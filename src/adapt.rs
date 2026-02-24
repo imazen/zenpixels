@@ -11,7 +11,7 @@ use zencodec_types::{PixelDescriptor, PixelSlice};
 
 use crate::converter::RowConverter;
 use crate::error::ConvertError;
-use crate::negotiate::best_match;
+use crate::negotiate::{best_match, ConvertIntent};
 
 /// Result of format adaptation: the converted data and its descriptor.
 pub struct Adapted<'a> {
@@ -26,6 +26,9 @@ pub struct Adapted<'a> {
 }
 
 /// Negotiate format and convert a [`PixelSlice`] for encoding.
+///
+/// Uses [`ConvertIntent::Fastest`] — minimizes conversion cost, which is the
+/// right default for codec encoding where the codec knows what format it wants.
 ///
 /// If the input already matches one of the `supported` formats, returns
 /// `Cow::Borrowed` (zero-copy). Otherwise, converts to the best match
@@ -50,6 +53,24 @@ pub struct Adapted<'a> {
 pub fn adapt_for_encode<'a>(
     pixels: &PixelSlice<'a>,
     supported: &[PixelDescriptor],
+) -> Result<Adapted<'a>, ConvertError> {
+    adapt_for_encode_with_intent(pixels, supported, ConvertIntent::Fastest)
+}
+
+/// Negotiate format and convert a [`PixelSlice`] with intent awareness.
+///
+/// Like [`adapt_for_encode`], but lets the caller specify a [`ConvertIntent`]
+/// to shift format preferences. For example, `ConvertIntent::LinearLight` will
+/// prefer f32 Linear targets for gamma-correct resize operations.
+///
+/// # Errors
+///
+/// Returns [`ConvertError::EmptyFormatList`] if `supported` is empty.
+/// Returns [`ConvertError::NoPath`] if no conversion exists to any supported format.
+pub fn adapt_for_encode_with_intent<'a>(
+    pixels: &PixelSlice<'a>,
+    supported: &[PixelDescriptor],
+    intent: ConvertIntent,
 ) -> Result<Adapted<'a>, ConvertError> {
     if supported.is_empty() {
         return Err(ConvertError::EmptyFormatList);
@@ -86,7 +107,8 @@ pub fn adapt_for_encode<'a>(
     }
 
     // Need conversion — pick best target and convert.
-    let target = best_match(src_desc, supported).ok_or(ConvertError::EmptyFormatList)?;
+    let target =
+        best_match(src_desc, supported, intent).ok_or(ConvertError::EmptyFormatList)?;
 
     let converter = RowConverter::new(src_desc, target)?;
 

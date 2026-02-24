@@ -43,7 +43,7 @@ pub mod pixels;
 pub use convert::{convert_row, ConvertPlan};
 pub use converter::RowConverter;
 pub use error::ConvertError;
-pub use negotiate::best_match;
+pub use negotiate::{best_match, ideal_format, ConvertIntent};
 
 // Re-export key types from zencodec-types for convenience.
 pub use zencodec_types::PixelDescriptor;
