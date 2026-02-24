@@ -21,3 +21,4 @@ bytemuck = "1.21"
 [dev-dependencies]
 imgref = "1.12"
 rgb = { version = "0.8", features = ["as-bytes"] }
+half = "2"

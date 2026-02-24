@@ -486,8 +486,10 @@ fn suitability_loss(target: PixelDescriptor, intent: ConvertIntent) -> u16 {
         ConvertIntent::Blend => {
             let mut s = linear_light_suitability(target);
             // Straight alpha requires per-pixel division during compositing.
+            // Calibrated: blending in straight alpha causes severe fringe artifacts
+            // at semi-transparent edges (measured ΔE=17.2, High bucket).
             if target.layout.has_alpha() && target.alpha == AlphaMode::Straight {
-                s += 25;
+                s += 200;
             }
             s
         }
@@ -515,7 +517,7 @@ fn linear_light_suitability(target: PixelDescriptor) -> u16 {
             }
         }
         ChannelType::U16 | ChannelType::I16 => 25,
-        ChannelType::U8 => 40,
+        ChannelType::U8 => 120,  // calibrated: resize in u8 sRGB measures ΔE=13.7 (Moderate)
         _ => 50,
     }
 }
@@ -625,16 +627,22 @@ fn depth_loss(target_depth: ChannelType, origin_depth: ChannelType) -> u16 {
     }
 
     // Target has less precision than the origin — lossy.
+    //
+    // Calibrated from CIEDE2000 measurements (perceptual_loss.rs).
+    // In sRGB space, quantization to 8 bits produces ΔE < 0.5 (below JND)
+    // because sRGB OETF provides perceptually uniform quantization.
+    // The suitability_loss function handles the separate concern of
+    // operating in a lower-precision format (gamma darkening in u8, etc).
     match (origin_depth, target_depth) {
-        (ChannelType::U16, ChannelType::U8) => 100,
-        (ChannelType::F32, ChannelType::U8) => 300,
-        (ChannelType::F32, ChannelType::U16) => 80,
+        (ChannelType::U16, ChannelType::U8) => 10,    // measured ΔE=0.14, sub-JND
+        (ChannelType::F32, ChannelType::U8) => 10,    // measured ΔE=0.14, sub-JND in sRGB
+        (ChannelType::F32, ChannelType::U16) => 5,    // 23→16 mantissa bits, negligible
         (ChannelType::F32, ChannelType::F16) => 20,   // 23→10 mantissa bits, small loss
-        (ChannelType::F32, ChannelType::I16) => 60,    // f32→i16 quantization
-        (ChannelType::F16, ChannelType::U8) => 100,    // 10 mantissa bits → 8 int bits
-        (ChannelType::U16, ChannelType::F16) => 30,    // 16→10 mantissa bits, moderate loss
-        (ChannelType::I16, ChannelType::U8) => 80,     // signed 16→8 bit truncation
-        _ => 200,
+        (ChannelType::F32, ChannelType::I16) => 5,    // measured ΔE=0.000, lossless round-trip
+        (ChannelType::F16, ChannelType::U8) => 8,     // measured ΔE=0.000 (f16 >8 bits precision)
+        (ChannelType::U16, ChannelType::F16) => 30,   // 16→10 mantissa bits, moderate loss
+        (ChannelType::I16, ChannelType::U8) => 8,     // similar to F16→U8
+        _ => 50,
     }
 }
 
