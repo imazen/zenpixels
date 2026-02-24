@@ -424,7 +424,7 @@ pub fn conversion_cost_with_provenance(
 // ---------------------------------------------------------------------------
 
 /// Score a candidate target for ranking. Lower is better.
-fn score_target(
+pub(crate) fn score_target(
     source: PixelDescriptor,
     provenance: Provenance,
     target: PixelDescriptor,
@@ -465,7 +465,7 @@ fn best_of(
 /// - `Fastest`: effort matters 4x more than loss
 /// - `LinearLight`/`Blend`: loss matters 4x more than effort
 /// - `Perceptual`: loss matters 3x more than effort
-fn weighted_score(effort: u32, loss: u32, intent: ConvertIntent) -> u32 {
+pub(crate) fn weighted_score(effort: u32, loss: u32, intent: ConvertIntent) -> u32 {
     match intent {
         ConvertIntent::Fastest => effort * 4 + loss,
         ConvertIntent::LinearLight | ConvertIntent::Blend => effort + loss * 4,
@@ -479,7 +479,7 @@ fn weighted_score(effort: u32, loss: u32, intent: ConvertIntent) -> u32 {
 /// For example, u8 data processed with LinearLight resize produces
 /// gamma-incorrect results — that's a quality loss independent of
 /// how cheap the u8→u8 identity conversion is.
-fn suitability_loss(target: PixelDescriptor, intent: ConvertIntent) -> u16 {
+pub(crate) fn suitability_loss(target: PixelDescriptor, intent: ConvertIntent) -> u16 {
     match intent {
         ConvertIntent::Fastest => 0,
         ConvertIntent::LinearLight => linear_light_suitability(target),
@@ -658,7 +658,7 @@ fn depth_loss(target_depth: ChannelType, origin_depth: ChannelType) -> u16 {
 /// F16 has 10 mantissa bits (~3.3 decimal digits) — between U8 (8 bits) and
 /// U16 (16 bits). I16 is treated as 15-bit precision (sign bit is overhead).
 #[allow(unreachable_patterns)] // non_exhaustive: future variants
-fn channel_bits(ct: ChannelType) -> u16 {
+pub(crate) fn channel_bits(ct: ChannelType) -> u16 {
     match ct {
         ChannelType::U8 => 8,
         ChannelType::F16 => 11,  // 10 mantissa + 1 implicit

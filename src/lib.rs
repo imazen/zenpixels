@@ -34,11 +34,14 @@ extern crate alloc;
 
 mod convert;
 mod error;
-mod negotiate;
+pub(crate) mod negotiate;
 
 pub mod adapt;
 pub mod converter;
+pub mod op_format;
+pub mod path;
 pub mod pixels;
+pub mod registry;
 
 pub use convert::{convert_row, ConvertPlan};
 pub use converter::RowConverter;
@@ -47,6 +50,12 @@ pub use negotiate::{
     best_match, best_match_with, conversion_cost, conversion_cost_with_provenance, ideal_format,
     negotiate, ConversionCost, ConvertIntent, FormatOption, Provenance,
 };
+pub use op_format::{OpCategory, OpRequirement};
+pub use path::{
+    generate_path_matrix, matrix_stats, optimal_path, ConversionPath, LossBucket, MatrixStats,
+    PathEntry, QualityThreshold,
+};
+pub use registry::{CodecFormats, FormatEntry};
 
 // Re-export key types from zencodec-types for convenience.
 pub use zencodec_types::{ColorPrimaries, PixelDescriptor};
