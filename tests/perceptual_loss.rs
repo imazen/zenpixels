@@ -519,6 +519,79 @@ fn box_blur_3(left: [f64; 3], center: [f64; 3], right: [f64; 3]) -> [f64; 3] {
     ]
 }
 
+/// Parameterized 4-tap cubic interpolation (Mitchell-Netravali family).
+/// `t` is fractional position [0,1] between samples[1] and samples[2].
+/// B=1/3, C=1/3 → Mitchell (minimal ringing).
+/// B=0, C=0.5 → Catmull-Rom (sharper, more ringing).
+/// B=0, C=1 → extreme sharpening (maximum overshoot for testing).
+fn cubic_interpolate_bc(samples: [[f64; 3]; 4], t: f64, b: f64, c: f64) -> [f64; 3] {
+    let kernel = |x: f64| -> f64 {
+        let x = x.abs();
+        if x < 1.0 {
+            ((12.0 - 9.0 * b - 6.0 * c) * x * x * x
+                + (-18.0 + 12.0 * b + 6.0 * c) * x * x
+                + (6.0 - 2.0 * b))
+                / 6.0
+        } else if x < 2.0 {
+            ((-b - 6.0 * c) * x * x * x
+                + (6.0 * b + 30.0 * c) * x * x
+                + (-12.0 * b - 48.0 * c) * x
+                + (8.0 * b + 24.0 * c))
+                / 6.0
+        } else {
+            0.0
+        }
+    };
+    let w0 = kernel(t + 1.0);
+    let w1 = kernel(t);
+    let w2 = kernel(1.0 - t);
+    let w3 = kernel(2.0 - t);
+    let sum = w0 + w1 + w2 + w3;
+    let mut result = [0.0; 3];
+    for ch in 0..3 {
+        result[ch] = (w0 * samples[0][ch]
+            + w1 * samples[1][ch]
+            + w2 * samples[2][ch]
+            + w3 * samples[3][ch])
+            / sum;
+    }
+    result
+}
+
+/// Mitchell-Netravali B=1/3, C=1/3 (default in most pipelines).
+fn cubic_interpolate(samples: [[f64; 3]; 4], t: f64) -> [f64; 3] {
+    cubic_interpolate_bc(samples, t, 1.0 / 3.0, 1.0 / 3.0)
+}
+
+/// Catmull-Rom B=0, C=0.5 (sharper, more ringing than Mitchell).
+fn catmull_rom_interpolate(samples: [[f64; 3]; 4], t: f64) -> [f64; 3] {
+    cubic_interpolate_bc(samples, t, 0.0, 0.5)
+}
+
+/// Generate a row of high-contrast linear sRGB pixels with sharp 1-pixel
+/// step edges. The abrupt transitions maximally trigger overshoot with
+/// multi-tap filters (cubic, Lanczos).
+fn sharp_edge_row(count: usize) -> Vec<[f64; 3]> {
+    (0..count)
+        .map(|i| {
+            // Alternating pattern with multiple frequency components
+            let t = i as f64 / count as f64;
+            if i % 20 < 10 {
+                // Hard step: near-black to bright and back every 20 pixels
+                if i % 20 < 5 {
+                    [0.01, 0.01, 0.01]
+                } else {
+                    [0.95, 0.80, 0.60]
+                }
+            } else {
+                // Smooth gradient section (for reference)
+                let gt = ((i % 20) as f64 - 10.0) / 10.0;
+                [t * 0.8 + 0.1, gt * 0.5 + 0.25, 0.5 - gt * 0.3]
+            }
+        })
+        .collect()
+}
+
 // ===========================================================================
 // Scenario framework
 // ===========================================================================
@@ -2038,6 +2111,171 @@ fn perceptual_operation_scenarios() {
             convs.push(result_i16);
         }
         results.push(run_scenario("Composite f32 vs i16 premul (α=0.1)", &refs, &convs, 10));
+    }
+
+    print_results(&results);
+
+    let failures: Vec<_> = results.iter().filter(|r| !r.match_ok).collect();
+    if !failures.is_empty() {
+        eprintln!("\nBucket mismatches:");
+        for f in &failures {
+            eprintln!(
+                "  {} — measured {} (p95 ΔE={:.3}), model {} (loss={})",
+                f.name,
+                f.measured_bucket.name(),
+                f.stats.p95_de,
+                f.model_bucket.name(),
+                f.model_loss
+            );
+        }
+        panic!("{} bucket mismatch(es)", failures.len());
+    }
+}
+
+// ===========================================================================
+// 3H: Gamut clamping scenarios
+//
+// Multi-tap resize kernels (Lanczos, Mitchell) have negative lobes that
+// produce overshoot/undershoot near sharp edges. In f32 linear, these
+// out-of-range values are preserved and naturally resolve. In formats
+// that clamp to [0,1] (sRGB encoding, integer quantization), the overshoot
+// is destroyed — causing halo artifacts and lost detail near edges.
+//
+// This is a separate error source from gamma darkening. The bilinear tests
+// above don't capture it because bilinear interpolation can't overshoot.
+// ===========================================================================
+
+#[test]
+fn gamut_clamping_scenarios() {
+    let mut results = Vec::new();
+    let row = sharp_edge_row(200);
+
+    // Helper: run cubic resize across the edge row in a given format.
+    // Returns (reference_linear, converted_linear) pairs for ΔE measurement.
+    let cubic_edge_test = |row: &[[f64; 3]],
+                           encode: &dyn Fn([f64; 3]) -> [f64; 3],
+                           decode: &dyn Fn([f64; 3]) -> [f64; 3],
+                           kernel: &dyn Fn([[f64; 3]; 4], f64) -> [f64; 3]|
+     -> (Vec<[f64; 3]>, Vec<[f64; 3]>) {
+        let mut refs = Vec::new();
+        let mut convs = Vec::new();
+        for i in 1..row.len() - 2 {
+            let t = 0.5;
+            let samples = [row[i - 1], row[i], row[i + 1], row[i + 2]];
+            // Reference: cubic in f32 linear (no clamping)
+            let correct = cubic_interpolate(samples, t);
+            // Candidate: encode → cubic → decode
+            let enc_samples = [
+                encode(row[i - 1]),
+                encode(row[i]),
+                encode(row[i + 1]),
+                encode(row[i + 2]),
+            ];
+            let interp = kernel(enc_samples, t);
+            let wrong = decode(interp);
+            // Clamp reference to wide range for Lab comparison
+            refs.push(correct.map(|c| c.clamp(-0.5, 2.0)));
+            convs.push(wrong.map(|c| c.clamp(-0.5, 2.0)));
+        }
+        (refs, convs)
+    };
+
+    // Encode/decode closures for different formats
+    let to_u8_srgb = |c: [f64; 3]| c.map(|v| (srgb_oetf(clamp01(v)) * 255.0).round() / 255.0);
+    let from_u8_srgb = |c: [f64; 3]| c.map(|v| srgb_eotf(clamp01(v)));
+    let to_f32_srgb = |c: [f64; 3]| c.map(|v| srgb_oetf(clamp01(v)));
+    let from_f32_srgb = |c: [f64; 3]| c.map(|v| srgb_eotf(clamp01(v)));
+    let to_i16_srgb_enc = |c: [f64; 3]| c.map(|v| to_i16_srgb_14bit(srgb_oetf(clamp01(v))));
+    let to_i16_lin = |c: [f64; 3]| c.map(to_i16);
+    let clamp_only = |c: [f64; 3]| c.map(|v| clamp01(v));
+    let f16_enc = |c: [f64; 3]| roundtrip_f16(c);
+    let identity_dec = |c: [f64; 3]| c;
+
+    // --- Mitchell (B=1/3, C=1/3): moderate ringing ---
+    //
+    // Key finding: clamping overshoot to [0,1] costs p95 ΔE ≈ 12 at sharp
+    // edges. This affects ALL integer formats (u8, i16, u16) equally, but NOT
+    // float formats (f32, f16) which can represent values outside [0,1].
+    //
+    // The cost model's linear_light_suitability doesn't currently capture
+    // this because it depends on the resize kernel, not just the format.
+    // Bilinear (no overshoot) → no clamping loss. Cubic/Lanczos → ΔE ≈ 12.
+
+    // 1. Mitchell: f32 unclamped vs clamped (pure clamping loss)
+    //    Isolates the clamping effect — same format, same kernel.
+    {
+        let (refs, convs) = cubic_edge_test(
+            &row,
+            &|c| c, // identity encode
+            &clamp_only, // just clamp
+            &cubic_interpolate,
+        );
+        // Clamping alone: p95 ΔE ≈ 12 at sharp step edges.
+        // NOT currently modeled — this is the gap the test documents.
+        results.push(run_scenario("Mitchell: unclamped vs clamped", &refs, &convs, 200));
+    }
+
+    // 2. Mitchell: f32 linear vs u8 sRGB (gamma + clamp + quantization)
+    {
+        let (refs, convs) = cubic_edge_test(&row, &to_u8_srgb, &from_u8_srgb, &cubic_interpolate);
+        results.push(run_scenario("Mitchell f32 Lin vs u8 sRGB (edges)", &refs, &convs, 120));
+    }
+
+    // 3. Mitchell: f32 linear vs f32 sRGB (gamma + clamp, no quantization)
+    {
+        let (refs, convs) = cubic_edge_test(&row, &to_f32_srgb, &from_f32_srgb, &cubic_interpolate);
+        results.push(run_scenario("Mitchell f32 Lin vs f32 sRGB (edges)", &refs, &convs, 120));
+    }
+
+    // 4. Mitchell: f32 linear vs i16 linear (integer clamp only)
+    //    Same clamping loss as unclamped-vs-clamped — the integer range IS [0,1].
+    {
+        let (refs, convs) = cubic_edge_test(&row, &to_i16_lin, &clamp_only, &cubic_interpolate);
+        results.push(run_scenario("Mitchell f32 Lin vs i16 Lin (edges)", &refs, &convs, 200));
+    }
+
+    // 5. Mitchell: f32 linear vs f16 linear (no clamp — f16 represents overshoot)
+    //    f16 can represent [-65504, 65504] — overshoot is preserved.
+    {
+        let (refs, convs) = cubic_edge_test(&row, &f16_enc, &identity_dec, &cubic_interpolate);
+        results.push(run_scenario("Mitchell f32 Lin vs f16 Lin (edges)", &refs, &convs, 5));
+    }
+
+    // --- Catmull-Rom (B=0, C=0.5): sharper, more ringing ---
+
+    // 6. Catmull-Rom: f32 unclamped vs clamped (pure clamping loss)
+    {
+        let (refs, convs) = cubic_edge_test(
+            &row,
+            &|c| c,
+            &clamp_only,
+            &catmull_rom_interpolate,
+        );
+        results.push(run_scenario("CatmullRom: unclamped vs clamped", &refs, &convs, 200));
+    }
+
+    // 7. Catmull-Rom: f32 linear vs u8 sRGB (gamma + clamp + quantization)
+    {
+        let (refs, convs) = cubic_edge_test(&row, &to_u8_srgb, &from_u8_srgb, &catmull_rom_interpolate);
+        results.push(run_scenario("CatmullRom f32 Lin vs u8 sRGB (edges)", &refs, &convs, 120));
+    }
+
+    // 8. Catmull-Rom: f32 linear vs f32 sRGB (gamma + clamp, no quantization)
+    {
+        let (refs, convs) = cubic_edge_test(&row, &to_f32_srgb, &from_f32_srgb, &catmull_rom_interpolate);
+        results.push(run_scenario("CatmullRom f32 Lin vs f32 sRGB (edges)", &refs, &convs, 120));
+    }
+
+    // 9. Catmull-Rom: f32 linear vs i16 sRGB (gamma + clamp + 14-bit quant)
+    {
+        let (refs, convs) = cubic_edge_test(&row, &to_i16_srgb_enc, &from_f32_srgb, &catmull_rom_interpolate);
+        results.push(run_scenario("CatmullRom f32 Lin vs i16 sRGB (edges)", &refs, &convs, 120));
+    }
+
+    // 10. Catmull-Rom: f32 linear vs i16 linear (integer clamp only)
+    {
+        let (refs, convs) = cubic_edge_test(&row, &to_i16_lin, &clamp_only, &catmull_rom_interpolate);
+        results.push(run_scenario("CatmullRom f32 Lin vs i16 Lin (edges)", &refs, &convs, 200));
     }
 
     print_results(&results);
