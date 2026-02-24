@@ -10,7 +10,9 @@
 //! with a custom [`ConversionCost`], so the negotiation picks their fast
 //! path instead of doing a redundant conversion.
 
-use zencodec_types::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
+use zencodec_types::{
+    AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
+};
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -24,11 +26,16 @@ use zencodec_types::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, Tra
 /// With provenance, it can see that the data's *true* precision is u8,
 /// so the round-trip is lossless.
 ///
-/// # Future extensions
+/// # Gamut provenance
 ///
-/// This struct will grow to include CICP primaries, matrix coefficients,
-/// and codec type (lossy/lossless) — all metadata that describes the
-/// data's origin characteristics rather than its current format.
+/// `origin_primaries` tracks the gamut of the original source, enabling
+/// lossless round-trip detection for gamut conversions. For example,
+/// sRGB data placed in BT.2020 for processing can round-trip back to
+/// sRGB losslessly — but only if no operations expanded the actual color
+/// usage (e.g., saturation boost filling the wider gamut). When an
+/// operation does expand gamut usage, the caller must update provenance
+/// via [`invalidate_primaries`](Self::invalidate_primaries) to reflect
+/// that the data now genuinely uses the wider gamut.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Provenance {
     /// The channel depth of the original source data.
@@ -37,21 +44,35 @@ pub struct Provenance {
     /// For an EXR (f32) loaded directly, this is `F32`.
     /// For a 16-bit PNG, this is `U16`.
     pub origin_depth: ChannelType,
+
+    /// The color primaries of the original source data.
+    ///
+    /// For a standard sRGB JPEG, this is `Bt709`. For a Display P3 image,
+    /// this is `DisplayP3`. Used to detect when converting to a narrower
+    /// gamut is lossless (the source fits entirely within the target).
+    ///
+    /// **Important:** If an operation expands the data's gamut usage
+    /// (e.g., saturation boost in BT.2020 that pushes colors outside
+    /// the original sRGB gamut), call [`invalidate_primaries`](Self::invalidate_primaries)
+    /// to update this to the current working primaries. Otherwise the
+    /// cost model will incorrectly report the gamut narrowing as lossless.
+    pub origin_primaries: ColorPrimaries,
 }
 
 impl Provenance {
-    /// Assume the descriptor's channel type *is* the true origin precision.
+    /// Assume the descriptor's properties *are* the true origin characteristics.
     ///
     /// This is the conservative default: if you don't know the data's history,
-    /// assume its current depth is its true depth.
+    /// assume its current format is its true origin.
     #[inline]
     pub fn from_source(desc: PixelDescriptor) -> Self {
         Self {
             origin_depth: desc.channel_type,
+            origin_primaries: desc.primaries,
         }
     }
 
-    /// Create provenance with an explicit origin depth.
+    /// Create provenance with an explicit origin depth. Primaries default to BT.709.
     ///
     /// Use this when the data has been widened from a known source depth.
     /// For example, a JPEG (u8) decoded into f32 for resize:
@@ -61,7 +82,43 @@ impl Provenance {
     /// ```
     #[inline]
     pub const fn with_origin_depth(origin_depth: ChannelType) -> Self {
-        Self { origin_depth }
+        Self {
+            origin_depth,
+            origin_primaries: ColorPrimaries::Bt709,
+        }
+    }
+
+    /// Create provenance with explicit origin depth and primaries.
+    #[inline]
+    pub const fn with_origin(origin_depth: ChannelType, origin_primaries: ColorPrimaries) -> Self {
+        Self {
+            origin_depth,
+            origin_primaries,
+        }
+    }
+
+    /// Create provenance with an explicit origin primaries. Depth defaults to
+    /// the descriptor's current channel type.
+    #[inline]
+    pub fn with_origin_primaries(desc: PixelDescriptor, primaries: ColorPrimaries) -> Self {
+        Self {
+            origin_depth: desc.channel_type,
+            origin_primaries: primaries,
+        }
+    }
+
+    /// Mark the gamut provenance as invalid (matches current format).
+    ///
+    /// Call this after any operation that expands the data's color usage
+    /// beyond the original gamut. For example, if sRGB data is converted
+    /// to BT.2020 and then saturation is boosted to fill the wider gamut,
+    /// the origin is no longer sRGB — the data genuinely uses BT.2020.
+    ///
+    /// After this call, converting to a narrower gamut (e.g., back to sRGB)
+    /// will correctly report gamut clipping loss.
+    #[inline]
+    pub fn invalidate_primaries(&mut self, current: ColorPrimaries) {
+        self.origin_primaries = current;
     }
 }
 
@@ -359,6 +416,7 @@ pub fn conversion_cost_with_provenance(
         + depth_cost(from.channel_type, to.channel_type, provenance.origin_depth)
         + layout_cost(from.layout, to.layout)
         + alpha_cost(from.alpha, to.alpha, from.layout, to.layout)
+        + primaries_cost(from.primaries, to.primaries, provenance.origin_primaries)
 }
 
 // ---------------------------------------------------------------------------
@@ -439,6 +497,7 @@ fn suitability_loss(target: PixelDescriptor, intent: ConvertIntent) -> u16 {
 
 /// Suitability penalty for LinearLight operations (resize, blur).
 /// f32 Linear is ideal; u8 gamma-encoded is worst.
+#[allow(unreachable_patterns)] // non_exhaustive: future variants
 fn linear_light_suitability(target: PixelDescriptor) -> u16 {
     match target.channel_type {
         ChannelType::F32 => {
@@ -448,7 +507,14 @@ fn linear_light_suitability(target: PixelDescriptor) -> u16 {
                 15
             }
         }
-        ChannelType::U16 => 25,
+        ChannelType::F16 => {
+            if target.transfer == TransferFunction::Linear {
+                5  // F16 linear: good but less precision than f32
+            } else {
+                20
+            }
+        }
+        ChannelType::U16 | ChannelType::I16 => 25,
         ChannelType::U8 => 40,
         _ => 50,
     }
@@ -524,11 +590,23 @@ fn depth_cost(from: ChannelType, to: ChannelType, origin_depth: ChannelType) -> 
 }
 
 /// Computational effort for a depth conversion (independent of provenance).
+#[allow(unreachable_patterns)] // non_exhaustive: future variants
 fn depth_effort(from: ChannelType, to: ChannelType) -> u16 {
     match (from, to) {
+        // Integer widen/narrow
         (ChannelType::U8, ChannelType::U16) | (ChannelType::U16, ChannelType::U8) => 10,
+        (ChannelType::U8, ChannelType::I16) | (ChannelType::I16, ChannelType::U8) => 12,
+        (ChannelType::U16, ChannelType::I16) | (ChannelType::I16, ChannelType::U16) => 8,
+        // Float ↔ integer
         (ChannelType::U16, ChannelType::F32) | (ChannelType::F32, ChannelType::U16) => 25,
         (ChannelType::U8, ChannelType::F32) | (ChannelType::F32, ChannelType::U8) => 40,
+        (ChannelType::I16, ChannelType::F32) | (ChannelType::F32, ChannelType::I16) => 15,
+        // F16 ↔ F32 (hardware or fast table conversion)
+        (ChannelType::F16, ChannelType::F32) | (ChannelType::F32, ChannelType::F16) => 15,
+        // F16 ↔ integer (via F32 intermediate)
+        (ChannelType::F16, ChannelType::U8) | (ChannelType::U8, ChannelType::F16) => 30,
+        (ChannelType::F16, ChannelType::U16) | (ChannelType::U16, ChannelType::F16) => 25,
+        (ChannelType::F16, ChannelType::I16) | (ChannelType::I16, ChannelType::F16) => 20,
         _ => 100,
     }
 }
@@ -536,6 +614,7 @@ fn depth_effort(from: ChannelType, to: ChannelType) -> u16 {
 /// Information loss when converting to `target_depth`, given the data's
 /// `origin_depth`. If the target can represent the origin precision,
 /// loss is zero.
+#[allow(unreachable_patterns)] // non_exhaustive: future variants
 fn depth_loss(target_depth: ChannelType, origin_depth: ChannelType) -> u16 {
     let target_bits = channel_bits(target_depth);
     let origin_bits = channel_bits(origin_depth);
@@ -550,17 +629,72 @@ fn depth_loss(target_depth: ChannelType, origin_depth: ChannelType) -> u16 {
         (ChannelType::U16, ChannelType::U8) => 100,
         (ChannelType::F32, ChannelType::U8) => 300,
         (ChannelType::F32, ChannelType::U16) => 80,
+        (ChannelType::F32, ChannelType::F16) => 20,   // 23→10 mantissa bits, small loss
+        (ChannelType::F32, ChannelType::I16) => 60,    // f32→i16 quantization
+        (ChannelType::F16, ChannelType::U8) => 100,    // 10 mantissa bits → 8 int bits
+        (ChannelType::U16, ChannelType::F16) => 30,    // 16→10 mantissa bits, moderate loss
+        (ChannelType::I16, ChannelType::U8) => 80,     // signed 16→8 bit truncation
         _ => 200,
     }
 }
 
 /// Nominal precision bits for a channel type (for ordering, not bit-exact).
+///
+/// F16 has 10 mantissa bits (~3.3 decimal digits) — between U8 (8 bits) and
+/// U16 (16 bits). I16 is treated as 15-bit precision (sign bit is overhead).
+#[allow(unreachable_patterns)] // non_exhaustive: future variants
 fn channel_bits(ct: ChannelType) -> u16 {
     match ct {
         ChannelType::U8 => 8,
+        ChannelType::F16 => 11,  // 10 mantissa + 1 implicit
+        ChannelType::I16 => 15,  // 16 bits minus sign
         ChannelType::U16 => 16,
         ChannelType::F32 => 32,
         _ => 0,
+    }
+}
+
+/// Cost of color primaries (gamut) conversion.
+///
+/// Gamut hierarchy: BT.2020 ⊃ Display P3 ⊃ BT.709/sRGB.
+///
+/// Key principle: narrowing is only lossy if the data actually uses the
+/// wider gamut. Provenance tracks whether the data originally came from
+/// a narrower gamut (and hasn't been modified to use the wider one).
+fn primaries_cost(
+    from: ColorPrimaries,
+    to: ColorPrimaries,
+    origin: ColorPrimaries,
+) -> ConversionCost {
+    if from == to {
+        return ConversionCost::ZERO;
+    }
+
+    // Unknown ↔ anything: relabeling only, no actual math.
+    if matches!(from, ColorPrimaries::Unknown) || matches!(to, ColorPrimaries::Unknown) {
+        return ConversionCost::new(1, 0);
+    }
+
+    // Widening (e.g., sRGB → P3 → BT.2020): 3x3 matrix, lossless.
+    if to.contains(from) {
+        return ConversionCost::new(10, 0);
+    }
+
+    // Narrowing (e.g., BT.2020 → sRGB): check if origin fits in target.
+    // If the data originally came from sRGB and was placed in BT.2020
+    // without modifying colors, converting back to sRGB is near-lossless
+    // (only numerical precision of the 3x3 matrix round-trip).
+    if to.contains(origin) {
+        return ConversionCost::new(10, 5);
+    }
+
+    // True gamut clipping: data uses the wider gamut and target is narrower.
+    // Loss depends on how much wider the source is.
+    match (from, to) {
+        (ColorPrimaries::DisplayP3, ColorPrimaries::Bt709) => ConversionCost::new(15, 80),
+        (ColorPrimaries::Bt2020, ColorPrimaries::DisplayP3) => ConversionCost::new(15, 100),
+        (ColorPrimaries::Bt2020, ColorPrimaries::Bt709) => ConversionCost::new(15, 200),
+        _ => ConversionCost::new(15, 150),
     }
 }
 
@@ -643,6 +777,7 @@ enum PrecisionTier {
     Hdr = 3,
 }
 
+#[allow(unreachable_patterns)] // non_exhaustive: future variants
 fn precision_tier(desc: PixelDescriptor) -> PrecisionTier {
     if matches!(
         desc.transfer,
@@ -652,7 +787,7 @@ fn precision_tier(desc: PixelDescriptor) -> PrecisionTier {
     }
     match desc.channel_type {
         ChannelType::U8 => PrecisionTier::Sdr8,
-        ChannelType::U16 => PrecisionTier::Sdr16,
+        ChannelType::U16 | ChannelType::F16 | ChannelType::I16 => PrecisionTier::Sdr16,
         ChannelType::F32 => PrecisionTier::LinearF32,
         _ => PrecisionTier::Sdr8,
     }

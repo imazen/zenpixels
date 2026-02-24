@@ -49,4 +49,4 @@ pub use negotiate::{
 };
 
 // Re-export key types from zencodec-types for convenience.
-pub use zencodec_types::PixelDescriptor;
+pub use zencodec_types::{ColorPrimaries, PixelDescriptor};
