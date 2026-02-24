@@ -16,6 +16,55 @@ use zencodec_types::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, Tra
 // Public types
 // ---------------------------------------------------------------------------
 
+/// Tracks where pixel data came from, so the cost model can distinguish
+/// "f32 that was widened from u8 JPEG" (lossless round-trip back to u8)
+/// from "f32 that was decoded from a 16-bit EXR" (lossy truncation to u8).
+///
+/// Without provenance, `depth_cost(f32 → u8)` always reports high loss.
+/// With provenance, it can see that the data's *true* precision is u8,
+/// so the round-trip is lossless.
+///
+/// # Future extensions
+///
+/// This struct will grow to include CICP primaries, matrix coefficients,
+/// and codec type (lossy/lossless) — all metadata that describes the
+/// data's origin characteristics rather than its current format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Provenance {
+    /// The channel depth of the original source data.
+    ///
+    /// For a JPEG (u8 sRGB) decoded into f32 for resize, this is `U8`.
+    /// For an EXR (f32) loaded directly, this is `F32`.
+    /// For a 16-bit PNG, this is `U16`.
+    pub origin_depth: ChannelType,
+}
+
+impl Provenance {
+    /// Assume the descriptor's channel type *is* the true origin precision.
+    ///
+    /// This is the conservative default: if you don't know the data's history,
+    /// assume its current depth is its true depth.
+    #[inline]
+    pub fn from_source(desc: PixelDescriptor) -> Self {
+        Self {
+            origin_depth: desc.channel_type,
+        }
+    }
+
+    /// Create provenance with an explicit origin depth.
+    ///
+    /// Use this when the data has been widened from a known source depth.
+    /// For example, a JPEG (u8) decoded into f32 for resize:
+    ///
+    /// ```rust,ignore
+    /// let provenance = Provenance::with_origin_depth(ChannelType::U8);
+    /// ```
+    #[inline]
+    pub const fn with_origin_depth(origin_depth: ChannelType) -> Self {
+        Self { origin_depth }
+    }
+}
+
 /// What the consumer plans to do with the converted pixels.
 ///
 /// Shifts the format negotiation cost model to prefer formats
@@ -134,17 +183,19 @@ impl From<PixelDescriptor> for FormatOption {
 ///
 /// Returns `None` only if `supported` is empty.
 ///
-/// This is the simple API — all consumer costs are assumed zero.
-/// Use [`best_match_with`] when the consumer has format-specific
-/// cost overrides (e.g., fused conversion paths).
+/// This is the simple API — all consumer costs are assumed zero,
+/// and provenance is inferred from the source descriptor (conservative).
+/// Use [`best_match_with`] for consumer cost overrides, or
+/// [`negotiate`] for full control over provenance and consumer costs.
 pub fn best_match(
     source: PixelDescriptor,
     supported: &[PixelDescriptor],
     intent: ConvertIntent,
 ) -> Option<PixelDescriptor> {
-    best_of(
+    negotiate(
         source,
-        supported.iter().map(|&d| (d, ConversionCost::ZERO)),
+        Provenance::from_source(source),
+        supported.iter().map(|&d| FormatOption::from(d)),
         intent,
     )
 }
@@ -157,14 +208,55 @@ pub fn best_match(
 /// Each [`FormatOption`] specifies a format the consumer can accept
 /// and what it costs the consumer to handle that format internally.
 /// The total cost is `our_conversion + consumer_cost`, weighted by intent.
+///
+/// Provenance is inferred from the source descriptor. Use [`negotiate`]
+/// when the data has been widened from a lower-precision origin.
 pub fn best_match_with(
     source: PixelDescriptor,
     options: &[FormatOption],
     intent: ConvertIntent,
 ) -> Option<PixelDescriptor> {
+    negotiate(
+        source,
+        Provenance::from_source(source),
+        options.iter().copied(),
+        intent,
+    )
+}
+
+/// Fully-parameterized format negotiation.
+///
+/// This is the most flexible entry point: it takes explicit provenance
+/// (so the cost model knows the data's true origin precision) and
+/// consumer cost overrides (so fused conversion paths are accounted for).
+///
+/// # When to use
+///
+/// Use this when the current pixel format doesn't represent the data's
+/// true precision. For example, a JPEG image (u8 sRGB) decoded into f32
+/// for gamma-correct resize: the data is *currently* f32, but its origin
+/// precision is u8. Converting back to u8 for JPEG encoding is lossless
+/// (within ±1 LSB), and the cost model should reflect that.
+///
+/// ```rust,ignore
+/// let provenance = Provenance::with_origin_depth(ChannelType::U8);
+/// let target = negotiate(
+///     current_f32_desc,
+///     provenance,
+///     encoder_options.iter().copied(),
+///     ConvertIntent::Fastest,
+/// );
+/// ```
+pub fn negotiate(
+    source: PixelDescriptor,
+    provenance: Provenance,
+    options: impl Iterator<Item = FormatOption>,
+    intent: ConvertIntent,
+) -> Option<PixelDescriptor> {
     best_of(
         source,
-        options.iter().map(|o| (o.descriptor, o.consumer_cost)),
+        provenance,
+        options.map(|o| (o.descriptor, o.consumer_cost)),
         intent,
     )
 }
@@ -244,9 +336,27 @@ pub fn ideal_format(source: PixelDescriptor, intent: ConvertIntent) -> PixelDesc
 ///
 /// This is the cost of *our* conversion kernels — it doesn't include
 /// any consumer-side cost. Intent-independent.
+///
+/// Provenance is inferred from `from` (conservative: assumes current
+/// depth is the true origin). Use [`conversion_cost_with_provenance`]
+/// when the data has been widened from a lower-precision source.
 pub fn conversion_cost(from: PixelDescriptor, to: PixelDescriptor) -> ConversionCost {
+    conversion_cost_with_provenance(from, to, Provenance::from_source(from))
+}
+
+/// Compute the two-axis conversion cost with explicit provenance.
+///
+/// Like [`conversion_cost`], but uses the provided [`Provenance`] to
+/// determine whether a depth narrowing is actually lossy. For example,
+/// `f32 → u8` reports zero loss when `provenance.origin_depth == U8`,
+/// because the data was originally u8 and the round-trip is lossless.
+pub fn conversion_cost_with_provenance(
+    from: PixelDescriptor,
+    to: PixelDescriptor,
+    provenance: Provenance,
+) -> ConversionCost {
     transfer_cost(from.transfer, to.transfer)
-        + depth_cost(from.channel_type, to.channel_type)
+        + depth_cost(from.channel_type, to.channel_type, provenance.origin_depth)
         + layout_cost(from.layout, to.layout)
         + alpha_cost(from.alpha, to.alpha, from.layout, to.layout)
 }
@@ -258,11 +368,12 @@ pub fn conversion_cost(from: PixelDescriptor, to: PixelDescriptor) -> Conversion
 /// Score a candidate target for ranking. Lower is better.
 fn score_target(
     source: PixelDescriptor,
+    provenance: Provenance,
     target: PixelDescriptor,
     consumer_cost: ConversionCost,
     intent: ConvertIntent,
 ) -> u32 {
-    let our_cost = conversion_cost(source, target);
+    let our_cost = conversion_cost_with_provenance(source, target, provenance);
     let total_effort = our_cost.effort as u32 + consumer_cost.effort as u32;
     let total_loss = our_cost.loss as u32
         + consumer_cost.loss as u32
@@ -273,13 +384,14 @@ fn score_target(
 /// Find the best target from an iterator of (descriptor, consumer_cost) pairs.
 fn best_of(
     source: PixelDescriptor,
+    provenance: Provenance,
     options: impl Iterator<Item = (PixelDescriptor, ConversionCost)>,
     intent: ConvertIntent,
 ) -> Option<PixelDescriptor> {
     let mut best: Option<(PixelDescriptor, u32)> = None;
 
     for (target, consumer_cost) in options {
-        let score = score_target(source, target, consumer_cost, intent);
+        let score = score_target(source, provenance, target, consumer_cost, intent);
         match best {
             Some((_, best_score)) if score < best_score => best = Some((target, score)),
             None => best = Some((target, score)),
@@ -387,23 +499,68 @@ fn transfer_cost(from: TransferFunction, to: TransferFunction) -> ConversionCost
     }
 }
 
-/// Cost of channel depth conversion. Widening is lossless; narrowing is lossy.
-fn depth_cost(from: ChannelType, to: ChannelType) -> ConversionCost {
+/// Cost of channel depth conversion, considering the data's origin precision.
+///
+/// The `origin_depth` comes from [`Provenance`] and tells us the true
+/// precision of the data. This matters because:
+///
+/// - `f32 → u8` with origin `U8`: the data was u8 JPEG decoded to f32
+///   for processing. Round-trip back to u8 is lossless (±1 LSB).
+/// - `f32 → u8` with origin `F32`: the data has true f32 precision
+///   (e.g., EXR or HDR AVIF). Truncating to u8 destroys highlight detail.
+///
+/// **Rule:** If `target depth >= origin depth`, the narrowing has zero loss
+/// because the target can represent everything the original data contained.
+/// The effort cost is always based on the *current* depth conversion work.
+fn depth_cost(from: ChannelType, to: ChannelType, origin_depth: ChannelType) -> ConversionCost {
     if from == to {
         return ConversionCost::ZERO;
     }
+
+    let effort = depth_effort(from, to);
+    let loss = depth_loss(to, origin_depth);
+
+    ConversionCost::new(effort, loss)
+}
+
+/// Computational effort for a depth conversion (independent of provenance).
+fn depth_effort(from: ChannelType, to: ChannelType) -> u16 {
     match (from, to) {
-        // Widening — no data loss.
-        (ChannelType::U8, ChannelType::U16) => ConversionCost::new(10, 0),
-        (ChannelType::U8, ChannelType::F32) => ConversionCost::new(40, 0),
-        (ChannelType::U16, ChannelType::F32) => ConversionCost::new(25, 0),
+        (ChannelType::U8, ChannelType::U16) | (ChannelType::U16, ChannelType::U8) => 10,
+        (ChannelType::U16, ChannelType::F32) | (ChannelType::F32, ChannelType::U16) => 25,
+        (ChannelType::U8, ChannelType::F32) | (ChannelType::F32, ChannelType::U8) => 40,
+        _ => 100,
+    }
+}
 
-        // Narrowing — lossy.
-        (ChannelType::U16, ChannelType::U8) => ConversionCost::new(10, 100),
-        (ChannelType::F32, ChannelType::U8) => ConversionCost::new(40, 300),
-        (ChannelType::F32, ChannelType::U16) => ConversionCost::new(25, 80),
+/// Information loss when converting to `target_depth`, given the data's
+/// `origin_depth`. If the target can represent the origin precision,
+/// loss is zero.
+fn depth_loss(target_depth: ChannelType, origin_depth: ChannelType) -> u16 {
+    let target_bits = channel_bits(target_depth);
+    let origin_bits = channel_bits(origin_depth);
 
-        _ => ConversionCost::new(100, 200),
+    if target_bits >= origin_bits {
+        // Target can hold everything the origin had — no loss.
+        return 0;
+    }
+
+    // Target has less precision than the origin — lossy.
+    match (origin_depth, target_depth) {
+        (ChannelType::U16, ChannelType::U8) => 100,
+        (ChannelType::F32, ChannelType::U8) => 300,
+        (ChannelType::F32, ChannelType::U16) => 80,
+        _ => 200,
+    }
+}
+
+/// Nominal precision bits for a channel type (for ordering, not bit-exact).
+fn channel_bits(ct: ChannelType) -> u16 {
+    match ct {
+        ChannelType::U8 => 8,
+        ChannelType::U16 => 16,
+        ChannelType::F32 => 32,
+        _ => 0,
     }
 }
 
