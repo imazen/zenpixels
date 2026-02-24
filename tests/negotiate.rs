@@ -545,14 +545,25 @@ fn u16_origin_f32_to_u8_reports_loss() {
 
 #[test]
 fn f32_origin_f32_to_u8_reports_high_loss() {
-    // EXR (native f32) → encode to JPEG u8. Full precision loss.
+    // EXR (native f32) → encode to JPEG u8.
+    // Perceptually calibrated: sRGB quantization produces ΔE < 0.5 (sub-JND),
+    // so the loss value is low but still nonzero (distinguishing from u8-origin
+    // round-trips which have zero loss).
     let provenance = Provenance::with_origin_depth(ChannelType::F32);
     let cost = conversion_cost_with_provenance(
         PixelDescriptor::RGBF32_LINEAR,
         PixelDescriptor::RGB8_SRGB,
         provenance,
     );
-    assert!(cost.loss >= 300, "f32→u8 with f32 origin should report high loss (got {})", cost.loss);
+    assert!(cost.loss > 0, "f32→u8 with f32 origin should report nonzero loss (got {})", cost.loss);
+    // Verify it's higher than the u8 round-trip (which is zero)
+    let u8_prov = Provenance::with_origin_depth(ChannelType::U8);
+    let u8_cost = conversion_cost_with_provenance(
+        PixelDescriptor::RGBF32_LINEAR,
+        PixelDescriptor::RGB8_SRGB,
+        u8_prov,
+    );
+    assert!(cost.loss > u8_cost.loss, "f32 origin should have more loss than u8 origin");
 }
 
 #[test]
@@ -601,32 +612,32 @@ fn provenance_from_source_matches_old_behavior() {
 #[test]
 fn provenance_shifts_negotiate_preference() {
     // Source is f32 Linear, but origin was u8 JPEG.
-    // Consumer has a moderately expensive f32 path (effort=50).
-    // Our f32→u8 conversion costs effort=45 (depth 40 + transfer 5).
+    // Consumer has a moderately expensive f32 path (effort=46).
+    // Our f32→u8 conversion costs effort=45 (depth 40 + transfer 5), loss=10.
     //
-    // Without provenance: f32→u8 has loss=300, so Fastest avoids it.
-    //   f32→u8 score = 45*4 + 300 = 480
-    //   f32→f32 score = 50*4 + 0 = 200  ← wins
+    // Without provenance (f32 origin): f32→u8 has loss=10 (calibrated).
+    //   f32→u8 score = 45*4 + 10 = 190
+    //   f32→f32 score = 46*4 + 0  = 184  ← wins
     //
     // With u8 provenance: f32→u8 has loss=0 (round-trip lossless).
     //   f32→u8 score = 45*4 + 0 = 180  ← wins
-    //   f32→f32 score = 50*4 + 0 = 200
+    //   f32→f32 score = 46*4 + 0 = 184
     let src = PixelDescriptor::RGBF32_LINEAR;
     let provenance = Provenance::with_origin_depth(ChannelType::U8);
     let options = [
         FormatOption::from(PixelDescriptor::RGB8_SRGB),       // our f32→u8 conversion, zero consumer cost
         FormatOption::with_cost(
             PixelDescriptor::RGBF32_LINEAR,
-            ConversionCost::new(50, 0),  // consumer accepts f32, moderate cost
+            ConversionCost::new(46, 0),  // consumer accepts f32, slightly more effort than our conversion
         ),
     ];
-    // Without provenance: f32→u8 has loss=300 → Fastest avoids it, picks f32.
+    // Without provenance: f32→u8 has loss=10 → f32 path wins by effort.
     assert_eq!(
         best_match_with(src, &options, ConvertIntent::Fastest),
         Some(PixelDescriptor::RGBF32_LINEAR),
         "without provenance, f32 should win due to u8 loss penalty"
     );
-    // With provenance: f32→u8 has loss=0 → effort decides, u8 path is cheaper.
+    // With provenance: f32→u8 has loss=0 → u8 path is cheaper overall.
     assert_eq!(
         negotiate(src, provenance, options.iter().copied(), ConvertIntent::Fastest),
         Some(PixelDescriptor::RGB8_SRGB),
