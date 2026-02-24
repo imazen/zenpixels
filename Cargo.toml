@@ -1,0 +1,23 @@
+[package]
+name = "zenpixels"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "Apache-2.0 OR MIT"
+description = "Pixel format negotiation and transfer-function-aware conversion for zen* codecs"
+categories = ["multimedia::images"]
+keywords = ["image", "pixel", "conversion", "srgb", "codec"]
+repository = "https://github.com/imazen/zenpixels"
+
+[features]
+default = ["std"]
+std = ["linear-srgb/std", "zencodec-types/codec"]
+
+[dependencies]
+zencodec-types = { version = "0.1", path = "../zencodec-types" }
+linear-srgb = { version = "0.5", path = "../linear-srgb", default-features = false }
+bytemuck = "1.21"
+
+[dev-dependencies]
+imgref = "1.12"
+rgb = { version = "0.8", features = ["as-bytes"] }
