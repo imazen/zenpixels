@@ -498,27 +498,34 @@ fn suitability_loss(target: PixelDescriptor, intent: ConvertIntent) -> u16 {
 }
 
 /// Suitability penalty for LinearLight operations (resize, blur).
-/// f32 Linear is ideal; u8 gamma-encoded is worst.
+/// f32 Linear is ideal; any gamma-encoded format produces gamma
+/// darkening artifacts that dominate over quantization.
+///
+/// # Calibration notes (CIEDE2000 measurements)
+///
+/// **Non-linear (gamma-encoded) formats:**
+/// Bilinear resize in sRGB measures p95 ΔE ≈ 13.7 regardless of bit depth
+/// (u8=13.7, i16 14-bit=13.7, u16=13.7, f16=13.7, f32 sRGB=13.7).
+/// Gamma darkening is the dominant error — precision barely matters.
+///
+/// **Linear formats:**
+/// Only quantization matters. f32=0, f16=0.022, i16=0.001, u8=0.213.
 #[allow(unreachable_patterns)] // non_exhaustive: future variants
 fn linear_light_suitability(target: PixelDescriptor) -> u16 {
-    match target.channel_type {
-        ChannelType::F32 => {
-            if target.transfer == TransferFunction::Linear {
-                0
-            } else {
-                15
-            }
+    if target.transfer == TransferFunction::Linear {
+        // Linear space: only quantization error.
+        match target.channel_type {
+            ChannelType::F32 => 0,
+            ChannelType::F16 => 5,   // 10 mantissa bits, measured ΔE=0.022
+            ChannelType::I16 => 5,   // 15 usable bits, measured ΔE=0.001
+            ChannelType::U16 => 5,   // 16 bits, negligible quantization
+            ChannelType::U8 => 40,   // severe banding in darks, measured ΔE=0.213
+            _ => 50,
         }
-        ChannelType::F16 => {
-            if target.transfer == TransferFunction::Linear {
-                5  // F16 linear: good but less precision than f32
-            } else {
-                20
-            }
-        }
-        ChannelType::U16 | ChannelType::I16 => 25,
-        ChannelType::U8 => 120,  // calibrated: resize in u8 sRGB measures ΔE=13.7 (Moderate)
-        _ => 50,
+    } else {
+        // Non-linear (sRGB, BT.709, PQ, HLG): gamma darkening dominates.
+        // All measure p95 ΔE ≈ 13.7 for resize regardless of precision.
+        120
     }
 }
 
