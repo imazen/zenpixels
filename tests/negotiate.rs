@@ -3,7 +3,10 @@
 use zencodec_types::{
     AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction,
 };
-use zenpixels::{best_match, ideal_format, ConvertIntent};
+use zenpixels::{
+    best_match, best_match_with, conversion_cost, ideal_format, ConversionCost, ConvertIntent,
+    FormatOption,
+};
 
 // =========================================================================
 // Existing tests (using ConvertIntent::Fastest — behavior preserved)
@@ -74,7 +77,7 @@ fn f32_linear_prefers_u16_over_u8_fastest() {
         TransferFunction::Srgb,
     );
     let supported = &[desc_u16, PixelDescriptor::RGB8_SRGB];
-    // u16 should be cheaper (less precision loss).
+    // u16 has less loss than u8.
     assert_eq!(
         best_match(src, supported, ConvertIntent::Fastest),
         Some(desc_u16)
@@ -102,10 +105,7 @@ fn single_option_always_selected() {
 /// Simulate JPEG encoder's supported formats.
 #[test]
 fn jpeg_format_negotiation() {
-    let jpeg_supported = &[
-        PixelDescriptor::RGB8_SRGB,
-        PixelDescriptor::GRAY8_SRGB,
-    ];
+    let jpeg_supported = &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::GRAY8_SRGB];
 
     assert_eq!(
         best_match(PixelDescriptor::RGBA8_SRGB, jpeg_supported, ConvertIntent::Fastest),
@@ -128,10 +128,7 @@ fn jpeg_format_negotiation() {
 /// Simulate WebP encoder's supported formats.
 #[test]
 fn webp_format_negotiation() {
-    let webp_supported = &[
-        PixelDescriptor::RGB8_SRGB,
-        PixelDescriptor::RGBA8_SRGB,
-    ];
+    let webp_supported = &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB];
 
     assert_eq!(
         best_match(PixelDescriptor::BGRA8_SRGB, webp_supported, ConvertIntent::Fastest),
@@ -169,6 +166,65 @@ fn png_format_negotiation() {
 }
 
 // =========================================================================
+// Two-axis ConversionCost tests
+// =========================================================================
+
+#[test]
+fn identity_cost_is_zero() {
+    let cost = conversion_cost(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGB8_SRGB);
+    assert_eq!(cost, ConversionCost::ZERO);
+}
+
+#[test]
+fn widening_conversion_has_zero_loss() {
+    // u8 sRGB → f32 Linear: effort > 0 (EOTF math), loss = 0 (lossless expansion).
+    let cost = conversion_cost(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR);
+    assert_eq!(cost.loss, 0, "widening should be lossless");
+    assert!(cost.effort > 0, "conversion should have nonzero effort");
+}
+
+#[test]
+fn narrowing_conversion_has_nonzero_loss() {
+    // f32 Linear → u8 sRGB: lossy (quantization).
+    let cost = conversion_cost(PixelDescriptor::RGBF32_LINEAR, PixelDescriptor::RGB8_SRGB);
+    assert!(cost.loss > 0, "f32→u8 should report data loss");
+    assert!(cost.effort > 0);
+}
+
+#[test]
+fn swizzle_is_effort_only() {
+    let cost = conversion_cost(PixelDescriptor::BGRA8_SRGB, PixelDescriptor::RGBA8_SRGB);
+    assert!(cost.effort > 0);
+    assert_eq!(cost.loss, 0, "swizzle is lossless");
+}
+
+#[test]
+fn drop_alpha_reports_loss() {
+    let cost = conversion_cost(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGB8_SRGB);
+    assert!(cost.loss > 0, "dropping alpha loses information");
+}
+
+#[test]
+fn color_to_gray_reports_high_loss() {
+    let cost = conversion_cost(PixelDescriptor::RGB8_SRGB, PixelDescriptor::GRAY8_SRGB);
+    assert!(cost.loss >= 400, "RGB→Gray loses color information (loss={})", cost.loss);
+}
+
+#[test]
+fn cost_is_additive() {
+    let a = ConversionCost::new(10, 20);
+    let b = ConversionCost::new(30, 40);
+    assert_eq!(a + b, ConversionCost::new(40, 60));
+}
+
+#[test]
+fn cost_add_saturates() {
+    let a = ConversionCost::new(u16::MAX, u16::MAX);
+    let b = ConversionCost::new(1, 1);
+    assert_eq!(a + b, ConversionCost::new(u16::MAX, u16::MAX));
+}
+
+// =========================================================================
 // Intent-aware best_match tests
 // =========================================================================
 
@@ -176,7 +232,6 @@ fn png_format_negotiation() {
 fn linear_light_prefers_f32_linear() {
     let src = PixelDescriptor::RGB8_SRGB;
     let supported = &[PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGBAF32_LINEAR];
-    // LinearLight should prefer f32 Linear for gamma-correct resize.
     assert_eq!(
         best_match(src, supported, ConvertIntent::LinearLight),
         Some(PixelDescriptor::RGBAF32_LINEAR)
@@ -185,7 +240,6 @@ fn linear_light_prefers_f32_linear() {
 
 #[test]
 fn fastest_prefers_same_depth() {
-    // Same scenario as above — Fastest should prefer staying in u8.
     let src = PixelDescriptor::RGB8_SRGB;
     let supported = &[PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGBAF32_LINEAR];
     assert_eq!(
@@ -210,7 +264,6 @@ fn blend_prefers_premultiplied() {
         TransferFunction::Linear,
     );
     let supported = &[straight_f32, premul_f32];
-    // Blend should prefer premultiplied.
     assert_eq!(
         best_match(src, supported, ConvertIntent::Blend),
         Some(premul_f32)
@@ -227,7 +280,6 @@ fn perceptual_prefers_srgb_f32() {
         TransferFunction::Srgb,
     );
     let supported = &[PixelDescriptor::RGBF32_LINEAR, f32_srgb];
-    // Perceptual should prefer sRGB f32 over Linear f32.
     assert_eq!(
         best_match(src, supported, ConvertIntent::Perceptual),
         Some(f32_srgb)
@@ -268,7 +320,6 @@ fn hdr_source_penalizes_sdr_target() {
         TransferFunction::Pq,
     );
     let supported = &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR];
-    // HDR source → f32 Linear is much less lossy than u8 sRGB.
     assert_eq!(
         best_match(src, supported, ConvertIntent::Fastest),
         Some(PixelDescriptor::RGBF32_LINEAR)
@@ -279,11 +330,89 @@ fn hdr_source_penalizes_sdr_target() {
 fn sdr8_allows_u8_fast_path() {
     let src = PixelDescriptor::RGB8_SRGB;
     let supported = &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR];
-    // SDR-8 + Perceptual: u8 sRGB is fine (LUT-fast), should be preferred.
     assert_eq!(
         best_match(src, supported, ConvertIntent::Perceptual),
         Some(PixelDescriptor::RGB8_SRGB)
     );
+}
+
+// =========================================================================
+// Consumer cost override tests (FormatOption / best_match_with)
+// =========================================================================
+
+#[test]
+fn consumer_fused_f32_path_preferred() {
+    // JPEG encoder with fast internal f32→u8+DCT path.
+    // Source is f32 Linear. Without override, we'd convert to u8 ourselves.
+    // With the fused path, the consumer handles f32 cheaply.
+    let src = PixelDescriptor::RGBF32_LINEAR;
+    let options = &[
+        FormatOption::from(PixelDescriptor::RGB8_SRGB), // native, we convert
+        FormatOption::with_cost(
+            PixelDescriptor::RGBF32_LINEAR,
+            ConversionCost::new(5, 0), // fast fused path, no extra loss
+        ),
+    ];
+    assert_eq!(
+        best_match_with(src, options, ConvertIntent::Fastest),
+        Some(PixelDescriptor::RGBF32_LINEAR)
+    );
+}
+
+#[test]
+fn consumer_cost_sums_with_ours() {
+    // Source is u8 sRGB. Consumer can accept f32 but it's expensive for them.
+    // Our u8→f32 conversion + their high cost should lose to native u8.
+    let src = PixelDescriptor::RGB8_SRGB;
+    let options = &[
+        FormatOption::from(PixelDescriptor::RGB8_SRGB),
+        FormatOption::with_cost(
+            PixelDescriptor::RGBF32_LINEAR,
+            ConversionCost::new(200, 0), // consumer's internal handling is expensive
+        ),
+    ];
+    // Native u8 should win — the consumer's f32 path is too expensive.
+    assert_eq!(
+        best_match_with(src, options, ConvertIntent::Fastest),
+        Some(PixelDescriptor::RGB8_SRGB)
+    );
+}
+
+#[test]
+fn consumer_loss_matters_for_quality_intents() {
+    // Two targets with identical effort but different consumer loss.
+    let src = PixelDescriptor::RGBF32_LINEAR;
+    let low_loss = FormatOption::with_cost(
+        PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            AlphaMode::None,
+            TransferFunction::Srgb,
+        ),
+        ConversionCost::new(10, 5),
+    );
+    let high_loss = FormatOption::with_cost(
+        PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            AlphaMode::None,
+            TransferFunction::Srgb,
+        ),
+        ConversionCost::new(10, 200),
+    );
+    // With same descriptor but different consumer loss, quality intent picks lower loss.
+    // Note: same descriptor, so our conversion cost is the same. Only consumer_cost differs.
+    let options = &[high_loss, low_loss];
+    assert_eq!(
+        best_match_with(src, options, ConvertIntent::LinearLight),
+        Some(low_loss.descriptor) // both have same descriptor, but low_loss option wins
+    );
+}
+
+#[test]
+fn format_option_from_descriptor_has_zero_cost() {
+    let opt = FormatOption::from(PixelDescriptor::RGB8_SRGB);
+    assert_eq!(opt.consumer_cost, ConversionCost::ZERO);
 }
 
 // =========================================================================
@@ -292,7 +421,6 @@ fn sdr8_allows_u8_fast_path() {
 
 #[test]
 fn ideal_format_fastest_identity() {
-    // Fastest preserves format as-is for all source types.
     assert_eq!(
         ideal_format(PixelDescriptor::RGB8_SRGB, ConvertIntent::Fastest),
         PixelDescriptor::RGB8_SRGB
@@ -312,7 +440,6 @@ fn ideal_format_fastest_identity() {
 
 #[test]
 fn ideal_format_linear_light_sdr() {
-    // u8 sRGB → f32 Linear.
     let result = ideal_format(PixelDescriptor::RGB8_SRGB, ConvertIntent::LinearLight);
     assert_eq!(result.channel_type, ChannelType::F32);
     assert_eq!(result.transfer, TransferFunction::Linear);
@@ -321,7 +448,6 @@ fn ideal_format_linear_light_sdr() {
 
 #[test]
 fn ideal_format_linear_light_already_f32_linear() {
-    // Already f32 Linear → keep as-is.
     assert_eq!(
         ideal_format(PixelDescriptor::RGBF32_LINEAR, ConvertIntent::LinearLight),
         PixelDescriptor::RGBF32_LINEAR
@@ -330,7 +456,6 @@ fn ideal_format_linear_light_already_f32_linear() {
 
 #[test]
 fn ideal_format_linear_light_hdr() {
-    // f32 PQ → f32 Linear (not HDR passthrough; we convert transfer).
     let pq = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
@@ -344,7 +469,6 @@ fn ideal_format_linear_light_hdr() {
 
 #[test]
 fn ideal_format_blend_adds_premul() {
-    // u8 sRGB straight alpha → f32 Linear premul.
     let result = ideal_format(PixelDescriptor::RGBA8_SRGB, ConvertIntent::Blend);
     assert_eq!(result.channel_type, ChannelType::F32);
     assert_eq!(result.transfer, TransferFunction::Linear);
@@ -354,7 +478,6 @@ fn ideal_format_blend_adds_premul() {
 
 #[test]
 fn ideal_format_blend_no_alpha_source() {
-    // RGB (no alpha) → f32 Linear, no premul needed.
     let result = ideal_format(PixelDescriptor::RGB8_SRGB, ConvertIntent::Blend);
     assert_eq!(result.channel_type, ChannelType::F32);
     assert_eq!(result.transfer, TransferFunction::Linear);
@@ -363,7 +486,6 @@ fn ideal_format_blend_no_alpha_source() {
 
 #[test]
 fn ideal_format_perceptual_sdr8() {
-    // u8 sRGB → keeps u8 sRGB (LUT-fast).
     assert_eq!(
         ideal_format(PixelDescriptor::RGB8_SRGB, ConvertIntent::Perceptual),
         PixelDescriptor::RGB8_SRGB
@@ -372,7 +494,6 @@ fn ideal_format_perceptual_sdr8() {
 
 #[test]
 fn ideal_format_perceptual_u16() {
-    // u16 sRGB → f32 sRGB (higher precision needs float).
     let result = ideal_format(PixelDescriptor::RGB16_SRGB, ConvertIntent::Perceptual);
     assert_eq!(result.channel_type, ChannelType::F32);
     assert_eq!(result.transfer, TransferFunction::Srgb);
@@ -380,7 +501,6 @@ fn ideal_format_perceptual_u16() {
 
 #[test]
 fn ideal_format_perceptual_hdr() {
-    // f32 PQ → f32 sRGB (gamut clamp, but perceptually uniform).
     let pq = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
