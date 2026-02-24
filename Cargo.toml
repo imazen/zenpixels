@@ -22,3 +22,4 @@ bytemuck = "1.21"
 imgref = "1.12"
 rgb = { version = "0.8", features = ["as-bytes"] }
 half = "2"
+zenresize = { path = "../zenresize", default-features = false, features = ["std"] }
