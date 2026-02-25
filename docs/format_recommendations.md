@@ -16,6 +16,7 @@ Interactive browser: [format_browser.html](format_browser.html) | Machine-readab
 | `rgb8_srgb` | RGB u8 sRGB | 3ch | JPEG PNG WebP AVIF JXL BMP GIF PNM | 3 |
 | `rgba8_srgb` | RGBA u8 sRGB | 4ch straight | PNG WebP AVIF JXL GIF | 4 |
 | `gray8_srgb` | Gray u8 sRGB | 1ch | JPEG PNG JXL GIF PNM | 1 |
+| `graya8_srgb` | GrayAlpha u8 sRGB | 2ch straight | PNG | 2 |
 | `bgra8_srgb` | BGRA u8 sRGB | 4ch straight | JPEG PNG JXL BMP PNM | 4 |
 
 ### High-Precision SDR (16-bit sRGB)
@@ -25,6 +26,7 @@ Interactive browser: [format_browser.html](format_browser.html) | Machine-readab
 | `rgb16_srgb` | RGB u16 sRGB | 3ch | PNG PNM | 6 |
 | `rgba16_srgb` | RGBA u16 sRGB | 4ch straight | PNG Farbfeld PNM | 8 |
 | `gray16_srgb` | Gray u16 sRGB | 1ch | PNG PNM | 2 |
+| `graya16_srgb` | GrayAlpha u16 sRGB | 2ch straight | PNG | 4 |
 
 ### Linear / HDR (f32 Linear)
 
@@ -33,6 +35,7 @@ Interactive browser: [format_browser.html](format_browser.html) | Machine-readab
 | `rgbf32_linear` | RGB f32 Linear | 3ch | PNG JXL PNM | 12 |
 | `rgbaf32_linear` | RGBA f32 Linear | 4ch straight | PNG JXL PNM | 16 |
 | `grayf32_linear` | Gray f32 Linear | 1ch | PNG JXL PNM | 4 |
+| `grayaf32_linear` | GrayAlpha f32 Linear | 2ch straight | PNG JXL PNM | 8 |
 
 ### JPEG Extended Decode (Internal API)
 
@@ -85,9 +88,11 @@ Never convert "just in case" — every conversion adds latency; some add loss.
 | RGB u8 sRGB | RGB f32 Linear | **unclamped** | u8→f32→u8 round-trip lossless (ULP proven, 256³ values) |
 | RGBA u8 sRGB | RGBA f32 Linear Straight | **unclamped** | Alpha preserved, round-trip lossless |
 | Gray u8 sRGB | Gray f32 Linear | **unclamped** | Single-channel, lossless |
+| GrayAlpha u8 sRGB | GrayAlpha f32 Linear Straight | **unclamped** | Luma + alpha, lossless round-trip |
 | BGRA u8 sRGB | RGBA f32 Linear | **unclamped** | Swizzle B↔R during conversion |
 | RGB u16 sRGB | RGB f32 Linear | **unclamped** | u16→f32 lossless (16 bits ⊂ 23-bit mantissa) |
 | RGBA u16 sRGB | RGBA f32 Linear | **unclamped** | u16 fits exactly in f32 |
+| GrayAlpha u16 sRGB | GrayAlpha f32 Linear Straight | **unclamped** | u16→f32 lossless, alpha preserved |
 | f32 Linear (any) | Same (already f32 Linear) | **unclamped** | Zero conversion cost |
 | JPEG f32 sRGB unclamped | RGB f32 Linear (unclamped) | **unclamped** | Apply EOTF; overshoot transforms correctly |
 | JPEG f32 Linear unclamped | Same | **unclamped** | Already ideal |
@@ -116,7 +121,7 @@ Never convert "just in case" — every conversion adds latency; some add loss.
 | Input | Working Format | Clamp | Notes |
 |-------|---------------|-------|-------|
 | Any RGB/Gray | RGBA f32 Linear Premul | clamped \[0,1\] | Add opaque alpha (1.0). Expand Gray→RGB if needed. |
-| Any RGBA Straight | RGBA f32 Linear Premul | clamped \[0,1\] | Straight→Premul: minor rounding at low alpha (≤2 ULP in f32) |
+| Any RGBA/GrayAlpha Straight | RGBA f32 Linear Premul | clamped \[0,1\] | Expand Gray→RGB if needed. Straight→Premul: ≤2 ULP rounding at low alpha |
 | JPEG unclamped | RGBA f32 Linear Premul | clamped \[0,1\] | Clamp overshoot before compositing |
 
 ### Palette Quantization: Quantize (GIF encoding)
@@ -168,12 +173,15 @@ Which codecs can encode at equivalent quality for each input class.
 | RGB u8 sRGB | PNG JXL BMP PNM | JPEG WebP AVIF JXL | All codecs accept natively |
 | RGBA u8 sRGB | PNG JXL PNM | WebP AVIF JXL | JPEG strips alpha |
 | Gray u8 sRGB | PNG JXL PNM | JPEG JXL | WebP/AVIF need RGB expansion |
+| GrayAlpha u8 sRGB | PNG | JXL | JPEG drops alpha; WebP/AVIF need Gray→RGB expansion |
 | RGB u16 sRGB | PNG Farbfeld PNM | JXL (f32) | Web codecs truncate to u8 |
 | RGBA u16 sRGB | PNG Farbfeld PNM | JXL (f32) | JPEG: alpha + depth loss |
 | Gray u16 sRGB | PNG PNM | JXL (f32) | Limited codec support |
+| GrayAlpha u16 sRGB | PNG | JXL (f32) | Very limited native support |
 | RGB f32 Linear | PNG JXL PNM | JXL | Web codecs: catastrophic depth loss |
 | RGBA f32 Linear | PNG JXL PNM | JXL | Web codecs: catastrophic loss |
 | Gray f32 Linear | PNG JXL PNM | JXL | Very limited |
+| GrayAlpha f32 Linear | PNG JXL PNM | JXL | Very limited |
 | JPEG extended 8-bit | PNG JXL BMP PNM | JPEG WebP AVIF JXL | 8-bit eff → same as u8 sRGB |
 | JPEG extended 10-bit | PNG(u16) JXL(f32) PNM | JXL | u8 codecs lose 2 bits |
 
@@ -214,6 +222,14 @@ prefer PNG or use JXL via the f32 Linear path.
 | Gray u8 sRGB | ✅ native gray | ⚠️ →RGB (3x) | ✅ lossless gray | ⚠️ →RGB (3x) | ⚠️ gamma 2.2 (±1 dark) |
 | Gray u16 sRGB | ⚠️ u8 gray | ⚠️ →RGB+u8 | ✅ lossless u16 gray | ⚠️ →RGB+u8 | ✅ f32 gray |
 | Gray f32 Linear | ❌ u8+OETF gray | ❌ →RGB+u8+OETF | ✅ lossless f32 gray | ❌ →RGB+u8+OETF | ✅ native f32 gray |
+
+### GrayAlpha Formats
+
+| Input | JPEG | WebP | PNG | AVIF | JXL |
+|-------|------|------|-----|------|-----|
+| GrayAlpha u8 sRGB | ⚠️ alpha dropped | ⚠️ →RGBA (3x) | ✅ native GA8 | ⚠️ →RGBA (3x) | ⚠️ gamma 2.2 (±1 dark) |
+| GrayAlpha u16 sRGB | ❌ alpha+u8 | ⚠️ →RGBA+u8 | ✅ lossless GA16 | ⚠️ →RGBA+u8 | ✅ f32 GA |
+| GrayAlpha f32 Linear | ❌ alpha+u8+OETF | ❌ →RGBA+u8+OETF | ✅ lossless f32 GA | ❌ →RGBA+u8+OETF | ✅ native f32 GA |
 
 ### BGRA Format
 
@@ -263,4 +279,5 @@ The working format recommendations above are backed by exhaustive numerical proo
 | BGRA↔RGBA swizzle = lossless | `ulp_bgra_rgba_swizzle_roundtrip` | 1,000,000 |
 | sRGB EOTF is monotonic | `ulp_srgb_eotf_monotonic` | 256 |
 | Gray→RGB→Gray = lossless (for pure gray) | `ulp_gray_rgb_gray_roundtrip` | 256 |
+| GrayAlpha→RGBA→GrayAlpha: gray lossless, alpha lossless | (via gray_rgb + add_drop_alpha proofs) | 256 |
 | RGB→RGBA→RGB = lossless | `ulp_add_drop_alpha_roundtrip` | 256 |
