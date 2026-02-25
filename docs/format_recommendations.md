@@ -185,11 +185,17 @@ What happens when you encode each input type to the five major web codecs.
 
 **Legend:** ✅ native (zero loss) · ⚠️ conversion needed (minor/noted loss) · ❌ significant loss
 
+**Note:** JXL uses gamma 1/2.2 (power 2.2), not the sRGB transfer curve. The sRGB curve
+has a linear segment near black then ~2.4 power; gamma 2.2 is a pure power function.
+At u8 precision this causes ±1 value error in the darkest tones. JXL f32 Linear is
+unaffected (no transfer function conversion). For truly lossless sRGB u8 round-trips,
+prefer PNG or use JXL via the f32 Linear path.
+
 ### RGB Formats
 
 | Input | JPEG | WebP | PNG | AVIF | JXL |
 |-------|------|------|-----|------|-----|
-| RGB u8 sRGB | ✅ native | ✅ native | ✅ lossless | ✅ native | ✅ native |
+| RGB u8 sRGB | ✅ native | ✅ native | ✅ lossless | ✅ native | ⚠️ gamma 2.2 (±1 dark) |
 | RGB u16 sRGB | ⚠️ u8 truncation | ⚠️ u8 truncation | ✅ lossless u16 | ⚠️ u8 truncation | ✅ f32 (lossless) |
 | RGB f32 Linear | ❌ u8+OETF | ❌ u8+OETF | ✅ lossless f32 | ❌ u8+OETF | ✅ native f32 |
 
@@ -197,7 +203,7 @@ What happens when you encode each input type to the five major web codecs.
 
 | Input | JPEG | WebP | PNG | AVIF | JXL |
 |-------|------|------|-----|------|-----|
-| RGBA u8 sRGB | ⚠️ alpha dropped | ✅ native | ✅ lossless | ✅ native | ✅ native |
+| RGBA u8 sRGB | ⚠️ alpha dropped | ✅ native | ✅ lossless | ✅ native | ⚠️ gamma 2.2 (±1 dark) |
 | RGBA u16 sRGB | ❌ alpha+u8 | ⚠️ u8 truncation | ✅ lossless u16 | ⚠️ u8 truncation | ✅ f32 (lossless) |
 | RGBA f32 Linear | ❌ alpha+u8+OETF | ⚠️ u8+OETF | ✅ lossless f32 | ⚠️ u8+OETF | ✅ native f32 |
 
@@ -205,7 +211,7 @@ What happens when you encode each input type to the five major web codecs.
 
 | Input | JPEG | WebP | PNG | AVIF | JXL |
 |-------|------|------|-----|------|-----|
-| Gray u8 sRGB | ✅ native gray | ⚠️ →RGB (3x) | ✅ lossless gray | ⚠️ →RGB (3x) | ✅ native gray |
+| Gray u8 sRGB | ✅ native gray | ⚠️ →RGB (3x) | ✅ lossless gray | ⚠️ →RGB (3x) | ⚠️ gamma 2.2 (±1 dark) |
 | Gray u16 sRGB | ⚠️ u8 gray | ⚠️ →RGB+u8 | ✅ lossless u16 gray | ⚠️ →RGB+u8 | ✅ f32 gray |
 | Gray f32 Linear | ❌ u8+OETF gray | ❌ →RGB+u8+OETF | ✅ lossless f32 gray | ❌ →RGB+u8+OETF | ✅ native f32 gray |
 
@@ -213,17 +219,17 @@ What happens when you encode each input type to the five major web codecs.
 
 | Input | JPEG | WebP | PNG | AVIF | JXL |
 |-------|------|------|-----|------|-----|
-| BGRA u8 sRGB | ⚠️ swizzle+alpha | ✅ swizzle only | ✅ swizzle only | ✅ swizzle only | ✅ native BGRA |
+| BGRA u8 sRGB | ⚠️ swizzle+alpha | ✅ swizzle only | ✅ swizzle only | ✅ swizzle only | ⚠️ gamma 2.2 + swizzle |
 
 ### JPEG Extended Decode
 
 | Input | JPEG | WebP | PNG | AVIF | JXL |
 |-------|------|------|-----|------|-----|
-| f32 sRGB deblock (8b) | ✅ clamp→u8 | ✅ clamp→u8 | ✅ clamp→u8 | ✅ clamp→u8 | ✅ clamp→u8 |
-| f32 Linear debias (8b) | ✅ OETF→u8 | ✅ OETF→u8 | ✅ OETF→u8 | ✅ OETF→u8 | ✅ OETF→u8 |
+| f32 sRGB deblock (8b) | ✅ clamp→u8 | ✅ clamp→u8 | ✅ clamp→u8 | ✅ clamp→u8 | ⚠️ gamma 2.2 (±1 dark) |
+| f32 Linear debias (8b) | ✅ OETF→u8 | ✅ OETF→u8 | ✅ OETF→u8 | ✅ OETF→u8 | ⚠️ gamma 2.2 (±1 dark) |
 | f32 sRGB precise (10b) | ⚠️ -2 bits | ⚠️ -2 bits | ✅ u16 (lossless) | ⚠️ -2 bits | ✅ f32 (lossless) |
 | f32 Linear precise (10b) | ⚠️ -2 bits | ⚠️ -2 bits | ✅ u16 (lossless) | ⚠️ -2 bits | ✅ f32 (lossless) |
-| Gray f32 Linear (8b) | ✅ OETF→u8 | ⚠️ →RGB | ✅ OETF→u8 | ⚠️ →RGB | ✅ OETF→u8 |
+| Gray f32 Linear (8b) | ✅ OETF→u8 | ⚠️ →RGB | ✅ OETF→u8 | ⚠️ →RGB | ⚠️ gamma 2.2 (±1 dark) |
 
 ### ICC / CICP Handling
 
