@@ -543,6 +543,106 @@ const DATA = {
       }
     },
     {
+      "id": "graya8_srgb",
+      "name": "GrayAlpha 8-bit sRGB",
+      "input": {
+        "channel_type": "U8",
+        "layout": "GrayAlpha",
+        "alpha": "Straight",
+        "transfer": "sRGB",
+        "primaries": "BT.709",
+        "effective_bits": 8,
+        "can_overshoot": false,
+        "bytes_per_pixel": 2
+      },
+      "source_codecs": [
+        "PNG"
+      ],
+      "transfer_rep": {
+        "format": "GrayAlpha u8 sRGB Straight",
+        "rationale": "Native grayscale + alpha. PNG color type 4."
+      },
+      "working_reps": {
+        "identity": {
+          "format": "GrayAlpha u8 sRGB",
+          "clamp": "N/A",
+          "rationale": "Identity."
+        },
+        "linear_math": {
+          "format": "GrayAlpha f32 Linear Straight",
+          "clamp": "unclamped",
+          "rationale": "Gamma-correct math on luminance channel, alpha preserved. u8\u2192f32\u2192u8 round-trip lossless."
+        },
+        "soft_filter": {
+          "format": "GrayAlpha u8 sRGB",
+          "clamp": "clamped [0,255]",
+          "rationale": "sRGB acceptable for blur/sharpen. Operate on luma only, alpha passthrough."
+        },
+        "composite": {
+          "format": "RGBA f32 Linear Premultiplied",
+          "clamp": "clamped [0,1]",
+          "rationale": "Expand Gray\u2192RGB (replicate), convert Straight\u2192Premultiplied. \u22642 ULP rounding at low alpha."
+        },
+        "quantize": {
+          "format": "RGBA u8 sRGB",
+          "clamp": "clamped [0,255]",
+          "rationale": "Expand Gray\u2192RGB for palette quantizer. GIF supports transparency via palette index."
+        }
+      },
+      "encoding_rep": {
+        "format": "GrayAlpha u8 sRGB",
+        "icc": "Preserve source ICC (grayscale profile)",
+        "cicp": "sRGB implicit",
+        "rationale": "Equivalent quality. Preserves alpha channel."
+      },
+      "encode_candidates": {
+        "lossless": [
+          "PNG"
+        ],
+        "lossy": [
+          "JXL (via RGBA or Gray+alpha)"
+        ],
+        "notes": "JPEG drops alpha. WebP/AVIF require Gray\u2192RGB expansion. GIF supports 1-bit transparency only. Native GrayAlpha support is rare \u2014 PNG is the primary codec."
+      },
+      "websafe_xref": {
+        "jpeg": {
+          "target": "Gray u8 sRGB",
+          "conversion": "drop alpha",
+          "loss": "alpha channel lost",
+          "icc": "preserved",
+          "notes": "JPEG has no alpha support"
+        },
+        "webp": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "Gray\u2192RGB (replicate) + keep alpha",
+          "loss": "3x luma channels, no quality loss",
+          "icc": "preserved",
+          "notes": "No grayscale WebP; must expand to RGBA"
+        },
+        "png": {
+          "target": "GrayAlpha u8 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Native PNG color type 4 (GA8)"
+        },
+        "avif": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "Gray\u2192RGB (replicate) + keep alpha",
+          "loss": "3x luma channels, no quality loss",
+          "icc": "CICP",
+          "notes": "No grayscale AVIF; must expand to RGBA"
+        },
+        "jxl": {
+          "target": "GrayAlpha u8",
+          "conversion": "sRGB\u2194gamma 2.2 transfer",
+          "loss": "sub-perceptual (\u00b11 value in dark tones, sRGB vs JXL gamma 2.2)",
+          "icc": "preserved",
+          "notes": "JXL supports gray+alpha natively but uses gamma 2.2"
+        }
+      }
+    },
+    {
       "id": "bgra8_srgb",
       "name": "BGRA 8-bit sRGB",
       "input": {
@@ -972,6 +1072,109 @@ const DATA = {
       }
     },
     {
+      "id": "graya16_srgb",
+      "name": "GrayAlpha 16-bit sRGB",
+      "input": {
+        "channel_type": "U16",
+        "layout": "GrayAlpha",
+        "alpha": "Straight",
+        "transfer": "sRGB",
+        "primaries": "BT.709",
+        "effective_bits": 16,
+        "can_overshoot": false,
+        "bytes_per_pixel": 4
+      },
+      "source_codecs": [
+        "PNG"
+      ],
+      "transfer_rep": {
+        "format": "GrayAlpha u16 sRGB Straight",
+        "rationale": "Full 16-bit grayscale + alpha precision."
+      },
+      "working_reps": {
+        "identity": {
+          "format": "GrayAlpha u16 sRGB",
+          "clamp": "N/A",
+          "rationale": "Identity."
+        },
+        "linear_math": {
+          "format": "GrayAlpha f32 Linear Straight",
+          "clamp": "unclamped",
+          "rationale": "u16\u2192f32 lossless (16 bits \u2282 23-bit mantissa). Alpha preserved."
+        },
+        "soft_filter": {
+          "format": "GrayAlpha u16 sRGB",
+          "clamp": "clamped [0,65535]",
+          "rationale": "16-bit sRGB acceptable. Operate on luma, alpha passthrough."
+        },
+        "composite": {
+          "format": "RGBA f32 Linear Premultiplied",
+          "clamp": "clamped [0,1]",
+          "rationale": "Gray\u2192RGB expansion + Straight\u2192Premul."
+        },
+        "quantize": {
+          "format": "RGBA u8 sRGB",
+          "clamp": "clamped [0,255]",
+          "rationale": "Depth loss: 8 bits truncated. Gray\u2192RGB expansion."
+        }
+      },
+      "encoding_rep": {
+        "format": "GrayAlpha u16 sRGB",
+        "icc": "Preserve source ICC",
+        "cicp": "sRGB implicit",
+        "rationale": "Preserves full 16-bit grayscale + alpha."
+      },
+      "encode_candidates": {
+        "lossless_native": [
+          "PNG"
+        ],
+        "lossless_widened": [
+          "JXL (as GrayAlpha f32 Linear)"
+        ],
+        "lossy_truncated": [
+          "JPEG Gray u8 (alpha + depth lost)"
+        ],
+        "notes": "WebP/AVIF require Gray\u2192RGB expansion + u8 truncation. Very limited codec support for GA16."
+      },
+      "websafe_xref": {
+        "jpeg": {
+          "target": "Gray u8 sRGB",
+          "conversion": "drop alpha + u16\u2192u8",
+          "loss": "alpha lost + 8 bits depth lost",
+          "icc": "preserved",
+          "notes": "JPEG: no alpha, u8 only"
+        },
+        "webp": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "Gray\u2192RGB + u16\u2192u8 + keep alpha",
+          "loss": "8 bits depth + 3x luma",
+          "icc": "preserved",
+          "notes": "No grayscale WebP"
+        },
+        "png": {
+          "target": "GrayAlpha u16 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Native PNG color type 4 (GA16)"
+        },
+        "avif": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "Gray\u2192RGB + u16\u2192u8 + keep alpha",
+          "loss": "8 bits depth + 3x luma",
+          "icc": "CICP",
+          "notes": "No grayscale AVIF"
+        },
+        "jxl": {
+          "target": "GrayAlpha f32 Linear",
+          "conversion": "u16 sRGB \u2192 f32 Linear",
+          "loss": "none (lossless widening)",
+          "icc": "preserved",
+          "notes": "Native gray+alpha"
+        }
+      }
+    },
+    {
       "id": "rgbf32_linear",
       "name": "RGB f32 Linear (HDR/wide)",
       "input": {
@@ -1286,6 +1489,110 @@ const DATA = {
           "loss": "none",
           "icc": "preserved",
           "notes": "Native grayscale"
+        }
+      }
+    },
+    {
+      "id": "grayaf32_linear",
+      "name": "GrayAlpha f32 Linear (HDR grayscale + alpha)",
+      "input": {
+        "channel_type": "F32",
+        "layout": "GrayAlpha",
+        "alpha": "Straight",
+        "transfer": "Linear",
+        "primaries": "BT.709",
+        "effective_bits": 32,
+        "can_overshoot": false,
+        "bytes_per_pixel": 8
+      },
+      "source_codecs": [
+        "PNG",
+        "JXL",
+        "PNM"
+      ],
+      "transfer_rep": {
+        "format": "GrayAlpha f32 Linear Straight",
+        "rationale": "HDR grayscale + alpha. Full precision."
+      },
+      "working_reps": {
+        "identity": {
+          "format": "GrayAlpha f32 Linear",
+          "clamp": "N/A",
+          "rationale": "Identity."
+        },
+        "linear_math": {
+          "format": "GrayAlpha f32 Linear Straight",
+          "clamp": "unclamped",
+          "rationale": "Already in ideal format. Zero conversion."
+        },
+        "soft_filter": {
+          "format": "GrayAlpha f32 Linear",
+          "clamp": "clamped [0,1] post-op",
+          "rationale": "Stay in f32. Operate on luma, alpha passthrough."
+        },
+        "composite": {
+          "format": "RGBA f32 Linear Premultiplied",
+          "clamp": "clamped [0,1]",
+          "rationale": "Gray\u2192RGB expansion + Straight\u2192Premul."
+        },
+        "quantize": {
+          "format": "RGBA u8 sRGB",
+          "clamp": "clamped [0,255]",
+          "rationale": "Major precision loss."
+        }
+      },
+      "encoding_rep": {
+        "format": "GrayAlpha f32 Linear",
+        "icc": "Preserve source ICC",
+        "cicp": "Signal transfer",
+        "rationale": "Preserves full HDR grayscale + alpha precision."
+      },
+      "encode_candidates": {
+        "lossless_native": [
+          "PNG",
+          "JXL",
+          "PNM"
+        ],
+        "lossy_truncated": [
+          "JPEG Gray u8 (alpha + depth + transfer lost)"
+        ],
+        "notes": "WebP/AVIF require Gray\u2192RGB expansion + f32\u2192u8 + OETF (quadruple loss). Very limited codec support."
+      },
+      "websafe_xref": {
+        "jpeg": {
+          "target": "Gray u8 sRGB",
+          "conversion": "drop alpha + f32\u2192u8 + OETF",
+          "loss": "alpha + depth + transfer lost",
+          "icc": "preserved",
+          "notes": "JPEG: no alpha, u8 only"
+        },
+        "webp": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "Gray\u2192RGB + f32\u2192u8 + OETF + keep alpha",
+          "loss": "depth + transfer + 3x luma",
+          "icc": "preserved",
+          "notes": "Quadruple conversion"
+        },
+        "png": {
+          "target": "GrayAlpha f32 Linear",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Lossless"
+        },
+        "avif": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "Gray\u2192RGB + f32\u2192u8 + OETF + keep alpha",
+          "loss": "depth + transfer + 3x luma",
+          "icc": "CICP",
+          "notes": "Quadruple conversion"
+        },
+        "jxl": {
+          "target": "GrayAlpha f32 Linear",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Native gray+alpha f32"
         }
       }
     },

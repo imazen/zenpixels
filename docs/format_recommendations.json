@@ -9,7 +9,11 @@
     {
       "id": "identity",
       "name": "Identity Operations",
-      "operations": ["Passthrough", "ColorMatrix", "Arithmetic"],
+      "operations": [
+        "Passthrough",
+        "ColorMatrix",
+        "Arithmetic"
+      ],
       "description": "No pixel math or simple LUT-able transforms. Use source format directly.",
       "default_clamp": "N/A",
       "intent": "Fastest"
@@ -17,7 +21,14 @@
     {
       "id": "linear_math",
       "name": "Linear-Light Math",
-      "operations": ["ResizeGentle", "ResizeSharp", "OklabSharpen", "OklabAdjust", "Tonemap", "IccTransform"],
+      "operations": [
+        "ResizeGentle",
+        "ResizeSharp",
+        "OklabSharpen",
+        "OklabAdjust",
+        "Tonemap",
+        "IccTransform"
+      ],
       "description": "Operations requiring gamma-correct math in linear light. f32 Linear required (f32 mandatory for ResizeSharp/OklabSharpen/OklabAdjust/Tonemap/IccTransform, preferred for ResizeGentle).",
       "default_clamp": "unclamped",
       "clamp_notes": "ResizeSharp: MUST be unclamped (Lanczos/CatmullRom overshoot). ResizeGentle: unclamped OK (Mitchell minor overshoot). Others: clamp to [0,1] after operation.",
@@ -26,7 +37,10 @@
     {
       "id": "soft_filter",
       "name": "Soft Filters",
-      "operations": ["Blur", "Sharpen"],
+      "operations": [
+        "Blur",
+        "Sharpen"
+      ],
       "description": "Convolution filters where gamma error is negligible. sRGB u8 acceptable, avoiding conversion overhead.",
       "default_clamp": "clamped",
       "intent": "Fastest"
@@ -34,7 +48,9 @@
     {
       "id": "composite",
       "name": "Compositing",
-      "operations": ["Composite"],
+      "operations": [
+        "Composite"
+      ],
       "description": "Porter-Duff compositing and blend modes. REQUIRES f32 Linear with Premultiplied alpha for correct results. Non-alpha sources get opaque alpha added.",
       "default_clamp": "clamped [0,1]",
       "intent": "Blend"
@@ -42,7 +58,9 @@
     {
       "id": "quantize",
       "name": "Palette Quantization",
-      "operations": ["Quantize"],
+      "operations": [
+        "Quantize"
+      ],
       "description": "GIF palette quantization. REQUIRES sRGB u8 for perceptual distance metrics.",
       "default_clamp": "clamped [0,255]",
       "intent": "Fastest"
@@ -63,11 +81,25 @@
       "id": "rgb8_srgb",
       "name": "RGB 8-bit sRGB",
       "input": {
-        "channel_type": "U8", "layout": "RGB", "alpha": "None",
-        "transfer": "sRGB", "primaries": "BT.709",
-        "effective_bits": 8, "can_overshoot": false, "bytes_per_pixel": 3
+        "channel_type": "U8",
+        "layout": "RGB",
+        "alpha": "None",
+        "transfer": "sRGB",
+        "primaries": "BT.709",
+        "effective_bits": 8,
+        "can_overshoot": false,
+        "bytes_per_pixel": 3
       },
-      "source_codecs": ["JPEG", "PNG", "WebP", "AVIF", "JXL", "BMP", "GIF", "PNM"],
+      "source_codecs": [
+        "JPEG",
+        "PNG",
+        "WebP",
+        "AVIF",
+        "JXL",
+        "BMP",
+        "GIF",
+        "PNM"
+      ],
       "transfer_rep": {
         "format": "RGB u8 sRGB",
         "rationale": "Native format. Compact, no conversion needed."
@@ -106,27 +138,78 @@
         "rationale": "Equivalent to source. No precision loss."
       },
       "encode_candidates": {
-        "lossless": ["PNG", "JXL", "BMP", "PNM"],
-        "lossy": ["JPEG", "WebP", "AVIF", "JXL"],
+        "lossless": [
+          "PNG",
+          "JXL",
+          "BMP",
+          "PNM"
+        ],
+        "lossy": [
+          "JPEG",
+          "WebP",
+          "AVIF",
+          "JXL"
+        ],
         "notes": "All major codecs accept RGB u8 sRGB natively."
       },
       "websafe_xref": {
-        "jpeg":  { "target": "RGB u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Native JPEG format" },
-        "webp":  { "target": "RGB u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Native WebP format" },
-        "png":   { "target": "RGB u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless" },
-        "avif":  { "target": "RGB u8 sRGB",  "conversion": "none", "loss": "none", "icc": "CICP signals sRGB", "notes": "Native format" },
-        "jxl":   { "target": "RGB u8 sRGB",  "conversion": "sRGB↔gamma 2.2 transfer", "loss": "sub-perceptual (±1 value in dark tones, sRGB vs JXL gamma 2.2)", "icc": "preserved", "notes": "JXL uses gamma 1/2.2, not sRGB curve. f32 Linear path avoids this." }
+        "jpeg": {
+          "target": "RGB u8 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Native JPEG format"
+        },
+        "webp": {
+          "target": "RGB u8 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Native WebP format"
+        },
+        "png": {
+          "target": "RGB u8 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Lossless"
+        },
+        "avif": {
+          "target": "RGB u8 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "CICP signals sRGB",
+          "notes": "Native format"
+        },
+        "jxl": {
+          "target": "RGB u8 sRGB",
+          "conversion": "sRGB↔gamma 2.2 transfer",
+          "loss": "sub-perceptual (±1 value in dark tones, sRGB vs JXL gamma 2.2)",
+          "icc": "preserved",
+          "notes": "JXL uses gamma 1/2.2, not sRGB curve. f32 Linear path avoids this."
+        }
       }
     },
     {
       "id": "rgba8_srgb",
       "name": "RGBA 8-bit sRGB",
       "input": {
-        "channel_type": "U8", "layout": "RGBA", "alpha": "Straight",
-        "transfer": "sRGB", "primaries": "BT.709",
-        "effective_bits": 8, "can_overshoot": false, "bytes_per_pixel": 4
+        "channel_type": "U8",
+        "layout": "RGBA",
+        "alpha": "Straight",
+        "transfer": "sRGB",
+        "primaries": "BT.709",
+        "effective_bits": 8,
+        "can_overshoot": false,
+        "bytes_per_pixel": 4
       },
-      "source_codecs": ["PNG", "WebP", "AVIF", "JXL", "GIF"],
+      "source_codecs": [
+        "PNG",
+        "WebP",
+        "AVIF",
+        "JXL",
+        "GIF"
+      ],
       "transfer_rep": {
         "format": "RGBA u8 sRGB Straight",
         "rationale": "Native format with alpha. Compact."
@@ -165,27 +248,76 @@
         "rationale": "Equivalent quality with alpha preserved."
       },
       "encode_candidates": {
-        "lossless": ["PNG", "JXL", "PNM"],
-        "lossy": ["WebP", "AVIF", "JXL"],
+        "lossless": [
+          "PNG",
+          "JXL",
+          "PNM"
+        ],
+        "lossy": [
+          "WebP",
+          "AVIF",
+          "JXL"
+        ],
         "notes": "JPEG strips alpha (use RGB u8 sRGB fallback). GIF requires quantization."
       },
       "websafe_xref": {
-        "jpeg":  { "target": "RGB u8 sRGB",   "conversion": "drop alpha", "loss": "alpha channel lost", "icc": "preserved", "notes": "JPEG has no alpha support" },
-        "webp":  { "target": "RGBA u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Native format" },
-        "png":   { "target": "RGBA u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless" },
-        "avif":  { "target": "RGBA u8 sRGB",  "conversion": "none", "loss": "none", "icc": "CICP", "notes": "Native format" },
-        "jxl":   { "target": "RGBA u8 sRGB",  "conversion": "sRGB↔gamma 2.2 transfer", "loss": "sub-perceptual (±1 value in dark tones, sRGB vs JXL gamma 2.2)", "icc": "preserved", "notes": "JXL uses gamma 1/2.2, not sRGB curve" }
+        "jpeg": {
+          "target": "RGB u8 sRGB",
+          "conversion": "drop alpha",
+          "loss": "alpha channel lost",
+          "icc": "preserved",
+          "notes": "JPEG has no alpha support"
+        },
+        "webp": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Native format"
+        },
+        "png": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Lossless"
+        },
+        "avif": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "CICP",
+          "notes": "Native format"
+        },
+        "jxl": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "sRGB↔gamma 2.2 transfer",
+          "loss": "sub-perceptual (±1 value in dark tones, sRGB vs JXL gamma 2.2)",
+          "icc": "preserved",
+          "notes": "JXL uses gamma 1/2.2, not sRGB curve"
+        }
       }
     },
     {
       "id": "gray8_srgb",
       "name": "Gray 8-bit sRGB",
       "input": {
-        "channel_type": "U8", "layout": "Gray", "alpha": "None",
-        "transfer": "sRGB", "primaries": "BT.709",
-        "effective_bits": 8, "can_overshoot": false, "bytes_per_pixel": 1
+        "channel_type": "U8",
+        "layout": "Gray",
+        "alpha": "None",
+        "transfer": "sRGB",
+        "primaries": "BT.709",
+        "effective_bits": 8,
+        "can_overshoot": false,
+        "bytes_per_pixel": 1
       },
-      "source_codecs": ["JPEG", "PNG", "JXL", "GIF", "PNM"],
+      "source_codecs": [
+        "JPEG",
+        "PNG",
+        "JXL",
+        "GIF",
+        "PNM"
+      ],
       "transfer_rep": {
         "format": "Gray u8 sRGB",
         "rationale": "Native grayscale. Most compact representation."
@@ -224,27 +356,175 @@
         "rationale": "Equivalent quality."
       },
       "encode_candidates": {
-        "lossless": ["PNG", "JXL", "PNM"],
-        "lossy": ["JPEG", "JXL"],
+        "lossless": [
+          "PNG",
+          "JXL",
+          "PNM"
+        ],
+        "lossy": [
+          "JPEG",
+          "JXL"
+        ],
         "notes": "WebP/AVIF require RGB expansion (no native grayscale). GIF supports grayscale palette."
       },
       "websafe_xref": {
-        "jpeg":  { "target": "Gray u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Native JPEG grayscale" },
-        "webp":  { "target": "RGB u8 sRGB",   "conversion": "Gray→RGB (replicate)", "loss": "3x size, no quality loss", "icc": "preserved", "notes": "No grayscale WebP" },
-        "png":   { "target": "Gray u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless grayscale PNG" },
-        "avif":  { "target": "RGB u8 sRGB",   "conversion": "Gray→RGB (replicate)", "loss": "3x size, no quality loss", "icc": "CICP", "notes": "No grayscale AVIF" },
-        "jxl":   { "target": "Gray u8 sRGB",  "conversion": "sRGB↔gamma 2.2 transfer", "loss": "sub-perceptual (±1 value in dark tones)", "icc": "preserved", "notes": "JXL uses gamma 1/2.2, not sRGB curve" }
+        "jpeg": {
+          "target": "Gray u8 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Native JPEG grayscale"
+        },
+        "webp": {
+          "target": "RGB u8 sRGB",
+          "conversion": "Gray→RGB (replicate)",
+          "loss": "3x size, no quality loss",
+          "icc": "preserved",
+          "notes": "No grayscale WebP"
+        },
+        "png": {
+          "target": "Gray u8 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Lossless grayscale PNG"
+        },
+        "avif": {
+          "target": "RGB u8 sRGB",
+          "conversion": "Gray→RGB (replicate)",
+          "loss": "3x size, no quality loss",
+          "icc": "CICP",
+          "notes": "No grayscale AVIF"
+        },
+        "jxl": {
+          "target": "Gray u8 sRGB",
+          "conversion": "sRGB↔gamma 2.2 transfer",
+          "loss": "sub-perceptual (±1 value in dark tones)",
+          "icc": "preserved",
+          "notes": "JXL uses gamma 1/2.2, not sRGB curve"
+        }
+      }
+    },
+    {
+      "id": "graya8_srgb",
+      "name": "GrayAlpha 8-bit sRGB",
+      "input": {
+        "channel_type": "U8",
+        "layout": "GrayAlpha",
+        "alpha": "Straight",
+        "transfer": "sRGB",
+        "primaries": "BT.709",
+        "effective_bits": 8,
+        "can_overshoot": false,
+        "bytes_per_pixel": 2
+      },
+      "source_codecs": [
+        "PNG"
+      ],
+      "transfer_rep": {
+        "format": "GrayAlpha u8 sRGB Straight",
+        "rationale": "Native grayscale + alpha. PNG color type 4."
+      },
+      "working_reps": {
+        "identity": {
+          "format": "GrayAlpha u8 sRGB",
+          "clamp": "N/A",
+          "rationale": "Identity."
+        },
+        "linear_math": {
+          "format": "GrayAlpha f32 Linear Straight",
+          "clamp": "unclamped",
+          "rationale": "Gamma-correct math on luminance channel, alpha preserved. u8→f32→u8 round-trip lossless."
+        },
+        "soft_filter": {
+          "format": "GrayAlpha u8 sRGB",
+          "clamp": "clamped [0,255]",
+          "rationale": "sRGB acceptable for blur/sharpen. Operate on luma only, alpha passthrough."
+        },
+        "composite": {
+          "format": "RGBA f32 Linear Premultiplied",
+          "clamp": "clamped [0,1]",
+          "rationale": "Expand Gray→RGB (replicate), convert Straight→Premultiplied. ≤2 ULP rounding at low alpha."
+        },
+        "quantize": {
+          "format": "RGBA u8 sRGB",
+          "clamp": "clamped [0,255]",
+          "rationale": "Expand Gray→RGB for palette quantizer. GIF supports transparency via palette index."
+        }
+      },
+      "encoding_rep": {
+        "format": "GrayAlpha u8 sRGB",
+        "icc": "Preserve source ICC (grayscale profile)",
+        "cicp": "sRGB implicit",
+        "rationale": "Equivalent quality. Preserves alpha channel."
+      },
+      "encode_candidates": {
+        "lossless": [
+          "PNG"
+        ],
+        "lossy": [
+          "JXL (via RGBA or Gray+alpha)"
+        ],
+        "notes": "JPEG drops alpha. WebP/AVIF require Gray→RGB expansion. GIF supports 1-bit transparency only. Native GrayAlpha support is rare — PNG is the primary codec."
+      },
+      "websafe_xref": {
+        "jpeg": {
+          "target": "Gray u8 sRGB",
+          "conversion": "drop alpha",
+          "loss": "alpha channel lost",
+          "icc": "preserved",
+          "notes": "JPEG has no alpha support"
+        },
+        "webp": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "Gray→RGB (replicate) + keep alpha",
+          "loss": "3x luma channels, no quality loss",
+          "icc": "preserved",
+          "notes": "No grayscale WebP; must expand to RGBA"
+        },
+        "png": {
+          "target": "GrayAlpha u8 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Native PNG color type 4 (GA8)"
+        },
+        "avif": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "Gray→RGB (replicate) + keep alpha",
+          "loss": "3x luma channels, no quality loss",
+          "icc": "CICP",
+          "notes": "No grayscale AVIF; must expand to RGBA"
+        },
+        "jxl": {
+          "target": "GrayAlpha u8",
+          "conversion": "sRGB↔gamma 2.2 transfer",
+          "loss": "sub-perceptual (±1 value in dark tones, sRGB vs JXL gamma 2.2)",
+          "icc": "preserved",
+          "notes": "JXL supports gray+alpha natively but uses gamma 2.2"
+        }
       }
     },
     {
       "id": "bgra8_srgb",
       "name": "BGRA 8-bit sRGB",
       "input": {
-        "channel_type": "U8", "layout": "BGRA", "alpha": "Straight",
-        "transfer": "sRGB", "primaries": "BT.709",
-        "effective_bits": 8, "can_overshoot": false, "bytes_per_pixel": 4
+        "channel_type": "U8",
+        "layout": "BGRA",
+        "alpha": "Straight",
+        "transfer": "sRGB",
+        "primaries": "BT.709",
+        "effective_bits": 8,
+        "can_overshoot": false,
+        "bytes_per_pixel": 4
       },
-      "source_codecs": ["JPEG", "PNG", "JXL", "BMP", "PNM"],
+      "source_codecs": [
+        "JPEG",
+        "PNG",
+        "JXL",
+        "BMP",
+        "PNM"
+      ],
       "transfer_rep": {
         "format": "BGRA u8 sRGB Straight",
         "rationale": "Windows byte order. Swizzle to RGBA is effort-only, zero loss."
@@ -283,27 +563,73 @@
         "rationale": "Swizzle to standard RGBA byte order for encoding. Zero quality loss."
       },
       "encode_candidates": {
-        "lossless": ["PNG", "JXL", "BMP"],
-        "lossy": ["WebP", "AVIF", "JXL"],
+        "lossless": [
+          "PNG",
+          "JXL",
+          "BMP"
+        ],
+        "lossy": [
+          "WebP",
+          "AVIF",
+          "JXL"
+        ],
         "notes": "BMP and JXL accept BGRA natively. Others need BGRA→RGBA swizzle (zero loss)."
       },
       "websafe_xref": {
-        "jpeg":  { "target": "RGB u8 sRGB",   "conversion": "swizzle + drop alpha", "loss": "alpha channel lost", "icc": "preserved", "notes": "Swizzle B↔R, strip alpha" },
-        "webp":  { "target": "RGBA u8 sRGB",  "conversion": "swizzle B↔R", "loss": "none", "icc": "preserved", "notes": "Byte reorder only" },
-        "png":   { "target": "RGBA u8 sRGB",  "conversion": "swizzle B↔R", "loss": "none", "icc": "preserved", "notes": "Lossless" },
-        "avif":  { "target": "RGBA u8 sRGB",  "conversion": "swizzle B↔R", "loss": "none", "icc": "CICP", "notes": "Byte reorder only" },
-        "jxl":   { "target": "BGRA u8 sRGB",  "conversion": "sRGB↔gamma 2.2 transfer", "loss": "sub-perceptual (±1 value in dark tones)", "icc": "preserved", "notes": "JXL accepts BGRA natively but uses gamma 2.2" }
+        "jpeg": {
+          "target": "RGB u8 sRGB",
+          "conversion": "swizzle + drop alpha",
+          "loss": "alpha channel lost",
+          "icc": "preserved",
+          "notes": "Swizzle B↔R, strip alpha"
+        },
+        "webp": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "swizzle B↔R",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Byte reorder only"
+        },
+        "png": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "swizzle B↔R",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Lossless"
+        },
+        "avif": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "swizzle B↔R",
+          "loss": "none",
+          "icc": "CICP",
+          "notes": "Byte reorder only"
+        },
+        "jxl": {
+          "target": "BGRA u8 sRGB",
+          "conversion": "sRGB↔gamma 2.2 transfer",
+          "loss": "sub-perceptual (±1 value in dark tones)",
+          "icc": "preserved",
+          "notes": "JXL accepts BGRA natively but uses gamma 2.2"
+        }
       }
     },
     {
       "id": "rgb16_srgb",
       "name": "RGB 16-bit sRGB",
       "input": {
-        "channel_type": "U16", "layout": "RGB", "alpha": "None",
-        "transfer": "sRGB", "primaries": "BT.709",
-        "effective_bits": 16, "can_overshoot": false, "bytes_per_pixel": 6
+        "channel_type": "U16",
+        "layout": "RGB",
+        "alpha": "None",
+        "transfer": "sRGB",
+        "primaries": "BT.709",
+        "effective_bits": 16,
+        "can_overshoot": false,
+        "bytes_per_pixel": 6
       },
-      "source_codecs": ["PNG", "PNM"],
+      "source_codecs": [
+        "PNG",
+        "PNM"
+      ],
       "transfer_rep": {
         "format": "RGB u16 sRGB",
         "rationale": "Preserves full 16-bit precision. Wider dynamic range within sRGB gamut."
@@ -342,28 +668,77 @@
         "rationale": "Preserves full 16-bit precision."
       },
       "encode_candidates": {
-        "lossless_native": ["PNG", "PNM", "Farbfeld"],
-        "lossless_widened": ["JXL (as f32 Linear)"],
-        "lossy_truncated": ["JPEG (u8)", "WebP (u8)", "AVIF (u8)"],
+        "lossless_native": [
+          "PNG",
+          "PNM",
+          "Farbfeld"
+        ],
+        "lossless_widened": [
+          "JXL (as f32 Linear)"
+        ],
+        "lossy_truncated": [
+          "JPEG (u8)",
+          "WebP (u8)",
+          "AVIF (u8)"
+        ],
         "notes": "PNG is the best lossless choice for u16 sRGB. JXL widens to f32 (lossless). JPEG/WebP/AVIF truncate to u8."
       },
       "websafe_xref": {
-        "jpeg":  { "target": "RGB u8 sRGB",      "conversion": "u16→u8 depth truncation", "loss": "8 bits depth lost", "icc": "preserved", "notes": "JPEG encoder accepts u16 input, output still 8-bit DCT" },
-        "webp":  { "target": "RGB u8 sRGB",      "conversion": "u16→u8 depth truncation", "loss": "8 bits depth lost", "icc": "preserved", "notes": "" },
-        "png":   { "target": "RGB u16 sRGB",     "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless 16-bit PNG" },
-        "avif":  { "target": "RGB u8 sRGB",      "conversion": "u16→u8 depth truncation", "loss": "8 bits depth lost", "icc": "CICP", "notes": "" },
-        "jxl":   { "target": "RGB f32 Linear",   "conversion": "u16 sRGB → f32 Linear", "loss": "none (lossless widening)", "icc": "preserved", "notes": "JXL has no u16 sRGB; f32 Linear preserves all 16 bits" }
+        "jpeg": {
+          "target": "RGB u8 sRGB",
+          "conversion": "u16→u8 depth truncation",
+          "loss": "8 bits depth lost",
+          "icc": "preserved",
+          "notes": "JPEG encoder accepts u16 input, output still 8-bit DCT"
+        },
+        "webp": {
+          "target": "RGB u8 sRGB",
+          "conversion": "u16→u8 depth truncation",
+          "loss": "8 bits depth lost",
+          "icc": "preserved",
+          "notes": ""
+        },
+        "png": {
+          "target": "RGB u16 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Lossless 16-bit PNG"
+        },
+        "avif": {
+          "target": "RGB u8 sRGB",
+          "conversion": "u16→u8 depth truncation",
+          "loss": "8 bits depth lost",
+          "icc": "CICP",
+          "notes": ""
+        },
+        "jxl": {
+          "target": "RGB f32 Linear",
+          "conversion": "u16 sRGB → f32 Linear",
+          "loss": "none (lossless widening)",
+          "icc": "preserved",
+          "notes": "JXL has no u16 sRGB; f32 Linear preserves all 16 bits"
+        }
       }
     },
     {
       "id": "rgba16_srgb",
       "name": "RGBA 16-bit sRGB",
       "input": {
-        "channel_type": "U16", "layout": "RGBA", "alpha": "Straight",
-        "transfer": "sRGB", "primaries": "BT.709",
-        "effective_bits": 16, "can_overshoot": false, "bytes_per_pixel": 8
+        "channel_type": "U16",
+        "layout": "RGBA",
+        "alpha": "Straight",
+        "transfer": "sRGB",
+        "primaries": "BT.709",
+        "effective_bits": 16,
+        "can_overshoot": false,
+        "bytes_per_pixel": 8
       },
-      "source_codecs": ["PNG", "Farbfeld", "PNM"],
+      "source_codecs": [
+        "PNG",
+        "Farbfeld",
+        "PNM"
+      ],
       "transfer_rep": {
         "format": "RGBA u16 sRGB Straight",
         "rationale": "Full 16-bit precision with alpha."
@@ -402,28 +777,75 @@
         "rationale": "Preserves full 16-bit precision with alpha."
       },
       "encode_candidates": {
-        "lossless_native": ["PNG", "Farbfeld", "PNM"],
-        "lossless_widened": ["JXL (as RGBA f32 Linear)"],
-        "lossy_truncated": ["WebP (u8)", "AVIF (u8)"],
+        "lossless_native": [
+          "PNG",
+          "Farbfeld",
+          "PNM"
+        ],
+        "lossless_widened": [
+          "JXL (as RGBA f32 Linear)"
+        ],
+        "lossy_truncated": [
+          "WebP (u8)",
+          "AVIF (u8)"
+        ],
         "notes": "JPEG strips alpha AND truncates to u8 (double loss)."
       },
       "websafe_xref": {
-        "jpeg":  { "target": "RGB u8 sRGB",      "conversion": "drop alpha + u16→u8", "loss": "alpha lost + 8 bits depth", "icc": "preserved", "notes": "Double loss" },
-        "webp":  { "target": "RGBA u8 sRGB",     "conversion": "u16→u8 depth truncation", "loss": "8 bits depth lost", "icc": "preserved", "notes": "" },
-        "png":   { "target": "RGBA u16 sRGB",    "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless 16-bit RGBA PNG" },
-        "avif":  { "target": "RGBA u8 sRGB",     "conversion": "u16→u8 depth truncation", "loss": "8 bits depth lost", "icc": "CICP", "notes": "" },
-        "jxl":   { "target": "RGBA f32 Linear",  "conversion": "u16 sRGB → f32 Linear", "loss": "none (lossless widening)", "icc": "preserved", "notes": "f32 preserves all 16 bits" }
+        "jpeg": {
+          "target": "RGB u8 sRGB",
+          "conversion": "drop alpha + u16→u8",
+          "loss": "alpha lost + 8 bits depth",
+          "icc": "preserved",
+          "notes": "Double loss"
+        },
+        "webp": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "u16→u8 depth truncation",
+          "loss": "8 bits depth lost",
+          "icc": "preserved",
+          "notes": ""
+        },
+        "png": {
+          "target": "RGBA u16 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Lossless 16-bit RGBA PNG"
+        },
+        "avif": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "u16→u8 depth truncation",
+          "loss": "8 bits depth lost",
+          "icc": "CICP",
+          "notes": ""
+        },
+        "jxl": {
+          "target": "RGBA f32 Linear",
+          "conversion": "u16 sRGB → f32 Linear",
+          "loss": "none (lossless widening)",
+          "icc": "preserved",
+          "notes": "f32 preserves all 16 bits"
+        }
       }
     },
     {
       "id": "gray16_srgb",
       "name": "Gray 16-bit sRGB",
       "input": {
-        "channel_type": "U16", "layout": "Gray", "alpha": "None",
-        "transfer": "sRGB", "primaries": "BT.709",
-        "effective_bits": 16, "can_overshoot": false, "bytes_per_pixel": 2
+        "channel_type": "U16",
+        "layout": "Gray",
+        "alpha": "None",
+        "transfer": "sRGB",
+        "primaries": "BT.709",
+        "effective_bits": 16,
+        "can_overshoot": false,
+        "bytes_per_pixel": 2
       },
-      "source_codecs": ["PNG", "PNM"],
+      "source_codecs": [
+        "PNG",
+        "PNM"
+      ],
       "transfer_rep": {
         "format": "Gray u16 sRGB",
         "rationale": "Full 16-bit grayscale precision."
@@ -462,28 +884,177 @@
         "rationale": "Preserves full 16-bit grayscale."
       },
       "encode_candidates": {
-        "lossless_native": ["PNG", "PNM"],
-        "lossless_widened": ["JXL (as Gray f32 Linear)"],
-        "lossy_truncated": ["JPEG Gray (u8)"],
+        "lossless_native": [
+          "PNG",
+          "PNM"
+        ],
+        "lossless_widened": [
+          "JXL (as Gray f32 Linear)"
+        ],
+        "lossy_truncated": [
+          "JPEG Gray (u8)"
+        ],
         "notes": "WebP/AVIF require RGB expansion + u8 truncation."
       },
       "websafe_xref": {
-        "jpeg":  { "target": "Gray u8 sRGB",     "conversion": "u16→u8 depth truncation", "loss": "8 bits depth lost", "icc": "preserved", "notes": "JPEG native grayscale" },
-        "webp":  { "target": "RGB u8 sRGB",      "conversion": "Gray→RGB + u16→u8", "loss": "8 bits depth + 3x size", "icc": "preserved", "notes": "No grayscale WebP" },
-        "png":   { "target": "Gray u16 sRGB",    "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless 16-bit grayscale" },
-        "avif":  { "target": "RGB u8 sRGB",      "conversion": "Gray→RGB + u16→u8", "loss": "8 bits depth + 3x size", "icc": "CICP", "notes": "No grayscale AVIF" },
-        "jxl":   { "target": "Gray f32 Linear",  "conversion": "u16 sRGB → f32 Linear", "loss": "none (lossless widening)", "icc": "preserved", "notes": "Native grayscale" }
+        "jpeg": {
+          "target": "Gray u8 sRGB",
+          "conversion": "u16→u8 depth truncation",
+          "loss": "8 bits depth lost",
+          "icc": "preserved",
+          "notes": "JPEG native grayscale"
+        },
+        "webp": {
+          "target": "RGB u8 sRGB",
+          "conversion": "Gray→RGB + u16→u8",
+          "loss": "8 bits depth + 3x size",
+          "icc": "preserved",
+          "notes": "No grayscale WebP"
+        },
+        "png": {
+          "target": "Gray u16 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Lossless 16-bit grayscale"
+        },
+        "avif": {
+          "target": "RGB u8 sRGB",
+          "conversion": "Gray→RGB + u16→u8",
+          "loss": "8 bits depth + 3x size",
+          "icc": "CICP",
+          "notes": "No grayscale AVIF"
+        },
+        "jxl": {
+          "target": "Gray f32 Linear",
+          "conversion": "u16 sRGB → f32 Linear",
+          "loss": "none (lossless widening)",
+          "icc": "preserved",
+          "notes": "Native grayscale"
+        }
+      }
+    },
+    {
+      "id": "graya16_srgb",
+      "name": "GrayAlpha 16-bit sRGB",
+      "input": {
+        "channel_type": "U16",
+        "layout": "GrayAlpha",
+        "alpha": "Straight",
+        "transfer": "sRGB",
+        "primaries": "BT.709",
+        "effective_bits": 16,
+        "can_overshoot": false,
+        "bytes_per_pixel": 4
+      },
+      "source_codecs": [
+        "PNG"
+      ],
+      "transfer_rep": {
+        "format": "GrayAlpha u16 sRGB Straight",
+        "rationale": "Full 16-bit grayscale + alpha precision."
+      },
+      "working_reps": {
+        "identity": {
+          "format": "GrayAlpha u16 sRGB",
+          "clamp": "N/A",
+          "rationale": "Identity."
+        },
+        "linear_math": {
+          "format": "GrayAlpha f32 Linear Straight",
+          "clamp": "unclamped",
+          "rationale": "u16→f32 lossless (16 bits ⊂ 23-bit mantissa). Alpha preserved."
+        },
+        "soft_filter": {
+          "format": "GrayAlpha u16 sRGB",
+          "clamp": "clamped [0,65535]",
+          "rationale": "16-bit sRGB acceptable. Operate on luma, alpha passthrough."
+        },
+        "composite": {
+          "format": "RGBA f32 Linear Premultiplied",
+          "clamp": "clamped [0,1]",
+          "rationale": "Gray→RGB expansion + Straight→Premul."
+        },
+        "quantize": {
+          "format": "RGBA u8 sRGB",
+          "clamp": "clamped [0,255]",
+          "rationale": "Depth loss: 8 bits truncated. Gray→RGB expansion."
+        }
+      },
+      "encoding_rep": {
+        "format": "GrayAlpha u16 sRGB",
+        "icc": "Preserve source ICC",
+        "cicp": "sRGB implicit",
+        "rationale": "Preserves full 16-bit grayscale + alpha."
+      },
+      "encode_candidates": {
+        "lossless_native": [
+          "PNG"
+        ],
+        "lossless_widened": [
+          "JXL (as GrayAlpha f32 Linear)"
+        ],
+        "lossy_truncated": [
+          "JPEG Gray u8 (alpha + depth lost)"
+        ],
+        "notes": "WebP/AVIF require Gray→RGB expansion + u8 truncation. Very limited codec support for GA16."
+      },
+      "websafe_xref": {
+        "jpeg": {
+          "target": "Gray u8 sRGB",
+          "conversion": "drop alpha + u16→u8",
+          "loss": "alpha lost + 8 bits depth lost",
+          "icc": "preserved",
+          "notes": "JPEG: no alpha, u8 only"
+        },
+        "webp": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "Gray→RGB + u16→u8 + keep alpha",
+          "loss": "8 bits depth + 3x luma",
+          "icc": "preserved",
+          "notes": "No grayscale WebP"
+        },
+        "png": {
+          "target": "GrayAlpha u16 sRGB",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Native PNG color type 4 (GA16)"
+        },
+        "avif": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "Gray→RGB + u16→u8 + keep alpha",
+          "loss": "8 bits depth + 3x luma",
+          "icc": "CICP",
+          "notes": "No grayscale AVIF"
+        },
+        "jxl": {
+          "target": "GrayAlpha f32 Linear",
+          "conversion": "u16 sRGB → f32 Linear",
+          "loss": "none (lossless widening)",
+          "icc": "preserved",
+          "notes": "Native gray+alpha"
+        }
       }
     },
     {
       "id": "rgbf32_linear",
       "name": "RGB f32 Linear (HDR/wide)",
       "input": {
-        "channel_type": "F32", "layout": "RGB", "alpha": "None",
-        "transfer": "Linear", "primaries": "BT.709",
-        "effective_bits": 32, "can_overshoot": false, "bytes_per_pixel": 12
+        "channel_type": "F32",
+        "layout": "RGB",
+        "alpha": "None",
+        "transfer": "Linear",
+        "primaries": "BT.709",
+        "effective_bits": 32,
+        "can_overshoot": false,
+        "bytes_per_pixel": 12
       },
-      "source_codecs": ["PNG", "JXL", "PNM"],
+      "source_codecs": [
+        "PNG",
+        "JXL",
+        "PNM"
+      ],
       "transfer_rep": {
         "format": "RGB f32 Linear",
         "rationale": "Native HDR representation. Maximum precision and dynamic range."
@@ -522,28 +1093,77 @@
         "rationale": "Preserves full HDR precision. Only PNG, JXL, PNM support f32."
       },
       "encode_candidates": {
-        "lossless_native": ["PNG", "JXL", "PNM"],
-        "lossy_native": ["JXL"],
-        "lossy_truncated": ["JPEG (u8 sRGB)", "WebP (u8 sRGB)", "AVIF (u8 sRGB)"],
+        "lossless_native": [
+          "PNG",
+          "JXL",
+          "PNM"
+        ],
+        "lossy_native": [
+          "JXL"
+        ],
+        "lossy_truncated": [
+          "JPEG (u8 sRGB)",
+          "WebP (u8 sRGB)",
+          "AVIF (u8 sRGB)"
+        ],
         "notes": "Only 3 codecs support f32. Web codecs truncate to u8 sRGB with major loss."
       },
       "websafe_xref": {
-        "jpeg":  { "target": "RGB u8 sRGB",      "conversion": "f32 Linear → u8 sRGB (OETF + quantize)", "loss": "24 bits depth + transfer (major)", "icc": "preserved", "notes": "HDR→SDR tonemapping may be needed" },
-        "webp":  { "target": "RGB u8 sRGB",      "conversion": "f32 Linear → u8 sRGB", "loss": "24 bits depth + transfer (major)", "icc": "preserved", "notes": "HDR→SDR tonemapping may be needed" },
-        "png":   { "target": "RGB f32 Linear",   "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless f32 PNG" },
-        "avif":  { "target": "RGB u8 sRGB",      "conversion": "f32 Linear → u8 sRGB", "loss": "24 bits depth + transfer (major)", "icc": "CICP", "notes": "HDR→SDR tonemapping may be needed" },
-        "jxl":   { "target": "RGB f32 Linear",   "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Native f32 JXL. Lossless or visually lossless" }
+        "jpeg": {
+          "target": "RGB u8 sRGB",
+          "conversion": "f32 Linear → u8 sRGB (OETF + quantize)",
+          "loss": "24 bits depth + transfer (major)",
+          "icc": "preserved",
+          "notes": "HDR→SDR tonemapping may be needed"
+        },
+        "webp": {
+          "target": "RGB u8 sRGB",
+          "conversion": "f32 Linear → u8 sRGB",
+          "loss": "24 bits depth + transfer (major)",
+          "icc": "preserved",
+          "notes": "HDR→SDR tonemapping may be needed"
+        },
+        "png": {
+          "target": "RGB f32 Linear",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Lossless f32 PNG"
+        },
+        "avif": {
+          "target": "RGB u8 sRGB",
+          "conversion": "f32 Linear → u8 sRGB",
+          "loss": "24 bits depth + transfer (major)",
+          "icc": "CICP",
+          "notes": "HDR→SDR tonemapping may be needed"
+        },
+        "jxl": {
+          "target": "RGB f32 Linear",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Native f32 JXL. Lossless or visually lossless"
+        }
       }
     },
     {
       "id": "rgbaf32_linear",
       "name": "RGBA f32 Linear (HDR/wide + alpha)",
       "input": {
-        "channel_type": "F32", "layout": "RGBA", "alpha": "Straight",
-        "transfer": "Linear", "primaries": "BT.709",
-        "effective_bits": 32, "can_overshoot": false, "bytes_per_pixel": 16
+        "channel_type": "F32",
+        "layout": "RGBA",
+        "alpha": "Straight",
+        "transfer": "Linear",
+        "primaries": "BT.709",
+        "effective_bits": 32,
+        "can_overshoot": false,
+        "bytes_per_pixel": 16
       },
-      "source_codecs": ["PNG", "JXL", "PNM"],
+      "source_codecs": [
+        "PNG",
+        "JXL",
+        "PNM"
+      ],
       "transfer_rep": {
         "format": "RGBA f32 Linear Straight",
         "rationale": "HDR with transparency. Full precision."
@@ -582,27 +1202,73 @@
         "rationale": "Preserves full HDR precision with alpha."
       },
       "encode_candidates": {
-        "lossless_native": ["PNG", "JXL", "PNM"],
-        "lossy_truncated": ["WebP (u8)", "AVIF (u8)"],
+        "lossless_native": [
+          "PNG",
+          "JXL",
+          "PNM"
+        ],
+        "lossy_truncated": [
+          "WebP (u8)",
+          "AVIF (u8)"
+        ],
         "notes": "JPEG strips alpha AND truncates f32→u8 (catastrophic loss)."
       },
       "websafe_xref": {
-        "jpeg":  { "target": "RGB u8 sRGB",       "conversion": "drop alpha + f32→u8 + OETF", "loss": "alpha + 24 bits depth (catastrophic)", "icc": "preserved", "notes": "Avoid: double loss" },
-        "webp":  { "target": "RGBA u8 sRGB",      "conversion": "f32 Linear → u8 sRGB", "loss": "24 bits depth + transfer", "icc": "preserved", "notes": "" },
-        "png":   { "target": "RGBA f32 Linear",   "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless" },
-        "avif":  { "target": "RGBA u8 sRGB",      "conversion": "f32 Linear → u8 sRGB", "loss": "24 bits depth + transfer", "icc": "CICP", "notes": "" },
-        "jxl":   { "target": "RGBA f32 Linear",   "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless or lossy" }
+        "jpeg": {
+          "target": "RGB u8 sRGB",
+          "conversion": "drop alpha + f32→u8 + OETF",
+          "loss": "alpha + 24 bits depth (catastrophic)",
+          "icc": "preserved",
+          "notes": "Avoid: double loss"
+        },
+        "webp": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "f32 Linear → u8 sRGB",
+          "loss": "24 bits depth + transfer",
+          "icc": "preserved",
+          "notes": ""
+        },
+        "png": {
+          "target": "RGBA f32 Linear",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Lossless"
+        },
+        "avif": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "f32 Linear → u8 sRGB",
+          "loss": "24 bits depth + transfer",
+          "icc": "CICP",
+          "notes": ""
+        },
+        "jxl": {
+          "target": "RGBA f32 Linear",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Lossless or lossy"
+        }
       }
     },
     {
       "id": "grayf32_linear",
       "name": "Gray f32 Linear (HDR grayscale)",
       "input": {
-        "channel_type": "F32", "layout": "Gray", "alpha": "None",
-        "transfer": "Linear", "primaries": "BT.709",
-        "effective_bits": 32, "can_overshoot": false, "bytes_per_pixel": 4
+        "channel_type": "F32",
+        "layout": "Gray",
+        "alpha": "None",
+        "transfer": "Linear",
+        "primaries": "BT.709",
+        "effective_bits": 32,
+        "can_overshoot": false,
+        "bytes_per_pixel": 4
       },
-      "source_codecs": ["PNG", "JXL", "PNM"],
+      "source_codecs": [
+        "PNG",
+        "JXL",
+        "PNM"
+      ],
       "transfer_rep": {
         "format": "Gray f32 Linear",
         "rationale": "HDR grayscale. Full precision."
@@ -641,27 +1307,174 @@
         "rationale": "Preserves full HDR grayscale precision."
       },
       "encode_candidates": {
-        "lossless_native": ["PNG", "JXL", "PNM"],
-        "lossy_truncated": ["JPEG Gray (u8)"],
+        "lossless_native": [
+          "PNG",
+          "JXL",
+          "PNM"
+        ],
+        "lossy_truncated": [
+          "JPEG Gray (u8)"
+        ],
         "notes": "WebP/AVIF require RGB expansion + u8 truncation (triple loss: depth+transfer+channels)."
       },
       "websafe_xref": {
-        "jpeg":  { "target": "Gray u8 sRGB",     "conversion": "f32 Linear → u8 sRGB", "loss": "24 bits depth + transfer", "icc": "preserved", "notes": "Native JPEG gray at u8" },
-        "webp":  { "target": "RGB u8 sRGB",      "conversion": "Gray→RGB + f32→u8 + OETF", "loss": "depth + transfer + 3x size", "icc": "preserved", "notes": "Triple conversion" },
-        "png":   { "target": "Gray f32 Linear",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless" },
-        "avif":  { "target": "RGB u8 sRGB",      "conversion": "Gray→RGB + f32→u8 + OETF", "loss": "depth + transfer + 3x size", "icc": "CICP", "notes": "Triple conversion" },
-        "jxl":   { "target": "Gray f32 Linear",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Native grayscale" }
+        "jpeg": {
+          "target": "Gray u8 sRGB",
+          "conversion": "f32 Linear → u8 sRGB",
+          "loss": "24 bits depth + transfer",
+          "icc": "preserved",
+          "notes": "Native JPEG gray at u8"
+        },
+        "webp": {
+          "target": "RGB u8 sRGB",
+          "conversion": "Gray→RGB + f32→u8 + OETF",
+          "loss": "depth + transfer + 3x size",
+          "icc": "preserved",
+          "notes": "Triple conversion"
+        },
+        "png": {
+          "target": "Gray f32 Linear",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Lossless"
+        },
+        "avif": {
+          "target": "RGB u8 sRGB",
+          "conversion": "Gray→RGB + f32→u8 + OETF",
+          "loss": "depth + transfer + 3x size",
+          "icc": "CICP",
+          "notes": "Triple conversion"
+        },
+        "jxl": {
+          "target": "Gray f32 Linear",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Native grayscale"
+        }
+      }
+    },
+    {
+      "id": "grayaf32_linear",
+      "name": "GrayAlpha f32 Linear (HDR grayscale + alpha)",
+      "input": {
+        "channel_type": "F32",
+        "layout": "GrayAlpha",
+        "alpha": "Straight",
+        "transfer": "Linear",
+        "primaries": "BT.709",
+        "effective_bits": 32,
+        "can_overshoot": false,
+        "bytes_per_pixel": 8
+      },
+      "source_codecs": [
+        "PNG",
+        "JXL",
+        "PNM"
+      ],
+      "transfer_rep": {
+        "format": "GrayAlpha f32 Linear Straight",
+        "rationale": "HDR grayscale + alpha. Full precision."
+      },
+      "working_reps": {
+        "identity": {
+          "format": "GrayAlpha f32 Linear",
+          "clamp": "N/A",
+          "rationale": "Identity."
+        },
+        "linear_math": {
+          "format": "GrayAlpha f32 Linear Straight",
+          "clamp": "unclamped",
+          "rationale": "Already in ideal format. Zero conversion."
+        },
+        "soft_filter": {
+          "format": "GrayAlpha f32 Linear",
+          "clamp": "clamped [0,1] post-op",
+          "rationale": "Stay in f32. Operate on luma, alpha passthrough."
+        },
+        "composite": {
+          "format": "RGBA f32 Linear Premultiplied",
+          "clamp": "clamped [0,1]",
+          "rationale": "Gray→RGB expansion + Straight→Premul."
+        },
+        "quantize": {
+          "format": "RGBA u8 sRGB",
+          "clamp": "clamped [0,255]",
+          "rationale": "Major precision loss."
+        }
+      },
+      "encoding_rep": {
+        "format": "GrayAlpha f32 Linear",
+        "icc": "Preserve source ICC",
+        "cicp": "Signal transfer",
+        "rationale": "Preserves full HDR grayscale + alpha precision."
+      },
+      "encode_candidates": {
+        "lossless_native": [
+          "PNG",
+          "JXL",
+          "PNM"
+        ],
+        "lossy_truncated": [
+          "JPEG Gray u8 (alpha + depth + transfer lost)"
+        ],
+        "notes": "WebP/AVIF require Gray→RGB expansion + f32→u8 + OETF (quadruple loss). Very limited codec support."
+      },
+      "websafe_xref": {
+        "jpeg": {
+          "target": "Gray u8 sRGB",
+          "conversion": "drop alpha + f32→u8 + OETF",
+          "loss": "alpha + depth + transfer lost",
+          "icc": "preserved",
+          "notes": "JPEG: no alpha, u8 only"
+        },
+        "webp": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "Gray→RGB + f32→u8 + OETF + keep alpha",
+          "loss": "depth + transfer + 3x luma",
+          "icc": "preserved",
+          "notes": "Quadruple conversion"
+        },
+        "png": {
+          "target": "GrayAlpha f32 Linear",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Lossless"
+        },
+        "avif": {
+          "target": "RGBA u8 sRGB",
+          "conversion": "Gray→RGB + f32→u8 + OETF + keep alpha",
+          "loss": "depth + transfer + 3x luma",
+          "icc": "CICP",
+          "notes": "Quadruple conversion"
+        },
+        "jxl": {
+          "target": "GrayAlpha f32 Linear",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Native gray+alpha f32"
+        }
       }
     },
     {
       "id": "jpeg_f32_srgb_deblock",
       "name": "JPEG f32 sRGB Deblocking (8-bit eff, unclamped)",
       "input": {
-        "channel_type": "F32", "layout": "RGB", "alpha": "None",
-        "transfer": "sRGB", "primaries": "BT.709",
-        "effective_bits": 8, "can_overshoot": true, "bytes_per_pixel": 12
+        "channel_type": "F32",
+        "layout": "RGB",
+        "alpha": "None",
+        "transfer": "sRGB",
+        "primaries": "BT.709",
+        "effective_bits": 8,
+        "can_overshoot": true,
+        "bytes_per_pixel": 12
       },
-      "source_codecs": ["JPEG (internal API: SrgbF32)"],
+      "source_codecs": [
+        "JPEG (internal API: SrgbF32)"
+      ],
       "transfer_rep": {
         "format": "RGB f32 sRGB (unclamped)",
         "rationale": "Preserves IDCT ringing as out-of-range values. Clamping to [0,1] here would destroy the deblocking quality advantage."
@@ -700,27 +1513,74 @@
         "rationale": "8-bit effective precision. Clamping overshoot at encode time produces smoother transitions than integer-decoded JPEG."
       },
       "encode_candidates": {
-        "lossless": ["PNG", "JXL", "BMP", "PNM"],
-        "lossy": ["JPEG", "WebP", "AVIF", "JXL"],
+        "lossless": [
+          "PNG",
+          "JXL",
+          "BMP",
+          "PNM"
+        ],
+        "lossy": [
+          "JPEG",
+          "WebP",
+          "AVIF",
+          "JXL"
+        ],
         "notes": "Output quality is u8 sRGB equivalent, but smoother than integer decode. All codecs accept the encoding rep."
       },
       "websafe_xref": {
-        "jpeg":  { "target": "RGB u8 sRGB",  "conversion": "clamp + f32→u8", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "Smoother than integer decode re-encode" },
-        "webp":  { "target": "RGB u8 sRGB",  "conversion": "clamp + f32→u8", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "" },
-        "png":   { "target": "RGB u8 sRGB",  "conversion": "clamp + f32→u8", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "Lossless u8 output" },
-        "avif":  { "target": "RGB u8 sRGB",  "conversion": "clamp + f32→u8", "loss": "none (8-bit eff)", "icc": "CICP", "notes": "" },
-        "jxl":   { "target": "RGB u8 sRGB",  "conversion": "clamp + f32→u8 + sRGB→gamma 2.2", "loss": "sub-perceptual (±1 dark tones, 8-bit eff)", "icc": "preserved", "notes": "JXL gamma 2.2 vs sRGB" }
+        "jpeg": {
+          "target": "RGB u8 sRGB",
+          "conversion": "clamp + f32→u8",
+          "loss": "none (8-bit eff)",
+          "icc": "preserved",
+          "notes": "Smoother than integer decode re-encode"
+        },
+        "webp": {
+          "target": "RGB u8 sRGB",
+          "conversion": "clamp + f32→u8",
+          "loss": "none (8-bit eff)",
+          "icc": "preserved",
+          "notes": ""
+        },
+        "png": {
+          "target": "RGB u8 sRGB",
+          "conversion": "clamp + f32→u8",
+          "loss": "none (8-bit eff)",
+          "icc": "preserved",
+          "notes": "Lossless u8 output"
+        },
+        "avif": {
+          "target": "RGB u8 sRGB",
+          "conversion": "clamp + f32→u8",
+          "loss": "none (8-bit eff)",
+          "icc": "CICP",
+          "notes": ""
+        },
+        "jxl": {
+          "target": "RGB u8 sRGB",
+          "conversion": "clamp + f32→u8 + sRGB→gamma 2.2",
+          "loss": "sub-perceptual (±1 dark tones, 8-bit eff)",
+          "icc": "preserved",
+          "notes": "JXL gamma 2.2 vs sRGB"
+        }
       }
     },
     {
       "id": "jpeg_f32_linear_debias",
       "name": "JPEG f32 Linear Debiased (8-bit eff, unclamped)",
       "input": {
-        "channel_type": "F32", "layout": "RGB", "alpha": "None",
-        "transfer": "Linear", "primaries": "BT.709",
-        "effective_bits": 8, "can_overshoot": true, "bytes_per_pixel": 12
+        "channel_type": "F32",
+        "layout": "RGB",
+        "alpha": "None",
+        "transfer": "Linear",
+        "primaries": "BT.709",
+        "effective_bits": 8,
+        "can_overshoot": true,
+        "bytes_per_pixel": 12
       },
-      "source_codecs": ["JPEG (internal API: LinearF32)"],
+      "source_codecs": [
+        "JPEG (internal API: LinearF32)"
+      ],
       "transfer_rep": {
         "format": "RGB f32 Linear (unclamped)",
         "rationale": "Linear-light decode with debiased dequantization. Preserves IDCT ringing for higher quality processing."
@@ -759,27 +1619,74 @@
         "rationale": "8-bit effective. Linear decode advantage is in working quality, not output depth."
       },
       "encode_candidates": {
-        "lossless": ["PNG", "JXL", "BMP", "PNM"],
-        "lossy": ["JPEG", "WebP", "AVIF", "JXL"],
+        "lossless": [
+          "PNG",
+          "JXL",
+          "BMP",
+          "PNM"
+        ],
+        "lossy": [
+          "JPEG",
+          "WebP",
+          "AVIF",
+          "JXL"
+        ],
         "notes": "All codecs work. Quality advantage comes from linear-light processing, not output format."
       },
       "websafe_xref": {
-        "jpeg":  { "target": "RGB u8 sRGB",  "conversion": "OETF + clamp + quantize", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "Higher quality than integer decode→encode" },
-        "webp":  { "target": "RGB u8 sRGB",  "conversion": "OETF + clamp + quantize", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "" },
-        "png":   { "target": "RGB u8 sRGB",  "conversion": "OETF + clamp + quantize", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "Lossless u8" },
-        "avif":  { "target": "RGB u8 sRGB",  "conversion": "OETF + clamp + quantize", "loss": "none (8-bit eff)", "icc": "CICP", "notes": "" },
-        "jxl":   { "target": "RGB u8 sRGB",  "conversion": "OETF + clamp + quantize + sRGB→gamma 2.2", "loss": "sub-perceptual (±1 dark tones, 8-bit eff)", "icc": "preserved", "notes": "JXL gamma 2.2 vs sRGB" }
+        "jpeg": {
+          "target": "RGB u8 sRGB",
+          "conversion": "OETF + clamp + quantize",
+          "loss": "none (8-bit eff)",
+          "icc": "preserved",
+          "notes": "Higher quality than integer decode→encode"
+        },
+        "webp": {
+          "target": "RGB u8 sRGB",
+          "conversion": "OETF + clamp + quantize",
+          "loss": "none (8-bit eff)",
+          "icc": "preserved",
+          "notes": ""
+        },
+        "png": {
+          "target": "RGB u8 sRGB",
+          "conversion": "OETF + clamp + quantize",
+          "loss": "none (8-bit eff)",
+          "icc": "preserved",
+          "notes": "Lossless u8"
+        },
+        "avif": {
+          "target": "RGB u8 sRGB",
+          "conversion": "OETF + clamp + quantize",
+          "loss": "none (8-bit eff)",
+          "icc": "CICP",
+          "notes": ""
+        },
+        "jxl": {
+          "target": "RGB u8 sRGB",
+          "conversion": "OETF + clamp + quantize + sRGB→gamma 2.2",
+          "loss": "sub-perceptual (±1 dark tones, 8-bit eff)",
+          "icc": "preserved",
+          "notes": "JXL gamma 2.2 vs sRGB"
+        }
       }
     },
     {
       "id": "jpeg_f32_srgb_precise",
       "name": "JPEG f32 sRGB Precise/XYB (10-bit eff, unclamped)",
       "input": {
-        "channel_type": "F32", "layout": "RGB", "alpha": "None",
-        "transfer": "sRGB", "primaries": "BT.709",
-        "effective_bits": 10, "can_overshoot": true, "bytes_per_pixel": 12
+        "channel_type": "F32",
+        "layout": "RGB",
+        "alpha": "None",
+        "transfer": "sRGB",
+        "primaries": "BT.709",
+        "effective_bits": 10,
+        "can_overshoot": true,
+        "bytes_per_pixel": 12
       },
-      "source_codecs": ["JPEG (internal API: SrgbF32Precise)"],
+      "source_codecs": [
+        "JPEG (internal API: SrgbF32Precise)"
+      ],
       "transfer_rep": {
         "format": "RGB f32 sRGB (unclamped, 10-bit effective)",
         "rationale": "Laplacian debiased dequantization recovers ~10 bits from 8-bit JPEG DCT. Preserves IDCT ringing."
@@ -818,27 +1725,74 @@
         "rationale": "10-bit effective precision exceeds u8. Use u16 or f32 for lossless preservation."
       },
       "encode_candidates": {
-        "lossless_full": ["PNG u16", "JXL f32", "PNM u16"],
-        "lossy_2bit": ["PNG u8", "JPEG u8", "WebP u8", "AVIF u8", "JXL u8"],
+        "lossless_full": [
+          "PNG u16",
+          "JXL f32",
+          "PNM u16"
+        ],
+        "lossy_2bit": [
+          "PNG u8",
+          "JPEG u8",
+          "WebP u8",
+          "AVIF u8",
+          "JXL u8"
+        ],
         "notes": "To preserve the 10-bit precision, encode as u16 PNG or f32 JXL. u8 codecs lose 2 bits."
       },
       "websafe_xref": {
-        "jpeg":  { "target": "RGB u8 sRGB",    "conversion": "clamp + f32→u8", "loss": "2 bits depth (10→8)", "icc": "preserved", "notes": "Still better than standard decode" },
-        "webp":  { "target": "RGB u8 sRGB",    "conversion": "clamp + f32→u8", "loss": "2 bits depth (10→8)", "icc": "preserved", "notes": "" },
-        "png":   { "target": "RGB u16 sRGB",   "conversion": "clamp + f32→u16", "loss": "none (10 bits fit in u16)", "icc": "preserved", "notes": "Preserves all recovered precision" },
-        "avif":  { "target": "RGB u8 sRGB",    "conversion": "clamp + f32→u8", "loss": "2 bits depth (10→8)", "icc": "CICP", "notes": "" },
-        "jxl":   { "target": "RGB f32 Linear", "conversion": "EOTF", "loss": "none", "icc": "preserved", "notes": "Preserves all precision + overshoot if desired" }
+        "jpeg": {
+          "target": "RGB u8 sRGB",
+          "conversion": "clamp + f32→u8",
+          "loss": "2 bits depth (10→8)",
+          "icc": "preserved",
+          "notes": "Still better than standard decode"
+        },
+        "webp": {
+          "target": "RGB u8 sRGB",
+          "conversion": "clamp + f32→u8",
+          "loss": "2 bits depth (10→8)",
+          "icc": "preserved",
+          "notes": ""
+        },
+        "png": {
+          "target": "RGB u16 sRGB",
+          "conversion": "clamp + f32→u16",
+          "loss": "none (10 bits fit in u16)",
+          "icc": "preserved",
+          "notes": "Preserves all recovered precision"
+        },
+        "avif": {
+          "target": "RGB u8 sRGB",
+          "conversion": "clamp + f32→u8",
+          "loss": "2 bits depth (10→8)",
+          "icc": "CICP",
+          "notes": ""
+        },
+        "jxl": {
+          "target": "RGB f32 Linear",
+          "conversion": "EOTF",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Preserves all precision + overshoot if desired"
+        }
       }
     },
     {
       "id": "jpeg_f32_linear_precise",
       "name": "JPEG f32 Linear Precise (10-bit eff, unclamped)",
       "input": {
-        "channel_type": "F32", "layout": "RGB", "alpha": "None",
-        "transfer": "Linear", "primaries": "BT.709",
-        "effective_bits": 10, "can_overshoot": true, "bytes_per_pixel": 12
+        "channel_type": "F32",
+        "layout": "RGB",
+        "alpha": "None",
+        "transfer": "Linear",
+        "primaries": "BT.709",
+        "effective_bits": 10,
+        "can_overshoot": true,
+        "bytes_per_pixel": 12
       },
-      "source_codecs": ["JPEG (internal API: LinearF32Precise)"],
+      "source_codecs": [
+        "JPEG (internal API: LinearF32Precise)"
+      ],
       "transfer_rep": {
         "format": "RGB f32 Linear (unclamped, 10-bit effective)",
         "rationale": "Linear-light with Laplacian debiased dequantization. Best quality JPEG decode path."
@@ -877,27 +1831,72 @@
         "rationale": "10-bit effective exceeds u8. f32 or u16 preserve the extra precision."
       },
       "encode_candidates": {
-        "lossless_full": ["PNG u16", "JXL f32", "PNM f32"],
-        "lossy_2bit": ["JPEG u8", "WebP u8", "AVIF u8"],
+        "lossless_full": [
+          "PNG u16",
+          "JXL f32",
+          "PNM f32"
+        ],
+        "lossy_2bit": [
+          "JPEG u8",
+          "WebP u8",
+          "AVIF u8"
+        ],
         "notes": "Best JPEG decode quality. Worth preserving in f32/u16 output."
       },
       "websafe_xref": {
-        "jpeg":  { "target": "RGB u8 sRGB",     "conversion": "OETF + clamp + f32→u8", "loss": "2 bits depth (10→8)", "icc": "preserved", "notes": "Still higher quality than standard decode" },
-        "webp":  { "target": "RGB u8 sRGB",     "conversion": "OETF + clamp + f32→u8", "loss": "2 bits depth (10→8)", "icc": "preserved", "notes": "" },
-        "png":   { "target": "RGB u16 sRGB",    "conversion": "OETF + f32→u16", "loss": "none", "icc": "preserved", "notes": "Preserves 10-bit precision" },
-        "avif":  { "target": "RGB u8 sRGB",     "conversion": "OETF + clamp + f32→u8", "loss": "2 bits depth (10→8)", "icc": "CICP", "notes": "" },
-        "jxl":   { "target": "RGB f32 Linear",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless — best path for quality preservation" }
+        "jpeg": {
+          "target": "RGB u8 sRGB",
+          "conversion": "OETF + clamp + f32→u8",
+          "loss": "2 bits depth (10→8)",
+          "icc": "preserved",
+          "notes": "Still higher quality than standard decode"
+        },
+        "webp": {
+          "target": "RGB u8 sRGB",
+          "conversion": "OETF + clamp + f32→u8",
+          "loss": "2 bits depth (10→8)",
+          "icc": "preserved",
+          "notes": ""
+        },
+        "png": {
+          "target": "RGB u16 sRGB",
+          "conversion": "OETF + f32→u16",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Preserves 10-bit precision"
+        },
+        "avif": {
+          "target": "RGB u8 sRGB",
+          "conversion": "OETF + clamp + f32→u8",
+          "loss": "2 bits depth (10→8)",
+          "icc": "CICP",
+          "notes": ""
+        },
+        "jxl": {
+          "target": "RGB f32 Linear",
+          "conversion": "none",
+          "loss": "none",
+          "icc": "preserved",
+          "notes": "Lossless — best path for quality preservation"
+        }
       }
     },
     {
       "id": "jpeg_gray_f32_linear",
       "name": "JPEG Gray f32 Linear Debiased (8-bit eff, unclamped)",
       "input": {
-        "channel_type": "F32", "layout": "Gray", "alpha": "None",
-        "transfer": "Linear", "primaries": "BT.709",
-        "effective_bits": 8, "can_overshoot": true, "bytes_per_pixel": 4
+        "channel_type": "F32",
+        "layout": "Gray",
+        "alpha": "None",
+        "transfer": "Linear",
+        "primaries": "BT.709",
+        "effective_bits": 8,
+        "can_overshoot": true,
+        "bytes_per_pixel": 4
       },
-      "source_codecs": ["JPEG (internal API: Gray LinearF32)"],
+      "source_codecs": [
+        "JPEG (internal API: Gray LinearF32)"
+      ],
       "transfer_rep": {
         "format": "Gray f32 Linear (unclamped)",
         "rationale": "Grayscale with debiased dequantization. Preserves IDCT ringing."
@@ -936,16 +1935,52 @@
         "rationale": "8-bit effective. Overshoot advantage is in processing, not output depth."
       },
       "encode_candidates": {
-        "lossless": ["PNG", "JXL", "PNM"],
-        "lossy": ["JPEG Gray"],
+        "lossless": [
+          "PNG",
+          "JXL",
+          "PNM"
+        ],
+        "lossy": [
+          "JPEG Gray"
+        ],
         "notes": "WebP/AVIF require RGB expansion."
       },
       "websafe_xref": {
-        "jpeg":  { "target": "Gray u8 sRGB",  "conversion": "OETF + clamp + f32→u8", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "Native JPEG gray, higher quality than integer decode" },
-        "webp":  { "target": "RGB u8 sRGB",   "conversion": "Gray→RGB + OETF + clamp + f32→u8", "loss": "3x size, no quality loss (8-bit eff)", "icc": "preserved", "notes": "No grayscale WebP" },
-        "png":   { "target": "Gray u8 sRGB",  "conversion": "OETF + clamp + f32→u8", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "Lossless grayscale" },
-        "avif":  { "target": "RGB u8 sRGB",   "conversion": "Gray→RGB + OETF + clamp + f32→u8", "loss": "3x size, no quality loss (8-bit eff)", "icc": "CICP", "notes": "No grayscale AVIF" },
-        "jxl":   { "target": "Gray u8 sRGB",  "conversion": "OETF + clamp + f32→u8 + sRGB→gamma 2.2", "loss": "sub-perceptual (±1 dark tones, 8-bit eff)", "icc": "preserved", "notes": "JXL gamma 2.2 vs sRGB" }
+        "jpeg": {
+          "target": "Gray u8 sRGB",
+          "conversion": "OETF + clamp + f32→u8",
+          "loss": "none (8-bit eff)",
+          "icc": "preserved",
+          "notes": "Native JPEG gray, higher quality than integer decode"
+        },
+        "webp": {
+          "target": "RGB u8 sRGB",
+          "conversion": "Gray→RGB + OETF + clamp + f32→u8",
+          "loss": "3x size, no quality loss (8-bit eff)",
+          "icc": "preserved",
+          "notes": "No grayscale WebP"
+        },
+        "png": {
+          "target": "Gray u8 sRGB",
+          "conversion": "OETF + clamp + f32→u8",
+          "loss": "none (8-bit eff)",
+          "icc": "preserved",
+          "notes": "Lossless grayscale"
+        },
+        "avif": {
+          "target": "RGB u8 sRGB",
+          "conversion": "Gray→RGB + OETF + clamp + f32→u8",
+          "loss": "3x size, no quality loss (8-bit eff)",
+          "icc": "CICP",
+          "notes": "No grayscale AVIF"
+        },
+        "jxl": {
+          "target": "Gray u8 sRGB",
+          "conversion": "OETF + clamp + f32→u8 + sRGB→gamma 2.2",
+          "loss": "sub-perceptual (±1 dark tones, 8-bit eff)",
+          "icc": "preserved",
+          "notes": "JXL gamma 2.2 vs sRGB"
+        }
       }
     }
   ]

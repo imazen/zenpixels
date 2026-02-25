@@ -189,13 +189,16 @@ static PNG_FORMATS: &[FormatEntry] = &[
     FormatEntry::standard(PixelDescriptor::RGB8_SRGB),
     FormatEntry::standard(PixelDescriptor::RGBA8_SRGB),
     FormatEntry::standard(PixelDescriptor::GRAY8_SRGB),
+    FormatEntry::standard(PixelDescriptor::GRAYA8_SRGB),
     FormatEntry::standard(PixelDescriptor::BGRA8_SRGB),
     FormatEntry::standard(PixelDescriptor::RGB16_SRGB),
     FormatEntry::standard(PixelDescriptor::RGBA16_SRGB),
     FormatEntry::standard(PixelDescriptor::GRAY16_SRGB),
+    FormatEntry::standard(PixelDescriptor::GRAYA16_SRGB),
     FormatEntry::standard(PixelDescriptor::RGBF32_LINEAR),
     FormatEntry::standard(PixelDescriptor::RGBAF32_LINEAR),
     FormatEntry::standard(PixelDescriptor::GRAYF32_LINEAR),
+    FormatEntry::standard(PixelDescriptor::GRAYAF32_LINEAR),
 ];
 
 pub static PNG: CodecFormats = CodecFormats {
@@ -302,10 +305,12 @@ static JXL_FORMATS: &[FormatEntry] = &[
     FormatEntry::standard(PixelDescriptor::RGB8_SRGB),
     FormatEntry::standard(PixelDescriptor::RGBA8_SRGB),
     FormatEntry::standard(PixelDescriptor::GRAY8_SRGB),
+    FormatEntry::standard(PixelDescriptor::GRAYA8_SRGB),
     FormatEntry::standard(PixelDescriptor::BGRA8_SRGB),
     FormatEntry::standard(PixelDescriptor::RGBF32_LINEAR),
     FormatEntry::standard(PixelDescriptor::RGBAF32_LINEAR),
     FormatEntry::standard(PixelDescriptor::GRAYF32_LINEAR),
+    FormatEntry::standard(PixelDescriptor::GRAYAF32_LINEAR),
 ];
 
 pub static JXL: CodecFormats = CodecFormats {
@@ -375,10 +380,12 @@ static PNM_FORMATS: &[FormatEntry] = &[
     FormatEntry::standard(PixelDescriptor::RGBA8_SRGB),
     FormatEntry::standard(PixelDescriptor::RGBA16_SRGB),
     FormatEntry::standard(PixelDescriptor::GRAY8_SRGB),
+    FormatEntry::standard(PixelDescriptor::GRAYA8_SRGB),
     FormatEntry::standard(PixelDescriptor::BGRA8_SRGB),
     FormatEntry::standard(PixelDescriptor::RGBF32_LINEAR),
     FormatEntry::standard(PixelDescriptor::RGBAF32_LINEAR),
     FormatEntry::standard(PixelDescriptor::GRAYF32_LINEAR),
+    FormatEntry::standard(PixelDescriptor::GRAYAF32_LINEAR),
 ];
 
 pub static PNM: CodecFormats = CodecFormats {

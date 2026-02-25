@@ -260,6 +260,14 @@ impl OpCategory {
             if !candidates.contains(&gray_ideal) {
                 candidates.push(gray_ideal);
             }
+            // GrayAlpha variant (if source has alpha, prefer staying in GA over expanding to RGBA)
+            if source.layout == ChannelLayout::GrayAlpha {
+                let ga_ideal =
+                    PixelDescriptor::new(ideal_depth, ChannelLayout::GrayAlpha, ideal_alpha, ideal_transfer);
+                if !candidates.contains(&ga_ideal) {
+                    candidates.push(ga_ideal);
+                }
+            }
         }
 
         candidates
