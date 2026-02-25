@@ -115,7 +115,7 @@
         "webp":  { "target": "RGB u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Native WebP format" },
         "png":   { "target": "RGB u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless" },
         "avif":  { "target": "RGB u8 sRGB",  "conversion": "none", "loss": "none", "icc": "CICP signals sRGB", "notes": "Native format" },
-        "jxl":   { "target": "RGB u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless or lossy" }
+        "jxl":   { "target": "RGB u8 sRGB",  "conversion": "sRGB↔gamma 2.2 transfer", "loss": "sub-perceptual (±1 value in dark tones, sRGB vs JXL gamma 2.2)", "icc": "preserved", "notes": "JXL uses gamma 1/2.2, not sRGB curve. f32 Linear path avoids this." }
       }
     },
     {
@@ -174,7 +174,7 @@
         "webp":  { "target": "RGBA u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Native format" },
         "png":   { "target": "RGBA u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless" },
         "avif":  { "target": "RGBA u8 sRGB",  "conversion": "none", "loss": "none", "icc": "CICP", "notes": "Native format" },
-        "jxl":   { "target": "RGBA u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless or lossy" }
+        "jxl":   { "target": "RGBA u8 sRGB",  "conversion": "sRGB↔gamma 2.2 transfer", "loss": "sub-perceptual (±1 value in dark tones, sRGB vs JXL gamma 2.2)", "icc": "preserved", "notes": "JXL uses gamma 1/2.2, not sRGB curve" }
       }
     },
     {
@@ -233,7 +233,7 @@
         "webp":  { "target": "RGB u8 sRGB",   "conversion": "Gray→RGB (replicate)", "loss": "3x size, no quality loss", "icc": "preserved", "notes": "No grayscale WebP" },
         "png":   { "target": "Gray u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Lossless grayscale PNG" },
         "avif":  { "target": "RGB u8 sRGB",   "conversion": "Gray→RGB (replicate)", "loss": "3x size, no quality loss", "icc": "CICP", "notes": "No grayscale AVIF" },
-        "jxl":   { "target": "Gray u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "Native grayscale" }
+        "jxl":   { "target": "Gray u8 sRGB",  "conversion": "sRGB↔gamma 2.2 transfer", "loss": "sub-perceptual (±1 value in dark tones)", "icc": "preserved", "notes": "JXL uses gamma 1/2.2, not sRGB curve" }
       }
     },
     {
@@ -292,7 +292,7 @@
         "webp":  { "target": "RGBA u8 sRGB",  "conversion": "swizzle B↔R", "loss": "none", "icc": "preserved", "notes": "Byte reorder only" },
         "png":   { "target": "RGBA u8 sRGB",  "conversion": "swizzle B↔R", "loss": "none", "icc": "preserved", "notes": "Lossless" },
         "avif":  { "target": "RGBA u8 sRGB",  "conversion": "swizzle B↔R", "loss": "none", "icc": "CICP", "notes": "Byte reorder only" },
-        "jxl":   { "target": "BGRA u8 sRGB",  "conversion": "none", "loss": "none", "icc": "preserved", "notes": "JXL accepts BGRA natively" }
+        "jxl":   { "target": "BGRA u8 sRGB",  "conversion": "sRGB↔gamma 2.2 transfer", "loss": "sub-perceptual (±1 value in dark tones)", "icc": "preserved", "notes": "JXL accepts BGRA natively but uses gamma 2.2" }
       }
     },
     {
@@ -709,7 +709,7 @@
         "webp":  { "target": "RGB u8 sRGB",  "conversion": "clamp + f32→u8", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "" },
         "png":   { "target": "RGB u8 sRGB",  "conversion": "clamp + f32→u8", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "Lossless u8 output" },
         "avif":  { "target": "RGB u8 sRGB",  "conversion": "clamp + f32→u8", "loss": "none (8-bit eff)", "icc": "CICP", "notes": "" },
-        "jxl":   { "target": "RGB u8 sRGB",  "conversion": "clamp + f32→u8", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "" }
+        "jxl":   { "target": "RGB u8 sRGB",  "conversion": "clamp + f32→u8 + sRGB→gamma 2.2", "loss": "sub-perceptual (±1 dark tones, 8-bit eff)", "icc": "preserved", "notes": "JXL gamma 2.2 vs sRGB" }
       }
     },
     {
@@ -768,7 +768,7 @@
         "webp":  { "target": "RGB u8 sRGB",  "conversion": "OETF + clamp + quantize", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "" },
         "png":   { "target": "RGB u8 sRGB",  "conversion": "OETF + clamp + quantize", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "Lossless u8" },
         "avif":  { "target": "RGB u8 sRGB",  "conversion": "OETF + clamp + quantize", "loss": "none (8-bit eff)", "icc": "CICP", "notes": "" },
-        "jxl":   { "target": "RGB u8 sRGB",  "conversion": "OETF + clamp + quantize", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "" }
+        "jxl":   { "target": "RGB u8 sRGB",  "conversion": "OETF + clamp + quantize + sRGB→gamma 2.2", "loss": "sub-perceptual (±1 dark tones, 8-bit eff)", "icc": "preserved", "notes": "JXL gamma 2.2 vs sRGB" }
       }
     },
     {
@@ -945,7 +945,7 @@
         "webp":  { "target": "RGB u8 sRGB",   "conversion": "Gray→RGB + OETF + clamp + f32→u8", "loss": "3x size, no quality loss (8-bit eff)", "icc": "preserved", "notes": "No grayscale WebP" },
         "png":   { "target": "Gray u8 sRGB",  "conversion": "OETF + clamp + f32→u8", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "Lossless grayscale" },
         "avif":  { "target": "RGB u8 sRGB",   "conversion": "Gray→RGB + OETF + clamp + f32→u8", "loss": "3x size, no quality loss (8-bit eff)", "icc": "CICP", "notes": "No grayscale AVIF" },
-        "jxl":   { "target": "Gray u8 sRGB",  "conversion": "OETF + clamp + f32→u8", "loss": "none (8-bit eff)", "icc": "preserved", "notes": "Native grayscale" }
+        "jxl":   { "target": "Gray u8 sRGB",  "conversion": "OETF + clamp + f32→u8 + sRGB→gamma 2.2", "loss": "sub-perceptual (±1 dark tones, 8-bit eff)", "icc": "preserved", "notes": "JXL gamma 2.2 vs sRGB" }
       }
     }
   ]
