@@ -3,9 +3,8 @@
 //! [`RowConverter`] wraps a [`ConvertPlan`] and provides a streaming-friendly
 //! API for converting pixel rows without per-call allocation.
 
-use crate::PixelDescriptor;
 use crate::convert::{ConvertPlan, convert_row};
-use crate::error::ConvertError;
+use crate::{ConvertError, PixelDescriptor};
 
 /// Pre-computed pixel format converter.
 ///

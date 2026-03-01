@@ -10,8 +10,9 @@
 //! 4. Filter by quality threshold
 //! 5. Pick lowest total cost among qualifying paths
 
-use crate::PixelDescriptor;
+use alloc::vec::Vec;
 
+use crate::PixelDescriptor;
 use crate::negotiate::{
     ConversionCost, Provenance, conversion_cost_with_provenance, suitability_loss, weighted_score,
 };
@@ -221,8 +222,8 @@ pub fn generate_path_matrix(
     operations: &[OpCategory],
     output_codecs: &[&CodecFormats],
     threshold: QualityThreshold,
-) -> alloc::vec::Vec<PathEntry> {
-    let mut entries = alloc::vec::Vec::new();
+) -> Vec<PathEntry> {
+    let mut entries = Vec::new();
 
     for source_codec in source_codecs {
         for source_entry in source_codec.decode_outputs {
@@ -446,7 +447,7 @@ mod tests {
             OpCategory::ResizeGentle,
             OpCategory::ResizeSharp,
         ];
-        let codecs: alloc::vec::Vec<&CodecFormats> = registry::ALL_CODECS.iter().copied().collect();
+        let codecs: Vec<&CodecFormats> = registry::ALL_CODECS.iter().copied().collect();
         let matrix = generate_path_matrix(
             &codecs,
             &all_ops,

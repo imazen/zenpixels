@@ -1305,6 +1305,8 @@ impl PlaneMask {
 
 #[cfg(test)]
 mod tests {
+    use core::mem::size_of;
+
     use super::*;
 
     #[test]
@@ -1373,7 +1375,7 @@ mod tests {
 
     #[test]
     fn descriptor_size() {
-        assert!(core::mem::size_of::<PixelDescriptor>() <= 8);
+        assert!(size_of::<PixelDescriptor>() <= 8);
     }
 
     #[test]
@@ -1449,8 +1451,8 @@ mod tests {
 
     #[test]
     fn planar_descriptor_size() {
-        assert!(core::mem::size_of::<PlanarDescriptor>() <= 40);
-        assert_eq!(core::mem::size_of::<PlaneSpec>(), 4);
-        assert_eq!(core::mem::size_of::<PlaneMask>(), 1);
+        assert!(size_of::<PlanarDescriptor>() <= 40);
+        assert_eq!(size_of::<PlaneSpec>(), 4);
+        assert_eq!(size_of::<PlaneMask>(), 1);
     }
 }
