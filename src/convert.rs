@@ -6,6 +6,7 @@
 use alloc::vec::Vec;
 use core::cmp::min;
 
+use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy};
 use crate::{
     AlphaMode, ChannelLayout, ChannelType, ConvertError, PixelDescriptor, TransferFunction,
 };
@@ -164,6 +165,46 @@ impl ConvertPlan {
         }
 
         Ok(Self { from, to, steps })
+    }
+
+    /// Create a conversion plan with explicit policy enforcement.
+    ///
+    /// Validates that the planned conversion steps are allowed by the given
+    /// policies before creating the plan. Returns an error if a forbidden
+    /// operation would be required.
+    pub fn new_explicit(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &ConvertOptions,
+    ) -> Result<Self, ConvertError> {
+        // Check alpha removal policy.
+        let drops_alpha = from.alpha.is_some() && to.alpha.is_none();
+        if drops_alpha {
+            match options.alpha_policy {
+                AlphaPolicy::Forbid => return Err(ConvertError::AlphaRemovalForbidden),
+                AlphaPolicy::DiscardIfOpaque
+                | AlphaPolicy::DiscardUnchecked
+                | AlphaPolicy::CompositeOnto { .. } => {}
+            }
+        }
+
+        // Check depth reduction policy.
+        let reduces_depth = from.channel_type.byte_size() > to.channel_type.byte_size();
+        if reduces_depth && options.depth_policy == DepthPolicy::Forbid {
+            return Err(ConvertError::DepthReductionForbidden);
+        }
+
+        // Check RGB→Gray requires luma coefficients.
+        let src_is_rgb = matches!(
+            from.layout,
+            ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
+        );
+        let dst_is_gray = matches!(to.layout, ChannelLayout::Gray | ChannelLayout::GrayAlpha);
+        if src_is_rgb && dst_is_gray && options.luma.is_none() {
+            return Err(ConvertError::RgbToGray);
+        }
+
+        Self::new(from, to)
     }
 
     /// True if conversion is a no-op.

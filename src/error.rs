@@ -24,6 +24,16 @@ pub enum ConvertError {
         from: TransferFunction,
         to: TransferFunction,
     },
+    /// Alpha channel is not fully opaque and [`AlphaPolicy::DiscardIfOpaque`](crate::AlphaPolicy::DiscardIfOpaque) was set.
+    AlphaNotOpaque,
+    /// Depth reduction was requested but [`DepthPolicy::Forbid`](crate::DepthPolicy::Forbid) was set.
+    DepthReductionForbidden,
+    /// Alpha removal was requested but [`AlphaPolicy::Forbid`](crate::AlphaPolicy::Forbid) was set.
+    AlphaRemovalForbidden,
+    /// RGB-to-grayscale conversion requires explicit luma coefficients.
+    RgbToGray,
+    /// Buffer allocation failed.
+    AllocationFailed,
 }
 
 impl fmt::Display for ConvertError {
@@ -54,6 +64,13 @@ impl fmt::Display for ConvertError {
             Self::UnsupportedTransfer { from, to } => {
                 write!(f, "unsupported transfer conversion: {from:?} → {to:?}")
             }
+            Self::AlphaNotOpaque => write!(f, "alpha channel is not fully opaque"),
+            Self::DepthReductionForbidden => write!(f, "depth reduction forbidden by policy"),
+            Self::AlphaRemovalForbidden => write!(f, "alpha removal forbidden by policy"),
+            Self::RgbToGray => {
+                write!(f, "RGB-to-grayscale requires explicit luma coefficients")
+            }
+            Self::AllocationFailed => write!(f, "buffer allocation failed"),
         }
     }
 }
