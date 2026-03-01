@@ -90,7 +90,13 @@ pub use color::{ColorContext, ColorProfileSource, NamedProfile, WorkingColorSpac
 pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
 
 // Re-export gamut conversion utilities.
-pub use gamut::{GamutMatrix, apply_matrix_f32, conversion_matrix};
+pub use gamut::{
+    GamutMatrix, apply_matrix_f32, apply_matrix_row_f32, apply_matrix_row_rgba_f32,
+    conversion_matrix,
+};
 
-// Re-export HDR types.
-pub use hdr::{ContentLightLevel, HdrMetadata, MasteringDisplay};
+// Re-export HDR types and tone mapping.
+pub use hdr::{
+    ContentLightLevel, HdrMetadata, MasteringDisplay, exposure_tonemap, reinhard_inverse,
+    reinhard_tonemap,
+};
