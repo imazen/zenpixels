@@ -34,11 +34,16 @@ extern crate alloc;
 pub mod descriptor;
 pub mod policy;
 
+pub mod cicp;
+pub mod color;
+pub mod pixel_types;
+
 mod convert;
 mod error;
 pub(crate) mod negotiate;
 
 pub mod adapt;
+pub mod buffer;
 pub mod converter;
 pub mod op_format;
 pub mod path;
@@ -64,6 +69,16 @@ pub use registry::{CodecFormats, FormatEntry};
 // Re-export key descriptor types at crate root for ergonomics.
 pub use descriptor::{
     AlphaMode, ByteOrder, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, PixelDescriptor,
-    PlanarDescriptor, PlaneMask, PlaneSemantic, PlaneSpec, SignalRange, Subsampling,
+    PixelFormat, PlanarDescriptor, PlaneMask, PlaneSemantic, PlaneSpec, SignalRange, Subsampling,
     TransferFunction, YuvMatrix,
 };
+
+// Re-export buffer types at crate root.
+pub use buffer::{BufferError, Pixel, PixelBuffer, PixelSlice, PixelSliceMut, Rgbx, Bgrx};
+
+// Re-export color types at crate root.
+pub use cicp::Cicp;
+pub use color::{ColorContext, ColorProfileSource, NamedProfile, WorkingColorSpace};
+
+// Re-export GrayAlpha pixel types at crate root.
+pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};

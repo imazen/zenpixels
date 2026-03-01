@@ -116,14 +116,10 @@ impl ConvertPlan {
                 )? {
                     steps.push(step);
                 }
-                if let Some(step) = layout_step(from.layout, to.layout) {
-                    steps.push(step);
-                }
+                steps.extend(layout_steps(from.layout, to.layout));
             } else {
                 // Layout first, then depth.
-                if let Some(step) = layout_step(from.layout, to.layout) {
-                    steps.push(step);
-                }
+                steps.extend(layout_steps(from.layout, to.layout));
                 if need_depth_change
                     && let Some(step) = depth_step(
                         from.channel_type,
@@ -223,40 +219,49 @@ impl ConvertPlan {
     }
 }
 
-/// Determine the layout conversion step.
-fn layout_step(from: ChannelLayout, to: ChannelLayout) -> Option<ConvertStep> {
+/// Determine the layout conversion step(s).
+///
+/// Some layout conversions require two steps (e.g., BGRA -> RGB needs
+/// swizzle + drop alpha). Returns up to 2 steps.
+fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
     if from == to {
-        return None;
+        return Vec::new();
     }
     match (from, to) {
         (ChannelLayout::Bgra, ChannelLayout::Rgba) | (ChannelLayout::Rgba, ChannelLayout::Bgra) => {
-            Some(ConvertStep::SwizzleBgraRgba)
+            vec![ConvertStep::SwizzleBgraRgba]
         }
-        (ChannelLayout::Rgb, ChannelLayout::Rgba) => Some(ConvertStep::AddAlpha),
+        (ChannelLayout::Rgb, ChannelLayout::Rgba) => vec![ConvertStep::AddAlpha],
         (ChannelLayout::Rgb, ChannelLayout::Bgra) => {
-            // Rgb → Bgra: add alpha then swizzle? We'll handle this as AddAlpha
-            // (produces RGBA) followed by SwizzleBgraRgba in convert_row.
-            // But we only return one step here; for multi-step we'd need to expand.
-            // For now, treat as AddAlpha (the swizzle part is in Bgra→Rgba later).
-            Some(ConvertStep::AddAlpha)
+            // Rgb -> RGBA -> BGRA: add alpha then swizzle.
+            vec![ConvertStep::AddAlpha, ConvertStep::SwizzleBgraRgba]
         }
-        (ChannelLayout::Rgba, ChannelLayout::Rgb) | (ChannelLayout::Bgra, ChannelLayout::Rgb) => {
-            Some(ConvertStep::DropAlpha)
+        (ChannelLayout::Rgba, ChannelLayout::Rgb) => vec![ConvertStep::DropAlpha],
+        (ChannelLayout::Bgra, ChannelLayout::Rgb) => {
+            // BGRA -> RGBA -> RGB: swizzle then drop alpha.
+            vec![ConvertStep::SwizzleBgraRgba, ConvertStep::DropAlpha]
         }
-        (ChannelLayout::Gray, ChannelLayout::Rgb) => Some(ConvertStep::GrayToRgb),
-        (ChannelLayout::Gray, ChannelLayout::Rgba) | (ChannelLayout::Gray, ChannelLayout::Bgra) => {
-            Some(ConvertStep::GrayToRgba)
+        (ChannelLayout::Gray, ChannelLayout::Rgb) => vec![ConvertStep::GrayToRgb],
+        (ChannelLayout::Gray, ChannelLayout::Rgba) => vec![ConvertStep::GrayToRgba],
+        (ChannelLayout::Gray, ChannelLayout::Bgra) => {
+            // Gray -> RGBA -> BGRA: expand then swizzle.
+            vec![ConvertStep::GrayToRgba, ConvertStep::SwizzleBgraRgba]
         }
-        (ChannelLayout::Rgb, ChannelLayout::Gray) => Some(ConvertStep::RgbToGray),
-        (ChannelLayout::Rgba, ChannelLayout::Gray) | (ChannelLayout::Bgra, ChannelLayout::Gray) => {
-            Some(ConvertStep::RgbaToGray)
+        (ChannelLayout::Rgb, ChannelLayout::Gray) => vec![ConvertStep::RgbToGray],
+        (ChannelLayout::Rgba, ChannelLayout::Gray) => vec![ConvertStep::RgbaToGray],
+        (ChannelLayout::Bgra, ChannelLayout::Gray) => {
+            // BGRA -> RGBA -> Gray: swizzle then to gray.
+            vec![ConvertStep::SwizzleBgraRgba, ConvertStep::RgbaToGray]
         }
-        (ChannelLayout::GrayAlpha, ChannelLayout::Rgba)
-        | (ChannelLayout::GrayAlpha, ChannelLayout::Bgra) => Some(ConvertStep::GrayAlphaToRgba),
-        (ChannelLayout::GrayAlpha, ChannelLayout::Rgb) => Some(ConvertStep::GrayAlphaToRgb),
-        (ChannelLayout::Gray, ChannelLayout::GrayAlpha) => Some(ConvertStep::GrayToGrayAlpha),
-        (ChannelLayout::GrayAlpha, ChannelLayout::Gray) => Some(ConvertStep::GrayAlphaToGray),
-        _ => None, // Unsupported layout conversion.
+        (ChannelLayout::GrayAlpha, ChannelLayout::Rgba) => vec![ConvertStep::GrayAlphaToRgba],
+        (ChannelLayout::GrayAlpha, ChannelLayout::Bgra) => {
+            // GrayAlpha -> RGBA -> BGRA: expand then swizzle.
+            vec![ConvertStep::GrayAlphaToRgba, ConvertStep::SwizzleBgraRgba]
+        }
+        (ChannelLayout::GrayAlpha, ChannelLayout::Rgb) => vec![ConvertStep::GrayAlphaToRgb],
+        (ChannelLayout::Gray, ChannelLayout::GrayAlpha) => vec![ConvertStep::GrayToGrayAlpha],
+        (ChannelLayout::GrayAlpha, ChannelLayout::Gray) => vec![ConvertStep::GrayAlphaToGray],
+        _ => Vec::new(), // Unsupported layout conversion.
     }
 }
 
