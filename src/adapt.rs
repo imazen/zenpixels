@@ -7,8 +7,10 @@ use alloc::borrow::Cow;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::convert::ConvertPlan;
 use crate::converter::RowConverter;
 use crate::negotiate::{ConvertIntent, best_match};
+use crate::policy::{AlphaPolicy, ConvertOptions};
 use crate::{ConvertError, PixelDescriptor};
 
 /// Result of format adaptation: the converted data and its descriptor.
@@ -170,6 +172,145 @@ pub fn convert_buffer(
     }
 
     Ok(output)
+}
+
+/// Negotiate format and convert with explicit policies.
+///
+/// Like [`adapt_for_encode`], but enforces [`ConvertOptions`] policies
+/// on the conversion. Returns an error if a policy forbids the required
+/// conversion.
+pub fn adapt_for_encode_explicit<'a>(
+    data: &'a [u8],
+    descriptor: PixelDescriptor,
+    width: u32,
+    rows: u32,
+    stride: usize,
+    supported: &[PixelDescriptor],
+    options: &ConvertOptions,
+) -> Result<Adapted<'a>, ConvertError> {
+    if supported.is_empty() {
+        return Err(ConvertError::EmptyFormatList);
+    }
+
+    // Check for exact match (zero-copy path).
+    if supported.contains(&descriptor) {
+        return Ok(Adapted {
+            data: contiguous_from_strided(data, width, rows, stride, descriptor.bytes_per_pixel()),
+            descriptor,
+            width,
+            rows,
+        });
+    }
+
+    // Check for transfer-agnostic match.
+    for &target in supported {
+        if descriptor.channel_type == target.channel_type
+            && descriptor.layout == target.layout
+            && descriptor.alpha == target.alpha
+        {
+            return Ok(Adapted {
+                data: contiguous_from_strided(
+                    data,
+                    width,
+                    rows,
+                    stride,
+                    descriptor.bytes_per_pixel(),
+                ),
+                descriptor: target,
+                width,
+                rows,
+            });
+        }
+    }
+
+    // Need conversion — pick best target, then validate policies.
+    let target = best_match(descriptor, supported, ConvertIntent::Fastest)
+        .ok_or(ConvertError::EmptyFormatList)?;
+
+    // Validate policies before doing work.
+    let plan = ConvertPlan::new_explicit(descriptor, target, options)?;
+
+    // Runtime opacity check for DiscardIfOpaque.
+    let drops_alpha = descriptor.alpha.is_some() && target.alpha.is_none();
+    if drops_alpha && options.alpha_policy == AlphaPolicy::DiscardIfOpaque {
+        let src_bpp = descriptor.bytes_per_pixel();
+        if !is_fully_opaque(data, width, rows, stride, src_bpp, &descriptor) {
+            return Err(ConvertError::AlphaNotOpaque);
+        }
+    }
+
+    let converter = RowConverter::from_plan(plan);
+    let src_bpp = descriptor.bytes_per_pixel();
+    let dst_bpp = target.bytes_per_pixel();
+    let dst_stride = (width as usize) * dst_bpp;
+    let mut output = vec![0u8; dst_stride * rows as usize];
+
+    for y in 0..rows {
+        let src_start = y as usize * stride;
+        let src_end = src_start + (width as usize * src_bpp);
+        let dst_start = y as usize * dst_stride;
+        let dst_end = dst_start + dst_stride;
+        converter.convert_row(
+            &data[src_start..src_end],
+            &mut output[dst_start..dst_end],
+            width,
+        );
+    }
+
+    Ok(Adapted {
+        data: Cow::Owned(output),
+        descriptor: target,
+        width,
+        rows,
+    })
+}
+
+/// Check if all alpha values in a strided buffer are fully opaque.
+fn is_fully_opaque(
+    data: &[u8],
+    width: u32,
+    rows: u32,
+    stride: usize,
+    bpp: usize,
+    desc: &PixelDescriptor,
+) -> bool {
+    if desc.alpha.is_none() {
+        return true;
+    }
+    let cs = desc.channel_type.byte_size();
+    let alpha_offset = (desc.layout.channels() - 1) * cs;
+    for y in 0..rows {
+        let row_start = y as usize * stride;
+        for x in 0..width as usize {
+            let off = row_start + x * bpp + alpha_offset;
+            match desc.channel_type {
+                crate::ChannelType::U8 => {
+                    if data[off] != 255 {
+                        return false;
+                    }
+                }
+                crate::ChannelType::U16 => {
+                    let v = u16::from_ne_bytes([data[off], data[off + 1]]);
+                    if v != 65535 {
+                        return false;
+                    }
+                }
+                crate::ChannelType::F32 => {
+                    let v = f32::from_ne_bytes([
+                        data[off],
+                        data[off + 1],
+                        data[off + 2],
+                        data[off + 3],
+                    ]);
+                    if v < 1.0 {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+    }
+    true
 }
 
 /// Extract contiguous packed rows from potentially strided data.

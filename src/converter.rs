@@ -37,6 +37,11 @@ impl RowConverter {
         Ok(Self { plan })
     }
 
+    /// Create a converter from a pre-computed plan.
+    pub fn from_plan(plan: ConvertPlan) -> Self {
+        Self { plan }
+    }
+
     /// Convert one row of `width` pixels.
     ///
     /// `src` must contain at least `width * from.bytes_per_pixel()` bytes.

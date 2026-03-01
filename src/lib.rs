@@ -32,6 +32,7 @@
 extern crate alloc;
 
 pub mod descriptor;
+pub mod policy;
 
 mod convert;
 mod error;
@@ -44,6 +45,7 @@ pub mod path;
 pub mod pixels;
 pub mod registry;
 
+pub use adapt::adapt_for_encode_explicit;
 pub use convert::{ConvertPlan, convert_row};
 pub use converter::RowConverter;
 pub use error::ConvertError;
@@ -56,6 +58,7 @@ pub use path::{
     ConversionPath, LossBucket, MatrixStats, PathEntry, QualityThreshold, generate_path_matrix,
     matrix_stats, optimal_path,
 };
+pub use policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GrayExpand, LumaCoefficients};
 pub use registry::{CodecFormats, FormatEntry};
 
 // Re-export key descriptor types at crate root for ergonomics.
