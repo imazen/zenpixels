@@ -15,7 +15,9 @@
 //! This matters for provenance: converting a 10-bit-effective u16 to u8 loses
 //! only 2 bits, not 8.
 
-use zencodec_types::PixelDescriptor;
+use crate::{
+    AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
+};
 
 /// A format a codec can produce (decode) or consume (encode).
 #[derive(Clone, Copy, Debug)]
@@ -43,12 +45,11 @@ impl FormatEntry {
     /// Create a format entry with standard precision (matches container type).
     const fn standard(descriptor: PixelDescriptor) -> Self {
         let effective_bits = match descriptor.channel_type {
-            zencodec_types::ChannelType::U8 => 8,
-            zencodec_types::ChannelType::U16 => 16,
-            zencodec_types::ChannelType::F16 => 11,
-            zencodec_types::ChannelType::I16 => 15,
-            zencodec_types::ChannelType::F32 => 32,
-            _ => 8,
+            ChannelType::U8 => 8,
+            ChannelType::U16 => 16,
+            ChannelType::F16 => 11,
+            ChannelType::I16 => 15,
+            ChannelType::F32 => 32,
         };
         Self {
             descriptor,
@@ -140,11 +141,11 @@ pub static JPEG_DECODE_EXTENDED: &[FormatEntry] = &[
     // SrgbF32: f32 sRGB gamma, unclamped integer IDCT, preserves ringing
     FormatEntry::overshoot(
         PixelDescriptor::new_full(
-            zencodec_types::ChannelType::F32,
-            zencodec_types::ChannelLayout::Rgb,
-            zencodec_types::AlphaMode::None,
-            zencodec_types::TransferFunction::Srgb,
-            zencodec_types::ColorPrimaries::Bt709,
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            AlphaMode::None,
+            TransferFunction::Srgb,
+            ColorPrimaries::Bt709,
         ),
         8,
     ),
@@ -153,11 +154,11 @@ pub static JPEG_DECODE_EXTENDED: &[FormatEntry] = &[
     // SrgbF32Precise: f32 sRGB with Laplacian dequantization biases (~10-bit effective)
     FormatEntry::overshoot(
         PixelDescriptor::new_full(
-            zencodec_types::ChannelType::F32,
-            zencodec_types::ChannelLayout::Rgb,
-            zencodec_types::AlphaMode::None,
-            zencodec_types::TransferFunction::Srgb,
-            zencodec_types::ColorPrimaries::Bt709,
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            AlphaMode::None,
+            TransferFunction::Srgb,
+            ColorPrimaries::Bt709,
         ),
         10,
     ),
@@ -402,9 +403,8 @@ pub static PNM: CodecFormats = CodecFormats {
 // ═══════════════════════════════════════════════════════════════════════
 
 /// All registered codecs.
-pub static ALL_CODECS: &[&CodecFormats] = &[
-    &JPEG, &PNG, &GIF, &WEBP, &AVIF, &JXL, &BMP, &FARBFELD, &PNM,
-];
+pub static ALL_CODECS: &[&CodecFormats] =
+    &[&JPEG, &PNG, &GIF, &WEBP, &AVIF, &JXL, &BMP, &FARBFELD, &PNM];
 
 #[cfg(test)]
 mod tests {
@@ -429,14 +429,17 @@ mod tests {
     #[test]
     fn effective_bits_within_container() {
         for codec in ALL_CODECS {
-            for entry in codec.decode_outputs.iter().chain(codec.encode_inputs.iter()) {
+            for entry in codec
+                .decode_outputs
+                .iter()
+                .chain(codec.encode_inputs.iter())
+            {
                 let container_bits = match entry.descriptor.channel_type {
-                    zencodec_types::ChannelType::U8 => 8,
-                    zencodec_types::ChannelType::U16 => 16,
-                    zencodec_types::ChannelType::F16 => 16,
-                    zencodec_types::ChannelType::I16 => 16,
-                    zencodec_types::ChannelType::F32 => 32,
-                    _ => 64,
+                    ChannelType::U8 => 8,
+                    ChannelType::U16 => 16,
+                    ChannelType::F16 => 16,
+                    ChannelType::I16 => 16,
+                    ChannelType::F32 => 32,
                 };
                 assert!(
                     entry.effective_bits <= container_bits,
@@ -453,7 +456,10 @@ mod tests {
     #[test]
     fn jpeg_extended_has_overshoot() {
         for entry in JPEG_DECODE_EXTENDED {
-            assert!(entry.can_overshoot, "JPEG extended f32 decode should have overshoot");
+            assert!(
+                entry.can_overshoot,
+                "JPEG extended f32 decode should have overshoot"
+            );
         }
     }
 

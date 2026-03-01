@@ -1,25 +1,20 @@
 //! Error types for pixel format conversion.
 
+use crate::{PixelDescriptor, TransferFunction};
 use core::fmt;
-use zencodec_types::{PixelDescriptor, TransferFunction};
 
 /// Errors that can occur during pixel format negotiation or conversion.
 #[derive(Debug, Clone)]
 pub enum ConvertError {
     /// No supported format could be found for the source descriptor.
-    NoMatch {
-        source: PixelDescriptor,
-    },
+    NoMatch { source: PixelDescriptor },
     /// No conversion path exists between the two formats.
     NoPath {
         from: PixelDescriptor,
         to: PixelDescriptor,
     },
     /// Source and destination buffer sizes don't match the expected dimensions.
-    BufferSize {
-        expected: usize,
-        actual: usize,
-    },
+    BufferSize { expected: usize, actual: usize },
     /// Width is zero or would overflow stride calculations.
     InvalidWidth(u32),
     /// The supported format list was empty.
@@ -57,10 +52,7 @@ impl fmt::Display for ConvertError {
             Self::InvalidWidth(w) => write!(f, "invalid width: {w}"),
             Self::EmptyFormatList => write!(f, "supported format list is empty"),
             Self::UnsupportedTransfer { from, to } => {
-                write!(
-                    f,
-                    "unsupported transfer conversion: {from:?} → {to:?}"
-                )
+                write!(f, "unsupported transfer conversion: {from:?} → {to:?}")
             }
         }
     }

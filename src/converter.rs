@@ -3,15 +3,13 @@
 //! [`RowConverter`] wraps a [`ConvertPlan`] and provides a streaming-friendly
 //! API for converting pixel rows without per-call allocation.
 
-use zencodec_types::{PixelDescriptor, PixelSlice, PixelSliceMut};
-
-use crate::convert::{convert_row, ConvertPlan};
+use crate::PixelDescriptor;
+use crate::convert::{ConvertPlan, convert_row};
 use crate::error::ConvertError;
 
 /// Pre-computed pixel format converter.
 ///
-/// Create once, then call [`convert_row`](Self::convert_row) or
-/// [`convert_slice`](Self::convert_slice) for each row/strip.
+/// Create once, then call [`convert_row`](Self::convert_row) for each row.
 ///
 /// # Example
 ///
@@ -49,28 +47,37 @@ impl RowConverter {
         convert_row(&self.plan, src, dst, width);
     }
 
-    /// Convert a full [`PixelSlice`] strip into a [`PixelSliceMut`].
+    /// Convert multiple rows from a strided source buffer to a strided destination.
     ///
-    /// The slices must have the same width and row count.
-    pub fn convert_slice(
+    /// The source and destination can have different strides.
+    pub fn convert_rows(
         &self,
-        src: &PixelSlice<'_>,
-        dst: &mut PixelSliceMut<'_>,
+        src: &[u8],
+        src_stride: usize,
+        dst: &mut [u8],
+        dst_stride: usize,
+        width: u32,
+        rows: u32,
     ) -> Result<(), ConvertError> {
-        if src.width() != dst.width() || src.rows() != dst.rows() {
-            return Err(ConvertError::BufferSize {
-                expected: dst.width() as usize * dst.rows() as usize,
-                actual: src.width() as usize * src.rows() as usize,
-            });
-        }
+        for y in 0..rows {
+            let src_start = y as usize * src_stride;
+            let src_end = src_start + (width as usize * self.plan.from().bytes_per_pixel());
+            let dst_start = y as usize * dst_stride;
+            let dst_end = dst_start + (width as usize * self.plan.to().bytes_per_pixel());
 
-        let width = src.width();
-        for y in 0..src.rows() {
-            let src_row = src.row(y);
-            let dst_row = dst.row_mut(y);
-            self.convert_row(src_row, dst_row, width);
-        }
+            if src_end > src.len() || dst_end > dst.len() {
+                return Err(ConvertError::BufferSize {
+                    expected: dst_end,
+                    actual: dst.len(),
+                });
+            }
 
+            self.convert_row(
+                &src[src_start..src_end],
+                &mut dst[dst_start..dst_end],
+                width,
+            );
+        }
         Ok(())
     }
 

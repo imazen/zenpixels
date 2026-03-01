@@ -1,6 +1,6 @@
 //! Tests for the adapt module (codec helper functions).
 
-use zencodec_types::{PixelDescriptor, PixelSlice};
+use zenpixels::PixelDescriptor;
 use zenpixels::adapt::{adapt_for_encode, convert_buffer};
 
 /// When input matches a supported format, should return borrowed data.
@@ -12,11 +12,9 @@ fn adapt_exact_match_is_borrowed() {
     let stride = width as usize * bpp;
     let data = vec![128u8; stride * rows as usize];
     let desc = PixelDescriptor::RGB8_SRGB;
-
-    let pixels = PixelSlice::new(&data, width, rows, stride, desc).unwrap();
     let supported = &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB];
 
-    let result = adapt_for_encode(&pixels, supported).unwrap();
+    let result = adapt_for_encode(&data, desc, width, rows, stride, supported).unwrap();
     assert_eq!(result.descriptor, PixelDescriptor::RGB8_SRGB);
     assert!(
         matches!(result.data, std::borrow::Cow::Borrowed(_)),
@@ -37,12 +35,10 @@ fn adapt_converts_when_needed() {
         data.extend_from_slice(&[10, 20, 30, 255]);
     }
     let desc = PixelDescriptor::BGRA8_SRGB;
-
-    let pixels = PixelSlice::new(&data, width, rows, stride, desc).unwrap();
     // Only supports RGBA8.
     let supported = &[PixelDescriptor::RGBA8_SRGB];
 
-    let result = adapt_for_encode(&pixels, supported).unwrap();
+    let result = adapt_for_encode(&data, desc, width, rows, stride, supported).unwrap();
     assert_eq!(result.descriptor, PixelDescriptor::RGBA8_SRGB);
     assert!(
         matches!(result.data, std::borrow::Cow::Owned(_)),
@@ -59,13 +55,10 @@ fn adapt_converts_when_needed() {
 /// Empty format list should return error.
 #[test]
 fn adapt_empty_list_errors() {
-    let width = 1u32;
-    let rows = 1u32;
     let data = vec![0u8; 3];
     let desc = PixelDescriptor::RGB8_SRGB;
-    let pixels = PixelSlice::new(&data, width, rows, 3, desc).unwrap();
 
-    let result = adapt_for_encode(&pixels, &[]);
+    let result = adapt_for_encode(&data, desc, 1, 1, 3, &[]);
     assert!(result.is_err());
 }
 
@@ -77,11 +70,9 @@ fn adapt_transfer_agnostic_match() {
     let rows = 1u32;
     let data = vec![100u8; 6]; // 2 RGB pixels
     let desc = PixelDescriptor::RGB8; // Unknown transfer
-
-    let pixels = PixelSlice::new(&data, width, rows, 6, desc).unwrap();
     let supported = &[PixelDescriptor::RGB8_SRGB];
 
-    let result = adapt_for_encode(&pixels, supported).unwrap();
+    let result = adapt_for_encode(&data, desc, width, rows, 6, supported).unwrap();
     assert_eq!(result.descriptor, PixelDescriptor::RGB8_SRGB);
     assert!(
         matches!(result.data, std::borrow::Cow::Borrowed(_)),

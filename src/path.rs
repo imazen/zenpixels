@@ -10,10 +10,10 @@
 //! 4. Filter by quality threshold
 //! 5. Pick lowest total cost among qualifying paths
 
-use zencodec_types::PixelDescriptor;
+use crate::PixelDescriptor;
 
 use crate::negotiate::{
-    conversion_cost_with_provenance, suitability_loss, weighted_score, ConversionCost, Provenance,
+    ConversionCost, Provenance, conversion_cost_with_provenance, suitability_loss, weighted_score,
 };
 use crate::op_format::OpCategory;
 use crate::registry::{CodecFormats, FormatEntry};
@@ -145,12 +145,13 @@ pub fn optimal_path(
     for working in candidates {
         let s2w = conversion_cost_with_provenance(source, working, provenance);
         let suit = suitability_loss(working, intent);
-        let w2o = conversion_cost_with_provenance(working, output, provenance_after_operation(provenance, working));
+        let w2o = conversion_cost_with_provenance(
+            working,
+            output,
+            provenance_after_operation(provenance, working),
+        );
 
-        let total_loss = s2w
-            .loss
-            .saturating_add(suit)
-            .saturating_add(w2o.loss);
+        let total_loss = s2w.loss.saturating_add(suit).saturating_add(w2o.loss);
 
         // Filter by threshold.
         if total_loss > max_loss {
@@ -187,10 +188,7 @@ pub fn optimal_path(
 /// After an operation processes data in the working format, the provenance
 /// origin depth is the *working format's* depth (the operation "consumes"
 /// the original precision and produces new data at working precision).
-fn provenance_after_operation(
-    original: Provenance,
-    working: PixelDescriptor,
-) -> Provenance {
+fn provenance_after_operation(original: Provenance, working: PixelDescriptor) -> Provenance {
     Provenance::with_origin(working.channel_type, original.origin_primaries)
 }
 
@@ -264,7 +262,7 @@ pub fn generate_path_matrix(
 /// Uses `effective_bits` to determine the origin depth: if effective_bits ≤ 8,
 /// origin is U8; if ≤ 16, origin is U16; otherwise F32.
 fn provenance_from_entry(entry: &FormatEntry) -> Provenance {
-    use zencodec_types::ChannelType;
+    use crate::ChannelType;
 
     let origin_depth = if entry.effective_bits <= 8 {
         ChannelType::U8
@@ -337,13 +335,23 @@ pub fn matrix_stats(entries: &[PathEntry]) -> MatrixStats {
 mod tests {
     use super::*;
     use crate::registry;
+    use crate::{AlphaMode, ChannelType, TransferFunction};
 
     #[test]
     fn passthrough_identity_is_lossless() {
         let src = PixelDescriptor::RGB8_SRGB;
         let provenance = Provenance::from_source(src);
-        let path = optimal_path(src, provenance, OpCategory::Passthrough, src, QualityThreshold::Lossless);
-        assert!(path.is_some(), "passthrough identity should always find a path");
+        let path = optimal_path(
+            src,
+            provenance,
+            OpCategory::Passthrough,
+            src,
+            QualityThreshold::Lossless,
+        );
+        assert!(
+            path.is_some(),
+            "passthrough identity should always find a path"
+        );
         let path = path.unwrap();
         assert_eq!(path.working_format, src);
         assert_eq!(path.total_loss, 0);
@@ -362,14 +370,14 @@ mod tests {
         );
         assert!(path.is_some());
         let path = path.unwrap();
-        assert_eq!(path.working_format.channel_type, zencodec_types::ChannelType::F32);
-        assert_eq!(path.working_format.transfer, zencodec_types::TransferFunction::Linear);
+        assert_eq!(path.working_format.channel_type, ChannelType::F32);
+        assert_eq!(path.working_format.transfer, TransferFunction::Linear);
     }
 
     #[test]
     fn jpeg_to_jpeg_passthrough() {
         let src = PixelDescriptor::RGB8_SRGB;
-        let provenance = Provenance::with_origin_depth(zencodec_types::ChannelType::U8);
+        let provenance = Provenance::with_origin_depth(ChannelType::U8);
         let path = optimal_path(
             src,
             provenance,
@@ -394,7 +402,7 @@ mod tests {
         );
         assert!(path.is_some());
         let path = path.unwrap();
-        assert_eq!(path.working_format.alpha, zencodec_types::AlphaMode::Premultiplied);
+        assert_eq!(path.working_format.alpha, AlphaMode::Premultiplied);
     }
 
     #[test]
@@ -412,7 +420,11 @@ mod tests {
 
     #[test]
     fn generate_jpeg_to_jpeg_matrix() {
-        let ops = [OpCategory::Passthrough, OpCategory::ResizeGentle, OpCategory::ResizeSharp];
+        let ops = [
+            OpCategory::Passthrough,
+            OpCategory::ResizeGentle,
+            OpCategory::ResizeSharp,
+        ];
         let matrix = generate_path_matrix(
             &[&registry::JPEG],
             &ops,
@@ -434,8 +446,7 @@ mod tests {
             OpCategory::ResizeGentle,
             OpCategory::ResizeSharp,
         ];
-        let codecs: alloc::vec::Vec<&CodecFormats> =
-            registry::ALL_CODECS.iter().copied().collect();
+        let codecs: alloc::vec::Vec<&CodecFormats> = registry::ALL_CODECS.iter().copied().collect();
         let matrix = generate_path_matrix(
             &codecs,
             &all_ops,
@@ -449,14 +460,16 @@ mod tests {
         // Most triples should have valid paths with High threshold
         assert!(
             stats.paths_found as f64 / stats.total_triples as f64 > 0.5,
-            "most triples should have valid paths: {}/{}", stats.paths_found, stats.total_triples
+            "most triples should have valid paths: {}/{}",
+            stats.paths_found,
+            stats.total_triples
         );
     }
 
     #[test]
     fn quality_threshold_filters_correctly() {
         let src = PixelDescriptor::RGBF32_LINEAR;
-        let provenance = Provenance::with_origin_depth(zencodec_types::ChannelType::F32);
+        let provenance = Provenance::with_origin_depth(ChannelType::F32);
 
         // Strict lossless threshold: f32→u8 should not qualify
         let lossless_path = optimal_path(
@@ -478,6 +491,9 @@ mod tests {
 
         // f32 origin → u8 has loss, so lossless should fail but relaxed should work
         assert!(lossless_path.is_none(), "f32→u8 should not be lossless");
-        assert!(relaxed_path.is_some(), "f32→u8 should work with relaxed threshold");
+        assert!(
+            relaxed_path.is_some(),
+            "f32→u8 should work with relaxed threshold"
+        );
     }
 }

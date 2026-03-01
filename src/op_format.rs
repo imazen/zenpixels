@@ -9,7 +9,7 @@
 //! The path solver uses these requirements to generate candidate working
 //! formats and evaluate conversion paths.
 
-use zencodec_types::{AlphaMode, ChannelType, TransferFunction};
+use crate::{AlphaMode, ChannelType, PixelDescriptor, TransferFunction};
 
 use crate::ConvertIntent;
 
@@ -212,9 +212,9 @@ impl OpCategory {
     /// source and output formats.
     pub fn candidate_working_formats(
         self,
-        source: zencodec_types::PixelDescriptor,
-    ) -> alloc::vec::Vec<zencodec_types::PixelDescriptor> {
-        use zencodec_types::{ChannelLayout, PixelDescriptor};
+        source: PixelDescriptor,
+    ) -> alloc::vec::Vec<PixelDescriptor> {
+        use crate::ChannelLayout;
 
         let req = self.requirement();
         let mut candidates = alloc::vec::Vec::with_capacity(4);
@@ -240,14 +240,24 @@ impl OpCategory {
         let ideal_alpha = req.alpha.unwrap_or(source.alpha);
 
         // RGB variant
-        let rgb_ideal = PixelDescriptor::new(ideal_depth, ChannelLayout::Rgb, AlphaMode::None, ideal_transfer);
+        let rgb_ideal = PixelDescriptor::new(
+            ideal_depth,
+            ChannelLayout::Rgb,
+            AlphaMode::None,
+            ideal_transfer,
+        );
         if !candidates.contains(&rgb_ideal) {
             candidates.push(rgb_ideal);
         }
 
         // RGBA variant (important for alpha-carrying sources and compositing)
         if source.layout.has_alpha() || req.alpha.is_some() {
-            let rgba_ideal = PixelDescriptor::new(ideal_depth, ChannelLayout::Rgba, ideal_alpha, ideal_transfer);
+            let rgba_ideal = PixelDescriptor::new(
+                ideal_depth,
+                ChannelLayout::Rgba,
+                ideal_alpha,
+                ideal_transfer,
+            );
             if !candidates.contains(&rgba_ideal) {
                 candidates.push(rgba_ideal);
             }
@@ -255,15 +265,23 @@ impl OpCategory {
 
         // Gray variant (if source is grayscale)
         if source.is_grayscale() {
-            let gray_ideal =
-                PixelDescriptor::new(ideal_depth, ChannelLayout::Gray, AlphaMode::None, ideal_transfer);
+            let gray_ideal = PixelDescriptor::new(
+                ideal_depth,
+                ChannelLayout::Gray,
+                AlphaMode::None,
+                ideal_transfer,
+            );
             if !candidates.contains(&gray_ideal) {
                 candidates.push(gray_ideal);
             }
             // GrayAlpha variant (if source has alpha, prefer staying in GA over expanding to RGBA)
             if source.layout == ChannelLayout::GrayAlpha {
-                let ga_ideal =
-                    PixelDescriptor::new(ideal_depth, ChannelLayout::GrayAlpha, ideal_alpha, ideal_transfer);
+                let ga_ideal = PixelDescriptor::new(
+                    ideal_depth,
+                    ChannelLayout::GrayAlpha,
+                    ideal_alpha,
+                    ideal_transfer,
+                );
                 if !candidates.contains(&ga_ideal) {
                     candidates.push(ga_ideal);
                 }
@@ -275,10 +293,7 @@ impl OpCategory {
 }
 
 /// Check if a format satisfies an operation's requirements.
-fn format_satisfies(
-    desc: zencodec_types::PixelDescriptor,
-    req: &OpRequirement,
-) -> bool {
+fn format_satisfies(desc: PixelDescriptor, req: &OpRequirement) -> bool {
     // Check transfer function.
     if let Some(tf) = req.transfer
         && desc.transfer != tf
@@ -291,8 +306,7 @@ fn format_satisfies(
         return false;
     }
     if let Some(min) = req.min_depth
-        && crate::negotiate::channel_bits(desc.channel_type)
-            < crate::negotiate::channel_bits(min)
+        && crate::negotiate::channel_bits(desc.channel_type) < crate::negotiate::channel_bits(min)
     {
         return false;
     }
@@ -336,26 +350,34 @@ mod tests {
 
     #[test]
     fn passthrough_candidates_match_source() {
-        let src = zencodec_types::PixelDescriptor::RGB8_SRGB;
+        let src = PixelDescriptor::RGB8_SRGB;
         let candidates = OpCategory::Passthrough.candidate_working_formats(src);
         assert_eq!(candidates, alloc::vec![src]);
     }
 
     #[test]
     fn resize_sharp_candidates_are_f32_linear() {
-        let src = zencodec_types::PixelDescriptor::RGB8_SRGB;
+        let src = PixelDescriptor::RGB8_SRGB;
         let candidates = OpCategory::ResizeSharp.candidate_working_formats(src);
-        assert!(candidates
-            .iter()
-            .all(|c| c.channel_type == ChannelType::F32 && c.transfer == TransferFunction::Linear));
+        assert!(
+            candidates
+                .iter()
+                .all(|c| c.channel_type == ChannelType::F32
+                    && c.transfer == TransferFunction::Linear)
+        );
     }
 
     #[test]
     fn composite_candidates_include_premul() {
-        let src = zencodec_types::PixelDescriptor::RGBA8_SRGB;
+        let src = PixelDescriptor::RGBA8_SRGB;
         let candidates = OpCategory::Composite.candidate_working_formats(src);
-        let has_premul = candidates.iter().any(|c| c.alpha == AlphaMode::Premultiplied);
-        assert!(has_premul, "composite candidates must include premultiplied format");
+        let has_premul = candidates
+            .iter()
+            .any(|c| c.alpha == AlphaMode::Premultiplied);
+        assert!(
+            has_premul,
+            "composite candidates must include premultiplied format"
+        );
     }
 
     #[test]

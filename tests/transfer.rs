@@ -3,9 +3,7 @@
 //! Verifies that sRGB ↔ linear conversions produce correct results
 //! and that naive (no-gamma) paths are used when transfer is Unknown.
 
-use zencodec_types::{
-    AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction,
-};
+use zenpixels::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
 use zenpixels::RowConverter;
 
 /// sRGB u8 → linear f32 should apply the EOTF.
@@ -48,11 +46,7 @@ fn srgb_u8_to_linear_f32_accuracy() {
     );
 
     // White should be 1.0.
-    assert!(
-        (f32_vals[6] - 1.0).abs() < 1e-6,
-        "white R: {}",
-        f32_vals[6]
-    );
+    assert!((f32_vals[6] - 1.0).abs() < 1e-6, "white R: {}", f32_vals[6]);
 }
 
 /// linear f32 → sRGB u8 should apply the OETF.

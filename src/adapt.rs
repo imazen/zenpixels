@@ -7,11 +7,10 @@ use alloc::borrow::Cow;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use zencodec_types::{PixelDescriptor, PixelSlice};
-
+use crate::PixelDescriptor;
 use crate::converter::RowConverter;
 use crate::error::ConvertError;
-use crate::negotiate::{best_match, ConvertIntent};
+use crate::negotiate::{ConvertIntent, best_match};
 
 /// Result of format adaptation: the converted data and its descriptor.
 pub struct Adapted<'a> {
@@ -25,50 +24,49 @@ pub struct Adapted<'a> {
     pub rows: u32,
 }
 
-/// Negotiate format and convert a [`PixelSlice`] for encoding.
+/// Negotiate format and convert pixel data for encoding.
 ///
-/// Uses [`ConvertIntent::Fastest`] — minimizes conversion cost, which is the
-/// right default for codec encoding where the codec knows what format it wants.
+/// Uses [`ConvertIntent::Fastest`] — minimizes conversion cost.
 ///
 /// If the input already matches one of the `supported` formats, returns
-/// `Cow::Borrowed` (zero-copy). Otherwise, converts to the best match
-/// and returns `Cow::Owned`.
+/// `Cow::Borrowed` (zero-copy). Otherwise, converts to the best match.
 ///
-/// # Errors
+/// # Arguments
 ///
-/// Returns [`ConvertError::EmptyFormatList`] if `supported` is empty.
-/// Returns [`ConvertError::NoPath`] if no conversion exists to any supported format.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// fn encode(self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, Error> {
-///     let adapted = zenpixels::adapt::adapt_for_encode(
-///         &pixels,
-///         &Self::SUPPORTED_FORMATS,
-///     )?;
-///     self.do_encode_native(&adapted.data, adapted.descriptor, adapted.width, adapted.rows)
-/// }
-/// ```
+/// * `data` - Raw pixel bytes, `rows * stride` bytes minimum.
+/// * `descriptor` - Format of the input data.
+/// * `width` - Pixels per row.
+/// * `rows` - Number of rows.
+/// * `stride` - Bytes between row starts (use `width * descriptor.bytes_per_pixel()` for packed).
+/// * `supported` - Formats the encoder accepts.
 pub fn adapt_for_encode<'a>(
-    pixels: &PixelSlice<'a>,
+    data: &'a [u8],
+    descriptor: PixelDescriptor,
+    width: u32,
+    rows: u32,
+    stride: usize,
     supported: &[PixelDescriptor],
 ) -> Result<Adapted<'a>, ConvertError> {
-    adapt_for_encode_with_intent(pixels, supported, ConvertIntent::Fastest)
+    adapt_for_encode_with_intent(
+        data,
+        descriptor,
+        width,
+        rows,
+        stride,
+        supported,
+        ConvertIntent::Fastest,
+    )
 }
 
-/// Negotiate format and convert a [`PixelSlice`] with intent awareness.
+/// Negotiate format and convert with intent awareness.
 ///
-/// Like [`adapt_for_encode`], but lets the caller specify a [`ConvertIntent`]
-/// to shift format preferences. For example, `ConvertIntent::LinearLight` will
-/// prefer f32 Linear targets for gamma-correct resize operations.
-///
-/// # Errors
-///
-/// Returns [`ConvertError::EmptyFormatList`] if `supported` is empty.
-/// Returns [`ConvertError::NoPath`] if no conversion exists to any supported format.
+/// Like [`adapt_for_encode`], but lets the caller specify a [`ConvertIntent`].
 pub fn adapt_for_encode_with_intent<'a>(
-    pixels: &PixelSlice<'a>,
+    data: &'a [u8],
+    descriptor: PixelDescriptor,
+    width: u32,
+    rows: u32,
+    stride: usize,
     supported: &[PixelDescriptor],
     intent: ConvertIntent,
 ) -> Result<Adapted<'a>, ConvertError> {
@@ -76,53 +74,59 @@ pub fn adapt_for_encode_with_intent<'a>(
         return Err(ConvertError::EmptyFormatList);
     }
 
-    let src_desc = pixels.descriptor();
-
-    // Check for exact match first (zero-copy path).
-    if supported.contains(&src_desc) {
+    // Check for exact match (zero-copy path).
+    if supported.contains(&descriptor) {
         return Ok(Adapted {
-            data: pixels.contiguous_bytes(),
-            descriptor: src_desc,
-            width: pixels.width(),
-            rows: pixels.rows(),
+            data: contiguous_from_strided(data, width, rows, stride, descriptor.bytes_per_pixel()),
+            descriptor,
+            width,
+            rows,
         });
     }
 
-    // Also check for transfer-agnostic match: if source has Unknown transfer
-    // and a supported format matches on everything except transfer, it's still
-    // a zero-copy path (the codec doesn't care about the transfer tag).
+    // Check for transfer-agnostic match: if source has Unknown transfer
+    // and a supported format matches on everything except transfer, it's
+    // still a zero-copy path.
     for &target in supported {
-        if src_desc.channel_type == target.channel_type
-            && src_desc.layout == target.layout
-            && src_desc.alpha == target.alpha
+        if descriptor.channel_type == target.channel_type
+            && descriptor.layout == target.layout
+            && descriptor.alpha == target.alpha
         {
-            // Layout-compatible, only transfer differs — zero-copy.
             return Ok(Adapted {
-                data: pixels.contiguous_bytes(),
+                data: contiguous_from_strided(
+                    data,
+                    width,
+                    rows,
+                    stride,
+                    descriptor.bytes_per_pixel(),
+                ),
                 descriptor: target,
-                width: pixels.width(),
-                rows: pixels.rows(),
+                width,
+                rows,
             });
         }
     }
 
-    // Need conversion — pick best target and convert.
-    let target =
-        best_match(src_desc, supported, intent).ok_or(ConvertError::EmptyFormatList)?;
+    // Need conversion — pick best target.
+    let target = best_match(descriptor, supported, intent).ok_or(ConvertError::EmptyFormatList)?;
 
-    let converter = RowConverter::new(src_desc, target)?;
+    let converter = RowConverter::new(descriptor, target)?;
 
-    let width = pixels.width();
-    let rows = pixels.rows();
+    let src_bpp = descriptor.bytes_per_pixel();
     let dst_bpp = target.bytes_per_pixel();
     let dst_stride = (width as usize) * dst_bpp;
     let mut output = vec![0u8; dst_stride * rows as usize];
 
     for y in 0..rows {
-        let src_row = pixels.row(y);
+        let src_start = y as usize * stride;
+        let src_end = src_start + (width as usize * src_bpp);
         let dst_start = y as usize * dst_stride;
         let dst_end = dst_start + dst_stride;
-        converter.convert_row(src_row, &mut output[dst_start..dst_end], width);
+        converter.convert_row(
+            &data[src_start..src_end],
+            &mut output[dst_start..dst_end],
+            width,
+        );
     }
 
     Ok(Adapted {
@@ -135,10 +139,7 @@ pub fn adapt_for_encode_with_intent<'a>(
 
 /// Convert a raw byte buffer from one format to another.
 ///
-/// Useful for decode-side adaptation where you have raw decoded bytes
-/// and need them in a specific target format.
-///
-/// Returns the converted buffer.
+/// Assumes packed (stride = width * bpp) layout.
 pub fn convert_buffer(
     src: &[u8],
     width: u32,
@@ -170,4 +171,28 @@ pub fn convert_buffer(
     }
 
     Ok(output)
+}
+
+/// Extract contiguous packed rows from potentially strided data.
+fn contiguous_from_strided<'a>(
+    data: &'a [u8],
+    width: u32,
+    rows: u32,
+    stride: usize,
+    bpp: usize,
+) -> Cow<'a, [u8]> {
+    let row_bytes = width as usize * bpp;
+    if stride == row_bytes {
+        // Already packed.
+        let total = row_bytes * rows as usize;
+        Cow::Borrowed(&data[..total])
+    } else {
+        // Need to strip padding.
+        let mut packed = Vec::with_capacity(row_bytes * rows as usize);
+        for y in 0..rows as usize {
+            let start = y * stride;
+            packed.extend_from_slice(&data[start..start + row_bytes]);
+        }
+        Cow::Owned(packed)
+    }
 }

@@ -47,12 +47,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
-name = "enough"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "177a59811828ea5dbc8927662d444ffee7b55a44696486f1b1a245ae9e652533"
-
-[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -178,12 +172,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
-name = "whereat"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ec598a1ade4224cfe3c5dace0d5d7deec9ed670503ff99d4946973c8c094534"
-
-[[package]]
 name = "wide"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -191,16 +179,6 @@ checksum = "ac11b009ebeae802ed758530b6496784ebfee7a87b9abfbcaf3bbe25b814eb25"
 dependencies = [
  "bytemuck",
  "safe_arch",
-]
-
-[[package]]
-name = "zencodec-types"
-version = "0.1.0"
-dependencies = [
- "enough",
- "imgref",
- "rgb",
- "whereat",
 ]
 
 [[package]]
@@ -216,7 +194,6 @@ dependencies = [
  "imgref",
  "linear-srgb 0.5.5",
  "rgb",
- "zencodec-types",
  "zenresize",
 ]
 

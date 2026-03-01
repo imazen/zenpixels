@@ -1,8 +1,6 @@
 //! Roundtrip tests for all supported format pairs.
 
-use zencodec_types::{
-    AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction,
-};
+use zenpixels::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
 use zenpixels::RowConverter;
 
 fn make_rgb8_row(width: usize) -> Vec<u8> {
@@ -39,8 +37,10 @@ fn rgb8_to_rgba8_roundtrip() {
     let mut rgba = vec![0u8; width as usize * 4];
     let mut back = vec![0u8; width as usize * 3];
 
-    let to_rgba = RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
-    let to_rgb = RowConverter::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGB8_SRGB).unwrap();
+    let to_rgba =
+        RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
+    let to_rgb =
+        RowConverter::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGB8_SRGB).unwrap();
 
     to_rgba.convert_row(&src, &mut rgba, width);
     to_rgb.convert_row(&rgba, &mut back, width);
@@ -73,8 +73,10 @@ fn bgra8_rgba8_roundtrip() {
     let mut rgba = vec![0u8; width as usize * 4];
     let mut back = vec![0u8; width as usize * 4];
 
-    let to_rgba = RowConverter::new(PixelDescriptor::BGRA8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
-    let to_bgra = RowConverter::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::BGRA8_SRGB).unwrap();
+    let to_rgba =
+        RowConverter::new(PixelDescriptor::BGRA8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
+    let to_bgra =
+        RowConverter::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::BGRA8_SRGB).unwrap();
 
     to_rgba.convert_row(&src, &mut rgba, width);
     to_bgra.convert_row(&rgba, &mut back, width);
@@ -135,7 +137,12 @@ fn u8_to_u16_roundtrip() {
     let src = make_rgb8_row(width as usize);
 
     let desc_u8 = PixelDescriptor::RGB8_SRGB;
-    let desc_u16 = PixelDescriptor::new(ChannelType::U16, ChannelLayout::Rgb, AlphaMode::None, TransferFunction::Srgb);
+    let desc_u16 = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        AlphaMode::None,
+        TransferFunction::Srgb,
+    );
 
     let to_u16 = RowConverter::new(desc_u8, desc_u16).unwrap();
     let to_u8 = RowConverter::new(desc_u16, desc_u8).unwrap();

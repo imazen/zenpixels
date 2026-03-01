@@ -3,9 +3,7 @@
 //! Each kernel converts one row of `width` pixels from a source format to
 //! a destination format. Kernels are pure functions with no allocation.
 
-use zencodec_types::{
-    AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction,
-};
+use crate::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
 
 use crate::error::ConvertError;
 
@@ -106,7 +104,12 @@ impl ConvertPlan {
 
             if need_depth_change && dst_ch > src_ch {
                 // Depth first, then layout.
-                if let Some(step) = depth_step(from.channel_type, to.channel_type, from.transfer, to.transfer)? {
+                if let Some(step) = depth_step(
+                    from.channel_type,
+                    to.channel_type,
+                    from.transfer,
+                    to.transfer,
+                )? {
                     steps.push(step);
                 }
                 if let Some(step) = layout_step(from.layout, to.layout) {
@@ -118,13 +121,23 @@ impl ConvertPlan {
                     steps.push(step);
                 }
                 if need_depth_change
-                    && let Some(step) = depth_step(from.channel_type, to.channel_type, from.transfer, to.transfer)?
+                    && let Some(step) = depth_step(
+                        from.channel_type,
+                        to.channel_type,
+                        from.transfer,
+                        to.transfer,
+                    )?
                 {
                     steps.push(step);
                 }
             }
         } else if need_depth_change
-            && let Some(step) = depth_step(from.channel_type, to.channel_type, from.transfer, to.transfer)?
+            && let Some(step) = depth_step(
+                from.channel_type,
+                to.channel_type,
+                from.transfer,
+                to.transfer,
+            )?
         {
             steps.push(step);
         }
@@ -172,8 +185,9 @@ fn layout_step(from: ChannelLayout, to: ChannelLayout) -> Option<ConvertStep> {
         return None;
     }
     match (from, to) {
-        (ChannelLayout::Bgra, ChannelLayout::Rgba)
-        | (ChannelLayout::Rgba, ChannelLayout::Bgra) => Some(ConvertStep::SwizzleBgraRgba),
+        (ChannelLayout::Bgra, ChannelLayout::Rgba) | (ChannelLayout::Rgba, ChannelLayout::Bgra) => {
+            Some(ConvertStep::SwizzleBgraRgba)
+        }
         (ChannelLayout::Rgb, ChannelLayout::Rgba) => Some(ConvertStep::AddAlpha),
         (ChannelLayout::Rgb, ChannelLayout::Bgra) => {
             // Rgb → Bgra: add alpha then swizzle? We'll handle this as AddAlpha
@@ -182,14 +196,17 @@ fn layout_step(from: ChannelLayout, to: ChannelLayout) -> Option<ConvertStep> {
             // For now, treat as AddAlpha (the swizzle part is in Bgra→Rgba later).
             Some(ConvertStep::AddAlpha)
         }
-        (ChannelLayout::Rgba, ChannelLayout::Rgb)
-        | (ChannelLayout::Bgra, ChannelLayout::Rgb) => Some(ConvertStep::DropAlpha),
+        (ChannelLayout::Rgba, ChannelLayout::Rgb) | (ChannelLayout::Bgra, ChannelLayout::Rgb) => {
+            Some(ConvertStep::DropAlpha)
+        }
         (ChannelLayout::Gray, ChannelLayout::Rgb) => Some(ConvertStep::GrayToRgb),
-        (ChannelLayout::Gray, ChannelLayout::Rgba)
-        | (ChannelLayout::Gray, ChannelLayout::Bgra) => Some(ConvertStep::GrayToRgba),
+        (ChannelLayout::Gray, ChannelLayout::Rgba) | (ChannelLayout::Gray, ChannelLayout::Bgra) => {
+            Some(ConvertStep::GrayToRgba)
+        }
         (ChannelLayout::Rgb, ChannelLayout::Gray) => Some(ConvertStep::RgbToGray),
-        (ChannelLayout::Rgba, ChannelLayout::Gray)
-        | (ChannelLayout::Bgra, ChannelLayout::Gray) => Some(ConvertStep::RgbaToGray),
+        (ChannelLayout::Rgba, ChannelLayout::Gray) | (ChannelLayout::Bgra, ChannelLayout::Gray) => {
+            Some(ConvertStep::RgbaToGray)
+        }
         (ChannelLayout::GrayAlpha, ChannelLayout::Rgba)
         | (ChannelLayout::GrayAlpha, ChannelLayout::Bgra) => Some(ConvertStep::GrayAlphaToRgba),
         (ChannelLayout::GrayAlpha, ChannelLayout::Rgb) => Some(ConvertStep::GrayAlphaToRgb),
@@ -299,53 +316,107 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
                 ChannelLayout::Rgba => ChannelLayout::Bgra,
                 other => other,
             };
-            PixelDescriptor::new(current.channel_type, new_layout, current.alpha, current.transfer)
+            PixelDescriptor::new(
+                current.channel_type,
+                new_layout,
+                current.alpha,
+                current.transfer,
+            )
         }
-        ConvertStep::AddAlpha => {
-            PixelDescriptor::new(current.channel_type, ChannelLayout::Rgba, AlphaMode::Straight, current.transfer)
-        }
-        ConvertStep::DropAlpha => {
-            PixelDescriptor::new(current.channel_type, ChannelLayout::Rgb, AlphaMode::None, current.transfer)
-        }
-        ConvertStep::GrayToRgb => {
-            PixelDescriptor::new(current.channel_type, ChannelLayout::Rgb, AlphaMode::None, current.transfer)
-        }
-        ConvertStep::GrayToRgba => {
-            PixelDescriptor::new(current.channel_type, ChannelLayout::Rgba, AlphaMode::Straight, current.transfer)
-        }
-        ConvertStep::RgbToGray | ConvertStep::RgbaToGray => {
-            PixelDescriptor::new(current.channel_type, ChannelLayout::Gray, AlphaMode::None, current.transfer)
-        }
-        ConvertStep::GrayAlphaToRgba => {
-            PixelDescriptor::new(current.channel_type, ChannelLayout::Rgba, current.alpha, current.transfer)
-        }
-        ConvertStep::GrayAlphaToRgb => {
-            PixelDescriptor::new(current.channel_type, ChannelLayout::Rgb, AlphaMode::None, current.transfer)
-        }
-        ConvertStep::GrayToGrayAlpha => {
-            PixelDescriptor::new(current.channel_type, ChannelLayout::GrayAlpha, AlphaMode::Straight, current.transfer)
-        }
-        ConvertStep::GrayAlphaToGray => {
-            PixelDescriptor::new(current.channel_type, ChannelLayout::Gray, AlphaMode::None, current.transfer)
-        }
+        ConvertStep::AddAlpha => PixelDescriptor::new(
+            current.channel_type,
+            ChannelLayout::Rgba,
+            AlphaMode::Straight,
+            current.transfer,
+        ),
+        ConvertStep::DropAlpha => PixelDescriptor::new(
+            current.channel_type,
+            ChannelLayout::Rgb,
+            AlphaMode::None,
+            current.transfer,
+        ),
+        ConvertStep::GrayToRgb => PixelDescriptor::new(
+            current.channel_type,
+            ChannelLayout::Rgb,
+            AlphaMode::None,
+            current.transfer,
+        ),
+        ConvertStep::GrayToRgba => PixelDescriptor::new(
+            current.channel_type,
+            ChannelLayout::Rgba,
+            AlphaMode::Straight,
+            current.transfer,
+        ),
+        ConvertStep::RgbToGray | ConvertStep::RgbaToGray => PixelDescriptor::new(
+            current.channel_type,
+            ChannelLayout::Gray,
+            AlphaMode::None,
+            current.transfer,
+        ),
+        ConvertStep::GrayAlphaToRgba => PixelDescriptor::new(
+            current.channel_type,
+            ChannelLayout::Rgba,
+            current.alpha,
+            current.transfer,
+        ),
+        ConvertStep::GrayAlphaToRgb => PixelDescriptor::new(
+            current.channel_type,
+            ChannelLayout::Rgb,
+            AlphaMode::None,
+            current.transfer,
+        ),
+        ConvertStep::GrayToGrayAlpha => PixelDescriptor::new(
+            current.channel_type,
+            ChannelLayout::GrayAlpha,
+            AlphaMode::Straight,
+            current.transfer,
+        ),
+        ConvertStep::GrayAlphaToGray => PixelDescriptor::new(
+            current.channel_type,
+            ChannelLayout::Gray,
+            AlphaMode::None,
+            current.transfer,
+        ),
         ConvertStep::SrgbU8ToLinearF32 | ConvertStep::NaiveU8ToF32 | ConvertStep::U16ToF32 => {
-            PixelDescriptor::new(ChannelType::F32, current.layout, current.alpha, TransferFunction::Linear)
+            PixelDescriptor::new(
+                ChannelType::F32,
+                current.layout,
+                current.alpha,
+                TransferFunction::Linear,
+            )
         }
         ConvertStep::LinearF32ToSrgbU8 | ConvertStep::NaiveF32ToU8 | ConvertStep::U16ToU8 => {
-            PixelDescriptor::new(ChannelType::U8, current.layout, current.alpha, TransferFunction::Srgb)
+            PixelDescriptor::new(
+                ChannelType::U8,
+                current.layout,
+                current.alpha,
+                TransferFunction::Srgb,
+            )
         }
-        ConvertStep::U8ToU16 => {
-            PixelDescriptor::new(ChannelType::U16, current.layout, current.alpha, current.transfer)
-        }
-        ConvertStep::F32ToU16 => {
-            PixelDescriptor::new(ChannelType::U16, current.layout, current.alpha, current.transfer)
-        }
-        ConvertStep::StraightToPremul => {
-            PixelDescriptor::new(current.channel_type, current.layout, AlphaMode::Premultiplied, current.transfer)
-        }
-        ConvertStep::PremulToStraight => {
-            PixelDescriptor::new(current.channel_type, current.layout, AlphaMode::Straight, current.transfer)
-        }
+        ConvertStep::U8ToU16 => PixelDescriptor::new(
+            ChannelType::U16,
+            current.layout,
+            current.alpha,
+            current.transfer,
+        ),
+        ConvertStep::F32ToU16 => PixelDescriptor::new(
+            ChannelType::U16,
+            current.layout,
+            current.alpha,
+            current.transfer,
+        ),
+        ConvertStep::StraightToPremul => PixelDescriptor::new(
+            current.channel_type,
+            current.layout,
+            AlphaMode::Premultiplied,
+            current.transfer,
+        ),
+        ConvertStep::PremulToStraight => PixelDescriptor::new(
+            current.channel_type,
+            current.layout,
+            AlphaMode::Straight,
+            current.transfer,
+        ),
     }
 }
 
@@ -870,7 +941,13 @@ fn f32_to_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
 // ---------------------------------------------------------------------------
 
 /// Straight → Premultiplied alpha (in-place copy from src to dst).
-fn straight_to_premul(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType, layout: ChannelLayout) {
+fn straight_to_premul(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    ch_type: ChannelType,
+    layout: ChannelLayout,
+) {
     let channels = layout.channels();
     let alpha_idx = channels - 1;
 
@@ -906,7 +983,13 @@ fn straight_to_premul(src: &[u8], dst: &mut [u8], width: usize, ch_type: Channel
 }
 
 /// Premultiplied → Straight alpha.
-fn premul_to_straight(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType, layout: ChannelLayout) {
+fn premul_to_straight(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    ch_type: ChannelType,
+    layout: ChannelLayout,
+) {
     let channels = layout.channels();
     let alpha_idx = channels - 1;
 
