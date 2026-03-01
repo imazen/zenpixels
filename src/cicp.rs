@@ -4,7 +4,7 @@
 //! transfer characteristics, and matrix coefficients. This struct
 //! carries the four fields needed by [`ColorContext`](crate::color::ColorContext).
 
-use crate::ColorPrimaries;
+use crate::{ColorPrimaries, TransferFunction};
 
 /// CICP color description (ITU-T H.273).
 ///
@@ -88,6 +88,15 @@ impl Cicp {
     /// This is a convenience wrapper around [`ColorPrimaries::from_cicp`].
     pub fn color_primaries_enum(&self) -> ColorPrimaries {
         ColorPrimaries::from_cicp(self.color_primaries).unwrap_or(ColorPrimaries::Unknown)
+    }
+
+    /// Map the CICP `transfer_characteristics` code to a [`TransferFunction`] enum.
+    ///
+    /// Returns [`Unknown`](TransferFunction::Unknown) for unrecognized codes.
+    /// This is a convenience wrapper around [`TransferFunction::from_cicp`].
+    pub fn transfer_function_enum(&self) -> TransferFunction {
+        TransferFunction::from_cicp(self.transfer_characteristics)
+            .unwrap_or(TransferFunction::Unknown)
     }
 
     /// Human-readable name for the color primaries code (ITU-T H.273 Table 2).
