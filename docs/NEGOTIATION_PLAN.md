@@ -75,7 +75,7 @@ fn linear_light_suitability(target: PixelDescriptor, hint: OperationHint) -> u16
             if target.transfer == TransferFunction::Linear {
                 match target.channel_type {
                     ChannelType::F32 => 0,
-                    ChannelType::F16 | ChannelType::I16 | ChannelType::U16 => 2,
+                    ChannelType::F16 | ChannelType::U16 => 2,
                     ChannelType::U8 => 10,
                     _ => 15,
                 }
@@ -91,7 +91,7 @@ fn linear_light_suitability(target: PixelDescriptor, hint: OperationHint) -> u16
                     ChannelType::F32 => 0,
                     ChannelType::F16 => 5,   // Preserves overshoot
                     // Integer clips overshoot — same loss as clamping
-                    ChannelType::I16 | ChannelType::U16 => 200,
+                    ChannelType::U16 => 200,
                     ChannelType::U8 => 200,
                     _ => 250,
                 }
@@ -111,7 +111,7 @@ fn linear_light_suitability(target: PixelDescriptor, hint: OperationHint) -> u16
                 match target.channel_type {
                     ChannelType::F32 => 0,
                     ChannelType::F16 => 5,
-                    ChannelType::I16 | ChannelType::U16 => 5,
+                    ChannelType::U16 => 5,
                     ChannelType::U8 => 40,
                     _ => 50,
                 }
@@ -362,8 +362,8 @@ With zenpixels negotiation, it can make better choices:
 
 ```rust
 // Current: hardcoded path selection
-let path = if is_u8 && !linear { I16Srgb }
-           else if is_u8 && linear { I16Linear }
+let path = if is_u8 && !linear { U16Srgb }
+           else if is_u8 && linear { U16Linear }
            else { F32 };
 
 // Proposed: use zenpixels negotiation
@@ -371,14 +371,14 @@ let hint = filter.operation_hint();
 let ideal = zenpixels::ideal_format(input_desc, ConvertIntent::LinearLight, hint);
 let path = match ideal.channel_type {
     ChannelType::F32 => F32,
-    ChannelType::I16 if ideal.transfer == TransferFunction::Srgb => I16Srgb,
-    ChannelType::I16 => I16Linear,
+    ChannelType::U16 if ideal.transfer == TransferFunction::Srgb => U16Srgb,
+    ChannelType::U16 => U16Linear,
     _ => F32, // Fallback
 };
 ```
 
 For ResizeSharp, this would automatically pick f32 even for u8 sRGB input,
-avoiding the i16 path that clips overshoot.
+avoiding the u16 path that clips overshoot.
 
 ### 4b. Selective clamping in zenresize
 

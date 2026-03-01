@@ -511,11 +511,11 @@ pub(crate) fn suitability_loss(target: PixelDescriptor, intent: ConvertIntent) -
 ///
 /// **Non-linear (gamma-encoded) formats:**
 /// Bilinear resize in sRGB measures p95 ΔE ≈ 13.7 regardless of bit depth
-/// (u8=13.7, i16 14-bit=13.7, u16=13.7, f16=13.7, f32 sRGB=13.7).
+/// (u8=13.7, u16=13.7, f16=13.7, f32 sRGB=13.7).
 /// Gamma darkening is the dominant error — precision barely matters.
 ///
 /// **Linear formats:**
-/// Only quantization matters. f32=0, f16=0.022, i16=0.001, u8=0.213.
+/// Only quantization matters. f32=0, f16=0.022, u8=0.213.
 #[allow(unreachable_patterns)] // non_exhaustive: future variants
 fn linear_light_suitability(target: PixelDescriptor) -> u16 {
     if target.transfer == TransferFunction::Linear {
@@ -523,7 +523,6 @@ fn linear_light_suitability(target: PixelDescriptor) -> u16 {
         match target.channel_type {
             ChannelType::F32 => 0,
             ChannelType::F16 => 5, // 10 mantissa bits, measured ΔE=0.022
-            ChannelType::I16 => 5, // 15 usable bits, measured ΔE=0.001
             ChannelType::U16 => 5, // 16 bits, negligible quantization
             ChannelType::U8 => 40, // severe banding in darks, measured ΔE=0.213
             _ => 50,
@@ -610,18 +609,15 @@ fn depth_effort(from: ChannelType, to: ChannelType) -> u16 {
     match (from, to) {
         // Integer widen/narrow
         (ChannelType::U8, ChannelType::U16) | (ChannelType::U16, ChannelType::U8) => 10,
-        (ChannelType::U8, ChannelType::I16) | (ChannelType::I16, ChannelType::U8) => 12,
-        (ChannelType::U16, ChannelType::I16) | (ChannelType::I16, ChannelType::U16) => 8,
         // Float ↔ integer
         (ChannelType::U16, ChannelType::F32) | (ChannelType::F32, ChannelType::U16) => 25,
         (ChannelType::U8, ChannelType::F32) | (ChannelType::F32, ChannelType::U8) => 40,
-        (ChannelType::I16, ChannelType::F32) | (ChannelType::F32, ChannelType::I16) => 15,
         // F16 ↔ F32 (hardware or fast table conversion)
         (ChannelType::F16, ChannelType::F32) | (ChannelType::F32, ChannelType::F16) => 15,
         // F16 ↔ integer (via F32 intermediate)
         (ChannelType::F16, ChannelType::U8) | (ChannelType::U8, ChannelType::F16) => 30,
         (ChannelType::F16, ChannelType::U16) | (ChannelType::U16, ChannelType::F16) => 25,
-        (ChannelType::F16, ChannelType::I16) | (ChannelType::I16, ChannelType::F16) => 20,
+        // remaining catch-all handles unknown future types
         _ => 100,
     }
 }
@@ -651,10 +647,8 @@ fn depth_loss(target_depth: ChannelType, origin_depth: ChannelType) -> u16 {
         (ChannelType::F32, ChannelType::U8) => 10, // measured ΔE=0.14, sub-JND in sRGB
         (ChannelType::F32, ChannelType::U16) => 5, // 23→16 mantissa bits, negligible
         (ChannelType::F32, ChannelType::F16) => 20, // 23→10 mantissa bits, small loss
-        (ChannelType::F32, ChannelType::I16) => 5, // measured ΔE=0.000, lossless round-trip
         (ChannelType::F16, ChannelType::U8) => 8,  // measured ΔE=0.000 (f16 >8 bits precision)
         (ChannelType::U16, ChannelType::F16) => 30, // 16→10 mantissa bits, moderate loss
-        (ChannelType::I16, ChannelType::U8) => 8,  // similar to F16→U8
         _ => 50,
     }
 }
@@ -662,13 +656,12 @@ fn depth_loss(target_depth: ChannelType, origin_depth: ChannelType) -> u16 {
 /// Nominal precision bits for a channel type (for ordering, not bit-exact).
 ///
 /// F16 has 10 mantissa bits (~3.3 decimal digits) — between U8 (8 bits) and
-/// U16 (16 bits). I16 is treated as 15-bit precision (sign bit is overhead).
+/// U16 (16 bits).
 #[allow(unreachable_patterns)] // non_exhaustive: future variants
 pub(crate) fn channel_bits(ct: ChannelType) -> u16 {
     match ct {
         ChannelType::U8 => 8,
         ChannelType::F16 => 11, // 10 mantissa + 1 implicit
-        ChannelType::I16 => 15, // 16 bits minus sign
         ChannelType::U16 => 16,
         ChannelType::F32 => 32,
         _ => 0,
@@ -808,7 +801,7 @@ fn precision_tier(desc: PixelDescriptor) -> PrecisionTier {
     }
     match desc.channel_type {
         ChannelType::U8 => PrecisionTier::Sdr8,
-        ChannelType::U16 | ChannelType::F16 | ChannelType::I16 => PrecisionTier::Sdr16,
+        ChannelType::U16 | ChannelType::F16 => PrecisionTier::Sdr16,
         ChannelType::F32 => PrecisionTier::LinearF32,
         _ => PrecisionTier::Sdr8,
     }

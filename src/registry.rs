@@ -46,7 +46,6 @@ impl FormatEntry {
             ChannelType::U8 => 8,
             ChannelType::U16 => 16,
             ChannelType::F16 => 11,
-            ChannelType::I16 => 15,
             ChannelType::F32 => 32,
         };
         Self {
@@ -436,7 +435,6 @@ mod tests {
                     ChannelType::U8 => 8,
                     ChannelType::U16 => 16,
                     ChannelType::F16 => 16,
-                    ChannelType::I16 => 16,
                     ChannelType::F32 => 32,
                 };
                 assert!(
