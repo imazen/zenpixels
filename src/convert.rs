@@ -117,8 +117,8 @@ impl ConvertPlan {
 
         // Depth/TF steps are needed when depth changes, or when both are F32
         // and transfer functions differ.
-        let need_depth_or_tf =
-            need_depth_change || (from.channel_type == ChannelType::F32 && from.transfer != to.transfer);
+        let need_depth_or_tf = need_depth_change
+            || (from.channel_type == ChannelType::F32 && from.transfer != to.transfer);
 
         // If we need to change depth AND layout, plan the optimal order.
         if need_layout_change {
@@ -317,18 +317,14 @@ fn depth_steps(
                 Ok(vec![ConvertStep::LinearF32ToHlgF32])
             }
             // PQ ↔ HLG: go through linear.
-            (TransferFunction::Pq, TransferFunction::Hlg) => {
-                Ok(vec![
-                    ConvertStep::PqF32ToLinearF32,
-                    ConvertStep::LinearF32ToHlgF32,
-                ])
-            }
-            (TransferFunction::Hlg, TransferFunction::Pq) => {
-                Ok(vec![
-                    ConvertStep::HlgF32ToLinearF32,
-                    ConvertStep::LinearF32ToPqF32,
-                ])
-            }
+            (TransferFunction::Pq, TransferFunction::Hlg) => Ok(vec![
+                ConvertStep::PqF32ToLinearF32,
+                ConvertStep::LinearF32ToHlgF32,
+            ]),
+            (TransferFunction::Hlg, TransferFunction::Pq) => Ok(vec![
+                ConvertStep::HlgF32ToLinearF32,
+                ConvertStep::LinearF32ToPqF32,
+            ]),
             // sRGB ↔ Linear are already handled.
             (TransferFunction::Srgb | TransferFunction::Bt709, TransferFunction::Linear)
             | (TransferFunction::Linear, TransferFunction::Srgb | TransferFunction::Bt709) => {

@@ -703,8 +703,8 @@ impl<'a, P> PixelSlice<'a, P> {
             let total = dst_stride
                 .checked_mul(self.rows as usize)
                 .ok_or(crate::ConvertError::AllocationFailed)?;
-            let mut out = try_alloc_zeroed(total)
-                .map_err(|_| crate::ConvertError::AllocationFailed)?;
+            let mut out =
+                try_alloc_zeroed(total).map_err(|_| crate::ConvertError::AllocationFailed)?;
             for y in 0..self.rows {
                 let src_row = self.row(y);
                 let dst_start = y as usize * dst_stride;
@@ -725,8 +725,7 @@ impl<'a, P> PixelSlice<'a, P> {
         let total = dst_stride
             .checked_mul(self.rows as usize)
             .ok_or(crate::ConvertError::AllocationFailed)?;
-        let mut out = try_alloc_zeroed(total)
-            .map_err(|_| crate::ConvertError::AllocationFailed)?;
+        let mut out = try_alloc_zeroed(total).map_err(|_| crate::ConvertError::AllocationFailed)?;
 
         for y in 0..self.rows {
             let src_row = self.row(y);
