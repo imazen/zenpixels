@@ -23,6 +23,10 @@
 //! |--------|-------------|--------|
 //! | u8 Srgb | f32 Linear | sRGB EOTF via `linear-srgb` |
 //! | f32 Linear | u8 Srgb | sRGB OETF via `linear-srgb` |
+//! | u16 PQ | f32 Linear | PQ EOTF (SMPTE ST 2084) |
+//! | f32 Linear | u16 PQ | PQ OETF (inverse EOTF) |
+//! | u16 HLG | f32 Linear | HLG EOTF (ARIB STD-B67) |
+//! | f32 Linear | u16 HLG | HLG OETF |
 //! | u8 Unknown | f32 Unknown | Naive `v / 255.0` |
 //! | Same depth | Same depth | No transfer math |
 
@@ -45,6 +49,8 @@ pub(crate) mod negotiate;
 pub mod adapt;
 pub mod buffer;
 pub mod converter;
+pub mod gamut;
+pub mod hdr;
 pub mod op_format;
 pub mod path;
 pub mod pixels;
@@ -82,3 +88,9 @@ pub use color::{ColorContext, ColorProfileSource, NamedProfile, WorkingColorSpac
 
 // Re-export GrayAlpha pixel types at crate root.
 pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
+
+// Re-export gamut conversion utilities.
+pub use gamut::{GamutMatrix, apply_matrix_f32, conversion_matrix};
+
+// Re-export HDR types.
+pub use hdr::{ContentLightLevel, HdrMetadata, MasteringDisplay};
