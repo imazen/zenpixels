@@ -24,8 +24,6 @@ pub enum ChannelType {
     F32 = 4,
     /// IEEE 754 half-precision float (2 bytes per channel).
     F16 = 5,
-    /// Signed 16-bit integer (2 bytes per channel).
-    I16 = 6,
 }
 
 impl ChannelType {
@@ -35,7 +33,7 @@ impl ChannelType {
     pub const fn byte_size(self) -> usize {
         match self {
             Self::U8 => 1,
-            Self::U16 | Self::F16 | Self::I16 => 2,
+            Self::U16 | Self::F16 => 2,
             Self::F32 => 4,
             _ => 0,
         }
@@ -65,17 +63,11 @@ impl ChannelType {
         matches!(self, Self::F16)
     }
 
-    /// Whether this is [`I16`](Self::I16).
-    #[inline]
-    pub const fn is_i16(self) -> bool {
-        matches!(self, Self::I16)
-    }
-
     /// Whether this is an integer type.
     #[inline]
     #[allow(unreachable_patterns)]
     pub const fn is_integer(self) -> bool {
-        matches!(self, Self::U8 | Self::U16 | Self::I16)
+        matches!(self, Self::U8 | Self::U16)
     }
 
     /// Whether this is a floating-point type.
@@ -94,7 +86,6 @@ impl fmt::Display for ChannelType {
             Self::U16 => f.write_str("U16"),
             Self::F32 => f.write_str("F32"),
             Self::F16 => f.write_str("F16"),
-            Self::I16 => f.write_str("I16"),
             _ => write!(f, "ChannelType({})", *self as u8),
         }
     }
@@ -1498,7 +1489,6 @@ mod tests {
         assert_eq!(ChannelType::U8.byte_size(), 1);
         assert_eq!(ChannelType::U16.byte_size(), 2);
         assert_eq!(ChannelType::F16.byte_size(), 2);
-        assert_eq!(ChannelType::I16.byte_size(), 2);
         assert_eq!(ChannelType::F32.byte_size(), 4);
     }
 
