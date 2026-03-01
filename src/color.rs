@@ -5,8 +5,8 @@
 //!
 //! [`ColorContext`] bundles ICC and CICP metadata for cheap sharing
 //! (via `Arc`) across pixel slices and pipeline stages.
-//! [`WorkingColorSpace`] tracks which color space pixels are currently
-//! in, so the planner knows what transforms have been applied.
+//! Current color state (transfer, primaries, alpha) is tracked on the
+//! pixel descriptor itself, not as a separate enum.
 
 use crate::TransferFunction;
 use crate::cicp::Cicp;
@@ -138,24 +138,6 @@ impl ColorContext {
     }
 }
 
-/// What color space the pixels are currently in.
-///
-/// Tracked on pixel slices and pipeline sources to know what transforms
-/// have been applied.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum WorkingColorSpace {
-    /// Original decoded space. ICC/CICP NOT applied.
-    #[default]
-    Native,
-    /// Linear light, sRGB/BT.709 primaries.
-    LinearSrgb,
-    /// Linear light, BT.2020 primaries (wide gamut).
-    LinearRec2020,
-    /// Oklab perceptual uniform space (L, a, b).
-    Oklab,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,10 +185,5 @@ mod tests {
             ColorContext::from_icc(vec![1]).transfer_function(),
             TransferFunction::Unknown
         );
-    }
-
-    #[test]
-    fn working_color_space_default() {
-        assert_eq!(WorkingColorSpace::default(), WorkingColorSpace::Native);
     }
 }

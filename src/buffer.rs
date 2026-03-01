@@ -4,8 +4,8 @@
 //! [`PixelBuffer`] (owned), [`PixelSlice`] (borrowed, immutable), and
 //! [`PixelSliceMut`] (borrowed, mutable).
 //!
-//! These types track pixel format via [`PixelDescriptor`], color context
-//! via [`ColorContext`], and working color space via [`WorkingColorSpace`].
+//! These types track pixel format via [`PixelDescriptor`] and color context
+//! via [`ColorContext`].
 //!
 //! Typed variants (e.g., `PixelBuffer<Rgb<u8>>`) enforce format correctness
 //! at compile time through the [`Pixel`] trait. Use [`erase()`] to convert
@@ -30,7 +30,7 @@ use rgb::alt::BGRA;
 #[cfg(feature = "buffer")]
 use rgb::{Gray, Rgb, Rgba};
 
-use crate::color::{ColorContext, WorkingColorSpace};
+use crate::color::ColorContext;
 use crate::descriptor::{
     AlphaMode, ColorPrimaries, PixelDescriptor, SignalRange, TransferFunction,
 };
@@ -313,9 +313,8 @@ fn pixels_to_bytes<P: bytemuck::NoUninit>(pixels: Vec<P>) -> Vec<u8> {
 /// [`erase()`](PixelSlice::erase) / [`try_typed()`](PixelSlice::try_typed)
 /// to convert between typed and erased forms.
 ///
-/// Optionally carries [`ColorContext`] and [`WorkingColorSpace`] to
-/// track source color metadata and current color space through the
-/// processing pipeline.
+/// Optionally carries [`ColorContext`] to track source color metadata
+/// through the processing pipeline.
 #[non_exhaustive]
 pub struct PixelSlice<'a, P = ()> {
     data: &'a [u8],
@@ -323,7 +322,6 @@ pub struct PixelSlice<'a, P = ()> {
     rows: u32,
     stride: usize,
     descriptor: PixelDescriptor,
-    working_space: WorkingColorSpace,
     color: Option<Arc<ColorContext>>,
     _pixel: PhantomData<P>,
 }
@@ -358,7 +356,7 @@ impl<'a> PixelSlice<'a> {
             rows,
             stride: stride_bytes,
             descriptor,
-            working_space: WorkingColorSpace::Native,
+
             color: None,
             _pixel: PhantomData,
         })
@@ -376,7 +374,7 @@ impl<'a, P> PixelSlice<'a, P> {
             rows: self.rows,
             stride: self.stride,
             descriptor: self.descriptor,
-            working_space: self.working_space,
+
             color: self.color,
             _pixel: PhantomData,
         }
@@ -395,7 +393,7 @@ impl<'a, P> PixelSlice<'a, P> {
                 rows: self.rows,
                 stride: self.stride,
                 descriptor: self.descriptor,
-                working_space: self.working_space,
+
                 color: self.color,
                 _pixel: PhantomData,
             })
@@ -512,19 +510,6 @@ impl<'a, P> PixelSlice<'a, P> {
         self
     }
 
-    /// Current working color space.
-    #[inline]
-    pub fn working_space(&self) -> WorkingColorSpace {
-        self.working_space
-    }
-
-    /// Return a copy of this slice with a different working color space.
-    #[inline]
-    pub fn with_working_space(mut self, ws: WorkingColorSpace) -> Self {
-        self.working_space = ws;
-        self
-    }
-
     /// Whether rows are tightly packed (no stride padding).
     ///
     /// When true, the entire pixel data is contiguous in memory and
@@ -622,7 +607,7 @@ impl<'a, P> PixelSlice<'a, P> {
                 rows: 0,
                 stride: self.stride,
                 descriptor: self.descriptor,
-                working_space: self.working_space,
+
                 color: self.color.clone(),
                 _pixel: PhantomData,
             };
@@ -636,7 +621,7 @@ impl<'a, P> PixelSlice<'a, P> {
             rows: count,
             stride: self.stride,
             descriptor: self.descriptor,
-            working_space: self.working_space,
+
             color: self.color.clone(),
             _pixel: PhantomData,
         }
@@ -666,7 +651,7 @@ impl<'a, P> PixelSlice<'a, P> {
                 rows: h,
                 stride: self.stride,
                 descriptor: self.descriptor,
-                working_space: self.working_space,
+
                 color: self.color.clone(),
                 _pixel: PhantomData,
             };
@@ -680,7 +665,7 @@ impl<'a, P> PixelSlice<'a, P> {
             rows: h,
             stride: self.stride,
             descriptor: self.descriptor,
-            working_space: self.working_space,
+
             color: self.color.clone(),
             _pixel: PhantomData,
         }
@@ -711,8 +696,7 @@ impl<'a, P> PixelSlice<'a, P> {
                 out[dst_start..dst_start + src_row.len()].copy_from_slice(src_row);
             }
             let mut buf = PixelBuffer::from_vec(out, self.width, self.rows, target)
-                .map_err(|_| crate::ConvertError::AllocationFailed)?
-                .with_working_space(self.working_space);
+                .map_err(|_| crate::ConvertError::AllocationFailed)?;
             if let Some(ctx) = self.color_context() {
                 buf = buf.with_color_context(Arc::clone(ctx));
             }
@@ -735,8 +719,7 @@ impl<'a, P> PixelSlice<'a, P> {
         }
 
         let mut buf = PixelBuffer::from_vec(out, self.width, self.rows, target)
-            .map_err(|_| crate::ConvertError::AllocationFailed)?
-            .with_working_space(self.working_space);
+            .map_err(|_| crate::ConvertError::AllocationFailed)?;
         if let Some(ctx) = self.color_context() {
             buf = buf.with_color_context(Arc::clone(ctx));
         }
@@ -826,7 +809,7 @@ impl<'a, P: Pixel> PixelSlice<'a, P> {
             rows,
             stride: stride_bytes,
             descriptor: P::DESCRIPTOR,
-            working_space: WorkingColorSpace::Native,
+
             color: None,
             _pixel: PhantomData,
         })
@@ -861,7 +844,6 @@ pub struct PixelSliceMut<'a, P = ()> {
     rows: u32,
     stride: usize,
     descriptor: PixelDescriptor,
-    working_space: WorkingColorSpace,
     color: Option<Arc<ColorContext>>,
     _pixel: PhantomData<P>,
 }
@@ -896,7 +878,7 @@ impl<'a> PixelSliceMut<'a> {
             rows,
             stride: stride_bytes,
             descriptor,
-            working_space: WorkingColorSpace::Native,
+
             color: None,
             _pixel: PhantomData,
         })
@@ -912,7 +894,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
             rows: self.rows,
             stride: self.stride,
             descriptor: self.descriptor,
-            working_space: self.working_space,
+
             color: self.color,
             _pixel: PhantomData,
         }
@@ -929,7 +911,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
                 rows: self.rows,
                 stride: self.stride,
                 descriptor: self.descriptor,
-                working_space: self.working_space,
+
                 color: self.color,
                 _pixel: PhantomData,
             })
@@ -1030,19 +1012,6 @@ impl<'a, P> PixelSliceMut<'a, P> {
         self
     }
 
-    /// Current working color space.
-    #[inline]
-    pub fn working_space(&self) -> WorkingColorSpace {
-        self.working_space
-    }
-
-    /// Return a copy of this slice with a different working color space.
-    #[inline]
-    pub fn with_working_space(mut self, ws: WorkingColorSpace) -> Self {
-        self.working_space = ws;
-        self
-    }
-
     /// Pixel bytes for row `y` (immutable, no padding).
     ///
     /// # Panics
@@ -1095,7 +1064,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
                 rows: 0,
                 stride: self.stride,
                 descriptor: self.descriptor,
-                working_space: self.working_space,
+
                 color: self.color.clone(),
                 _pixel: PhantomData,
             };
@@ -1109,7 +1078,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
             rows: count,
             stride: self.stride,
             descriptor: self.descriptor,
-            working_space: self.working_space,
+
             color: self.color.clone(),
             _pixel: PhantomData,
         }
@@ -1143,7 +1112,7 @@ impl<'a, P: Pixel> PixelSliceMut<'a, P> {
             rows,
             stride: stride_bytes,
             descriptor: P::DESCRIPTOR,
-            working_space: WorkingColorSpace::Native,
+
             color: None,
             _pixel: PhantomData,
         })
@@ -1192,7 +1161,7 @@ impl<'a> PixelSliceMut<'a, Rgbx> {
         let width = self.width;
         let rows = self.rows;
         let stride = self.stride;
-        let ws = self.working_space;
+
         let color = self.color;
         let data = self.data;
         for_each_pixel_4bpp(data, width, rows, stride, |px| {
@@ -1204,7 +1173,7 @@ impl<'a> PixelSliceMut<'a, Rgbx> {
             rows,
             stride,
             descriptor: PixelDescriptor::BGRX8_SRGB,
-            working_space: ws,
+
             color,
             _pixel: PhantomData,
         }
@@ -1218,7 +1187,7 @@ impl<'a> PixelSliceMut<'a, Rgbx> {
         let width = self.width;
         let rows = self.rows;
         let stride = self.stride;
-        let ws = self.working_space;
+
         let color = self.color;
         let data = self.data;
         for_each_pixel_4bpp(data, width, rows, stride, |px| {
@@ -1230,7 +1199,7 @@ impl<'a> PixelSliceMut<'a, Rgbx> {
             rows,
             stride,
             descriptor: PixelDescriptor::RGBA8_SRGB,
-            working_space: ws,
+
             color,
             _pixel: PhantomData,
         }
@@ -1243,7 +1212,7 @@ impl<'a> PixelSliceMut<'a, Bgrx> {
         let width = self.width;
         let rows = self.rows;
         let stride = self.stride;
-        let ws = self.working_space;
+
         let color = self.color;
         let data = self.data;
         for_each_pixel_4bpp(data, width, rows, stride, |px| {
@@ -1255,7 +1224,7 @@ impl<'a> PixelSliceMut<'a, Bgrx> {
             rows,
             stride,
             descriptor: PixelDescriptor::RGBX8_SRGB,
-            working_space: ws,
+
             color,
             _pixel: PhantomData,
         }
@@ -1269,7 +1238,7 @@ impl<'a> PixelSliceMut<'a, Bgrx> {
         let width = self.width;
         let rows = self.rows;
         let stride = self.stride;
-        let ws = self.working_space;
+
         let color = self.color;
         let data = self.data;
         for_each_pixel_4bpp(data, width, rows, stride, |px| {
@@ -1281,7 +1250,7 @@ impl<'a> PixelSliceMut<'a, Bgrx> {
             rows,
             stride,
             descriptor: PixelDescriptor::BGRA8_SRGB,
-            working_space: ws,
+
             color,
             _pixel: PhantomData,
         }
@@ -1298,7 +1267,7 @@ impl<'a> PixelSliceMut<'a, Rgba<u8>> {
         let width = self.width;
         let rows = self.rows;
         let stride = self.stride;
-        let ws = self.working_space;
+
         let color = self.color;
         let data = self.data;
         for_each_pixel_4bpp(data, width, rows, stride, |px| {
@@ -1315,7 +1284,7 @@ impl<'a> PixelSliceMut<'a, Rgba<u8>> {
             rows,
             stride,
             descriptor: PixelDescriptor::RGBX8_SRGB,
-            working_space: ws,
+
             color,
             _pixel: PhantomData,
         }
@@ -1332,7 +1301,7 @@ impl<'a> PixelSliceMut<'a, Rgba<u8>> {
             rows: self.rows,
             stride: self.stride,
             descriptor: PixelDescriptor::RGBX8_SRGB,
-            working_space: self.working_space,
+
             color: self.color,
             _pixel: PhantomData,
         }
@@ -1343,7 +1312,7 @@ impl<'a> PixelSliceMut<'a, Rgba<u8>> {
         let width = self.width;
         let rows = self.rows;
         let stride = self.stride;
-        let ws = self.working_space;
+
         let color = self.color;
         let data = self.data;
         for_each_pixel_4bpp(data, width, rows, stride, |px| {
@@ -1355,7 +1324,7 @@ impl<'a> PixelSliceMut<'a, Rgba<u8>> {
             rows,
             stride,
             descriptor: PixelDescriptor::BGRA8_SRGB,
-            working_space: ws,
+
             color,
             _pixel: PhantomData,
         }
@@ -1372,7 +1341,7 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
         let width = self.width;
         let rows = self.rows;
         let stride = self.stride;
-        let ws = self.working_space;
+
         let color = self.color;
         let data = self.data;
         for_each_pixel_4bpp(data, width, rows, stride, |px| {
@@ -1390,7 +1359,7 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
             rows,
             stride,
             descriptor: PixelDescriptor::BGRX8_SRGB,
-            working_space: ws,
+
             color,
             _pixel: PhantomData,
         }
@@ -1404,7 +1373,7 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
             rows: self.rows,
             stride: self.stride,
             descriptor: PixelDescriptor::BGRX8_SRGB,
-            working_space: self.working_space,
+
             color: self.color,
             _pixel: PhantomData,
         }
@@ -1415,7 +1384,7 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
         let width = self.width;
         let rows = self.rows;
         let stride = self.stride;
-        let ws = self.working_space;
+
         let color = self.color;
         let data = self.data;
         for_each_pixel_4bpp(data, width, rows, stride, |px| {
@@ -1427,7 +1396,7 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
             rows,
             stride,
             descriptor: PixelDescriptor::RGBA8_SRGB,
-            working_space: ws,
+
             color,
             _pixel: PhantomData,
         }
@@ -1456,7 +1425,6 @@ pub struct PixelBuffer<P = ()> {
     height: u32,
     stride: usize,
     descriptor: PixelDescriptor,
-    working_space: WorkingColorSpace,
     color: Option<Arc<ColorContext>>,
     _pixel: PhantomData<P>,
 }
@@ -1497,7 +1465,7 @@ impl PixelBuffer {
             height,
             stride,
             descriptor,
-            working_space: WorkingColorSpace::Native,
+
             color: None,
             _pixel: PhantomData,
         })
@@ -1551,7 +1519,7 @@ impl PixelBuffer {
             height,
             stride,
             descriptor,
-            working_space: WorkingColorSpace::Native,
+
             color: None,
             _pixel: PhantomData,
         })
@@ -1588,7 +1556,7 @@ impl PixelBuffer {
             height,
             stride,
             descriptor,
-            working_space: WorkingColorSpace::Native,
+
             color: None,
             _pixel: PhantomData,
         })
@@ -1632,7 +1600,7 @@ impl<P: Pixel> PixelBuffer<P> {
             height,
             stride,
             descriptor,
-            working_space: WorkingColorSpace::Native,
+
             color: None,
             _pixel: PhantomData,
         })
@@ -1666,7 +1634,7 @@ impl<P: Pixel + bytemuck::NoUninit> PixelBuffer<P> {
             height,
             stride,
             descriptor,
-            working_space: WorkingColorSpace::Native,
+
             color: None,
             _pixel: PhantomData,
         })
@@ -1692,7 +1660,7 @@ impl<P: Pixel + bytemuck::NoUninit> PixelBuffer<P> {
             height,
             stride: stride_bytes,
             descriptor,
-            working_space: WorkingColorSpace::Native,
+
             color: None,
             _pixel: PhantomData,
         }
@@ -1892,7 +1860,7 @@ impl<P> PixelBuffer<P> {
             height: self.height,
             stride: self.stride,
             descriptor: self.descriptor,
-            working_space: self.working_space,
+
             color: self.color,
             _pixel: PhantomData,
         }
@@ -1910,7 +1878,7 @@ impl<P> PixelBuffer<P> {
                 height: self.height,
                 stride: self.stride,
                 descriptor: self.descriptor,
-                working_space: self.working_space,
+
                 color: self.color,
                 _pixel: PhantomData,
             })
@@ -2069,19 +2037,6 @@ impl<P> PixelBuffer<P> {
         self
     }
 
-    /// Current working color space.
-    #[inline]
-    pub fn working_space(&self) -> WorkingColorSpace {
-        self.working_space
-    }
-
-    /// Set the working color space.
-    #[inline]
-    pub fn with_working_space(mut self, ws: WorkingColorSpace) -> Self {
-        self.working_space = ws;
-        self
-    }
-
     /// Borrow the full buffer as an immutable [`PixelSlice`].
     pub fn as_slice(&self) -> PixelSlice<'_, P> {
         let total = self.stride * self.height as usize;
@@ -2091,7 +2046,7 @@ impl<P> PixelBuffer<P> {
             rows: self.height,
             stride: self.stride,
             descriptor: self.descriptor,
-            working_space: self.working_space,
+
             color: self.color.clone(),
             _pixel: PhantomData,
         }
@@ -2107,7 +2062,7 @@ impl<P> PixelBuffer<P> {
             rows: self.height,
             stride: self.stride,
             descriptor: self.descriptor,
-            working_space: self.working_space,
+
             color: self.color.clone(),
             _pixel: PhantomData,
         }
@@ -2131,7 +2086,7 @@ impl<P> PixelBuffer<P> {
                 rows: 0,
                 stride: self.stride,
                 descriptor: self.descriptor,
-                working_space: self.working_space,
+
                 color: self.color.clone(),
                 _pixel: PhantomData,
             };
@@ -2147,7 +2102,7 @@ impl<P> PixelBuffer<P> {
             rows: count,
             stride: self.stride,
             descriptor: self.descriptor,
-            working_space: self.working_space,
+
             color: self.color.clone(),
             _pixel: PhantomData,
         }
@@ -2171,7 +2126,7 @@ impl<P> PixelBuffer<P> {
                 rows: 0,
                 stride: self.stride,
                 descriptor: self.descriptor,
-                working_space: self.working_space,
+
                 color: self.color.clone(),
                 _pixel: PhantomData,
             };
@@ -2187,7 +2142,7 @@ impl<P> PixelBuffer<P> {
             rows: count,
             stride: self.stride,
             descriptor: self.descriptor,
-            working_space: self.working_space,
+
             color: self.color.clone(),
             _pixel: PhantomData,
         }
@@ -2216,7 +2171,7 @@ impl<P> PixelBuffer<P> {
                 rows: h,
                 stride: self.stride,
                 descriptor: self.descriptor,
-                working_space: self.working_space,
+
                 color: self.color.clone(),
                 _pixel: PhantomData,
             };
@@ -2232,7 +2187,7 @@ impl<P> PixelBuffer<P> {
             rows: h,
             stride: self.stride,
             descriptor: self.descriptor,
-            working_space: self.working_space,
+
             color: self.color.clone(),
             _pixel: PhantomData,
         }
@@ -2258,7 +2213,7 @@ impl<P> PixelBuffer<P> {
             height: h,
             stride,
             descriptor: self.descriptor,
-            working_space: self.working_space,
+
             color: self.color.clone(),
             _pixel: PhantomData,
         };
@@ -2333,7 +2288,7 @@ impl PixelBuffer {
             height: self.height,
             stride: dst_stride,
             descriptor: target,
-            working_space: self.working_space,
+
             color: self.color.clone(),
             _pixel: PhantomData,
         }
@@ -2371,7 +2326,7 @@ macro_rules! impl_from_imgref {
                     rows: img.height() as u32,
                     stride: byte_stride,
                     descriptor: $descriptor,
-                    working_space: WorkingColorSpace::Native,
+
                     color: None,
                     _pixel: PhantomData,
                 }
@@ -2424,7 +2379,7 @@ macro_rules! impl_from_imgref_mut {
                     rows,
                     stride: byte_stride,
                     descriptor: $descriptor,
-                    working_space: WorkingColorSpace::Native,
+
                     color: None,
                     _pixel: PhantomData,
                 }
