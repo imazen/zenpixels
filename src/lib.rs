@@ -1,8 +1,7 @@
 //! Pixel format negotiation and transfer-function-aware conversion.
 //!
-//! Every codec that implements [`zencodec_types::Encoder`] needs to handle
-//! format dispatch: converting input pixel data to a format the codec
-//! natively supports. This crate centralizes that logic.
+//! Every image codec needs format dispatch: converting input pixel data
+//! to a format the codec natively supports. This crate centralizes that logic.
 //!
 //! # Core concepts
 //!
@@ -13,8 +12,8 @@
 //!   converts rows with no per-row allocation, using SIMD where available.
 //!
 //! - **Codec helpers**: [`adapt_for_encode`] negotiates format and converts
-//!   a [`PixelSlice`](zencodec_types::PixelSlice) in one call, returning
-//!   `Cow::Borrowed` when the input already matches a supported format.
+//!   pixel data in one call, returning `Cow::Borrowed` when the input
+//!   already matches a supported format.
 //!
 //! # Transfer function rules
 //!
@@ -32,6 +31,8 @@
 
 extern crate alloc;
 
+pub mod descriptor;
+
 mod convert;
 mod error;
 pub(crate) mod negotiate;
@@ -43,19 +44,23 @@ pub mod path;
 pub mod pixels;
 pub mod registry;
 
-pub use convert::{convert_row, ConvertPlan};
+pub use convert::{ConvertPlan, convert_row};
 pub use converter::RowConverter;
 pub use error::ConvertError;
 pub use negotiate::{
-    best_match, best_match_with, conversion_cost, conversion_cost_with_provenance, ideal_format,
-    negotiate, ConversionCost, ConvertIntent, FormatOption, Provenance,
+    ConversionCost, ConvertIntent, FormatOption, Provenance, best_match, best_match_with,
+    conversion_cost, conversion_cost_with_provenance, ideal_format, negotiate,
 };
 pub use op_format::{OpCategory, OpRequirement};
 pub use path::{
-    generate_path_matrix, matrix_stats, optimal_path, ConversionPath, LossBucket, MatrixStats,
-    PathEntry, QualityThreshold,
+    ConversionPath, LossBucket, MatrixStats, PathEntry, QualityThreshold, generate_path_matrix,
+    matrix_stats, optimal_path,
 };
 pub use registry::{CodecFormats, FormatEntry};
 
-// Re-export key types from zencodec-types for convenience.
-pub use zencodec_types::{ColorPrimaries, PixelDescriptor};
+// Re-export key descriptor types at crate root for ergonomics.
+pub use descriptor::{
+    AlphaMode, ByteOrder, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, PixelDescriptor,
+    PlanarDescriptor, PlaneMask, PlaneSemantic, PlaneSpec, SignalRange, Subsampling,
+    TransferFunction, YuvMatrix,
+};

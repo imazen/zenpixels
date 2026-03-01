@@ -11,10 +11,9 @@ repository = "https://github.com/imazen/zenpixels"
 
 [features]
 default = ["std"]
-std = ["linear-srgb/std", "zencodec-types/codec"]
+std = ["linear-srgb/std"]
 
 [dependencies]
-zencodec-types = { version = "0.1", path = "../zencodec-types" }
 linear-srgb = { version = "0.5", path = "../linear-srgb", default-features = false }
 bytemuck = "1.21"
 

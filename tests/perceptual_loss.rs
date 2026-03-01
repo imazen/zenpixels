@@ -10,10 +10,10 @@
 
 #![allow(dead_code)]
 
-use zencodec_types::{
+use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
 };
-use zenpixels::{conversion_cost, conversion_cost_with_provenance, ConversionCost, Provenance};
+use zenpixels::{ConversionCost, Provenance, conversion_cost, conversion_cost_with_provenance};
 
 // ===========================================================================
 // Reference color math (f64 precision, test-only)
@@ -467,7 +467,11 @@ fn roundtrip_u8_srgb(linear: [f64; 3]) -> [f64; 3] {
 
 /// u16 quantize: linear → sRGB u16 → back to linear.
 fn roundtrip_u16_srgb(linear: [f64; 3]) -> [f64; 3] {
-    let srgb = linear.map(|c| (srgb_oetf(clamp01(c)) * 65535.0).round().clamp(0.0, 65535.0));
+    let srgb = linear.map(|c| {
+        (srgb_oetf(clamp01(c)) * 65535.0)
+            .round()
+            .clamp(0.0, 65535.0)
+    });
     srgb.map(|c| srgb_eotf(c / 65535.0))
 }
 
@@ -484,7 +488,9 @@ fn roundtrip_i16(linear: [f64; 3]) -> [f64; 3] {
     linear.map(|c| {
         let clamped = clamp01(c);
         // Map [0, 1] → [-32768, 32767]
-        let i = (clamped * 65535.0 - 32768.0).round().clamp(-32768.0, 32767.0) as i16;
+        let i = (clamped * 65535.0 - 32768.0)
+            .round()
+            .clamp(-32768.0, 32767.0) as i16;
         (i as f64 + 32768.0) / 65535.0
     })
 }
@@ -662,7 +668,12 @@ fn depth_roundtrip_scenarios() {
             PixelDescriptor::RGB8_SRGB,
             Provenance::with_origin_depth(ChannelType::U8),
         );
-        results.push(run_scenario("u8 sRGB → f32 Lin → u8 sRGB", &grid, &converted, (cost_fwd + cost_back).loss));
+        results.push(run_scenario(
+            "u8 sRGB → f32 Lin → u8 sRGB",
+            &grid,
+            &converted,
+            (cost_fwd + cost_back).loss,
+        ));
     }
 
     // 2. u8 sRGB → u16 sRGB → u8 sRGB (should be exact)
@@ -683,25 +694,40 @@ fn depth_roundtrip_scenarios() {
             PixelDescriptor::RGB8_SRGB,
             Provenance::with_origin_depth(ChannelType::U8),
         );
-        results.push(run_scenario("u8 sRGB → u16 sRGB → u8 sRGB", &grid, &converted, (cost_fwd + cost_back).loss));
+        results.push(run_scenario(
+            "u8 sRGB → u16 sRGB → u8 sRGB",
+            &grid,
+            &converted,
+            (cost_fwd + cost_back).loss,
+        ));
     }
 
     // 3. u16 sRGB → u8 sRGB (quantization)
     {
         let reference_u16: Vec<_> = ramp.iter().map(|c| roundtrip_u16_srgb(*c)).collect();
-        let converted: Vec<_> = reference_u16.iter().map(|c| roundtrip_u8_srgb(*c)).collect();
-        let cost = conversion_cost(
-            PixelDescriptor::RGB16_SRGB,
-            PixelDescriptor::RGB8_SRGB,
-        );
-        results.push(run_scenario("u16 sRGB → u8 sRGB", &reference_u16, &converted, cost.loss));
+        let converted: Vec<_> = reference_u16
+            .iter()
+            .map(|c| roundtrip_u8_srgb(*c))
+            .collect();
+        let cost = conversion_cost(PixelDescriptor::RGB16_SRGB, PixelDescriptor::RGB8_SRGB);
+        results.push(run_scenario(
+            "u16 sRGB → u8 sRGB",
+            &reference_u16,
+            &converted,
+            cost.loss,
+        ));
     }
 
     // 4. f32 Linear → u8 sRGB (origin f32 — true loss)
     {
         let converted: Vec<_> = ramp.iter().map(|c| roundtrip_u8_srgb(*c)).collect();
         let cost = conversion_cost(PixelDescriptor::RGBF32_LINEAR, PixelDescriptor::RGB8_SRGB);
-        results.push(run_scenario("f32 Lin → u8 sRGB (origin f32)", &ramp, &converted, cost.loss));
+        results.push(run_scenario(
+            "f32 Lin → u8 sRGB (origin f32)",
+            &ramp,
+            &converted,
+            cost.loss,
+        ));
     }
 
     // 5. f32 Linear → u8 sRGB (origin u8 — should be near-lossless)
@@ -722,14 +748,24 @@ fn depth_roundtrip_scenarios() {
             PixelDescriptor::RGB8_SRGB,
             Provenance::with_origin_depth(ChannelType::U8),
         );
-        results.push(run_scenario("f32 Lin → u8 sRGB (origin u8)", &reference, &converted, cost.loss));
+        results.push(run_scenario(
+            "f32 Lin → u8 sRGB (origin u8)",
+            &reference,
+            &converted,
+            cost.loss,
+        ));
     }
 
     // 6. f32 → f16 → f32
     {
         let converted: Vec<_> = ramp.iter().map(|c| roundtrip_f16(*c)).collect();
         let cost = ConversionCost::new(30, 20); // f32→f16 + f16→f32
-        results.push(run_scenario("f32 → f16 → f32", &ramp, &converted, cost.loss));
+        results.push(run_scenario(
+            "f32 → f16 → f32",
+            &ramp,
+            &converted,
+            cost.loss,
+        ));
     }
 
     // 7. u8 → f16 → u8 (f16 has >8 bits precision)
@@ -768,7 +804,12 @@ fn depth_roundtrip_scenarios() {
             .collect();
         let ref_linear: Vec<_> = reference.iter().map(|c| c.map(srgb_eotf)).collect();
         let conv_linear: Vec<_> = converted.iter().map(|c| c.map(srgb_eotf)).collect();
-        results.push(run_scenario("u16 → f16 → u16", &ref_linear, &conv_linear, 30));
+        results.push(run_scenario(
+            "u16 → f16 → u16",
+            &ref_linear,
+            &conv_linear,
+            30,
+        ));
     }
 
     // 9. f32 → i16 → f32 (simulated)
@@ -776,7 +817,12 @@ fn depth_roundtrip_scenarios() {
         let converted: Vec<_> = ramp.iter().map(|c| roundtrip_i16(*c)).collect();
         // Model: f32→i16 loss=5 (calibrated), i16→f32 loss=0 (widening)
         let cost = ConversionCost::new(30, 5);
-        results.push(run_scenario("f32 → i16 → f32", &ramp, &converted, cost.loss));
+        results.push(run_scenario(
+            "f32 → i16 → f32",
+            &ramp,
+            &converted,
+            cost.loss,
+        ));
     }
 
     // 10. u8 → f32 (naive, no gamma) — measures what happens with wrong conversion
@@ -798,14 +844,24 @@ fn depth_roundtrip_scenarios() {
             .collect();
         // The "converted" values are in sRGB space but we're comparing in linear
         // This shows the error of not applying gamma correction
-        results.push(run_scenario("u8 → f32 (naive, no gamma)", &reference, &converted, 300));
+        results.push(run_scenario(
+            "u8 → f32 (naive, no gamma)",
+            &reference,
+            &converted,
+            300,
+        ));
     }
 
     // 11. u8 → f32 (sRGB EOTF) → u8 (sRGB OETF) — should be ≤1 LSB
     {
         let reference = srgb_grid_linear();
         let converted: Vec<_> = reference.iter().map(|c| roundtrip_u8_srgb(*c)).collect();
-        results.push(run_scenario("u8 → f32 (EOTF) → u8 (OETF)", &reference, &converted, 0));
+        results.push(run_scenario(
+            "u8 → f32 (EOTF) → u8 (OETF)",
+            &reference,
+            &converted,
+            0,
+        ));
     }
 
     // 12. u16 → f32 → u16 (f32 has >16 bits mantissa — exact)
@@ -830,7 +886,12 @@ fn depth_roundtrip_scenarios() {
             .collect();
         let ref_linear: Vec<_> = reference.iter().map(|c| c.map(srgb_eotf)).collect();
         let conv_linear: Vec<_> = converted.iter().map(|c| c.map(srgb_eotf)).collect();
-        results.push(run_scenario("u16 → f32 → u16", &ref_linear, &conv_linear, 0));
+        results.push(run_scenario(
+            "u16 → f32 → u16",
+            &ref_linear,
+            &conv_linear,
+            0,
+        ));
     }
 
     // 13. f16 → u8
@@ -1028,8 +1089,16 @@ fn premul_roundtrip_scenarios() {
                 let pg2 = (sg / 255.0 * af * 255.0).round().clamp(0.0, 255.0);
                 let pb2 = (sb / 255.0 * af * 255.0).round().clamp(0.0, 255.0);
 
-                refs.push([srgb_eotf(pr / 255.0), srgb_eotf(pg / 255.0), srgb_eotf(pb / 255.0)]);
-                convs.push([srgb_eotf(pr2 / 255.0), srgb_eotf(pg2 / 255.0), srgb_eotf(pb2 / 255.0)]);
+                refs.push([
+                    srgb_eotf(pr / 255.0),
+                    srgb_eotf(pg / 255.0),
+                    srgb_eotf(pb / 255.0),
+                ]);
+                convs.push([
+                    srgb_eotf(pr2 / 255.0),
+                    srgb_eotf(pg2 / 255.0),
+                    srgb_eotf(pb2 / 255.0),
+                ]);
             }
         }
         results.push(run_scenario("u8 premul(R=200,α=100) rt", &refs, &convs, 15));
@@ -1082,10 +1151,10 @@ fn gamut_conversion_scenarios() {
 
     // Helper: convert linear RGB between primaries, return in linear sRGB for ΔE
     let convert_and_measure = |colors: &[[f64; 3]],
-                                src_to_xyz: &[[f64; 3]; 3],
-                                dst_from_xyz: &[[f64; 3]; 3],
-                                back_to_xyz: &[[f64; 3]; 3],
-                                back_from_xyz: &[[f64; 3]; 3]|
+                               src_to_xyz: &[[f64; 3]; 3],
+                               dst_from_xyz: &[[f64; 3]; 3],
+                               back_to_xyz: &[[f64; 3]; 3],
+                               back_from_xyz: &[[f64; 3]; 3]|
      -> (Vec<[f64; 3]>, Vec<[f64; 3]>) {
         let mut refs = Vec::new();
         let mut convs = Vec::new();
@@ -1097,7 +1166,8 @@ fn gamut_conversion_scenarios() {
             // Reference: original in sRGB linear
             let ref_srgb = xyz_to_rgb(xyz_orig, &XYZ_TO_SRGB).map(|v| clamp01(v));
             // Converted: round-tripped, in sRGB linear
-            let conv_srgb = xyz_to_rgb(rgb_to_xyz(back, src_to_xyz), &XYZ_TO_SRGB).map(|v| clamp01(v));
+            let conv_srgb =
+                xyz_to_rgb(rgb_to_xyz(back, src_to_xyz), &XYZ_TO_SRGB).map(|v| clamp01(v));
             refs.push(ref_srgb);
             convs.push(conv_srgb);
         }
@@ -1107,15 +1177,15 @@ fn gamut_conversion_scenarios() {
     // 1. sRGB → P3 → sRGB (all in-gamut, should be exact)
     {
         let colors = srgb_grid_linear();
-        let (refs, convs) = convert_and_measure(
-            &colors,
-            &SRGB_TO_XYZ,
-            &XYZ_TO_P3,
-            &P3_TO_XYZ,
-            &XYZ_TO_SRGB,
-        );
+        let (refs, convs) =
+            convert_and_measure(&colors, &SRGB_TO_XYZ, &XYZ_TO_P3, &P3_TO_XYZ, &XYZ_TO_SRGB);
         let cost = ConversionCost::new(20, 0); // widening + narrowing with matching origin
-        results.push(run_scenario("sRGB → P3 → sRGB (in-gamut)", &refs, &convs, cost.loss));
+        results.push(run_scenario(
+            "sRGB → P3 → sRGB (in-gamut)",
+            &refs,
+            &convs,
+            cost.loss,
+        ));
     }
 
     // 2. P3 → sRGB → P3 (saturated P3 — clips)
@@ -1155,7 +1225,10 @@ fn gamut_conversion_scenarios() {
                 max_de: *de_values.last().unwrap_or(&0.0),
                 mean_de: de_values.iter().sum::<f64>() / de_values.len().max(1) as f64,
                 p95_de,
-                p99_de: de_values.get((de_values.len() as f64 * 0.99) as usize).copied().unwrap_or(0.0),
+                p99_de: de_values
+                    .get((de_values.len() as f64 * 0.99) as usize)
+                    .copied()
+                    .unwrap_or(0.0),
                 sample_count: de_values.len(),
             },
             model_loss: cost.loss,
@@ -1175,7 +1248,12 @@ fn gamut_conversion_scenarios() {
             &BT2020_TO_XYZ,
             &XYZ_TO_SRGB,
         );
-        results.push(run_scenario("sRGB → BT.2020 → sRGB (in-gamut)", &refs, &convs, 0));
+        results.push(run_scenario(
+            "sRGB → BT.2020 → sRGB (in-gamut)",
+            &refs,
+            &convs,
+            0,
+        ));
     }
 
     // 4. BT.2020 → sRGB → BT.2020 (saturated — heavy clipping)
@@ -1213,7 +1291,10 @@ fn gamut_conversion_scenarios() {
                 max_de: *de_values.last().unwrap_or(&0.0),
                 mean_de: de_values.iter().sum::<f64>() / de_values.len().max(1) as f64,
                 p95_de,
-                p99_de: de_values.get((de_values.len() as f64 * 0.99) as usize).copied().unwrap_or(0.0),
+                p99_de: de_values
+                    .get((de_values.len() as f64 * 0.99) as usize)
+                    .copied()
+                    .unwrap_or(0.0),
                 sample_count: de_values.len(),
             },
             model_loss: cost.loss,
@@ -1234,7 +1315,8 @@ fn gamut_conversion_scenarios() {
             let xyz_back = rgb_to_xyz(in_p3, &P3_TO_XYZ);
             let back = xyz_to_rgb(xyz_back, &XYZ_TO_BT2020).map(|v| clamp01(v));
             let ref_srgb = xyz_to_rgb(xyz, &XYZ_TO_SRGB).map(|v| clamp01(v));
-            let conv_srgb = xyz_to_rgb(rgb_to_xyz(back, &BT2020_TO_XYZ), &XYZ_TO_SRGB).map(|v| clamp01(v));
+            let conv_srgb =
+                xyz_to_rgb(rgb_to_xyz(back, &BT2020_TO_XYZ), &XYZ_TO_SRGB).map(|v| clamp01(v));
             refs.push(ref_srgb);
             convs.push(conv_srgb);
         }
@@ -1253,7 +1335,12 @@ fn gamut_conversion_scenarios() {
             ColorPrimaries::DisplayP3,
         );
         let cost = conversion_cost(bt2020, p3);
-        results.push(run_scenario("BT.2020 → P3 → BT.2020 (saturated)", &refs, &convs, cost.loss));
+        results.push(run_scenario(
+            "BT.2020 → P3 → BT.2020 (saturated)",
+            &refs,
+            &convs,
+            cost.loss,
+        ));
     }
 
     // 6. P3 → BT.2020 → P3 (subset — should be near-exact)
@@ -1267,7 +1354,8 @@ fn gamut_conversion_scenarios() {
             let xyz_back = rgb_to_xyz(in_bt2020, &BT2020_TO_XYZ);
             let back = xyz_to_rgb(xyz_back, &XYZ_TO_P3).map(|v| clamp01(v));
             let ref_srgb = xyz_to_rgb(xyz, &XYZ_TO_SRGB).map(|v| clamp01(v));
-            let conv_srgb = xyz_to_rgb(rgb_to_xyz(back, &P3_TO_XYZ), &XYZ_TO_SRGB).map(|v| clamp01(v));
+            let conv_srgb =
+                xyz_to_rgb(rgb_to_xyz(back, &P3_TO_XYZ), &XYZ_TO_SRGB).map(|v| clamp01(v));
             refs.push(ref_srgb);
             convs.push(conv_srgb);
         }
@@ -1300,7 +1388,12 @@ fn gamut_conversion_scenarios() {
         let srgb = PixelDescriptor::RGBF32_LINEAR;
         let prov = Provenance::with_origin(ChannelType::F32, ColorPrimaries::Bt709);
         let cost = conversion_cost_with_provenance(bt2020, srgb, prov);
-        results.push(run_scenario("BT.2020→sRGB (origin sRGB)", &refs, &convs, cost.loss));
+        results.push(run_scenario(
+            "BT.2020→sRGB (origin sRGB)",
+            &refs,
+            &convs,
+            cost.loss,
+        ));
     }
 
     // 8. P3 → sRGB with sRGB origin provenance (near-lossless)
@@ -1326,7 +1419,12 @@ fn gamut_conversion_scenarios() {
         let srgb = PixelDescriptor::RGBF32_LINEAR;
         let prov = Provenance::with_origin(ChannelType::F32, ColorPrimaries::Bt709);
         let cost = conversion_cost_with_provenance(p3, srgb, prov);
-        results.push(run_scenario("P3→sRGB (origin sRGB)", &refs, &convs, cost.loss));
+        results.push(run_scenario(
+            "P3→sRGB (origin sRGB)",
+            &refs,
+            &convs,
+            cost.loss,
+        ));
     }
 
     print_results(&results);
@@ -1370,14 +1468,24 @@ fn transfer_function_scenarios() {
         // Compare in linear for ΔE
         let ref_linear: Vec<_> = reference.iter().map(|c| c.map(srgb_eotf)).collect();
         let conv_linear: Vec<_> = converted.iter().map(|c| c.map(srgb_eotf)).collect();
-        results.push(run_scenario("f32 sRGB → Lin → sRGB", &ref_linear, &conv_linear, 0));
+        results.push(run_scenario(
+            "f32 sRGB → Lin → sRGB",
+            &ref_linear,
+            &conv_linear,
+            0,
+        ));
     }
 
     // 2. u8 sRGB → f32 Linear → u8 sRGB (≤1 LSB)
     {
         let reference = srgb_grid_linear();
         let converted: Vec<_> = reference.iter().map(|c| roundtrip_u8_srgb(*c)).collect();
-        results.push(run_scenario("u8 sRGB → f32 Lin → u8 sRGB", &reference, &converted, 0));
+        results.push(run_scenario(
+            "u8 sRGB → f32 Lin → u8 sRGB",
+            &reference,
+            &converted,
+            0,
+        ));
     }
 
     // 3. f32 PQ → f32 Linear → f32 PQ (simulated, near-exact in range)
@@ -1431,7 +1539,12 @@ fn transfer_function_scenarios() {
             ColorPrimaries::Bt2020,
         );
         let cost = conversion_cost(pq_desc, PixelDescriptor::RGB8_SRGB);
-        results.push(run_scenario("f32 PQ → u8 sRGB (HDR→SDR)", &reference, &converted, cost.loss));
+        results.push(run_scenario(
+            "f32 PQ → u8 sRGB (HDR→SDR)",
+            &reference,
+            &converted,
+            cost.loss,
+        ));
     }
 
     // 5. f32 HLG → f32 Linear → f32 HLG (near-exact)
@@ -1451,7 +1564,12 @@ fn transfer_function_scenarios() {
                 back.map(hlg_eotf)
             })
             .collect();
-        results.push(run_scenario("f32 HLG → Lin → HLG", &reference, &converted, 0));
+        results.push(run_scenario(
+            "f32 HLG → Lin → HLG",
+            &reference,
+            &converted,
+            0,
+        ));
     }
 
     // 6. f32 BT.709 → f32 sRGB → f32 BT.709 (near-exact, similar curves)
@@ -1471,9 +1589,17 @@ fn transfer_function_scenarios() {
             })
             .collect();
         // Convert both to linear sRGB for comparison
-        let ref_linear: Vec<_> = reference.iter().map(|c| c.map(|v| bt709_eotf(bt709_oetf(v)))).collect();
+        let ref_linear: Vec<_> = reference
+            .iter()
+            .map(|c| c.map(|v| bt709_eotf(bt709_oetf(v))))
+            .collect();
         let conv_linear: Vec<_> = converted.iter().map(|c| c.map(|v| bt709_eotf(v))).collect();
-        results.push(run_scenario("f32 BT.709 → sRGB → BT.709", &ref_linear, &conv_linear, 0));
+        results.push(run_scenario(
+            "f32 BT.709 → sRGB → BT.709",
+            &ref_linear,
+            &conv_linear,
+            0,
+        ));
     }
 
     print_results(&results);
@@ -1531,7 +1657,12 @@ fn operation_suitability_scenarios() {
             refs.push(correct);
             convs.push(wrong_linear);
         }
-        results.push(run_scenario("Resize in sRGB vs Linear (gamma)", &refs, &convs, 120));
+        results.push(run_scenario(
+            "Resize in sRGB vs Linear (gamma)",
+            &refs,
+            &convs,
+            120,
+        ));
     }
 
     // 2. Resize 2x in f32 Linear vs u8 Linear (8-bit banding)
@@ -1548,7 +1679,12 @@ fn operation_suitability_scenarios() {
             refs.push(correct);
             convs.push(wrong);
         }
-        results.push(run_scenario("Resize in u8 Linear (banding)", &refs, &convs, 40));
+        results.push(run_scenario(
+            "Resize in u8 Linear (banding)",
+            &refs,
+            &convs,
+            40,
+        ));
     }
 
     // 3. 3x3 box blur in f32 Linear vs u8 sRGB (edge darkening)
@@ -1671,7 +1807,12 @@ fn operation_suitability_scenarios() {
 
             let _ = t; // use the variable
         }
-        results.push(run_scenario("Resize premul vs straight (fringe)", &refs, &convs, 200));
+        results.push(run_scenario(
+            "Resize premul vs straight (fringe)",
+            &refs,
+            &convs,
+            200,
+        ));
     }
 
     print_results(&results);
@@ -1703,7 +1844,9 @@ fn operation_suitability_scenarios() {
 
 /// Quantize linear [0,1] to i16 [-32768,32767] for fixed-point math.
 fn to_i16(v: f64) -> f64 {
-    let scaled = (clamp01(v) * 65535.0 - 32768.0).round().clamp(-32768.0, 32767.0);
+    let scaled = (clamp01(v) * 65535.0 - 32768.0)
+        .round()
+        .clamp(-32768.0, 32767.0);
     (scaled + 32768.0) / 65535.0
 }
 
@@ -1756,7 +1899,12 @@ fn extended_resize_format_scenarios() {
             convs.push(wrong_linear);
         }
         // Model: linear_light_suitability for non-linear = 120 (gamma darkening dominates)
-        results.push(run_scenario("Resize i16 sRGB (14-bit) vs f32 Lin", &refs, &convs, 120));
+        results.push(run_scenario(
+            "Resize i16 sRGB (14-bit) vs f32 Lin",
+            &refs,
+            &convs,
+            120,
+        ));
     }
 
     // 2. Resize in f32 sRGB vs f32 Linear
@@ -1775,7 +1923,12 @@ fn extended_resize_format_scenarios() {
             convs.push(wrong_linear);
         }
         // Model: linear_light_suitability for non-linear = 120 (gamma darkening dominates)
-        results.push(run_scenario("Resize f32 sRGB vs f32 Lin", &refs, &convs, 120));
+        results.push(run_scenario(
+            "Resize f32 sRGB vs f32 Lin",
+            &refs,
+            &convs,
+            120,
+        ));
     }
 
     // 3. Resize in i16 Linear vs f32 Linear
@@ -1793,7 +1946,12 @@ fn extended_resize_format_scenarios() {
             convs.push(wrong);
         }
         // Model: linear_light_suitability for I16 linear = 5 (quantization only)
-        results.push(run_scenario("Resize i16 Linear vs f32 Lin", &refs, &convs, 5));
+        results.push(run_scenario(
+            "Resize i16 Linear vs f32 Lin",
+            &refs,
+            &convs,
+            5,
+        ));
     }
 
     // 4. Resize in u16 sRGB vs f32 Linear
@@ -1812,7 +1970,12 @@ fn extended_resize_format_scenarios() {
             convs.push(wrong_linear);
         }
         // Model: linear_light_suitability for non-linear = 120 (gamma darkening dominates)
-        results.push(run_scenario("Resize u16 sRGB vs f32 Lin", &refs, &convs, 120));
+        results.push(run_scenario(
+            "Resize u16 sRGB vs f32 Lin",
+            &refs,
+            &convs,
+            120,
+        ));
     }
 
     // 5. Resize in u8 Linear vs f32 Linear (existing scenario, broader data)
@@ -1830,7 +1993,12 @@ fn extended_resize_format_scenarios() {
         }
         // Model: u8 linear suitability = 40. Measured ΔE=0.213 (Lossless).
         // Within 1-bucket tolerance (Lossless vs NearLossless).
-        results.push(run_scenario("Resize u8 Linear vs f32 Lin", &refs, &convs, 40));
+        results.push(run_scenario(
+            "Resize u8 Linear vs f32 Lin",
+            &refs,
+            &convs,
+            40,
+        ));
     }
 
     // 6. Resize in f16 Linear vs f32 Linear
@@ -1847,7 +2015,12 @@ fn extended_resize_format_scenarios() {
             convs.push(wrong);
         }
         // Model: linear_light_suitability for F16 linear = 5 (quantization only)
-        results.push(run_scenario("Resize f16 Linear vs f32 Lin", &refs, &convs, 5));
+        results.push(run_scenario(
+            "Resize f16 Linear vs f32 Lin",
+            &refs,
+            &convs,
+            5,
+        ));
     }
 
     // 7. Resize in f16 sRGB vs f32 Linear
@@ -1865,7 +2038,12 @@ fn extended_resize_format_scenarios() {
             convs.push(wrong_linear);
         }
         // Model: linear_light_suitability for non-linear = 120 (gamma darkening dominates)
-        results.push(run_scenario("Resize f16 sRGB vs f32 Lin", &refs, &convs, 120));
+        results.push(run_scenario(
+            "Resize f16 sRGB vs f32 Lin",
+            &refs,
+            &convs,
+            120,
+        ));
     }
 
     // 8. Box blur in i16 sRGB (14-bit) vs f32 Linear
@@ -1885,7 +2063,12 @@ fn extended_resize_format_scenarios() {
         }
         // Blur on a gradient: near-zero gamma error (neighbors too similar).
         // Model's suitability=120 is for resize-class operations (distant pixels).
-        results.push(run_scenario("Blur i16 sRGB (14-bit) vs f32 Lin", &refs, &convs, 5));
+        results.push(run_scenario(
+            "Blur i16 sRGB (14-bit) vs f32 Lin",
+            &refs,
+            &convs,
+            5,
+        ));
     }
 
     print_results(&results);
@@ -1970,7 +2153,12 @@ fn perceptual_operation_scenarios() {
         }
         // Perceptual ops: the error is from operating in sRGB vs perceptually uniform space.
         // This isn't a linear_light_suitability value — it's a separate perceptual quality metric.
-        results.push(run_scenario("Saturation 1.5x sRGB vs Linear", &refs, &convs, 15));
+        results.push(run_scenario(
+            "Saturation 1.5x sRGB vs Linear",
+            &refs,
+            &convs,
+            15,
+        ));
     }
 
     // 2. Saturation boost 1.5x in u8 sRGB vs f32 linear
@@ -1989,7 +2177,12 @@ fn perceptual_operation_scenarios() {
             refs.push(correct);
             convs.push(wrong_linear);
         }
-        results.push(run_scenario("Saturation 1.5x u8 sRGB vs f32 Lin", &refs, &convs, 25));
+        results.push(run_scenario(
+            "Saturation 1.5x u8 sRGB vs f32 Lin",
+            &refs,
+            &convs,
+            25,
+        ));
     }
 
     // 3. Sharpening (USM) in i16 sRGB (14-bit) vs f32 Linear
@@ -2020,7 +2213,12 @@ fn perceptual_operation_scenarios() {
             convs.push(wrong_linear);
         }
         // USM on a gradient: near-zero gamma error (neighbors too similar).
-        results.push(run_scenario("USM i16 sRGB (14-bit) vs f32 Lin", &refs, &convs, 5));
+        results.push(run_scenario(
+            "USM i16 sRGB (14-bit) vs f32 Lin",
+            &refs,
+            &convs,
+            5,
+        ));
     }
 
     // 4. HDR tonemapping: Reinhard in f32 vs u8 (clamp-only)
@@ -2041,7 +2239,12 @@ fn perceptual_operation_scenarios() {
             refs.push(correct);
             convs.push(wrong);
         }
-        results.push(run_scenario("Tonemap Reinhard vs u8 clamp", &refs, &convs, 500));
+        results.push(run_scenario(
+            "Tonemap Reinhard vs u8 clamp",
+            &refs,
+            &convs,
+            500,
+        ));
     }
 
     // 5. Sharpening in f32 sRGB vs f32 Linear
@@ -2104,7 +2307,12 @@ fn perceptual_operation_scenarios() {
             refs.push(correct);
             convs.push(result_i16);
         }
-        results.push(run_scenario("Composite f32 vs i16 premul (α=0.1)", &refs, &convs, 10));
+        results.push(run_scenario(
+            "Composite f32 vs i16 premul (α=0.1)",
+            &refs,
+            &convs,
+            10,
+        ));
     }
 
     print_results(&results);
@@ -2192,7 +2400,10 @@ fn gamut_clamping_scenarios() {
 
     // Clamp f32 linear output to [0,1] to simulate integer format behavior.
     let clamp_to_01 = |pixels: &[[f64; 3]]| -> Vec<[f64; 3]> {
-        pixels.iter().map(|p| p.map(|v| v.clamp(0.0, 1.0))).collect()
+        pixels
+            .iter()
+            .map(|p| p.map(|v| v.clamp(0.0, 1.0)))
+            .collect()
     };
 
     // -----------------------------------------------------------------------
@@ -2391,7 +2602,11 @@ fn cost_model_ranking_correlates() {
             PixelDescriptor::RGB8_SRGB,
             Provenance::with_origin_depth(ChannelType::U8),
         );
-        pairs.push(("u8→f32→u8 (prov)", stats.p95_de, (cost_fwd + cost_back).loss));
+        pairs.push((
+            "u8→f32→u8 (prov)",
+            stats.p95_de,
+            (cost_fwd + cost_back).loss,
+        ));
     }
 
     // f32→u8 (origin f32): low perceptual loss due to sRGB quantization
@@ -2422,7 +2637,10 @@ fn cost_model_ranking_correlates() {
             de_values.push(ciede2000(xyz_to_lab(xyz_orig), xyz_to_lab(xyz_rt)));
         }
         de_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let p95 = de_values.get((de_values.len() as f64 * 0.95) as usize).copied().unwrap_or(0.0);
+        let p95 = de_values
+            .get((de_values.len() as f64 * 0.95) as usize)
+            .copied()
+            .unwrap_or(0.0);
         pairs.push(("P3→sRGB clip", p95, 80));
     }
 
@@ -2437,7 +2655,10 @@ fn cost_model_ranking_correlates() {
             de_values.push(ciede2000(xyz_to_lab(xyz_orig), xyz_to_lab(xyz_rt)));
         }
         de_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let p95 = de_values.get((de_values.len() as f64 * 0.95) as usize).copied().unwrap_or(0.0);
+        let p95 = de_values
+            .get((de_values.len() as f64 * 0.95) as usize)
+            .copied()
+            .unwrap_or(0.0);
         pairs.push(("BT.2020→sRGB clip", p95, 200));
     }
 
@@ -2483,14 +2704,14 @@ fn cost_model_ranking_correlates() {
     // Compute Spearman rank correlation
     let n = pairs.len();
     let mut de_ranked: Vec<_> = pairs.iter().enumerate().collect();
-    de_ranked.sort_by(|a, b| a.1 .1.partial_cmp(&b.1 .1).unwrap());
+    de_ranked.sort_by(|a, b| a.1.1.partial_cmp(&b.1.1).unwrap());
     let mut de_ranks = vec![0.0f64; n];
     for (rank, &(idx, _)) in de_ranked.iter().enumerate() {
         de_ranks[idx] = rank as f64 + 1.0;
     }
 
     let mut loss_ranked: Vec<_> = pairs.iter().enumerate().collect();
-    loss_ranked.sort_by(|a, b| a.1 .2.cmp(&b.1 .2));
+    loss_ranked.sort_by(|a, b| a.1.2.cmp(&b.1.2));
     let mut loss_ranks = vec![0.0f64; n];
     for (rank, &(idx, _)) in loss_ranked.iter().enumerate() {
         loss_ranks[idx] = rank as f64 + 1.0;

@@ -1,11 +1,9 @@
 //! Tests for format negotiation preference ordering.
 
-use zencodec_types::{
-    AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction,
-};
+use zenpixels::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
 use zenpixels::{
-    best_match, best_match_with, conversion_cost, conversion_cost_with_provenance, ideal_format,
-    negotiate, ConversionCost, ConvertIntent, FormatOption, Provenance,
+    ConversionCost, ConvertIntent, FormatOption, Provenance, best_match, best_match_with,
+    conversion_cost, conversion_cost_with_provenance, ideal_format, negotiate,
 };
 
 // =========================================================================
@@ -108,19 +106,35 @@ fn jpeg_format_negotiation() {
     let jpeg_supported = &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::GRAY8_SRGB];
 
     assert_eq!(
-        best_match(PixelDescriptor::RGBA8_SRGB, jpeg_supported, ConvertIntent::Fastest),
+        best_match(
+            PixelDescriptor::RGBA8_SRGB,
+            jpeg_supported,
+            ConvertIntent::Fastest
+        ),
         Some(PixelDescriptor::RGB8_SRGB)
     );
     assert_eq!(
-        best_match(PixelDescriptor::BGRA8_SRGB, jpeg_supported, ConvertIntent::Fastest),
+        best_match(
+            PixelDescriptor::BGRA8_SRGB,
+            jpeg_supported,
+            ConvertIntent::Fastest
+        ),
         Some(PixelDescriptor::RGB8_SRGB)
     );
     assert_eq!(
-        best_match(PixelDescriptor::GRAY8_SRGB, jpeg_supported, ConvertIntent::Fastest),
+        best_match(
+            PixelDescriptor::GRAY8_SRGB,
+            jpeg_supported,
+            ConvertIntent::Fastest
+        ),
         Some(PixelDescriptor::GRAY8_SRGB)
     );
     assert_eq!(
-        best_match(PixelDescriptor::RGBF32_LINEAR, jpeg_supported, ConvertIntent::Fastest),
+        best_match(
+            PixelDescriptor::RGBF32_LINEAR,
+            jpeg_supported,
+            ConvertIntent::Fastest
+        ),
         Some(PixelDescriptor::RGB8_SRGB)
     );
 }
@@ -131,11 +145,19 @@ fn webp_format_negotiation() {
     let webp_supported = &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB];
 
     assert_eq!(
-        best_match(PixelDescriptor::BGRA8_SRGB, webp_supported, ConvertIntent::Fastest),
+        best_match(
+            PixelDescriptor::BGRA8_SRGB,
+            webp_supported,
+            ConvertIntent::Fastest
+        ),
         Some(PixelDescriptor::RGBA8_SRGB)
     );
     assert_eq!(
-        best_match(PixelDescriptor::GRAY8_SRGB, webp_supported, ConvertIntent::Fastest),
+        best_match(
+            PixelDescriptor::GRAY8_SRGB,
+            webp_supported,
+            ConvertIntent::Fastest
+        ),
         Some(PixelDescriptor::RGB8_SRGB)
     );
 }
@@ -156,11 +178,19 @@ fn png_format_negotiation() {
     ];
 
     assert_eq!(
-        best_match(PixelDescriptor::RGB8_SRGB, png_supported, ConvertIntent::Fastest),
+        best_match(
+            PixelDescriptor::RGB8_SRGB,
+            png_supported,
+            ConvertIntent::Fastest
+        ),
         Some(PixelDescriptor::RGB8_SRGB)
     );
     assert_eq!(
-        best_match(PixelDescriptor::GRAY8_SRGB, png_supported, ConvertIntent::Fastest),
+        best_match(
+            PixelDescriptor::GRAY8_SRGB,
+            png_supported,
+            ConvertIntent::Fastest
+        ),
         Some(PixelDescriptor::GRAY8_SRGB)
     );
 }
@@ -207,7 +237,11 @@ fn drop_alpha_reports_loss() {
 #[test]
 fn color_to_gray_reports_high_loss() {
     let cost = conversion_cost(PixelDescriptor::RGB8_SRGB, PixelDescriptor::GRAY8_SRGB);
-    assert!(cost.loss >= 400, "RGB→Gray loses color information (loss={})", cost.loss);
+    assert!(
+        cost.loss >= 400,
+        "RGB→Gray loses color information (loss={})",
+        cost.loss
+    );
 }
 
 #[test]
@@ -526,7 +560,10 @@ fn u8_origin_f32_to_u8_reports_zero_loss() {
         PixelDescriptor::RGB8_SRGB,
         provenance,
     );
-    assert_eq!(cost.loss, 0, "u8→f32→u8 round-trip should report zero depth loss");
+    assert_eq!(
+        cost.loss, 0,
+        "u8→f32→u8 round-trip should report zero depth loss"
+    );
     assert!(cost.effort > 0, "conversion still has effort cost");
 }
 
@@ -555,7 +592,11 @@ fn f32_origin_f32_to_u8_reports_high_loss() {
         PixelDescriptor::RGB8_SRGB,
         provenance,
     );
-    assert!(cost.loss > 0, "f32→u8 with f32 origin should report nonzero loss (got {})", cost.loss);
+    assert!(
+        cost.loss > 0,
+        "f32→u8 with f32 origin should report nonzero loss (got {})",
+        cost.loss
+    );
     // Verify it's higher than the u8 round-trip (which is zero)
     let u8_prov = Provenance::with_origin_depth(ChannelType::U8);
     let u8_cost = conversion_cost_with_provenance(
@@ -563,7 +604,10 @@ fn f32_origin_f32_to_u8_reports_high_loss() {
         PixelDescriptor::RGB8_SRGB,
         u8_prov,
     );
-    assert!(cost.loss > u8_cost.loss, "f32 origin should have more loss than u8 origin");
+    assert!(
+        cost.loss > u8_cost.loss,
+        "f32 origin should have more loss than u8 origin"
+    );
 }
 
 #[test]
@@ -583,7 +627,10 @@ fn u16_origin_f32_to_u16_reports_zero_loss() {
         TransferFunction::Srgb,
     );
     let cost = conversion_cost_with_provenance(f32_src, u16_dst, provenance);
-    assert_eq!(cost.loss, 0, "u16→f32→u16 round-trip should report zero depth loss");
+    assert_eq!(
+        cost.loss, 0,
+        "u16→f32→u16 round-trip should report zero depth loss"
+    );
 }
 
 #[test]
@@ -625,10 +672,10 @@ fn provenance_shifts_negotiate_preference() {
     let src = PixelDescriptor::RGBF32_LINEAR;
     let provenance = Provenance::with_origin_depth(ChannelType::U8);
     let options = [
-        FormatOption::from(PixelDescriptor::RGB8_SRGB),       // our f32→u8 conversion, zero consumer cost
+        FormatOption::from(PixelDescriptor::RGB8_SRGB), // our f32→u8 conversion, zero consumer cost
         FormatOption::with_cost(
             PixelDescriptor::RGBF32_LINEAR,
-            ConversionCost::new(46, 0),  // consumer accepts f32, slightly more effort than our conversion
+            ConversionCost::new(46, 0), // consumer accepts f32, slightly more effort than our conversion
         ),
     ];
     // Without provenance: f32→u8 has loss=10 → f32 path wins by effort.
@@ -639,7 +686,12 @@ fn provenance_shifts_negotiate_preference() {
     );
     // With provenance: f32→u8 has loss=0 → u8 path is cheaper overall.
     assert_eq!(
-        negotiate(src, provenance, options.iter().copied(), ConvertIntent::Fastest),
+        negotiate(
+            src,
+            provenance,
+            options.iter().copied(),
+            ConvertIntent::Fastest
+        ),
         Some(PixelDescriptor::RGB8_SRGB),
         "with u8 provenance, u8 should win since round-trip is lossless"
     );

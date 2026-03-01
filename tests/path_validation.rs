@@ -6,21 +6,18 @@
 //! 3. Cost predictions are consistent with calibrated loss buckets
 //! 4. The full matrix produces sensible results
 
-use zenpixels::{
-    generate_path_matrix, matrix_stats, optimal_path, CodecFormats, ConversionPath, LossBucket,
-    OpCategory, Provenance, QualityThreshold,
-};
+use zenpixels::{AlphaMode, ChannelType, PixelDescriptor, TransferFunction};
 use zenpixels::registry;
-use zencodec_types::{AlphaMode, ChannelType, PixelDescriptor, TransferFunction};
+use zenpixels::{
+    CodecFormats, ConversionPath, LossBucket, OpCategory, Provenance, QualityThreshold,
+    generate_path_matrix, matrix_stats, optimal_path,
+};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Common triples: JPEG → op → JPEG
 // ═══════════════════════════════════════════════════════════════════════
 
-fn jpeg_path(
-    op: OpCategory,
-    threshold: QualityThreshold,
-) -> Option<ConversionPath> {
+fn jpeg_path(op: OpCategory, threshold: QualityThreshold) -> Option<ConversionPath> {
     optimal_path(
         PixelDescriptor::RGB8_SRGB,
         Provenance::with_origin_depth(ChannelType::U8),
@@ -165,7 +162,10 @@ fn png16_to_jpeg_passthrough() {
         PixelDescriptor::RGB8_SRGB,
         QualityThreshold::NearLossless,
     );
-    assert!(path.is_some(), "u16→u8 should work with NearLossless threshold");
+    assert!(
+        path.is_some(),
+        "u16→u8 should work with NearLossless threshold"
+    );
 }
 
 #[test]
@@ -305,7 +305,10 @@ fn f32_origin_to_u8_is_lossy() {
     );
     assert!(path.is_some());
     let path = path.unwrap();
-    assert!(path.total_loss > 0, "f32→u8 with f32 origin should be lossy");
+    assert!(
+        path.total_loss > 0,
+        "f32→u8 with f32 origin should be lossy"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -329,8 +332,16 @@ fn full_matrix_with_all_codecs_and_three_ops() {
     let stats = matrix_stats(&matrix);
 
     // Sanity checks.
-    assert!(stats.total_triples > 1000, "expected >1000 triples, got {}", stats.total_triples);
-    assert!(stats.paths_found > 500, "expected >500 paths, got {}", stats.paths_found);
+    assert!(
+        stats.total_triples > 1000,
+        "expected >1000 triples, got {}",
+        stats.total_triples
+    );
+    assert!(
+        stats.paths_found > 500,
+        "expected >500 paths, got {}",
+        stats.paths_found
+    );
 
     // Most passthrough identity triples should be lossless.
     let passthrough_lossless = matrix
@@ -339,15 +350,28 @@ fn full_matrix_with_all_codecs_and_three_ops() {
         .filter(|e| e.source_format == e.output_format)
         .filter(|e| e.path.as_ref().is_some_and(|p| p.total_loss == 0))
         .count();
-    assert!(passthrough_lossless > 0, "some passthrough identities should be lossless");
+    assert!(
+        passthrough_lossless > 0,
+        "some passthrough identities should be lossless"
+    );
 
     // Print summary for debugging.
-    println!("Full matrix: {} triples, {} paths found, {} no path",
-        stats.total_triples, stats.paths_found, stats.no_path);
-    println!("  By bucket: Lossless={}, NearLossless={}, LowLoss={}, Moderate={}, High={}",
-        stats.by_bucket[0], stats.by_bucket[1], stats.by_bucket[2],
-        stats.by_bucket[3], stats.by_bucket[4]);
-    println!("  Distinct working formats: {}", stats.distinct_working_formats);
+    println!(
+        "Full matrix: {} triples, {} paths found, {} no path",
+        stats.total_triples, stats.paths_found, stats.no_path
+    );
+    println!(
+        "  By bucket: Lossless={}, NearLossless={}, LowLoss={}, Moderate={}, High={}",
+        stats.by_bucket[0],
+        stats.by_bucket[1],
+        stats.by_bucket[2],
+        stats.by_bucket[3],
+        stats.by_bucket[4]
+    );
+    println!(
+        "  Distinct working formats: {}",
+        stats.distinct_working_formats
+    );
 }
 
 #[test]
@@ -378,8 +402,10 @@ fn full_matrix_all_13_ops() {
     );
     let stats = matrix_stats(&matrix);
 
-    println!("All ops matrix: {} triples, {} paths, {} no path",
-        stats.total_triples, stats.paths_found, stats.no_path);
+    println!(
+        "All ops matrix: {} triples, {} paths, {} no path",
+        stats.total_triples, stats.paths_found, stats.no_path
+    );
 
     // Every operation should find at least some valid paths.
     for &op in &all_ops {
@@ -413,7 +439,8 @@ fn lossless_paths_have_zero_total_loss() {
     for entry in &matrix {
         if let Some(ref path) = entry.path {
             assert_eq!(
-                path.total_loss, 0,
+                path.total_loss,
+                0,
                 "path from {} {:?} → {} {:?} marked lossless but has loss {}",
                 entry.source_codec,
                 entry.source_format,

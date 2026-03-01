@@ -10,7 +10,7 @@
 //! with a custom [`ConversionCost`], so the negotiation picks their fast
 //! path instead of doing a redundant conversion.
 
-use zencodec_types::{
+use crate::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
 };
 
@@ -194,7 +194,7 @@ impl core::ops::Add for ConversionCost {
 ///
 /// ```rust,ignore
 /// use zenpixels::{FormatOption, ConversionCost};
-/// use zencodec_types::PixelDescriptor;
+/// use zenpixels::PixelDescriptor;
 ///
 /// let options = &[
 ///     FormatOption::from(PixelDescriptor::RGB8_SRGB),     // native, zero cost
@@ -359,7 +359,12 @@ pub fn ideal_format(source: PixelDescriptor, intent: ConvertIntent) -> PixelDesc
             {
                 return source;
             }
-            PixelDescriptor::new(ChannelType::F32, source.layout, alpha, TransferFunction::Linear)
+            PixelDescriptor::new(
+                ChannelType::F32,
+                source.layout,
+                alpha,
+                TransferFunction::Linear,
+            )
         }
 
         ConvertIntent::Perceptual => {
@@ -433,9 +438,8 @@ pub(crate) fn score_target(
 ) -> u32 {
     let our_cost = conversion_cost_with_provenance(source, target, provenance);
     let total_effort = our_cost.effort as u32 + consumer_cost.effort as u32;
-    let total_loss = our_cost.loss as u32
-        + consumer_cost.loss as u32
-        + suitability_loss(target, intent) as u32;
+    let total_loss =
+        our_cost.loss as u32 + consumer_cost.loss as u32 + suitability_loss(target, intent) as u32;
     weighted_score(total_effort, total_loss, intent)
 }
 
@@ -516,10 +520,10 @@ fn linear_light_suitability(target: PixelDescriptor) -> u16 {
         // Linear space: only quantization error.
         match target.channel_type {
             ChannelType::F32 => 0,
-            ChannelType::F16 => 5,   // 10 mantissa bits, measured ΔE=0.022
-            ChannelType::I16 => 5,   // 15 usable bits, measured ΔE=0.001
-            ChannelType::U16 => 5,   // 16 bits, negligible quantization
-            ChannelType::U8 => 40,   // severe banding in darks, measured ΔE=0.213
+            ChannelType::F16 => 5, // 10 mantissa bits, measured ΔE=0.022
+            ChannelType::I16 => 5, // 15 usable bits, measured ΔE=0.001
+            ChannelType::U16 => 5, // 16 bits, negligible quantization
+            ChannelType::U8 => 40, // severe banding in darks, measured ΔE=0.213
             _ => 50,
         }
     } else {
@@ -641,14 +645,14 @@ fn depth_loss(target_depth: ChannelType, origin_depth: ChannelType) -> u16 {
     // The suitability_loss function handles the separate concern of
     // operating in a lower-precision format (gamma darkening in u8, etc).
     match (origin_depth, target_depth) {
-        (ChannelType::U16, ChannelType::U8) => 10,    // measured ΔE=0.14, sub-JND
-        (ChannelType::F32, ChannelType::U8) => 10,    // measured ΔE=0.14, sub-JND in sRGB
-        (ChannelType::F32, ChannelType::U16) => 5,    // 23→16 mantissa bits, negligible
-        (ChannelType::F32, ChannelType::F16) => 20,   // 23→10 mantissa bits, small loss
-        (ChannelType::F32, ChannelType::I16) => 5,    // measured ΔE=0.000, lossless round-trip
-        (ChannelType::F16, ChannelType::U8) => 8,     // measured ΔE=0.000 (f16 >8 bits precision)
-        (ChannelType::U16, ChannelType::F16) => 30,   // 16→10 mantissa bits, moderate loss
-        (ChannelType::I16, ChannelType::U8) => 8,     // similar to F16→U8
+        (ChannelType::U16, ChannelType::U8) => 10, // measured ΔE=0.14, sub-JND
+        (ChannelType::F32, ChannelType::U8) => 10, // measured ΔE=0.14, sub-JND in sRGB
+        (ChannelType::F32, ChannelType::U16) => 5, // 23→16 mantissa bits, negligible
+        (ChannelType::F32, ChannelType::F16) => 20, // 23→10 mantissa bits, small loss
+        (ChannelType::F32, ChannelType::I16) => 5, // measured ΔE=0.000, lossless round-trip
+        (ChannelType::F16, ChannelType::U8) => 8,  // measured ΔE=0.000 (f16 >8 bits precision)
+        (ChannelType::U16, ChannelType::F16) => 30, // 16→10 mantissa bits, moderate loss
+        (ChannelType::I16, ChannelType::U8) => 8,  // similar to F16→U8
         _ => 50,
     }
 }
@@ -661,8 +665,8 @@ fn depth_loss(target_depth: ChannelType, origin_depth: ChannelType) -> u16 {
 pub(crate) fn channel_bits(ct: ChannelType) -> u16 {
     match ct {
         ChannelType::U8 => 8,
-        ChannelType::F16 => 11,  // 10 mantissa + 1 implicit
-        ChannelType::I16 => 15,  // 16 bits minus sign
+        ChannelType::F16 => 11, // 10 mantissa + 1 implicit
+        ChannelType::I16 => 15, // 16 bits minus sign
         ChannelType::U16 => 16,
         ChannelType::F32 => 32,
         _ => 0,
@@ -720,21 +724,25 @@ fn layout_cost(from: ChannelLayout, to: ChannelLayout) -> ConversionCost {
     }
     match (from, to) {
         // Swizzle: cheap, lossless.
-        (ChannelLayout::Bgra, ChannelLayout::Rgba)
-        | (ChannelLayout::Rgba, ChannelLayout::Bgra) => ConversionCost::new(5, 0),
+        (ChannelLayout::Bgra, ChannelLayout::Rgba) | (ChannelLayout::Rgba, ChannelLayout::Bgra) => {
+            ConversionCost::new(5, 0)
+        }
 
         // Add alpha: cheap, lossless (fill opaque).
-        (ChannelLayout::Rgb, ChannelLayout::Rgba)
-        | (ChannelLayout::Rgb, ChannelLayout::Bgra) => ConversionCost::new(10, 0),
+        (ChannelLayout::Rgb, ChannelLayout::Rgba) | (ChannelLayout::Rgb, ChannelLayout::Bgra) => {
+            ConversionCost::new(10, 0)
+        }
 
         // Drop alpha: cheap but lossy (alpha channel destroyed).
-        (ChannelLayout::Rgba, ChannelLayout::Rgb)
-        | (ChannelLayout::Bgra, ChannelLayout::Rgb) => ConversionCost::new(15, 50),
+        (ChannelLayout::Rgba, ChannelLayout::Rgb) | (ChannelLayout::Bgra, ChannelLayout::Rgb) => {
+            ConversionCost::new(15, 50)
+        }
 
         // Gray → RGB: replicate, lossless.
         (ChannelLayout::Gray, ChannelLayout::Rgb) => ConversionCost::new(8, 0),
-        (ChannelLayout::Gray, ChannelLayout::Rgba)
-        | (ChannelLayout::Gray, ChannelLayout::Bgra) => ConversionCost::new(10, 0),
+        (ChannelLayout::Gray, ChannelLayout::Rgba) | (ChannelLayout::Gray, ChannelLayout::Bgra) => {
+            ConversionCost::new(10, 0)
+        }
 
         // Color → Gray: luma calculation, very lossy (color info destroyed).
         (ChannelLayout::Rgb, ChannelLayout::Gray)
@@ -794,10 +802,7 @@ enum PrecisionTier {
 
 #[allow(unreachable_patterns)] // non_exhaustive: future variants
 fn precision_tier(desc: PixelDescriptor) -> PrecisionTier {
-    if matches!(
-        desc.transfer,
-        TransferFunction::Pq | TransferFunction::Hlg
-    ) {
+    if matches!(desc.transfer, TransferFunction::Pq | TransferFunction::Hlg) {
         return PrecisionTier::Hdr;
     }
     match desc.channel_type {

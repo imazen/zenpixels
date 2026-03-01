@@ -7,7 +7,7 @@
 //! This replaces statistical sampling with exhaustive numerical proof:
 //! "u8 sRGB → f32 linear → u8 sRGB is lossless (max error = 0 for all 256 values)".
 
-use zenpixels::{convert_row, ConvertPlan, PixelDescriptor};
+use zenpixels::{ConvertPlan, PixelDescriptor, convert_row};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Helper: exhaustive u8 round-trip through an intermediate format
@@ -16,9 +16,7 @@ use zenpixels::{convert_row, ConvertPlan, PixelDescriptor};
 /// Test a u8→X→u8 round-trip for all 256 values per channel (RGB).
 ///
 /// Returns the max error in u8 units (0 = perfectly lossless).
-fn measure_u8_roundtrip_max_error(
-    intermediate: PixelDescriptor,
-) -> u8 {
+fn measure_u8_roundtrip_max_error(intermediate: PixelDescriptor) -> u8 {
     let src_desc = PixelDescriptor::RGB8_SRGB;
     let plan_fwd = ConvertPlan::new(src_desc, intermediate).expect("forward plan");
     let plan_back = ConvertPlan::new(intermediate, src_desc).expect("backward plan");
@@ -51,9 +49,7 @@ fn measure_u8_roundtrip_max_error(
 /// Test a u8→X→u8 round-trip exhaustively over the full 256^3 RGB cube.
 ///
 /// This is slower (~16M evaluations) but proves correctness for every value.
-fn measure_u8_roundtrip_full_cube(
-    intermediate: PixelDescriptor,
-) -> u8 {
+fn measure_u8_roundtrip_full_cube(intermediate: PixelDescriptor) -> u8 {
     let src_desc = PixelDescriptor::RGB8_SRGB;
     let plan_fwd = ConvertPlan::new(src_desc, intermediate).expect("forward plan");
     let plan_back = ConvertPlan::new(intermediate, src_desc).expect("backward plan");
@@ -113,7 +109,7 @@ fn ulp_u8_srgb_f32_linear_roundtrip_full_cube() {
 fn ulp_u8_u16_roundtrip() {
     // u8 → u16 uses v * 257, u16 → u8 uses (v * 255 + 32768) >> 16
     // This should be perfectly lossless.
-    use zencodec_types::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
 
     let src = PixelDescriptor::RGB8_SRGB;
     let mid_desc = PixelDescriptor::new(
@@ -150,7 +146,7 @@ fn ulp_u8_u16_roundtrip() {
 
 #[test]
 fn ulp_u16_to_u8_max_error() {
-    use zencodec_types::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
 
     let src = PixelDescriptor::new(
         ChannelType::U16,
@@ -184,7 +180,7 @@ fn ulp_u16_to_u8_max_error() {
 
 #[test]
 fn ulp_u8_to_u16_exact() {
-    use zencodec_types::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
 
     let src = PixelDescriptor::RGB8_SRGB;
     let dst = PixelDescriptor::new(
@@ -240,7 +236,10 @@ fn ulp_bgra_rgba_swizzle_roundtrip() {
         }
     }
 
-    assert_eq!(error_count, 0, "BGRA↔RGBA swizzle should be perfectly lossless");
+    assert_eq!(
+        error_count, 0,
+        "BGRA↔RGBA swizzle should be perfectly lossless"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -326,7 +325,7 @@ fn ulp_srgb_oetf_boundary_values() {
 
 #[test]
 fn ulp_naive_u8_f32_roundtrip() {
-    use zencodec_types::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
 
     let u8_desc = PixelDescriptor::new(
         ChannelType::U8,
@@ -370,7 +369,7 @@ fn ulp_naive_u8_f32_roundtrip() {
 
 #[test]
 fn ulp_u16_f32_roundtrip_exhaustive() {
-    use zencodec_types::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
 
     let u16_desc = PixelDescriptor::new(
         ChannelType::U16,
@@ -415,7 +414,7 @@ fn ulp_u16_f32_roundtrip_exhaustive() {
 
 #[test]
 fn ulp_premul_roundtrip_u8_exhaustive() {
-    use zencodec_types::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
 
     let straight = PixelDescriptor::new(
         ChannelType::U8,
@@ -470,7 +469,10 @@ fn ulp_premul_roundtrip_u8_exhaustive() {
     // The max error should be bounded. For u8 premul, worst case is alpha=1.
     // Don't assert exact value since it depends on the rounding, just document it.
     // At alpha=1, only 0 and 1 are representable after premul, so error can be up to 254.
-    assert!(max_err > 0, "premul in u8 is expected to be lossy at low alpha");
+    assert!(
+        max_err > 0,
+        "premul in u8 is expected to be lossy at low alpha"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -479,7 +481,7 @@ fn ulp_premul_roundtrip_u8_exhaustive() {
 
 #[test]
 fn ulp_premul_roundtrip_f32() {
-    use zencodec_types::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
 
     let straight = PixelDescriptor::new(
         ChannelType::F32,
@@ -513,7 +515,8 @@ fn ulp_premul_roundtrip_f32() {
             let result: [f32; 4] = bytemuck::cast(output);
 
             if alpha > 0.0 {
-                let err_bits = (result[0].to_bits() as i64 - value.to_bits() as i64).unsigned_abs() as u32;
+                let err_bits =
+                    (result[0].to_bits() as i64 - value.to_bits() as i64).unsigned_abs() as u32;
                 max_ulp_err = max_ulp_err.max(err_bits);
             }
         }
@@ -603,7 +606,7 @@ fn ulp_add_drop_alpha_roundtrip() {
 
 #[test]
 fn ulp_gray_alpha_rgba_roundtrip() {
-    use zencodec_types::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
 
     let ga = PixelDescriptor::new(
         ChannelType::U8,
