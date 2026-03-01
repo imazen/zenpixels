@@ -75,8 +75,13 @@ pub use registry::{CodecFormats, FormatEntry};
 // Re-export key descriptor types at crate root for ergonomics.
 pub use descriptor::{
     AlphaMode, ByteOrder, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, InterleaveFormat,
-    PixelDescriptor, PixelFormat, PlanarDescriptor, PlaneMask, PlaneSemantic, PlaneSpec,
-    SignalRange, Subsampling, TransferFunction, YuvMatrix,
+    PixelDescriptor, PixelFormat, SignalRange, TransferFunction,
+};
+
+// Re-export planar types when the `planar` feature is enabled.
+#[cfg(feature = "planar")]
+pub use descriptor::{
+    MultiPlaneImage, Plane, PlaneRelationship, PlaneSemantic, Subsampling, YuvMatrix,
 };
 
 // Re-export buffer types at crate root.

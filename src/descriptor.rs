@@ -987,10 +987,11 @@ impl fmt::Display for ByteOrder {
 }
 
 // ---------------------------------------------------------------------------
-// Chroma subsampling
+// Chroma subsampling (planar feature)
 // ---------------------------------------------------------------------------
 
 /// Chroma subsampling ratio.
+#[cfg(feature = "planar")]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 #[repr(u8)]
@@ -1006,6 +1007,7 @@ pub enum Subsampling {
     S411 = 3,
 }
 
+#[cfg(feature = "planar")]
 impl Subsampling {
     /// Horizontal subsampling factor (1 = full, 2 = half, 4 = quarter).
     #[inline]
@@ -1030,6 +1032,7 @@ impl Subsampling {
     }
 }
 
+#[cfg(feature = "planar")]
 impl fmt::Display for Subsampling {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1042,10 +1045,11 @@ impl fmt::Display for Subsampling {
 }
 
 // ---------------------------------------------------------------------------
-// YUV matrix coefficients
+// YUV matrix coefficients (planar feature)
 // ---------------------------------------------------------------------------
 
 /// YCbCr matrix coefficients for luma/chroma conversion.
+#[cfg(feature = "planar")]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 #[repr(u8)]
@@ -1061,6 +1065,7 @@ pub enum YuvMatrix {
     Bt2020 = 3,
 }
 
+#[cfg(feature = "planar")]
 impl YuvMatrix {
     /// RGB to Y luma coefficients [Kr, Kg, Kb].
     #[allow(unreachable_patterns)]
@@ -1086,6 +1091,7 @@ impl YuvMatrix {
     }
 }
 
+#[cfg(feature = "planar")]
 impl fmt::Display for YuvMatrix {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1495,311 +1501,140 @@ impl fmt::Display for InterleaveFormat {
 }
 
 // ---------------------------------------------------------------------------
-// Planar descriptors
+// Multi-plane types (planar feature)
 // ---------------------------------------------------------------------------
 
-/// Maximum number of planes in a planar layout.
-pub const MAX_PLANES: usize = 8;
-
-/// Semantic meaning of a single plane.
+/// Semantic label for a plane in a multi-plane image.
+#[cfg(feature = "planar")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum PlaneSemantic {
-    Luma = 0,
-    ChromaCb = 1,
-    ChromaCr = 2,
-    Red = 3,
-    Green = 4,
-    Blue = 5,
-    Alpha = 6,
-    OklabL = 7,
-    OklabA = 8,
-    OklabB = 9,
-    GainMap = 10,
-    Gray = 11,
+    /// Luma (Y).
+    Y = 0,
+    /// Chroma blue-difference (Cb / U).
+    Cb = 1,
+    /// Chroma red-difference (Cr / V).
+    Cr = 2,
+    /// Red channel.
+    R = 3,
+    /// Green channel.
+    G = 4,
+    /// Blue channel.
+    B = 5,
+    /// Alpha channel.
+    A = 6,
+    /// Depth map.
+    Depth = 7,
+    /// Gain map (e.g., Ultra HDR).
+    GainMap = 8,
 }
 
+#[cfg(feature = "planar")]
 impl fmt::Display for PlaneSemantic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Luma => f.write_str("Y"),
-            Self::ChromaCb => f.write_str("Cb"),
-            Self::ChromaCr => f.write_str("Cr"),
-            Self::Red => f.write_str("R"),
-            Self::Green => f.write_str("G"),
-            Self::Blue => f.write_str("B"),
-            Self::Alpha => f.write_str("A"),
-            Self::OklabL => f.write_str("L"),
-            Self::OklabA => f.write_str("a"),
-            Self::OklabB => f.write_str("b"),
+            Self::Y => f.write_str("Y"),
+            Self::Cb => f.write_str("Cb"),
+            Self::Cr => f.write_str("Cr"),
+            Self::R => f.write_str("R"),
+            Self::G => f.write_str("G"),
+            Self::B => f.write_str("B"),
+            Self::A => f.write_str("A"),
+            Self::Depth => f.write_str("Depth"),
             Self::GainMap => f.write_str("GainMap"),
-            Self::Gray => f.write_str("Gray"),
         }
     }
 }
 
-/// Descriptor for a single plane in a planar layout.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct PlaneSpec {
+/// A single plane with its semantic label.
+///
+/// Each plane is an independent [`PixelBuffer`](crate::buffer::PixelBuffer)
+/// (opaque gray channel) that can be a different size from other planes
+/// (e.g., subsampled chroma).
+#[cfg(feature = "planar")]
+pub struct Plane {
+    /// The pixel data for this plane.
+    pub buffer: crate::buffer::PixelBuffer,
     /// What this plane represents.
     pub semantic: PlaneSemantic,
-    /// Horizontal subsampling (1=full, 2=half, 4=quarter).
-    pub h_subsample: u8,
-    /// Vertical subsampling (1=full, 2=half).
-    pub v_subsample: u8,
-    /// Per-plane channel type (usually same for all).
-    pub channel_type: ChannelType,
 }
 
-impl PlaneSpec {
-    /// Compute plane width from reference (luma) width.
-    #[inline]
-    pub const fn plane_width(self, ref_w: u32) -> u32 {
-        ref_w.div_ceil(self.h_subsample as u32)
-    }
-
-    /// Compute plane height from reference (luma) height.
-    #[inline]
-    pub const fn plane_height(self, ref_h: u32) -> u32 {
-        ref_h.div_ceil(self.v_subsample as u32)
-    }
-
-    /// Whether this plane is subsampled.
-    #[inline]
-    pub const fn is_subsampled(self) -> bool {
-        self.h_subsample > 1 || self.v_subsample > 1
-    }
+/// How planes in a [`MultiPlaneImage`] relate to each other.
+#[cfg(feature = "planar")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PlaneRelationship {
+    /// Independent channels (e.g., split R, G, B).
+    Independent,
+    /// YCbCr with a specific matrix. Subsampling is implied by plane dimensions.
+    YCbCr {
+        /// The YCbCr matrix coefficients.
+        matrix: YuvMatrix,
+    },
+    /// Gain map (base rendition + gain plane).
+    GainMap,
 }
 
-/// Fixed-size planar format descriptor. Up to 8 planes, no heap.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct PlanarDescriptor {
-    planes: [PlaneSpec; MAX_PLANES],
-    plane_count: u8,
-    /// YUV matrix coefficients (if YCbCr).
-    pub yuv_matrix: YuvMatrix,
-    /// Transfer function for all planes.
-    pub transfer: TransferFunction,
+/// A multi-plane image where each plane is an independent pixel buffer.
+///
+/// Planes can be different sizes (e.g., subsampled chroma in YCbCr 4:2:0).
+/// Subsampling is NOT an explicit enum — it's implied by relative plane
+/// dimensions. If Y is 1920×1080 and Cb is 960×540, that's 4:2:0.
+#[cfg(feature = "planar")]
+pub struct MultiPlaneImage {
+    planes: alloc::vec::Vec<Plane>,
+    /// How the planes relate to each other.
+    pub relationship: PlaneRelationship,
+    /// Optional color context shared across all planes.
+    pub origin: Option<alloc::sync::Arc<crate::color::ColorContext>>,
 }
 
-impl PlanarDescriptor {
-    /// Number of planes.
-    #[inline]
-    pub const fn plane_count(&self) -> usize {
-        self.plane_count as usize
-    }
-
-    /// Access all plane specs.
-    #[inline]
-    pub fn planes(&self) -> &[PlaneSpec] {
-        &self.planes[..self.plane_count as usize]
-    }
-
-    /// Width of a specific plane given reference width.
-    #[inline]
-    pub fn plane_width(&self, idx: usize, ref_w: u32) -> u32 {
-        self.planes[idx].plane_width(ref_w)
-    }
-
-    /// Height of a specific plane given reference height.
-    #[inline]
-    pub fn plane_height(&self, idx: usize, ref_h: u32) -> u32 {
-        self.planes[idx].plane_height(ref_h)
-    }
-
-    // -- Factory methods ------------------------------------------------------
-
-    const fn spec(semantic: PlaneSemantic, h: u8, v: u8, ct: ChannelType) -> PlaneSpec {
-        PlaneSpec {
-            semantic,
-            h_subsample: h,
-            v_subsample: v,
-            channel_type: ct,
-        }
-    }
-
-    const EMPTY_SPEC: PlaneSpec = PlaneSpec {
-        semantic: PlaneSemantic::Gray,
-        h_subsample: 1,
-        v_subsample: 1,
-        channel_type: ChannelType::U8,
-    };
-
-    fn from_specs(specs: &[PlaneSpec], matrix: YuvMatrix, transfer: TransferFunction) -> Self {
-        let mut planes = [Self::EMPTY_SPEC; MAX_PLANES];
-        let count = specs.len().min(MAX_PLANES);
-        planes[..count].copy_from_slice(&specs[..count]);
+#[cfg(feature = "planar")]
+impl MultiPlaneImage {
+    /// Create a new multi-plane image.
+    pub fn new(planes: alloc::vec::Vec<Plane>, relationship: PlaneRelationship) -> Self {
         Self {
             planes,
-            plane_count: count as u8,
-            yuv_matrix: matrix,
-            transfer,
+            relationship,
+            origin: None,
         }
     }
 
-    /// YCbCr 4:2:0.
-    pub fn ycbcr_420(ct: ChannelType, matrix: YuvMatrix, transfer: TransferFunction) -> Self {
-        Self::from_specs(
-            &[
-                Self::spec(PlaneSemantic::Luma, 1, 1, ct),
-                Self::spec(PlaneSemantic::ChromaCb, 2, 2, ct),
-                Self::spec(PlaneSemantic::ChromaCr, 2, 2, ct),
-            ],
-            matrix,
-            transfer,
-        )
+    /// Attach a color context.
+    pub fn with_origin(mut self, ctx: alloc::sync::Arc<crate::color::ColorContext>) -> Self {
+        self.origin = Some(ctx);
+        self
     }
 
-    /// YCbCr 4:2:2.
-    pub fn ycbcr_422(ct: ChannelType, matrix: YuvMatrix, transfer: TransferFunction) -> Self {
-        Self::from_specs(
-            &[
-                Self::spec(PlaneSemantic::Luma, 1, 1, ct),
-                Self::spec(PlaneSemantic::ChromaCb, 2, 1, ct),
-                Self::spec(PlaneSemantic::ChromaCr, 2, 1, ct),
-            ],
-            matrix,
-            transfer,
-        )
-    }
-
-    /// YCbCr 4:4:4.
-    pub fn ycbcr_444(ct: ChannelType, matrix: YuvMatrix, transfer: TransferFunction) -> Self {
-        Self::from_specs(
-            &[
-                Self::spec(PlaneSemantic::Luma, 1, 1, ct),
-                Self::spec(PlaneSemantic::ChromaCb, 1, 1, ct),
-                Self::spec(PlaneSemantic::ChromaCr, 1, 1, ct),
-            ],
-            matrix,
-            transfer,
-        )
-    }
-
-    /// YCbCr 4:1:1.
-    pub fn ycbcr_411(ct: ChannelType, matrix: YuvMatrix, transfer: TransferFunction) -> Self {
-        Self::from_specs(
-            &[
-                Self::spec(PlaneSemantic::Luma, 1, 1, ct),
-                Self::spec(PlaneSemantic::ChromaCb, 4, 1, ct),
-                Self::spec(PlaneSemantic::ChromaCr, 4, 1, ct),
-            ],
-            matrix,
-            transfer,
-        )
-    }
-
-    /// Planar RGB.
-    pub fn planar_rgb(ct: ChannelType, transfer: TransferFunction) -> Self {
-        Self::from_specs(
-            &[
-                Self::spec(PlaneSemantic::Red, 1, 1, ct),
-                Self::spec(PlaneSemantic::Green, 1, 1, ct),
-                Self::spec(PlaneSemantic::Blue, 1, 1, ct),
-            ],
-            YuvMatrix::Identity,
-            transfer,
-        )
-    }
-
-    /// Planar RGBA.
-    pub fn planar_rgba(ct: ChannelType, transfer: TransferFunction) -> Self {
-        Self::from_specs(
-            &[
-                Self::spec(PlaneSemantic::Red, 1, 1, ct),
-                Self::spec(PlaneSemantic::Green, 1, 1, ct),
-                Self::spec(PlaneSemantic::Blue, 1, 1, ct),
-                Self::spec(PlaneSemantic::Alpha, 1, 1, ct),
-            ],
-            YuvMatrix::Identity,
-            transfer,
-        )
-    }
-
-    /// Planar Oklab.
-    pub fn oklab(ct: ChannelType, transfer: TransferFunction) -> Self {
-        Self::from_specs(
-            &[
-                Self::spec(PlaneSemantic::OklabL, 1, 1, ct),
-                Self::spec(PlaneSemantic::OklabA, 1, 1, ct),
-                Self::spec(PlaneSemantic::OklabB, 1, 1, ct),
-            ],
-            YuvMatrix::Identity,
-            transfer,
-        )
-    }
-
-    /// Create from a [`Subsampling`] value.
-    pub fn from_subsampling(
-        sub: Subsampling,
-        ct: ChannelType,
-        matrix: YuvMatrix,
-        transfer: TransferFunction,
-    ) -> Self {
-        match sub {
-            Subsampling::S444 => Self::ycbcr_444(ct, matrix, transfer),
-            Subsampling::S422 => Self::ycbcr_422(ct, matrix, transfer),
-            Subsampling::S420 => Self::ycbcr_420(ct, matrix, transfer),
-            Subsampling::S411 => Self::ycbcr_411(ct, matrix, transfer),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Plane mask
-// ---------------------------------------------------------------------------
-
-/// Bitfield selecting which planes to process.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct PlaneMask {
-    bits: u8,
-}
-
-impl PlaneMask {
-    pub const ALL: Self = Self { bits: 0xFF };
-    pub const NONE: Self = Self { bits: 0 };
-    /// Plane 0 only (typically luma).
-    pub const LUMA: Self = Self { bits: 1 };
-    /// Planes 1 and 2 (typically chroma Cb/Cr).
-    pub const CHROMA: Self = Self { bits: 0b110 };
-    /// Plane 3 (typically alpha in a 4-plane layout).
-    pub const ALPHA: Self = Self { bits: 0b1000 };
-
-    /// Select a single plane by index.
+    /// Number of planes.
     #[inline]
-    pub const fn single(idx: usize) -> Self {
-        Self {
-            bits: 1u8 << (idx as u8),
-        }
+    pub fn plane_count(&self) -> usize {
+        self.planes.len()
     }
 
-    /// Whether plane `idx` is included.
+    /// Access all planes.
     #[inline]
-    pub const fn includes(self, idx: usize) -> bool {
-        self.bits & (1u8 << (idx as u8)) != 0
+    pub fn planes(&self) -> &[Plane] {
+        &self.planes
     }
 
-    /// Union of two masks.
+    /// Access all planes mutably.
     #[inline]
-    pub const fn union(self, other: Self) -> Self {
-        Self {
-            bits: self.bits | other.bits,
-        }
+    pub fn planes_mut(&mut self) -> &mut [Plane] {
+        &mut self.planes
     }
 
-    /// Intersection of two masks.
+    /// Access a single plane by index.
     #[inline]
-    pub const fn intersection(self, other: Self) -> Self {
-        Self {
-            bits: self.bits & other.bits,
-        }
+    pub fn plane(&self, idx: usize) -> &Plane {
+        &self.planes[idx]
     }
 
-    /// Number of selected planes.
+    /// Access a single plane mutably by index.
     #[inline]
-    pub const fn count(self) -> u32 {
-        self.bits.count_ones()
+    pub fn plane_mut(&mut self, idx: usize) -> &mut Plane {
+        &mut self.planes[idx]
     }
 }
 
@@ -1928,6 +1763,7 @@ mod tests {
         assert_eq!(ColorModel::Oklab.color_channels(), 3);
     }
 
+    #[cfg(feature = "planar")]
     #[test]
     fn subsampling_factors() {
         assert_eq!(Subsampling::S444.h_factor(), 1);
@@ -1940,61 +1776,12 @@ mod tests {
         assert_eq!(Subsampling::S411.v_factor(), 1);
     }
 
+    #[cfg(feature = "planar")]
     #[test]
     fn yuv_matrix_cicp() {
         assert_eq!(YuvMatrix::from_cicp(1), Some(YuvMatrix::Bt709));
         assert_eq!(YuvMatrix::from_cicp(5), Some(YuvMatrix::Bt601));
         assert_eq!(YuvMatrix::from_cicp(9), Some(YuvMatrix::Bt2020));
         assert_eq!(YuvMatrix::from_cicp(99), None);
-    }
-
-    #[test]
-    fn planar_descriptor_420() {
-        let pd =
-            PlanarDescriptor::ycbcr_420(ChannelType::U8, YuvMatrix::Bt601, TransferFunction::Srgb);
-        assert_eq!(pd.plane_count(), 3);
-        assert_eq!(pd.plane_width(0, 1920), 1920); // luma
-        assert_eq!(pd.plane_width(1, 1920), 960); // chroma
-        assert_eq!(pd.plane_height(0, 1080), 1080);
-        assert_eq!(pd.plane_height(1, 1080), 540);
-    }
-
-    #[test]
-    fn planar_descriptor_411() {
-        let pd =
-            PlanarDescriptor::ycbcr_411(ChannelType::U8, YuvMatrix::Bt601, TransferFunction::Srgb);
-        assert_eq!(pd.plane_count(), 3);
-        assert_eq!(pd.plane_width(1, 1920), 480); // quarter horizontal
-        assert_eq!(pd.plane_height(1, 1080), 1080); // no vertical subsampling
-    }
-
-    #[test]
-    fn plane_mask_operations() {
-        let luma_chroma = PlaneMask::LUMA.union(PlaneMask::CHROMA);
-        assert!(luma_chroma.includes(0));
-        assert!(luma_chroma.includes(1));
-        assert!(luma_chroma.includes(2));
-        assert!(!luma_chroma.includes(3));
-        assert_eq!(luma_chroma.count(), 3);
-    }
-
-    #[test]
-    fn plane_spec_rounding() {
-        let spec = PlaneSpec {
-            semantic: PlaneSemantic::ChromaCb,
-            h_subsample: 2,
-            v_subsample: 2,
-            channel_type: ChannelType::U8,
-        };
-        // Odd dimensions round up
-        assert_eq!(spec.plane_width(1921), 961);
-        assert_eq!(spec.plane_height(1081), 541);
-    }
-
-    #[test]
-    fn planar_descriptor_size() {
-        assert!(size_of::<PlanarDescriptor>() <= 40);
-        assert_eq!(size_of::<PlaneSpec>(), 4);
-        assert_eq!(size_of::<PlaneMask>(), 1);
     }
 }
