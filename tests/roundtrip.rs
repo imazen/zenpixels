@@ -140,7 +140,7 @@ fn u8_to_u16_roundtrip() {
     let desc_u16 = PixelDescriptor::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Srgb,
     );
 
@@ -174,7 +174,7 @@ fn gray_alpha_to_rgba() {
     let from = PixelDescriptor::new(
         ChannelType::U8,
         ChannelLayout::GrayAlpha,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Srgb,
     );
     let to = PixelDescriptor::RGBA8_SRGB;
@@ -200,7 +200,7 @@ fn gray_to_gray_alpha_roundtrip() {
     let to = PixelDescriptor::new(
         ChannelType::U8,
         ChannelLayout::GrayAlpha,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Srgb,
     );
 

@@ -15,9 +15,7 @@
 //! This matters for provenance: converting a 10-bit-effective u16 to u8 loses
 //! only 2 bits, not 8.
 
-use crate::{
-    AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
-};
+use crate::{ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction};
 
 /// A format a codec can produce (decode) or consume (encode).
 #[derive(Clone, Copy, Debug)]
@@ -143,7 +141,7 @@ pub static JPEG_DECODE_EXTENDED: &[FormatEntry] = &[
         PixelDescriptor::new_full(
             ChannelType::F32,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             TransferFunction::Srgb,
             ColorPrimaries::Bt709,
         ),
@@ -156,7 +154,7 @@ pub static JPEG_DECODE_EXTENDED: &[FormatEntry] = &[
         PixelDescriptor::new_full(
             ChannelType::F32,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             TransferFunction::Srgb,
             ColorPrimaries::Bt709,
         ),

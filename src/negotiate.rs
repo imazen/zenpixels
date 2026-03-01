@@ -351,7 +351,7 @@ pub fn ideal_format(source: PixelDescriptor, intent: ConvertIntent) -> PixelDesc
 
         ConvertIntent::Blend => {
             let alpha = if source.layout.has_alpha() {
-                AlphaMode::Premultiplied
+                Some(AlphaMode::Premultiplied)
             } else {
                 source.alpha
             };
@@ -494,7 +494,7 @@ pub(crate) fn suitability_loss(target: PixelDescriptor, intent: ConvertIntent) -
             // Straight alpha requires per-pixel division during compositing.
             // Calibrated: blending in straight alpha causes severe fringe artifacts
             // at semi-transparent edges (measured ΔE=17.2, High bucket).
-            if target.layout.has_alpha() && target.alpha == AlphaMode::Straight {
+            if target.layout.has_alpha() && target.alpha == Some(AlphaMode::Straight) {
                 s += 200;
             }
             s
@@ -772,8 +772,8 @@ fn layout_cost(from: ChannelLayout, to: ChannelLayout) -> ConversionCost {
 
 /// Cost of alpha mode conversion.
 fn alpha_cost(
-    from_alpha: AlphaMode,
-    to_alpha: AlphaMode,
+    from_alpha: Option<AlphaMode>,
+    to_alpha: Option<AlphaMode>,
     from_layout: ChannelLayout,
     to_layout: ChannelLayout,
 ) -> ConversionCost {
@@ -782,10 +782,9 @@ fn alpha_cost(
     }
     match (from_alpha, to_alpha) {
         // Straight → Premul: per-pixel multiply, tiny rounding loss.
-        (AlphaMode::Straight, AlphaMode::Premultiplied) => ConversionCost::new(20, 5),
+        (Some(AlphaMode::Straight), Some(AlphaMode::Premultiplied)) => ConversionCost::new(20, 5),
         // Premul → Straight: per-pixel divide, worse rounding at low alpha.
-        (AlphaMode::Premultiplied, AlphaMode::Straight) => ConversionCost::new(25, 10),
-        (AlphaMode::None, _) | (_, AlphaMode::None) => ConversionCost::ZERO,
+        (Some(AlphaMode::Premultiplied), Some(AlphaMode::Straight)) => ConversionCost::new(25, 10),
         _ => ConversionCost::ZERO,
     }
 }
@@ -874,7 +873,7 @@ mod tests {
         let src = PixelDescriptor::new(
             ChannelType::U8,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             TransferFunction::Unknown,
         );
         let target = PixelDescriptor::RGB8_SRGB;

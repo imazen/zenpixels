@@ -109,13 +109,13 @@ fn ulp_u8_srgb_f32_linear_roundtrip_full_cube() {
 fn ulp_u8_u16_roundtrip() {
     // u8 → u16 uses v * 257, u16 → u8 uses (v * 255 + 32768) >> 16
     // This should be perfectly lossless.
-    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
 
     let src = PixelDescriptor::RGB8_SRGB;
     let mid_desc = PixelDescriptor::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Srgb,
     );
 
@@ -146,12 +146,12 @@ fn ulp_u8_u16_roundtrip() {
 
 #[test]
 fn ulp_u16_to_u8_max_error() {
-    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
 
     let src = PixelDescriptor::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Srgb,
     );
     let dst = PixelDescriptor::RGB8_SRGB;
@@ -180,13 +180,13 @@ fn ulp_u16_to_u8_max_error() {
 
 #[test]
 fn ulp_u8_to_u16_exact() {
-    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
 
     let src = PixelDescriptor::RGB8_SRGB;
     let dst = PixelDescriptor::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Srgb,
     );
     let plan = ConvertPlan::new(src, dst).expect("u8→u16 plan");
@@ -325,18 +325,18 @@ fn ulp_srgb_oetf_boundary_values() {
 
 #[test]
 fn ulp_naive_u8_f32_roundtrip() {
-    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
 
     let u8_desc = PixelDescriptor::new(
         ChannelType::U8,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Unknown,
     );
     let f32_desc = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Unknown,
     );
 
@@ -369,18 +369,18 @@ fn ulp_naive_u8_f32_roundtrip() {
 
 #[test]
 fn ulp_u16_f32_roundtrip_exhaustive() {
-    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
 
     let u16_desc = PixelDescriptor::new(
         ChannelType::U16,
         ChannelLayout::Gray,
-        AlphaMode::None,
+        None,
         TransferFunction::Srgb,
     );
     let f32_desc = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Gray,
-        AlphaMode::None,
+        None,
         TransferFunction::Srgb,
     );
 
@@ -419,13 +419,13 @@ fn ulp_premul_roundtrip_u8_exhaustive() {
     let straight = PixelDescriptor::new(
         ChannelType::U8,
         ChannelLayout::Rgba,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Srgb,
     );
     let premul = PixelDescriptor::new(
         ChannelType::U8,
         ChannelLayout::Rgba,
-        AlphaMode::Premultiplied,
+        Some(AlphaMode::Premultiplied),
         TransferFunction::Srgb,
     );
 
@@ -486,13 +486,13 @@ fn ulp_premul_roundtrip_f32() {
     let straight = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgba,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Linear,
     );
     let premul = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgba,
-        AlphaMode::Premultiplied,
+        Some(AlphaMode::Premultiplied),
         TransferFunction::Linear,
     );
 
@@ -611,7 +611,7 @@ fn ulp_gray_alpha_rgba_roundtrip() {
     let ga = PixelDescriptor::new(
         ChannelType::U8,
         ChannelLayout::GrayAlpha,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Srgb,
     );
     let rgba = PixelDescriptor::RGBA8_SRGB;

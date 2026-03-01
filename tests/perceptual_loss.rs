@@ -10,9 +10,7 @@
 
 #![allow(dead_code)]
 
-use zenpixels::{
-    AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
-};
+use zenpixels::{ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction};
 use zenpixels::{ConversionCost, Provenance, conversion_cost, conversion_cost_with_provenance};
 
 // ===========================================================================
@@ -1211,7 +1209,7 @@ fn gamut_conversion_scenarios() {
         let p3_to_srgb = PixelDescriptor::new_full(
             ChannelType::F32,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             TransferFunction::Linear,
             ColorPrimaries::DisplayP3,
         );
@@ -1277,7 +1275,7 @@ fn gamut_conversion_scenarios() {
         let bt2020 = PixelDescriptor::new_full(
             ChannelType::F32,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             TransferFunction::Linear,
             ColorPrimaries::Bt2020,
         );
@@ -1323,14 +1321,14 @@ fn gamut_conversion_scenarios() {
         let bt2020 = PixelDescriptor::new_full(
             ChannelType::F32,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             TransferFunction::Linear,
             ColorPrimaries::Bt2020,
         );
         let p3 = PixelDescriptor::new_full(
             ChannelType::F32,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             TransferFunction::Linear,
             ColorPrimaries::DisplayP3,
         );
@@ -1381,7 +1379,7 @@ fn gamut_conversion_scenarios() {
         let bt2020 = PixelDescriptor::new_full(
             ChannelType::F32,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             TransferFunction::Linear,
             ColorPrimaries::Bt2020,
         );
@@ -1412,7 +1410,7 @@ fn gamut_conversion_scenarios() {
         let p3 = PixelDescriptor::new_full(
             ChannelType::F32,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             TransferFunction::Linear,
             ColorPrimaries::DisplayP3,
         );
@@ -1534,7 +1532,7 @@ fn transfer_function_scenarios() {
         let pq_desc = PixelDescriptor::new_full(
             ChannelType::F32,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             TransferFunction::Pq,
             ColorPrimaries::Bt2020,
         );
