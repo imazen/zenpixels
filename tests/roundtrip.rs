@@ -1,7 +1,7 @@
 //! Roundtrip tests for all supported format pairs.
 
-use zenpixels::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
 use zenpixels::RowConverter;
+use zenpixels::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
 
 fn make_rgb8_row(width: usize) -> Vec<u8> {
     (0..width * 3).map(|i| (i % 256) as u8).collect()
