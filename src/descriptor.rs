@@ -689,12 +689,141 @@ impl PixelDescriptor {
         Self { alpha, ..self }
     }
 
+    /// Alias for [`with_alpha`](Self::with_alpha).
+    #[inline]
+    pub const fn with_alpha_mode(self, alpha: Option<AlphaMode>) -> Self {
+        self.with_alpha(alpha)
+    }
+
     /// Return a copy with a different signal range.
     #[inline]
     pub const fn with_signal_range(self, signal_range: SignalRange) -> Self {
         Self {
             signal_range,
             ..self
+        }
+    }
+
+    /// Whether this format is fully opaque (no transparency possible).
+    ///
+    /// Returns `true` when there is no alpha channel (`None`), the alpha
+    /// bytes are undefined padding (`Undefined`), or alpha is all-255 (`Opaque`).
+    #[inline]
+    pub const fn is_opaque(self) -> bool {
+        matches!(
+            self.alpha,
+            None | Some(AlphaMode::Undefined | AlphaMode::Opaque)
+        )
+    }
+
+    /// Whether this format may contain transparent pixels.
+    ///
+    /// Returns `true` for [`Straight`](AlphaMode::Straight) and
+    /// [`Premultiplied`](AlphaMode::Premultiplied).
+    #[inline]
+    #[allow(unreachable_patterns)]
+    pub const fn may_have_transparency(self) -> bool {
+        matches!(
+            self.alpha,
+            Some(AlphaMode::Straight | AlphaMode::Premultiplied)
+        )
+    }
+
+    /// The alpha mode, if any.
+    #[inline]
+    pub const fn alpha_mode(self) -> Option<AlphaMode> {
+        self.alpha
+    }
+
+    /// Whether the transfer function is [`Linear`](TransferFunction::Linear).
+    #[inline]
+    pub const fn is_linear(self) -> bool {
+        matches!(self.transfer, TransferFunction::Linear)
+    }
+
+    /// Whether the transfer function is [`Unknown`](TransferFunction::Unknown).
+    #[inline]
+    pub const fn is_unknown_transfer(self) -> bool {
+        matches!(self.transfer, TransferFunction::Unknown)
+    }
+
+    /// Minimum byte alignment required for the channel type (1, 2, or 4).
+    #[inline]
+    pub const fn min_alignment(self) -> usize {
+        self.channel_type.byte_size()
+    }
+
+    /// Tightly-packed byte stride for a given width.
+    #[inline]
+    pub const fn aligned_stride(self, width: u32) -> usize {
+        width as usize * self.bytes_per_pixel()
+    }
+
+    /// SIMD-friendly byte stride for a given width.
+    ///
+    /// The stride is a multiple of `lcm(bytes_per_pixel, simd_align)`,
+    /// ensuring every row start is both pixel-aligned and SIMD-aligned.
+    /// `simd_align` must be a power of 2.
+    #[inline]
+    pub const fn simd_aligned_stride(self, width: u32, simd_align: usize) -> usize {
+        let bpp = self.bytes_per_pixel();
+        let raw = width as usize * bpp;
+        let align = lcm(bpp, simd_align);
+        align_up_general(raw, align)
+    }
+
+    /// Returns the physical pixel format if it matches a known layout.
+    #[allow(unreachable_patterns)]
+    pub const fn pixel_format(&self) -> Option<PixelFormat> {
+        match (self.channel_type, self.layout, self.alpha) {
+            (ChannelType::U8, ChannelLayout::Rgb, None) => Some(PixelFormat::Rgb8),
+            (
+                ChannelType::U8,
+                ChannelLayout::Rgba,
+                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
+            ) => Some(PixelFormat::Rgba8),
+            (ChannelType::U16, ChannelLayout::Rgb, None) => Some(PixelFormat::Rgb16),
+            (
+                ChannelType::U16,
+                ChannelLayout::Rgba,
+                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
+            ) => Some(PixelFormat::Rgba16),
+            (ChannelType::F32, ChannelLayout::Rgb, None) => Some(PixelFormat::RgbF32),
+            (
+                ChannelType::F32,
+                ChannelLayout::Rgba,
+                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
+            ) => Some(PixelFormat::RgbaF32),
+            (ChannelType::U8, ChannelLayout::Gray, None) => Some(PixelFormat::Gray8),
+            (ChannelType::U16, ChannelLayout::Gray, None) => Some(PixelFormat::Gray16),
+            (ChannelType::F32, ChannelLayout::Gray, None) => Some(PixelFormat::GrayF32),
+            (
+                ChannelType::U8,
+                ChannelLayout::GrayAlpha,
+                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
+            ) => Some(PixelFormat::GrayA8),
+            (
+                ChannelType::U16,
+                ChannelLayout::GrayAlpha,
+                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
+            ) => Some(PixelFormat::GrayA16),
+            (
+                ChannelType::F32,
+                ChannelLayout::GrayAlpha,
+                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
+            ) => Some(PixelFormat::GrayAF32),
+            (
+                ChannelType::U8,
+                ChannelLayout::Bgra,
+                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
+            ) => Some(PixelFormat::Bgra8),
+            (ChannelType::U8, ChannelLayout::Rgba, None | Some(AlphaMode::Undefined)) => {
+                Some(PixelFormat::Rgbx8)
+            }
+            (ChannelType::U8, ChannelLayout::Bgra, None | Some(AlphaMode::Undefined)) => {
+                Some(PixelFormat::Bgrx8)
+            }
+            _ => None,
         }
     }
 
@@ -707,6 +836,33 @@ impl PixelDescriptor {
         self.channel_type as u8 == other.channel_type as u8
             && self.layout as u8 == other.layout as u8
     }
+}
+
+// Alignment helpers.
+
+const fn gcd(mut a: usize, mut b: usize) -> usize {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+const fn lcm(a: usize, b: usize) -> usize {
+    if a == 0 || b == 0 {
+        0
+    } else {
+        a / gcd(a, b) * b
+    }
+}
+
+const fn align_up_general(value: usize, align: usize) -> usize {
+    if align == 0 {
+        return value;
+    }
+    let rem = value % align;
+    if rem == 0 { value } else { value + align - rem }
 }
 
 impl fmt::Display for PixelDescriptor {
@@ -985,6 +1141,30 @@ impl PixelFormat {
     #[inline]
     pub const fn bytes_per_pixel(self) -> usize {
         self.descriptor().bytes_per_pixel()
+    }
+
+    /// Whether this format carries meaningful alpha data.
+    #[inline]
+    pub const fn has_alpha(self) -> bool {
+        self.descriptor().has_alpha()
+    }
+
+    /// Whether this format is grayscale.
+    #[inline]
+    pub const fn is_grayscale(self) -> bool {
+        self.descriptor().is_grayscale()
+    }
+
+    /// Channel storage type for this format.
+    #[inline]
+    pub const fn channel_type(self) -> ChannelType {
+        self.descriptor().channel_type
+    }
+
+    /// Channel layout for this format.
+    #[inline]
+    pub const fn channel_layout(self) -> ChannelLayout {
+        self.descriptor().layout
     }
 }
 

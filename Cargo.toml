@@ -12,10 +12,15 @@ repository = "https://github.com/imazen/zenpixels"
 [features]
 default = ["std"]
 std = ["linear-srgb/std"]
+buffer = ["dep:rgb", "dep:imgref"]
+codec = ["buffer", "dep:enough"]
 
 [dependencies]
 linear-srgb = { version = "0.5", path = "../linear-srgb", default-features = false }
-bytemuck = "1.21"
+bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
+rgb = { version = "0.8", default-features = false, features = ["as-bytes"], optional = true }
+imgref = { version = "1.12", optional = true }
+enough = { version = "0.4", optional = true }
 
 [dev-dependencies]
 imgref = "1.12"
