@@ -671,6 +671,104 @@ impl<'a, P> PixelSlice<'a, P> {
             _pixel: PhantomData,
         }
     }
+
+    // -- Conversion methods ---------------------------------------------------
+
+    /// Convert pixel data to a different layout and depth.
+    ///
+    /// Uses [`RowConverter`](crate::converter::RowConverter) for
+    /// transfer-function-aware conversion. Color metadata (transfer,
+    /// primaries, working space, color context) is preserved.
+    ///
+    /// **Allocates** a new [`PixelBuffer`].
+    pub fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, crate::ConvertError> {
+        let src_desc = self.descriptor;
+        if src_desc == target {
+            // Identity — just copy.
+            let dst_stride = target.aligned_stride(self.width);
+            let mut out = vec![0u8; dst_stride * self.rows as usize];
+            for y in 0..self.rows {
+                let src_row = self.row(y);
+                let dst_start = y as usize * dst_stride;
+                out[dst_start..dst_start + src_row.len()].copy_from_slice(src_row);
+            }
+            let mut buf = PixelBuffer::from_vec(out, self.width, self.rows, target)
+                .map_err(|_| crate::ConvertError::AllocationFailed)?
+                .with_working_space(self.working_space);
+            if let Some(ctx) = self.color_context() {
+                buf = buf.with_color_context(Arc::clone(ctx));
+            }
+            return Ok(buf);
+        }
+
+        let converter = crate::converter::RowConverter::new(src_desc, target)?;
+
+        let dst_stride = target.aligned_stride(self.width);
+        let mut out = vec![0u8; dst_stride * self.rows as usize];
+
+        for y in 0..self.rows {
+            let src_row = self.row(y);
+            let dst_start = y as usize * dst_stride;
+            let dst_end = dst_start + dst_stride;
+            converter.convert_row(src_row, &mut out[dst_start..dst_end], self.width);
+        }
+
+        let mut buf = PixelBuffer::from_vec(out, self.width, self.rows, target)
+            .map_err(|_| crate::ConvertError::AllocationFailed)?
+            .with_working_space(self.working_space);
+        if let Some(ctx) = self.color_context() {
+            buf = buf.with_color_context(Arc::clone(ctx));
+        }
+        Ok(buf)
+    }
+
+    /// Add an alpha channel. **Allocates** a new `PixelBuffer`.
+    ///
+    /// - Gray → GrayAlpha (opaque alpha)
+    /// - Rgb → Rgba (opaque alpha)
+    /// - Already has alpha → identity copy
+    pub fn try_add_alpha(&self) -> Result<PixelBuffer, crate::ConvertError> {
+        let desc = self.descriptor;
+        let target_layout = match desc.layout {
+            crate::descriptor::ChannelLayout::Gray => crate::descriptor::ChannelLayout::GrayAlpha,
+            crate::descriptor::ChannelLayout::Rgb => crate::descriptor::ChannelLayout::Rgba,
+            other => other,
+        };
+        let target = PixelDescriptor {
+            layout: target_layout,
+            alpha: if target_layout.has_alpha() && desc.alpha.is_none() {
+                Some(AlphaMode::Straight)
+            } else {
+                desc.alpha
+            },
+            ..desc
+        };
+        self.convert_to(target)
+    }
+
+    /// Widen to U16 depth (lossless, ×257). **Allocates** a new `PixelBuffer`.
+    ///
+    /// No-op copy if already U16.
+    pub fn try_widen_to_u16(&self) -> Result<PixelBuffer, crate::ConvertError> {
+        let desc = self.descriptor;
+        let target = PixelDescriptor {
+            channel_type: crate::descriptor::ChannelType::U16,
+            ..desc
+        };
+        self.convert_to(target)
+    }
+
+    /// Narrow to U8 depth (lossy, rounded). **Allocates** a new `PixelBuffer`.
+    ///
+    /// No-op copy if already U8.
+    pub fn try_narrow_to_u8(&self) -> Result<PixelBuffer, crate::ConvertError> {
+        let desc = self.descriptor;
+        let target = PixelDescriptor {
+            channel_type: crate::descriptor::ChannelType::U8,
+            ..desc
+        };
+        self.convert_to(target)
+    }
 }
 
 impl<'a, P: Pixel> PixelSlice<'a, P> {
