@@ -65,6 +65,22 @@ pub(crate) enum ConvertStep {
     U16ToF32,
     /// f32 → u16 (clamp * 65535 + 0.5).
     F32ToU16,
+    /// PQ (SMPTE ST 2084) u16 → linear f32 (EOTF).
+    PqU16ToLinearF32,
+    /// Linear f32 → PQ u16 (inverse EOTF / OETF).
+    LinearF32ToPqU16,
+    /// PQ f32 [0,1] → linear f32 (EOTF, no depth change).
+    PqF32ToLinearF32,
+    /// Linear f32 → PQ f32 [0,1] (OETF, no depth change).
+    LinearF32ToPqF32,
+    /// HLG (ARIB STD-B67) u16 → linear f32 (EOTF).
+    HlgU16ToLinearF32,
+    /// Linear f32 → HLG u16 (OETF).
+    LinearF32ToHlgU16,
+    /// HLG f32 [0,1] → linear f32 (EOTF, no depth change).
+    HlgF32ToLinearF32,
+    /// Linear f32 → HLG f32 [0,1] (OETF, no depth change).
+    LinearF32ToHlgF32,
     /// Straight → Premultiplied alpha.
     StraightToPremul,
     /// Premultiplied → Straight alpha.
@@ -99,6 +115,11 @@ impl ConvertPlan {
         let need_alpha_change =
             from.alpha != to.alpha && from.alpha.is_some() && to.alpha.is_some();
 
+        // Depth/TF steps are needed when depth changes, or when both are F32
+        // and transfer functions differ.
+        let need_depth_or_tf =
+            need_depth_change || (from.channel_type == ChannelType::F32 && from.transfer != to.transfer);
+
         // If we need to change depth AND layout, plan the optimal order.
         if need_layout_change {
             // When going to fewer channels, convert layout first (less depth work).
@@ -106,40 +127,34 @@ impl ConvertPlan {
             let src_ch = from.layout.channels();
             let dst_ch = to.layout.channels();
 
-            if need_depth_change && dst_ch > src_ch {
+            if need_depth_or_tf && dst_ch > src_ch {
                 // Depth first, then layout.
-                if let Some(step) = depth_step(
+                steps.extend(depth_steps(
                     from.channel_type,
                     to.channel_type,
                     from.transfer,
                     to.transfer,
-                )? {
-                    steps.push(step);
-                }
+                )?);
                 steps.extend(layout_steps(from.layout, to.layout));
             } else {
                 // Layout first, then depth.
                 steps.extend(layout_steps(from.layout, to.layout));
-                if need_depth_change
-                    && let Some(step) = depth_step(
+                if need_depth_or_tf {
+                    steps.extend(depth_steps(
                         from.channel_type,
                         to.channel_type,
                         from.transfer,
                         to.transfer,
-                    )?
-                {
-                    steps.push(step);
+                    )?);
                 }
             }
-        } else if need_depth_change
-            && let Some(step) = depth_step(
+        } else if need_depth_or_tf {
+            steps.extend(depth_steps(
                 from.channel_type,
                 to.channel_type,
                 from.transfer,
                 to.transfer,
-            )?
-        {
-            steps.push(step);
+            )?);
         }
 
         // Alpha mode conversion (if both have alpha and modes differ).
@@ -265,42 +280,126 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
     }
 }
 
-/// Determine the depth conversion step, considering transfer functions.
-fn depth_step(
+/// Determine the depth conversion step(s), considering transfer functions.
+///
+/// Returns one or two steps. Two steps are needed when the conversion
+/// requires going through an intermediate format (e.g. PQ U16 → sRGB U8
+/// goes PQ U16 → Linear F32 → sRGB U8).
+fn depth_steps(
     from: ChannelType,
     to: ChannelType,
     from_tf: TransferFunction,
     to_tf: TransferFunction,
-) -> Result<Option<ConvertStep>, ConvertError> {
-    if from == to {
-        return Ok(None);
+) -> Result<Vec<ConvertStep>, ConvertError> {
+    if from == to && from_tf == to_tf {
+        return Ok(Vec::new());
+    }
+
+    // Same depth, different transfer function.
+    // For integer types, TF changes are metadata-only (no math).
+    // For F32, we can apply EOTF/OETF in place.
+    if from == to && from != ChannelType::F32 {
+        return Ok(Vec::new());
+    }
+
+    if from == to && from == ChannelType::F32 {
+        return match (from_tf, to_tf) {
+            (TransferFunction::Pq, TransferFunction::Linear) => {
+                Ok(vec![ConvertStep::PqF32ToLinearF32])
+            }
+            (TransferFunction::Linear, TransferFunction::Pq) => {
+                Ok(vec![ConvertStep::LinearF32ToPqF32])
+            }
+            (TransferFunction::Hlg, TransferFunction::Linear) => {
+                Ok(vec![ConvertStep::HlgF32ToLinearF32])
+            }
+            (TransferFunction::Linear, TransferFunction::Hlg) => {
+                Ok(vec![ConvertStep::LinearF32ToHlgF32])
+            }
+            // PQ ↔ HLG: go through linear.
+            (TransferFunction::Pq, TransferFunction::Hlg) => {
+                Ok(vec![
+                    ConvertStep::PqF32ToLinearF32,
+                    ConvertStep::LinearF32ToHlgF32,
+                ])
+            }
+            (TransferFunction::Hlg, TransferFunction::Pq) => {
+                Ok(vec![
+                    ConvertStep::HlgF32ToLinearF32,
+                    ConvertStep::LinearF32ToPqF32,
+                ])
+            }
+            // sRGB ↔ Linear are already handled.
+            (TransferFunction::Srgb | TransferFunction::Bt709, TransferFunction::Linear)
+            | (TransferFunction::Linear, TransferFunction::Srgb | TransferFunction::Bt709) => {
+                // F32 sRGB ↔ Linear: no dedicated kernel yet, treat as identity.
+                // (The sRGB kernels only handle U8 ↔ F32 transitions.)
+                Ok(Vec::new())
+            }
+            _ => Ok(Vec::new()),
+        };
     }
 
     match (from, to) {
         (ChannelType::U8, ChannelType::F32) => {
-            // sRGB u8 → linear f32 uses EOTF.
             if (from_tf == TransferFunction::Srgb || from_tf == TransferFunction::Bt709)
-                && (to_tf == TransferFunction::Linear)
+                && to_tf == TransferFunction::Linear
             {
-                Ok(Some(ConvertStep::SrgbU8ToLinearF32))
+                Ok(vec![ConvertStep::SrgbU8ToLinearF32])
             } else {
-                Ok(Some(ConvertStep::NaiveU8ToF32))
+                Ok(vec![ConvertStep::NaiveU8ToF32])
             }
         }
         (ChannelType::F32, ChannelType::U8) => {
-            // Linear f32 → sRGB u8 uses OETF.
-            if (from_tf == TransferFunction::Linear)
+            if from_tf == TransferFunction::Linear
                 && (to_tf == TransferFunction::Srgb || to_tf == TransferFunction::Bt709)
             {
-                Ok(Some(ConvertStep::LinearF32ToSrgbU8))
+                Ok(vec![ConvertStep::LinearF32ToSrgbU8])
             } else {
-                Ok(Some(ConvertStep::NaiveF32ToU8))
+                Ok(vec![ConvertStep::NaiveF32ToU8])
             }
         }
-        (ChannelType::U16, ChannelType::U8) => Ok(Some(ConvertStep::U16ToU8)),
-        (ChannelType::U8, ChannelType::U16) => Ok(Some(ConvertStep::U8ToU16)),
-        (ChannelType::U16, ChannelType::F32) => Ok(Some(ConvertStep::U16ToF32)),
-        (ChannelType::F32, ChannelType::U16) => Ok(Some(ConvertStep::F32ToU16)),
+        (ChannelType::U16, ChannelType::F32) => {
+            // PQ/HLG U16 → Linear F32: apply EOTF during conversion.
+            match (from_tf, to_tf) {
+                (TransferFunction::Pq, TransferFunction::Linear) => {
+                    Ok(vec![ConvertStep::PqU16ToLinearF32])
+                }
+                (TransferFunction::Hlg, TransferFunction::Linear) => {
+                    Ok(vec![ConvertStep::HlgU16ToLinearF32])
+                }
+                _ => Ok(vec![ConvertStep::U16ToF32]),
+            }
+        }
+        (ChannelType::F32, ChannelType::U16) => {
+            // Linear F32 → PQ/HLG U16: apply OETF during conversion.
+            match (from_tf, to_tf) {
+                (TransferFunction::Linear, TransferFunction::Pq) => {
+                    Ok(vec![ConvertStep::LinearF32ToPqU16])
+                }
+                (TransferFunction::Linear, TransferFunction::Hlg) => {
+                    Ok(vec![ConvertStep::LinearF32ToHlgU16])
+                }
+                _ => Ok(vec![ConvertStep::F32ToU16]),
+            }
+        }
+        (ChannelType::U16, ChannelType::U8) => {
+            // HDR U16 → SDR U8: go through linear F32 with proper EOTF → OETF.
+            if from_tf == TransferFunction::Pq && to_tf == TransferFunction::Srgb {
+                Ok(vec![
+                    ConvertStep::PqU16ToLinearF32,
+                    ConvertStep::LinearF32ToSrgbU8,
+                ])
+            } else if from_tf == TransferFunction::Hlg && to_tf == TransferFunction::Srgb {
+                Ok(vec![
+                    ConvertStep::HlgU16ToLinearF32,
+                    ConvertStep::LinearF32ToSrgbU8,
+                ])
+            } else {
+                Ok(vec![ConvertStep::U16ToU8])
+            }
+        }
+        (ChannelType::U8, ChannelType::U16) => Ok(vec![ConvertStep::U8ToU16]),
         _ => Err(ConvertError::NoPath {
             from: PixelDescriptor::new(from, ChannelLayout::Rgb, None, from_tf),
             to: PixelDescriptor::new(to, ChannelLayout::Rgb, None, to_tf),
@@ -426,14 +525,18 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
             None,
             current.transfer,
         ),
-        ConvertStep::SrgbU8ToLinearF32 | ConvertStep::NaiveU8ToF32 | ConvertStep::U16ToF32 => {
-            PixelDescriptor::new(
-                ChannelType::F32,
-                current.layout,
-                current.alpha,
-                TransferFunction::Linear,
-            )
-        }
+        ConvertStep::SrgbU8ToLinearF32
+        | ConvertStep::NaiveU8ToF32
+        | ConvertStep::U16ToF32
+        | ConvertStep::PqU16ToLinearF32
+        | ConvertStep::HlgU16ToLinearF32
+        | ConvertStep::PqF32ToLinearF32
+        | ConvertStep::HlgF32ToLinearF32 => PixelDescriptor::new(
+            ChannelType::F32,
+            current.layout,
+            current.alpha,
+            TransferFunction::Linear,
+        ),
         ConvertStep::LinearF32ToSrgbU8 | ConvertStep::NaiveF32ToU8 | ConvertStep::U16ToU8 => {
             PixelDescriptor::new(
                 ChannelType::U8,
@@ -448,11 +551,25 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
             current.alpha,
             current.transfer,
         ),
-        ConvertStep::F32ToU16 => PixelDescriptor::new(
-            ChannelType::U16,
+        ConvertStep::F32ToU16 | ConvertStep::LinearF32ToPqU16 | ConvertStep::LinearF32ToHlgU16 => {
+            let tf = match step {
+                ConvertStep::LinearF32ToPqU16 => TransferFunction::Pq,
+                ConvertStep::LinearF32ToHlgU16 => TransferFunction::Hlg,
+                _ => current.transfer,
+            };
+            PixelDescriptor::new(ChannelType::U16, current.layout, current.alpha, tf)
+        }
+        ConvertStep::LinearF32ToPqF32 => PixelDescriptor::new(
+            ChannelType::F32,
             current.layout,
             current.alpha,
-            current.transfer,
+            TransferFunction::Pq,
+        ),
+        ConvertStep::LinearF32ToHlgF32 => PixelDescriptor::new(
+            ChannelType::F32,
+            current.layout,
+            current.alpha,
+            TransferFunction::Hlg,
         ),
         ConvertStep::StraightToPremul => PixelDescriptor::new(
             current.channel_type,
@@ -560,6 +677,38 @@ fn apply_step_u8(
 
         ConvertStep::F32ToU16 => {
             f32_to_u16(src, dst, w, from.layout.channels());
+        }
+
+        ConvertStep::PqU16ToLinearF32 => {
+            pq_u16_to_linear_f32(src, dst, w, from.layout.channels());
+        }
+
+        ConvertStep::LinearF32ToPqU16 => {
+            linear_f32_to_pq_u16(src, dst, w, from.layout.channels());
+        }
+
+        ConvertStep::PqF32ToLinearF32 => {
+            pq_f32_to_linear_f32(src, dst, w, from.layout.channels());
+        }
+
+        ConvertStep::LinearF32ToPqF32 => {
+            linear_f32_to_pq_f32(src, dst, w, from.layout.channels());
+        }
+
+        ConvertStep::HlgU16ToLinearF32 => {
+            hlg_u16_to_linear_f32(src, dst, w, from.layout.channels());
+        }
+
+        ConvertStep::LinearF32ToHlgU16 => {
+            linear_f32_to_hlg_u16(src, dst, w, from.layout.channels());
+        }
+
+        ConvertStep::HlgF32ToLinearF32 => {
+            hlg_f32_to_linear_f32(src, dst, w, from.layout.channels());
+        }
+
+        ConvertStep::LinearF32ToHlgF32 => {
+            linear_f32_to_hlg_f32(src, dst, w, from.layout.channels());
         }
 
         ConvertStep::StraightToPremul => {
@@ -982,6 +1131,164 @@ fn f32_to_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
     for i in 0..count {
         dst16[i] = (srcf[i].clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PQ (SMPTE ST 2084) transfer function
+// ---------------------------------------------------------------------------
+
+// PQ constants (SMPTE ST 2084 / BT.2100).
+const PQ_M1: f64 = 2610.0 / 16384.0; // 0.1593017578125
+const PQ_M2: f64 = 2523.0 / 4096.0 * 128.0; // 78.84375
+const PQ_C1: f64 = 3424.0 / 4096.0; // 0.8359375
+const PQ_C2: f64 = 2413.0 / 4096.0 * 32.0; // 18.8515625
+const PQ_C3: f64 = 2392.0 / 4096.0 * 32.0; // 18.6875
+
+/// PQ EOTF: encoded [0,1] → linear light [0,1] (where 1.0 = 10000 cd/m²).
+#[inline]
+fn pq_eotf(v: f32) -> f32 {
+    if v <= 0.0 {
+        return 0.0;
+    }
+    let v = v as f64;
+    let vp = v.powf(1.0 / PQ_M2);
+    let num = (vp - PQ_C1).max(0.0);
+    let den = PQ_C2 - PQ_C3 * vp;
+    if den <= 0.0 {
+        return 0.0;
+    }
+    (num / den).powf(1.0 / PQ_M1) as f32
+}
+
+/// PQ inverse EOTF (OETF): linear light [0,1] → encoded [0,1].
+#[inline]
+fn pq_oetf(v: f32) -> f32 {
+    if v <= 0.0 {
+        return 0.0;
+    }
+    let v = v as f64;
+    let ym1 = v.powf(PQ_M1);
+    let num = PQ_C1 + PQ_C2 * ym1;
+    let den = 1.0 + PQ_C3 * ym1;
+    (num / den).powf(PQ_M2) as f32
+}
+
+/// PQ U16 → Linear F32 (EOTF applied during depth conversion).
+fn pq_u16_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let src16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    for i in 0..count {
+        let normalized = src16[i] as f32 / 65535.0;
+        dstf[i] = pq_eotf(normalized);
+    }
+}
+
+/// Linear F32 → PQ U16 (OETF applied during depth conversion).
+fn linear_f32_to_pq_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
+    for i in 0..count {
+        let encoded = pq_oetf(srcf[i].max(0.0));
+        dst16[i] = (encoded.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
+    }
+}
+
+/// PQ F32 → Linear F32 (EOTF, same depth).
+fn pq_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    for i in 0..count {
+        dstf[i] = pq_eotf(srcf[i]);
+    }
+}
+
+/// Linear F32 → PQ F32 (OETF, same depth).
+fn linear_f32_to_pq_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    for i in 0..count {
+        dstf[i] = pq_oetf(srcf[i].max(0.0));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HLG (ARIB STD-B67) transfer function
+// ---------------------------------------------------------------------------
+
+// HLG constants (ARIB STD-B67 / BT.2100, ITU-R BT.2100-2).
+const HLG_A: f64 = 0.17883277;
+const HLG_B: f64 = 0.28466892; // 1 - 4*a
+const HLG_C: f64 = 0.55991073; // 0.5 - a*ln(4*a)
+
+/// HLG OETF: scene-linear [0,1] → encoded [0,1].
+#[inline]
+fn hlg_oetf(v: f32) -> f32 {
+    let v = v.max(0.0) as f64;
+    if v <= 1.0 / 12.0 {
+        (3.0 * v).sqrt() as f32
+    } else {
+        (HLG_A * (12.0 * v - HLG_B).ln() + HLG_C) as f32
+    }
+}
+
+/// HLG inverse OETF (EOTF): encoded [0,1] → scene-linear [0,1].
+#[inline]
+fn hlg_eotf(v: f32) -> f32 {
+    if v <= 0.0 {
+        return 0.0;
+    }
+    let v = v as f64;
+    if v <= 0.5 {
+        (v * v / 3.0) as f32
+    } else {
+        (((v - HLG_C) / HLG_A).exp() + HLG_B) as f32 / 12.0
+    }
+}
+
+/// HLG U16 → Linear F32 (EOTF applied during depth conversion).
+fn hlg_u16_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let src16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    for i in 0..count {
+        let normalized = src16[i] as f32 / 65535.0;
+        dstf[i] = hlg_eotf(normalized);
+    }
+}
+
+/// Linear F32 → HLG U16 (OETF applied during depth conversion).
+fn linear_f32_to_hlg_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
+    for i in 0..count {
+        let encoded = hlg_oetf(srcf[i]);
+        dst16[i] = (encoded.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
+    }
+}
+
+/// HLG F32 → Linear F32 (EOTF, same depth).
+fn hlg_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    for i in 0..count {
+        dstf[i] = hlg_eotf(srcf[i]);
+    }
+}
+
+/// Linear F32 → HLG F32 (OETF, same depth).
+fn linear_f32_to_hlg_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    for i in 0..count {
+        dstf[i] = hlg_oetf(srcf[i]);
     }
 }
 

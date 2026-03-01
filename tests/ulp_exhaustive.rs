@@ -633,3 +633,340 @@ fn ulp_gray_alpha_rgba_roundtrip() {
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// PQ (SMPTE ST 2084) transfer function tests
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn ulp_pq_eotf_boundary_values() {
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+
+    let pq_u16 = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Pq,
+    );
+    let linear_f32 = PixelDescriptor::new(
+        ChannelType::F32,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Linear,
+    );
+
+    let plan = ConvertPlan::new(pq_u16, linear_f32).expect("PQ U16 → Linear F32 plan");
+
+    // PQ code 0 → linear 0.0
+    let input_0: [u8; 2] = 0u16.to_ne_bytes();
+    let mut out_0 = [0u8; 4];
+    convert_row(&plan, &input_0, &mut out_0, 1);
+    let f0: f32 = bytemuck::cast(out_0);
+    assert_eq!(f0, 0.0, "PQ EOTF(0) should be 0.0");
+
+    // PQ code 65535 → linear ~1.0 (10000 cd/m² normalized)
+    let input_max: [u8; 2] = 65535u16.to_ne_bytes();
+    let mut out_max = [0u8; 4];
+    convert_row(&plan, &input_max, &mut out_max, 1);
+    let fmax: f32 = bytemuck::cast(out_max);
+    assert!(
+        (fmax - 1.0).abs() < 0.001,
+        "PQ EOTF(65535) should be ~1.0, got {fmax}"
+    );
+
+    // PQ mid-range (~0.508 encoded ≈ 100 nits / 10000 = 0.01 linear)
+    let input_mid: [u8; 2] = 33280u16.to_ne_bytes(); // ~0.508
+    let mut out_mid = [0u8; 4];
+    convert_row(&plan, &input_mid, &mut out_mid, 1);
+    let fmid: f32 = bytemuck::cast(out_mid);
+    // PQ encodes the full 0-10000 cd/m² range. ~0.508 encodes roughly 100 nits.
+    assert!(
+        fmid > 0.005 && fmid < 0.05,
+        "PQ EOTF(~0.508) should be in [0.005, 0.05] (around 100 nits), got {fmid}"
+    );
+}
+
+#[test]
+fn ulp_pq_roundtrip_u16() {
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+
+    let pq_u16 = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Pq,
+    );
+    let linear_f32 = PixelDescriptor::new(
+        ChannelType::F32,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Linear,
+    );
+
+    let plan_fwd = ConvertPlan::new(pq_u16, linear_f32).expect("PQ U16 → Linear F32");
+    let plan_back = ConvertPlan::new(linear_f32, pq_u16).expect("Linear F32 → PQ U16");
+
+    let mut max_err: u16 = 0;
+    // Test representative values across the range.
+    for v in (0u32..=65535).step_by(1) {
+        let v16 = v as u16;
+        let input: [u8; 2] = v16.to_ne_bytes();
+        let mut mid = [0u8; 4];
+        let mut output = [0u8; 2];
+
+        convert_row(&plan_fwd, &input, &mut mid, 1);
+        convert_row(&plan_back, &mid, &mut output, 1);
+
+        let result = u16::from_ne_bytes(output);
+        let err = (result as i32 - v16 as i32).unsigned_abs() as u16;
+        max_err = max_err.max(err);
+    }
+
+    // PQ has a very steep curve near 0, so there will be some quantization error.
+    // But the round-trip should be within ±1 for most values.
+    println!("PQ U16 round-trip: max error = {max_err}");
+    assert!(
+        max_err <= 1,
+        "PQ U16 round-trip should be within ±1, got max error {max_err}"
+    );
+}
+
+#[test]
+fn ulp_pq_f32_roundtrip() {
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+
+    let pq_f32 = PixelDescriptor::new(
+        ChannelType::F32,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Pq,
+    );
+    let linear_f32 = PixelDescriptor::new(
+        ChannelType::F32,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Linear,
+    );
+
+    let plan_fwd = ConvertPlan::new(pq_f32, linear_f32).expect("PQ F32 → Linear F32");
+    let plan_back = ConvertPlan::new(linear_f32, pq_f32).expect("Linear F32 → PQ F32");
+
+    let mut max_rel_err: f64 = 0.0;
+    // Test values across [0, 1] in PQ domain.
+    for i in 0..=10000 {
+        let pq_val = i as f32 / 10000.0;
+        let input: [u8; 4] = bytemuck::cast(pq_val);
+        let mut mid = [0u8; 4];
+        let mut output = [0u8; 4];
+
+        convert_row(&plan_fwd, &input, &mut mid, 1);
+        convert_row(&plan_back, &mid, &mut output, 1);
+
+        let result: f32 = bytemuck::cast(output);
+        if pq_val > 0.01 {
+            let rel_err = ((result - pq_val) as f64 / pq_val as f64).abs();
+            max_rel_err = max_rel_err.max(rel_err);
+        }
+    }
+
+    println!("PQ F32 round-trip: max relative error = {max_rel_err:.2e}");
+    assert!(
+        max_rel_err < 1e-4,
+        "PQ F32 round-trip should be near-lossless, got {max_rel_err:.2e}"
+    );
+}
+
+#[test]
+fn ulp_pq_eotf_monotonic() {
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+
+    let pq_u16 = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Pq,
+    );
+    let linear_f32 = PixelDescriptor::new(
+        ChannelType::F32,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Linear,
+    );
+
+    let plan = ConvertPlan::new(pq_u16, linear_f32).expect("PQ EOTF plan");
+    let mut prev: f32 = -1.0;
+
+    for v in 0u32..=65535 {
+        let v16 = v as u16;
+        let input: [u8; 2] = v16.to_ne_bytes();
+        let mut output = [0u8; 4];
+        convert_row(&plan, &input, &mut output, 1);
+        let result: f32 = bytemuck::cast(output);
+        assert!(
+            result >= prev,
+            "PQ EOTF not monotonic at {v16}: {result} < {prev}"
+        );
+        prev = result;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// HLG (ARIB STD-B67) transfer function tests
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn ulp_hlg_boundary_values() {
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+
+    let hlg_u16 = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Hlg,
+    );
+    let linear_f32 = PixelDescriptor::new(
+        ChannelType::F32,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Linear,
+    );
+
+    let plan = ConvertPlan::new(hlg_u16, linear_f32).expect("HLG U16 → Linear F32 plan");
+
+    // HLG code 0 → linear 0.0
+    let input_0: [u8; 2] = 0u16.to_ne_bytes();
+    let mut out_0 = [0u8; 4];
+    convert_row(&plan, &input_0, &mut out_0, 1);
+    let f0: f32 = bytemuck::cast(out_0);
+    assert_eq!(f0, 0.0, "HLG EOTF(0) should be 0.0");
+
+    // HLG code 65535 → linear 1.0
+    let input_max: [u8; 2] = 65535u16.to_ne_bytes();
+    let mut out_max = [0u8; 4];
+    convert_row(&plan, &input_max, &mut out_max, 1);
+    let fmax: f32 = bytemuck::cast(out_max);
+    assert!(
+        (fmax - 1.0).abs() < 0.01,
+        "HLG EOTF(65535) should be ~1.0, got {fmax}"
+    );
+}
+
+#[test]
+fn ulp_hlg_roundtrip_u16() {
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+
+    let hlg_u16 = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Hlg,
+    );
+    let linear_f32 = PixelDescriptor::new(
+        ChannelType::F32,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Linear,
+    );
+
+    let plan_fwd = ConvertPlan::new(hlg_u16, linear_f32).expect("HLG U16 → Linear F32");
+    let plan_back = ConvertPlan::new(linear_f32, hlg_u16).expect("Linear F32 → HLG U16");
+
+    let mut max_err: u16 = 0;
+    for v in 0u32..=65535 {
+        let v16 = v as u16;
+        let input: [u8; 2] = v16.to_ne_bytes();
+        let mut mid = [0u8; 4];
+        let mut output = [0u8; 2];
+
+        convert_row(&plan_fwd, &input, &mut mid, 1);
+        convert_row(&plan_back, &mid, &mut output, 1);
+
+        let result = u16::from_ne_bytes(output);
+        let err = (result as i32 - v16 as i32).unsigned_abs() as u16;
+        max_err = max_err.max(err);
+    }
+
+    println!("HLG U16 round-trip: max error = {max_err}");
+    assert!(
+        max_err <= 1,
+        "HLG U16 round-trip should be within ±1, got max error {max_err}"
+    );
+}
+
+#[test]
+fn ulp_hlg_eotf_monotonic() {
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+
+    let hlg_u16 = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Hlg,
+    );
+    let linear_f32 = PixelDescriptor::new(
+        ChannelType::F32,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Linear,
+    );
+
+    let plan = ConvertPlan::new(hlg_u16, linear_f32).expect("HLG EOTF plan");
+    let mut prev: f32 = -1.0;
+
+    for v in 0u32..=65535 {
+        let v16 = v as u16;
+        let input: [u8; 2] = v16.to_ne_bytes();
+        let mut output = [0u8; 4];
+        convert_row(&plan, &input, &mut output, 1);
+        let result: f32 = bytemuck::cast(output);
+        assert!(
+            result >= prev,
+            "HLG EOTF not monotonic at {v16}: {result} < {prev}"
+        );
+        prev = result;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cross-TF: PQ U16 → sRGB U8 (HDR to SDR naive conversion)
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn ulp_pq_to_srgb_basic() {
+    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+
+    let pq_u16 = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Pq,
+    );
+    let srgb_u8 = PixelDescriptor::new(
+        ChannelType::U8,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    );
+
+    let plan = ConvertPlan::new(pq_u16, srgb_u8).expect("PQ U16 → sRGB U8 plan");
+
+    // PQ code 0 → sRGB 0
+    let input_0: [u8; 6] = [0; 6]; // 3 × u16(0)
+    let mut out_0 = [0u8; 3];
+    convert_row(&plan, &input_0, &mut out_0, 1);
+    assert_eq!(out_0, [0, 0, 0], "PQ(0) → sRGB should be black");
+
+    // ~203 nits (diffuse white) in PQ ≈ code ~33280 → should map to sRGB ~200-255
+    let mid_val: u16 = 33280;
+    let input_mid: [u8; 6] = bytemuck::cast([mid_val, mid_val, mid_val]);
+    let mut out_mid = [0u8; 3];
+    convert_row(&plan, &input_mid, &mut out_mid, 1);
+    // The exact value depends on the PQ→linear→sRGB chain
+    println!("PQ({mid_val}) → sRGB: [{}, {}, {}]", out_mid[0], out_mid[1], out_mid[2]);
+    // Should be a reasonable SDR value, not 0 and not 255
+    assert!(
+        out_mid[0] > 10 && out_mid[0] < 255,
+        "PQ(33280) → sRGB should be a moderate value, got {}",
+        out_mid[0]
+    );
+}
