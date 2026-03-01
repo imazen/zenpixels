@@ -26,6 +26,16 @@ pub struct ContentLightLevel {
     pub max_frame_average_light_level: u16,
 }
 
+impl ContentLightLevel {
+    /// Create content light level metadata.
+    pub const fn new(max_content_light_level: u16, max_frame_average_light_level: u16) -> Self {
+        Self {
+            max_content_light_level,
+            max_frame_average_light_level,
+        }
+    }
+}
+
 /// Mastering display color volume metadata (SMPTE ST 2086).
 ///
 /// Describes the display on which the content was mastered, enabling
@@ -44,6 +54,21 @@ pub struct MasteringDisplay {
 }
 
 impl MasteringDisplay {
+    /// Create mastering display metadata from CIE 1931 xy coordinates and cd/m² luminances.
+    pub const fn new(
+        primaries_xy: [[f32; 2]; 3],
+        white_point_xy: [f32; 2],
+        max_luminance: f32,
+        min_luminance: f32,
+    ) -> Self {
+        Self {
+            primaries_xy,
+            white_point_xy,
+            max_luminance,
+            min_luminance,
+        }
+    }
+
     /// BT.2020 primaries with D65 white point, 10000 nits peak (HDR10 reference).
     pub const HDR10_REFERENCE: Self = Self {
         primaries_xy: [[0.708, 0.292], [0.170, 0.797], [0.131, 0.046]],
