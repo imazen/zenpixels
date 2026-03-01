@@ -89,9 +89,9 @@ pub fn adapt_for_encode_with_intent<'a>(
     // and a supported format matches on everything except transfer, it's
     // still a zero-copy path.
     for &target in supported {
-        if descriptor.channel_type == target.channel_type
-            && descriptor.layout == target.layout
-            && descriptor.alpha == target.alpha
+        if descriptor.channel_type() == target.channel_type()
+            && descriptor.layout() == target.layout()
+            && descriptor.alpha() == target.alpha()
         {
             return Ok(Adapted {
                 data: contiguous_from_strided(
@@ -204,9 +204,9 @@ pub fn adapt_for_encode_explicit<'a>(
 
     // Check for transfer-agnostic match.
     for &target in supported {
-        if descriptor.channel_type == target.channel_type
-            && descriptor.layout == target.layout
-            && descriptor.alpha == target.alpha
+        if descriptor.channel_type() == target.channel_type()
+            && descriptor.layout() == target.layout()
+            && descriptor.alpha() == target.alpha()
         {
             return Ok(Adapted {
                 data: contiguous_from_strided(
@@ -231,7 +231,7 @@ pub fn adapt_for_encode_explicit<'a>(
     let plan = ConvertPlan::new_explicit(descriptor, target, options)?;
 
     // Runtime opacity check for DiscardIfOpaque.
-    let drops_alpha = descriptor.alpha.is_some() && target.alpha.is_none();
+    let drops_alpha = descriptor.alpha().is_some() && target.alpha().is_none();
     if drops_alpha && options.alpha_policy == AlphaPolicy::DiscardIfOpaque {
         let src_bpp = descriptor.bytes_per_pixel();
         if !is_fully_opaque(data, width, rows, stride, src_bpp, &descriptor) {
@@ -274,16 +274,16 @@ fn is_fully_opaque(
     bpp: usize,
     desc: &PixelDescriptor,
 ) -> bool {
-    if desc.alpha.is_none() {
+    if desc.alpha().is_none() {
         return true;
     }
-    let cs = desc.channel_type.byte_size();
-    let alpha_offset = (desc.layout.channels() - 1) * cs;
+    let cs = desc.channel_type().byte_size();
+    let alpha_offset = (desc.layout().channels() - 1) * cs;
     for y in 0..rows {
         let row_start = y as usize * stride;
         for x in 0..width as usize {
             let off = row_start + x * bpp + alpha_offset;
-            match desc.channel_type {
+            match desc.channel_type() {
                 crate::ChannelType::U8 => {
                     if data[off] != 255 {
                         return false;

@@ -110,56 +110,56 @@ impl ConvertPlan {
         // first, then change depth. This minimizes the number of channels
         // we need to depth-convert.
 
-        let need_depth_change = from.channel_type != to.channel_type;
-        let need_layout_change = from.layout != to.layout;
+        let need_depth_change = from.channel_type() != to.channel_type();
+        let need_layout_change = from.layout() != to.layout();
         let need_alpha_change =
-            from.alpha != to.alpha && from.alpha.is_some() && to.alpha.is_some();
+            from.alpha() != to.alpha() && from.alpha().is_some() && to.alpha().is_some();
 
         // Depth/TF steps are needed when depth changes, or when both are F32
         // and transfer functions differ.
         let need_depth_or_tf = need_depth_change
-            || (from.channel_type == ChannelType::F32 && from.transfer != to.transfer);
+            || (from.channel_type() == ChannelType::F32 && from.transfer() != to.transfer());
 
         // If we need to change depth AND layout, plan the optimal order.
         if need_layout_change {
             // When going to fewer channels, convert layout first (less depth work).
             // When going to more channels, convert depth first (less layout work).
-            let src_ch = from.layout.channels();
-            let dst_ch = to.layout.channels();
+            let src_ch = from.layout().channels();
+            let dst_ch = to.layout().channels();
 
             if need_depth_or_tf && dst_ch > src_ch {
                 // Depth first, then layout.
                 steps.extend(depth_steps(
-                    from.channel_type,
-                    to.channel_type,
-                    from.transfer,
-                    to.transfer,
+                    from.channel_type(),
+                    to.channel_type(),
+                    from.transfer(),
+                    to.transfer(),
                 )?);
-                steps.extend(layout_steps(from.layout, to.layout));
+                steps.extend(layout_steps(from.layout(), to.layout()));
             } else {
                 // Layout first, then depth.
-                steps.extend(layout_steps(from.layout, to.layout));
+                steps.extend(layout_steps(from.layout(), to.layout()));
                 if need_depth_or_tf {
                     steps.extend(depth_steps(
-                        from.channel_type,
-                        to.channel_type,
-                        from.transfer,
-                        to.transfer,
+                        from.channel_type(),
+                        to.channel_type(),
+                        from.transfer(),
+                        to.transfer(),
                     )?);
                 }
             }
         } else if need_depth_or_tf {
             steps.extend(depth_steps(
-                from.channel_type,
-                to.channel_type,
-                from.transfer,
-                to.transfer,
+                from.channel_type(),
+                to.channel_type(),
+                from.transfer(),
+                to.transfer(),
             )?);
         }
 
         // Alpha mode conversion (if both have alpha and modes differ).
         if need_alpha_change {
-            match (from.alpha, to.alpha) {
+            match (from.alpha(), to.alpha()) {
                 (Some(AlphaMode::Straight), Some(AlphaMode::Premultiplied)) => {
                     steps.push(ConvertStep::StraightToPremul);
                 }
@@ -189,7 +189,7 @@ impl ConvertPlan {
         options: &ConvertOptions,
     ) -> Result<Self, ConvertError> {
         // Check alpha removal policy.
-        let drops_alpha = from.alpha.is_some() && to.alpha.is_none();
+        let drops_alpha = from.alpha().is_some() && to.alpha().is_none();
         if drops_alpha {
             match options.alpha_policy {
                 AlphaPolicy::Forbid => return Err(ConvertError::AlphaRemovalForbidden),
@@ -200,17 +200,17 @@ impl ConvertPlan {
         }
 
         // Check depth reduction policy.
-        let reduces_depth = from.channel_type.byte_size() > to.channel_type.byte_size();
+        let reduces_depth = from.channel_type().byte_size() > to.channel_type().byte_size();
         if reduces_depth && options.depth_policy == DepthPolicy::Forbid {
             return Err(ConvertError::DepthReductionForbidden);
         }
 
         // Check RGB→Gray requires luma coefficients.
         let src_is_rgb = matches!(
-            from.layout,
+            from.layout(),
             ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
         );
-        let dst_is_gray = matches!(to.layout, ChannelLayout::Gray | ChannelLayout::GrayAlpha);
+        let dst_is_gray = matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
         if src_is_rgb && dst_is_gray && options.luma.is_none() {
             return Err(ConvertError::RgbToGray);
         }
@@ -455,71 +455,71 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
     match step {
         ConvertStep::Identity => current,
         ConvertStep::SwizzleBgraRgba => {
-            let new_layout = match current.layout {
+            let new_layout = match current.layout() {
                 ChannelLayout::Bgra => ChannelLayout::Rgba,
                 ChannelLayout::Rgba => ChannelLayout::Bgra,
                 other => other,
             };
             PixelDescriptor::new(
-                current.channel_type,
+                current.channel_type(),
                 new_layout,
-                current.alpha,
-                current.transfer,
+                current.alpha(),
+                current.transfer(),
             )
         }
         ConvertStep::AddAlpha => PixelDescriptor::new(
-            current.channel_type,
+            current.channel_type(),
             ChannelLayout::Rgba,
             Some(AlphaMode::Straight),
-            current.transfer,
+            current.transfer(),
         ),
         ConvertStep::DropAlpha => PixelDescriptor::new(
-            current.channel_type,
+            current.channel_type(),
             ChannelLayout::Rgb,
             None,
-            current.transfer,
+            current.transfer(),
         ),
         ConvertStep::GrayToRgb => PixelDescriptor::new(
-            current.channel_type,
+            current.channel_type(),
             ChannelLayout::Rgb,
             None,
-            current.transfer,
+            current.transfer(),
         ),
         ConvertStep::GrayToRgba => PixelDescriptor::new(
-            current.channel_type,
+            current.channel_type(),
             ChannelLayout::Rgba,
             Some(AlphaMode::Straight),
-            current.transfer,
+            current.transfer(),
         ),
         ConvertStep::RgbToGray | ConvertStep::RgbaToGray => PixelDescriptor::new(
-            current.channel_type,
+            current.channel_type(),
             ChannelLayout::Gray,
             None,
-            current.transfer,
+            current.transfer(),
         ),
         ConvertStep::GrayAlphaToRgba => PixelDescriptor::new(
-            current.channel_type,
+            current.channel_type(),
             ChannelLayout::Rgba,
-            current.alpha,
-            current.transfer,
+            current.alpha(),
+            current.transfer(),
         ),
         ConvertStep::GrayAlphaToRgb => PixelDescriptor::new(
-            current.channel_type,
+            current.channel_type(),
             ChannelLayout::Rgb,
             None,
-            current.transfer,
+            current.transfer(),
         ),
         ConvertStep::GrayToGrayAlpha => PixelDescriptor::new(
-            current.channel_type,
+            current.channel_type(),
             ChannelLayout::GrayAlpha,
             Some(AlphaMode::Straight),
-            current.transfer,
+            current.transfer(),
         ),
         ConvertStep::GrayAlphaToGray => PixelDescriptor::new(
-            current.channel_type,
+            current.channel_type(),
             ChannelLayout::Gray,
             None,
-            current.transfer,
+            current.transfer(),
         ),
         ConvertStep::SrgbU8ToLinearF32
         | ConvertStep::NaiveU8ToF32
@@ -529,55 +529,55 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
         | ConvertStep::PqF32ToLinearF32
         | ConvertStep::HlgF32ToLinearF32 => PixelDescriptor::new(
             ChannelType::F32,
-            current.layout,
-            current.alpha,
+            current.layout(),
+            current.alpha(),
             TransferFunction::Linear,
         ),
         ConvertStep::LinearF32ToSrgbU8 | ConvertStep::NaiveF32ToU8 | ConvertStep::U16ToU8 => {
             PixelDescriptor::new(
                 ChannelType::U8,
-                current.layout,
-                current.alpha,
+                current.layout(),
+                current.alpha(),
                 TransferFunction::Srgb,
             )
         }
         ConvertStep::U8ToU16 => PixelDescriptor::new(
             ChannelType::U16,
-            current.layout,
-            current.alpha,
-            current.transfer,
+            current.layout(),
+            current.alpha(),
+            current.transfer(),
         ),
         ConvertStep::F32ToU16 | ConvertStep::LinearF32ToPqU16 | ConvertStep::LinearF32ToHlgU16 => {
             let tf = match step {
                 ConvertStep::LinearF32ToPqU16 => TransferFunction::Pq,
                 ConvertStep::LinearF32ToHlgU16 => TransferFunction::Hlg,
-                _ => current.transfer,
+                _ => current.transfer(),
             };
-            PixelDescriptor::new(ChannelType::U16, current.layout, current.alpha, tf)
+            PixelDescriptor::new(ChannelType::U16, current.layout(), current.alpha(), tf)
         }
         ConvertStep::LinearF32ToPqF32 => PixelDescriptor::new(
             ChannelType::F32,
-            current.layout,
-            current.alpha,
+            current.layout(),
+            current.alpha(),
             TransferFunction::Pq,
         ),
         ConvertStep::LinearF32ToHlgF32 => PixelDescriptor::new(
             ChannelType::F32,
-            current.layout,
-            current.alpha,
+            current.layout(),
+            current.alpha(),
             TransferFunction::Hlg,
         ),
         ConvertStep::StraightToPremul => PixelDescriptor::new(
-            current.channel_type,
-            current.layout,
+            current.channel_type(),
+            current.layout(),
             Some(AlphaMode::Premultiplied),
-            current.transfer,
+            current.transfer(),
         ),
         ConvertStep::PremulToStraight => PixelDescriptor::new(
-            current.channel_type,
-            current.layout,
+            current.channel_type(),
+            current.layout(),
             Some(AlphaMode::Straight),
-            current.transfer,
+            current.transfer(),
         ),
     }
 }
@@ -600,23 +600,23 @@ fn apply_step_u8(
         }
 
         ConvertStep::SwizzleBgraRgba => {
-            swizzle_bgra_rgba(src, dst, w, from.channel_type);
+            swizzle_bgra_rgba(src, dst, w, from.channel_type());
         }
 
         ConvertStep::AddAlpha => {
-            add_alpha(src, dst, w, from.channel_type);
+            add_alpha(src, dst, w, from.channel_type());
         }
 
         ConvertStep::DropAlpha => {
-            drop_alpha(src, dst, w, from.channel_type);
+            drop_alpha(src, dst, w, from.channel_type());
         }
 
         ConvertStep::GrayToRgb => {
-            gray_to_rgb(src, dst, w, from.channel_type);
+            gray_to_rgb(src, dst, w, from.channel_type());
         }
 
         ConvertStep::GrayToRgba => {
-            gray_to_rgba(src, dst, w, from.channel_type);
+            gray_to_rgba(src, dst, w, from.channel_type());
         }
 
         ConvertStep::RgbToGray => {
@@ -628,91 +628,91 @@ fn apply_step_u8(
         }
 
         ConvertStep::GrayAlphaToRgba => {
-            gray_alpha_to_rgba(src, dst, w, from.channel_type);
+            gray_alpha_to_rgba(src, dst, w, from.channel_type());
         }
 
         ConvertStep::GrayAlphaToRgb => {
-            gray_alpha_to_rgb(src, dst, w, from.channel_type);
+            gray_alpha_to_rgb(src, dst, w, from.channel_type());
         }
 
         ConvertStep::GrayToGrayAlpha => {
-            gray_to_gray_alpha(src, dst, w, from.channel_type);
+            gray_to_gray_alpha(src, dst, w, from.channel_type());
         }
 
         ConvertStep::GrayAlphaToGray => {
-            gray_alpha_to_gray(src, dst, w, from.channel_type);
+            gray_alpha_to_gray(src, dst, w, from.channel_type());
         }
 
         ConvertStep::SrgbU8ToLinearF32 => {
-            srgb_u8_to_linear_f32(src, dst, w, from.layout.channels());
+            srgb_u8_to_linear_f32(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::LinearF32ToSrgbU8 => {
-            linear_f32_to_srgb_u8(src, dst, w, from.layout.channels());
+            linear_f32_to_srgb_u8(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::NaiveU8ToF32 => {
-            naive_u8_to_f32(src, dst, w, from.layout.channels());
+            naive_u8_to_f32(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::NaiveF32ToU8 => {
-            naive_f32_to_u8(src, dst, w, from.layout.channels());
+            naive_f32_to_u8(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::U16ToU8 => {
-            u16_to_u8(src, dst, w, from.layout.channels());
+            u16_to_u8(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::U8ToU16 => {
-            u8_to_u16(src, dst, w, from.layout.channels());
+            u8_to_u16(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::U16ToF32 => {
-            u16_to_f32(src, dst, w, from.layout.channels());
+            u16_to_f32(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::F32ToU16 => {
-            f32_to_u16(src, dst, w, from.layout.channels());
+            f32_to_u16(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::PqU16ToLinearF32 => {
-            pq_u16_to_linear_f32(src, dst, w, from.layout.channels());
+            pq_u16_to_linear_f32(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::LinearF32ToPqU16 => {
-            linear_f32_to_pq_u16(src, dst, w, from.layout.channels());
+            linear_f32_to_pq_u16(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::PqF32ToLinearF32 => {
-            pq_f32_to_linear_f32(src, dst, w, from.layout.channels());
+            pq_f32_to_linear_f32(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::LinearF32ToPqF32 => {
-            linear_f32_to_pq_f32(src, dst, w, from.layout.channels());
+            linear_f32_to_pq_f32(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::HlgU16ToLinearF32 => {
-            hlg_u16_to_linear_f32(src, dst, w, from.layout.channels());
+            hlg_u16_to_linear_f32(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::LinearF32ToHlgU16 => {
-            linear_f32_to_hlg_u16(src, dst, w, from.layout.channels());
+            linear_f32_to_hlg_u16(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::HlgF32ToLinearF32 => {
-            hlg_f32_to_linear_f32(src, dst, w, from.layout.channels());
+            hlg_f32_to_linear_f32(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::LinearF32ToHlgF32 => {
-            linear_f32_to_hlg_f32(src, dst, w, from.layout.channels());
+            linear_f32_to_hlg_f32(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::StraightToPremul => {
-            straight_to_premul(src, dst, w, from.channel_type, from.layout);
+            straight_to_premul(src, dst, w, from.channel_type(), from.layout());
         }
 
         ConvertStep::PremulToStraight => {
-            premul_to_straight(src, dst, w, from.channel_type, from.layout);
+            premul_to_straight(src, dst, w, from.channel_type(), from.layout());
         }
     }
 }

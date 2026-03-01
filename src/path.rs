@@ -190,7 +190,7 @@ pub fn optimal_path(
 /// origin depth is the *working format's* depth (the operation "consumes"
 /// the original precision and produces new data at working precision).
 fn provenance_after_operation(original: Provenance, working: PixelDescriptor) -> Provenance {
-    Provenance::with_origin(working.channel_type, original.origin_primaries)
+    Provenance::with_origin(working.channel_type(), original.origin_primaries)
 }
 
 /// An entry in the full path matrix.
@@ -315,15 +315,15 @@ pub fn matrix_stats(entries: &[PathEntry]) -> MatrixStats {
 
                 // Encode working format as bytes for BTreeSet (PixelDescriptor doesn't impl Ord).
                 let wf = path.working_format;
-                let alpha_byte = match wf.alpha {
+                let alpha_byte = match wf.alpha() {
                     None => 0u8,
                     Some(a) => a as u8,
                 };
                 let key = (
-                    wf.channel_type as u8,
-                    wf.layout as u8,
+                    wf.channel_type() as u8,
+                    wf.layout() as u8,
                     alpha_byte,
-                    wf.transfer as u8,
+                    wf.transfer() as u8,
                     wf.primaries as u8,
                 );
                 working_formats.insert(key);
@@ -375,8 +375,8 @@ mod tests {
         );
         assert!(path.is_some());
         let path = path.unwrap();
-        assert_eq!(path.working_format.channel_type, ChannelType::F32);
-        assert_eq!(path.working_format.transfer, TransferFunction::Linear);
+        assert_eq!(path.working_format.channel_type(), ChannelType::F32);
+        assert_eq!(path.working_format.transfer(), TransferFunction::Linear);
     }
 
     #[test]
@@ -407,7 +407,7 @@ mod tests {
         );
         assert!(path.is_some());
         let path = path.unwrap();
-        assert_eq!(path.working_format.alpha, Some(AlphaMode::Premultiplied));
+        assert_eq!(path.working_format.alpha(), Some(AlphaMode::Premultiplied));
     }
 
     #[test]

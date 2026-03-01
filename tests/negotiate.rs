@@ -475,9 +475,9 @@ fn ideal_format_fastest_identity() {
 #[test]
 fn ideal_format_linear_light_sdr() {
     let result = ideal_format(PixelDescriptor::RGB8_SRGB, ConvertIntent::LinearLight);
-    assert_eq!(result.channel_type, ChannelType::F32);
-    assert_eq!(result.transfer, TransferFunction::Linear);
-    assert_eq!(result.layout, ChannelLayout::Rgb);
+    assert_eq!(result.channel_type(), ChannelType::F32);
+    assert_eq!(result.transfer(), TransferFunction::Linear);
+    assert_eq!(result.layout(), ChannelLayout::Rgb);
 }
 
 #[test]
@@ -497,25 +497,25 @@ fn ideal_format_linear_light_hdr() {
         TransferFunction::Pq,
     );
     let result = ideal_format(pq, ConvertIntent::LinearLight);
-    assert_eq!(result.channel_type, ChannelType::F32);
-    assert_eq!(result.transfer, TransferFunction::Linear);
+    assert_eq!(result.channel_type(), ChannelType::F32);
+    assert_eq!(result.transfer(), TransferFunction::Linear);
 }
 
 #[test]
 fn ideal_format_blend_adds_premul() {
     let result = ideal_format(PixelDescriptor::RGBA8_SRGB, ConvertIntent::Blend);
-    assert_eq!(result.channel_type, ChannelType::F32);
-    assert_eq!(result.transfer, TransferFunction::Linear);
-    assert_eq!(result.alpha, Some(AlphaMode::Premultiplied));
-    assert_eq!(result.layout, ChannelLayout::Rgba);
+    assert_eq!(result.channel_type(), ChannelType::F32);
+    assert_eq!(result.transfer(), TransferFunction::Linear);
+    assert_eq!(result.alpha(), Some(AlphaMode::Premultiplied));
+    assert_eq!(result.layout(), ChannelLayout::Rgba);
 }
 
 #[test]
 fn ideal_format_blend_no_alpha_source() {
     let result = ideal_format(PixelDescriptor::RGB8_SRGB, ConvertIntent::Blend);
-    assert_eq!(result.channel_type, ChannelType::F32);
-    assert_eq!(result.transfer, TransferFunction::Linear);
-    assert!(result.alpha.is_none());
+    assert_eq!(result.channel_type(), ChannelType::F32);
+    assert_eq!(result.transfer(), TransferFunction::Linear);
+    assert!(result.alpha().is_none());
 }
 
 #[test]
@@ -529,8 +529,8 @@ fn ideal_format_perceptual_sdr8() {
 #[test]
 fn ideal_format_perceptual_u16() {
     let result = ideal_format(PixelDescriptor::RGB16_SRGB, ConvertIntent::Perceptual);
-    assert_eq!(result.channel_type, ChannelType::F32);
-    assert_eq!(result.transfer, TransferFunction::Srgb);
+    assert_eq!(result.channel_type(), ChannelType::F32);
+    assert_eq!(result.transfer(), TransferFunction::Srgb);
 }
 
 #[test]
@@ -542,8 +542,8 @@ fn ideal_format_perceptual_hdr() {
         TransferFunction::Pq,
     );
     let result = ideal_format(pq, ConvertIntent::Perceptual);
-    assert_eq!(result.channel_type, ChannelType::F32);
-    assert_eq!(result.transfer, TransferFunction::Srgb);
+    assert_eq!(result.channel_type(), ChannelType::F32);
+    assert_eq!(result.transfer(), TransferFunction::Srgb);
 }
 
 // =========================================================================

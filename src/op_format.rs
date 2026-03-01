@@ -229,15 +229,15 @@ impl OpCategory {
         }
 
         // Generate the "ideal" format based on requirements.
-        let ideal_transfer = req.transfer.unwrap_or(source.transfer);
+        let ideal_transfer = req.transfer.unwrap_or(source.transfer());
         let ideal_depth = if req.requires_float {
             ChannelType::F32
         } else {
-            req.min_depth.unwrap_or(source.channel_type)
+            req.min_depth.unwrap_or(source.channel_type())
         };
         let ideal_alpha = match req.alpha {
             Some(a) => Some(a),
-            None => source.alpha,
+            None => source.alpha(),
         };
 
         // RGB variant
@@ -247,7 +247,7 @@ impl OpCategory {
         }
 
         // RGBA variant (important for alpha-carrying sources and compositing)
-        if source.layout.has_alpha() || req.alpha.is_some() {
+        if source.layout().has_alpha() || req.alpha.is_some() {
             let rgba_ideal = PixelDescriptor::new(
                 ideal_depth,
                 ChannelLayout::Rgba,
@@ -267,7 +267,7 @@ impl OpCategory {
                 candidates.push(gray_ideal);
             }
             // GrayAlpha variant (if source has alpha, prefer staying in GA over expanding to RGBA)
-            if source.layout == ChannelLayout::GrayAlpha {
+            if source.layout() == ChannelLayout::GrayAlpha {
                 let ga_ideal = PixelDescriptor::new(
                     ideal_depth,
                     ChannelLayout::GrayAlpha,
@@ -288,25 +288,25 @@ impl OpCategory {
 fn format_satisfies(desc: PixelDescriptor, req: &OpRequirement) -> bool {
     // Check transfer function.
     if let Some(tf) = req.transfer
-        && desc.transfer != tf
+        && desc.transfer() != tf
     {
         return false;
     }
 
     // Check depth.
-    if req.requires_float && desc.channel_type != ChannelType::F32 {
+    if req.requires_float && desc.channel_type() != ChannelType::F32 {
         return false;
     }
     if let Some(min) = req.min_depth
-        && channel_bits(desc.channel_type) < channel_bits(min)
+        && channel_bits(desc.channel_type()) < channel_bits(min)
     {
         return false;
     }
 
     // Check alpha mode.
     if let Some(alpha) = req.alpha
-        && desc.layout.has_alpha()
-        && desc.alpha != Some(alpha)
+        && desc.layout().has_alpha()
+        && desc.alpha() != Some(alpha)
     {
         return false;
     }
@@ -354,8 +354,8 @@ mod tests {
         assert!(
             candidates
                 .iter()
-                .all(|c| c.channel_type == ChannelType::F32
-                    && c.transfer == TransferFunction::Linear)
+                .all(|c| c.channel_type() == ChannelType::F32
+                    && c.transfer() == TransferFunction::Linear)
         );
     }
 
@@ -365,7 +365,7 @@ mod tests {
         let candidates = OpCategory::Composite.candidate_working_formats(src);
         let has_premul = candidates
             .iter()
-            .any(|c| c.alpha == Some(AlphaMode::Premultiplied));
+            .any(|c| c.alpha() == Some(AlphaMode::Premultiplied));
         assert!(
             has_premul,
             "composite candidates must include premultiplied format"
