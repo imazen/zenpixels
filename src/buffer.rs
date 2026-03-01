@@ -192,6 +192,8 @@ pub enum BufferError {
     /// The new descriptor has a different `bytes_per_pixel()` than the
     /// current one, so reinterpreting the buffer would be invalid.
     IncompatibleDescriptor,
+    /// Buffer allocation failed (out of memory or overflow).
+    AllocationFailed,
 }
 
 impl fmt::Display for BufferError {
@@ -209,6 +211,7 @@ impl fmt::Display for BufferError {
             Self::IncompatibleDescriptor => {
                 write!(f, "new descriptor has different bytes_per_pixel")
             }
+            Self::AllocationFailed => write!(f, "buffer allocation failed"),
         }
     }
 }
@@ -228,6 +231,17 @@ const fn align_up(val: usize, align: usize) -> usize {
 fn align_offset(ptr: *const u8, align: usize) -> usize {
     let addr = ptr as usize;
     align_up(addr, align) - addr
+}
+
+/// Try to allocate a zeroed `Vec<u8>` of the given size.
+///
+/// Returns [`BufferError::AllocationFailed`] if the allocation fails.
+fn try_alloc_zeroed(size: usize) -> Result<Vec<u8>, BufferError> {
+    let mut data = Vec::new();
+    data.try_reserve_exact(size)
+        .map_err(|_| BufferError::AllocationFailed)?;
+    data.resize(size, 0);
+    Ok(data)
 }
 
 /// Validate slice parameters (shared by erased and typed constructors).
@@ -686,7 +700,11 @@ impl<'a, P> PixelSlice<'a, P> {
         if src_desc == target {
             // Identity — just copy.
             let dst_stride = target.aligned_stride(self.width);
-            let mut out = vec![0u8; dst_stride * self.rows as usize];
+            let total = dst_stride
+                .checked_mul(self.rows as usize)
+                .ok_or(crate::ConvertError::AllocationFailed)?;
+            let mut out = try_alloc_zeroed(total)
+                .map_err(|_| crate::ConvertError::AllocationFailed)?;
             for y in 0..self.rows {
                 let src_row = self.row(y);
                 let dst_start = y as usize * dst_stride;
@@ -704,7 +722,11 @@ impl<'a, P> PixelSlice<'a, P> {
         let converter = crate::converter::RowConverter::new(src_desc, target)?;
 
         let dst_stride = target.aligned_stride(self.width);
-        let mut out = vec![0u8; dst_stride * self.rows as usize];
+        let total = dst_stride
+            .checked_mul(self.rows as usize)
+            .ok_or(crate::ConvertError::AllocationFailed)?;
+        let mut out = try_alloc_zeroed(total)
+            .map_err(|_| crate::ConvertError::AllocationFailed)?;
 
         for y in 0..self.rows {
             let src_row = self.row(y);
@@ -1434,14 +1456,34 @@ pub struct PixelBuffer<P = ()> {
 
 impl PixelBuffer {
     /// Allocate a zero-filled buffer for the given dimensions and format.
+    ///
+    /// # Panics
+    ///
+    /// Panics if allocation fails. Use [`try_new`](Self::try_new) for fallible allocation.
     pub fn new(width: u32, height: u32, descriptor: PixelDescriptor) -> Self {
+        Self::try_new(width, height, descriptor).expect("pixel buffer allocation failed")
+    }
+
+    /// Try to allocate a zero-filled buffer for the given dimensions and format.
+    ///
+    /// Returns [`BufferError::InvalidDimensions`] if the total size overflows,
+    /// or [`BufferError::AllocationFailed`] if allocation fails.
+    pub fn try_new(
+        width: u32,
+        height: u32,
+        descriptor: PixelDescriptor,
+    ) -> Result<Self, BufferError> {
         let stride = descriptor.aligned_stride(width);
-        let total = stride * height as usize;
+        let total = stride
+            .checked_mul(height as usize)
+            .ok_or(BufferError::InvalidDimensions)?;
         let align = descriptor.min_alignment();
-        let alloc_size = total + align - 1;
-        let data = vec![0u8; alloc_size];
+        let alloc_size = total
+            .checked_add(align - 1)
+            .ok_or(BufferError::InvalidDimensions)?;
+        let data = try_alloc_zeroed(alloc_size)?;
         let offset = align_offset(data.as_ptr(), align);
-        Self {
+        Ok(Self {
             data,
             offset,
             width,
@@ -1451,7 +1493,7 @@ impl PixelBuffer {
             working_space: WorkingColorSpace::Native,
             color: None,
             _pixel: PhantomData,
-        }
+        })
     }
 
     /// Allocate a SIMD-aligned buffer for the given dimensions and format.
@@ -1461,18 +1503,41 @@ impl PixelBuffer {
     /// itself starts at a SIMD-aligned address.
     ///
     /// `simd_align` must be a power of 2 (e.g. 16, 32, 64).
+    ///
+    /// # Panics
+    ///
+    /// Panics if allocation fails. Use [`try_new_simd_aligned`](Self::try_new_simd_aligned)
+    /// for fallible allocation.
     pub fn new_simd_aligned(
         width: u32,
         height: u32,
         descriptor: PixelDescriptor,
         simd_align: usize,
     ) -> Self {
+        Self::try_new_simd_aligned(width, height, descriptor, simd_align)
+            .expect("pixel buffer SIMD-aligned allocation failed")
+    }
+
+    /// Try to allocate a SIMD-aligned buffer for the given dimensions and format.
+    ///
+    /// Returns [`BufferError::InvalidDimensions`] if the total size overflows,
+    /// or [`BufferError::AllocationFailed`] if allocation fails.
+    pub fn try_new_simd_aligned(
+        width: u32,
+        height: u32,
+        descriptor: PixelDescriptor,
+        simd_align: usize,
+    ) -> Result<Self, BufferError> {
         let stride = descriptor.simd_aligned_stride(width, simd_align);
-        let total = stride * height as usize;
-        let alloc_size = total + simd_align - 1;
-        let data = vec![0u8; alloc_size];
+        let total = stride
+            .checked_mul(height as usize)
+            .ok_or(BufferError::InvalidDimensions)?;
+        let alloc_size = total
+            .checked_add(simd_align - 1)
+            .ok_or(BufferError::InvalidDimensions)?;
+        let data = try_alloc_zeroed(alloc_size)?;
         let offset = align_offset(data.as_ptr(), simd_align);
-        Self {
+        Ok(Self {
             data,
             offset,
             width,
@@ -1482,7 +1547,7 @@ impl PixelBuffer {
             working_space: WorkingColorSpace::Native,
             color: None,
             _pixel: PhantomData,
-        }
+        })
     }
 
     /// Wrap an existing `Vec<u8>` as a pixel buffer.
@@ -1527,16 +1592,33 @@ impl<P: Pixel> PixelBuffer<P> {
     /// Allocate a typed zero-filled buffer for the given dimensions.
     ///
     /// The descriptor is derived from `P::DESCRIPTOR`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if allocation fails. Use [`try_new_typed`](Self::try_new_typed)
+    /// for fallible allocation.
     pub fn new_typed(width: u32, height: u32) -> Self {
+        Self::try_new_typed(width, height).expect("typed pixel buffer allocation failed")
+    }
+
+    /// Try to allocate a typed zero-filled buffer for the given dimensions.
+    ///
+    /// Returns [`BufferError::InvalidDimensions`] if the total size overflows,
+    /// or [`BufferError::AllocationFailed`] if allocation fails.
+    pub fn try_new_typed(width: u32, height: u32) -> Result<Self, BufferError> {
         const { assert!(core::mem::size_of::<P>() == P::DESCRIPTOR.bytes_per_pixel()) }
         let descriptor = P::DESCRIPTOR;
         let stride = descriptor.aligned_stride(width);
-        let total = stride * height as usize;
+        let total = stride
+            .checked_mul(height as usize)
+            .ok_or(BufferError::InvalidDimensions)?;
         let align = descriptor.min_alignment();
-        let alloc_size = total + align - 1;
-        let data = vec![0u8; alloc_size];
+        let alloc_size = total
+            .checked_add(align - 1)
+            .ok_or(BufferError::InvalidDimensions)?;
+        let data = try_alloc_zeroed(alloc_size)?;
         let offset = align_offset(data.as_ptr(), align);
-        Self {
+        Ok(Self {
             data,
             offset,
             width,
@@ -1546,7 +1628,7 @@ impl<P: Pixel> PixelBuffer<P> {
             working_space: WorkingColorSpace::Native,
             color: None,
             _pixel: PhantomData,
-        }
+        })
     }
 }
 
