@@ -3,9 +3,12 @@
 //! Each kernel converts one row of `width` pixels from a source format to
 //! a destination format. Kernels are pure functions with no allocation.
 
-use crate::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
+use alloc::vec::Vec;
+use core::cmp::min;
 
-use crate::error::ConvertError;
+use crate::{
+    AlphaMode, ChannelLayout, ChannelType, ConvertError, PixelDescriptor, TransferFunction,
+};
 
 /// Pre-computed conversion plan.
 ///
@@ -15,7 +18,7 @@ use crate::error::ConvertError;
 pub struct ConvertPlan {
     pub(crate) from: PixelDescriptor,
     pub(crate) to: PixelDescriptor,
-    pub(crate) steps: alloc::vec::Vec<ConvertStep>,
+    pub(crate) steps: Vec<ConvertStep>,
 }
 
 /// A single conversion step.
@@ -76,11 +79,11 @@ impl ConvertPlan {
             return Ok(Self {
                 from,
                 to,
-                steps: alloc::vec![ConvertStep::Identity],
+                steps: vec![ConvertStep::Identity],
             });
         }
 
-        let mut steps = alloc::vec::Vec::with_capacity(3);
+        let mut steps = Vec::with_capacity(3);
 
         // Step 1: Layout conversion (within same depth class).
         // Step 2: Depth conversion.
@@ -269,7 +272,7 @@ fn depth_step(
 /// For multi-step plans, an internal scratch buffer is used.
 pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
     if plan.is_identity() {
-        let len = core::cmp::min(src.len(), dst.len());
+        let len = min(src.len(), dst.len());
         dst[..len].copy_from_slice(&src[..len]);
         return;
     }
@@ -281,7 +284,7 @@ pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
 
     // Multi-step: use intermediate buffer.
     // Calculate intermediate format after first step.
-    let mut current = alloc::vec::Vec::from(src);
+    let mut current = Vec::from(src);
     let mut current_desc = plan.from;
 
     for (i, &step) in plan.steps.iter().enumerate() {
@@ -298,7 +301,7 @@ pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
         if is_last {
             apply_step_u8(step, &current, dst, width, current_desc, next_desc);
         } else {
-            let mut next = alloc::vec![0u8; next_len];
+            let mut next = vec![0u8; next_len];
             apply_step_u8(step, &current, &mut next, width, current_desc, next_desc);
             current = next;
             current_desc = next_desc;
@@ -433,7 +436,7 @@ fn apply_step_u8(
 
     match step {
         ConvertStep::Identity => {
-            let len = core::cmp::min(src.len(), dst.len());
+            let len = min(src.len(), dst.len());
             dst[..len].copy_from_slice(&src[..len]);
         }
 
@@ -976,7 +979,7 @@ fn straight_to_premul(
         }
         _ => {
             // Fallback: copy.
-            let len = core::cmp::min(src.len(), dst.len());
+            let len = min(src.len(), dst.len());
             dst[..len].copy_from_slice(&src[..len]);
         }
     }
@@ -1031,7 +1034,7 @@ fn premul_to_straight(
             }
         }
         _ => {
-            let len = core::cmp::min(src.len(), dst.len());
+            let len = min(src.len(), dst.len());
             dst[..len].copy_from_slice(&src[..len]);
         }
     }

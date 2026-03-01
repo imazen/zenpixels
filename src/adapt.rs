@@ -7,10 +7,9 @@ use alloc::borrow::Cow;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::PixelDescriptor;
 use crate::converter::RowConverter;
-use crate::error::ConvertError;
 use crate::negotiate::{ConvertIntent, best_match};
+use crate::{ConvertError, PixelDescriptor};
 
 /// Result of format adaptation: the converted data and its descriptor.
 pub struct Adapted<'a> {

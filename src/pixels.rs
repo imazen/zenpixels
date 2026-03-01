@@ -3,9 +3,10 @@
 //! This module provides [`convert_pixels`], a transfer-function-aware
 //! pixel format converter that operates on raw byte buffers.
 
+use alloc::vec::Vec;
+
 use crate::adapt::convert_buffer;
-use crate::error::ConvertError;
-use crate::{PixelDescriptor, TransferFunction};
+use crate::{ConvertError, PixelDescriptor, TransferFunction};
 
 /// Convert raw pixel data to a target [`PixelDescriptor`], applying correct
 /// transfer functions when crossing depth boundaries.
@@ -55,7 +56,7 @@ pub fn convert_pixels(
 /// Result of a whole-frame pixel conversion.
 pub struct ConvertedPixels {
     /// Raw pixel bytes in the target format.
-    pub data: alloc::vec::Vec<u8>,
+    pub data: Vec<u8>,
     /// The pixel format of `data`.
     pub descriptor: PixelDescriptor,
     /// Image width.

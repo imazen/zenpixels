@@ -10,6 +10,8 @@
 //! with a custom [`ConversionCost`], so the negotiation picks their fast
 //! path instead of doing a redundant conversion.
 
+use core::ops::Add;
+
 use crate::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
 };
@@ -173,7 +175,7 @@ impl ConversionCost {
     }
 }
 
-impl core::ops::Add for ConversionCost {
+impl Add for ConversionCost {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
         Self {

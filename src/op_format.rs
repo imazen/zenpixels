@@ -9,9 +9,10 @@
 //! The path solver uses these requirements to generate candidate working
 //! formats and evaluate conversion paths.
 
-use crate::{AlphaMode, ChannelType, PixelDescriptor, TransferFunction};
+use alloc::vec::Vec;
 
-use crate::ConvertIntent;
+use crate::negotiate::channel_bits;
+use crate::{AlphaMode, ChannelType, ConvertIntent, PixelDescriptor, TransferFunction};
 
 /// Abstract operation categories for format negotiation.
 ///
@@ -210,14 +211,11 @@ impl OpCategory {
     /// Returns a small set of formats that satisfy the operation's requirements.
     /// The path solver evaluates each candidate's conversion cost from/to the
     /// source and output formats.
-    pub fn candidate_working_formats(
-        self,
-        source: PixelDescriptor,
-    ) -> alloc::vec::Vec<PixelDescriptor> {
+    pub fn candidate_working_formats(self, source: PixelDescriptor) -> Vec<PixelDescriptor> {
         use crate::ChannelLayout;
 
         let req = self.requirement();
-        let mut candidates = alloc::vec::Vec::with_capacity(4);
+        let mut candidates = Vec::with_capacity(4);
 
         // If passthrough, source format is always the best candidate.
         if self == Self::Passthrough {
@@ -306,7 +304,7 @@ fn format_satisfies(desc: PixelDescriptor, req: &OpRequirement) -> bool {
         return false;
     }
     if let Some(min) = req.min_depth
-        && crate::negotiate::channel_bits(desc.channel_type) < crate::negotiate::channel_bits(min)
+        && channel_bits(desc.channel_type) < channel_bits(min)
     {
         return false;
     }
@@ -352,7 +350,7 @@ mod tests {
     fn passthrough_candidates_match_source() {
         let src = PixelDescriptor::RGB8_SRGB;
         let candidates = OpCategory::Passthrough.candidate_working_formats(src);
-        assert_eq!(candidates, alloc::vec![src]);
+        assert_eq!(candidates, vec![src]);
     }
 
     #[test]
