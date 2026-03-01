@@ -962,7 +962,10 @@ fn ulp_pq_to_srgb_basic() {
     let mut out_mid = [0u8; 3];
     convert_row(&plan, &input_mid, &mut out_mid, 1);
     // The exact value depends on the PQ→linear→sRGB chain
-    println!("PQ({mid_val}) → sRGB: [{}, {}, {}]", out_mid[0], out_mid[1], out_mid[2]);
+    println!(
+        "PQ({mid_val}) → sRGB: [{}, {}, {}]",
+        out_mid[0], out_mid[1], out_mid[2]
+    );
     // Should be a reasonable SDR value, not 0 and not 255
     assert!(
         out_mid[0] > 10 && out_mid[0] < 255,

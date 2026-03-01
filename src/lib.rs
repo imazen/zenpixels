@@ -80,7 +80,7 @@ pub use descriptor::{
 };
 
 // Re-export buffer types at crate root.
-pub use buffer::{BufferError, Pixel, PixelBuffer, PixelSlice, PixelSliceMut, Rgbx, Bgrx};
+pub use buffer::{Bgrx, BufferError, Pixel, PixelBuffer, PixelSlice, PixelSliceMut, Rgbx};
 
 // Re-export color types at crate root.
 pub use cicp::Cicp;
