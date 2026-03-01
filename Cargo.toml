@@ -14,6 +14,8 @@ default = ["std"]
 std = ["linear-srgb/std"]
 buffer = ["dep:rgb", "dep:imgref"]
 codec = ["buffer", "dep:enough"]
+hdr-ultrahdr = ["dep:ultrahdr-core"]
+hdr-gainforge = ["dep:gainforge"]
 
 [dependencies]
 linear-srgb = { version = "0.5", path = "../linear-srgb", default-features = false }
@@ -21,6 +23,8 @@ bytemuck = { version = "1.21", default-features = false, features = ["extern_cra
 rgb = { version = "0.8", default-features = false, features = ["as-bytes"], optional = true }
 imgref = { version = "1.12", optional = true }
 enough = { version = "0.4", optional = true }
+ultrahdr-core = { version = "0.2", path = "../ultrahdr/ultrahdr-core", optional = true }
+gainforge = { version = "0.4", optional = true }
 
 [dev-dependencies]
 imgref = "1.12"
