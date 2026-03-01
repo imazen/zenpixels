@@ -3,8 +3,8 @@
 //! Verifies that sRGB ↔ linear conversions produce correct results
 //! and that naive (no-gamma) paths are used when transfer is Unknown.
 
-use zenpixels::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
 use zenpixels::RowConverter;
+use zenpixels::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
 
 /// sRGB u8 → linear f32 should apply the EOTF.
 #[test]
