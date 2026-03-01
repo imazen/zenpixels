@@ -69,7 +69,7 @@ impl Provenance {
     #[inline]
     pub fn from_source(desc: PixelDescriptor) -> Self {
         Self {
-            origin_depth: desc.channel_type,
+            origin_depth: desc.channel_type(),
             origin_primaries: desc.primaries,
         }
     }
@@ -104,7 +104,7 @@ impl Provenance {
     #[inline]
     pub fn with_origin_primaries(desc: PixelDescriptor, primaries: ColorPrimaries) -> Self {
         Self {
-            origin_depth: desc.channel_type,
+            origin_depth: desc.channel_type(),
             origin_primaries: primaries,
         }
     }
@@ -336,34 +336,34 @@ pub fn ideal_format(source: PixelDescriptor, intent: ConvertIntent) -> PixelDesc
         ConvertIntent::Fastest => source,
 
         ConvertIntent::LinearLight => {
-            if source.channel_type == ChannelType::F32
-                && source.transfer == TransferFunction::Linear
+            if source.channel_type() == ChannelType::F32
+                && source.transfer() == TransferFunction::Linear
             {
                 return source;
             }
             PixelDescriptor::new(
                 ChannelType::F32,
-                source.layout,
-                source.alpha,
+                source.layout(),
+                source.alpha(),
                 TransferFunction::Linear,
             )
         }
 
         ConvertIntent::Blend => {
-            let alpha = if source.layout.has_alpha() {
+            let alpha = if source.layout().has_alpha() {
                 Some(AlphaMode::Premultiplied)
             } else {
-                source.alpha
+                source.alpha()
             };
-            if source.channel_type == ChannelType::F32
-                && source.transfer == TransferFunction::Linear
-                && source.alpha == alpha
+            if source.channel_type() == ChannelType::F32
+                && source.transfer() == TransferFunction::Linear
+                && source.alpha() == alpha
             {
                 return source;
             }
             PixelDescriptor::new(
                 ChannelType::F32,
-                source.layout,
+                source.layout(),
                 alpha,
                 TransferFunction::Linear,
             )
@@ -373,22 +373,22 @@ pub fn ideal_format(source: PixelDescriptor, intent: ConvertIntent) -> PixelDesc
             let tier = precision_tier(source);
             match tier {
                 PrecisionTier::Sdr8 => {
-                    if source.transfer == TransferFunction::Srgb
-                        || source.transfer == TransferFunction::Unknown
+                    if source.transfer() == TransferFunction::Srgb
+                        || source.transfer() == TransferFunction::Unknown
                     {
                         return source;
                     }
                     PixelDescriptor::new(
                         ChannelType::U8,
-                        source.layout,
-                        source.alpha,
+                        source.layout(),
+                        source.alpha(),
                         TransferFunction::Srgb,
                     )
                 }
                 _ => PixelDescriptor::new(
                     ChannelType::F32,
-                    source.layout,
-                    source.alpha,
+                    source.layout(),
+                    source.alpha(),
                     TransferFunction::Srgb,
                 ),
             }
@@ -419,10 +419,14 @@ pub fn conversion_cost_with_provenance(
     to: PixelDescriptor,
     provenance: Provenance,
 ) -> ConversionCost {
-    transfer_cost(from.transfer, to.transfer)
-        + depth_cost(from.channel_type, to.channel_type, provenance.origin_depth)
-        + layout_cost(from.layout, to.layout)
-        + alpha_cost(from.alpha, to.alpha, from.layout, to.layout)
+    transfer_cost(from.transfer(), to.transfer())
+        + depth_cost(
+            from.channel_type(),
+            to.channel_type(),
+            provenance.origin_depth,
+        )
+        + layout_cost(from.layout(), to.layout())
+        + alpha_cost(from.alpha(), to.alpha(), from.layout(), to.layout())
         + primaries_cost(from.primaries, to.primaries, provenance.origin_primaries)
 }
 
@@ -494,7 +498,7 @@ pub(crate) fn suitability_loss(target: PixelDescriptor, intent: ConvertIntent) -
             // Straight alpha requires per-pixel division during compositing.
             // Calibrated: blending in straight alpha causes severe fringe artifacts
             // at semi-transparent edges (measured ΔE=17.2, High bucket).
-            if target.layout.has_alpha() && target.alpha == Some(AlphaMode::Straight) {
+            if target.layout().has_alpha() && target.alpha() == Some(AlphaMode::Straight) {
                 s += 200;
             }
             s
@@ -518,9 +522,9 @@ pub(crate) fn suitability_loss(target: PixelDescriptor, intent: ConvertIntent) -
 /// Only quantization matters. f32=0, f16=0.022, u8=0.213.
 #[allow(unreachable_patterns)] // non_exhaustive: future variants
 fn linear_light_suitability(target: PixelDescriptor) -> u16 {
-    if target.transfer == TransferFunction::Linear {
+    if target.transfer() == TransferFunction::Linear {
         // Linear space: only quantization error.
-        match target.channel_type {
+        match target.channel_type() {
             ChannelType::F32 => 0,
             ChannelType::F16 => 5, // 10 mantissa bits, measured ΔE=0.022
             ChannelType::U16 => 5, // 16 bits, negligible quantization
@@ -537,11 +541,11 @@ fn linear_light_suitability(target: PixelDescriptor) -> u16 {
 /// Suitability penalty for perceptual operations (sharpening, color grading).
 /// sRGB-encoded data is ideal; Linear f32 is slightly off.
 fn perceptual_suitability(target: PixelDescriptor) -> u16 {
-    if target.channel_type == ChannelType::F32 && target.transfer == TransferFunction::Linear {
+    if target.channel_type() == ChannelType::F32 && target.transfer() == TransferFunction::Linear {
         return 15;
     }
     if matches!(
-        target.transfer,
+        target.transfer(),
         TransferFunction::Pq | TransferFunction::Hlg
     ) {
         return 10;
@@ -796,10 +800,13 @@ enum PrecisionTier {
 
 #[allow(unreachable_patterns)] // non_exhaustive: future variants
 fn precision_tier(desc: PixelDescriptor) -> PrecisionTier {
-    if matches!(desc.transfer, TransferFunction::Pq | TransferFunction::Hlg) {
+    if matches!(
+        desc.transfer(),
+        TransferFunction::Pq | TransferFunction::Hlg
+    ) {
         return PrecisionTier::Hdr;
     }
-    match desc.channel_type {
+    match desc.channel_type() {
         ChannelType::U8 => PrecisionTier::Sdr8,
         ChannelType::U16 | ChannelType::F16 => PrecisionTier::Sdr16,
         ChannelType::F32 => PrecisionTier::LinearF32,

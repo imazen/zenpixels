@@ -355,20 +355,14 @@ impl fmt::Display for SignalRange {
 
 /// Compact pixel format descriptor.
 ///
-/// Describes the format of pixel data without carrying the data itself.
-/// The `alpha` field is `Option<AlphaMode>`: `None` means no alpha channel
-/// exists, while `Some(mode)` describes the semantics of a present channel.
+/// Wraps a [`PixelFormat`] (per-pixel physical layout + transfer) and adds
+/// color primaries and signal range. The `format.alpha` field is
+/// `Option<AlphaMode>`: `None` means no alpha channel exists.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[non_exhaustive]
 pub struct PixelDescriptor {
-    /// Channel storage type (u8, u16, f16, i16, f32).
-    pub channel_type: ChannelType,
-    /// Channel layout (gray, RGB, RGBA, etc.).
-    pub layout: ChannelLayout,
-    /// Alpha interpretation. `None` = no alpha channel.
-    pub alpha: Option<AlphaMode>,
-    /// Transfer function (sRGB, linear, PQ, etc.).
-    pub transfer: TransferFunction,
+    /// Physical pixel format (channel type, color model, alpha, transfer, byte order).
+    pub format: PixelFormat,
     /// Color primaries (gamut). Defaults to BT.709/sRGB.
     pub primaries: ColorPrimaries,
     /// Signal range (full vs narrow/limited).
@@ -376,6 +370,66 @@ pub struct PixelDescriptor {
 }
 
 impl PixelDescriptor {
+    // -- Forwarding accessors (backward compat) -------------------------------
+
+    /// Channel storage type.
+    #[inline]
+    pub const fn channel_type(&self) -> ChannelType {
+        self.format.channel_type
+    }
+
+    /// Alpha interpretation. `None` = no alpha channel.
+    #[inline]
+    pub const fn alpha(&self) -> Option<AlphaMode> {
+        self.format.alpha
+    }
+
+    /// Transfer function.
+    #[inline]
+    pub const fn transfer(&self) -> TransferFunction {
+        self.format.transfer
+    }
+
+    /// Byte order.
+    #[inline]
+    pub const fn byte_order(&self) -> ByteOrder {
+        self.format.byte_order
+    }
+
+    /// Color model.
+    #[inline]
+    pub const fn color_model(&self) -> ColorModel {
+        self.format.color_model
+    }
+
+    /// Compute the channel layout from color model, alpha, and byte order.
+    #[inline]
+    pub const fn layout(&self) -> ChannelLayout {
+        match (
+            self.format.color_model,
+            self.format.alpha,
+            self.format.byte_order,
+        ) {
+            (ColorModel::Gray, None, _) => ChannelLayout::Gray,
+            (ColorModel::Gray, Some(_), _) => ChannelLayout::GrayAlpha,
+            (_, Some(_), ByteOrder::Bgr) => ChannelLayout::Bgra,
+            (_, None, ByteOrder::Bgr) => ChannelLayout::Rgb,
+            (_, Some(_), _) => ChannelLayout::Rgba,
+            (_, None, _) => ChannelLayout::Rgb,
+        }
+    }
+
+    // -- Constructors ---------------------------------------------------------
+
+    /// Derive `ColorModel` and `ByteOrder` from a `ChannelLayout`.
+    const fn layout_to_model_order(layout: ChannelLayout) -> (ColorModel, ByteOrder) {
+        match layout {
+            ChannelLayout::Gray | ChannelLayout::GrayAlpha => (ColorModel::Gray, ByteOrder::Native),
+            ChannelLayout::Bgra => (ColorModel::Rgb, ByteOrder::Bgr),
+            _ => (ColorModel::Rgb, ByteOrder::Native),
+        }
+    }
+
     /// Create a descriptor with default primaries (BT.709) and full range.
     pub const fn new(
         channel_type: ChannelType,
@@ -383,11 +437,15 @@ impl PixelDescriptor {
         alpha: Option<AlphaMode>,
         transfer: TransferFunction,
     ) -> Self {
+        let (color_model, byte_order) = Self::layout_to_model_order(layout);
         Self {
-            channel_type,
-            layout,
-            alpha,
-            transfer,
+            format: PixelFormat {
+                channel_type,
+                color_model,
+                alpha,
+                transfer,
+                byte_order,
+            },
             primaries: ColorPrimaries::Bt709,
             signal_range: SignalRange::Full,
         }
@@ -401,12 +459,25 @@ impl PixelDescriptor {
         transfer: TransferFunction,
         primaries: ColorPrimaries,
     ) -> Self {
+        let (color_model, byte_order) = Self::layout_to_model_order(layout);
         Self {
-            channel_type,
-            layout,
-            alpha,
-            transfer,
+            format: PixelFormat {
+                channel_type,
+                color_model,
+                alpha,
+                transfer,
+                byte_order,
+            },
             primaries,
+            signal_range: SignalRange::Full,
+        }
+    }
+
+    /// Create from an existing [`PixelFormat`].
+    pub const fn from_format(format: PixelFormat) -> Self {
+        Self {
+            format,
+            primaries: ColorPrimaries::Bt709,
             signal_range: SignalRange::Full,
         }
     }
@@ -632,20 +703,20 @@ impl PixelDescriptor {
     /// Number of channels.
     #[inline]
     pub const fn channels(self) -> usize {
-        self.layout.channels()
+        self.layout().channels()
     }
 
     /// Bytes per pixel.
     #[inline]
     pub const fn bytes_per_pixel(self) -> usize {
-        self.layout.channels() * self.channel_type.byte_size()
+        self.format.bytes_per_pixel()
     }
 
     /// Whether this descriptor has meaningful alpha data.
     #[inline]
     pub const fn has_alpha(self) -> bool {
         matches!(
-            self.alpha,
+            self.format.alpha,
             Some(AlphaMode::Straight) | Some(AlphaMode::Premultiplied) | Some(AlphaMode::Opaque)
         )
     }
@@ -653,19 +724,25 @@ impl PixelDescriptor {
     /// Whether this descriptor is grayscale.
     #[inline]
     pub const fn is_grayscale(self) -> bool {
-        matches!(self.layout, ChannelLayout::Gray | ChannelLayout::GrayAlpha)
+        matches!(self.format.color_model, ColorModel::Gray)
     }
 
     /// Whether this descriptor uses BGR byte order.
     #[inline]
     pub const fn is_bgr(self) -> bool {
-        matches!(self.layout, ChannelLayout::Bgra)
+        matches!(self.format.byte_order, ByteOrder::Bgr)
     }
 
     /// Return a copy with a different transfer function.
     #[inline]
     pub const fn with_transfer(self, transfer: TransferFunction) -> Self {
-        Self { transfer, ..self }
+        Self {
+            format: PixelFormat {
+                transfer,
+                ..self.format
+            },
+            ..self
+        }
     }
 
     /// Return a copy with different primaries.
@@ -677,7 +754,13 @@ impl PixelDescriptor {
     /// Return a copy with a different alpha mode.
     #[inline]
     pub const fn with_alpha(self, alpha: Option<AlphaMode>) -> Self {
-        Self { alpha, ..self }
+        Self {
+            format: PixelFormat {
+                alpha,
+                ..self.format
+            },
+            ..self
+        }
     }
 
     /// Alias for [`with_alpha`](Self::with_alpha).
@@ -702,7 +785,7 @@ impl PixelDescriptor {
     #[inline]
     pub const fn is_opaque(self) -> bool {
         matches!(
-            self.alpha,
+            self.format.alpha,
             None | Some(AlphaMode::Undefined | AlphaMode::Opaque)
         )
     }
@@ -715,7 +798,7 @@ impl PixelDescriptor {
     #[allow(unreachable_patterns)]
     pub const fn may_have_transparency(self) -> bool {
         matches!(
-            self.alpha,
+            self.format.alpha,
             Some(AlphaMode::Straight | AlphaMode::Premultiplied)
         )
     }
@@ -723,25 +806,25 @@ impl PixelDescriptor {
     /// The alpha mode, if any.
     #[inline]
     pub const fn alpha_mode(self) -> Option<AlphaMode> {
-        self.alpha
+        self.format.alpha
     }
 
     /// Whether the transfer function is [`Linear`](TransferFunction::Linear).
     #[inline]
     pub const fn is_linear(self) -> bool {
-        matches!(self.transfer, TransferFunction::Linear)
+        matches!(self.format.transfer, TransferFunction::Linear)
     }
 
     /// Whether the transfer function is [`Unknown`](TransferFunction::Unknown).
     #[inline]
     pub const fn is_unknown_transfer(self) -> bool {
-        matches!(self.transfer, TransferFunction::Unknown)
+        matches!(self.format.transfer, TransferFunction::Unknown)
     }
 
     /// Minimum byte alignment required for the channel type (1, 2, or 4).
     #[inline]
     pub const fn min_alignment(self) -> usize {
-        self.channel_type.byte_size()
+        self.format.channel_type.byte_size()
     }
 
     /// Tightly-packed byte stride for a given width.
@@ -764,63 +847,12 @@ impl PixelDescriptor {
     }
 
     /// Returns the interleaved pixel format if it matches a known layout.
-    #[allow(unreachable_patterns)]
     pub const fn interleaved_format(&self) -> Option<InterleaveFormat> {
-        match (self.channel_type, self.layout, self.alpha) {
-            (ChannelType::U8, ChannelLayout::Rgb, None) => Some(InterleaveFormat::Rgb8),
-            (
-                ChannelType::U8,
-                ChannelLayout::Rgba,
-                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
-            ) => Some(InterleaveFormat::Rgba8),
-            (ChannelType::U16, ChannelLayout::Rgb, None) => Some(InterleaveFormat::Rgb16),
-            (
-                ChannelType::U16,
-                ChannelLayout::Rgba,
-                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
-            ) => Some(InterleaveFormat::Rgba16),
-            (ChannelType::F32, ChannelLayout::Rgb, None) => Some(InterleaveFormat::RgbF32),
-            (
-                ChannelType::F32,
-                ChannelLayout::Rgba,
-                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
-            ) => Some(InterleaveFormat::RgbaF32),
-            (ChannelType::U8, ChannelLayout::Gray, None) => Some(InterleaveFormat::Gray8),
-            (ChannelType::U16, ChannelLayout::Gray, None) => Some(InterleaveFormat::Gray16),
-            (ChannelType::F32, ChannelLayout::Gray, None) => Some(InterleaveFormat::GrayF32),
-            (
-                ChannelType::U8,
-                ChannelLayout::GrayAlpha,
-                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
-            ) => Some(InterleaveFormat::GrayA8),
-            (
-                ChannelType::U16,
-                ChannelLayout::GrayAlpha,
-                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
-            ) => Some(InterleaveFormat::GrayA16),
-            (
-                ChannelType::F32,
-                ChannelLayout::GrayAlpha,
-                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
-            ) => Some(InterleaveFormat::GrayAF32),
-            (
-                ChannelType::U8,
-                ChannelLayout::Bgra,
-                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
-            ) => Some(InterleaveFormat::Bgra8),
-            (ChannelType::U8, ChannelLayout::Rgba, None | Some(AlphaMode::Undefined)) => {
-                Some(InterleaveFormat::Rgbx8)
-            }
-            (ChannelType::U8, ChannelLayout::Bgra, None | Some(AlphaMode::Undefined)) => {
-                Some(InterleaveFormat::Bgrx8)
-            }
-            _ => None,
-        }
+        self.format.interleaved_format()
     }
 
     /// Deprecated: use [`interleaved_format`](Self::interleaved_format).
     #[deprecated(note = "renamed to interleaved_format")]
-    #[allow(unreachable_patterns)]
     pub const fn pixel_format(&self) -> Option<InterleaveFormat> {
         self.interleaved_format()
     }
@@ -831,8 +863,8 @@ impl PixelDescriptor {
     /// without any pixel transformation — same channel type, same layout.
     #[inline]
     pub const fn layout_compatible(self, other: Self) -> bool {
-        self.channel_type as u8 == other.channel_type as u8
-            && self.layout as u8 == other.layout as u8
+        self.format.channel_type as u8 == other.format.channel_type as u8
+            && self.layout() as u8 == other.layout() as u8
     }
 }
 
@@ -865,8 +897,14 @@ const fn align_up_general(value: usize, align: usize) -> usize {
 
 impl fmt::Display for PixelDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {} {}", self.layout, self.channel_type, self.transfer)?;
-        if let Some(alpha) = self.alpha
+        write!(
+            f,
+            "{} {} {}",
+            self.layout(),
+            self.format.channel_type,
+            self.format.transfer
+        )?;
+        if let Some(alpha) = self.format.alpha
             && alpha.has_alpha()
         {
             write!(f, " alpha={alpha}")?;
@@ -1414,30 +1452,30 @@ impl InterleaveFormat {
     /// Channel storage type for this format.
     #[inline]
     pub const fn channel_type(self) -> ChannelType {
-        self.descriptor().channel_type
+        self.descriptor().channel_type()
     }
 
     /// Channel layout for this format.
     #[inline]
     pub const fn channel_layout(self) -> ChannelLayout {
-        self.descriptor().layout
+        self.descriptor().layout()
     }
 
     /// Convert to a [`PixelFormat`] struct.
     pub const fn to_pixel_format(self) -> PixelFormat {
         let desc = self.descriptor();
-        let byte_order = match desc.layout {
+        let byte_order = match desc.layout() {
             ChannelLayout::Bgra => ByteOrder::Bgr,
             _ => ByteOrder::Native,
         };
-        let color_model = match desc.layout {
+        let color_model = match desc.layout() {
             ChannelLayout::Gray | ChannelLayout::GrayAlpha => ColorModel::Gray,
             _ => ColorModel::Rgb,
         };
         PixelFormat {
-            channel_type: desc.channel_type,
+            channel_type: desc.channel_type(),
             color_model,
-            alpha: desc.alpha,
+            alpha: desc.alpha(),
             transfer: TransferFunction::Unknown,
             byte_order,
         }
@@ -1816,8 +1854,8 @@ mod tests {
     #[test]
     fn interleave_format_roundtrip() {
         let desc = InterleaveFormat::Rgba8.descriptor();
-        assert_eq!(desc.layout, ChannelLayout::Rgba);
-        assert_eq!(desc.channel_type, ChannelType::U8);
+        assert_eq!(desc.layout(), ChannelLayout::Rgba);
+        assert_eq!(desc.channel_type(), ChannelType::U8);
     }
 
     #[test]
@@ -1878,7 +1916,8 @@ mod tests {
 
     #[test]
     fn descriptor_size() {
-        assert!(size_of::<PixelDescriptor>() <= 8);
+        // PixelFormat (5 fields, ~6 bytes) + primaries (1) + signal_range (1) = ~8
+        assert!(size_of::<PixelDescriptor>() <= 12);
     }
 
     #[test]

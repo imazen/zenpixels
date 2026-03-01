@@ -450,7 +450,7 @@ impl<'a, P> PixelSlice<'a, P> {
     /// Return a copy with a different transfer function.
     #[inline]
     pub fn with_transfer(mut self, tf: TransferFunction) -> Self {
-        self.descriptor.transfer = tf;
+        self.descriptor.format.transfer = tf;
         self
     }
 
@@ -471,7 +471,7 @@ impl<'a, P> PixelSlice<'a, P> {
     /// Return a copy with a different alpha mode.
     #[inline]
     pub fn with_alpha_mode(mut self, am: Option<AlphaMode>) -> Self {
-        self.descriptor.alpha = am;
+        self.descriptor.format.alpha = am;
         self
     }
 
@@ -750,20 +750,18 @@ impl<'a, P> PixelSlice<'a, P> {
     /// - Already has alpha → identity copy
     pub fn try_add_alpha(&self) -> Result<PixelBuffer, crate::ConvertError> {
         let desc = self.descriptor;
-        let target_layout = match desc.layout {
+        let target_layout = match desc.layout() {
             crate::descriptor::ChannelLayout::Gray => crate::descriptor::ChannelLayout::GrayAlpha,
             crate::descriptor::ChannelLayout::Rgb => crate::descriptor::ChannelLayout::Rgba,
             other => other,
         };
-        let target = PixelDescriptor {
-            layout: target_layout,
-            alpha: if target_layout.has_alpha() && desc.alpha.is_none() {
-                Some(AlphaMode::Straight)
-            } else {
-                desc.alpha
-            },
-            ..desc
+        let alpha = if target_layout.has_alpha() && desc.alpha().is_none() {
+            Some(AlphaMode::Straight)
+        } else {
+            desc.alpha()
         };
+        let target =
+            PixelDescriptor::new(desc.channel_type(), target_layout, alpha, desc.transfer());
         self.convert_to(target)
     }
 
@@ -772,10 +770,12 @@ impl<'a, P> PixelSlice<'a, P> {
     /// No-op copy if already U16.
     pub fn try_widen_to_u16(&self) -> Result<PixelBuffer, crate::ConvertError> {
         let desc = self.descriptor;
-        let target = PixelDescriptor {
-            channel_type: crate::descriptor::ChannelType::U16,
-            ..desc
-        };
+        let target = PixelDescriptor::new(
+            crate::descriptor::ChannelType::U16,
+            desc.layout(),
+            desc.alpha(),
+            desc.transfer(),
+        );
         self.convert_to(target)
     }
 
@@ -784,10 +784,12 @@ impl<'a, P> PixelSlice<'a, P> {
     /// No-op copy if already U8.
     pub fn try_narrow_to_u8(&self) -> Result<PixelBuffer, crate::ConvertError> {
         let desc = self.descriptor;
-        let target = PixelDescriptor {
-            channel_type: crate::descriptor::ChannelType::U8,
-            ..desc
-        };
+        let target = PixelDescriptor::new(
+            crate::descriptor::ChannelType::U8,
+            desc.layout(),
+            desc.alpha(),
+            desc.transfer(),
+        );
         self.convert_to(target)
     }
 }
@@ -836,7 +838,10 @@ impl<P> fmt::Debug for PixelSlice<'_, P> {
         write!(
             f,
             "PixelSlice({}x{}, {:?} {:?})",
-            self.width, self.rows, self.descriptor.layout, self.descriptor.channel_type
+            self.width,
+            self.rows,
+            self.descriptor.layout(),
+            self.descriptor.channel_type()
         )
     }
 }
@@ -963,7 +968,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
     /// Return a copy with a different transfer function.
     #[inline]
     pub fn with_transfer(mut self, tf: TransferFunction) -> Self {
-        self.descriptor.transfer = tf;
+        self.descriptor.format.transfer = tf;
         self
     }
 
@@ -984,7 +989,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
     /// Return a copy with a different alpha mode.
     #[inline]
     pub fn with_alpha_mode(mut self, am: Option<AlphaMode>) -> Self {
-        self.descriptor.alpha = am;
+        self.descriptor.format.alpha = am;
         self
     }
 
@@ -1150,7 +1155,10 @@ impl<P> fmt::Debug for PixelSliceMut<'_, P> {
         write!(
             f,
             "PixelSliceMut({}x{}, {:?} {:?})",
-            self.width, self.rows, self.descriptor.layout, self.descriptor.channel_type
+            self.width,
+            self.rows,
+            self.descriptor.layout(),
+            self.descriptor.channel_type()
         )
     }
 }
@@ -1941,7 +1949,7 @@ impl<P> PixelBuffer<P> {
     /// Return a copy with a different transfer function.
     #[inline]
     pub fn with_transfer(mut self, tf: TransferFunction) -> Self {
-        self.descriptor.transfer = tf;
+        self.descriptor.format.transfer = tf;
         self
     }
 
@@ -1962,7 +1970,7 @@ impl<P> PixelBuffer<P> {
     /// Return a copy with a different alpha mode.
     #[inline]
     pub fn with_alpha_mode(mut self, am: Option<AlphaMode>) -> Self {
-        self.descriptor.alpha = am;
+        self.descriptor.format.alpha = am;
         self
     }
 
@@ -2337,7 +2345,10 @@ impl<P> fmt::Debug for PixelBuffer<P> {
         write!(
             f,
             "PixelBuffer({}x{}, {:?} {:?})",
-            self.width, self.height, self.descriptor.layout, self.descriptor.channel_type
+            self.width,
+            self.height,
+            self.descriptor.layout(),
+            self.descriptor.channel_type()
         )
     }
 }
@@ -2676,10 +2687,10 @@ mod tests {
     #[test]
     fn bgrx8_srgb_properties() {
         let d = PixelDescriptor::BGRX8_SRGB;
-        assert_eq!(d.channel_type, ChannelType::U8);
-        assert_eq!(d.layout, ChannelLayout::Bgra);
-        assert_eq!(d.alpha, Some(AlphaMode::Undefined));
-        assert_eq!(d.transfer, TransferFunction::Srgb);
+        assert_eq!(d.channel_type(), ChannelType::U8);
+        assert_eq!(d.layout(), ChannelLayout::Bgra);
+        assert_eq!(d.alpha(), Some(AlphaMode::Undefined));
+        assert_eq!(d.transfer(), TransferFunction::Srgb);
         assert_eq!(d.bytes_per_pixel(), 4);
         assert_eq!(d.min_alignment(), 1);
         // Layout-compatible with BGRA8
@@ -2689,7 +2700,7 @@ mod tests {
         // BGRA does have meaningful alpha
         assert!(PixelDescriptor::BGRA8_SRGB.has_alpha());
         // The layout itself reports an alpha-position channel
-        assert!(d.layout.has_alpha());
+        assert!(d.layout().has_alpha());
     }
 
     #[test]
@@ -2758,7 +2769,7 @@ mod tests {
         // RGBA8 -> BGRA8: same 4 bpp, different layout
         let buf = PixelBuffer::new(2, 2, PixelDescriptor::RGBA8);
         let buf2 = buf.reinterpret(PixelDescriptor::BGRA8).unwrap();
-        assert_eq!(buf2.descriptor().layout, ChannelLayout::Bgra);
+        assert_eq!(buf2.descriptor().layout(), ChannelLayout::Bgra);
     }
 
     #[test]
@@ -2783,13 +2794,13 @@ mod tests {
     fn per_field_setters() {
         let buf = PixelBuffer::new(2, 2, PixelDescriptor::RGB8);
         let buf = buf.with_transfer(TransferFunction::Srgb);
-        assert_eq!(buf.descriptor().transfer, TransferFunction::Srgb);
+        assert_eq!(buf.descriptor().transfer(), TransferFunction::Srgb);
         let buf = buf.with_primaries(ColorPrimaries::DisplayP3);
         assert_eq!(buf.descriptor().primaries, ColorPrimaries::DisplayP3);
         let buf = buf.with_signal_range(SignalRange::Narrow);
         assert!(matches!(buf.descriptor().signal_range, SignalRange::Narrow));
         let buf = buf.with_alpha_mode(Some(AlphaMode::Premultiplied));
-        assert_eq!(buf.descriptor().alpha, Some(AlphaMode::Premultiplied));
+        assert_eq!(buf.descriptor().alpha(), Some(AlphaMode::Premultiplied));
     }
 
     // --- copy_to_contiguous_bytes ---

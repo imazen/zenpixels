@@ -43,14 +43,18 @@ impl fmt::Display for ConvertError {
                 write!(
                     f,
                     "no supported format matches source {:?}/{:?}",
-                    source.channel_type, source.layout
+                    source.channel_type(),
+                    source.layout()
                 )
             }
             Self::NoPath { from, to } => {
                 write!(
                     f,
                     "no conversion path from {:?}/{:?} to {:?}/{:?}",
-                    from.channel_type, from.layout, to.channel_type, to.layout
+                    from.channel_type(),
+                    from.layout(),
+                    to.channel_type(),
+                    to.layout()
                 )
             }
             Self::BufferSize { expected, actual } => {

@@ -42,7 +42,7 @@ pub struct FormatEntry {
 impl FormatEntry {
     /// Create a format entry with standard precision (matches container type).
     const fn standard(descriptor: PixelDescriptor) -> Self {
-        let effective_bits = match descriptor.channel_type {
+        let effective_bits = match descriptor.channel_type() {
             ChannelType::U8 => 8,
             ChannelType::U16 => 16,
             ChannelType::F16 => 11,
@@ -431,7 +431,7 @@ mod tests {
                 .iter()
                 .chain(codec.encode_inputs.iter())
             {
-                let container_bits = match entry.descriptor.channel_type {
+                let container_bits = match entry.descriptor.channel_type() {
                     ChannelType::U8 => 8,
                     ChannelType::U16 => 16,
                     ChannelType::F16 => 16,

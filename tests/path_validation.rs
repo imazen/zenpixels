@@ -45,7 +45,7 @@ fn jpeg_resize_gentle_jpeg() {
     assert!(path.is_some(), "JPEG resize Mitchell should find a path");
     let path = path.unwrap();
     // Resize gentle prefers linear f32.
-    assert_eq!(path.working_format.transfer, TransferFunction::Linear);
+    assert_eq!(path.working_format.transfer(), TransferFunction::Linear);
 }
 
 #[test]
@@ -57,8 +57,8 @@ fn jpeg_resize_sharp_jpeg() {
     assert!(path.is_some(), "JPEG resize Lanczos should find a path");
     let path = path.unwrap();
     // Sharp resize requires f32 linear.
-    assert_eq!(path.working_format.channel_type, ChannelType::F32);
-    assert_eq!(path.working_format.transfer, TransferFunction::Linear);
+    assert_eq!(path.working_format.channel_type(), ChannelType::F32);
+    assert_eq!(path.working_format.transfer(), TransferFunction::Linear);
 }
 
 #[test]
@@ -107,9 +107,9 @@ fn png_rgba_composite_webp() {
     assert!(path.is_some(), "PNG RGBA composite should find a path");
     let path = path.unwrap();
     // Compositing requires premultiplied alpha in f32 linear.
-    assert_eq!(path.working_format.alpha, Some(AlphaMode::Premultiplied));
-    assert_eq!(path.working_format.channel_type, ChannelType::F32);
-    assert_eq!(path.working_format.transfer, TransferFunction::Linear);
+    assert_eq!(path.working_format.alpha(), Some(AlphaMode::Premultiplied));
+    assert_eq!(path.working_format.channel_type(), ChannelType::F32);
+    assert_eq!(path.working_format.transfer(), TransferFunction::Linear);
 }
 
 #[test]
@@ -196,15 +196,18 @@ fn assert_working_satisfies_op(path: &ConversionPath, op: OpCategory) {
 
     if let Some(tf) = req.transfer {
         assert_eq!(
-            path.working_format.transfer, tf,
+            path.working_format.transfer(),
+            tf,
             "working format transfer {:?} doesn't match requirement {:?} for {:?}",
-            path.working_format.transfer, tf, op
+            path.working_format.transfer(),
+            tf,
+            op
         );
     }
 
     if req.requires_float {
         assert_eq!(
-            path.working_format.channel_type,
+            path.working_format.channel_type(),
             ChannelType::F32,
             "working format should be f32 for {:?}",
             op
@@ -212,12 +215,12 @@ fn assert_working_satisfies_op(path: &ConversionPath, op: OpCategory) {
     }
 
     if let Some(alpha) = req.alpha {
-        if path.working_format.layout.has_alpha() {
+        if path.working_format.layout().has_alpha() {
             assert_eq!(
-                path.working_format.alpha,
+                path.working_format.alpha(),
                 Some(alpha),
                 "working format alpha {:?} doesn't match requirement {:?} for {:?}",
-                path.working_format.alpha,
+                path.working_format.alpha(),
                 alpha,
                 op
             );
