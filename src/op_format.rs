@@ -235,15 +235,13 @@ impl OpCategory {
         } else {
             req.min_depth.unwrap_or(source.channel_type)
         };
-        let ideal_alpha = req.alpha.unwrap_or(source.alpha);
+        let ideal_alpha = match req.alpha {
+            Some(a) => Some(a),
+            None => source.alpha,
+        };
 
         // RGB variant
-        let rgb_ideal = PixelDescriptor::new(
-            ideal_depth,
-            ChannelLayout::Rgb,
-            AlphaMode::None,
-            ideal_transfer,
-        );
+        let rgb_ideal = PixelDescriptor::new(ideal_depth, ChannelLayout::Rgb, None, ideal_transfer);
         if !candidates.contains(&rgb_ideal) {
             candidates.push(rgb_ideal);
         }
@@ -263,12 +261,8 @@ impl OpCategory {
 
         // Gray variant (if source is grayscale)
         if source.is_grayscale() {
-            let gray_ideal = PixelDescriptor::new(
-                ideal_depth,
-                ChannelLayout::Gray,
-                AlphaMode::None,
-                ideal_transfer,
-            );
+            let gray_ideal =
+                PixelDescriptor::new(ideal_depth, ChannelLayout::Gray, None, ideal_transfer);
             if !candidates.contains(&gray_ideal) {
                 candidates.push(gray_ideal);
             }
@@ -312,7 +306,7 @@ fn format_satisfies(desc: PixelDescriptor, req: &OpRequirement) -> bool {
     // Check alpha mode.
     if let Some(alpha) = req.alpha
         && desc.layout.has_alpha()
-        && desc.alpha != alpha
+        && desc.alpha != Some(alpha)
     {
         return false;
     }
@@ -371,7 +365,7 @@ mod tests {
         let candidates = OpCategory::Composite.candidate_working_formats(src);
         let has_premul = candidates
             .iter()
-            .any(|c| c.alpha == AlphaMode::Premultiplied);
+            .any(|c| c.alpha == Some(AlphaMode::Premultiplied));
         assert!(
             has_premul,
             "composite candidates must include premultiplied format"

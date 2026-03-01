@@ -315,10 +315,14 @@ pub fn matrix_stats(entries: &[PathEntry]) -> MatrixStats {
 
                 // Encode working format as bytes for BTreeSet (PixelDescriptor doesn't impl Ord).
                 let wf = path.working_format;
+                let alpha_byte = match wf.alpha {
+                    None => 0u8,
+                    Some(a) => a as u8,
+                };
                 let key = (
                     wf.channel_type as u8,
                     wf.layout as u8,
-                    wf.alpha as u8,
+                    alpha_byte,
                     wf.transfer as u8,
                     wf.primaries as u8,
                 );
@@ -403,7 +407,7 @@ mod tests {
         );
         assert!(path.is_some());
         let path = path.unwrap();
-        assert_eq!(path.working_format.alpha, AlphaMode::Premultiplied);
+        assert_eq!(path.working_format.alpha, Some(AlphaMode::Premultiplied));
     }
 
     #[test]

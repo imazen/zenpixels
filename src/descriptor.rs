@@ -158,15 +158,13 @@ impl fmt::Display for ChannelLayout {
 
 /// Alpha channel interpretation.
 ///
-/// Unlike `Option<AlphaMode>`, this uses a flat enum for ergonomic matching:
-/// `AlphaMode::None` means no alpha channel, vs `Some(AlphaMode::Straight)`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+/// Wrapped in `Option<AlphaMode>` on [`PixelDescriptor`]: `None` means no
+/// alpha channel exists, while `Some(AlphaMode::Straight)` etc. describe
+/// the semantics of a present alpha channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum AlphaMode {
-    /// No alpha channel exists.
-    #[default]
-    None = 0,
     /// Alpha bytes exist but values are undefined padding (RGBX, BGRX).
     Undefined = 1,
     /// Straight (unassociated) alpha.
@@ -178,7 +176,7 @@ pub enum AlphaMode {
 }
 
 impl AlphaMode {
-    /// Whether this mode represents a real alpha channel (not None or Undefined).
+    /// Whether this mode represents a real alpha channel (not Undefined padding).
     #[inline]
     pub const fn has_alpha(self) -> bool {
         matches!(self, Self::Straight | Self::Premultiplied | Self::Opaque)
@@ -187,14 +185,13 @@ impl AlphaMode {
     /// Whether this mode has any alpha-position bytes (including padding).
     #[inline]
     pub const fn has_alpha_bytes(self) -> bool {
-        !matches!(self, Self::None)
+        true
     }
 }
 
 impl fmt::Display for AlphaMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::None => f.write_str("none"),
             Self::Undefined => f.write_str("undefined"),
             Self::Straight => f.write_str("straight"),
             Self::Premultiplied => f.write_str("premultiplied"),
@@ -368,6 +365,8 @@ impl fmt::Display for SignalRange {
 /// Compact pixel format descriptor.
 ///
 /// Describes the format of pixel data without carrying the data itself.
+/// The `alpha` field is `Option<AlphaMode>`: `None` means no alpha channel
+/// exists, while `Some(mode)` describes the semantics of a present channel.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[non_exhaustive]
 pub struct PixelDescriptor {
@@ -375,8 +374,8 @@ pub struct PixelDescriptor {
     pub channel_type: ChannelType,
     /// Channel layout (gray, RGB, RGBA, etc.).
     pub layout: ChannelLayout,
-    /// Alpha interpretation.
-    pub alpha: AlphaMode,
+    /// Alpha interpretation. `None` = no alpha channel.
+    pub alpha: Option<AlphaMode>,
     /// Transfer function (sRGB, linear, PQ, etc.).
     pub transfer: TransferFunction,
     /// Color primaries (gamut). Defaults to BT.709/sRGB.
@@ -390,7 +389,7 @@ impl PixelDescriptor {
     pub const fn new(
         channel_type: ChannelType,
         layout: ChannelLayout,
-        alpha: AlphaMode,
+        alpha: Option<AlphaMode>,
         transfer: TransferFunction,
     ) -> Self {
         Self {
@@ -407,7 +406,7 @@ impl PixelDescriptor {
     pub const fn new_full(
         channel_type: ChannelType,
         layout: ChannelLayout,
-        alpha: AlphaMode,
+        alpha: Option<AlphaMode>,
         transfer: TransferFunction,
         primaries: ColorPrimaries,
     ) -> Self {
@@ -427,105 +426,105 @@ impl PixelDescriptor {
     pub const RGB8_SRGB: Self = Self::new(
         ChannelType::U8,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Srgb,
     );
     /// 8-bit sRGB RGBA with straight alpha.
     pub const RGBA8_SRGB: Self = Self::new(
         ChannelType::U8,
         ChannelLayout::Rgba,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Srgb,
     );
     /// 16-bit sRGB RGB.
     pub const RGB16_SRGB: Self = Self::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Srgb,
     );
     /// 16-bit sRGB RGBA with straight alpha.
     pub const RGBA16_SRGB: Self = Self::new(
         ChannelType::U16,
         ChannelLayout::Rgba,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Srgb,
     );
     /// Linear-light f32 RGB.
     pub const RGBF32_LINEAR: Self = Self::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Linear,
     );
     /// Linear-light f32 RGBA with straight alpha.
     pub const RGBAF32_LINEAR: Self = Self::new(
         ChannelType::F32,
         ChannelLayout::Rgba,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Linear,
     );
     /// 8-bit sRGB grayscale.
     pub const GRAY8_SRGB: Self = Self::new(
         ChannelType::U8,
         ChannelLayout::Gray,
-        AlphaMode::None,
+        None,
         TransferFunction::Srgb,
     );
     /// 16-bit sRGB grayscale.
     pub const GRAY16_SRGB: Self = Self::new(
         ChannelType::U16,
         ChannelLayout::Gray,
-        AlphaMode::None,
+        None,
         TransferFunction::Srgb,
     );
     /// Linear-light f32 grayscale.
     pub const GRAYF32_LINEAR: Self = Self::new(
         ChannelType::F32,
         ChannelLayout::Gray,
-        AlphaMode::None,
+        None,
         TransferFunction::Linear,
     );
     /// 8-bit sRGB grayscale with straight alpha.
     pub const GRAYA8_SRGB: Self = Self::new(
         ChannelType::U8,
         ChannelLayout::GrayAlpha,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Srgb,
     );
     /// 16-bit sRGB grayscale with straight alpha.
     pub const GRAYA16_SRGB: Self = Self::new(
         ChannelType::U16,
         ChannelLayout::GrayAlpha,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Srgb,
     );
     /// Linear-light f32 grayscale with straight alpha.
     pub const GRAYAF32_LINEAR: Self = Self::new(
         ChannelType::F32,
         ChannelLayout::GrayAlpha,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Linear,
     );
     /// 8-bit sRGB BGRA with straight alpha.
     pub const BGRA8_SRGB: Self = Self::new(
         ChannelType::U8,
         ChannelLayout::Bgra,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Srgb,
     );
     /// 8-bit sRGB RGBX (padding byte, not alpha).
     pub const RGBX8_SRGB: Self = Self::new(
         ChannelType::U8,
         ChannelLayout::Rgba,
-        AlphaMode::Undefined,
+        Some(AlphaMode::Undefined),
         TransferFunction::Srgb,
     );
     /// 8-bit sRGB BGRX (padding byte, not alpha).
     pub const BGRX8_SRGB: Self = Self::new(
         ChannelType::U8,
         ChannelLayout::Bgra,
-        AlphaMode::Undefined,
+        Some(AlphaMode::Undefined),
         TransferFunction::Srgb,
     );
 
@@ -535,105 +534,105 @@ impl PixelDescriptor {
     pub const RGB8: Self = Self::new(
         ChannelType::U8,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Unknown,
     );
     /// 8-bit RGBA, transfer unknown.
     pub const RGBA8: Self = Self::new(
         ChannelType::U8,
         ChannelLayout::Rgba,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Unknown,
     );
     /// 16-bit RGB, transfer unknown.
     pub const RGB16: Self = Self::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Unknown,
     );
     /// 16-bit RGBA, transfer unknown.
     pub const RGBA16: Self = Self::new(
         ChannelType::U16,
         ChannelLayout::Rgba,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Unknown,
     );
     /// f32 RGB, transfer unknown.
     pub const RGBF32: Self = Self::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Unknown,
     );
     /// f32 RGBA, transfer unknown.
     pub const RGBAF32: Self = Self::new(
         ChannelType::F32,
         ChannelLayout::Rgba,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Unknown,
     );
     /// 8-bit grayscale, transfer unknown.
     pub const GRAY8: Self = Self::new(
         ChannelType::U8,
         ChannelLayout::Gray,
-        AlphaMode::None,
+        None,
         TransferFunction::Unknown,
     );
     /// 16-bit grayscale, transfer unknown.
     pub const GRAY16: Self = Self::new(
         ChannelType::U16,
         ChannelLayout::Gray,
-        AlphaMode::None,
+        None,
         TransferFunction::Unknown,
     );
     /// f32 grayscale, transfer unknown.
     pub const GRAYF32: Self = Self::new(
         ChannelType::F32,
         ChannelLayout::Gray,
-        AlphaMode::None,
+        None,
         TransferFunction::Unknown,
     );
     /// 8-bit grayscale with alpha, transfer unknown.
     pub const GRAYA8: Self = Self::new(
         ChannelType::U8,
         ChannelLayout::GrayAlpha,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Unknown,
     );
     /// 16-bit grayscale with alpha, transfer unknown.
     pub const GRAYA16: Self = Self::new(
         ChannelType::U16,
         ChannelLayout::GrayAlpha,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Unknown,
     );
     /// f32 grayscale with alpha, transfer unknown.
     pub const GRAYAF32: Self = Self::new(
         ChannelType::F32,
         ChannelLayout::GrayAlpha,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Unknown,
     );
     /// 8-bit BGRA, transfer unknown.
     pub const BGRA8: Self = Self::new(
         ChannelType::U8,
         ChannelLayout::Bgra,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Unknown,
     );
     /// 8-bit RGBX, transfer unknown.
     pub const RGBX8: Self = Self::new(
         ChannelType::U8,
         ChannelLayout::Rgba,
-        AlphaMode::Undefined,
+        Some(AlphaMode::Undefined),
         TransferFunction::Unknown,
     );
     /// 8-bit BGRX, transfer unknown.
     pub const BGRX8: Self = Self::new(
         ChannelType::U8,
         ChannelLayout::Bgra,
-        AlphaMode::Undefined,
+        Some(AlphaMode::Undefined),
         TransferFunction::Unknown,
     );
 
@@ -654,7 +653,10 @@ impl PixelDescriptor {
     /// Whether this descriptor has meaningful alpha data.
     #[inline]
     pub const fn has_alpha(self) -> bool {
-        self.alpha.has_alpha()
+        matches!(
+            self.alpha,
+            Some(AlphaMode::Straight) | Some(AlphaMode::Premultiplied) | Some(AlphaMode::Opaque)
+        )
     }
 
     /// Whether this descriptor is grayscale.
@@ -683,7 +685,7 @@ impl PixelDescriptor {
 
     /// Return a copy with a different alpha mode.
     #[inline]
-    pub const fn with_alpha(self, alpha: AlphaMode) -> Self {
+    pub const fn with_alpha(self, alpha: Option<AlphaMode>) -> Self {
         Self { alpha, ..self }
     }
 
@@ -710,8 +712,10 @@ impl PixelDescriptor {
 impl fmt::Display for PixelDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} {} {}", self.layout, self.channel_type, self.transfer)?;
-        if self.alpha.has_alpha() {
-            write!(f, " alpha={}", self.alpha)?;
+        if let Some(alpha) = self.alpha
+            && alpha.has_alpha()
+        {
+            write!(f, " alpha={alpha}")?;
         }
         Ok(())
     }
@@ -1356,12 +1360,15 @@ mod tests {
     }
 
     #[test]
-    fn alpha_mode_none_default() {
-        assert_eq!(AlphaMode::default(), AlphaMode::None);
-        assert!(!AlphaMode::None.has_alpha());
+    fn alpha_mode_semantics() {
+        // None (Option) = no alpha channel
+        assert!(!PixelDescriptor::RGB8.has_alpha());
+        // Undefined = padding bytes, not real alpha
         assert!(!AlphaMode::Undefined.has_alpha());
+        // Straight and Premultiplied = real alpha
         assert!(AlphaMode::Straight.has_alpha());
         assert!(AlphaMode::Premultiplied.has_alpha());
+        assert!(AlphaMode::Opaque.has_alpha());
     }
 
     #[test]

@@ -107,7 +107,7 @@ fn png_rgba_composite_webp() {
     assert!(path.is_some(), "PNG RGBA composite should find a path");
     let path = path.unwrap();
     // Compositing requires premultiplied alpha in f32 linear.
-    assert_eq!(path.working_format.alpha, AlphaMode::Premultiplied);
+    assert_eq!(path.working_format.alpha, Some(AlphaMode::Premultiplied));
     assert_eq!(path.working_format.channel_type, ChannelType::F32);
     assert_eq!(path.working_format.transfer, TransferFunction::Linear);
 }
@@ -214,9 +214,12 @@ fn assert_working_satisfies_op(path: &ConversionPath, op: OpCategory) {
     if let Some(alpha) = req.alpha {
         if path.working_format.layout.has_alpha() {
             assert_eq!(
-                path.working_format.alpha, alpha,
+                path.working_format.alpha,
+                Some(alpha),
                 "working format alpha {:?} doesn't match requirement {:?} for {:?}",
-                path.working_format.alpha, alpha, op
+                path.working_format.alpha,
+                alpha,
+                op
             );
         }
     }

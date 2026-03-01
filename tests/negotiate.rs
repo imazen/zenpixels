@@ -71,7 +71,7 @@ fn f32_linear_prefers_u16_over_u8_fastest() {
     let desc_u16 = PixelDescriptor::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Srgb,
     );
     let supported = &[desc_u16, PixelDescriptor::RGB8_SRGB];
@@ -172,7 +172,7 @@ fn png_format_negotiation() {
         PixelDescriptor::new(
             ChannelType::U16,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             TransferFunction::Srgb,
         ),
     ];
@@ -288,13 +288,13 @@ fn blend_prefers_premultiplied() {
     let straight_f32 = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgba,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Linear,
     );
     let premul_f32 = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgba,
-        AlphaMode::Premultiplied,
+        Some(AlphaMode::Premultiplied),
         TransferFunction::Linear,
     );
     let supported = &[straight_f32, premul_f32];
@@ -310,7 +310,7 @@ fn perceptual_prefers_srgb_f32() {
     let f32_srgb = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Srgb,
     );
     let supported = &[PixelDescriptor::RGBF32_LINEAR, f32_srgb];
@@ -330,7 +330,7 @@ fn u16_source_penalizes_u8_target() {
     let rgb16 = PixelDescriptor::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Srgb,
     );
     let supported = &[PixelDescriptor::RGB8_SRGB, rgb16];
@@ -350,7 +350,7 @@ fn hdr_source_penalizes_sdr_target() {
     let src = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Pq,
     );
     let supported = &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR];
@@ -420,7 +420,7 @@ fn consumer_loss_matters_for_quality_intents() {
         PixelDescriptor::new(
             ChannelType::F32,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             TransferFunction::Srgb,
         ),
         ConversionCost::new(10, 5),
@@ -429,7 +429,7 @@ fn consumer_loss_matters_for_quality_intents() {
         PixelDescriptor::new(
             ChannelType::F32,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             TransferFunction::Srgb,
         ),
         ConversionCost::new(10, 200),
@@ -466,7 +466,7 @@ fn ideal_format_fastest_identity() {
     let pq = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Pq,
     );
     assert_eq!(ideal_format(pq, ConvertIntent::Fastest), pq);
@@ -493,7 +493,7 @@ fn ideal_format_linear_light_hdr() {
     let pq = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Pq,
     );
     let result = ideal_format(pq, ConvertIntent::LinearLight);
@@ -506,7 +506,7 @@ fn ideal_format_blend_adds_premul() {
     let result = ideal_format(PixelDescriptor::RGBA8_SRGB, ConvertIntent::Blend);
     assert_eq!(result.channel_type, ChannelType::F32);
     assert_eq!(result.transfer, TransferFunction::Linear);
-    assert_eq!(result.alpha, AlphaMode::Premultiplied);
+    assert_eq!(result.alpha, Some(AlphaMode::Premultiplied));
     assert_eq!(result.layout, ChannelLayout::Rgba);
 }
 
@@ -515,7 +515,7 @@ fn ideal_format_blend_no_alpha_source() {
     let result = ideal_format(PixelDescriptor::RGB8_SRGB, ConvertIntent::Blend);
     assert_eq!(result.channel_type, ChannelType::F32);
     assert_eq!(result.transfer, TransferFunction::Linear);
-    assert_eq!(result.alpha, AlphaMode::None);
+    assert!(result.alpha.is_none());
 }
 
 #[test]
@@ -538,7 +538,7 @@ fn ideal_format_perceptual_hdr() {
     let pq = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Pq,
     );
     let result = ideal_format(pq, ConvertIntent::Perceptual);
@@ -617,13 +617,13 @@ fn u16_origin_f32_to_u16_reports_zero_loss() {
     let f32_src = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Linear,
     );
     let u16_dst = PixelDescriptor::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Srgb,
     );
     let cost = conversion_cost_with_provenance(f32_src, u16_dst, provenance);

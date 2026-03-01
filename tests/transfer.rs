@@ -13,7 +13,7 @@ fn srgb_u8_to_linear_f32_accuracy() {
     let to = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Linear,
     );
     let conv = RowConverter::new(from, to).unwrap();
@@ -55,7 +55,7 @@ fn linear_f32_to_srgb_u8_accuracy() {
     let from = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Linear,
     );
     let to = PixelDescriptor::RGB8_SRGB;
@@ -92,7 +92,7 @@ fn srgb_roundtrip_accuracy() {
     let linear_f32 = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Linear,
     );
 
@@ -132,13 +132,13 @@ fn unknown_transfer_uses_naive() {
     let from = PixelDescriptor::new(
         ChannelType::U8,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Unknown,
     );
     let to = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
-        AlphaMode::None,
+        None,
         TransferFunction::Unknown,
     );
     let conv = RowConverter::new(from, to).unwrap();
@@ -167,13 +167,13 @@ fn srgb_rgba_to_linear_preserves_alpha_semantics() {
     let from = PixelDescriptor::new(
         ChannelType::U8,
         ChannelLayout::Rgba,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Srgb,
     );
     let to = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgba,
-        AlphaMode::Straight,
+        Some(AlphaMode::Straight),
         TransferFunction::Linear,
     );
     let conv = RowConverter::new(from, to).unwrap();

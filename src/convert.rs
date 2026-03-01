@@ -96,7 +96,7 @@ impl ConvertPlan {
         let need_depth_change = from.channel_type != to.channel_type;
         let need_layout_change = from.layout != to.layout;
         let need_alpha_change =
-            from.alpha != to.alpha && from.layout.has_alpha() && to.layout.has_alpha();
+            from.alpha != to.alpha && from.alpha.is_some() && to.alpha.is_some();
 
         // If we need to change depth AND layout, plan the optimal order.
         if need_layout_change {
@@ -148,10 +148,10 @@ impl ConvertPlan {
         // Alpha mode conversion (if both have alpha and modes differ).
         if need_alpha_change {
             match (from.alpha, to.alpha) {
-                (AlphaMode::Straight, AlphaMode::Premultiplied) => {
+                (Some(AlphaMode::Straight), Some(AlphaMode::Premultiplied)) => {
                     steps.push(ConvertStep::StraightToPremul);
                 }
-                (AlphaMode::Premultiplied, AlphaMode::Straight) => {
+                (Some(AlphaMode::Premultiplied), Some(AlphaMode::Straight)) => {
                     steps.push(ConvertStep::PremulToStraight);
                 }
                 _ => {}
@@ -256,8 +256,8 @@ fn depth_step(
         (ChannelType::U16, ChannelType::F32) => Ok(Some(ConvertStep::U16ToF32)),
         (ChannelType::F32, ChannelType::U16) => Ok(Some(ConvertStep::F32ToU16)),
         _ => Err(ConvertError::NoPath {
-            from: PixelDescriptor::new(from, ChannelLayout::Rgb, AlphaMode::None, from_tf),
-            to: PixelDescriptor::new(to, ChannelLayout::Rgb, AlphaMode::None, to_tf),
+            from: PixelDescriptor::new(from, ChannelLayout::Rgb, None, from_tf),
+            to: PixelDescriptor::new(to, ChannelLayout::Rgb, None, to_tf),
         }),
     }
 }
@@ -329,31 +329,31 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
         ConvertStep::AddAlpha => PixelDescriptor::new(
             current.channel_type,
             ChannelLayout::Rgba,
-            AlphaMode::Straight,
+            Some(AlphaMode::Straight),
             current.transfer,
         ),
         ConvertStep::DropAlpha => PixelDescriptor::new(
             current.channel_type,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             current.transfer,
         ),
         ConvertStep::GrayToRgb => PixelDescriptor::new(
             current.channel_type,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             current.transfer,
         ),
         ConvertStep::GrayToRgba => PixelDescriptor::new(
             current.channel_type,
             ChannelLayout::Rgba,
-            AlphaMode::Straight,
+            Some(AlphaMode::Straight),
             current.transfer,
         ),
         ConvertStep::RgbToGray | ConvertStep::RgbaToGray => PixelDescriptor::new(
             current.channel_type,
             ChannelLayout::Gray,
-            AlphaMode::None,
+            None,
             current.transfer,
         ),
         ConvertStep::GrayAlphaToRgba => PixelDescriptor::new(
@@ -365,19 +365,19 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
         ConvertStep::GrayAlphaToRgb => PixelDescriptor::new(
             current.channel_type,
             ChannelLayout::Rgb,
-            AlphaMode::None,
+            None,
             current.transfer,
         ),
         ConvertStep::GrayToGrayAlpha => PixelDescriptor::new(
             current.channel_type,
             ChannelLayout::GrayAlpha,
-            AlphaMode::Straight,
+            Some(AlphaMode::Straight),
             current.transfer,
         ),
         ConvertStep::GrayAlphaToGray => PixelDescriptor::new(
             current.channel_type,
             ChannelLayout::Gray,
-            AlphaMode::None,
+            None,
             current.transfer,
         ),
         ConvertStep::SrgbU8ToLinearF32 | ConvertStep::NaiveU8ToF32 | ConvertStep::U16ToF32 => {
@@ -411,13 +411,13 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
         ConvertStep::StraightToPremul => PixelDescriptor::new(
             current.channel_type,
             current.layout,
-            AlphaMode::Premultiplied,
+            Some(AlphaMode::Premultiplied),
             current.transfer,
         ),
         ConvertStep::PremulToStraight => PixelDescriptor::new(
             current.channel_type,
             current.layout,
-            AlphaMode::Straight,
+            Some(AlphaMode::Straight),
             current.transfer,
         ),
     }
