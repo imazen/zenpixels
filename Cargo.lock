@@ -67,6 +67,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "177a59811828ea5dbc8927662d444ffee7b55a44696486f1b1a245ae9e652533"
 
 [[package]]
+name = "gainforge"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f2ada1dee0383a301c34cca4de8566bc600303712f7a94be3283850819eca1c"
+dependencies = [
+ "moxcms",
+ "num-traits",
+ "pxfm",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -123,6 +134,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "moxcms"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04e5f643aebb3c117fa77e268557e3bf19e250769062820fcaf3ff33ea560adf"
+dependencies = [
+ "num-traits",
+ "pxfm",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -139,6 +160,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "pxfm"
+version = "0.1.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7186d3822593aa4393561d186d1393b3923e9d6163d3fbfd6e825e3e6cf3e6a8"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]
@@ -186,6 +216,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "thiserror"
+version = "2.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
+dependencies = [
+ "thiserror-impl",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "ultrahdr-core"
+version = "0.2.0"
+dependencies = [
+ "archmage",
+ "bytemuck",
+ "enough",
+ "half",
+ "magetypes",
+ "thiserror",
+ "wide",
+]
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -211,10 +274,12 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "enough",
+ "gainforge",
  "half",
  "imgref",
  "linear-srgb 0.5.5",
  "rgb",
+ "ultrahdr-core",
  "zenresize",
 ]
 
