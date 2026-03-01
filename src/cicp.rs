@@ -1,15 +1,24 @@
-//! Minimal CICP (Coding-Independent Code Points) color description.
+//! CICP (Coding-Independent Code Points) color description.
 //!
 //! ITU-T H.273 / ISO 23091-2 defines code points for color primaries,
-//! transfer characteristics, and matrix coefficients. This minimal struct
-//! carries just the four fields needed by [`ColorContext`](crate::color::ColorContext).
+//! transfer characteristics, and matrix coefficients. This struct
+//! carries the four fields needed by [`ColorContext`](crate::color::ColorContext).
 
-/// CICP color description (4 code points + range flag).
+use crate::ColorPrimaries;
+
+/// CICP color description (ITU-T H.273).
 ///
-/// This is a lightweight copy of the struct also defined in `zencodec-types`.
-/// It exists here so that `zenpixels` can carry color metadata without
-/// depending on codec infrastructure.
+/// Coding-Independent Code Points describe the color space of an image
+/// without requiring an ICC profile. Used by AVIF, HEIF, JPEG XL, and
+/// video codecs (H.264, H.265, AV1).
+///
+/// Common combinations:
+/// - sRGB: `(1, 13, 6, true)` — BT.709 primaries, sRGB transfer, BT.601 matrix
+/// - Display P3: `(12, 13, 6, true)` — P3 primaries, sRGB transfer
+/// - BT.2100 PQ (HDR): `(9, 16, 9, true)` — BT.2020 primaries, PQ transfer
+/// - BT.2100 HLG (HDR): `(9, 18, 9, true)` — BT.2020 primaries, HLG transfer
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct Cicp {
     /// Color primaries (ColourPrimaries). Common values:
     /// 1 = BT.709/sRGB, 9 = BT.2020, 12 = Display P3.
@@ -41,7 +50,7 @@ impl Cicp {
         }
     }
 
-    /// sRGB: BT.709 primaries, sRGB transfer, BT.601 matrix, full range.
+    /// sRGB color space: BT.709 primaries, sRGB transfer, BT.601 matrix, full range.
     pub const SRGB: Self = Self {
         color_primaries: 1,
         transfer_characteristics: 13,
@@ -65,11 +74,102 @@ impl Cicp {
         full_range: true,
     };
 
-    /// Display P3 with sRGB transfer.
+    /// Display P3 with sRGB transfer: P3 primaries, sRGB transfer, Identity matrix, full range.
     pub const DISPLAY_P3: Self = Self {
         color_primaries: 12,
         transfer_characteristics: 13,
         matrix_coefficients: 0,
         full_range: true,
     };
+
+    /// Map the CICP `color_primaries` code to a [`ColorPrimaries`] enum.
+    ///
+    /// Returns [`Unknown`](ColorPrimaries::Unknown) for unrecognized codes.
+    /// This is a convenience wrapper around [`ColorPrimaries::from_cicp`].
+    pub fn color_primaries_enum(&self) -> ColorPrimaries {
+        ColorPrimaries::from_cicp(self.color_primaries).unwrap_or(ColorPrimaries::Unknown)
+    }
+
+    /// Human-readable name for the color primaries code (ITU-T H.273 Table 2).
+    pub fn color_primaries_name(code: u8) -> &'static str {
+        match code {
+            0 => "Reserved",
+            1 => "BT.709/sRGB",
+            2 => "Unspecified",
+            4 => "BT.470M",
+            5 => "BT.601 (625)",
+            6 => "BT.601 (525)",
+            7 => "SMPTE 240M",
+            8 => "Generic Film",
+            9 => "BT.2020",
+            10 => "XYZ",
+            11 => "SMPTE 431 (DCI-P3)",
+            12 => "Display P3",
+            22 => "EBU Tech 3213",
+            _ => "Unknown",
+        }
+    }
+
+    /// Human-readable name for the transfer characteristics code (ITU-T H.273 Table 3).
+    pub fn transfer_characteristics_name(code: u8) -> &'static str {
+        match code {
+            0 => "Reserved",
+            1 => "BT.709",
+            2 => "Unspecified",
+            4 => "BT.470M (Gamma 2.2)",
+            5 => "BT.470BG (Gamma 2.8)",
+            6 => "BT.601",
+            7 => "SMPTE 240M",
+            8 => "Linear",
+            9 => "Log 100:1",
+            10 => "Log 316:1",
+            11 => "IEC 61966-2-4",
+            12 => "BT.1361",
+            13 => "sRGB",
+            14 => "BT.2020 (10-bit)",
+            15 => "BT.2020 (12-bit)",
+            16 => "PQ (HDR)",
+            17 => "SMPTE 428",
+            18 => "HLG (HDR)",
+            _ => "Unknown",
+        }
+    }
+
+    /// Human-readable name for the matrix coefficients code (ITU-T H.273 Table 4).
+    pub fn matrix_coefficients_name(code: u8) -> &'static str {
+        match code {
+            0 => "Identity/RGB",
+            1 => "BT.709",
+            2 => "Unspecified",
+            4 => "FCC",
+            5 => "BT.470BG",
+            6 => "BT.601",
+            7 => "SMPTE 240M",
+            8 => "YCgCo",
+            9 => "BT.2020 NCL",
+            10 => "BT.2020 CL",
+            11 => "SMPTE 2085",
+            12 => "Chroma NCL",
+            13 => "Chroma CL",
+            14 => "ICtCp",
+            _ => "Unknown",
+        }
+    }
+}
+
+impl core::fmt::Display for Cicp {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{} / {} / {} ({})",
+            Self::color_primaries_name(self.color_primaries),
+            Self::transfer_characteristics_name(self.transfer_characteristics),
+            Self::matrix_coefficients_name(self.matrix_coefficients),
+            if self.full_range {
+                "full range"
+            } else {
+                "limited range"
+            },
+        )
+    }
 }
