@@ -74,9 +74,9 @@ pub use registry::{CodecFormats, FormatEntry};
 
 // Re-export key descriptor types at crate root for ergonomics.
 pub use descriptor::{
-    AlphaMode, ByteOrder, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, PixelDescriptor,
-    PixelFormat, PlanarDescriptor, PlaneMask, PlaneSemantic, PlaneSpec, SignalRange, Subsampling,
-    TransferFunction, YuvMatrix,
+    AlphaMode, ByteOrder, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, InterleaveFormat,
+    PixelDescriptor, PixelFormat, PlanarDescriptor, PlaneMask, PlaneSemantic, PlaneSpec,
+    SignalRange, Subsampling, TransferFunction, YuvMatrix,
 };
 
 // Re-export buffer types at crate root.

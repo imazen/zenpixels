@@ -763,59 +763,66 @@ impl PixelDescriptor {
         align_up_general(raw, align)
     }
 
-    /// Returns the physical pixel format if it matches a known layout.
+    /// Returns the interleaved pixel format if it matches a known layout.
     #[allow(unreachable_patterns)]
-    pub const fn pixel_format(&self) -> Option<PixelFormat> {
+    pub const fn interleaved_format(&self) -> Option<InterleaveFormat> {
         match (self.channel_type, self.layout, self.alpha) {
-            (ChannelType::U8, ChannelLayout::Rgb, None) => Some(PixelFormat::Rgb8),
+            (ChannelType::U8, ChannelLayout::Rgb, None) => Some(InterleaveFormat::Rgb8),
             (
                 ChannelType::U8,
                 ChannelLayout::Rgba,
                 Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
-            ) => Some(PixelFormat::Rgba8),
-            (ChannelType::U16, ChannelLayout::Rgb, None) => Some(PixelFormat::Rgb16),
+            ) => Some(InterleaveFormat::Rgba8),
+            (ChannelType::U16, ChannelLayout::Rgb, None) => Some(InterleaveFormat::Rgb16),
             (
                 ChannelType::U16,
                 ChannelLayout::Rgba,
                 Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
-            ) => Some(PixelFormat::Rgba16),
-            (ChannelType::F32, ChannelLayout::Rgb, None) => Some(PixelFormat::RgbF32),
+            ) => Some(InterleaveFormat::Rgba16),
+            (ChannelType::F32, ChannelLayout::Rgb, None) => Some(InterleaveFormat::RgbF32),
             (
                 ChannelType::F32,
                 ChannelLayout::Rgba,
                 Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
-            ) => Some(PixelFormat::RgbaF32),
-            (ChannelType::U8, ChannelLayout::Gray, None) => Some(PixelFormat::Gray8),
-            (ChannelType::U16, ChannelLayout::Gray, None) => Some(PixelFormat::Gray16),
-            (ChannelType::F32, ChannelLayout::Gray, None) => Some(PixelFormat::GrayF32),
+            ) => Some(InterleaveFormat::RgbaF32),
+            (ChannelType::U8, ChannelLayout::Gray, None) => Some(InterleaveFormat::Gray8),
+            (ChannelType::U16, ChannelLayout::Gray, None) => Some(InterleaveFormat::Gray16),
+            (ChannelType::F32, ChannelLayout::Gray, None) => Some(InterleaveFormat::GrayF32),
             (
                 ChannelType::U8,
                 ChannelLayout::GrayAlpha,
                 Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
-            ) => Some(PixelFormat::GrayA8),
+            ) => Some(InterleaveFormat::GrayA8),
             (
                 ChannelType::U16,
                 ChannelLayout::GrayAlpha,
                 Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
-            ) => Some(PixelFormat::GrayA16),
+            ) => Some(InterleaveFormat::GrayA16),
             (
                 ChannelType::F32,
                 ChannelLayout::GrayAlpha,
                 Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
-            ) => Some(PixelFormat::GrayAF32),
+            ) => Some(InterleaveFormat::GrayAF32),
             (
                 ChannelType::U8,
                 ChannelLayout::Bgra,
                 Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
-            ) => Some(PixelFormat::Bgra8),
+            ) => Some(InterleaveFormat::Bgra8),
             (ChannelType::U8, ChannelLayout::Rgba, None | Some(AlphaMode::Undefined)) => {
-                Some(PixelFormat::Rgbx8)
+                Some(InterleaveFormat::Rgbx8)
             }
             (ChannelType::U8, ChannelLayout::Bgra, None | Some(AlphaMode::Undefined)) => {
-                Some(PixelFormat::Bgrx8)
+                Some(InterleaveFormat::Bgrx8)
             }
             _ => None,
         }
+    }
+
+    /// Deprecated: use [`interleaved_format`](Self::interleaved_format).
+    #[deprecated(note = "renamed to interleaved_format")]
+    #[allow(unreachable_patterns)]
+    pub const fn pixel_format(&self) -> Option<InterleaveFormat> {
+        self.interleaved_format()
     }
 
     /// Whether this descriptor's channel type and layout are compatible with `other`.
@@ -1053,17 +1060,275 @@ impl fmt::Display for YuvMatrix {
 }
 
 // ---------------------------------------------------------------------------
-// PixelFormat — match-friendly physical layout enum
+// PixelFormat — per-pixel physical layout struct
 // ---------------------------------------------------------------------------
 
-/// Physical pixel layout for match-based format dispatch.
+/// Physical pixel format: channel type, color model, alpha, transfer, and byte order.
+///
+/// Describes everything about a single pixel's encoding that is independent
+/// of the image container, color space primaries, signal range, or multi-plane
+/// layout. Subsampling, YUV matrix, and planar concerns live on the
+/// multi-plane container, not here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct PixelFormat {
+    /// Channel storage type (u8, u16, f16, f32).
+    pub channel_type: ChannelType,
+    /// What the channels represent (Gray, RGB, YCbCr, Oklab, …).
+    pub color_model: ColorModel,
+    /// Alpha interpretation. `None` = no alpha channel.
+    pub alpha: Option<AlphaMode>,
+    /// Electro-optical transfer function.
+    pub transfer: TransferFunction,
+    /// RGB-family byte order (Native or BGR).
+    pub byte_order: ByteOrder,
+}
+
+impl PixelFormat {
+    // -- Named presets (const) ------------------------------------------------
+
+    /// sRGB 8-bit RGB.
+    pub const SRGB_RGB_U8: Self = Self {
+        channel_type: ChannelType::U8,
+        color_model: ColorModel::Rgb,
+        alpha: None,
+        transfer: TransferFunction::Srgb,
+        byte_order: ByteOrder::Native,
+    };
+    /// sRGB 8-bit RGBA with straight alpha.
+    pub const SRGB_RGBA_U8: Self = Self {
+        channel_type: ChannelType::U8,
+        color_model: ColorModel::Rgb,
+        alpha: Some(AlphaMode::Straight),
+        transfer: TransferFunction::Srgb,
+        byte_order: ByteOrder::Native,
+    };
+    /// Linear-light f32 RGB.
+    pub const LINEAR_RGB_F32: Self = Self {
+        channel_type: ChannelType::F32,
+        color_model: ColorModel::Rgb,
+        alpha: None,
+        transfer: TransferFunction::Linear,
+        byte_order: ByteOrder::Native,
+    };
+    /// Linear-light f32 RGBA with straight alpha.
+    pub const LINEAR_RGBA_F32: Self = Self {
+        channel_type: ChannelType::F32,
+        color_model: ColorModel::Rgb,
+        alpha: Some(AlphaMode::Straight),
+        transfer: TransferFunction::Linear,
+        byte_order: ByteOrder::Native,
+    };
+    /// 8-bit grayscale, transfer unknown.
+    pub const GRAY_U8: Self = Self {
+        channel_type: ChannelType::U8,
+        color_model: ColorModel::Gray,
+        alpha: None,
+        transfer: TransferFunction::Unknown,
+        byte_order: ByteOrder::Native,
+    };
+    /// f32 grayscale, transfer unknown.
+    pub const GRAY_F32: Self = Self {
+        channel_type: ChannelType::F32,
+        color_model: ColorModel::Gray,
+        alpha: None,
+        transfer: TransferFunction::Unknown,
+        byte_order: ByteOrder::Native,
+    };
+    /// 16-bit grayscale, transfer unknown.
+    pub const GRAY_U16: Self = Self {
+        channel_type: ChannelType::U16,
+        color_model: ColorModel::Gray,
+        alpha: None,
+        transfer: TransferFunction::Unknown,
+        byte_order: ByteOrder::Native,
+    };
+    /// Oklab f32.
+    pub const OKLAB_F32: Self = Self {
+        channel_type: ChannelType::F32,
+        color_model: ColorModel::Oklab,
+        alpha: None,
+        transfer: TransferFunction::Unknown,
+        byte_order: ByteOrder::Native,
+    };
+    /// 8-bit BGRA with straight alpha, transfer unknown.
+    pub const BGRA_U8: Self = Self {
+        channel_type: ChannelType::U8,
+        color_model: ColorModel::Rgb,
+        alpha: Some(AlphaMode::Straight),
+        transfer: TransferFunction::Unknown,
+        byte_order: ByteOrder::Bgr,
+    };
+    /// Linear-light f32 grayscale.
+    pub const LINEAR_GRAY_F32: Self = Self {
+        channel_type: ChannelType::F32,
+        color_model: ColorModel::Gray,
+        alpha: None,
+        transfer: TransferFunction::Linear,
+        byte_order: ByteOrder::Native,
+    };
+
+    // -- Query methods --------------------------------------------------------
+
+    /// Number of channels (color channels + alpha if present).
+    #[inline]
+    pub const fn channels(&self) -> usize {
+        let color = self.color_model.color_channels() as usize;
+        if self.alpha.is_some() {
+            color + 1
+        } else {
+            color
+        }
+    }
+
+    /// Whether this format has an alpha channel.
+    #[inline]
+    pub const fn has_alpha(&self) -> bool {
+        self.alpha.is_some()
+    }
+
+    /// Whether the transfer function is linear.
+    #[inline]
+    pub const fn is_linear(&self) -> bool {
+        matches!(self.transfer, TransferFunction::Linear)
+    }
+
+    /// Whether this is an HDR transfer function (PQ or HLG).
+    #[inline]
+    pub const fn is_hdr(&self) -> bool {
+        matches!(self.transfer, TransferFunction::Pq | TransferFunction::Hlg)
+    }
+
+    /// Whether alpha is premultiplied.
+    #[inline]
+    pub const fn is_premultiplied(&self) -> bool {
+        matches!(self.alpha, Some(AlphaMode::Premultiplied))
+    }
+
+    /// Whether the transfer function is perceptual (sRGB or BT.709).
+    #[inline]
+    pub const fn is_perceptual(&self) -> bool {
+        matches!(
+            self.transfer,
+            TransferFunction::Srgb | TransferFunction::Bt709
+        )
+    }
+
+    /// Bytes per pixel.
+    #[inline]
+    pub const fn bytes_per_pixel(&self) -> usize {
+        self.channels() * self.channel_type.byte_size()
+    }
+
+    /// Map to the corresponding [`InterleaveFormat`] variant, if one exists.
+    #[allow(unreachable_patterns)]
+    pub const fn interleaved_format(&self) -> Option<InterleaveFormat> {
+        match (
+            self.channel_type,
+            self.color_model,
+            self.alpha,
+            self.byte_order,
+        ) {
+            (ChannelType::U8, ColorModel::Rgb, None, ByteOrder::Native) => {
+                Some(InterleaveFormat::Rgb8)
+            }
+            (
+                ChannelType::U8,
+                ColorModel::Rgb,
+                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
+                ByteOrder::Native,
+            ) => Some(InterleaveFormat::Rgba8),
+            (ChannelType::U16, ColorModel::Rgb, None, ByteOrder::Native) => {
+                Some(InterleaveFormat::Rgb16)
+            }
+            (
+                ChannelType::U16,
+                ColorModel::Rgb,
+                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
+                ByteOrder::Native,
+            ) => Some(InterleaveFormat::Rgba16),
+            (ChannelType::F32, ColorModel::Rgb, None, ByteOrder::Native) => {
+                Some(InterleaveFormat::RgbF32)
+            }
+            (
+                ChannelType::F32,
+                ColorModel::Rgb,
+                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
+                ByteOrder::Native,
+            ) => Some(InterleaveFormat::RgbaF32),
+            (ChannelType::U8, ColorModel::Gray, None, _) => Some(InterleaveFormat::Gray8),
+            (ChannelType::U16, ColorModel::Gray, None, _) => Some(InterleaveFormat::Gray16),
+            (ChannelType::F32, ColorModel::Gray, None, _) => Some(InterleaveFormat::GrayF32),
+            (
+                ChannelType::U8,
+                ColorModel::Gray,
+                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
+                _,
+            ) => Some(InterleaveFormat::GrayA8),
+            (
+                ChannelType::U16,
+                ColorModel::Gray,
+                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
+                _,
+            ) => Some(InterleaveFormat::GrayA16),
+            (
+                ChannelType::F32,
+                ColorModel::Gray,
+                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
+                _,
+            ) => Some(InterleaveFormat::GrayAF32),
+            (
+                ChannelType::U8,
+                ColorModel::Rgb,
+                Some(AlphaMode::Straight | AlphaMode::Premultiplied | AlphaMode::Opaque),
+                ByteOrder::Bgr,
+            ) => Some(InterleaveFormat::Bgra8),
+            (
+                ChannelType::U8,
+                ColorModel::Rgb,
+                None | Some(AlphaMode::Undefined),
+                ByteOrder::Native,
+            ) => Some(InterleaveFormat::Rgbx8),
+            (
+                ChannelType::U8,
+                ColorModel::Rgb,
+                None | Some(AlphaMode::Undefined),
+                ByteOrder::Bgr,
+            ) => Some(InterleaveFormat::Bgrx8),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for PixelFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(il) = self.interleaved_format() {
+            write!(f, "{} {}", il, self.transfer)
+        } else {
+            write!(
+                f,
+                "{} {} {}",
+                self.color_model, self.channel_type, self.transfer
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// InterleaveFormat — match-friendly physical layout enum
+// ---------------------------------------------------------------------------
+
+/// Interleaved pixel layout for match-based format dispatch.
 ///
 /// Captures channel type and layout only — NOT transfer function, primaries,
 /// or signal range. Every variant corresponds to a named [`PixelDescriptor`]
 /// constant.
+///
+/// Use this enum when you need exhaustive `match` dispatch over known
+/// pixel layouts. For richer metadata, use [`PixelFormat`] (the struct).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum PixelFormat {
+pub enum InterleaveFormat {
     Rgb8,
     Rgba8,
     Rgb16,
@@ -1081,7 +1346,7 @@ pub enum PixelFormat {
     Bgrx8,
 }
 
-impl PixelFormat {
+impl InterleaveFormat {
     /// Base descriptor with `Unknown` transfer and BT.709 primaries.
     #[allow(unreachable_patterns)]
     pub const fn descriptor(self) -> PixelDescriptor {
@@ -1157,9 +1422,35 @@ impl PixelFormat {
     pub const fn channel_layout(self) -> ChannelLayout {
         self.descriptor().layout
     }
+
+    /// Convert to a [`PixelFormat`] struct.
+    pub const fn to_pixel_format(self) -> PixelFormat {
+        let desc = self.descriptor();
+        let byte_order = match desc.layout {
+            ChannelLayout::Bgra => ByteOrder::Bgr,
+            _ => ByteOrder::Native,
+        };
+        let color_model = match desc.layout {
+            ChannelLayout::Gray | ChannelLayout::GrayAlpha => ColorModel::Gray,
+            _ => ColorModel::Rgb,
+        };
+        PixelFormat {
+            channel_type: desc.channel_type,
+            color_model,
+            alpha: desc.alpha,
+            transfer: TransferFunction::Unknown,
+            byte_order,
+        }
+    }
 }
 
-impl fmt::Display for PixelFormat {
+impl From<InterleaveFormat> for PixelFormat {
+    fn from(il: InterleaveFormat) -> Self {
+        il.to_pixel_format()
+    }
+}
+
+impl fmt::Display for InterleaveFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
     }
@@ -1523,10 +1814,45 @@ mod tests {
     }
 
     #[test]
-    fn pixel_format_roundtrip() {
-        let desc = PixelFormat::Rgba8.descriptor();
+    fn interleave_format_roundtrip() {
+        let desc = InterleaveFormat::Rgba8.descriptor();
         assert_eq!(desc.layout, ChannelLayout::Rgba);
         assert_eq!(desc.channel_type, ChannelType::U8);
+    }
+
+    #[test]
+    fn pixel_format_struct_basics() {
+        assert_eq!(PixelFormat::SRGB_RGB_U8.channels(), 3);
+        assert_eq!(PixelFormat::SRGB_RGBA_U8.channels(), 4);
+        assert!(PixelFormat::SRGB_RGBA_U8.has_alpha());
+        assert!(!PixelFormat::SRGB_RGB_U8.has_alpha());
+        assert!(PixelFormat::LINEAR_RGB_F32.is_linear());
+        assert!(!PixelFormat::SRGB_RGB_U8.is_linear());
+        assert!(PixelFormat::SRGB_RGB_U8.is_perceptual());
+        assert_eq!(PixelFormat::SRGB_RGB_U8.bytes_per_pixel(), 3);
+        assert_eq!(PixelFormat::LINEAR_RGBA_F32.bytes_per_pixel(), 16);
+        assert_eq!(PixelFormat::GRAY_U8.channels(), 1);
+    }
+
+    #[test]
+    fn pixel_format_struct_size() {
+        assert!(size_of::<PixelFormat>() <= 8);
+    }
+
+    #[test]
+    fn pixel_format_interleave_roundtrip() {
+        // InterleaveFormat → PixelFormat → InterleaveFormat
+        let il = InterleaveFormat::Rgba8;
+        let pf: PixelFormat = il.into();
+        assert_eq!(pf.interleaved_format(), Some(il));
+
+        let il2 = InterleaveFormat::Bgra8;
+        let pf2: PixelFormat = il2.into();
+        assert_eq!(pf2.interleaved_format(), Some(il2));
+
+        let il3 = InterleaveFormat::Gray8;
+        let pf3: PixelFormat = il3.into();
+        assert_eq!(pf3.interleaved_format(), Some(il3));
     }
 
     #[test]
