@@ -1030,6 +1030,20 @@ impl Subsampling {
             _ => 1,
         }
     }
+
+    /// Map horizontal and vertical subsampling factors to a named pattern.
+    ///
+    /// Returns `None` for factor combinations that don't match a standard
+    /// subsampling pattern.
+    pub const fn from_factors(h: u8, v: u8) -> Option<Self> {
+        match (h, v) {
+            (1, 1) => Some(Self::S444),
+            (2, 1) => Some(Self::S422),
+            (2, 2) => Some(Self::S420),
+            (4, 1) => Some(Self::S411),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(feature = "planar")]
@@ -1510,48 +1524,330 @@ impl fmt::Display for InterleaveFormat {
 #[non_exhaustive]
 #[repr(u8)]
 pub enum PlaneSemantic {
-    /// Luma (Y).
-    Y = 0,
+    /// Luma (Y) — brightness in YCbCr color spaces.
+    Luma = 0,
     /// Chroma blue-difference (Cb / U).
-    Cb = 1,
+    ChromaCb = 1,
     /// Chroma red-difference (Cr / V).
-    Cr = 2,
+    ChromaCr = 2,
     /// Red channel.
-    R = 3,
+    Red = 3,
     /// Green channel.
-    G = 4,
+    Green = 4,
     /// Blue channel.
-    B = 5,
-    /// Alpha channel.
-    A = 6,
+    Blue = 5,
+    /// Alpha (transparency) channel.
+    Alpha = 6,
     /// Depth map.
     Depth = 7,
     /// Gain map (e.g., Ultra HDR).
     GainMap = 8,
+    /// Grayscale (single-channel luminance, not part of YCbCr).
+    Gray = 9,
+    /// Oklab lightness (L).
+    OklabL = 10,
+    /// Oklab green-red axis (a).
+    OklabA = 11,
+    /// Oklab blue-yellow axis (b).
+    OklabB = 12,
+}
+
+#[cfg(feature = "planar")]
+impl PlaneSemantic {
+    /// Whether this semantic represents a luminance-like channel.
+    #[inline]
+    pub const fn is_luminance(self) -> bool {
+        matches!(self, Self::Luma | Self::Gray | Self::OklabL)
+    }
+
+    /// Whether this semantic represents a chroma channel.
+    #[inline]
+    pub const fn is_chroma(self) -> bool {
+        matches!(
+            self,
+            Self::ChromaCb | Self::ChromaCr | Self::OklabA | Self::OklabB
+        )
+    }
+
+    /// Whether this semantic is an RGB color channel.
+    #[inline]
+    pub const fn is_rgb(self) -> bool {
+        matches!(self, Self::Red | Self::Green | Self::Blue)
+    }
+
+    /// Whether this semantic is the alpha channel.
+    #[inline]
+    pub const fn is_alpha(self) -> bool {
+        matches!(self, Self::Alpha)
+    }
 }
 
 #[cfg(feature = "planar")]
 impl fmt::Display for PlaneSemantic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Y => f.write_str("Y"),
-            Self::Cb => f.write_str("Cb"),
-            Self::Cr => f.write_str("Cr"),
-            Self::R => f.write_str("R"),
-            Self::G => f.write_str("G"),
-            Self::B => f.write_str("B"),
-            Self::A => f.write_str("A"),
+            Self::Luma => f.write_str("Luma"),
+            Self::ChromaCb => f.write_str("Cb"),
+            Self::ChromaCr => f.write_str("Cr"),
+            Self::Red => f.write_str("R"),
+            Self::Green => f.write_str("G"),
+            Self::Blue => f.write_str("B"),
+            Self::Alpha => f.write_str("A"),
             Self::Depth => f.write_str("Depth"),
             Self::GainMap => f.write_str("GainMap"),
+            Self::Gray => f.write_str("Gray"),
+            Self::OklabL => f.write_str("Oklab.L"),
+            Self::OklabA => f.write_str("Oklab.a"),
+            Self::OklabB => f.write_str("Oklab.b"),
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// PlaneDescriptor — per-plane metadata (no pixel data)
+// ---------------------------------------------------------------------------
+
+/// Metadata describing a single plane in a multi-plane image.
+///
+/// This is a pure descriptor — no pixel data, no heap allocation.
+/// Subsample factors are explicit per-plane rather than inferred from
+/// dimension ratios, because strip-based pipelines don't carry global
+/// image dimensions.
+///
+/// # Examples
+///
+/// ```
+/// use zenpixels::{PlaneDescriptor, PlaneSemantic, ChannelType};
+///
+/// let luma = PlaneDescriptor::new(PlaneSemantic::Luma, ChannelType::F32);
+/// assert!(!luma.is_subsampled());
+/// assert_eq!(luma.plane_width(1920), 1920);
+///
+/// let chroma = PlaneDescriptor::new(PlaneSemantic::ChromaCb, ChannelType::F32)
+///     .with_subsampling(2, 2); // 4:2:0
+/// assert!(chroma.is_subsampled());
+/// assert_eq!(chroma.plane_width(1920), 960);
+/// assert_eq!(chroma.plane_height(1080), 540);
+/// ```
+#[cfg(feature = "planar")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PlaneDescriptor {
+    /// What this plane represents.
+    pub semantic: PlaneSemantic,
+    /// Storage type for each sample in this plane.
+    pub channel_type: ChannelType,
+    /// Horizontal subsampling factor (1 = full resolution, 2 = half, 4 = quarter).
+    pub h_subsample: u8,
+    /// Vertical subsampling factor (1 = full resolution, 2 = half).
+    pub v_subsample: u8,
+}
+
+#[cfg(feature = "planar")]
+impl PlaneDescriptor {
+    /// Create a full-resolution plane descriptor (no subsampling).
+    #[inline]
+    pub const fn new(semantic: PlaneSemantic, channel_type: ChannelType) -> Self {
+        Self {
+            semantic,
+            channel_type,
+            h_subsample: 1,
+            v_subsample: 1,
+        }
+    }
+
+    /// Builder: set subsampling factors.
+    ///
+    /// # Panics
+    ///
+    /// Debug-asserts that `h` and `v` are non-zero powers of two.
+    #[inline]
+    pub const fn with_subsampling(mut self, h: u8, v: u8) -> Self {
+        debug_assert!(
+            h > 0 && h.is_power_of_two(),
+            "h_subsample must be a power of 2"
+        );
+        debug_assert!(
+            v > 0 && v.is_power_of_two(),
+            "v_subsample must be a power of 2"
+        );
+        self.h_subsample = h;
+        self.v_subsample = v;
+        self
+    }
+
+    /// Compute the width of this plane given a reference (luma) width.
+    ///
+    /// Uses ceiling division so subsampled planes always cover the full image.
+    #[inline]
+    pub const fn plane_width(&self, ref_width: u32) -> u32 {
+        ref_width.div_ceil(self.h_subsample as u32)
+    }
+
+    /// Compute the height of this plane given a reference (luma) height.
+    ///
+    /// Uses ceiling division so subsampled planes always cover the full image.
+    #[inline]
+    pub const fn plane_height(&self, ref_height: u32) -> u32 {
+        ref_height.div_ceil(self.v_subsample as u32)
+    }
+
+    /// Whether this plane is subsampled (either axis).
+    #[inline]
+    pub const fn is_subsampled(&self) -> bool {
+        self.h_subsample > 1 || self.v_subsample > 1
+    }
+
+    /// Bytes per sample in this plane.
+    #[inline]
+    pub const fn bytes_per_sample(&self) -> usize {
+        self.channel_type.byte_size()
+    }
+}
+
+#[cfg(feature = "planar")]
+impl fmt::Display for PlaneDescriptor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.semantic, self.channel_type)?;
+        if self.is_subsampled() {
+            write!(f, " (1/{}×1/{})", self.h_subsample, self.v_subsample)?;
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PlaneMask — bitmask for plane selection
+// ---------------------------------------------------------------------------
+
+/// Bitmask selecting which planes to process in a multi-plane operation.
+///
+/// Supports up to 8 planes. Operations that only affect certain channels
+/// (e.g., luma sharpening) use this to skip untouched planes.
+///
+/// # Examples
+///
+/// ```
+/// use zenpixels::PlaneMask;
+///
+/// let mask = PlaneMask::LUMA.union(PlaneMask::ALPHA);
+/// assert!(mask.includes(0));  // luma
+/// assert!(!mask.includes(1)); // chroma Cb
+/// assert!(mask.includes(3));  // alpha
+/// assert_eq!(mask.count(), 2);
+/// ```
+#[cfg(feature = "planar")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PlaneMask {
+    bits: u8,
+}
+
+#[cfg(feature = "planar")]
+impl PlaneMask {
+    /// All planes (bits 0–7).
+    pub const ALL: Self = Self { bits: 0xFF };
+    /// No planes.
+    pub const NONE: Self = Self { bits: 0 };
+    /// Plane 0 only (luma / lightness / red / gray).
+    pub const LUMA: Self = Self { bits: 0b0001 };
+    /// Planes 1 and 2 (chroma Cb + Cr, or Oklab a + b).
+    pub const CHROMA: Self = Self { bits: 0b0110 };
+    /// Plane 3 (alpha).
+    pub const ALPHA: Self = Self { bits: 0b1000 };
+
+    /// Mask for a single plane by index (0–7).
+    #[inline]
+    pub const fn single(idx: usize) -> Self {
+        debug_assert!(idx < 8, "PlaneMask supports at most 8 planes");
+        Self {
+            bits: 1u8 << (idx as u8),
+        }
+    }
+
+    /// Whether the plane at `idx` is included in this mask.
+    #[inline]
+    pub const fn includes(&self, idx: usize) -> bool {
+        if idx >= 8 {
+            return false;
+        }
+        (self.bits >> (idx as u8)) & 1 != 0
+    }
+
+    /// Union of two masks.
+    #[inline]
+    pub const fn union(self, other: Self) -> Self {
+        Self {
+            bits: self.bits | other.bits,
+        }
+    }
+
+    /// Intersection of two masks.
+    #[inline]
+    pub const fn intersection(self, other: Self) -> Self {
+        Self {
+            bits: self.bits & other.bits,
+        }
+    }
+
+    /// Number of planes selected.
+    #[inline]
+    pub const fn count(&self) -> u32 {
+        self.bits.count_ones()
+    }
+
+    /// Whether no planes are selected.
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.bits == 0
+    }
+
+    /// The raw bitmask value.
+    #[inline]
+    pub const fn bits(&self) -> u8 {
+        self.bits
+    }
+
+    /// Construct from a raw bitmask value.
+    #[inline]
+    pub const fn from_bits(bits: u8) -> Self {
+        Self { bits }
+    }
+}
+
+#[cfg(feature = "planar")]
+impl fmt::Display for PlaneMask {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if *self == Self::ALL {
+            return f.write_str("ALL");
+        }
+        if self.is_empty() {
+            return f.write_str("NONE");
+        }
+        let mut first = true;
+        for i in 0..8 {
+            if self.includes(i) {
+                if !first {
+                    f.write_str("|")?;
+                }
+                write!(f, "{i}")?;
+                first = false;
+            }
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Plane — buffer + semantic (legacy, retained for backward compat)
+// ---------------------------------------------------------------------------
 
 /// A single plane with its semantic label.
 ///
 /// Each plane is an independent [`PixelBuffer`](crate::buffer::PixelBuffer)
 /// (opaque gray channel) that can be a different size from other planes
 /// (e.g., subsampled chroma).
+///
+/// **Prefer [`PlaneLayout`] + separate buffers** for new code. This type
+/// is retained for backward compatibility.
 #[cfg(feature = "planar")]
 pub struct Plane {
     /// The pixel data for this plane.
@@ -1560,43 +1856,350 @@ pub struct Plane {
     pub semantic: PlaneSemantic,
 }
 
-/// How planes in a [`MultiPlaneImage`] relate to each other.
+/// How planes in a multi-plane image relate to each other.
 #[cfg(feature = "planar")]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum PlaneRelationship {
     /// Independent channels (e.g., split R, G, B).
     Independent,
-    /// YCbCr with a specific matrix. Subsampling is implied by plane dimensions.
+    /// YCbCr with a specific matrix. Subsampling per-plane in [`PlaneDescriptor`].
     YCbCr {
         /// The YCbCr matrix coefficients.
         matrix: YuvMatrix,
     },
+    /// Oklab perceptual color space (L/a/b). Fixed transform, no matrix parameter.
+    Oklab,
     /// Gain map (base rendition + gain plane).
     GainMap,
 }
 
+// ---------------------------------------------------------------------------
+// PlaneLayout — complete spatial layout descriptor
+// ---------------------------------------------------------------------------
+
+/// Complete layout of a multi-plane image.
+///
+/// Separates the *metadata* (how many planes, what they represent, their
+/// subsampling) from any pixel buffers. Every consumer that needs to know
+/// about planar organization works with `PlaneLayout`; only code that
+/// allocates or reads pixels needs actual buffers.
+///
+/// # Examples
+///
+/// ```
+/// use zenpixels::{PlaneLayout, ChannelType, PlaneSemantic};
+///
+/// let layout = PlaneLayout::ycbcr_420(ChannelType::U8);
+/// assert!(layout.is_planar());
+/// assert!(layout.is_ycbcr());
+/// assert!(layout.has_subsampling());
+/// assert_eq!(layout.plane_count(), 3);
+///
+/// // Check plane semantics
+/// let planes = layout.planes();
+/// assert_eq!(planes[0].semantic, PlaneSemantic::Luma);
+/// assert_eq!(planes[1].semantic, PlaneSemantic::ChromaCb);
+/// assert!(!planes[0].is_subsampled());
+/// assert!(planes[1].is_subsampled());
+/// ```
+#[cfg(feature = "planar")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PlaneLayout {
+    /// Interleaved pixel data (channels packed per-pixel).
+    Interleaved {
+        /// Number of channels per pixel (e.g., 3 for RGB, 4 for RGBA).
+        channels: u8,
+    },
+    /// Planar pixel data (one buffer per plane).
+    Planar {
+        /// Descriptor for each plane.
+        planes: alloc::vec::Vec<PlaneDescriptor>,
+        /// How the planes relate to each other.
+        relationship: PlaneRelationship,
+    },
+}
+
+#[cfg(feature = "planar")]
+impl PlaneLayout {
+    // --- Factory methods ---
+
+    /// YCbCr 4:4:4 (no subsampling).
+    pub fn ycbcr_444(ct: ChannelType) -> Self {
+        Self::Planar {
+            planes: alloc::vec![
+                PlaneDescriptor::new(PlaneSemantic::Luma, ct),
+                PlaneDescriptor::new(PlaneSemantic::ChromaCb, ct),
+                PlaneDescriptor::new(PlaneSemantic::ChromaCr, ct),
+            ],
+            relationship: PlaneRelationship::YCbCr {
+                matrix: YuvMatrix::Bt601,
+            },
+        }
+    }
+
+    /// YCbCr 4:4:4 with a specific matrix.
+    pub fn ycbcr_444_matrix(ct: ChannelType, matrix: YuvMatrix) -> Self {
+        Self::Planar {
+            planes: alloc::vec![
+                PlaneDescriptor::new(PlaneSemantic::Luma, ct),
+                PlaneDescriptor::new(PlaneSemantic::ChromaCb, ct),
+                PlaneDescriptor::new(PlaneSemantic::ChromaCr, ct),
+            ],
+            relationship: PlaneRelationship::YCbCr { matrix },
+        }
+    }
+
+    /// YCbCr 4:2:2 (horizontal half chroma).
+    pub fn ycbcr_422(ct: ChannelType) -> Self {
+        Self::Planar {
+            planes: alloc::vec![
+                PlaneDescriptor::new(PlaneSemantic::Luma, ct),
+                PlaneDescriptor::new(PlaneSemantic::ChromaCb, ct).with_subsampling(2, 1),
+                PlaneDescriptor::new(PlaneSemantic::ChromaCr, ct).with_subsampling(2, 1),
+            ],
+            relationship: PlaneRelationship::YCbCr {
+                matrix: YuvMatrix::Bt601,
+            },
+        }
+    }
+
+    /// YCbCr 4:2:0 (half chroma in both axes).
+    pub fn ycbcr_420(ct: ChannelType) -> Self {
+        Self::Planar {
+            planes: alloc::vec![
+                PlaneDescriptor::new(PlaneSemantic::Luma, ct),
+                PlaneDescriptor::new(PlaneSemantic::ChromaCb, ct).with_subsampling(2, 2),
+                PlaneDescriptor::new(PlaneSemantic::ChromaCr, ct).with_subsampling(2, 2),
+            ],
+            relationship: PlaneRelationship::YCbCr {
+                matrix: YuvMatrix::Bt601,
+            },
+        }
+    }
+
+    /// Planar RGB (3 independent planes, no subsampling).
+    pub fn rgb(ct: ChannelType) -> Self {
+        Self::Planar {
+            planes: alloc::vec![
+                PlaneDescriptor::new(PlaneSemantic::Red, ct),
+                PlaneDescriptor::new(PlaneSemantic::Green, ct),
+                PlaneDescriptor::new(PlaneSemantic::Blue, ct),
+            ],
+            relationship: PlaneRelationship::Independent,
+        }
+    }
+
+    /// Planar RGBA (4 independent planes, no subsampling).
+    pub fn rgba(ct: ChannelType) -> Self {
+        Self::Planar {
+            planes: alloc::vec![
+                PlaneDescriptor::new(PlaneSemantic::Red, ct),
+                PlaneDescriptor::new(PlaneSemantic::Green, ct),
+                PlaneDescriptor::new(PlaneSemantic::Blue, ct),
+                PlaneDescriptor::new(PlaneSemantic::Alpha, ct),
+            ],
+            relationship: PlaneRelationship::Independent,
+        }
+    }
+
+    /// Oklab (L/a/b, 3 planes, no subsampling).
+    pub fn oklab(ct: ChannelType) -> Self {
+        Self::Planar {
+            planes: alloc::vec![
+                PlaneDescriptor::new(PlaneSemantic::OklabL, ct),
+                PlaneDescriptor::new(PlaneSemantic::OklabA, ct),
+                PlaneDescriptor::new(PlaneSemantic::OklabB, ct),
+            ],
+            relationship: PlaneRelationship::Oklab,
+        }
+    }
+
+    /// Oklab with alpha (L/a/b/A, 4 planes, no subsampling).
+    pub fn oklab_alpha(ct: ChannelType) -> Self {
+        Self::Planar {
+            planes: alloc::vec![
+                PlaneDescriptor::new(PlaneSemantic::OklabL, ct),
+                PlaneDescriptor::new(PlaneSemantic::OklabA, ct),
+                PlaneDescriptor::new(PlaneSemantic::OklabB, ct),
+                PlaneDescriptor::new(PlaneSemantic::Alpha, ct),
+            ],
+            relationship: PlaneRelationship::Oklab,
+        }
+    }
+
+    /// Grayscale (single plane, no subsampling).
+    pub fn gray(ct: ChannelType) -> Self {
+        Self::Planar {
+            planes: alloc::vec![PlaneDescriptor::new(PlaneSemantic::Gray, ct)],
+            relationship: PlaneRelationship::Independent,
+        }
+    }
+
+    // --- Queries ---
+
+    /// Number of planes (or interleaved channels).
+    #[inline]
+    pub fn plane_count(&self) -> usize {
+        match self {
+            Self::Interleaved { channels } => *channels as usize,
+            Self::Planar { planes, .. } => planes.len(),
+        }
+    }
+
+    /// Plane descriptors. Empty slice for interleaved layout.
+    #[inline]
+    pub fn planes(&self) -> &[PlaneDescriptor] {
+        match self {
+            Self::Interleaved { .. } => &[],
+            Self::Planar { planes, .. } => planes,
+        }
+    }
+
+    /// Index of the luma/lightness plane, if any.
+    pub fn luma_plane_index(&self) -> Option<usize> {
+        match self {
+            Self::Interleaved { .. } => None,
+            Self::Planar { planes, .. } => planes.iter().position(|p| p.semantic.is_luminance()),
+        }
+    }
+
+    /// Whether any plane is subsampled.
+    pub fn has_subsampling(&self) -> bool {
+        match self {
+            Self::Interleaved { .. } => false,
+            Self::Planar { planes, .. } => planes.iter().any(|p| p.is_subsampled()),
+        }
+    }
+
+    /// Whether this is a YCbCr layout.
+    pub fn is_ycbcr(&self) -> bool {
+        matches!(
+            self,
+            Self::Planar {
+                relationship: PlaneRelationship::YCbCr { .. },
+                ..
+            }
+        )
+    }
+
+    /// Whether this is an Oklab layout.
+    pub fn is_oklab(&self) -> bool {
+        matches!(
+            self,
+            Self::Planar {
+                relationship: PlaneRelationship::Oklab,
+                ..
+            }
+        )
+    }
+
+    /// Whether this layout is planar (not interleaved).
+    #[inline]
+    pub fn is_planar(&self) -> bool {
+        matches!(self, Self::Planar { .. })
+    }
+
+    /// The plane relationship, if planar.
+    pub fn relationship(&self) -> Option<PlaneRelationship> {
+        match self {
+            Self::Interleaved { .. } => None,
+            Self::Planar { relationship, .. } => Some(*relationship),
+        }
+    }
+
+    /// Maximum vertical subsampling factor across all planes.
+    ///
+    /// Returns 1 for interleaved or non-subsampled layouts.
+    pub fn max_v_subsample(&self) -> u8 {
+        match self {
+            Self::Interleaved { .. } => 1,
+            Self::Planar { planes, .. } => planes.iter().map(|p| p.v_subsample).max().unwrap_or(1),
+        }
+    }
+
+    /// Maximum horizontal subsampling factor across all planes.
+    ///
+    /// Returns 1 for interleaved or non-subsampled layouts.
+    pub fn max_h_subsample(&self) -> u8 {
+        match self {
+            Self::Interleaved { .. } => 1,
+            Self::Planar { planes, .. } => planes.iter().map(|p| p.h_subsample).max().unwrap_or(1),
+        }
+    }
+}
+
+#[cfg(feature = "planar")]
+impl fmt::Display for PlaneLayout {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Interleaved { channels } => write!(f, "Interleaved({channels}ch)"),
+            Self::Planar {
+                planes,
+                relationship,
+            } => {
+                write!(f, "{relationship:?}[")?;
+                for (i, p) in planes.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{p}")?;
+                }
+                f.write_str("]")
+            }
+        }
+    }
+}
+
 /// A multi-plane image where each plane is an independent pixel buffer.
 ///
-/// Planes can be different sizes (e.g., subsampled chroma in YCbCr 4:2:0).
-/// Subsampling is NOT an explicit enum — it's implied by relative plane
-/// dimensions. If Y is 1920×1080 and Cb is 960×540, that's 4:2:0.
+/// Combines a [`PlaneLayout`] (metadata describing plane count, semantics,
+/// subsampling, and relationship) with actual pixel buffers. Each buffer
+/// corresponds to one plane in the layout.
+///
+/// # Examples
+///
+/// ```
+/// use zenpixels::{MultiPlaneImage, PlaneLayout, ChannelType, PixelBuffer, PixelDescriptor};
+///
+/// let layout = PlaneLayout::ycbcr_444(ChannelType::U8);
+/// let y = PixelBuffer::new(1920, 1080, PixelDescriptor::GRAY8);
+/// let cb = PixelBuffer::new(1920, 1080, PixelDescriptor::GRAY8);
+/// let cr = PixelBuffer::new(1920, 1080, PixelDescriptor::GRAY8);
+///
+/// let img = MultiPlaneImage::new(layout, vec![y, cb, cr]);
+/// assert_eq!(img.plane_count(), 3);
+/// assert!(img.layout().is_ycbcr());
+/// ```
 #[cfg(feature = "planar")]
 pub struct MultiPlaneImage {
-    planes: alloc::vec::Vec<Plane>,
-    /// How the planes relate to each other.
-    pub relationship: PlaneRelationship,
-    /// Optional color context shared across all planes.
-    pub origin: Option<alloc::sync::Arc<crate::color::ColorContext>>,
+    layout: PlaneLayout,
+    buffers: alloc::vec::Vec<crate::buffer::PixelBuffer>,
+    origin: Option<alloc::sync::Arc<crate::color::ColorContext>>,
 }
 
 #[cfg(feature = "planar")]
 impl MultiPlaneImage {
-    /// Create a new multi-plane image.
-    pub fn new(planes: alloc::vec::Vec<Plane>, relationship: PlaneRelationship) -> Self {
+    /// Create a new multi-plane image from a layout and corresponding buffers.
+    ///
+    /// # Panics
+    ///
+    /// Debug-asserts that the number of buffers matches the planar plane count.
+    pub fn new(layout: PlaneLayout, buffers: alloc::vec::Vec<crate::buffer::PixelBuffer>) -> Self {
+        debug_assert!(
+            layout.is_planar(),
+            "MultiPlaneImage requires a Planar layout"
+        );
+        debug_assert_eq!(
+            layout.plane_count(),
+            buffers.len(),
+            "buffer count ({}) must match plane count ({})",
+            buffers.len(),
+            layout.plane_count(),
+        );
         Self {
-            planes,
-            relationship,
+            layout,
+            buffers,
             origin: None,
         }
     }
@@ -1607,34 +2210,46 @@ impl MultiPlaneImage {
         self
     }
 
+    /// The layout describing this image's plane organization.
+    #[inline]
+    pub fn layout(&self) -> &PlaneLayout {
+        &self.layout
+    }
+
     /// Number of planes.
     #[inline]
     pub fn plane_count(&self) -> usize {
-        self.planes.len()
+        self.buffers.len()
     }
 
-    /// Access all planes.
+    /// Access a single buffer by index.
     #[inline]
-    pub fn planes(&self) -> &[Plane] {
-        &self.planes
+    pub fn buffer(&self, idx: usize) -> Option<&crate::buffer::PixelBuffer> {
+        self.buffers.get(idx)
     }
 
-    /// Access all planes mutably.
+    /// Access a single buffer mutably by index.
     #[inline]
-    pub fn planes_mut(&mut self) -> &mut [Plane] {
-        &mut self.planes
+    pub fn buffer_mut(&mut self, idx: usize) -> Option<&mut crate::buffer::PixelBuffer> {
+        self.buffers.get_mut(idx)
     }
 
-    /// Access a single plane by index.
+    /// Access all buffers.
     #[inline]
-    pub fn plane(&self, idx: usize) -> &Plane {
-        &self.planes[idx]
+    pub fn buffers(&self) -> &[crate::buffer::PixelBuffer] {
+        &self.buffers
     }
 
-    /// Access a single plane mutably by index.
+    /// Access all buffers mutably.
     #[inline]
-    pub fn plane_mut(&mut self, idx: usize) -> &mut Plane {
-        &mut self.planes[idx]
+    pub fn buffers_mut(&mut self) -> &mut [crate::buffer::PixelBuffer] {
+        &mut self.buffers
+    }
+
+    /// The optional color context shared across all planes.
+    #[inline]
+    pub fn origin(&self) -> Option<&alloc::sync::Arc<crate::color::ColorContext>> {
+        self.origin.as_ref()
     }
 }
 
@@ -1783,5 +2398,383 @@ mod tests {
         assert_eq!(YuvMatrix::from_cicp(5), Some(YuvMatrix::Bt601));
         assert_eq!(YuvMatrix::from_cicp(9), Some(YuvMatrix::Bt2020));
         assert_eq!(YuvMatrix::from_cicp(99), None);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn subsampling_from_factors() {
+        assert_eq!(Subsampling::from_factors(1, 1), Some(Subsampling::S444));
+        assert_eq!(Subsampling::from_factors(2, 1), Some(Subsampling::S422));
+        assert_eq!(Subsampling::from_factors(2, 2), Some(Subsampling::S420));
+        assert_eq!(Subsampling::from_factors(4, 1), Some(Subsampling::S411));
+        assert_eq!(Subsampling::from_factors(3, 1), None);
+        assert_eq!(Subsampling::from_factors(1, 2), None);
+    }
+
+    // --- PlaneSemantic tests ---
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_semantic_classification() {
+        // Luminance-like
+        assert!(PlaneSemantic::Luma.is_luminance());
+        assert!(PlaneSemantic::Gray.is_luminance());
+        assert!(PlaneSemantic::OklabL.is_luminance());
+        assert!(!PlaneSemantic::Red.is_luminance());
+
+        // Chroma
+        assert!(PlaneSemantic::ChromaCb.is_chroma());
+        assert!(PlaneSemantic::ChromaCr.is_chroma());
+        assert!(PlaneSemantic::OklabA.is_chroma());
+        assert!(PlaneSemantic::OklabB.is_chroma());
+        assert!(!PlaneSemantic::Luma.is_chroma());
+
+        // RGB
+        assert!(PlaneSemantic::Red.is_rgb());
+        assert!(PlaneSemantic::Green.is_rgb());
+        assert!(PlaneSemantic::Blue.is_rgb());
+        assert!(!PlaneSemantic::Luma.is_rgb());
+
+        // Alpha
+        assert!(PlaneSemantic::Alpha.is_alpha());
+        assert!(!PlaneSemantic::Luma.is_alpha());
+        assert!(!PlaneSemantic::Depth.is_alpha());
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_semantic_display() {
+        assert_eq!(format!("{}", PlaneSemantic::Luma), "Luma");
+        assert_eq!(format!("{}", PlaneSemantic::ChromaCb), "Cb");
+        assert_eq!(format!("{}", PlaneSemantic::Gray), "Gray");
+        assert_eq!(format!("{}", PlaneSemantic::OklabL), "Oklab.L");
+    }
+
+    // --- PlaneDescriptor tests ---
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_descriptor_full_resolution() {
+        let d = PlaneDescriptor::new(PlaneSemantic::Luma, ChannelType::F32);
+        assert_eq!(d.semantic, PlaneSemantic::Luma);
+        assert_eq!(d.channel_type, ChannelType::F32);
+        assert!(!d.is_subsampled());
+        assert_eq!(d.h_subsample, 1);
+        assert_eq!(d.v_subsample, 1);
+        assert_eq!(d.plane_width(1920), 1920);
+        assert_eq!(d.plane_height(1080), 1080);
+        assert_eq!(d.bytes_per_sample(), 4);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_descriptor_subsampled() {
+        let d =
+            PlaneDescriptor::new(PlaneSemantic::ChromaCb, ChannelType::U8).with_subsampling(2, 2);
+        assert!(d.is_subsampled());
+        assert_eq!(d.plane_width(1920), 960);
+        assert_eq!(d.plane_height(1080), 540);
+        // Odd dimensions use ceiling division
+        assert_eq!(d.plane_width(1921), 961);
+        assert_eq!(d.plane_height(1081), 541);
+        assert_eq!(d.bytes_per_sample(), 1);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_descriptor_quarter_h() {
+        let d =
+            PlaneDescriptor::new(PlaneSemantic::ChromaCr, ChannelType::U16).with_subsampling(4, 1);
+        assert!(d.is_subsampled());
+        assert_eq!(d.plane_width(1920), 480);
+        assert_eq!(d.plane_height(1080), 1080);
+        assert_eq!(d.bytes_per_sample(), 2);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_descriptor_display() {
+        let d = PlaneDescriptor::new(PlaneSemantic::Luma, ChannelType::F32);
+        assert_eq!(format!("{d}"), "Luma:F32");
+
+        let d =
+            PlaneDescriptor::new(PlaneSemantic::ChromaCb, ChannelType::U8).with_subsampling(2, 2);
+        assert_eq!(format!("{d}"), "Cb:U8 (1/2\u{00d7}1/2)");
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_descriptor_size() {
+        // Should be small — semantic (1) + channel_type (1) + h (1) + v (1) = 4
+        assert!(size_of::<PlaneDescriptor>() <= 4);
+    }
+
+    // --- PlaneMask tests ---
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_mask_constants() {
+        assert!(PlaneMask::ALL.includes(0));
+        assert!(PlaneMask::ALL.includes(7));
+        assert!(!PlaneMask::NONE.includes(0));
+        assert!(PlaneMask::NONE.is_empty());
+        assert!(PlaneMask::LUMA.includes(0));
+        assert!(!PlaneMask::LUMA.includes(1));
+        assert!(PlaneMask::CHROMA.includes(1));
+        assert!(PlaneMask::CHROMA.includes(2));
+        assert!(!PlaneMask::CHROMA.includes(0));
+        assert!(PlaneMask::ALPHA.includes(3));
+        assert!(!PlaneMask::ALPHA.includes(0));
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_mask_single() {
+        let m = PlaneMask::single(5);
+        assert!(m.includes(5));
+        assert!(!m.includes(4));
+        assert_eq!(m.count(), 1);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_mask_union_intersection() {
+        let luma_alpha = PlaneMask::LUMA.union(PlaneMask::ALPHA);
+        assert!(luma_alpha.includes(0));
+        assert!(luma_alpha.includes(3));
+        assert!(!luma_alpha.includes(1));
+        assert_eq!(luma_alpha.count(), 2);
+
+        let intersect = luma_alpha.intersection(PlaneMask::LUMA);
+        assert!(intersect.includes(0));
+        assert!(!intersect.includes(3));
+        assert_eq!(intersect.count(), 1);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_mask_out_of_range() {
+        assert!(!PlaneMask::ALL.includes(8));
+        assert!(!PlaneMask::ALL.includes(100));
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_mask_bits_roundtrip() {
+        let m = PlaneMask::LUMA.union(PlaneMask::CHROMA);
+        let bits = m.bits();
+        assert_eq!(PlaneMask::from_bits(bits), m);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_mask_display() {
+        assert_eq!(format!("{}", PlaneMask::ALL), "ALL");
+        assert_eq!(format!("{}", PlaneMask::NONE), "NONE");
+        assert_eq!(format!("{}", PlaneMask::LUMA), "0");
+        assert_eq!(
+            format!("{}", PlaneMask::LUMA.union(PlaneMask::ALPHA)),
+            "0|3"
+        );
+    }
+
+    // --- PlaneLayout tests ---
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_layout_interleaved() {
+        let layout = PlaneLayout::Interleaved { channels: 4 };
+        assert!(!layout.is_planar());
+        assert_eq!(layout.plane_count(), 4);
+        assert!(layout.planes().is_empty());
+        assert!(!layout.has_subsampling());
+        assert!(!layout.is_ycbcr());
+        assert!(!layout.is_oklab());
+        assert_eq!(layout.luma_plane_index(), None);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_layout_ycbcr_444() {
+        let layout = PlaneLayout::ycbcr_444(ChannelType::F32);
+        assert!(layout.is_planar());
+        assert!(layout.is_ycbcr());
+        assert!(!layout.is_oklab());
+        assert_eq!(layout.plane_count(), 3);
+        assert!(!layout.has_subsampling());
+        assert_eq!(layout.luma_plane_index(), Some(0));
+        assert_eq!(layout.max_v_subsample(), 1);
+        assert_eq!(layout.max_h_subsample(), 1);
+
+        let planes = layout.planes();
+        assert_eq!(planes[0].semantic, PlaneSemantic::Luma);
+        assert_eq!(planes[1].semantic, PlaneSemantic::ChromaCb);
+        assert_eq!(planes[2].semantic, PlaneSemantic::ChromaCr);
+        assert_eq!(planes[0].channel_type, ChannelType::F32);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_layout_ycbcr_420() {
+        let layout = PlaneLayout::ycbcr_420(ChannelType::U8);
+        assert!(layout.is_planar());
+        assert!(layout.is_ycbcr());
+        assert!(layout.has_subsampling());
+        assert_eq!(layout.max_v_subsample(), 2);
+        assert_eq!(layout.max_h_subsample(), 2);
+
+        let planes = layout.planes();
+        assert!(!planes[0].is_subsampled());
+        assert!(planes[1].is_subsampled());
+        assert_eq!(planes[1].h_subsample, 2);
+        assert_eq!(planes[1].v_subsample, 2);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_layout_ycbcr_422() {
+        let layout = PlaneLayout::ycbcr_422(ChannelType::U8);
+        assert!(layout.has_subsampling());
+        assert_eq!(layout.max_v_subsample(), 1);
+        assert_eq!(layout.max_h_subsample(), 2);
+
+        let planes = layout.planes();
+        assert_eq!(planes[1].h_subsample, 2);
+        assert_eq!(planes[1].v_subsample, 1);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_layout_ycbcr_444_matrix() {
+        let layout = PlaneLayout::ycbcr_444_matrix(ChannelType::U8, YuvMatrix::Bt709);
+        assert_eq!(
+            layout.relationship(),
+            Some(PlaneRelationship::YCbCr {
+                matrix: YuvMatrix::Bt709
+            })
+        );
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_layout_oklab() {
+        let layout = PlaneLayout::oklab(ChannelType::F32);
+        assert!(layout.is_planar());
+        assert!(layout.is_oklab());
+        assert!(!layout.is_ycbcr());
+        assert_eq!(layout.plane_count(), 3);
+        assert!(!layout.has_subsampling());
+        assert_eq!(layout.luma_plane_index(), Some(0));
+
+        let planes = layout.planes();
+        assert_eq!(planes[0].semantic, PlaneSemantic::OklabL);
+        assert_eq!(planes[1].semantic, PlaneSemantic::OklabA);
+        assert_eq!(planes[2].semantic, PlaneSemantic::OklabB);
+        assert_eq!(planes[0].channel_type, ChannelType::F32);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_layout_oklab_alpha() {
+        let layout = PlaneLayout::oklab_alpha(ChannelType::F32);
+        assert!(layout.is_oklab());
+        assert_eq!(layout.plane_count(), 4);
+        assert_eq!(layout.planes()[3].semantic, PlaneSemantic::Alpha);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_layout_rgb() {
+        let layout = PlaneLayout::rgb(ChannelType::U8);
+        assert!(layout.is_planar());
+        assert!(!layout.is_ycbcr());
+        assert!(!layout.is_oklab());
+        assert_eq!(layout.plane_count(), 3);
+        assert_eq!(layout.relationship(), Some(PlaneRelationship::Independent));
+
+        let planes = layout.planes();
+        assert_eq!(planes[0].semantic, PlaneSemantic::Red);
+        assert_eq!(planes[1].semantic, PlaneSemantic::Green);
+        assert_eq!(planes[2].semantic, PlaneSemantic::Blue);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_layout_rgba() {
+        let layout = PlaneLayout::rgba(ChannelType::U8);
+        assert_eq!(layout.plane_count(), 4);
+        assert_eq!(layout.planes()[3].semantic, PlaneSemantic::Alpha);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_layout_gray() {
+        let layout = PlaneLayout::gray(ChannelType::U8);
+        assert!(layout.is_planar());
+        assert_eq!(layout.plane_count(), 1);
+        assert_eq!(layout.planes()[0].semantic, PlaneSemantic::Gray);
+        assert_eq!(layout.luma_plane_index(), Some(0));
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_layout_display() {
+        let layout = PlaneLayout::Interleaved { channels: 3 };
+        assert_eq!(format!("{layout}"), "Interleaved(3ch)");
+
+        let layout = PlaneLayout::oklab(ChannelType::F32);
+        let s = format!("{layout}");
+        assert!(s.starts_with("Oklab["), "got: {s}");
+        assert!(s.contains("Oklab.L:F32"), "got: {s}");
+    }
+
+    // --- MultiPlaneImage tests ---
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn multi_plane_image_basic() {
+        let layout = PlaneLayout::ycbcr_444(ChannelType::U8);
+        let y = crate::buffer::PixelBuffer::new(64, 64, PixelDescriptor::GRAY8);
+        let cb = crate::buffer::PixelBuffer::new(64, 64, PixelDescriptor::GRAY8);
+        let cr = crate::buffer::PixelBuffer::new(64, 64, PixelDescriptor::GRAY8);
+
+        let img = MultiPlaneImage::new(layout, alloc::vec![y, cb, cr]);
+        assert_eq!(img.plane_count(), 3);
+        assert!(img.layout().is_ycbcr());
+        assert!(img.buffer(0).is_some());
+        assert!(img.buffer(2).is_some());
+        assert!(img.buffer(3).is_none());
+        assert!(img.origin().is_none());
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn multi_plane_image_with_origin() {
+        let layout = PlaneLayout::gray(ChannelType::U8);
+        let buf = crate::buffer::PixelBuffer::new(32, 32, PixelDescriptor::GRAY8);
+
+        let ctx = alloc::sync::Arc::new(crate::color::ColorContext::from_cicp(
+            crate::cicp::Cicp::new(1, 13, 0, false),
+        ));
+        let img = MultiPlaneImage::new(layout, alloc::vec![buf]).with_origin(ctx.clone());
+        assert!(img.origin().is_some());
+    }
+
+    // --- PlaneRelationship tests ---
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn plane_relationship_variants() {
+        let r = PlaneRelationship::Oklab;
+        assert_eq!(r, PlaneRelationship::Oklab);
+
+        let r = PlaneRelationship::YCbCr {
+            matrix: YuvMatrix::Bt709,
+        };
+        assert_ne!(r, PlaneRelationship::Independent);
+
+        // Copy
+        let r2 = r;
+        assert_eq!(r, r2);
     }
 }

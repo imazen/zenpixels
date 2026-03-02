@@ -11,7 +11,7 @@
 //! - **Row conversion**: [`RowConverter`] pre-computes a conversion plan and
 //!   converts rows with no per-row allocation, using SIMD where available.
 //!
-//! - **Codec helpers**: [`adapt_for_encode`] negotiates format and converts
+//! - **Codec helpers**: [`adapt::adapt_for_encode`] negotiates format and converts
 //!   pixel data in one call, returning `Cow::Borrowed` when the input
 //!   already matches a supported format.
 //!
@@ -81,7 +81,8 @@ pub use descriptor::{
 // Re-export planar types when the `planar` feature is enabled.
 #[cfg(feature = "planar")]
 pub use descriptor::{
-    MultiPlaneImage, Plane, PlaneRelationship, PlaneSemantic, Subsampling, YuvMatrix,
+    MultiPlaneImage, Plane, PlaneDescriptor, PlaneLayout, PlaneMask, PlaneRelationship,
+    PlaneSemantic, Subsampling, YuvMatrix,
 };
 
 // Re-export buffer types at crate root.

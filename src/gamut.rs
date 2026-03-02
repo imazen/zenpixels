@@ -24,7 +24,7 @@ pub const BT709_TO_BT2020: GamutMatrix = [
 /// BT.2020 → BT.709 (row-major).
 ///
 /// Converts linear BT.2020 RGB to linear BT.709/sRGB RGB.
-/// Values outside [0,1] indicate out-of-gamut colors.
+/// Values outside \[0,1\] indicate out-of-gamut colors.
 pub const BT2020_TO_BT709: GamutMatrix = [
     [1.6604_9100, -0.5876_5614, -0.0728_3486],
     [-0.1245_5047, 1.1328_9990, -0.0083_4942],

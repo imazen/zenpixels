@@ -4,8 +4,8 @@
 //! gain map support through optional backends:
 //!
 //! - **`hdr-ultrahdr`** feature: ISO 21496-1 gain map creation/application
-//!   via the [`ultrahdr-core`] crate.
-//! - **`hdr-gainforge`** feature: HDR tone mapping via the [`gainforge`] crate.
+//!   via the `ultrahdr-core` crate.
+//! - **`hdr-gainforge`** feature: HDR tone mapping via the `gainforge` crate.
 //!
 //! The core PQ/HLG EOTF/OETF math is always available (no optional deps)
 //! through the main conversion pipeline in [`ConvertPlan`](crate::ConvertPlan).
