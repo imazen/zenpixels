@@ -51,6 +51,7 @@ pub mod buffer;
 pub mod converter;
 pub mod gamut;
 pub mod hdr;
+pub mod oklab;
 pub mod op_format;
 pub mod path;
 pub mod pixels;
@@ -98,7 +99,7 @@ pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
 // Re-export gamut conversion utilities.
 pub use gamut::{
     GamutMatrix, apply_matrix_f32, apply_matrix_row_f32, apply_matrix_row_rgba_f32,
-    conversion_matrix,
+    conversion_matrix, mat3_mul,
 };
 
 // Re-export HDR types and tone mapping.

@@ -226,6 +226,48 @@ impl TransferFunction {
             _ => None,
         }
     }
+
+    /// Scalar EOTF: encoded signal → linear light.
+    ///
+    /// Canonical reference implementation for testing SIMD paths.
+    /// Clamps negative inputs to zero.
+    #[allow(unreachable_patterns)]
+    pub fn linearize(&self, v: f32) -> f32 {
+        match self {
+            Self::Linear | Self::Unknown => v,
+            Self::Srgb | Self::Bt709 => linear_srgb::scalar::srgb_to_linear(v),
+            Self::Pq => crate::convert::pq_eotf(v),
+            Self::Hlg => crate::convert::hlg_eotf(v),
+            _ => v,
+        }
+    }
+
+    /// Scalar OETF: linear light → encoded signal.
+    ///
+    /// Canonical reference implementation for testing SIMD paths.
+    #[allow(unreachable_patterns)]
+    pub fn delinearize(&self, v: f32) -> f32 {
+        match self {
+            Self::Linear | Self::Unknown => v,
+            Self::Srgb | Self::Bt709 => linear_srgb::scalar::linear_to_srgb(v),
+            Self::Pq => crate::convert::pq_oetf(v),
+            Self::Hlg => crate::convert::hlg_oetf(v),
+            _ => v,
+        }
+    }
+
+    /// Reference white luminance in nits.
+    ///
+    /// - SDR (sRGB, BT.709, Linear, Unknown): `1.0` (relative/scene-referred)
+    /// - PQ: `203.0` (ITU-R BT.2408 reference white)
+    /// - HLG: `1.0` (scene-referred)
+    #[allow(unreachable_patterns)]
+    pub fn reference_white_nits(&self) -> f32 {
+        match self {
+            Self::Pq => 203.0,
+            _ => 1.0,
+        }
+    }
 }
 
 impl fmt::Display for TransferFunction {
@@ -305,6 +347,32 @@ impl ColorPrimaries {
             Self::Bt2020 => 3,
             Self::Unknown => 0,
             _ => 0,
+        }
+    }
+
+    /// Linear RGB → CIE XYZ (D65 white point).
+    ///
+    /// Returns `None` for [`Unknown`](Self::Unknown).
+    #[allow(unreachable_patterns)]
+    pub fn to_xyz_matrix(&self) -> Option<&'static crate::gamut::GamutMatrix> {
+        match self {
+            Self::Bt709 => Some(&crate::gamut::BT709_TO_XYZ),
+            Self::DisplayP3 => Some(&crate::gamut::DISPLAY_P3_TO_XYZ),
+            Self::Bt2020 => Some(&crate::gamut::BT2020_TO_XYZ),
+            _ => None,
+        }
+    }
+
+    /// CIE XYZ (D65 white point) → linear RGB.
+    ///
+    /// Returns `None` for [`Unknown`](Self::Unknown).
+    #[allow(unreachable_patterns)]
+    pub fn from_xyz_matrix(&self) -> Option<&'static crate::gamut::GamutMatrix> {
+        match self {
+            Self::Bt709 => Some(&crate::gamut::XYZ_TO_BT709),
+            Self::DisplayP3 => Some(&crate::gamut::XYZ_TO_DISPLAY_P3),
+            Self::Bt2020 => Some(&crate::gamut::XYZ_TO_BT2020),
+            _ => None,
         }
     }
 }
@@ -2127,6 +2195,39 @@ impl PlaneLayout {
             Self::Planar { planes, .. } => planes.iter().map(|p| p.h_subsample).max().unwrap_or(1),
         }
     }
+
+    /// Build a [`PlaneMask`] from a predicate on plane semantics.
+    ///
+    /// Returns [`PlaneMask::NONE`] for interleaved layouts.
+    pub fn mask_where(&self, f: impl Fn(PlaneSemantic) -> bool) -> PlaneMask {
+        match self {
+            Self::Interleaved { .. } => PlaneMask::NONE,
+            Self::Planar { planes, .. } => {
+                let mut bits = 0u8;
+                for (i, p) in planes.iter().enumerate() {
+                    if i < 8 && f(p.semantic) {
+                        bits |= 1 << (i as u8);
+                    }
+                }
+                PlaneMask::from_bits(bits)
+            }
+        }
+    }
+
+    /// Mask of luminance-like planes (Luma, Gray, OklabL).
+    pub fn luma_mask(&self) -> PlaneMask {
+        self.mask_where(|s| s.is_luminance())
+    }
+
+    /// Mask of chroma planes (Cb, Cr, OklabA, OklabB).
+    pub fn chroma_mask(&self) -> PlaneMask {
+        self.mask_where(|s| s.is_chroma())
+    }
+
+    /// Mask of alpha planes.
+    pub fn alpha_mask(&self) -> PlaneMask {
+        self.mask_where(|s| s.is_alpha())
+    }
 }
 
 #[cfg(feature = "planar")]
@@ -2776,5 +2877,153 @@ mod tests {
         // Copy
         let r2 = r;
         assert_eq!(r, r2);
+    }
+
+    // --- TransferFunction linearize/delinearize tests ---
+
+    #[test]
+    fn srgb_linearize_roundtrip() {
+        let tf = TransferFunction::Srgb;
+        for &v in &[0.0, 0.04045, 0.1, 0.5, 0.73, 1.0] {
+            let lin = tf.linearize(v);
+            let back = tf.delinearize(lin);
+            assert!(
+                (v - back).abs() < 1e-5,
+                "sRGB roundtrip failed for {v}: linearize={lin}, delinearize={back}"
+            );
+        }
+    }
+
+    #[test]
+    fn pq_linearize_roundtrip() {
+        let tf = TransferFunction::Pq;
+        for &v in &[0.0, 0.1, 0.5, 0.75, 1.0] {
+            let lin = tf.linearize(v);
+            let back = tf.delinearize(lin);
+            assert!(
+                (v - back).abs() < 1e-4,
+                "PQ roundtrip failed for {v}: linearize={lin}, delinearize={back}"
+            );
+        }
+    }
+
+    #[test]
+    fn hlg_linearize_roundtrip() {
+        let tf = TransferFunction::Hlg;
+        for &v in &[0.0, 0.1, 0.3, 0.5, 0.8, 1.0] {
+            let lin = tf.linearize(v);
+            let back = tf.delinearize(lin);
+            assert!(
+                (v - back).abs() < 1e-4,
+                "HLG roundtrip failed for {v}: linearize={lin}, delinearize={back}"
+            );
+        }
+    }
+
+    #[test]
+    fn linear_identity() {
+        let tf = TransferFunction::Linear;
+        for &v in &[0.0, 0.5, 1.0] {
+            assert_eq!(tf.linearize(v), v);
+            assert_eq!(tf.delinearize(v), v);
+        }
+    }
+
+    #[test]
+    fn reference_white_nits_values() {
+        assert_eq!(TransferFunction::Pq.reference_white_nits(), 203.0);
+        assert_eq!(TransferFunction::Srgb.reference_white_nits(), 1.0);
+        assert_eq!(TransferFunction::Hlg.reference_white_nits(), 1.0);
+        assert_eq!(TransferFunction::Linear.reference_white_nits(), 1.0);
+        assert_eq!(TransferFunction::Unknown.reference_white_nits(), 1.0);
+    }
+
+    // --- ColorPrimaries XYZ matrix tests ---
+
+    #[test]
+    fn xyz_matrix_availability() {
+        assert!(ColorPrimaries::Bt709.to_xyz_matrix().is_some());
+        assert!(ColorPrimaries::Bt709.from_xyz_matrix().is_some());
+        assert!(ColorPrimaries::DisplayP3.to_xyz_matrix().is_some());
+        assert!(ColorPrimaries::Bt2020.to_xyz_matrix().is_some());
+        assert!(ColorPrimaries::Unknown.to_xyz_matrix().is_none());
+        assert!(ColorPrimaries::Unknown.from_xyz_matrix().is_none());
+    }
+
+    #[test]
+    fn xyz_roundtrip_bt709() {
+        let to = ColorPrimaries::Bt709.to_xyz_matrix().unwrap();
+        let from = ColorPrimaries::Bt709.from_xyz_matrix().unwrap();
+        let rgb = [0.5f32, 0.3, 0.8];
+        let mut v = rgb;
+        crate::gamut::apply_matrix_f32(&mut v, to);
+        crate::gamut::apply_matrix_f32(&mut v, from);
+        for c in 0..3 {
+            assert!(
+                (v[c] - rgb[c]).abs() < 1e-4,
+                "XYZ roundtrip BT.709 ch{c}: {:.6} vs {:.6}",
+                v[c],
+                rgb[c]
+            );
+        }
+    }
+
+    // --- PlaneLayout mask tests ---
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn mask_where_oklab() {
+        let layout = PlaneLayout::oklab_alpha(ChannelType::F32);
+        let luma = layout.luma_mask();
+        assert!(luma.includes(0));
+        assert!(!luma.includes(1));
+        assert_eq!(luma.count(), 1);
+
+        let chroma = layout.chroma_mask();
+        assert!(chroma.includes(1));
+        assert!(chroma.includes(2));
+        assert!(!chroma.includes(0));
+        assert_eq!(chroma.count(), 2);
+
+        let alpha = layout.alpha_mask();
+        assert!(alpha.includes(3));
+        assert_eq!(alpha.count(), 1);
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn mask_where_ycbcr_420() {
+        let layout = PlaneLayout::ycbcr_420(ChannelType::U8);
+        let luma = layout.luma_mask();
+        assert!(luma.includes(0));
+        assert_eq!(luma.count(), 1);
+
+        let chroma = layout.chroma_mask();
+        assert!(chroma.includes(1));
+        assert!(chroma.includes(2));
+        assert_eq!(chroma.count(), 2);
+
+        let alpha = layout.alpha_mask();
+        assert!(alpha.is_empty());
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn mask_where_gray() {
+        let layout = PlaneLayout::gray(ChannelType::U8);
+        let luma = layout.luma_mask();
+        assert!(luma.includes(0));
+        assert_eq!(luma.count(), 1);
+        assert!(layout.chroma_mask().is_empty());
+        assert!(layout.alpha_mask().is_empty());
+    }
+
+    #[cfg(feature = "planar")]
+    #[test]
+    fn mask_where_interleaved_returns_none() {
+        let layout = PlaneLayout::Interleaved { channels: 4 };
+        assert!(layout.luma_mask().is_empty());
+        assert!(layout.chroma_mask().is_empty());
+        assert!(layout.alpha_mask().is_empty());
     }
 }
