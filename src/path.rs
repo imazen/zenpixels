@@ -4,7 +4,7 @@
 //! finds the cheapest conversion chain that satisfies quality constraints.
 //!
 //! The algorithm:
-//! 1. Get the operation's [`OpRequirement`]
+//! 1. Get the operation's [`OpRequirement`](crate::OpRequirement)
 //! 2. Generate candidate working formats
 //! 3. For each candidate: compute source→working cost + suitability + working→output cost
 //! 4. Filter by quality threshold

@@ -8,8 +8,8 @@
 //! via [`ColorContext`].
 //!
 //! Typed variants (e.g., `PixelBuffer<Rgb<u8>>`) enforce format correctness
-//! at compile time through the [`Pixel`] trait. Use [`erase()`] to convert
-//! to a type-erased form, or [`try_typed()`] to go back.
+//! at compile time through the [`Pixel`] trait. Use `erase()` to convert
+//! to a type-erased form, or `try_typed()` to go back.
 //!
 //! Format conversions (e.g., `to_rgb8()`, `to_rgba8()`) delegate to
 //! [`RowConverter`](crate::converter::RowConverter) for correct transfer-function-aware
