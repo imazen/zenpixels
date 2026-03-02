@@ -1143,7 +1143,7 @@ const PQ_C3: f64 = 2392.0 / 4096.0 * 32.0; // 18.6875
 
 /// PQ EOTF: encoded [0,1] → linear light [0,1] (where 1.0 = 10000 cd/m²).
 #[inline]
-fn pq_eotf(v: f32) -> f32 {
+pub(crate) fn pq_eotf(v: f32) -> f32 {
     if v <= 0.0 {
         return 0.0;
     }
@@ -1159,7 +1159,7 @@ fn pq_eotf(v: f32) -> f32 {
 
 /// PQ inverse EOTF (OETF): linear light [0,1] → encoded [0,1].
 #[inline]
-fn pq_oetf(v: f32) -> f32 {
+pub(crate) fn pq_oetf(v: f32) -> f32 {
     if v <= 0.0 {
         return 0.0;
     }
@@ -1223,7 +1223,7 @@ const HLG_C: f64 = 0.55991073; // 0.5 - a*ln(4*a)
 
 /// HLG OETF: scene-linear [0,1] → encoded [0,1].
 #[inline]
-fn hlg_oetf(v: f32) -> f32 {
+pub(crate) fn hlg_oetf(v: f32) -> f32 {
     let v = v.max(0.0) as f64;
     if v <= 1.0 / 12.0 {
         (3.0 * v).sqrt() as f32
@@ -1234,7 +1234,7 @@ fn hlg_oetf(v: f32) -> f32 {
 
 /// HLG inverse OETF (EOTF): encoded [0,1] → scene-linear [0,1].
 #[inline]
-fn hlg_eotf(v: f32) -> f32 {
+pub(crate) fn hlg_eotf(v: f32) -> f32 {
     if v <= 0.0 {
         return 0.0;
     }
