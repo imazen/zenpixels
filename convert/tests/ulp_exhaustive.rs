@@ -7,7 +7,7 @@
 //! This replaces statistical sampling with exhaustive numerical proof:
 //! "u8 sRGB → f32 linear → u8 sRGB is lossless (max error = 0 for all 256 values)".
 
-use zenpixels::{ConvertPlan, PixelDescriptor, convert_row};
+use zenpixels_convert::{ConvertPlan, PixelDescriptor, convert_row};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Helper: exhaustive u8 round-trip through an intermediate format
@@ -109,7 +109,7 @@ fn ulp_u8_srgb_f32_linear_roundtrip_full_cube() {
 fn ulp_u8_u16_roundtrip() {
     // u8 → u16 uses v * 257, u16 → u8 uses (v * 255 + 32768) >> 16
     // This should be perfectly lossless.
-    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
     let src = PixelDescriptor::RGB8_SRGB;
     let mid_desc = PixelDescriptor::new(
@@ -146,7 +146,7 @@ fn ulp_u8_u16_roundtrip() {
 
 #[test]
 fn ulp_u16_to_u8_max_error() {
-    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
     let src = PixelDescriptor::new(
         ChannelType::U16,
@@ -180,7 +180,7 @@ fn ulp_u16_to_u8_max_error() {
 
 #[test]
 fn ulp_u8_to_u16_exact() {
-    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
     let src = PixelDescriptor::RGB8_SRGB;
     let dst = PixelDescriptor::new(
@@ -325,7 +325,7 @@ fn ulp_srgb_oetf_boundary_values() {
 
 #[test]
 fn ulp_naive_u8_f32_roundtrip() {
-    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
     let u8_desc = PixelDescriptor::new(
         ChannelType::U8,
@@ -369,7 +369,7 @@ fn ulp_naive_u8_f32_roundtrip() {
 
 #[test]
 fn ulp_u16_f32_roundtrip_exhaustive() {
-    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
     let u16_desc = PixelDescriptor::new(
         ChannelType::U16,
@@ -414,7 +414,7 @@ fn ulp_u16_f32_roundtrip_exhaustive() {
 
 #[test]
 fn ulp_premul_roundtrip_u8_exhaustive() {
-    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
 
     let straight = PixelDescriptor::new(
         ChannelType::U8,
@@ -481,7 +481,7 @@ fn ulp_premul_roundtrip_u8_exhaustive() {
 
 #[test]
 fn ulp_premul_roundtrip_f32() {
-    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
 
     let straight = PixelDescriptor::new(
         ChannelType::F32,
@@ -606,7 +606,7 @@ fn ulp_add_drop_alpha_roundtrip() {
 
 #[test]
 fn ulp_gray_alpha_rgba_roundtrip() {
-    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
 
     let ga = PixelDescriptor::new(
         ChannelType::U8,
@@ -640,7 +640,7 @@ fn ulp_gray_alpha_rgba_roundtrip() {
 
 #[test]
 fn ulp_pq_eotf_boundary_values() {
-    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
     let pq_u16 = PixelDescriptor::new(
         ChannelType::U16,
@@ -688,7 +688,7 @@ fn ulp_pq_eotf_boundary_values() {
 
 #[test]
 fn ulp_pq_roundtrip_u16() {
-    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
     let pq_u16 = PixelDescriptor::new(
         ChannelType::U16,
@@ -733,7 +733,7 @@ fn ulp_pq_roundtrip_u16() {
 
 #[test]
 fn ulp_pq_f32_roundtrip() {
-    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
     let pq_f32 = PixelDescriptor::new(
         ChannelType::F32,
@@ -778,7 +778,7 @@ fn ulp_pq_f32_roundtrip() {
 
 #[test]
 fn ulp_pq_eotf_monotonic() {
-    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
     let pq_u16 = PixelDescriptor::new(
         ChannelType::U16,
@@ -816,7 +816,7 @@ fn ulp_pq_eotf_monotonic() {
 
 #[test]
 fn ulp_hlg_boundary_values() {
-    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
     let hlg_u16 = PixelDescriptor::new(
         ChannelType::U16,
@@ -853,7 +853,7 @@ fn ulp_hlg_boundary_values() {
 
 #[test]
 fn ulp_hlg_roundtrip_u16() {
-    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
     let hlg_u16 = PixelDescriptor::new(
         ChannelType::U16,
@@ -895,7 +895,7 @@ fn ulp_hlg_roundtrip_u16() {
 
 #[test]
 fn ulp_hlg_eotf_monotonic() {
-    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
     let hlg_u16 = PixelDescriptor::new(
         ChannelType::U16,
@@ -933,7 +933,7 @@ fn ulp_hlg_eotf_monotonic() {
 
 #[test]
 fn ulp_pq_to_srgb_basic() {
-    use zenpixels::{ChannelLayout, ChannelType, TransferFunction};
+    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
     let pq_u16 = PixelDescriptor::new(
         ChannelType::U16,

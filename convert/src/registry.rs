@@ -47,6 +47,7 @@ impl FormatEntry {
             ChannelType::U16 => 16,
             ChannelType::F16 => 11,
             ChannelType::F32 => 32,
+            _ => 0,
         };
         Self {
             descriptor,
@@ -436,6 +437,7 @@ mod tests {
                     ChannelType::U16 => 16,
                     ChannelType::F16 => 16,
                     ChannelType::F32 => 32,
+                    _ => 0,
                 };
                 assert!(
                     entry.effective_bits <= container_bits,

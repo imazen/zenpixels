@@ -10,8 +10,12 @@
 
 #![allow(dead_code)]
 
-use zenpixels::{ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction};
-use zenpixels::{ConversionCost, Provenance, conversion_cost, conversion_cost_with_provenance};
+use zenpixels_convert::{
+    ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
+};
+use zenpixels_convert::{
+    ConversionCost, Provenance, conversion_cost, conversion_cost_with_provenance,
+};
 
 // ===========================================================================
 // Reference color math (f64 precision, test-only)

@@ -11,9 +11,8 @@
 //! at compile time through the [`Pixel`] trait. Use `erase()` to convert
 //! to a type-erased form, or `try_typed()` to go back.
 //!
-//! Format conversions (e.g., `to_rgb8()`, `to_rgba8()`) delegate to
-//! [`RowConverter`](crate::converter::RowConverter) for correct transfer-function-aware
-//! conversion.
+//! For format conversions (e.g., `convert_to`, `to_rgb8`), see the
+//! `zenpixels-convert` crate which provides `PixelBufferConvertExt`.
 
 use alloc::sync::Arc;
 use alloc::vec;
@@ -669,111 +668,6 @@ impl<'a, P> PixelSlice<'a, P> {
             color: self.color.clone(),
             _pixel: PhantomData,
         }
-    }
-
-    // -- Conversion methods ---------------------------------------------------
-
-    /// Convert pixel data to a different layout and depth.
-    ///
-    /// Uses [`RowConverter`](crate::converter::RowConverter) for
-    /// transfer-function-aware conversion. Color metadata (transfer,
-    /// primaries, working space, color context) is preserved.
-    ///
-    /// **Allocates** a new [`PixelBuffer`].
-    pub fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, crate::ConvertError> {
-        let src_desc = self.descriptor;
-        if src_desc == target {
-            // Identity — just copy.
-            let dst_stride = target.aligned_stride(self.width);
-            let total = dst_stride
-                .checked_mul(self.rows as usize)
-                .ok_or(crate::ConvertError::AllocationFailed)?;
-            let mut out =
-                try_alloc_zeroed(total).map_err(|_| crate::ConvertError::AllocationFailed)?;
-            for y in 0..self.rows {
-                let src_row = self.row(y);
-                let dst_start = y as usize * dst_stride;
-                out[dst_start..dst_start + src_row.len()].copy_from_slice(src_row);
-            }
-            let mut buf = PixelBuffer::from_vec(out, self.width, self.rows, target)
-                .map_err(|_| crate::ConvertError::AllocationFailed)?;
-            if let Some(ctx) = self.color_context() {
-                buf = buf.with_color_context(Arc::clone(ctx));
-            }
-            return Ok(buf);
-        }
-
-        let converter = crate::converter::RowConverter::new(src_desc, target)?;
-
-        let dst_stride = target.aligned_stride(self.width);
-        let total = dst_stride
-            .checked_mul(self.rows as usize)
-            .ok_or(crate::ConvertError::AllocationFailed)?;
-        let mut out = try_alloc_zeroed(total).map_err(|_| crate::ConvertError::AllocationFailed)?;
-
-        for y in 0..self.rows {
-            let src_row = self.row(y);
-            let dst_start = y as usize * dst_stride;
-            let dst_end = dst_start + dst_stride;
-            converter.convert_row(src_row, &mut out[dst_start..dst_end], self.width);
-        }
-
-        let mut buf = PixelBuffer::from_vec(out, self.width, self.rows, target)
-            .map_err(|_| crate::ConvertError::AllocationFailed)?;
-        if let Some(ctx) = self.color_context() {
-            buf = buf.with_color_context(Arc::clone(ctx));
-        }
-        Ok(buf)
-    }
-
-    /// Add an alpha channel. **Allocates** a new `PixelBuffer`.
-    ///
-    /// - Gray → GrayAlpha (opaque alpha)
-    /// - Rgb → Rgba (opaque alpha)
-    /// - Already has alpha → identity copy
-    pub fn try_add_alpha(&self) -> Result<PixelBuffer, crate::ConvertError> {
-        let desc = self.descriptor;
-        let target_layout = match desc.layout() {
-            crate::descriptor::ChannelLayout::Gray => crate::descriptor::ChannelLayout::GrayAlpha,
-            crate::descriptor::ChannelLayout::Rgb => crate::descriptor::ChannelLayout::Rgba,
-            other => other,
-        };
-        let alpha = if target_layout.has_alpha() && desc.alpha().is_none() {
-            Some(AlphaMode::Straight)
-        } else {
-            desc.alpha()
-        };
-        let target =
-            PixelDescriptor::new(desc.channel_type(), target_layout, alpha, desc.transfer());
-        self.convert_to(target)
-    }
-
-    /// Widen to U16 depth (lossless, ×257). **Allocates** a new `PixelBuffer`.
-    ///
-    /// No-op copy if already U16.
-    pub fn try_widen_to_u16(&self) -> Result<PixelBuffer, crate::ConvertError> {
-        let desc = self.descriptor;
-        let target = PixelDescriptor::new(
-            crate::descriptor::ChannelType::U16,
-            desc.layout(),
-            desc.alpha(),
-            desc.transfer(),
-        );
-        self.convert_to(target)
-    }
-
-    /// Narrow to U8 depth (lossy, rounded). **Allocates** a new `PixelBuffer`.
-    ///
-    /// No-op copy if already U8.
-    pub fn try_narrow_to_u8(&self) -> Result<PixelBuffer, crate::ConvertError> {
-        let desc = self.descriptor;
-        let target = PixelDescriptor::new(
-            crate::descriptor::ChannelType::U8,
-            desc.layout(),
-            desc.alpha(),
-            desc.transfer(),
-        );
-        self.convert_to(target)
     }
 }
 
@@ -2228,73 +2122,6 @@ impl<P> PixelBuffer<P> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Format conversion methods (type-erased PixelBuffer) via RowConverter
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "buffer")]
-impl PixelBuffer {
-    /// Convert to RGB8, allocating a new buffer.
-    ///
-    /// Uses [`RowConverter`](crate::converter::RowConverter) for correct
-    /// transfer-function-aware conversion.
-    pub fn to_rgb8(&self) -> PixelBuffer<Rgb<u8>> {
-        self.convert_to_typed(PixelDescriptor::RGB8_SRGB)
-    }
-
-    /// Convert to RGBA8, allocating a new buffer.
-    ///
-    /// Uses [`RowConverter`](crate::converter::RowConverter) for correct
-    /// transfer-function-aware conversion.
-    pub fn to_rgba8(&self) -> PixelBuffer<Rgba<u8>> {
-        self.convert_to_typed(PixelDescriptor::RGBA8_SRGB)
-    }
-
-    /// Convert to Gray8, allocating a new buffer.
-    ///
-    /// Uses [`RowConverter`](crate::converter::RowConverter) for correct
-    /// transfer-function-aware conversion.
-    pub fn to_gray8(&self) -> PixelBuffer<Gray<u8>> {
-        self.convert_to_typed(PixelDescriptor::GRAY8_SRGB)
-    }
-
-    /// Convert to BGRA8, allocating a new buffer.
-    ///
-    /// Uses [`RowConverter`](crate::converter::RowConverter) for correct
-    /// transfer-function-aware conversion.
-    pub fn to_bgra8(&self) -> PixelBuffer<BGRA<u8>> {
-        self.convert_to_typed(PixelDescriptor::BGRA8_SRGB)
-    }
-
-    /// Internal: convert to any target descriptor, returning a typed buffer.
-    fn convert_to_typed<Q: Pixel>(&self, target: PixelDescriptor) -> PixelBuffer<Q> {
-        let conv = crate::converter::RowConverter::new(self.descriptor, target)
-            .expect("RowConverter: no conversion path");
-        let dst_bpp = target.bytes_per_pixel();
-        let dst_stride = target.aligned_stride(self.width);
-        let total = dst_stride * self.height as usize;
-        let mut out = vec![0u8; total];
-        let src_slice = self.as_slice();
-        for y in 0..self.height {
-            let src_row = src_slice.row(y);
-            let dst_start = y as usize * dst_stride;
-            let dst_end = dst_start + self.width as usize * dst_bpp;
-            conv.convert_row(src_row, &mut out[dst_start..dst_end], self.width);
-        }
-        PixelBuffer {
-            data: out,
-            offset: 0,
-            width: self.width,
-            height: self.height,
-            stride: dst_stride,
-            descriptor: target,
-
-            color: self.color.clone(),
-            _pixel: PhantomData,
-        }
-    }
-}
-
 impl<P> fmt::Debug for PixelBuffer<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -2796,8 +2623,7 @@ mod buffer_tests {
     use super::*;
     use alloc::vec;
     use alloc::vec::Vec;
-    use rgb::alt::BGRA;
-    use rgb::{Gray, Rgb, Rgba};
+    use rgb::{Gray, Rgb};
 
     // --- ImgRef -> PixelSlice -> row access ---
 
@@ -2848,146 +2674,6 @@ mod buffer_tests {
         let v1 = u16::from_ne_bytes([row[2], row[3]]);
         assert_eq!(v0, 1000);
         assert_eq!(v1, 2000);
-    }
-
-    // --- PixelBuffer format conversion tests (via RowConverter) ---
-
-    #[test]
-    fn convert_rgb8_to_rgba8() {
-        let pixels: Vec<Rgb<u8>> = vec![
-            Rgb {
-                r: 10,
-                g: 20,
-                b: 30,
-            },
-            Rgb {
-                r: 40,
-                g: 50,
-                b: 60,
-            },
-        ];
-        let buf = PixelBuffer::from_pixels(pixels, 2, 1).unwrap();
-        let erased: PixelBuffer = buf.into();
-        let rgba = erased.to_rgba8();
-        assert_eq!(rgba.width(), 2);
-        assert_eq!(rgba.height(), 1);
-        let s = rgba.as_slice();
-        assert_eq!(s.row(0), &[10, 20, 30, 255, 40, 50, 60, 255]);
-    }
-
-    #[test]
-    fn convert_rgba8_to_rgb8() {
-        let pixels: Vec<Rgba<u8>> = vec![Rgba {
-            r: 10,
-            g: 20,
-            b: 30,
-            a: 128,
-        }];
-        let buf = PixelBuffer::from_pixels(pixels, 1, 1).unwrap();
-        let erased: PixelBuffer = buf.into();
-        let rgb = erased.to_rgb8();
-        let s = rgb.as_slice();
-        assert_eq!(s.row(0), &[10, 20, 30]);
-    }
-
-    #[test]
-    fn convert_gray8_to_rgb8() {
-        let pixels = vec![Gray::new(128u8), Gray::new(64u8)];
-        let buf = PixelBuffer::from_pixels(pixels, 2, 1).unwrap();
-        let erased: PixelBuffer = buf.into();
-        let rgb = erased.to_rgb8();
-        let s = rgb.as_slice();
-        assert_eq!(s.row(0), &[128, 128, 128, 64, 64, 64]);
-    }
-
-    #[test]
-    fn convert_gray8_to_rgba8() {
-        let pixels = vec![Gray::new(200u8)];
-        let buf = PixelBuffer::from_pixels(pixels, 1, 1).unwrap();
-        let erased: PixelBuffer = buf.into();
-        let rgba = erased.to_rgba8();
-        let s = rgba.as_slice();
-        assert_eq!(s.row(0), &[200, 200, 200, 255]);
-    }
-
-    #[test]
-    fn convert_bgra8_to_rgb8() {
-        let pixels: Vec<BGRA<u8>> = vec![BGRA {
-            b: 10,
-            g: 20,
-            r: 30,
-            a: 255,
-        }];
-        let buf = PixelBuffer::from_pixels(pixels, 1, 1).unwrap();
-        let erased: PixelBuffer = buf.into();
-        let rgb = erased.to_rgb8();
-        let s = rgb.as_slice();
-        // rgb order: r=30, g=20, b=10
-        assert_eq!(s.row(0), &[30, 20, 10]);
-    }
-
-    #[test]
-    fn convert_bgra8_to_rgba8() {
-        let pixels: Vec<BGRA<u8>> = vec![BGRA {
-            b: 10,
-            g: 20,
-            r: 30,
-            a: 128,
-        }];
-        let buf = PixelBuffer::from_pixels(pixels, 1, 1).unwrap();
-        let erased: PixelBuffer = buf.into();
-        let rgba = erased.to_rgba8();
-        let s = rgba.as_slice();
-        assert_eq!(s.row(0), &[30, 20, 10, 128]);
-    }
-
-    #[test]
-    fn convert_preserves_multirow() {
-        let pixels: Vec<Rgb<u8>> = vec![
-            Rgb {
-                r: 10,
-                g: 20,
-                b: 30,
-            },
-            Rgb {
-                r: 40,
-                g: 50,
-                b: 60,
-            },
-            Rgb {
-                r: 70,
-                g: 80,
-                b: 90,
-            },
-            Rgb {
-                r: 100,
-                g: 110,
-                b: 120,
-            },
-        ];
-        let buf = PixelBuffer::from_pixels(pixels, 2, 2).unwrap();
-        let erased: PixelBuffer = buf.into();
-        let rgba = erased.to_rgba8();
-        assert_eq!(rgba.width(), 2);
-        assert_eq!(rgba.height(), 2);
-        let s = rgba.as_slice();
-        assert_eq!(s.row(0), &[10, 20, 30, 255, 40, 50, 60, 255]);
-        assert_eq!(s.row(1), &[70, 80, 90, 255, 100, 110, 120, 255]);
-    }
-
-    #[test]
-    fn convert_grayalpha8_to_rgba8() {
-        // GrayAlpha8 needs manual buffer construction
-        let mut buf = PixelBuffer::new(1, 1, PixelDescriptor::GRAYA8_SRGB);
-        {
-            let mut s = buf.as_slice_mut();
-            let row = s.row_mut(0);
-            row[0] = 100; // gray value
-            row[1] = 200; // alpha
-        }
-        let rgba = buf.to_rgba8();
-        let s = rgba.as_slice();
-        assert_eq!(s.row(0), &[100, 100, 100, 200]);
     }
 
     // --- from_pixels_erased ---

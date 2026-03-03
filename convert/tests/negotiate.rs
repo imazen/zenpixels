@@ -1,7 +1,7 @@
 //! Tests for format negotiation preference ordering.
 
-use zenpixels::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
-use zenpixels::{
+use zenpixels_convert::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
+use zenpixels_convert::{
     ConversionCost, ConvertIntent, FormatOption, Provenance, best_match, best_match_with,
     conversion_cost, conversion_cost_with_provenance, ideal_format, negotiate,
 };

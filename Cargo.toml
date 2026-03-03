@@ -1,34 +1,29 @@
+[workspace]
+members = [".", "convert"]
+resolver = "2"
+
 [package]
 name = "zenpixels"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.93"
 license = "Apache-2.0 OR MIT"
-description = "Pixel format negotiation and transfer-function-aware conversion for zen* codecs"
+description = "Pixel format interchange types for zen* codecs"
 categories = ["multimedia::images"]
-keywords = ["image", "pixel", "conversion", "srgb", "codec"]
+keywords = ["image", "pixel", "format", "descriptor", "codec"]
 repository = "https://github.com/imazen/zenpixels"
 
 [features]
 default = ["std"]
-std = ["linear-srgb/std"]
+std = []
 planar = []
 buffer = ["dep:rgb", "dep:imgref"]
-codec = ["buffer", "dep:enough"]
-hdr-ultrahdr = ["dep:ultrahdr-core"]
-hdr-gainforge = ["dep:gainforge"]
 
 [dependencies]
-linear-srgb = { version = "0.5", path = "../linear-srgb", default-features = false }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["as-bytes"], optional = true }
 imgref = { version = "1.12", optional = true }
-enough = { version = "0.4", optional = true }
-ultrahdr-core = { version = "0.2", path = "../ultrahdr/ultrahdr-core", optional = true }
-gainforge = { version = "0.4", optional = true }
 
 [dev-dependencies]
 imgref = "1.12"
 rgb = { version = "0.8", features = ["as-bytes"] }
-half = "2"
-zenresize = { path = "../zenresize", default-features = false, features = ["std"] }
