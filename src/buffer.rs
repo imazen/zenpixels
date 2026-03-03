@@ -20,20 +20,20 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 use imgref::ImgRef;
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 use imgref::ImgVec;
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 use rgb::alt::BGRA;
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 use rgb::{Gray, Rgb, Rgba};
 
 use crate::color::ColorContext;
 use crate::descriptor::{
     AlphaMode, ColorPrimaries, PixelDescriptor, SignalRange, TransferFunction,
 };
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 use crate::pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
 
 // ---------------------------------------------------------------------------
@@ -100,67 +100,67 @@ impl Pixel for Bgrx {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::BGRX8;
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl Pixel for Rgb<u8> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::RGB8;
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl Pixel for Rgba<u8> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::RGBA8;
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl Pixel for Gray<u8> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAY8;
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl Pixel for Rgb<u16> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::RGB16;
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl Pixel for Rgba<u16> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::RGBA16;
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl Pixel for Gray<u16> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAY16;
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl Pixel for Rgb<f32> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::RGBF32;
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl Pixel for Rgba<f32> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::RGBAF32;
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl Pixel for Gray<f32> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYF32;
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl Pixel for BGRA<u8> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::BGRA8;
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl Pixel for GrayAlpha8 {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYA8;
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl Pixel for GrayAlpha16 {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYA16;
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl Pixel for GrayAlphaF32 {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYAF32;
 }
@@ -287,7 +287,7 @@ fn required_bytes(rows: u32, stride: usize, min_stride: usize) -> Result<usize, 
 
 /// Convert `Vec<P>` to `Vec<u8>`. Zero-copy when alignment matches (u8-component
 /// types), copies via `cast_slice` otherwise.
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 fn pixels_to_bytes<P: bytemuck::Pod>(pixels: Vec<P>) -> Vec<u8> {
     match bytemuck::try_cast_vec(pixels) {
         Ok(bytes) => bytes,
@@ -1074,7 +1074,7 @@ impl<'a> PixelSliceMut<'a, Rgbx> {
     }
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl<'a> PixelSliceMut<'a, Rgbx> {
     /// Upgrade to RGBA by setting all padding bytes to 255 (fully opaque).
     pub fn upgrade_to_rgba(self) -> PixelSliceMut<'a, Rgba<u8>> {
@@ -1125,7 +1125,7 @@ impl<'a> PixelSliceMut<'a, Bgrx> {
     }
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl<'a> PixelSliceMut<'a, Bgrx> {
     /// Upgrade to BGRA by setting all padding bytes to 255 (fully opaque).
     pub fn upgrade_to_bgra(self) -> PixelSliceMut<'a, BGRA<u8>> {
@@ -1151,7 +1151,7 @@ impl<'a> PixelSliceMut<'a, Bgrx> {
     }
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl<'a> PixelSliceMut<'a, Rgba<u8>> {
     /// Matte alpha against a solid RGB background, producing RGBX.
     ///
@@ -1225,7 +1225,7 @@ impl<'a> PixelSliceMut<'a, Rgba<u8>> {
     }
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl<'a> PixelSliceMut<'a, BGRA<u8>> {
     /// Matte alpha against a solid RGB background, producing BGRX.
     ///
@@ -1501,7 +1501,7 @@ impl<P: Pixel> PixelBuffer<P> {
     }
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "rgb")]
 impl<P: Pixel> PixelBuffer<P> {
     /// Construct from a typed pixel `Vec`.
     ///
@@ -1533,7 +1533,10 @@ impl<P: Pixel> PixelBuffer<P> {
             _pixel: PhantomData,
         })
     }
+}
 
+#[cfg(feature = "imgref")]
+impl<P: Pixel> PixelBuffer<P> {
     /// Construct from a typed `ImgVec`.
     ///
     /// Zero-copy when `P` has alignment 1 (u8-component types).
@@ -1561,7 +1564,7 @@ impl<P: Pixel> PixelBuffer<P> {
     }
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl<P: Pixel> PixelBuffer<P> {
     /// Borrow the buffer as an [`ImgRef`].
     ///
@@ -1603,8 +1606,8 @@ impl<P: Pixel> PixelBuffer<P> {
     }
 }
 
-/// Type-erased construction and `try_as_imgref` for PixelBuffer.
-#[cfg(feature = "buffer")]
+/// Type-erased typed pixel construction and access.
+#[cfg(feature = "rgb")]
 impl PixelBuffer {
     /// Zero-copy construction from typed pixels, returning an erased `PixelBuffer`.
     ///
@@ -1620,33 +1623,6 @@ impl PixelBuffer {
         height: u32,
     ) -> Result<Self, BufferError> {
         PixelBuffer::<P>::from_pixels(pixels, width, height).map(PixelBuffer::from)
-    }
-
-    /// Try to borrow the buffer as a typed [`ImgRef`].
-    ///
-    /// Returns `None` if the descriptor is not layout-compatible with `P`.
-    pub fn try_as_imgref<P: Pixel>(&self) -> Option<ImgRef<'_, P>> {
-        if !self.descriptor.layout_compatible(P::DESCRIPTOR) {
-            return None;
-        }
-        let pixel_size = core::mem::size_of::<P>();
-        if pixel_size == 0 || !self.stride.is_multiple_of(pixel_size) {
-            return None;
-        }
-        let total_bytes = if self.height == 0 {
-            0
-        } else {
-            (self.height as usize - 1) * self.stride + self.width as usize * pixel_size
-        };
-        let data = &self.data[self.offset..self.offset + total_bytes];
-        let pixels: &[P] = bytemuck::cast_slice(data);
-        let stride_px = self.stride / pixel_size;
-        Some(imgref::Img::new_stride(
-            pixels,
-            self.width as usize,
-            self.height as usize,
-            stride_px,
-        ))
     }
 
     /// Zero-copy access to the pixel data as a typed slice.
@@ -1669,36 +1645,6 @@ impl PixelBuffer {
         let total = row_bytes * self.height as usize;
         let data = &self.data[self.offset..self.offset + total];
         Some(bytemuck::cast_slice(data))
-    }
-
-    /// Try to borrow the buffer as a typed mutable [`ImgRefMut`](imgref::ImgRefMut).
-    ///
-    /// Returns `None` if the descriptor is not layout-compatible with `P`.
-    pub fn try_as_imgref_mut<P: Pixel>(
-        &mut self,
-    ) -> Option<imgref::ImgRefMut<'_, P>> {
-        if !self.descriptor.layout_compatible(P::DESCRIPTOR) {
-            return None;
-        }
-        let pixel_size = core::mem::size_of::<P>();
-        if pixel_size == 0 || !self.stride.is_multiple_of(pixel_size) {
-            return None;
-        }
-        let total_bytes = if self.height == 0 {
-            0
-        } else {
-            (self.height as usize - 1) * self.stride + self.width as usize * pixel_size
-        };
-        let offset = self.offset;
-        let data = &mut self.data[offset..offset + total_bytes];
-        let pixels: &mut [P] = bytemuck::cast_slice_mut(data);
-        let stride_px = self.stride / pixel_size;
-        Some(imgref::Img::new_stride(
-            pixels,
-            self.width as usize,
-            self.height as usize,
-            stride_px,
-        ))
     }
 
     /// Consume the buffer and return the pixels as a typed `Vec<P>`.
@@ -1741,6 +1687,67 @@ impl PixelBuffer {
             out.extend_from_slice(bytemuck::cast_slice(row_data));
         }
         Some(out)
+    }
+}
+
+/// Imgref interop for type-erased PixelBuffer.
+#[cfg(feature = "imgref")]
+impl PixelBuffer {
+    /// Try to borrow the buffer as a typed [`ImgRef`].
+    ///
+    /// Returns `None` if the descriptor is not layout-compatible with `P`.
+    pub fn try_as_imgref<P: Pixel>(&self) -> Option<ImgRef<'_, P>> {
+        if !self.descriptor.layout_compatible(P::DESCRIPTOR) {
+            return None;
+        }
+        let pixel_size = core::mem::size_of::<P>();
+        if pixel_size == 0 || !self.stride.is_multiple_of(pixel_size) {
+            return None;
+        }
+        let total_bytes = if self.height == 0 {
+            0
+        } else {
+            (self.height as usize - 1) * self.stride + self.width as usize * pixel_size
+        };
+        let data = &self.data[self.offset..self.offset + total_bytes];
+        let pixels: &[P] = bytemuck::cast_slice(data);
+        let stride_px = self.stride / pixel_size;
+        Some(imgref::Img::new_stride(
+            pixels,
+            self.width as usize,
+            self.height as usize,
+            stride_px,
+        ))
+    }
+
+    /// Try to borrow the buffer as a typed mutable [`ImgRefMut`](imgref::ImgRefMut).
+    ///
+    /// Returns `None` if the descriptor is not layout-compatible with `P`.
+    pub fn try_as_imgref_mut<P: Pixel>(
+        &mut self,
+    ) -> Option<imgref::ImgRefMut<'_, P>> {
+        if !self.descriptor.layout_compatible(P::DESCRIPTOR) {
+            return None;
+        }
+        let pixel_size = core::mem::size_of::<P>();
+        if pixel_size == 0 || !self.stride.is_multiple_of(pixel_size) {
+            return None;
+        }
+        let total_bytes = if self.height == 0 {
+            0
+        } else {
+            (self.height as usize - 1) * self.stride + self.width as usize * pixel_size
+        };
+        let offset = self.offset;
+        let data = &mut self.data[offset..offset + total_bytes];
+        let pixels: &mut [P] = bytemuck::cast_slice_mut(data);
+        let stride_px = self.stride / pixel_size;
+        Some(imgref::Img::new_stride(
+            pixels,
+            self.width as usize,
+            self.height as usize,
+            stride_px,
+        ))
     }
 }
 
@@ -2136,10 +2143,10 @@ impl<P> fmt::Debug for PixelBuffer<P> {
 }
 
 // ---------------------------------------------------------------------------
-// ImgRef -> PixelSlice (zero-copy From impls) -- buffer feature only
+// ImgRef -> PixelSlice (zero-copy From impls) -- imgref feature only
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 macro_rules! impl_from_imgref {
     ($pixel:ty, $descriptor:expr) => {
         impl<'a> From<ImgRef<'a, $pixel>> for PixelSlice<'a, $pixel> {
@@ -2164,32 +2171,32 @@ macro_rules! impl_from_imgref {
 
 // u8 types are conventionally sRGB, f32 types are conventionally linear.
 // u16 types have no standard convention so use transfer-agnostic descriptors.
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref!(Rgb<u8>, PixelDescriptor::RGB8_SRGB);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref!(Rgba<u8>, PixelDescriptor::RGBA8_SRGB);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref!(Rgb<u16>, PixelDescriptor::RGB16);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref!(Rgba<u16>, PixelDescriptor::RGBA16);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref!(Rgb<f32>, PixelDescriptor::RGBF32_LINEAR);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref!(Rgba<f32>, PixelDescriptor::RGBAF32_LINEAR);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref!(Gray<u8>, PixelDescriptor::GRAY8_SRGB);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref!(Gray<u16>, PixelDescriptor::GRAY16);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref!(Gray<f32>, PixelDescriptor::GRAYF32_LINEAR);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref!(BGRA<u8>, PixelDescriptor::BGRA8_SRGB);
 
 // ---------------------------------------------------------------------------
-// ImgRefMut -> PixelSliceMut (zero-copy From impls) -- buffer feature only
+// ImgRefMut -> PixelSliceMut (zero-copy From impls) -- imgref feature only
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 macro_rules! impl_from_imgref_mut {
     ($pixel:ty, $descriptor:expr) => {
         impl<'a> From<imgref::ImgRefMut<'a, $pixel>> for PixelSliceMut<'a, $pixel> {
@@ -2215,25 +2222,25 @@ macro_rules! impl_from_imgref_mut {
     };
 }
 
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref_mut!(Rgb<u8>, PixelDescriptor::RGB8_SRGB);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref_mut!(Rgba<u8>, PixelDescriptor::RGBA8_SRGB);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref_mut!(Rgb<u16>, PixelDescriptor::RGB16);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref_mut!(Rgba<u16>, PixelDescriptor::RGBA16);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref_mut!(Rgb<f32>, PixelDescriptor::RGBF32_LINEAR);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref_mut!(Rgba<f32>, PixelDescriptor::RGBAF32_LINEAR);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref_mut!(Gray<u8>, PixelDescriptor::GRAY8_SRGB);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref_mut!(Gray<u16>, PixelDescriptor::GRAY16);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref_mut!(Gray<f32>, PixelDescriptor::GRAYF32_LINEAR);
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 impl_from_imgref_mut!(BGRA<u8>, PixelDescriptor::BGRA8_SRGB);
 
 // ---------------------------------------------------------------------------
@@ -2618,7 +2625,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "buffer"))]
+#[cfg(all(test, feature = "imgref"))]
 mod buffer_tests {
     use super::*;
     use alloc::vec;
