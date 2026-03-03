@@ -388,6 +388,12 @@ pub struct PixelDescriptor {
 impl PixelDescriptor {
     // -- Forwarding accessors -------------------------------------------------
 
+    /// The pixel format variant (layout + depth, no transfer or alpha semantics).
+    #[inline]
+    pub const fn pixel_format(&self) -> PixelFormat {
+        self.format
+    }
+
     /// Channel storage type.
     #[inline]
     pub const fn channel_type(&self) -> ChannelType {
