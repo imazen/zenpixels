@@ -1,7 +1,7 @@
 //! Roundtrip tests for all supported format pairs.
 
-use zenpixels::RowConverter;
-use zenpixels::{
+use zenpixels_convert::RowConverter;
+use zenpixels_convert::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
 };
 

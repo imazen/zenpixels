@@ -6,9 +6,9 @@
 //! 3. Cost predictions are consistent with calibrated loss buckets
 //! 4. The full matrix produces sensible results
 
-use zenpixels::registry;
-use zenpixels::{AlphaMode, ChannelType, PixelDescriptor, TransferFunction};
-use zenpixels::{
+use zenpixels_convert::registry;
+use zenpixels_convert::{AlphaMode, ChannelType, PixelDescriptor, TransferFunction};
+use zenpixels_convert::{
     CodecFormats, ConversionPath, LossBucket, OpCategory, Provenance, QualityThreshold,
     generate_path_matrix, matrix_stats, optimal_path,
 };

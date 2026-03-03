@@ -1,7 +1,7 @@
 //! Tests for the adapt module (codec helper functions).
 
-use zenpixels::PixelDescriptor;
-use zenpixels::adapt::{adapt_for_encode, convert_buffer};
+use zenpixels_convert::PixelDescriptor;
+use zenpixels_convert::adapt::{adapt_for_encode, convert_buffer};
 
 /// When input matches a supported format, should return borrowed data.
 #[test]

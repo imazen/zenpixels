@@ -190,13 +190,8 @@ impl ConvertPlan {
     ) -> Result<Self, ConvertError> {
         // Check alpha removal policy.
         let drops_alpha = from.alpha().is_some() && to.alpha().is_none();
-        if drops_alpha {
-            match options.alpha_policy {
-                AlphaPolicy::Forbid => return Err(ConvertError::AlphaRemovalForbidden),
-                AlphaPolicy::DiscardIfOpaque
-                | AlphaPolicy::DiscardUnchecked
-                | AlphaPolicy::CompositeOnto { .. } => {}
-            }
+        if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
+            return Err(ConvertError::AlphaRemovalForbidden);
         }
 
         // Check depth reduction policy.

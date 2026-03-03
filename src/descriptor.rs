@@ -227,35 +227,6 @@ impl TransferFunction {
         }
     }
 
-    /// Scalar EOTF: encoded signal → linear light.
-    ///
-    /// Canonical reference implementation for testing SIMD paths.
-    /// Clamps negative inputs to zero.
-    #[allow(unreachable_patterns)]
-    pub fn linearize(&self, v: f32) -> f32 {
-        match self {
-            Self::Linear | Self::Unknown => v,
-            Self::Srgb | Self::Bt709 => linear_srgb::scalar::srgb_to_linear(v),
-            Self::Pq => crate::convert::pq_eotf(v),
-            Self::Hlg => crate::convert::hlg_eotf(v),
-            _ => v,
-        }
-    }
-
-    /// Scalar OETF: linear light → encoded signal.
-    ///
-    /// Canonical reference implementation for testing SIMD paths.
-    #[allow(unreachable_patterns)]
-    pub fn delinearize(&self, v: f32) -> f32 {
-        match self {
-            Self::Linear | Self::Unknown => v,
-            Self::Srgb | Self::Bt709 => linear_srgb::scalar::linear_to_srgb(v),
-            Self::Pq => crate::convert::pq_oetf(v),
-            Self::Hlg => crate::convert::hlg_oetf(v),
-            _ => v,
-        }
-    }
-
     /// Reference white luminance in nits.
     ///
     /// - SDR (sRGB, BT.709, Linear, Unknown): `1.0` (relative/scene-referred)
@@ -347,32 +318,6 @@ impl ColorPrimaries {
             Self::Bt2020 => 3,
             Self::Unknown => 0,
             _ => 0,
-        }
-    }
-
-    /// Linear RGB → CIE XYZ (D65 white point).
-    ///
-    /// Returns `None` for [`Unknown`](Self::Unknown).
-    #[allow(unreachable_patterns)]
-    pub fn to_xyz_matrix(&self) -> Option<&'static crate::gamut::GamutMatrix> {
-        match self {
-            Self::Bt709 => Some(&crate::gamut::BT709_TO_XYZ),
-            Self::DisplayP3 => Some(&crate::gamut::DISPLAY_P3_TO_XYZ),
-            Self::Bt2020 => Some(&crate::gamut::BT2020_TO_XYZ),
-            _ => None,
-        }
-    }
-
-    /// CIE XYZ (D65 white point) → linear RGB.
-    ///
-    /// Returns `None` for [`Unknown`](Self::Unknown).
-    #[allow(unreachable_patterns)]
-    pub fn from_xyz_matrix(&self) -> Option<&'static crate::gamut::GamutMatrix> {
-        match self {
-            Self::Bt709 => Some(&crate::gamut::XYZ_TO_BT709),
-            Self::DisplayP3 => Some(&crate::gamut::XYZ_TO_DISPLAY_P3),
-            Self::Bt2020 => Some(&crate::gamut::XYZ_TO_BT2020),
-            _ => None,
         }
     }
 }
@@ -2879,56 +2824,6 @@ mod tests {
         assert_eq!(r, r2);
     }
 
-    // --- TransferFunction linearize/delinearize tests ---
-
-    #[test]
-    fn srgb_linearize_roundtrip() {
-        let tf = TransferFunction::Srgb;
-        for &v in &[0.0, 0.04045, 0.1, 0.5, 0.73, 1.0] {
-            let lin = tf.linearize(v);
-            let back = tf.delinearize(lin);
-            assert!(
-                (v - back).abs() < 1e-5,
-                "sRGB roundtrip failed for {v}: linearize={lin}, delinearize={back}"
-            );
-        }
-    }
-
-    #[test]
-    fn pq_linearize_roundtrip() {
-        let tf = TransferFunction::Pq;
-        for &v in &[0.0, 0.1, 0.5, 0.75, 1.0] {
-            let lin = tf.linearize(v);
-            let back = tf.delinearize(lin);
-            assert!(
-                (v - back).abs() < 1e-4,
-                "PQ roundtrip failed for {v}: linearize={lin}, delinearize={back}"
-            );
-        }
-    }
-
-    #[test]
-    fn hlg_linearize_roundtrip() {
-        let tf = TransferFunction::Hlg;
-        for &v in &[0.0, 0.1, 0.3, 0.5, 0.8, 1.0] {
-            let lin = tf.linearize(v);
-            let back = tf.delinearize(lin);
-            assert!(
-                (v - back).abs() < 1e-4,
-                "HLG roundtrip failed for {v}: linearize={lin}, delinearize={back}"
-            );
-        }
-    }
-
-    #[test]
-    fn linear_identity() {
-        let tf = TransferFunction::Linear;
-        for &v in &[0.0, 0.5, 1.0] {
-            assert_eq!(tf.linearize(v), v);
-            assert_eq!(tf.delinearize(v), v);
-        }
-    }
-
     #[test]
     fn reference_white_nits_values() {
         assert_eq!(TransferFunction::Pq.reference_white_nits(), 203.0);
@@ -2936,36 +2831,6 @@ mod tests {
         assert_eq!(TransferFunction::Hlg.reference_white_nits(), 1.0);
         assert_eq!(TransferFunction::Linear.reference_white_nits(), 1.0);
         assert_eq!(TransferFunction::Unknown.reference_white_nits(), 1.0);
-    }
-
-    // --- ColorPrimaries XYZ matrix tests ---
-
-    #[test]
-    fn xyz_matrix_availability() {
-        assert!(ColorPrimaries::Bt709.to_xyz_matrix().is_some());
-        assert!(ColorPrimaries::Bt709.from_xyz_matrix().is_some());
-        assert!(ColorPrimaries::DisplayP3.to_xyz_matrix().is_some());
-        assert!(ColorPrimaries::Bt2020.to_xyz_matrix().is_some());
-        assert!(ColorPrimaries::Unknown.to_xyz_matrix().is_none());
-        assert!(ColorPrimaries::Unknown.from_xyz_matrix().is_none());
-    }
-
-    #[test]
-    fn xyz_roundtrip_bt709() {
-        let to = ColorPrimaries::Bt709.to_xyz_matrix().unwrap();
-        let from = ColorPrimaries::Bt709.from_xyz_matrix().unwrap();
-        let rgb = [0.5f32, 0.3, 0.8];
-        let mut v = rgb;
-        crate::gamut::apply_matrix_f32(&mut v, to);
-        crate::gamut::apply_matrix_f32(&mut v, from);
-        for c in 0..3 {
-            assert!(
-                (v[c] - rgb[c]).abs() < 1e-4,
-                "XYZ roundtrip BT.709 ch{c}: {:.6} vs {:.6}",
-                v[c],
-                rgb[c]
-            );
-        }
     }
 
     // --- PlaneLayout mask tests ---

@@ -7,8 +7,9 @@
 //! - `fast_cbrt`: fast cube root (~22 bits precision)
 //! - Scalar `rgb_to_oklab` / `oklab_to_rgb` reference implementations
 
-use crate::ColorPrimaries;
+use crate::ext::ColorPrimariesExt;
 use crate::gamut::{GamutMatrix, mat3_mul};
+use zenpixels::ColorPrimaries;
 
 // ---------------------------------------------------------------------------
 // Oklab matrices (Björn Ottosson, 2020)
