@@ -13,6 +13,8 @@ repository = "https://github.com/imazen/zenpixels"
 default = ["std"]
 std = ["zenpixels/std", "linear-srgb/std"]
 buffer = ["zenpixels/buffer", "dep:rgb"]
+rgb = ["zenpixels/rgb"]
+imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]
 codec = ["buffer", "dep:enough"]
 hdr-ultrahdr = ["dep:ultrahdr-core"]
@@ -28,6 +30,6 @@ ultrahdr-core = { version = "0.2", path = "../../ultrahdr/ultrahdr-core", option
 gainforge = { version = "0.4", optional = true }
 
 [dev-dependencies]
-zenpixels = { path = "..", features = ["buffer", "planar"] }
+zenpixels = { path = "..", features = ["buffer", "planar", "rgb", "imgref"] }
 half = "2"
 zenresize = { path = "../../zenresize", default-features = false, features = ["std"] }
