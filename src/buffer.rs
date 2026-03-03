@@ -447,7 +447,7 @@ impl<'a, P> PixelSlice<'a, P> {
     /// Return a copy with a different transfer function.
     #[inline]
     pub fn with_transfer(mut self, tf: TransferFunction) -> Self {
-        self.descriptor.format.transfer = tf;
+        self.descriptor.transfer = tf;
         self
     }
 
@@ -468,7 +468,7 @@ impl<'a, P> PixelSlice<'a, P> {
     /// Return a copy with a different alpha mode.
     #[inline]
     pub fn with_alpha_mode(mut self, am: Option<AlphaMode>) -> Self {
-        self.descriptor.format.alpha = am;
+        self.descriptor.alpha = am;
         self
     }
 
@@ -844,7 +844,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
     /// Return a copy with a different transfer function.
     #[inline]
     pub fn with_transfer(mut self, tf: TransferFunction) -> Self {
-        self.descriptor.format.transfer = tf;
+        self.descriptor.transfer = tf;
         self
     }
 
@@ -865,7 +865,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
     /// Return a copy with a different alpha mode.
     #[inline]
     pub fn with_alpha_mode(mut self, am: Option<AlphaMode>) -> Self {
-        self.descriptor.format.alpha = am;
+        self.descriptor.alpha = am;
         self
     }
 
@@ -1723,9 +1723,7 @@ impl PixelBuffer {
     /// Try to borrow the buffer as a typed mutable [`ImgRefMut`](imgref::ImgRefMut).
     ///
     /// Returns `None` if the descriptor is not layout-compatible with `P`.
-    pub fn try_as_imgref_mut<P: Pixel>(
-        &mut self,
-    ) -> Option<imgref::ImgRefMut<'_, P>> {
+    pub fn try_as_imgref_mut<P: Pixel>(&mut self) -> Option<imgref::ImgRefMut<'_, P>> {
         if !self.descriptor.layout_compatible(P::DESCRIPTOR) {
             return None;
         }
@@ -1818,7 +1816,7 @@ impl<P> PixelBuffer<P> {
     /// Return a copy with a different transfer function.
     #[inline]
     pub fn with_transfer(mut self, tf: TransferFunction) -> Self {
-        self.descriptor.format.transfer = tf;
+        self.descriptor.transfer = tf;
         self
     }
 
@@ -1839,7 +1837,7 @@ impl<P> PixelBuffer<P> {
     /// Return a copy with a different alpha mode.
     #[inline]
     pub fn with_alpha_mode(mut self, am: Option<AlphaMode>) -> Self {
-        self.descriptor.format.alpha = am;
+        self.descriptor.alpha = am;
         self
     }
 
