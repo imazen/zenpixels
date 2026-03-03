@@ -45,7 +45,7 @@ use crate::pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
 /// Same memory layout as `Rgba<u8>` but the 4th byte is padding,
 /// not alpha. Use this for SIMD-friendly 32-bit RGB processing
 /// without alpha semantics.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[repr(C)]
 pub struct Rgbx {
     /// Red channel.
@@ -61,7 +61,7 @@ pub struct Rgbx {
 /// 32-bit BGR pixel with padding byte (BGRx).
 ///
 /// Same memory layout as `BGRA<u8>` but the 4th byte is padding.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[repr(C)]
 pub struct Bgrx {
     /// Blue channel.
@@ -87,7 +87,7 @@ pub struct Bgrx {
 /// The trait is open (not sealed) — custom pixel types can implement it.
 /// The `new_typed()` constructors include a compile-time assertion that
 /// `size_of::<P>() == P::DESCRIPTOR.bytes_per_pixel()` to catch bad impls.
-pub trait Pixel: Copy + 'static {
+pub trait Pixel: bytemuck::Pod {
     /// The pixel format descriptor for this type.
     const DESCRIPTOR: PixelDescriptor;
 }
@@ -288,7 +288,7 @@ fn required_bytes(rows: u32, stride: usize, min_stride: usize) -> Result<usize, 
 /// Convert `Vec<P>` to `Vec<u8>`. Zero-copy when alignment matches (u8-component
 /// types), copies via `cast_slice` otherwise.
 #[cfg(feature = "buffer")]
-fn pixels_to_bytes<P: bytemuck::NoUninit>(pixels: Vec<P>) -> Vec<u8> {
+fn pixels_to_bytes<P: bytemuck::Pod>(pixels: Vec<P>) -> Vec<u8> {
     match bytemuck::try_cast_vec(pixels) {
         Ok(bytes) => bytes,
         Err((_err, pixels)) => bytemuck::cast_slice::<P, u8>(&pixels).to_vec(),
@@ -1502,7 +1502,7 @@ impl<P: Pixel> PixelBuffer<P> {
 }
 
 #[cfg(feature = "buffer")]
-impl<P: Pixel + bytemuck::NoUninit> PixelBuffer<P> {
+impl<P: Pixel> PixelBuffer<P> {
     /// Construct from a typed pixel `Vec`.
     ///
     /// Zero-copy when `P` has alignment 1 (u8-component types like `Rgb<u8>`).
@@ -1562,7 +1562,7 @@ impl<P: Pixel + bytemuck::NoUninit> PixelBuffer<P> {
 }
 
 #[cfg(feature = "buffer")]
-impl<P: Pixel + bytemuck::AnyBitPattern + bytemuck::NoUninit> PixelBuffer<P> {
+impl<P: Pixel> PixelBuffer<P> {
     /// Borrow the buffer as an [`ImgRef`].
     ///
     /// Zero-copy: reinterprets the raw bytes as typed pixels via
@@ -1614,7 +1614,7 @@ impl PixelBuffer {
     /// # Errors
     ///
     /// Returns [`BufferError::InvalidDimensions`] if `pixels.len() != width * height`.
-    pub fn from_pixels_erased<P: Pixel + bytemuck::NoUninit>(
+    pub fn from_pixels_erased<P: Pixel>(
         pixels: Vec<P>,
         width: u32,
         height: u32,
@@ -1625,7 +1625,7 @@ impl PixelBuffer {
     /// Try to borrow the buffer as a typed [`ImgRef`].
     ///
     /// Returns `None` if the descriptor is not layout-compatible with `P`.
-    pub fn try_as_imgref<P: Pixel + bytemuck::AnyBitPattern>(&self) -> Option<ImgRef<'_, P>> {
+    pub fn try_as_imgref<P: Pixel>(&self) -> Option<ImgRef<'_, P>> {
         if !self.descriptor.layout_compatible(P::DESCRIPTOR) {
             return None;
         }
@@ -1657,7 +1657,7 @@ impl PixelBuffer {
     /// This is a convenience for the common case where you just need a flat
     /// pixel slice without imgref metadata. For strided access, use
     /// [`try_as_imgref()`](Self::try_as_imgref).
-    pub fn as_contiguous_pixels<P: Pixel + bytemuck::AnyBitPattern>(&self) -> Option<&[P]> {
+    pub fn as_contiguous_pixels<P: Pixel>(&self) -> Option<&[P]> {
         if !self.descriptor.layout_compatible(P::DESCRIPTOR) {
             return None;
         }
@@ -1674,7 +1674,7 @@ impl PixelBuffer {
     /// Try to borrow the buffer as a typed mutable [`ImgRefMut`](imgref::ImgRefMut).
     ///
     /// Returns `None` if the descriptor is not layout-compatible with `P`.
-    pub fn try_as_imgref_mut<P: Pixel + bytemuck::AnyBitPattern + bytemuck::NoUninit>(
+    pub fn try_as_imgref_mut<P: Pixel>(
         &mut self,
     ) -> Option<imgref::ImgRefMut<'_, P>> {
         if !self.descriptor.layout_compatible(P::DESCRIPTOR) {
@@ -1707,7 +1707,7 @@ impl PixelBuffer {
     /// Strips stride padding if present. Zero-copy when the buffer is
     /// tightly packed and `P` has alignment 1 (u8-component types like
     /// `Rgb<u8>`, `Rgba<u8>`); copies otherwise.
-    pub fn into_contiguous_pixels<P: Pixel + bytemuck::AnyBitPattern>(self) -> Option<Vec<P>> {
+    pub fn into_contiguous_pixels<P: Pixel>(self) -> Option<Vec<P>> {
         if !self.descriptor.layout_compatible(P::DESCRIPTOR) {
             return None;
         }
