@@ -21,7 +21,7 @@ hdr-ultrahdr = ["dep:ultrahdr-core"]
 hdr-gainforge = ["dep:gainforge"]
 
 [dependencies]
-zenpixels = { path = "..", default-features = false }
+zenpixels = { path = "../zenpixels", default-features = false }
 linear-srgb = { version = "0.5", path = "../../linear-srgb", default-features = false }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck", "unstable-experimental"], optional = true }
@@ -30,6 +30,6 @@ ultrahdr-core = { version = "0.2", path = "../../ultrahdr/ultrahdr-core", option
 gainforge = { version = "0.4", optional = true }
 
 [dev-dependencies]
-zenpixels = { path = "..", features = ["buffer", "planar", "rgb", "imgref"] }
+zenpixels = { path = "../zenpixels", features = ["buffer", "planar", "rgb", "imgref"] }
 half = "2"
 zenresize = { path = "../../zenresize", default-features = false, features = ["std"] }
