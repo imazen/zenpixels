@@ -1,7 +1,62 @@
-//! Codec adapter functions.
+//! Codec adapter functions — the fastest path to a compliant encoder.
 //!
-//! High-level helpers that combine format negotiation with conversion,
-//! replacing the per-codec format dispatch if-chains.
+//! These functions combine format negotiation with pixel conversion in a
+//! single call, replacing the per-codec format dispatch if-chains that
+//! every encoder would otherwise need to write.
+//!
+//! # Which function to use
+//!
+//! | Function | Negotiation | Policy | Use case |
+//! |----------|-------------|--------|----------|
+//! | [`adapt_for_encode`] | `Fastest` intent | Permissive | Simple encode path |
+//! | [`adapt_for_encode_with_intent`] | Caller-specified | Permissive | Encode after processing |
+//! | [`adapt_for_encode_explicit`] | `Fastest` intent | [`ConvertOptions`] | Policy-sensitive encode |
+//! | [`convert_buffer`] | None (caller picks) | Permissive | Direct format→format |
+//!
+//! # Zero-copy fast path
+//!
+//! All `adapt_for_encode*` functions check for an exact match first. If the
+//! source descriptor matches one of the supported formats, the function
+//! returns `Cow::Borrowed` — no allocation, no copy, no conversion. This
+//! means the common case (JPEG u8 sRGB → JPEG u8 sRGB) has zero overhead.
+//!
+//! A second fast path handles transfer-agnostic matches: if the source has
+//! `TransferFunction::Unknown` and a supported format matches on everything
+//! else (depth, layout, alpha), it's also zero-copy. This covers codecs
+//! that don't tag their output with a transfer function.
+//!
+//! # Strided buffers
+//!
+//! The `stride` parameter allows adapting buffers with row padding (common
+//! when rows are SIMD-aligned or when working with sub-regions of a larger
+//! buffer). If `stride > width * bpp`, the padding is stripped during
+//! conversion and the output is always packed (stride = width * bpp).
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use zenpixels_convert::adapt::adapt_for_encode;
+//!
+//! let supported = &[
+//!     PixelDescriptor::RGB8_SRGB,
+//!     PixelDescriptor::GRAY8_SRGB,
+//! ];
+//!
+//! let adapted = adapt_for_encode(
+//!     raw_bytes, source_desc, width, rows, stride, supported,
+//! )?;
+//!
+//! match &adapted.data {
+//!     Cow::Borrowed(data) => {
+//!         // Fast path: source was already in a supported format.
+//!         encoder.write_direct(data, adapted.descriptor)?;
+//!     }
+//!     Cow::Owned(data) => {
+//!         // Converted: write the new data with the new descriptor.
+//!         encoder.write_converted(data, adapted.descriptor)?;
+//!     }
+//! }
+//! ```
 
 use alloc::borrow::Cow;
 use alloc::vec;

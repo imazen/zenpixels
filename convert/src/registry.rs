@@ -4,6 +4,47 @@
 //! zen* codec's zencodec-types integration. Extended (internal-API-only) formats
 //! are listed separately where they exist.
 //!
+//! # How to register a codec
+//!
+//! Every codec declares a [`CodecFormats`] constant that lists every pixel
+//! format the decoder can produce and the encoder can accept. The format
+//! negotiation system ([`super::best_match`], [`super::negotiate`]) uses
+//! these tables to pick the cheapest conversion path.
+//!
+//! ```rust,ignore
+//! pub static MY_CODEC: CodecFormats = CodecFormats {
+//!     name: "mycodec",
+//!     decode_outputs: &[
+//!         FormatEntry::standard(PixelDescriptor::RGB8_SRGB),
+//!         FormatEntry::standard(PixelDescriptor::RGBA8_SRGB),
+//!     ],
+//!     encode_inputs: &[
+//!         FormatEntry::standard(PixelDescriptor::RGB8_SRGB),
+//!     ],
+//!     icc_decode: true,
+//!     icc_encode: true,
+//!     cicp: false,
+//! };
+//! ```
+//!
+//! # Rules for format entries
+//!
+//! **Only register formats the codec handles natively.** If your decoder
+//! outputs u8 sRGB and your caller needs f32, that is a conversion handled
+//! by [`RowConverter`](super::RowConverter). Don't add `RGBF32_LINEAR` to
+//! your decode list unless your decoder genuinely outputs f32 data. Listing
+//! non-native formats causes double conversions (codec converts internally,
+//! then the negotiator converts again).
+//!
+//! **Decode and encode lists can differ.** A JPEG decoder produces u8 only,
+//! but a JPEG encoder may accept u8, u16, and f32 (converting internally
+//! before DCT). List what each side actually handles.
+//!
+//! **Set `icc_decode`/`icc_encode`/`cicp` accurately.** These booleans
+//! tell the pipeline whether ICC and CICP metadata can round-trip through
+//! the codec. A codec that silently drops ICC profiles must set
+//! `icc_encode: false`, even if the format spec supports ICC.
+//!
 //! # Effective bits
 //!
 //! The `effective_bits` field tracks the actual precision of data within its
@@ -14,6 +55,29 @@
 //!
 //! This matters for provenance: converting a 10-bit-effective u16 to u8 loses
 //! only 2 bits, not 8.
+//!
+//! When `effective_bits` is wrong, the cost model over- or under-values
+//! precision during negotiation. Examples:
+//!
+//! - A GIF decoder that outputs u8 converted from palette: `effective_bits = 8`
+//!   (the u8 values are already the final precision).
+//! - A JPEG decoder with debiased dequantization producing f32: `effective_bits = 10`
+//!   (10 bits of real precision in the f32 container).
+//! - A PNG decoder that expands 1-bit gray to u8: `effective_bits = 8`
+//!   (the values are scaled to fill the u8 range).
+//!
+//! Use [`FormatEntry::standard`](FormatEntry) for the common case where
+//! effective bits match the container (u8→8, u16→16, f32→32). Use
+//! [`FormatEntry::with_bits`](FormatEntry) when they differ.
+//!
+//! # Overshoot
+//!
+//! Set `can_overshoot = true` only when output pixel values exceed
+//! `[0.0, 1.0]` for float formats or the full integer range for integer
+//! formats. The only known case is JPEG f32 decode with preserved IDCT
+//! ringing — the inverse DCT produces values beyond the nominal range.
+//! Most codecs clamp to nominal range and should set `can_overshoot = false`
+//! (the default from [`FormatEntry::standard`](FormatEntry)).
 
 use crate::{ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction};
 

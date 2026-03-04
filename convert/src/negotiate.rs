@@ -9,6 +9,78 @@
 //! with a fused f32→u8+DCT path) can express this via [`FormatOption`]
 //! with a custom [`ConversionCost`], so the negotiation picks their fast
 //! path instead of doing a redundant conversion.
+//!
+//! # How negotiation works
+//!
+//! For each candidate target in the supported format list, the cost model
+//! computes five independent cost components:
+//!
+//! 1. **Transfer cost**: Effort of applying/removing EOTF (sRGB→linear,
+//!    PQ→linear, etc.). Unknown↔anything is free (relabeling).
+//! 2. **Depth cost**: Effort of depth conversion (u8→f32, u16→u8). Loss
+//!    considers provenance — if the data was originally u8 and was widened
+//!    to f32 for processing, converting back to u8 has zero loss.
+//! 3. **Layout cost**: Effort of adding/removing/swizzling channels.
+//!    RGB→Gray is very lossy (500); BGRA→RGBA is cheap (5, swizzle only).
+//! 4. **Alpha cost**: Effort of alpha mode conversion. Straight→premul is
+//!    cheap; premul→straight involves division (worse rounding at low alpha).
+//! 5. **Primaries cost**: Effort of gamut matrix (3×3 multiply). Loss
+//!    considers provenance — narrowing to a gamut that contains the origin
+//!    gamut has near-zero loss.
+//!
+//! These five costs are summed, then the consumer's cost override is added,
+//! then a suitability penalty (e.g., "u8 sRGB is bad for linear-light
+//! resize") is added to the loss axis. Finally, effort and loss are
+//! combined into a single score via [`ConvertIntent`]-specific weights.
+//! The candidate with the lowest score wins.
+//!
+//! # Provenance
+//!
+//! [`Provenance`] is the key to avoiding unnecessary quality loss. Without
+//! it, converting f32→u8 always reports high loss. With it, the cost model
+//! knows the data was originally u8 (e.g., from JPEG) and the round-trip
+//! is lossless.
+//!
+//! Update provenance when operations change the data's effective precision
+//! or gamut:
+//!
+//! - JPEG u8 → f32 for resize → back to u8: **No update needed.** Origin
+//!   is still u8.
+//! - sRGB data → convert to BT.2020 → saturation boost → back to sRGB:
+//!   **Call `invalidate_primaries(Bt2020)`** because the data now genuinely
+//!   uses the wider gamut.
+//! - 16-bit PNG → process in f32 → back to u16: **No update needed.**
+//!   Origin is still u16.
+//!
+//! # Consumer cost overrides
+//!
+//! [`FormatOption::with_cost`] lets codecs advertise fast internal paths.
+//! Example: a JPEG encoder with a fused f32→u8+DCT kernel can accept
+//! f32 data directly, saving the caller a separate f32→u8 conversion:
+//!
+//! ```rust,ignore
+//! let options = &[
+//!     FormatOption::from(PixelDescriptor::RGB8_SRGB),    // native: zero cost
+//!     FormatOption::with_cost(
+//!         PixelDescriptor::RGBF32_LINEAR,
+//!         ConversionCost::new(5, 0),  // fast fused path
+//!     ),
+//! ];
+//! ```
+//!
+//! Without the override, the negotiator would prefer RGB8_SRGB (no
+//! conversion needed) even when the source is already f32. With the
+//! override, it sees that delivering f32 directly costs only 5 effort
+//! (the encoder's fused path) vs. 40+ effort (our f32→u8 conversion).
+//!
+//! # Suitability penalties
+//!
+//! The cost model adds quality-of-operation penalties independent of
+//! conversion cost. For example, bilinear resize in sRGB u8 produces
+//! gamma-darkening artifacts (measured ΔE ≈ 13.7) regardless of how
+//! cheap the u8→u8 identity "conversion" is. `LinearLight` intent
+//! penalizes non-linear formats by 120 loss points, steering the
+//! negotiator toward f32 linear even when u8 sRGB is cheaper to deliver.
 
 use core::ops::Add;
 
