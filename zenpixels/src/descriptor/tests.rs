@@ -224,8 +224,7 @@ fn plane_descriptor_subsampled() {
 #[cfg(feature = "planar")]
 #[test]
 fn plane_descriptor_quarter_h() {
-    let d =
-        PlaneDescriptor::new(PlaneSemantic::ChromaCr, ChannelType::U16).with_subsampling(4, 1);
+    let d = PlaneDescriptor::new(PlaneSemantic::ChromaCr, ChannelType::U16).with_subsampling(4, 1);
     assert!(d.is_subsampled());
     assert_eq!(d.plane_width(1920), 480);
     assert_eq!(d.plane_height(1080), 1080);

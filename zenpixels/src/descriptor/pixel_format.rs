@@ -1,8 +1,6 @@
 use core::fmt;
 
-use super::{
-    AlphaMode, ByteOrder, ChannelLayout, ChannelType, ColorModel, PixelDescriptor,
-};
+use super::{AlphaMode, ByteOrder, ChannelLayout, ChannelType, ColorModel, PixelDescriptor};
 
 /// Physical pixel layout for match-based format dispatch.
 ///

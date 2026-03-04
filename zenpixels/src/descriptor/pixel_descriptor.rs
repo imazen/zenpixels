@@ -1,8 +1,8 @@
 use core::fmt;
 
 use super::{
-    align_up_general, lcm, AlphaMode, ByteOrder, ChannelLayout, ChannelType, ColorModel,
-    ColorPrimaries, PixelFormat, SignalRange, TransferFunction,
+    AlphaMode, ByteOrder, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, PixelFormat,
+    SignalRange, TransferFunction, align_up_general, lcm,
 };
 
 /// Compact pixel format descriptor.
