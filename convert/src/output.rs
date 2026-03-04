@@ -3,6 +3,81 @@
 //! [`finalize_for_output`] converts pixel data and generates matching metadata
 //! in a single atomic operation, preventing the most common color management
 //! bug: pixel values that don't match the embedded color metadata.
+//!
+//! # Why atomicity matters
+//!
+//! The most common color management bug looks like this:
+//!
+//! ```rust,ignore
+//! // BUG: pixels and metadata can diverge
+//! let pixels = convert_to_p3(&buffer);
+//! let metadata = OutputMetadata { icc: Some(srgb_icc), .. };
+//! // ^^^ pixels are Display P3 but metadata says sRGB — wrong!
+//! ```
+//!
+//! [`finalize_for_output`] prevents this by producing the pixels and metadata
+//! together. The [`EncodeReady`] struct bundles both, and the only way to
+//! create one is through this function. If the conversion fails, neither
+//! pixels nor metadata are produced.
+//!
+//! # Usage
+//!
+//! ```rust,ignore
+//! use zenpixels_convert::{
+//!     finalize_for_output, OutputProfile, PixelFormat,
+//! };
+//!
+//! let ready = finalize_for_output(
+//!     &buffer,              // source pixel data
+//!     &color_origin,        // how the source described its color
+//!     OutputProfile::SameAsOrigin,  // re-embed original metadata
+//!     PixelFormat::Rgb8,    // target byte layout
+//!     &cms,                 // CMS impl (for ICC transforms)
+//! )?;
+//!
+//! // Write pixels — these match the metadata
+//! encoder.write_pixels(ready.pixels())?;
+//!
+//! // Embed color metadata — guaranteed to match the pixels
+//! if let Some(icc) = &ready.metadata().icc {
+//!     encoder.write_icc_chunk(icc)?;
+//! }
+//! if let Some(cicp) = &ready.metadata().cicp {
+//!     encoder.write_cicp(cicp)?;
+//! }
+//! if let Some(hdr) = &ready.metadata().hdr {
+//!     encoder.write_hdr_metadata(hdr)?;
+//! }
+//! ```
+//!
+//! # Output profiles
+//!
+//! [`OutputProfile`] controls what color space the output should be in:
+//!
+//! - **`SameAsOrigin`**: Re-embed the original ICC/CICP from the source file.
+//!   Pixels are converted only if the target pixel format differs from the
+//!   source. Used for transcoding without color changes. If the source had
+//!   an ICC profile, it is passed through; if CICP, the CICP codes are
+//!   preserved.
+//!
+//! - **`Named(cicp)`**: Convert to a well-known CICP profile (sRGB, Display P3,
+//!   BT.2020, PQ, HLG). Uses hardcoded 3×3 gamut matrices — no CMS needed.
+//!   Fast and deterministic.
+//!
+//! - **`Icc(bytes)`**: Convert to a specific ICC profile. Requires a
+//!   [`ColorManagement`] implementation to build the source→destination
+//!   transform. Use this for print workflows, custom profiles, or any
+//!   profile that isn't a standard CICP combination.
+//!
+//! # CMS requirement
+//!
+//! The `cms` parameter is only used when:
+//! - `OutputProfile::Icc` is selected, or
+//! - `OutputProfile::SameAsOrigin` and the source has an ICC profile.
+//!
+//! For `OutputProfile::Named`, the CMS is unused — gamut conversion uses
+//! hardcoded matrices. Codecs that don't need ICC support can pass a
+//! no-op CMS implementation.
 
 use alloc::sync::Arc;
 
