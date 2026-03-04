@@ -29,12 +29,7 @@ enough = { version = "0.4", optional = true }
 ultrahdr-core = { version = "0.2", path = "../../ultrahdr/ultrahdr-core", optional = true }
 gainforge = { version = "0.4", optional = true }
 
-[lints.rust.unexpected_cfgs]
-level = "warn"
-check-cfg = ['cfg(feature, values("zenresize"))']
-
 [dev-dependencies]
 zenpixels = { path = "../zenpixels", features = ["buffer", "planar", "rgb", "imgref"] }
 half = "2"
-# zenresize temporarily removed - path dep not available in worktree
-# zenresize = { path = "../../zenresize", default-features = false, features = ["std"] }
+zenresize = { path = "../../zenresize", default-features = false, features = ["std"] }
