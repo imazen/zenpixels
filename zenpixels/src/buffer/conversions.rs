@@ -2,20 +2,18 @@
 // ImgRef -> PixelSlice (zero-copy From impls) -- imgref feature only
 // ---------------------------------------------------------------------------
 
+use super::{Pixel, PixelBuffer, PixelSlice, PixelSliceMut};
+
+#[cfg(feature = "imgref")]
+use crate::descriptor::PixelDescriptor;
 #[cfg(feature = "imgref")]
 use core::marker::PhantomData;
-
 #[cfg(feature = "imgref")]
 use imgref::ImgRef;
-
-#[cfg(feature = "rgb")]
+#[cfg(feature = "imgref")]
 use rgb::alt::BGRA;
-#[cfg(feature = "rgb")]
+#[cfg(feature = "imgref")]
 use rgb::{Gray, Rgb, Rgba};
-
-use crate::descriptor::PixelDescriptor;
-
-use super::{Pixel, PixelBuffer, PixelSlice, PixelSliceMut};
 
 #[cfg(feature = "imgref")]
 macro_rules! impl_from_imgref {
