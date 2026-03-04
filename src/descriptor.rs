@@ -110,28 +110,39 @@ pub enum ChannelLayout {
     Rgba = 4,
     /// Blue, green, red, alpha (Windows/DirectX byte order).
     Bgra = 5,
+    /// Oklab perceptual color: L, a, b.
+    Oklab = 6,
+    /// Oklab perceptual color with alpha: L, a, b, alpha.
+    OklabA = 7,
 }
 
 impl ChannelLayout {
     /// Number of channels in this layout.
     #[inline]
+    #[allow(unreachable_patterns)]
     pub const fn channels(self) -> usize {
         match self {
             Self::Gray => 1,
             Self::GrayAlpha => 2,
-            Self::Rgb => 3,
-            Self::Rgba | Self::Bgra => 4,
+            Self::Rgb | Self::Oklab => 3,
+            Self::Rgba | Self::Bgra | Self::OklabA => 4,
+            _ => 0,
         }
     }
 
     /// Whether this layout includes an alpha channel.
     #[inline]
+    #[allow(unreachable_patterns)]
     pub const fn has_alpha(self) -> bool {
-        matches!(self, Self::GrayAlpha | Self::Rgba | Self::Bgra)
+        matches!(
+            self,
+            Self::GrayAlpha | Self::Rgba | Self::Bgra | Self::OklabA
+        )
     }
 }
 
 impl fmt::Display for ChannelLayout {
+    #[allow(unreachable_patterns)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Gray => f.write_str("Gray"),
@@ -139,6 +150,9 @@ impl fmt::Display for ChannelLayout {
             Self::Rgb => f.write_str("RGB"),
             Self::Rgba => f.write_str("RGBA"),
             Self::Bgra => f.write_str("BGRA"),
+            Self::Oklab => f.write_str("Oklab"),
+            Self::OklabA => f.write_str("OklabA"),
+            _ => write!(f, "ChannelLayout({})", *self as u8),
         }
     }
 }
@@ -711,6 +725,25 @@ impl PixelDescriptor {
         TransferFunction::Unknown,
     );
 
+    // -- Oklab constants ------------------------------------------------------
+
+    /// Oklab f32 (L, a, b), transfer unknown.
+    pub const OKLABF32: Self = Self {
+        format: PixelFormat::OklabF32,
+        transfer: TransferFunction::Unknown,
+        alpha: None,
+        primaries: ColorPrimaries::Bt709,
+        signal_range: SignalRange::Full,
+    };
+    /// Oklab+alpha f32 (L, a, b, alpha), transfer unknown.
+    pub const OKLABAF32: Self = Self {
+        format: PixelFormat::OklabaF32,
+        transfer: TransferFunction::Unknown,
+        alpha: Some(AlphaMode::Straight),
+        primaries: ColorPrimaries::Bt709,
+        signal_range: SignalRange::Full,
+    };
+
     // -- Methods --------------------------------------------------------------
 
     /// Number of channels.
@@ -1121,27 +1154,31 @@ impl fmt::Display for YuvMatrix {
 /// pixel layouts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
+#[repr(u8)]
 pub enum PixelFormat {
-    Rgb8,
-    Rgba8,
-    Rgb16,
-    Rgba16,
-    RgbF32,
-    RgbaF32,
-    Gray8,
-    Gray16,
-    GrayF32,
-    GrayA8,
-    GrayA16,
-    GrayAF32,
-    Bgra8,
-    Rgbx8,
-    Bgrx8,
+    Rgb8 = 1,
+    Rgba8 = 2,
+    Rgb16 = 3,
+    Rgba16 = 4,
+    RgbF32 = 5,
+    RgbaF32 = 6,
+    Gray8 = 7,
+    Gray16 = 8,
+    GrayF32 = 9,
+    GrayA8 = 10,
+    GrayA16 = 11,
+    GrayAF32 = 12,
+    Bgra8 = 13,
+    Rgbx8 = 14,
+    Bgrx8 = 15,
+    OklabF32 = 16,
+    OklabaF32 = 17,
 }
 
 impl PixelFormat {
     /// Channel storage type.
     #[inline]
+    #[allow(unreachable_patterns)]
     pub const fn channel_type(self) -> ChannelType {
         match self {
             Self::Rgb8
@@ -1152,12 +1189,19 @@ impl PixelFormat {
             | Self::Rgbx8
             | Self::Bgrx8 => ChannelType::U8,
             Self::Rgb16 | Self::Rgba16 | Self::Gray16 | Self::GrayA16 => ChannelType::U16,
-            Self::RgbF32 | Self::RgbaF32 | Self::GrayF32 | Self::GrayAF32 => ChannelType::F32,
+            Self::RgbF32
+            | Self::RgbaF32
+            | Self::GrayF32
+            | Self::GrayAF32
+            | Self::OklabF32
+            | Self::OklabaF32 => ChannelType::F32,
+            _ => ChannelType::U8,
         }
     }
 
     /// Channel layout.
     #[inline]
+    #[allow(unreachable_patterns)]
     pub const fn layout(self) -> ChannelLayout {
         match self {
             Self::Rgb8 | Self::Rgb16 | Self::RgbF32 => ChannelLayout::Rgb,
@@ -1165,11 +1209,15 @@ impl PixelFormat {
             Self::Gray8 | Self::Gray16 | Self::GrayF32 => ChannelLayout::Gray,
             Self::GrayA8 | Self::GrayA16 | Self::GrayAF32 => ChannelLayout::GrayAlpha,
             Self::Bgra8 | Self::Bgrx8 => ChannelLayout::Bgra,
+            Self::OklabF32 => ChannelLayout::Oklab,
+            Self::OklabaF32 => ChannelLayout::OklabA,
+            _ => ChannelLayout::Rgb,
         }
     }
 
     /// Color model (what the channels represent).
     #[inline]
+    #[allow(unreachable_patterns)]
     pub const fn color_model(self) -> ColorModel {
         match self {
             Self::Gray8
@@ -1178,12 +1226,14 @@ impl PixelFormat {
             | Self::GrayA8
             | Self::GrayA16
             | Self::GrayAF32 => ColorModel::Gray,
+            Self::OklabF32 | Self::OklabaF32 => ColorModel::Oklab,
             _ => ColorModel::Rgb,
         }
     }
 
     /// Byte order (Native or BGR).
     #[inline]
+    #[allow(unreachable_patterns)]
     pub const fn byte_order(self) -> ByteOrder {
         match self {
             Self::Bgra8 | Self::Bgrx8 => ByteOrder::Bgr,
@@ -1220,6 +1270,7 @@ impl PixelFormat {
     /// - Formats with no alpha bytes → `None`
     /// - Formats with padding (Rgbx8, Bgrx8) → `Some(AlphaMode::Undefined)`
     /// - Formats with alpha → `Some(AlphaMode::Straight)`
+    #[allow(unreachable_patterns)]
     pub const fn default_alpha(self) -> Option<AlphaMode> {
         match self {
             Self::Rgb8
@@ -1227,7 +1278,8 @@ impl PixelFormat {
             | Self::RgbF32
             | Self::Gray8
             | Self::Gray16
-            | Self::GrayF32 => None,
+            | Self::GrayF32
+            | Self::OklabF32 => None,
             Self::Rgbx8 | Self::Bgrx8 => Some(AlphaMode::Undefined),
             _ => Some(AlphaMode::Straight),
         }
@@ -1252,6 +1304,8 @@ impl PixelFormat {
             Self::Bgra8 => "BGRA8",
             Self::Rgbx8 => "RGBX8",
             Self::Bgrx8 => "BGRX8",
+            Self::OklabF32 => "OklabF32",
+            Self::OklabaF32 => "OklabaF32",
             _ => "Unknown",
         }
     }
@@ -1287,6 +1341,9 @@ impl PixelFormat {
             (ChannelType::U8, ChannelLayout::Bgra, true) => Some(Self::Bgrx8),
             (ChannelType::U8, ChannelLayout::Bgra, false) => Some(Self::Bgra8),
 
+            (ChannelType::F32, ChannelLayout::Oklab, _) => Some(Self::OklabF32),
+            (ChannelType::F32, ChannelLayout::OklabA, _) => Some(Self::OklabaF32),
+
             _ => None,
         }
     }
@@ -1310,6 +1367,8 @@ impl PixelFormat {
             Self::Bgra8 => PixelDescriptor::BGRA8,
             Self::Rgbx8 => PixelDescriptor::RGBX8,
             Self::Bgrx8 => PixelDescriptor::BGRX8,
+            Self::OklabF32 => PixelDescriptor::OKLABF32,
+            Self::OklabaF32 => PixelDescriptor::OKLABAF32,
             _ => PixelDescriptor::RGB8,
         }
     }

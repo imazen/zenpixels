@@ -38,12 +38,14 @@ pub mod error;
 pub(crate) mod negotiate;
 
 pub mod adapt;
+pub mod cms;
 pub mod converter;
 pub mod ext;
 pub mod gamut;
 pub mod hdr;
 pub mod oklab;
 pub mod op_format;
+pub mod output;
 pub mod path;
 pub mod pixels;
 pub mod registry;
@@ -80,3 +82,9 @@ pub use hdr::{
     ContentLightLevel, HdrMetadata, MasteringDisplay, exposure_tonemap, reinhard_inverse,
     reinhard_tonemap,
 };
+
+// Re-export CMS traits.
+pub use cms::{ColorManagement, RowTransform};
+
+// Re-export output types.
+pub use output::{EncodeReady, OutputMetadata, OutputProfile, finalize_for_output};

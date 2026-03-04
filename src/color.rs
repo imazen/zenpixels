@@ -138,6 +138,94 @@ impl ColorContext {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Color provenance — how the source described its color
+// ---------------------------------------------------------------------------
+
+/// How the source file described its color information.
+///
+/// Preserved for re-encoding and round-trip conversion decisions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ColorProvenance {
+    /// Color was described via an embedded ICC profile.
+    Icc,
+    /// Color was described via CICP code points.
+    Cicp,
+    /// Color was described via PNG gAMA + cHRM chunks or similar.
+    GamaChrm,
+    /// Color was assumed (no explicit metadata in source).
+    Assumed,
+}
+
+/// Immutable record of how the source file described its color.
+///
+/// Tracks the original color description from the decoded file so
+/// encoders can make provenance-aware decisions (e.g., re-embed the
+/// original ICC profile, or prefer CICP when re-encoding to AVIF).
+///
+/// `ColorOrigin` is immutable once set. It records how color was
+/// described, not what the pixels currently are. The encoder uses
+/// [`PixelDescriptor`](crate::PixelDescriptor) for the current state
+/// and can consult `ColorOrigin` for provenance decisions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ColorOrigin {
+    /// Raw ICC profile bytes from the source file, if any.
+    pub icc: Option<Arc<[u8]>>,
+    /// CICP parameters from the source file, if any.
+    pub cicp: Option<Cicp>,
+    /// How the color information was originally described.
+    pub provenance: ColorProvenance,
+}
+
+impl ColorOrigin {
+    /// Create from an ICC profile.
+    pub fn from_icc(icc: impl Into<Arc<[u8]>>) -> Self {
+        Self {
+            icc: Some(icc.into()),
+            cicp: None,
+            provenance: ColorProvenance::Icc,
+        }
+    }
+
+    /// Create from CICP parameters.
+    pub fn from_cicp(cicp: Cicp) -> Self {
+        Self {
+            icc: None,
+            cicp: Some(cicp),
+            provenance: ColorProvenance::Cicp,
+        }
+    }
+
+    /// Create from both ICC and CICP (e.g., AVIF with both).
+    pub fn from_icc_and_cicp(icc: impl Into<Arc<[u8]>>, cicp: Cicp) -> Self {
+        Self {
+            icc: Some(icc.into()),
+            cicp: Some(cicp),
+            provenance: ColorProvenance::Cicp,
+        }
+    }
+
+    /// Create from gAMA/cHRM chunks (no ICC or CICP).
+    pub fn from_gama_chrm() -> Self {
+        Self {
+            icc: None,
+            cicp: None,
+            provenance: ColorProvenance::GamaChrm,
+        }
+    }
+
+    /// Create for assumed/default color (no explicit metadata).
+    pub fn assumed() -> Self {
+        Self {
+            icc: None,
+            cicp: None,
+            provenance: ColorProvenance::Assumed,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

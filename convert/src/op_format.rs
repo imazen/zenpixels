@@ -259,6 +259,35 @@ impl OpCategory {
             }
         }
 
+        // Oklab variant (for Oklab operations or if source is already Oklab)
+        if matches!(self, Self::OklabSharpen | Self::OklabAdjust)
+            || matches!(
+                source.layout(),
+                ChannelLayout::Oklab | ChannelLayout::OklabA
+            )
+        {
+            let oklab_ideal = PixelDescriptor::new(
+                ChannelType::F32,
+                ChannelLayout::Oklab,
+                None,
+                TransferFunction::Unknown,
+            );
+            if !candidates.contains(&oklab_ideal) {
+                candidates.push(oklab_ideal);
+            }
+            if source.layout().has_alpha() || req.alpha.is_some() {
+                let oklaba_ideal = PixelDescriptor::new(
+                    ChannelType::F32,
+                    ChannelLayout::OklabA,
+                    ideal_alpha,
+                    TransferFunction::Unknown,
+                );
+                if !candidates.contains(&oklaba_ideal) {
+                    candidates.push(oklaba_ideal);
+                }
+            }
+        }
+
         // Gray variant (if source is grayscale)
         if source.is_grayscale() {
             let gray_ideal =

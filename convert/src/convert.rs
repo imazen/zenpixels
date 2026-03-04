@@ -85,6 +85,14 @@ pub(crate) enum ConvertStep {
     StraightToPremul,
     /// Premultiplied → Straight alpha.
     PremulToStraight,
+    /// Linear RGB f32 → Oklab f32 (3-channel color model change).
+    LinearRgbToOklab,
+    /// Oklab f32 → Linear RGB f32 (3-channel color model change).
+    OklabToLinearRgb,
+    /// Linear RGBA f32 → Oklaba f32 (4-channel, alpha preserved).
+    LinearRgbaToOklaba,
+    /// Oklaba f32 → Linear RGBA f32 (4-channel, alpha preserved).
+    OklabaToLinearRgba,
 }
 
 impl ConvertPlan {
@@ -271,6 +279,31 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
         (ChannelLayout::GrayAlpha, ChannelLayout::Rgb) => vec![ConvertStep::GrayAlphaToRgb],
         (ChannelLayout::Gray, ChannelLayout::GrayAlpha) => vec![ConvertStep::GrayToGrayAlpha],
         (ChannelLayout::GrayAlpha, ChannelLayout::Gray) => vec![ConvertStep::GrayAlphaToGray],
+
+        // Oklab ↔ RGB conversions (via linear RGB).
+        (ChannelLayout::Rgb, ChannelLayout::Oklab) => vec![ConvertStep::LinearRgbToOklab],
+        (ChannelLayout::Oklab, ChannelLayout::Rgb) => vec![ConvertStep::OklabToLinearRgb],
+        (ChannelLayout::Rgba, ChannelLayout::OklabA) => vec![ConvertStep::LinearRgbaToOklaba],
+        (ChannelLayout::OklabA, ChannelLayout::Rgba) => vec![ConvertStep::OklabaToLinearRgba],
+
+        // Oklab ↔ RGB with alpha add/drop.
+        (ChannelLayout::Rgb, ChannelLayout::OklabA) => {
+            vec![ConvertStep::AddAlpha, ConvertStep::LinearRgbaToOklaba]
+        }
+        (ChannelLayout::OklabA, ChannelLayout::Rgb) => {
+            vec![ConvertStep::OklabaToLinearRgba, ConvertStep::DropAlpha]
+        }
+        (ChannelLayout::Oklab, ChannelLayout::Rgba) => {
+            vec![ConvertStep::OklabToLinearRgb, ConvertStep::AddAlpha]
+        }
+        (ChannelLayout::Rgba, ChannelLayout::Oklab) => {
+            vec![ConvertStep::DropAlpha, ConvertStep::LinearRgbToOklab]
+        }
+
+        // Oklab ↔ alpha variants.
+        (ChannelLayout::Oklab, ChannelLayout::OklabA) => vec![ConvertStep::AddAlpha],
+        (ChannelLayout::OklabA, ChannelLayout::Oklab) => vec![ConvertStep::DropAlpha],
+
         _ => Vec::new(), // Unsupported layout conversion.
     }
 }
@@ -574,6 +607,34 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
             Some(AlphaMode::Straight),
             current.transfer(),
         ),
+        ConvertStep::LinearRgbToOklab => PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Oklab,
+            None,
+            TransferFunction::Unknown,
+        )
+        .with_primaries(current.primaries),
+        ConvertStep::OklabToLinearRgb => PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Linear,
+        )
+        .with_primaries(current.primaries),
+        ConvertStep::LinearRgbaToOklaba => PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::OklabA,
+            Some(AlphaMode::Straight),
+            TransferFunction::Unknown,
+        )
+        .with_primaries(current.primaries),
+        ConvertStep::OklabaToLinearRgba => PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgba,
+            current.alpha(),
+            TransferFunction::Linear,
+        )
+        .with_primaries(current.primaries),
     }
 }
 
@@ -708,6 +769,22 @@ fn apply_step_u8(
 
         ConvertStep::PremulToStraight => {
             premul_to_straight(src, dst, w, from.channel_type(), from.layout());
+        }
+
+        ConvertStep::LinearRgbToOklab => {
+            linear_rgb_to_oklab_f32(src, dst, w, from.primaries);
+        }
+
+        ConvertStep::OklabToLinearRgb => {
+            oklab_to_linear_rgb_f32(src, dst, w, from.primaries);
+        }
+
+        ConvertStep::LinearRgbaToOklaba => {
+            linear_rgba_to_oklaba_f32(src, dst, w, from.primaries);
+        }
+
+        ConvertStep::OklabaToLinearRgba => {
+            oklaba_to_linear_rgba_f32(src, dst, w, from.primaries);
         }
     }
 }
@@ -1381,5 +1458,95 @@ fn premul_to_straight(
             let len = min(src.len(), dst.len());
             dst[..len].copy_from_slice(&src[..len]);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Oklab conversion kernels
+// ---------------------------------------------------------------------------
+
+use crate::ColorPrimaries;
+use crate::oklab::{lms_to_rgb_matrix, oklab_to_rgb, rgb_to_lms_matrix, rgb_to_oklab};
+
+/// Linear RGB f32 → Oklab f32 (3 channels).
+fn linear_rgb_to_oklab_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
+    let Some(m1) = rgb_to_lms_matrix(primaries) else {
+        // Fallback: copy.
+        let len = min(src.len(), dst.len());
+        dst[..len].copy_from_slice(&src[..len]);
+        return;
+    };
+
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
+
+    for i in 0..width {
+        let s = i * 3;
+        let [l, a, b] = rgb_to_oklab(srcf[s], srcf[s + 1], srcf[s + 2], &m1);
+        dstf[s] = l;
+        dstf[s + 1] = a;
+        dstf[s + 2] = b;
+    }
+}
+
+/// Oklab f32 → Linear RGB f32 (3 channels).
+fn oklab_to_linear_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
+    let Some(m1_inv) = lms_to_rgb_matrix(primaries) else {
+        let len = min(src.len(), dst.len());
+        dst[..len].copy_from_slice(&src[..len]);
+        return;
+    };
+
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
+
+    for i in 0..width {
+        let s = i * 3;
+        let [r, g, b] = oklab_to_rgb(srcf[s], srcf[s + 1], srcf[s + 2], &m1_inv);
+        dstf[s] = r;
+        dstf[s + 1] = g;
+        dstf[s + 2] = b;
+    }
+}
+
+/// Linear RGBA f32 → Oklaba f32 (4 channels, alpha preserved).
+fn linear_rgba_to_oklaba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
+    let Some(m1) = rgb_to_lms_matrix(primaries) else {
+        let len = min(src.len(), dst.len());
+        dst[..len].copy_from_slice(&src[..len]);
+        return;
+    };
+
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
+
+    for i in 0..width {
+        let s = i * 4;
+        let [l, a, b] = rgb_to_oklab(srcf[s], srcf[s + 1], srcf[s + 2], &m1);
+        dstf[s] = l;
+        dstf[s + 1] = a;
+        dstf[s + 2] = b;
+        dstf[s + 3] = srcf[s + 3]; // alpha unchanged
+    }
+}
+
+/// Oklaba f32 → Linear RGBA f32 (4 channels, alpha preserved).
+fn oklaba_to_linear_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
+    let Some(m1_inv) = lms_to_rgb_matrix(primaries) else {
+        let len = min(src.len(), dst.len());
+        dst[..len].copy_from_slice(&src[..len]);
+        return;
+    };
+
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
+
+    for i in 0..width {
+        let s = i * 4;
+        let [r, g, b] = oklab_to_rgb(srcf[s], srcf[s + 1], srcf[s + 2], &m1_inv);
+        dstf[s] = r;
+        dstf[s + 1] = g;
+        dstf[s + 2] = b;
+        dstf[s + 3] = srcf[s + 3]; // alpha unchanged
     }
 }

@@ -763,6 +763,23 @@ fn layout_cost(from: ChannelLayout, to: ChannelLayout) -> ConversionCost {
         // GrayAlpha → Rgb: replicate + drop alpha.
         (ChannelLayout::GrayAlpha, ChannelLayout::Rgb) => ConversionCost::new(12, 50),
 
+        // RGB ↔ Oklab: matrix + cube root, lossless at f32.
+        (ChannelLayout::Rgb, ChannelLayout::Oklab) | (ChannelLayout::Oklab, ChannelLayout::Rgb) => {
+            ConversionCost::new(80, 0)
+        }
+        (ChannelLayout::Rgba, ChannelLayout::OklabA)
+        | (ChannelLayout::OklabA, ChannelLayout::Rgba) => ConversionCost::new(80, 0),
+
+        // Oklab ↔ alpha variants.
+        (ChannelLayout::Oklab, ChannelLayout::OklabA) => ConversionCost::new(10, 0),
+        (ChannelLayout::OklabA, ChannelLayout::Oklab) => ConversionCost::new(15, 50),
+
+        // Cross-model with alpha changes.
+        (ChannelLayout::Rgb, ChannelLayout::OklabA) => ConversionCost::new(90, 0),
+        (ChannelLayout::OklabA, ChannelLayout::Rgb) => ConversionCost::new(90, 50),
+        (ChannelLayout::Oklab, ChannelLayout::Rgba) => ConversionCost::new(90, 0),
+        (ChannelLayout::Rgba, ChannelLayout::Oklab) => ConversionCost::new(90, 50),
+
         _ => ConversionCost::new(100, 500),
     }
 }
