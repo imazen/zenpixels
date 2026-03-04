@@ -12,10 +12,11 @@ extern crate alloc;
 pub mod descriptor;
 pub mod policy;
 
-pub mod buffer;
 pub mod cicp;
 pub mod color;
 pub mod pixel_types;
+
+pub mod buffer;
 
 // Re-export key descriptor types at crate root for ergonomics.
 #[allow(deprecated)]

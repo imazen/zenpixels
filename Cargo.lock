@@ -112,6 +112,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "linear-srgb"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7687eee4c424bdb5f360d5d975a52baa0f56c1ce15e3c5cbef4af7d39e148092"
+dependencies = [
+ "archmage",
+ "bytemuck",
+ "magetypes",
+ "num-traits",
+ "wide",
+]
+
+[[package]]
 name = "magetypes"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -183,6 +196,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "safe_unaligned_simd"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9c874fb993656d484725d58fbfddb39dfcf98ebcadc1a1d09568aa6b39bafba"
+
+[[package]]
 name = "syn"
 version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -243,6 +262,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenlayout"
+version = "0.1.0"
+
+[[package]]
 name = "zenpixels"
 version = "0.1.0"
 dependencies = [
@@ -259,9 +282,24 @@ dependencies = [
  "enough",
  "gainforge",
  "half",
- "linear-srgb",
+ "linear-srgb 0.5.5",
  "rgb",
  "ultrahdr-core",
+ "zenpixels",
+ "zenresize",
+]
+
+[[package]]
+name = "zenresize"
+version = "0.1.0"
+dependencies = [
+ "archmage",
+ "imgref",
+ "linear-srgb 0.5.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rgb",
+ "safe_unaligned_simd",
+ "wide",
+ "zenlayout",
  "zenpixels",
 ]
 
