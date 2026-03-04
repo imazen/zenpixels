@@ -27,14 +27,12 @@ use imgref::ImgVec;
 #[cfg(feature = "rgb")]
 use rgb::alt::BGRA;
 #[cfg(feature = "rgb")]
-use rgb::{Gray, Rgb, Rgba};
+use rgb::{Gray, GrayA, Rgb, Rgba};
 
 use crate::color::ColorContext;
 use crate::descriptor::{
     AlphaMode, ColorPrimaries, PixelDescriptor, SignalRange, TransferFunction,
 };
-#[cfg(feature = "rgb")]
-use crate::pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
 
 // ---------------------------------------------------------------------------
 // Padded pixel types (32-bit SIMD-friendly)
@@ -151,17 +149,17 @@ impl Pixel for BGRA<u8> {
 }
 
 #[cfg(feature = "rgb")]
-impl Pixel for GrayAlpha8 {
+impl Pixel for GrayA<u8> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYA8;
 }
 
 #[cfg(feature = "rgb")]
-impl Pixel for GrayAlpha16 {
+impl Pixel for GrayA<u16> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYA16;
 }
 
 #[cfg(feature = "rgb")]
-impl Pixel for GrayAlphaF32 {
+impl Pixel for GrayA<f32> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYAF32;
 }
 
@@ -2149,8 +2147,7 @@ macro_rules! impl_from_imgref {
     ($pixel:ty, $descriptor:expr) => {
         impl<'a> From<ImgRef<'a, $pixel>> for PixelSlice<'a, $pixel> {
             fn from(img: ImgRef<'a, $pixel>) -> Self {
-                use rgb::ComponentBytes;
-                let bytes = img.buf().as_bytes();
+                let bytes: &[u8] = bytemuck::cast_slice(img.buf());
                 let byte_stride = img.stride() * core::mem::size_of::<$pixel>();
                 PixelSlice {
                     data: bytes,
@@ -2199,12 +2196,11 @@ macro_rules! impl_from_imgref_mut {
     ($pixel:ty, $descriptor:expr) => {
         impl<'a> From<imgref::ImgRefMut<'a, $pixel>> for PixelSliceMut<'a, $pixel> {
             fn from(img: imgref::ImgRefMut<'a, $pixel>) -> Self {
-                use rgb::ComponentBytes;
                 let width = img.width() as u32;
                 let rows = img.height() as u32;
                 let byte_stride = img.stride() * core::mem::size_of::<$pixel>();
                 let buf = img.into_buf();
-                let bytes = buf.as_bytes_mut();
+                let bytes: &mut [u8] = bytemuck::cast_slice_mut(buf);
                 PixelSliceMut {
                     data: bytes,
                     width,
