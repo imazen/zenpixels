@@ -1,4 +1,3 @@
 [workspace]
-members = ["zenpixels"]
-exclude = ["zenpixels-convert"]
+members = ["zenpixels", "zenpixels-convert"]
 resolver = "2"

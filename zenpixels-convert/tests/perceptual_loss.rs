@@ -553,6 +553,7 @@ fn sharp_edge_image(width: usize, height: usize) -> Vec<[f64; 3]> {
 }
 
 /// Convert f64 linear RGB image to packed f32 for zenresize LinearF32 input.
+#[cfg(feature = "zenresize")]
 fn to_f32_linear_packed(pixels: &[[f64; 3]]) -> Vec<f32> {
     pixels
         .iter()
@@ -561,6 +562,7 @@ fn to_f32_linear_packed(pixels: &[[f64; 3]]) -> Vec<f32> {
 }
 
 /// Convert f64 linear RGB image to packed u8 sRGB for zenresize Srgb8 input.
+#[cfg(feature = "zenresize")]
 fn to_u8_srgb_packed(pixels: &[[f64; 3]]) -> Vec<u8> {
     pixels
         .iter()
@@ -575,6 +577,7 @@ fn to_u8_srgb_packed(pixels: &[[f64; 3]]) -> Vec<u8> {
 }
 
 /// Unpack zenresize f32 linear output to f64 triples.
+#[cfg(feature = "zenresize")]
 fn from_f32_linear_packed(data: &[f32]) -> Vec<[f64; 3]> {
     data.chunks_exact(3)
         .map(|c| [c[0] as f64, c[1] as f64, c[2] as f64])
@@ -582,6 +585,7 @@ fn from_f32_linear_packed(data: &[f32]) -> Vec<[f64; 3]> {
 }
 
 /// Unpack zenresize u8 sRGB output to f64 linear triples.
+#[cfg(feature = "zenresize")]
 fn from_u8_srgb_packed(data: &[u8]) -> Vec<[f64; 3]> {
     data.chunks_exact(3)
         .map(|c| {
@@ -2349,6 +2353,7 @@ fn perceptual_operation_scenarios() {
 // above don't capture it because bilinear interpolation can't overshoot.
 // ===========================================================================
 
+#[cfg(feature = "zenresize")]
 #[test]
 fn gamut_clamping_scenarios() {
     use zenresize::{Filter, PixelFormat, PixelLayout, ResizeConfig, Resizer};
