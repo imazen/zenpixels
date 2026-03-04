@@ -27,12 +27,14 @@ use imgref::ImgVec;
 #[cfg(feature = "rgb")]
 use rgb::alt::BGRA;
 #[cfg(feature = "rgb")]
-use rgb::{Gray, GrayA, Rgb, Rgba};
+use rgb::{Gray, Rgb, Rgba};
 
 use crate::color::ColorContext;
 use crate::descriptor::{
     AlphaMode, ColorPrimaries, PixelDescriptor, SignalRange, TransferFunction,
 };
+#[cfg(feature = "rgb")]
+use crate::pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
 
 // ---------------------------------------------------------------------------
 // Padded pixel types (32-bit SIMD-friendly)
@@ -149,17 +151,17 @@ impl Pixel for BGRA<u8> {
 }
 
 #[cfg(feature = "rgb")]
-impl Pixel for GrayA<u8> {
+impl Pixel for GrayAlpha8 {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYA8;
 }
 
 #[cfg(feature = "rgb")]
-impl Pixel for GrayA<u16> {
+impl Pixel for GrayAlpha16 {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYA16;
 }
 
 #[cfg(feature = "rgb")]
-impl Pixel for GrayA<f32> {
+impl Pixel for GrayAlphaF32 {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYAF32;
 }
 
