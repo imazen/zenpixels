@@ -38,7 +38,7 @@ pub use buffer::{Bgrx, BufferError, Pixel, PixelBuffer, PixelSlice, PixelSliceMu
 
 // Re-export color types at crate root.
 pub use cicp::Cicp;
-pub use color::{ColorContext, ColorProfileSource, NamedProfile};
+pub use color::{ColorContext, ColorOrigin, ColorProfileSource, ColorProvenance, NamedProfile};
 
 // Re-export GrayAlpha pixel types at crate root.
 pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
