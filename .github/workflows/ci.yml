@@ -35,6 +35,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -65,6 +68,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -101,6 +107,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -130,6 +139,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -178,6 +190,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
 
@@ -206,6 +221,9 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
+
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
