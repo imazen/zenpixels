@@ -14,6 +14,7 @@ pub mod policy;
 
 pub mod cicp;
 pub mod color;
+#[cfg(feature = "rgb")]
 pub mod pixel_types;
 
 pub mod buffer;
@@ -41,6 +42,7 @@ pub use cicp::Cicp;
 pub use color::{ColorContext, ColorOrigin, ColorProfileSource, ColorProvenance, NamedProfile};
 
 // Re-export GrayAlpha pixel types at crate root.
+#[cfg(feature = "rgb")]
 pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
 
 pub use policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GrayExpand, LumaCoefficients};

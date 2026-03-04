@@ -24,9 +24,9 @@ buffer = ["rgb", "imgref"]
 
 [dependencies]
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
-rgb = { version = "0.8", default-features = false, features = ["as-bytes"], optional = true }
+rgb = { version = "0.8", default-features = false, features = ["bytemuck", "unstable-experimental"], optional = true }
 imgref = { version = "1.12", optional = true }
 
 [dev-dependencies]
 imgref = "1.12"
-rgb = { version = "0.8", features = ["as-bytes"] }
+rgb = { version = "0.8", default-features = false, features = ["bytemuck", "unstable-experimental"] }
