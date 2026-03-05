@@ -132,10 +132,19 @@ impl ConvertPlan {
         if need_layout_change {
             // When going to fewer channels, convert layout first (less depth work).
             // When going to more channels, convert depth first (less layout work).
+            //
+            // Exception: Oklab layout steps require f32 data. When the source
+            // is integer (U8/U16) and the layout change involves Oklab, we must
+            // convert depth first regardless of channel count.
             let src_ch = from.layout().channels();
             let dst_ch = to.layout().channels();
+            let involves_oklab =
+                matches!(from.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA)
+                    || matches!(to.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA);
+            let depth_first = need_depth_or_tf
+                && (dst_ch > src_ch || (involves_oklab && from.channel_type() != ChannelType::F32));
 
-            if need_depth_or_tf && dst_ch > src_ch {
+            if depth_first {
                 // Depth first, then layout.
                 steps.extend(depth_steps(
                     from.channel_type(),
@@ -222,6 +231,7 @@ impl ConvertPlan {
     }
 
     /// True if conversion is a no-op.
+    #[must_use]
     pub fn is_identity(&self) -> bool {
         self.steps.len() == 1 && self.steps[0] == ConvertStep::Identity
     }
@@ -1136,14 +1146,14 @@ fn gray_alpha_to_gray(src: &[u8], dst: &mut [u8], width: usize, ch_type: Channel
 fn srgb_u8_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    linear_srgb::simd::srgb_u8_to_linear_slice(&src[..count], dstf);
+    linear_srgb::default::srgb_u8_to_linear_slice(&src[..count], dstf);
 }
 
 /// Linear f32 → sRGB u8 using `linear-srgb` SIMD batch conversion.
 fn linear_f32_to_srgb_u8(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
-    linear_srgb::simd::linear_to_srgb_u8_slice(srcf, &mut dst[..count]);
+    linear_srgb::default::linear_to_srgb_u8_slice(srcf, &mut dst[..count]);
 }
 
 /// Naive u8 → f32 (v / 255.0, no transfer function).
@@ -1314,7 +1324,7 @@ pub(crate) fn hlg_eotf(v: f32) -> f32 {
     if v <= 0.5 {
         (v * v / 3.0) as f32
     } else {
-        (((v - HLG_C) / HLG_A).exp() + HLG_B) as f32 / 12.0
+        ((((v - HLG_C) / HLG_A).exp() + HLG_B) / 12.0) as f32
     }
 }
 

@@ -102,11 +102,13 @@ pub struct HdrMetadata {
 
 impl HdrMetadata {
     /// True if this describes HDR content (PQ or HLG transfer function).
+    #[must_use]
     pub fn is_hdr(&self) -> bool {
         matches!(self.transfer, TransferFunction::Pq | TransferFunction::Hlg)
     }
 
     /// True if this describes SDR content.
+    #[must_use]
     pub fn is_sdr(&self) -> bool {
         !self.is_hdr()
     }
@@ -141,6 +143,7 @@ impl HdrMetadata {
 /// metadata — for proper tone mapping, use the gainforge or ultrahdr
 /// backends.
 #[inline]
+#[must_use]
 pub fn reinhard_tonemap(v: f32) -> f32 {
     v / (1.0 + v)
 }
@@ -149,6 +152,7 @@ pub fn reinhard_tonemap(v: f32) -> f32 {
 ///
 /// Maps [0, 1) → [0, ∞) using `v / (1 - v)`.
 #[inline]
+#[must_use]
 pub fn reinhard_inverse(v: f32) -> f32 {
     if v >= 1.0 {
         return f32::MAX;
@@ -161,6 +165,7 @@ pub fn reinhard_inverse(v: f32) -> f32 {
 /// `exposure` is in stops relative to 1.0. Positive values brighten,
 /// negative darken. The result is clamped to [0, 1].
 #[inline]
+#[must_use]
 pub fn exposure_tonemap(v: f32, exposure: f32) -> f32 {
     (v * 2.0f32.powf(exposure)).clamp(0.0, 1.0)
 }

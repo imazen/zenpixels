@@ -59,7 +59,7 @@ pub enum LumaCoefficients {
 
 /// Explicit options for pixel format conversion. All lossy
 /// operations require a policy choice — no silent defaults.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ConvertOptions {
     /// How to expand grayscale to RGB.
     pub gray_expand: GrayExpand,
