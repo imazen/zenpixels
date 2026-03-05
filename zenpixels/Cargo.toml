@@ -7,6 +7,7 @@ license = "Apache-2.0 OR MIT"
 description = "Pixel format interchange types for zen* codecs"
 categories = ["multimedia::images"]
 keywords = ["image", "pixel", "format", "descriptor", "codec"]
+readme = "../README.md"
 repository = "https://github.com/imazen/zenpixels"
 
 [features]

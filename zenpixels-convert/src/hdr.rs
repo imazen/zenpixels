@@ -164,6 +164,9 @@ pub fn reinhard_inverse(v: f32) -> f32 {
 ///
 /// `exposure` is in stops relative to 1.0. Positive values brighten,
 /// negative darken. The result is clamped to [0, 1].
+///
+/// Requires `std` because `f32::powf` is not available in `no_std`.
+#[cfg(feature = "std")]
 #[inline]
 #[must_use]
 pub fn exposure_tonemap(v: f32, exposure: f32) -> f32 {

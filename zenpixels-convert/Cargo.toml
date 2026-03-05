@@ -7,6 +7,7 @@ license = "Apache-2.0 OR MIT"
 description = "Transfer-function-aware pixel conversion, gamut mapping, and codec format negotiation for zenpixels"
 categories = ["multimedia::images"]
 keywords = ["image", "pixel", "conversion", "srgb", "codec"]
+readme = "../README.md"
 repository = "https://github.com/imazen/zenpixels"
 
 [features]
@@ -21,7 +22,7 @@ hdr-ultrahdr = ["dep:ultrahdr-core"]
 hdr-gainforge = ["dep:gainforge"]
 
 [dependencies]
-zenpixels = { path = "../zenpixels", default-features = false }
+zenpixels = { version = "0.1.0", path = "../zenpixels", default-features = false }
 linear-srgb = { version = "0.6", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
@@ -30,6 +31,6 @@ ultrahdr-core = { version = "0.2", path = "../../ultrahdr/ultrahdr-core", option
 gainforge = { version = "0.4", optional = true }
 
 [dev-dependencies]
-zenpixels = { path = "../zenpixels", features = ["buffer", "planar", "rgb", "imgref"] }
+zenpixels = { version = "0.1.0", path = "../zenpixels", features = ["buffer", "planar", "rgb", "imgref"] }
 half = "2"
-zenresize = { path = "../../zenresize", default-features = false, features = ["std"] }
+

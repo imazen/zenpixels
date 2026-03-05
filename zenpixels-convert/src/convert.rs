@@ -3,6 +3,7 @@
 //! Each kernel converts one row of `width` pixels from a source format to
 //! a destination format. Kernels are pure functions with no allocation.
 
+use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::min;
 
