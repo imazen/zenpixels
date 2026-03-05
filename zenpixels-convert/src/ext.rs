@@ -304,7 +304,8 @@ mod tests {
     #[test]
     fn pq_linearize_roundtrip() {
         let tf = TransferFunction::Pq;
-        // Rational polynomial PQ (no powf) has ~3e-4 worst-case roundtrip error
+        // linear-srgb 0.6 rational poly: ~3e-4 roundtrip error at low signal.
+        // Tighten to 1e-5 after upgrading to linear-srgb with two-range EOTF.
         for &v in &[0.0, 0.1, 0.5, 0.75, 1.0] {
             let lin = tf.linearize(v);
             let back = tf.delinearize(lin);
