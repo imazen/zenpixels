@@ -2700,12 +2700,16 @@ mod tests {
         {
             let mut s = buf.as_slice_mut();
             s.row_mut(0).copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
-            s.row_mut(1).copy_from_slice(&[9, 10, 11, 12, 13, 14, 15, 16]);
+            s.row_mut(1)
+                .copy_from_slice(&[9, 10, 11, 12, 13, 14, 15, 16]);
         }
         let slice = buf.as_slice();
         let bytes = slice.as_contiguous_bytes();
         assert!(bytes.is_some());
-        assert_eq!(bytes.unwrap(), &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        assert_eq!(
+            bytes.unwrap(),
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        );
     }
 
     #[test]

@@ -451,7 +451,10 @@ mod tests {
         let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
         let out = buf.try_add_alpha().unwrap();
         // Should now be RGBA with straight alpha
-        assert_eq!(out.descriptor().layout(), zenpixels::descriptor::ChannelLayout::Rgba);
+        assert_eq!(
+            out.descriptor().layout(),
+            zenpixels::descriptor::ChannelLayout::Rgba
+        );
         let slice = out.as_slice();
         let row = slice.row(0);
         assert_eq!(row[3], 255);
@@ -501,8 +504,7 @@ mod tests {
             data[i * 2] = bytes[0];
             data[i * 2 + 1] = bytes[1];
         }
-        let buf =
-            PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB16_SRGB).unwrap();
+        let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB16_SRGB).unwrap();
         let out = buf.try_narrow_to_u8().unwrap();
         assert_eq!(
             out.descriptor().channel_type(),
