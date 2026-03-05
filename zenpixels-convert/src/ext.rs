@@ -363,4 +363,233 @@ mod tests {
             );
         }
     }
+
+    // --- Bt709 and Unknown transfer function tests ---
+
+    #[test]
+    fn bt709_linearize_roundtrip() {
+        let tf = TransferFunction::Bt709;
+        for &v in &[0.0, 0.04045, 0.1, 0.5, 0.73, 1.0] {
+            let lin = tf.linearize(v);
+            let back = tf.delinearize(lin);
+            assert!(
+                (v - back).abs() < 1e-5,
+                "BT.709 roundtrip failed for {v}: linearize={lin}, delinearize={back}"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_transfer_identity() {
+        let tf = TransferFunction::Unknown;
+        for &v in &[0.0, 0.25, 0.5, 0.75, 1.0] {
+            assert_eq!(
+                tf.linearize(v),
+                v,
+                "Unknown linearize should be identity for {v}"
+            );
+            assert_eq!(
+                tf.delinearize(v),
+                v,
+                "Unknown delinearize should be identity for {v}"
+            );
+        }
+    }
+
+    // --- PixelBufferConvertExt tests ---
+
+    #[cfg(feature = "buffer")]
+    use super::PixelBufferConvertExt;
+
+    #[cfg(feature = "buffer")]
+    use zenpixels::PixelDescriptor;
+
+    #[cfg(feature = "buffer")]
+    use zenpixels::buffer::PixelBuffer;
+
+    #[test]
+    #[cfg(feature = "buffer")]
+    fn convert_to_identity() {
+        let data = vec![100u8, 150, 200, 50, 100, 150];
+        let buf = PixelBuffer::from_vec(data.clone(), 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+        let out = buf.convert_to(PixelDescriptor::RGB8_SRGB).unwrap();
+        assert_eq!(out.descriptor(), PixelDescriptor::RGB8_SRGB);
+        assert_eq!(out.width(), 2);
+        assert_eq!(out.height(), 1);
+        assert_eq!(&out.as_slice().row(0)[..6], &data[..]);
+    }
+
+    #[test]
+    #[cfg(feature = "buffer")]
+    fn convert_to_rgba8() {
+        let data = vec![100u8, 150, 200, 50, 100, 150];
+        let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+        let out = buf.convert_to(PixelDescriptor::RGBA8_SRGB).unwrap();
+        assert_eq!(out.descriptor(), PixelDescriptor::RGBA8_SRGB);
+        let slice = out.as_slice();
+        let row = slice.row(0);
+        // Pixel 0: R=100, G=150, B=200, A=255
+        assert_eq!(row[0], 100);
+        assert_eq!(row[1], 150);
+        assert_eq!(row[2], 200);
+        assert_eq!(row[3], 255);
+        // Pixel 1: R=50, G=100, B=150, A=255
+        assert_eq!(row[4], 50);
+        assert_eq!(row[5], 100);
+        assert_eq!(row[6], 150);
+        assert_eq!(row[7], 255);
+    }
+
+    #[test]
+    #[cfg(feature = "buffer")]
+    fn try_add_alpha_rgb() {
+        let data = vec![100u8, 150, 200, 50, 100, 150];
+        let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+        let out = buf.try_add_alpha().unwrap();
+        // Should now be RGBA with straight alpha
+        assert_eq!(out.descriptor().layout(), zenpixels::descriptor::ChannelLayout::Rgba);
+        let slice = out.as_slice();
+        let row = slice.row(0);
+        assert_eq!(row[3], 255);
+        assert_eq!(row[7], 255);
+    }
+
+    #[test]
+    #[cfg(feature = "buffer")]
+    fn try_widen_to_u16() {
+        let data = vec![100u8, 150, 200, 50, 100, 150];
+        let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+        let out = buf.try_widen_to_u16().unwrap();
+        assert_eq!(
+            out.descriptor().channel_type(),
+            zenpixels::descriptor::ChannelType::U16
+        );
+        let slice = out.as_slice();
+        let row = slice.row(0);
+        // U16 little-endian: value * 257
+        for (i, &expected_u8) in [100u8, 150, 200, 50, 100, 150].iter().enumerate() {
+            let lo = row[i * 2];
+            let hi = row[i * 2 + 1];
+            let val = u16::from_le_bytes([lo, hi]);
+            let expected = expected_u8 as u16 * 257;
+            assert_eq!(
+                val, expected,
+                "channel {i}: expected {expected} (u8={expected_u8}*257), got {val}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "buffer")]
+    fn try_narrow_to_u8() {
+        // Create RGB16 buffer with known values
+        let values: [u16; 6] = [
+            100 * 257,
+            150 * 257,
+            200 * 257,
+            50 * 257,
+            100 * 257,
+            150 * 257,
+        ];
+        let mut data = vec![0u8; 12];
+        for (i, &v) in values.iter().enumerate() {
+            let bytes = v.to_le_bytes();
+            data[i * 2] = bytes[0];
+            data[i * 2 + 1] = bytes[1];
+        }
+        let buf =
+            PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB16_SRGB).unwrap();
+        let out = buf.try_narrow_to_u8().unwrap();
+        assert_eq!(
+            out.descriptor().channel_type(),
+            zenpixels::descriptor::ChannelType::U8
+        );
+        let slice = out.as_slice();
+        let row = slice.row(0);
+        assert_eq!(row[0], 100);
+        assert_eq!(row[1], 150);
+        assert_eq!(row[2], 200);
+        assert_eq!(row[3], 50);
+        assert_eq!(row[4], 100);
+        assert_eq!(row[5], 150);
+    }
+
+    #[test]
+    #[cfg(feature = "buffer")]
+    fn to_rgb8() {
+        // Start with RGBA8 buffer, convert to typed RGB8
+        let data = vec![100u8, 150, 200, 255, 50, 100, 150, 255];
+        let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let typed: PixelBuffer<rgb::Rgb<u8>> = buf.to_rgb8();
+        assert_eq!(typed.width(), 2);
+        assert_eq!(typed.height(), 1);
+        let slice = typed.as_slice();
+        let row = slice.row(0);
+        // Alpha should be dropped: 3 bytes per pixel
+        assert_eq!(row[0], 100);
+        assert_eq!(row[1], 150);
+        assert_eq!(row[2], 200);
+        assert_eq!(row[3], 50);
+        assert_eq!(row[4], 100);
+        assert_eq!(row[5], 150);
+    }
+
+    #[test]
+    #[cfg(feature = "buffer")]
+    fn to_rgba8() {
+        let data = vec![100u8, 150, 200, 50, 100, 150];
+        let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+        let typed: PixelBuffer<rgb::Rgba<u8>> = buf.to_rgba8();
+        assert_eq!(typed.width(), 2);
+        assert_eq!(typed.height(), 1);
+        let slice = typed.as_slice();
+        let row = slice.row(0);
+        // RGB -> RGBA with alpha=255
+        assert_eq!(row[0], 100);
+        assert_eq!(row[1], 150);
+        assert_eq!(row[2], 200);
+        assert_eq!(row[3], 255);
+        assert_eq!(row[4], 50);
+        assert_eq!(row[5], 100);
+        assert_eq!(row[6], 150);
+        assert_eq!(row[7], 255);
+    }
+
+    #[test]
+    #[cfg(feature = "buffer")]
+    fn to_gray8() {
+        let data = vec![100u8, 150, 200, 50, 100, 150];
+        let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+        let typed: PixelBuffer<rgb::Gray<u8>> = buf.to_gray8();
+        assert_eq!(typed.width(), 2);
+        assert_eq!(typed.height(), 1);
+        let slice = typed.as_slice();
+        let row = slice.row(0);
+        // Gray values should be luminance-weighted, not zero
+        assert!(row[0] > 0, "gray pixel 0 should be non-zero");
+        assert!(row[1] > 0, "gray pixel 1 should be non-zero");
+    }
+
+    #[test]
+    #[cfg(feature = "buffer")]
+    fn to_bgra8() {
+        let data = vec![100u8, 150, 200, 50, 100, 150];
+        let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+        let typed: PixelBuffer<rgb::alt::BGRA<u8>> = buf.to_bgra8();
+        assert_eq!(typed.width(), 2);
+        assert_eq!(typed.height(), 1);
+        let slice = typed.as_slice();
+        let row = slice.row(0);
+        // BGRA layout: B, G, R, A
+        // Pixel 0: R=100, G=150, B=200 -> BGRA = 200, 150, 100, 255
+        assert_eq!(row[0], 200);
+        assert_eq!(row[1], 150);
+        assert_eq!(row[2], 100);
+        assert_eq!(row[3], 255);
+        // Pixel 1: R=50, G=100, B=150 -> BGRA = 150, 100, 50, 255
+        assert_eq!(row[4], 150);
+        assert_eq!(row[5], 100);
+        assert_eq!(row[6], 50);
+        assert_eq!(row[7], 255);
+    }
 }
