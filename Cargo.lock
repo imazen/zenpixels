@@ -104,6 +104,16 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 [[package]]
 name = "linear-srgb"
 version = "0.6.1"
+dependencies = [
+ "archmage",
+ "bytemuck",
+ "magetypes",
+ "num-traits",
+]
+
+[[package]]
+name = "linear-srgb"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c9a589797e9ba985551ca1f2725358439d7d3ef8cd92aa1d41c925ff2becea"
 dependencies = [
@@ -229,6 +239,7 @@ dependencies = [
  "bytemuck",
  "enough",
  "half",
+ "linear-srgb 0.6.1",
  "magetypes",
  "thiserror",
  "wide",
@@ -273,7 +284,7 @@ dependencies = [
  "enough",
  "gainforge",
  "half",
- "linear-srgb",
+ "linear-srgb 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rgb",
  "ultrahdr-core",
  "zenpixels",
@@ -287,7 +298,7 @@ dependencies = [
  "archmage",
  "imgref",
  "libm",
- "linear-srgb",
+ "linear-srgb 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "magetypes",
  "rgb",
  "safe_unaligned_simd",
