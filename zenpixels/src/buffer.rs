@@ -2647,6 +2647,165 @@ mod tests {
         assert_eq!(bytes.len(), 12);
         assert_eq!(bytes, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
     }
+
+    // --- BufferError Display for all variants ---
+
+    #[test]
+    fn buffer_error_display_alignment_violation() {
+        let msg = format!("{}", BufferError::AlignmentViolation);
+        assert_eq!(msg, "data is not aligned for the channel type");
+    }
+
+    #[test]
+    fn buffer_error_display_insufficient_data() {
+        let msg = format!("{}", BufferError::InsufficientData);
+        assert_eq!(msg, "data slice is too small for the given dimensions");
+    }
+
+    #[test]
+    fn buffer_error_display_invalid_dimensions() {
+        let msg = format!("{}", BufferError::InvalidDimensions);
+        assert_eq!(msg, "width or height is zero or causes overflow");
+    }
+
+    #[test]
+    fn buffer_error_display_incompatible_descriptor() {
+        let msg = format!("{}", BufferError::IncompatibleDescriptor);
+        assert_eq!(msg, "new descriptor has different bytes_per_pixel");
+    }
+
+    #[test]
+    fn buffer_error_display_allocation_failed() {
+        let msg = format!("{}", BufferError::AllocationFailed);
+        assert_eq!(msg, "buffer allocation failed");
+    }
+
+    // --- PixelSlice::is_contiguous ---
+
+    #[test]
+    fn pixel_slice_is_contiguous_tight() {
+        // Tight buffer: stride == width * bpp
+        let buf = PixelBuffer::new(4, 3, PixelDescriptor::RGBA8_SRGB);
+        let slice = buf.as_slice();
+        // stride should be 4 * 4 = 16
+        assert_eq!(slice.stride(), 16);
+        assert!(slice.is_contiguous());
+    }
+
+    // --- PixelSlice::as_contiguous_bytes ---
+
+    #[test]
+    fn pixel_slice_as_contiguous_bytes_tight() {
+        let mut buf = PixelBuffer::new(2, 2, PixelDescriptor::RGBA8_SRGB);
+        {
+            let mut s = buf.as_slice_mut();
+            s.row_mut(0).copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+            s.row_mut(1).copy_from_slice(&[9, 10, 11, 12, 13, 14, 15, 16]);
+        }
+        let slice = buf.as_slice();
+        let bytes = slice.as_contiguous_bytes();
+        assert!(bytes.is_some());
+        assert_eq!(bytes.unwrap(), &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+    }
+
+    #[test]
+    fn pixel_slice_as_contiguous_bytes_padded_returns_none() {
+        // SIMD-aligned buffer will have stride padding for small widths
+        let buf = PixelBuffer::new_simd_aligned(2, 2, PixelDescriptor::RGB8_SRGB, 16);
+        let slice = buf.as_slice();
+        // stride > width * bpp, so not contiguous
+        assert!(slice.stride() > 6);
+        assert!(!slice.is_contiguous());
+        assert!(slice.as_contiguous_bytes().is_none());
+    }
+
+    // --- PixelSlice::row_with_stride ---
+
+    #[test]
+    fn pixel_slice_row_with_stride_padded() {
+        // Create a padded buffer via SIMD alignment
+        let buf = PixelBuffer::new_simd_aligned(2, 2, PixelDescriptor::RGBA8_SRGB, 64);
+        let slice = buf.as_slice();
+        let stride = slice.stride();
+        // stride should be >= 8 (2 * 4 bpp) and aligned
+        assert!(stride >= 8);
+        // row_with_stride returns the full stride bytes including padding
+        let full_row = slice.row_with_stride(0);
+        assert_eq!(full_row.len(), stride);
+        // row() returns only the pixel data (no padding)
+        let pixel_row = slice.row(0);
+        assert_eq!(pixel_row.len(), 8); // 2 pixels * 4 bytes
+    }
+
+    // --- PixelBuffer::has_alpha ---
+
+    #[test]
+    fn pixel_buffer_has_alpha_rgba8() {
+        let buf = PixelBuffer::new(2, 2, PixelDescriptor::RGBA8_SRGB);
+        assert!(buf.has_alpha());
+    }
+
+    #[test]
+    fn pixel_buffer_has_alpha_rgb8_false() {
+        let buf = PixelBuffer::new(2, 2, PixelDescriptor::RGB8_SRGB);
+        assert!(!buf.has_alpha());
+    }
+
+    // --- PixelBuffer::is_grayscale ---
+
+    #[test]
+    fn pixel_buffer_is_grayscale_gray8() {
+        let buf = PixelBuffer::new(2, 2, PixelDescriptor::GRAY8_SRGB);
+        assert!(buf.is_grayscale());
+    }
+
+    #[test]
+    fn pixel_buffer_is_grayscale_rgb8_false() {
+        let buf = PixelBuffer::new(2, 2, PixelDescriptor::RGB8_SRGB);
+        assert!(!buf.is_grayscale());
+    }
+
+    // --- PixelSlice::try_typed (requires "rgb" feature) ---
+
+    #[cfg(feature = "rgb")]
+    #[test]
+    fn pixel_slice_try_typed_success() {
+        use rgb::Rgba;
+
+        let buf = PixelBuffer::new(2, 2, PixelDescriptor::RGBA8_SRGB);
+        let slice = buf.as_slice();
+        let typed: Option<PixelSlice<'_, Rgba<u8>>> = slice.try_typed();
+        assert!(typed.is_some());
+        let typed = typed.unwrap();
+        assert_eq!(typed.width(), 2);
+        assert_eq!(typed.rows(), 2);
+    }
+
+    // --- PixelBuffer::try_typed ---
+
+    #[cfg(feature = "rgb")]
+    #[test]
+    fn pixel_buffer_try_typed_success() {
+        use rgb::Rgba;
+
+        let buf = PixelBuffer::new(2, 2, PixelDescriptor::RGBA8_SRGB);
+        let typed: Option<PixelBuffer<Rgba<u8>>> = buf.try_typed();
+        assert!(typed.is_some());
+        let typed = typed.unwrap();
+        assert_eq!(typed.width(), 2);
+        assert_eq!(typed.height(), 2);
+    }
+
+    #[cfg(feature = "rgb")]
+    #[test]
+    fn pixel_buffer_try_typed_failure_wrong_layout() {
+        use rgb::Rgba;
+
+        // RGB8 buffer cannot be typed as Rgba<u8>
+        let buf = PixelBuffer::new(2, 2, PixelDescriptor::RGB8_SRGB);
+        let typed: Option<PixelBuffer<Rgba<u8>>> = buf.try_typed();
+        assert!(typed.is_none());
+    }
 }
 
 #[cfg(all(test, feature = "imgref"))]

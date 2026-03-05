@@ -999,4 +999,222 @@ mod tests {
         assert_eq!(u16s[1], 150 * 257);
         assert_eq!(u16s[2], 200 * 257);
     }
+
+    // -----------------------------------------------------------------------
+    // U16 and F32 layout conversion kernels
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gray_u16_to_rgb_u16() {
+        let from = PixelDescriptor::new(
+            ChannelType::U16,
+            ChannelLayout::Gray,
+            None,
+            TransferFunction::Srgb,
+        );
+        let to = PixelDescriptor::new(
+            ChannelType::U16,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Srgb,
+        );
+        let src16: [u16; 1] = [40000];
+        let src: &[u8] = bytemuck::cast_slice(&src16);
+        let dst = convert_pixel(from, to, src);
+        let out: &[u16] = bytemuck::cast_slice(&dst);
+        assert_eq!(out, [40000, 40000, 40000]);
+    }
+
+    #[test]
+    fn gray_f32_to_rgba_f32() {
+        let from = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Gray,
+            None,
+            TransferFunction::Linear,
+        );
+        let to = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgba,
+            Some(AlphaMode::Straight),
+            TransferFunction::Linear,
+        );
+        let src_f: [f32; 1] = [0.6];
+        let src: &[u8] = bytemuck::cast_slice(&src_f);
+        let dst = convert_pixel(from, to, src);
+        let out: &[f32] = bytemuck::cast_slice(&dst);
+        assert!((out[0] - 0.6).abs() < 1e-6);
+        assert!((out[1] - 0.6).abs() < 1e-6);
+        assert!((out[2] - 0.6).abs() < 1e-6);
+        assert!((out[3] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn rgb_f32_to_rgba_f32() {
+        let from = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Linear,
+        );
+        let to = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgba,
+            Some(AlphaMode::Straight),
+            TransferFunction::Linear,
+        );
+        let src_f: [f32; 3] = [0.2, 0.4, 0.8];
+        let src: &[u8] = bytemuck::cast_slice(&src_f);
+        let dst = convert_pixel(from, to, src);
+        let out: &[f32] = bytemuck::cast_slice(&dst);
+        assert!((out[0] - 0.2).abs() < 1e-6);
+        assert!((out[1] - 0.4).abs() < 1e-6);
+        assert!((out[2] - 0.8).abs() < 1e-6);
+        assert!((out[3] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn rgba_u16_to_rgb_u16() {
+        let from = PixelDescriptor::new(
+            ChannelType::U16,
+            ChannelLayout::Rgba,
+            Some(AlphaMode::Straight),
+            TransferFunction::Srgb,
+        );
+        let to = PixelDescriptor::new(
+            ChannelType::U16,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Srgb,
+        );
+        let src16: [u16; 4] = [10000, 20000, 30000, 65535];
+        let src: &[u8] = bytemuck::cast_slice(&src16);
+        let dst = convert_pixel(from, to, src);
+        let out: &[u16] = bytemuck::cast_slice(&dst);
+        assert_eq!(out, [10000, 20000, 30000]);
+    }
+
+    #[test]
+    fn gray_alpha_u16_to_rgba_u16() {
+        let from = PixelDescriptor::new(
+            ChannelType::U16,
+            ChannelLayout::GrayAlpha,
+            Some(AlphaMode::Straight),
+            TransferFunction::Srgb,
+        );
+        let to = PixelDescriptor::new(
+            ChannelType::U16,
+            ChannelLayout::Rgba,
+            Some(AlphaMode::Straight),
+            TransferFunction::Srgb,
+        );
+        let src16: [u16; 2] = [50000, 32768];
+        let src: &[u8] = bytemuck::cast_slice(&src16);
+        let dst = convert_pixel(from, to, src);
+        let out: &[u16] = bytemuck::cast_slice(&dst);
+        assert_eq!(out, [50000, 50000, 50000, 32768]);
+    }
+
+    #[test]
+    fn gray_alpha_f32_to_rgb_f32() {
+        let from = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::GrayAlpha,
+            Some(AlphaMode::Straight),
+            TransferFunction::Linear,
+        );
+        let to = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Linear,
+        );
+        let src_f: [f32; 2] = [0.75, 0.5];
+        let src: &[u8] = bytemuck::cast_slice(&src_f);
+        let dst = convert_pixel(from, to, src);
+        let out: &[f32] = bytemuck::cast_slice(&dst);
+        assert!((out[0] - 0.75).abs() < 1e-6);
+        assert!((out[1] - 0.75).abs() < 1e-6);
+        assert!((out[2] - 0.75).abs() < 1e-6);
+    }
+
+    #[test]
+    fn gray_u16_to_gray_alpha_u16() {
+        let from = PixelDescriptor::new(
+            ChannelType::U16,
+            ChannelLayout::Gray,
+            None,
+            TransferFunction::Srgb,
+        );
+        let to = PixelDescriptor::new(
+            ChannelType::U16,
+            ChannelLayout::GrayAlpha,
+            Some(AlphaMode::Straight),
+            TransferFunction::Srgb,
+        );
+        let src16: [u16; 1] = [12345];
+        let src: &[u8] = bytemuck::cast_slice(&src16);
+        let dst = convert_pixel(from, to, src);
+        let out: &[u16] = bytemuck::cast_slice(&dst);
+        assert_eq!(out, [12345, 65535]);
+    }
+
+    #[test]
+    fn gray_alpha_f32_to_gray_f32() {
+        let from = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::GrayAlpha,
+            Some(AlphaMode::Straight),
+            TransferFunction::Linear,
+        );
+        let to = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Gray,
+            None,
+            TransferFunction::Linear,
+        );
+        let src_f: [f32; 2] = [0.33, 0.9];
+        let src: &[u8] = bytemuck::cast_slice(&src_f);
+        let dst = convert_pixel(from, to, src);
+        let out: &[f32] = bytemuck::cast_slice(&dst);
+        assert!((out[0] - 0.33).abs() < 1e-6);
+    }
+
+    // -----------------------------------------------------------------------
+    // Transfer function roundtrips (ext.rs branches)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn bt709_linear_f32_roundtrip() {
+        use crate::TransferFunctionExt;
+        let tf = TransferFunction::Bt709;
+        let values = [0.0f32, 0.1, 0.25, 0.5, 0.75, 1.0];
+        for &v in &values {
+            let linear = tf.linearize(v);
+            let back = tf.delinearize(linear);
+            assert!(
+                (back - v).abs() < 1e-5,
+                "Bt709 roundtrip failed for {v}: linearize={linear}, delinearize={back}"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_transfer_roundtrip() {
+        use crate::TransferFunctionExt;
+        let tf = TransferFunction::Unknown;
+        let values = [0.0f32, 0.1, 0.5, 0.99, 1.0];
+        for &v in &values {
+            let linear = tf.linearize(v);
+            assert!(
+                (linear - v).abs() < 1e-7,
+                "Unknown linearize should be identity: {v} -> {linear}"
+            );
+            let back = tf.delinearize(linear);
+            assert!(
+                (back - v).abs() < 1e-7,
+                "Unknown delinearize should be identity: {linear} -> {back}"
+            );
+        }
+    }
 }
