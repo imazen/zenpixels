@@ -1213,43 +1213,23 @@ fn f32_to_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
 }
 
 // ---------------------------------------------------------------------------
-// PQ (SMPTE ST 2084) transfer function
+// PQ (SMPTE ST 2084) transfer function — delegates to linear-srgb
 // ---------------------------------------------------------------------------
 
-// PQ constants (SMPTE ST 2084 / BT.2100).
-const PQ_M1: f64 = 2610.0 / 16384.0; // 0.1593017578125
-const PQ_M2: f64 = 2523.0 / 4096.0 * 128.0; // 78.84375
-const PQ_C1: f64 = 3424.0 / 4096.0; // 0.8359375
-const PQ_C2: f64 = 2413.0 / 4096.0 * 32.0; // 18.8515625
-const PQ_C3: f64 = 2392.0 / 4096.0 * 32.0; // 18.6875
-
 /// PQ EOTF: encoded [0,1] → linear light [0,1] (where 1.0 = 10000 cd/m²).
+///
+/// Uses rational polynomial from `linear-srgb` (no `powf` calls).
 #[inline]
 pub(crate) fn pq_eotf(v: f32) -> f32 {
-    if v <= 0.0 {
-        return 0.0;
-    }
-    let v = v as f64;
-    let vp = v.powf(1.0 / PQ_M2);
-    let num = (vp - PQ_C1).max(0.0);
-    let den = PQ_C2 - PQ_C3 * vp;
-    if den <= 0.0 {
-        return 0.0;
-    }
-    (num / den).powf(1.0 / PQ_M1) as f32
+    linear_srgb::tf::pq_to_linear(v)
 }
 
 /// PQ inverse EOTF (OETF): linear light [0,1] → encoded [0,1].
+///
+/// Uses rational polynomial from `linear-srgb` (no `powf` calls).
 #[inline]
 pub(crate) fn pq_oetf(v: f32) -> f32 {
-    if v <= 0.0 {
-        return 0.0;
-    }
-    let v = v as f64;
-    let ym1 = v.powf(PQ_M1);
-    let num = PQ_C1 + PQ_C2 * ym1;
-    let den = 1.0 + PQ_C3 * ym1;
-    (num / den).powf(PQ_M2) as f32
+    linear_srgb::tf::linear_to_pq(v)
 }
 
 /// PQ U16 → Linear F32 (EOTF applied during depth conversion).
@@ -1295,37 +1275,23 @@ fn linear_f32_to_pq_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usiz
 }
 
 // ---------------------------------------------------------------------------
-// HLG (ARIB STD-B67) transfer function
+// HLG (ARIB STD-B67) transfer function — delegates to linear-srgb
 // ---------------------------------------------------------------------------
 
-// HLG constants (ARIB STD-B67 / BT.2100, ITU-R BT.2100-2).
-const HLG_A: f64 = 0.17883277;
-const HLG_B: f64 = 0.28466892; // 1 - 4*a
-const HLG_C: f64 = 0.55991073; // 0.5 - a*ln(4*a)
-
 /// HLG OETF: scene-linear [0,1] → encoded [0,1].
+///
+/// Uses `fast_log2f` from `linear-srgb` (no `libm` ln calls).
 #[inline]
 pub(crate) fn hlg_oetf(v: f32) -> f32 {
-    let v = v.max(0.0) as f64;
-    if v <= 1.0 / 12.0 {
-        (3.0 * v).sqrt() as f32
-    } else {
-        (HLG_A * (12.0 * v - HLG_B).ln() + HLG_C) as f32
-    }
+    linear_srgb::tf::linear_to_hlg(v)
 }
 
 /// HLG inverse OETF (EOTF): encoded [0,1] → scene-linear [0,1].
+///
+/// Uses `fast_pow2f` from `linear-srgb` (no `libm` exp calls).
 #[inline]
 pub(crate) fn hlg_eotf(v: f32) -> f32 {
-    if v <= 0.0 {
-        return 0.0;
-    }
-    let v = v as f64;
-    if v <= 0.5 {
-        (v * v / 3.0) as f32
-    } else {
-        ((((v - HLG_C) / HLG_A).exp() + HLG_B) / 12.0) as f32
-    }
+    linear_srgb::tf::hlg_to_linear(v)
 }
 
 /// HLG U16 → Linear F32 (EOTF applied during depth conversion).

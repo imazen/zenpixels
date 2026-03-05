@@ -33,7 +33,8 @@ impl TransferFunctionExt for TransferFunction {
     fn linearize(&self, v: f32) -> f32 {
         match self {
             Self::Linear | Self::Unknown => v,
-            Self::Srgb | Self::Bt709 => linear_srgb::precise::srgb_to_linear(v),
+            Self::Srgb => linear_srgb::precise::srgb_to_linear(v),
+            Self::Bt709 => linear_srgb::tf::bt709_to_linear(v),
             Self::Pq => pq_eotf(v),
             Self::Hlg => hlg_eotf(v),
             _ => v,
@@ -44,7 +45,8 @@ impl TransferFunctionExt for TransferFunction {
     fn delinearize(&self, v: f32) -> f32 {
         match self {
             Self::Linear | Self::Unknown => v,
-            Self::Srgb | Self::Bt709 => linear_srgb::precise::linear_to_srgb(v),
+            Self::Srgb => linear_srgb::precise::linear_to_srgb(v),
+            Self::Bt709 => linear_srgb::tf::linear_to_bt709(v),
             Self::Pq => pq_oetf(v),
             Self::Hlg => hlg_oetf(v),
             _ => v,
@@ -302,11 +304,12 @@ mod tests {
     #[test]
     fn pq_linearize_roundtrip() {
         let tf = TransferFunction::Pq;
+        // Rational polynomial PQ (no powf) has ~3e-4 worst-case roundtrip error
         for &v in &[0.0, 0.1, 0.5, 0.75, 1.0] {
             let lin = tf.linearize(v);
             let back = tf.delinearize(lin);
             assert!(
-                (v - back).abs() < 1e-4,
+                (v - back).abs() < 5e-4,
                 "PQ roundtrip failed for {v}: linearize={lin}, delinearize={back}"
             );
         }
