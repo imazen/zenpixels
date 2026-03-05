@@ -274,4 +274,198 @@ mod tests {
             TransferFunction::Unknown
         );
     }
+
+    // --- ColorContext additional coverage ---
+
+    #[test]
+    fn color_context_from_icc() {
+        let ctx = ColorContext::from_icc(vec![10, 20, 30]);
+        assert!(ctx.icc.is_some());
+        assert_eq!(ctx.icc.as_deref(), Some(&[10u8, 20, 30][..]));
+        assert!(ctx.cicp.is_none());
+    }
+
+    #[test]
+    fn color_context_from_icc_and_cicp() {
+        let ctx = ColorContext::from_icc_and_cicp(vec![1, 2], Cicp::BT2100_PQ);
+        assert!(ctx.icc.is_some());
+        assert_eq!(ctx.cicp, Some(Cicp::BT2100_PQ));
+    }
+
+    #[test]
+    fn color_context_profile_source_icc_only() {
+        let ctx = ColorContext::from_icc(vec![42]);
+        let src = ctx.as_profile_source().unwrap();
+        assert_eq!(src, ColorProfileSource::Icc(&[42]));
+    }
+
+    #[test]
+    fn color_context_profile_source_none() {
+        let ctx = ColorContext {
+            icc: None,
+            cicp: None,
+        };
+        assert!(ctx.as_profile_source().is_none());
+    }
+
+    #[test]
+    fn color_context_pq_transfer() {
+        assert_eq!(
+            ColorContext::from_cicp(Cicp::BT2100_PQ).transfer_function(),
+            TransferFunction::Pq
+        );
+    }
+
+    #[test]
+    fn color_context_hlg_transfer() {
+        assert_eq!(
+            ColorContext::from_cicp(Cicp::BT2100_HLG).transfer_function(),
+            TransferFunction::Hlg
+        );
+    }
+
+    #[test]
+    fn color_context_eq_and_clone() {
+        let a = ColorContext::from_cicp(Cicp::SRGB);
+        let b = a.clone();
+        assert_eq!(a, b);
+        let c = ColorContext::from_icc(vec![1]);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn color_context_debug() {
+        let ctx = ColorContext::from_cicp(Cicp::SRGB);
+        let s = alloc::format!("{ctx:?}");
+        assert!(s.contains("ColorContext"));
+    }
+
+    // --- ColorProfileSource coverage ---
+
+    #[test]
+    fn color_profile_source_named() {
+        let src = ColorProfileSource::Named(NamedProfile::DisplayP3);
+        assert_eq!(src, ColorProfileSource::Named(NamedProfile::DisplayP3));
+        assert_ne!(src, ColorProfileSource::Named(NamedProfile::Srgb));
+    }
+
+    #[test]
+    fn color_profile_source_cicp() {
+        let src = ColorProfileSource::Cicp(Cicp::BT2100_PQ);
+        assert_eq!(src, ColorProfileSource::Cicp(Cicp::BT2100_PQ));
+    }
+
+    #[test]
+    fn color_profile_source_icc() {
+        let data: &[u8] = &[1, 2, 3];
+        let src = ColorProfileSource::Icc(data);
+        assert_eq!(src, ColorProfileSource::Icc(&[1, 2, 3]));
+    }
+
+    #[test]
+    fn color_profile_source_debug_clone() {
+        let src = ColorProfileSource::Named(NamedProfile::Srgb);
+        let s = alloc::format!("{src:?}");
+        assert!(s.contains("Named"));
+        let src2 = src.clone();
+        assert_eq!(src, src2);
+    }
+
+    // --- NamedProfile coverage ---
+
+    #[test]
+    fn named_profile_all_variants_to_cicp() {
+        assert!(NamedProfile::Srgb.to_cicp().is_some());
+        assert!(NamedProfile::DisplayP3.to_cicp().is_some());
+        assert!(NamedProfile::Bt2020.to_cicp().is_some());
+        assert!(NamedProfile::Bt2020Pq.to_cicp().is_some());
+        assert!(NamedProfile::Bt2020Hlg.to_cicp().is_some());
+        assert!(NamedProfile::LinearSrgb.to_cicp().is_some());
+        assert!(NamedProfile::AdobeRgb.to_cicp().is_none());
+    }
+
+    #[test]
+    fn named_profile_debug_clone_hash() {
+        use core::hash::{Hash, Hasher};
+        let p = NamedProfile::DisplayP3;
+        let _ = alloc::format!("{p:?}");
+        let p2 = p;
+        assert_eq!(p, p2);
+        let mut h = std::hash::DefaultHasher::new();
+        p.hash(&mut h);
+        let _ = h.finish();
+    }
+
+    // --- ColorProvenance coverage ---
+
+    #[test]
+    fn color_provenance_variants() {
+        assert_ne!(ColorProvenance::Icc, ColorProvenance::Cicp);
+        assert_ne!(ColorProvenance::GamaChrm, ColorProvenance::Assumed);
+        let a = ColorProvenance::Icc;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn color_provenance_debug_hash() {
+        use core::hash::{Hash, Hasher};
+        let p = ColorProvenance::Cicp;
+        let _ = alloc::format!("{p:?}");
+        let mut h = std::hash::DefaultHasher::new();
+        p.hash(&mut h);
+        let _ = h.finish();
+    }
+
+    // --- ColorOrigin coverage ---
+
+    #[test]
+    fn color_origin_from_icc() {
+        let o = ColorOrigin::from_icc(vec![1, 2, 3]);
+        assert!(o.icc.is_some());
+        assert!(o.cicp.is_none());
+        assert_eq!(o.provenance, ColorProvenance::Icc);
+    }
+
+    #[test]
+    fn color_origin_from_cicp() {
+        let o = ColorOrigin::from_cicp(Cicp::SRGB);
+        assert!(o.icc.is_none());
+        assert_eq!(o.cicp, Some(Cicp::SRGB));
+        assert_eq!(o.provenance, ColorProvenance::Cicp);
+    }
+
+    #[test]
+    fn color_origin_from_icc_and_cicp() {
+        let o = ColorOrigin::from_icc_and_cicp(vec![10], Cicp::BT2100_PQ);
+        assert!(o.icc.is_some());
+        assert_eq!(o.cicp, Some(Cicp::BT2100_PQ));
+        assert_eq!(o.provenance, ColorProvenance::Cicp);
+    }
+
+    #[test]
+    fn color_origin_from_gama_chrm() {
+        let o = ColorOrigin::from_gama_chrm();
+        assert!(o.icc.is_none());
+        assert!(o.cicp.is_none());
+        assert_eq!(o.provenance, ColorProvenance::GamaChrm);
+    }
+
+    #[test]
+    fn color_origin_assumed() {
+        let o = ColorOrigin::assumed();
+        assert!(o.icc.is_none());
+        assert!(o.cicp.is_none());
+        assert_eq!(o.provenance, ColorProvenance::Assumed);
+    }
+
+    #[test]
+    fn color_origin_eq_clone_debug() {
+        let a = ColorOrigin::from_cicp(Cicp::SRGB);
+        let b = a.clone();
+        assert_eq!(a, b);
+        let _ = alloc::format!("{a:?}");
+        let c = ColorOrigin::assumed();
+        assert_ne!(a, c);
+    }
 }

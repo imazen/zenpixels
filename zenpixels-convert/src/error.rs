@@ -81,3 +81,112 @@ impl fmt::Display for ConvertError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for ConvertError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::format;
+
+    #[test]
+    fn display_no_match() {
+        let e = ConvertError::NoMatch {
+            source: PixelDescriptor::RGB8_SRGB,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("no supported format"));
+        assert!(s.contains("U8"));
+        assert!(s.contains("Rgb"));
+    }
+
+    #[test]
+    fn display_no_path() {
+        let e = ConvertError::NoPath {
+            from: PixelDescriptor::RGB8_SRGB,
+            to: PixelDescriptor::GRAY8_SRGB,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("no conversion path"));
+    }
+
+    #[test]
+    fn display_buffer_size() {
+        let e = ConvertError::BufferSize {
+            expected: 1024,
+            actual: 512,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("1024"));
+        assert!(s.contains("512"));
+    }
+
+    #[test]
+    fn display_invalid_width() {
+        let e = ConvertError::InvalidWidth(0);
+        assert!(format!("{e}").contains("0"));
+    }
+
+    #[test]
+    fn display_empty_format_list() {
+        let s = format!("{}", ConvertError::EmptyFormatList);
+        assert!(s.contains("empty"));
+    }
+
+    #[test]
+    fn display_unsupported_transfer() {
+        let e = ConvertError::UnsupportedTransfer {
+            from: TransferFunction::Pq,
+            to: TransferFunction::Hlg,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("Pq"));
+        assert!(s.contains("Hlg"));
+    }
+
+    #[test]
+    fn display_alpha_not_opaque() {
+        assert!(format!("{}", ConvertError::AlphaNotOpaque).contains("opaque"));
+    }
+
+    #[test]
+    fn display_depth_reduction_forbidden() {
+        assert!(format!("{}", ConvertError::DepthReductionForbidden).contains("forbidden"));
+    }
+
+    #[test]
+    fn display_alpha_removal_forbidden() {
+        assert!(format!("{}", ConvertError::AlphaRemovalForbidden).contains("forbidden"));
+    }
+
+    #[test]
+    fn display_rgb_to_gray() {
+        assert!(format!("{}", ConvertError::RgbToGray).contains("luma"));
+    }
+
+    #[test]
+    fn display_allocation_failed() {
+        assert!(format!("{}", ConvertError::AllocationFailed).contains("allocation"));
+    }
+
+    #[test]
+    fn error_eq() {
+        assert_eq!(ConvertError::AlphaNotOpaque, ConvertError::AlphaNotOpaque);
+        assert_ne!(ConvertError::AlphaNotOpaque, ConvertError::RgbToGray);
+    }
+
+    #[test]
+    fn error_debug() {
+        let e = ConvertError::AllocationFailed;
+        let s = format!("{e:?}");
+        assert!(s.contains("AllocationFailed"));
+    }
+
+    #[test]
+    fn error_clone() {
+        let e = ConvertError::BufferSize {
+            expected: 100,
+            actual: 50,
+        };
+        let e2 = e.clone();
+        assert_eq!(e, e2);
+    }
+}

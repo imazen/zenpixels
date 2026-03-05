@@ -221,4 +221,93 @@ mod tests {
             .is_sdr()
         );
     }
+
+    #[test]
+    fn content_light_level_new() {
+        let cll = ContentLightLevel::new(1000, 500);
+        assert_eq!(cll.max_content_light_level, 1000);
+        assert_eq!(cll.max_frame_average_light_level, 500);
+    }
+
+    #[test]
+    fn content_light_level_default() {
+        let cll = ContentLightLevel::default();
+        assert_eq!(cll.max_content_light_level, 0);
+        assert_eq!(cll.max_frame_average_light_level, 0);
+    }
+
+    #[test]
+    fn mastering_display_new() {
+        let md = MasteringDisplay::new(
+            [[0.68, 0.32], [0.265, 0.69], [0.15, 0.06]],
+            [0.3127, 0.329],
+            1000.0,
+            0.001,
+        );
+        assert_eq!(md.max_luminance, 1000.0);
+        assert_eq!(md.min_luminance, 0.001);
+    }
+
+    #[test]
+    fn mastering_display_constants() {
+        assert_eq!(MasteringDisplay::HDR10_REFERENCE.max_luminance, 10000.0);
+        assert_eq!(MasteringDisplay::DISPLAY_P3_1000.max_luminance, 1000.0);
+    }
+
+    #[test]
+    fn hdr10_constructor() {
+        let cll = ContentLightLevel::new(4000, 1000);
+        let meta = HdrMetadata::hdr10(cll);
+        assert!(meta.is_hdr());
+        assert_eq!(meta.transfer, TransferFunction::Pq);
+        assert_eq!(meta.content_light_level, Some(cll));
+        assert!(meta.mastering_display.is_some());
+    }
+
+    #[test]
+    fn hlg_constructor() {
+        let meta = HdrMetadata::hlg();
+        assert!(meta.is_hdr());
+        assert_eq!(meta.transfer, TransferFunction::Hlg);
+        assert!(meta.content_light_level.is_none());
+        assert!(meta.mastering_display.is_none());
+    }
+
+    #[test]
+    fn exposure_tonemap_values() {
+        // 0 stops = unchanged (clamped to [0,1]).
+        assert!((exposure_tonemap(0.5, 0.0) - 0.5).abs() < 1e-6);
+        // +1 stop = doubled.
+        assert!((exposure_tonemap(0.25, 1.0) - 0.5).abs() < 1e-5);
+        // -1 stop = halved.
+        assert!((exposure_tonemap(0.5, -1.0) - 0.25).abs() < 1e-5);
+        // Clamped to [0,1].
+        assert_eq!(exposure_tonemap(0.8, 1.0), 1.0);
+        assert_eq!(exposure_tonemap(0.0, 5.0), 0.0);
+    }
+
+    #[test]
+    fn reinhard_inverse_at_one() {
+        assert_eq!(reinhard_inverse(1.0), f32::MAX);
+    }
+
+    #[test]
+    fn content_light_level_clone_eq_hash() {
+        use core::hash::{Hash, Hasher};
+        let a = ContentLightLevel::new(100, 50);
+        let b = a;
+        assert_eq!(a, b);
+        let mut h1 = std::hash::DefaultHasher::new();
+        a.hash(&mut h1);
+        let mut h2 = std::hash::DefaultHasher::new();
+        b.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn hdr_metadata_clone_partial_eq() {
+        let a = HdrMetadata::hlg();
+        let b = a;
+        assert_eq!(a, b);
+    }
 }

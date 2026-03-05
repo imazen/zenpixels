@@ -182,3 +182,117 @@ impl core::fmt::Display for Cicp {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::format;
+
+    #[test]
+    fn cicp_new() {
+        let c = Cicp::new(1, 13, 6, true);
+        assert_eq!(c, Cicp::SRGB);
+    }
+
+    #[test]
+    fn cicp_constants() {
+        assert_eq!(Cicp::SRGB.color_primaries, 1);
+        assert_eq!(Cicp::SRGB.transfer_characteristics, 13);
+        assert_eq!(Cicp::BT2100_PQ.transfer_characteristics, 16);
+        assert_eq!(Cicp::BT2100_HLG.transfer_characteristics, 18);
+        assert_eq!(Cicp::DISPLAY_P3.color_primaries, 12);
+    }
+
+    #[test]
+    fn color_primaries_enum() {
+        assert_eq!(Cicp::SRGB.color_primaries_enum(), ColorPrimaries::Bt709);
+        assert_eq!(
+            Cicp::BT2100_PQ.color_primaries_enum(),
+            ColorPrimaries::Bt2020
+        );
+        assert_eq!(
+            Cicp::DISPLAY_P3.color_primaries_enum(),
+            ColorPrimaries::DisplayP3
+        );
+        assert_eq!(
+            Cicp::new(255, 0, 0, true).color_primaries_enum(),
+            ColorPrimaries::Unknown
+        );
+    }
+
+    #[test]
+    fn transfer_function_enum() {
+        assert_eq!(Cicp::SRGB.transfer_function_enum(), TransferFunction::Srgb);
+        assert_eq!(
+            Cicp::BT2100_PQ.transfer_function_enum(),
+            TransferFunction::Pq
+        );
+        assert_eq!(
+            Cicp::BT2100_HLG.transfer_function_enum(),
+            TransferFunction::Hlg
+        );
+        assert_eq!(
+            Cicp::new(1, 255, 0, true).transfer_function_enum(),
+            TransferFunction::Unknown
+        );
+    }
+
+    #[test]
+    fn color_primaries_name_known() {
+        assert_eq!(Cicp::color_primaries_name(0), "Reserved");
+        assert_eq!(Cicp::color_primaries_name(1), "BT.709/sRGB");
+        assert_eq!(Cicp::color_primaries_name(9), "BT.2020");
+        assert_eq!(Cicp::color_primaries_name(12), "Display P3");
+        assert_eq!(Cicp::color_primaries_name(200), "Unknown");
+    }
+
+    #[test]
+    fn transfer_characteristics_name_known() {
+        assert_eq!(Cicp::transfer_characteristics_name(8), "Linear");
+        assert_eq!(Cicp::transfer_characteristics_name(13), "sRGB");
+        assert_eq!(Cicp::transfer_characteristics_name(16), "PQ (HDR)");
+        assert_eq!(Cicp::transfer_characteristics_name(18), "HLG (HDR)");
+        assert_eq!(Cicp::transfer_characteristics_name(200), "Unknown");
+    }
+
+    #[test]
+    fn matrix_coefficients_name_known() {
+        assert_eq!(Cicp::matrix_coefficients_name(0), "Identity/RGB");
+        assert_eq!(Cicp::matrix_coefficients_name(1), "BT.709");
+        assert_eq!(Cicp::matrix_coefficients_name(9), "BT.2020 NCL");
+        assert_eq!(Cicp::matrix_coefficients_name(200), "Unknown");
+    }
+
+    #[test]
+    fn display_srgb() {
+        let s = format!("{}", Cicp::SRGB);
+        assert!(s.contains("BT.709/sRGB"));
+        assert!(s.contains("sRGB"));
+        assert!(s.contains("full range"));
+    }
+
+    #[test]
+    fn display_limited_range() {
+        let c = Cicp::new(1, 1, 1, false);
+        let s = format!("{c}");
+        assert!(s.contains("limited range"));
+    }
+
+    #[test]
+    fn debug_and_clone() {
+        let c = Cicp::SRGB;
+        let _ = format!("{c:?}");
+        let c2 = c;
+        assert_eq!(c, c2);
+    }
+
+    #[test]
+    fn hash() {
+        use core::hash::{Hash, Hasher};
+        let mut h1 = std::hash::DefaultHasher::new();
+        Cicp::SRGB.hash(&mut h1);
+        let mut h2 = std::hash::DefaultHasher::new();
+        Cicp::SRGB.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+}
