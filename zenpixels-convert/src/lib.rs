@@ -22,7 +22,7 @@
 //!   already matches a supported format.
 //!
 //! - **Extension traits**: [`TransferFunctionExt`], [`ColorPrimariesExt`],
-//!   and [`PixelBufferConvertExt`] add conversion methods to interchange types.
+//!   and `PixelBufferConvertExt` (requires `buffer` feature) add conversion methods to interchange types.
 //!
 //! # Codec compliance guide
 //!
@@ -425,10 +425,9 @@ pub use gamut::{
 };
 
 // Re-export HDR types and tone mapping.
-pub use hdr::{
-    ContentLightLevel, HdrMetadata, MasteringDisplay, exposure_tonemap, reinhard_inverse,
-    reinhard_tonemap,
-};
+pub use hdr::{ContentLightLevel, HdrMetadata, MasteringDisplay, reinhard_inverse, reinhard_tonemap};
+#[cfg(feature = "std")]
+pub use hdr::exposure_tonemap;
 
 // Re-export CMS traits.
 pub use cms::{ColorManagement, RowTransform};
