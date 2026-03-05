@@ -18,11 +18,13 @@ pub trait TransferFunctionExt {
     /// Scalar EOTF: encoded signal → linear light.
     ///
     /// Canonical reference implementation for testing SIMD paths.
+    #[must_use]
     fn linearize(&self, v: f32) -> f32;
 
     /// Scalar OETF: linear light → encoded signal.
     ///
     /// Canonical reference implementation for testing SIMD paths.
+    #[must_use]
     fn delinearize(&self, v: f32) -> f32;
 }
 
@@ -31,7 +33,7 @@ impl TransferFunctionExt for TransferFunction {
     fn linearize(&self, v: f32) -> f32 {
         match self {
             Self::Linear | Self::Unknown => v,
-            Self::Srgb | Self::Bt709 => linear_srgb::scalar::srgb_to_linear(v),
+            Self::Srgb | Self::Bt709 => linear_srgb::precise::srgb_to_linear(v),
             Self::Pq => pq_eotf(v),
             Self::Hlg => hlg_eotf(v),
             _ => v,
@@ -42,7 +44,7 @@ impl TransferFunctionExt for TransferFunction {
     fn delinearize(&self, v: f32) -> f32 {
         match self {
             Self::Linear | Self::Unknown => v,
-            Self::Srgb | Self::Bt709 => linear_srgb::scalar::linear_to_srgb(v),
+            Self::Srgb | Self::Bt709 => linear_srgb::precise::linear_to_srgb(v),
             Self::Pq => pq_oetf(v),
             Self::Hlg => hlg_oetf(v),
             _ => v,

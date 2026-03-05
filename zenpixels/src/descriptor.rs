@@ -186,12 +186,6 @@ impl AlphaMode {
     pub const fn has_alpha(self) -> bool {
         matches!(self, Self::Straight | Self::Premultiplied | Self::Opaque)
     }
-
-    /// Whether this mode has any alpha-position bytes (including padding).
-    #[inline]
-    pub const fn has_alpha_bytes(self) -> bool {
-        true
-    }
 }
 
 impl fmt::Display for AlphaMode {
@@ -230,6 +224,7 @@ pub enum TransferFunction {
 
 impl TransferFunction {
     /// Map CICP `transfer_characteristics` code to a [`TransferFunction`].
+    #[inline]
     pub const fn from_cicp(tc: u8) -> Option<Self> {
         match tc {
             1 => Some(Self::Bt709),
@@ -294,6 +289,7 @@ pub enum ColorPrimaries {
 
 impl ColorPrimaries {
     /// Map a CICP `color_primaries` code to a [`ColorPrimaries`].
+    #[inline]
     pub const fn from_cicp(code: u8) -> Option<Self> {
         match code {
             1 => Some(Self::Bt709),
@@ -305,6 +301,7 @@ impl ColorPrimaries {
 
     /// Convert to the CICP `color_primaries` code.
     #[allow(unreachable_patterns)]
+    #[inline]
     pub const fn to_cicp(self) -> Option<u8> {
         match self {
             Self::Bt709 => Some(1),
@@ -318,6 +315,7 @@ impl ColorPrimaries {
     /// Whether `self` fully contains the gamut of `other`.
     ///
     /// Gamut hierarchy: BT.2020 > Display P3 > BT.709.
+    #[inline]
     pub const fn contains(self, other: Self) -> bool {
         self.gamut_width() >= other.gamut_width()
             && !matches!(self, Self::Unknown)
@@ -384,7 +382,7 @@ impl fmt::Display for SignalRange {
 ///
 /// Combines a [`PixelFormat`] (physical pixel layout) with transfer function,
 /// alpha mode, color primaries, and signal range.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct PixelDescriptor {
     /// Physical pixel format (channel type + layout as a flat enum).
@@ -452,6 +450,7 @@ impl PixelDescriptor {
     ///
     /// Panics if the `(channel_type, layout, alpha)` combination has no
     /// corresponding [`PixelFormat`] variant (e.g. `(U16, Bgra, _)`).
+    #[inline]
     pub const fn new(
         channel_type: ChannelType,
         layout: ChannelLayout,
@@ -477,6 +476,7 @@ impl PixelDescriptor {
     ///
     /// Panics if the `(channel_type, layout, alpha)` combination has no
     /// corresponding [`PixelFormat`] variant.
+    #[inline]
     pub const fn new_full(
         channel_type: ChannelType,
         layout: ChannelLayout,
@@ -499,6 +499,7 @@ impl PixelDescriptor {
 
     /// Create from a [`PixelFormat`] with default alpha, unknown transfer,
     /// BT.709 primaries, and full range.
+    #[inline]
     pub const fn from_pixel_format(format: PixelFormat) -> Self {
         Self {
             format,
@@ -781,30 +782,35 @@ impl PixelDescriptor {
 
     /// Return a copy with a different transfer function.
     #[inline]
+    #[must_use]
     pub const fn with_transfer(self, transfer: TransferFunction) -> Self {
         Self { transfer, ..self }
     }
 
     /// Return a copy with different primaries.
     #[inline]
+    #[must_use]
     pub const fn with_primaries(self, primaries: ColorPrimaries) -> Self {
         Self { primaries, ..self }
     }
 
     /// Return a copy with a different alpha mode.
     #[inline]
+    #[must_use]
     pub const fn with_alpha(self, alpha: Option<AlphaMode>) -> Self {
         Self { alpha, ..self }
     }
 
     /// Alias for [`with_alpha`](Self::with_alpha).
     #[inline]
+    #[must_use]
     pub const fn with_alpha_mode(self, alpha: Option<AlphaMode>) -> Self {
         self.with_alpha(alpha)
     }
 
     /// Return a copy with a different signal range.
     #[inline]
+    #[must_use]
     pub const fn with_signal_range(self, signal_range: SignalRange) -> Self {
         Self {
             signal_range,
@@ -835,12 +841,6 @@ impl PixelDescriptor {
             self.alpha,
             Some(AlphaMode::Straight | AlphaMode::Premultiplied)
         )
-    }
-
-    /// The alpha mode, if any.
-    #[inline]
-    pub const fn alpha_mode(self) -> Option<AlphaMode> {
-        self.alpha
     }
 
     /// Whether the transfer function is [`Linear`](TransferFunction::Linear).
@@ -953,10 +953,6 @@ pub enum ColorModel {
     YCbCr = 2,
     /// Oklab perceptual color space (L, a, b).
     Oklab = 3,
-    /// CIE XYZ.
-    Xyz = 4,
-    /// CIE L*a*b*.
-    Lab = 5,
 }
 
 impl ColorModel {
@@ -978,8 +974,6 @@ impl fmt::Display for ColorModel {
             Self::Rgb => f.write_str("RGB"),
             Self::YCbCr => f.write_str("YCbCr"),
             Self::Oklab => f.write_str("Oklab"),
-            Self::Xyz => f.write_str("XYZ"),
-            Self::Lab => f.write_str("L*a*b*"),
         }
     }
 }
@@ -1058,6 +1052,7 @@ impl Subsampling {
     ///
     /// Returns `None` for factor combinations that don't match a standard
     /// subsampling pattern.
+    #[inline]
     pub const fn from_factors(h: u8, v: u8) -> Option<Self> {
         match (h, v) {
             (1, 1) => Some(Self::S444),
@@ -1106,6 +1101,7 @@ pub enum YuvMatrix {
 impl YuvMatrix {
     /// RGB to Y luma coefficients [Kr, Kg, Kb].
     #[allow(unreachable_patterns)]
+    #[inline]
     pub const fn rgb_to_y_coeffs(self) -> [f64; 3] {
         match self {
             Self::Identity => [1.0, 0.0, 0.0],
@@ -1117,6 +1113,7 @@ impl YuvMatrix {
     }
 
     /// Map a CICP `matrix_coefficients` code to a [`YuvMatrix`].
+    #[inline]
     pub const fn from_cicp(mc: u8) -> Option<Self> {
         match mc {
             0 => Some(Self::Identity),
@@ -1271,6 +1268,7 @@ impl PixelFormat {
     /// - Formats with padding (Rgbx8, Bgrx8) → `Some(AlphaMode::Undefined)`
     /// - Formats with alpha → `Some(AlphaMode::Straight)`
     #[allow(unreachable_patterns)]
+    #[inline]
     pub const fn default_alpha(self) -> Option<AlphaMode> {
         match self {
             Self::Rgb8
@@ -1287,6 +1285,7 @@ impl PixelFormat {
 
     /// Short human-readable name.
     #[allow(unreachable_patterns)]
+    #[inline]
     pub const fn name(self) -> &'static str {
         match self {
             Self::Rgb8 => "RGB8",
@@ -1314,6 +1313,7 @@ impl PixelFormat {
     ///
     /// Returns `None` for combinations that have no `PixelFormat` variant
     /// (e.g. `(U16, Bgra, _)`).
+    #[inline]
     pub const fn from_parts(
         channel_type: ChannelType,
         layout: ChannelLayout,
@@ -1350,6 +1350,7 @@ impl PixelFormat {
 
     /// Base descriptor with `Unknown` transfer and BT.709 primaries.
     #[allow(unreachable_patterns)]
+    #[inline]
     pub const fn descriptor(self) -> PixelDescriptor {
         match self {
             Self::Rgb8 => PixelDescriptor::RGB8,
@@ -1531,6 +1532,7 @@ impl PlaneDescriptor {
     ///
     /// Debug-asserts that `h` and `v` are non-zero powers of two.
     #[inline]
+    #[must_use]
     pub const fn with_subsampling(mut self, h: u8, v: u8) -> Self {
         debug_assert!(
             h > 0 && h.is_power_of_two(),

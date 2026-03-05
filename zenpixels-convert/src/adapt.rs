@@ -69,6 +69,7 @@ use crate::policy::{AlphaPolicy, ConvertOptions};
 use crate::{ConvertError, PixelDescriptor};
 
 /// Result of format adaptation: the converted data and its descriptor.
+#[derive(Clone, Debug)]
 pub struct Adapted<'a> {
     /// Pixel data — borrowed if no conversion was needed, owned otherwise.
     pub data: Cow<'a, [u8]>,
@@ -142,11 +143,14 @@ pub fn adapt_for_encode_with_intent<'a>(
 
     // Check for transfer-agnostic match: if source has Unknown transfer
     // and a supported format matches on everything except transfer, it's
-    // still a zero-copy path.
+    // still a zero-copy path. Primaries and signal range must also match
+    // — relabeling BT.2020 as BT.709 without gamut conversion is wrong.
     for &target in supported {
         if descriptor.channel_type() == target.channel_type()
             && descriptor.layout() == target.layout()
             && descriptor.alpha() == target.alpha()
+            && descriptor.primaries == target.primaries
+            && descriptor.signal_range == target.signal_range
         {
             return Ok(Adapted {
                 data: contiguous_from_strided(
@@ -257,11 +261,13 @@ pub fn adapt_for_encode_explicit<'a>(
         });
     }
 
-    // Check for transfer-agnostic match.
+    // Check for transfer-agnostic match (primaries and signal range must match).
     for &target in supported {
         if descriptor.channel_type() == target.channel_type()
             && descriptor.layout() == target.layout()
             && descriptor.alpha() == target.alpha()
+            && descriptor.primaries == target.primaries
+            && descriptor.signal_range == target.signal_range
         {
             return Ok(Adapted {
                 data: contiguous_from_strided(
@@ -389,5 +395,99 @@ fn contiguous_from_strided<'a>(
             packed.extend_from_slice(&data[start..start + row_bytes]);
         }
         Cow::Owned(packed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zenpixels::descriptor::{ColorPrimaries, SignalRange};
+    use zenpixels::policy::{AlphaPolicy, DepthPolicy, GrayExpand};
+
+    /// 2×1 RGB8 pixel data (6 bytes).
+    fn test_rgb8_data() -> Vec<u8> {
+        vec![255, 0, 0, 0, 255, 0]
+    }
+
+    #[test]
+    fn transfer_agnostic_match_requires_same_primaries() {
+        let data = test_rgb8_data();
+        let source = PixelDescriptor::RGB8.with_primaries(ColorPrimaries::Bt2020);
+        let target = PixelDescriptor::RGB8_SRGB; // BT.709 primaries
+
+        let result = adapt_for_encode(&data, source, 2, 1, 6, &[target]).unwrap();
+
+        // Must NOT zero-copy relabel — primaries differ, conversion is needed.
+        // Before the fix, this would return Cow::Borrowed (zero-copy) via the
+        // transfer-agnostic match, silently relabeling BT.2020 as BT.709.
+        assert!(
+            matches!(result.data, Cow::Owned(_)),
+            "different primaries must trigger conversion, not zero-copy relabel"
+        );
+    }
+
+    #[test]
+    fn transfer_agnostic_match_requires_same_signal_range() {
+        let data = test_rgb8_data();
+        let source = PixelDescriptor::RGB8.with_signal_range(SignalRange::Narrow);
+        let target = PixelDescriptor::RGB8_SRGB; // Full range
+
+        let result = adapt_for_encode(&data, source, 2, 1, 6, &[target]).unwrap();
+
+        // Must not zero-copy relabel — signal ranges differ.
+        assert!(
+            matches!(result.data, Cow::Owned(_)),
+            "different signal range must trigger conversion, not zero-copy relabel"
+        );
+    }
+
+    #[test]
+    fn transfer_agnostic_match_allows_zero_copy_when_all_match() {
+        let data = test_rgb8_data();
+        // Source: RGB8 with unknown transfer, BT.709, Full range.
+        let source = PixelDescriptor::RGB8.with_primaries(ColorPrimaries::Bt709);
+        // Target: RGB8 sRGB with same primaries and range.
+        let target = PixelDescriptor::RGB8_SRGB;
+
+        let result = adapt_for_encode(&data, source, 2, 1, 6, &[target]).unwrap();
+
+        // Should zero-copy (only transfer differs, which is the agnostic part).
+        assert!(
+            matches!(result.data, Cow::Borrowed(_)),
+            "should be zero-copy when only transfer differs"
+        );
+        assert_eq!(result.descriptor, target);
+    }
+
+    #[test]
+    fn exact_match_is_zero_copy() {
+        let data = test_rgb8_data();
+        let desc = PixelDescriptor::RGB8_SRGB;
+
+        let result = adapt_for_encode(&data, desc, 2, 1, 6, &[desc]).unwrap();
+
+        assert!(matches!(result.data, Cow::Borrowed(_)));
+        assert_eq!(result.descriptor, desc);
+    }
+
+    #[test]
+    fn explicit_variant_also_checks_primaries() {
+        let data = test_rgb8_data();
+        let source = PixelDescriptor::RGB8.with_primaries(ColorPrimaries::Bt2020);
+        let target = PixelDescriptor::RGB8_SRGB;
+        let options = ConvertOptions {
+            gray_expand: GrayExpand::Broadcast,
+            alpha_policy: AlphaPolicy::DiscardUnchecked,
+            depth_policy: DepthPolicy::Round,
+            luma: None,
+        };
+
+        let result =
+            adapt_for_encode_explicit(&data, source, 2, 1, 6, &[target], &options).unwrap();
+
+        assert!(
+            matches!(result.data, Cow::Owned(_)),
+            "explicit variant: different primaries must trigger conversion"
+        );
     }
 }

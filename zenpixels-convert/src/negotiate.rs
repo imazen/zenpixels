@@ -111,6 +111,7 @@ use crate::{
 /// via [`invalidate_primaries`](Self::invalidate_primaries) to reflect
 /// that the data now genuinely uses the wider gamut.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Provenance {
     /// The channel depth of the original source data.
     ///
@@ -201,6 +202,7 @@ impl Provenance {
 /// Shifts the format negotiation cost model to prefer formats
 /// suited for the intended operation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConvertIntent {
     /// Minimize conversion effort. Good for encoding — the codec
     /// already knows what it wants, just get there cheaply.
@@ -476,6 +478,7 @@ pub fn ideal_format(source: PixelDescriptor, intent: ConvertIntent) -> PixelDesc
 /// Provenance is inferred from `from` (conservative: assumes current
 /// depth is the true origin). Use [`conversion_cost_with_provenance`]
 /// when the data has been widened from a lower-precision source.
+#[must_use]
 pub fn conversion_cost(from: PixelDescriptor, to: PixelDescriptor) -> ConversionCost {
     conversion_cost_with_provenance(from, to, Provenance::from_source(from))
 }
@@ -486,6 +489,7 @@ pub fn conversion_cost(from: PixelDescriptor, to: PixelDescriptor) -> Conversion
 /// determine whether a depth narrowing is actually lossy. For example,
 /// `f32 → u8` reports zero loss when `provenance.origin_depth == U8`,
 /// because the data was originally u8 and the round-trip is lossless.
+#[must_use]
 pub fn conversion_cost_with_provenance(
     from: PixelDescriptor,
     to: PixelDescriptor,

@@ -4,7 +4,7 @@ use crate::{PixelDescriptor, TransferFunction};
 use core::fmt;
 
 /// Errors that can occur during pixel format negotiation or conversion.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ConvertError {
     /// No supported format could be found for the source descriptor.
     NoMatch { source: PixelDescriptor },

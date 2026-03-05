@@ -417,6 +417,7 @@ impl<'a, P> PixelSlice<'a, P> {
     /// `channel_type` or `layout`). Use [`reinterpret()`](Self::reinterpret)
     /// for genuine layout changes.
     #[inline]
+    #[must_use]
     pub fn with_descriptor(mut self, descriptor: PixelDescriptor) -> Self {
         assert!(
             self.descriptor.layout_compatible(descriptor),
@@ -446,6 +447,7 @@ impl<'a, P> PixelSlice<'a, P> {
 
     /// Return a copy with a different transfer function.
     #[inline]
+    #[must_use]
     pub fn with_transfer(mut self, tf: TransferFunction) -> Self {
         self.descriptor.transfer = tf;
         self
@@ -453,6 +455,7 @@ impl<'a, P> PixelSlice<'a, P> {
 
     /// Return a copy with different color primaries.
     #[inline]
+    #[must_use]
     pub fn with_primaries(mut self, cp: ColorPrimaries) -> Self {
         self.descriptor.primaries = cp;
         self
@@ -460,6 +463,7 @@ impl<'a, P> PixelSlice<'a, P> {
 
     /// Return a copy with a different signal range.
     #[inline]
+    #[must_use]
     pub fn with_signal_range(mut self, sr: SignalRange) -> Self {
         self.descriptor.signal_range = sr;
         self
@@ -467,6 +471,7 @@ impl<'a, P> PixelSlice<'a, P> {
 
     /// Return a copy with a different alpha mode.
     #[inline]
+    #[must_use]
     pub fn with_alpha_mode(mut self, am: Option<AlphaMode>) -> Self {
         self.descriptor.alpha = am;
         self
@@ -504,6 +509,7 @@ impl<'a, P> PixelSlice<'a, P> {
 
     /// Return a copy of this slice with a color context attached.
     #[inline]
+    #[must_use]
     pub fn with_color_context(mut self, ctx: Arc<ColorContext>) -> Self {
         self.color = Some(ctx);
         self
@@ -818,6 +824,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
     ///
     /// See [`PixelSlice::with_descriptor()`] for details.
     #[inline]
+    #[must_use]
     pub fn with_descriptor(mut self, descriptor: PixelDescriptor) -> Self {
         assert!(
             self.descriptor.layout_compatible(descriptor),
@@ -843,6 +850,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
 
     /// Return a copy with a different transfer function.
     #[inline]
+    #[must_use]
     pub fn with_transfer(mut self, tf: TransferFunction) -> Self {
         self.descriptor.transfer = tf;
         self
@@ -850,6 +858,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
 
     /// Return a copy with different color primaries.
     #[inline]
+    #[must_use]
     pub fn with_primaries(mut self, cp: ColorPrimaries) -> Self {
         self.descriptor.primaries = cp;
         self
@@ -857,6 +866,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
 
     /// Return a copy with a different signal range.
     #[inline]
+    #[must_use]
     pub fn with_signal_range(mut self, sr: SignalRange) -> Self {
         self.descriptor.signal_range = sr;
         self
@@ -864,6 +874,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
 
     /// Return a copy with a different alpha mode.
     #[inline]
+    #[must_use]
     pub fn with_alpha_mode(mut self, am: Option<AlphaMode>) -> Self {
         self.descriptor.alpha = am;
         self
@@ -901,6 +912,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
 
     /// Return a copy of this slice with a color context attached.
     #[inline]
+    #[must_use]
     pub fn with_color_context(mut self, ctx: Arc<ColorContext>) -> Self {
         self.color = Some(ctx);
         self
@@ -1051,6 +1063,7 @@ fn for_each_pixel_4bpp(
 
 impl<'a> PixelSliceMut<'a, Rgbx> {
     /// Byte-swap R<->B channels in place, converting to BGRX.
+    #[must_use]
     pub fn swap_to_bgrx(self) -> PixelSliceMut<'a, Bgrx> {
         let width = self.width;
         let rows = self.rows;
@@ -1077,6 +1090,7 @@ impl<'a> PixelSliceMut<'a, Rgbx> {
 #[cfg(feature = "rgb")]
 impl<'a> PixelSliceMut<'a, Rgbx> {
     /// Upgrade to RGBA by setting all padding bytes to 255 (fully opaque).
+    #[must_use]
     pub fn upgrade_to_rgba(self) -> PixelSliceMut<'a, Rgba<u8>> {
         let width = self.width;
         let rows = self.rows;
@@ -1102,6 +1116,7 @@ impl<'a> PixelSliceMut<'a, Rgbx> {
 
 impl<'a> PixelSliceMut<'a, Bgrx> {
     /// Byte-swap B<->R channels in place, converting to RGBX.
+    #[must_use]
     pub fn swap_to_rgbx(self) -> PixelSliceMut<'a, Rgbx> {
         let width = self.width;
         let rows = self.rows;
@@ -1128,6 +1143,7 @@ impl<'a> PixelSliceMut<'a, Bgrx> {
 #[cfg(feature = "rgb")]
 impl<'a> PixelSliceMut<'a, Bgrx> {
     /// Upgrade to BGRA by setting all padding bytes to 255 (fully opaque).
+    #[must_use]
     pub fn upgrade_to_bgra(self) -> PixelSliceMut<'a, BGRA<u8>> {
         let width = self.width;
         let rows = self.rows;
@@ -1157,6 +1173,7 @@ impl<'a> PixelSliceMut<'a, Rgba<u8>> {
     ///
     /// Each pixel is composited: `out = src * alpha/255 + bg * (255 - alpha)/255`.
     /// The alpha byte becomes padding.
+    #[must_use]
     pub fn matte_to_rgbx(self, bg: Rgb<u8>) -> PixelSliceMut<'a, Rgbx> {
         let width = self.width;
         let rows = self.rows;
@@ -1188,6 +1205,7 @@ impl<'a> PixelSliceMut<'a, Rgba<u8>> {
     ///
     /// The alpha byte value is preserved in memory but semantically ignored.
     /// Use when you know alpha is already 255 or don't care about the values.
+    #[must_use]
     pub fn strip_alpha_to_rgbx(self) -> PixelSliceMut<'a, Rgbx> {
         PixelSliceMut {
             data: self.data,
@@ -1202,6 +1220,7 @@ impl<'a> PixelSliceMut<'a, Rgba<u8>> {
     }
 
     /// Byte-swap R<->B channels in place, converting to BGRA.
+    #[must_use]
     pub fn swap_to_bgra(self) -> PixelSliceMut<'a, BGRA<u8>> {
         let width = self.width;
         let rows = self.rows;
@@ -1231,6 +1250,7 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
     ///
     /// Each pixel is composited: `out = src * alpha/255 + bg * (255 - alpha)/255`.
     /// The alpha byte becomes padding.
+    #[must_use]
     pub fn matte_to_bgrx(self, bg: Rgb<u8>) -> PixelSliceMut<'a, Bgrx> {
         let width = self.width;
         let rows = self.rows;
@@ -1260,6 +1280,7 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
     }
 
     /// Strip alpha to BGRX without compositing (just mark as padding).
+    #[must_use]
     pub fn strip_alpha_to_bgrx(self) -> PixelSliceMut<'a, Bgrx> {
         PixelSliceMut {
             data: self.data,
@@ -1274,6 +1295,7 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
     }
 
     /// Byte-swap B<->R channels in place, converting to RGBA.
+    #[must_use]
     pub fn swap_to_rgba(self) -> PixelSliceMut<'a, Rgba<u8>> {
         let width = self.width;
         let rows = self.rows;
@@ -1790,6 +1812,7 @@ impl<P> PixelBuffer<P> {
     ///
     /// See [`PixelSlice::with_descriptor()`] for details.
     #[inline]
+    #[must_use]
     pub fn with_descriptor(mut self, descriptor: PixelDescriptor) -> Self {
         assert!(
             self.descriptor.layout_compatible(descriptor),
@@ -1815,6 +1838,7 @@ impl<P> PixelBuffer<P> {
 
     /// Return a copy with a different transfer function.
     #[inline]
+    #[must_use]
     pub fn with_transfer(mut self, tf: TransferFunction) -> Self {
         self.descriptor.transfer = tf;
         self
@@ -1822,6 +1846,7 @@ impl<P> PixelBuffer<P> {
 
     /// Return a copy with different color primaries.
     #[inline]
+    #[must_use]
     pub fn with_primaries(mut self, cp: ColorPrimaries) -> Self {
         self.descriptor.primaries = cp;
         self
@@ -1829,6 +1854,7 @@ impl<P> PixelBuffer<P> {
 
     /// Return a copy with a different signal range.
     #[inline]
+    #[must_use]
     pub fn with_signal_range(mut self, sr: SignalRange) -> Self {
         self.descriptor.signal_range = sr;
         self
@@ -1836,6 +1862,7 @@ impl<P> PixelBuffer<P> {
 
     /// Return a copy with a different alpha mode.
     #[inline]
+    #[must_use]
     pub fn with_alpha_mode(mut self, am: Option<AlphaMode>) -> Self {
         self.descriptor.alpha = am;
         self
@@ -1931,6 +1958,7 @@ impl<P> PixelBuffer<P> {
 
     /// Set the color context on this buffer.
     #[inline]
+    #[must_use]
     pub fn with_color_context(mut self, ctx: Arc<ColorContext>) -> Self {
         self.color = Some(ctx);
         self

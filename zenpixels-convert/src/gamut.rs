@@ -15,7 +15,7 @@ pub type GamutMatrix = [[f32; 3]; 3];
 /// BT.709 → BT.2020 (row-major).
 ///
 /// Converts linear BT.709/sRGB RGB to linear BT.2020 RGB.
-pub const BT709_TO_BT2020: GamutMatrix = [
+pub(crate) const BT709_TO_BT2020: GamutMatrix = [
     [0.6274_0389, 0.3292_8303, 0.0433_1307],
     [0.0690_9729, 0.9195_4040, 0.0113_6232],
     [0.0163_9170, 0.0880_1327, 0.8955_9503],
@@ -25,35 +25,35 @@ pub const BT709_TO_BT2020: GamutMatrix = [
 ///
 /// Converts linear BT.2020 RGB to linear BT.709/sRGB RGB.
 /// Values outside \[0,1\] indicate out-of-gamut colors.
-pub const BT2020_TO_BT709: GamutMatrix = [
+pub(crate) const BT2020_TO_BT709: GamutMatrix = [
     [1.6604_9100, -0.5876_5614, -0.0728_3486],
     [-0.1245_5047, 1.1328_9990, -0.0083_4942],
     [-0.0181_5076, -0.1005_7890, 1.1187_2966],
 ];
 
 /// BT.709 → Display P3 (row-major).
-pub const BT709_TO_DISPLAY_P3: GamutMatrix = [
+pub(crate) const BT709_TO_DISPLAY_P3: GamutMatrix = [
     [0.8224_5811, 0.1775_4189, 0.0000_0000],
     [0.0331_9419, 0.9668_0581, 0.0000_0000],
     [0.0170_8263, 0.0723_9744, 0.9105_3993],
 ];
 
 /// Display P3 → BT.709 (row-major).
-pub const DISPLAY_P3_TO_BT709: GamutMatrix = [
+pub(crate) const DISPLAY_P3_TO_BT709: GamutMatrix = [
     [1.2249_4018, -0.2249_4018, 0.0000_0000],
     [-0.0420_4986, 1.0420_4986, 0.0000_0000],
     [-0.0196_4113, -0.0786_4905, 1.0982_5018],
 ];
 
 /// BT.2020 → Display P3 (row-major).
-pub const BT2020_TO_DISPLAY_P3: GamutMatrix = [
+pub(crate) const BT2020_TO_DISPLAY_P3: GamutMatrix = [
     [1.3434_6376, -0.2826_7869, -0.0607_8507],
     [-0.0652_8279, 1.0764_0361, -0.0111_2082],
     [-0.0028_8423, -0.0193_4633, 1.0222_3056],
 ];
 
 /// Display P3 → BT.2020 (row-major).
-pub const DISPLAY_P3_TO_BT2020: GamutMatrix = [
+pub(crate) const DISPLAY_P3_TO_BT2020: GamutMatrix = [
     [0.7536_7740, 0.1985_4087, 0.0477_8174],
     [0.0457_0150, 0.9417_7793, 0.0125_2057],
     [0.0011_7409, 0.0176_4065, 0.9811_8526],
@@ -64,42 +64,42 @@ pub const DISPLAY_P3_TO_BT2020: GamutMatrix = [
 // ---------------------------------------------------------------------------
 
 /// BT.709/sRGB → CIE XYZ (D65). Derived from CIE 1931 xy chromaticities.
-pub const BT709_TO_XYZ: GamutMatrix = [
+pub(crate) const BT709_TO_XYZ: GamutMatrix = [
     [0.4123907993, 0.3575843394, 0.1804807884],
     [0.2126390059, 0.7151686788, 0.0721923154],
     [0.0193308187, 0.1191947798, 0.9505321522],
 ];
 
 /// CIE XYZ (D65) → BT.709/sRGB.
-pub const XYZ_TO_BT709: GamutMatrix = [
+pub(crate) const XYZ_TO_BT709: GamutMatrix = [
     [3.2409699419, -1.5373831776, -0.4986107603],
     [-0.9692436363, 1.8759675015, 0.0415550574],
     [0.0556300797, -0.2039769589, 1.0569715142],
 ];
 
 /// Display P3 → CIE XYZ (D65). Same white point as sRGB, wider primaries.
-pub const DISPLAY_P3_TO_XYZ: GamutMatrix = [
+pub(crate) const DISPLAY_P3_TO_XYZ: GamutMatrix = [
     [0.4865709486, 0.2656676932, 0.1982172852],
     [0.2289745641, 0.6917385218, 0.0792869141],
     [0.0000000000, 0.0451133819, 1.0439443689],
 ];
 
 /// CIE XYZ (D65) → Display P3.
-pub const XYZ_TO_DISPLAY_P3: GamutMatrix = [
+pub(crate) const XYZ_TO_DISPLAY_P3: GamutMatrix = [
     [2.4934969119, -0.9313836179, -0.4027107845],
     [-0.8294889696, 1.7626640603, 0.0236246858],
     [0.0358458302, -0.0761723893, 0.9568845240],
 ];
 
 /// BT.2020 → CIE XYZ (D65).
-pub const BT2020_TO_XYZ: GamutMatrix = [
+pub(crate) const BT2020_TO_XYZ: GamutMatrix = [
     [0.6369580484, 0.1446169036, 0.1688809752],
     [0.2627002120, 0.6779980715, 0.0593017165],
     [0.0000000000, 0.0280726930, 1.0609850578],
 ];
 
 /// CIE XYZ (D65) → BT.2020.
-pub const XYZ_TO_BT2020: GamutMatrix = [
+pub(crate) const XYZ_TO_BT2020: GamutMatrix = [
     [1.7166511880, -0.3556707838, -0.2533662814],
     [-0.6666843518, 1.6164812366, 0.0157685458],
     [0.0176398574, -0.0427706133, 0.9421031212],

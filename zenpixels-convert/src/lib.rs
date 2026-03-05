@@ -394,7 +394,7 @@ pub mod oklab;
 pub mod op_format;
 pub mod output;
 pub mod path;
-pub mod pixels;
+
 pub mod registry;
 
 // Re-export key conversion types at crate root.
@@ -421,7 +421,7 @@ pub use ext::{ColorPrimariesExt, TransferFunctionExt};
 // Re-export gamut conversion utilities.
 pub use gamut::{
     GamutMatrix, apply_matrix_f32, apply_matrix_row_f32, apply_matrix_row_rgba_f32,
-    conversion_matrix, mat3_mul,
+    conversion_matrix,
 };
 
 // Re-export HDR types and tone mapping.
