@@ -2754,4 +2754,289 @@ mod tests {
         assert!(layout.chroma_mask().is_empty());
         assert!(layout.alpha_mask().is_empty());
     }
+
+    // --- Display impl tests ---
+
+    #[test]
+    fn channel_type_display() {
+        assert_eq!(format!("{}", ChannelType::U8), "U8");
+        assert_eq!(format!("{}", ChannelType::U16), "U16");
+        assert_eq!(format!("{}", ChannelType::F32), "F32");
+        assert_eq!(format!("{}", ChannelType::F16), "F16");
+    }
+
+    #[test]
+    fn channel_layout_display() {
+        assert_eq!(format!("{}", ChannelLayout::Gray), "Gray");
+        assert_eq!(format!("{}", ChannelLayout::GrayAlpha), "GrayAlpha");
+        assert_eq!(format!("{}", ChannelLayout::Rgb), "RGB");
+        assert_eq!(format!("{}", ChannelLayout::Rgba), "RGBA");
+        assert_eq!(format!("{}", ChannelLayout::Bgra), "BGRA");
+        assert_eq!(format!("{}", ChannelLayout::Oklab), "Oklab");
+        assert_eq!(format!("{}", ChannelLayout::OklabA), "OklabA");
+    }
+
+    #[test]
+    fn alpha_mode_display() {
+        assert_eq!(format!("{}", AlphaMode::Undefined), "undefined");
+        assert_eq!(format!("{}", AlphaMode::Straight), "straight");
+        assert_eq!(format!("{}", AlphaMode::Premultiplied), "premultiplied");
+        assert_eq!(format!("{}", AlphaMode::Opaque), "opaque");
+    }
+
+    #[test]
+    fn transfer_function_display() {
+        assert_eq!(format!("{}", TransferFunction::Linear), "linear");
+        assert_eq!(format!("{}", TransferFunction::Srgb), "sRGB");
+        assert_eq!(format!("{}", TransferFunction::Bt709), "BT.709");
+        assert_eq!(format!("{}", TransferFunction::Pq), "PQ");
+        assert_eq!(format!("{}", TransferFunction::Hlg), "HLG");
+        assert_eq!(format!("{}", TransferFunction::Unknown), "unknown");
+    }
+
+    #[test]
+    fn color_primaries_display() {
+        assert_eq!(format!("{}", ColorPrimaries::Bt709), "BT.709");
+        assert_eq!(format!("{}", ColorPrimaries::Bt2020), "BT.2020");
+        assert_eq!(format!("{}", ColorPrimaries::DisplayP3), "Display P3");
+        assert_eq!(format!("{}", ColorPrimaries::Unknown), "unknown");
+    }
+
+    #[test]
+    fn signal_range_display() {
+        assert_eq!(format!("{}", SignalRange::Full), "full");
+        assert_eq!(format!("{}", SignalRange::Narrow), "narrow");
+    }
+
+    #[test]
+    fn pixel_descriptor_display() {
+        let s = format!("{}", PixelDescriptor::RGB8_SRGB);
+        assert!(s.contains("U8"), "expected U8 in: {s}");
+        assert!(s.contains("sRGB"), "expected sRGB in: {s}");
+
+        let s = format!("{}", PixelDescriptor::RGBA8_SRGB);
+        assert!(s.contains("alpha=straight"), "expected alpha in: {s}");
+    }
+
+    #[test]
+    fn pixel_format_display() {
+        let s = format!("{}", PixelFormat::Rgb8);
+        assert!(s.contains("RGB8"));
+        let s = format!("{}", PixelFormat::Bgra8);
+        assert!(s.contains("BGRA8"));
+    }
+
+    // --- from_cicp / to_cicp tests ---
+
+    #[test]
+    fn transfer_function_from_cicp() {
+        assert_eq!(
+            TransferFunction::from_cicp(1),
+            Some(TransferFunction::Bt709)
+        );
+        assert_eq!(
+            TransferFunction::from_cicp(8),
+            Some(TransferFunction::Linear)
+        );
+        assert_eq!(
+            TransferFunction::from_cicp(13),
+            Some(TransferFunction::Srgb)
+        );
+        assert_eq!(TransferFunction::from_cicp(16), Some(TransferFunction::Pq));
+        assert_eq!(TransferFunction::from_cicp(18), Some(TransferFunction::Hlg));
+        assert_eq!(TransferFunction::from_cicp(99), None);
+    }
+
+    #[test]
+    fn color_primaries_from_cicp() {
+        assert_eq!(ColorPrimaries::from_cicp(1), Some(ColorPrimaries::Bt709));
+        assert_eq!(ColorPrimaries::from_cicp(9), Some(ColorPrimaries::Bt2020));
+        assert_eq!(
+            ColorPrimaries::from_cicp(12),
+            Some(ColorPrimaries::DisplayP3)
+        );
+        assert_eq!(ColorPrimaries::from_cicp(99), None);
+    }
+
+    #[test]
+    fn color_primaries_to_cicp() {
+        assert_eq!(ColorPrimaries::Bt709.to_cicp(), Some(1));
+        assert_eq!(ColorPrimaries::Bt2020.to_cicp(), Some(9));
+        assert_eq!(ColorPrimaries::DisplayP3.to_cicp(), Some(12));
+        assert_eq!(ColorPrimaries::Unknown.to_cicp(), None);
+    }
+
+    // --- ChannelType helpers ---
+
+    #[test]
+    fn channel_type_helpers() {
+        assert!(ChannelType::U8.is_u8());
+        assert!(!ChannelType::U8.is_u16());
+        assert!(ChannelType::U16.is_u16());
+        assert!(ChannelType::F32.is_f32());
+        assert!(ChannelType::F16.is_f16());
+        assert!(ChannelType::U8.is_integer());
+        assert!(ChannelType::U16.is_integer());
+        assert!(!ChannelType::F32.is_integer());
+        assert!(ChannelType::F32.is_float());
+        assert!(ChannelType::F16.is_float());
+        assert!(!ChannelType::U8.is_float());
+    }
+
+    // --- ChannelLayout helpers ---
+
+    #[test]
+    fn channel_layout_channels() {
+        assert_eq!(ChannelLayout::Gray.channels(), 1);
+        assert_eq!(ChannelLayout::GrayAlpha.channels(), 2);
+        assert_eq!(ChannelLayout::Rgb.channels(), 3);
+        assert_eq!(ChannelLayout::Rgba.channels(), 4);
+        assert_eq!(ChannelLayout::Bgra.channels(), 4);
+        assert_eq!(ChannelLayout::Oklab.channels(), 3);
+        assert_eq!(ChannelLayout::OklabA.channels(), 4);
+    }
+
+    #[test]
+    fn channel_layout_has_alpha() {
+        assert!(!ChannelLayout::Gray.has_alpha());
+        assert!(ChannelLayout::GrayAlpha.has_alpha());
+        assert!(!ChannelLayout::Rgb.has_alpha());
+        assert!(ChannelLayout::Rgba.has_alpha());
+        assert!(ChannelLayout::Bgra.has_alpha());
+        assert!(!ChannelLayout::Oklab.has_alpha());
+        assert!(ChannelLayout::OklabA.has_alpha());
+    }
+
+    // --- PixelDescriptor builder methods ---
+
+    #[test]
+    fn with_transfer() {
+        let desc = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Linear);
+        assert_eq!(desc.transfer(), TransferFunction::Linear);
+        assert_eq!(desc.layout(), ChannelLayout::Rgb);
+    }
+
+    #[test]
+    fn with_primaries() {
+        let desc = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+        assert_eq!(desc.primaries, ColorPrimaries::DisplayP3);
+    }
+
+    #[test]
+    fn with_signal_range() {
+        let desc = PixelDescriptor::RGB8_SRGB.with_signal_range(SignalRange::Narrow);
+        assert_eq!(desc.signal_range, SignalRange::Narrow);
+    }
+
+    #[test]
+    fn with_alpha_mode() {
+        let desc = PixelDescriptor::RGBA8_SRGB.with_alpha(Some(AlphaMode::Premultiplied));
+        assert_eq!(desc.alpha(), Some(AlphaMode::Premultiplied));
+    }
+
+    // --- PixelDescriptor predicates ---
+
+    #[test]
+    fn is_opaque_and_may_have_transparency() {
+        assert!(PixelDescriptor::RGB8_SRGB.is_opaque());
+        assert!(!PixelDescriptor::RGB8_SRGB.may_have_transparency());
+        assert!(!PixelDescriptor::RGBA8_SRGB.is_opaque());
+        assert!(PixelDescriptor::RGBA8_SRGB.may_have_transparency());
+
+        let rgbx = PixelDescriptor::new(
+            ChannelType::U8,
+            ChannelLayout::Rgba,
+            Some(AlphaMode::Undefined),
+            TransferFunction::Srgb,
+        );
+        assert!(rgbx.is_opaque());
+        assert!(!rgbx.may_have_transparency());
+    }
+
+    #[test]
+    fn is_linear_and_is_unknown_transfer() {
+        assert!(!PixelDescriptor::RGB8_SRGB.is_linear());
+        assert!(PixelDescriptor::RGBF32_LINEAR.is_linear());
+        assert!(!PixelDescriptor::RGB8_SRGB.is_unknown_transfer());
+        let desc = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Unknown);
+        assert!(desc.is_unknown_transfer());
+    }
+
+    #[test]
+    fn min_alignment() {
+        assert_eq!(PixelDescriptor::RGB8_SRGB.min_alignment(), 1);
+        assert_eq!(PixelDescriptor::RGBF32_LINEAR.min_alignment(), 4);
+    }
+
+    #[test]
+    fn aligned_stride() {
+        assert_eq!(PixelDescriptor::RGB8_SRGB.aligned_stride(100), 300);
+        assert_eq!(PixelDescriptor::RGBA8_SRGB.aligned_stride(100), 400);
+        assert_eq!(PixelDescriptor::RGBF32_LINEAR.aligned_stride(10), 120);
+    }
+
+    #[test]
+    fn simd_aligned_stride() {
+        let stride = PixelDescriptor::RGB8_SRGB.simd_aligned_stride(100, 16);
+        assert!(stride >= 300);
+        assert_eq!(stride % 16, 0);
+        assert_eq!(stride % 3, 0); // pixel-aligned
+    }
+
+    // --- new_full and from_pixel_format ---
+
+    #[test]
+    fn new_full_constructor() {
+        let desc = PixelDescriptor::new_full(
+            ChannelType::U8,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Srgb,
+            ColorPrimaries::DisplayP3,
+        );
+        assert_eq!(desc.primaries, ColorPrimaries::DisplayP3);
+        assert_eq!(desc.transfer(), TransferFunction::Srgb);
+    }
+
+    #[test]
+    fn from_pixel_format_constructor() {
+        let desc = PixelDescriptor::from_pixel_format(PixelFormat::Rgba8);
+        assert_eq!(desc.layout(), ChannelLayout::Rgba);
+        assert_eq!(desc.transfer(), TransferFunction::Unknown);
+        assert_eq!(desc.primaries, ColorPrimaries::Bt709);
+        assert_eq!(desc.signal_range, SignalRange::Full);
+    }
+
+    // --- PixelFormat::name ---
+
+    #[test]
+    fn pixel_format_name() {
+        assert_eq!(PixelFormat::Rgb8.name(), "RGB8");
+        assert_eq!(PixelFormat::Bgra8.name(), "BGRA8");
+        assert_eq!(PixelFormat::Gray8.name(), "Gray8");
+    }
+
+    // --- ColorModel ---
+
+    #[test]
+    fn color_model_display() {
+        assert_eq!(format!("{}", ColorModel::Gray), "Gray");
+        assert_eq!(format!("{}", ColorModel::Rgb), "RGB");
+        assert_eq!(format!("{}", ColorModel::YCbCr), "YCbCr");
+        assert_eq!(format!("{}", ColorModel::Oklab), "Oklab");
+    }
+
+    // --- SignalRange default ---
+
+    #[test]
+    fn signal_range_default() {
+        assert_eq!(SignalRange::default(), SignalRange::Full);
+    }
+
+    // --- ColorPrimaries default ---
+
+    #[test]
+    fn color_primaries_default() {
+        assert_eq!(ColorPrimaries::default(), ColorPrimaries::Bt709);
+    }
 }

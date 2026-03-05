@@ -71,3 +71,102 @@ pub struct ConvertOptions {
     /// RGB→Gray is forbidden (returns `ConvertError::RgbToGray`).
     pub luma: Option<LumaCoefficients>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::format;
+
+    #[test]
+    fn gray_expand_derive_traits() {
+        let a = GrayExpand::Broadcast;
+        let b = a;
+        #[allow(clippy::clone_on_copy)]
+        let c = a.clone();
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+        let _ = format!("{a:?}");
+    }
+
+    #[test]
+    fn alpha_policy_variants() {
+        let discard = AlphaPolicy::DiscardIfOpaque;
+        let unchecked = AlphaPolicy::DiscardUnchecked;
+        let composite = AlphaPolicy::CompositeOnto {
+            r: 255,
+            g: 255,
+            b: 255,
+        };
+        let forbid = AlphaPolicy::Forbid;
+
+        assert_ne!(discard, unchecked);
+        assert_ne!(composite, forbid);
+
+        let composite2 = AlphaPolicy::CompositeOnto {
+            r: 255,
+            g: 255,
+            b: 255,
+        };
+        assert_eq!(composite, composite2);
+
+        let composite_diff = AlphaPolicy::CompositeOnto { r: 0, g: 0, b: 0 };
+        assert_ne!(composite, composite_diff);
+    }
+
+    #[test]
+    fn depth_policy_variants() {
+        assert_ne!(DepthPolicy::Round, DepthPolicy::Truncate);
+        assert_ne!(DepthPolicy::Round, DepthPolicy::Forbid);
+        let a = DepthPolicy::Truncate;
+        #[allow(clippy::clone_on_copy)]
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn luma_coefficients_variants() {
+        assert_ne!(LumaCoefficients::Bt709, LumaCoefficients::Bt601);
+        let a = LumaCoefficients::Bt709;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn convert_options_derive_traits() {
+        let opts = ConvertOptions {
+            gray_expand: GrayExpand::Broadcast,
+            alpha_policy: AlphaPolicy::DiscardUnchecked,
+            depth_policy: DepthPolicy::Round,
+            luma: Some(LumaCoefficients::Bt709),
+        };
+        #[allow(clippy::clone_on_copy)]
+        let opts2 = opts.clone();
+        assert_eq!(opts, opts2);
+        let _ = format!("{opts:?}");
+    }
+
+    #[test]
+    fn alpha_policy_hash() {
+        use core::hash::{Hash, Hasher};
+        let mut h1 = std::hash::DefaultHasher::new();
+        AlphaPolicy::Forbid.hash(&mut h1);
+        let mut h2 = std::hash::DefaultHasher::new();
+        AlphaPolicy::Forbid.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn convert_options_hash() {
+        use core::hash::{Hash, Hasher};
+        let opts = ConvertOptions {
+            gray_expand: GrayExpand::Broadcast,
+            alpha_policy: AlphaPolicy::Forbid,
+            depth_policy: DepthPolicy::Forbid,
+            luma: None,
+        };
+        let mut h = std::hash::DefaultHasher::new();
+        opts.hash(&mut h);
+        // Just verify it doesn't panic.
+        let _ = h.finish();
+    }
+}

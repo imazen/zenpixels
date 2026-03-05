@@ -53,3 +53,119 @@ impl GrayAlphaF32 {
         Self { v, a }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::format;
+
+    #[test]
+    fn gray_alpha8_new_and_fields() {
+        let px = GrayAlpha8::new(128, 200);
+        assert_eq!(px.v, 128);
+        assert_eq!(px.a, 200);
+    }
+
+    #[test]
+    fn gray_alpha16_new_and_fields() {
+        let px = GrayAlpha16::new(1000, 65535);
+        assert_eq!(px.v, 1000);
+        assert_eq!(px.a, 65535);
+    }
+
+    #[test]
+    fn gray_alpha_f32_new_and_fields() {
+        let px = GrayAlphaF32::new(0.5, 1.0);
+        assert_eq!(px.v, 0.5);
+        assert_eq!(px.a, 1.0);
+    }
+
+    #[test]
+    fn gray_alpha8_default() {
+        let px = GrayAlpha8::default();
+        assert_eq!(px.v, 0);
+        assert_eq!(px.a, 0);
+    }
+
+    #[test]
+    fn gray_alpha16_default() {
+        let px = GrayAlpha16::default();
+        assert_eq!(px.v, 0);
+        assert_eq!(px.a, 0);
+    }
+
+    #[test]
+    fn gray_alpha_f32_default() {
+        let px = GrayAlphaF32::default();
+        assert_eq!(px.v, 0.0);
+        assert_eq!(px.a, 0.0);
+    }
+
+    #[test]
+    fn gray_alpha8_eq_hash() {
+        use core::hash::{Hash, Hasher};
+        let a = GrayAlpha8::new(100, 200);
+        let b = GrayAlpha8::new(100, 200);
+        let c = GrayAlpha8::new(100, 201);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        let mut h1 = std::hash::DefaultHasher::new();
+        a.hash(&mut h1);
+        let mut h2 = std::hash::DefaultHasher::new();
+        b.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn gray_alpha_f32_partial_eq() {
+        let a = GrayAlphaF32::new(0.5, 1.0);
+        let b = GrayAlphaF32::new(0.5, 1.0);
+        let c = GrayAlphaF32::new(0.5, 0.9);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn gray_alpha8_debug() {
+        let s = format!("{:?}", GrayAlpha8::new(10, 20));
+        assert!(s.contains("10"));
+        assert!(s.contains("20"));
+    }
+
+    #[test]
+    fn gray_alpha8_clone_copy() {
+        let a = GrayAlpha8::new(50, 100);
+        let b = a;
+        #[allow(clippy::clone_on_copy)]
+        let c = a.clone();
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+    }
+
+    #[test]
+    fn gray_alpha8_bytemuck_roundtrip() {
+        let pixels = [GrayAlpha8::new(10, 20), GrayAlpha8::new(30, 40)];
+        let bytes: &[u8] = bytemuck::cast_slice(&pixels);
+        assert_eq!(bytes, &[10, 20, 30, 40]);
+        let back: &[GrayAlpha8] = bytemuck::cast_slice(bytes);
+        assert_eq!(back, &pixels);
+    }
+
+    #[test]
+    fn gray_alpha16_bytemuck_roundtrip() {
+        let pixels = [GrayAlpha16::new(1000, 2000)];
+        let bytes: &[u8] = bytemuck::cast_slice(&pixels);
+        assert_eq!(bytes.len(), 4);
+        let back: &[GrayAlpha16] = bytemuck::cast_slice(bytes);
+        assert_eq!(back[0], pixels[0]);
+    }
+
+    #[test]
+    fn gray_alpha_f32_bytemuck_roundtrip() {
+        let pixels = [GrayAlphaF32::new(0.5, 1.0)];
+        let bytes: &[u8] = bytemuck::cast_slice(&pixels);
+        assert_eq!(bytes.len(), 8);
+        let back: &[GrayAlphaF32] = bytemuck::cast_slice(bytes);
+        assert_eq!(back[0], pixels[0]);
+    }
+}

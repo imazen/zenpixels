@@ -103,7 +103,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "linear-srgb"
-version = "0.5.5"
+version = "0.6.0"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -250,7 +250,9 @@ dependencies = [
 
 [[package]]
 name = "zenlayout"
-version = "0.1.0"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e136195598f6c1dc769200888ad1f9071f99d54ac3a91b80be6ba0b164e6b5b"
 
 [[package]]
 name = "zenpixels"
