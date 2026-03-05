@@ -1381,9 +1381,6 @@ impl fmt::Display for PixelFormat {
     }
 }
 
-/// Deprecated alias — use [`PixelFormat`] instead.
-#[deprecated(note = "renamed to PixelFormat")]
-pub type InterleaveFormat = PixelFormat;
 
 // ---------------------------------------------------------------------------
 // Multi-plane types (planar feature)

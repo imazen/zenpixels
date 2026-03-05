@@ -19,8 +19,6 @@ pub mod pixel_types;
 pub mod buffer;
 
 // Re-export key descriptor types at crate root for ergonomics.
-#[allow(deprecated)]
-pub use descriptor::InterleaveFormat;
 pub use descriptor::{
     AlphaMode, ByteOrder, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, PixelDescriptor,
     PixelFormat, SignalRange, TransferFunction,
