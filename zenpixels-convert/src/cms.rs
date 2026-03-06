@@ -94,7 +94,7 @@ pub trait RowTransform {
 /// (e.g., `cms-moxcms`).
 pub trait ColorManagement {
     /// Error type for CMS operations.
-    type Error;
+    type Error: core::fmt::Debug;
 
     /// Build a row-level transform between two ICC profiles.
     ///
