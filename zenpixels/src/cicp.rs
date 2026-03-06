@@ -287,6 +287,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn hash() {
         use core::hash::{Hash, Hasher};
         let mut h1 = std::hash::DefaultHasher::new();

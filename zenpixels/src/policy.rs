@@ -146,6 +146,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn alpha_policy_hash() {
         use core::hash::{Hash, Hasher};
         let mut h1 = std::hash::DefaultHasher::new();
@@ -156,6 +157,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn convert_options_hash() {
         use core::hash::{Hash, Hasher};
         let opts = ConvertOptions {
