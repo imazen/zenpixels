@@ -214,8 +214,8 @@ fn assert_working_satisfies_op(path: &ConversionPath, op: OpCategory) {
         );
     }
 
-    if let Some(alpha) = req.alpha {
-        if path.working_format.layout().has_alpha() {
+    if let Some(alpha) = req.alpha
+        && path.working_format.layout().has_alpha() {
             assert_eq!(
                 path.working_format.alpha(),
                 Some(alpha),
@@ -225,7 +225,6 @@ fn assert_working_satisfies_op(path: &ConversionPath, op: OpCategory) {
                 op
             );
         }
-    }
 }
 
 #[test]
@@ -328,7 +327,7 @@ fn full_matrix_with_all_codecs_and_three_ops() {
         OpCategory::ResizeGentle,
         OpCategory::ResizeSharp,
     ];
-    let codecs: Vec<&CodecFormats> = registry::ALL_CODECS.iter().copied().collect();
+    let codecs: Vec<&CodecFormats> = registry::ALL_CODECS.to_vec();
     let matrix = generate_path_matrix(
         &codecs,
         &ops,
@@ -434,7 +433,7 @@ fn full_matrix_all_13_ops() {
 
 #[test]
 fn lossless_paths_have_zero_total_loss() {
-    let codecs: Vec<&CodecFormats> = registry::ALL_CODECS.iter().copied().collect();
+    let codecs: Vec<&CodecFormats> = registry::ALL_CODECS.to_vec();
     let matrix = generate_path_matrix(
         &codecs,
         &[OpCategory::Passthrough],

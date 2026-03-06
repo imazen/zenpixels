@@ -427,9 +427,11 @@ pub use gamut::{
 };
 
 // Re-export HDR types and tone mapping.
-pub use hdr::{ContentLightLevel, HdrMetadata, MasteringDisplay, reinhard_inverse, reinhard_tonemap};
 #[cfg(feature = "std")]
 pub use hdr::exposure_tonemap;
+pub use hdr::{
+    ContentLightLevel, HdrMetadata, MasteringDisplay, reinhard_inverse, reinhard_tonemap,
+};
 
 // Re-export CMS traits.
 pub use cms::{ColorManagement, RowTransform};

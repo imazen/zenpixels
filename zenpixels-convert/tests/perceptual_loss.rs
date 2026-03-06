@@ -506,7 +506,7 @@ fn convert_primaries(
 ) -> [f64; 3] {
     let xyz = rgb_to_xyz(rgb, from_to_xyz);
     let out = xyz_to_rgb(xyz, to_from_xyz);
-    out.map(|c| clamp01(c))
+    out.map(clamp01)
 }
 
 /// Simple bilinear 2x downsample of a 2-wide "image" to 1 pixel.
@@ -686,7 +686,7 @@ fn depth_roundtrip_scenarios() {
                 let srgb = c.map(|v| (srgb_oetf(clamp01(v)) * 255.0).round().clamp(0.0, 255.0));
                 let u16_val = srgb.map(|v| (v / 255.0 * 65535.0).round());
                 let back_u8 = u16_val.map(|v| (v / 65535.0 * 255.0).round() / 255.0);
-                back_u8.map(|v| srgb_eotf(v))
+                back_u8.map(srgb_eotf)
             })
             .collect();
         // Return leg uses u8 provenance.
@@ -881,8 +881,8 @@ fn depth_roundtrip_scenarios() {
                 c.map(|v| {
                     let u16_val = (v * 65535.0).round();
                     let f32_val = u16_val as f32 / 65535.0;
-                    let back = (f32_val as f64 * 65535.0).round() / 65535.0;
-                    back
+                    
+                    (f32_val as f64 * 65535.0).round() / 65535.0
                 })
             })
             .collect();
@@ -1162,14 +1162,14 @@ fn gamut_conversion_scenarios() {
         let mut convs = Vec::new();
         for &c in colors {
             let xyz_orig = rgb_to_xyz(c, src_to_xyz);
-            let in_dst = xyz_to_rgb(xyz_orig, dst_from_xyz).map(|v| clamp01(v));
+            let in_dst = xyz_to_rgb(xyz_orig, dst_from_xyz).map(clamp01);
             let xyz_back = rgb_to_xyz(in_dst, back_to_xyz);
-            let back = xyz_to_rgb(xyz_back, back_from_xyz).map(|v| clamp01(v));
+            let back = xyz_to_rgb(xyz_back, back_from_xyz).map(clamp01);
             // Reference: original in sRGB linear
-            let ref_srgb = xyz_to_rgb(xyz_orig, &XYZ_TO_SRGB).map(|v| clamp01(v));
+            let ref_srgb = xyz_to_rgb(xyz_orig, &XYZ_TO_SRGB).map(clamp01);
             // Converted: round-tripped, in sRGB linear
             let conv_srgb =
-                xyz_to_rgb(rgb_to_xyz(back, src_to_xyz), &XYZ_TO_SRGB).map(|v| clamp01(v));
+                xyz_to_rgb(rgb_to_xyz(back, src_to_xyz), &XYZ_TO_SRGB).map(clamp01);
             refs.push(ref_srgb);
             convs.push(conv_srgb);
         }
@@ -1198,7 +1198,7 @@ fn gamut_conversion_scenarios() {
         let mut de_values: Vec<f64> = Vec::new();
         for &c in &colors {
             let xyz_orig = rgb_to_xyz(c, &P3_TO_XYZ);
-            let in_srgb = xyz_to_rgb(xyz_orig, &XYZ_TO_SRGB).map(|v| clamp01(v));
+            let in_srgb = xyz_to_rgb(xyz_orig, &XYZ_TO_SRGB).map(clamp01);
             let xyz_rt = rgb_to_xyz(in_srgb, &SRGB_TO_XYZ);
             // Compare in Lab directly from XYZ
             let lab_orig = xyz_to_lab(xyz_orig);
@@ -1265,7 +1265,7 @@ fn gamut_conversion_scenarios() {
         let mut de_values: Vec<f64> = Vec::new();
         for &c in &colors {
             let xyz_orig = rgb_to_xyz(c, &BT2020_TO_XYZ);
-            let in_srgb = xyz_to_rgb(xyz_orig, &XYZ_TO_SRGB).map(|v| clamp01(v));
+            let in_srgb = xyz_to_rgb(xyz_orig, &XYZ_TO_SRGB).map(clamp01);
             let xyz_rt = rgb_to_xyz(in_srgb, &SRGB_TO_XYZ);
             let lab_orig = xyz_to_lab(xyz_orig);
             let lab_rt = xyz_to_lab(xyz_rt);
@@ -1313,12 +1313,12 @@ fn gamut_conversion_scenarios() {
         let mut convs = Vec::new();
         for &c in &colors {
             let xyz = rgb_to_xyz(c, &BT2020_TO_XYZ);
-            let in_p3 = xyz_to_rgb(xyz, &XYZ_TO_P3).map(|v| clamp01(v));
+            let in_p3 = xyz_to_rgb(xyz, &XYZ_TO_P3).map(clamp01);
             let xyz_back = rgb_to_xyz(in_p3, &P3_TO_XYZ);
-            let back = xyz_to_rgb(xyz_back, &XYZ_TO_BT2020).map(|v| clamp01(v));
-            let ref_srgb = xyz_to_rgb(xyz, &XYZ_TO_SRGB).map(|v| clamp01(v));
+            let back = xyz_to_rgb(xyz_back, &XYZ_TO_BT2020).map(clamp01);
+            let ref_srgb = xyz_to_rgb(xyz, &XYZ_TO_SRGB).map(clamp01);
             let conv_srgb =
-                xyz_to_rgb(rgb_to_xyz(back, &BT2020_TO_XYZ), &XYZ_TO_SRGB).map(|v| clamp01(v));
+                xyz_to_rgb(rgb_to_xyz(back, &BT2020_TO_XYZ), &XYZ_TO_SRGB).map(clamp01);
             refs.push(ref_srgb);
             convs.push(conv_srgb);
         }
@@ -1354,10 +1354,10 @@ fn gamut_conversion_scenarios() {
             let xyz = rgb_to_xyz(c, &P3_TO_XYZ);
             let in_bt2020 = xyz_to_rgb(xyz, &XYZ_TO_BT2020);
             let xyz_back = rgb_to_xyz(in_bt2020, &BT2020_TO_XYZ);
-            let back = xyz_to_rgb(xyz_back, &XYZ_TO_P3).map(|v| clamp01(v));
-            let ref_srgb = xyz_to_rgb(xyz, &XYZ_TO_SRGB).map(|v| clamp01(v));
+            let back = xyz_to_rgb(xyz_back, &XYZ_TO_P3).map(clamp01);
+            let ref_srgb = xyz_to_rgb(xyz, &XYZ_TO_SRGB).map(clamp01);
             let conv_srgb =
-                xyz_to_rgb(rgb_to_xyz(back, &P3_TO_XYZ), &XYZ_TO_SRGB).map(|v| clamp01(v));
+                xyz_to_rgb(rgb_to_xyz(back, &P3_TO_XYZ), &XYZ_TO_SRGB).map(clamp01);
             refs.push(ref_srgb);
             convs.push(conv_srgb);
         }
@@ -1376,7 +1376,7 @@ fn gamut_conversion_scenarios() {
             let in_bt2020 = xyz_to_rgb(xyz, &XYZ_TO_BT2020);
             // Convert back to sRGB (no clipping since it was originally sRGB)
             let xyz_back = rgb_to_xyz(in_bt2020, &BT2020_TO_XYZ);
-            let back_srgb = xyz_to_rgb(xyz_back, &XYZ_TO_SRGB).map(|v| clamp01(v));
+            let back_srgb = xyz_to_rgb(xyz_back, &XYZ_TO_SRGB).map(clamp01);
             refs.push(c);
             convs.push(back_srgb);
         }
@@ -1407,7 +1407,7 @@ fn gamut_conversion_scenarios() {
             let xyz = rgb_to_xyz(c, &SRGB_TO_XYZ);
             let in_p3 = xyz_to_rgb(xyz, &XYZ_TO_P3);
             let xyz_back = rgb_to_xyz(in_p3, &P3_TO_XYZ);
-            let back_srgb = xyz_to_rgb(xyz_back, &XYZ_TO_SRGB).map(|v| clamp01(v));
+            let back_srgb = xyz_to_rgb(xyz_back, &XYZ_TO_SRGB).map(clamp01);
             refs.push(c);
             convs.push(back_srgb);
         }
@@ -1459,7 +1459,7 @@ fn transfer_function_scenarios() {
 
     // 1. f32 sRGB → f32 Linear → f32 sRGB (near-exact)
     {
-        let reference: Vec<_> = ramp.iter().map(|c| c.map(|v| srgb_oetf(v))).collect();
+        let reference: Vec<_> = ramp.iter().map(|c| c.map(srgb_oetf)).collect();
         let converted: Vec<_> = reference
             .iter()
             .map(|c| {
@@ -1595,7 +1595,7 @@ fn transfer_function_scenarios() {
             .iter()
             .map(|c| c.map(|v| bt709_eotf(bt709_oetf(v))))
             .collect();
-        let conv_linear: Vec<_> = converted.iter().map(|c| c.map(|v| bt709_eotf(v))).collect();
+        let conv_linear: Vec<_> = converted.iter().map(|c| c.map(bt709_eotf)).collect();
         results.push(run_scenario(
             "f32 BT.709 → sRGB → BT.709",
             &ref_linear,
@@ -1655,7 +1655,7 @@ fn operation_suitability_scenarios() {
             let a_srgb = a.map(|c| srgb_oetf(clamp01(c)));
             let b_srgb = b.map(|c| srgb_oetf(clamp01(c)));
             let wrong_srgb = bilinear_downsample_pair(a_srgb, b_srgb);
-            let wrong_linear = wrong_srgb.map(|c| srgb_eotf(c));
+            let wrong_linear = wrong_srgb.map(srgb_eotf);
             refs.push(correct);
             convs.push(wrong_linear);
         }
@@ -1700,7 +1700,7 @@ fn operation_suitability_scenarios() {
             let c_srgb = ramp[i].map(|c| srgb_oetf(clamp01(c)));
             let r_srgb = ramp[i + 1].map(|c| srgb_oetf(clamp01(c)));
             let wrong_srgb = box_blur_3(l_srgb, c_srgb, r_srgb);
-            let wrong_linear = wrong_srgb.map(|c| srgb_eotf(c));
+            let wrong_linear = wrong_srgb.map(srgb_eotf);
             refs.push(correct);
             convs.push(wrong_linear);
         }
@@ -1804,7 +1804,7 @@ fn operation_suitability_scenarios() {
             let b_u8 = b_color.map(|c| (c * 255.0).round() / 255.0);
             let wrong = bilinear_downsample_pair(a_u8, b_u8);
 
-            refs.push(correct.map(|c| clamp01(c)));
+            refs.push(correct.map(clamp01));
             convs.push(wrong);
 
             let _ = t; // use the variable
@@ -2636,7 +2636,7 @@ fn cost_model_ranking_correlates() {
         let mut de_values: Vec<f64> = Vec::new();
         for &c in &p3_colors {
             let xyz_orig = rgb_to_xyz(c, &P3_TO_XYZ);
-            let in_srgb = xyz_to_rgb(xyz_orig, &XYZ_TO_SRGB).map(|v| clamp01(v));
+            let in_srgb = xyz_to_rgb(xyz_orig, &XYZ_TO_SRGB).map(clamp01);
             let xyz_rt = rgb_to_xyz(in_srgb, &SRGB_TO_XYZ);
             de_values.push(ciede2000(xyz_to_lab(xyz_orig), xyz_to_lab(xyz_rt)));
         }
@@ -2654,7 +2654,7 @@ fn cost_model_ranking_correlates() {
         let mut de_values: Vec<f64> = Vec::new();
         for &c in &bt_colors {
             let xyz_orig = rgb_to_xyz(c, &BT2020_TO_XYZ);
-            let in_srgb = xyz_to_rgb(xyz_orig, &XYZ_TO_SRGB).map(|v| clamp01(v));
+            let in_srgb = xyz_to_rgb(xyz_orig, &XYZ_TO_SRGB).map(clamp01);
             let xyz_rt = rgb_to_xyz(in_srgb, &SRGB_TO_XYZ);
             de_values.push(ciede2000(xyz_to_lab(xyz_orig), xyz_to_lab(xyz_rt)));
         }
