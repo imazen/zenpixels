@@ -9,7 +9,8 @@ use core::cmp::min;
 
 use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy};
 use crate::{
-    AlphaMode, ChannelLayout, ChannelType, ConvertError, PixelDescriptor, TransferFunction,
+    AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, ConvertError, PixelDescriptor,
+    TransferFunction,
 };
 
 /// Pre-computed conversion plan.
@@ -142,6 +143,12 @@ impl ConvertPlan {
             let involves_oklab =
                 matches!(from.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA)
                     || matches!(to.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA);
+
+            // Oklab conversion requires known primaries for the RGB→LMS matrix.
+            if involves_oklab && from.primaries == ColorPrimaries::Unknown {
+                return Err(ConvertError::NoPath { from, to });
+            }
+
             let depth_first = need_depth_or_tf
                 && (dst_ch > src_ch || (involves_oklab && from.channel_type() != ChannelType::F32));
 
@@ -1442,17 +1449,16 @@ fn premul_to_straight(
 // Oklab conversion kernels
 // ---------------------------------------------------------------------------
 
-use crate::ColorPrimaries;
 use crate::oklab::{lms_to_rgb_matrix, oklab_to_rgb, rgb_to_lms_matrix, rgb_to_oklab};
 
 /// Linear RGB f32 → Oklab f32 (3 channels).
+///
+/// # Panics
+///
+/// Panics if `primaries` is `Unknown`. The plan should have rejected this.
 fn linear_rgb_to_oklab_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
-    let Some(m1) = rgb_to_lms_matrix(primaries) else {
-        // Fallback: copy.
-        let len = min(src.len(), dst.len());
-        dst[..len].copy_from_slice(&src[..len]);
-        return;
-    };
+    let m1 = rgb_to_lms_matrix(primaries)
+        .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
 
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
@@ -1468,11 +1474,8 @@ fn linear_rgb_to_oklab_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: 
 
 /// Oklab f32 → Linear RGB f32 (3 channels).
 fn oklab_to_linear_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
-    let Some(m1_inv) = lms_to_rgb_matrix(primaries) else {
-        let len = min(src.len(), dst.len());
-        dst[..len].copy_from_slice(&src[..len]);
-        return;
-    };
+    let m1_inv = lms_to_rgb_matrix(primaries)
+        .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
 
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
@@ -1488,11 +1491,8 @@ fn oklab_to_linear_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: 
 
 /// Linear RGBA f32 → Oklaba f32 (4 channels, alpha preserved).
 fn linear_rgba_to_oklaba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
-    let Some(m1) = rgb_to_lms_matrix(primaries) else {
-        let len = min(src.len(), dst.len());
-        dst[..len].copy_from_slice(&src[..len]);
-        return;
-    };
+    let m1 = rgb_to_lms_matrix(primaries)
+        .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
 
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
@@ -1509,11 +1509,8 @@ fn linear_rgba_to_oklaba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries
 
 /// Oklaba f32 → Linear RGBA f32 (4 channels, alpha preserved).
 fn oklaba_to_linear_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
-    let Some(m1_inv) = lms_to_rgb_matrix(primaries) else {
-        let len = min(src.len(), dst.len());
-        dst[..len].copy_from_slice(&src[..len]);
-        return;
-    };
+    let m1_inv = lms_to_rgb_matrix(primaries)
+        .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
 
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);

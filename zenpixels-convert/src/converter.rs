@@ -1217,4 +1217,25 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn oklab_unknown_primaries_returns_error() {
+        use crate::ColorPrimaries;
+        let from = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Linear,
+        )
+        .with_primaries(ColorPrimaries::Unknown);
+        let to = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Oklab,
+            None,
+            TransferFunction::Linear,
+        )
+        .with_primaries(ColorPrimaries::Unknown);
+        let result = RowConverter::new(from, to);
+        assert!(result.is_err(), "Oklab with Unknown primaries should fail");
+    }
 }
