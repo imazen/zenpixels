@@ -881,7 +881,7 @@ fn depth_roundtrip_scenarios() {
                 c.map(|v| {
                     let u16_val = (v * 65535.0).round();
                     let f32_val = u16_val as f32 / 65535.0;
-                    
+
                     (f32_val as f64 * 65535.0).round() / 65535.0
                 })
             })
@@ -1168,8 +1168,7 @@ fn gamut_conversion_scenarios() {
             // Reference: original in sRGB linear
             let ref_srgb = xyz_to_rgb(xyz_orig, &XYZ_TO_SRGB).map(clamp01);
             // Converted: round-tripped, in sRGB linear
-            let conv_srgb =
-                xyz_to_rgb(rgb_to_xyz(back, src_to_xyz), &XYZ_TO_SRGB).map(clamp01);
+            let conv_srgb = xyz_to_rgb(rgb_to_xyz(back, src_to_xyz), &XYZ_TO_SRGB).map(clamp01);
             refs.push(ref_srgb);
             convs.push(conv_srgb);
         }
@@ -1317,8 +1316,7 @@ fn gamut_conversion_scenarios() {
             let xyz_back = rgb_to_xyz(in_p3, &P3_TO_XYZ);
             let back = xyz_to_rgb(xyz_back, &XYZ_TO_BT2020).map(clamp01);
             let ref_srgb = xyz_to_rgb(xyz, &XYZ_TO_SRGB).map(clamp01);
-            let conv_srgb =
-                xyz_to_rgb(rgb_to_xyz(back, &BT2020_TO_XYZ), &XYZ_TO_SRGB).map(clamp01);
+            let conv_srgb = xyz_to_rgb(rgb_to_xyz(back, &BT2020_TO_XYZ), &XYZ_TO_SRGB).map(clamp01);
             refs.push(ref_srgb);
             convs.push(conv_srgb);
         }
@@ -1356,8 +1354,7 @@ fn gamut_conversion_scenarios() {
             let xyz_back = rgb_to_xyz(in_bt2020, &BT2020_TO_XYZ);
             let back = xyz_to_rgb(xyz_back, &XYZ_TO_P3).map(clamp01);
             let ref_srgb = xyz_to_rgb(xyz, &XYZ_TO_SRGB).map(clamp01);
-            let conv_srgb =
-                xyz_to_rgb(rgb_to_xyz(back, &P3_TO_XYZ), &XYZ_TO_SRGB).map(clamp01);
+            let conv_srgb = xyz_to_rgb(rgb_to_xyz(back, &P3_TO_XYZ), &XYZ_TO_SRGB).map(clamp01);
             refs.push(ref_srgb);
             convs.push(conv_srgb);
         }

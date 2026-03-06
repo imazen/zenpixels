@@ -215,16 +215,17 @@ fn assert_working_satisfies_op(path: &ConversionPath, op: OpCategory) {
     }
 
     if let Some(alpha) = req.alpha
-        && path.working_format.layout().has_alpha() {
-            assert_eq!(
-                path.working_format.alpha(),
-                Some(alpha),
-                "working format alpha {:?} doesn't match requirement {:?} for {:?}",
-                path.working_format.alpha(),
-                alpha,
-                op
-            );
-        }
+        && path.working_format.layout().has_alpha()
+    {
+        assert_eq!(
+            path.working_format.alpha(),
+            Some(alpha),
+            "working format alpha {:?} doesn't match requirement {:?} for {:?}",
+            path.working_format.alpha(),
+            alpha,
+            op
+        );
+    }
 }
 
 #[test]
