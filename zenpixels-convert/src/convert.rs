@@ -318,6 +318,56 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
             vec![ConvertStep::DropAlpha, ConvertStep::LinearRgbToOklab]
         }
 
+        // Oklab ↔ BGRA (swizzle to/from RGBA, then Oklab).
+        (ChannelLayout::Bgra, ChannelLayout::OklabA) => {
+            vec![ConvertStep::SwizzleBgraRgba, ConvertStep::LinearRgbaToOklaba]
+        }
+        (ChannelLayout::OklabA, ChannelLayout::Bgra) => {
+            vec![ConvertStep::OklabaToLinearRgba, ConvertStep::SwizzleBgraRgba]
+        }
+        (ChannelLayout::Bgra, ChannelLayout::Oklab) => {
+            vec![
+                ConvertStep::SwizzleBgraRgba,
+                ConvertStep::DropAlpha,
+                ConvertStep::LinearRgbToOklab,
+            ]
+        }
+        (ChannelLayout::Oklab, ChannelLayout::Bgra) => {
+            vec![
+                ConvertStep::OklabToLinearRgb,
+                ConvertStep::AddAlpha,
+                ConvertStep::SwizzleBgraRgba,
+            ]
+        }
+
+        // Gray ↔ Oklab (expand gray to RGB first).
+        (ChannelLayout::Gray, ChannelLayout::Oklab) => {
+            vec![ConvertStep::GrayToRgb, ConvertStep::LinearRgbToOklab]
+        }
+        (ChannelLayout::Oklab, ChannelLayout::Gray) => {
+            vec![ConvertStep::OklabToLinearRgb, ConvertStep::RgbToGray]
+        }
+        (ChannelLayout::Gray, ChannelLayout::OklabA) => {
+            vec![ConvertStep::GrayToRgba, ConvertStep::LinearRgbaToOklaba]
+        }
+        (ChannelLayout::OklabA, ChannelLayout::Gray) => {
+            vec![ConvertStep::OklabaToLinearRgba, ConvertStep::RgbaToGray]
+        }
+        (ChannelLayout::GrayAlpha, ChannelLayout::OklabA) => {
+            vec![ConvertStep::GrayAlphaToRgba, ConvertStep::LinearRgbaToOklaba]
+        }
+        (ChannelLayout::OklabA, ChannelLayout::GrayAlpha) => {
+            // Drop alpha from OklabA→Oklab, convert to RGB, then to GrayAlpha.
+            // Alpha is lost; this is inherently lossy.
+            vec![ConvertStep::OklabaToLinearRgba, ConvertStep::RgbaToGray, ConvertStep::GrayToGrayAlpha]
+        }
+        (ChannelLayout::GrayAlpha, ChannelLayout::Oklab) => {
+            vec![ConvertStep::GrayAlphaToRgb, ConvertStep::LinearRgbToOklab]
+        }
+        (ChannelLayout::Oklab, ChannelLayout::GrayAlpha) => {
+            vec![ConvertStep::OklabToLinearRgb, ConvertStep::RgbToGray, ConvertStep::GrayToGrayAlpha]
+        }
+
         // Oklab ↔ alpha variants.
         (ChannelLayout::Oklab, ChannelLayout::OklabA) => vec![ConvertStep::AddAlpha],
         (ChannelLayout::OklabA, ChannelLayout::Oklab) => vec![ConvertStep::DropAlpha],
