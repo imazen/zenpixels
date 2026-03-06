@@ -151,6 +151,27 @@ jobs:
         run: cargo hack check --workspace --rust-version
 
   # ==========================================================================
+  # Feature powerset (all feature combinations compile and test)
+  # ==========================================================================
+  features:
+    name: Feature powerset
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@cargo-hack
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test all feature combinations
+        run: cargo hack test --workspace --feature-powerset --depth 3
+
+  # ==========================================================================
   # Code coverage
   # ==========================================================================
   coverage:
