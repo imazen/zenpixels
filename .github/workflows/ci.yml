@@ -35,30 +35,20 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Patch path deps to git refs
-        shell: bash
-        run: |
-          sed \
-            -e 's|path = "\.\./\.\./linear-srgb", ||g' \
-            -e 's|path = "\.\./\.\./ultrahdr/ultrahdr-core", ||g' \
-            -e 's|path = "\.\./\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
-            zenpixels-convert/Cargo.toml > zenpixels-convert/Cargo.toml.ci && \
-            mv zenpixels-convert/Cargo.toml.ci zenpixels-convert/Cargo.toml
-
       - name: Test (workspace)
         run: cargo test --workspace
 
       - name: Check no_std (zenpixels)
         run: cargo check -p zenpixels --no-default-features
+
+      - name: Check no_std (zenpixels-convert)
+        run: cargo check -p zenpixels-convert --no-default-features
 
   # ==========================================================================
   # Cross-compiled 32-bit testing (i686 via QEMU)
@@ -68,9 +58,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -85,16 +72,6 @@ jobs:
         with:
           key: cross-i686
 
-      - name: Patch path deps to git refs
-        shell: bash
-        run: |
-          sed \
-            -e 's|path = "\.\./\.\./linear-srgb", ||g' \
-            -e 's|path = "\.\./\.\./ultrahdr/ultrahdr-core", ||g' \
-            -e 's|path = "\.\./\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
-            zenpixels-convert/Cargo.toml > zenpixels-convert/Cargo.toml.ci && \
-            mv zenpixels-convert/Cargo.toml.ci zenpixels-convert/Cargo.toml
-
       - name: Test (i686/QEMU)
         run: cross test --workspace --target i686-unknown-linux-gnu
 
@@ -107,9 +84,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -117,16 +91,6 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-
-      - name: Patch path deps to git refs
-        shell: bash
-        run: |
-          sed \
-            -e 's|path = "\.\./\.\./linear-srgb", ||g' \
-            -e 's|path = "\.\./\.\./ultrahdr/ultrahdr-core", ||g' \
-            -e 's|path = "\.\./\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
-            zenpixels-convert/Cargo.toml > zenpixels-convert/Cargo.toml.ci && \
-            mv zenpixels-convert/Cargo.toml.ci zenpixels-convert/Cargo.toml
 
       - name: Check WASM (no_std)
         run: cargo check --workspace --target wasm32-wasip1 --no-default-features
@@ -140,9 +104,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -150,16 +111,6 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-
-      - name: Patch path deps to git refs
-        shell: bash
-        run: |
-          sed \
-            -e 's|path = "\.\./\.\./linear-srgb", ||g' \
-            -e 's|path = "\.\./\.\./ultrahdr/ultrahdr-core", ||g' \
-            -e 's|path = "\.\./\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
-            zenpixels-convert/Cargo.toml > zenpixels-convert/Cargo.toml.ci && \
-            mv zenpixels-convert/Cargo.toml.ci zenpixels-convert/Cargo.toml
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -190,24 +141,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
-
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-
-      - name: Patch path deps to git refs
-        shell: bash
-        run: |
-          sed \
-            -e 's|path = "\.\./\.\./linear-srgb", ||g' \
-            -e 's|path = "\.\./\.\./ultrahdr/ultrahdr-core", ||g' \
-            -e 's|path = "\.\./\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
-            zenpixels-convert/Cargo.toml > zenpixels-convert/Cargo.toml.ci && \
-            mv zenpixels-convert/Cargo.toml.ci zenpixels-convert/Cargo.toml
 
       - name: Check MSRV
         run: cargo hack check --workspace --rust-version
@@ -222,9 +160,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -233,16 +168,6 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-
-      - name: Patch path deps to git refs
-        shell: bash
-        run: |
-          sed \
-            -e 's|path = "\.\./\.\./linear-srgb", ||g' \
-            -e 's|path = "\.\./\.\./ultrahdr/ultrahdr-core", ||g' \
-            -e 's|path = "\.\./\.\./zenresize"|git = "https://github.com/imazen/zenresize"|g' \
-            zenpixels-convert/Cargo.toml > zenpixels-convert/Cargo.toml.ci && \
-            mv zenpixels-convert/Cargo.toml.ci zenpixels-convert/Cargo.toml
 
       - name: Generate coverage
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
