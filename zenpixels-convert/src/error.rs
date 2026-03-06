@@ -34,6 +34,8 @@ pub enum ConvertError {
     RgbToGray,
     /// Buffer allocation failed.
     AllocationFailed,
+    /// CMS transform could not be built (invalid ICC profile, unsupported color space, etc.).
+    CmsError(alloc::string::String),
 }
 
 impl fmt::Display for ConvertError {
@@ -75,6 +77,7 @@ impl fmt::Display for ConvertError {
                 write!(f, "RGB-to-grayscale requires explicit luma coefficients")
             }
             Self::AllocationFailed => write!(f, "buffer allocation failed"),
+            Self::CmsError(msg) => write!(f, "CMS transform failed: {msg}"),
         }
     }
 }
@@ -165,6 +168,14 @@ mod tests {
     #[test]
     fn display_allocation_failed() {
         assert!(format!("{}", ConvertError::AllocationFailed).contains("allocation"));
+    }
+
+    #[test]
+    fn display_cms_error() {
+        let e = ConvertError::CmsError(alloc::string::String::from("profile mismatch"));
+        let s = format!("{e}");
+        assert!(s.contains("CMS transform failed"));
+        assert!(s.contains("profile mismatch"));
     }
 
     #[test]

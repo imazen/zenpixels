@@ -354,6 +354,8 @@
 //! - [`ConvertError::DepthReductionForbidden`] — `Forbid` policy prevents
 //!   narrowing (e.g., f32→u8).
 //! - [`ConvertError::AllocationFailed`] — buffer allocation failed (OOM).
+//! - [`ConvertError::CmsError`] — CMS transform failed (invalid ICC profile,
+//!   unsupported color space, etc.).
 //!
 //! Codecs should match on specific variants and return actionable errors
 //! to callers. Do not flatten `ConvertError` into a generic string.
