@@ -385,12 +385,18 @@ mod tests {
     }
 
     #[test]
-    fn named_profile_debug_clone_hash() {
-        use core::hash::{Hash, Hasher};
+    fn named_profile_debug_clone_eq() {
         let p = NamedProfile::DisplayP3;
         let _ = alloc::format!("{p:?}");
         let p2 = p;
         assert_eq!(p, p2);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn named_profile_hash() {
+        use core::hash::{Hash, Hasher};
+        let p = NamedProfile::DisplayP3;
         let mut h = std::hash::DefaultHasher::new();
         p.hash(&mut h);
         let _ = h.finish();
@@ -408,10 +414,16 @@ mod tests {
     }
 
     #[test]
-    fn color_provenance_debug_hash() {
-        use core::hash::{Hash, Hasher};
+    fn color_provenance_debug() {
         let p = ColorProvenance::Cicp;
         let _ = alloc::format!("{p:?}");
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn color_provenance_hash() {
+        use core::hash::{Hash, Hasher};
+        let p = ColorProvenance::Cicp;
         let mut h = std::hash::DefaultHasher::new();
         p.hash(&mut h);
         let _ = h.finish();

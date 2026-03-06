@@ -345,6 +345,8 @@ fn format_satisfies(desc: PixelDescriptor, req: &OpRequirement) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use super::*;
 
     #[test]

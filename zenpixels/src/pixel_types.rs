@@ -102,13 +102,20 @@ mod tests {
     }
 
     #[test]
-    fn gray_alpha8_eq_hash() {
-        use core::hash::{Hash, Hasher};
+    fn gray_alpha8_eq() {
         let a = GrayAlpha8::new(100, 200);
         let b = GrayAlpha8::new(100, 200);
         let c = GrayAlpha8::new(100, 201);
         assert_eq!(a, b);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn gray_alpha8_hash() {
+        use core::hash::{Hash, Hasher};
+        let a = GrayAlpha8::new(100, 200);
+        let b = GrayAlpha8::new(100, 200);
         let mut h1 = std::hash::DefaultHasher::new();
         a.hash(&mut h1);
         let mut h2 = std::hash::DefaultHasher::new();

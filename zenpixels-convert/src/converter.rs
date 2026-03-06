@@ -113,13 +113,19 @@ impl RowConverter {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use super::*;
     use crate::convert::ConvertPlan;
     use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GrayExpand};
     use crate::{AlphaMode, ChannelLayout, ChannelType, ConvertError, TransferFunction};
 
     /// Helper: build a RowConverter and convert a single pixel.
-    fn convert_pixel(from: PixelDescriptor, to: PixelDescriptor, src: &[u8]) -> Vec<u8> {
+    fn convert_pixel(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        src: &[u8],
+    ) -> alloc::vec::Vec<u8> {
         let conv = RowConverter::new(from, to).unwrap();
         let dst_bpp = to.bytes_per_pixel();
         let mut dst = vec![0u8; dst_bpp];

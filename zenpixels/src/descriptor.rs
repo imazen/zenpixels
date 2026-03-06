@@ -2160,6 +2160,7 @@ impl MultiPlaneImage {
 
 #[cfg(test)]
 mod tests {
+    use alloc::format;
     use core::mem::size_of;
 
     use super::*;

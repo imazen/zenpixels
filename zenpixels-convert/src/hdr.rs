@@ -258,6 +258,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn exposure_tonemap_values() {
         // 0 stops = unchanged (clamped to [0,1]).
         assert!((exposure_tonemap(0.5, 0.0) - 0.5).abs() < 1e-6);
@@ -276,11 +277,18 @@ mod tests {
     }
 
     #[test]
-    fn content_light_level_clone_eq_hash() {
-        use core::hash::{Hash, Hasher};
+    fn content_light_level_clone_eq() {
         let a = ContentLightLevel::new(100, 50);
         let b = a;
         assert_eq!(a, b);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn content_light_level_hash() {
+        use core::hash::{Hash, Hasher};
+        let a = ContentLightLevel::new(100, 50);
+        let b = a;
         let mut h1 = std::hash::DefaultHasher::new();
         a.hash(&mut h1);
         let mut h2 = std::hash::DefaultHasher::new();
