@@ -1,14 +1,9 @@
 //! HDR processing utilities.
 //!
-//! Provides transfer function conversion, tone mapping dispatch, and
-//! gain map support through optional backends:
-//!
-//! - **`hdr-ultrahdr`** feature: ISO 21496-1 gain map creation/application
-//!   via the `ultrahdr-core` crate.
-//! - **`hdr-gainforge`** feature: HDR tone mapping via the `gainforge` crate.
-//!
-//! The core PQ/HLG EOTF/OETF math is always available (no optional deps)
-//! through the main conversion pipeline in [`ConvertPlan`](crate::ConvertPlan).
+//! Provides HDR metadata types (content light level, mastering display),
+//! and basic tone mapping helpers. The core PQ/HLG EOTF/OETF math is
+//! always available through the main conversion pipeline in
+//! [`ConvertPlan`](crate::ConvertPlan).
 
 use crate::TransferFunction;
 
@@ -140,8 +135,8 @@ impl HdrMetadata {
 ///
 /// Maps linear light [0, ∞) → [0, 1) using `v / (1 + v)`.
 /// Preserves relative brightness ordering. Does not use any display
-/// metadata — for proper tone mapping, use the gainforge or ultrahdr
-/// backends.
+/// metadata — for proper tone mapping, use a dedicated HDR tone mapping
+/// library.
 #[inline]
 #[must_use]
 pub fn reinhard_tonemap(v: f32) -> f32 {
@@ -172,20 +167,6 @@ pub fn reinhard_inverse(v: f32) -> f32 {
 pub fn exposure_tonemap(v: f32, exposure: f32) -> f32 {
     (v * 2.0f32.powf(exposure)).clamp(0.0, 1.0)
 }
-
-// ---------------------------------------------------------------------------
-// ultrahdr-core integration (feature-gated)
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "hdr-ultrahdr")]
-pub use ultrahdr_core;
-
-// ---------------------------------------------------------------------------
-// gainforge integration (feature-gated)
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "hdr-gainforge")]
-pub use gainforge;
 
 #[cfg(test)]
 mod tests {
