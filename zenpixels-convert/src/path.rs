@@ -451,7 +451,7 @@ mod tests {
             OpCategory::ResizeGentle,
             OpCategory::ResizeSharp,
         ];
-        let codecs: Vec<&CodecFormats> = registry::ALL_CODECS.iter().copied().collect();
+        let codecs: Vec<&CodecFormats> = registry::ALL_CODECS.to_vec();
         let matrix = generate_path_matrix(
             &codecs,
             &all_ops,

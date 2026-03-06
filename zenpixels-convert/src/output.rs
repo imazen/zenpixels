@@ -214,9 +214,9 @@ pub fn finalize_for_output<C: ColorManagement>(
         && let Some(src_icc) = buffer.color_context().and_then(|c| c.icc.as_ref())
         && let Some(dst_icc) = &metadata.icc
     {
-        let transform = cms.build_transform(src_icc, dst_icc).map_err(|e| {
-            ConvertError::CmsError(alloc::format!("{e:?}"))
-        })?;
+        let transform = cms
+            .build_transform(src_icc, dst_icc)
+            .map_err(|e| ConvertError::CmsError(alloc::format!("{e:?}")))?;
 
         let src_slice = buffer.as_slice();
         let mut out = PixelBuffer::try_new(buffer.width(), buffer.height(), target_desc)

@@ -411,7 +411,7 @@ fn pq_u16_to_srgb_u8() {
     // Pixel 0: all zero (PQ black)
     // Pixel 1: all 65535 (PQ white = 10000 nits, clips to sRGB white)
     for j in 0..3 {
-        let base = 1 * 6 + j * 2;
+        let base = 6 + j * 2;
         src[base..base + 2].copy_from_slice(&65535u16.to_ne_bytes());
     }
     // Pixel 2: mid value ~32768

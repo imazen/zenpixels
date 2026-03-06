@@ -215,11 +215,10 @@ mod tests {
     fn white_point_preservation() {
         let mut rgb = [1.0f32, 1.0, 1.0];
         apply_matrix_f32(&mut rgb, &BT709_TO_BT2020);
-        for c in 0..3 {
+        for (c, &val) in rgb.iter().enumerate() {
             assert!(
-                (rgb[c] - 1.0).abs() < 1e-4,
-                "White point not preserved in ch{c}: {:.6}",
-                rgb[c]
+                (val - 1.0).abs() < 1e-4,
+                "White point not preserved in ch{c}: {val:.6}",
             );
         }
     }
@@ -295,11 +294,10 @@ mod tests {
             let mut rgb = [1.0f32; 3];
             apply_matrix_f32(&mut rgb, to);
             apply_matrix_f32(&mut rgb, from);
-            for c in 0..3 {
+            for (c, &val) in rgb.iter().enumerate() {
                 assert!(
-                    (rgb[c] - 1.0).abs() < 1e-3,
-                    "{name} XYZ white point ch{c}: {:.6}",
-                    rgb[c]
+                    (val - 1.0).abs() < 1e-3,
+                    "{name} XYZ white point ch{c}: {val:.6}",
                 );
             }
         }
@@ -309,13 +307,12 @@ mod tests {
     #[test]
     fn mat3_mul_inverse() {
         let identity = mat3_mul(&BT709_TO_XYZ, &XYZ_TO_BT709);
-        for i in 0..3 {
-            for j in 0..3 {
+        for (i, row) in identity.iter().enumerate() {
+            for (j, &val) in row.iter().enumerate() {
                 let expected = if i == j { 1.0 } else { 0.0 };
                 assert!(
-                    (identity[i][j] - expected).abs() < 1e-4,
-                    "mat3_mul identity [{i}][{j}] = {:.6}, expected {expected:.1}",
-                    identity[i][j]
+                    (val - expected).abs() < 1e-4,
+                    "mat3_mul identity [{i}][{j}] = {val:.6}, expected {expected:.1}",
                 );
             }
         }
