@@ -1,8 +1,33 @@
-//! Pixel format interchange types.
+//! Pixel format interchange types for Rust image codecs.
 //!
-//! Lightweight type definitions for describing pixel formats, color contexts,
-//! and buffer layouts. No conversion logic — see `zenpixels-convert` for
-//! transfer-function-aware conversion, gamut mapping, and codec negotiation.
+//! This crate provides the type system for describing pixel data: what the
+//! bytes are ([`PixelFormat`]), what they mean ([`PixelDescriptor`]), and where
+//! they live ([`PixelBuffer`], [`PixelSlice`], [`PixelSliceMut`]).
+//!
+//! No conversion logic lives here. For transfer-function-aware conversion,
+//! gamut mapping, and codec format negotiation, see
+//! [`zenpixels-convert`](https://docs.rs/zenpixels-convert).
+//!
+//! # Core types
+//!
+//! - [`PixelFormat`] — flat enum of byte layouts (`Rgb8`, `Rgba16`, `OklabF32`, etc.)
+//! - [`PixelDescriptor`] — format + transfer function + primaries + alpha mode + signal range
+//! - [`PixelBuffer`] — owned pixel storage with SIMD-aligned allocation
+//! - [`PixelSlice`] / [`PixelSliceMut`] — borrowed views with stride support
+//! - [`Pixel`] — trait mapping concrete types to their descriptor
+//! - [`Cicp`] — ITU-T H.273 color signaling codes
+//! - [`ColorContext`] — ICC profile bytes and/or CICP, `Arc`-shared
+//! - [`ConvertOptions`] — policies for lossy operations (alpha removal, depth reduction)
+//!
+//! # Feature flags
+//!
+//! | Feature | What it enables |
+//! |---------|----------------|
+//! | `std` | Standard library (default; currently a no-op, everything is `no_std + alloc`) |
+//! | `rgb` | [`Pixel`] impls for `rgb` crate types, typed `from_pixels()` constructors |
+//! | `imgref` | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
+//! | `buffer` | Convenience: enables both `rgb` and `imgref` |
+//! | `planar` | Multi-plane image types (YCbCr, Oklab, gain maps) |
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

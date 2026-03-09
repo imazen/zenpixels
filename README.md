@@ -1,5 +1,11 @@
 # zenpixels
 
+[![CI](https://github.com/imazen/zenpixels/actions/workflows/ci.yml/badge.svg)](https://github.com/imazen/zenpixels/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/zenpixels?style=for-the-badge)](https://crates.io/crates/zenpixels)
+[![docs.rs](https://img.shields.io/docsrs/zenpixels?style=for-the-badge)](https://docs.rs/zenpixels)
+[![MSRV](https://img.shields.io/badge/MSRV-1.93-blue?style=for-the-badge)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field)
+[![license](https://img.shields.io/crates/l/zenpixels?style=for-the-badge)](LICENSE-MIT)
+
 Pixel format interchange types and transfer-function-aware conversion for Rust image codecs.
 
 Two crates, one split: **zenpixels** defines the types, **zenpixels-convert** does the math. Codecs depend on the interchange crate for zero-cost format descriptions. Processing pipelines pull in the conversion crate when they need to change pixel formats, apply transfer functions, or negotiate the cheapest encode path.
@@ -151,18 +157,26 @@ Built-in impls for `Rgbx` and `Bgrx` (32-bit SIMD-friendly padded types) and `Gr
 
 **`PixelBuffer<P>`** (owned):
 - `try_new(w, h, desc)` — tight stride
-- `try_new_simd_aligned(w, h, desc)` — 32-byte aligned rows for SIMD
+- `try_new_simd_aligned(w, h, desc, align)` — SIMD-aligned rows (e.g., 32-byte)
 - `from_vec(data, w, h, desc)` — wrap existing allocation
 - `from_pixels(pixels, w, h)` — from typed `Vec<P>` (requires `rgb` feature)
+- `as_slice()` / `as_slice_mut()` — borrow as `PixelSlice` / `PixelSliceMut`
+- `rows(y, count)` / `rows_mut(y, count)` — borrow a sub-range of rows
+- `crop_view(x, y, w, h)` — zero-copy rectangle view
+- `crop_copy(x, y, w, h)` — copy a rectangle into a new buffer
 - `into_vec()` — recover the allocation for pool reuse
 
 **`PixelSlice<'a, P>`** (borrowed, immutable) and **`PixelSliceMut<'a, P>`** (borrowed, mutable):
-- `row(y)` / `row_mut(y)` — raw byte access to a single row
-- `row_pixels(y)` — typed `&[P]` via bytemuck (when `P: Pixel`)
+- `row(y)` / `row_mut(y)` — pixel bytes for a single row (no padding)
+- `row_with_stride(y)` — full stride bytes including padding
+- `as_strided_bytes()` — raw backing bytes including stride padding (zero-copy)
+- `as_contiguous_bytes()` — raw bytes when rows are tightly packed (`None` if padded)
+- `contiguous_bytes()` — `Cow::Borrowed` when tight, copies to strip padding otherwise
 - `sub_rows(y, count)` — zero-copy vertical slice
 - `crop_view(x, y, w, h)` — zero-copy rectangle view
+- `is_contiguous()` — true when `stride == width * bpp`
 
-With the `imgref` feature, `From<ImgRef<P>>` and `From<ImgVec<P>>` conversions are available for interop with the `imgref` ecosystem.
+With the `imgref` feature, `From<ImgRef<P>>` and `From<ImgVec<P>>` conversions are available for interop with the `imgref` ecosystem. `PixelBuffer` also provides `as_imgref()`, `try_as_imgref::<P>()`, and their mutable counterparts for type-erased buffers.
 
 ## Conversion (zenpixels-convert)
 
@@ -223,7 +237,7 @@ Every operation that destroys information requires an explicit policy via `Conve
 
 - **Gamut matrices** — 3x3 row-major f32 conversion matrices between named primaries. No CMS needed for sRGB/Display P3/BT.2020 conversions.
 - **HDR** — Reinhard and exposure tone mapping, content light level metadata.
-- **Oklab** — primaries-aware `rgb_to_lms_matrix()`. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
+- **Oklab** — primaries-aware `rgb_to_lms_matrix()` and `lms_to_rgb_matrix()`, scalar `rgb_to_oklab()` and `oklab_to_rgb()` functions, and public LMS/XYZ/Oklab matrices (`LMS_FROM_XYZ`, `OKLAB_FROM_LMS_CBRT`, etc.). Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
 - **CMS traits** — `ColorManagement` and `RowTransform` for ICC-to-ICC transforms via external CMS backends.
 - **Codec format registry** — `CodecFormats` struct where each codec declares its decode outputs and encode inputs, ICC/CICP support, effective bits, and whether values can overshoot `[0.0, 1.0]`.
 
@@ -255,8 +269,11 @@ With the `planar` feature, zenpixels handles multi-plane images: YCbCr 4:2:0/4:2
 | Feature | What it enables |
 |---|---|
 | `std` | Standard library (default) |
+| `rgb` | Enables `rgb` crate `Pixel` impls (forwarded to zenpixels) |
+| `imgref` | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
 | `buffer` | `PixelBufferConvertExt` — `convert_to()`, `to_rgb8()`, `to_rgba8()`, etc. |
-| `codec` | Format registry and negotiation |
+| `planar` | Multi-plane image types (forwarded to zenpixels) |
+| `codec` | Format registry and negotiation (implies `buffer`) |
 
 ## Ecosystem
 
@@ -280,4 +297,4 @@ Rust 1.93+, 2024 edition.
 
 ## License
 
-MIT OR Apache-2.0
+Apache-2.0 OR MIT
