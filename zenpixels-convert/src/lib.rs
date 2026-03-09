@@ -416,7 +416,7 @@ pub use pipeline::{
 };
 
 // Re-export extension traits.
-#[cfg(feature = "buffer")]
+#[cfg(feature = "imgref")]
 pub use ext::PixelBufferConvertExt;
 pub use ext::{ColorPrimariesExt, TransferFunctionExt};
 

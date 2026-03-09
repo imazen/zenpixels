@@ -176,7 +176,6 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | `std` | yes | Standard library (currently a no-op; everything is `no_std + alloc`) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed `from_pixels()` constructors |
 | `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
-| `buffer` | | Convenience: enables both `rgb` and `imgref` |
 | `planar` | | Multi-plane image types (YCbCr, Oklab, gain maps) |
 
 ### zenpixels-convert
@@ -185,8 +184,7 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 |---|---|---|
 | `std` | yes | Standard library |
 | `rgb` | | `Pixel` impls for `rgb` crate types |
-| `imgref` | | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
-| `buffer` | | `PixelBufferConvertExt` — `convert_to()`, `to_rgb8()`, `to_rgba8()`, etc. |
+| `imgref` | | `ImgRef`/`ImgVec` conversions, `PixelBufferConvertExt` (implies `rgb`) |
 | `planar` | | Multi-plane image types |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
 

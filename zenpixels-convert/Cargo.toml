@@ -13,9 +13,8 @@ keywords = ["image", "pixel", "conversion", "srgb", "codec"]
 [features]
 default = ["std"]
 std = ["zenpixels/std", "linear-srgb/std", "garb/std"]
-buffer = ["zenpixels/buffer", "dep:rgb"]
 rgb = ["zenpixels/rgb"]
-imgref = ["zenpixels/imgref", "rgb"]
+imgref = ["zenpixels/imgref", "rgb", "dep:rgb"]
 planar = ["zenpixels/planar"]
 pipeline = []
 
@@ -28,7 +27,7 @@ garb = { version = "0.2", default-features = false, features = ["experimental"] 
 whereat = { version = "0.1.3", path = "../../whereat", default-features = false }
 
 [dev-dependencies]
-zenpixels = { version = "0.1.1", path = "../zenpixels", features = ["buffer", "planar", "rgb", "imgref"] }
-zenpixels-convert = { path = ".", features = ["pipeline"] }
+zenpixels = { version = "0.1.1", path = "../zenpixels", features = ["planar", "imgref"] }
+zenpixels-convert = { path = ".", features = ["pipeline", "imgref"] }
 half = "2"
 

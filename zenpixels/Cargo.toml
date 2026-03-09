@@ -16,8 +16,6 @@ std = []
 planar = []
 rgb = ["dep:rgb"]
 imgref = ["dep:imgref", "rgb"]
-# Convenience alias: enables both rgb Pixel impls and imgref interop.
-buffer = ["rgb", "imgref"]
 
 [dependencies]
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
