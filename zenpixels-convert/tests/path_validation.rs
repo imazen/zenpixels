@@ -1,3 +1,4 @@
+#![cfg(feature = "pipeline")]
 //! Path validation tests — verify the path solver produces correct results.
 //!
 //! These tests check that:

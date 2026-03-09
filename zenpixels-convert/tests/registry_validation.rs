@@ -1,3 +1,4 @@
+#![cfg(feature = "pipeline")]
 //! Validation tests for codec registry declarations.
 //!
 //! Ensures format entries are consistent and that negotiation works correctly
