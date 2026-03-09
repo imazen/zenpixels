@@ -22,7 +22,7 @@
 //!   already matches a supported format.
 //!
 //! - **Extension traits**: [`TransferFunctionExt`], [`ColorPrimariesExt`],
-//!   and `PixelBufferConvertExt` (requires `buffer` feature) add conversion methods to interchange types.
+//!   and `PixelBufferConvertExt` add conversion methods to interchange types.
 //!
 //! # Codec compliance guide
 //!
@@ -435,8 +435,10 @@ pub use hdr::{
     ContentLightLevel, HdrMetadata, MasteringDisplay, reinhard_inverse, reinhard_tonemap,
 };
 
-// Re-export CMS traits.
+// Re-export CMS traits and implementations.
 pub use cms::{ColorManagement, RowTransform};
+#[cfg(feature = "cms-moxcms")]
+pub use cms_moxcms::MoxCms;
 
 // Re-export output types.
 pub use output::{EncodeReady, OutputMetadata, OutputProfile, finalize_for_output};
