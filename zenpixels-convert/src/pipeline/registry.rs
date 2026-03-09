@@ -8,7 +8,7 @@
 //!
 //! Every codec declares a [`CodecFormats`] constant that lists every pixel
 //! format the decoder can produce and the encoder can accept. The format
-//! negotiation system ([`super::best_match`], [`super::negotiate`]) uses
+//! negotiation system ([`crate::best_match`], [`crate::negotiate`]) uses
 //! these tables to pick the cheapest conversion path.
 //!
 //! ```rust,ignore
@@ -31,7 +31,7 @@
 //!
 //! **Only register formats the codec handles natively.** If your decoder
 //! outputs u8 sRGB and your caller needs f32, that is a conversion handled
-//! by [`RowConverter`](super::RowConverter). Don't add `RGBF32_LINEAR` to
+//! by [`RowConverter`](crate::RowConverter). Don't add `RGBF32_LINEAR` to
 //! your decode list unless your decoder genuinely outputs f32 data. Listing
 //! non-native formats causes double conversions (codec converts internally,
 //! then the negotiator converts again).

@@ -159,9 +159,9 @@ Every operation that destroys information requires an explicit policy via `Conve
 
 **CMS traits** — `ColorManagement` and `RowTransform` for ICC-to-ICC transforms via external backends.
 
-### Codec registry
+### Pipeline planner
 
-`CodecFormats` declares each codec's decode outputs and encode inputs, ICC/CICP support, effective bits, and overshoot behavior. The `codec` feature enables format registry and negotiation.
+`CodecFormats` declares each codec's decode outputs and encode inputs, ICC/CICP support, effective bits, and overshoot behavior. The `pipeline` feature enables the format registry, operation requirements, and path solver for multi-step conversion planning.
 
 ## Planar support
 
@@ -188,7 +188,7 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | `imgref` | | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
 | `buffer` | | `PixelBufferConvertExt` — `convert_to()`, `to_rgb8()`, `to_rgba8()`, etc. |
 | `planar` | | Multi-plane image types |
-| `codec` | | Format registry and negotiation (implies `buffer`) |
+| `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
 
 ## MSRV
 

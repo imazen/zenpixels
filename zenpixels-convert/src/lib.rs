@@ -117,7 +117,7 @@
 //!   not what the pixels are. This is immutable and used only at encode time
 //!   for provenance decisions (e.g., "re-embed the original ICC profile").
 //!
-//! - Set `effective_bits` correctly on [`FormatEntry`]. A 10-bit AVIF source
+//! - Set `effective_bits` correctly on `FormatEntry`. A 10-bit AVIF source
 //!   decoded to u16 has `effective_bits = 10`, not 16. A JPEG decoded to f32
 //!   with debiased dequantization has `effective_bits = 10`. Getting this
 //!   wrong makes the cost model over- or under-value precision.
@@ -285,10 +285,11 @@
 //!
 //! ## Format registry
 //!
-//! Every codec must declare its capabilities in a [`CodecFormats`] struct,
+//! Every codec must declare its capabilities in a `CodecFormats` struct,
 //! typically as a `pub static`. This serves as the single source of truth
-//! for what the codec can produce and consume. See [`registry`] for the
-//! full format table and examples for each codec.
+//! for what the codec can produce and consume. See the `pipeline::registry`
+//! module (requires the `pipeline` feature) for the full format table and
+//! examples for each codec.
 //!
 //! ```rust,ignore
 //! pub static MY_CODEC: CodecFormats = CodecFormats {
