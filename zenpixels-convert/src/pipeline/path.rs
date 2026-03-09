@@ -12,12 +12,12 @@
 
 use alloc::vec::Vec;
 
+use super::op_format::OpCategory;
+use super::registry::{CodecFormats, FormatEntry};
 use crate::PixelDescriptor;
 use crate::negotiate::{
     ConversionCost, Provenance, conversion_cost_with_provenance, suitability_loss, weighted_score,
 };
-use super::op_format::OpCategory;
-use super::registry::{CodecFormats, FormatEntry};
 
 /// Perceptual loss buckets, calibrated against CIEDE2000 measurements.
 ///

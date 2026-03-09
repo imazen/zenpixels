@@ -17,10 +17,7 @@ fn all_codecs_have_unique_names() {
     for (i, name) in names.iter().enumerate() {
         for (j, other) in names.iter().enumerate() {
             if i != j {
-                assert_ne!(
-                    name, other,
-                    "duplicate codec name: {name}"
-                );
+                assert_ne!(name, other, "duplicate codec name: {name}");
             }
         }
     }
@@ -36,7 +33,11 @@ fn no_empty_codec_names() {
 #[test]
 fn effective_bits_are_nonzero() {
     for codec in ALL_CODECS {
-        for entry in codec.decode_outputs.iter().chain(codec.encode_inputs.iter()) {
+        for entry in codec
+            .decode_outputs
+            .iter()
+            .chain(codec.encode_inputs.iter())
+        {
             assert!(
                 entry.effective_bits > 0,
                 "{}: effective_bits is 0 for {:?}",
@@ -50,7 +51,8 @@ fn effective_bits_are_nonzero() {
 #[test]
 fn no_duplicate_descriptors_in_decode() {
     for codec in ALL_CODECS {
-        let descs: Vec<PixelDescriptor> = codec.decode_outputs.iter().map(|e| e.descriptor).collect();
+        let descs: Vec<PixelDescriptor> =
+            codec.decode_outputs.iter().map(|e| e.descriptor).collect();
         for (i, d) in descs.iter().enumerate() {
             for (j, other) in descs.iter().enumerate() {
                 if i != j {
@@ -68,7 +70,8 @@ fn no_duplicate_descriptors_in_decode() {
 #[test]
 fn no_duplicate_descriptors_in_encode() {
     for codec in ALL_CODECS {
-        let descs: Vec<PixelDescriptor> = codec.encode_inputs.iter().map(|e| e.descriptor).collect();
+        let descs: Vec<PixelDescriptor> =
+            codec.encode_inputs.iter().map(|e| e.descriptor).collect();
         for (i, d) in descs.iter().enumerate() {
             for (j, other) in descs.iter().enumerate() {
                 if i != j {
@@ -86,7 +89,11 @@ fn no_duplicate_descriptors_in_encode() {
 #[test]
 fn overshoot_only_on_float_formats() {
     for codec in ALL_CODECS {
-        for entry in codec.decode_outputs.iter().chain(codec.encode_inputs.iter()) {
+        for entry in codec
+            .decode_outputs
+            .iter()
+            .chain(codec.encode_inputs.iter())
+        {
             if entry.can_overshoot {
                 assert!(
                     entry.descriptor.channel_type() == zenpixels_convert::ChannelType::F32
@@ -130,8 +137,11 @@ fn cross_codec_negotiation_always_finds_target() {
     // should find a match in the target's encode inputs.
     for src_codec in ALL_CODECS {
         for dst_codec in ALL_CODECS {
-            let encode_descs: Vec<PixelDescriptor> =
-                dst_codec.encode_inputs.iter().map(|e| e.descriptor).collect();
+            let encode_descs: Vec<PixelDescriptor> = dst_codec
+                .encode_inputs
+                .iter()
+                .map(|e| e.descriptor)
+                .collect();
 
             let any_match = src_codec.decode_outputs.iter().any(|entry| {
                 best_match(entry.descriptor, &encode_descs, ConvertIntent::Fastest).is_some()

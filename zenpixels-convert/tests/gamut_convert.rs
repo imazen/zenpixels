@@ -27,7 +27,10 @@ fn row_converter_ignores_primaries_difference() {
     let dst = f32_linear(ColorPrimaries::Bt2020);
 
     let conv = RowConverter::new(src, dst).unwrap();
-    assert!(conv.is_identity(), "RowConverter should be identity when only primaries differ");
+    assert!(
+        conv.is_identity(),
+        "RowConverter should be identity when only primaries differ"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -53,16 +56,37 @@ fn manual_gamut_pipeline_bt709_to_bt2020() {
     // Step 2: Apply BT.709 → BT.2020 gamut matrix
     let m = conversion_matrix(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
     let mut linear_f32 = [
-        f32::from_ne_bytes([linear_bytes[0], linear_bytes[1], linear_bytes[2], linear_bytes[3]]),
-        f32::from_ne_bytes([linear_bytes[4], linear_bytes[5], linear_bytes[6], linear_bytes[7]]),
-        f32::from_ne_bytes([linear_bytes[8], linear_bytes[9], linear_bytes[10], linear_bytes[11]]),
+        f32::from_ne_bytes([
+            linear_bytes[0],
+            linear_bytes[1],
+            linear_bytes[2],
+            linear_bytes[3],
+        ]),
+        f32::from_ne_bytes([
+            linear_bytes[4],
+            linear_bytes[5],
+            linear_bytes[6],
+            linear_bytes[7],
+        ]),
+        f32::from_ne_bytes([
+            linear_bytes[8],
+            linear_bytes[9],
+            linear_bytes[10],
+            linear_bytes[11],
+        ]),
     ];
     let before = linear_f32;
     apply_matrix_f32(&mut linear_f32, m);
 
     // The gamut matrix should change the values (BT.709 → BT.2020 is not identity).
-    let changed = linear_f32.iter().zip(before.iter()).any(|(a, b)| (a - b).abs() > 1e-6);
-    assert!(changed, "gamut matrix should change at least one channel for a non-white color");
+    let changed = linear_f32
+        .iter()
+        .zip(before.iter())
+        .any(|(a, b)| (a - b).abs() > 1e-6);
+    assert!(
+        changed,
+        "gamut matrix should change at least one channel for a non-white color"
+    );
 
     // Step 3: Roundtrip back to BT.709 and verify
     let m_back = conversion_matrix(ColorPrimaries::Bt2020, ColorPrimaries::Bt709).unwrap();
@@ -92,7 +116,11 @@ fn conversion_matrix_returns_none_for_unknown() {
 
 #[test]
 fn all_named_primaries_pairs_have_matrices() {
-    let known = [ColorPrimaries::Bt709, ColorPrimaries::DisplayP3, ColorPrimaries::Bt2020];
+    let known = [
+        ColorPrimaries::Bt709,
+        ColorPrimaries::DisplayP3,
+        ColorPrimaries::Bt2020,
+    ];
     for &from in &known {
         for &to in &known {
             if from != to {
@@ -111,9 +139,9 @@ fn gamut_row_conversion_multi_pixel() {
 
     // 3 pixels, RGB f32
     let mut data = [
-        0.5f32, 0.3, 0.8,  // pixel 0
-        1.0, 1.0, 1.0,     // pixel 1 (white)
-        0.0, 0.0, 0.0,     // pixel 2 (black)
+        0.5f32, 0.3, 0.8, // pixel 0
+        1.0, 1.0, 1.0, // pixel 1 (white)
+        0.0, 0.0, 0.0, // pixel 2 (black)
     ];
 
     let original = data;
@@ -131,7 +159,10 @@ fn gamut_row_conversion_multi_pixel() {
 
     // Non-white pixel should change
     let changed = (0..3).any(|c| (data[c] - original[c]).abs() > 1e-4);
-    assert!(changed, "non-white pixel should change with gamut conversion");
+    assert!(
+        changed,
+        "non-white pixel should change with gamut conversion"
+    );
 }
 
 #[test]
@@ -151,7 +182,11 @@ fn gamut_rgba_row_preserves_alpha() {
 
 #[test]
 fn xyz_matrices_invert_correctly() {
-    for primaries in [ColorPrimaries::Bt709, ColorPrimaries::DisplayP3, ColorPrimaries::Bt2020] {
+    for primaries in [
+        ColorPrimaries::Bt709,
+        ColorPrimaries::DisplayP3,
+        ColorPrimaries::Bt2020,
+    ] {
         let to_xyz = primaries.to_xyz_matrix().unwrap();
         let from_xyz = primaries.from_xyz_matrix().unwrap();
 
@@ -178,8 +213,8 @@ fn xyz_matrices_invert_correctly() {
 #[test]
 fn convert_to_preserves_color_context() {
     use alloc::sync::Arc;
-    use zenpixels_convert::{ColorContext, PixelBuffer};
     use zenpixels_convert::ext::PixelBufferConvertExt;
+    use zenpixels_convert::{ColorContext, PixelBuffer};
 
     extern crate alloc;
 
@@ -193,7 +228,10 @@ fn convert_to_preserves_color_context() {
     // Convert to RGBA8 — should preserve color context.
     let out = buf.convert_to(PixelDescriptor::RGBA8_SRGB).unwrap();
 
-    assert!(out.color_context().is_some(), "color context should be preserved after conversion");
+    assert!(
+        out.color_context().is_some(),
+        "color context should be preserved after conversion"
+    );
     let out_ctx = out.color_context().unwrap();
     assert!(out_ctx.icc.is_some());
     assert_eq!(out_ctx.icc.as_ref().unwrap().len(), 32);

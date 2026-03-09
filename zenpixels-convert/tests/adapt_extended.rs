@@ -2,8 +2,8 @@
 //! and edge cases not covered by the basic adapt tests.
 
 use zenpixels_convert::adapt::{adapt_for_encode, adapt_for_encode_explicit, convert_buffer};
-use zenpixels_convert::{ConvertError, PixelDescriptor};
 use zenpixels_convert::policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GrayExpand};
+use zenpixels_convert::{ConvertError, PixelDescriptor};
 
 use alloc::borrow::Cow;
 
@@ -45,7 +45,10 @@ fn strided_buffer_packed_is_zero_copy() {
 
     let result = adapt_for_encode(&data, desc, 2, 1, 6, &[desc]).unwrap();
 
-    assert!(matches!(result.data, Cow::Borrowed(_)), "packed exact match should be zero-copy");
+    assert!(
+        matches!(result.data, Cow::Borrowed(_)),
+        "packed exact match should be zero-copy"
+    );
 }
 
 #[test]
@@ -263,15 +266,8 @@ fn adapt_explicit_empty_supported_returns_error() {
     let data = vec![100, 150, 200];
     let options = ConvertOptions::permissive();
 
-    let result = adapt_for_encode_explicit(
-        &data,
-        PixelDescriptor::RGB8_SRGB,
-        1,
-        1,
-        3,
-        &[],
-        &options,
-    );
+    let result =
+        adapt_for_encode_explicit(&data, PixelDescriptor::RGB8_SRGB, 1, 1, 3, &[], &options);
 
     assert!(result.is_err());
 }

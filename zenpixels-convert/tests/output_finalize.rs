@@ -92,7 +92,14 @@ fn same_as_origin_identity_preserves_pixels() {
     let buf = make_rgb8_buffer(2, 2, [100, 150, 200]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(&buf, &origin, OutputProfile::SameAsOrigin, PixelFormat::Rgb8, &NoopCms).unwrap();
+    let ready = finalize_for_output(
+        &buf,
+        &origin,
+        OutputProfile::SameAsOrigin,
+        PixelFormat::Rgb8,
+        &NoopCms,
+    )
+    .unwrap();
 
     let slice = ready.pixels();
     let row = slice.row(0);
@@ -105,7 +112,14 @@ fn same_as_origin_metadata_has_no_icc_no_cicp_for_assumed() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(&buf, &origin, OutputProfile::SameAsOrigin, PixelFormat::Rgb8, &NoopCms).unwrap();
+    let ready = finalize_for_output(
+        &buf,
+        &origin,
+        OutputProfile::SameAsOrigin,
+        PixelFormat::Rgb8,
+        &NoopCms,
+    )
+    .unwrap();
 
     let meta = ready.metadata();
     assert!(meta.icc.is_none());
@@ -118,7 +132,14 @@ fn same_as_origin_preserves_cicp_from_origin() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_cicp(Cicp::SRGB);
 
-    let ready = finalize_for_output(&buf, &origin, OutputProfile::SameAsOrigin, PixelFormat::Rgb8, &NoopCms).unwrap();
+    let ready = finalize_for_output(
+        &buf,
+        &origin,
+        OutputProfile::SameAsOrigin,
+        PixelFormat::Rgb8,
+        &NoopCms,
+    )
+    .unwrap();
 
     let meta = ready.metadata();
     assert_eq!(meta.cicp, Some(Cicp::SRGB));
@@ -130,7 +151,14 @@ fn same_as_origin_with_format_change_converts() {
     let buf = make_rgb8_buffer(2, 1, [100, 150, 200]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(&buf, &origin, OutputProfile::SameAsOrigin, PixelFormat::Rgba8, &NoopCms).unwrap();
+    let ready = finalize_for_output(
+        &buf,
+        &origin,
+        OutputProfile::SameAsOrigin,
+        PixelFormat::Rgba8,
+        &NoopCms,
+    )
+    .unwrap();
 
     let slice = ready.pixels();
     let row = slice.row(0);
@@ -150,7 +178,14 @@ fn named_srgb_produces_cicp_metadata() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(&buf, &origin, OutputProfile::Named(Cicp::SRGB), PixelFormat::Rgb8, &NoopCms).unwrap();
+    let ready = finalize_for_output(
+        &buf,
+        &origin,
+        OutputProfile::Named(Cicp::SRGB),
+        PixelFormat::Rgb8,
+        &NoopCms,
+    )
+    .unwrap();
 
     let meta = ready.metadata();
     assert!(meta.icc.is_none());
@@ -163,7 +198,14 @@ fn named_profile_converts_format() {
     let buf = make_rgba8_buffer(2, 1, [100, 150, 200, 255]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(&buf, &origin, OutputProfile::Named(Cicp::SRGB), PixelFormat::Rgb8, &NoopCms).unwrap();
+    let ready = finalize_for_output(
+        &buf,
+        &origin,
+        OutputProfile::Named(Cicp::SRGB),
+        PixelFormat::Rgb8,
+        &NoopCms,
+    )
+    .unwrap();
 
     let slice = ready.pixels();
     let row = slice.row(0);
@@ -252,7 +294,14 @@ fn encode_ready_into_parts_works() {
     let buf = make_rgb8_buffer(2, 2, [50, 100, 150]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(&buf, &origin, OutputProfile::SameAsOrigin, PixelFormat::Rgb8, &NoopCms).unwrap();
+    let ready = finalize_for_output(
+        &buf,
+        &origin,
+        OutputProfile::SameAsOrigin,
+        PixelFormat::Rgb8,
+        &NoopCms,
+    )
+    .unwrap();
 
     let (pixels, metadata) = ready.into_parts();
     assert_eq!(pixels.width(), 2);
@@ -270,7 +319,14 @@ fn multi_row_conversion_is_correct() {
     let buf = make_rgb8_buffer(3, 2, [10, 20, 30]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(&buf, &origin, OutputProfile::SameAsOrigin, PixelFormat::Rgba8, &NoopCms).unwrap();
+    let ready = finalize_for_output(
+        &buf,
+        &origin,
+        OutputProfile::SameAsOrigin,
+        PixelFormat::Rgba8,
+        &NoopCms,
+    )
+    .unwrap();
 
     let slice = ready.pixels();
     for y in 0..2 {
