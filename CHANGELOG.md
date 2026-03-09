@@ -11,6 +11,7 @@
 
 - Make Oklab LMS/XYZ matrices public: `LMS_FROM_XYZ`, `XYZ_FROM_LMS`, `OKLAB_FROM_LMS_CBRT`, `LMS_CBRT_FROM_OKLAB`.
 - Make scalar Oklab functions public: `rgb_to_oklab()`, `oklab_to_rgb()`, `fast_cbrt()`.
+- Use `garb` 0.2 for SIMD-accelerated (AVX2/NEON/WASM) pixel swizzle, layout conversions, depth scaling, and BT.709 luma. Replaces scalar loops for all u8 channel operations and element-level depth conversions (u8↔u16↔f32). U16/f32 layout paths remain scalar.
 
 ## 0.1.0
 

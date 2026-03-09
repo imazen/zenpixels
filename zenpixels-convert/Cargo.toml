@@ -12,7 +12,7 @@ repository = "https://github.com/imazen/zenpixels"
 
 [features]
 default = ["std"]
-std = ["zenpixels/std", "linear-srgb/std"]
+std = ["zenpixels/std", "linear-srgb/std", "garb/std"]
 buffer = ["zenpixels/buffer", "dep:rgb"]
 rgb = ["zenpixels/rgb"]
 imgref = ["zenpixels/imgref", "rgb"]
@@ -24,6 +24,7 @@ zenpixels = { version = "0.1.1", path = "../zenpixels", default-features = false
 linear-srgb = { version = "0.6", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
+garb = { version = "0.2", default-features = false, features = ["experimental"] }
 enough = { version = "0.4", optional = true }
 
 [dev-dependencies]

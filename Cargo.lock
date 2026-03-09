@@ -4,9 +4,9 @@ version = 4
 
 [[package]]
 name = "archmage"
-version = "0.9.3"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c06fce4ba08fb97a48343135a4a3a1306a402137650ce7f2e2d377af19135b6f"
+checksum = "8890833f60d40334c52df791e924456e3688eb54579973df1bcb6137fd40b59b"
 dependencies = [
  "archmage-macros",
  "safe_unaligned_simd",
@@ -14,9 +14,9 @@ dependencies = [
 
 [[package]]
 name = "archmage-macros"
-version = "0.9.3"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1313d66c52ca713bb53065953e1ecaa9bf69cb8f4e190aa08232ac5790a66dc1"
+checksum = "320a3958b3befe63e12cc761781da61013529f6d1697bcae0061c447ae2486fc"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -68,6 +68,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "177a59811828ea5dbc8927662d444ffee7b55a44696486f1b1a245ae9e652533"
 
 [[package]]
+name = "garb"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "232a3653471b7228242fec8669102c1991af35a5262c6eb18aa47d68d661a143"
+dependencies = [
+ "archmage",
+ "bytemuck",
+ "paste",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -104,9 +115,9 @@ dependencies = [
 
 [[package]]
 name = "magetypes"
-version = "0.9.3"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06ba39f70cdfbbaea85cf5d82bfe84c83c8c00f0cc80243bee241c6a5227c3dd"
+checksum = "739934e720cab10b1ca37f0c3e34780bb4820ba272712e4b64d135f0dbe03d44"
 dependencies = [
  "archmage",
 ]
@@ -120,6 +131,12 @@ dependencies = [
  "autocfg",
  "libm",
 ]
+
+[[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "proc-macro2"
@@ -186,6 +203,7 @@ version = "0.1.1"
 dependencies = [
  "bytemuck",
  "enough",
+ "garb",
  "half",
  "linear-srgb",
  "rgb",
