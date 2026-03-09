@@ -182,13 +182,15 @@ impl ColorManagement for MoxCms {
 
 /// Compare XYZ colorants to identify well-known profiles.
 ///
-/// Checks the profile's red/green/blue colorants and white point against
-/// sRGB (BT.709), Display P3, and BT.2020. Tolerance is 0.002 in XYZ,
-/// which is tight enough to distinguish these gamuts while tolerating
-/// normal ICC profile rounding.
+/// Checks the profile's red/green/blue colorants against sRGB (BT.709),
+/// Display P3, and BT.2020. The colorant values are in PCS (D50-adapted)
+/// space, as stored in ICC profiles after Bradford chromatic adaptation
+/// from D65. Tolerance is 0.003 in XYZ, tight enough to distinguish
+/// these gamuts while tolerating s15Fixed16 quantization.
 fn identify_by_colorants(profile: &ColorProfile) -> Option<Cicp> {
-    // Known colorant matrices (XYZ, D65 white point, row-major).
-    // Values from ICC specification and ITU-R standards.
+    // Known colorant values in D50 PCS space (Bradford-adapted from D65).
+    // Computed by applying the standard D65→D50 Bradford matrix to the
+    // absolute D65 XYZ colorant matrices from ITU-R specifications.
     struct KnownProfile {
         primaries_code: u8,
         rx: f64,
@@ -200,35 +202,35 @@ fn identify_by_colorants(profile: &ColorProfile) -> Option<Cicp> {
     }
 
     const KNOWN: &[KnownProfile] = &[
-        // sRGB / BT.709
+        // sRGB / BT.709 (D50-adapted)
         KnownProfile {
             primaries_code: 1,
-            rx: 0.4124,
-            ry: 0.2126,
-            gx: 0.3576,
-            gy: 0.7152,
-            bx: 0.1805,
-            by: 0.0722,
+            rx: 0.4361,
+            ry: 0.2225,
+            gx: 0.3851,
+            gy: 0.7169,
+            bx: 0.1431,
+            by: 0.0606,
         },
-        // Display P3
+        // Display P3 (D50-adapted)
         KnownProfile {
             primaries_code: 12,
-            rx: 0.4866,
-            ry: 0.2290,
-            gx: 0.2657,
-            gy: 0.6917,
-            bx: 0.1982,
-            by: 0.0793,
+            rx: 0.5151,
+            ry: 0.2412,
+            gx: 0.2919,
+            gy: 0.6922,
+            bx: 0.1572,
+            by: 0.0666,
         },
-        // BT.2020
+        // BT.2020 (D50-adapted)
         KnownProfile {
             primaries_code: 9,
-            rx: 0.6370,
-            ry: 0.2627,
-            gx: 0.1446,
-            gy: 0.6780,
-            bx: 0.1689,
-            by: 0.0593,
+            rx: 0.6734,
+            ry: 0.2790,
+            gx: 0.1656,
+            gy: 0.6753,
+            bx: 0.1251,
+            by: 0.0456,
         },
     ];
 
@@ -236,7 +238,7 @@ fn identify_by_colorants(profile: &ColorProfile) -> Option<Cicp> {
     let g = &profile.green_colorant;
     let b = &profile.blue_colorant;
 
-    const TOL: f64 = 0.002;
+    const TOL: f64 = 0.003;
 
     for known in KNOWN {
         let matches = (r.x - known.rx).abs() < TOL

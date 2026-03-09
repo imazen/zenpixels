@@ -177,23 +177,29 @@ fn make_icc_v2(
 }
 
 /// sRGB ICC profile (BT.709 primaries, gamma 2.2 approximation).
+///
+/// Colorants are D50-adapted (Bradford from D65), matching ICC v4 PCS.
 fn srgb_icc() -> Vec<u8> {
     make_icc_v2(
-        0.4124, 0.2126, 0.0193, 0.3576, 0.7152, 0.1192, 0.1805, 0.0722, 0.9505, 2.2,
+        0.4361, 0.2225, 0.0139, 0.3852, 0.7169, 0.0971, 0.1431, 0.0606, 0.7141, 2.2,
     )
 }
 
 /// Display P3 ICC profile (P3 primaries, gamma 2.2).
+///
+/// Colorants are D50-adapted (Bradford from D65), matching ICC v4 PCS.
 fn display_p3_icc() -> Vec<u8> {
     make_icc_v2(
-        0.4866, 0.2290, 0.0000, 0.2657, 0.6917, 0.0451, 0.1982, 0.0793, 1.0439, 2.2,
+        0.5152, 0.2412, -0.0011, 0.2920, 0.6922, 0.0419, 0.1571, 0.0666, 0.7842, 2.2,
     )
 }
 
 /// BT.2020 ICC profile (BT.2020 primaries, gamma 2.2).
+///
+/// Colorants are D50-adapted (Bradford from D65), matching ICC v4 PCS.
 fn bt2020_icc() -> Vec<u8> {
     make_icc_v2(
-        0.6370, 0.2627, 0.0000, 0.1446, 0.6780, 0.0281, 0.1689, 0.0593, 1.0610, 2.2,
+        0.6736, 0.2791, -0.0019, 0.1657, 0.6753, 0.0300, 0.1251, 0.0456, 0.7971, 2.2,
     )
 }
 
