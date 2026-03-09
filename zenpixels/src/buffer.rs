@@ -541,6 +541,20 @@ impl<'a, P> PixelSlice<'a, P> {
         }
     }
 
+    /// Zero-copy access to the raw backing bytes, including any stride padding.
+    ///
+    /// Unlike [`as_contiguous_bytes()`](Self::as_contiguous_bytes), this always
+    /// succeeds and includes inter-row padding bytes. The returned slice spans
+    /// from the first pixel of row 0 through the last pixel of the final row
+    /// (the final row contains no trailing padding).
+    ///
+    /// This is useful for zero-copy strided passthrough to APIs that accept
+    /// a byte buffer plus a stride value (e.g. GPU uploads, codec writers).
+    #[inline]
+    pub fn as_strided_bytes(&self) -> &'a [u8] {
+        self.data
+    }
+
     /// Get the raw pixel bytes, copying only if stride padding exists.
     ///
     /// Returns `Cow::Borrowed` when rows are contiguous (zero-copy),
@@ -916,6 +930,22 @@ impl<'a, P> PixelSliceMut<'a, P> {
     pub fn with_color_context(mut self, ctx: Arc<ColorContext>) -> Self {
         self.color = Some(ctx);
         self
+    }
+
+    /// Zero-copy access to the raw backing bytes, including any stride padding.
+    ///
+    /// See [`PixelSlice::as_strided_bytes()`] for details.
+    #[inline]
+    pub fn as_strided_bytes(&self) -> &[u8] {
+        self.data
+    }
+
+    /// Mutable access to the raw backing bytes, including any stride padding.
+    ///
+    /// See [`PixelSlice::as_strided_bytes()`] for details.
+    #[inline]
+    pub fn as_strided_bytes_mut(&mut self) -> &mut [u8] {
+        self.data
     }
 
     /// Pixel bytes for row `y` (immutable, no padding).
@@ -2721,6 +2751,62 @@ mod tests {
         assert!(slice.stride() > 6);
         assert!(!slice.is_contiguous());
         assert!(slice.as_contiguous_bytes().is_none());
+    }
+
+    // --- PixelSlice::as_strided_bytes ---
+
+    #[test]
+    fn pixel_slice_as_strided_bytes_tight() {
+        let mut buf = PixelBuffer::new(2, 2, PixelDescriptor::RGBA8_SRGB);
+        {
+            let mut s = buf.as_slice_mut();
+            s.row_mut(0).copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+            s.row_mut(1)
+                .copy_from_slice(&[9, 10, 11, 12, 13, 14, 15, 16]);
+        }
+        let slice = buf.as_slice();
+        let bytes = slice.as_strided_bytes();
+        // Tight layout: strided bytes == contiguous bytes
+        assert_eq!(
+            bytes,
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        );
+    }
+
+    #[test]
+    fn pixel_slice_as_strided_bytes_padded() {
+        let buf = PixelBuffer::new_simd_aligned(2, 2, PixelDescriptor::RGB8_SRGB, 16);
+        let slice = buf.as_slice();
+        let stride = slice.stride();
+        assert!(stride > 6, "expected padding for SIMD alignment");
+        let bytes = slice.as_strided_bytes();
+        // Total length includes stride padding between and after rows
+        assert_eq!(bytes.len(), stride * 2);
+    }
+
+    #[test]
+    fn pixel_slice_as_strided_bytes_sub_rows() {
+        let buf = PixelBuffer::new_simd_aligned(2, 4, PixelDescriptor::RGB8_SRGB, 16);
+        let slice = buf.as_slice();
+        let stride = slice.stride();
+        let sub = slice.sub_rows(1, 2);
+        let bytes = sub.as_strided_bytes();
+        // sub_rows trims trailing padding on last row: (count-1)*stride + width*bpp
+        let expected_len = stride + 2 * 3; // 1 stride + 6 pixel bytes
+        assert_eq!(bytes.len(), expected_len);
+    }
+
+    #[test]
+    fn pixel_slice_mut_as_strided_bytes() {
+        let mut buf = PixelBuffer::new_simd_aligned(2, 2, PixelDescriptor::RGB8_SRGB, 16);
+        let mut slice = buf.as_slice_mut();
+        let stride = slice.stride();
+        // Write via as_strided_bytes_mut
+        let bytes = slice.as_strided_bytes_mut();
+        assert_eq!(bytes.len(), stride * 2);
+        bytes[0] = 42;
+        // Verify through row accessor
+        assert_eq!(slice.row(0)[0], 42);
     }
 
     // --- PixelSlice::row_with_stride ---
