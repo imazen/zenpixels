@@ -1,12 +1,13 @@
-//! Tests for gamut (color primaries) conversion through RowConverter.
+//! Tests for gamut (color primaries) conversion and color context preservation.
 //!
-//! Validates that converting between BT.709, Display P3, and BT.2020
-//! primaries produces correct results through the full conversion pipeline.
+//! Key architectural note: RowConverter does NOT apply gamut matrices.
+//! Primaries conversion is handled separately via `gamut::conversion_matrix()`
+//! + `apply_matrix_row_f32()`. This tests both paths.
 
 use zenpixels_convert::{
     ColorPrimaries, PixelDescriptor, RowConverter,
     ext::ColorPrimariesExt,
-    gamut::apply_matrix_f32,
+    gamut::{apply_matrix_f32, apply_matrix_row_f32, apply_matrix_row_rgba_f32, conversion_matrix},
 };
 
 /// Make an f32 RGB descriptor with specific primaries.
@@ -14,145 +15,134 @@ fn f32_linear(primaries: ColorPrimaries) -> PixelDescriptor {
     PixelDescriptor::RGBF32_LINEAR.with_primaries(primaries)
 }
 
-/// Convert a single pixel through RowConverter.
-fn convert_pixel_f32(src_desc: PixelDescriptor, dst_desc: PixelDescriptor, pixel: [f32; 3]) -> [f32; 3] {
-    let conv = RowConverter::new(src_desc, dst_desc).unwrap();
-    let src_bytes: Vec<u8> = pixel.iter().flat_map(|v| v.to_ne_bytes()).collect();
-    let mut dst_bytes = vec![0u8; 12];
-    conv.convert_row(&src_bytes, &mut dst_bytes, 1);
-    let r = f32::from_ne_bytes([dst_bytes[0], dst_bytes[1], dst_bytes[2], dst_bytes[3]]);
-    let g = f32::from_ne_bytes([dst_bytes[4], dst_bytes[5], dst_bytes[6], dst_bytes[7]]);
-    let b = f32::from_ne_bytes([dst_bytes[8], dst_bytes[9], dst_bytes[10], dst_bytes[11]]);
-    [r, g, b]
-}
-
 // ---------------------------------------------------------------------------
-// Gamut conversion through RowConverter
+// RowConverter correctly treats different primaries as identity
 // ---------------------------------------------------------------------------
 
 #[test]
-fn bt709_to_bt2020_white_preserved() {
+fn row_converter_ignores_primaries_difference() {
+    // RowConverter intentionally does NOT apply gamut matrices.
+    // Gamut conversion is a separate step (conversion_matrix + apply_matrix_row).
     let src = f32_linear(ColorPrimaries::Bt709);
     let dst = f32_linear(ColorPrimaries::Bt2020);
 
-    let result = convert_pixel_f32(src, dst, [1.0, 1.0, 1.0]);
-
-    for c in 0..3 {
-        assert!(
-            (result[c] - 1.0).abs() < 1e-3,
-            "white point ch{c}: expected ~1.0, got {:.6}",
-            result[c]
-        );
-    }
-}
-
-#[test]
-fn bt709_to_bt2020_roundtrip() {
-    let bt709 = f32_linear(ColorPrimaries::Bt709);
-    let bt2020 = f32_linear(ColorPrimaries::Bt2020);
-
-    let original = [0.5, 0.3, 0.8];
-    let intermediate = convert_pixel_f32(bt709, bt2020, original);
-    let recovered = convert_pixel_f32(bt2020, bt709, intermediate);
-
-    for c in 0..3 {
-        assert!(
-            (recovered[c] - original[c]).abs() < 1e-3,
-            "BT.709 → BT.2020 → BT.709 roundtrip ch{c}: {:.6} vs {:.6}",
-            recovered[c],
-            original[c]
-        );
-    }
-}
-
-#[test]
-fn bt709_to_display_p3_roundtrip() {
-    let bt709 = f32_linear(ColorPrimaries::Bt709);
-    let p3 = f32_linear(ColorPrimaries::DisplayP3);
-
-    let original = [0.7, 0.2, 0.4];
-    let intermediate = convert_pixel_f32(bt709, p3, original);
-    let recovered = convert_pixel_f32(p3, bt709, intermediate);
-
-    for c in 0..3 {
-        assert!(
-            (recovered[c] - original[c]).abs() < 1e-3,
-            "BT.709 → P3 → BT.709 roundtrip ch{c}: {:.6} vs {:.6}",
-            recovered[c],
-            original[c]
-        );
-    }
-}
-
-#[test]
-fn same_primaries_is_identity() {
-    let desc = f32_linear(ColorPrimaries::Bt709);
-    let pixel = [0.5, 0.3, 0.8];
-    let result = convert_pixel_f32(desc, desc, pixel);
-
-    for c in 0..3 {
-        assert!(
-            (result[c] - pixel[c]).abs() < 1e-6,
-            "identity ch{c}: {:.6} vs {:.6}",
-            result[c],
-            pixel[c]
-        );
-    }
-}
-
-#[test]
-fn unknown_primaries_to_known_is_relabel() {
-    let unknown = f32_linear(ColorPrimaries::Unknown);
-    let bt709 = f32_linear(ColorPrimaries::Bt709);
-
-    // Unknown → BT.709 should be a relabel (no matrix applied).
-    let pixel = [0.5, 0.3, 0.8];
-    let result = convert_pixel_f32(unknown, bt709, pixel);
-
-    for c in 0..3 {
-        assert!(
-            (result[c] - pixel[c]).abs() < 1e-6,
-            "relabel ch{c}: {:.6} vs {:.6}",
-            result[c],
-            pixel[c]
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Gamut conversion combined with depth change
-// ---------------------------------------------------------------------------
-
-#[test]
-fn bt709_u8_srgb_to_bt2020_f32_linear() {
-    // This tests the compound path: sRGB u8 → linear f32 + gamut matrix.
-    let src = PixelDescriptor::RGB8_SRGB; // BT.709 primaries by default
-    let dst = f32_linear(ColorPrimaries::Bt2020);
-
     let conv = RowConverter::new(src, dst).unwrap();
+    assert!(conv.is_identity(), "RowConverter should be identity when only primaries differ");
+}
 
-    // White pixel
-    let src_bytes = [255u8, 255, 255];
-    let mut dst_bytes = [0u8; 12];
-    conv.convert_row(&src_bytes, &mut dst_bytes, 1);
+// ---------------------------------------------------------------------------
+// Manual gamut conversion pipeline (the correct way)
+// ---------------------------------------------------------------------------
 
-    let r = f32::from_ne_bytes([dst_bytes[0], dst_bytes[1], dst_bytes[2], dst_bytes[3]]);
-    let g = f32::from_ne_bytes([dst_bytes[4], dst_bytes[5], dst_bytes[6], dst_bytes[7]]);
-    let b = f32::from_ne_bytes([dst_bytes[8], dst_bytes[9], dst_bytes[10], dst_bytes[11]]);
+#[test]
+fn manual_gamut_pipeline_bt709_to_bt2020() {
+    // This is how a pipeline actually does gamut conversion:
+    // 1. Convert to linear f32 via RowConverter
+    // 2. Apply gamut matrix
+    // 3. Convert to target format via RowConverter
 
-    // White should be ~1.0 in any primaries.
-    assert!(
-        (r - 1.0).abs() < 0.02,
-        "white R in BT.2020: {r:.4}"
-    );
-    assert!(
-        (g - 1.0).abs() < 0.02,
-        "white G in BT.2020: {g:.4}"
-    );
-    assert!(
-        (b - 1.0).abs() < 0.02,
-        "white B in BT.2020: {b:.4}"
-    );
+    // Step 1: sRGB u8 → linear f32
+    let src_desc = PixelDescriptor::RGB8_SRGB;
+    let linear_desc = PixelDescriptor::RGBF32_LINEAR;
+    let to_linear = RowConverter::new(src_desc, linear_desc).unwrap();
+
+    let src_bytes = [128u8, 200, 64]; // one pixel
+    let mut linear_bytes = [0u8; 12];
+    to_linear.convert_row(&src_bytes, &mut linear_bytes, 1);
+
+    // Step 2: Apply BT.709 → BT.2020 gamut matrix
+    let m = conversion_matrix(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
+    let mut linear_f32 = [
+        f32::from_ne_bytes([linear_bytes[0], linear_bytes[1], linear_bytes[2], linear_bytes[3]]),
+        f32::from_ne_bytes([linear_bytes[4], linear_bytes[5], linear_bytes[6], linear_bytes[7]]),
+        f32::from_ne_bytes([linear_bytes[8], linear_bytes[9], linear_bytes[10], linear_bytes[11]]),
+    ];
+    let before = linear_f32;
+    apply_matrix_f32(&mut linear_f32, m);
+
+    // The gamut matrix should change the values (BT.709 → BT.2020 is not identity).
+    let changed = linear_f32.iter().zip(before.iter()).any(|(a, b)| (a - b).abs() > 1e-6);
+    assert!(changed, "gamut matrix should change at least one channel for a non-white color");
+
+    // Step 3: Roundtrip back to BT.709 and verify
+    let m_back = conversion_matrix(ColorPrimaries::Bt2020, ColorPrimaries::Bt709).unwrap();
+    apply_matrix_f32(&mut linear_f32, m_back);
+
+    for c in 0..3 {
+        assert!(
+            (linear_f32[c] - before[c]).abs() < 1e-3,
+            "gamut roundtrip ch{c}: {:.6} vs {:.6}",
+            linear_f32[c],
+            before[c]
+        );
+    }
+}
+
+#[test]
+fn conversion_matrix_returns_none_for_same_primaries() {
+    assert!(conversion_matrix(ColorPrimaries::Bt709, ColorPrimaries::Bt709).is_none());
+    assert!(conversion_matrix(ColorPrimaries::Bt2020, ColorPrimaries::Bt2020).is_none());
+}
+
+#[test]
+fn conversion_matrix_returns_none_for_unknown() {
+    assert!(conversion_matrix(ColorPrimaries::Unknown, ColorPrimaries::Bt709).is_none());
+    assert!(conversion_matrix(ColorPrimaries::Bt709, ColorPrimaries::Unknown).is_none());
+}
+
+#[test]
+fn all_named_primaries_pairs_have_matrices() {
+    let known = [ColorPrimaries::Bt709, ColorPrimaries::DisplayP3, ColorPrimaries::Bt2020];
+    for &from in &known {
+        for &to in &known {
+            if from != to {
+                assert!(
+                    conversion_matrix(from, to).is_some(),
+                    "missing matrix for {from:?} → {to:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn gamut_row_conversion_multi_pixel() {
+    let m = conversion_matrix(ColorPrimaries::Bt709, ColorPrimaries::DisplayP3).unwrap();
+
+    // 3 pixels, RGB f32
+    let mut data = [
+        0.5f32, 0.3, 0.8,  // pixel 0
+        1.0, 1.0, 1.0,     // pixel 1 (white)
+        0.0, 0.0, 0.0,     // pixel 2 (black)
+    ];
+
+    let original = data;
+    apply_matrix_row_f32(&mut data, 3, m);
+
+    // White should be ~preserved
+    assert!((data[3] - 1.0).abs() < 1e-4, "white R");
+    assert!((data[4] - 1.0).abs() < 1e-4, "white G");
+    assert!((data[5] - 1.0).abs() < 1e-4, "white B");
+
+    // Black should be exactly preserved
+    assert_eq!(data[6], 0.0);
+    assert_eq!(data[7], 0.0);
+    assert_eq!(data[8], 0.0);
+
+    // Non-white pixel should change
+    let changed = (0..3).any(|c| (data[c] - original[c]).abs() > 1e-4);
+    assert!(changed, "non-white pixel should change with gamut conversion");
+}
+
+#[test]
+fn gamut_rgba_row_preserves_alpha() {
+    let m = conversion_matrix(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
+
+    let mut data = [0.5f32, 0.3, 0.8, 0.42, 0.1, 0.9, 0.2, 0.99];
+    apply_matrix_row_rgba_f32(&mut data, 2, m);
+
+    assert_eq!(data[3], 0.42, "alpha pixel 0 must be preserved");
+    assert_eq!(data[7], 0.99, "alpha pixel 1 must be preserved");
 }
 
 // ---------------------------------------------------------------------------
