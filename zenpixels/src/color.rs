@@ -50,6 +50,28 @@ pub enum NamedProfile {
 }
 
 impl NamedProfile {
+    /// Map CICP parameters to a well-known named profile.
+    ///
+    /// Recognizes sRGB, Display P3, BT.2020 (SDR), BT.2100 PQ, BT.2100 HLG,
+    /// and Linear sRGB. Returns `None` for unrecognized combinations.
+    pub const fn from_cicp(cicp: Cicp) -> Option<Self> {
+        // Match on (primaries, transfer, matrix, full_range).
+        // We match matrix_coefficients == 0 (Identity/RGB) for all RGB profiles.
+        match (
+            cicp.color_primaries,
+            cicp.transfer_characteristics,
+            cicp.matrix_coefficients,
+        ) {
+            (1, 13, 0) => Some(Self::Srgb),
+            (12, 13, 0) => Some(Self::DisplayP3),
+            (9, 1, 0) => Some(Self::Bt2020),
+            (9, 16, _) => Some(Self::Bt2020Pq), // BT.2100 PQ (any matrix)
+            (9, 18, _) => Some(Self::Bt2020Hlg), // BT.2100 HLG (any matrix)
+            (1, 8, 0) => Some(Self::LinearSrgb),
+            _ => None,
+        }
+    }
+
     /// Convert to CICP parameters, if a standard mapping exists.
     pub const fn to_cicp(self) -> Option<Cicp> {
         match self {
@@ -241,6 +263,54 @@ mod tests {
         assert_eq!(NamedProfile::Srgb.to_cicp(), Some(Cicp::SRGB));
         assert_eq!(NamedProfile::Bt2020Pq.to_cicp(), Some(Cicp::BT2100_PQ));
         assert!(NamedProfile::AdobeRgb.to_cicp().is_none());
+    }
+
+    #[test]
+    fn named_profile_from_cicp() {
+        assert_eq!(NamedProfile::from_cicp(Cicp::SRGB), Some(NamedProfile::Srgb));
+        assert_eq!(
+            NamedProfile::from_cicp(Cicp::DISPLAY_P3),
+            Some(NamedProfile::DisplayP3)
+        );
+        assert_eq!(
+            NamedProfile::from_cicp(Cicp::BT2100_PQ),
+            Some(NamedProfile::Bt2020Pq)
+        );
+        assert_eq!(
+            NamedProfile::from_cicp(Cicp::BT2100_HLG),
+            Some(NamedProfile::Bt2020Hlg)
+        );
+        // Linear sRGB
+        assert_eq!(
+            NamedProfile::from_cicp(Cicp::new(1, 8, 0, true)),
+            Some(NamedProfile::LinearSrgb)
+        );
+        // BT.2020 SDR
+        assert_eq!(
+            NamedProfile::from_cicp(Cicp::new(9, 1, 0, true)),
+            Some(NamedProfile::Bt2020)
+        );
+        // Unknown combo
+        assert_eq!(NamedProfile::from_cicp(Cicp::new(99, 99, 0, true)), None);
+    }
+
+    #[test]
+    fn named_profile_cicp_roundtrip() {
+        for profile in [
+            NamedProfile::Srgb,
+            NamedProfile::DisplayP3,
+            NamedProfile::Bt2020,
+            NamedProfile::Bt2020Pq,
+            NamedProfile::Bt2020Hlg,
+            NamedProfile::LinearSrgb,
+        ] {
+            let cicp = profile.to_cicp().unwrap();
+            assert_eq!(
+                NamedProfile::from_cicp(cicp),
+                Some(profile),
+                "roundtrip failed for {profile:?}"
+            );
+        }
     }
 
     #[test]

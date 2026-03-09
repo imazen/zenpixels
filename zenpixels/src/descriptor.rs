@@ -236,6 +236,21 @@ impl TransferFunction {
         }
     }
 
+    /// Convert to the CICP `transfer_characteristics` code.
+    #[allow(unreachable_patterns)]
+    #[inline]
+    pub const fn to_cicp(self) -> Option<u8> {
+        match self {
+            Self::Bt709 => Some(1),
+            Self::Linear => Some(8),
+            Self::Srgb => Some(13),
+            Self::Pq => Some(16),
+            Self::Hlg => Some(18),
+            Self::Unknown => None,
+            _ => None,
+        }
+    }
+
     /// Reference white luminance in nits.
     ///
     /// - SDR (sRGB, BT.709, Linear, Unknown): `1.0` (relative/scene-referred)
@@ -2842,6 +2857,30 @@ mod tests {
         assert_eq!(TransferFunction::from_cicp(16), Some(TransferFunction::Pq));
         assert_eq!(TransferFunction::from_cicp(18), Some(TransferFunction::Hlg));
         assert_eq!(TransferFunction::from_cicp(99), None);
+    }
+
+    #[test]
+    fn transfer_function_to_cicp() {
+        assert_eq!(TransferFunction::Bt709.to_cicp(), Some(1));
+        assert_eq!(TransferFunction::Linear.to_cicp(), Some(8));
+        assert_eq!(TransferFunction::Srgb.to_cicp(), Some(13));
+        assert_eq!(TransferFunction::Pq.to_cicp(), Some(16));
+        assert_eq!(TransferFunction::Hlg.to_cicp(), Some(18));
+        assert_eq!(TransferFunction::Unknown.to_cicp(), None);
+    }
+
+    #[test]
+    fn transfer_function_cicp_roundtrip() {
+        for tf in [
+            TransferFunction::Bt709,
+            TransferFunction::Linear,
+            TransferFunction::Srgb,
+            TransferFunction::Pq,
+            TransferFunction::Hlg,
+        ] {
+            let code = tf.to_cicp().unwrap();
+            assert_eq!(TransferFunction::from_cicp(code), Some(tf));
+        }
     }
 
     #[test]

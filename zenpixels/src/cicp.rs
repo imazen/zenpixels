@@ -99,6 +99,50 @@ impl Cicp {
             .unwrap_or(TransferFunction::Unknown)
     }
 
+    /// Create a CICP from a [`PixelDescriptor`](crate::PixelDescriptor).
+    ///
+    /// Returns `None` if the descriptor's transfer function or color primaries
+    /// cannot be mapped to CICP code points (e.g., `Unknown` variants).
+    pub fn from_descriptor(desc: &crate::PixelDescriptor) -> Option<Self> {
+        let tc = desc.transfer.to_cicp()?;
+        let cp = desc.primaries.to_cicp()?;
+        let full_range = matches!(desc.signal_range, crate::SignalRange::Full);
+        Some(Self {
+            color_primaries: cp,
+            transfer_characteristics: tc,
+            matrix_coefficients: 0, // RGB content uses Identity
+            full_range,
+        })
+    }
+
+    /// Convert to a [`PixelDescriptor`](crate::PixelDescriptor) with the given
+    /// [`PixelFormat`](crate::PixelFormat).
+    ///
+    /// Maps the CICP code points to the corresponding enum variants.
+    /// Unmapped codes become `Unknown`.
+    pub fn to_descriptor(&self, format: crate::PixelFormat) -> crate::PixelDescriptor {
+        let transfer = self.transfer_function_enum();
+        let primaries = self.color_primaries_enum();
+        let signal_range = if self.full_range {
+            crate::SignalRange::Full
+        } else {
+            crate::SignalRange::Narrow
+        };
+        // Derive alpha from the pixel format's channel layout.
+        let alpha = if format.layout().has_alpha() {
+            Some(crate::AlphaMode::Straight)
+        } else {
+            None
+        };
+        crate::PixelDescriptor {
+            format,
+            transfer,
+            alpha,
+            primaries,
+            signal_range,
+        }
+    }
+
     /// Human-readable name for the color primaries code (ITU-T H.273 Table 2).
     pub fn color_primaries_name(code: u8) -> &'static str {
         match code {
@@ -295,5 +339,64 @@ mod tests {
         let mut h2 = std::hash::DefaultHasher::new();
         Cicp::SRGB.hash(&mut h2);
         assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn from_descriptor_srgb() {
+        use crate::{AlphaMode, PixelDescriptor, PixelFormat, SignalRange};
+        let desc = PixelDescriptor {
+            format: PixelFormat::Rgba8,
+            transfer: TransferFunction::Srgb,
+            alpha: Some(AlphaMode::Straight),
+            primaries: ColorPrimaries::Bt709,
+            signal_range: SignalRange::Full,
+        };
+        let cicp = Cicp::from_descriptor(&desc).unwrap();
+        assert_eq!(cicp, Cicp::SRGB);
+    }
+
+    #[test]
+    fn from_descriptor_unknown_returns_none() {
+        use crate::{PixelDescriptor, PixelFormat, SignalRange};
+        let desc = PixelDescriptor {
+            format: PixelFormat::Rgb8,
+            transfer: TransferFunction::Unknown,
+            alpha: None,
+            primaries: ColorPrimaries::Bt709,
+            signal_range: SignalRange::Full,
+        };
+        assert!(Cicp::from_descriptor(&desc).is_none());
+    }
+
+    #[test]
+    fn to_descriptor_srgb_rgba() {
+        use crate::{AlphaMode, PixelFormat, SignalRange};
+        let desc = Cicp::SRGB.to_descriptor(PixelFormat::Rgba8);
+        assert_eq!(desc.format, PixelFormat::Rgba8);
+        assert_eq!(desc.transfer, TransferFunction::Srgb);
+        assert_eq!(desc.primaries, ColorPrimaries::Bt709);
+        assert_eq!(desc.alpha, Some(AlphaMode::Straight));
+        assert_eq!(desc.signal_range, SignalRange::Full);
+    }
+
+    #[test]
+    fn to_descriptor_narrow_range() {
+        use crate::{PixelFormat, SignalRange};
+        let cicp = Cicp::new(1, 13, 0, false);
+        let desc = cicp.to_descriptor(PixelFormat::Rgb8);
+        assert_eq!(desc.signal_range, SignalRange::Narrow);
+        assert!(desc.alpha.is_none());
+    }
+
+    #[test]
+    fn descriptor_roundtrip() {
+        use crate::PixelFormat;
+        for cicp in [Cicp::SRGB, Cicp::BT2100_PQ, Cicp::BT2100_HLG, Cicp::DISPLAY_P3] {
+            let desc = cicp.to_descriptor(PixelFormat::Rgb8);
+            let back = Cicp::from_descriptor(&desc).unwrap();
+            assert_eq!(back.color_primaries, cicp.color_primaries);
+            assert_eq!(back.transfer_characteristics, cicp.transfer_characteristics);
+            assert_eq!(back.full_range, cicp.full_range);
+        }
     }
 }
