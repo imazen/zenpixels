@@ -30,4 +30,5 @@ whereat = { version = "0.1.3", path = "../../whereat", default-features = false 
 zenpixels = { version = "0.1.1", path = "../zenpixels", features = ["planar", "imgref"] }
 zenpixels-convert = { path = ".", features = ["pipeline", "imgref"] }
 half = "2"
+palette = "0.7"
 
