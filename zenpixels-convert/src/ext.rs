@@ -103,6 +103,8 @@ use alloc::sync::Arc;
 #[cfg(feature = "buffer")]
 use alloc::vec;
 #[cfg(feature = "buffer")]
+use whereat::{At, ResultAtExt};
+#[cfg(feature = "buffer")]
 use zenpixels::PixelDescriptor;
 #[cfg(feature = "buffer")]
 use zenpixels::buffer::{Pixel, PixelBuffer};
@@ -118,20 +120,20 @@ pub trait PixelBufferConvertExt {
     /// conversion. Color metadata is preserved.
     ///
     /// **Allocates** a new [`PixelBuffer`].
-    fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, crate::ConvertError>;
+    fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>>;
 
     /// Add an alpha channel. **Allocates** a new `PixelBuffer`.
     ///
     /// - Gray → GrayAlpha (opaque alpha)
     /// - Rgb → Rgba (opaque alpha)
     /// - Already has alpha → identity copy
-    fn try_add_alpha(&self) -> Result<PixelBuffer, crate::ConvertError>;
+    fn try_add_alpha(&self) -> Result<PixelBuffer, At<crate::ConvertError>>;
 
     /// Widen to U16 depth (lossless, ×257). **Allocates** a new `PixelBuffer`.
-    fn try_widen_to_u16(&self) -> Result<PixelBuffer, crate::ConvertError>;
+    fn try_widen_to_u16(&self) -> Result<PixelBuffer, At<crate::ConvertError>>;
 
     /// Narrow to U8 depth (lossy, rounded). **Allocates** a new `PixelBuffer`.
-    fn try_narrow_to_u8(&self) -> Result<PixelBuffer, crate::ConvertError>;
+    fn try_narrow_to_u8(&self) -> Result<PixelBuffer, At<crate::ConvertError>>;
 
     /// Convert to RGB8, allocating a new buffer.
     fn to_rgb8(&self) -> PixelBuffer<rgb::Rgb<u8>>;
@@ -148,14 +150,15 @@ pub trait PixelBufferConvertExt {
 
 #[cfg(feature = "buffer")]
 impl PixelBufferConvertExt for PixelBuffer {
-    fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, crate::ConvertError> {
+    #[track_caller]
+    fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>> {
         let src_desc = self.descriptor();
         if src_desc == target {
             // Identity — just copy.
             let dst_stride = target.aligned_stride(self.width());
             let total = dst_stride
                 .checked_mul(self.height() as usize)
-                .ok_or(crate::ConvertError::AllocationFailed)?;
+                .ok_or_else(|| whereat::at!(crate::ConvertError::AllocationFailed))?;
             let mut out = alloc::vec![0u8; total];
             let src_slice = self.as_slice();
             for y in 0..self.height() {
@@ -164,19 +167,19 @@ impl PixelBufferConvertExt for PixelBuffer {
                 out[dst_start..dst_start + src_row.len()].copy_from_slice(src_row);
             }
             let mut buf = PixelBuffer::from_vec(out, self.width(), self.height(), target)
-                .map_err(|_| crate::ConvertError::AllocationFailed)?;
+                .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
             if let Some(ctx) = self.color_context() {
                 buf = buf.with_color_context(Arc::clone(ctx));
             }
             return Ok(buf);
         }
 
-        let converter = crate::RowConverter::new(src_desc, target)?;
+        let converter = crate::RowConverter::new(src_desc, target).at()?;
 
         let dst_stride = target.aligned_stride(self.width());
         let total = dst_stride
             .checked_mul(self.height() as usize)
-            .ok_or(crate::ConvertError::AllocationFailed)?;
+            .ok_or_else(|| whereat::at!(crate::ConvertError::AllocationFailed))?;
         let mut out = alloc::vec![0u8; total];
 
         let src_slice = self.as_slice();
@@ -188,14 +191,15 @@ impl PixelBufferConvertExt for PixelBuffer {
         }
 
         let mut buf = PixelBuffer::from_vec(out, self.width(), self.height(), target)
-            .map_err(|_| crate::ConvertError::AllocationFailed)?;
+            .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
         if let Some(ctx) = self.color_context() {
             buf = buf.with_color_context(Arc::clone(ctx));
         }
         Ok(buf)
     }
 
-    fn try_add_alpha(&self) -> Result<PixelBuffer, crate::ConvertError> {
+    #[track_caller]
+    fn try_add_alpha(&self) -> Result<PixelBuffer, At<crate::ConvertError>> {
         let desc = self.descriptor();
         let target_layout = match desc.layout() {
             ChannelLayout::Gray => ChannelLayout::GrayAlpha,
@@ -212,7 +216,8 @@ impl PixelBufferConvertExt for PixelBuffer {
         self.convert_to(target)
     }
 
-    fn try_widen_to_u16(&self) -> Result<PixelBuffer, crate::ConvertError> {
+    #[track_caller]
+    fn try_widen_to_u16(&self) -> Result<PixelBuffer, At<crate::ConvertError>> {
         let desc = self.descriptor();
         let target = PixelDescriptor::new(
             ChannelType::U16,
@@ -223,7 +228,8 @@ impl PixelBufferConvertExt for PixelBuffer {
         self.convert_to(target)
     }
 
-    fn try_narrow_to_u8(&self) -> Result<PixelBuffer, crate::ConvertError> {
+    #[track_caller]
+    fn try_narrow_to_u8(&self) -> Result<PixelBuffer, At<crate::ConvertError>> {
         let desc = self.descriptor();
         let target = PixelDescriptor::new(
             ChannelType::U8,

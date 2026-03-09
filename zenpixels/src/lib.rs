@@ -34,6 +34,8 @@
 
 extern crate alloc;
 
+whereat::define_at_crate_info!(path = "zenpixels/");
+
 pub mod descriptor;
 pub mod policy;
 
@@ -67,3 +69,6 @@ pub use color::{ColorContext, ColorOrigin, ColorProfileSource, ColorProvenance, 
 pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
 
 pub use policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GrayExpand, LumaCoefficients};
+
+// Re-export whereat types for error tracing.
+pub use whereat::{At, ResultAtExt, at};

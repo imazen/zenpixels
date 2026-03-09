@@ -88,6 +88,7 @@ use crate::{
     Cicp, ColorOrigin, ColorPrimaries, PixelBuffer, PixelDescriptor, PixelFormat, PixelSlice,
     TransferFunction,
 };
+use whereat::{At, ResultAtExt};
 
 /// Target output color profile.
 #[derive(Clone, Debug)]
@@ -170,13 +171,14 @@ impl EncodeReady {
 /// - The target format requires a conversion that isn't supported.
 /// - The CMS fails to build a transform for ICC profiles.
 /// - Buffer allocation fails.
+#[track_caller]
 pub fn finalize_for_output<C: ColorManagement>(
     buffer: &PixelBuffer,
     origin: &ColorOrigin,
     target: OutputProfile,
     pixel_format: PixelFormat,
     cms: &C,
-) -> Result<EncodeReady, ConvertError> {
+) -> Result<EncodeReady, At<ConvertError>> {
     let source_desc = buffer.descriptor();
     let target_desc = pixel_format.descriptor();
 
@@ -216,11 +218,11 @@ pub fn finalize_for_output<C: ColorManagement>(
     {
         let transform = cms
             .build_transform(src_icc, dst_icc)
-            .map_err(|e| ConvertError::CmsError(alloc::format!("{e:?}")))?;
+            .map_err(|e| whereat::at!(ConvertError::CmsError(alloc::format!("{e:?}"))))?;
 
         let src_slice = buffer.as_slice();
         let mut out = PixelBuffer::try_new(buffer.width(), buffer.height(), target_desc)
-            .map_err(|_| ConvertError::AllocationFailed)?;
+            .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
 
         {
             let mut dst_slice = out.as_slice_mut();
@@ -254,7 +256,7 @@ pub fn finalize_for_output<C: ColorManagement>(
             buffer.height(),
             target_desc_full,
         )
-        .map_err(|_| ConvertError::AllocationFailed)?;
+        .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
         return Ok(EncodeReady {
             pixels: out,
             metadata,
@@ -262,10 +264,10 @@ pub fn finalize_for_output<C: ColorManagement>(
     }
 
     // Use RowConverter for format conversion.
-    let converter = crate::RowConverter::new(source_desc, target_desc_full)?;
+    let converter = crate::RowConverter::new(source_desc, target_desc_full).at()?;
     let src_slice = buffer.as_slice();
     let mut out = PixelBuffer::try_new(buffer.width(), buffer.height(), target_desc_full)
-        .map_err(|_| ConvertError::AllocationFailed)?;
+        .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
 
     {
         let mut dst_slice = out.as_slice_mut();

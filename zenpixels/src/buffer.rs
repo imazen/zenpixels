@@ -20,6 +20,8 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
 
+use whereat::{At, ResultAtExt};
+
 #[cfg(feature = "imgref")]
 use imgref::ImgRef;
 #[cfg(feature = "imgref")]
@@ -334,13 +336,14 @@ impl<'a> PixelSlice<'a> {
     ///
     /// Returns an error if the data is too small, the stride is too small,
     /// or the data is not aligned for the channel type.
+    #[track_caller]
     pub fn new(
         data: &'a [u8],
         width: u32,
         rows: u32,
         stride_bytes: usize,
         descriptor: PixelDescriptor,
-    ) -> Result<Self, BufferError> {
+    ) -> Result<Self, At<BufferError>> {
         validate_slice(
             data.len(),
             data.as_ptr(),
@@ -348,7 +351,8 @@ impl<'a> PixelSlice<'a> {
             rows,
             stride_bytes,
             &descriptor,
-        )?;
+        )
+        .map_err(|e| whereat::at!(e))?;
         Ok(Self {
             data,
             width,
@@ -437,9 +441,10 @@ impl<'a, P> PixelSlice<'a, P> {
     /// the same `bytes_per_pixel()` as the current one.
     ///
     /// Use cases: treating RGBA8 data as BGRA8, RGBX8 as RGBA8.
-    pub fn reinterpret(mut self, descriptor: PixelDescriptor) -> Result<Self, BufferError> {
+    #[track_caller]
+    pub fn reinterpret(mut self, descriptor: PixelDescriptor) -> Result<Self, At<BufferError>> {
         if self.descriptor.bytes_per_pixel() != descriptor.bytes_per_pixel() {
-            return Err(BufferError::IncompatibleDescriptor);
+            return Err(whereat::at!(BufferError::IncompatibleDescriptor));
         }
         self.descriptor = descriptor;
         Ok(self)
@@ -713,12 +718,13 @@ impl<'a, P: Pixel> PixelSlice<'a, P> {
     ///
     /// Includes a compile-time assertion that `size_of::<P>()` matches
     /// `P::DESCRIPTOR.bytes_per_pixel()`, catching bad `Pixel` impls.
+    #[track_caller]
     pub fn new_typed(
         data: &'a [u8],
         width: u32,
         rows: u32,
         stride_pixels: u32,
-    ) -> Result<Self, BufferError> {
+    ) -> Result<Self, At<BufferError>> {
         const { assert!(core::mem::size_of::<P>() == P::DESCRIPTOR.bytes_per_pixel()) }
         let stride_bytes = stride_pixels as usize * core::mem::size_of::<P>();
         validate_slice(
@@ -728,7 +734,8 @@ impl<'a, P: Pixel> PixelSlice<'a, P> {
             rows,
             stride_bytes,
             &P::DESCRIPTOR,
-        )?;
+        )
+        .map_err(|e| whereat::at!(e))?;
         Ok(Self {
             data,
             width,
@@ -783,13 +790,14 @@ impl<'a> PixelSliceMut<'a> {
     ///
     /// Returns an error if the data is too small, the stride is too small,
     /// or the data is not aligned for the channel type.
+    #[track_caller]
     pub fn new(
         data: &'a mut [u8],
         width: u32,
         rows: u32,
         stride_bytes: usize,
         descriptor: PixelDescriptor,
-    ) -> Result<Self, BufferError> {
+    ) -> Result<Self, At<BufferError>> {
         validate_slice(
             data.len(),
             data.as_ptr(),
@@ -797,7 +805,8 @@ impl<'a> PixelSliceMut<'a> {
             rows,
             stride_bytes,
             &descriptor,
-        )?;
+        )
+        .map_err(|e| whereat::at!(e))?;
         Ok(Self {
             data,
             width,
@@ -866,9 +875,10 @@ impl<'a, P> PixelSliceMut<'a, P> {
     /// Reinterpret the buffer with a different physical layout.
     ///
     /// See [`PixelSlice::reinterpret()`] for details.
-    pub fn reinterpret(mut self, descriptor: PixelDescriptor) -> Result<Self, BufferError> {
+    #[track_caller]
+    pub fn reinterpret(mut self, descriptor: PixelDescriptor) -> Result<Self, At<BufferError>> {
         if self.descriptor.bytes_per_pixel() != descriptor.bytes_per_pixel() {
-            return Err(BufferError::IncompatibleDescriptor);
+            return Err(whereat::at!(BufferError::IncompatibleDescriptor));
         }
         self.descriptor = descriptor;
         Ok(self)
@@ -1038,12 +1048,13 @@ impl<'a, P: Pixel> PixelSliceMut<'a, P> {
     ///
     /// `stride_pixels` is the number of pixels per row (>= width).
     /// The byte stride is `stride_pixels * size_of::<P>()`.
+    #[track_caller]
     pub fn new_typed(
         data: &'a mut [u8],
         width: u32,
         rows: u32,
         stride_pixels: u32,
-    ) -> Result<Self, BufferError> {
+    ) -> Result<Self, At<BufferError>> {
         const { assert!(core::mem::size_of::<P>() == P::DESCRIPTOR.bytes_per_pixel()) }
         let stride_bytes = stride_pixels as usize * core::mem::size_of::<P>();
         validate_slice(
@@ -1053,7 +1064,8 @@ impl<'a, P: Pixel> PixelSliceMut<'a, P> {
             rows,
             stride_bytes,
             &P::DESCRIPTOR,
-        )?;
+        )
+        .map_err(|e| whereat::at!(e))?;
         Ok(Self {
             data,
             width,
@@ -1401,20 +1413,21 @@ impl PixelBuffer {
     ///
     /// Returns [`BufferError::InvalidDimensions`] if the total size overflows,
     /// or [`BufferError::AllocationFailed`] if allocation fails.
+    #[track_caller]
     pub fn try_new(
         width: u32,
         height: u32,
         descriptor: PixelDescriptor,
-    ) -> Result<Self, BufferError> {
+    ) -> Result<Self, At<BufferError>> {
         let stride = descriptor.aligned_stride(width);
         let total = stride
             .checked_mul(height as usize)
-            .ok_or(BufferError::InvalidDimensions)?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let align = descriptor.min_alignment();
         let alloc_size = total
             .checked_add(align - 1)
-            .ok_or(BufferError::InvalidDimensions)?;
-        let data = try_alloc_zeroed(alloc_size)?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let data = try_alloc_zeroed(alloc_size).map_err(|e| whereat::at!(e))?;
         let offset = align_offset(data.as_ptr(), align);
         Ok(Self {
             data,
@@ -1455,20 +1468,21 @@ impl PixelBuffer {
     ///
     /// Returns [`BufferError::InvalidDimensions`] if the total size overflows,
     /// or [`BufferError::AllocationFailed`] if allocation fails.
+    #[track_caller]
     pub fn try_new_simd_aligned(
         width: u32,
         height: u32,
         descriptor: PixelDescriptor,
         simd_align: usize,
-    ) -> Result<Self, BufferError> {
+    ) -> Result<Self, At<BufferError>> {
         let stride = descriptor.simd_aligned_stride(width, simd_align);
         let total = stride
             .checked_mul(height as usize)
-            .ok_or(BufferError::InvalidDimensions)?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let alloc_size = total
             .checked_add(simd_align - 1)
-            .ok_or(BufferError::InvalidDimensions)?;
-        let data = try_alloc_zeroed(alloc_size)?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let data = try_alloc_zeroed(alloc_size).map_err(|e| whereat::at!(e))?;
         let offset = align_offset(data.as_ptr(), simd_align);
         Ok(Self {
             data,
@@ -1492,20 +1506,21 @@ impl PixelBuffer {
     /// # Errors
     ///
     /// Returns [`BufferError::InsufficientData`] if the vec is too small.
+    #[track_caller]
     pub fn from_vec(
         data: Vec<u8>,
         width: u32,
         height: u32,
         descriptor: PixelDescriptor,
-    ) -> Result<Self, BufferError> {
+    ) -> Result<Self, At<BufferError>> {
         let stride = descriptor.aligned_stride(width);
         let total = stride
             .checked_mul(height as usize)
-            .ok_or(BufferError::InvalidDimensions)?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let align = descriptor.min_alignment();
         let offset = align_offset(data.as_ptr(), align);
         if data.len() < offset + total {
-            return Err(BufferError::InsufficientData);
+            return Err(whereat::at!(BufferError::InsufficientData));
         }
         Ok(Self {
             data,
@@ -1538,18 +1553,19 @@ impl<P: Pixel> PixelBuffer<P> {
     ///
     /// Returns [`BufferError::InvalidDimensions`] if the total size overflows,
     /// or [`BufferError::AllocationFailed`] if allocation fails.
-    pub fn try_new_typed(width: u32, height: u32) -> Result<Self, BufferError> {
+    #[track_caller]
+    pub fn try_new_typed(width: u32, height: u32) -> Result<Self, At<BufferError>> {
         const { assert!(core::mem::size_of::<P>() == P::DESCRIPTOR.bytes_per_pixel()) }
         let descriptor = P::DESCRIPTOR;
         let stride = descriptor.aligned_stride(width);
         let total = stride
             .checked_mul(height as usize)
-            .ok_or(BufferError::InvalidDimensions)?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let align = descriptor.min_alignment();
         let alloc_size = total
             .checked_add(align - 1)
-            .ok_or(BufferError::InvalidDimensions)?;
-        let data = try_alloc_zeroed(alloc_size)?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let data = try_alloc_zeroed(alloc_size).map_err(|e| whereat::at!(e))?;
         let offset = align_offset(data.as_ptr(), align);
         Ok(Self {
             data,
@@ -1576,11 +1592,12 @@ impl<P: Pixel> PixelBuffer<P> {
     /// # Errors
     ///
     /// Returns [`BufferError::InvalidDimensions`] if `pixels.len() != width * height`.
-    pub fn from_pixels(pixels: Vec<P>, width: u32, height: u32) -> Result<Self, BufferError> {
+    #[track_caller]
+    pub fn from_pixels(pixels: Vec<P>, width: u32, height: u32) -> Result<Self, At<BufferError>> {
         const { assert!(core::mem::size_of::<P>() == P::DESCRIPTOR.bytes_per_pixel()) }
         let expected = width as usize * height as usize;
         if pixels.len() != expected {
-            return Err(BufferError::InvalidDimensions);
+            return Err(whereat::at!(BufferError::InvalidDimensions));
         }
         let descriptor = P::DESCRIPTOR;
         let stride = descriptor.aligned_stride(width);
@@ -1681,12 +1698,15 @@ impl PixelBuffer {
     /// # Errors
     ///
     /// Returns [`BufferError::InvalidDimensions`] if `pixels.len() != width * height`.
+    #[track_caller]
     pub fn from_pixels_erased<P: Pixel>(
         pixels: Vec<P>,
         width: u32,
         height: u32,
-    ) -> Result<Self, BufferError> {
-        PixelBuffer::<P>::from_pixels(pixels, width, height).map(PixelBuffer::from)
+    ) -> Result<Self, At<BufferError>> {
+        PixelBuffer::<P>::from_pixels(pixels, width, height)
+            .at()
+            .map(PixelBuffer::from)
     }
 
     /// Zero-copy access to the pixel data as a typed slice.
@@ -1870,9 +1890,10 @@ impl<P> PixelBuffer<P> {
     /// Reinterpret the buffer with a different physical layout.
     ///
     /// See [`PixelSlice::reinterpret()`] for details.
-    pub fn reinterpret(mut self, descriptor: PixelDescriptor) -> Result<Self, BufferError> {
+    #[track_caller]
+    pub fn reinterpret(mut self, descriptor: PixelDescriptor) -> Result<Self, At<BufferError>> {
         if self.descriptor.bytes_per_pixel() != descriptor.bytes_per_pixel() {
-            return Err(BufferError::IncompatibleDescriptor);
+            return Err(whereat::at!(BufferError::IncompatibleDescriptor));
         }
         self.descriptor = descriptor;
         Ok(self)
@@ -2369,7 +2390,7 @@ mod tests {
     fn pixel_buffer_from_vec_too_small() {
         let data = vec![0u8; 10];
         let err = PixelBuffer::from_vec(data, 10, 5, PixelDescriptor::RGB8_SRGB);
-        assert_eq!(err.unwrap_err(), BufferError::InsufficientData);
+        assert_eq!(*err.unwrap_err().error(), BufferError::InsufficientData);
     }
 
     #[test]
@@ -2475,14 +2496,14 @@ mod tests {
     fn pixel_slice_stride_too_small() {
         let data = [0u8; 100];
         let err = PixelSlice::new(&data, 10, 1, 2, PixelDescriptor::RGB8_SRGB);
-        assert_eq!(err.unwrap_err(), BufferError::StrideTooSmall);
+        assert_eq!(*err.unwrap_err().error(), BufferError::StrideTooSmall);
     }
 
     #[test]
     fn pixel_slice_insufficient_data() {
         let data = [0u8; 10];
         let err = PixelSlice::new(&data, 10, 1, 30, PixelDescriptor::RGB8_SRGB);
-        assert_eq!(err.unwrap_err(), BufferError::InsufficientData);
+        assert_eq!(*err.unwrap_err().error(), BufferError::InsufficientData);
     }
 
     #[test]
@@ -2497,7 +2518,10 @@ mod tests {
         // RGB8 bpp=3, stride=32 is not a multiple of 3
         let data = [0u8; 128];
         let err = PixelSlice::new(&data, 10, 1, 32, PixelDescriptor::RGB8_SRGB);
-        assert_eq!(err.unwrap_err(), BufferError::StrideNotPixelAligned);
+        assert_eq!(
+            *err.unwrap_err().error(),
+            BufferError::StrideNotPixelAligned
+        );
 
         // stride=33 IS a multiple of 3 -> accepted
         let ok = PixelSlice::new(&data, 10, 1, 33, PixelDescriptor::RGB8_SRGB);
@@ -2632,7 +2656,10 @@ mod tests {
         // RGB8 (3 bpp) -> RGBA8 (4 bpp): different bytes_per_pixel
         let buf = PixelBuffer::new(2, 2, PixelDescriptor::RGB8);
         let err = buf.reinterpret(PixelDescriptor::RGBA8);
-        assert_eq!(err.unwrap_err(), BufferError::IncompatibleDescriptor);
+        assert_eq!(
+            *err.unwrap_err().error(),
+            BufferError::IncompatibleDescriptor
+        );
     }
 
     #[test]
@@ -3002,6 +3029,6 @@ mod buffer_tests {
     fn from_pixels_erased_dimension_mismatch() {
         let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 1, g: 2, b: 3 }];
         let err = PixelBuffer::from_pixels_erased(pixels, 2, 1);
-        assert_eq!(err.unwrap_err(), BufferError::InvalidDimensions);
+        assert_eq!(*err.unwrap_err().error(), BufferError::InvalidDimensions);
     }
 }

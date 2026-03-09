@@ -12,6 +12,7 @@ use crate::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, ConvertError, PixelDescriptor,
     TransferFunction,
 };
+use whereat::{At, ResultAtExt};
 
 /// Pre-computed conversion plan.
 ///
@@ -101,7 +102,8 @@ impl ConvertPlan {
     /// Create a conversion plan from `from` to `to`.
     ///
     /// Returns `Err` if no conversion path exists.
-    pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, ConvertError> {
+    #[track_caller]
+    pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
         if from == to {
             return Ok(Self {
                 from,
@@ -146,7 +148,7 @@ impl ConvertPlan {
 
             // Oklab conversion requires known primaries for the RGB→LMS matrix.
             if involves_oklab && from.primaries == ColorPrimaries::Unknown {
-                return Err(ConvertError::NoPath { from, to });
+                return Err(whereat::at!(ConvertError::NoPath { from, to }));
             }
 
             let depth_first = need_depth_or_tf
@@ -154,32 +156,41 @@ impl ConvertPlan {
 
             if depth_first {
                 // Depth first, then layout.
-                steps.extend(depth_steps(
-                    from.channel_type(),
-                    to.channel_type(),
-                    from.transfer(),
-                    to.transfer(),
-                )?);
+                steps.extend(
+                    depth_steps(
+                        from.channel_type(),
+                        to.channel_type(),
+                        from.transfer(),
+                        to.transfer(),
+                    )
+                    .map_err(|e| whereat::at!(e))?,
+                );
                 steps.extend(layout_steps(from.layout(), to.layout()));
             } else {
                 // Layout first, then depth.
                 steps.extend(layout_steps(from.layout(), to.layout()));
                 if need_depth_or_tf {
-                    steps.extend(depth_steps(
-                        from.channel_type(),
-                        to.channel_type(),
-                        from.transfer(),
-                        to.transfer(),
-                    )?);
+                    steps.extend(
+                        depth_steps(
+                            from.channel_type(),
+                            to.channel_type(),
+                            from.transfer(),
+                            to.transfer(),
+                        )
+                        .map_err(|e| whereat::at!(e))?,
+                    );
                 }
             }
         } else if need_depth_or_tf {
-            steps.extend(depth_steps(
-                from.channel_type(),
-                to.channel_type(),
-                from.transfer(),
-                to.transfer(),
-            )?);
+            steps.extend(
+                depth_steps(
+                    from.channel_type(),
+                    to.channel_type(),
+                    from.transfer(),
+                    to.transfer(),
+                )
+                .map_err(|e| whereat::at!(e))?,
+            );
         }
 
         // Alpha mode conversion (if both have alpha and modes differ).
@@ -208,21 +219,22 @@ impl ConvertPlan {
     /// Validates that the planned conversion steps are allowed by the given
     /// policies before creating the plan. Returns an error if a forbidden
     /// operation would be required.
+    #[track_caller]
     pub fn new_explicit(
         from: PixelDescriptor,
         to: PixelDescriptor,
         options: &ConvertOptions,
-    ) -> Result<Self, ConvertError> {
+    ) -> Result<Self, At<ConvertError>> {
         // Check alpha removal policy.
         let drops_alpha = from.alpha().is_some() && to.alpha().is_none();
         if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
-            return Err(ConvertError::AlphaRemovalForbidden);
+            return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
         }
 
         // Check depth reduction policy.
         let reduces_depth = from.channel_type().byte_size() > to.channel_type().byte_size();
         if reduces_depth && options.depth_policy == DepthPolicy::Forbid {
-            return Err(ConvertError::DepthReductionForbidden);
+            return Err(whereat::at!(ConvertError::DepthReductionForbidden));
         }
 
         // Check RGB→Gray requires luma coefficients.
@@ -232,10 +244,10 @@ impl ConvertPlan {
         );
         let dst_is_gray = matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
         if src_is_rgb && dst_is_gray && options.luma.is_none() {
-            return Err(ConvertError::RgbToGray);
+            return Err(whereat::at!(ConvertError::RgbToGray));
         }
 
-        Self::new(from, to)
+        Self::new(from, to).at()
     }
 
     /// True if conversion is a no-op.

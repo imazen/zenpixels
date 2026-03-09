@@ -67,6 +67,7 @@ use crate::converter::RowConverter;
 use crate::negotiate::{ConvertIntent, best_match};
 use crate::policy::{AlphaPolicy, ConvertOptions};
 use crate::{ConvertError, PixelDescriptor};
+use whereat::{At, ResultAtExt};
 
 /// Result of format adaptation: the converted data and its descriptor.
 #[derive(Clone, Debug)]
@@ -96,6 +97,7 @@ pub struct Adapted<'a> {
 /// * `rows` - Number of rows.
 /// * `stride` - Bytes between row starts (use `width * descriptor.bytes_per_pixel()` for packed).
 /// * `supported` - Formats the encoder accepts.
+#[track_caller]
 pub fn adapt_for_encode<'a>(
     data: &'a [u8],
     descriptor: PixelDescriptor,
@@ -103,7 +105,7 @@ pub fn adapt_for_encode<'a>(
     rows: u32,
     stride: usize,
     supported: &[PixelDescriptor],
-) -> Result<Adapted<'a>, ConvertError> {
+) -> Result<Adapted<'a>, At<ConvertError>> {
     adapt_for_encode_with_intent(
         data,
         descriptor,
@@ -118,6 +120,7 @@ pub fn adapt_for_encode<'a>(
 /// Negotiate format and convert with intent awareness.
 ///
 /// Like [`adapt_for_encode`], but lets the caller specify a [`ConvertIntent`].
+#[track_caller]
 pub fn adapt_for_encode_with_intent<'a>(
     data: &'a [u8],
     descriptor: PixelDescriptor,
@@ -126,9 +129,9 @@ pub fn adapt_for_encode_with_intent<'a>(
     stride: usize,
     supported: &[PixelDescriptor],
     intent: ConvertIntent,
-) -> Result<Adapted<'a>, ConvertError> {
+) -> Result<Adapted<'a>, At<ConvertError>> {
     if supported.is_empty() {
-        return Err(ConvertError::EmptyFormatList);
+        return Err(whereat::at!(ConvertError::EmptyFormatList));
     }
 
     // Check for exact match (zero-copy path).
@@ -168,9 +171,10 @@ pub fn adapt_for_encode_with_intent<'a>(
     }
 
     // Need conversion — pick best target.
-    let target = best_match(descriptor, supported, intent).ok_or(ConvertError::EmptyFormatList)?;
+    let target = best_match(descriptor, supported, intent)
+        .ok_or_else(|| whereat::at!(ConvertError::EmptyFormatList))?;
 
-    let converter = RowConverter::new(descriptor, target)?;
+    let converter = RowConverter::new(descriptor, target).at()?;
 
     let src_bpp = descriptor.bytes_per_pixel();
     let dst_bpp = target.bytes_per_pixel();
@@ -200,18 +204,19 @@ pub fn adapt_for_encode_with_intent<'a>(
 /// Convert a raw byte buffer from one format to another.
 ///
 /// Assumes packed (stride = width * bpp) layout.
+#[track_caller]
 pub fn convert_buffer(
     src: &[u8],
     width: u32,
     rows: u32,
     from: PixelDescriptor,
     to: PixelDescriptor,
-) -> Result<Vec<u8>, ConvertError> {
+) -> Result<Vec<u8>, At<ConvertError>> {
     if from == to {
         return Ok(src.to_vec());
     }
 
-    let converter = RowConverter::new(from, to)?;
+    let converter = RowConverter::new(from, to).at()?;
     let src_bpp = from.bytes_per_pixel();
     let dst_bpp = to.bytes_per_pixel();
     let src_stride = (width as usize) * src_bpp;
@@ -238,6 +243,7 @@ pub fn convert_buffer(
 /// Like [`adapt_for_encode`], but enforces [`ConvertOptions`] policies
 /// on the conversion. Returns an error if a policy forbids the required
 /// conversion.
+#[track_caller]
 pub fn adapt_for_encode_explicit<'a>(
     data: &'a [u8],
     descriptor: PixelDescriptor,
@@ -246,9 +252,9 @@ pub fn adapt_for_encode_explicit<'a>(
     stride: usize,
     supported: &[PixelDescriptor],
     options: &ConvertOptions,
-) -> Result<Adapted<'a>, ConvertError> {
+) -> Result<Adapted<'a>, At<ConvertError>> {
     if supported.is_empty() {
-        return Err(ConvertError::EmptyFormatList);
+        return Err(whereat::at!(ConvertError::EmptyFormatList));
     }
 
     // Check for exact match (zero-copy path).
@@ -286,17 +292,17 @@ pub fn adapt_for_encode_explicit<'a>(
 
     // Need conversion — pick best target, then validate policies.
     let target = best_match(descriptor, supported, ConvertIntent::Fastest)
-        .ok_or(ConvertError::EmptyFormatList)?;
+        .ok_or_else(|| whereat::at!(ConvertError::EmptyFormatList))?;
 
     // Validate policies before doing work.
-    let plan = ConvertPlan::new_explicit(descriptor, target, options)?;
+    let plan = ConvertPlan::new_explicit(descriptor, target, options).at()?;
 
     // Runtime opacity check for DiscardIfOpaque.
     let drops_alpha = descriptor.alpha().is_some() && target.alpha().is_none();
     if drops_alpha && options.alpha_policy == AlphaPolicy::DiscardIfOpaque {
         let src_bpp = descriptor.bytes_per_pixel();
         if !is_fully_opaque(data, width, rows, stride, src_bpp, &descriptor) {
-            return Err(ConvertError::AlphaNotOpaque);
+            return Err(whereat::at!(ConvertError::AlphaNotOpaque));
         }
     }
 

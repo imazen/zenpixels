@@ -378,6 +378,8 @@
 
 extern crate alloc;
 
+whereat::define_at_crate_info!(path = "zenpixels-convert/");
+
 // Re-export all interchange types from zenpixels.
 pub use zenpixels::*;
 

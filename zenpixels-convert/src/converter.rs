@@ -5,6 +5,7 @@
 
 use crate::convert::{ConvertPlan, convert_row};
 use crate::{ConvertError, PixelDescriptor};
+use whereat::{At, ResultAtExt};
 
 /// Pre-computed pixel format converter.
 ///
@@ -33,8 +34,9 @@ impl RowConverter {
     /// Create a converter from `from` to `to`.
     ///
     /// Returns `Err` if no conversion path exists between the formats.
-    pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, ConvertError> {
-        let plan = ConvertPlan::new(from, to)?;
+    #[track_caller]
+    pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
+        let plan = ConvertPlan::new(from, to).at()?;
         Ok(Self { plan })
     }
 
@@ -55,6 +57,7 @@ impl RowConverter {
     /// Convert multiple rows from a strided source buffer to a strided destination.
     ///
     /// The source and destination can have different strides.
+    #[track_caller]
     pub fn convert_rows(
         &self,
         src: &[u8],
@@ -63,7 +66,7 @@ impl RowConverter {
         dst_stride: usize,
         width: u32,
         rows: u32,
-    ) -> Result<(), ConvertError> {
+    ) -> Result<(), At<ConvertError>> {
         for y in 0..rows {
             let src_start = y as usize * src_stride;
             let src_end = src_start + (width as usize * self.plan.from().bytes_per_pixel());
@@ -71,10 +74,10 @@ impl RowConverter {
             let dst_end = dst_start + (width as usize * self.plan.to().bytes_per_pixel());
 
             if src_end > src.len() || dst_end > dst.len() {
-                return Err(ConvertError::BufferSize {
+                return Err(whereat::at!(ConvertError::BufferSize {
                     expected: dst_end,
                     actual: dst.len(),
-                });
+                }));
             }
 
             self.convert_row(
@@ -855,7 +858,7 @@ mod tests {
         let src = [10u8, 20, 30];
         let mut dst = [0u8; 4];
         let err = conv.convert_rows(&src, 3, &mut dst, 4, 1, 2).unwrap_err();
-        assert!(matches!(err, ConvertError::BufferSize { .. }));
+        assert!(matches!(*err.error(), ConvertError::BufferSize { .. }));
     }
 
     // -----------------------------------------------------------------------
@@ -873,7 +876,7 @@ mod tests {
             luma: None,
         };
         let err = ConvertPlan::new_explicit(from, to, &opts).unwrap_err();
-        assert_eq!(err, ConvertError::AlphaRemovalForbidden);
+        assert_eq!(*err.error(), ConvertError::AlphaRemovalForbidden);
     }
 
     #[test]
@@ -892,7 +895,7 @@ mod tests {
             luma: None,
         };
         let err = ConvertPlan::new_explicit(from, to, &opts).unwrap_err();
-        assert_eq!(err, ConvertError::DepthReductionForbidden);
+        assert_eq!(*err.error(), ConvertError::DepthReductionForbidden);
     }
 
     #[test]
@@ -909,7 +912,7 @@ mod tests {
             &opts,
         )
         .unwrap_err();
-        assert_eq!(err, ConvertError::RgbToGray);
+        assert_eq!(*err.error(), ConvertError::RgbToGray);
     }
 
     #[test]

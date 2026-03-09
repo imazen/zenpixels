@@ -23,6 +23,7 @@ buffer = ["rgb", "imgref"]
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 imgref = { version = "1.12", optional = true }
+whereat = { path = "/home/lilith/work/whereat", default-features = false }
 
 [dev-dependencies]
 imgref = "1.12"
