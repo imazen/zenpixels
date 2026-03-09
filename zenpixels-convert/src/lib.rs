@@ -391,6 +391,8 @@ pub(crate) mod negotiate;
 
 pub mod adapt;
 pub mod cms;
+#[cfg(feature = "cms-moxcms")]
+pub mod cms_moxcms;
 pub mod converter;
 pub mod ext;
 pub mod gamut;
@@ -416,9 +418,9 @@ pub use pipeline::{
 };
 
 // Re-export extension traits.
-pub use ext::{ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
 #[cfg(feature = "rgb")]
 pub use ext::PixelBufferConvertTypedExt;
+pub use ext::{ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
 
 // Re-export gamut conversion utilities.
 pub use gamut::{

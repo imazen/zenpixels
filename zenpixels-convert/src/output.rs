@@ -217,7 +217,7 @@ pub fn finalize_for_output<C: ColorManagement>(
         && let Some(dst_icc) = &metadata.icc
     {
         let transform = cms
-            .build_transform(src_icc, dst_icc)
+            .build_transform_for_format(src_icc, dst_icc, source_desc.format, pixel_format)
             .map_err(|e| whereat::at!(ConvertError::CmsError(alloc::format!("{e:?}"))))?;
 
         let src_slice = buffer.as_slice();

@@ -1,0 +1,278 @@
+//! CMS backend using [moxcms](https://crates.io/crates/moxcms).
+//!
+//! Provides a concrete [`ColorManagement`] implementation backed by the moxcms
+//! ICC profile engine. Requires the `cms-moxcms` feature.
+//!
+//! # Supported formats
+//!
+//! Transforms are created at the native bit depth (u8, u16, or f32) and layout
+//! (RGB, RGBA, Gray, GrayAlpha) of the source and destination pixel formats.
+//! Formats without a direct moxcms layout mapping (Bgra, Rgbx, Bgrx, Oklab)
+//! fall back to u8 RGB.
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use zenpixels_convert::cms_moxcms::MoxCms;
+//! use zenpixels_convert::output::{finalize_for_output, OutputProfile};
+//!
+//! let ready = finalize_for_output(
+//!     &buffer, &origin,
+//!     OutputProfile::Icc(dst_icc.into()),
+//!     PixelFormat::Rgb8,
+//!     &MoxCms,
+//! )?;
+//! ```
+
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::sync::Arc;
+
+use moxcms::{ColorProfile, Layout, TransformExecutor, TransformOptions};
+
+use crate::cms::{ColorManagement, RowTransform};
+use crate::{ChannelType, Cicp, PixelFormat};
+
+/// CMS backend using moxcms.
+///
+/// Stateless — all configuration comes from the ICC profiles and pixel formats
+/// passed to each method call. Safe to share across threads.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MoxCms;
+
+/// Map a [`PixelFormat`] to the corresponding moxcms [`Layout`].
+///
+/// Returns `None` for formats that don't have a direct moxcms mapping
+/// (Bgra, Rgbx, Bgrx, Oklab variants).
+fn pixel_format_to_layout(format: PixelFormat) -> Option<Layout> {
+    match format {
+        PixelFormat::Rgb8 | PixelFormat::Rgb16 | PixelFormat::RgbF32 => Some(Layout::Rgb),
+        PixelFormat::Rgba8 | PixelFormat::Rgba16 | PixelFormat::RgbaF32 => Some(Layout::Rgba),
+        PixelFormat::Gray8 | PixelFormat::Gray16 | PixelFormat::GrayF32 => Some(Layout::Gray),
+        PixelFormat::GrayA8 | PixelFormat::GrayA16 | PixelFormat::GrayAF32 => {
+            Some(Layout::GrayAlpha)
+        }
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RowTransform wrapper
+// ---------------------------------------------------------------------------
+
+/// Internal wrapper around moxcms transform executors at different bit depths.
+enum MoxTransformInner {
+    U8(Arc<dyn TransformExecutor<u8> + Send + Sync>),
+    U16(Arc<dyn TransformExecutor<u16> + Send + Sync>),
+    F32(Arc<dyn TransformExecutor<f32> + Send + Sync>),
+}
+
+struct MoxRowTransform {
+    inner: MoxTransformInner,
+}
+
+impl RowTransform for MoxRowTransform {
+    fn transform_row(&self, src: &[u8], dst: &mut [u8], _width: u32) {
+        match &self.inner {
+            MoxTransformInner::U8(xform) => {
+                xform
+                    .transform(src, dst)
+                    .expect("moxcms u8 transform: buffer size mismatch");
+            }
+            MoxTransformInner::U16(xform) => {
+                let src_u16: &[u16] = bytemuck::cast_slice(src);
+                let dst_u16: &mut [u16] = bytemuck::cast_slice_mut(dst);
+                xform
+                    .transform(src_u16, dst_u16)
+                    .expect("moxcms u16 transform: buffer size mismatch");
+            }
+            MoxTransformInner::F32(xform) => {
+                let src_f32: &[f32] = bytemuck::cast_slice(src);
+                let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
+                xform
+                    .transform(src_f32, dst_f32)
+                    .expect("moxcms f32 transform: buffer size mismatch");
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ColorManagement implementation
+// ---------------------------------------------------------------------------
+
+impl ColorManagement for MoxCms {
+    type Error = MoxCmsError;
+
+    fn build_transform(
+        &self,
+        src_icc: &[u8],
+        dst_icc: &[u8],
+    ) -> Result<Box<dyn RowTransform>, Self::Error> {
+        // Default: u8 RGB, which covers the common JPEG/PNG/WebP case.
+        self.build_transform_for_format(src_icc, dst_icc, PixelFormat::Rgb8, PixelFormat::Rgb8)
+    }
+
+    fn build_transform_for_format(
+        &self,
+        src_icc: &[u8],
+        dst_icc: &[u8],
+        src_format: PixelFormat,
+        dst_format: PixelFormat,
+    ) -> Result<Box<dyn RowTransform>, Self::Error> {
+        let src_profile = ColorProfile::new_from_slice(src_icc)
+            .map_err(|e| MoxCmsError(format!("failed to parse source ICC profile: {e}")))?;
+        let dst_profile = ColorProfile::new_from_slice(dst_icc)
+            .map_err(|e| MoxCmsError(format!("failed to parse destination ICC profile: {e}")))?;
+
+        let src_layout = pixel_format_to_layout(src_format).unwrap_or(Layout::Rgb);
+        let dst_layout = pixel_format_to_layout(dst_format).unwrap_or(Layout::Rgb);
+        let opts = TransformOptions::default();
+
+        // Pick the narrower of the two channel types to avoid unnecessary
+        // precision loss, but always use the source depth when both differ
+        // (the CMS handles the depth conversion internally).
+        let depth = src_format.channel_type();
+
+        let inner = match depth {
+            ChannelType::U8 => {
+                let xform = src_profile
+                    .create_transform_8bit(src_layout, &dst_profile, dst_layout, opts)
+                    .map_err(|e| MoxCmsError(format!("failed to create u8 transform: {e}")))?;
+                MoxTransformInner::U8(xform)
+            }
+            ChannelType::U16 | ChannelType::F16 => {
+                let xform = src_profile
+                    .create_transform_16bit(src_layout, &dst_profile, dst_layout, opts)
+                    .map_err(|e| MoxCmsError(format!("failed to create u16 transform: {e}")))?;
+                MoxTransformInner::U16(xform)
+            }
+            ChannelType::F32 | _ => {
+                let xform = src_profile
+                    .create_transform_f32(src_layout, &dst_profile, dst_layout, opts)
+                    .map_err(|e| MoxCmsError(format!("failed to create f32 transform: {e}")))?;
+                MoxTransformInner::F32(xform)
+            }
+        };
+
+        Ok(Box::new(MoxRowTransform { inner }))
+    }
+
+    fn identify_profile(&self, icc: &[u8]) -> Option<Cicp> {
+        let profile = ColorProfile::new_from_slice(icc).ok()?;
+
+        // If the profile has embedded CICP metadata, use it directly.
+        if let Some(cicp) = &profile.cicp {
+            return Some(Cicp::new(
+                cicp.color_primaries as u8,
+                cicp.transfer_characteristics as u8,
+                cicp.matrix_coefficients as u8,
+                cicp.full_range,
+            ));
+        }
+
+        // Fall back to comparing colorant matrices against known profiles.
+        identify_by_colorants(&profile)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Profile identification by colorant comparison
+// ---------------------------------------------------------------------------
+
+/// Compare XYZ colorants to identify well-known profiles.
+///
+/// Checks the profile's red/green/blue colorants and white point against
+/// sRGB (BT.709), Display P3, and BT.2020. Tolerance is 0.002 in XYZ,
+/// which is tight enough to distinguish these gamuts while tolerating
+/// normal ICC profile rounding.
+fn identify_by_colorants(profile: &ColorProfile) -> Option<Cicp> {
+    // Known colorant matrices (XYZ, D65 white point, row-major).
+    // Values from ICC specification and ITU-R standards.
+    struct KnownProfile {
+        primaries_code: u8,
+        rx: f64,
+        ry: f64,
+        gx: f64,
+        gy: f64,
+        bx: f64,
+        by: f64,
+    }
+
+    const KNOWN: &[KnownProfile] = &[
+        // sRGB / BT.709
+        KnownProfile {
+            primaries_code: 1,
+            rx: 0.4124,
+            ry: 0.2126,
+            gx: 0.3576,
+            gy: 0.7152,
+            bx: 0.1805,
+            by: 0.0722,
+        },
+        // Display P3
+        KnownProfile {
+            primaries_code: 12,
+            rx: 0.4866,
+            ry: 0.2290,
+            gx: 0.2657,
+            gy: 0.6917,
+            bx: 0.1982,
+            by: 0.0793,
+        },
+        // BT.2020
+        KnownProfile {
+            primaries_code: 9,
+            rx: 0.6370,
+            ry: 0.2627,
+            gx: 0.1446,
+            gy: 0.6780,
+            bx: 0.1689,
+            by: 0.0593,
+        },
+    ];
+
+    let r = &profile.red_colorant;
+    let g = &profile.green_colorant;
+    let b = &profile.blue_colorant;
+
+    const TOL: f64 = 0.002;
+
+    for known in KNOWN {
+        let matches = (r.x - known.rx).abs() < TOL
+            && (r.y - known.ry).abs() < TOL
+            && (g.x - known.gx).abs() < TOL
+            && (g.y - known.gy).abs() < TOL
+            && (b.x - known.bx).abs() < TOL
+            && (b.y - known.by).abs() < TOL;
+
+        if matches {
+            // For sRGB, use transfer characteristic 13 (sRGB).
+            // For others, use 1 (BT.709) as a safe default since we
+            // can't reliably identify the TRC from colorants alone.
+            let transfer = if known.primaries_code == 1 { 13 } else { 1 };
+            return Some(Cicp::new(
+                known.primaries_code,
+                transfer,
+                0, // Identity (RGB)
+                true,
+            ));
+        }
+    }
+
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Error type
+// ---------------------------------------------------------------------------
+
+/// Error from the moxcms CMS backend.
+#[derive(Debug, Clone)]
+pub struct MoxCmsError(pub String);
+
+impl core::fmt::Display for MoxCmsError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(&self.0)
+    }
+}

@@ -68,6 +68,7 @@
 //! `build_transform` always returns an error. This satisfies the type
 //! system while making it clear that ICC transforms are unsupported.
 
+use crate::PixelFormat;
 use alloc::boxed::Box;
 
 /// Row-level color transform produced by a [`ColorManagement`] implementation.
@@ -100,11 +101,35 @@ pub trait ColorManagement {
     ///
     /// Returns a [`RowTransform`] that converts pixel rows from the
     /// source profile's color space to the destination profile's.
+    ///
+    /// This method assumes u8 RGB pixel data. For format-aware transforms
+    /// that match the actual source/destination bit depth and layout, use
+    /// [`build_transform_for_format`](Self::build_transform_for_format).
     fn build_transform(
         &self,
         src_icc: &[u8],
         dst_icc: &[u8],
     ) -> Result<Box<dyn RowTransform>, Self::Error>;
+
+    /// Build a format-aware row-level transform between two ICC profiles.
+    ///
+    /// Like [`build_transform`](Self::build_transform), but the CMS backend
+    /// can use the pixel format information to create a transform at the
+    /// native bit depth (u8, u16, or f32) and layout (RGB, RGBA, Gray, etc.),
+    /// avoiding unnecessary depth conversions.
+    ///
+    /// The default implementation ignores the format parameters and delegates
+    /// to [`build_transform`](Self::build_transform).
+    fn build_transform_for_format(
+        &self,
+        src_icc: &[u8],
+        dst_icc: &[u8],
+        src_format: PixelFormat,
+        dst_format: PixelFormat,
+    ) -> Result<Box<dyn RowTransform>, Self::Error> {
+        let _ = (src_format, dst_format);
+        self.build_transform(src_icc, dst_icc)
+    }
 
     /// Identify whether an ICC profile matches a known CICP combination.
     ///
