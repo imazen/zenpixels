@@ -84,6 +84,14 @@ pub(crate) enum ConvertStep {
     HlgF32ToLinearF32,
     /// Linear f32 → HLG f32 [0,1] (OETF, no depth change).
     LinearF32ToHlgF32,
+    /// sRGB f32 [0,1] → linear f32 (EOTF, no depth change).
+    SrgbF32ToLinearF32,
+    /// Linear f32 → sRGB f32 [0,1] (OETF, no depth change).
+    LinearF32ToSrgbF32,
+    /// BT.709 f32 [0,1] → linear f32 (EOTF, no depth change).
+    Bt709F32ToLinearF32,
+    /// Linear f32 → BT.709 f32 [0,1] (OETF, no depth change).
+    LinearF32ToBt709F32,
     /// Straight → Premultiplied alpha.
     StraightToPremul,
     /// Premultiplied → Straight alpha.
@@ -450,13 +458,60 @@ fn depth_steps(
                 ConvertStep::HlgF32ToLinearF32,
                 ConvertStep::LinearF32ToPqF32,
             ]),
-            // sRGB ↔ Linear are already handled.
-            (TransferFunction::Srgb | TransferFunction::Bt709, TransferFunction::Linear)
-            | (TransferFunction::Linear, TransferFunction::Srgb | TransferFunction::Bt709) => {
-                // F32 sRGB ↔ Linear: no dedicated kernel yet, treat as identity.
-                // (The sRGB kernels only handle U8 ↔ F32 transitions.)
-                Ok(Vec::new())
+            (TransferFunction::Srgb, TransferFunction::Linear) => {
+                Ok(vec![ConvertStep::SrgbF32ToLinearF32])
             }
+            (TransferFunction::Linear, TransferFunction::Srgb) => {
+                Ok(vec![ConvertStep::LinearF32ToSrgbF32])
+            }
+            (TransferFunction::Bt709, TransferFunction::Linear) => {
+                Ok(vec![ConvertStep::Bt709F32ToLinearF32])
+            }
+            (TransferFunction::Linear, TransferFunction::Bt709) => {
+                Ok(vec![ConvertStep::LinearF32ToBt709F32])
+            }
+            // sRGB ↔ BT.709: go through linear.
+            (TransferFunction::Srgb, TransferFunction::Bt709) => Ok(vec![
+                ConvertStep::SrgbF32ToLinearF32,
+                ConvertStep::LinearF32ToBt709F32,
+            ]),
+            (TransferFunction::Bt709, TransferFunction::Srgb) => Ok(vec![
+                ConvertStep::Bt709F32ToLinearF32,
+                ConvertStep::LinearF32ToSrgbF32,
+            ]),
+            // sRGB/BT.709 ↔ PQ/HLG: go through linear.
+            (TransferFunction::Srgb, TransferFunction::Pq) => Ok(vec![
+                ConvertStep::SrgbF32ToLinearF32,
+                ConvertStep::LinearF32ToPqF32,
+            ]),
+            (TransferFunction::Srgb, TransferFunction::Hlg) => Ok(vec![
+                ConvertStep::SrgbF32ToLinearF32,
+                ConvertStep::LinearF32ToHlgF32,
+            ]),
+            (TransferFunction::Pq, TransferFunction::Srgb) => Ok(vec![
+                ConvertStep::PqF32ToLinearF32,
+                ConvertStep::LinearF32ToSrgbF32,
+            ]),
+            (TransferFunction::Hlg, TransferFunction::Srgb) => Ok(vec![
+                ConvertStep::HlgF32ToLinearF32,
+                ConvertStep::LinearF32ToSrgbF32,
+            ]),
+            (TransferFunction::Bt709, TransferFunction::Pq) => Ok(vec![
+                ConvertStep::Bt709F32ToLinearF32,
+                ConvertStep::LinearF32ToPqF32,
+            ]),
+            (TransferFunction::Bt709, TransferFunction::Hlg) => Ok(vec![
+                ConvertStep::Bt709F32ToLinearF32,
+                ConvertStep::LinearF32ToHlgF32,
+            ]),
+            (TransferFunction::Pq, TransferFunction::Bt709) => Ok(vec![
+                ConvertStep::PqF32ToLinearF32,
+                ConvertStep::LinearF32ToBt709F32,
+            ]),
+            (TransferFunction::Hlg, TransferFunction::Bt709) => Ok(vec![
+                ConvertStep::HlgF32ToLinearF32,
+                ConvertStep::LinearF32ToBt709F32,
+            ]),
             _ => Ok(Vec::new()),
         };
     }
@@ -652,7 +707,9 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
         | ConvertStep::PqU16ToLinearF32
         | ConvertStep::HlgU16ToLinearF32
         | ConvertStep::PqF32ToLinearF32
-        | ConvertStep::HlgF32ToLinearF32 => PixelDescriptor::new(
+        | ConvertStep::HlgF32ToLinearF32
+        | ConvertStep::SrgbF32ToLinearF32
+        | ConvertStep::Bt709F32ToLinearF32 => PixelDescriptor::new(
             ChannelType::F32,
             current.layout(),
             current.alpha(),
@@ -691,6 +748,18 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
             current.layout(),
             current.alpha(),
             TransferFunction::Hlg,
+        ),
+        ConvertStep::LinearF32ToSrgbF32 => PixelDescriptor::new(
+            ChannelType::F32,
+            current.layout(),
+            current.alpha(),
+            TransferFunction::Srgb,
+        ),
+        ConvertStep::LinearF32ToBt709F32 => PixelDescriptor::new(
+            ChannelType::F32,
+            current.layout(),
+            current.alpha(),
+            TransferFunction::Bt709,
         ),
         ConvertStep::StraightToPremul => PixelDescriptor::new(
             current.channel_type(),
@@ -858,6 +927,22 @@ fn apply_step_u8(
 
         ConvertStep::LinearF32ToHlgF32 => {
             linear_f32_to_hlg_f32(src, dst, w, from.layout().channels());
+        }
+
+        ConvertStep::SrgbF32ToLinearF32 => {
+            srgb_f32_to_linear_f32(src, dst, w, from.layout().channels());
+        }
+
+        ConvertStep::LinearF32ToSrgbF32 => {
+            linear_f32_to_srgb_f32(src, dst, w, from.layout().channels());
+        }
+
+        ConvertStep::Bt709F32ToLinearF32 => {
+            bt709_f32_to_linear_f32(src, dst, w, from.layout().channels());
+        }
+
+        ConvertStep::LinearF32ToBt709F32 => {
+            linear_f32_to_bt709_f32(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::StraightToPremul => {
@@ -1361,6 +1446,50 @@ fn linear_f32_to_hlg_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usi
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
     for i in 0..count {
         dstf[i] = hlg_oetf(srcf[i]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// sRGB / BT.709 F32 ↔ Linear F32 transfer function kernels
+// ---------------------------------------------------------------------------
+
+/// sRGB F32 → Linear F32 (EOTF, same depth).
+fn srgb_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    for i in 0..count {
+        dstf[i] = linear_srgb::precise::srgb_to_linear(srcf[i]);
+    }
+}
+
+/// Linear F32 → sRGB F32 (OETF, same depth).
+fn linear_f32_to_srgb_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    for i in 0..count {
+        dstf[i] = linear_srgb::precise::linear_to_srgb(srcf[i]);
+    }
+}
+
+/// BT.709 F32 → Linear F32 (EOTF, same depth).
+fn bt709_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    for i in 0..count {
+        dstf[i] = linear_srgb::tf::bt709_to_linear(srcf[i]);
+    }
+}
+
+/// Linear F32 → BT.709 F32 (OETF, same depth).
+fn linear_f32_to_bt709_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    for i in 0..count {
+        dstf[i] = linear_srgb::tf::linear_to_bt709(srcf[i]);
     }
 }
 

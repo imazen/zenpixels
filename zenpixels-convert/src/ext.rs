@@ -126,6 +126,27 @@ pub trait PixelBufferConvertExt {
 
     /// Narrow to U8 depth (lossy, rounded). **Allocates** a new `PixelBuffer`.
     fn try_narrow_to_u8(&self) -> Result<PixelBuffer, At<crate::ConvertError>>;
+
+    /// Convert to linear-light F32, preserving channel layout and primaries.
+    ///
+    /// This is the EOTF step of a scene-referred pipeline: decoded pixels
+    /// (sRGB, BT.709, PQ, HLG) are converted to linear light for processing.
+    ///
+    /// **Allocates** a new `PixelBuffer`.
+    fn linearize(&self) -> Result<PixelBuffer, At<crate::ConvertError>>;
+
+    /// Apply a transfer function to a linear-light buffer.
+    ///
+    /// This is the OETF step: linear-light pixels are encoded for display
+    /// or storage. The buffer should be in F32 linear light; if it is in a
+    /// different transfer function, the conversion goes through linear as
+    /// an intermediate step.
+    ///
+    /// **Allocates** a new `PixelBuffer`.
+    fn delinearize(
+        &self,
+        transfer: TransferFunction,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>>;
 }
 
 /// Typed convenience conversions that return `PixelBuffer<P>`.
@@ -234,6 +255,28 @@ impl PixelBufferConvertExt for PixelBuffer {
             desc.alpha(),
             desc.transfer(),
         );
+        self.convert_to(target)
+    }
+
+    #[track_caller]
+    fn linearize(&self) -> Result<PixelBuffer, At<crate::ConvertError>> {
+        let desc = self.descriptor();
+        let target = PixelDescriptor::new_full(
+            ChannelType::F32,
+            desc.layout(),
+            desc.alpha(),
+            TransferFunction::Linear,
+            desc.primaries,
+        );
+        self.convert_to(target)
+    }
+
+    #[track_caller]
+    fn delinearize(
+        &self,
+        transfer: TransferFunction,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>> {
+        let target = self.descriptor().with_transfer(transfer);
         self.convert_to(target)
     }
 }
@@ -482,6 +525,107 @@ mod tests {
                 "channel {i}: expected {expected} (u8={expected_u8}*257), got {val}"
             );
         }
+    }
+
+    #[test]
+    fn linearize_srgb_to_linear_f32() {
+        let data = vec![128u8, 128, 128, 64, 64, 64];
+        let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+        let lin = buf.linearize().unwrap();
+        assert_eq!(lin.descriptor().transfer(), TransferFunction::Linear);
+        assert_eq!(
+            lin.descriptor().channel_type(),
+            zenpixels::descriptor::ChannelType::F32
+        );
+        assert_eq!(lin.descriptor().primaries, ColorPrimaries::Bt709);
+        // sRGB 128/255 ≈ 0.502 → linear ≈ 0.216
+        let slice = lin.as_slice();
+        let row = slice.row(0);
+        let r = f32::from_le_bytes([row[0], row[1], row[2], row[3]]);
+        assert!(
+            (r - 0.216).abs() < 0.01,
+            "sRGB 128 should linearize to ~0.216, got {r}"
+        );
+    }
+
+    #[test]
+    fn delinearize_linear_to_srgb() {
+        // Create linear F32 buffer
+        let linear_val: f32 = 0.216;
+        let mut data = vec![0u8; 24]; // 2 pixels × 3 channels × 4 bytes
+        for i in 0..6 {
+            let bytes = linear_val.to_le_bytes();
+            data[i * 4..i * 4 + 4].copy_from_slice(&bytes);
+        }
+        let buf =
+            PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGBF32_LINEAR).unwrap();
+        let srgb = buf.delinearize(TransferFunction::Srgb).unwrap();
+        assert_eq!(srgb.descriptor().transfer(), TransferFunction::Srgb);
+        // Linear 0.216 → sRGB ≈ 0.502
+        let slice = srgb.as_slice();
+        let row = slice.row(0);
+        let r = f32::from_le_bytes([row[0], row[1], row[2], row[3]]);
+        assert!(
+            (r - 0.502).abs() < 0.01,
+            "linear 0.216 should delinearize to ~0.502, got {r}"
+        );
+    }
+
+    #[test]
+    fn linearize_delinearize_roundtrip() {
+        let data = vec![100u8, 150, 200, 50, 100, 150];
+        let buf = PixelBuffer::from_vec(data.clone(), 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+        let lin = buf.linearize().unwrap();
+        // Now delinearize back to sRGB F32
+        let back = lin.delinearize(TransferFunction::Srgb).unwrap();
+        // Values should round-trip within F32 precision
+        let slice = back.as_slice();
+        let row = slice.row(0);
+        let r = f32::from_le_bytes([row[0], row[1], row[2], row[3]]);
+        let expected = 100.0 / 255.0;
+        assert!(
+            (r - expected).abs() < 0.005,
+            "roundtrip pixel 0 R: expected ~{expected}, got {r}"
+        );
+    }
+
+    #[test]
+    fn linearize_preserves_alpha() {
+        let data = vec![100u8, 150, 200, 128, 50, 100, 150, 64];
+        let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let lin = buf.linearize().unwrap();
+        assert_eq!(
+            lin.descriptor().layout(),
+            zenpixels::descriptor::ChannelLayout::Rgba
+        );
+        assert!(lin.descriptor().alpha().is_some());
+    }
+
+    #[test]
+    fn linearize_preserves_primaries() {
+        let data = vec![100u8, 150, 200, 50, 100, 150];
+        let desc = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+        let buf = PixelBuffer::from_vec(data, 2, 1, desc).unwrap();
+        let lin = buf.linearize().unwrap();
+        assert_eq!(lin.descriptor().primaries, ColorPrimaries::DisplayP3);
+    }
+
+    #[test]
+    fn linearize_already_linear_is_identity() {
+        let val: f32 = 0.5;
+        let mut data = vec![0u8; 12]; // 1 pixel × 3 channels × 4 bytes
+        for i in 0..3 {
+            data[i * 4..i * 4 + 4].copy_from_slice(&val.to_le_bytes());
+        }
+        let buf = PixelBuffer::from_vec(data, 1, 1, PixelDescriptor::RGBF32_LINEAR).unwrap();
+        let lin = buf.linearize().unwrap();
+        let slice = lin.as_slice();
+        let row = slice.row(0);
+        let r = f32::from_le_bytes([row[0], row[1], row[2], row[3]]);
+        assert!(
+            (r - val).abs() < 1e-6,
+            "already-linear should be identity, got {r}"
+        );
     }
 
     #[test]
