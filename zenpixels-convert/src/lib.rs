@@ -416,9 +416,9 @@ pub use pipeline::{
 };
 
 // Re-export extension traits.
-#[cfg(feature = "imgref")]
-pub use ext::PixelBufferConvertExt;
-pub use ext::{ColorPrimariesExt, TransferFunctionExt};
+pub use ext::{ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
+#[cfg(feature = "rgb")]
+pub use ext::PixelBufferConvertTypedExt;
 
 // Re-export gamut conversion utilities.
 pub use gamut::{

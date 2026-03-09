@@ -176,7 +176,6 @@ fn xyz_matrices_invert_correctly() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[cfg(feature = "imgref")]
 fn convert_to_preserves_color_context() {
     use alloc::sync::Arc;
     use zenpixels_convert::{ColorContext, PixelBuffer};

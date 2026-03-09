@@ -183,8 +183,8 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | Feature | Default | What it enables |
 |---|---|---|
 | `std` | yes | Standard library |
-| `rgb` | | `Pixel` impls for `rgb` crate types |
-| `imgref` | | `ImgRef`/`ImgVec` conversions, `PixelBufferConvertExt` (implies `rgb`) |
+| `rgb` | | `Pixel` impls for `rgb` crate types, typed convenience methods (`to_rgb8()`, `to_rgba8()`, etc.) |
+| `imgref` | | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
 | `planar` | | Multi-plane image types |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
 

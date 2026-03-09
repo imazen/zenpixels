@@ -98,21 +98,13 @@ impl ColorPrimariesExt for ColorPrimaries {
 // PixelBufferConvertExt
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "imgref")]
 use alloc::sync::Arc;
-#[cfg(feature = "imgref")]
-use alloc::vec;
-#[cfg(feature = "imgref")]
 use whereat::{At, ResultAtExt};
-#[cfg(feature = "imgref")]
 use zenpixels::PixelDescriptor;
-#[cfg(feature = "imgref")]
-use zenpixels::buffer::{Pixel, PixelBuffer};
-#[cfg(feature = "imgref")]
+use zenpixels::buffer::PixelBuffer;
 use zenpixels::descriptor::{AlphaMode, ChannelLayout, ChannelType};
 
 /// Adds format conversion methods to type-erased [`PixelBuffer`].
-#[cfg(feature = "imgref")]
 pub trait PixelBufferConvertExt {
     /// Convert pixel data to a different layout and depth.
     ///
@@ -134,7 +126,13 @@ pub trait PixelBufferConvertExt {
 
     /// Narrow to U8 depth (lossy, rounded). **Allocates** a new `PixelBuffer`.
     fn try_narrow_to_u8(&self) -> Result<PixelBuffer, At<crate::ConvertError>>;
+}
 
+/// Typed convenience conversions that return `PixelBuffer<P>`.
+///
+/// Requires the `rgb` feature for the concrete pixel types.
+#[cfg(feature = "rgb")]
+pub trait PixelBufferConvertTypedExt: PixelBufferConvertExt {
     /// Convert to RGB8, allocating a new buffer.
     fn to_rgb8(&self) -> PixelBuffer<rgb::Rgb<u8>>;
 
@@ -148,7 +146,6 @@ pub trait PixelBufferConvertExt {
     fn to_bgra8(&self) -> PixelBuffer<rgb::alt::BGRA<u8>>;
 }
 
-#[cfg(feature = "imgref")]
 impl PixelBufferConvertExt for PixelBuffer {
     #[track_caller]
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>> {
@@ -239,7 +236,13 @@ impl PixelBufferConvertExt for PixelBuffer {
         );
         self.convert_to(target)
     }
+}
 
+#[cfg(feature = "rgb")]
+use zenpixels::buffer::Pixel;
+
+#[cfg(feature = "rgb")]
+impl PixelBufferConvertTypedExt for PixelBuffer {
     fn to_rgb8(&self) -> PixelBuffer<rgb::Rgb<u8>> {
         convert_to_typed(self, PixelDescriptor::RGB8_SRGB)
     }
@@ -258,7 +261,7 @@ impl PixelBufferConvertExt for PixelBuffer {
 }
 
 /// Internal: convert to any target descriptor, returning a typed buffer.
-#[cfg(feature = "imgref")]
+#[cfg(feature = "rgb")]
 fn convert_to_typed<Q: Pixel>(buf: &PixelBuffer, target: PixelDescriptor) -> PixelBuffer<Q> {
     let conv = crate::RowConverter::new(buf.descriptor(), target)
         .expect("RowConverter: no conversion path");
@@ -408,17 +411,9 @@ mod tests {
 
     // --- PixelBufferConvertExt tests ---
 
-    #[cfg(feature = "imgref")]
     use super::PixelBufferConvertExt;
 
-    #[cfg(feature = "imgref")]
-    use zenpixels::PixelDescriptor;
-
-    #[cfg(feature = "imgref")]
-    use zenpixels::buffer::PixelBuffer;
-
     #[test]
-    #[cfg(feature = "imgref")]
     fn convert_to_identity() {
         let data = vec![100u8, 150, 200, 50, 100, 150];
         let buf = PixelBuffer::from_vec(data.clone(), 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
@@ -430,7 +425,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "imgref")]
     fn convert_to_rgba8() {
         let data = vec![100u8, 150, 200, 50, 100, 150];
         let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
@@ -451,7 +445,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "imgref")]
     fn try_add_alpha_rgb() {
         let data = vec![100u8, 150, 200, 50, 100, 150];
         let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
@@ -468,7 +461,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "imgref")]
     fn try_widen_to_u16() {
         let data = vec![100u8, 150, 200, 50, 100, 150];
         let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
@@ -493,7 +485,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "imgref")]
     fn try_narrow_to_u8() {
         // Create RGB16 buffer with known values
         let values: [u16; 6] = [
@@ -527,7 +518,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "imgref")]
+    #[cfg(feature = "rgb")]
     fn to_rgb8() {
         // Start with RGBA8 buffer, convert to typed RGB8
         let data = vec![100u8, 150, 200, 255, 50, 100, 150, 255];
@@ -547,7 +538,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "imgref")]
+    #[cfg(feature = "rgb")]
     fn to_rgba8() {
         let data = vec![100u8, 150, 200, 50, 100, 150];
         let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
@@ -568,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "imgref")]
+    #[cfg(feature = "rgb")]
     fn to_gray8() {
         let data = vec![100u8, 150, 200, 50, 100, 150];
         let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
@@ -583,7 +574,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "imgref")]
+    #[cfg(feature = "rgb")]
     fn to_bgra8() {
         let data = vec![100u8, 150, 200, 50, 100, 150];
         let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
