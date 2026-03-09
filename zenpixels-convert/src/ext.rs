@@ -306,6 +306,7 @@ impl PixelBufferConvertTypedExt for PixelBuffer {
 /// Internal: convert to any target descriptor, returning a typed buffer.
 #[cfg(feature = "rgb")]
 fn convert_to_typed<Q: Pixel>(buf: &PixelBuffer, target: PixelDescriptor) -> PixelBuffer<Q> {
+    use alloc::vec;
     let conv = crate::RowConverter::new(buf.descriptor(), target)
         .expect("RowConverter: no conversion path");
     let dst_bpp = target.bytes_per_pixel();
