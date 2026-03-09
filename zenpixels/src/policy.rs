@@ -59,6 +59,24 @@ pub enum LumaCoefficients {
 
 /// Explicit options for pixel format conversion. All lossy
 /// operations require a policy choice — no silent defaults.
+///
+/// Construct via struct literal for full control, or use the convenience
+/// constructors and `with_*` builders for common patterns:
+///
+/// ```
+/// use zenpixels::{ConvertOptions, AlphaPolicy, DepthPolicy};
+///
+/// // Forbid all lossy operations (safe default)
+/// let strict = ConvertOptions::forbid_lossy();
+///
+/// // Allow common lossy operations with sensible defaults
+/// let permissive = ConvertOptions::permissive();
+///
+/// // Customize from a preset
+/// let custom = ConvertOptions::permissive()
+///     .with_alpha_policy(AlphaPolicy::CompositeOnto { r: 255, g: 255, b: 255 })
+///     .with_depth_policy(DepthPolicy::Truncate);
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ConvertOptions {
     /// How to expand grayscale to RGB.
@@ -70,6 +88,67 @@ pub struct ConvertOptions {
     /// Luma coefficients for RGB→Gray conversion. `None` means
     /// RGB→Gray is forbidden (returns `ConvertError::RgbToGray`).
     pub luma: Option<LumaCoefficients>,
+}
+
+impl ConvertOptions {
+    /// Forbid all lossy operations.
+    ///
+    /// - Alpha removal: forbidden (returns error)
+    /// - Depth reduction: forbidden (returns error)
+    /// - RGB→Gray: forbidden (returns error)
+    /// - Gray→RGB: broadcast (lossless)
+    ///
+    /// Use this as a starting point when you want to ensure no data loss,
+    /// then selectively relax with `with_*` methods.
+    pub const fn forbid_lossy() -> Self {
+        Self {
+            gray_expand: GrayExpand::Broadcast,
+            alpha_policy: AlphaPolicy::Forbid,
+            depth_policy: DepthPolicy::Forbid,
+            luma: None,
+        }
+    }
+
+    /// Allow common lossy operations with sensible defaults.
+    ///
+    /// - Alpha removal: discard only if all pixels are opaque
+    /// - Depth reduction: round to nearest
+    /// - RGB→Gray: BT.709 luma coefficients
+    /// - Gray→RGB: broadcast (lossless)
+    pub const fn permissive() -> Self {
+        Self {
+            gray_expand: GrayExpand::Broadcast,
+            alpha_policy: AlphaPolicy::DiscardIfOpaque,
+            depth_policy: DepthPolicy::Round,
+            luma: Some(LumaCoefficients::Bt709),
+        }
+    }
+
+    /// Set the alpha removal policy.
+    pub const fn with_alpha_policy(mut self, policy: AlphaPolicy) -> Self {
+        self.alpha_policy = policy;
+        self
+    }
+
+    /// Set the depth reduction policy.
+    pub const fn with_depth_policy(mut self, policy: DepthPolicy) -> Self {
+        self.depth_policy = policy;
+        self
+    }
+
+    /// Set the grayscale expansion method.
+    pub const fn with_gray_expand(mut self, expand: GrayExpand) -> Self {
+        self.gray_expand = expand;
+        self
+    }
+
+    /// Set the luma coefficients for RGB→Gray conversion.
+    ///
+    /// Pass `None` to forbid RGB→Gray conversion.
+    pub const fn with_luma(mut self, luma: Option<LumaCoefficients>) -> Self {
+        self.luma = luma;
+        self
+    }
 }
 
 #[cfg(test)]
