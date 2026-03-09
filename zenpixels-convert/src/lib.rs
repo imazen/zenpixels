@@ -395,14 +395,9 @@ pub mod ext;
 pub mod gamut;
 pub mod hdr;
 pub mod oklab;
-#[cfg(feature = "pipeline")]
-pub mod op_format;
 pub mod output;
 #[cfg(feature = "pipeline")]
-pub mod path;
-
-#[cfg(feature = "pipeline")]
-pub mod registry;
+pub mod pipeline;
 
 // Re-export key conversion types at crate root.
 pub use adapt::adapt_for_encode_explicit;
@@ -414,14 +409,10 @@ pub use negotiate::{
     conversion_cost, conversion_cost_with_provenance, ideal_format, negotiate,
 };
 #[cfg(feature = "pipeline")]
-pub use op_format::{OpCategory, OpRequirement};
-#[cfg(feature = "pipeline")]
-pub use path::{
-    ConversionPath, LossBucket, MatrixStats, PathEntry, QualityThreshold, generate_path_matrix,
-    matrix_stats, optimal_path,
+pub use pipeline::{
+    CodecFormats, ConversionPath, FormatEntry, LossBucket, MatrixStats, OpCategory, OpRequirement,
+    PathEntry, QualityThreshold, generate_path_matrix, matrix_stats, optimal_path,
 };
-#[cfg(feature = "pipeline")]
-pub use registry::{CodecFormats, FormatEntry};
 
 // Re-export extension traits.
 #[cfg(feature = "buffer")]

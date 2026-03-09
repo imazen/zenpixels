@@ -4,7 +4,7 @@
 //! Ensures format entries are consistent and that negotiation works correctly
 //! for every registered codec.
 
-use zenpixels_convert::registry::{self, ALL_CODECS};
+use zenpixels_convert::pipeline::registry::{self, ALL_CODECS};
 use zenpixels_convert::{ConvertIntent, PixelDescriptor, best_match};
 
 // ---------------------------------------------------------------------------
