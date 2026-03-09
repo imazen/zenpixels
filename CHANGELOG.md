@@ -1,8 +1,20 @@
 # Changelog
 
-## 0.1.0 — 2026-03-08
+## 0.1.1
 
-Initial release. Both `zenpixels` and `zenpixels-convert` at 0.1.0.
+### zenpixels
+
+- Add `PixelSlice::as_strided_bytes()` — zero-copy access to raw backing bytes including inter-row stride padding, for passthrough to GPU uploads, codec writers, and other APIs that accept a buffer + stride.
+- Add `PixelSliceMut::as_strided_bytes()` and `as_strided_bytes_mut()` — same for mutable slices.
+
+### zenpixels-convert
+
+- Make Oklab LMS/XYZ matrices public: `LMS_FROM_XYZ`, `XYZ_FROM_LMS`, `OKLAB_FROM_LMS_CBRT`, `LMS_CBRT_FROM_OKLAB`.
+- Make scalar Oklab functions public: `rgb_to_oklab()`, `oklab_to_rgb()`, `fast_cbrt()`.
+
+## 0.1.0
+
+Initial release.
 
 ### zenpixels (interchange types)
 
@@ -18,7 +30,6 @@ Initial release. Both `zenpixels` and `zenpixels-convert` at 0.1.0.
 - Phantom-typed `P: Pixel` for compile-time format safety, zero-cost `.erase()` / `.try_typed::<Q>()`
 - SIMD-aligned allocation via `try_new_simd_aligned()`
 - Row access: `row()`, `row_mut()`, `row_with_stride()`
-- Strided access: `as_strided_bytes()`, `as_strided_bytes_mut()` for zero-copy passthrough to GPU/codec APIs
 - Contiguous access: `as_contiguous_bytes()`, `contiguous_bytes()` (Cow)
 - Zero-copy views: `sub_rows()`, `crop_view()`, `crop_copy()`
 - `Rgbx` and `Bgrx` 32-bit SIMD-friendly padded pixel types
@@ -60,9 +71,6 @@ Initial release. Both `zenpixels` and `zenpixels-convert` at 0.1.0.
 
 **Oklab:**
 - Primaries-aware `rgb_to_lms_matrix()` / `lms_to_rgb_matrix()`
-- Scalar `rgb_to_oklab()` / `oklab_to_rgb()` functions
-- Public LMS/XYZ/Oklab matrices (`LMS_FROM_XYZ`, `XYZ_FROM_LMS`, `OKLAB_FROM_LMS_CBRT`, `LMS_CBRT_FROM_OKLAB`)
-- `fast_cbrt()` approximation
 
 **HDR:**
 - Reinhard and exposure tone mapping

@@ -1,6 +1,6 @@
 [package]
 name = "zenpixels-convert"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.93"
 license = "Apache-2.0 OR MIT"
@@ -20,13 +20,13 @@ planar = ["zenpixels/planar"]
 codec = ["buffer", "dep:enough"]
 
 [dependencies]
-zenpixels = { version = "0.1.0", path = "../zenpixels", default-features = false }
+zenpixels = { version = "0.1.1", path = "../zenpixels", default-features = false }
 linear-srgb = { version = "0.6", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 enough = { version = "0.4", optional = true }
 
 [dev-dependencies]
-zenpixels = { version = "0.1.0", path = "../zenpixels", features = ["buffer", "planar", "rgb", "imgref"] }
+zenpixels = { version = "0.1.1", path = "../zenpixels", features = ["buffer", "planar", "rgb", "imgref"] }
 half = "2"
 
