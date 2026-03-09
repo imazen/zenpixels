@@ -541,18 +541,30 @@ impl<'a, P> PixelSlice<'a, P> {
         }
     }
 
-    /// Zero-copy access to the raw backing bytes, including any stride padding.
+    /// Raw backing bytes including inter-row stride padding.
     ///
-    /// Unlike [`as_contiguous_bytes()`](Self::as_contiguous_bytes), this always
-    /// succeeds and includes inter-row padding bytes. The returned slice spans
-    /// from the first pixel of row 0 through the last pixel of the final row
-    /// (the final row contains no trailing padding).
+    /// Returns a `&[u8]` covering all rows with stride padding between
+    /// them. Includes trailing padding after the last row when the
+    /// backing buffer is large enough (e.g., from a full allocation),
+    /// but not for sub-row views where the last row may be trimmed.
     ///
-    /// This is useful for zero-copy strided passthrough to APIs that accept
-    /// a byte buffer plus a stride value (e.g. GPU uploads, codec writers).
+    /// Use with [`stride()`](Self::stride) for APIs that accept a byte
+    /// buffer plus a stride value (GPU uploads, codec writers, etc).
     #[inline]
     pub fn as_strided_bytes(&self) -> &'a [u8] {
-        self.data
+        if self.rows == 0 {
+            return &[];
+        }
+        // Use rows*stride if the backing buffer is large enough (includes
+        // trailing padding), otherwise trim the last row to width*bpp.
+        let full = self.rows as usize * self.stride;
+        if full <= self.data.len() {
+            &self.data[..full]
+        } else {
+            let bpp = self.descriptor.bytes_per_pixel();
+            let trimmed = (self.rows as usize - 1) * self.stride + self.width as usize * bpp;
+            &self.data[..trimmed]
+        }
     }
 
     /// Get the raw pixel bytes, copying only if stride padding exists.
