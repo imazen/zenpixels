@@ -41,6 +41,7 @@ pub mod policy;
 
 pub mod cicp;
 pub mod color;
+pub mod hdr;
 pub mod pixel_types;
 
 pub mod buffer;
@@ -64,6 +65,9 @@ pub use buffer::{Bgrx, BufferError, Pixel, PixelBuffer, PixelSlice, PixelSliceMu
 // Re-export color types at crate root.
 pub use cicp::Cicp;
 pub use color::{ColorContext, ColorOrigin, ColorProfileSource, ColorProvenance, NamedProfile};
+
+// Re-export HDR metadata types at crate root.
+pub use hdr::{ContentLightLevel, MasteringDisplay};
 
 // Re-export GrayAlpha pixel types at crate root.
 pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};

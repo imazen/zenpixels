@@ -50,11 +50,11 @@ impl Cicp {
         }
     }
 
-    /// sRGB color space: BT.709 primaries, sRGB transfer, BT.601 matrix, full range.
+    /// sRGB color space: BT.709 primaries, sRGB transfer, Identity (RGB) matrix, full range.
     pub const SRGB: Self = Self {
         color_primaries: 1,
         transfer_characteristics: 13,
-        matrix_coefficients: 6,
+        matrix_coefficients: 0,
         full_range: true,
     };
 
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn cicp_new() {
-        let c = Cicp::new(1, 13, 6, true);
+        let c = Cicp::new(1, 13, 0, true);
         assert_eq!(c, Cicp::SRGB);
     }
 
