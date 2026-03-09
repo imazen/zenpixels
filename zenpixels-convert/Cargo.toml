@@ -1,14 +1,14 @@
 [package]
 name = "zenpixels-convert"
-version = "0.1.1"
-edition = "2024"
-rust-version = "1.93"
-license = "Apache-2.0 OR MIT"
-description = "Transfer-function-aware pixel conversion, gamut mapping, and codec format negotiation for zenpixels"
-categories = ["multimedia::images"]
-keywords = ["image", "pixel", "conversion", "srgb", "codec"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 readme = "../README.md"
-repository = "https://github.com/imazen/zenpixels"
+repository.workspace = true
+categories.workspace = true
+description = "Transfer-function-aware pixel conversion, gamut mapping, and codec format negotiation for zenpixels"
+keywords = ["image", "pixel", "conversion", "srgb", "codec"]
 
 [features]
 default = ["std"]

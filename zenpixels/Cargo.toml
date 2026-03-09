@@ -1,14 +1,14 @@
 [package]
 name = "zenpixels"
-version = "0.1.1"
-edition = "2024"
-rust-version = "1.93"
-license = "Apache-2.0 OR MIT"
-description = "Pixel format interchange types for zen* codecs"
-categories = ["multimedia::images"]
-keywords = ["image", "pixel", "format", "descriptor", "codec"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 readme = "../README.md"
-repository = "https://github.com/imazen/zenpixels"
+repository.workspace = true
+categories.workspace = true
+description = "Pixel format interchange types for zen* codecs"
+keywords = ["image", "pixel", "format", "descriptor", "codec"]
 
 [features]
 default = ["std"]
