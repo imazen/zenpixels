@@ -3,7 +3,7 @@
 //! These types describe the format of pixel data: channel type, layout,
 //! alpha handling, transfer function, color primaries, and signal range.
 //!
-//! Standalone definitions — no dependency on zencodec-types.
+//! Standalone definitions — no dependency on zencodec.
 
 use core::fmt;
 

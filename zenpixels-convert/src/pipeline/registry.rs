@@ -1,7 +1,7 @@
 //! Codec format registry — static tables of what each codec can produce and consume.
 //!
 //! These tables are derived from the actual `supported_descriptors()` in each
-//! zen* codec's zencodec-types integration. Extended (internal-API-only) formats
+//! zen* codec's zencodec integration. Extended (internal-API-only) formats
 //! are listed separately where they exist.
 //!
 //! # How to register a codec
