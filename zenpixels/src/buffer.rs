@@ -954,6 +954,23 @@ impl<'a, P> PixelSliceMut<'a, P> {
         self
     }
 
+    /// Reborrow as an immutable [`PixelSlice`] (zero-copy).
+    ///
+    /// The returned slice borrows from `self`, so the mutable slice
+    /// cannot be used while the immutable reborrow is alive.
+    #[inline]
+    pub fn as_pixel_slice(&self) -> PixelSlice<'_, P> {
+        PixelSlice {
+            data: self.data,
+            width: self.width,
+            rows: self.rows,
+            stride: self.stride,
+            descriptor: self.descriptor,
+            color: self.color.clone(),
+            _pixel: PhantomData,
+        }
+    }
+
     /// Zero-copy access to the raw backing bytes, including any stride padding.
     ///
     /// See [`PixelSlice::as_strided_bytes()`] for details.
@@ -2349,6 +2366,25 @@ impl<'a, P: Pixel> From<PixelSliceMut<'a, P>> for PixelSliceMut<'a> {
 impl<P: Pixel> From<PixelBuffer<P>> for PixelBuffer {
     fn from(typed: PixelBuffer<P>) -> Self {
         typed.erase()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mutable -> Immutable conversions (zero-copy reborrow / move)
+// ---------------------------------------------------------------------------
+
+/// Consume a mutable pixel slice and produce an immutable one (zero-copy).
+impl<'a, P> From<PixelSliceMut<'a, P>> for PixelSlice<'a, P> {
+    fn from(mut_slice: PixelSliceMut<'a, P>) -> Self {
+        PixelSlice {
+            data: mut_slice.data,
+            width: mut_slice.width,
+            rows: mut_slice.rows,
+            stride: mut_slice.stride,
+            descriptor: mut_slice.descriptor,
+            color: mut_slice.color,
+            _pixel: PhantomData,
+        }
     }
 }
 
