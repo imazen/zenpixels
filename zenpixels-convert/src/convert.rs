@@ -1367,24 +1367,22 @@ fn linear_f32_to_pq_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usiz
     }
 }
 
-/// PQ F32 → Linear F32 (EOTF, same depth).
+/// PQ F32 → Linear F32 (EOTF, same depth). SIMD-dispatched.
 fn pq_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    for i in 0..count {
-        dstf[i] = pq_eotf(srcf[i]);
-    }
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::pq_to_linear_slice(&mut dstf[..count]);
 }
 
-/// Linear F32 → PQ F32 (OETF, same depth).
+/// Linear F32 → PQ F32 (OETF, same depth). SIMD-dispatched.
 fn linear_f32_to_pq_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    for i in 0..count {
-        dstf[i] = pq_oetf(srcf[i].max(0.0));
-    }
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::linear_to_pq_slice(&mut dstf[..count]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1429,48 +1427,44 @@ fn linear_f32_to_hlg_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usi
     }
 }
 
-/// HLG F32 → Linear F32 (EOTF, same depth).
+/// HLG F32 → Linear F32 (EOTF, same depth). SIMD-dispatched.
 fn hlg_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    for i in 0..count {
-        dstf[i] = hlg_eotf(srcf[i]);
-    }
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::hlg_to_linear_slice(&mut dstf[..count]);
 }
 
-/// Linear F32 → HLG F32 (OETF, same depth).
+/// Linear F32 → HLG F32 (OETF, same depth). SIMD-dispatched.
 fn linear_f32_to_hlg_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    for i in 0..count {
-        dstf[i] = hlg_oetf(srcf[i]);
-    }
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::linear_to_hlg_slice(&mut dstf[..count]);
 }
 
 // ---------------------------------------------------------------------------
 // sRGB / BT.709 F32 ↔ Linear F32 transfer function kernels
 // ---------------------------------------------------------------------------
 
-/// sRGB F32 → Linear F32 (EOTF, same depth).
+/// sRGB F32 → Linear F32 (EOTF, same depth). SIMD-dispatched.
 fn srgb_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    for i in 0..count {
-        dstf[i] = linear_srgb::precise::srgb_to_linear(srcf[i]);
-    }
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::srgb_to_linear_slice(&mut dstf[..count]);
 }
 
-/// Linear F32 → sRGB F32 (OETF, same depth).
+/// Linear F32 → sRGB F32 (OETF, same depth). SIMD-dispatched.
 fn linear_f32_to_srgb_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    for i in 0..count {
-        dstf[i] = linear_srgb::precise::linear_to_srgb(srcf[i]);
-    }
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::linear_to_srgb_slice(&mut dstf[..count]);
 }
 
 /// BT.709 F32 → Linear F32 (EOTF, same depth).
