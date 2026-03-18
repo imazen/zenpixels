@@ -74,7 +74,7 @@ use alloc::boxed::Box;
 /// Row-level color transform produced by a [`ColorManagement`] implementation.
 ///
 /// Applies an ICC-to-ICC color conversion to a row of pixel data.
-pub trait RowTransform {
+pub trait RowTransform: Send {
     /// Transform one row of pixels from source to destination color space.
     ///
     /// `src` and `dst` may be different lengths if the transform changes

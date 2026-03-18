@@ -40,6 +40,23 @@ impl RowConverter {
         Ok(Self { plan })
     }
 
+    /// Create a converter with explicit policy options.
+    ///
+    /// Like [`new`](Self::new) but validates [`ConvertOptions`] policies
+    /// (alpha removal, depth reduction, RGB→Gray) before creating the plan.
+    /// Returns a specific error if a forbidden operation would be required.
+    ///
+    /// [`ConvertOptions`]: crate::policy::ConvertOptions
+    #[track_caller]
+    pub fn new_explicit(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &crate::policy::ConvertOptions,
+    ) -> Result<Self, At<ConvertError>> {
+        let plan = ConvertPlan::new_explicit(from, to, options).at()?;
+        Ok(Self { plan })
+    }
+
     /// Create a converter from a pre-computed plan.
     pub fn from_plan(plan: ConvertPlan) -> Self {
         Self { plan }
