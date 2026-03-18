@@ -4,13 +4,13 @@
 //! path, and every cross-TF conversion for correctness, monotonicity,
 //! and roundtrip accuracy.
 
+use zenpixels::buffer::PixelBuffer;
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, Cicp, ColorPrimaries, NamedProfile, PixelDescriptor,
     PixelFormat, SignalRange, TransferFunction,
 };
-use zenpixels::buffer::PixelBuffer;
-use zenpixels_convert::ext::{PixelBufferConvertExt, TransferFunctionExt};
 use zenpixels_convert::RowConverter;
+use zenpixels_convert::ext::{PixelBufferConvertExt, TransferFunctionExt};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Section 1: CICP Code Point Mapping Exhaustiveness
@@ -78,7 +78,10 @@ fn transfer_function_cicp_bijection() {
     ] {
         let code = tf.to_cicp().unwrap();
         let back = TransferFunction::from_cicp(code).unwrap();
-        assert_eq!(back, tf, "to_cicp({tf:?})={code} → from_cicp({code})={back:?}");
+        assert_eq!(
+            back, tf,
+            "to_cicp({tf:?})={code} → from_cicp({code})={back:?}"
+        );
     }
 }
 
@@ -177,8 +180,16 @@ fn cicp_narrow_range_roundtrip() {
 /// Descriptors with Unknown transfer or primaries cannot create a CICP.
 #[test]
 fn from_descriptor_rejects_unknown() {
-    let unknown_tf = PixelDescriptor::new(ChannelType::U8, ChannelLayout::Rgb, None, TransferFunction::Unknown);
-    assert!(Cicp::from_descriptor(&unknown_tf).is_none(), "Unknown TF → None");
+    let unknown_tf = PixelDescriptor::new(
+        ChannelType::U8,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Unknown,
+    );
+    assert!(
+        Cicp::from_descriptor(&unknown_tf).is_none(),
+        "Unknown TF → None"
+    );
 
     let unknown_cp = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::Unknown);
     assert!(
@@ -271,7 +282,9 @@ fn cicp_name_functions_cover_all_listed_codes() {
     assert_eq!(Cicp::color_primaries_name(200), "Unknown");
 
     // Transfer characteristics: all codes in the match
-    let tc_codes = [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+    let tc_codes = [
+        0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+    ];
     for code in tc_codes {
         let name = Cicp::transfer_characteristics_name(code);
         assert_ne!(name, "Unknown", "TC code {code} should have a name");
@@ -372,7 +385,7 @@ fn scalar_linearize_delinearize_roundtrip() {
     let tfs = [
         (TransferFunction::Srgb, 1e-5),
         (TransferFunction::Bt709, 1e-5),
-        (TransferFunction::Pq, 5e-4),   // rational poly has lower precision
+        (TransferFunction::Pq, 5e-4), // rational poly has lower precision
         (TransferFunction::Hlg, 1e-4),
         (TransferFunction::Linear, 0.0),
     ];
@@ -459,17 +472,13 @@ fn srgb_is_nonlinear() {
 fn f32_converter(from_tf: TransferFunction, to_tf: TransferFunction) -> RowConverter {
     let from = PixelDescriptor::new(ChannelType::F32, ChannelLayout::Rgb, None, from_tf);
     let to = PixelDescriptor::new(ChannelType::F32, ChannelLayout::Rgb, None, to_tf);
-    RowConverter::new(from, to).unwrap_or_else(|e| {
-        panic!("Failed to create converter {from_tf:?}→{to_tf:?}: {e:?}")
-    })
+    RowConverter::new(from, to)
+        .unwrap_or_else(|e| panic!("Failed to create converter {from_tf:?}→{to_tf:?}: {e:?}"))
 }
 
 /// Helper: convert a single F32 RGB pixel through a RowConverter.
 fn convert_f32_pixel(conv: &RowConverter, r: f32, g: f32, b: f32) -> [f32; 3] {
-    let src: Vec<u8> = [r, g, b]
-        .iter()
-        .flat_map(|v| v.to_ne_bytes())
-        .collect();
+    let src: Vec<u8> = [r, g, b].iter().flat_map(|v| v.to_ne_bytes()).collect();
     let mut dst = vec![0u8; 12];
     conv.convert_row(&src, &mut dst, 1);
     let f: &[f32] = bytemuck::cast_slice(&dst);
@@ -491,8 +500,7 @@ fn all_f32_tf_pairs_create_converters() {
             if from_tf == to_tf {
                 continue;
             }
-            let from =
-                PixelDescriptor::new(ChannelType::F32, ChannelLayout::Rgb, None, from_tf);
+            let from = PixelDescriptor::new(ChannelType::F32, ChannelLayout::Rgb, None, from_tf);
             let to = PixelDescriptor::new(ChannelType::F32, ChannelLayout::Rgb, None, to_tf);
             assert!(
                 RowConverter::new(from, to).is_ok(),
@@ -621,10 +629,7 @@ fn black_preserved_all_tf_pairs() {
             let conv = f32_converter(from_tf, to_tf);
             let result = convert_f32_pixel(&conv, 0.0, 0.0, 0.0);
             for (ch, &v) in result.iter().enumerate() {
-                assert!(
-                    v.abs() < 1e-6,
-                    "{from_tf:?}→{to_tf:?} black ch{ch}: {v}"
-                );
+                assert!(v.abs() < 1e-6, "{from_tf:?}→{to_tf:?} black ch{ch}: {v}");
             }
         }
     }
@@ -768,10 +773,10 @@ fn bt709_f32_linear_exhaustive_roundtrip() {
 /// Helper: create a 4-pixel RGB8 buffer with known values.
 fn make_test_rgb8_buffer(tf: TransferFunction) -> PixelBuffer {
     let data = vec![
-        0, 0, 0,       // black
-        128, 128, 128,  // mid-gray
-        64, 128, 192,   // mixed
-        255, 255, 255,  // white
+        0, 0, 0, // black
+        128, 128, 128, // mid-gray
+        64, 128, 192, // mixed
+        255, 255, 255, // white
     ];
     let desc = PixelDescriptor::new(ChannelType::U8, ChannelLayout::Rgb, None, tf);
     PixelBuffer::from_vec(data, 4, 1, desc).unwrap()
@@ -780,19 +785,10 @@ fn make_test_rgb8_buffer(tf: TransferFunction) -> PixelBuffer {
 /// Helper: create a 4-pixel RGB F32 buffer with known linear values.
 fn make_test_rgbf32_buffer(tf: TransferFunction, primaries: ColorPrimaries) -> PixelBuffer {
     let values: Vec<f32> = vec![
-        0.0, 0.0, 0.0,
-        0.214, 0.214, 0.214,
-        0.05, 0.214, 0.5,
-        1.0, 1.0, 1.0,
+        0.0, 0.0, 0.0, 0.214, 0.214, 0.214, 0.05, 0.214, 0.5, 1.0, 1.0, 1.0,
     ];
     let data: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
-    let desc = PixelDescriptor::new_full(
-        ChannelType::F32,
-        ChannelLayout::Rgb,
-        None,
-        tf,
-        primaries,
-    );
+    let desc = PixelDescriptor::new_full(ChannelType::F32, ChannelLayout::Rgb, None, tf, primaries);
     PixelBuffer::from_vec(data, 4, 1, desc).unwrap()
 }
 
@@ -836,7 +832,10 @@ fn buffer_linearize_bt709_u8() {
     assert!(read_f32(&lin, 0).abs() < 1e-6);
     // Mid-gray → ~0.21
     let mid = read_f32(&lin, 12);
-    assert!(mid > 0.18 && mid < 0.25, "BT.709 mid-gray linearized: {mid}");
+    assert!(
+        mid > 0.18 && mid < 0.25,
+        "BT.709 mid-gray linearized: {mid}"
+    );
     // White → 1
     assert!((read_f32(&lin, 36) - 1.0).abs() < 1e-5);
 }
@@ -1007,7 +1006,12 @@ fn srgb_u8_f32_u8_roundtrip_all_values() {
 /// PQ U16 → Linear F32 → PQ U16 roundtrip: max drift ≤ 1.
 #[test]
 fn pq_u16_f32_u16_roundtrip_wide_range() {
-    let pq_u16 = PixelDescriptor::new(ChannelType::U16, ChannelLayout::Rgb, None, TransferFunction::Pq);
+    let pq_u16 = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Pq,
+    );
     let linear_f32 = PixelDescriptor::RGBF32_LINEAR;
 
     let to_linear = RowConverter::new(pq_u16, linear_f32).unwrap();
@@ -1037,16 +1041,18 @@ fn pq_u16_f32_u16_roundtrip_wide_range() {
         let drift = (orig as i32 - result as i32).unsigned_abs();
         max_drift = max_drift.max(drift);
     }
-    assert!(
-        max_drift <= 1,
-        "PQ U16 roundtrip max drift: {max_drift}"
-    );
+    assert!(max_drift <= 1, "PQ U16 roundtrip max drift: {max_drift}");
 }
 
 /// HLG U16 → Linear F32 → HLG U16 roundtrip: max drift ≤ 1.
 #[test]
 fn hlg_u16_f32_u16_roundtrip_wide_range() {
-    let hlg_u16 = PixelDescriptor::new(ChannelType::U16, ChannelLayout::Rgb, None, TransferFunction::Hlg);
+    let hlg_u16 = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Hlg,
+    );
     let linear_f32 = PixelDescriptor::RGBF32_LINEAR;
 
     let to_linear = RowConverter::new(hlg_u16, linear_f32).unwrap();
@@ -1075,16 +1081,18 @@ fn hlg_u16_f32_u16_roundtrip_wide_range() {
         let drift = (orig as i32 - result as i32).unsigned_abs();
         max_drift = max_drift.max(drift);
     }
-    assert!(
-        max_drift <= 1,
-        "HLG U16 roundtrip max drift: {max_drift}"
-    );
+    assert!(max_drift <= 1, "HLG U16 roundtrip max drift: {max_drift}");
 }
 
 /// PQ U16 → sRGB U8: HDR to SDR path produces reasonable output.
 #[test]
 fn pq_u16_to_srgb_u8_correctness() {
-    let pq_u16 = PixelDescriptor::new(ChannelType::U16, ChannelLayout::Rgb, None, TransferFunction::Pq);
+    let pq_u16 = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Pq,
+    );
     let srgb_u8 = PixelDescriptor::RGB8_SRGB;
     let conv = RowConverter::new(pq_u16, srgb_u8).unwrap();
 
@@ -1123,7 +1131,12 @@ fn pq_u16_to_srgb_u8_correctness() {
 /// HLG U16 → sRGB U8 path produces reasonable output.
 #[test]
 fn hlg_u16_to_srgb_u8_correctness() {
-    let hlg_u16 = PixelDescriptor::new(ChannelType::U16, ChannelLayout::Rgb, None, TransferFunction::Hlg);
+    let hlg_u16 = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Hlg,
+    );
     let srgb_u8 = PixelDescriptor::RGB8_SRGB;
     let conv = RowConverter::new(hlg_u16, srgb_u8).unwrap();
 

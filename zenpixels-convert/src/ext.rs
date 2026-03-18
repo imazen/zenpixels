@@ -558,8 +558,7 @@ mod tests {
             let bytes = linear_val.to_le_bytes();
             data[i * 4..i * 4 + 4].copy_from_slice(&bytes);
         }
-        let buf =
-            PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGBF32_LINEAR).unwrap();
+        let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGBF32_LINEAR).unwrap();
         let srgb = buf.delinearize(TransferFunction::Srgb).unwrap();
         assert_eq!(srgb.descriptor().transfer(), TransferFunction::Srgb);
         // Linear 0.216 → sRGB ≈ 0.502

@@ -29,9 +29,9 @@ extern crate alloc;
 
 use std::path::Path;
 
+use zenpixels_convert::PixelFormat;
 use zenpixels_convert::cms::ColorManagement;
 use zenpixels_convert::cms_moxcms::MoxCms;
-use zenpixels_convert::PixelFormat;
 
 // ---------------------------------------------------------------------------
 // Profile discovery
@@ -156,18 +156,26 @@ fn identify_known_profiles() {
         }
     }
 
-    eprintln!("  identified {}/{} profiles:", identified.len(), profiles.len());
+    eprintln!(
+        "  identified {}/{} profiles:",
+        identified.len(),
+        profiles.len()
+    );
     for (name, cicp) in &identified {
         eprintln!(
             "    {name}: primaries={}, transfer={}, matrix={}, full_range={}",
-            cicp.color_primaries, cicp.transfer_characteristics,
-            cicp.matrix_coefficients, cicp.full_range
+            cicp.color_primaries,
+            cicp.transfer_characteristics,
+            cicp.matrix_coefficients,
+            cicp.full_range
         );
     }
     eprintln!("  unknown: {}", unknown.join(", "));
 
     // sRGB and Rec709 should be identified (both BT.709 primaries).
-    let srgb_found = identified.iter().any(|(n, c)| *n == "sRGB" && c.color_primaries == 1);
+    let srgb_found = identified
+        .iter()
+        .any(|(n, c)| *n == "sRGB" && c.color_primaries == 1);
     assert!(srgb_found, "sRGB should be identified as BT.709 primaries");
 }
 
@@ -187,8 +195,11 @@ fn all_rgb_profile_pairs_create_transforms() {
         .filter(|(_, data)| is_parseable(data) && is_rgb_profile(data))
         .collect();
 
-    eprintln!("  testing {} RGB profiles ({} pairs)",
-        rgb_profiles.len(), rgb_profiles.len() * (rgb_profiles.len() - 1));
+    eprintln!(
+        "  testing {} RGB profiles ({} pairs)",
+        rgb_profiles.len(),
+        rgb_profiles.len() * (rgb_profiles.len() - 1)
+    );
 
     let mut ok = 0;
     let mut fail = 0;
@@ -251,7 +262,11 @@ fn white_black_preservation_all_pairs() {
             // White
             let mut dst = [0u8; 3];
             xform.transform_row(&[255, 255, 255], &mut dst, 1);
-            let w_err = dst.iter().map(|&v| (255i32 - v as i32).abs()).max().unwrap();
+            let w_err = dst
+                .iter()
+                .map(|&v| (255i32 - v as i32).abs())
+                .max()
+                .unwrap();
             if w_err > white_max_err {
                 white_max_err = w_err;
                 worst_white = format!("{src_name}→{dst_name}: {:?}", dst);
@@ -455,12 +470,16 @@ fn format_aware_transforms_real_profiles() {
 
     eprintln!("  sRGB→AdobeRGB mid-gray:");
     eprintln!("    u8:  {:?}", dst_u8);
-    eprintln!("    u16: {:?} (as u8: {:?})",
+    eprintln!(
+        "    u16: {:?} (as u8: {:?})",
         dst_u16,
-        dst_u16.map(|v| (v >> 8) as u8));
-    eprintln!("    f32: {:?} (as u8: {:?})",
+        dst_u16.map(|v| (v >> 8) as u8)
+    );
+    eprintln!(
+        "    f32: {:?} (as u8: {:?})",
         dst_f32,
-        dst_f32.map(|v| (v * 255.0 + 0.5) as u8));
+        dst_f32.map(|v| (v * 255.0 + 0.5) as u8)
+    );
 
     // Gray should be approximately preserved across all depths
     for ch in 0..3 {
@@ -552,12 +571,7 @@ fn multi_pixel_consistency() {
     let xform = cms.build_transform(srgb, adobe).unwrap();
 
     // Transform 4 pixels individually and as a row, compare results
-    let pixels = [
-        [255u8, 0, 0],
-        [0, 255, 0],
-        [0, 0, 255],
-        [128, 128, 128],
-    ];
+    let pixels = [[255u8, 0, 0], [0, 255, 0], [0, 0, 255], [128, 128, 128]];
 
     // Individual transforms
     let mut individual = [[0u8; 3]; 4];

@@ -25,9 +25,9 @@ extern crate alloc;
 use std::collections::HashMap;
 use std::path::Path;
 
+use zenpixels_convert::PixelFormat;
 use zenpixels_convert::cms::ColorManagement;
 use zenpixels_convert::cms_moxcms::MoxCms;
-use zenpixels_convert::PixelFormat;
 
 // ---------------------------------------------------------------------------
 // ICC extraction from image files
@@ -187,7 +187,11 @@ fn corpus_profile_count() {
     eprintln!("loaded {} unique ICC profiles from corpus", profiles.len());
     for (name, icc) in &profiles {
         let cs = icc_color_space(icc).map(|b| String::from_utf8_lossy(&b).to_string());
-        eprintln!("  {name:50} {:>7}B  cs={}", icc.len(), cs.unwrap_or_default());
+        eprintln!(
+            "  {name:50} {:>7}B  cs={}",
+            icc.len(),
+            cs.unwrap_or_default()
+        );
     }
 }
 
@@ -246,7 +250,10 @@ fn identify_corpus_profiles() {
 
     eprintln!("identified {} profiles:", identified.len());
     for (name, cicp) in &identified {
-        eprintln!("  {name}: primaries={}, transfer={}", cicp.color_primaries, cicp.transfer_characteristics);
+        eprintln!(
+            "  {name}: primaries={}, transfer={}",
+            cicp.color_primaries, cicp.transfer_characteristics
+        );
     }
     eprintln!("unidentified {} profiles:", unidentified.len());
     for name in &unidentified {
@@ -273,7 +280,11 @@ fn all_rgb_pairs_create_transforms() {
         .filter(|(_, icc)| is_rgb_profile(icc))
         .collect();
 
-    eprintln!("testing {} RGB profiles ({} pairs)", rgb_profiles.len(), rgb_profiles.len() * rgb_profiles.len());
+    eprintln!(
+        "testing {} RGB profiles ({} pairs)",
+        rgb_profiles.len(),
+        rgb_profiles.len() * rgb_profiles.len()
+    );
 
     let mut ok = 0;
     let mut fail = 0;
@@ -312,7 +323,10 @@ fn white_preservation_corpus() {
     let srgb_profile: Option<&Vec<u8>> = profiles
         .iter()
         .find(|(_, icc)| {
-            is_matrix_rgb_profile(icc) && cms.identify_profile(icc).is_some_and(|c| c.color_primaries == 1)
+            is_matrix_rgb_profile(icc)
+                && cms
+                    .identify_profile(icc)
+                    .is_some_and(|c| c.color_primaries == 1)
         })
         .map(|(_, icc)| icc);
 
@@ -348,7 +362,9 @@ fn white_preservation_corpus() {
         tested += 1;
     }
 
-    eprintln!("white preservation: tested {tested} profiles, max error {max_err} (worst: {worst_name})");
+    eprintln!(
+        "white preservation: tested {tested} profiles, max error {max_err} (worst: {worst_name})"
+    );
     assert!(
         max_err <= 10,
         "white preservation error too large: {max_err} on {worst_name}"
@@ -391,7 +407,9 @@ fn black_preservation_corpus() {
         tested += 1;
     }
 
-    eprintln!("black preservation: tested {tested} profiles, max error {max_err} (worst: {worst_name})");
+    eprintln!(
+        "black preservation: tested {tested} profiles, max error {max_err} (worst: {worst_name})"
+    );
     assert!(
         max_err <= 5,
         "black preservation error too large: {max_err} on {worst_name}"
@@ -430,10 +448,7 @@ fn format_aware_transforms_corpus() {
                     Ok(_) => ok += 1,
                     Err(e) => {
                         if fail < 5 {
-                            eprintln!(
-                                "  fail: {src_name} → {dst_name} ({:?}): {e:?}",
-                                fmt
-                            );
+                            eprintln!("  fail: {src_name} → {dst_name} ({:?}): {e:?}", fmt);
                         }
                         fail += 1;
                     }
@@ -443,10 +458,7 @@ fn format_aware_transforms_corpus() {
     }
 
     eprintln!("format-aware transforms: {ok} ok, {fail} fail");
-    assert!(
-        ok > 100,
-        "too few successful format-aware transforms: {ok}"
-    );
+    assert!(ok > 100, "too few successful format-aware transforms: {ok}");
 }
 
 #[test]
@@ -539,7 +551,10 @@ fn monitor_profile_transforms() {
                 dst[ch]
             );
         }
-        eprintln!("  {mon_name}: gray [128,128,128] → [{},{},{}]", dst[0], dst[1], dst[2]);
+        eprintln!(
+            "  {mon_name}: gray [128,128,128] → [{},{},{}]",
+            dst[0], dst[1], dst[2]
+        );
     }
 }
 
@@ -578,8 +593,7 @@ fn camera_profiles_transform_correctly() {
     let std_profile = profiles
         .iter()
         .find(|(name, icc)| {
-            is_rgb_profile(icc)
-                && (name.contains("adobe-rgb") || name.contains("display-p3"))
+            is_rgb_profile(icc) && (name.contains("adobe-rgb") || name.contains("display-p3"))
         })
         .map(|(_, icc)| icc);
 
@@ -613,8 +627,10 @@ fn camera_profiles_transform_correctly() {
         for (src, color_name) in &test_colors {
             let mut dst = [0u8; 3];
             xform.transform_row(src, &mut dst, 1);
-            eprintln!("  {name}: {color_name} [{},{},{}] → [{},{},{}]",
-                src[0], src[1], src[2], dst[0], dst[1], dst[2]);
+            eprintln!(
+                "  {name}: {color_name} [{},{},{}] → [{},{},{}]",
+                src[0], src[1], src[2], dst[0], dst[1], dst[2]
+            );
         }
     }
 }
@@ -654,7 +670,8 @@ fn self_transform_near_identity() {
                         let err = (dst[ch] as i32 - src[ch] as i32).abs();
                         if err > worst_err {
                             worst_err = err;
-                            worst_name = format!("{name} at ({r},{g},{b}) ch{ch}: {}→{}", src[ch], dst[ch]);
+                            worst_name =
+                                format!("{name} at ({r},{g},{b}) ch{ch}: {}→{}", src[ch], dst[ch]);
                         }
                     }
                 }
@@ -682,7 +699,10 @@ fn adobe_rgb_variant_consistency() {
         .collect();
 
     if adobe_profiles.len() < 2 {
-        eprintln!("need >= 2 Adobe RGB variants, found {}", adobe_profiles.len());
+        eprintln!(
+            "need >= 2 Adobe RGB variants, found {}",
+            adobe_profiles.len()
+        );
         return;
     }
 
@@ -704,9 +724,11 @@ fn adobe_rgb_variant_consistency() {
     let test_pixels: Vec<[u8; 3]> = (0..=255)
         .step_by(51)
         .flat_map(|r| {
-            (0..=255)
-                .step_by(51)
-                .flat_map(move |g| (0..=255).step_by(51).map(move |b| [r as u8, g as u8, b as u8]))
+            (0..=255).step_by(51).flat_map(move |g| {
+                (0..=255)
+                    .step_by(51)
+                    .map(move |b| [r as u8, g as u8, b as u8])
+            })
         })
         .collect();
 
