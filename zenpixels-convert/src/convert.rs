@@ -36,6 +36,11 @@ pub(crate) enum ConvertStep {
     AddAlpha,
     /// Drop alpha channel (4ch → 3ch).
     DropAlpha,
+    /// Composite onto solid matte color, then drop alpha (4ch → 3ch).
+    ///
+    /// `out[c] = (src[c] * alpha + matte[c] * (255 - alpha) + 127) / 255`
+    /// Applied at u8 depth. For other depths, values are scaled.
+    MatteComposite { r: u8, g: u8, b: u8 },
     /// Gray → RGB (replicate gray to all 3 channels).
     GrayToRgb,
     /// Gray → RGBA (replicate + opaque alpha).
@@ -255,7 +260,20 @@ impl ConvertPlan {
             return Err(whereat::at!(ConvertError::RgbToGray));
         }
 
-        Self::new(from, to).at()
+        let mut plan = Self::new(from, to).at()?;
+
+        // Replace DropAlpha with MatteComposite when policy is CompositeOnto.
+        if drops_alpha {
+            if let AlphaPolicy::CompositeOnto { r, g, b } = options.alpha_policy {
+                for step in &mut plan.steps {
+                    if matches!(step, ConvertStep::DropAlpha) {
+                        *step = ConvertStep::MatteComposite { r, g, b };
+                    }
+                }
+            }
+        }
+
+        Ok(plan)
     }
 
     /// True if conversion is a no-op.
@@ -653,7 +671,7 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
             Some(AlphaMode::Straight),
             current.transfer(),
         ),
-        ConvertStep::DropAlpha => PixelDescriptor::new(
+        ConvertStep::DropAlpha | ConvertStep::MatteComposite { .. } => PixelDescriptor::new(
             current.channel_type(),
             ChannelLayout::Rgb,
             None,
@@ -831,6 +849,10 @@ fn apply_step_u8(
 
         ConvertStep::DropAlpha => {
             drop_alpha(src, dst, w, from.channel_type());
+        }
+
+        ConvertStep::MatteComposite { r, g, b } => {
+            matte_composite(src, dst, w, from.channel_type(), r, g, b);
         }
 
         ConvertStep::GrayToRgb => {
@@ -1068,6 +1090,67 @@ fn drop_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
             }
         }
         _ => {}
+    }
+}
+
+/// Composite RGBA onto a solid matte color, producing RGB (4ch → 3ch).
+///
+/// Blending in sRGB space (matching browser/CSS behavior).
+fn matte_composite(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    ch_type: ChannelType,
+    mr: u8,
+    mg: u8,
+    mb: u8,
+) {
+    match ch_type {
+        ChannelType::U8 => {
+            for i in 0..width {
+                let si = i * 4;
+                let di = i * 3;
+                let a = src[si + 3] as u32;
+                let inv_a = 255 - a;
+                dst[di] = ((src[si] as u32 * a + mr as u32 * inv_a + 127) / 255) as u8;
+                dst[di + 1] = ((src[si + 1] as u32 * a + mg as u32 * inv_a + 127) / 255) as u8;
+                dst[di + 2] = ((src[si + 2] as u32 * a + mb as u32 * inv_a + 127) / 255) as u8;
+            }
+        }
+        ChannelType::U16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * 8]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 6]);
+            for i in 0..width {
+                let a = src16[i * 4 + 3] as u64;
+                let inv_a = 65535 - a;
+                let mr16 = mr as u64 * 257; // scale u8 matte to u16
+                let mg16 = mg as u64 * 257;
+                let mb16 = mb as u64 * 257;
+                dst16[i * 3] = ((src16[i * 4] as u64 * a + mr16 * inv_a + 32767) / 65535) as u16;
+                dst16[i * 3 + 1] =
+                    ((src16[i * 4 + 1] as u64 * a + mg16 * inv_a + 32767) / 65535) as u16;
+                dst16[i * 3 + 2] =
+                    ((src16[i * 4 + 2] as u64 * a + mb16 * inv_a + 32767) / 65535) as u16;
+            }
+        }
+        ChannelType::F32 => {
+            let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
+            let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
+            let mr_f = mr as f32 / 255.0;
+            let mg_f = mg as f32 / 255.0;
+            let mb_f = mb as f32 / 255.0;
+            for i in 0..width {
+                let a = srcf[i * 4 + 3].clamp(0.0, 1.0);
+                let inv_a = 1.0 - a;
+                dstf[i * 3] = srcf[i * 4] * a + mr_f * inv_a;
+                dstf[i * 3 + 1] = srcf[i * 4 + 1] * a + mg_f * inv_a;
+                dstf[i * 3 + 2] = srcf[i * 4 + 2] * a + mb_f * inv_a;
+            }
+        }
+        _ => {
+            // Fallback: just drop alpha
+            drop_alpha(src, dst, width, ch_type);
+        }
     }
 }
 
