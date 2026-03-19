@@ -125,6 +125,17 @@ impl RowConverter {
         self.plan.to()
     }
 
+    /// Compose two converters: apply `self` then `other` in a single pass.
+    ///
+    /// Adjacent inverse steps cancel (e.g., sRGB→linear then linear→sRGB
+    /// becomes identity). This eliminates intermediate buffers in zenpipe's
+    /// TransformSource when chaining format conversions.
+    ///
+    /// Returns `None` if the converters are incompatible (self.to != other.from).
+    pub fn compose(&self, other: &Self) -> Option<Self> {
+        self.plan.compose(&other.plan).map(Self::from_plan)
+    }
+
     /// Access the underlying conversion plan.
     pub fn plan(&self) -> &ConvertPlan {
         &self.plan
@@ -1263,5 +1274,66 @@ mod tests {
         .with_primaries(ColorPrimaries::Unknown);
         let result = RowConverter::new(from, to);
         assert!(result.is_err(), "Oklab with Unknown primaries should fail");
+    }
+
+    // -----------------------------------------------------------------------
+    // Compose
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn compose_roundtrip_cancels_to_identity() {
+        let a = RowConverter::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGBAF32_LINEAR)
+            .unwrap();
+        let b = RowConverter::new(PixelDescriptor::RGBAF32_LINEAR, PixelDescriptor::RGBA8_SRGB)
+            .unwrap();
+        let composed = a.compose(&b).unwrap();
+        assert!(composed.is_identity(), "sRGB→linear→sRGB should cancel");
+    }
+
+    #[test]
+    fn compose_chain_reduces_steps() {
+        // RGBA8 sRGB → RGBAF32 linear → RGBAF32 sRGB
+        // Steps: SrgbU8ToLinearF32 then LinearF32ToSrgbF32
+        // The sRGB→linear step from plan A and linear→sRGB from plan B
+        // should NOT cancel (different depth target), but composing avoids
+        // an intermediate allocation.
+        let a = RowConverter::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGBAF32_LINEAR)
+            .unwrap();
+        let srgb_f32 = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgba,
+            Some(AlphaMode::Straight),
+            TransferFunction::Srgb,
+        );
+        let b = RowConverter::new(PixelDescriptor::RGBAF32_LINEAR, srgb_f32).unwrap();
+        let composed = a.compose(&b).unwrap();
+        assert!(!composed.is_identity());
+        assert_eq!(composed.from_descriptor(), PixelDescriptor::RGBA8_SRGB);
+        assert_eq!(composed.to_descriptor(), srgb_f32);
+    }
+
+    #[test]
+    fn compose_incompatible_returns_none() {
+        let a = RowConverter::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGBAF32_LINEAR)
+            .unwrap();
+        let b = RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
+        assert!(a.compose(&b).is_none(), "RGBAF32_LINEAR != RGB8_SRGB");
+    }
+
+    #[test]
+    fn compose_premul_roundtrip_cancels() {
+        let premul = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgba,
+            Some(AlphaMode::Premultiplied),
+            TransferFunction::Linear,
+        );
+        let a = RowConverter::new(PixelDescriptor::RGBAF32_LINEAR, premul).unwrap();
+        let b = RowConverter::new(premul, PixelDescriptor::RGBAF32_LINEAR).unwrap();
+        let composed = a.compose(&b).unwrap();
+        assert!(
+            composed.is_identity(),
+            "straight→premul→straight should cancel"
+        );
     }
 }

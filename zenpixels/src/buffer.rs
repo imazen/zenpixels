@@ -20,7 +20,9 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
 
-use whereat::{At, ResultAtExt};
+use whereat::At;
+#[cfg(feature = "rgb")]
+use whereat::ResultAtExt;
 
 #[cfg(feature = "imgref")]
 use imgref::ImgRef;

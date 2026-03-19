@@ -263,17 +263,75 @@ impl ConvertPlan {
         let mut plan = Self::new(from, to).at()?;
 
         // Replace DropAlpha with MatteComposite when policy is CompositeOnto.
-        if drops_alpha {
-            if let AlphaPolicy::CompositeOnto { r, g, b } = options.alpha_policy {
-                for step in &mut plan.steps {
-                    if matches!(step, ConvertStep::DropAlpha) {
-                        *step = ConvertStep::MatteComposite { r, g, b };
-                    }
+        if drops_alpha && let AlphaPolicy::CompositeOnto { r, g, b } = options.alpha_policy {
+            for step in &mut plan.steps {
+                if matches!(step, ConvertStep::DropAlpha) {
+                    *step = ConvertStep::MatteComposite { r, g, b };
                 }
             }
         }
 
         Ok(plan)
+    }
+
+    /// Compose two plans into one: apply `self` then `other`.
+    ///
+    /// The composed plan executes both conversions in a single `convert_row`
+    /// call, using one intermediate buffer instead of two. Adjacent inverse
+    /// steps are cancelled (e.g., `SrgbU8ToLinearF32` + `LinearF32ToSrgbU8`
+    /// → identity).
+    ///
+    /// Returns `None` if `self.to` != `other.from` (incompatible plans).
+    pub fn compose(&self, other: &Self) -> Option<Self> {
+        if self.to != other.from {
+            return None;
+        }
+
+        let mut steps = self.steps.clone();
+
+        // Append other's steps, skipping its Identity if present.
+        for &step in &other.steps {
+            if step == ConvertStep::Identity {
+                continue;
+            }
+            steps.push(step);
+        }
+
+        // Peephole: cancel adjacent inverse pairs.
+        let mut changed = true;
+        while changed {
+            changed = false;
+            let mut i = 0;
+            while i + 1 < steps.len() {
+                if are_inverse(steps[i], steps[i + 1]) {
+                    steps.remove(i + 1);
+                    steps.remove(i);
+                    changed = true;
+                    // Don't advance — check the new adjacent pair.
+                } else {
+                    i += 1;
+                }
+            }
+        }
+
+        // If everything cancelled, produce identity.
+        if steps.is_empty() {
+            steps.push(ConvertStep::Identity);
+        }
+
+        // Remove leading/trailing Identity if there are real steps.
+        if steps.len() > 1 {
+            steps.retain(|s| *s != ConvertStep::Identity);
+            if steps.is_empty() {
+                steps.push(ConvertStep::Identity);
+            }
+        }
+
+        Some(Self {
+            from: self.from,
+            to: other.to,
+            steps,
+        })
     }
 
     /// True if conversion is a no-op.
@@ -646,6 +704,48 @@ pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
             current_desc = next_desc;
         }
     }
+}
+
+/// Check if two steps are inverses that cancel each other.
+fn are_inverse(a: ConvertStep, b: ConvertStep) -> bool {
+    matches!(
+        (a, b),
+        // Self-inverse
+        (ConvertStep::SwizzleBgraRgba, ConvertStep::SwizzleBgraRgba)
+        // Layout inverses (lossless for opaque data)
+        | (ConvertStep::AddAlpha, ConvertStep::DropAlpha)
+        // Transfer function f32↔f32 (exact inverses in float)
+        | (ConvertStep::SrgbF32ToLinearF32, ConvertStep::LinearF32ToSrgbF32)
+        | (ConvertStep::LinearF32ToSrgbF32, ConvertStep::SrgbF32ToLinearF32)
+        | (ConvertStep::PqF32ToLinearF32, ConvertStep::LinearF32ToPqF32)
+        | (ConvertStep::LinearF32ToPqF32, ConvertStep::PqF32ToLinearF32)
+        | (ConvertStep::HlgF32ToLinearF32, ConvertStep::LinearF32ToHlgF32)
+        | (ConvertStep::LinearF32ToHlgF32, ConvertStep::HlgF32ToLinearF32)
+        | (ConvertStep::Bt709F32ToLinearF32, ConvertStep::LinearF32ToBt709F32)
+        | (ConvertStep::LinearF32ToBt709F32, ConvertStep::Bt709F32ToLinearF32)
+        // Alpha mode (exact inverses in float)
+        | (ConvertStep::StraightToPremul, ConvertStep::PremulToStraight)
+        | (ConvertStep::PremulToStraight, ConvertStep::StraightToPremul)
+        // Color model (exact inverses in float)
+        | (ConvertStep::LinearRgbToOklab, ConvertStep::OklabToLinearRgb)
+        | (ConvertStep::OklabToLinearRgb, ConvertStep::LinearRgbToOklab)
+        | (ConvertStep::LinearRgbaToOklaba, ConvertStep::OklabaToLinearRgba)
+        | (ConvertStep::OklabaToLinearRgba, ConvertStep::LinearRgbaToOklaba)
+        // Cross-depth pairs (near-lossless for same depth class)
+        | (ConvertStep::NaiveU8ToF32, ConvertStep::NaiveF32ToU8)
+        | (ConvertStep::NaiveF32ToU8, ConvertStep::NaiveU8ToF32)
+        | (ConvertStep::U8ToU16, ConvertStep::U16ToU8)
+        | (ConvertStep::U16ToU8, ConvertStep::U8ToU16)
+        | (ConvertStep::U16ToF32, ConvertStep::F32ToU16)
+        | (ConvertStep::F32ToU16, ConvertStep::U16ToF32)
+        // Cross-depth with transfer (near-lossless roundtrip)
+        | (ConvertStep::SrgbU8ToLinearF32, ConvertStep::LinearF32ToSrgbU8)
+        | (ConvertStep::LinearF32ToSrgbU8, ConvertStep::SrgbU8ToLinearF32)
+        | (ConvertStep::PqU16ToLinearF32, ConvertStep::LinearF32ToPqU16)
+        | (ConvertStep::LinearF32ToPqU16, ConvertStep::PqU16ToLinearF32)
+        | (ConvertStep::HlgU16ToLinearF32, ConvertStep::LinearF32ToHlgU16)
+        | (ConvertStep::LinearF32ToHlgU16, ConvertStep::HlgU16ToLinearF32)
+    )
 }
 
 /// Compute the descriptor after applying one step.
