@@ -352,8 +352,8 @@ fn white_preservation_corpus() {
         let mut dst = [0u8; 3];
         xform.transform_row(&src, &mut dst, 1);
 
-        for ch in 0..3 {
-            let err = 255 - dst[ch];
+        for &val in &dst {
+            let err = 255 - val;
             if err > max_err {
                 max_err = err;
                 worst_name = name.clone();
@@ -398,9 +398,9 @@ fn black_preservation_corpus() {
         let mut dst = [0u8; 3];
         xform.transform_row(&src, &mut dst, 1);
 
-        for ch in 0..3 {
-            if dst[ch] > max_err {
-                max_err = dst[ch];
+        for &val in &dst {
+            if val > max_err {
+                max_err = val;
                 worst_name = name.clone();
             }
         }
@@ -542,13 +542,12 @@ fn monitor_profile_transforms() {
         let mut dst = [0u8; 3];
         xform.transform_row(&src, &mut dst, 1);
 
-        for ch in 0..3 {
-            let err = (dst[ch] as i32 - 128).abs();
+        for (ch, &val) in dst.iter().enumerate() {
+            let err = (val as i32 - 128).abs();
             assert!(
                 err <= 40,
-                "monitor profile {mon_name}: gray ch{ch} mapped to {}, error {err} \
+                "monitor profile {mon_name}: gray ch{ch} mapped to {val}, error {err} \
                  (source: {src_name})",
-                dst[ch]
             );
         }
         eprintln!(

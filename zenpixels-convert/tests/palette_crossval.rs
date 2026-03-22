@@ -132,9 +132,9 @@ fn oklab_roundtrip_u8() {
                 let g2 = (tf.delinearize(lg2) * 255.0 + 0.5) as i32;
                 let b2 = (tf.delinearize(lb2) * 255.0 + 0.5) as i32;
 
-                let err_r = (r2 - ri as i32).abs();
-                let err_g = (g2 - gi as i32).abs();
-                let err_b = (b2 - bi as i32).abs();
+                let err_r = (r2 - ri).abs();
+                let err_g = (g2 - gi).abs();
+                let err_b = (b2 - bi).abs();
                 let err = err_r.max(err_g).max(err_b);
                 max_err = max_err.max(err);
 

@@ -29,6 +29,7 @@ use zenpixels_convert::{
 /// - Tag table (4 tags × 12 bytes)
 /// - rXYZ, gXYZ, bXYZ tags (20 bytes each)
 /// - rTRC = gTRC = bTRC (shared curv tag, 12 bytes for single gamma)
+#[expect(clippy::too_many_arguments)]
 fn make_icc_v2(
     rx: f64,
     ry: f64,
@@ -284,9 +285,9 @@ fn gray_neutral_preserved() {
     let mut dst_row = [0u8; 3];
     xform.transform_row(&src_row, &mut dst_row, 1);
 
-    for ch in 0..3 {
-        let err = (dst_row[ch] as i32 - 128).abs();
-        assert!(err <= 3, "gray ch{ch}: expected ~128, got {}", dst_row[ch]);
+    for (ch, &val) in dst_row.iter().enumerate() {
+        let err = (val as i32 - 128).abs();
+        assert!(err <= 3, "gray ch{ch}: expected ~128, got {val}");
     }
 }
 
@@ -523,11 +524,10 @@ fn cms_white_preserved_across_profiles() {
         let mut dst = [0u8; 3];
         xform.transform_row(&src, &mut dst, 1);
 
-        for ch in 0..3 {
+        for (ch, &val) in dst.iter().enumerate() {
             assert!(
-                dst[ch] >= 250,
-                "white ch{ch} in {name}: expected ~255, got {}",
-                dst[ch]
+                val >= 250,
+                "white ch{ch} in {name}: expected ~255, got {val}",
             );
         }
     }
@@ -543,12 +543,8 @@ fn cms_black_preserved_across_profiles() {
         let mut dst = [0u8; 3];
         xform.transform_row(&src, &mut dst, 1);
 
-        for ch in 0..3 {
-            assert!(
-                dst[ch] <= 5,
-                "black ch{ch} in {name}: expected ~0, got {}",
-                dst[ch]
-            );
+        for (ch, &val) in dst.iter().enumerate() {
+            assert!(val <= 5, "black ch{ch} in {name}: expected ~0, got {val}",);
         }
     }
 }
