@@ -174,7 +174,7 @@ pub fn adapt_for_encode_with_intent<'a>(
     let target = best_match(descriptor, supported, intent)
         .ok_or_else(|| whereat::at!(ConvertError::EmptyFormatList))?;
 
-    let converter = RowConverter::new(descriptor, target).at()?;
+    let mut converter = RowConverter::new(descriptor, target).at()?;
 
     let src_bpp = descriptor.bytes_per_pixel();
     let dst_bpp = target.bytes_per_pixel();
@@ -216,7 +216,7 @@ pub fn convert_buffer(
         return Ok(src.to_vec());
     }
 
-    let converter = RowConverter::new(from, to).at()?;
+    let mut converter = RowConverter::new(from, to).at()?;
     let src_bpp = from.bytes_per_pixel();
     let dst_bpp = to.bytes_per_pixel();
     let src_stride = (width as usize) * src_bpp;
@@ -306,7 +306,7 @@ pub fn adapt_for_encode_explicit<'a>(
         }
     }
 
-    let converter = RowConverter::from_plan(plan);
+    let mut converter = RowConverter::from_plan(plan);
     let src_bpp = descriptor.bytes_per_pixel();
     let dst_bpp = target.bytes_per_pixel();
     let dst_stride = (width as usize) * dst_bpp;

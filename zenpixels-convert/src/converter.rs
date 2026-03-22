@@ -1,22 +1,24 @@
 //! Pre-computed row converter.
 //!
-//! [`RowConverter`] wraps a [`ConvertPlan`] and provides a streaming-friendly
-//! API for converting pixel rows without per-call allocation.
+//! [`RowConverter`] wraps a [`ConvertPlan`] with pre-allocated scratch
+//! buffers for zero-allocation-per-row streaming conversion.
 
-use crate::convert::{ConvertPlan, convert_row};
+use crate::convert::{ConvertPlan, ConvertScratch, convert_row_buffered};
 use crate::{ConvertError, PixelDescriptor};
 use whereat::{At, ResultAtExt};
 
-/// Pre-computed pixel format converter.
+/// Pre-computed pixel format converter with pre-allocated scratch buffers.
 ///
 /// Create once, then call [`convert_row`](Self::convert_row) for each row.
+/// Multi-step conversions reuse internal scratch buffers, eliminating
+/// per-row heap allocation.
 ///
 /// # Example
 ///
 /// ```rust,ignore
 /// use zenpixels::{RowConverter, PixelDescriptor};
 ///
-/// let conv = RowConverter::new(
+/// let mut conv = RowConverter::new(
 ///     PixelDescriptor::RGB8_SRGB,
 ///     PixelDescriptor::RGBA8_SRGB,
 /// )?;
@@ -25,9 +27,10 @@ use whereat::{At, ResultAtExt};
 ///     conv.convert_row(&src_row, &mut dst_row, width);
 /// }
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct RowConverter {
     plan: ConvertPlan,
+    scratch: ConvertScratch,
 }
 
 impl RowConverter {
@@ -37,7 +40,10 @@ impl RowConverter {
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
         let plan = ConvertPlan::new(from, to).at()?;
-        Ok(Self { plan })
+        Ok(Self {
+            plan,
+            scratch: ConvertScratch::new(),
+        })
     }
 
     /// Create a converter with explicit policy options.
@@ -54,21 +60,30 @@ impl RowConverter {
         options: &crate::policy::ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
         let plan = ConvertPlan::new_explicit(from, to, options).at()?;
-        Ok(Self { plan })
+        Ok(Self {
+            plan,
+            scratch: ConvertScratch::new(),
+        })
     }
 
     /// Create a converter from a pre-computed plan.
     pub fn from_plan(plan: ConvertPlan) -> Self {
-        Self { plan }
+        Self {
+            plan,
+            scratch: ConvertScratch::new(),
+        }
     }
 
     /// Convert one row of `width` pixels.
     ///
     /// `src` must contain at least `width * from.bytes_per_pixel()` bytes.
     /// `dst` must contain at least `width * to.bytes_per_pixel()` bytes.
+    ///
+    /// Multi-step conversions reuse internal scratch buffers — no heap
+    /// allocation after the first call at a given width.
     #[inline]
-    pub fn convert_row(&self, src: &[u8], dst: &mut [u8], width: u32) {
-        convert_row(&self.plan, src, dst, width);
+    pub fn convert_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
+        convert_row_buffered(&self.plan, src, dst, width, &mut self.scratch);
     }
 
     /// Convert multiple rows from a strided source buffer to a strided destination.
@@ -76,7 +91,7 @@ impl RowConverter {
     /// The source and destination can have different strides.
     #[track_caller]
     pub fn convert_rows(
-        &self,
+        &mut self,
         src: &[u8],
         src_stride: usize,
         dst: &mut [u8],
@@ -142,6 +157,15 @@ impl RowConverter {
     }
 }
 
+impl Clone for RowConverter {
+    fn clone(&self) -> Self {
+        Self {
+            plan: self.plan.clone(),
+            scratch: ConvertScratch::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;
@@ -157,7 +181,7 @@ mod tests {
         to: PixelDescriptor,
         src: &[u8],
     ) -> alloc::vec::Vec<u8> {
-        let conv = RowConverter::new(from, to).unwrap();
+        let mut conv = RowConverter::new(from, to).unwrap();
         let dst_bpp = to.bytes_per_pixel();
         let mut dst = vec![0u8; dst_bpp];
         conv.convert_row(src, &mut dst, 1);
@@ -171,7 +195,7 @@ mod tests {
     #[test]
     fn identity_conversion() {
         let desc = PixelDescriptor::RGB8_SRGB;
-        let conv = RowConverter::new(desc, desc).unwrap();
+        let mut conv = RowConverter::new(desc, desc).unwrap();
         assert!(conv.is_identity());
         assert_eq!(conv.from_descriptor(), desc);
         assert_eq!(conv.to_descriptor(), desc);
@@ -782,7 +806,7 @@ mod tests {
 
     #[test]
     fn rgb8_to_oklabf32_does_not_panic() {
-        let conv =
+        let mut conv =
             RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::OKLABF32).unwrap();
         assert!(!conv.is_identity());
 
@@ -864,7 +888,7 @@ mod tests {
 
     #[test]
     fn convert_rows_basic() {
-        let conv =
+        let mut conv =
             RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
 
         let src = [10u8, 20, 30, 40, 50, 60];
@@ -880,7 +904,7 @@ mod tests {
 
     #[test]
     fn convert_rows_buffer_too_small() {
-        let conv =
+        let mut conv =
             RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
 
         let src = [10u8, 20, 30];
@@ -989,7 +1013,7 @@ mod tests {
 
     #[test]
     fn convert_multiple_pixels() {
-        let conv =
+        let mut conv =
             RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
         let src = [10, 20, 30, 40, 50, 60, 70, 80, 90];
         let mut dst = [0u8; 12];

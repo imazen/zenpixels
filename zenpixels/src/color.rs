@@ -267,7 +267,10 @@ mod tests {
 
     #[test]
     fn named_profile_from_cicp() {
-        assert_eq!(NamedProfile::from_cicp(Cicp::SRGB), Some(NamedProfile::Srgb));
+        assert_eq!(
+            NamedProfile::from_cicp(Cicp::SRGB),
+            Some(NamedProfile::Srgb)
+        );
         assert_eq!(
             NamedProfile::from_cicp(Cicp::DISPLAY_P3),
             Some(NamedProfile::DisplayP3)

@@ -477,7 +477,7 @@ fn f32_converter(from_tf: TransferFunction, to_tf: TransferFunction) -> RowConve
 }
 
 /// Helper: convert a single F32 RGB pixel through a RowConverter.
-fn convert_f32_pixel(conv: &RowConverter, r: f32, g: f32, b: f32) -> [f32; 3] {
+fn convert_f32_pixel(conv: &mut RowConverter, r: f32, g: f32, b: f32) -> [f32; 3] {
     let src: Vec<u8> = [r, g, b].iter().flat_map(|v| v.to_ne_bytes()).collect();
     let mut dst = vec![0u8; 12];
     conv.convert_row(&src, &mut dst, 1);
@@ -534,12 +534,12 @@ fn all_f32_tf_pairs_roundtrip() {
             if from_tf == to_tf {
                 continue;
             }
-            let fwd = f32_converter(from_tf, to_tf);
-            let rev = f32_converter(to_tf, from_tf);
+            let mut fwd = f32_converter(from_tf, to_tf);
+            let mut rev = f32_converter(to_tf, from_tf);
 
             for &[r, g, b] in test_pixels {
-                let mid = convert_f32_pixel(&fwd, r, g, b);
-                let back = convert_f32_pixel(&rev, mid[0], mid[1], mid[2]);
+                let mid = convert_f32_pixel(&mut fwd, r, g, b);
+                let back = convert_f32_pixel(&mut rev, mid[0], mid[1], mid[2]);
                 // PQ has lower precision due to rational polynomial approximation
                 let tol = if matches!(from_tf, TransferFunction::Pq)
                     || matches!(to_tf, TransferFunction::Pq)
@@ -579,15 +579,15 @@ fn cross_tf_via_linear_matches_direct() {
             if src_tf == dst_tf {
                 continue;
             }
-            let direct = f32_converter(src_tf, dst_tf);
-            let to_lin = f32_converter(src_tf, TransferFunction::Linear);
-            let from_lin = f32_converter(TransferFunction::Linear, dst_tf);
+            let mut direct = f32_converter(src_tf, dst_tf);
+            let mut to_lin = f32_converter(src_tf, TransferFunction::Linear);
+            let mut from_lin = f32_converter(TransferFunction::Linear, dst_tf);
 
             for &[r, g, b] in test_pixels {
-                let direct_result = convert_f32_pixel(&direct, r, g, b);
+                let direct_result = convert_f32_pixel(&mut direct, r, g, b);
                 let via_lin = {
-                    let lin = convert_f32_pixel(&to_lin, r, g, b);
-                    convert_f32_pixel(&from_lin, lin[0], lin[1], lin[2])
+                    let lin = convert_f32_pixel(&mut to_lin, r, g, b);
+                    convert_f32_pixel(&mut from_lin, lin[0], lin[1], lin[2])
                 };
 
                 let tol = if matches!(src_tf, TransferFunction::Pq)
@@ -626,8 +626,8 @@ fn black_preserved_all_tf_pairs() {
             if from_tf == to_tf {
                 continue;
             }
-            let conv = f32_converter(from_tf, to_tf);
-            let result = convert_f32_pixel(&conv, 0.0, 0.0, 0.0);
+            let mut conv = f32_converter(from_tf, to_tf);
+            let result = convert_f32_pixel(&mut conv, 0.0, 0.0, 0.0);
             for (ch, &v) in result.iter().enumerate() {
                 assert!(v.abs() < 1e-6, "{from_tf:?}→{to_tf:?} black ch{ch}: {v}");
             }
@@ -650,8 +650,8 @@ fn white_preserved_all_tf_pairs() {
             if from_tf == to_tf {
                 continue;
             }
-            let conv = f32_converter(from_tf, to_tf);
-            let result = convert_f32_pixel(&conv, 1.0, 1.0, 1.0);
+            let mut conv = f32_converter(from_tf, to_tf);
+            let result = convert_f32_pixel(&mut conv, 1.0, 1.0, 1.0);
             for (ch, &v) in result.iter().enumerate() {
                 assert!(
                     (v - 1.0).abs() < 1e-3,
@@ -669,10 +669,10 @@ fn white_preserved_all_tf_pairs() {
 /// sRGB F32 → Linear F32 known values.
 #[test]
 fn srgb_f32_to_linear_f32_known_values() {
-    let conv = f32_converter(TransferFunction::Srgb, TransferFunction::Linear);
+    let mut conv = f32_converter(TransferFunction::Srgb, TransferFunction::Linear);
 
     // sRGB 0.5 → linear ~0.214
-    let mid = convert_f32_pixel(&conv, 0.5, 0.5, 0.5);
+    let mid = convert_f32_pixel(&mut conv, 0.5, 0.5, 0.5);
     assert!(
         (mid[0] - 0.214).abs() < 0.003,
         "sRGB(0.5)→linear: got {}, expected ~0.214",
@@ -680,21 +680,21 @@ fn srgb_f32_to_linear_f32_known_values() {
     );
 
     // sRGB 0.0 → linear 0.0
-    let black = convert_f32_pixel(&conv, 0.0, 0.0, 0.0);
+    let black = convert_f32_pixel(&mut conv, 0.0, 0.0, 0.0);
     assert!(black[0].abs() < 1e-6);
 
     // sRGB 1.0 → linear 1.0
-    let white = convert_f32_pixel(&conv, 1.0, 1.0, 1.0);
+    let white = convert_f32_pixel(&mut conv, 1.0, 1.0, 1.0);
     assert!((white[0] - 1.0).abs() < 1e-5);
 }
 
 /// Linear F32 → sRGB F32 known values.
 #[test]
 fn linear_f32_to_srgb_f32_known_values() {
-    let conv = f32_converter(TransferFunction::Linear, TransferFunction::Srgb);
+    let mut conv = f32_converter(TransferFunction::Linear, TransferFunction::Srgb);
 
     // linear 0.214 → sRGB ~0.5
-    let mid = convert_f32_pixel(&conv, 0.214, 0.214, 0.214);
+    let mid = convert_f32_pixel(&mut conv, 0.214, 0.214, 0.214);
     assert!(
         (mid[0] - 0.5).abs() < 0.01,
         "linear(0.214)→sRGB: got {}, expected ~0.5",
@@ -705,8 +705,8 @@ fn linear_f32_to_srgb_f32_known_values() {
 /// BT.709 F32 → Linear F32 known values.
 #[test]
 fn bt709_f32_to_linear_f32_known_values() {
-    let conv = f32_converter(TransferFunction::Bt709, TransferFunction::Linear);
-    let mid = convert_f32_pixel(&conv, 0.5, 0.5, 0.5);
+    let mut conv = f32_converter(TransferFunction::Bt709, TransferFunction::Linear);
+    let mid = convert_f32_pixel(&mut conv, 0.5, 0.5, 0.5);
     // BT.709 EOTF at 0.5 → ~0.26
     assert!(
         mid[0] > 0.22 && mid[0] < 0.30,
@@ -718,9 +718,9 @@ fn bt709_f32_to_linear_f32_known_values() {
 /// Linear F32 → BT.709 F32 known values.
 #[test]
 fn linear_f32_to_bt709_f32_known_values() {
-    let conv = f32_converter(TransferFunction::Linear, TransferFunction::Bt709);
+    let mut conv = f32_converter(TransferFunction::Linear, TransferFunction::Bt709);
     // BT.709 OETF(0.26) ≈ 0.5
-    let mid = convert_f32_pixel(&conv, 0.26, 0.26, 0.26);
+    let mid = convert_f32_pixel(&mut conv, 0.26, 0.26, 0.26);
     assert!(
         mid[0] > 0.45 && mid[0] < 0.55,
         "linear(0.26)→BT.709: got {}, expected ~0.5",
@@ -731,13 +731,13 @@ fn linear_f32_to_bt709_f32_known_values() {
 /// sRGB F32 → Linear F32 roundtrip for all 256 "u8-equivalent" values.
 #[test]
 fn srgb_f32_linear_exhaustive_roundtrip() {
-    let to_lin = f32_converter(TransferFunction::Srgb, TransferFunction::Linear);
-    let to_srgb = f32_converter(TransferFunction::Linear, TransferFunction::Srgb);
+    let mut to_lin = f32_converter(TransferFunction::Srgb, TransferFunction::Linear);
+    let mut to_srgb = f32_converter(TransferFunction::Linear, TransferFunction::Srgb);
 
     for i in 0..=255u8 {
         let v = i as f32 / 255.0;
-        let lin = convert_f32_pixel(&to_lin, v, v, v);
-        let back = convert_f32_pixel(&to_srgb, lin[0], lin[1], lin[2]);
+        let lin = convert_f32_pixel(&mut to_lin, v, v, v);
+        let back = convert_f32_pixel(&mut to_srgb, lin[0], lin[1], lin[2]);
         assert!(
             (back[0] - v).abs() < 1e-5,
             "sRGB F32 roundtrip at {i}/255 (v={v}): got {}, delta={}",
@@ -750,13 +750,13 @@ fn srgb_f32_linear_exhaustive_roundtrip() {
 /// BT.709 F32 → Linear F32 roundtrip for all 256 "u8-equivalent" values.
 #[test]
 fn bt709_f32_linear_exhaustive_roundtrip() {
-    let to_lin = f32_converter(TransferFunction::Bt709, TransferFunction::Linear);
-    let to_bt709 = f32_converter(TransferFunction::Linear, TransferFunction::Bt709);
+    let mut to_lin = f32_converter(TransferFunction::Bt709, TransferFunction::Linear);
+    let mut to_bt709 = f32_converter(TransferFunction::Linear, TransferFunction::Bt709);
 
     for i in 0..=255u8 {
         let v = i as f32 / 255.0;
-        let lin = convert_f32_pixel(&to_lin, v, v, v);
-        let back = convert_f32_pixel(&to_bt709, lin[0], lin[1], lin[2]);
+        let lin = convert_f32_pixel(&mut to_lin, v, v, v);
+        let back = convert_f32_pixel(&mut to_bt709, lin[0], lin[1], lin[2]);
         assert!(
             (back[0] - v).abs() < 1e-5,
             "BT.709 F32 roundtrip at {i}/255 (v={v}): got {}, delta={}",
@@ -971,8 +971,8 @@ fn srgb_u8_f32_u8_roundtrip_all_values() {
     let srgb_u8 = PixelDescriptor::RGB8_SRGB;
     let linear_f32 = PixelDescriptor::RGBF32_LINEAR;
 
-    let to_linear = RowConverter::new(srgb_u8, linear_f32).unwrap();
-    let to_srgb = RowConverter::new(linear_f32, srgb_u8).unwrap();
+    let mut to_linear = RowConverter::new(srgb_u8, linear_f32).unwrap();
+    let mut to_srgb = RowConverter::new(linear_f32, srgb_u8).unwrap();
 
     let width = 256u32;
     let mut src = Vec::with_capacity(256 * 3);
@@ -1014,8 +1014,8 @@ fn pq_u16_f32_u16_roundtrip_wide_range() {
     );
     let linear_f32 = PixelDescriptor::RGBF32_LINEAR;
 
-    let to_linear = RowConverter::new(pq_u16, linear_f32).unwrap();
-    let to_pq = RowConverter::new(linear_f32, pq_u16).unwrap();
+    let mut to_linear = RowConverter::new(pq_u16, linear_f32).unwrap();
+    let mut to_pq = RowConverter::new(linear_f32, pq_u16).unwrap();
 
     // Test 256 evenly-spaced U16 values.
     let width = 256u32;
@@ -1055,8 +1055,8 @@ fn hlg_u16_f32_u16_roundtrip_wide_range() {
     );
     let linear_f32 = PixelDescriptor::RGBF32_LINEAR;
 
-    let to_linear = RowConverter::new(hlg_u16, linear_f32).unwrap();
-    let to_hlg = RowConverter::new(linear_f32, hlg_u16).unwrap();
+    let mut to_linear = RowConverter::new(hlg_u16, linear_f32).unwrap();
+    let mut to_hlg = RowConverter::new(linear_f32, hlg_u16).unwrap();
 
     let width = 256u32;
     let mut src = vec![0u8; 256 * 3 * 2];
@@ -1094,7 +1094,7 @@ fn pq_u16_to_srgb_u8_correctness() {
         TransferFunction::Pq,
     );
     let srgb_u8 = PixelDescriptor::RGB8_SRGB;
-    let conv = RowConverter::new(pq_u16, srgb_u8).unwrap();
+    let mut conv = RowConverter::new(pq_u16, srgb_u8).unwrap();
 
     // Build test data: 5 pixels at different PQ levels.
     let width = 5u32;
@@ -1138,7 +1138,7 @@ fn hlg_u16_to_srgb_u8_correctness() {
         TransferFunction::Hlg,
     );
     let srgb_u8 = PixelDescriptor::RGB8_SRGB;
-    let conv = RowConverter::new(hlg_u16, srgb_u8).unwrap();
+    let mut conv = RowConverter::new(hlg_u16, srgb_u8).unwrap();
 
     let width = 3u32;
     let hlg_values: [u16; 3] = [0, 32768, 65535];
@@ -1171,7 +1171,7 @@ fn hlg_u16_to_srgb_u8_correctness() {
 fn row_converter_matches_scalar_eotf() {
     let srgb_u8 = PixelDescriptor::RGB8_SRGB;
     let linear_f32 = PixelDescriptor::RGBF32_LINEAR;
-    let conv = RowConverter::new(srgb_u8, linear_f32).unwrap();
+    let mut conv = RowConverter::new(srgb_u8, linear_f32).unwrap();
 
     for i in 0..=255u8 {
         let v = i as f32 / 255.0;
@@ -1195,12 +1195,12 @@ fn row_converter_matches_scalar_eotf() {
 /// sRGB F32 → Linear F32 via RowConverter matches scalar TransferFunctionExt.
 #[test]
 fn f32_converter_matches_scalar_srgb() {
-    let conv = f32_converter(TransferFunction::Srgb, TransferFunction::Linear);
+    let mut conv = f32_converter(TransferFunction::Srgb, TransferFunction::Linear);
 
     for i in 0..=100u32 {
         let v = i as f32 / 100.0;
         let expected = TransferFunction::Srgb.linearize(v);
-        let result = convert_f32_pixel(&conv, v, v, v);
+        let result = convert_f32_pixel(&mut conv, v, v, v);
 
         assert!(
             (result[0] - expected).abs() < 1e-6,
@@ -1214,12 +1214,12 @@ fn f32_converter_matches_scalar_srgb() {
 /// BT.709 F32 → Linear F32 via RowConverter matches scalar TransferFunctionExt.
 #[test]
 fn f32_converter_matches_scalar_bt709() {
-    let conv = f32_converter(TransferFunction::Bt709, TransferFunction::Linear);
+    let mut conv = f32_converter(TransferFunction::Bt709, TransferFunction::Linear);
 
     for i in 0..=100u32 {
         let v = i as f32 / 100.0;
         let expected = TransferFunction::Bt709.linearize(v);
-        let result = convert_f32_pixel(&conv, v, v, v);
+        let result = convert_f32_pixel(&mut conv, v, v, v);
 
         assert!(
             (result[0] - expected).abs() < 1e-6,
@@ -1233,12 +1233,12 @@ fn f32_converter_matches_scalar_bt709() {
 /// PQ F32 → Linear F32 via RowConverter matches scalar TransferFunctionExt.
 #[test]
 fn f32_converter_matches_scalar_pq() {
-    let conv = f32_converter(TransferFunction::Pq, TransferFunction::Linear);
+    let mut conv = f32_converter(TransferFunction::Pq, TransferFunction::Linear);
 
     for i in 0..=100u32 {
         let v = i as f32 / 100.0;
         let expected = TransferFunction::Pq.linearize(v);
-        let result = convert_f32_pixel(&conv, v, v, v);
+        let result = convert_f32_pixel(&mut conv, v, v, v);
 
         assert!(
             (result[0] - expected).abs() < 1e-6,
@@ -1252,12 +1252,12 @@ fn f32_converter_matches_scalar_pq() {
 /// HLG F32 → Linear F32 via RowConverter matches scalar TransferFunctionExt.
 #[test]
 fn f32_converter_matches_scalar_hlg() {
-    let conv = f32_converter(TransferFunction::Hlg, TransferFunction::Linear);
+    let mut conv = f32_converter(TransferFunction::Hlg, TransferFunction::Linear);
 
     for i in 0..=100u32 {
         let v = i as f32 / 100.0;
         let expected = TransferFunction::Hlg.linearize(v);
-        let result = convert_f32_pixel(&conv, v, v, v);
+        let result = convert_f32_pixel(&mut conv, v, v, v);
 
         assert!(
             (result[0] - expected).abs() < 1e-6,

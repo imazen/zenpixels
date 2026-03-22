@@ -47,7 +47,7 @@ fn manual_gamut_pipeline_bt709_to_bt2020() {
     // Step 1: sRGB u8 → linear f32
     let src_desc = PixelDescriptor::RGB8_SRGB;
     let linear_desc = PixelDescriptor::RGBF32_LINEAR;
-    let to_linear = RowConverter::new(src_desc, linear_desc).unwrap();
+    let mut to_linear = RowConverter::new(src_desc, linear_desc).unwrap();
 
     let src_bytes = [128u8, 200, 64]; // one pixel
     let mut linear_bytes = [0u8; 12];

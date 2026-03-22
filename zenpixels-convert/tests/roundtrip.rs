@@ -39,9 +39,9 @@ fn rgb8_to_rgba8_roundtrip() {
     let mut rgba = vec![0u8; width as usize * 4];
     let mut back = vec![0u8; width as usize * 3];
 
-    let to_rgba =
+    let mut to_rgba =
         RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
-    let to_rgb =
+    let mut to_rgb =
         RowConverter::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGB8_SRGB).unwrap();
 
     to_rgba.convert_row(&src, &mut rgba, width);
@@ -56,7 +56,8 @@ fn rgba8_add_alpha_is_opaque() {
     let src = make_rgb8_row(width as usize);
     let mut rgba = vec![0u8; width as usize * 4];
 
-    let conv = RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
+    let mut conv =
+        RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
     conv.convert_row(&src, &mut rgba, width);
 
     // Every 4th byte should be 255 (opaque).
@@ -75,9 +76,9 @@ fn bgra8_rgba8_roundtrip() {
     let mut rgba = vec![0u8; width as usize * 4];
     let mut back = vec![0u8; width as usize * 4];
 
-    let to_rgba =
+    let mut to_rgba =
         RowConverter::new(PixelDescriptor::BGRA8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
-    let to_bgra =
+    let mut to_bgra =
         RowConverter::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::BGRA8_SRGB).unwrap();
 
     to_rgba.convert_row(&src, &mut rgba, width);
@@ -92,7 +93,8 @@ fn gray8_to_rgb8() {
     let src = make_gray8_row(width as usize);
     let mut rgb = vec![0u8; width as usize * 3];
 
-    let conv = RowConverter::new(PixelDescriptor::GRAY8_SRGB, PixelDescriptor::RGB8_SRGB).unwrap();
+    let mut conv =
+        RowConverter::new(PixelDescriptor::GRAY8_SRGB, PixelDescriptor::RGB8_SRGB).unwrap();
     conv.convert_row(&src, &mut rgb, width);
 
     for i in 0..width as usize {
@@ -109,7 +111,8 @@ fn gray8_to_rgba8() {
     let src = make_gray8_row(width as usize);
     let mut rgba = vec![0u8; width as usize * 4];
 
-    let conv = RowConverter::new(PixelDescriptor::GRAY8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
+    let mut conv =
+        RowConverter::new(PixelDescriptor::GRAY8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
     conv.convert_row(&src, &mut rgba, width);
 
     for i in 0..width as usize {
@@ -127,7 +130,8 @@ fn identity_is_noop() {
     let src = make_rgb8_row(width as usize);
     let mut dst = vec![0u8; src.len()];
 
-    let conv = RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGB8_SRGB).unwrap();
+    let mut conv =
+        RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGB8_SRGB).unwrap();
     assert!(conv.is_identity());
     conv.convert_row(&src, &mut dst, width);
     assert_eq!(src, dst);
@@ -146,8 +150,8 @@ fn u8_to_u16_roundtrip() {
         TransferFunction::Srgb,
     );
 
-    let to_u16 = RowConverter::new(desc_u8, desc_u16).unwrap();
-    let to_u8 = RowConverter::new(desc_u16, desc_u8).unwrap();
+    let mut to_u16 = RowConverter::new(desc_u8, desc_u16).unwrap();
+    let mut to_u8 = RowConverter::new(desc_u16, desc_u8).unwrap();
 
     let mut u16_row = vec![0u8; width as usize * 3 * 2];
     let mut back = vec![0u8; width as usize * 3];
@@ -180,7 +184,7 @@ fn gray_alpha_to_rgba() {
         TransferFunction::Srgb,
     );
     let to = PixelDescriptor::RGBA8_SRGB;
-    let conv = RowConverter::new(from, to).unwrap();
+    let mut conv = RowConverter::new(from, to).unwrap();
     conv.convert_row(&src, &mut rgba, width);
 
     // Pixel 0: gray=100, alpha=200
@@ -248,8 +252,8 @@ fn pq_u16_linear_f32_roundtrip() {
         TransferFunction::Linear,
     );
 
-    let to_linear = RowConverter::new(pq_u16, linear_f32).unwrap();
-    let to_pq = RowConverter::new(linear_f32, pq_u16).unwrap();
+    let mut to_linear = RowConverter::new(pq_u16, linear_f32).unwrap();
+    let mut to_pq = RowConverter::new(linear_f32, pq_u16).unwrap();
 
     let mut f32_buf = vec![0u8; width as usize * 3 * 4];
     let mut back = vec![0u8; width as usize * 3 * 2];
@@ -289,8 +293,8 @@ fn hlg_u16_linear_f32_roundtrip() {
         TransferFunction::Linear,
     );
 
-    let to_linear = RowConverter::new(hlg_u16, linear_f32).unwrap();
-    let to_hlg = RowConverter::new(linear_f32, hlg_u16).unwrap();
+    let mut to_linear = RowConverter::new(hlg_u16, linear_f32).unwrap();
+    let mut to_hlg = RowConverter::new(linear_f32, hlg_u16).unwrap();
 
     let mut f32_buf = vec![0u8; width as usize * 3 * 4];
     let mut back = vec![0u8; width as usize * 3 * 2];
@@ -329,8 +333,8 @@ fn pq_f32_linear_f32_roundtrip() {
         TransferFunction::Linear,
     );
 
-    let to_linear = RowConverter::new(pq_f32, linear_f32).unwrap();
-    let to_pq = RowConverter::new(linear_f32, pq_f32).unwrap();
+    let mut to_linear = RowConverter::new(pq_f32, linear_f32).unwrap();
+    let mut to_pq = RowConverter::new(linear_f32, pq_f32).unwrap();
 
     let mut linear_buf = vec![0u8; width as usize * 3 * 4];
     let mut back = vec![0u8; width as usize * 3 * 4];
@@ -369,8 +373,8 @@ fn hlg_f32_linear_f32_roundtrip() {
         TransferFunction::Linear,
     );
 
-    let to_linear = RowConverter::new(hlg_f32, linear_f32).unwrap();
-    let to_hlg = RowConverter::new(linear_f32, hlg_f32).unwrap();
+    let mut to_linear = RowConverter::new(hlg_f32, linear_f32).unwrap();
+    let mut to_hlg = RowConverter::new(linear_f32, hlg_f32).unwrap();
 
     let mut linear_buf = vec![0u8; width as usize * 3 * 4];
     let mut back = vec![0u8; width as usize * 3 * 4];
@@ -403,7 +407,7 @@ fn pq_u16_to_srgb_u8() {
     );
     let srgb_u8 = PixelDescriptor::RGB8_SRGB;
 
-    let conv = RowConverter::new(pq_u16, srgb_u8).unwrap();
+    let mut conv = RowConverter::new(pq_u16, srgb_u8).unwrap();
 
     // PQ 0 → linear 0 → sRGB 0
     // PQ 65535 → linear 1.0 → sRGB 255
@@ -466,8 +470,8 @@ fn pq_hlg_cross_conversion() {
         TransferFunction::Hlg,
     );
 
-    let pq_to_hlg = RowConverter::new(pq_f32, hlg_f32).unwrap();
-    let hlg_to_pq = RowConverter::new(hlg_f32, pq_f32).unwrap();
+    let mut pq_to_hlg = RowConverter::new(pq_f32, hlg_f32).unwrap();
+    let mut hlg_to_pq = RowConverter::new(hlg_f32, pq_f32).unwrap();
 
     let mut hlg_buf = vec![0u8; width as usize * 3 * 4];
     let mut back = vec![0u8; width as usize * 3 * 4];
@@ -528,8 +532,8 @@ fn gray_to_gray_alpha_roundtrip() {
         TransferFunction::Srgb,
     );
 
-    let to_ga = RowConverter::new(from, to).unwrap();
-    let to_g = RowConverter::new(to, from).unwrap();
+    let mut to_ga = RowConverter::new(from, to).unwrap();
+    let mut to_g = RowConverter::new(to, from).unwrap();
 
     let mut ga = vec![0u8; width as usize * 2];
     let mut back = vec![0u8; width as usize];

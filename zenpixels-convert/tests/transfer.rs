@@ -16,7 +16,7 @@ fn srgb_u8_to_linear_f32_accuracy() {
         None,
         TransferFunction::Linear,
     );
-    let conv = RowConverter::new(from, to).unwrap();
+    let mut conv = RowConverter::new(from, to).unwrap();
 
     // Test known sRGB values.
     // sRGB 0 → linear 0.0
@@ -59,7 +59,7 @@ fn linear_f32_to_srgb_u8_accuracy() {
         TransferFunction::Linear,
     );
     let to = PixelDescriptor::RGB8_SRGB;
-    let conv = RowConverter::new(from, to).unwrap();
+    let mut conv = RowConverter::new(from, to).unwrap();
 
     let width = 3u32;
     // Known linear values: 0.0, 0.2158 (→ ~sRGB 128), 1.0.
@@ -96,8 +96,8 @@ fn srgb_roundtrip_accuracy() {
         TransferFunction::Linear,
     );
 
-    let to_linear = RowConverter::new(srgb_u8, linear_f32).unwrap();
-    let to_srgb = RowConverter::new(linear_f32, srgb_u8).unwrap();
+    let mut to_linear = RowConverter::new(srgb_u8, linear_f32).unwrap();
+    let mut to_srgb = RowConverter::new(linear_f32, srgb_u8).unwrap();
 
     let width = 256u32;
     // All possible u8 values for R channel (0..=255), G=128, B=64.
@@ -141,7 +141,7 @@ fn unknown_transfer_uses_naive() {
         None,
         TransferFunction::Unknown,
     );
-    let conv = RowConverter::new(from, to).unwrap();
+    let mut conv = RowConverter::new(from, to).unwrap();
 
     let width = 1u32;
     let src: Vec<u8> = vec![128, 128, 128];
@@ -176,7 +176,7 @@ fn srgb_rgba_to_linear_preserves_alpha_semantics() {
         Some(AlphaMode::Straight),
         TransferFunction::Linear,
     );
-    let conv = RowConverter::new(from, to).unwrap();
+    let mut conv = RowConverter::new(from, to).unwrap();
 
     let width = 1u32;
     // R=128, G=128, B=128, A=128

@@ -192,7 +192,7 @@ impl PixelBufferConvertExt for PixelBuffer {
             return Ok(buf);
         }
 
-        let converter = crate::RowConverter::new(src_desc, target).at()?;
+        let mut converter = crate::RowConverter::new(src_desc, target).at()?;
 
         let dst_stride = target.aligned_stride(self.width());
         let total = dst_stride
@@ -307,7 +307,7 @@ impl PixelBufferConvertTypedExt for PixelBuffer {
 #[cfg(feature = "rgb")]
 fn convert_to_typed<Q: Pixel>(buf: &PixelBuffer, target: PixelDescriptor) -> PixelBuffer<Q> {
     use alloc::vec;
-    let conv = crate::RowConverter::new(buf.descriptor(), target)
+    let mut conv = crate::RowConverter::new(buf.descriptor(), target)
         .expect("RowConverter: no conversion path");
     let dst_bpp = target.bytes_per_pixel();
     let dst_stride = target.aligned_stride(buf.width());

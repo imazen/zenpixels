@@ -1,7 +1,9 @@
 //! Row-level pixel conversion kernels.
 //!
 //! Each kernel converts one row of `width` pixels from a source format to
-//! a destination format. Kernels are pure functions with no allocation.
+//! a destination format. Individual step kernels are pure functions with
+//! no allocation. Multi-step plans use [`ConvertScratch`] ping-pong
+//! buffers to avoid per-row heap allocation in streaming loops.
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -340,6 +342,19 @@ impl ConvertPlan {
         self.steps.len() == 1 && self.steps[0] == ConvertStep::Identity
     }
 
+    /// Maximum bytes-per-pixel across all intermediate formats in the plan.
+    ///
+    /// Used to pre-allocate scratch buffers for streaming conversion.
+    pub(crate) fn max_intermediate_bpp(&self) -> usize {
+        let mut desc = self.from;
+        let mut max_bpp = desc.bytes_per_pixel();
+        for &step in &self.steps {
+            desc = intermediate_desc(desc, step);
+            max_bpp = max_bpp.max(desc.bytes_per_pixel());
+        }
+        max_bpp
+    }
+
     /// Source descriptor.
     pub fn from(&self) -> PixelDescriptor {
         self.from
@@ -663,10 +678,46 @@ fn depth_steps(
 // Row conversion kernels
 // ---------------------------------------------------------------------------
 
+/// Pre-allocated scratch buffer for multi-step row conversions.
+///
+/// Eliminates per-row heap allocation by reusing two ping-pong halves
+/// of a single buffer across calls. Create once per [`ConvertPlan`],
+/// then pass to [`convert_row_buffered`] for each row.
+pub(crate) struct ConvertScratch {
+    /// Single allocation split into two halves via `split_at_mut`.
+    buf: Vec<u8>,
+}
+
+impl ConvertScratch {
+    /// Create empty scratch (buffer grows on first use).
+    pub(crate) fn new() -> Self {
+        Self { buf: Vec::new() }
+    }
+
+    /// Ensure the buffer is large enough for two halves of the max
+    /// intermediate format at the given width.
+    fn ensure_capacity(&mut self, plan: &ConvertPlan, width: u32) {
+        let half = (width as usize) * plan.max_intermediate_bpp();
+        let total = half * 2;
+        if self.buf.len() < total {
+            self.buf.resize(total, 0);
+        }
+    }
+}
+
+impl core::fmt::Debug for ConvertScratch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ConvertScratch")
+            .field("capacity", &self.buf.capacity())
+            .finish()
+    }
+}
+
 /// Convert one row of `width` pixels using a pre-computed plan.
 ///
 /// `src` and `dst` must be sized for `width` pixels in their respective formats.
-/// For multi-step plans, an internal scratch buffer is used.
+/// For multi-step plans, an internal scratch buffer is allocated per call.
+/// Prefer [`convert_row_buffered`] in hot loops.
 pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
     if plan.is_identity() {
         let len = min(src.len(), dst.len());
@@ -679,30 +730,86 @@ pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
         return;
     }
 
-    // Multi-step: use intermediate buffer.
-    // Calculate intermediate format after first step.
-    let mut current = Vec::from(src);
+    // Allocating fallback for one-off calls.
+    let mut scratch = ConvertScratch::new();
+    convert_row_buffered(plan, src, dst, width, &mut scratch);
+}
+
+/// Convert one row of `width` pixels, reusing pre-allocated scratch buffers.
+///
+/// For multi-step plans this avoids per-row heap allocation by ping-ponging
+/// between two halves of a scratch buffer. Single-step plans bypass scratch.
+pub(crate) fn convert_row_buffered(
+    plan: &ConvertPlan,
+    src: &[u8],
+    dst: &mut [u8],
+    width: u32,
+    scratch: &mut ConvertScratch,
+) {
+    if plan.is_identity() {
+        let len = min(src.len(), dst.len());
+        dst[..len].copy_from_slice(&src[..len]);
+        return;
+    }
+
+    if plan.steps.len() == 1 {
+        apply_step_u8(plan.steps[0], src, dst, width, plan.from, plan.to);
+        return;
+    }
+
+    scratch.ensure_capacity(plan, width);
+
+    let half = scratch.buf.len() / 2;
+    let (buf_a, buf_b) = scratch.buf.split_at_mut(half);
+
+    let num_steps = plan.steps.len();
     let mut current_desc = plan.from;
 
     for (i, &step) in plan.steps.iter().enumerate() {
-        let is_last = i == plan.steps.len() - 1;
+        let is_last = i == num_steps - 1;
         let next_desc = if is_last {
             plan.to
         } else {
             intermediate_desc(current_desc, step)
         };
 
-        let next_bpp = next_desc.bytes_per_pixel();
-        let next_len = (width as usize) * next_bpp;
+        let next_len = (width as usize) * next_desc.bytes_per_pixel();
+        let curr_len = (width as usize) * current_desc.bytes_per_pixel();
 
-        if is_last {
-            apply_step_u8(step, &current, dst, width, current_desc, next_desc);
+        // Ping-pong: even steps read src/buf_b and write buf_a;
+        // odd steps read buf_a and write buf_b. Each branch only
+        // borrows each half in one mode, satisfying the borrow checker.
+        if i % 2 == 0 {
+            let input = if i == 0 { src } else { &buf_b[..curr_len] };
+            if is_last {
+                apply_step_u8(step, input, dst, width, current_desc, next_desc);
+            } else {
+                apply_step_u8(
+                    step,
+                    input,
+                    &mut buf_a[..next_len],
+                    width,
+                    current_desc,
+                    next_desc,
+                );
+            }
         } else {
-            let mut next = vec![0u8; next_len];
-            apply_step_u8(step, &current, &mut next, width, current_desc, next_desc);
-            current = next;
-            current_desc = next_desc;
+            let input = &buf_a[..curr_len];
+            if is_last {
+                apply_step_u8(step, input, dst, width, current_desc, next_desc);
+            } else {
+                apply_step_u8(
+                    step,
+                    input,
+                    &mut buf_b[..next_len],
+                    width,
+                    current_desc,
+                    next_desc,
+                );
+            }
         }
+
+        current_desc = next_desc;
     }
 }
 

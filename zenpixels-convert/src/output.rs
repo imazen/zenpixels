@@ -264,7 +264,7 @@ pub fn finalize_for_output<C: ColorManagement>(
     }
 
     // Use RowConverter for format conversion.
-    let converter = crate::RowConverter::new(source_desc, target_desc_full).at()?;
+    let mut converter = crate::RowConverter::new(source_desc, target_desc_full).at()?;
     let src_slice = buffer.as_slice();
     let mut out = PixelBuffer::try_new(buffer.width(), buffer.height(), target_desc_full)
         .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
