@@ -13,9 +13,9 @@ dependencies = [
 
 [[package]]
 name = "archmage"
-version = "0.9.10"
+version = "0.9.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3277aaadcdb806f088022607cbc1f545d93f2be875ed308a17274006126a8e4"
+checksum = "b31252c47e70c7056709e9f98842aef4f709056c2b3a4f666c584f8cc37f7ca0"
 dependencies = [
  "archmage-macros",
  "safe_unaligned_simd",
@@ -23,9 +23,9 @@ dependencies = [
 
 [[package]]
 name = "archmage-macros"
-version = "0.9.10"
+version = "0.9.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d21eb5f22a36e5509ba9ac633a6bf96ef9a2e5ef1b047a959dfcfbe975664205"
+checksum = "3a97189db9dffc2e13364c6f56461085d65743ff4d17890d6b80744203aae92b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -84,9 +84,9 @@ checksum = "dd2e7510819d6fbf51a5545c8f922716ecfb14df168a3242f7d33e0239efe6a1"
 
 [[package]]
 name = "garb"
-version = "0.2.1"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "232a3653471b7228242fec8669102c1991af35a5262c6eb18aa47d68d661a143"
+checksum = "5b7b87fd4550db5153983b6a4ccfa6050095afe31f9fd03492556e6a82d5a235"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -128,9 +128,9 @@ dependencies = [
 
 [[package]]
 name = "magetypes"
-version = "0.9.10"
+version = "0.9.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e687f5c9d3f0e6a06df3cbde6c271231c83b5a1b9b3dd3439014b355c770be9"
+checksum = "c805c315148e092279cd19d011ce4b22ff9d3cc593cca089364f6501d12087b1"
 dependencies = [
  "archmage",
 ]
@@ -336,18 +336,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.41"
+version = "0.8.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96e13bc581734df6250836c59a5f44f3c57db9f9acb9dc8e3eaabdaf6170254d"
+checksum = "efbb2a062be311f2ba113ce66f697a4dc589f85e78a4aea276200804cea0ed87"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.41"
+version = "0.8.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3545ea9e86d12ab9bba9fcd99b54c1556fd3199007def5a03c375623d05fac1c"
+checksum = "0e8bc7269b54418e7aeeef514aa68f8690b8c0489a06b0136e5f57c4c5ccab89"
 dependencies = [
  "proc-macro2",
  "quote",
