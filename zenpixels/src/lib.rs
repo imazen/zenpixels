@@ -26,7 +26,6 @@
 //! | `std` | Standard library (default; currently a no-op, everything is `no_std + alloc`) |
 //! | `rgb` | [`Pixel`] impls for `rgb` crate types, typed `from_pixels()` constructors |
 //! | `imgref` | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
-//! | `buffer` | Convenience: enables both `rgb` and `imgref` |
 //! | `planar` | Multi-plane image types (YCbCr, Oklab, gain maps) |
 
 #![cfg_attr(not(feature = "std"), no_std)]

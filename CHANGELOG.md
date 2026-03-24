@@ -1,17 +1,75 @@
 # Changelog
 
-## 0.1.1
+## 0.2.0
 
-### zenpixels
+This is a **breaking release** — see "Breaking changes" below.
 
-- Add `PixelSlice::as_strided_bytes()` — zero-copy access to raw backing bytes including inter-row stride padding, for passthrough to GPU uploads, codec writers, and other APIs that accept a buffer + stride.
-- Add `PixelSliceMut::as_strided_bytes()` and `as_strided_bytes_mut()` — same for mutable slices.
+### zenpixels — breaking changes
 
-### zenpixels-convert
+- **Removed `buffer` feature.** Its functionality (`rgb` + `imgref`) is now always
+  available via the `imgref` feature, which implies `rgb`.
+- **Error types now wrapped in `At<>`** (from `whereat` crate). All public functions
+  returning `Result<T, BufferError>` now return `Result<T, At<BufferError>>`.
+  Call `.into_inner()` to unwrap, or use `whereat::ResultAtExt` for ergonomic chaining.
 
-- Make Oklab LMS/XYZ matrices public: `LMS_FROM_XYZ`, `XYZ_FROM_LMS`, `OKLAB_FROM_LMS_CBRT`, `LMS_CBRT_FROM_OKLAB`.
-- Make scalar Oklab functions public: `rgb_to_oklab()`, `oklab_to_rgb()`, `fast_cbrt()`.
-- Use `garb` 0.2 for SIMD-accelerated (AVX2/NEON/WASM) pixel swizzle, layout conversions, depth scaling, and BT.709 luma. Replaces scalar loops for all u8 channel operations and element-level depth conversions (u8↔u16↔f32). U16/f32 layout paths remain scalar.
+### zenpixels — additions
+
+- `PixelSlice::as_strided_bytes()` — zero-copy access to raw backing bytes including
+  inter-row stride padding. For GPU uploads, codec writers, and other buffer+stride APIs.
+- `PixelSliceMut::as_strided_bytes()` / `as_strided_bytes_mut()` — mutable equivalents.
+  Now clips to actual data extent (matching `PixelSlice` behavior).
+- `PixelSliceMut::as_pixel_slice()` and `From<PixelSliceMut> for PixelSlice` —
+  zero-copy immutable borrow from a mutable slice.
+- `ContentLightLevel` and `MasteringDisplay` moved here from `zenpixels-convert::hdr`.
+  Re-exported at crate root.
+- `Cicp::from_descriptor()`, `Cicp::to_descriptor()` — round-trip between CICP codes
+  and `PixelDescriptor`.
+- `NamedProfile::from_cicp()` — identify named profiles from CICP codes.
+- `TransferFunction::to_cicp()` — convert transfer function enum to CICP code.
+- `ConvertOptions` convenience constructors: `forbid_lossy()`, `permissive()`,
+  plus `with_alpha_policy()`, `with_depth_policy()`, `with_luma()` builders.
+
+### zenpixels-convert — breaking changes
+
+- **`RowConverter::convert_row()` and `convert_rows()` changed from `&self` to
+  `&mut self`**. This enables internal scratch buffer reuse (no per-row heap allocation).
+  Callers must use `let mut converter`.
+- **`RowTransform` trait now requires `Send`.** Non-`Send` implementors will no longer
+  compile.
+- **`PixelBufferConvertExt` trait split.** `to_rgb8()`, `to_rgba8()`, `to_gray8()`,
+  `to_bgra8()` moved to new `PixelBufferConvertTypedExt` trait.
+  `linearize()` and `delinearize()` added to `PixelBufferConvertExt`.
+- **Error types now wrapped in `At<>`** (from `whereat` crate). All public functions
+  returning `Result<T, ConvertError>` now return `Result<T, At<ConvertError>>`.
+- **Pipeline modules gated behind `pipeline` feature.** `CodecFormats`, `FormatEntry`,
+  `ConversionPath`, `PathEntry`, etc. moved from root to `pipeline::` submodule.
+- **`Cicp::SRGB.matrix_coefficients` changed from `6` to `0`** (correct per ITU-T H.273).
+
+### zenpixels-convert — additions
+
+- **Streaming perf: zero per-row allocation.** `ConvertScratch` ping-pong buffers
+  replace heap allocation in multi-step row conversions.
+- `ConvertPlan::compose()` and `RowConverter::compose()` — chain two converters.
+  Peephole optimization cancels inverse pairs (e.g., premultiply + unpremultiply).
+- `RowConverter::new_explicit()` — explicit conversion plan without format negotiation.
+- `MatteComposite` conversion step — flatten alpha against a matte color.
+- `linearize()` / `delinearize()` on `PixelBufferConvertExt` — buffer-level TF conversion.
+- F32 transfer function kernels for sRGB, BT.709, PQ, HLG (SIMD-dispatched via
+  `linear-srgb`).
+- **moxcms CMS backend** (behind `cms-moxcms` feature). `MoxCms` implements
+  `ColorManagement` for ICC profile transforms via the `moxcms` crate. Supports
+  u8, u16, and f32 transforms. F16 input routes to the f32 path.
+- `garb` 0.2 for SIMD-accelerated pixel swizzle, layout conversions, depth scaling,
+  and BT.709 luma.
+- Public Oklab constants and functions: `LMS_FROM_XYZ`, `XYZ_FROM_LMS`,
+  `OKLAB_FROM_LMS_CBRT`, `LMS_CBRT_FROM_OKLAB`, `rgb_to_oklab()`, `oklab_to_rgb()`,
+  `fast_cbrt()`.
+
+### Bug fixes
+
+- F16 data no longer incorrectly routed to u16 CMS transform path. F16 now uses
+  the f32 transform (IEEE 754 half-floats are not integer-encoded).
+- Fixed ICC profile identification to use D50-adapted PCS colorants.
 
 ## 0.1.0
 

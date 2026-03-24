@@ -20,7 +20,7 @@ pipeline = []
 cms-moxcms = ["std", "dep:moxcms"]
 
 [dependencies]
-zenpixels = { version = "0.1.1", path = "../zenpixels", default-features = false }
+zenpixels = { version = "0.2.0", path = "../zenpixels", default-features = false }
 linear-srgb = { version = "0.6", path = "../../linear-srgb", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
@@ -29,7 +29,7 @@ whereat = { version = "0.1.4", default-features = false }
 moxcms = { version = "0.8", optional = true }
 
 [dev-dependencies]
-zenpixels = { version = "0.1.1", path = "../zenpixels", features = ["planar", "imgref"] }
+zenpixels = { version = "0.2.0", path = "../zenpixels", features = ["planar", "imgref"] }
 zenpixels-convert = { path = ".", features = ["pipeline", "imgref", "cms-moxcms"] }
 half = "2"
 palette = "0.7"

@@ -141,13 +141,16 @@ impl ColorManagement for MoxCms {
                     .map_err(|e| MoxCmsError(format!("failed to create u8 transform: {e}")))?;
                 MoxTransformInner::U8(xform)
             }
-            ChannelType::U16 | ChannelType::F16 => {
+            ChannelType::U16 => {
                 let xform = src_profile
                     .create_transform_16bit(src_layout, &dst_profile, dst_layout, opts)
                     .map_err(|e| MoxCmsError(format!("failed to create u16 transform: {e}")))?;
                 MoxTransformInner::U16(xform)
             }
-            ChannelType::F32 | _ => {
+            // F16 and F32 both use the f32 transform path (F16 data must be
+            // converted to f32 before CMS — IEEE 754 half-floats are not
+            // integer-encoded u16 values).
+            ChannelType::F16 | ChannelType::F32 | _ => {
                 let xform = src_profile
                     .create_transform_f32(src_layout, &dst_profile, dst_layout, opts)
                     .map_err(|e| MoxCmsError(format!("failed to create f32 transform: {e}")))?;

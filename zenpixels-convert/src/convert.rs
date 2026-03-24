@@ -682,7 +682,7 @@ fn depth_steps(
 ///
 /// Eliminates per-row heap allocation by reusing two ping-pong halves
 /// of a single buffer across calls. Create once per [`ConvertPlan`],
-/// then pass to [`convert_row_buffered`] for each row.
+/// then pass to `convert_row_buffered` for each row.
 pub(crate) struct ConvertScratch {
     /// Single allocation split into two halves via `split_at_mut`.
     buf: Vec<u8>,
@@ -717,7 +717,7 @@ impl core::fmt::Debug for ConvertScratch {
 ///
 /// `src` and `dst` must be sized for `width` pixels in their respective formats.
 /// For multi-step plans, an internal scratch buffer is allocated per call.
-/// Prefer [`convert_row_buffered`] in hot loops.
+/// Prefer [`RowConverter`](crate::RowConverter) in hot loops (reuses scratch buffers).
 pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
     if plan.is_identity() {
         let len = min(src.len(), dst.len());

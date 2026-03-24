@@ -975,7 +975,9 @@ impl<'a, P> PixelSliceMut<'a, P> {
 
     /// Zero-copy access to the raw backing bytes, including any stride padding.
     ///
-    /// See [`PixelSlice::as_strided_bytes()`] for details.
+    /// Unlike [`PixelSlice::as_strided_bytes()`] (which clips to the image
+    /// extent), this returns the full backing buffer so callers can write
+    /// stride padding (zeroing, codec requirements, etc.).
     #[inline]
     pub fn as_strided_bytes(&self) -> &[u8] {
         self.data
@@ -983,7 +985,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
 
     /// Mutable access to the raw backing bytes, including any stride padding.
     ///
-    /// See [`PixelSlice::as_strided_bytes()`] for details.
+    /// Returns the full backing buffer so callers can write stride padding.
     #[inline]
     pub fn as_strided_bytes_mut(&mut self) -> &mut [u8] {
         self.data

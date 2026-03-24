@@ -32,7 +32,7 @@ let target = best_match(source_desc, &encoder_formats, ConvertIntent::Fastest)
     .ok_or("no compatible format")?;
 
 // Pre-compute the plan, then convert row by row — no per-row allocation
-let converter = RowConverter::new(source_desc, target)?;
+let mut converter = RowConverter::new(source_desc, target)?;
 for y in 0..height {
     converter.convert_row(src_row, dst_row, width);
 }
