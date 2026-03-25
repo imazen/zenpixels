@@ -772,6 +772,26 @@ fn straight_to_premul(
     let channels = layout.channels();
     let alpha_idx = channels - 1;
 
+    // Fast path: 4-channel layouts (RGBA, BGRA, OklabA) delegate to garb.
+    if channels == 4 {
+        match ch_type {
+            ChannelType::U8 => {
+                let n = width * 4;
+                garb::bytes::premultiply_alpha_rgba_u8_copy(&src[..n], &mut dst[..n])
+                    .expect("pre-validated row size");
+                return;
+            }
+            ChannelType::F32 => {
+                let n = width * 16;
+                garb::bytes::premultiply_alpha_f32_copy(&src[..n], &mut dst[..n])
+                    .expect("pre-validated row size");
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    // Generic path for 2-channel (GrayAlpha) or other layouts.
     match ch_type {
         ChannelType::U8 => {
             for i in 0..width {
@@ -814,6 +834,15 @@ fn premul_to_straight(
     let channels = layout.channels();
     let alpha_idx = channels - 1;
 
+    // Fast path: 4-channel f32 layouts delegate to garb.
+    if channels == 4 && ch_type == ChannelType::F32 {
+        let n = width * 16;
+        garb::bytes::unpremultiply_alpha_f32_copy(&src[..n], &mut dst[..n])
+            .expect("pre-validated row size");
+        return;
+    }
+
+    // Generic path.
     match ch_type {
         ChannelType::U8 => {
             for i in 0..width {
@@ -833,6 +862,7 @@ fn premul_to_straight(
             }
         }
         ChannelType::F32 => {
+            // 2-channel (GrayAlpha) or other non-4ch layouts.
             let srcf: &[f32] = bytemuck::cast_slice(&src[..width * channels * 4]);
             let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * channels * 4]);
             for i in 0..width {
