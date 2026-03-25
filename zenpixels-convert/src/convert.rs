@@ -685,8 +685,8 @@ fn depth_steps(
 /// then pass to `convert_row_buffered` for each row.
 pub(crate) struct ConvertScratch {
     /// Single allocation split into two halves via `split_at_mut`.
-    /// Stored as `Vec<u32>` to guarantee 4-byte alignment for
-    /// `bytemuck::cast_slice` to `&[f32]`/`&[u16]` in intermediate steps.
+    /// Stored as `Vec<u32>` to guarantee 4-byte alignment, which lets
+    /// garb and bytemuck use fast aligned paths instead of unaligned fallbacks.
     buf: Vec<u32>,
 }
 
