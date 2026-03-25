@@ -185,6 +185,7 @@ pub(super) fn apply_step_u8(
 // ---------------------------------------------------------------------------
 
 /// BGRA ↔ RGBA swizzle.
+// TODO(autoversion): u16/f32 paths are scalar loops; vectorize
 fn swizzle_bgra_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
     let bps = ch_type.byte_size(); // bytes per sample
     let pixel_bytes = 4 * bps;
@@ -616,6 +617,7 @@ pub(crate) fn pq_oetf(v: f32) -> f32 {
 }
 
 /// PQ U16 → Linear F32 (EOTF applied during depth conversion).
+// TODO(autoversion): normalize + rational polynomial vectorizes well with FMA
 fn pq_u16_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let src16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
@@ -627,6 +629,7 @@ fn pq_u16_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usiz
 }
 
 /// Linear F32 → PQ U16 (OETF applied during depth conversion).
+// TODO(autoversion): rational polynomial + quantize vectorizes well with FMA
 fn linear_f32_to_pq_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
@@ -676,6 +679,7 @@ pub(crate) fn hlg_eotf(v: f32) -> f32 {
 }
 
 /// HLG U16 → Linear F32 (EOTF applied during depth conversion).
+// TODO(autoversion): normalize + piecewise log/exp vectorizes with FMA
 fn hlg_u16_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let src16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
@@ -687,6 +691,7 @@ fn hlg_u16_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usi
 }
 
 /// Linear F32 → HLG U16 (OETF applied during depth conversion).
+// TODO(autoversion): piecewise sqrt/log + quantize vectorizes with FMA
 fn linear_f32_to_hlg_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
@@ -738,6 +743,8 @@ fn linear_f32_to_srgb_f32(src: &[u8], dst: &mut [u8], width: usize, channels: us
 }
 
 /// BT.709 F32 → Linear F32 (EOTF, same depth).
+// TODO(autoversion): piecewise polynomial, vectorizes well
+// TODO(linear-srgb): add bt709_to_linear_slice for SIMD batch conversion
 fn bt709_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
@@ -748,6 +755,8 @@ fn bt709_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: u
 }
 
 /// Linear F32 → BT.709 F32 (OETF, same depth).
+// TODO(autoversion): piecewise polynomial, vectorizes well
+// TODO(linear-srgb): add linear_to_bt709_slice for SIMD batch conversion
 fn linear_f32_to_bt709_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
@@ -899,6 +908,7 @@ use crate::oklab::{lms_to_rgb_matrix, oklab_to_rgb, rgb_to_lms_matrix, rgb_to_ok
 /// # Panics
 ///
 /// Panics if `primaries` is `Unknown`. The plan should have rejected this.
+// TODO(autoversion): 3x3 matrix multiply + cbrt per pixel, excellent FMA candidate
 fn linear_rgb_to_oklab_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
     let m1 = rgb_to_lms_matrix(primaries)
         .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
@@ -916,6 +926,7 @@ fn linear_rgb_to_oklab_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: 
 }
 
 /// Oklab f32 → Linear RGB f32 (3 channels).
+// TODO(autoversion): 3x3 matrix multiply + cube per pixel, excellent FMA candidate
 fn oklab_to_linear_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
     let m1_inv = lms_to_rgb_matrix(primaries)
         .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
@@ -933,6 +944,7 @@ fn oklab_to_linear_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: 
 }
 
 /// Linear RGBA f32 → Oklaba f32 (4 channels, alpha preserved).
+// TODO(autoversion): 3x3 matrix + cbrt, alpha passthrough; FMA candidate
 fn linear_rgba_to_oklaba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
     let m1 = rgb_to_lms_matrix(primaries)
         .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
@@ -951,6 +963,7 @@ fn linear_rgba_to_oklaba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries
 }
 
 /// Oklaba f32 → Linear RGBA f32 (4 channels, alpha preserved).
+// TODO(autoversion): 3x3 matrix + cube, alpha passthrough; FMA candidate
 fn oklaba_to_linear_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
     let m1_inv = lms_to_rgb_matrix(primaries)
         .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
