@@ -79,6 +79,25 @@ PixelDescriptor::OKLABF32         // f32 Oklab L,a,b
 
 `ColorOrigin` is the immutable provenance record: *how the source file described its color*, not what the pixels currently are. Used at encode time to decide whether to re-embed the original profile.
 
+### Orientation
+
+`Orientation` is the canonical EXIF orientation enum for the zen ecosystem. `#[repr(u8)]` with EXIF values 1-8, so `o as u8` gives the tag value directly.
+
+All 8 elements of the D4 dihedral group, with full composition algebra:
+
+```rust
+use zenpixels::Orientation;
+
+let combined = Orientation::Rotate90.then(Orientation::FlipH);
+assert_eq!(combined, Orientation::Transpose);
+
+let undone = Orientation::Rotate90.compose(Orientation::Rotate90.inverse());
+assert_eq!(undone, Orientation::Identity);
+
+let (w, h) = Orientation::Rotate90.output_dimensions(1920, 1080);
+assert_eq!((w, h), (1080, 1920));
+```
+
 ## Pixel buffers
 
 `PixelBuffer`, `PixelSlice`, and `PixelSliceMut` carry their `PixelDescriptor` and optional `ColorContext`. Generic over `P: Pixel` for compile-time type safety, with zero-cost `.erase()` / `.try_typed::<Q>()` for dynamic dispatch.
@@ -144,6 +163,8 @@ Every operation that destroys information requires an explicit policy via `Conve
 - **Alpha removal**: `DiscardIfOpaque`, `CompositeOnto { r, g, b }`, `DiscardUnchecked`, or `Forbid`
 - **Depth reduction**: `Round`, `Truncate`, or `Forbid`
 - **RGB to gray**: requires explicit luma coefficients (`Bt709` or `Bt601`), or `None` to forbid
+
+Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `ConvertOptions::permissive()` (sensible lossy defaults), with `with_alpha_policy()`, `with_depth_policy()`, etc. for customization.
 
 ### Atomic output assembly
 

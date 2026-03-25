@@ -10,40 +10,63 @@ This is a **breaking release** — see "Breaking changes" below.
   available via the `imgref` feature, which implies `rgb`.
 - **Error types now wrapped in `At<>`** (from `whereat` crate). All public functions
   returning `Result<T, BufferError>` now return `Result<T, At<BufferError>>`.
-  Call `.into_inner()` to unwrap, or use `whereat::ResultAtExt` for ergonomic chaining.
+  Call `.error()` to inspect, `.into_inner()` to unwrap, or use `whereat::ResultAtExt`
+  for ergonomic chaining. Affected: `PixelSlice::new`, `PixelSliceMut::new`,
+  `PixelBuffer::try_new`, `from_vec`, `from_pixels`, `reinterpret`, and all
+  `_typed` constructors.
 
 ### zenpixels — additions
 
+- **`Orientation` enum** — canonical EXIF orientation type (D4 dihedral group).
+  `#[repr(u8)]` with EXIF values 1-8. Includes D4 group algebra (`compose`,
+  `inverse`, `then`), geometry helpers (`output_dimensions`, `forward_map`,
+  `swaps_axes`, `is_row_local`), and EXIF conversion (`from_exif`, `to_exif`).
+  All core methods are `const`. Re-exported at crate root.
 - `PixelSlice::as_strided_bytes()` — zero-copy access to raw backing bytes including
   inter-row stride padding. For GPU uploads, codec writers, and other buffer+stride APIs.
-- `PixelSliceMut::as_strided_bytes()` / `as_strided_bytes_mut()` — mutable equivalents.
-  Now clips to actual data extent (matching `PixelSlice` behavior).
+- `PixelSliceMut::as_strided_bytes()` / `as_strided_bytes_mut()` — return the full
+  backing `&[u8]` / `&mut [u8]` including any trailing bytes beyond the image extent.
 - `PixelSliceMut::as_pixel_slice()` and `From<PixelSliceMut> for PixelSlice` —
-  zero-copy immutable borrow from a mutable slice.
+  zero-copy immutable borrow/move from a mutable slice.
 - `ContentLightLevel` and `MasteringDisplay` moved here from `zenpixels-convert::hdr`.
   Re-exported at crate root.
+- `MasteringDisplay::HDR10_REFERENCE` and `DISPLAY_P3_1000` — predefined constants
+  for common mastering display configurations.
 - `Cicp::from_descriptor()`, `Cicp::to_descriptor()` — round-trip between CICP codes
   and `PixelDescriptor`.
 - `NamedProfile::from_cicp()` — identify named profiles from CICP codes.
-- `TransferFunction::to_cicp()` — convert transfer function enum to CICP code.
+- `TransferFunction::to_cicp()`, `ColorPrimaries::to_cicp()` — convert enum variants
+  to CICP code points.
 - `ConvertOptions` convenience constructors: `forbid_lossy()`, `permissive()`,
-  plus `with_alpha_policy()`, `with_depth_policy()`, `with_luma()` builders.
+  plus `with_alpha_policy()`, `with_depth_policy()`, `with_gray_expand()`,
+  `with_luma()` builders.
+- `#[track_caller]` on all fallible constructors for better error diagnostics.
+- `whereat::At`, `ResultAtExt`, and `at` re-exported at crate root.
 
 ### zenpixels-convert — breaking changes
 
 - **`RowConverter::convert_row()` and `convert_rows()` changed from `&self` to
   `&mut self`**. This enables internal scratch buffer reuse (no per-row heap allocation).
   Callers must use `let mut converter`.
+- **`RowConverter` no longer auto-derives `Clone`.** A manual `Clone` impl creates
+  fresh (empty) scratch buffers. Behavior is unchanged but the clone is not a
+  bitwise copy.
 - **`RowTransform` trait now requires `Send`.** Non-`Send` implementors will no longer
   compile.
 - **`PixelBufferConvertExt` trait split.** `to_rgb8()`, `to_rgba8()`, `to_gray8()`,
-  `to_bgra8()` moved to new `PixelBufferConvertTypedExt` trait.
-  `linearize()` and `delinearize()` added to `PixelBufferConvertExt`.
+  `to_bgra8()` moved to new `PixelBufferConvertTypedExt` trait (requires `rgb` feature).
+  `linearize()` and `delinearize()` added to `PixelBufferConvertExt` (always available).
 - **Error types now wrapped in `At<>`** (from `whereat` crate). All public functions
   returning `Result<T, ConvertError>` now return `Result<T, At<ConvertError>>`.
-- **Pipeline modules gated behind `pipeline` feature.** `CodecFormats`, `FormatEntry`,
+  Affected: `RowConverter::new`, `new_explicit`, `convert_rows`,
+  `adapt_for_encode`, `adapt_for_encode_explicit`, `convert_buffer`,
+  `PixelBufferConvertExt` methods.
+- **`codec` feature renamed to `pipeline`.** `CodecFormats`, `FormatEntry`,
   `ConversionPath`, `PathEntry`, etc. moved from root to `pipeline::` submodule.
-- **`Cicp::SRGB.matrix_coefficients` changed from `6` to `0`** (correct per ITU-T H.273).
+  Import paths changed from `zenpixels_convert::registry::*` to
+  `zenpixels_convert::pipeline::*`.
+- **`Cicp::SRGB.matrix_coefficients` changed from `6` to `0`** (correct per ITU-T H.273
+  — sRGB is an RGB color space, not YCbCr, so Identity matrix is correct).
 
 ### zenpixels-convert — additions
 
@@ -51,11 +74,16 @@ This is a **breaking release** — see "Breaking changes" below.
   replace heap allocation in multi-step row conversions.
 - `ConvertPlan::compose()` and `RowConverter::compose()` — chain two converters.
   Peephole optimization cancels inverse pairs (e.g., premultiply + unpremultiply).
-- `RowConverter::new_explicit()` — explicit conversion plan without format negotiation.
-- `MatteComposite` conversion step — flatten alpha against a matte color.
-- `linearize()` / `delinearize()` on `PixelBufferConvertExt` — buffer-level TF conversion.
-- F32 transfer function kernels for sRGB, BT.709, PQ, HLG (SIMD-dispatched via
-  `linear-srgb`).
+- `RowConverter::new_explicit()` — explicit conversion plan with `ConvertOptions`
+  policy validation before creating the plan.
+- `MatteComposite` conversion step — flatten alpha against a matte color
+  (used by `AlphaPolicy::CompositeOnto`).
+- `linearize()` / `delinearize()` on `PixelBufferConvertExt` — buffer-level
+  transfer function conversion.
+- F32-to-F32 transfer function kernels: `SrgbF32ToLinearF32`, `LinearF32ToSrgbF32`,
+  `Bt709F32ToLinearF32`, `LinearF32ToBt709F32`. Previously only u8/u16↔f32 TF
+  conversions existed; these enable f32→f32 re-encoding without a depth roundtrip.
+  PQ and HLG f32↔f32 kernels also added. All SIMD-dispatched via `linear-srgb`.
 - **moxcms CMS backend** (behind `cms-moxcms` feature). `MoxCms` implements
   `ColorManagement` for ICC profile transforms via the `moxcms` crate. Supports
   u8, u16, and f32 transforms. F16 input routes to the f32 path.

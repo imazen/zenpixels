@@ -37,6 +37,8 @@ whereat::define_at_crate_info!(path = "zenpixels/");
 
 pub mod descriptor;
 pub mod orientation;
+#[cfg(feature = "planar")]
+pub mod planar;
 pub mod policy;
 
 pub mod cicp;
@@ -57,7 +59,7 @@ pub use descriptor::{
 
 // Re-export planar types when the `planar` feature is enabled.
 #[cfg(feature = "planar")]
-pub use descriptor::{
+pub use planar::{
     MultiPlaneImage, Plane, PlaneDescriptor, PlaneLayout, PlaneMask, PlaneRelationship,
     PlaneSemantic, Subsampling, YuvMatrix,
 };
