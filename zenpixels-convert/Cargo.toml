@@ -21,7 +21,7 @@ cms-moxcms = ["std", "dep:moxcms"]
 
 [dependencies]
 zenpixels = { version = "0.2.0", path = "../zenpixels", default-features = false }
-linear-srgb = { version = "0.6", path = "../../linear-srgb", default-features = false, features = ["transfer"] }
+linear-srgb = { version = "0.7", path = "../../linear-srgb", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 garb = { version = "0.2", default-features = false, features = ["experimental"] }
