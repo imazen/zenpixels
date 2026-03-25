@@ -100,7 +100,7 @@ fn explicit_depth_forbid_returns_error() {
     );
 
     assert!(result.is_err());
-    let err = result.unwrap_err().into_inner();
+    let err = result.unwrap_err().decompose().0;
     assert_eq!(err, ConvertError::DepthReductionForbidden);
 }
 
@@ -127,7 +127,7 @@ fn explicit_alpha_forbid_returns_error() {
     );
 
     assert!(result.is_err());
-    let err = result.unwrap_err().into_inner();
+    let err = result.unwrap_err().decompose().0;
     assert_eq!(err, ConvertError::AlphaRemovalForbidden);
 }
 
@@ -182,7 +182,7 @@ fn explicit_discard_if_opaque_fails_when_semitransparent() {
     );
 
     assert!(result.is_err());
-    let err = result.unwrap_err().into_inner();
+    let err = result.unwrap_err().decompose().0;
     assert_eq!(err, ConvertError::AlphaNotOpaque);
 }
 
@@ -256,7 +256,7 @@ fn adapt_empty_supported_returns_error() {
 
     assert!(result.is_err());
     assert_eq!(
-        result.unwrap_err().into_inner(),
+        result.unwrap_err().decompose().0,
         ConvertError::EmptyFormatList
     );
 }
