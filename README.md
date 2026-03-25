@@ -1,6 +1,6 @@
 # zenpixels
 
-[![CI](https://github.com/imazen/zenpixels/actions/workflows/ci.yml/badge.svg)](https://github.com/imazen/zenpixels/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenpixels/ci.yml?style=for-the-badge)](https://github.com/imazen/zenpixels/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/zenpixels?style=for-the-badge)](https://crates.io/crates/zenpixels)
 [![docs.rs](https://img.shields.io/docsrs/zenpixels?style=for-the-badge)](https://docs.rs/zenpixels)
 [![MSRV](https://img.shields.io/badge/MSRV-1.93-blue?style=for-the-badge)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field)
