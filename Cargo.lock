@@ -84,9 +84,7 @@ checksum = "dd2e7510819d6fbf51a5545c8f922716ecfb14df168a3242f7d33e0239efe6a1"
 
 [[package]]
 name = "garb"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b7b87fd4550db5153983b6a4ccfa6050095afe31f9fd03492556e6a82d5a235"
+version = "0.2.4"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -118,7 +116,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "linear-srgb"
-version = "0.6.3"
+version = "0.7.0"
 dependencies = [
  "archmage",
  "bytemuck",
