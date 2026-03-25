@@ -25,94 +25,25 @@ This is the right shape. What follows builds on it.
 
 ## What's Missing
 
-### 1. Scalar Reference Functions on Existing Enums
+### 1. Scalar Reference Functions on Existing Enums [DONE]
 
 **Highest priority. Unlocks everything else.**
 
-The transfer function kernels (`pq_eotf`, `hlg_oetf`, `srgb_eotf_f32`, etc.) exist in `convert.rs` but are private. They need to be the canonical reference implementations that any downstream SIMD code tests against.
+~~The transfer function kernels (`pq_eotf`, `hlg_oetf`, `srgb_eotf_f32`, etc.) exist in `convert.rs` but are private. They need to be the canonical reference implementations that any downstream SIMD code tests against.~~
 
-```rust
-impl TransferFunction {
-    /// Encode → linear light (EOTF). THE scalar reference for correctness testing.
-    pub fn linearize(&self, v: f32) -> f32;
-    /// Linear light → encode (OETF).
-    pub fn delinearize(&self, v: f32) -> f32;
-}
-```
+`linearize` and `delinearize` are implemented as a public extension trait on `TransferFunction` in `zenpixels-convert/src/ext.rs`. Full roundtrip tests and CICP correctness tests exist.
 
-This is just making existing private functions public behind a method on the enum. No new math, no new dependencies.
+Similarly, `ColorPrimaries` exposes XYZ matrices:
 
-Similarly, `ColorPrimaries` should expose XYZ matrices:
+`to_xyz_matrix()` and `from_xyz_matrix()` are implemented as public methods on `ColorPrimaries` via the extension trait in `zenpixels-convert/src/ext.rs`. Returns `Option<&'static GamutMatrix>` (None for `Unknown`). Used by `zenpixels-convert/src/oklab.rs` to compute RGB→LMS matrices.
 
-```rust
-impl ColorPrimaries {
-    /// 3x3 row-major: linear RGB in these primaries → CIE XYZ (D65 white).
-    pub fn to_xyz_matrix(&self) -> [[f32; 3]; 3];
-    /// 3x3 row-major: CIE XYZ (D65 white) → linear RGB in these primaries.
-    pub fn from_xyz_matrix(&self) -> [[f32; 3]; 3];
-}
-```
+### 2. Oklab Conversion Constants [DONE]
 
-These are compile-time constants derived from the CIE xy chromaticities in the ITU-R specs. The existing `gamut.rs` matrices (BT709_TO_BT2020, etc.) are *products* of these — `to_xyz(A)` composed with `from_xyz(B)` gives the gamut conversion. Having the building blocks means we can compute any conversion, including RGB→LMS for Oklab.
+`pub mod oklab` is implemented in `zenpixels-convert/src/lib.rs` (re-exported as `zenpixels_convert::oklab`). Provides LMS/XYZ/Oklab matrices, `rgb_to_lms_matrix(primaries)`, `lms_to_rgb_matrix(primaries)`, scalar `rgb_to_oklab()`, and `oklab_to_rgb()`.
 
-### 2. Oklab Conversion Constants
+### 3. HDR Reference White [DONE]
 
-Pre-computed matrices for the Oklab scatter/gather path:
-
-```rust
-/// Oklab conversion utilities.
-pub mod oklab {
-    use crate::{ColorPrimaries, GamutMatrix};
-
-    /// LMS-from-XYZ matrix (Hunt-Pointer-Estevez variant, Ottosson 2020).
-    pub const LMS_FROM_XYZ: GamutMatrix = [ /* ... */ ];
-    /// XYZ-from-LMS (inverse).
-    pub const XYZ_FROM_LMS: GamutMatrix = [ /* ... */ ];
-
-    /// LMS^(1/3) → Oklab (M2 matrix, universal — does not depend on primaries).
-    pub const OKLAB_FROM_LMS_CBRT: GamutMatrix = [ /* ... */ ];
-    /// Oklab → LMS^(1/3) (M2 inverse).
-    pub const LMS_CBRT_FROM_OKLAB: GamutMatrix = [ /* ... */ ];
-
-    /// Compute the combined RGB→LMS matrix for a given set of primaries.
-    ///
-    /// This is `LMS_FROM_XYZ × XYZ_from_primaries`. The result is a
-    /// compile-time constant for the three supported primaries sets.
-    pub fn rgb_to_lms_matrix(primaries: ColorPrimaries) -> GamutMatrix;
-
-    /// Compute the combined LMS→RGB matrix for a given set of primaries.
-    pub fn lms_to_rgb_matrix(primaries: ColorPrimaries) -> GamutMatrix;
-
-    /// Scalar reference: cbrt approximation (two Newton-Raphson iterations).
-    /// ~22 bits of precision, sufficient for f32.
-    pub fn fast_cbrt(x: f32) -> f32;
-
-    /// Scalar reference: linear RGB → Oklab L/a/b.
-    pub fn rgb_to_oklab(r: f32, g: f32, b: f32, m1: &GamutMatrix) -> [f32; 3];
-
-    /// Scalar reference: Oklab L/a/b → linear RGB.
-    pub fn oklab_to_rgb(l: f32, a: f32, b: f32, m1_inv: &GamutMatrix) -> [f32; 3];
-}
-```
-
-zenfilters tests its SIMD scatter/gather against `oklab::rgb_to_oklab()`. zenpixels stays small — this is ~100 lines of const arrays and pure scalar math with zero dependencies.
-
-### 3. HDR Reference White
-
-PQ linear values are absolute luminance (0–10,000 nits). Oklab expects relative luminance (~0–1 for SDR). Without normalization, HDR L values will be ~0–49 and break filter parameter ranges.
-
-```rust
-impl TransferFunction {
-    /// Reference white luminance in nits.
-    /// SDR transfers return 1.0 (relative). PQ returns 203.0 (ITU-R BT.2408).
-    /// HLG returns 1.0 (scene-referred, already relative).
-    pub fn reference_white_nits(&self) -> f32;
-}
-```
-
-The scatter path divides linear values by this before Oklab conversion. The gather path multiplies by it after. Filters see relative luminance where 1.0 = reference white; HDR highlights exceed 1.0. Filter parameters work identically for SDR and HDR.
-
-This is one method returning a constant. No new types needed — the `ReferenceWhite` enum from the previous draft was overengineered. It's just `transfer.reference_white_nits()`.
+`reference_white_nits()` is implemented directly on `TransferFunction` in `zenpixels/src/descriptor.rs` (line 260). Returns 203.0 for PQ, 1.0 for all SDR transfers.
 
 ### 4. PlaneMask Semantic Lookup
 
@@ -198,10 +129,10 @@ When the gather produces out-of-gamut values (e.g., saturation boost pushed a P3
 
 | Item | Where | Size | Priority |
 |------|-------|------|----------|
-| Scalar `linearize`/`delinearize` on `TransferFunction` | zenpixels | ~20 lines (expose existing private fns) | **Now** |
-| XYZ matrices on `ColorPrimaries` | zenpixels `gamut.rs` | ~60 lines (6 const matrices) | **Now** |
-| `oklab` module (M1/M2 matrices, scalar reference fns) | zenpixels | ~100 lines | **Now** |
-| `reference_white_nits()` on `TransferFunction` | zenpixels | ~10 lines | **Now** |
+| Scalar `linearize`/`delinearize` on `TransferFunction` | zenpixels-convert `ext.rs` | done | **DONE** |
+| XYZ matrices on `ColorPrimaries` | zenpixels-convert `ext.rs` | done | **DONE** |
+| `oklab` module (M1/M2 matrices, scalar reference fns) | zenpixels-convert `oklab.rs` | done | **DONE** |
+| `reference_white_nits()` on `TransferFunction` | zenpixels `descriptor.rs:260` | done | **DONE** |
 | `mask_where()` on `PlaneLayout` | zenpixels | ~15 lines | Soon |
 | `ChannelAccess` struct | zenfilters | ~10 lines | When building zenfilters |
 | SIMD scatter/gather kernels | zenfilters | ~200 lines | When building zenfilters |
