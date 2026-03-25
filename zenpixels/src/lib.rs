@@ -36,6 +36,7 @@ extern crate alloc;
 whereat::define_at_crate_info!(path = "zenpixels/");
 
 pub mod descriptor;
+pub mod orientation;
 pub mod policy;
 
 pub mod cicp;
@@ -44,6 +45,9 @@ pub mod hdr;
 pub mod pixel_types;
 
 pub mod buffer;
+
+// Re-export orientation type at crate root.
+pub use orientation::Orientation;
 
 // Re-export key descriptor types at crate root for ergonomics.
 pub use descriptor::{
