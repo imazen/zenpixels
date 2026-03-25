@@ -176,16 +176,25 @@ mod tests {
     use crate::{AlphaMode, ChannelLayout, ChannelType, ConvertError, TransferFunction};
 
     /// Helper: build a RowConverter and convert a single pixel.
+    ///
+    /// Uses aligned buffers to work around garb requiring 4-byte aligned
+    /// `&[u8]` on Windows (see <https://github.com/imazen/garb/issues/1>).
     fn convert_pixel(
         from: PixelDescriptor,
         to: PixelDescriptor,
         src: &[u8],
     ) -> alloc::vec::Vec<u8> {
         let mut conv = RowConverter::new(from, to).unwrap();
+        let src_bpp = from.bytes_per_pixel();
         let dst_bpp = to.bytes_per_pixel();
-        let mut dst = vec![0u8; dst_bpp];
-        conv.convert_row(src, &mut dst, 1);
-        dst
+        // Allocate as u32 to guarantee 4-byte alignment.
+        let mut src_aligned = vec![0u32; src_bpp.div_ceil(4)];
+        let src_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut src_aligned);
+        src_bytes[..src_bpp].copy_from_slice(&src[..src_bpp]);
+        let mut dst_aligned = vec![0u32; dst_bpp.div_ceil(4)];
+        let dst_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut dst_aligned);
+        conv.convert_row(&src_bytes[..src_bpp], &mut dst_bytes[..dst_bpp], 1);
+        dst_bytes[..dst_bpp].to_vec()
     }
 
     // -----------------------------------------------------------------------

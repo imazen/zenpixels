@@ -685,7 +685,9 @@ fn depth_steps(
 /// then pass to `convert_row_buffered` for each row.
 pub(crate) struct ConvertScratch {
     /// Single allocation split into two halves via `split_at_mut`.
-    buf: Vec<u8>,
+    /// Stored as `Vec<u32>` to guarantee 4-byte alignment for
+    /// `bytemuck::cast_slice` to `&[f32]`/`&[u16]` in intermediate steps.
+    buf: Vec<u32>,
 }
 
 impl ConvertScratch {
@@ -697,10 +699,10 @@ impl ConvertScratch {
     /// Ensure the buffer is large enough for two halves of the max
     /// intermediate format at the given width.
     fn ensure_capacity(&mut self, plan: &ConvertPlan, width: u32) {
-        let half = (width as usize) * plan.max_intermediate_bpp();
-        let total = half * 2;
-        if self.buf.len() < total {
-            self.buf.resize(total, 0);
+        let half_bytes = (width as usize) * plan.max_intermediate_bpp();
+        let total_u32 = (half_bytes * 2).div_ceil(4);
+        if self.buf.len() < total_u32 {
+            self.buf.resize(total_u32, 0);
         }
     }
 }
@@ -759,8 +761,9 @@ pub(crate) fn convert_row_buffered(
 
     scratch.ensure_capacity(plan, width);
 
-    let half = scratch.buf.len() / 2;
-    let (buf_a, buf_b) = scratch.buf.split_at_mut(half);
+    let buf_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut scratch.buf);
+    let half = buf_bytes.len() / 2;
+    let (buf_a, buf_b) = buf_bytes.split_at_mut(half);
 
     let num_steps = plan.steps.len();
     let mut current_desc = plan.from;
