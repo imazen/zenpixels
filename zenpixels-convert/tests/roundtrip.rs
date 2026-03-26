@@ -491,10 +491,9 @@ fn pq_hlg_cross_conversion() {
     }
 }
 
-/// Verify that conversion plans with different primaries but same depth are identity.
-/// (Gamut conversion is NOT part of ConvertPlan — it's handled separately.)
+/// Verify that different primaries with same depth triggers gamut conversion.
 #[test]
-fn different_primaries_same_depth_is_identity() {
+fn different_primaries_same_depth_applies_gamut() {
     let bt709 = PixelDescriptor::new(
         ChannelType::U8,
         ChannelLayout::Rgb,
@@ -511,12 +510,24 @@ fn different_primaries_same_depth_is_identity() {
     )
     .with_primaries(ColorPrimaries::Bt2020);
 
-    // ConvertPlan ignores primaries — gamut conversion is a separate step.
-    let conv = RowConverter::new(bt709, bt2020).unwrap();
+    // ConvertPlan now applies gamut matrices for known primaries.
+    let mut conv = RowConverter::new(bt709, bt2020).unwrap();
     assert!(
-        conv.is_identity(),
-        "Same depth/layout/TF with different primaries should be identity"
+        !conv.is_identity(),
+        "Different primaries should apply gamut conversion"
     );
+
+    // White should be preserved.
+    let width = 1u32;
+    let src: Vec<u8> = vec![255, 255, 255];
+    let mut dst = vec![0u8; 3];
+    conv.convert_row(&src, &mut dst, width);
+    for (c, &val) in dst.iter().enumerate() {
+        assert!(
+            (val as i32 - 255).unsigned_abs() <= 1,
+            "White not preserved in ch{c}: {val}"
+        );
+    }
 }
 
 #[test]

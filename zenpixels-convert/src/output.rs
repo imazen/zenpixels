@@ -61,8 +61,9 @@
 //!   preserved.
 //!
 //! - **`Named(cicp)`**: Convert to a well-known CICP profile (sRGB, Display P3,
-//!   BT.2020, PQ, HLG). Uses hardcoded 3×3 gamut matrices — no CMS needed.
-//!   Fast and deterministic.
+//!   BT.2020, PQ, HLG). Uses hardcoded 3×3 gamut matrices and transfer
+//!   function conversion via `RowConverter` — no CMS needed. Fast and
+//!   deterministic.
 //!
 //! - **`Icc(bytes)`**: Convert to a specific ICC profile. Requires a
 //!   [`ColorManagement`] implementation to build the source→destination

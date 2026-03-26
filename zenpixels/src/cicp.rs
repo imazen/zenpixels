@@ -12,11 +12,13 @@ use crate::{ColorPrimaries, TransferFunction};
 /// without requiring an ICC profile. Used by AVIF, HEIF, JPEG XL, and
 /// video codecs (H.264, H.265, AV1).
 ///
-/// Common combinations:
-/// - sRGB: `(1, 13, 6, true)` — BT.709 primaries, sRGB transfer, BT.601 matrix
-/// - Display P3: `(12, 13, 6, true)` — P3 primaries, sRGB transfer
-/// - BT.2100 PQ (HDR): `(9, 16, 9, true)` — BT.2020 primaries, PQ transfer
-/// - BT.2100 HLG (HDR): `(9, 18, 9, true)` — BT.2020 primaries, HLG transfer
+/// Common combinations for RGB content (matrix_coefficients = 0 = Identity):
+/// - sRGB: `(1, 13, 0, true)` — BT.709 primaries, sRGB transfer
+/// - Display P3: `(12, 13, 0, true)` — P3 primaries, sRGB transfer
+/// - BT.2100 PQ (HDR): `(9, 16, 0, true)` — BT.2020 primaries, PQ transfer
+/// - BT.2100 HLG (HDR): `(9, 18, 0, true)` — BT.2020 primaries, HLG transfer
+///
+/// Video/YCbCr content uses non-zero matrix_coefficients (e.g., 6=BT.601, 9=BT.2020).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]

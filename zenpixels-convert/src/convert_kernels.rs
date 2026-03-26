@@ -179,6 +179,14 @@ pub(super) fn apply_step_u8(
         ConvertStep::OklabaToLinearRgba => {
             oklaba_to_linear_rgba_f32(src, dst, w, from.primaries);
         }
+
+        ConvertStep::GamutMatrixRgbF32(flat) => {
+            gamut_matrix_rgb_f32(src, dst, w, &flat);
+        }
+
+        ConvertStep::GamutMatrixRgbaF32(flat) => {
+            gamut_matrix_rgba_f32(src, dst, w, &flat);
+        }
     }
 }
 
@@ -1126,5 +1134,42 @@ fn oklab_to_rgb_4ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) 
             dst[i + 2] = b;
             dst[i + 3] = src[i + 3];
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Gamut matrix kernels
+// ---------------------------------------------------------------------------
+
+/// Apply a 3×3 gamut matrix to a row of linear RGB f32 pixels.
+fn gamut_matrix_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32; 9]) {
+    let s: &[f32] = bytemuck::cast_slice(src);
+    let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
+    let m = matrix;
+    for p in 0..width {
+        let base = p * 3;
+        let r = s[base];
+        let g = s[base + 1];
+        let b = s[base + 2];
+        d[base] = m[0] * r + m[1] * g + m[2] * b;
+        d[base + 1] = m[3] * r + m[4] * g + m[5] * b;
+        d[base + 2] = m[6] * r + m[7] * g + m[8] * b;
+    }
+}
+
+/// Apply a 3×3 gamut matrix to a row of linear RGBA f32 pixels (alpha passthrough).
+fn gamut_matrix_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32; 9]) {
+    let s: &[f32] = bytemuck::cast_slice(src);
+    let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
+    let m = matrix;
+    for p in 0..width {
+        let base = p * 4;
+        let r = s[base];
+        let g = s[base + 1];
+        let b = s[base + 2];
+        d[base] = m[0] * r + m[1] * g + m[2] * b;
+        d[base + 1] = m[3] * r + m[4] * g + m[5] * b;
+        d[base + 2] = m[6] * r + m[7] * g + m[8] * b;
+        d[base + 3] = s[base + 3]; // alpha unchanged
     }
 }
