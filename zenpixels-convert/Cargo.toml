@@ -18,6 +18,7 @@ imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]
 pipeline = []
 cms-moxcms = ["std", "dep:moxcms"]
+serde = ["zenpixels/serde"]
 
 [dependencies]
 zenpixels = { version = "0.2.0", path = "../zenpixels", default-features = false }

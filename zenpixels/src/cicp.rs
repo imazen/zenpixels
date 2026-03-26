@@ -18,6 +18,7 @@ use crate::{ColorPrimaries, TransferFunction};
 /// - BT.2100 PQ (HDR): `(9, 16, 9, true)` — BT.2020 primaries, PQ transfer
 /// - BT.2100 HLG (HDR): `(9, 18, 9, true)` — BT.2020 primaries, HLG transfer
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct Cicp {
     /// Color primaries (ColourPrimaries). Common values:
