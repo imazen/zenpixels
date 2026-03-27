@@ -284,7 +284,9 @@ fn drop_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
 
 /// Composite RGBA onto a solid matte color, producing RGB (4ch → 3ch).
 ///
-/// Blending in sRGB space (matching browser/CSS behavior).
+/// Blending in linear light to avoid sRGB-space color errors.
+/// The matte color (r, g, b) is sRGB u8; pixel data is converted to linear
+/// for blending, then converted back to the original encoding.
 fn matte_composite(
     src: &[u8],
     dst: &mut [u8],
@@ -294,46 +296,55 @@ fn matte_composite(
     mg: u8,
     mb: u8,
 ) {
+    // Pre-convert sRGB u8 matte to linear f32 (used by all paths).
+    let mr_lin = linear_srgb::default::srgb_u8_to_linear(mr);
+    let mg_lin = linear_srgb::default::srgb_u8_to_linear(mg);
+    let mb_lin = linear_srgb::default::srgb_u8_to_linear(mb);
+
     match ch_type {
         ChannelType::U8 => {
             for i in 0..width {
                 let si = i * 4;
                 let di = i * 3;
-                let a = src[si + 3] as u32;
-                let inv_a = 255 - a;
-                dst[di] = ((src[si] as u32 * a + mr as u32 * inv_a + 127) / 255) as u8;
-                dst[di + 1] = ((src[si + 1] as u32 * a + mg as u32 * inv_a + 127) / 255) as u8;
-                dst[di + 2] = ((src[si + 2] as u32 * a + mb as u32 * inv_a + 127) / 255) as u8;
+                let a = src[si + 3] as f32 * (1.0 / 255.0);
+                let inv_a = 1.0 - a;
+                // sRGB u8 → linear f32, blend, linear f32 → sRGB u8
+                let sr = linear_srgb::default::srgb_u8_to_linear(src[si]);
+                let sg = linear_srgb::default::srgb_u8_to_linear(src[si + 1]);
+                let sb = linear_srgb::default::srgb_u8_to_linear(src[si + 2]);
+                dst[di] = linear_srgb::default::linear_to_srgb_u8(sr * a + mr_lin * inv_a);
+                dst[di + 1] = linear_srgb::default::linear_to_srgb_u8(sg * a + mg_lin * inv_a);
+                dst[di + 2] = linear_srgb::default::linear_to_srgb_u8(sb * a + mb_lin * inv_a);
             }
         }
         ChannelType::U16 => {
             let src16: &[u16] = bytemuck::cast_slice(&src[..width * 8]);
             let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 6]);
             for i in 0..width {
-                let a = src16[i * 4 + 3] as u64;
-                let inv_a = 65535 - a;
-                let mr16 = mr as u64 * 257; // scale u8 matte to u16
-                let mg16 = mg as u64 * 257;
-                let mb16 = mb as u64 * 257;
-                dst16[i * 3] = ((src16[i * 4] as u64 * a + mr16 * inv_a + 32767) / 65535) as u16;
+                let a = src16[i * 4 + 3] as f32 * (1.0 / 65535.0);
+                let inv_a = 1.0 - a;
+                // sRGB u16 → linear f32, blend, linear f32 → sRGB u16
+                let sr = linear_srgb::default::srgb_u16_to_linear(src16[i * 4]);
+                let sg = linear_srgb::default::srgb_u16_to_linear(src16[i * 4 + 1]);
+                let sb = linear_srgb::default::srgb_u16_to_linear(src16[i * 4 + 2]);
+                dst16[i * 3] = linear_srgb::default::linear_to_srgb_u16(sr * a + mr_lin * inv_a);
                 dst16[i * 3 + 1] =
-                    ((src16[i * 4 + 1] as u64 * a + mg16 * inv_a + 32767) / 65535) as u16;
+                    linear_srgb::default::linear_to_srgb_u16(sg * a + mg_lin * inv_a);
                 dst16[i * 3 + 2] =
-                    ((src16[i * 4 + 2] as u64 * a + mb16 * inv_a + 32767) / 65535) as u16;
+                    linear_srgb::default::linear_to_srgb_u16(sb * a + mb_lin * inv_a);
             }
         }
         ChannelType::F32 => {
+            // F32 pixel data is assumed to be in linear light already.
+            // Convert the sRGB matte to linear to match.
             let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
             let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-            let mr_f = mr as f32 / 255.0;
-            let mg_f = mg as f32 / 255.0;
-            let mb_f = mb as f32 / 255.0;
             for i in 0..width {
                 let a = srcf[i * 4 + 3].clamp(0.0, 1.0);
                 let inv_a = 1.0 - a;
-                dstf[i * 3] = srcf[i * 4] * a + mr_f * inv_a;
-                dstf[i * 3 + 1] = srcf[i * 4 + 1] * a + mg_f * inv_a;
-                dstf[i * 3 + 2] = srcf[i * 4 + 2] * a + mb_f * inv_a;
+                dstf[i * 3] = srcf[i * 4] * a + mr_lin * inv_a;
+                dstf[i * 3 + 1] = srcf[i * 4 + 1] * a + mg_lin * inv_a;
+                dstf[i * 3 + 2] = srcf[i * 4 + 2] * a + mb_lin * inv_a;
             }
         }
         _ => {

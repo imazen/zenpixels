@@ -40,8 +40,9 @@ pub(crate) enum ConvertStep {
     DropAlpha,
     /// Composite onto solid matte color, then drop alpha (4ch → 3ch).
     ///
-    /// `out[c] = (src[c] * alpha + matte[c] * (255 - alpha) + 127) / 255`
-    /// Applied at u8 depth. For other depths, values are scaled.
+    /// Blends in linear light: src and matte are converted from sRGB to linear,
+    /// alpha-blended, then converted back. For f32 data, pixel values are
+    /// assumed already linear; only the sRGB u8 matte is linearized.
     MatteComposite { r: u8, g: u8, b: u8 },
     /// Gray → RGB (replicate gray to all 3 channels).
     GrayToRgb,
