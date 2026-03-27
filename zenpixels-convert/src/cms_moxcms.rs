@@ -127,7 +127,12 @@ impl ColorManagement for MoxCms {
 
         let src_layout = pixel_format_to_layout(src_format).unwrap_or(Layout::Rgb);
         let dst_layout = pixel_format_to_layout(dst_format).unwrap_or(Layout::Rgb);
-        let opts = TransformOptions::default();
+        // CICP transfer is for applications, not CMMs (ICC Votable Proposal).
+        // Matches the v2 path fix — see moxcms issue #154.
+        let opts = TransformOptions {
+            allow_use_cicp_transfer: false,
+            ..Default::default()
+        };
 
         // Pick the narrower of the two channel types to avoid unnecessary
         // precision loss, but always use the source depth when both differ
