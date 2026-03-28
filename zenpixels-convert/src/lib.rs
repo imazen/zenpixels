@@ -397,6 +397,7 @@ pub mod converter;
 pub mod ext;
 pub mod gamut;
 pub mod hdr;
+pub mod icc_profiles;
 pub mod oklab;
 pub mod output;
 #[cfg(feature = "pipeline")]
