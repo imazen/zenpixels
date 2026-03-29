@@ -198,6 +198,7 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed `from_pixels()` constructors |
 | `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
 | `planar` | | Multi-plane image types (YCbCr, Oklab, gain maps) |
+| `serde` | | `Serialize`/`Deserialize` derives on all core types |
 
 ### zenpixels-convert
 
@@ -209,6 +210,7 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | `planar` | | Multi-plane image types |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
+| `serde` | | Forwards to `zenpixels/serde` |
 
 ## MSRV
 

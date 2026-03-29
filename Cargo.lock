@@ -344,7 +344,7 @@ checksum = "b90a7ad6cf187c316a60a9cb75fc7106cabd934094678b9f695ca4adca26cf08"
 
 [[package]]
 name = "zenpixels"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -355,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "zenpixels-convert"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "archmage",
  "bytemuck",

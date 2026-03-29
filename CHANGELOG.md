@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.2.1
+
+### zenpixels — additions
+
+- **`serde` feature** — optional `Serialize`/`Deserialize` derives on all core
+  types: `PixelDescriptor`, `PixelFormat`, `ChannelType`, `ChannelLayout`,
+  `AlphaMode`, `TransferFunction`, `ColorPrimaries`, `SignalRange`, `ColorModel`,
+  `ByteOrder`, `Cicp`, `ContentLightLevel`, and `MasteringDisplay`. Off by default.
+
+### zenpixels-convert — additions
+
+- **Gamut matrix in `RowConverter`** — primaries conversion (e.g., BT.709 ↔
+  Display P3 ↔ BT.2020) is now automatic. `RowConverter` injects a 3×3 matrix
+  step in linear f32 space when source and destination primaries differ.
+  Previously callers had to apply gamut matrices manually.
+- **Embedded ICC profiles** — CC0-licensed ICC profiles for Display P3, AdobeRGB,
+  Rec2020, and ProPhoto are now bundled. `icc_profile_for_primaries()` returns
+  the appropriate profile bytes for a given `ColorPrimaries` value.
+- **`serde` feature** — forwards to `zenpixels/serde`.
+
+### Bug fixes
+
+- **Display P3 TRC correction** — `identify_by_colorants` now correctly maps
+  Display P3 to sRGB transfer characteristic (code 13) instead of BT.709 (code 1).
+- **`allow_use_cicp_transfer` disabled** in the moxcms CMS path. CICP transfer
+  function override is for applications, not CMMs. The zen conversion pipeline
+  handles transfer functions explicitly via `RowConverter`, so the CMS should
+  only apply the ICC profile's gamut mapping. Matches the moxcms v2 path fix.
+- **Linear-space matte compositing** — `matte_composite` now blends in linear
+  light instead of gamma-encoded space, fixing visible darkening artifacts at
+  semi-transparent edges.
+
 ## 0.2.0
 
 This is a **breaking release** — see "Breaking changes" below.
