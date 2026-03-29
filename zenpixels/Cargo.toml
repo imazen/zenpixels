@@ -16,9 +16,11 @@ std = []
 planar = []
 rgb = ["dep:rgb"]
 imgref = ["dep:imgref", "rgb"]
+serde = ["dep:serde"]
 
 [dependencies]
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
+serde = { version = "1", optional = true, default-features = false, features = ["derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 imgref = { version = "1.12", optional = true }
 whereat = { version = "0.1.4", default-features = false }

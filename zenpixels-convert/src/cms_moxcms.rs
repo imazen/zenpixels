@@ -257,10 +257,15 @@ fn identify_by_colorants(profile: &ColorProfile) -> Option<Cicp> {
             && (b.y - known.by).abs() < TOL;
 
         if matches {
-            // For sRGB, use transfer characteristic 13 (sRGB).
-            // For others, use 1 (BT.709) as a safe default since we
-            // can't reliably identify the TRC from colorants alone.
-            let transfer = if known.primaries_code == 1 { 13 } else { 1 };
+            // Map known primaries to their standard transfer characteristic.
+            // sRGB (1) and Display P3 (12) both use the sRGB TRC (13).
+            // BT.2020 (9) uses BT.709 TRC (1) as a safe default since
+            // the actual TRC (PQ, HLG, or BT.709) can't be identified
+            // from colorants alone.
+            let transfer = match known.primaries_code {
+                1 | 12 => 13, // sRGB and Display P3 use sRGB TRC
+                _ => 1,       // BT.2020 etc. default to BT.709 TRC
+            };
             return Some(Cicp::new(
                 known.primaries_code,
                 transfer,

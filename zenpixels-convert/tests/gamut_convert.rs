@@ -20,17 +20,41 @@ fn f32_linear(primaries: ColorPrimaries) -> PixelDescriptor {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn row_converter_ignores_primaries_difference() {
-    // RowConverter intentionally does NOT apply gamut matrices.
-    // Gamut conversion is a separate step (conversion_matrix + apply_matrix_row).
+fn row_converter_applies_gamut_matrix_for_primaries_difference() {
+    // RowConverter applies a 3×3 gamut matrix in linear f32 when primaries differ.
     let src = f32_linear(ColorPrimaries::Bt709);
     let dst = f32_linear(ColorPrimaries::Bt2020);
 
-    let conv = RowConverter::new(src, dst).unwrap();
+    let mut conv = RowConverter::new(src, dst).unwrap();
     assert!(
-        conv.is_identity(),
-        "RowConverter should be identity when only primaries differ"
+        !conv.is_identity(),
+        "RowConverter should apply gamut matrix when primaries differ"
     );
+
+    // Verify that pure white maps to white (white point preservation).
+    let mut src_row = [1.0f32, 1.0, 1.0];
+    let mut dst_row = [0.0f32; 3];
+    conv.convert_row(
+        bytemuck::cast_slice(&src_row),
+        bytemuck::cast_slice_mut(&mut dst_row),
+        1,
+    );
+    for (c, &val) in dst_row.iter().enumerate() {
+        assert!(
+            (val - 1.0).abs() < 1e-3,
+            "White point not preserved in ch{c}: {val:.6}"
+        );
+    }
+
+    // Verify a non-white color actually changes.
+    src_row = [0.5, 0.3, 0.8];
+    conv.convert_row(
+        bytemuck::cast_slice(&src_row),
+        bytemuck::cast_slice_mut(&mut dst_row),
+        1,
+    );
+    let changed = (0..3).any(|c| (dst_row[c] - src_row[c]).abs() > 0.01);
+    assert!(changed, "Gamut matrix should change non-neutral colors");
 }
 
 // ---------------------------------------------------------------------------

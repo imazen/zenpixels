@@ -13,6 +13,7 @@ use core::fmt;
 
 /// Channel storage type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum ChannelType {
@@ -97,6 +98,7 @@ impl fmt::Display for ChannelType {
 
 /// Channel layout (number and meaning of channels).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum ChannelLayout {
@@ -167,6 +169,7 @@ impl fmt::Display for ChannelLayout {
 /// alpha channel exists, while `Some(AlphaMode::Straight)` etc. describe
 /// the semantics of a present alpha channel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum AlphaMode {
@@ -205,6 +208,7 @@ impl fmt::Display for AlphaMode {
 
 /// Electro-optical transfer function.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum TransferFunction {
@@ -288,6 +292,7 @@ impl fmt::Display for TransferFunction {
 ///
 /// Discriminant values match CICP `ColorPrimaries` codes (ITU-T H.273).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum ColorPrimaries {
@@ -368,6 +373,7 @@ impl fmt::Display for ColorPrimaries {
 
 /// Signal range for pixel values.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum SignalRange {
@@ -398,6 +404,7 @@ impl fmt::Display for SignalRange {
 /// Combines a [`PixelFormat`] (physical pixel layout) with transfer function,
 /// alpha mode, color primaries, and signal range.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct PixelDescriptor {
     /// Physical pixel format (channel type + layout as a flat enum).
@@ -957,6 +964,7 @@ impl fmt::Display for PixelDescriptor {
 
 /// What the channels represent, independent of channel count or byte order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum ColorModel {
@@ -1031,6 +1039,7 @@ impl fmt::Display for ByteOrder {
 /// Use this enum when you need exhaustive `match` dispatch over known
 /// pixel layouts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum PixelFormat {
