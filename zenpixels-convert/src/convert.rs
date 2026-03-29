@@ -236,118 +236,123 @@ impl ConvertPlan {
             && from.primaries != ColorPrimaries::Unknown
             && to.primaries != ColorPrimaries::Unknown;
 
-        if need_primaries {
-            if let Some(matrix) = crate::gamut::conversion_matrix(from.primaries, to.primaries) {
-                // Flatten the 3×3 matrix for storage in the step enum.
-                let flat = [
-                    matrix[0][0], matrix[0][1], matrix[0][2],
-                    matrix[1][0], matrix[1][1], matrix[1][2],
-                    matrix[2][0], matrix[2][1], matrix[2][2],
-                ];
+        if need_primaries
+            && let Some(matrix) = crate::gamut::conversion_matrix(from.primaries, to.primaries)
+        {
+            // Flatten the 3×3 matrix for storage in the step enum.
+            let flat = [
+                matrix[0][0],
+                matrix[0][1],
+                matrix[0][2],
+                matrix[1][0],
+                matrix[1][1],
+                matrix[1][2],
+                matrix[2][0],
+                matrix[2][1],
+                matrix[2][2],
+            ];
 
-                // The gamut matrix must be applied in linear f32 space.
-                // Check if the existing steps already go through linear f32.
-                let mut goes_through_linear = false;
-                {
-                    let mut desc = from;
-                    for &step in &steps {
-                        desc = intermediate_desc(desc, step);
-                        if desc.channel_type() == ChannelType::F32
-                            && desc.transfer() == TransferFunction::Linear
-                        {
-                            goes_through_linear = true;
-                        }
+            // The gamut matrix must be applied in linear f32 space.
+            // Check if the existing steps already go through linear f32.
+            let mut goes_through_linear = false;
+            {
+                let mut desc = from;
+                for &step in &steps {
+                    desc = intermediate_desc(desc, step);
+                    if desc.channel_type() == ChannelType::F32
+                        && desc.transfer() == TransferFunction::Linear
+                    {
+                        goes_through_linear = true;
                     }
                 }
+            }
 
-                if goes_through_linear {
-                    // Insert the gamut matrix right after the first step that
-                    // produces linear f32. All subsequent steps encode to the
-                    // target format.
-                    let mut insert_pos = 0;
-                    let mut desc = from;
-                    for (i, &step) in steps.iter().enumerate() {
-                        desc = intermediate_desc(desc, step);
-                        if desc.channel_type() == ChannelType::F32
-                            && desc.transfer() == TransferFunction::Linear
-                        {
-                            insert_pos = i + 1;
-                            break;
-                        }
+            if goes_through_linear {
+                // Insert the gamut matrix right after the first step that
+                // produces linear f32. All subsequent steps encode to the
+                // target format.
+                let mut insert_pos = 0;
+                let mut desc = from;
+                for (i, &step) in steps.iter().enumerate() {
+                    desc = intermediate_desc(desc, step);
+                    if desc.channel_type() == ChannelType::F32
+                        && desc.transfer() == TransferFunction::Linear
+                    {
+                        insert_pos = i + 1;
+                        break;
                     }
-                    let gamut_step = if desc.layout().has_alpha() {
-                        ConvertStep::GamutMatrixRgbaF32(flat)
-                    } else {
-                        ConvertStep::GamutMatrixRgbF32(flat)
-                    };
-                    steps.insert(insert_pos, gamut_step);
+                }
+                let gamut_step = if desc.layout().has_alpha() {
+                    ConvertStep::GamutMatrixRgbaF32(flat)
                 } else {
-                    // No existing linear f32 step — we must add linearize → gamut → delinearize.
-                    // Determine layout for the gamut step.
-                    let has_alpha = from.layout().has_alpha() || to.layout().has_alpha();
-                    // Use the layout at the current point in the plan.
-                    let mut desc = from;
-                    for &step in &steps {
-                        desc = intermediate_desc(desc, step);
-                    }
-                    let gamut_step = if desc.layout().has_alpha() || has_alpha {
-                        ConvertStep::GamutMatrixRgbaF32(flat)
-                    } else {
-                        ConvertStep::GamutMatrixRgbF32(flat)
-                    };
+                    ConvertStep::GamutMatrixRgbF32(flat)
+                };
+                steps.insert(insert_pos, gamut_step);
+            } else {
+                // No existing linear f32 step — we must add linearize → gamut → delinearize.
+                // Determine layout for the gamut step.
+                let has_alpha = from.layout().has_alpha() || to.layout().has_alpha();
+                // Use the layout at the current point in the plan.
+                let mut desc = from;
+                for &step in &steps {
+                    desc = intermediate_desc(desc, step);
+                }
+                let gamut_step = if desc.layout().has_alpha() || has_alpha {
+                    ConvertStep::GamutMatrixRgbaF32(flat)
+                } else {
+                    ConvertStep::GamutMatrixRgbF32(flat)
+                };
 
-                    // Insert linearize → gamut → encode-to-target-tf at the end,
-                    // before any alpha mode steps.
-                    let linearize = match desc.transfer() {
-                        TransferFunction::Srgb => ConvertStep::SrgbF32ToLinearF32,
-                        TransferFunction::Bt709 => ConvertStep::Bt709F32ToLinearF32,
-                        TransferFunction::Pq => ConvertStep::PqF32ToLinearF32,
-                        TransferFunction::Hlg => ConvertStep::HlgF32ToLinearF32,
-                        TransferFunction::Linear => ConvertStep::Identity,
-                        _ => ConvertStep::SrgbF32ToLinearF32, // assume sRGB for Unknown
-                    };
-                    let to_target_tf = match to.transfer() {
-                        TransferFunction::Srgb => ConvertStep::LinearF32ToSrgbF32,
-                        TransferFunction::Bt709 => ConvertStep::LinearF32ToBt709F32,
-                        TransferFunction::Pq => ConvertStep::LinearF32ToPqF32,
-                        TransferFunction::Hlg => ConvertStep::LinearF32ToHlgF32,
-                        TransferFunction::Linear => ConvertStep::Identity,
-                        _ => ConvertStep::LinearF32ToSrgbF32, // assume sRGB for Unknown
-                    };
+                // Insert linearize → gamut → encode-to-target-tf at the end,
+                // before any alpha mode steps.
+                let linearize = match desc.transfer() {
+                    TransferFunction::Srgb => ConvertStep::SrgbF32ToLinearF32,
+                    TransferFunction::Bt709 => ConvertStep::Bt709F32ToLinearF32,
+                    TransferFunction::Pq => ConvertStep::PqF32ToLinearF32,
+                    TransferFunction::Hlg => ConvertStep::HlgF32ToLinearF32,
+                    TransferFunction::Linear => ConvertStep::Identity,
+                    _ => ConvertStep::SrgbF32ToLinearF32, // assume sRGB for Unknown
+                };
+                let to_target_tf = match to.transfer() {
+                    TransferFunction::Srgb => ConvertStep::LinearF32ToSrgbF32,
+                    TransferFunction::Bt709 => ConvertStep::LinearF32ToBt709F32,
+                    TransferFunction::Pq => ConvertStep::LinearF32ToPqF32,
+                    TransferFunction::Hlg => ConvertStep::LinearF32ToHlgF32,
+                    TransferFunction::Linear => ConvertStep::Identity,
+                    _ => ConvertStep::LinearF32ToSrgbF32, // assume sRGB for Unknown
+                };
 
-                    // Need to be in f32 first. If current is integer, add naive conversion.
-                    let mut gamut_steps = Vec::new();
-                    if desc.channel_type() != ChannelType::F32 {
-                        // Use the fused sRGB u8→linear f32 if applicable.
-                        if desc.channel_type() == ChannelType::U8
-                            && matches!(desc.transfer(), TransferFunction::Srgb | TransferFunction::Bt709 | TransferFunction::Unknown)
-                        {
-                            gamut_steps.push(ConvertStep::SrgbU8ToLinearF32);
-                            // Already linear, skip separate linearize.
-                            gamut_steps.push(gamut_step);
-                            gamut_steps.push(ConvertStep::LinearF32ToSrgbU8);
-                        } else if desc.channel_type() == ChannelType::U16 && desc.transfer() == TransferFunction::Pq {
-                            gamut_steps.push(ConvertStep::PqU16ToLinearF32);
-                            gamut_steps.push(gamut_step);
-                            gamut_steps.push(ConvertStep::LinearF32ToPqU16);
-                        } else if desc.channel_type() == ChannelType::U16 && desc.transfer() == TransferFunction::Hlg {
-                            gamut_steps.push(ConvertStep::HlgU16ToLinearF32);
-                            gamut_steps.push(gamut_step);
-                            gamut_steps.push(ConvertStep::LinearF32ToHlgU16);
-                        } else {
-                            // Generic: naive to f32, linearize, gamut, delinearize, naive back
-                            gamut_steps.push(ConvertStep::NaiveU8ToF32);
-                            if linearize != ConvertStep::Identity {
-                                gamut_steps.push(linearize);
-                            }
-                            gamut_steps.push(gamut_step);
-                            if to_target_tf != ConvertStep::Identity {
-                                gamut_steps.push(to_target_tf);
-                            }
-                            gamut_steps.push(ConvertStep::NaiveF32ToU8);
-                        }
+                // Need to be in f32 first. If current is integer, add naive conversion.
+                let mut gamut_steps = Vec::new();
+                if desc.channel_type() != ChannelType::F32 {
+                    // Use the fused sRGB u8→linear f32 if applicable.
+                    if desc.channel_type() == ChannelType::U8
+                        && matches!(
+                            desc.transfer(),
+                            TransferFunction::Srgb
+                                | TransferFunction::Bt709
+                                | TransferFunction::Unknown
+                        )
+                    {
+                        gamut_steps.push(ConvertStep::SrgbU8ToLinearF32);
+                        // Already linear, skip separate linearize.
+                        gamut_steps.push(gamut_step);
+                        gamut_steps.push(ConvertStep::LinearF32ToSrgbU8);
+                    } else if desc.channel_type() == ChannelType::U16
+                        && desc.transfer() == TransferFunction::Pq
+                    {
+                        gamut_steps.push(ConvertStep::PqU16ToLinearF32);
+                        gamut_steps.push(gamut_step);
+                        gamut_steps.push(ConvertStep::LinearF32ToPqU16);
+                    } else if desc.channel_type() == ChannelType::U16
+                        && desc.transfer() == TransferFunction::Hlg
+                    {
+                        gamut_steps.push(ConvertStep::HlgU16ToLinearF32);
+                        gamut_steps.push(gamut_step);
+                        gamut_steps.push(ConvertStep::LinearF32ToHlgU16);
                     } else {
-                        // Already f32, just linearize → gamut → encode
+                        // Generic: naive to f32, linearize, gamut, delinearize, naive back
+                        gamut_steps.push(ConvertStep::NaiveU8ToF32);
                         if linearize != ConvertStep::Identity {
                             gamut_steps.push(linearize);
                         }
@@ -355,10 +360,20 @@ impl ConvertPlan {
                         if to_target_tf != ConvertStep::Identity {
                             gamut_steps.push(to_target_tf);
                         }
+                        gamut_steps.push(ConvertStep::NaiveF32ToU8);
                     }
-
-                    steps.extend(gamut_steps);
+                } else {
+                    // Already f32, just linearize → gamut → encode
+                    if linearize != ConvertStep::Identity {
+                        gamut_steps.push(linearize);
+                    }
+                    gamut_steps.push(gamut_step);
+                    if to_target_tf != ConvertStep::Identity {
+                        gamut_steps.push(to_target_tf);
+                    }
                 }
+
+                steps.extend(gamut_steps);
             }
         }
 
