@@ -28,13 +28,17 @@ use alloc::boxed::Box;
 use alloc::format;
 use alloc::sync::Arc;
 
-use moxcms::{BarycentricWeightScale, ColorProfile, Layout, TransformExecutor, TransformOptions};
+use moxcms::{
+    BarycentricWeightScale, ColorProfile, InterpolationMethod, Layout, TransformExecutor,
+    TransformOptions,
+};
 
 /// Standard moxcms transform options. See imageflow_core's moxcms_transform.rs for rationale.
 fn lut_transform_opts() -> TransformOptions {
     TransformOptions {
         allow_use_cicp_transfer: false,
         barycentric_weight_scale: BarycentricWeightScale::High,
+        interpolation_method: InterpolationMethod::Tetrahedral,
         ..Default::default()
     }
 }
