@@ -30,6 +30,15 @@ use alloc::sync::Arc;
 
 use moxcms::{BarycentricWeightScale, ColorProfile, Layout, TransformExecutor, TransformOptions};
 
+/// Standard moxcms transform options. See imageflow_core's moxcms_transform.rs for rationale.
+fn lut_transform_opts() -> TransformOptions {
+    TransformOptions {
+        allow_use_cicp_transfer: false,
+        barycentric_weight_scale: BarycentricWeightScale::High,
+        ..Default::default()
+    }
+}
+
 use crate::cms::{ColorManagement, RowTransform};
 use crate::{ChannelType, Cicp, PixelFormat};
 
@@ -129,13 +138,7 @@ impl ColorManagement for MoxCms {
         let dst_layout = pixel_format_to_layout(dst_format).unwrap_or(Layout::Rgb);
         // CICP transfer is for applications, not CMMs (ICC Votable Proposal).
         // Matches the v2 path fix — see moxcms issue #154.
-        // BarycentricWeightScale::High reduces LUT interpolation error from max≤14
-        // to max≤2 vs lcms2 for standard ICC LUT profiles with no measurable perf cost.
-        let opts = TransformOptions {
-            allow_use_cicp_transfer: false,
-            barycentric_weight_scale: BarycentricWeightScale::High,
-            ..Default::default()
-        };
+        let opts = lut_transform_opts();
 
         // Pick the narrower of the two channel types to avoid unnecessary
         // precision loss, but always use the source depth when both differ
