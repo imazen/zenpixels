@@ -11,7 +11,8 @@ fn make_lut_transform(opts: TransformOptions) -> Arc<Transform8BitExecutor> {
     let src = ColorProfile::new_pro_photo_rgb();
     let dst = ColorProfile::new_srgb();
     // create_transform_8bit always uses the CLut/LUT path
-    src.create_transform_8bit(Layout::Rgba, &dst, Layout::Rgba, opts).unwrap()
+    src.create_transform_8bit(Layout::Rgba, &dst, Layout::Rgba, opts)
+        .unwrap()
 }
 
 fn opts_fixed(method: InterpolationMethod) -> TransformOptions {
@@ -41,31 +42,60 @@ fn main() {
     let pixels = w * h * 4;
 
     let transforms: &[(&str, Arc<Transform8BitExecutor>)] = &[
-        ("fixed  Linear",                make_lut_transform(opts_fixed(InterpolationMethod::Linear))),
-        ("fixed  Tetrahedral",           make_lut_transform(opts_fixed(InterpolationMethod::Tetrahedral))),
-        ("fixed  Pyramid",               make_lut_transform(opts_fixed(InterpolationMethod::Pyramid))),
-        ("fixed  Prism",                 make_lut_transform(opts_fixed(InterpolationMethod::Prism))),
-        ("float  Linear",                make_lut_transform(opts_float(InterpolationMethod::Linear))),
-        ("float  Tetrahedral",           make_lut_transform(opts_float(InterpolationMethod::Tetrahedral))),
-        ("float  Pyramid",               make_lut_transform(opts_float(InterpolationMethod::Pyramid))),
-        ("float  Prism",                 make_lut_transform(opts_float(InterpolationMethod::Prism))),
+        (
+            "fixed  Linear",
+            make_lut_transform(opts_fixed(InterpolationMethod::Linear)),
+        ),
+        (
+            "fixed  Tetrahedral",
+            make_lut_transform(opts_fixed(InterpolationMethod::Tetrahedral)),
+        ),
+        (
+            "fixed  Pyramid",
+            make_lut_transform(opts_fixed(InterpolationMethod::Pyramid)),
+        ),
+        (
+            "fixed  Prism",
+            make_lut_transform(opts_fixed(InterpolationMethod::Prism)),
+        ),
+        (
+            "float  Linear",
+            make_lut_transform(opts_float(InterpolationMethod::Linear)),
+        ),
+        (
+            "float  Tetrahedral",
+            make_lut_transform(opts_float(InterpolationMethod::Tetrahedral)),
+        ),
+        (
+            "float  Pyramid",
+            make_lut_transform(opts_float(InterpolationMethod::Pyramid)),
+        ),
+        (
+            "float  Prism",
+            make_lut_transform(opts_float(InterpolationMethod::Prism)),
+        ),
     ];
 
     let src: Vec<u8> = (0..pixels).map(|i| (i % 256) as u8).collect();
 
     zenbench::run(|suite| {
-        suite.group("moxcms ProPhoto→sRGB LUT  4K (3840×2160)  High weight scale", |g| {
-            g.throughput(Throughput::Bytes(pixels as u64));
+        suite.group(
+            "moxcms ProPhoto→sRGB LUT  4K (3840×2160)  High weight scale",
+            |g| {
+                g.throughput(Throughput::Bytes(pixels as u64));
 
-            for (name, t) in transforms {
-                let mut dst = vec![0u8; pixels];
-                let s = src.clone();
-                let t = t.clone();
-                g.bench(*name, move |bench| bench.iter(|| {
-                    t.transform(&s, &mut dst).unwrap();
-                    black_box(());
-                }));
-            }
-        });
+                for (name, t) in transforms {
+                    let mut dst = vec![0u8; pixels];
+                    let s = src.clone();
+                    let t = t.clone();
+                    g.bench(*name, move |bench| {
+                        bench.iter(|| {
+                            t.transform(&s, &mut dst).unwrap();
+                            black_box(());
+                        })
+                    });
+                }
+            },
+        );
     });
 }
