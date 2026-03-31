@@ -53,19 +53,17 @@ pub fn lut_transform_opts() -> TransformOptions {
     }
 }
 
-/// Standard moxcms transform options for CICP-native formats (e.g. JXL).
+/// Standard moxcms transform options for CICP-native formats (e.g. JXL, HEIF).
 ///
 /// Same as [`lut_transform_opts`] except `allow_use_cicp_transfer` is `true` —
-/// the transform honors embedded CICP transfer characteristics. Use this when
-/// the source format carries authoritative CICP data (JXL, HEIF) and you want
-/// the transfer function applied from that metadata rather than the profile's
-/// curv/para TRC.
+/// the transform honors embedded CICP transfer characteristics rather than
+/// falling back to the profile's curv/para TRC. Use this when the source format
+/// carries authoritative CICP data and you want that transfer function applied.
 pub fn cicp_transform_opts() -> TransformOptions {
     TransformOptions {
         allow_use_cicp_transfer: true,
         barycentric_weight_scale: BarycentricWeightScale::High,
         interpolation_method: InterpolationMethod::Tetrahedral,
-        allow_extended_range_rgb_xyz: true,
         ..Default::default()
     }
 }

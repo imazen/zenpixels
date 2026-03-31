@@ -21,7 +21,7 @@ cms-moxcms = ["std", "dep:moxcms"]
 serde = ["zenpixels/serde"]
 
 [dependencies]
-zenpixels = { version = "0.2.1", path = "../zenpixels", default-features = false }
+zenpixels = { version = "0.2.2", path = "../zenpixels", default-features = false }
 linear-srgb = { version = "0.6.6", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
@@ -31,7 +31,7 @@ whereat = { version = "0.1.5", default-features = false }
 moxcms = { version = "0.8.1", optional = true, features = ["options"] }
 
 [dev-dependencies]
-zenpixels = { version = "0.2.1", path = "../zenpixels", features = ["planar", "imgref"] }
+zenpixels = { version = "0.2.2", path = "../zenpixels", features = ["planar", "imgref"] }
 zenpixels-convert = { path = ".", features = ["pipeline", "imgref", "cms-moxcms"] }
 zenbench = "0.1.2"
 half = "2"

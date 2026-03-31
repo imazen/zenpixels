@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.2
+
+### zenpixels-convert — additions
+
+- **`lut_transform_opts()`** (public) — canonical moxcms `TransformOptions` for
+  standard ICC LUT transforms: `allow_use_cicp_transfer: false`,
+  `BarycentricWeightScale::High`, `InterpolationMethod::Tetrahedral`.
+- **`cicp_transform_opts()`** — same quality settings as `lut_transform_opts` but
+  `allow_use_cicp_transfer: true` for CICP-native source formats (JXL, HEIF).
+
+### zenpixels-convert — improvements
+
+- **`InterpolationMethod::Tetrahedral`** added to the internal `lut_transform_opts`
+  used by `MoxCms::build_transform_for_format`. Improves accuracy of 3D CLUT
+  transforms over the previous trilinear default.
+- **`BarycentricWeightScale::High`** was already set; now documented in the public
+  function with the rationale (max LUT interpolation error ≤2 vs ≤14, no perf cost).
+
 ## 0.2.1
 
 ### zenpixels — additions
