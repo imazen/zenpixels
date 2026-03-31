@@ -28,11 +28,18 @@ rgb = { version = "0.8", default-features = false, features = ["bytemuck"], opti
 garb = { version = "0.2.5", default-features = false, features = ["experimental"] }
 archmage = { version = "0.9.15", default-features = false }
 whereat = { version = "0.1.5", default-features = false }
-moxcms = { version = "0.8.1", optional = true }
+moxcms = { version = "0.8.1", optional = true, features = ["options"] }
 
 [dev-dependencies]
 zenpixels = { version = "0.2.1", path = "../zenpixels", features = ["planar", "imgref"] }
 zenpixels-convert = { path = ".", features = ["pipeline", "imgref", "cms-moxcms"] }
+zenbench = "0.1.2"
 half = "2"
 palette = "0.7"
+
+[[bench]]
+name = "bench_cms"
+path = "benches/bench_cms.rs"
+harness = false
+required-features = ["cms-moxcms"]
 

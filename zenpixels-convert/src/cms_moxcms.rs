@@ -28,7 +28,7 @@ use alloc::boxed::Box;
 use alloc::format;
 use alloc::sync::Arc;
 
-use moxcms::{ColorProfile, Layout, TransformExecutor, TransformOptions};
+use moxcms::{BarycentricWeightScale, ColorProfile, Layout, TransformExecutor, TransformOptions};
 
 use crate::cms::{ColorManagement, RowTransform};
 use crate::{ChannelType, Cicp, PixelFormat};
@@ -129,8 +129,11 @@ impl ColorManagement for MoxCms {
         let dst_layout = pixel_format_to_layout(dst_format).unwrap_or(Layout::Rgb);
         // CICP transfer is for applications, not CMMs (ICC Votable Proposal).
         // Matches the v2 path fix — see moxcms issue #154.
+        // BarycentricWeightScale::High reduces LUT interpolation error from max≤14
+        // to max≤2 vs lcms2 for standard ICC LUT profiles with no measurable perf cost.
         let opts = TransformOptions {
             allow_use_cicp_transfer: false,
+            barycentric_weight_scale: BarycentricWeightScale::High,
             ..Default::default()
         };
 
