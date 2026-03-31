@@ -33,12 +33,37 @@ use moxcms::{
     TransformOptions,
 };
 
-/// Standard moxcms transform options. See imageflow_core's moxcms_transform.rs for rationale.
-fn lut_transform_opts() -> TransformOptions {
+/// Standard moxcms transform options for ICC LUT transforms.
+///
+/// - `allow_use_cicp_transfer: false` — honor the profile's own curv/para TRC,
+///   not any embedded CICP transfer characteristics (moxcms issue #154).
+/// - `barycentric_weight_scale: High` — cuts LUT interpolation error from max≤14
+///   to max≤2 vs lcms2 for standard ICC LUT profiles, no measurable perf cost.
+/// - `interpolation_method: Tetrahedral` — tetrahedral interpolation over trilinear
+///   for higher accuracy in 3D CLUTs.
+///
+/// Use this for all standard display-referred ICC profile transforms. For JXL
+/// (CICP-native), use [`jxl_transform_opts`] which keeps `allow_use_cicp_transfer`
+/// at its default.
+pub fn lut_transform_opts() -> TransformOptions {
     TransformOptions {
         allow_use_cicp_transfer: false,
         barycentric_weight_scale: BarycentricWeightScale::High,
         interpolation_method: InterpolationMethod::Tetrahedral,
+        ..Default::default()
+    }
+}
+
+/// Standard moxcms transform options for CICP-native formats (e.g. JXL).
+///
+/// Same as [`lut_transform_opts`] except `allow_use_cicp_transfer` is left at
+/// its default (`true`). JXL carries CICP data natively and the transform should
+/// honor it rather than falling back to the profile's curv/para TRC.
+pub fn jxl_transform_opts() -> TransformOptions {
+    TransformOptions {
+        barycentric_weight_scale: BarycentricWeightScale::High,
+        interpolation_method: InterpolationMethod::Tetrahedral,
+        allow_extended_range_rgb_xyz: true,
         ..Default::default()
     }
 }
