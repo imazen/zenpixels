@@ -95,13 +95,9 @@ pub fn transform_opts(priority: ColorPriority, intent: RenderingIntent) -> Trans
     TransformOptions {
         rendering_intent: match intent {
             RenderingIntent::Perceptual => moxcms::RenderingIntent::Perceptual,
-            RenderingIntent::RelativeColorimetric => {
-                moxcms::RenderingIntent::RelativeColorimetric
-            }
+            RenderingIntent::RelativeColorimetric => moxcms::RenderingIntent::RelativeColorimetric,
             RenderingIntent::Saturation => moxcms::RenderingIntent::Saturation,
-            RenderingIntent::AbsoluteColorimetric => {
-                moxcms::RenderingIntent::AbsoluteColorimetric
-            }
+            RenderingIntent::AbsoluteColorimetric => moxcms::RenderingIntent::AbsoluteColorimetric,
         },
         allow_use_cicp_transfer: matches!(priority, ColorPriority::PreferCicp),
         barycentric_weight_scale: BarycentricWeightScale::High,
@@ -122,7 +118,10 @@ pub fn transform_opts(priority: ColorPriority, intent: RenderingIntent) -> Trans
     note = "use transform_opts(ColorPriority::PreferIcc, RenderingIntent::RelativeColorimetric) instead"
 )]
 pub fn lut_transform_opts() -> TransformOptions {
-    transform_opts(ColorPriority::PreferIcc, RenderingIntent::RelativeColorimetric)
+    transform_opts(
+        ColorPriority::PreferIcc,
+        RenderingIntent::RelativeColorimetric,
+    )
 }
 
 /// Standard moxcms transform options for CICP-native formats (e.g. JXL, HEIF).
