@@ -33,39 +33,114 @@ use moxcms::{
     TransformOptions,
 };
 
-/// Standard moxcms transform options for ICC LUT transforms.
+use crate::cms::{ColorPriority, RenderingIntent};
+
+/// Build moxcms [`TransformOptions`] from a [`ColorPriority`] and
+/// [`RenderingIntent`].
 ///
-/// - `allow_use_cicp_transfer: false` — honor the profile's own curv/para TRC,
-///   not any embedded CICP transfer characteristics (moxcms issue #154).
-/// - `barycentric_weight_scale: High` — cuts LUT interpolation error from max≤14
-///   to max≤2 vs lcms2 for standard ICC LUT profiles, no measurable perf cost.
-/// - `interpolation_method: Tetrahedral` — tetrahedral interpolation over trilinear
-///   for higher accuracy in 3D CLUTs.
+/// This is the single entry point for constructing moxcms transform options.
+/// It applies our quality defaults (tetrahedral interpolation, high-precision
+/// barycentric weights) and maps the backend-agnostic enums to moxcms types.
 ///
-/// Use this for all standard display-referred ICC profile transforms. For
-/// CICP-native formats (JXL, HEIF), use [`cicp_transform_opts`].
-pub fn lut_transform_opts() -> TransformOptions {
+/// # Parameters
+///
+/// - `priority` — which transfer function metadata to trust. Use
+///   [`ColorPriority::PreferIcc`] for standard ICC workflows (JPEG, PNG, TIFF,
+///   WebP). Use [`ColorPriority::PreferCicp`] for CICP-native formats (JPEG XL,
+///   HEIF, AVIF) where the CICP code is the authoritative description and the
+///   ICC profile is a backwards-compatibility fallback.
+///
+/// - `intent` — ICC rendering intent. Use
+///   [`RenderingIntent::RelativeColorimetric`] (the default) for display output.
+///   See [`RenderingIntent`] docs for when to use other intents.
+///
+/// # Quality settings
+///
+/// The following are always applied regardless of arguments:
+///
+/// - **Tetrahedral interpolation** over trilinear for 3D CLUTs. Produces
+///   higher accuracy in saturated regions where trilinear interpolation
+///   crosses cube diagonals. No measurable performance cost for the image
+///   sizes we handle.
+///
+/// - **High barycentric weight scale.** Cuts LUT interpolation error from
+///   max ≤ 14 to max ≤ 2 (code values, u8 scale) vs. lcms2 for standard
+///   ICC LUT profiles. The 5% performance cost cited in moxcms docs is
+///   negligible at our call granularity (row-level transforms, not
+///   pixel-level).
+///
+/// # Rendering intent vs. profile LUT availability
+///
+/// Requesting an intent whose LUT is absent in the profile causes a silent
+/// fallback to the profile's default intent (typically relative colorimetric).
+/// Most display profiles only ship one LUT. See [`RenderingIntent`] docs for
+/// details on which profiles actually honor which intents.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use zenpixels_convert::cms::{ColorPriority, RenderingIntent};
+/// use zenpixels_convert::cms_moxcms::transform_opts;
+///
+/// // Standard ICC workflow (JPEG, PNG, etc.)
+/// let opts = transform_opts(ColorPriority::PreferIcc, RenderingIntent::RelativeColorimetric);
+///
+/// // JPEG XL decode — trust CICP transfer characteristics
+/// let opts = transform_opts(ColorPriority::PreferCicp, RenderingIntent::RelativeColorimetric);
+///
+/// // Soft-proofing: simulate print appearance on screen
+/// let opts = transform_opts(ColorPriority::PreferIcc, RenderingIntent::AbsoluteColorimetric);
+/// ```
+pub fn transform_opts(priority: ColorPriority, intent: RenderingIntent) -> TransformOptions {
     TransformOptions {
-        allow_use_cicp_transfer: false,
+        rendering_intent: match intent {
+            RenderingIntent::Perceptual => moxcms::RenderingIntent::Perceptual,
+            RenderingIntent::RelativeColorimetric => {
+                moxcms::RenderingIntent::RelativeColorimetric
+            }
+            RenderingIntent::Saturation => moxcms::RenderingIntent::Saturation,
+            RenderingIntent::AbsoluteColorimetric => {
+                moxcms::RenderingIntent::AbsoluteColorimetric
+            }
+        },
+        allow_use_cicp_transfer: matches!(priority, ColorPriority::PreferCicp),
         barycentric_weight_scale: BarycentricWeightScale::High,
         interpolation_method: InterpolationMethod::Tetrahedral,
         ..Default::default()
     }
 }
 
+/// Standard moxcms transform options for ICC LUT transforms.
+///
+/// # Deprecated
+///
+/// Use [`transform_opts`]`(`[`ColorPriority::PreferIcc`]`,
+/// `[`RenderingIntent::RelativeColorimetric`]`)` instead, which lets you
+/// specify the rendering intent explicitly.
+#[deprecated(
+    since = "0.2.3",
+    note = "use transform_opts(ColorPriority::PreferIcc, RenderingIntent::RelativeColorimetric) instead"
+)]
+pub fn lut_transform_opts() -> TransformOptions {
+    transform_opts(ColorPriority::PreferIcc, RenderingIntent::RelativeColorimetric)
+}
+
 /// Standard moxcms transform options for CICP-native formats (e.g. JXL, HEIF).
 ///
-/// Same as [`lut_transform_opts`] except `allow_use_cicp_transfer` is `true` —
-/// the transform honors embedded CICP transfer characteristics rather than
-/// falling back to the profile's curv/para TRC. Use this when the source format
-/// carries authoritative CICP data and you want that transfer function applied.
+/// # Deprecated
+///
+/// Use [`transform_opts`]`(`[`ColorPriority::PreferCicp`]`,
+/// `[`RenderingIntent::RelativeColorimetric`]`)` instead, which lets you
+/// specify the rendering intent explicitly.
+#[deprecated(
+    since = "0.2.3",
+    note = "use transform_opts(ColorPriority::PreferCicp, RenderingIntent::RelativeColorimetric) instead"
+)]
 pub fn cicp_transform_opts() -> TransformOptions {
-    TransformOptions {
-        allow_use_cicp_transfer: true,
-        barycentric_weight_scale: BarycentricWeightScale::High,
-        interpolation_method: InterpolationMethod::Tetrahedral,
-        ..Default::default()
-    }
+    transform_opts(
+        ColorPriority::PreferCicp,
+        RenderingIntent::RelativeColorimetric,
+    )
 }
 
 use crate::cms::{ColorManagement, RowTransform};
@@ -167,7 +242,7 @@ impl ColorManagement for MoxCms {
         let dst_layout = pixel_format_to_layout(dst_format).unwrap_or(Layout::Rgb);
         // CICP transfer is for applications, not CMMs (ICC Votable Proposal).
         // Matches the v2 path fix — see moxcms issue #154.
-        let opts = lut_transform_opts();
+        let opts = transform_opts(ColorPriority::PreferIcc, RenderingIntent::default());
 
         // Pick the narrower of the two channel types to avoid unnecessary
         // precision loss, but always use the source depth when both differ

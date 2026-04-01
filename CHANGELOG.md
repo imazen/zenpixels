@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.2.3
+
+### zenpixels-convert — additions
+
+- **`RenderingIntent`** enum — `Perceptual`, `RelativeColorimetric` (default),
+  `Saturation`, `AbsoluteColorimetric`. Backend-agnostic ICC rendering intent
+  with thorough documentation of LUT fallback behavior, profile compatibility,
+  and the moxcms/lcms2 perceptual intent mismatch.
+- **`ColorPriority`** enum — `PreferIcc` (default), `PreferCicp`. Controls
+  whether the CMS trusts ICC `curv`/`para` TRCs or CICP transfer characteristics.
+  Documented: precision tradeoffs, advisory vs. authoritative semantics, and
+  when each setting is correct.
+- **`transform_opts(priority, intent)`** — single entry point for building
+  moxcms `TransformOptions`. Replaces `lut_transform_opts()` and
+  `cicp_transform_opts()` with explicit control over rendering intent.
+
+### zenpixels-convert — breaking behavior change
+
+- **Default rendering intent is now `RelativeColorimetric`**, not `Perceptual`.
+  The previous default inherited moxcms's `Perceptual`, but moxcms's perceptual
+  intent does not match lcms2 and may produce inaccurate results. Most display
+  profiles only ship a relative colorimetric LUT, making the two intents
+  identical in practice — but for profiles that do have perceptual tables, this
+  is a visible change.
+
+### zenpixels-convert — deprecations
+
+- **`lut_transform_opts()`** — use `transform_opts(ColorPriority::PreferIcc, intent)`.
+- **`cicp_transform_opts()`** — use `transform_opts(ColorPriority::PreferCicp, intent)`.
+
 ## 0.2.2
 
 ### zenpixels-convert — additions

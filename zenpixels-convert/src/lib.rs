@@ -436,8 +436,8 @@ pub use hdr::{
     ContentLightLevel, HdrMetadata, MasteringDisplay, reinhard_inverse, reinhard_tonemap,
 };
 
-// Re-export CMS traits and implementations.
-pub use cms::{ColorManagement, RowTransform};
+// Re-export CMS traits, enums, and implementations.
+pub use cms::{ColorManagement, ColorPriority, RenderingIntent, RowTransform};
 #[cfg(feature = "cms-moxcms")]
 pub use cms_moxcms::MoxCms;
 

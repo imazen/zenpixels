@@ -836,6 +836,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenpixels"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6671ce2ea4d3110e2aef9514cc48267291f50fab7b7eead43b36e7c887fb740"
+dependencies = [
+ "bytemuck",
+ "imgref",
+ "rgb",
+ "serde",
+ "whereat",
+]
+
+[[package]]
 name = "zenpixels-convert"
 version = "0.2.2"
 dependencies = [
@@ -849,7 +862,7 @@ dependencies = [
  "rgb",
  "whereat",
  "zenbench",
- "zenpixels",
+ "zenpixels 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "zenpixels-convert",
 ]
 

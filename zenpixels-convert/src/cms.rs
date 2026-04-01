@@ -71,6 +71,179 @@
 use crate::PixelFormat;
 use alloc::boxed::Box;
 
+/// ICC rendering intent — controls how colors outside the destination gamut
+/// are handled during a profile-to-profile transform.
+///
+/// # Which intent to use
+///
+/// For **display-to-display** workflows (web images, app thumbnails, photo
+/// export): use [`RelativeColorimetric`](Self::RelativeColorimetric). It
+/// preserves in-gamut colors exactly and is the de facto standard for screen
+/// output.
+///
+/// For **photographic print** with a profile that has a perceptual table:
+/// use [`Perceptual`](Self::Perceptual). It compresses the full source gamut
+/// smoothly instead of clipping.
+///
+/// For **soft-proofing** ("what will this print look like on screen"): use
+/// [`AbsoluteColorimetric`](Self::AbsoluteColorimetric) to simulate the
+/// paper white.
+///
+/// [`Saturation`](Self::Saturation) is for business graphics (pie charts,
+/// logos). It is almost never correct for photographic images.
+///
+/// # Interaction with ICC profiles
+///
+/// An ICC profile may contain up to four LUTs (AToB0–AToB3), one per intent.
+/// **Most display profiles only ship a single LUT** (relative colorimetric).
+/// When you request an intent whose LUT is absent, the CMS silently falls
+/// back to the profile's default — usually relative colorimetric. This means
+/// `Perceptual` and `RelativeColorimetric` produce **identical output** for
+/// the vast majority of display profiles (sRGB IEC 61966-2.1, Display P3,
+/// etc.). The distinction only matters for print/press profiles that include
+/// dedicated perceptual gamut-mapping tables.
+///
+/// # Bugs and pitfalls
+///
+/// - **Perceptual on display profiles is a no-op.** Requesting `Perceptual`
+///   doesn't add gamut mapping when the profile lacks a perceptual table —
+///   it silently degrades to clipping. If you need actual gamut mapping
+///   between display profiles, you must supply a profile that contains
+///   perceptual intent tables (e.g., a proofing profile or a carefully
+///   authored display profile).
+///
+/// - **AbsoluteColorimetric tints whites.** Source white is preserved
+///   literally, so a D50 source on a D65 display shows yellowish whites.
+///   Never use this for final output — only for proofing previews.
+///
+/// - **Saturation may shift hues.** The ICC spec allows saturation-intent
+///   tables to sacrifice hue accuracy for vividness. Photographs will look
+///   wrong.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+pub enum RenderingIntent {
+    /// Compress the entire source gamut into the destination gamut,
+    /// preserving the perceptual relationship between colors at the cost
+    /// of shifting all values (including in-gamut ones).
+    ///
+    /// **Requires a perceptual LUT in the profile.** Most display profiles
+    /// omit this table, so the CMS falls back to relative colorimetric
+    /// silently. This intent only behaves differently from
+    /// `RelativeColorimetric` when both source and destination profiles
+    /// contain dedicated perceptual rendering tables — typically print,
+    /// press, or carefully authored proofing profiles.
+    ///
+    /// When it works: smooth, continuous gamut mapping with no hard clips.
+    /// When the LUT is missing: identical to `RelativeColorimetric`.
+    ///
+    /// **CMS compatibility warning:** moxcms's perceptual intent
+    /// implementation does not match lcms2's output and may not be
+    /// accurate for all profile combinations. If cross-CMS consistency
+    /// matters, prefer [`RelativeColorimetric`](Self::RelativeColorimetric).
+    Perceptual,
+
+    /// Preserve in-gamut colors exactly; clip out-of-gamut colors to the
+    /// nearest boundary color. White point is adapted from source to
+    /// destination (source white → destination white).
+    ///
+    /// This is the correct default for virtually all display-to-display
+    /// workflows: web images, app thumbnails, photo export, screen preview.
+    /// Colors that fit in the destination gamut are reproduced without any
+    /// remapping — what the numbers say is what you get.
+    ///
+    /// **Tradeoff:** saturated gradients that cross the gamut boundary can
+    /// show hard clipping artifacts (banding). If the source gamut is much
+    /// wider than the destination (e.g., BT.2020 → sRGB), consider whether
+    /// a perceptual-intent profile or a dedicated gamut-mapping step would
+    /// produce smoother results.
+    #[default]
+    RelativeColorimetric,
+
+    /// Maximize saturation and vividness, sacrificing hue accuracy.
+    /// Designed for business graphics: charts, logos, presentation slides.
+    ///
+    /// **Not suitable for photographs.** Hue shifts are expected and
+    /// intentional — the goal is "vivid", not "accurate".
+    ///
+    /// Like `Perceptual`, many profiles lack a saturation-intent LUT.
+    /// When absent, the CMS falls back to the profile's default intent.
+    Saturation,
+
+    /// Like `RelativeColorimetric` but **without** white point adaptation.
+    /// Source white is preserved literally: a D50 (warm) source displayed
+    /// on a D65 (cool) screen will show yellowish whites.
+    ///
+    /// **Use exclusively for soft-proofing**: simulating how a print will
+    /// look by preserving the paper white and ink gamut on screen. Never
+    /// use for final output — the tinted whites look wrong on every
+    /// display except the exact one being simulated.
+    AbsoluteColorimetric,
+}
+
+/// Controls which transfer function metadata the CMS trusts when building
+/// a transform.
+///
+/// ICC profiles store transfer response curves (TRC) as `curv` or `para`
+/// tags — lookup tables or parametric curves baked into the profile. Modern
+/// container formats (JPEG XL, HEIF/AVIF, AV1) also carry CICP transfer
+/// characteristics — an integer code that names an exact mathematical
+/// transfer function (sRGB, PQ, HLG, etc.).
+///
+/// When both are present, they should agree — but in practice, the ICC TRC
+/// may be a reduced-precision approximation of the CICP function (limited
+/// by `curv` table size or `para` parameter quantization). The question is
+/// which source of truth to prefer.
+///
+/// # Which priority to use
+///
+/// - **Standard ICC workflows** (JPEG, PNG, TIFF, WebP): use
+///   [`PreferIcc`](Self::IccOnly). These formats don't carry CICP metadata;
+///   the ICC profile is the sole authority.
+///
+/// - **CICP-native formats** (JPEG XL, HEIF, AVIF): use
+///   [`PreferCicp`](Self::PreferCicp). The CICP code is the authoritative
+///   description; the ICC profile exists for backwards compatibility with
+///   older software.
+///
+/// # Bugs and pitfalls
+///
+/// - **CICP ≠ ICC is a real bug.** Some encoders embed a generic sRGB ICC
+///   profile alongside a PQ or HLG CICP code. Using `PreferCicp` is correct
+///   here — the ICC profile is wrong (or at best, a tone-mapped fallback).
+///   Using `PreferIcc` would silently apply the wrong transfer function.
+///
+/// - **`PreferIcc` for CICP-native formats loses precision.** If the ICC
+///   profile's `curv` table is a 1024-entry LUT approximating the sRGB
+///   function, you get quantization steps in dark tones. The CICP code
+///   gives the exact closed-form function — no quantization, no table
+///   interpolation error.
+///
+/// - **`PreferCicp` for pure-ICC formats is harmless but pointless.** If
+///   the profile has no embedded CICP metadata, the CMS ignores this flag
+///   and falls back to the TRC. No wrong output, just a wasted branch.
+///
+/// - **Advisory vs. authoritative.** The ICC Votable Proposal on CICP
+///   metadata in ICC profiles designates the CICP fields as *advisory*.
+///   The profile's actual TRC tags remain the normative description.
+///   `PreferIcc` follows this interpretation. `PreferCicp` overrides it
+///   for formats where the container's CICP is known to be authoritative.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+pub enum ColorPriority {
+    /// Prefer the ICC profile's own `curv`/`para` TRC curves. Ignore any
+    /// embedded CICP transfer characteristics.
+    ///
+    /// Correct for standard ICC workflows (JPEG, PNG, TIFF, WebP) and
+    /// any situation where the ICC profile is the sole color authority.
+    #[default]
+    PreferIcc,
+
+    /// Allow the CMS to use CICP transfer characteristics when available.
+    ///
+    /// Faster (closed-form math vs. LUT interpolation) and more precise
+    /// (no table quantization error). Correct only for formats where CICP
+    /// is the authoritative color description: JPEG XL, HEIF, AVIF.
+    PreferCicp,
+}
+
 /// Row-level color transform produced by a [`ColorManagement`] implementation.
 ///
 /// Applies an ICC-to-ICC color conversion to a row of pixel data.
