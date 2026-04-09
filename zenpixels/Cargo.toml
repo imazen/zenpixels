@@ -9,6 +9,20 @@ repository.workspace = true
 categories.workspace = true
 description = "Pixel format interchange types for zen* codecs"
 keywords = ["image", "pixel", "format", "descriptor", "codec"]
+exclude = [
+    "CLAUDE.md",
+    "CONTEXT-HANDOFF.md",
+    "FEEDBACK.md",
+    ".claude/",
+    ".superwork/",
+    ".zenbench/",
+    "copter-report/",
+    ".github/",
+    "Cross.toml",
+    "justfile",
+    "Cargo.toml.original.txt",
+    "fuzz/",
+]
 
 [features]
 default = ["std"]

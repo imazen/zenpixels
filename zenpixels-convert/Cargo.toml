@@ -9,6 +9,20 @@ repository.workspace = true
 categories.workspace = true
 description = "Transfer-function-aware pixel conversion, gamut mapping, and codec format negotiation for zenpixels"
 keywords = ["image", "pixel", "conversion", "srgb", "codec"]
+exclude = [
+    "CLAUDE.md",
+    "CONTEXT-HANDOFF.md",
+    "FEEDBACK.md",
+    ".claude/",
+    ".superwork/",
+    ".zenbench/",
+    "copter-report/",
+    ".github/",
+    "Cross.toml",
+    "justfile",
+    "Cargo.toml.original.txt",
+    "fuzz/",
+]
 
 [features]
 default = ["std"]
@@ -32,7 +46,7 @@ moxcms = { version = "0.8.1", optional = true, features = ["options"] }
 
 [dev-dependencies]
 zenpixels = { version = "0.2.2", features = ["planar", "imgref"] }
-zenpixels-convert = { path = "", features = ["pipeline", "imgref", "cms-moxcms"] }
+zenpixels-convert = { path = "", features = ["pipeline", "imgref", "cms-moxcms"] , version = "0.2.3" }
 zenbench = { version = "0.1.2"}
 half = "2"
 palette = "0.7"
