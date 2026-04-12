@@ -64,26 +64,42 @@ fn load_icc_dir(dir: &Path) -> Vec<(String, Vec<u8>)> {
     out
 }
 
-/// Transform a test gradient with the given options, return output pixels.
-fn transform_gradient(
+/// Build a full 256³ RGB cube (16,777,216 pixels) as RGBA with alpha sweep.
+///
+/// Every possible (R, G, B) combination appears exactly once. Alpha cycles
+/// through 0–255 across the pixels so alpha-associated rounding is exercised.
+/// Total: 256³ × 4 = 67,108,864 bytes.
+fn build_full_rgba_cube() -> Vec<u8> {
+    let pixel_count: usize = 256 * 256 * 256;
+    let mut src = vec![0u8; pixel_count * 4];
+    let mut idx = 0;
+    for r in 0..=255u8 {
+        for g in 0..=255u8 {
+            for b in 0..=255u8 {
+                let off = idx * 4;
+                src[off] = r;
+                src[off + 1] = g;
+                src[off + 2] = b;
+                src[off + 3] = idx as u8; // alpha cycles 0–255
+                idx += 1;
+            }
+        }
+    }
+    src
+}
+
+/// Transform the full RGBA cube with the given options, return output pixels.
+fn transform_full_cube(
     src_profile: &ColorProfile,
     dst_profile: &ColorProfile,
     opts: TransformOptions,
+    src: &[u8],
 ) -> Option<Vec<u8>> {
-    // 256-pixel RGB gradient: R sweeps 0–255, G=128, B=64.
-    // This exercises the full TRC range and catches rounding differences.
-    let mut src = vec![0u8; 256 * 3];
-    for i in 0..256 {
-        src[i * 3] = i as u8;
-        src[i * 3 + 1] = 128;
-        src[i * 3 + 2] = 64;
-    }
-
     let xform = src_profile
-        .create_transform_8bit(Layout::Rgb, dst_profile, Layout::Rgb, opts)
+        .create_transform_8bit(Layout::Rgba, dst_profile, Layout::Rgba, opts)
         .ok()?;
-    let mut dst = vec![0u8; 256 * 3];
-    xform.transform(&src, &mut dst).ok()?;
+    let mut dst = vec![0u8; src.len()];
+    xform.transform(src, &mut dst).ok()?;
     Some(dst)
 }
 
@@ -102,7 +118,52 @@ fn opts_with_cicp_flag(allow: bool) -> TransformOptions {
 // Tests
 // ---------------------------------------------------------------------------
 
+/// Compare two RGBA buffers, return (differing_channel_count, max_delta).
+fn compare_buffers(a: &[u8], b: &[u8]) -> (usize, u8) {
+    let max_delta = a
+        .iter()
+        .zip(b.iter())
+        .map(|(x, y)| x.abs_diff(*y))
+        .max()
+        .unwrap_or(0);
+    let diff_count = a.iter().zip(b.iter()).filter(|(x, y)| x != y).count();
+    (diff_count, max_delta)
+}
+
+/// Test a single profile: transform full 256³ RGBA cube with flag on/off, compare.
+fn test_profile_cicp_flag(
+    name: &str,
+    src_profile: &ColorProfile,
+    dst_profile: &ColorProfile,
+    cube: &[u8],
+) -> Option<String> {
+    let has_cicp = src_profile.cicp.is_some();
+
+    let out_off = transform_full_cube(src_profile, dst_profile, opts_with_cicp_flag(false), cube);
+    let out_on = transform_full_cube(src_profile, dst_profile, opts_with_cicp_flag(true), cube);
+
+    match (out_off, out_on) {
+        (Some(a), Some(b)) => {
+            if a != b {
+                let (diff_count, max_delta) = compare_buffers(&a, &b);
+                Some(format!(
+                    "{name}: {diff_count} channels differ, max delta={max_delta}, \
+                     cicp_in_profile={has_cicp}"
+                ))
+            } else {
+                eprintln!("  {name}: identical across all 256³×4 values (cicp={has_cicp})");
+                None
+            }
+        }
+        _ => {
+            eprintln!("  {name}: transform failed, skipping");
+            None
+        }
+    }
+}
+
 /// Test imageflow source JPEGs: does the cicp flag change output?
+/// Exercises every possible (R,G,B) combination with alpha sweep.
 #[test]
 #[ignore] // requires exiftool + imageflow corpus
 fn cicp_flag_imageflow_jpegs() {
@@ -113,6 +174,7 @@ fn cicp_flag_imageflow_jpegs() {
     }
 
     let dst_profile = ColorProfile::new_srgb();
+    let cube = build_full_rgba_cube();
     let mut tested = 0;
     let mut diffs = Vec::new();
 
@@ -130,49 +192,14 @@ fn cicp_flag_imageflow_jpegs() {
             };
             let name = path.file_stem().unwrap().to_string_lossy().to_string();
 
-            let has_cicp = src_profile.cicp.is_some();
-
-            let out_no_cicp =
-                transform_gradient(&src_profile, &dst_profile, opts_with_cicp_flag(false));
-            let out_cicp =
-                transform_gradient(&src_profile, &dst_profile, opts_with_cicp_flag(true));
-
-            match (out_no_cicp, out_cicp) {
-                (Some(a), Some(b)) => {
-                    tested += 1;
-                    if a != b {
-                        // Count differing pixels and max delta
-                        let max_delta: u8 = a
-                            .iter()
-                            .zip(b.iter())
-                            .map(|(x, y)| x.abs_diff(*y))
-                            .max()
-                            .unwrap_or(0);
-                        let diff_count = a.iter().zip(b.iter()).filter(|(x, y)| x != y).count();
-                        diffs.push(format!(
-                            "{name}: {diff_count} channels differ, max delta={max_delta}, \
-                             cicp_in_profile={has_cicp}"
-                        ));
-                    } else {
-                        eprintln!("  {name}: identical (cicp_in_profile={has_cicp})");
-                    }
-                }
-                _ => {
-                    eprintln!("  {name}: transform failed, skipping");
-                }
+            if let Some(diff) = test_profile_cicp_flag(&name, &src_profile, &dst_profile, &cube) {
+                diffs.push(diff);
             }
+            tested += 1;
         }
     }
 
-    eprintln!("\n{tested} profiles tested");
-    if !diffs.is_empty() {
-        eprintln!("\nProfiles where cicp flag changed output:");
-        for d in &diffs {
-            eprintln!("  {d}");
-        }
-    }
-    // For profiles without cicp tags, the flag should make zero difference.
-    // If any diff appears, we need to investigate.
+    eprintln!("\n{tested} profiles tested, each against full 256³ RGBA cube");
     assert!(
         diffs.is_empty(),
         "cicp flag changed output for {} profiles (expected 0 for pre-v4.4 profiles)",
@@ -181,6 +208,7 @@ fn cicp_flag_imageflow_jpegs() {
 }
 
 /// Test Compact-ICC-Profiles: does the cicp flag change output?
+/// Exercises every possible (R,G,B) combination with alpha sweep.
 #[test]
 #[ignore] // requires network (git clone)
 fn cicp_flag_compact_icc_profiles() {
@@ -210,6 +238,7 @@ fn cicp_flag_compact_icc_profiles() {
     assert!(!profiles.is_empty(), "no profiles found");
 
     let dst_profile = ColorProfile::new_srgb();
+    let cube = build_full_rgba_cube();
     let mut tested = 0;
     let mut diffs = Vec::new();
 
@@ -222,33 +251,21 @@ fn cicp_flag_compact_icc_profiles() {
             }
         };
 
-        // Skip grayscale profiles — need Gray layout
+        // Skip non-RGB profiles
         if icc.len() >= 20 && &icc[16..20] != b"RGB " {
             eprintln!("  {name}: not RGB, skipping");
             continue;
         }
 
-        let out_a = transform_gradient(&src_profile, &dst_profile, opts_with_cicp_flag(false));
-        let out_b = transform_gradient(&src_profile, &dst_profile, opts_with_cicp_flag(true));
-
-        match (out_a, out_b) {
-            (Some(a), Some(b)) => {
-                tested += 1;
-                if a != b {
-                    let max_delta: u8 = a
-                        .iter()
-                        .zip(b.iter())
-                        .map(|(x, y)| x.abs_diff(*y))
-                        .max()
-                        .unwrap_or(0);
-                    diffs.push(format!("{name}: max delta={max_delta}"));
-                }
-            }
-            _ => eprintln!("  {name}: transform failed"),
+        if let Some(diff) = test_profile_cicp_flag(name, &src_profile, &dst_profile, &cube) {
+            diffs.push(diff);
         }
+        tested += 1;
     }
 
-    eprintln!("\n{tested} RGB profiles tested from Compact-ICC-Profiles");
+    eprintln!(
+        "\n{tested} RGB profiles tested from Compact-ICC-Profiles, each against full 256³ RGBA cube"
+    );
     assert!(
         diffs.is_empty(),
         "cicp flag changed output for {} profiles: {:?}",
@@ -259,39 +276,36 @@ fn cicp_flag_compact_icc_profiles() {
 
 /// Test moxcms-generated profiles WITH cicp tags: the flag SHOULD matter here.
 /// This validates that the flag actually does something when cicp is present.
+/// Uses the full 256³ RGBA cube for exhaustive coverage.
 #[test]
 fn cicp_flag_matters_for_v44_profiles() {
     let dst_profile = ColorProfile::new_srgb();
+    let cube = build_full_rgba_cube();
 
     // BT.2020 PQ profile — has cicp tag with PQ transfer (tc=16).
-    // With allow_use_cicp_transfer=true, moxcms should use the PQ EOTF.
-    // With allow_use_cicp_transfer=false, it should use the ICC TRC curves.
     let src_profile = ColorProfile::new_bt2020_pq();
 
-    let out_no = transform_gradient(&src_profile, &dst_profile, opts_with_cicp_flag(false));
-    let out_yes = transform_gradient(&src_profile, &dst_profile, opts_with_cicp_flag(true));
+    let out_no = transform_full_cube(
+        &src_profile,
+        &dst_profile,
+        opts_with_cicp_flag(false),
+        &cube,
+    );
+    let out_yes = transform_full_cube(&src_profile, &dst_profile, opts_with_cicp_flag(true), &cube);
 
     match (out_no, out_yes) {
         (Some(a), Some(b)) => {
-            // For a PQ profile, the flag SHOULD produce different output
-            // because PQ EOTF is very different from the parametric TRC
-            // that moxcms stores in the ICC structure.
             if a == b {
                 eprintln!("WARNING: cicp flag made no difference for BT.2020 PQ profile");
                 eprintln!(
                     "This may mean moxcms always uses CICP when present, \
-                           regardless of the flag."
+                     regardless of the flag."
                 );
             } else {
-                let max_delta: u8 = a
-                    .iter()
-                    .zip(b.iter())
-                    .map(|(x, y)| x.abs_diff(*y))
-                    .max()
-                    .unwrap_or(0);
-                let diff_count = a.iter().zip(b.iter()).filter(|(x, y)| x != y).count();
+                let (diff_count, max_delta) = compare_buffers(&a, &b);
                 eprintln!(
-                    "BT.2020 PQ: flag matters — {diff_count} channels differ, max delta={max_delta}"
+                    "BT.2020 PQ: flag matters — {diff_count}/{} channels differ, max delta={max_delta}",
+                    a.len()
                 );
             }
         }
