@@ -263,7 +263,8 @@ fn validate_slice(
     if stride_bytes < min_stride {
         return Err(BufferError::StrideTooSmall);
     }
-    if bpp > 0 && !stride_bytes.is_multiple_of(bpp) {
+    #[allow(clippy::manual_is_multiple_of)] // is_multiple_of stabilized 1.87; MSRV is 1.85
+    if bpp > 0 && stride_bytes % bpp != 0 {
         return Err(BufferError::StrideNotPixelAligned);
     }
     if rows > 0 {
@@ -273,7 +274,8 @@ fn validate_slice(
         }
     }
     let align = descriptor.min_alignment();
-    if !(data_ptr as usize).is_multiple_of(align) {
+    #[allow(clippy::manual_is_multiple_of)] // is_multiple_of stabilized 1.87; MSRV is 1.85
+    if (data_ptr as usize) % align != 0 {
         return Err(BufferError::AlignmentViolation);
     }
     Ok(())
