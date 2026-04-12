@@ -1808,7 +1808,8 @@ impl PixelBuffer {
             return None;
         }
         let pixel_size = core::mem::size_of::<P>();
-        if pixel_size == 0 || !self.stride.is_multiple_of(pixel_size) {
+        #[allow(clippy::manual_is_multiple_of)] // is_multiple_of stabilized 1.87; MSRV is 1.85
+        if pixel_size == 0 || self.stride % pixel_size != 0 {
             return None;
         }
         let total_bytes = if self.height == 0 {
@@ -1835,7 +1836,8 @@ impl PixelBuffer {
             return None;
         }
         let pixel_size = core::mem::size_of::<P>();
-        if pixel_size == 0 || !self.stride.is_multiple_of(pixel_size) {
+        #[allow(clippy::manual_is_multiple_of)] // is_multiple_of stabilized 1.87; MSRV is 1.85
+        if pixel_size == 0 || self.stride % pixel_size != 0 {
             return None;
         }
         let total_bytes = if self.height == 0 {
