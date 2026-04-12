@@ -72,7 +72,7 @@ fn mat3x3(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     )
 }
 
-/// Apply the 3×3 gamut matrix to linear RGB data in-place (RGB layout).
+/// Apply the 3×3 gamut matrix to linear f32 RGB data in-place.
 fn apply_matrix_rgb(m: &[[f32; 3]; 3], data: &mut [f32]) {
     for pixel in data.chunks_exact_mut(3) {
         let (r, g, b) = (pixel[0], pixel[1], pixel[2]);
@@ -83,7 +83,7 @@ fn apply_matrix_rgb(m: &[[f32; 3]; 3], data: &mut [f32]) {
     }
 }
 
-/// Apply the 3×3 gamut matrix to linear RGB data in-place (RGBA layout, alpha unchanged).
+/// Apply the 3×3 gamut matrix to linear f32 RGBA data in-place (alpha unchanged).
 fn apply_matrix_rgba(m: &[[f32; 3]; 3], data: &mut [f32]) {
     for pixel in data.chunks_exact_mut(4) {
         let (r, g, b) = (pixel[0], pixel[1], pixel[2]);
@@ -97,28 +97,22 @@ fn apply_matrix_rgba(m: &[[f32; 3]; 3], data: &mut [f32]) {
 /// Convert Display P3 → sRGB, f32 RGB pixels in-place.
 ///
 /// Three-pass pipeline: SIMD-batch linearize → matrix → SIMD-batch encode.
-/// Input and output use the sRGB transfer function (identical for both spaces).
-/// Values are clamped to [0,1] by the SIMD TRC functions.
+/// Uses rational polynomial TRC (~5e-7 max error vs f64, no LUT quantization).
+/// Values are clamped to [0,1] by the TRC functions.
 ///
 /// `data` is a slice of `[R, G, B, R, G, B, ...]` f32 values.
 /// Length must be a multiple of 3.
 pub fn p3_to_srgb_f32(data: &mut [f32]) {
     debug_assert_eq!(data.len() % 3, 0);
-    // Pass 1: linearize all channels (SIMD batch)
     linear_srgb::default::srgb_to_linear_slice(data);
-    // Pass 2: apply P3→sRGB matrix
     apply_matrix_rgb(&P3_TO_SRGB, data);
-    // Pass 3: re-encode all channels (SIMD batch)
     linear_srgb::default::linear_to_srgb_slice(data);
 }
 
 /// Convert sRGB → Display P3, f32 RGB pixels in-place.
 ///
-/// Three-pass pipeline: SIMD-batch linearize → matrix → SIMD-batch encode.
-/// Values are clamped to [0,1] by the SIMD TRC functions.
-///
-/// `data` is a slice of `[R, G, B, R, G, B, ...]` f32 values.
-/// Length must be a multiple of 3.
+/// Three-pass pipeline with rational polynomial TRC.
+/// Values are clamped to [0,1].
 pub fn srgb_to_p3_f32(data: &mut [f32]) {
     debug_assert_eq!(data.len() % 3, 0);
     linear_srgb::default::srgb_to_linear_slice(data);
@@ -129,7 +123,6 @@ pub fn srgb_to_p3_f32(data: &mut [f32]) {
 /// Convert Display P3 → sRGB, f32 RGBA pixels in-place.
 ///
 /// Alpha channel is passed through unchanged.
-/// Three-pass pipeline with RGBA-aware SIMD TRC (skips alpha channel).
 pub fn p3_to_srgb_f32_rgba(data: &mut [f32]) {
     debug_assert_eq!(data.len() % 4, 0);
     linear_srgb::default::srgb_to_linear_rgba_slice(data);

@@ -51,7 +51,52 @@ fn main() {
         .create_transform_f32(Layout::Rgb, &dst_p3, Layout::Rgb, opts)
         .unwrap();
 
+    // Standalone pass benchmarks to identify bottleneck
+    let data_linear_rgb = {
+        let mut d = data_rgb.clone();
+        linear_srgb::default::srgb_to_linear_slice(&mut d);
+        d
+    };
+
     zenbench::run(|suite| {
+        suite.group("Pass breakdown  1080p f32 RGB", |g| {
+            g.throughput(Throughput::Bytes((pixel_count * 3 * 4) as u64));
+
+            let d = data_rgb.clone();
+            g.bench("linearize only", move |bench| {
+                let mut buf = d.clone();
+                bench.iter(|| {
+                    linear_srgb::default::srgb_to_linear_slice(&mut buf);
+                    black_box(());
+                });
+            });
+
+            let d = data_linear_rgb.clone();
+            g.bench("matrix only (P3→sRGB)", move |bench| {
+                let mut buf = d.clone();
+                bench.iter(|| {
+                    for pixel in buf.chunks_exact_mut(3) {
+                        let (r, g, b) = (pixel[0], pixel[1], pixel[2]);
+                        pixel[0] =
+                            1.2249401763_f32.mul_add(r, (-0.2249401763_f32).mul_add(g, 0.0 * b));
+                        pixel[1] =
+                            (-0.0420569547_f32).mul_add(r, 1.0420569547_f32.mul_add(g, 0.0 * b));
+                        pixel[2] = (-0.0196375546_f32)
+                            .mul_add(r, (-0.0786360456_f32).mul_add(g, 1.0982736001_f32 * b));
+                    }
+                    black_box(());
+                });
+            });
+
+            let d = data_linear_rgb.clone();
+            g.bench("encode only", move |bench| {
+                let mut buf = d.clone();
+                bench.iter(|| {
+                    linear_srgb::default::linear_to_srgb_slice(&mut buf);
+                    black_box(());
+                });
+            });
+        });
         suite.group("P3→sRGB  1080p (1920×1080)  f32 RGB", |g| {
             g.throughput(Throughput::Bytes((pixel_count * 3 * 4) as u64));
 
