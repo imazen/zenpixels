@@ -141,14 +141,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install cargo-hack
-        uses: taiki-e/install-action@cargo-hack
+      - name: Install MSRV toolchains
+        run: |
+          rustup toolchain install 1.85.0 --no-self-update --profile minimal
+          rustup toolchain install 1.89.0 --no-self-update --profile minimal
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Check MSRV
-        run: cargo hack check --workspace --rust-version
+      - name: Check MSRV (zenpixels @ 1.85)
+        run: cargo +1.85.0 check -p zenpixels
+
+      - name: Check MSRV (zenpixels-convert @ 1.89)
+        run: cargo +1.89.0 check -p zenpixels-convert
 
   # ==========================================================================
   # Feature powerset (all feature combinations compile)
