@@ -213,6 +213,50 @@ impl RowTransform for MoxRowTransform {
 // ColorManagement implementation
 // ---------------------------------------------------------------------------
 
+/// Build a [`RowTransform`] from two already-parsed [`ColorProfile`]s.
+///
+/// Shared implementation for both ICC-to-ICC and CICP-to-ICC paths.
+/// Always uses `PreferIcc` / `RelativeColorimetric` — CICP-in-ICC tags
+/// are never trusted for TRC (see moxcms issue #154).
+fn build_transform_inner(
+    src_profile: &ColorProfile,
+    dst_profile: &ColorProfile,
+    src_format: PixelFormat,
+    dst_format: PixelFormat,
+) -> Result<Box<dyn RowTransform>, MoxCmsError> {
+    let src_layout = pixel_format_to_layout(src_format).unwrap_or(Layout::Rgb);
+    let dst_layout = pixel_format_to_layout(dst_format).unwrap_or(Layout::Rgb);
+    let opts = transform_opts(ColorPriority::PreferIcc, RenderingIntent::default());
+
+    let depth = src_format.channel_type();
+
+    let inner = match depth {
+        ChannelType::U8 => {
+            let xform = src_profile
+                .create_transform_8bit(src_layout, dst_profile, dst_layout, opts)
+                .map_err(|e| MoxCmsError(format!("failed to create u8 transform: {e}")))?;
+            MoxTransformInner::U8(xform)
+        }
+        ChannelType::U16 => {
+            let xform = src_profile
+                .create_transform_16bit(src_layout, dst_profile, dst_layout, opts)
+                .map_err(|e| MoxCmsError(format!("failed to create u16 transform: {e}")))?;
+            MoxTransformInner::U16(xform)
+        }
+        // F16 and F32 both use the f32 transform path (F16 data must be
+        // converted to f32 before CMS — IEEE 754 half-floats are not
+        // integer-encoded u16 values).
+        ChannelType::F16 | ChannelType::F32 | _ => {
+            let xform = src_profile
+                .create_transform_f32(src_layout, dst_profile, dst_layout, opts)
+                .map_err(|e| MoxCmsError(format!("failed to create f32 transform: {e}")))?;
+            MoxTransformInner::F32(xform)
+        }
+    };
+
+    Ok(Box::new(MoxRowTransform { inner }))
+}
+
 impl ColorManagement for MoxCms {
     type Error = MoxCmsError;
 
@@ -221,7 +265,6 @@ impl ColorManagement for MoxCms {
         src_icc: &[u8],
         dst_icc: &[u8],
     ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        // Default: u8 RGB, which covers the common JPEG/PNG/WebP case.
         self.build_transform_for_format(src_icc, dst_icc, PixelFormat::Rgb8, PixelFormat::Rgb8)
     }
 
@@ -237,42 +280,31 @@ impl ColorManagement for MoxCms {
         let dst_profile = ColorProfile::new_from_slice(dst_icc)
             .map_err(|e| MoxCmsError(format!("failed to parse destination ICC profile: {e}")))?;
 
-        let src_layout = pixel_format_to_layout(src_format).unwrap_or(Layout::Rgb);
-        let dst_layout = pixel_format_to_layout(dst_format).unwrap_or(Layout::Rgb);
-        // CICP transfer is for applications, not CMMs (ICC Votable Proposal).
-        // Matches the v2 path fix — see moxcms issue #154.
-        let opts = transform_opts(ColorPriority::PreferIcc, RenderingIntent::default());
+        build_transform_inner(&src_profile, &dst_profile, src_format, dst_format)
+    }
 
-        // Pick the narrower of the two channel types to avoid unnecessary
-        // precision loss, but always use the source depth when both differ
-        // (the CMS handles the depth conversion internally).
-        let depth = src_format.channel_type();
+    fn build_transform_from_cicp(
+        &self,
+        src_cicp: Cicp,
+        dst_icc: &[u8],
+        src_format: PixelFormat,
+        dst_format: PixelFormat,
+    ) -> Result<Box<dyn RowTransform>, Self::Error> {
+        let src_profile = ColorProfile::new_from_cicp(moxcms::CicpProfile {
+            color_primaries: moxcms::CicpColorPrimaries::try_from(src_cicp.color_primaries)
+                .unwrap_or(moxcms::CicpColorPrimaries::Bt709),
+            transfer_characteristics: moxcms::TransferCharacteristics::try_from(
+                src_cicp.transfer_characteristics,
+            )
+            .unwrap_or(moxcms::TransferCharacteristics::Srgb),
+            matrix_coefficients: moxcms::MatrixCoefficients::try_from(src_cicp.matrix_coefficients)
+                .unwrap_or(moxcms::MatrixCoefficients::Identity),
+            full_range: src_cicp.full_range,
+        });
+        let dst_profile = ColorProfile::new_from_slice(dst_icc)
+            .map_err(|e| MoxCmsError(format!("failed to parse destination ICC profile: {e}")))?;
 
-        let inner = match depth {
-            ChannelType::U8 => {
-                let xform = src_profile
-                    .create_transform_8bit(src_layout, &dst_profile, dst_layout, opts)
-                    .map_err(|e| MoxCmsError(format!("failed to create u8 transform: {e}")))?;
-                MoxTransformInner::U8(xform)
-            }
-            ChannelType::U16 => {
-                let xform = src_profile
-                    .create_transform_16bit(src_layout, &dst_profile, dst_layout, opts)
-                    .map_err(|e| MoxCmsError(format!("failed to create u16 transform: {e}")))?;
-                MoxTransformInner::U16(xform)
-            }
-            // F16 and F32 both use the f32 transform path (F16 data must be
-            // converted to f32 before CMS — IEEE 754 half-floats are not
-            // integer-encoded u16 values).
-            ChannelType::F16 | ChannelType::F32 | _ => {
-                let xform = src_profile
-                    .create_transform_f32(src_layout, &dst_profile, dst_layout, opts)
-                    .map_err(|e| MoxCmsError(format!("failed to create f32 transform: {e}")))?;
-                MoxTransformInner::F32(xform)
-            }
-        };
-
-        Ok(Box::new(MoxRowTransform { inner }))
+        build_transform_inner(&src_profile, &dst_profile, src_format, dst_format)
     }
 
     fn identify_profile(&self, icc: &[u8]) -> Option<Cicp> {

@@ -69,7 +69,9 @@ pub use buffer::{Bgrx, BufferError, Pixel, PixelBuffer, PixelSlice, PixelSliceMu
 
 // Re-export color types at crate root.
 pub use cicp::Cicp;
-pub use color::{ColorContext, ColorOrigin, ColorProfileSource, ColorProvenance, NamedProfile};
+pub use color::{
+    ColorAuthority, ColorContext, ColorOrigin, ColorProfileSource, ColorProvenance, NamedProfile,
+};
 
 // Re-export HDR metadata types at crate root.
 pub use hdr::{ContentLightLevel, MasteringDisplay};

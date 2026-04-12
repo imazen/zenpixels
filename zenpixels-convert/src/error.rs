@@ -36,6 +36,11 @@ pub enum ConvertError {
     AllocationFailed,
     /// CMS transform could not be built (invalid ICC profile, unsupported color space, etc.).
     CmsError(alloc::string::String),
+    /// HDR source requires tone mapping before conversion to an SDR target.
+    ///
+    /// A colorimetric CMS transform from PQ/HLG to an SDR profile will clip
+    /// highlights. Tone map the pixels first, then retry with SDR metadata.
+    HdrTransferRequiresToneMapping,
 }
 
 impl fmt::Display for ConvertError {
@@ -78,6 +83,10 @@ impl fmt::Display for ConvertError {
             }
             Self::AllocationFailed => write!(f, "buffer allocation failed"),
             Self::CmsError(msg) => write!(f, "CMS transform failed: {msg}"),
+            Self::HdrTransferRequiresToneMapping => write!(
+                f,
+                "HDR source (PQ/HLG) requires tone mapping before conversion to SDR target"
+            ),
         }
     }
 }
