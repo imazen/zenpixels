@@ -395,6 +395,7 @@ pub mod cms;
 pub mod cms_moxcms;
 pub mod converter;
 pub mod ext;
+pub mod fast_p3;
 pub mod gamut;
 pub mod hdr;
 pub mod icc_profiles;
