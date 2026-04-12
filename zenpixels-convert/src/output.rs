@@ -86,8 +86,8 @@ use crate::cms::ColorManagement;
 use crate::error::ConvertError;
 use crate::hdr::HdrMetadata;
 use crate::{
-    Cicp, ColorOrigin, ColorPrimaries, PixelBuffer, PixelDescriptor, PixelFormat, PixelSlice,
-    TransferFunction,
+    Cicp, ColorAuthority, ColorOrigin, ColorPrimaries, PixelBuffer, PixelDescriptor, PixelFormat,
+    PixelSlice, TransferFunction,
 };
 use whereat::{At, ResultAtExt};
 
@@ -183,6 +183,11 @@ pub fn finalize_for_output<C: ColorManagement>(
     let source_desc = buffer.descriptor();
     let target_desc = pixel_format.descriptor();
 
+    // Reject HDR→SDR without tone mapping.
+    if origin_has_hdr_transfer(origin) && !target_has_hdr_transfer(&target) {
+        return Err(whereat::at!(ConvertError::HdrTransferRequiresToneMapping));
+    }
+
     // Determine output metadata based on target profile.
     let (metadata, needs_cms_transform) = match &target {
         OutputProfile::SameAsOrigin => {
@@ -191,8 +196,9 @@ pub fn finalize_for_output<C: ColorManagement>(
                 cicp: origin.cicp,
                 hdr: None,
             };
-            // If origin has ICC, we may need a CMS transform.
-            (metadata, origin.icc.is_some())
+            // SameAsOrigin = keep the source color space. No CMS conversion.
+            // Pixel format changes (depth, layout) are handled by RowConverter.
+            (metadata, false)
         }
         OutputProfile::Named(cicp) => {
             let metadata = OutputMetadata {
@@ -212,15 +218,11 @@ pub fn finalize_for_output<C: ColorManagement>(
         }
     };
 
-    // If source has an ICC profile and we need CMS, use it.
+    // Apply CMS transform if needed, respecting color_authority.
     if needs_cms_transform
-        && let Some(src_icc) = buffer.color_context().and_then(|c| c.icc.as_ref())
-        && let Some(dst_icc) = &metadata.icc
+        && let Some(transform) =
+            build_cms_transform(origin, &metadata, &source_desc, pixel_format, cms)?
     {
-        let transform = cms
-            .build_transform_for_format(src_icc, dst_icc, source_desc.format, pixel_format)
-            .map_err(|e| whereat::at!(ConvertError::CmsError(alloc::format!("{e:?}"))))?;
-
         let src_slice = buffer.as_slice();
         let mut out = PixelBuffer::try_new(buffer.width(), buffer.height(), target_desc)
             .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
@@ -283,6 +285,81 @@ pub fn finalize_for_output<C: ColorManagement>(
         pixels: out,
         metadata,
     })
+}
+
+/// Build a CMS transform from the origin's authoritative color metadata.
+///
+/// Respects [`ColorAuthority`]: when `Icc`, builds from ICC bytes; when `Cicp`,
+/// builds from CICP codes via [`build_transform_from_cicp`](ColorManagement::build_transform_from_cicp).
+///
+/// Falls back to the non-authoritative field when the authoritative one is
+/// missing (e.g., `Icc` authority but no ICC → tries CICP). This handles
+/// codec bugs (wrong authority) and incomplete metadata gracefully.
+///
+/// Returns `Ok(None)` when no source profile can be determined.
+fn build_cms_transform<C: ColorManagement>(
+    origin: &ColorOrigin,
+    metadata: &OutputMetadata,
+    source_desc: &PixelDescriptor,
+    dst_format: PixelFormat,
+    cms: &C,
+) -> Result<Option<alloc::boxed::Box<dyn crate::cms::RowTransform>>, At<ConvertError>> {
+    let src_format = source_desc.format;
+    let Some(ref dst_icc) = metadata.icc else {
+        return Ok(None);
+    };
+
+    // Try the authoritative source first, then fall back to the other field.
+    match origin.color_authority {
+        ColorAuthority::Icc => {
+            if let Some(ref src_icc) = origin.icc {
+                let transform = cms
+                    .build_transform_for_format(src_icc, dst_icc, src_format, dst_format)
+                    .map_err(|e| whereat::at!(ConvertError::CmsError(alloc::format!("{e:?}"))))?;
+                return Ok(Some(transform));
+            }
+            // Fallback: ICC authority but no ICC — try CICP if available.
+            if let Some(cicp) = origin.cicp {
+                let transform = cms
+                    .build_transform_from_cicp(cicp, dst_icc, src_format, dst_format)
+                    .map_err(|e| whereat::at!(ConvertError::CmsError(alloc::format!("{e:?}"))))?;
+                return Ok(Some(transform));
+            }
+            Ok(None)
+        }
+        ColorAuthority::Cicp => {
+            if let Some(cicp) = origin.cicp {
+                let transform = cms
+                    .build_transform_from_cicp(cicp, dst_icc, src_format, dst_format)
+                    .map_err(|e| whereat::at!(ConvertError::CmsError(alloc::format!("{e:?}"))))?;
+                return Ok(Some(transform));
+            }
+            // Fallback: CICP authority but no CICP — try ICC if available.
+            if let Some(ref src_icc) = origin.icc {
+                let transform = cms
+                    .build_transform_for_format(src_icc, dst_icc, src_format, dst_format)
+                    .map_err(|e| whereat::at!(ConvertError::CmsError(alloc::format!("{e:?}"))))?;
+                return Ok(Some(transform));
+            }
+            Ok(None)
+        }
+    }
+}
+
+/// Check if the origin describes HDR content (PQ or HLG transfer).
+fn origin_has_hdr_transfer(origin: &ColorOrigin) -> bool {
+    origin
+        .cicp
+        .is_some_and(|c| matches!(c.transfer_characteristics, 16 | 18))
+}
+
+/// Check if the output target is HDR-capable (PQ or HLG).
+fn target_has_hdr_transfer(target: &OutputProfile) -> bool {
+    match target {
+        OutputProfile::SameAsOrigin => true, // same as source — if source is HDR, output is too
+        OutputProfile::Named(cicp) => matches!(cicp.transfer_characteristics, 16 | 18),
+        OutputProfile::Icc(_) => false, // can't determine from ICC bytes alone — assume SDR
+    }
 }
 
 /// Resolve the target transfer function.

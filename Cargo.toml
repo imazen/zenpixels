@@ -2,6 +2,9 @@
 members = ["zenpixels", "zenpixels-convert"]
 resolver = "2"
 
+[workspace.dependencies]
+zenpixels = { path = "zenpixels", version = "0.2.5", default-features = false }
+
 [workspace.package]
 version = "0.2.2"
 edition = "2024"

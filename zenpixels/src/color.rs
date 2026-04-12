@@ -96,6 +96,60 @@ impl NamedProfile {
     }
 }
 
+/// Which color metadata a CMS should prefer when building transforms.
+///
+/// When both ICC and CICP are present, this determines which one the CMS
+/// uses. When only one is present, it is used regardless of this flag —
+/// the authority controls precedence, not exclusivity.
+///
+/// **Codec contract:** codecs should set this to match the data they
+/// actually provide. Setting `Icc` without populating `icc_profile` (or
+/// `Cicp` without `cicp`) is a codec bug. Implementations *may* fall back
+/// to the other field when the authoritative one is absent, but are not
+/// required to — they may also treat the mismatch as an error or assume
+/// sRGB.
+///
+/// [`ColorContext::as_profile_source`] implements a lenient resolution:
+/// preferred field → other field → `None`. Stricter consumers can inspect
+/// the authority and the fields directly.
+///
+/// The codec sets this during decode based on the format's specification:
+///
+/// - **JPEG, WebP, TIFF**: `Icc` (ICC is the only color signal)
+/// - **PNG 3rd Ed**: `Cicp` when cICP chunk present, `Icc` when only iCCP
+/// - **AVIF/MIAF**: `Icc` when ICC colr box present, `Cicp` otherwise
+/// - **HEIC/HEIF**: `Cicp` when nclx colr box present, `Icc` otherwise
+/// - **JPEG XL**: `Cicp` when enum encoding (`want_icc=false`), `Icc` when embedded ICC
+///
+/// Both `icc_profile` and `cicp` may be populated regardless of this flag —
+/// the non-authoritative field is preserved for metadata roundtripping.
+///
+/// This is distinct from [`ColorProvenance`] which records *how the source
+/// described* its color (for re-encoding decisions). `ColorAuthority` says
+/// which field the CMS should *prefer* for building transforms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum ColorAuthority {
+    /// ICC profile bytes take precedence for CMS transforms.
+    ///
+    /// The CMS should parse `icc_profile` and use its TRC curves directly.
+    /// Any CICP tag embedded inside the ICC should NOT override the TRC
+    /// (i.e., `allow_use_cicp_transfer: false` in moxcms terms).
+    ///
+    /// Codecs should only set this when `icc_profile` is populated.
+    /// Lenient consumers may fall back to `cicp` if ICC is absent.
+    #[default]
+    Icc,
+    /// CICP codes take precedence for CMS transforms.
+    ///
+    /// The CMS should build a source profile from the `cicp` field
+    /// (e.g., `ColorProfile::new_from_cicp()` in moxcms). The ICC profile,
+    /// if present, is for backwards-compatible metadata roundtripping only.
+    ///
+    /// Codecs should only set this when `cicp` is populated.
+    /// Lenient consumers may fall back to `icc_profile` if CICP is absent.
+    Cicp,
+}
+
 /// Color space metadata for pixel data.
 ///
 /// Bundles ICC profile bytes and/or CICP parameters into a single
@@ -108,6 +162,8 @@ pub struct ColorContext {
     pub icc: Option<Arc<[u8]>>,
     /// CICP parameters (ITU-T H.273).
     pub cicp: Option<Cicp>,
+    /// Which field the CMS should treat as authoritative for transforms.
+    pub color_authority: ColorAuthority,
 }
 
 impl ColorContext {
@@ -116,6 +172,7 @@ impl ColorContext {
         Self {
             icc: Some(icc.into()),
             cicp: None,
+            color_authority: ColorAuthority::Icc,
         }
     }
 
@@ -124,6 +181,7 @@ impl ColorContext {
         Self {
             icc: None,
             cicp: Some(cicp),
+            color_authority: ColorAuthority::Cicp,
         }
     }
 
@@ -132,18 +190,32 @@ impl ColorContext {
         Self {
             icc: Some(icc.into()),
             cicp: Some(cicp),
+            color_authority: ColorAuthority::Cicp,
         }
     }
 
     /// Get a [`ColorProfileSource`] reference for CMS integration.
     ///
-    /// Returns CICP if present (takes precedence per AVIF/HEIF specs),
-    /// otherwise returns the ICC profile bytes.
+    /// Returns a source based on [`ColorAuthority`]: when authority is `Cicp`,
+    /// returns CICP if present; when authority is `Icc`, returns ICC bytes if
+    /// present. In both cases, falls back to the other field if the authoritative
+    /// one is absent, and returns `None` when neither is present.
     pub fn as_profile_source(&self) -> Option<ColorProfileSource<'_>> {
-        if let Some(cicp) = self.cicp {
-            Some(ColorProfileSource::Cicp(cicp))
-        } else {
-            self.icc.as_deref().map(ColorProfileSource::Icc)
+        match self.color_authority {
+            ColorAuthority::Cicp => {
+                if let Some(cicp) = self.cicp {
+                    return Some(ColorProfileSource::Cicp(cicp));
+                }
+                // Fallback to ICC if CICP authority but no CICP present
+                self.icc.as_deref().map(ColorProfileSource::Icc)
+            }
+            ColorAuthority::Icc => {
+                if let Some(icc) = self.icc.as_deref() {
+                    return Some(ColorProfileSource::Icc(icc));
+                }
+                // Fallback to CICP if ICC authority but no ICC present
+                self.cicp.map(ColorProfileSource::Cicp)
+            }
         }
     }
 
@@ -199,6 +271,8 @@ pub struct ColorOrigin {
     pub cicp: Option<Cicp>,
     /// How the color information was originally described.
     pub provenance: ColorProvenance,
+    /// Which field a CMS should treat as authoritative for transforms.
+    pub color_authority: ColorAuthority,
 }
 
 impl ColorOrigin {
@@ -208,6 +282,7 @@ impl ColorOrigin {
             icc: Some(icc.into()),
             cicp: None,
             provenance: ColorProvenance::Icc,
+            color_authority: ColorAuthority::Icc,
         }
     }
 
@@ -217,6 +292,7 @@ impl ColorOrigin {
             icc: None,
             cicp: Some(cicp),
             provenance: ColorProvenance::Cicp,
+            color_authority: ColorAuthority::Cicp,
         }
     }
 
@@ -226,6 +302,7 @@ impl ColorOrigin {
             icc: Some(icc.into()),
             cicp: Some(cicp),
             provenance: ColorProvenance::Cicp,
+            color_authority: ColorAuthority::Cicp,
         }
     }
 
@@ -235,6 +312,7 @@ impl ColorOrigin {
             icc: None,
             cicp: None,
             provenance: ColorProvenance::GamaChrm,
+            color_authority: ColorAuthority::Icc,
         }
     }
 
@@ -244,7 +322,14 @@ impl ColorOrigin {
             icc: None,
             cicp: None,
             provenance: ColorProvenance::Assumed,
+            color_authority: ColorAuthority::Icc,
         }
+    }
+
+    /// Override the color authority.
+    pub fn with_color_authority(mut self, authority: ColorAuthority) -> Self {
+        self.color_authority = authority;
+        self
     }
 }
 
@@ -324,8 +409,39 @@ mod tests {
     }
 
     #[test]
-    fn color_context_profile_source_prefers_cicp() {
+    fn color_context_profile_source_cicp_authority() {
+        // from_icc_and_cicp sets ColorAuthority::Cicp, so CICP wins
         let ctx = ColorContext::from_icc_and_cicp(vec![1, 2, 3], Cicp::SRGB);
+        assert_eq!(ctx.color_authority, ColorAuthority::Cicp);
+        let src = ctx.as_profile_source().unwrap();
+        assert_eq!(src, ColorProfileSource::Cicp(Cicp::SRGB));
+    }
+
+    #[test]
+    fn color_context_profile_source_icc_authority() {
+        // Manually set ICC authority on a context that has both — ICC wins
+        let mut ctx = ColorContext::from_icc_and_cicp(vec![1, 2, 3], Cicp::SRGB);
+        ctx.color_authority = ColorAuthority::Icc;
+        let src = ctx.as_profile_source().unwrap();
+        assert_eq!(src, ColorProfileSource::Icc(&[1, 2, 3]));
+    }
+
+    #[test]
+    fn color_context_profile_source_cicp_authority_fallback_to_icc() {
+        // CICP authority but no CICP present — falls back to ICC
+        let mut ctx = ColorContext::from_icc(vec![7, 8, 9]);
+        ctx.color_authority = ColorAuthority::Cicp;
+        let src = ctx.as_profile_source().unwrap();
+        assert_eq!(src, ColorProfileSource::Icc(&[7, 8, 9]));
+    }
+
+    #[test]
+    fn color_context_profile_source_icc_authority_fallback_to_cicp() {
+        // ICC authority but no ICC present — falls back to CICP
+        let ctx = ColorContext::from_cicp(Cicp::SRGB);
+        // from_cicp sets ColorAuthority::Cicp; override to Icc for fallback test
+        let mut ctx = ctx;
+        ctx.color_authority = ColorAuthority::Icc;
         let src = ctx.as_profile_source().unwrap();
         assert_eq!(src, ColorProfileSource::Cicp(Cicp::SRGB));
     }
@@ -377,6 +493,7 @@ mod tests {
         let ctx = ColorContext {
             icc: None,
             cicp: None,
+            color_authority: ColorAuthority::Icc,
         };
         assert!(ctx.as_profile_source().is_none());
     }

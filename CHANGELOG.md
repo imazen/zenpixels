@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.2.5
+
+### zenpixels — additions
+
+- **`ColorAuthority`** enum (`Icc` | `Cicp`) — declares which color metadata
+  field the CMS should trust for building transforms. Set by the codec during
+  decode based on the format's specification (e.g., AVIF: ICC wins when present;
+  PNG 3rd Ed: cICP wins when present; JPEG/WebP/TIFF: ICC only). Default is
+  `Icc`. Both `icc` and `cicp` fields remain populated regardless of authority
+  for metadata roundtripping during cross-format transcode. Re-exported at
+  crate root.
+- **`color_authority` field** on `ColorContext` and `ColorOrigin`. Constructors
+  set it automatically: `from_icc()` → `Icc`, `from_cicp()` → `Cicp`,
+  `from_icc_and_cicp()` → `Cicp`. Override with `with_color_authority()`.
+
+### zenpixels — behavior change
+
+- **`ColorContext::as_profile_source()`** now respects `color_authority` instead
+  of hardcoding CICP preference. When authority is `Icc`, returns the ICC
+  profile; when `Cicp`, returns CICP. Falls back to the other field when the
+  authoritative one is absent. Previously always returned CICP when present,
+  which was wrong for AVIF (where ICC takes precedence per MIAF spec).
+
+### zenpixels-convert — additions
+
+- **`ColorManagement::build_transform_from_cicp()`** — builds a CMS transform
+  directly from CICP codes, avoiding the ICC serialize→deserialize round-trip.
+  `MoxCms` implementation uses `ColorProfile::new_from_cicp()`. Shared
+  transform-building logic extracted to `build_transform_inner()`.
+- **`ConvertError::HdrTransferRequiresToneMapping`** — returned by
+  `finalize_for_output()` when a PQ/HLG source targets an SDR output. Prevents
+  silent highlight clipping. Callers must tone map first (e.g., via
+  `ultrahdr_core::color::tonemap::tonemap_image_to_srgb8()`), then retry with
+  SDR metadata.
+
+### zenpixels-convert — behavior change
+
+- **`finalize_for_output()` respects `ColorAuthority`** on the `ColorOrigin`.
+  When authority is `Icc`, builds the CMS source from ICC bytes. When `Cicp`,
+  uses `build_transform_from_cicp()`. Falls back to the non-authoritative field
+  when the authoritative one is missing (handles codec bugs gracefully).
+- **`SameAsOrigin` no longer invokes the CMS.** It means "keep the color space"
+  — only pixel format changes (depth, layout) are applied via `RowConverter`.
+  Previously it wastefully built a same-profile-to-same-profile CMS transform.
+- **PQ/HLG → SDR is now rejected.** `finalize_for_output()` returns
+  `HdrTransferRequiresToneMapping` instead of silently clipping. HDR → HDR
+  (SameAsOrigin, Named PQ/HLG) is allowed.
+
 ## 0.2.3
 
 ### zenpixels-convert — additions
