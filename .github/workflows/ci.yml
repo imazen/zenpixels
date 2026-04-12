@@ -141,13 +141,18 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Install MSRV toolchains
+        run: |
+          rustup toolchain install 1.85.0 --no-self-update --profile minimal
+          rustup toolchain install 1.89.0 --no-self-update --profile minimal
+
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Check MSRV
+      - name: Check MSRV (zenpixels @ 1.85, zenpixels-convert @ 1.89)
         run: cargo hack check --workspace --rust-version
 
   # ==========================================================================

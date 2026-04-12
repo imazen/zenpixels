@@ -949,10 +949,10 @@ impl fmt::Display for PixelDescriptor {
             self.format.channel_type(),
             self.transfer
         )?;
-        if let Some(alpha) = self.alpha
-            && alpha.has_alpha()
-        {
-            write!(f, " alpha={alpha}")?;
+        if let Some(alpha) = self.alpha {
+            if alpha.has_alpha() {
+                write!(f, " alpha={alpha}")?;
+            }
         }
         Ok(())
     }
