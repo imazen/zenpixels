@@ -146,20 +146,14 @@ jobs:
           rustup toolchain install 1.85.0 --no-self-update --profile minimal
           rustup toolchain install 1.89.0 --no-self-update --profile minimal
 
-      - name: Install Rust (stable, for lockfile generation)
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Generate lockfile with stable
-        run: cargo generate-lockfile
-
       - name: Check MSRV (zenpixels @ 1.85)
-        run: cargo +1.85.0 check -p zenpixels --locked
+        run: cargo +1.85.0 check -p zenpixels
 
       - name: Check MSRV (zenpixels-convert @ 1.89)
-        run: cargo +1.89.0 check -p zenpixels-convert --locked
+        run: cargo +1.89.0 check -p zenpixels-convert
 
   # ==========================================================================
   # Feature powerset (all feature combinations compile)
