@@ -22,7 +22,7 @@ test:
 
 # ── ICC profile table management ──────────────────────────────────────
 
-# Fetch ICC profiles from R2 to local cache
+# Fetch ICC profiles from R2 to local cache using the manifest
 icc-fetch:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -33,25 +33,43 @@ icc-fetch:
     ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
     export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
     export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+    # Download manifest first
+    aws s3 cp "s3://{{r2_bucket}}/{{r2_prefix}}MANIFEST.txt" "{{icc_cache}}/MANIFEST.txt" \
+        --endpoint-url "$ENDPOINT" --no-progress 2>/dev/null || true
+    # Sync all profiles
     echo "Syncing ICC profiles from R2 → {{icc_cache}} ..."
     aws s3 sync "s3://{{r2_bucket}}/{{r2_prefix}}" "{{icc_cache}}/" \
         --endpoint-url "$ENDPOINT" --no-progress
-    echo "Done: $(find "{{icc_cache}}" -name '*.icc' | wc -l) profiles"
+    TOTAL=$(find "{{icc_cache}}" -name '*.icc' -o -name '*.icm' | wc -l)
+    echo "Done: $TOTAL profiles in cache"
+    # Verify against manifest if present
+    if [ -f "{{icc_cache}}/MANIFEST.txt" ]; then
+        EXPECTED=$(wc -l < "{{icc_cache}}/MANIFEST.txt")
+        echo "Manifest expects $EXPECTED, have $TOTAL"
+        if [ "$TOTAL" -lt "$EXPECTED" ]; then
+            echo "WARNING: fewer profiles than manifest — some may be missing"
+        fi
+    fi
 
-# Upload ICC profiles to R2 from a local directory
+# Upload ICC profiles to R2 from a local directory and update manifest
 icc-upload dir:
     #!/usr/bin/env bash
     set -euo pipefail
-    : "${R2_ACCOUNT_ID:?Set R2_ACCOUNT_ID}"
-    : "${R2_ACCESS_KEY_ID:?Set R2_ACCESS_KEY_ID}"
-    : "${R2_SECRET_ACCESS_KEY:?Set R2_SECRET_ACCESS_KEY}"
-    ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
-    export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
-    export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
-    echo "Uploading ICC profiles from {{dir}} → R2 ..."
-    aws s3 sync "{{dir}}/" "s3://{{r2_bucket}}/{{r2_prefix}}" \
-        --endpoint-url "$ENDPOINT" --no-progress
-    echo "Done."
+    echo "Uploading ICC profiles from {{dir}} → R2 ({{r2_bucket}}/{{r2_prefix}})..."
+    for f in "{{dir}}"/*.icc "{{dir}}"/*.icm; do
+        [ -f "$f" ] || continue
+        name=$(basename "$f")
+        npx wrangler r2 object put "{{r2_bucket}}/{{r2_prefix}}$name" --file "$f" --content-type application/octet-stream 2>/dev/null
+        echo "  uploaded: $name"
+    done
+    # Rebuild manifest: list all objects in the prefix
+    echo "Rebuilding manifest..."
+    npx wrangler r2 object list "{{r2_bucket}}" --prefix "{{r2_prefix}}" 2>/dev/null \
+        | grep -oP '"key"\s*:\s*"[^"]*\.(icc|icm)"' \
+        | sed 's/.*"key"\s*:\s*"{{r2_prefix}}//' | sed 's/"//' | sort > /tmp/icc-manifest-update.txt
+    npx wrangler r2 object put "{{r2_bucket}}/{{r2_prefix}}MANIFEST.txt" \
+        --file /tmp/icc-manifest-update.txt --content-type text/plain 2>/dev/null
+    echo "Done. $(wc -l < /tmp/icc-manifest-update.txt) profiles in manifest."
 
 # Ensure well-known ICC profile collections are in the local cache
 icc-ensure-sources:
