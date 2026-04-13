@@ -304,31 +304,6 @@ pub trait ColorManagement {
         self.build_transform(src_icc, dst_icc)
     }
 
-    /// Build a format-aware row-level transform from CICP codes to an ICC profile.
-    ///
-    /// Like [`build_transform_for_format`](Self::build_transform_for_format),
-    /// but the source profile is constructed from CICP code points instead of
-    /// parsed from ICC bytes. Avoids the ICC serialize→deserialize round-trip
-    /// when [`ColorAuthority::Cicp`](crate::ColorAuthority) indicates that CICP
-    /// is the authoritative color description.
-    ///
-    /// The default implementation synthesizes an ICC profile from the CICP codes
-    /// and delegates to [`build_transform_for_format`](Self::build_transform_for_format).
-    /// Backends that can construct source profiles directly from CICP (e.g.,
-    /// `ColorProfile::new_from_cicp()` in moxcms) should override this for
-    /// better performance.
-    fn build_transform_from_cicp(
-        &self,
-        _src_cicp: crate::Cicp,
-        _dst_icc: &[u8],
-        _src_format: PixelFormat,
-        _dst_format: PixelFormat,
-    ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
-        // Default: not supported. Callers should fall back to building from ICC.
-        // Backends that support direct CICP→profile construction override this.
-        None
-    }
-
     /// Identify whether an ICC profile matches a known CICP combination.
     ///
     /// Two-tier matching:

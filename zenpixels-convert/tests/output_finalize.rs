@@ -111,14 +111,22 @@ impl ColorManagement for TrackingCms {
         Ok(Box::new(IdentityTransform))
     }
 
-    fn build_transform_from_cicp(
+    fn build_source_transform(
         &self,
-        _src_cicp: Cicp,
-        _dst_icc: &[u8],
+        src: zenpixels_convert::ColorProfileSource<'_>,
+        _dst: zenpixels_convert::ColorProfileSource<'_>,
         _src_format: PixelFormat,
         _dst_format: PixelFormat,
     ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
-        self.cicp_calls.fetch_add(1, Ordering::Relaxed);
+        match src {
+            zenpixels_convert::ColorProfileSource::Cicp(_) => {
+                self.cicp_calls.fetch_add(1, Ordering::Relaxed);
+            }
+            zenpixels_convert::ColorProfileSource::Icc(_) => {
+                self.icc_calls.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
         Some(Ok(Box::new(IdentityTransform)))
     }
 
@@ -674,14 +682,14 @@ impl ColorManagement for FailingCms {
         Err("deliberate ICC failure")
     }
 
-    fn build_transform_from_cicp(
+    fn build_source_transform(
         &self,
-        _src_cicp: Cicp,
-        _dst_icc: &[u8],
+        _src: zenpixels_convert::ColorProfileSource<'_>,
+        _dst: zenpixels_convert::ColorProfileSource<'_>,
         _src_format: PixelFormat,
         _dst_format: PixelFormat,
     ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
-        Some(Err("deliberate CICP failure"))
+        Some(Err("deliberate source transform failure"))
     }
 
     fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {

@@ -290,7 +290,7 @@ pub fn finalize_for_output<C: ColorManagement>(
 /// Build a CMS transform from the origin's authoritative color metadata.
 ///
 /// Respects [`ColorAuthority`]: when `Icc`, builds from ICC bytes; when `Cicp`,
-/// builds from CICP codes via [`build_transform_from_cicp`](ColorManagement::build_transform_from_cicp).
+/// builds from CICP codes via [`build_source_transform`](ColorManagement::build_source_transform).
 ///
 /// Falls back to the non-authoritative field when the authoritative one is
 /// missing (e.g., `Icc` authority but no ICC → tries CICP). This handles
@@ -308,11 +308,23 @@ fn build_cms_transform<C: ColorManagement>(
     let Some(ref dst_icc) = metadata.icc else {
         return Ok(None);
     };
+    let dst_source = crate::ColorProfileSource::Icc(dst_icc);
 
     // Try the authoritative source first, then fall back to the other field.
     match origin.color_authority {
         ColorAuthority::Icc => {
             if let Some(ref src_icc) = origin.icc {
+                // Try build_source_transform first (handles PrimariesTransferPair fast path)
+                let src = crate::ColorProfileSource::Icc(src_icc);
+                if let Some(result) =
+                    cms.build_source_transform(src, dst_source.clone(), src_format, dst_format)
+                {
+                    let transform = result.map_err(|e| {
+                        whereat::at!(ConvertError::CmsError(alloc::format!("{e:?}")))
+                    })?;
+                    return Ok(Some(transform));
+                }
+                // Fall back to build_transform_for_format (ICC-only path)
                 let transform = cms
                     .build_transform_for_format(src_icc, dst_icc, src_format, dst_format)
                     .map_err(|e| whereat::at!(ConvertError::CmsError(alloc::format!("{e:?}"))))?;
@@ -320,8 +332,9 @@ fn build_cms_transform<C: ColorManagement>(
             }
             // Fallback: ICC authority but no ICC — try CICP if available.
             if let Some(cicp) = origin.cicp {
+                let src = crate::ColorProfileSource::Cicp(cicp);
                 if let Some(result) =
-                    cms.build_transform_from_cicp(cicp, dst_icc, src_format, dst_format)
+                    cms.build_source_transform(src, dst_source, src_format, dst_format)
                 {
                     let transform = result.map_err(|e| {
                         whereat::at!(ConvertError::CmsError(alloc::format!("{e:?}")))
@@ -333,8 +346,9 @@ fn build_cms_transform<C: ColorManagement>(
         }
         ColorAuthority::Cicp => {
             if let Some(cicp) = origin.cicp {
+                let src = crate::ColorProfileSource::Cicp(cicp);
                 if let Some(result) =
-                    cms.build_transform_from_cicp(cicp, dst_icc, src_format, dst_format)
+                    cms.build_source_transform(src, dst_source.clone(), src_format, dst_format)
                 {
                     let transform = result.map_err(|e| {
                         whereat::at!(ConvertError::CmsError(alloc::format!("{e:?}")))

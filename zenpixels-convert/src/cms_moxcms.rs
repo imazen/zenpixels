@@ -283,41 +283,6 @@ impl ColorManagement for MoxCms {
         build_transform_inner(&src_profile, &dst_profile, src_format, dst_format)
     }
 
-    fn build_transform_from_cicp(
-        &self,
-        src_cicp: Cicp,
-        dst_icc: &[u8],
-        src_format: PixelFormat,
-        dst_format: PixelFormat,
-    ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
-        let src_profile = ColorProfile::new_from_cicp(moxcms::CicpProfile {
-            color_primaries: moxcms::CicpColorPrimaries::try_from(src_cicp.color_primaries)
-                .unwrap_or(moxcms::CicpColorPrimaries::Bt709),
-            transfer_characteristics: moxcms::TransferCharacteristics::try_from(
-                src_cicp.transfer_characteristics,
-            )
-            .unwrap_or(moxcms::TransferCharacteristics::Srgb),
-            matrix_coefficients: moxcms::MatrixCoefficients::try_from(src_cicp.matrix_coefficients)
-                .unwrap_or(moxcms::MatrixCoefficients::Identity),
-            full_range: src_cicp.full_range,
-        });
-        let dst_profile = match ColorProfile::new_from_slice(dst_icc) {
-            Ok(p) => p,
-            Err(e) => {
-                return Some(Err(MoxCmsError(format!(
-                    "failed to parse destination ICC profile: {e}"
-                ))));
-            }
-        };
-
-        Some(build_transform_inner(
-            &src_profile,
-            &dst_profile,
-            src_format,
-            dst_format,
-        ))
-    }
-
     fn identify_profile(&self, icc: &[u8]) -> Option<Cicp> {
         let profile = ColorProfile::new_from_slice(icc).ok()?;
 
@@ -334,6 +299,85 @@ impl ColorManagement for MoxCms {
         // Fall back to comparing colorant matrices against known profiles.
         identify_by_colorants(&profile)
     }
+
+    fn build_source_transform(
+        &self,
+        src: crate::ColorProfileSource<'_>,
+        dst: crate::ColorProfileSource<'_>,
+        src_format: PixelFormat,
+        dst_format: PixelFormat,
+    ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
+        let src_profile = match source_to_moxcms_profile(&src) {
+            Ok(Some(p)) => p,
+            Ok(None) => return None,
+            Err(e) => return Some(Err(e)),
+        };
+        let dst_profile = match source_to_moxcms_profile(&dst) {
+            Ok(Some(p)) => p,
+            Ok(None) => return None,
+            Err(e) => return Some(Err(e)),
+        };
+        Some(build_transform_inner(
+            &src_profile,
+            &dst_profile,
+            src_format,
+            dst_format,
+        ))
+    }
+}
+
+/// Convert a [`ColorProfileSource`] to a moxcms [`ColorProfile`].
+///
+/// Returns `Ok(None)` if the source can't be mapped to moxcms.
+fn source_to_moxcms_profile(
+    src: &crate::ColorProfileSource<'_>,
+) -> Result<Option<ColorProfile>, MoxCmsError> {
+    match src {
+        crate::ColorProfileSource::Icc(icc) => ColorProfile::new_from_slice(icc)
+            .map(Some)
+            .map_err(|e| MoxCmsError(format!("failed to parse ICC: {e}"))),
+        crate::ColorProfileSource::Cicp(cicp) => Ok(Some(cicp_to_moxcms_profile(cicp))),
+        crate::ColorProfileSource::Named(named) => {
+            let (p, t) = named.to_primaries_transfer();
+            primaries_transfer_to_moxcms_profile(p, t)
+        }
+        crate::ColorProfileSource::PrimariesTransferPair {
+            primaries,
+            transfer,
+        } => primaries_transfer_to_moxcms_profile(*primaries, *transfer),
+        _ => Ok(None),
+    }
+}
+
+/// Convert CICP to a moxcms ColorProfile.
+fn cicp_to_moxcms_profile(cicp: &Cicp) -> ColorProfile {
+    ColorProfile::new_from_cicp(moxcms::CicpProfile {
+        color_primaries: moxcms::CicpColorPrimaries::try_from(cicp.color_primaries)
+            .unwrap_or(moxcms::CicpColorPrimaries::Bt709),
+        transfer_characteristics: moxcms::TransferCharacteristics::try_from(
+            cicp.transfer_characteristics,
+        )
+        .unwrap_or(moxcms::TransferCharacteristics::Srgb),
+        matrix_coefficients: moxcms::MatrixCoefficients::try_from(cicp.matrix_coefficients)
+            .unwrap_or(moxcms::MatrixCoefficients::Identity),
+        full_range: cicp.full_range,
+    })
+}
+
+/// Convert primaries + transfer to a moxcms ColorProfile via CICP mapping.
+fn primaries_transfer_to_moxcms_profile(
+    primaries: crate::ColorPrimaries,
+    transfer: crate::TransferFunction,
+) -> Result<Option<ColorProfile>, MoxCmsError> {
+    let cp = match primaries.to_cicp() {
+        Some(c) => c,
+        None => return Ok(None),
+    };
+    let tc = match transfer.to_cicp() {
+        Some(c) => c,
+        None => return Ok(None),
+    };
+    Ok(Some(cicp_to_moxcms_profile(&Cicp::new(cp, tc, 0, true))))
 }
 
 // ---------------------------------------------------------------------------
