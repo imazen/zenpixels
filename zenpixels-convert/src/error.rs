@@ -5,6 +5,7 @@ use core::fmt;
 
 /// Errors that can occur during pixel format negotiation or conversion.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ConvertError {
     /// No supported format could be found for the source descriptor.
     NoMatch { source: PixelDescriptor },

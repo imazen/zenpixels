@@ -289,7 +289,7 @@ impl ColorManagement for MoxCms {
         dst_icc: &[u8],
         src_format: PixelFormat,
         dst_format: PixelFormat,
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
+    ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
         let src_profile = ColorProfile::new_from_cicp(moxcms::CicpProfile {
             color_primaries: moxcms::CicpColorPrimaries::try_from(src_cicp.color_primaries)
                 .unwrap_or(moxcms::CicpColorPrimaries::Bt709),
@@ -301,10 +301,12 @@ impl ColorManagement for MoxCms {
                 .unwrap_or(moxcms::MatrixCoefficients::Identity),
             full_range: src_cicp.full_range,
         });
-        let dst_profile = ColorProfile::new_from_slice(dst_icc)
-            .map_err(|e| MoxCmsError(format!("failed to parse destination ICC profile: {e}")))?;
+        let dst_profile = match ColorProfile::new_from_slice(dst_icc) {
+            Ok(p) => p,
+            Err(e) => return Some(Err(MoxCmsError(format!("failed to parse destination ICC profile: {e}")))),
+        };
 
-        build_transform_inner(&src_profile, &dst_profile, src_format, dst_format)
+        Some(build_transform_inner(&src_profile, &dst_profile, src_format, dst_format))
     }
 
     fn identify_profile(&self, icc: &[u8]) -> Option<Cicp> {

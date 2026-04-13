@@ -157,14 +157,11 @@ pub enum ColorAuthority {
 /// sources so color metadata travels with pixel data without per-strip
 /// cloning overhead.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
 pub struct ColorContext {
     /// Raw ICC profile bytes.
     pub icc: Option<Arc<[u8]>>,
     /// CICP parameters (ITU-T H.273).
     pub cicp: Option<Cicp>,
-    /// Which field the CMS should treat as authoritative for transforms.
-    pub color_authority: ColorAuthority,
 }
 
 impl ColorContext {
@@ -173,7 +170,6 @@ impl ColorContext {
         Self {
             icc: Some(icc.into()),
             cicp: None,
-            color_authority: ColorAuthority::Icc,
         }
     }
 
@@ -182,41 +178,35 @@ impl ColorContext {
         Self {
             icc: None,
             cicp: Some(cicp),
-            color_authority: ColorAuthority::Cicp,
         }
     }
 
     /// Create from both ICC and CICP.
+    ///
+    /// **Deprecated:** Codecs should populate only the authoritative field —
+    /// use [`from_icc()`](Self::from_icc) or [`from_cicp()`](Self::from_cicp).
+    /// Roundtrip metadata belongs on [`ColorOrigin`], not `ColorContext`.
+    #[deprecated(since = "0.2.6", note = "use from_icc() or from_cicp(); roundtrip metadata belongs on ColorOrigin")]
     pub fn from_icc_and_cicp(icc: impl Into<Arc<[u8]>>, cicp: Cicp) -> Self {
         Self {
             icc: Some(icc.into()),
             cicp: Some(cicp),
-            color_authority: ColorAuthority::Cicp,
         }
     }
 
     /// Get a [`ColorProfileSource`] reference for CMS integration.
     ///
-    /// Returns a source based on [`ColorAuthority`]: when authority is `Cicp`,
-    /// returns CICP if present; when authority is `Icc`, returns ICC bytes if
-    /// present. In both cases, falls back to the other field if the authoritative
-    /// one is absent, and returns `None` when neither is present.
+    /// Returns ICC if present, otherwise CICP. Returns `None` when neither
+    /// is present.
+    ///
+    /// Codecs should populate only the authoritative field on `ColorContext`
+    /// at decode time, using [`ColorAuthority`] on [`ColorOrigin`] to
+    /// determine which. When only one field is set, this method returns it.
     pub fn as_profile_source(&self) -> Option<ColorProfileSource<'_>> {
-        match self.color_authority {
-            ColorAuthority::Cicp => {
-                if let Some(cicp) = self.cicp {
-                    return Some(ColorProfileSource::Cicp(cicp));
-                }
-                // Fallback to ICC if CICP authority but no CICP present
-                self.icc.as_deref().map(ColorProfileSource::Icc)
-            }
-            ColorAuthority::Icc => {
-                if let Some(icc) = self.icc.as_deref() {
-                    return Some(ColorProfileSource::Icc(icc));
-                }
-                // Fallback to CICP if ICC authority but no ICC present
-                self.cicp.map(ColorProfileSource::Cicp)
-            }
+        if let Some(icc) = self.icc.as_deref() {
+            Some(ColorProfileSource::Icc(icc))
+        } else {
+            self.cicp.map(ColorProfileSource::Cicp)
         }
     }
 
@@ -410,41 +400,12 @@ mod tests {
     }
 
     #[test]
-    fn color_context_profile_source_cicp_authority() {
-        // from_icc_and_cicp sets ColorAuthority::Cicp, so CICP wins
+    #[allow(deprecated)]
+    fn color_context_profile_source_prefers_icc() {
+        // When both are present, ICC wins (codecs should avoid this case)
         let ctx = ColorContext::from_icc_and_cicp(vec![1, 2, 3], Cicp::SRGB);
-        assert_eq!(ctx.color_authority, ColorAuthority::Cicp);
-        let src = ctx.as_profile_source().unwrap();
-        assert_eq!(src, ColorProfileSource::Cicp(Cicp::SRGB));
-    }
-
-    #[test]
-    fn color_context_profile_source_icc_authority() {
-        // Manually set ICC authority on a context that has both — ICC wins
-        let mut ctx = ColorContext::from_icc_and_cicp(vec![1, 2, 3], Cicp::SRGB);
-        ctx.color_authority = ColorAuthority::Icc;
         let src = ctx.as_profile_source().unwrap();
         assert_eq!(src, ColorProfileSource::Icc(&[1, 2, 3]));
-    }
-
-    #[test]
-    fn color_context_profile_source_cicp_authority_fallback_to_icc() {
-        // CICP authority but no CICP present — falls back to ICC
-        let mut ctx = ColorContext::from_icc(vec![7, 8, 9]);
-        ctx.color_authority = ColorAuthority::Cicp;
-        let src = ctx.as_profile_source().unwrap();
-        assert_eq!(src, ColorProfileSource::Icc(&[7, 8, 9]));
-    }
-
-    #[test]
-    fn color_context_profile_source_icc_authority_fallback_to_cicp() {
-        // ICC authority but no ICC present — falls back to CICP
-        let ctx = ColorContext::from_cicp(Cicp::SRGB);
-        // from_cicp sets ColorAuthority::Cicp; override to Icc for fallback test
-        let mut ctx = ctx;
-        ctx.color_authority = ColorAuthority::Icc;
-        let src = ctx.as_profile_source().unwrap();
-        assert_eq!(src, ColorProfileSource::Cicp(Cicp::SRGB));
     }
 
     #[test]
@@ -476,6 +437,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn color_context_from_icc_and_cicp() {
         let ctx = ColorContext::from_icc_and_cicp(vec![1, 2], Cicp::BT2100_PQ);
         assert!(ctx.icc.is_some());
@@ -494,7 +456,6 @@ mod tests {
         let ctx = ColorContext {
             icc: None,
             cicp: None,
-            color_authority: ColorAuthority::Icc,
         };
         assert!(ctx.as_profile_source().is_none());
     }

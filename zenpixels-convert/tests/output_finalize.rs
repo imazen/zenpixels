@@ -31,15 +31,6 @@ impl ColorManagement for NoopCms {
         Err("no-op CMS: ICC transforms not supported")
     }
 
-    fn build_transform_from_cicp(
-        &self,
-        _src_cicp: Cicp,
-        _dst_icc: &[u8],
-        _src_format: PixelFormat,
-        _dst_format: PixelFormat,
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        Err("no-op CMS: CICP transforms not supported")
-    }
 
     fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
         None
@@ -69,15 +60,6 @@ impl ColorManagement for IdentityCms {
         Ok(Box::new(IdentityTransform))
     }
 
-    fn build_transform_from_cicp(
-        &self,
-        _src_cicp: Cicp,
-        _dst_icc: &[u8],
-        _src_format: PixelFormat,
-        _dst_format: PixelFormat,
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        Ok(Box::new(IdentityTransform))
-    }
 
     fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
         None
@@ -131,16 +113,6 @@ impl ColorManagement for TrackingCms {
         Ok(Box::new(IdentityTransform))
     }
 
-    fn build_transform_from_cicp(
-        &self,
-        _src_cicp: Cicp,
-        _dst_icc: &[u8],
-        _src_format: PixelFormat,
-        _dst_format: PixelFormat,
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        self.cicp_calls.fetch_add(1, Ordering::Relaxed);
-        Ok(Box::new(IdentityTransform))
-    }
 
     fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
         None
@@ -694,15 +666,6 @@ impl ColorManagement for FailingCms {
         Err("deliberate ICC failure")
     }
 
-    fn build_transform_from_cicp(
-        &self,
-        _src_cicp: Cicp,
-        _dst_icc: &[u8],
-        _src_format: PixelFormat,
-        _dst_format: PixelFormat,
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        Err("deliberate CICP failure")
-    }
 
     fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
         None

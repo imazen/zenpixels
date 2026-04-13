@@ -3,7 +3,7 @@ members = ["zenpixels", "zenpixels-convert"]
 resolver = "2"
 
 [workspace.dependencies]
-zenpixels = { path = "zenpixels", version = "0.3.0", default-features = false }
+zenpixels = { path = "zenpixels", version = "0.2.6", default-features = false }
 
 [workspace.package]
 version = "0.2.2"

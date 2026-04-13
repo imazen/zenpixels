@@ -1,6 +1,6 @@
 [package]
 name = "zenpixels-convert"
-version = "0.3.0"
+version = "0.2.6"
 edition.workspace = true
 rust-version = "1.89"
 license.workspace = true

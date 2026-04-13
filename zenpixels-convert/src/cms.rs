@@ -319,11 +319,15 @@ pub trait ColorManagement {
     /// better performance.
     fn build_transform_from_cicp(
         &self,
-        src_cicp: crate::Cicp,
-        dst_icc: &[u8],
-        src_format: PixelFormat,
-        dst_format: PixelFormat,
-    ) -> Result<Box<dyn RowTransform>, Self::Error>;
+        _src_cicp: crate::Cicp,
+        _dst_icc: &[u8],
+        _src_format: PixelFormat,
+        _dst_format: PixelFormat,
+    ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
+        // Default: not supported. Callers should fall back to building from ICC.
+        // Backends that support direct CICP→profile construction override this.
+        None
+    }
 
     /// Identify whether an ICC profile matches a known CICP combination.
     ///
