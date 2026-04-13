@@ -69,6 +69,51 @@ pub const BT2020_TO_SRGB: [[f32; 3]; 3] = [
     [-0.0181507634, -0.1005788980, 1.1187296614],
 ];
 
+/// Adobe RGB (1998) linear → sRGB linear.
+///
+/// Adobe RGB shares red/blue primaries with sRGB but has a wider green
+/// (0.21, 0.71 vs 0.30, 0.60). This is NOT the identity matrix.
+pub const ADOBERGB_TO_SRGB: [[f32; 3]; 3] = [
+    [1.3983557440, -0.3983557440, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, -0.0429289893, 1.0429289893],
+];
+
+/// sRGB linear → Adobe RGB (1998) linear.
+pub const SRGB_TO_ADOBERGB: [[f32; 3]; 3] = [
+    [0.7151256069, 0.2848743931, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 0.0411619485, 0.9588380515],
+];
+
+/// Adobe RGB (1998) linear → Display P3 linear.
+pub const ADOBERGB_TO_P3: [[f32; 3]; 3] = [
+    [1.1500944181, -0.1500944181, 0.0],
+    [0.0464172986, 0.9535827014, 0.0],
+    [0.0238875948, 0.0265047763, 0.9496076289],
+];
+
+/// Display P3 linear → Adobe RGB (1998) linear.
+pub const P3_TO_ADOBERGB: [[f32; 3]; 3] = [
+    [0.8640051375, 0.1359948625, 0.0],
+    [-0.0420569547, 1.0420569547, 0.0],
+    [-0.0205603808, -0.0325061380, 1.0530665188],
+];
+
+/// Adobe RGB (1998) linear → BT.2020 linear.
+pub const ADOBERGB_TO_BT2020: [[f32; 3]; 3] = [
+    [0.8773338417, 0.0774937065, 0.0451724518],
+    [0.0966225915, 0.8915273202, 0.0118500883],
+    [0.0229210627, 0.0430366850, 0.9340422523],
+];
+
+/// BT.2020 linear → Adobe RGB (1998) linear.
+pub const BT2020_TO_ADOBERGB: [[f32; 3]; 3] = [
+    [1.1519783947, -0.0975030553, -0.0544753394],
+    [-0.1245504745, 1.1328998971, -0.0083494226],
+    [-0.0225303828, -0.0498065074, 1.0723368902],
+];
+
 /// BT.2020 linear → Display P3 linear.
 pub const BT2020_TO_P3: [[f32; 3]; 3] = [
     [1.3435782526, -0.2821796705, -0.0613985821],
@@ -351,6 +396,56 @@ stamp_trc_kernels!(srgb_to_bt709,
 );
 
 // =========================================================================
+// Adobe RGB gamma 2.2 TRC wrappers (bind gamma parameter for macro compat)
+// =========================================================================
+
+const ADOBE_GAMMA: f32 = 2.19921875; // Adobe RGB spec: 563/256
+
+#[rite]
+fn adobe_to_linear_x8(token: X64V3Token, v: [f32; 8]) -> [f32; 8] {
+    trc_x8::gamma_to_linear_v3(token, v, ADOBE_GAMMA)
+}
+
+#[rite]
+fn adobe_from_linear_x8(token: X64V3Token, v: [f32; 8]) -> [f32; 8] {
+    trc_x8::linear_to_gamma_v3(token, v, ADOBE_GAMMA)
+}
+
+#[inline(always)]
+fn adobe_to_linear_scalar(v: f32) -> f32 {
+    linear_srgb::default::gamma_to_linear(v, ADOBE_GAMMA)
+}
+
+#[inline(always)]
+fn adobe_from_linear_scalar(v: f32) -> f32 {
+    linear_srgb::default::linear_to_gamma(v, ADOBE_GAMMA)
+}
+
+// Adobe RGB same-TRC (both sides gamma 2.2)
+stamp_trc_kernels!(adobe,
+    simd_linearize: adobe_to_linear_x8,
+    simd_encode: adobe_from_linear_x8,
+    scalar_linearize: adobe_to_linear_scalar,
+    scalar_encode: adobe_from_linear_scalar
+);
+
+// Adobe RGB source → sRGB dest (gamma 2.2 linearize, sRGB encode)
+stamp_trc_kernels!(adobe_to_srgb,
+    simd_linearize: adobe_to_linear_x8,
+    simd_encode: trc_x8::linear_to_srgb_v3,
+    scalar_linearize: adobe_to_linear_scalar,
+    scalar_encode: linear_srgb::tf::linear_to_srgb
+);
+
+// sRGB source → Adobe RGB dest (sRGB linearize, gamma 2.2 encode)
+stamp_trc_kernels!(srgb_to_adobe,
+    simd_linearize: trc_x8::srgb_to_linear_v3,
+    simd_encode: adobe_from_linear_x8,
+    scalar_linearize: linear_srgb::tf::srgb_to_linear,
+    scalar_encode: adobe_from_linear_scalar
+);
+
+// =========================================================================
 // Public API — named conversions
 // =========================================================================
 
@@ -422,6 +517,69 @@ pub fn p3_to_bt2020_f32(data: &mut [f32]) {
 pub fn bt2020_to_p3_f32(data: &mut [f32]) {
     debug_assert_eq!(data.len() % 3, 0);
     incant!(convert_rgb_srgb(&BT2020_TO_P3, data));
+}
+
+// --- Adobe RGB ↔ sRGB (cross-TRC: gamma 2.2 ↔ sRGB) ---
+
+/// Adobe RGB → sRGB, f32 RGB in-place.
+pub fn adobergb_to_srgb_f32(data: &mut [f32]) {
+    debug_assert_eq!(data.len() % 3, 0);
+    incant!(convert_rgb_adobe_to_srgb(&ADOBERGB_TO_SRGB, data));
+}
+/// sRGB → Adobe RGB, f32 RGB in-place.
+pub fn srgb_to_adobergb_f32(data: &mut [f32]) {
+    debug_assert_eq!(data.len() % 3, 0);
+    incant!(convert_rgb_srgb_to_adobe(&SRGB_TO_ADOBERGB, data));
+}
+/// Adobe RGB → sRGB, f32 RGBA in-place. Alpha unchanged.
+pub fn adobergb_to_srgb_f32_rgba(data: &mut [f32]) {
+    debug_assert_eq!(data.len() % 4, 0);
+    incant!(convert_rgba_adobe_to_srgb(&ADOBERGB_TO_SRGB, data));
+}
+
+// --- Adobe RGB ↔ P3 (cross-TRC: gamma 2.2 ↔ sRGB) ---
+
+/// Adobe RGB → Display P3, f32 RGB in-place.
+pub fn adobergb_to_p3_f32(data: &mut [f32]) {
+    debug_assert_eq!(data.len() % 3, 0);
+    incant!(convert_rgb_adobe_to_srgb(&ADOBERGB_TO_P3, data));
+}
+/// Display P3 → Adobe RGB, f32 RGB in-place.
+pub fn p3_to_adobergb_f32(data: &mut [f32]) {
+    debug_assert_eq!(data.len() % 3, 0);
+    incant!(convert_rgb_srgb_to_adobe(&P3_TO_ADOBERGB, data));
+}
+
+// --- Adobe RGB ↔ BT.2020 ---
+
+/// Adobe RGB → BT.2020, f32 RGB in-place (gamma 2.2 both sides).
+pub fn adobergb_to_bt2020_f32(data: &mut [f32]) {
+    debug_assert_eq!(data.len() % 3, 0);
+    incant!(convert_rgb_adobe(&ADOBERGB_TO_BT2020, data));
+}
+
+// --- Adobe RGB u8 ---
+
+/// Adobe RGB → sRGB, u8 RGB → u8 RGB.
+pub fn adobergb_to_srgb_u8_rgb(src: &[u8], dst: &mut [u8]) {
+    convert_u8_rgb(
+        &ADOBERGB_TO_SRGB,
+        src,
+        dst,
+        adobe_to_linear_scalar,
+        linear_srgb::tf::linear_to_srgb,
+    );
+}
+
+/// sRGB → Adobe RGB, u8 RGB → u8 RGB.
+pub fn srgb_to_adobergb_u8_rgb(src: &[u8], dst: &mut [u8]) {
+    convert_u8_rgb(
+        &SRGB_TO_ADOBERGB,
+        src,
+        dst,
+        linear_srgb::tf::srgb_to_linear,
+        adobe_from_linear_scalar,
+    );
 }
 
 // --- Generic: any matrix + any TRC (advanced users) ---
@@ -986,5 +1144,85 @@ mod tests {
                 }
             }
         }
+    }
+
+    // --- Adobe RGB ---
+
+    #[test]
+    fn adobergb_srgb_white() {
+        assert_white_roundtrip(adobergb_to_srgb_f32);
+    }
+    #[test]
+    fn srgb_adobergb_white() {
+        assert_white_roundtrip(srgb_to_adobergb_f32);
+    }
+    #[test]
+    fn adobergb_srgb_black() {
+        assert_black_roundtrip(adobergb_to_srgb_f32);
+    }
+    #[test]
+    fn adobergb_srgb_roundtrip() {
+        // sRGB is a subset of Adobe RGB, so sRGB→Adobe→sRGB roundtrips
+        assert_roundtrip(srgb_to_adobergb_f32, adobergb_to_srgb_f32, 1e-4);
+    }
+    #[test]
+    fn adobergb_p3_white() {
+        assert_white_roundtrip(adobergb_to_p3_f32);
+    }
+    #[test]
+    fn adobergb_rgba_alpha() {
+        let mut px = [0.5_f32, 0.5, 0.5, 0.7];
+        adobergb_to_srgb_f32_rgba(&mut px);
+        assert!((px[3] - 0.7).abs() < f32::EPSILON, "alpha changed: {px:?}");
+    }
+    #[test]
+    fn u8_adobergb_srgb_roundtrip() {
+        let original = [128u8, 128, 128];
+        let mut mid = [0u8; 3];
+        let mut result = [0u8; 3];
+        srgb_to_adobergb_u8_rgb(&original, &mut mid);
+        adobergb_to_srgb_u8_rgb(&mid, &mut result);
+        for i in 0..3 {
+            assert!(
+                (original[i] as i16 - result[i] as i16).unsigned_abs() <= 1,
+                "ch{i}: {original:?} → {mid:?} → {result:?}"
+            );
+        }
+    }
+    #[test]
+    fn all_matrices_preserve_white_with_adobe() {
+        let matrices: &[(&str, &[[f32; 3]; 3])] = &[
+            ("ADOBERGB_TO_SRGB", &ADOBERGB_TO_SRGB),
+            ("SRGB_TO_ADOBERGB", &SRGB_TO_ADOBERGB),
+            ("ADOBERGB_TO_P3", &ADOBERGB_TO_P3),
+            ("P3_TO_ADOBERGB", &P3_TO_ADOBERGB),
+            ("ADOBERGB_TO_BT2020", &ADOBERGB_TO_BT2020),
+            ("BT2020_TO_ADOBERGB", &BT2020_TO_ADOBERGB),
+        ];
+        for (name, m) in matrices {
+            let (r, g, b) = mat3x3(m, 1.0, 1.0, 1.0);
+            assert!(
+                (r - 1.0).abs() < 1e-5 && (g - 1.0).abs() < 1e-5 && (b - 1.0).abs() < 1e-5,
+                "{name}: white → ({r}, {g}, {b})"
+            );
+        }
+    }
+    #[test]
+    fn adobe_matrix_inverse_pairs() {
+        let identity = |m1: &[[f32; 3]; 3], m2: &[[f32; 3]; 3]| {
+            for i in 0..3 {
+                for j in 0..3 {
+                    let sum: f32 = (0..3).map(|k| m1[i][k] * m2[k][j]).sum();
+                    let expected = if i == j { 1.0 } else { 0.0 };
+                    assert!(
+                        (sum - expected).abs() < 1e-4,
+                        "M1×M2[{i}][{j}] = {sum}, expected {expected}"
+                    );
+                }
+            }
+        };
+        identity(&ADOBERGB_TO_SRGB, &SRGB_TO_ADOBERGB);
+        identity(&ADOBERGB_TO_P3, &P3_TO_ADOBERGB);
+        identity(&ADOBERGB_TO_BT2020, &BT2020_TO_ADOBERGB);
     }
 }
