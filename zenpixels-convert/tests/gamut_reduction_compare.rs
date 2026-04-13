@@ -27,7 +27,7 @@ fn build_lite_u8_fn(
     dst_profile: zenpixels_convert::ColorProfileSource<'_>,
 ) -> Box<dyn Fn(&[u8], &mut [u8])> {
     use zenpixels_convert::cms::ColorManagement;
-    let cms = zenpixels_convert::ZenCmsLite;
+    let cms = zenpixels_convert::ZenCmsLite::default();
     let xf = cms
         .build_source_transform(
             src_profile,
@@ -49,7 +49,7 @@ fn build_lite_f32_fn(
     dst_profile: zenpixels_convert::ColorProfileSource<'_>,
 ) -> Box<dyn Fn(&mut [f32])> {
     use zenpixels_convert::cms::ColorManagement;
-    let cms = zenpixels_convert::ZenCmsLite;
+    let cms = zenpixels_convert::ZenCmsLite::default();
     let xf = cms
         .build_source_transform(
             src_profile,

@@ -61,8 +61,45 @@ use crate::{ChannelType, Cicp, ColorPrimaries, PixelFormat, TransferFunction};
 ///
 /// Custom/unknown ICC profiles that don't match any known hash return `None`,
 /// signaling the caller to fall back to a full CMS (e.g., moxcms).
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ZenCmsLite;
+///
+/// # Extended range
+///
+/// By default, f32 conversions clamp to \[0, 1\] and use fused SIMD kernels
+/// (~4 GiB/s). Set `extended: true` to preserve out-of-gamut values
+/// (negatives, >1.0) for HDR or cross-gamut workflows that need to defer
+/// tone mapping or gamut mapping to a later stage. The extended path is
+/// scalar (~200 MiB/s) because sign-preserving TRC requires per-channel
+/// branching.
+///
+/// ```rust,ignore
+/// // Fast (default): clamp to [0,1], fused SIMD
+/// let cms = ZenCmsLite::default();
+///
+/// // Extended: preserve out-of-gamut, scalar powf
+/// let cms = ZenCmsLite::extended();
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct ZenCmsLite {
+    /// Preserve out-of-gamut values (negatives, >1.0) in f32 conversions.
+    /// Default: `false` (clamp to \[0,1\], fused SIMD).
+    pub extended: bool,
+}
+
+impl Default for ZenCmsLite {
+    fn default() -> Self {
+        Self { extended: false }
+    }
+}
+
+impl ZenCmsLite {
+    /// Create a `ZenCmsLite` with extended range enabled.
+    ///
+    /// Preserves out-of-gamut f32 values (negatives, >1.0) for HDR/cross-gamut
+    /// workflows. Slower than the default clamped SIMD path.
+    pub const fn extended() -> Self {
+        Self { extended: true }
+    }
+}
 
 /// Error from the lightweight CMS.
 #[derive(Debug, Clone)]
@@ -191,12 +228,9 @@ impl ColorManagement for ZenCmsLite {
             None
         };
 
-        // Use extended range for f32 when converting to a narrower gamut
-        // (out-of-gamut values produce negatives that must survive) or when
-        // source is HDR (PQ/HLG values can exceed 1.0 after linearization).
-        let narrowing = src_p as u8 != dst_p as u8 && !dst_p.contains(src_p);
-        let hdr_source = matches!(src_t, TransferFunction::Pq | TransferFunction::Hlg);
-        let extended = matches!(channel_type, ChannelType::F32) && (narrowing || hdr_source);
+        // Extended range (sign-preserving, no clamping) is opt-in via
+        // ZenCmsLite::extended(). Only applies to f32 — u8/u16 always clamp.
+        let extended = self.extended && matches!(channel_type, ChannelType::F32);
 
         Some(Ok(Box::new(LiteTransform {
             matrix,
@@ -346,7 +380,7 @@ mod tests {
 
     #[test]
     fn build_source_transform_p3_to_srgb_f32() {
-        let cms = ZenCmsLite;
+        let cms = ZenCmsLite::default();
         let src = ColorProfileSource::Named(NamedProfile::DisplayP3);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
         let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
@@ -372,7 +406,7 @@ mod tests {
 
     #[test]
     fn build_source_transform_p3_to_srgb_u8() {
-        let cms = ZenCmsLite;
+        let cms = ZenCmsLite::default();
         let src = ColorProfileSource::Named(NamedProfile::DisplayP3);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
         let result = cms.build_source_transform(src, dst, PixelFormat::Rgb8, PixelFormat::Rgb8);
@@ -394,7 +428,7 @@ mod tests {
 
     #[test]
     fn same_color_space_returns_none() {
-        let cms = ZenCmsLite;
+        let cms = ZenCmsLite::default();
         let src = ColorProfileSource::Named(NamedProfile::Srgb);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
         assert!(
@@ -406,14 +440,14 @@ mod tests {
 
     #[test]
     fn icc_profile_not_supported() {
-        let cms = ZenCmsLite;
+        let cms = ZenCmsLite::default();
         assert!(cms.build_transform(&[0; 100], &[0; 100]).is_err());
         assert!(cms.identify_profile(&[0; 100]).is_none());
     }
 
     #[test]
     fn cicp_source_supported() {
-        let cms = ZenCmsLite;
+        let cms = ZenCmsLite::default();
         let src = ColorProfileSource::Cicp(Cicp::DISPLAY_P3);
         let dst = ColorProfileSource::Cicp(Cicp::SRGB);
         let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
@@ -423,7 +457,7 @@ mod tests {
 
     #[test]
     fn primaries_transfer_pair_supported() {
-        let cms = ZenCmsLite;
+        let cms = ZenCmsLite::default();
         let src = ColorProfileSource::PrimariesTransferPair {
             primaries: ColorPrimaries::DisplayP3,
             transfer: TransferFunction::Srgb,
@@ -439,7 +473,7 @@ mod tests {
 
     #[test]
     fn cross_trc_conversion() {
-        let cms = ZenCmsLite;
+        let cms = ZenCmsLite::default();
         // BT.2020 PQ → sRGB: different primaries AND different TRC
         let src = ColorProfileSource::Named(NamedProfile::Bt2020Pq);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
@@ -464,7 +498,7 @@ mod tests {
 
     #[test]
     fn identify_profile_p3_icc() {
-        let cms = ZenCmsLite;
+        let cms = ZenCmsLite::default();
         let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
         let cicp = cms.identify_profile(p3_icc);
         assert!(cicp.is_some(), "should identify Display P3 ICC profile");
@@ -478,14 +512,14 @@ mod tests {
 
     #[test]
     fn identify_profile_unknown_returns_none() {
-        let cms = ZenCmsLite;
+        let cms = ZenCmsLite::default();
         assert!(cms.identify_profile(&[0; 100]).is_none());
         assert!(cms.identify_profile(&[]).is_none());
     }
 
     #[test]
     fn build_transform_for_format_icc_to_icc() {
-        let cms = ZenCmsLite;
+        let cms = ZenCmsLite::default();
         let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
         let bt2020_icc = crate::icc_profiles::REC2020_V4;
 
@@ -518,14 +552,14 @@ mod tests {
 
     #[test]
     fn build_transform_unrecognized_icc_fails() {
-        let cms = ZenCmsLite;
+        let cms = ZenCmsLite::default();
         let garbage = [0u8; 200];
         assert!(cms.build_transform(&garbage, &garbage).is_err());
     }
 
     #[test]
     fn build_source_transform_icc_src() {
-        let cms = ZenCmsLite;
+        let cms = ZenCmsLite::default();
         let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
         let src = ColorProfileSource::Icc(p3_icc);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
@@ -534,13 +568,44 @@ mod tests {
         assert!(result.unwrap().is_ok());
     }
 
-    // --- Extended range (HDR / out-of-gamut) ---
+    // --- Clamped vs extended ---
+
+    #[test]
+    fn default_clamps_out_of_gamut() {
+        // Default (clamped): P3 green → sRGB should clamp negatives to 0.
+        let cms = ZenCmsLite::default();
+        let src = ColorProfileSource::Named(NamedProfile::DisplayP3);
+        let dst = ColorProfileSource::Named(NamedProfile::Srgb);
+        let transform = cms
+            .build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32)
+            .unwrap()
+            .unwrap();
+
+        let src_px: [f32; 3] = [0.0, 1.0, 0.0];
+        let mut dst_px = [0.0f32; 3];
+        transform.transform_row(
+            bytemuck::cast_slice(&src_px),
+            bytemuck::cast_slice_mut(&mut dst_px),
+            1,
+        );
+        // Clamped path: red should be 0 (clamped from negative), green ≤ 1.0
+        assert!(
+            dst_px[0] >= 0.0,
+            "clamped path should not produce negatives: {}",
+            dst_px[0]
+        );
+        assert!(
+            dst_px[1] <= 1.0 + 1e-5,
+            "clamped path should not produce >1: {}",
+            dst_px[1]
+        );
+    }
 
     #[test]
     fn extended_range_preserves_negative_values() {
         // P3 pure green → sRGB produces negative red (out of sRGB gamut).
         // Extended range must preserve these negatives, not clamp to 0.
-        let cms = ZenCmsLite;
+        let cms = ZenCmsLite::extended();
         let src = ColorProfileSource::Named(NamedProfile::DisplayP3);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
         let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
@@ -569,7 +634,7 @@ mod tests {
     #[test]
     fn extended_range_hdr_preserves_supernormal() {
         // BT.2020 PQ → sRGB: PQ signal 1.0 = 10000 nits, far above SDR range.
-        let cms = ZenCmsLite;
+        let cms = ZenCmsLite::extended();
         let src = ColorProfileSource::Named(NamedProfile::Bt2020Pq);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
         let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);

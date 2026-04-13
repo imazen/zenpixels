@@ -39,7 +39,7 @@ fn build_lite_xf(
     dst: ColorProfileSource<'_>,
     fmt: PixelFormat,
 ) -> Box<dyn zenpixels_convert::cms::RowTransform> {
-    ZenCmsLite
+    ZenCmsLite::default()
         .build_source_transform(src, dst, fmt, fmt)
         .unwrap()
         .unwrap()
