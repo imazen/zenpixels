@@ -44,12 +44,23 @@ use alloc::format;
 
 use crate::cms::{ColorManagement, RowTransform};
 use crate::fast_gamut;
+use crate::icc;
 use crate::{ChannelType, Cicp, ColorPrimaries, PixelFormat, TransferFunction};
 
 /// Lightweight CMS using fused SIMD gamut conversion kernels.
 ///
-/// Handles named-profile conversions without ICC parsing. Stateless and
-/// zero-cost to construct.
+/// Handles conversions between any color spaces that can be described by
+/// a (primaries, transfer) pair. This includes:
+///
+/// - **ICC profiles**: identified via 132-profile hash table (~100ns) and
+///   CICP-in-ICC extraction. Covers sRGB, Display P3, BT.2020, Adobe RGB,
+///   ProPhoto, and their variants across ICC v2–v5.
+/// - **CICP codes**: mapped directly to primaries + transfer.
+/// - **Named profiles**: decomposed to primaries + transfer.
+/// - **Explicit primaries + transfer pairs**.
+///
+/// Custom/unknown ICC profiles that don't match any known hash return `None`,
+/// signaling the caller to fall back to a full CMS (e.g., moxcms).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ZenCmsLite;
 
@@ -63,11 +74,29 @@ impl core::fmt::Display for ZenCmsLiteError {
     }
 }
 
-/// Extract (primaries, transfer) from a `ColorProfileSource`, if possible.
-fn extract_primaries_transfer(
+/// Extract (primaries, transfer) from a `ColorProfileSource`.
+///
+/// For ICC sources, tries hash-based identification (~100ns) and CICP-in-ICC
+/// extraction. Returns `None` only for truly unknown custom profiles.
+fn resolve_primaries_transfer(
     src: &crate::ColorProfileSource<'_>,
 ) -> Option<(ColorPrimaries, TransferFunction)> {
-    src.primaries_transfer()
+    match src {
+        crate::ColorProfileSource::Icc(icc_bytes) => {
+            // Try hash-based identification first (covers 132 known profiles).
+            if let Some(id) = icc::identify_common(icc_bytes, icc::Tolerance::Intent) {
+                return Some((id.primaries, id.transfer));
+            }
+            // Try CICP-in-ICC tag (ICC v4.4+).
+            if let Some(cicp) = icc::extract_cicp(icc_bytes) {
+                let p = ColorPrimaries::from_cicp(cicp.color_primaries)?;
+                let t = TransferFunction::from_cicp(cicp.transfer_characteristics)?;
+                return Some((p, t));
+            }
+            None
+        }
+        other => other.primaries_transfer(),
+    }
 }
 
 impl ColorManagement for ZenCmsLite {
@@ -75,17 +104,36 @@ impl ColorManagement for ZenCmsLite {
 
     fn build_transform(
         &self,
-        _src_icc: &[u8],
-        _dst_icc: &[u8],
+        src_icc: &[u8],
+        dst_icc: &[u8],
     ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        Err(ZenCmsLiteError(
-            "ZenCmsLite does not support ICC profile transforms".into(),
-        ))
+        self.build_transform_for_format(src_icc, dst_icc, PixelFormat::Rgb8, PixelFormat::Rgb8)
     }
 
-    fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
-        // ZenCmsLite cannot parse ICC profiles.
-        None
+    fn build_transform_for_format(
+        &self,
+        src_icc: &[u8],
+        dst_icc: &[u8],
+        src_format: PixelFormat,
+        dst_format: PixelFormat,
+    ) -> Result<Box<dyn RowTransform>, Self::Error> {
+        let src = crate::ColorProfileSource::Icc(src_icc);
+        let dst = crate::ColorProfileSource::Icc(dst_icc);
+        match self.build_source_transform(src, dst, src_format, dst_format) {
+            Some(result) => result,
+            None => Err(ZenCmsLiteError(
+                "unrecognized ICC profile (not in known-profile table)".into(),
+            )),
+        }
+    }
+
+    fn identify_profile(&self, icc_bytes: &[u8]) -> Option<Cicp> {
+        // Hash-based identification → CICP.
+        if let Some(id) = icc::identify_common(icc_bytes, icc::Tolerance::Intent) {
+            return id.to_cicp();
+        }
+        // CICP-in-ICC tag (ICC v4.4+).
+        icc::extract_cicp(icc_bytes)
     }
 
     fn build_source_transform(
@@ -95,8 +143,8 @@ impl ColorManagement for ZenCmsLite {
         src_format: PixelFormat,
         dst_format: PixelFormat,
     ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
-        let (src_p, src_t) = extract_primaries_transfer(&src)?;
-        let (dst_p, dst_t) = extract_primaries_transfer(&dst)?;
+        let (src_p, src_t) = resolve_primaries_transfer(&src)?;
+        let (dst_p, dst_t) = resolve_primaries_transfer(&dst)?;
 
         // Same color space — no conversion needed.
         if src_p as u8 == dst_p as u8 && src_t as u8 == dst_t as u8 {
@@ -377,5 +425,79 @@ mod tests {
         for ch in 0..3 {
             assert!(dst_px[ch].abs() < 1e-5, "black ch{ch}: {}", dst_px[ch]);
         }
+    }
+
+    // --- ICC profile identification ---
+
+    #[test]
+    fn identify_profile_p3_icc() {
+        let cms = ZenCmsLite;
+        let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
+        let cicp = cms.identify_profile(p3_icc);
+        assert!(cicp.is_some(), "should identify Display P3 ICC profile");
+        let cicp = cicp.unwrap();
+        assert_eq!(cicp.color_primaries, 12, "should be Display P3 (cp=12)");
+        assert_eq!(
+            cicp.transfer_characteristics, 13,
+            "should be sRGB TRC (tc=13)"
+        );
+    }
+
+    #[test]
+    fn identify_profile_unknown_returns_none() {
+        let cms = ZenCmsLite;
+        assert!(cms.identify_profile(&[0; 100]).is_none());
+        assert!(cms.identify_profile(&[]).is_none());
+    }
+
+    #[test]
+    fn build_transform_for_format_icc_to_icc() {
+        let cms = ZenCmsLite;
+        let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
+        let bt2020_icc = crate::icc_profiles::REC2020_V4;
+
+        // P3 ICC → BT.2020 ICC should work (both are recognized profiles)
+        let result = cms.build_transform_for_format(
+            p3_icc,
+            bt2020_icc,
+            PixelFormat::RgbF32,
+            PixelFormat::RgbF32,
+        );
+        assert!(result.is_ok(), "should handle recognized ICC→ICC");
+
+        let transform = result.unwrap();
+        // White should map to white
+        let src_px: [f32; 3] = [1.0, 1.0, 1.0];
+        let mut dst_px = [0.0f32; 3];
+        transform.transform_row(
+            bytemuck::cast_slice(&src_px),
+            bytemuck::cast_slice_mut(&mut dst_px),
+            1,
+        );
+        for ch in 0..3 {
+            assert!(
+                (dst_px[ch] - 1.0).abs() < 1e-4,
+                "ICC→ICC white ch{ch}: {}",
+                dst_px[ch]
+            );
+        }
+    }
+
+    #[test]
+    fn build_transform_unrecognized_icc_fails() {
+        let cms = ZenCmsLite;
+        let garbage = [0u8; 200];
+        assert!(cms.build_transform(&garbage, &garbage).is_err());
+    }
+
+    #[test]
+    fn build_source_transform_icc_src() {
+        let cms = ZenCmsLite;
+        let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
+        let src = ColorProfileSource::Icc(p3_icc);
+        let dst = ColorProfileSource::Named(NamedProfile::Srgb);
+        let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
+        assert!(result.is_some(), "ICC P3 src should be recognized");
+        assert!(result.unwrap().is_ok());
     }
 }

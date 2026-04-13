@@ -32,7 +32,7 @@ imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]
 pipeline = []
 cms-moxcms = ["std", "dep:moxcms"]
-zencms-lite = ["dep:magetypes", "dep:paste"]
+zencms-lite = ["dep:magetypes", "dep:paste", "zenpixels/icc"]
 serde = ["zenpixels/serde"]
 
 [dependencies]

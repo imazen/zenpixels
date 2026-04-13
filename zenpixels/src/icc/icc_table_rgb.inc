@@ -1,5 +1,6 @@
 &[
     (0x0373_482f_2294_c17a, CP::Bt709, TF::Srgb,  1),  // srgb v1 31 canon 6578ac5c
+    (0x03d5_20f2_dff3_4ae6, CP::DisplayP3, TF::Srgb,  1),  // zpc display p3 compat v2
     (0x0582_1f2a_e35b_b471, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 d904903e
     (0x0796_16e1_1678_df00, CP::Bt709, TF::Srgb,  1),  // 敮啓srgb 12afb4d9
     (0x0831_3776_1575_8c5d, CP::Bt709, TF::Srgb, 33),  // c2 7d61bdc0
@@ -17,6 +18,7 @@
     (0x2594_8312_e5cd_6a48, CP::Bt709, TF::Srgb,  1),  // display e01187ad
     (0x260c_d3fb_9142_5fc2, CP::Bt709, TF::Srgb,  1),  // srgb built-in 737acacd
     (0x285e_8614_9334_c025, CP::DisplayP3, TF::Srgb,  1),  // display 7ce50c9c
+    (0x2955_b1ae_972b_1d7c, CP::Bt2020, TF::Bt709,  1),  // zpc rec2020 compat v4
     (0x347b_29a9_9718_4c3d, CP::DisplayP3, TF::Srgb,  1),  // srgb transfer d77bd8c4
     (0x3980_7a73_90b4_2882, CP::Bt709, TF::Srgb,  1),  // srgb iec61966-2-1 black scaled c4c11531
     (0x3a45_5986_8883_779d, CP::DisplayP3, TF::Srgb,  1),  // display 518dbeba
@@ -98,6 +100,7 @@
     (0xd680_1fb5_e54b_d8c1, CP::DisplayP3, TF::Srgb,  1),  // display ef26b91d
     (0xda4a_81a2_4496_07bd, CP::Bt709, TF::Gamma22,  0),  // srgb profile e2b447e6
     (0xda62_6fd8_d996_0d4d, CP::DisplayP3, TF::Srgb,  1),  // display 1e5b6330
+    (0xdb45_d405_5d6d_54a1, CP::DisplayP3, TF::Srgb,  1),  // zpc display p3 compat v4
     (0xdd41_6b82_8094_836a, CP::DisplayP3, TF::Srgb,  1),  // moxcms display p3
     (0xe027_6b27_9678_f216, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 8551730c
     (0xe3c0_33dc_d296_0f6d, CP::DisplayP3, TF::Srgb, 13),  // up3 ffc2520e
