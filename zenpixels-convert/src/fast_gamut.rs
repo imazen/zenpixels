@@ -780,6 +780,117 @@ pub(crate) fn convert_u8_rgb_lut_lut(
     }
 }
 
+/// SIMD-batched u8→u8: LUT linearize 8 pixels → SIMD matrix → LUT encode.
+/// Processes 8 RGB pixels (24 bytes) per iteration with SIMD matrix multiply.
+#[rite]
+fn convert_8px_u8_rgb_simd(
+    token: X64V3Token,
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    lin_lut: &[f32; 256],
+    enc_u8: fn(f32) -> u8,
+) {
+    // Gather-linearize: 8 scalar LUT lookups per channel → pack into f32x8
+    let mut r = [0.0f32; 8];
+    let mut g = [0.0f32; 8];
+    let mut b = [0.0f32; 8];
+    for i in 0..8 {
+        r[i] = lin_lut[src[i * 3] as usize];
+        g[i] = lin_lut[src[i * 3 + 1] as usize];
+        b[i] = lin_lut[src[i * 3 + 2] as usize];
+    }
+
+    // SIMD matrix multiply
+    let rv = mt_f32x8::from_array(token, r);
+    let gv = mt_f32x8::from_array(token, g);
+    let bv = mt_f32x8::from_array(token, b);
+    let (or, og, ob) = mat3x3_x8(token, m, rv, gv, bv);
+    let ro = or.to_array();
+    let go = og.to_array();
+    let bo = ob.to_array();
+
+    // Scatter-encode: f32 → u8 via LUT, 8 pixels
+    for i in 0..8 {
+        dst[i * 3] = enc_u8(ro[i]);
+        dst[i * 3 + 1] = enc_u8(go[i]);
+        dst[i * 3 + 2] = enc_u8(bo[i]);
+    }
+}
+
+/// SIMD-dispatched u8 RGB conversion: LUT→SIMD matrix→LUT in batches of 8 pixels.
+#[arcane]
+fn convert_u8_rgb_lut_simd_v3(
+    token: X64V3Token,
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    lin_lut: &[f32; 256],
+    enc_u8: fn(f32) -> u8,
+) {
+    let pixel_count = src.len() / 3;
+    let bulk = (pixel_count / 8) * 8;
+    let bulk_bytes = bulk * 3;
+
+    for off in (0..bulk_bytes).step_by(24) {
+        convert_8px_u8_rgb_simd(
+            token,
+            m,
+            &src[off..off + 24],
+            &mut dst[off..off + 24],
+            lin_lut,
+            enc_u8,
+        );
+    }
+
+    // Remainder: scalar
+    for i in bulk..pixel_count {
+        let base = i * 3;
+        let r = lin_lut[src[base] as usize];
+        let g = lin_lut[src[base + 1] as usize];
+        let b = lin_lut[src[base + 2] as usize];
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst[base] = enc_u8(nr);
+        dst[base + 1] = enc_u8(ng);
+        dst[base + 2] = enc_u8(nb);
+    }
+}
+
+/// Scalar fallback for the SIMD dispatcher.
+fn convert_u8_rgb_lut_simd_scalar(
+    _token: ScalarToken,
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    lin_lut: &[f32; 256],
+    enc_u8: fn(f32) -> u8,
+) {
+    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+        let r = lin_lut[src_px[0] as usize];
+        let g = lin_lut[src_px[1] as usize];
+        let b = lin_lut[src_px[2] as usize];
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst_px[0] = enc_u8(nr);
+        dst_px[1] = enc_u8(ng);
+        dst_px[2] = enc_u8(nb);
+    }
+}
+
+/// SIMD-batched u8 RGB gamut conversion: LUT→SIMD matrix→LUT.
+/// Processes 8 pixels at a time with SIMD matrix multiply, scalar LUT
+/// lookups for linearize/encode. Falls back to scalar for remainder.
+pub(crate) fn convert_u8_rgb_simd_lut(
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    lin_lut: &[f32; 256],
+    enc_u8: fn(f32) -> u8,
+) {
+    debug_assert_eq!(src.len() % 3, 0);
+    debug_assert_eq!(src.len(), dst.len());
+    incant!(convert_u8_rgb_lut_simd(m, src, dst, lin_lut, enc_u8));
+}
+
 /// Convert u8 RGBA via LUT linearization AND LUT encoding. Alpha copied.
 pub(crate) fn convert_u8_rgba_lut_lut(
     m: &[[f32; 3]; 3],
