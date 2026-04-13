@@ -157,6 +157,7 @@ pub enum ColorAuthority {
 /// sources so color metadata travels with pixel data without per-strip
 /// cloning overhead.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ColorContext {
     /// Raw ICC profile bytes.
     pub icc: Option<Arc<[u8]>>,
