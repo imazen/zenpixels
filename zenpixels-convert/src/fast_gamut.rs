@@ -114,6 +114,48 @@ pub const BT2020_TO_ADOBERGB: [[f32; 3]; 3] = [
     [-0.0225303828, -0.0498065074, 1.0723368902],
 ];
 
+/// DCI-P3 (D50) linear → sRGB linear (includes Bradford D50→D65 adaptation).
+pub const DCIP3_TO_SRGB: [[f32; 3]; 3] = [
+    [1.3172195039, -0.3028431415, -0.0143763623],
+    [-0.0427573380, 1.0481182934, -0.0053609554],
+    [-0.0198710751, -0.0745299402, 1.0944010153],
+];
+
+/// sRGB linear → DCI-P3 (D50) linear (includes Bradford D65→D50 adaptation).
+pub const SRGB_TO_DCIP3: [[f32; 3]; 3] = [
+    [0.7665586115, 0.2222827982, 0.0111585903],
+    [0.0313533965, 0.9635149303, 0.0051316732],
+    [0.0160536314, 0.0696524466, 0.9142939220],
+];
+
+/// DCI-P3 (D50) linear → Display P3 (D65) linear (Bradford adaptation).
+pub const DCIP3_TO_P3: [[f32; 3]; 3] = [
+    [1.0757718928, -0.0629961080, -0.0127757847],
+    [0.0023860038, 1.0032742109, -0.0056602146],
+    [0.0013130427, 0.0028467286, 0.9958402288],
+];
+
+/// Display P3 (D65) linear → DCI-P3 (D50) linear (Bradford adaptation).
+pub const P3_TO_DCIP3: [[f32; 3]; 3] = [
+    [0.9294207757, 0.0583240392, 0.0122551851],
+    [-0.0022172423, 0.9965812610, 0.0056359812],
+    [-0.0012191285, -0.0029257487, 1.0041448773],
+];
+
+/// DCI-P3 (D50) linear → BT.2020 linear (Bradford D50→D65).
+pub const DCIP3_TO_BT2020: [[f32; 3]; 3] = [
+    [0.8114887052, 0.1518944892, 0.0366168056],
+    [0.0514734163, 0.9420146367, 0.0065119469],
+    [0.0000314677, 0.0205356625, 0.9794328698],
+];
+
+/// BT.2020 linear → DCI-P3 (D50) linear (Bradford D65→D50).
+pub const BT2020_TO_DCIP3: [[f32; 3]; 3] = [
+    [1.2449757120, -0.1997595348, -0.0452161772],
+    [-0.0680373528, 1.0726252817, -0.0045879289],
+    [0.0013865326, -0.0224831997, 1.0210966671],
+];
+
 /// BT.2020 linear → Display P3 linear.
 pub const BT2020_TO_P3: [[f32; 3]; 3] = [
     [1.3435782526, -0.2821796705, -0.0613985821],
@@ -446,6 +488,56 @@ stamp_trc_kernels!(srgb_to_adobe,
 );
 
 // =========================================================================
+// DCI-P3 gamma 2.6 TRC
+// =========================================================================
+
+const DCI_GAMMA: f32 = 2.6;
+
+#[rite]
+fn dci_to_linear_x8(token: X64V3Token, v: [f32; 8]) -> [f32; 8] {
+    trc_x8::gamma_to_linear_v3(token, v, DCI_GAMMA)
+}
+
+#[rite]
+fn dci_from_linear_x8(token: X64V3Token, v: [f32; 8]) -> [f32; 8] {
+    trc_x8::linear_to_gamma_v3(token, v, DCI_GAMMA)
+}
+
+#[inline(always)]
+fn dci_to_linear_scalar(v: f32) -> f32 {
+    linear_srgb::default::gamma_to_linear(v, DCI_GAMMA)
+}
+
+#[inline(always)]
+fn dci_from_linear_scalar(v: f32) -> f32 {
+    linear_srgb::default::linear_to_gamma(v, DCI_GAMMA)
+}
+
+// DCI-P3 same-TRC (γ2.6 both sides — for DCI↔DCI with different primaries, unlikely)
+stamp_trc_kernels!(dci,
+    simd_linearize: dci_to_linear_x8,
+    simd_encode: dci_from_linear_x8,
+    scalar_linearize: dci_to_linear_scalar,
+    scalar_encode: dci_from_linear_scalar
+);
+
+// DCI-P3 source → sRGB dest (γ2.6 linearize, sRGB encode)
+stamp_trc_kernels!(dci_to_srgb,
+    simd_linearize: dci_to_linear_x8,
+    simd_encode: trc_x8::linear_to_srgb_v3,
+    scalar_linearize: dci_to_linear_scalar,
+    scalar_encode: linear_srgb::tf::linear_to_srgb
+);
+
+// sRGB source → DCI-P3 dest (sRGB linearize, γ2.6 encode)
+stamp_trc_kernels!(srgb_to_dci,
+    simd_linearize: trc_x8::srgb_to_linear_v3,
+    simd_encode: dci_from_linear_x8,
+    scalar_linearize: linear_srgb::tf::srgb_to_linear,
+    scalar_encode: dci_from_linear_scalar
+);
+
+// =========================================================================
 // Public API — named conversions
 // =========================================================================
 
@@ -580,6 +672,51 @@ pub fn srgb_to_adobergb_u8_rgb(src: &[u8], dst: &mut [u8]) {
         linear_srgb::tf::srgb_to_linear,
         adobe_from_linear_scalar,
     );
+}
+
+// --- DCI-P3 ↔ sRGB (cross-TRC: γ2.6 ↔ sRGB, Bradford adaptation) ---
+
+/// DCI-P3 → sRGB, f32 RGB in-place.
+pub fn dcip3_to_srgb_f32(data: &mut [f32]) {
+    debug_assert_eq!(data.len() % 3, 0);
+    incant!(convert_rgb_dci_to_srgb(&DCIP3_TO_SRGB, data));
+}
+/// sRGB → DCI-P3, f32 RGB in-place.
+pub fn srgb_to_dcip3_f32(data: &mut [f32]) {
+    debug_assert_eq!(data.len() % 3, 0);
+    incant!(convert_rgb_srgb_to_dci(&SRGB_TO_DCIP3, data));
+}
+
+// --- DCI-P3 ↔ Display P3 (cross-TRC: γ2.6 ↔ sRGB, Bradford adaptation) ---
+
+/// DCI-P3 → Display P3, f32 RGB in-place.
+pub fn dcip3_to_p3_f32(data: &mut [f32]) {
+    debug_assert_eq!(data.len() % 3, 0);
+    incant!(convert_rgb_dci_to_srgb(&DCIP3_TO_P3, data));
+}
+/// Display P3 → DCI-P3, f32 RGB in-place.
+pub fn p3_to_dcip3_f32(data: &mut [f32]) {
+    debug_assert_eq!(data.len() % 3, 0);
+    incant!(convert_rgb_srgb_to_dci(&P3_TO_DCIP3, data));
+}
+
+// --- DCI-P3 ↔ BT.2020 ---
+
+/// DCI-P3 → BT.2020, f32 RGB in-place (γ2.6 → BT.709 TRC).
+pub fn dcip3_to_bt2020_f32(data: &mut [f32]) {
+    debug_assert_eq!(data.len() % 3, 0);
+    // DCI γ2.6 linearize → matrix → BT.709 encode
+    // Need a dci_to_bt709 stamp... use dci linearize + bt709 encode
+    // For now, go through linear: linearize, matrix, encode
+    for pixel in data.chunks_exact_mut(3) {
+        let r = dci_to_linear_scalar(pixel[0]);
+        let g = dci_to_linear_scalar(pixel[1]);
+        let b = dci_to_linear_scalar(pixel[2]);
+        let (nr, ng, nb) = mat3x3(&DCIP3_TO_BT2020, r, g, b);
+        pixel[0] = linear_srgb::tf::linear_to_bt709(nr);
+        pixel[1] = linear_srgb::tf::linear_to_bt709(ng);
+        pixel[2] = linear_srgb::tf::linear_to_bt709(nb);
+    }
 }
 
 // --- Generic: any matrix + any TRC (advanced users) ---
@@ -1224,5 +1361,72 @@ mod tests {
         identity(&ADOBERGB_TO_SRGB, &SRGB_TO_ADOBERGB);
         identity(&ADOBERGB_TO_P3, &P3_TO_ADOBERGB);
         identity(&ADOBERGB_TO_BT2020, &BT2020_TO_ADOBERGB);
+    }
+
+    // --- DCI-P3 ---
+
+    #[test]
+    fn dcip3_srgb_white() {
+        assert_white_roundtrip(dcip3_to_srgb_f32);
+    }
+    #[test]
+    fn srgb_dcip3_white() {
+        assert_white_roundtrip(srgb_to_dcip3_f32);
+    }
+    #[test]
+    fn dcip3_srgb_black() {
+        assert_black_roundtrip(dcip3_to_srgb_f32);
+    }
+    #[test]
+    fn dcip3_p3_white() {
+        assert_white_roundtrip(dcip3_to_p3_f32);
+    }
+    #[test]
+    fn p3_dcip3_white() {
+        assert_white_roundtrip(p3_to_dcip3_f32);
+    }
+    #[test]
+    fn dcip3_srgb_roundtrip() {
+        assert_roundtrip(srgb_to_dcip3_f32, dcip3_to_srgb_f32, 1e-4);
+    }
+    #[test]
+    fn dcip3_p3_roundtrip() {
+        assert_roundtrip(p3_to_dcip3_f32, dcip3_to_p3_f32, 1e-4);
+    }
+    #[test]
+    fn dci_matrix_inverse_pairs() {
+        let identity = |m1: &[[f32; 3]; 3], m2: &[[f32; 3]; 3]| {
+            for i in 0..3 {
+                for j in 0..3 {
+                    let sum: f32 = (0..3).map(|k| m1[i][k] * m2[k][j]).sum();
+                    let expected = if i == j { 1.0 } else { 0.0 };
+                    assert!(
+                        (sum - expected).abs() < 1e-4,
+                        "M1×M2[{i}][{j}] = {sum}, expected {expected}"
+                    );
+                }
+            }
+        };
+        identity(&DCIP3_TO_SRGB, &SRGB_TO_DCIP3);
+        identity(&DCIP3_TO_P3, &P3_TO_DCIP3);
+        identity(&DCIP3_TO_BT2020, &BT2020_TO_DCIP3);
+    }
+    #[test]
+    fn all_dci_matrices_preserve_white() {
+        let matrices: &[(&str, &[[f32; 3]; 3])] = &[
+            ("DCIP3_TO_SRGB", &DCIP3_TO_SRGB),
+            ("SRGB_TO_DCIP3", &SRGB_TO_DCIP3),
+            ("DCIP3_TO_P3", &DCIP3_TO_P3),
+            ("P3_TO_DCIP3", &P3_TO_DCIP3),
+            ("DCIP3_TO_BT2020", &DCIP3_TO_BT2020),
+            ("BT2020_TO_DCIP3", &BT2020_TO_DCIP3),
+        ];
+        for (name, m) in matrices {
+            let (r, g, b) = mat3x3(m, 1.0, 1.0, 1.0);
+            assert!(
+                (r - 1.0).abs() < 1e-4 && (g - 1.0).abs() < 1e-4 && (b - 1.0).abs() < 1e-4,
+                "{name}: white → ({r}, {g}, {b})"
+            );
+        }
     }
 }
