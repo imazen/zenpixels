@@ -492,6 +492,171 @@ pub fn srgb_to_p3_f32_extended(data: &mut [f32]) {
 }
 
 // =========================================================================
+// u8 ↔ f32 wrappers
+// =========================================================================
+
+/// Convert u8 RGB source to f32 RGB dest via gamut conversion.
+///
+/// Source u8 values are linearized via sRGB TRC LUT (lossless for u8),
+/// matrix-transformed, then re-encoded and quantized to u8 output.
+///
+/// `src_trc_linearize` and `dst_trc_encode` are the per-channel TRC functions.
+fn convert_u8_rgb(
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    linearize_fn: fn(f32) -> f32,
+    encode_fn: fn(f32) -> f32,
+) {
+    debug_assert_eq!(src.len() % 3, 0);
+    debug_assert_eq!(src.len(), dst.len());
+    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+        let r = linearize_fn(src_px[0] as f32 / 255.0);
+        let g = linearize_fn(src_px[1] as f32 / 255.0);
+        let b = linearize_fn(src_px[2] as f32 / 255.0);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst_px[0] = (encode_fn(nr) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+        dst_px[1] = (encode_fn(ng) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+        dst_px[2] = (encode_fn(nb) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+    }
+}
+
+/// Convert u8 RGBA source to u8 RGBA dest via gamut conversion. Alpha copied.
+fn convert_u8_rgba(
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    linearize_fn: fn(f32) -> f32,
+    encode_fn: fn(f32) -> f32,
+) {
+    debug_assert_eq!(src.len() % 4, 0);
+    debug_assert_eq!(src.len(), dst.len());
+    for (src_px, dst_px) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
+        let r = linearize_fn(src_px[0] as f32 / 255.0);
+        let g = linearize_fn(src_px[1] as f32 / 255.0);
+        let b = linearize_fn(src_px[2] as f32 / 255.0);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst_px[0] = (encode_fn(nr) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+        dst_px[1] = (encode_fn(ng) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+        dst_px[2] = (encode_fn(nb) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+        dst_px[3] = src_px[3];
+    }
+}
+
+/// Convert u16 RGB source to u16 RGB dest via gamut conversion.
+fn convert_u16_rgb(
+    m: &[[f32; 3]; 3],
+    src: &[u16],
+    dst: &mut [u16],
+    linearize_fn: fn(f32) -> f32,
+    encode_fn: fn(f32) -> f32,
+) {
+    debug_assert_eq!(src.len() % 3, 0);
+    debug_assert_eq!(src.len(), dst.len());
+    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+        let r = linearize_fn(src_px[0] as f32 / 65535.0);
+        let g = linearize_fn(src_px[1] as f32 / 65535.0);
+        let b = linearize_fn(src_px[2] as f32 / 65535.0);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst_px[0] = (encode_fn(nr) * 65535.0 + 0.5).clamp(0.0, 65535.0) as u16;
+        dst_px[1] = (encode_fn(ng) * 65535.0 + 0.5).clamp(0.0, 65535.0) as u16;
+        dst_px[2] = (encode_fn(nb) * 65535.0 + 0.5).clamp(0.0, 65535.0) as u16;
+    }
+}
+
+// --- u8 named conversions ---
+
+/// Display P3 → sRGB, u8 RGB → u8 RGB.
+pub fn p3_to_srgb_u8_rgb(src: &[u8], dst: &mut [u8]) {
+    convert_u8_rgb(
+        &P3_TO_SRGB,
+        src,
+        dst,
+        linear_srgb::tf::srgb_to_linear,
+        linear_srgb::tf::linear_to_srgb,
+    );
+}
+
+/// sRGB → Display P3, u8 RGB → u8 RGB.
+pub fn srgb_to_p3_u8_rgb(src: &[u8], dst: &mut [u8]) {
+    convert_u8_rgb(
+        &SRGB_TO_P3,
+        src,
+        dst,
+        linear_srgb::tf::srgb_to_linear,
+        linear_srgb::tf::linear_to_srgb,
+    );
+}
+
+/// Display P3 → sRGB, u8 RGBA → u8 RGBA. Alpha copied.
+pub fn p3_to_srgb_u8_rgba(src: &[u8], dst: &mut [u8]) {
+    convert_u8_rgba(
+        &P3_TO_SRGB,
+        src,
+        dst,
+        linear_srgb::tf::srgb_to_linear,
+        linear_srgb::tf::linear_to_srgb,
+    );
+}
+
+/// sRGB → Display P3, u8 RGBA → u8 RGBA. Alpha copied.
+pub fn srgb_to_p3_u8_rgba(src: &[u8], dst: &mut [u8]) {
+    convert_u8_rgba(
+        &SRGB_TO_P3,
+        src,
+        dst,
+        linear_srgb::tf::srgb_to_linear,
+        linear_srgb::tf::linear_to_srgb,
+    );
+}
+
+/// BT.2020 SDR → sRGB, u8 RGB → u8 RGB.
+pub fn bt2020_sdr_to_srgb_u8_rgb(src: &[u8], dst: &mut [u8]) {
+    convert_u8_rgb(
+        &BT2020_TO_SRGB,
+        src,
+        dst,
+        linear_srgb::tf::bt709_to_linear,
+        linear_srgb::tf::linear_to_srgb,
+    );
+}
+
+/// sRGB → BT.2020 SDR, u8 RGB → u8 RGB.
+pub fn srgb_to_bt2020_sdr_u8_rgb(src: &[u8], dst: &mut [u8]) {
+    convert_u8_rgb(
+        &SRGB_TO_BT2020,
+        src,
+        dst,
+        linear_srgb::tf::srgb_to_linear,
+        linear_srgb::tf::linear_to_bt709,
+    );
+}
+
+// --- u16 named conversions ---
+
+/// Display P3 → sRGB, u16 RGB → u16 RGB.
+pub fn p3_to_srgb_u16_rgb(src: &[u16], dst: &mut [u16]) {
+    convert_u16_rgb(
+        &P3_TO_SRGB,
+        src,
+        dst,
+        linear_srgb::tf::srgb_to_linear,
+        linear_srgb::tf::linear_to_srgb,
+    );
+}
+
+/// BT.2020 PQ → sRGB, u16 RGB → u16 RGB. **No tone mapping**.
+pub fn bt2020_pq_to_srgb_u16_rgb(src: &[u16], dst: &mut [u16]) {
+    convert_u16_rgb(
+        &BT2020_TO_SRGB,
+        src,
+        dst,
+        linear_srgb::tf::pq_to_linear,
+        linear_srgb::tf::linear_to_srgb,
+    );
+}
+
+// =========================================================================
 // Tests
 // =========================================================================
 
@@ -652,6 +817,170 @@ mod tests {
                         assert!(
                             *c >= -1e-4 && *c <= 1.0 + 1e-4,
                             "sRGB ({r},{g},{b}) ch{i} out of BT.2020: {c}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // --- u8 conversions ---
+
+    #[test]
+    fn u8_p3_srgb_white() {
+        let src = [255u8, 255, 255];
+        let mut dst = [0u8; 3];
+        p3_to_srgb_u8_rgb(&src, &mut dst);
+        assert_eq!(dst, [255, 255, 255]);
+    }
+
+    #[test]
+    fn u8_p3_srgb_black() {
+        let src = [0u8, 0, 0];
+        let mut dst = [0u8; 3];
+        p3_to_srgb_u8_rgb(&src, &mut dst);
+        assert_eq!(dst, [0, 0, 0]);
+    }
+
+    #[test]
+    fn u8_srgb_p3_roundtrip() {
+        // Mid-gray should survive roundtrip within ±1 code value
+        let original = [128u8, 128, 128];
+        let mut mid = [0u8; 3];
+        let mut result = [0u8; 3];
+        srgb_to_p3_u8_rgb(&original, &mut mid);
+        p3_to_srgb_u8_rgb(&mid, &mut result);
+        for i in 0..3 {
+            assert!(
+                (original[i] as i16 - result[i] as i16).unsigned_abs() <= 1,
+                "ch{i}: {original:?} → {mid:?} → {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn u8_rgba_alpha_passthrough() {
+        let src = [128u8, 64, 32, 200];
+        let mut dst = [0u8; 4];
+        p3_to_srgb_u8_rgba(&src, &mut dst);
+        assert_eq!(dst[3], 200, "alpha should be copied");
+    }
+
+    #[test]
+    fn u8_bt2020_sdr_srgb_roundtrip() {
+        let original = [100u8, 150, 200];
+        let mut mid = [0u8; 3];
+        let mut result = [0u8; 3];
+        srgb_to_bt2020_sdr_u8_rgb(&original, &mut mid);
+        bt2020_sdr_to_srgb_u8_rgb(&mid, &mut result);
+        for i in 0..3 {
+            assert!(
+                (original[i] as i16 - result[i] as i16).unsigned_abs() <= 2,
+                "ch{i}: {original:?} → {mid:?} → {result:?}"
+            );
+        }
+    }
+
+    // --- u16 conversions ---
+
+    #[test]
+    fn u16_p3_srgb_white() {
+        let src = [65535u16, 65535, 65535];
+        let mut dst = [0u16; 3];
+        p3_to_srgb_u16_rgb(&src, &mut dst);
+        assert_eq!(dst, [65535, 65535, 65535]);
+    }
+
+    #[test]
+    fn u16_p3_srgb_black() {
+        let src = [0u16, 0, 0];
+        let mut dst = [0u16; 3];
+        p3_to_srgb_u16_rgb(&src, &mut dst);
+        assert_eq!(dst, [0, 0, 0]);
+    }
+
+    // --- Accuracy: f32 roundtrip max error ---
+
+    #[test]
+    fn f32_srgb_p3_srgb_roundtrip_accuracy() {
+        // sRGB→P3→sRGB roundtrip: sRGB is a subset of P3, so no clamping.
+        // This tests the pure polynomial + matrix precision.
+        let mut max_err: f32 = 0.0;
+        for r in (0..=255).step_by(4) {
+            for g in (0..=255).step_by(4) {
+                for b in (0..=255).step_by(16) {
+                    let original = [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0];
+                    let mut px = original;
+                    srgb_to_p3_f32(&mut px);
+                    p3_to_srgb_f32(&mut px);
+                    for i in 0..3 {
+                        let err = (original[i] - px[i]).abs();
+                        if err > max_err {
+                            max_err = err;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(max_err < 1e-4, "max roundtrip error: {max_err}");
+    }
+
+    // --- Matrix inverse verification ---
+
+    #[test]
+    fn matrix_inverse_pairs() {
+        // P3_TO_SRGB × SRGB_TO_P3 ≈ identity
+        let identity = |m1: &[[f32; 3]; 3], m2: &[[f32; 3]; 3]| {
+            for i in 0..3 {
+                for j in 0..3 {
+                    let sum: f32 = (0..3).map(|k| m1[i][k] * m2[k][j]).sum();
+                    let expected = if i == j { 1.0 } else { 0.0 };
+                    assert!(
+                        (sum - expected).abs() < 1e-5,
+                        "M1×M2[{i}][{j}] = {sum}, expected {expected}"
+                    );
+                }
+            }
+        };
+        identity(&P3_TO_SRGB, &SRGB_TO_P3);
+        identity(&BT2020_TO_SRGB, &SRGB_TO_BT2020);
+        identity(&BT2020_TO_P3, &P3_TO_BT2020);
+    }
+
+    // --- All matrices preserve white ---
+
+    #[test]
+    fn all_matrices_preserve_white() {
+        let matrices: &[(&str, &[[f32; 3]; 3])] = &[
+            ("P3_TO_SRGB", &P3_TO_SRGB),
+            ("SRGB_TO_P3", &SRGB_TO_P3),
+            ("BT2020_TO_SRGB", &BT2020_TO_SRGB),
+            ("SRGB_TO_BT2020", &SRGB_TO_BT2020),
+            ("P3_TO_BT2020", &P3_TO_BT2020),
+            ("BT2020_TO_P3", &BT2020_TO_P3),
+        ];
+        for (name, m) in matrices {
+            let (r, g, b) = mat3x3(m, 1.0, 1.0, 1.0);
+            assert!(
+                (r - 1.0).abs() < 1e-5 && (g - 1.0).abs() < 1e-5 && (b - 1.0).abs() < 1e-5,
+                "{name}: white → ({r}, {g}, {b})"
+            );
+        }
+    }
+
+    // --- P3 subset of BT.2020 ---
+
+    #[test]
+    fn p3_subset_of_bt2020() {
+        for r in (0..=255).step_by(17) {
+            for g in (0..=255).step_by(17) {
+                for b in (0..=255).step_by(17) {
+                    let mut px = [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0];
+                    p3_to_bt2020_f32(&mut px);
+                    for (i, c) in px.iter().enumerate() {
+                        assert!(
+                            *c >= -1e-4 && *c <= 1.0 + 1e-4,
+                            "P3 ({r},{g},{b}) ch{i} out of BT.2020: {c}"
                         );
                     }
                 }
