@@ -390,8 +390,6 @@ pub mod error;
 pub(crate) mod negotiate;
 
 pub mod adapt;
-#[cfg(feature = "zencms-lite")]
-pub(crate) mod clut;
 pub mod cms;
 #[cfg(feature = "zencms-lite")]
 pub mod cms_lite;

@@ -1,65 +1,37 @@
-# Context Handoff — Color Registry + Fast Gamut CMS
+# Context Handoff — ZenCmsLite + Fused SIMD Gamut Conversion
 
 ## Current State (2026-04-13)
 
-### PR Open
-- **imazen/zenpixels#8** (`feat/color-registry`): Color registry with const-evaluated gamut matrices
-  - `ColorPrimaries::chromaticity()` — CIE xy for all 8 primaries
-  - `registry::gamut_matrix(src, dst)` — const fn, computes any 3×3 matrix with Bradford adaptation
-  - Registry table: `(primaries, transfer) ↔ CICP ↔ NamedProfile`
-  - 11 tests, CSS Color 4 cross-validated
-  - Compile time: 0.5ms per const matrix (100 matrices = 53ms overhead)
+### Branch: `explore/fast-p3-srgb` (PR #9)
 
-### Explore Branch
-- `explore/fast-p3-srgb`: Fused SIMD gamut conversion
-  - `fast_gamut.rs` — 1432 lines, 48 tests, behind `zencms-lite` feature flag
-  - 1.9x faster than moxcms for f32 P3↔sRGB, more accurate (99.9% exact vs 90.5%)
-  - Uses archmage `#[rite]`/`#[arcane]` + `incant!` for AVX2+FMA dispatch
-  - Currently has 24 hardcoded matrix constants — needs refactoring to use registry
-  - u8 path is 55x slower than moxcms (scalar polynomial, needs SIMD LUT batch)
-  - Validated against moxcms (256³ exhaustive), CSS Color 4, ICC profile colorants
+**ZenCmsLite** — lightweight `ColorManagement` impl using fused SIMD gamut kernels.
+- Identifies ICC profiles via 135-profile hash table (~100ns) + CICP-in-ICC extraction
+- Falls back to moxcms for unknown custom profiles
+- f32: fused TRC+matrix SIMD kernels, ~3.3 GiB/s (95% of moxcms)
+- u8: LUT linearize → SIMD (matrix + poly encode) → quantize, 638 MiB/s
+- Extended range: opt-in via `ZenCmsLite::extended()`, scalar sign-preserving powf
 
-### Main Branch Changes (already merged)
-- `ColorProfileSource::PrimariesTransferPair { primaries, transfer }` variant
-- `ColorManagement::build_source_transform()` trait method
-- `build_transform_from_cicp` removed (subsumed by build_source_transform)
-- `NamedProfile::to_primaries_transfer()` / `from_primaries_transfer()`
-- zencodec: icc_extract_cicp cross-validated with moxcms, comprehensive ColorAuthority tests
+### Key Files
+- `zenpixels/src/descriptor.rs` — `ColorPrimaries::gamut_matrix_to(dst)` (new public API)
+- `zenpixels/src/registry.rs` — const fn matrix computation (pub(crate))
+- `zenpixels-convert/src/fast_gamut.rs` — stamped SIMD kernels, dispatch, u8/u16 converters
+- `zenpixels-convert/src/cms_lite.rs` — `ZenCmsLite` struct, `LiteTransform`, ICC identification
+- `zenpixels-convert/src/gamut.rs` — `conversion_matrix()` delegates to registry
+- `zenpixels-convert/src/convert_kernels.rs` — RowConverter gamut step uses SIMD (cfg zencms-lite)
 
-## Next Steps
-
-1. **Merge registry PR** (#8)
-2. **Rebase explore branch** on registry, refactor fast_gamut:
-   - Replace 24 hardcoded `const` matrix arrays with `const gamut_matrix()` calls
-   - Delete the DCI-P3 Bradford matrices (computed automatically now)
-   - fast_gamut becomes ~500 lines shorter
-3. **Implement `ZenCmsLite`** struct:
-   - `impl ColorManagement for ZenCmsLite`
-   - `build_source_transform`: match on `PrimariesTransferPair`, compute matrix via registry, pick TRC kernel
-   - `identify_profile`: reuse existing hash+colorant identification from moxcms backend
-   - `build_transform_for_format`: identify both profiles → delegate to build_source_transform
-4. **Wire into `finalize_for_output`**: already tries `build_source_transform` first
-5. **Fix u8 performance**: use `linear-srgb` SIMD LUT batch functions wrapping fused f32 kernel
-6. **Refactor scattered match statements** to use registry lookups (DRY)
-
-## Key Files
-- `zenpixels/src/registry.rs` — registry + const matrix math
-- `zenpixels/src/descriptor.rs` — ColorPrimaries, TransferFunction enums + chromaticity()
-- `zenpixels/src/color.rs` — ColorProfileSource, NamedProfile, ColorAuthority
-- `zenpixels-convert/src/cms.rs` — ColorManagement trait
-- `zenpixels-convert/src/cms_moxcms.rs` — moxcms backend
-- `zenpixels-convert/src/fast_gamut.rs` — fused SIMD kernels (explore branch)
-- `zenpixels-convert/src/output.rs` — finalize_for_output dispatch
-
-## Benchmark Reference (1080p f32 RGB)
-| Conversion | fast_gamut | moxcms |
+### Performance (P3→sRGB 1080p)
+| Path | Throughput | vs moxcms |
 |---|---|---|
-| P3→sRGB f32 | 5-6ms (3.7-4.7 GiB/s) | 7-12ms (2-3.5 GiB/s) |
-| BT.2020 PQ→sRGB f32 | 6ms (3.7 GiB/s) | 6.5ms (3.6 GiB/s) |
-| P3→sRGB u8 | 126ms (47 MiB/s) ❌ | 2.3ms (2.6 GiB/s) |
+| f32 RGB (fused SIMD) | 3.3 GiB/s | 95% |
+| f32 BT.2020 SDR→sRGB | 3.5 GiB/s | 96% |
+| f32 BT.2020 PQ→sRGB | 2.1 GiB/s | 58% |
+| u8 RGB (fused SIMD) | 638 MiB/s | 24% |
+| f32 extended (scalar) | ~200 MiB/s | — |
 
-## Accuracy (u8, vs f64 ground truth)
-| | fast_gamut | moxcms |
-|---|---|---|
-| P3→sRGB exact | 99.9% | 90.5% |
-| Max delta | ±1 | ±2 |
+### What's Left
+- **linear-srgb**: PR imazen/linear-srgb#5 needs merge + release (SIMD extended abs+sign)
+- **Wire SIMD extended**: use linear-srgb's new SIMD extended slice functions (blocked on release)
+- **u8 gap**: 4x behind moxcms. Same algorithm (LUT→matrix→LUT), implementation detail gap.
+  Profiling the hot loop would identify whether it's branch prediction, loop structure, or cache.
+- **3D CLUT**: explored, works (±1 accuracy), but doesn't help for matrix-shaper profiles because
+  the encode step still dominates. Only useful for LUT-based ICC profiles.
