@@ -530,6 +530,15 @@ impl PixelDescriptor {
         self.transfer
     }
 
+    /// Extract the color encoding as a [`ColorProfileSource::PrimariesTransferPair`].
+    #[inline]
+    pub const fn color_profile_source(&self) -> crate::ColorProfileSource<'static> {
+        crate::ColorProfileSource::PrimariesTransferPair {
+            primaries: self.primaries,
+            transfer: self.transfer,
+        }
+    }
+
     /// Byte order.
     #[inline]
     pub const fn byte_order(&self) -> ByteOrder {

@@ -8,11 +8,12 @@
 //! Current color state (transfer, primaries, alpha) is tracked on the
 //! pixel descriptor itself, not as a separate enum.
 
-use crate::TransferFunction;
 use crate::cicp::Cicp;
+use crate::{ColorPrimaries, TransferFunction};
 use alloc::sync::Arc;
 
-/// A source color profile — either ICC bytes or CICP parameters.
+/// A source color profile — either ICC bytes, CICP parameters, a named
+/// profile, or a primaries + transfer function pair.
 ///
 /// This unified type lets consumers pass decoded image color info
 /// directly to a CMS backend without caring whether the source had
@@ -26,6 +27,20 @@ pub enum ColorProfileSource<'a> {
     Cicp(Cicp),
     /// Well-known named profile.
     Named(NamedProfile),
+    /// Color primaries + transfer function pair.
+    ///
+    /// Covers the full `ColorPrimaries × TransferFunction` matrix,
+    /// including combinations that don't have a [`NamedProfile`] variant
+    /// or a CICP mapping (e.g., Adobe RGB, DCI-P3, ProPhoto, ACES).
+    ///
+    /// A CMS backend that handles this variant can avoid ICC profile
+    /// parsing entirely for known primaries/transfer combinations.
+    PrimariesTransferPair {
+        /// Color primaries (gamut + white point).
+        primaries: ColorPrimaries,
+        /// Transfer function (EOTF encoding).
+        transfer: TransferFunction,
+    },
 }
 
 /// Well-known color profiles that any CMS should recognize.
@@ -92,6 +107,77 @@ impl NamedProfile {
                 full_range: true,
             }),
             Self::AdobeRgb => None,
+        }
+    }
+
+    /// Decompose into primaries + transfer function.
+    pub const fn to_primaries_transfer(self) -> (ColorPrimaries, TransferFunction) {
+        match self {
+            Self::Srgb => (ColorPrimaries::Bt709, TransferFunction::Srgb),
+            Self::DisplayP3 => (ColorPrimaries::DisplayP3, TransferFunction::Srgb),
+            Self::Bt2020 => (ColorPrimaries::Bt2020, TransferFunction::Bt709),
+            Self::Bt2020Pq => (ColorPrimaries::Bt2020, TransferFunction::Pq),
+            Self::Bt2020Hlg => (ColorPrimaries::Bt2020, TransferFunction::Hlg),
+            Self::AdobeRgb => (ColorPrimaries::AdobeRgb, TransferFunction::Gamma22),
+            Self::LinearSrgb => (ColorPrimaries::Bt709, TransferFunction::Linear),
+        }
+    }
+
+    /// Try to construct from a primaries + transfer pair.
+    ///
+    /// Returns `None` for combinations that don't have a named profile
+    /// (e.g., Display P3 + PQ, or Adobe RGB + Linear).
+    pub const fn from_primaries_transfer(
+        primaries: ColorPrimaries,
+        transfer: TransferFunction,
+    ) -> Option<Self> {
+        match (primaries, transfer) {
+            (ColorPrimaries::Bt709, TransferFunction::Srgb) => Some(Self::Srgb),
+            (ColorPrimaries::DisplayP3, TransferFunction::Srgb) => Some(Self::DisplayP3),
+            (ColorPrimaries::Bt2020, TransferFunction::Bt709) => Some(Self::Bt2020),
+            (ColorPrimaries::Bt2020, TransferFunction::Pq) => Some(Self::Bt2020Pq),
+            (ColorPrimaries::Bt2020, TransferFunction::Hlg) => Some(Self::Bt2020Hlg),
+            (ColorPrimaries::AdobeRgb, TransferFunction::Gamma22) => Some(Self::AdobeRgb),
+            (ColorPrimaries::Bt709, TransferFunction::Linear) => Some(Self::LinearSrgb),
+            _ => None,
+        }
+    }
+}
+
+impl<'a> ColorProfileSource<'a> {
+    /// Create from primaries + transfer function.
+    pub const fn from_primaries_transfer(
+        primaries: ColorPrimaries,
+        transfer: TransferFunction,
+    ) -> Self {
+        Self::PrimariesTransferPair {
+            primaries,
+            transfer,
+        }
+    }
+
+    /// Try to extract primaries + transfer, regardless of variant.
+    ///
+    /// - `PrimariesTransferPair` — returns directly
+    /// - `Named` — decomposes via [`NamedProfile::to_primaries_transfer`]
+    /// - `Cicp` — maps via [`ColorPrimaries::from_cicp`] and [`TransferFunction::from_cicp`]
+    /// - `Icc` — returns `None` (requires profile parsing)
+    pub const fn primaries_transfer(&self) -> Option<(ColorPrimaries, TransferFunction)> {
+        match self {
+            Self::PrimariesTransferPair {
+                primaries,
+                transfer,
+            } => Some((*primaries, *transfer)),
+            Self::Named(named) => Some(named.to_primaries_transfer()),
+            Self::Cicp(cicp) => {
+                let p = ColorPrimaries::from_cicp(cicp.color_primaries);
+                let t = TransferFunction::from_cicp(cicp.transfer_characteristics);
+                match (p, t) {
+                    (Some(p), Some(t)) => Some((p, t)),
+                    _ => None,
+                }
+            }
+            Self::Icc(_) => None,
         }
     }
 }
