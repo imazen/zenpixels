@@ -53,9 +53,9 @@ icc-upload dir:
         --endpoint-url "$ENDPOINT" --no-progress
     echo "Done."
 
-# Regenerate .inc table files from ICC profile cache
+# Regenerate .inc table files from ICC profile cache + bundled profiles
 icc-gen: icc-build-gen
-    /tmp/zenpixels-gen-icc-tables "{{icc_cache}}" "{{icc_out}}"
+    /tmp/zenpixels-gen-icc-tables "{{icc_cache}}" "zenpixels-convert/src/profiles" "{{icc_out}}"
 
 # Build the table generator
 icc-build-gen:
@@ -67,7 +67,7 @@ icc-update: icc-fetch icc-gen test
 
 # Show what the generator would produce without writing (dry run)
 icc-dry-run: icc-build-gen
-    /tmp/zenpixels-gen-icc-tables "{{icc_cache}}" /tmp/zenpixels-icc-dry-run
+    /tmp/zenpixels-gen-icc-tables "{{icc_cache}}" "zenpixels-convert/src/profiles" /tmp/zenpixels-icc-dry-run
     @echo "--- RGB ---"
     @head -5 /tmp/zenpixels-icc-dry-run/icc_table_rgb.inc
     @echo "..."

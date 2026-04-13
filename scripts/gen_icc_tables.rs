@@ -237,27 +237,48 @@ fn clean_desc(fname: &str) -> String {
 // ── Main ─────────────────────────────────────────────────────────────────
 
 fn main() {
-    let dir = if let Some(arg) = std::env::args().nth(1) {
-        PathBuf::from(arg)
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Parse arguments: all args before the last are input dirs, last is output dir.
+    // Special case: if only one arg, it's the input dir (output defaults).
+    // If no args, use defaults for both.
+    let (input_dirs, out_dir) = if args.len() >= 2 {
+        let out = PathBuf::from(args.last().unwrap());
+        let inputs: Vec<PathBuf> = args[..args.len() - 1].iter().map(PathBuf::from).collect();
+        (inputs, out)
+    } else if args.len() == 1 {
+        let input = PathBuf::from(&args[0]);
+        let exe = std::env::current_exe().unwrap_or_default();
+        let out = exe.parent().unwrap_or(&PathBuf::from(".")).join("../zenpixels/src/icc");
+        (vec![input], out)
     } else if let Ok(d) = std::env::var("ICC_PROFILES_DIR") {
-        PathBuf::from(d)
+        let exe = std::env::current_exe().unwrap_or_default();
+        let out = exe.parent().unwrap_or(&PathBuf::from(".")).join("../zenpixels/src/icc");
+        (vec![PathBuf::from(d)], out)
     } else {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        PathBuf::from(home).join(".cache/zencodec-icc")
+        let cache = PathBuf::from(home).join(".cache/zencodec-icc");
+        let exe = std::env::current_exe().unwrap_or_default();
+        let out = exe.parent().unwrap_or(&PathBuf::from(".")).join("../zenpixels/src/icc");
+        (vec![cache], out)
     };
 
-    if !dir.exists() {
-        eprintln!("Directory not found: {}", dir.display());
-        eprintln!("Usage: gen_icc_tables <icc-profiles-dir>");
-        std::process::exit(1);
+    // Always include the bundled profiles from zenpixels-convert.
+    // Locate them relative to the output directory.
+    let bundled_dir = out_dir.join("../../zenpixels-convert/src/profiles");
+    let mut all_dirs = input_dirs.clone();
+    if bundled_dir.exists() && !all_dirs.iter().any(|d| d == &bundled_dir) {
+        all_dirs.push(bundled_dir.clone());
+        eprintln!("Auto-including bundled profiles: {}", bundled_dir.display());
     }
 
-    // Determine output directory
-    let out_dir = std::env::args().nth(2).map(PathBuf::from).unwrap_or_else(|| {
-        // Default: zenpixels/src/icc/ relative to script location
-        let exe = std::env::current_exe().unwrap_or_default();
-        exe.parent().unwrap_or(&PathBuf::from(".")).join("../zenpixels/src/icc")
-    });
+    for dir in &all_dirs {
+        if !dir.exists() {
+            eprintln!("Directory not found: {}", dir.display());
+            eprintln!("Usage: gen_icc_tables <dir1> [dir2 ...] <out-dir>");
+            std::process::exit(1);
+        }
+    }
 
     // norm_hash → (cp_rust_name, tf_rust_name, max_err, description)
     let mut rgb: BTreeMap<u64, (&str, &str, u32, String)> = BTreeMap::new();
@@ -265,11 +286,16 @@ fn main() {
     let mut skipped = 0u32;
     let mut scanned = 0u32;
 
-    let mut entries: Vec<_> = std::fs::read_dir(&dir).unwrap()
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| matches!(p.extension().and_then(|e| e.to_str()), Some("icc" | "icm")))
-        .collect();
+    let mut entries: Vec<PathBuf> = Vec::new();
+    for dir in &all_dirs {
+        if let Ok(rd) = std::fs::read_dir(dir) {
+            entries.extend(
+                rd.filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| matches!(p.extension().and_then(|e| e.to_str()), Some("icc" | "icm")))
+            );
+        }
+    }
     entries.sort();
 
     for path in &entries {
