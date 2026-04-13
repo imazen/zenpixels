@@ -415,6 +415,129 @@ stamp_trc_kernels!(srgb_to_dci,
 
 use crate::TransferFunction;
 
+// =========================================================================
+// Extended range (sign-preserving, no clamping — for HDR / out-of-gamut)
+// =========================================================================
+
+/// Sign-preserving sRGB linearization (extended range, scalar `powf`).
+#[inline(always)]
+fn linearize_srgb_extended(v: f32) -> f32 {
+    if v >= 0.0 {
+        linear_srgb::precise::srgb_to_linear_extended(v)
+    } else {
+        -linear_srgb::precise::srgb_to_linear_extended(-v)
+    }
+}
+
+/// Sign-preserving sRGB encoding (extended range, scalar `powf`).
+#[inline(always)]
+fn encode_srgb_extended(v: f32) -> f32 {
+    if v >= 0.0 {
+        linear_srgb::precise::linear_to_srgb_extended(v)
+    } else {
+        -linear_srgb::precise::linear_to_srgb_extended(-v)
+    }
+}
+
+/// Sign-preserving generic gamma linearization.
+#[inline(always)]
+fn linearize_gamma_extended(v: f32, gamma: f32) -> f32 {
+    if v >= 0.0 {
+        v.powf(gamma)
+    } else {
+        -((-v).powf(gamma))
+    }
+}
+
+/// Sign-preserving generic gamma encoding.
+#[inline(always)]
+fn encode_gamma_extended(v: f32, inv_gamma: f32) -> f32 {
+    if v >= 0.0 {
+        v.powf(inv_gamma)
+    } else {
+        -((-v).powf(inv_gamma))
+    }
+}
+
+/// Scalar linearization for extended range (sign-preserving, no clamping).
+fn scalar_linearize_extended(trc: TransferFunction) -> Option<fn(f32) -> f32> {
+    match trc {
+        TransferFunction::Srgb => Some(linearize_srgb_extended),
+        TransferFunction::Gamma22 => Some(|v| linearize_gamma_extended(v, ADOBE_GAMMA)),
+        TransferFunction::Gamma26 => Some(|v| linearize_gamma_extended(v, DCI_GAMMA)),
+        TransferFunction::Linear => Some(core::convert::identity),
+        // PQ/HLG/BT.709 don't produce negative values in practice,
+        // but use the clamped versions as fallback.
+        _ => scalar_linearize(trc),
+    }
+}
+
+/// Scalar encoding for extended range (sign-preserving, no clamping).
+fn scalar_encode_extended(trc: TransferFunction) -> Option<fn(f32) -> f32> {
+    match trc {
+        TransferFunction::Srgb => Some(encode_srgb_extended),
+        TransferFunction::Gamma22 => Some(|v| encode_gamma_extended(v, 1.0 / ADOBE_GAMMA)),
+        TransferFunction::Gamma26 => Some(|v| encode_gamma_extended(v, 1.0 / DCI_GAMMA)),
+        TransferFunction::Linear => Some(core::convert::identity),
+        _ => scalar_encode(trc),
+    }
+}
+
+/// Convert f32 RGB data in-place with extended range (no clamping).
+/// Scalar-only — sign preservation requires per-channel branching.
+pub(crate) fn convert_f32_rgb_extended(
+    m: &[[f32; 3]; 3],
+    data: &mut [f32],
+    src_trc: TransferFunction,
+    dst_trc: TransferFunction,
+) -> bool {
+    let Some(lin) = scalar_linearize_extended(src_trc) else {
+        return false;
+    };
+    let Some(enc) = scalar_encode_extended(dst_trc) else {
+        return false;
+    };
+    for pixel in data.chunks_exact_mut(3) {
+        let r = lin(pixel[0]);
+        let g = lin(pixel[1]);
+        let b = lin(pixel[2]);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        pixel[0] = enc(nr);
+        pixel[1] = enc(ng);
+        pixel[2] = enc(nb);
+    }
+    true
+}
+
+/// Convert f32 RGBA data in-place with extended range. Alpha unchanged.
+pub(crate) fn convert_f32_rgba_extended(
+    m: &[[f32; 3]; 3],
+    data: &mut [f32],
+    src_trc: TransferFunction,
+    dst_trc: TransferFunction,
+) -> bool {
+    let Some(lin) = scalar_linearize_extended(src_trc) else {
+        return false;
+    };
+    let Some(enc) = scalar_encode_extended(dst_trc) else {
+        return false;
+    };
+    for pixel in data.chunks_exact_mut(4) {
+        let r = lin(pixel[0]);
+        let g = lin(pixel[1]);
+        let b = lin(pixel[2]);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        pixel[0] = enc(nr);
+        pixel[1] = enc(ng);
+        pixel[2] = enc(nb);
+    }
+    true
+}
+
+// =========================================================================
+// Scalar TRC lookup (clamped)
+// =========================================================================
+
 /// Scalar linearization function for a given transfer function.
 pub(crate) fn scalar_linearize(trc: TransferFunction) -> Option<fn(f32) -> f32> {
     match trc {

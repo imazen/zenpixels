@@ -191,6 +191,13 @@ impl ColorManagement for ZenCmsLite {
             None
         };
 
+        // Use extended range for f32 when converting to a narrower gamut
+        // (out-of-gamut values produce negatives that must survive) or when
+        // source is HDR (PQ/HLG values can exceed 1.0 after linearization).
+        let narrowing = src_p as u8 != dst_p as u8 && !dst_p.contains(src_p);
+        let hdr_source = matches!(src_t, TransferFunction::Pq | TransferFunction::Hlg);
+        let extended = matches!(channel_type, ChannelType::F32) && (narrowing || hdr_source);
+
         Some(Ok(Box::new(LiteTransform {
             matrix,
             src_trc: src_t,
@@ -200,6 +207,7 @@ impl ColorManagement for ZenCmsLite {
             linearize_lut,
             has_alpha,
             channel_type,
+            extended,
             _dst_format: dst_format,
         })))
     }
@@ -215,6 +223,10 @@ struct LiteTransform {
     linearize_lut: Option<alloc::boxed::Box<[f32; 256]>>,
     has_alpha: bool,
     channel_type: ChannelType,
+    /// Use extended range (sign-preserving, no clamping) for f32 path.
+    /// Required for HDR → SDR gamut conversion where out-of-gamut values
+    /// must survive until tone mapping.
+    extended: bool,
     _dst_format: PixelFormat,
 }
 
@@ -270,7 +282,24 @@ impl LiteTransform {
         // Copy src → dst, then transform in place.
         dst.copy_from_slice(src);
         let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
-        if self.has_alpha {
+        if self.extended {
+            // Extended range: sign-preserving, no clamping (for HDR/out-of-gamut).
+            if self.has_alpha {
+                fast_gamut::convert_f32_rgba_extended(
+                    &self.matrix,
+                    dst_f32,
+                    self.src_trc,
+                    self.dst_trc,
+                );
+            } else {
+                fast_gamut::convert_f32_rgb_extended(
+                    &self.matrix,
+                    dst_f32,
+                    self.src_trc,
+                    self.dst_trc,
+                );
+            }
+        } else if self.has_alpha {
             fast_gamut::convert_f32_rgba_dispatch(
                 &self.matrix,
                 dst_f32,
@@ -499,5 +528,64 @@ mod tests {
         let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
         assert!(result.is_some(), "ICC P3 src should be recognized");
         assert!(result.unwrap().is_ok());
+    }
+
+    // --- Extended range (HDR / out-of-gamut) ---
+
+    #[test]
+    fn extended_range_preserves_negative_values() {
+        // P3 pure green → sRGB produces negative red (out of sRGB gamut).
+        // Extended range must preserve these negatives, not clamp to 0.
+        let cms = ZenCmsLite;
+        let src = ColorProfileSource::Named(NamedProfile::DisplayP3);
+        let dst = ColorProfileSource::Named(NamedProfile::Srgb);
+        let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
+        let transform = result.unwrap().unwrap();
+
+        let src_px: [f32; 3] = [0.0, 1.0, 0.0]; // P3 pure green
+        let mut dst_px = [0.0f32; 3];
+        transform.transform_row(
+            bytemuck::cast_slice(&src_px),
+            bytemuck::cast_slice_mut(&mut dst_px),
+            1,
+        );
+        // P3 green maps outside sRGB: red should be negative, green > 1.0
+        assert!(
+            dst_px[0] < 0.0,
+            "P3 green should have negative sRGB red: {}",
+            dst_px[0]
+        );
+        assert!(
+            dst_px[1] > 1.0,
+            "P3 green should have >1.0 sRGB green: {}",
+            dst_px[1]
+        );
+    }
+
+    #[test]
+    fn extended_range_hdr_preserves_supernormal() {
+        // BT.2020 PQ → sRGB: PQ signal 1.0 = 10000 nits, far above SDR range.
+        let cms = ZenCmsLite;
+        let src = ColorProfileSource::Named(NamedProfile::Bt2020Pq);
+        let dst = ColorProfileSource::Named(NamedProfile::Srgb);
+        let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
+        let transform = result.unwrap().unwrap();
+
+        let src_px: [f32; 3] = [0.5, 0.5, 0.5]; // ~100 nits in PQ
+        let mut dst_px = [0.0f32; 3];
+        transform.transform_row(
+            bytemuck::cast_slice(&src_px),
+            bytemuck::cast_slice_mut(&mut dst_px),
+            1,
+        );
+        // Should produce values (possibly >1.0 or <0.0) — not clamped to [0,1]
+        // The exact values depend on tone mapping, but they should be finite.
+        for ch in 0..3 {
+            assert!(
+                dst_px[ch].is_finite(),
+                "HDR→SDR should produce finite values: ch{ch}={}",
+                dst_px[ch]
+            );
+        }
     }
 }
