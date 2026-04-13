@@ -235,3 +235,126 @@ fn convert_u16_rgba(
         dst_px[3] = src_px[3];
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cms::ColorManagement;
+    use crate::{ColorProfileSource, NamedProfile, PixelFormat};
+
+    #[test]
+    fn build_source_transform_p3_to_srgb_f32() {
+        let cms = ZenCmsLite;
+        let src = ColorProfileSource::Named(NamedProfile::DisplayP3);
+        let dst = ColorProfileSource::Named(NamedProfile::Srgb);
+        let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
+        assert!(result.is_some(), "should support P3→sRGB");
+        let transform = result.unwrap().expect("should not error");
+
+        // White should map to white
+        let src_px: [f32; 3] = [1.0, 1.0, 1.0];
+        let mut dst_px = [0.0f32; 3];
+        transform.transform_row(
+            bytemuck::cast_slice(&src_px),
+            bytemuck::cast_slice_mut(&mut dst_px),
+            1,
+        );
+        for ch in 0..3 {
+            assert!(
+                (dst_px[ch] - 1.0).abs() < 1e-4,
+                "white ch{ch}: {}",
+                dst_px[ch]
+            );
+        }
+    }
+
+    #[test]
+    fn build_source_transform_p3_to_srgb_u8() {
+        let cms = ZenCmsLite;
+        let src = ColorProfileSource::Named(NamedProfile::DisplayP3);
+        let dst = ColorProfileSource::Named(NamedProfile::Srgb);
+        let result = cms.build_source_transform(src, dst, PixelFormat::Rgb8, PixelFormat::Rgb8);
+        assert!(result.is_some());
+        let transform = result.unwrap().expect("should not error");
+
+        // White (255,255,255) should map to (255,255,255)
+        let src_px = [255u8, 255, 255];
+        let mut dst_px = [0u8; 3];
+        transform.transform_row(&src_px, &mut dst_px, 1);
+        assert_eq!(dst_px, [255, 255, 255]);
+
+        // Black should map to black
+        let src_px = [0u8, 0, 0];
+        let mut dst_px = [0u8; 3];
+        transform.transform_row(&src_px, &mut dst_px, 1);
+        assert_eq!(dst_px, [0, 0, 0]);
+    }
+
+    #[test]
+    fn same_color_space_returns_none() {
+        let cms = ZenCmsLite;
+        let src = ColorProfileSource::Named(NamedProfile::Srgb);
+        let dst = ColorProfileSource::Named(NamedProfile::Srgb);
+        assert!(
+            cms.build_source_transform(src, dst, PixelFormat::Rgb8, PixelFormat::Rgb8)
+                .is_none(),
+            "same color space should return None (no transform needed)"
+        );
+    }
+
+    #[test]
+    fn icc_profile_not_supported() {
+        let cms = ZenCmsLite;
+        assert!(cms.build_transform(&[0; 100], &[0; 100]).is_err());
+        assert!(cms.identify_profile(&[0; 100]).is_none());
+    }
+
+    #[test]
+    fn cicp_source_supported() {
+        let cms = ZenCmsLite;
+        let src = ColorProfileSource::Cicp(Cicp::DISPLAY_P3);
+        let dst = ColorProfileSource::Cicp(Cicp::SRGB);
+        let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
+        assert!(result.is_some(), "CICP source should be supported");
+        assert!(result.unwrap().is_ok());
+    }
+
+    #[test]
+    fn primaries_transfer_pair_supported() {
+        let cms = ZenCmsLite;
+        let src = ColorProfileSource::PrimariesTransferPair {
+            primaries: ColorPrimaries::DisplayP3,
+            transfer: TransferFunction::Srgb,
+        };
+        let dst = ColorProfileSource::PrimariesTransferPair {
+            primaries: ColorPrimaries::Bt709,
+            transfer: TransferFunction::Srgb,
+        };
+        let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
+        assert!(result.is_some());
+        assert!(result.unwrap().is_ok());
+    }
+
+    #[test]
+    fn cross_trc_conversion() {
+        let cms = ZenCmsLite;
+        // BT.2020 PQ → sRGB: different primaries AND different TRC
+        let src = ColorProfileSource::Named(NamedProfile::Bt2020Pq);
+        let dst = ColorProfileSource::Named(NamedProfile::Srgb);
+        let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
+        assert!(result.is_some());
+        let transform = result.unwrap().expect("should not error");
+
+        // Black should still map to black
+        let src_px = [0.0f32, 0.0, 0.0];
+        let mut dst_px = [0.0f32; 3];
+        transform.transform_row(
+            bytemuck::cast_slice(&src_px),
+            bytemuck::cast_slice_mut(&mut dst_px),
+            1,
+        );
+        for ch in 0..3 {
+            assert!(dst_px[ch].abs() < 1e-5, "black ch{ch}: {}", dst_px[ch]);
+        }
+    }
+}
