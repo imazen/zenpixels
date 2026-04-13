@@ -178,12 +178,24 @@ fn max_u16_err(trc: &Trc, eotf: fn(f64) -> f64) -> u32 {
 
 struct KP { rust_name: &'static str, rx: f64, ry: f64, gx: f64, gy: f64, bx: f64, by: f64 }
 const KNOWN_P: &[KP] = &[
-    KP { rust_name: "Bt709",    rx: 0.4361, ry: 0.2225, gx: 0.3851, gy: 0.7169, bx: 0.1431, by: 0.0606 },
-    KP { rust_name: "DisplayP3", rx: 0.5151, ry: 0.2412, gx: 0.2919, gy: 0.6922, bx: 0.1572, by: 0.0666 },
-    KP { rust_name: "DciP3",    rx: 0.4862, ry: 0.2267, gx: 0.3239, gy: 0.7103, bx: 0.1542, by: 0.0630 },
-    KP { rust_name: "Bt2020",   rx: 0.6734, ry: 0.2790, gx: 0.1656, gy: 0.6753, bx: 0.1251, by: 0.0456 },
-    KP { rust_name: "AdobeRgb", rx: 0.6097, ry: 0.3111, gx: 0.2053, gy: 0.6257, bx: 0.1492, by: 0.0632 },
-    KP { rust_name: "ProPhoto", rx: 0.7977, ry: 0.2880, gx: 0.1352, gy: 0.7119, bx: 0.0313, by: 0.0001 },
+    KP { rust_name: "Bt709",      rx: 0.4361, ry: 0.2225, gx: 0.3851, gy: 0.7169, bx: 0.1431, by: 0.0606 },
+    KP { rust_name: "DisplayP3",  rx: 0.5151, ry: 0.2412, gx: 0.2919, gy: 0.6922, bx: 0.1572, by: 0.0666 },
+    KP { rust_name: "DciP3",      rx: 0.4862, ry: 0.2267, gx: 0.3239, gy: 0.7103, bx: 0.1542, by: 0.0630 },
+    KP { rust_name: "Bt2020",     rx: 0.6734, ry: 0.2790, gx: 0.1656, gy: 0.6753, bx: 0.1251, by: 0.0456 },
+    KP { rust_name: "AdobeRgb",   rx: 0.6097, ry: 0.3111, gx: 0.2053, gy: 0.6257, bx: 0.1492, by: 0.0632 },
+    KP { rust_name: "ProPhoto",   rx: 0.7977, ry: 0.2880, gx: 0.1352, gy: 0.7119, bx: 0.0313, by: 0.0001 },
+    // SMPTE 170M / BT.601 525 (NTSC, D65-native, D50-adapted)
+    KP { rust_name: "Smpte170m",  rx: 0.4163, ry: 0.2217, gx: 0.3932, gy: 0.7033, bx: 0.1547, by: 0.0750 },
+    // BT.470BG / BT.601 625 (PAL/SECAM, D65-native, D50-adapted)
+    KP { rust_name: "Bt470Bg",    rx: 0.4552, ry: 0.2323, gx: 0.3676, gy: 0.7078, bx: 0.1414, by: 0.0599 },
+    // Apple RGB (D65-native, D50-adapted)
+    KP { rust_name: "AppleRgb",   rx: 0.4755, ry: 0.2552, gx: 0.3397, gy: 0.6726, bx: 0.1490, by: 0.0723 },
+    // ColorMatch RGB (D50-native, no adaptation needed)
+    KP { rust_name: "ColorMatch", rx: 0.5094, ry: 0.2749, gx: 0.3208, gy: 0.6581, bx: 0.1339, by: 0.0670 },
+    // Adobe Wide Gamut RGB (D50-native)
+    KP { rust_name: "WideGamut",  rx: 0.7165, ry: 0.2587, gx: 0.1010, gy: 0.7247, bx: 0.1467, by: 0.0166 },
+    // ECI-RGB v2 (D50-native)
+    KP { rust_name: "EciRgbV2",   rx: 0.6503, ry: 0.3203, gx: 0.1780, gy: 0.6021, bx: 0.1359, by: 0.0777 },
 ];
 
 fn identify_primaries(data: &[u8]) -> Option<&'static str> {

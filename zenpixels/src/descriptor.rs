@@ -249,6 +249,9 @@ impl TransferFunction {
     pub const fn from_cicp(tc: u8) -> Option<Self> {
         match tc {
             1 => Some(Self::Bt709),
+            // SMPTE 170M (6) and SMPTE 240M (7) use the BT.709 curve —
+            // per BT.601/SMPTE 170M spec, the OETF is identical to BT.709.
+            6 | 7 => Some(Self::Bt709),
             8 => Some(Self::Linear),
             13 => Some(Self::Srgb),
             16 => Some(Self::Pq),
@@ -342,6 +345,18 @@ pub enum ColorPrimaries {
     /// ProPhoto RGB (ROMM RGB). Ultra-wide gamut.
     /// White point: D50 (0.3457, 0.3585).
     ProPhoto,
+    /// SMPTE 170M / BT.601-7 525-line (CICP 6). NTSC SD broadcast. White point: D65.
+    Smpte170m,
+    /// BT.470-6 System B/G / BT.601-7 625-line (CICP 5). PAL/SECAM SD broadcast. White point: D65.
+    Bt470Bg,
+    /// Apple RGB. Legacy Mac default. White point: D65.
+    AppleRgb,
+    /// ColorMatch RGB (Radius). Print workflow. White point: D50.
+    ColorMatch,
+    /// Adobe Wide Gamut RGB. Print workflow, extremely wide gamut. White point: D50.
+    WideGamut,
+    /// ECI-RGB v2 (European Color Initiative). Print workflow. White point: D50.
+    EciRgbV2,
     /// Primaries not known.
     Unknown,
 }
@@ -370,6 +385,18 @@ impl ColorPrimaries {
             Self::ProPhoto => Some(((0.7347, 0.2653), (0.1596, 0.8404), (0.0366, 0.0001))),
             Self::AcesAp0 => Some(((0.7347, 0.2653), (0.0000, 1.0000), (0.0001, -0.0770))),
             Self::AcesAp1 => Some(((0.713, 0.293), (0.165, 0.830), (0.128, 0.044))),
+            // SMPTE 170M / BT.601 525-line (CICP 6): SMPTE C phosphors
+            Self::Smpte170m => Some(((0.630, 0.340), (0.310, 0.595), (0.155, 0.070))),
+            // BT.470-6 System B/G / BT.601 625-line (CICP 5): EBU Tech 3213
+            Self::Bt470Bg => Some(((0.64, 0.33), (0.29, 0.60), (0.15, 0.06))),
+            // Apple RGB: Trinitron phosphors (classic Mac)
+            Self::AppleRgb => Some(((0.625, 0.340), (0.280, 0.595), (0.155, 0.070))),
+            // ColorMatch RGB (Radius): print workflow
+            Self::ColorMatch => Some(((0.630, 0.340), (0.295, 0.605), (0.150, 0.075))),
+            // Adobe Wide Gamut RGB: extreme gamut
+            Self::WideGamut => Some(((0.735, 0.265), (0.115, 0.826), (0.157, 0.018))),
+            // ECI-RGB v2 (European Color Initiative)
+            Self::EciRgbV2 => Some(((0.670, 0.330), (0.210, 0.710), (0.140, 0.080))),
             Self::Unknown => None,
             _ => None,
         }
@@ -380,6 +407,8 @@ impl ColorPrimaries {
     pub const fn from_cicp(code: u8) -> Option<Self> {
         match code {
             1 => Some(Self::Bt709),
+            5 => Some(Self::Bt470Bg),
+            6 | 7 => Some(Self::Smpte170m), // 6=SMPTE 170M, 7=SMPTE 240M (same primaries)
             9 => Some(Self::Bt2020),
             11 => Some(Self::DciP3),
             12 => Some(Self::DisplayP3),
@@ -393,6 +422,8 @@ impl ColorPrimaries {
     pub const fn to_cicp(self) -> Option<u8> {
         match self {
             Self::Bt709 => Some(1),
+            Self::Bt470Bg => Some(5),
+            Self::Smpte170m => Some(6),
             Self::Bt2020 => Some(9),
             Self::DciP3 => Some(11),
             Self::DisplayP3 => Some(12),
@@ -407,9 +438,10 @@ impl ColorPrimaries {
     pub const fn white_point(self) -> (f32, f32) {
         match self {
             Self::Bt709 | Self::Bt2020 | Self::DisplayP3 | Self::AdobeRgb => Self::WHITE_D65,
+            Self::Smpte170m | Self::Bt470Bg | Self::AppleRgb => Self::WHITE_D65,
             Self::DciP3 => Self::WHITE_DCI,
             Self::AcesAp0 | Self::AcesAp1 => Self::WHITE_ACES,
-            Self::ProPhoto => Self::WHITE_D50,
+            Self::ProPhoto | Self::ColorMatch | Self::WideGamut | Self::EciRgbV2 => Self::WHITE_D50,
             Self::Unknown => Self::WHITE_D65,
             _ => Self::WHITE_D65,
         }
@@ -459,11 +491,14 @@ impl ColorPrimaries {
     #[allow(unreachable_patterns)]
     const fn gamut_width(self) -> u8 {
         match self {
+            Self::Smpte170m | Self::Bt470Bg | Self::AppleRgb | Self::ColorMatch => 1, // sRGB-ish
             Self::Bt709 => 1,
+            Self::EciRgbV2 => 2,
             Self::AdobeRgb => 2,
             Self::DisplayP3 | Self::DciP3 => 3,
             Self::Bt2020 => 4,
             Self::ProPhoto => 5,
+            Self::WideGamut => 5,
             Self::AcesAp1 => 6,
             Self::AcesAp0 => 7,
             Self::Unknown => 0,
@@ -484,6 +519,12 @@ impl fmt::Display for ColorPrimaries {
             Self::AcesAp1 => f.write_str("ACES AP1"),
             Self::AdobeRgb => f.write_str("Adobe RGB"),
             Self::ProPhoto => f.write_str("ProPhoto RGB"),
+            Self::Smpte170m => f.write_str("SMPTE 170M"),
+            Self::Bt470Bg => f.write_str("BT.470-6 BG"),
+            Self::AppleRgb => f.write_str("Apple RGB"),
+            Self::ColorMatch => f.write_str("ColorMatch RGB"),
+            Self::WideGamut => f.write_str("Wide Gamut RGB"),
+            Self::EciRgbV2 => f.write_str("ECI-RGB v2"),
             Self::Unknown => f.write_str("unknown"),
             _ => f.write_str("ColorPrimaries(?)"),
         }

@@ -56,19 +56,24 @@ fn all_color_primaries_have_cicp_code() {
     assert_eq!(ColorPrimaries::Unknown.to_cicp(), None);
 }
 
-/// from_cicp and to_cicp are inverses for all known TransferFunction variants.
+/// from_cicp and to_cicp round-trip for primary codes (aliases like 6↔7 may collapse).
 #[test]
 fn transfer_function_cicp_bijection() {
-    for code in 0..=255u8 {
-        if let Some(tf) = TransferFunction::from_cicp(code) {
-            let back = tf.to_cicp().expect("known TF should have a code");
-            assert_eq!(
-                back, code,
-                "{tf:?}: from_cicp({code}) → to_cicp() = {back}, expected {code}"
-            );
-        }
+    // Primary codes that must round-trip exactly
+    for code in [1u8, 8, 13, 16, 18] {
+        let tf = TransferFunction::from_cicp(code).unwrap();
+        assert_eq!(tf.to_cicp(), Some(code));
     }
-    // Also verify the reverse: every non-Unknown enum maps back.
+    // Aliases that map to another primary code (SMPTE 170M/240M → BT.709 curve)
+    assert_eq!(
+        TransferFunction::from_cicp(6),
+        Some(TransferFunction::Bt709)
+    );
+    assert_eq!(
+        TransferFunction::from_cicp(7),
+        Some(TransferFunction::Bt709)
+    );
+    // Reverse: every non-Unknown enum maps to its primary code
     for tf in [
         TransferFunction::Linear,
         TransferFunction::Srgb,
@@ -78,26 +83,30 @@ fn transfer_function_cicp_bijection() {
     ] {
         let code = tf.to_cicp().unwrap();
         let back = TransferFunction::from_cicp(code).unwrap();
-        assert_eq!(
-            back, tf,
-            "to_cicp({tf:?})={code} → from_cicp({code})={back:?}"
-        );
+        assert_eq!(back, tf);
     }
 }
 
-/// from_cicp and to_cicp are inverses for all known ColorPrimaries variants.
+/// from_cicp and to_cicp round-trip for primary codes (aliases like 6↔7 may collapse).
 #[test]
 fn color_primaries_cicp_bijection() {
-    for code in 0..=255u8 {
-        if let Some(cp) = ColorPrimaries::from_cicp(code) {
-            let back = cp.to_cicp().expect("known CP should have a code");
-            assert_eq!(back, code, "{cp:?}: from_cicp({code}) → to_cicp() = {back}");
-        }
+    // Primary codes that must round-trip exactly
+    for code in [1u8, 5, 6, 9, 11, 12] {
+        let cp = ColorPrimaries::from_cicp(code).unwrap();
+        assert_eq!(cp.to_cicp(), Some(code));
     }
+    // Alias: SMPTE 240M (7) shares primaries with SMPTE 170M (6)
+    assert_eq!(
+        ColorPrimaries::from_cicp(7),
+        Some(ColorPrimaries::Smpte170m)
+    );
     for cp in [
         ColorPrimaries::Bt709,
         ColorPrimaries::Bt2020,
         ColorPrimaries::DisplayP3,
+        ColorPrimaries::DciP3,
+        ColorPrimaries::Smpte170m,
+        ColorPrimaries::Bt470Bg,
     ] {
         let code = cp.to_cicp().unwrap();
         let back = ColorPrimaries::from_cicp(code).unwrap();
@@ -108,15 +117,15 @@ fn color_primaries_cicp_bijection() {
 /// Unrecognized CICP codes return None.
 #[test]
 fn unknown_cicp_codes_return_none() {
-    // TransferFunction: only 1, 8, 13, 16, 18 are recognized
-    for code in [0, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 14, 15, 17, 19, 99, 255] {
+    // TransferFunction: recognized = 1, 6, 7, 8, 13, 16, 18
+    for code in [0, 2, 3, 4, 5, 9, 10, 11, 12, 14, 15, 17, 19, 99, 255] {
         assert!(
             TransferFunction::from_cicp(code).is_none(),
             "TC code {code} should not be recognized"
         );
     }
-    // ColorPrimaries: only 1, 9, 11, 12 are recognized
-    for code in [0, 2, 3, 4, 5, 6, 7, 8, 10, 13, 22, 99, 255] {
+    // ColorPrimaries: recognized = 1, 5, 6, 7, 9, 11, 12
+    for code in [0, 2, 3, 4, 8, 10, 13, 22, 99, 255] {
         assert!(
             ColorPrimaries::from_cicp(code).is_none(),
             "CP code {code} should not be recognized"

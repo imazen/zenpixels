@@ -14,7 +14,8 @@
     (0x1585_7e13_3f8d_56c8, CP::DisplayP3, TF::Srgb,  1),  // display 10b11b78
     (0x16db_7fa8_9f3d_3268, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 0958d8ab
     (0x1a51_546f_b3e8_9789, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 c7de586e
-    (0x1de1_79d1_245a_a2ed, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 304f569a
+    (0x1de1_79d1_245a_a2ed, CP::AdobeRgb, TF::Gamma22,  0),  // AdobeCS4-RGB-AdobeRGB1998
+    (0x1f1e_b9a8_da2d_9a43, CP::EciRgbV2, TF::Gamma18, 11),  // eci-rgb icm e691806f
     (0x21d7_7bd7_333e_4a7d, CP::Bt709, TF::Srgb,  1),  // srgb iec61966-2 1 22c894f4
     (0x21ff_ca63_c0f3_0ab3, CP::DisplayP3, TF::Srgb,  1),  // display a587aa4f
     (0x2594_8312_e5cd_6a48, CP::Bt709, TF::Srgb,  1),  // display e01187ad
@@ -23,12 +24,14 @@
     (0x2955_b1ae_972b_1d7c, CP::Bt2020, TF::Bt709,  9),  // Rec2020Compat-v4
     (0x2964_3971_16a9_a063, CP::Bt2020, TF::Gamma24,  1),  // bt 2020
     (0x30f1_6600_93c3_8a9c, CP::Bt709, TF::Srgb,  2),  // compact-icc-sRGB-v2-magic
+    (0x3421_5439_ee9c_77b5, CP::Bt470Bg, TF::Bt709,  8),  // Rec601PAL-v2-micro
     (0x3447_1f32_1966_9298, CP::Bt2020, TF::Bt709, 10),  // Rec2020Compat-v2-magic
     (0x347b_29a9_9718_4c3d, CP::DisplayP3, TF::Srgb,  1),  // srgb transfer d77bd8c4
     (0x37fe_9a81_9365_5633, CP::Bt709, TF::Srgb, 56),  // compact-icc-sRGB-v2-nano
     (0x3810_063c_dbb3_cb1f, CP::Bt709, TF::Bt709,  8),  // Rec709-v2-micro
     (0x3980_7a73_90b4_2882, CP::Bt709, TF::Srgb,  1),  // skcms-sRGB black scaled
     (0x3a45_5986_8883_779d, CP::DisplayP3, TF::Srgb,  1),  // display 518dbeba
+    (0x3b32_a0ca_a58a_5705, CP::Bt470Bg, TF::Bt709,  3),  // Rec601PAL-v2-magic
     (0x3b4c_8aad_1af4_34f8, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 07c1e073
     (0x3c23_9a35_ce4c_d003, CP::Bt709, TF::Srgb,  1),  // iec61966-2 1 2e2fd04e
     (0x3c4e_15c5_1211_3d7a, CP::Bt2020, TF::Bt709, 12),  // Rec2020Compat-v2-micro
@@ -39,9 +42,12 @@
     (0x4642_ec4c_18f0_be12, CP::ProPhoto, TF::Gamma18, 11),  // prophoto rgb 0a8ef7d1
     (0x4841_e8c9_651b_1501, CP::ProPhoto, TF::Gamma18, 28),  // ProPhoto-v4
     (0x4ce8_0f1f_8cd9_3179, CP::DisplayP3, TF::Srgb,  1),  // display e87d90b7
+    (0x4d5f_1ad7_77f2_1cc4, CP::Smpte170m, TF::Bt709,  8),  // Rec601NTSC-v2-micro
     (0x4ddb_298f_87a7_d57b, CP::DisplayP3, TF::Srgb,  1),  // display a7671e7c
     (0x4e00_f306_afc5_6fa4, CP::Bt709, TF::Gamma22,  0),  // nikon srgb 4 0 0 3000 a9a2c1c0
+    (0x4fe2_e7a0_5a6d_adc4, CP::WideGamut, TF::Gamma22, 33),  // WideGamutCompat-v4
     (0x5090_c1d3_8201_a990, CP::Bt709, TF::Srgb,  1),  // artifex software srgb icc profile 942e0f66
+    (0x5307_0d4c_6ac3_ed54, CP::AppleRgb, TF::Gamma18,  6),  // AppleCompat-v4
     (0x54f2_4611_9e0a_d96c, CP::DisplayP3, TF::Srgb,  1),  // display 06eae9a2
     (0x5543_4ec8_4b72_0cc7, CP::Bt709, TF::Srgb,  1),  // colord-Gamma5000K
     (0x554f_201b_1cd0_d698, CP::Bt709, TF::Srgb,  1),  // colord-sRGB
@@ -65,19 +71,23 @@
     (0x6e44_01ce_573d_051c, CP::Bt709, TF::Srgb,  1),  // 65 srg rel srg d7f9e32a
     (0x6e62_7ec1_ab55_7af9, CP::Bt709, TF::Srgb,  1),  // skcms-sRGB2014
     (0x6ea8_4a96_a82e_7aa4, CP::AdobeRgb, TF::Gamma22,  0),  // nikon adobe rgb 4 0 0 3001 359a7324
+    (0x7152_1fa1_e10a_6039, CP::Smpte170m, TF::Bt709,  1),  // Rec601NTSC-v4
     (0x7398_f0fa_f1b5_e246, CP::DisplayP3, TF::Srgb,  1),  // display 40b4f862
     (0x73d4_99f8_2fe9_8d7f, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 e5f6ffb8
     (0x77c3_6de1_98c8_8c4f, CP::AdobeRgb, TF::Gamma22,  0),  // oprgb 2b8daf8c
     (0x7c9a_645b_1aab_1a97, CP::DisplayP3, TF::Srgb,  1),  // display ba7f388f
     (0x7e44_223b_f886_ebfd, CP::Bt709, TF::Gamma22,  0),  // oprgb 406f5f5a
     (0x812f_f091_22c6_c936, CP::Bt709, TF::Srgb,  1),  // srgb built-in bfb182d9
+    (0x818c_91e9_b633_19f7, CP::Smpte170m, TF::Bt709,  3),  // Rec601NTSC-v2-magic
     (0x818f_cff2_d8b8_4b1c, CP::ProPhoto, TF::Gamma18, 28),  // ProPhoto-v2-micro
     (0x819b_c97e_d386_7ce1, CP::DisplayP3, TF::Srgb,  1),  // display cc697fd8
     (0x81f2_bfa8_b6c9_8025, CP::DisplayP3, TF::Srgb,  1),  // srgb transfer fa7e53ae
+    (0x8208_61d2_e95c_6cbd, CP::ColorMatch, TF::Gamma18, 11),  // AdobeCS4-RGB-ColorMatchRGB
     (0x832f_fc20_dff7_d16a, CP::DisplayP3, TF::Srgb,  1),  // display p3 5471f6ff
     (0x842f_779c_3e07_4eda, CP::Bt709, TF::Srgb,  1),  // skcms-sRGB LUT
     (0x84e7_d1c9_f1db_6c99, CP::Bt2020, TF::Bt709,  9),  // moxcms bt.2020
     (0x8579_39cc_c858_2fcb, CP::Bt709, TF::Srgb,  1),  // srgb iec61966-2 1 a8e4d0dc
+    (0x8693_5ed0_3a0d_d2a5, CP::AppleRgb, TF::Gamma18, 11),  // AdobeCS4-RGB-AppleRGB
     (0x88b9_9839_e2c4_8006, CP::Bt709, TF::Srgb,  1),  // srgb iec61966-2 1 3f6a7ffe
     (0x8bd2_5c8e_3e37_6c84, CP::Bt709, TF::Bt709,  3),  // Rec709-v2-magic
     (0x8c0b_549f_4401_8587, CP::Bt709, TF::Gamma22,  0),  // srgb profile a4eddfda
@@ -112,25 +122,32 @@
     (0xb5fc_f4f5_49dc_2e44, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 2f6457e2
     (0xbaf0_0f6d_edf3_186e, CP::Bt709, TF::Srgb,  1),  // skcms-sRGB HP
     (0xbc4e_56e8_fe2f_531f, CP::Bt709, TF::Gamma18, 11),  // epson standard rgb - gamma 1 8 24e1d7a0
+    (0xbcd7_fea2_0e23_8a2e, CP::Smpte170m, TF::Gamma22,  0),  // AdobeCS4-RGB-SMPTE-C
     (0xbdd8_9a20_39a0_78c9, CP::DisplayP3, TF::Srgb,  1),  // display 227959c8
     (0xbe8a_72e0_eb42_b512, CP::Bt709, TF::Srgb,  1),  // srgb built-in 0627a605
     (0xc281_663a_1a05_e0cc, CP::DisplayP3, TF::Srgb,  1),  // skcms-Display P3 LUT
     (0xc5c2_1622_d297_a38f, CP::DisplayP3, TF::Srgb,  2),  // DisplayP3-v2-magic
+    (0xc807_45da_e6fb_0982, CP::Bt470Bg, TF::Gamma22,  0),  // AdobeCS4-RGB-PAL SECAM
     (0xc8ec_64b7_9518_3fce, CP::DisplayP3, TF::Srgb, 13),  // DisplayP3Compat-v2-micro
     (0xc929_c65d_e192_9d15, CP::Bt709, TF::Srgb,  1),  // colord-Gamma5500K
     (0xca98_e1c6_2e4b_5be8, CP::Bt709, TF::Linear,  0),  // compact-icc-scRGB-v2
     (0xcbd9_22da_b07a_f755, CP::DisplayP3, TF::Pq,  1),  // moxcms display p3 pq
     (0xce3c_6812_ee26_aa6e, CP::Bt2020, TF::Bt709, 12),  // Rec2020-v2-micro
     (0xce77_a6ca_3f0e_7d1a, CP::ProPhoto, TF::Gamma18, 28),  // ProPhoto-v2-magic
+    (0xcf39_7b15_1fd8_ab31, CP::AppleRgb, TF::Gamma18, 11),  // AppleCompat-v2
     (0xd0ff_072b_721e_a276, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 211d915b
     (0xd274_a0eb_9670_91cb, CP::Bt709, TF::Srgb,  1),  //  f1932003
+    (0xd325_205b_5fba_ca45, CP::WideGamut, TF::Gamma22,  0),  // WideGamutCompat-v2
     (0xd680_1fb5_e54b_d8c1, CP::DisplayP3, TF::Srgb,  1),  // display ef26b91d
+    (0xd924_1e27_0149_751c, CP::ColorMatch, TF::Gamma18, 11),  // ColorMatchCompat-v2
     (0xda4a_81a2_4496_07bd, CP::Bt709, TF::Gamma22,  0),  // srgb profile e2b447e6
     (0xda62_6fd8_d996_0d4d, CP::DisplayP3, TF::Srgb,  1),  // display 1e5b6330
     (0xdaae_d341_bea9_d33c, CP::DisplayP3, TF::Srgb,  1),  // DisplayP3-v4
     (0xdb45_d405_5d6d_54a1, CP::DisplayP3, TF::Srgb,  1),  // DisplayP3Compat-v4
     (0xdd41_6b82_8094_836a, CP::DisplayP3, TF::Srgb,  1),  // moxcms display p3
     (0xe027_6b27_9678_f216, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 8551730c
+    (0xe05f_a8a6_3f55_9db4, CP::EciRgbV2, TF::Gamma18, 11),  // eci-rgb icm 685a9445
+    (0xe2f4_4924_cd20_0fa9, CP::ColorMatch, TF::Gamma18,  6),  // ColorMatchCompat-v4
     (0xe3c0_33dc_d296_0f6d, CP::DisplayP3, TF::Srgb, 13),  // up3 ffc2520e
     (0xe43c_4a7a_82e7_4433, CP::Bt709, TF::Srgb,  1),  // colord-Gamma6500K
     (0xe8a6_159d_1982_d083, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 24b690fa
@@ -151,5 +168,6 @@
     (0xfba3_ad08_4afe_22a3, CP::Bt709, TF::Srgb,  1),  // iec 61966-2-1 d84cc0d7
     (0xfbc7_c6bb_89f3_ac3c, CP::Bt709, TF::Srgb, 33),  // c2 61bb24bd
     (0xfc9a_b178_cdb6_16c8, CP::DisplayP3, TF::Srgb,  1),  // display 3453eccf
+    (0xfdf0_953a_50cc_cab5, CP::Bt470Bg, TF::Bt709,  1),  // Rec601PAL-v4
     (0xff5a_b890_4461_9f37, CP::Bt709, TF::Srgb,  1),  // built-in srgb 056b6825
 ]
