@@ -180,6 +180,65 @@ impl<'a> ColorProfileSource<'a> {
             Self::Icc(_) => None,
         }
     }
+
+    /// Resolve to a (primaries, transfer) pair using all available methods,
+    /// including ICC profile identification when the `icc` feature is enabled.
+    ///
+    /// This is the most complete resolution path:
+    /// - `PrimariesTransferPair` — returns directly
+    /// - `Named` — decomposes via [`NamedProfile::to_primaries_transfer`]
+    /// - `Cicp` — maps via `from_cicp`, but returns `None` if `matrix_coefficients`
+    ///   is non-zero (YCbCr data requires matrix conversion first) or `full_range`
+    ///   is false (narrow-range data needs range expansion first)
+    /// - `Icc` — hash-based identification (~100ns, 135 known profiles) + CICP-in-ICC
+    ///   extraction. Returns `None` for unknown custom profiles.
+    ///
+    /// Returns `None` when the profile is unknown or when reducing to
+    /// (primaries, transfer) would discard significant information
+    /// (YCbCr matrix coefficients, narrow signal range).
+    #[cfg(feature = "icc")]
+    pub fn resolve(&self) -> Option<(ColorPrimaries, TransferFunction)> {
+        match self {
+            Self::PrimariesTransferPair {
+                primaries,
+                transfer,
+            } => Some((*primaries, *transfer)),
+            Self::Named(named) => Some(named.to_primaries_transfer()),
+            Self::Cicp(cicp) => {
+                // Non-identity matrix coefficients mean YCbCr data — can't reduce
+                // to just primaries+transfer without a YCbCr→RGB matrix step.
+                if cicp.matrix_coefficients != 0 {
+                    return None;
+                }
+                // Narrow range needs expansion before primaries+transfer applies.
+                if !cicp.full_range {
+                    return None;
+                }
+                let p = ColorPrimaries::from_cicp(cicp.color_primaries)?;
+                let t = TransferFunction::from_cicp(cicp.transfer_characteristics)?;
+                Some((p, t))
+            }
+            Self::Icc(icc_bytes) => {
+                // Try hash-based identification (covers 135 known profiles).
+                if let Some(id) =
+                    crate::icc::identify_common(icc_bytes, crate::icc::Tolerance::Intent)
+                {
+                    return Some((id.primaries, id.transfer));
+                }
+                // Try CICP-in-ICC tag (ICC v4.4+).
+                if let Some(cicp) = crate::icc::extract_cicp(icc_bytes) {
+                    if cicp.matrix_coefficients != 0 || !cicp.full_range {
+                        return None;
+                    }
+                    let p = ColorPrimaries::from_cicp(cicp.color_primaries)?;
+                    let t = TransferFunction::from_cicp(cicp.transfer_characteristics)?;
+                    return Some((p, t));
+                }
+                None
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Which color metadata a CMS should prefer when building transforms.

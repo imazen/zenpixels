@@ -44,7 +44,6 @@ use alloc::format;
 
 use crate::cms::{ColorManagement, RowTransform};
 use crate::fast_gamut;
-use crate::icc;
 use crate::{ChannelType, Cicp, ColorPrimaries, PixelFormat, TransferFunction};
 
 /// Lightweight CMS using fused SIMD gamut conversion kernels.
@@ -111,30 +110,11 @@ impl core::fmt::Display for ZenCmsLiteError {
     }
 }
 
-/// Extract (primaries, transfer) from a `ColorProfileSource`.
-///
-/// For ICC sources, tries hash-based identification (~100ns) and CICP-in-ICC
-/// extraction. Returns `None` only for truly unknown custom profiles.
-fn resolve_primaries_transfer(
-    src: &crate::ColorProfileSource<'_>,
-) -> Option<(ColorPrimaries, TransferFunction)> {
-    match src {
-        crate::ColorProfileSource::Icc(icc_bytes) => {
-            // Try hash-based identification first (covers 132 known profiles).
-            if let Some(id) = icc::identify_common(icc_bytes, icc::Tolerance::Intent) {
-                return Some((id.primaries, id.transfer));
-            }
-            // Try CICP-in-ICC tag (ICC v4.4+).
-            if let Some(cicp) = icc::extract_cicp(icc_bytes) {
-                let p = ColorPrimaries::from_cicp(cicp.color_primaries)?;
-                let t = TransferFunction::from_cicp(cicp.transfer_characteristics)?;
-                return Some((p, t));
-            }
-            None
-        }
-        other => other.primaries_transfer(),
-    }
-}
+// Resolution of ColorProfileSource → (primaries, transfer) is handled by
+// ColorProfileSource::resolve() (requires `icc` feature on zenpixels,
+// which `zencms-lite` enables). That method handles ICC hash-based
+// identification, CICP-in-ICC extraction, and CICP safety checks
+// (rejects non-identity matrix coefficients and narrow range).
 
 impl ColorManagement for ZenCmsLite {
     type Error = ZenCmsLiteError;
@@ -165,12 +145,11 @@ impl ColorManagement for ZenCmsLite {
     }
 
     fn identify_profile(&self, icc_bytes: &[u8]) -> Option<Cicp> {
-        // Hash-based identification → CICP.
-        if let Some(id) = icc::identify_common(icc_bytes, icc::Tolerance::Intent) {
-            return id.to_cicp();
-        }
-        // CICP-in-ICC tag (ICC v4.4+).
-        icc::extract_cicp(icc_bytes)
+        let src = crate::ColorProfileSource::Icc(icc_bytes);
+        let (p, t) = src.resolve()?;
+        let cp = p.to_cicp()?;
+        let tc = t.to_cicp()?;
+        Some(Cicp::new(cp, tc, 0, true))
     }
 
     fn build_source_transform(
@@ -180,8 +159,8 @@ impl ColorManagement for ZenCmsLite {
         src_format: PixelFormat,
         dst_format: PixelFormat,
     ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
-        let (src_p, src_t) = resolve_primaries_transfer(&src)?;
-        let (dst_p, dst_t) = resolve_primaries_transfer(&dst)?;
+        let (src_p, src_t) = src.resolve()?;
+        let (dst_p, dst_t) = dst.resolve()?;
 
         // Same color space — no conversion needed.
         if src_p as u8 == dst_p as u8 && src_t as u8 == dst_t as u8 {
