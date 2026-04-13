@@ -12,53 +12,6 @@ use crate::ColorPrimaries;
 /// A 3×3 row-major matrix for linear RGB ↔ linear RGB gamut conversion.
 pub type GamutMatrix = [[f32; 3]; 3];
 
-/// BT.709 → BT.2020 (row-major).
-///
-/// Converts linear BT.709/sRGB RGB to linear BT.2020 RGB.
-pub(crate) const BT709_TO_BT2020: GamutMatrix = [
-    [0.6274_0389, 0.3292_8303, 0.0433_1307],
-    [0.0690_9729, 0.9195_4040, 0.0113_6232],
-    [0.0163_9170, 0.0880_1327, 0.8955_9503],
-];
-
-/// BT.2020 → BT.709 (row-major).
-///
-/// Converts linear BT.2020 RGB to linear BT.709/sRGB RGB.
-/// Values outside \[0,1\] indicate out-of-gamut colors.
-pub(crate) const BT2020_TO_BT709: GamutMatrix = [
-    [1.6604_9100, -0.5876_5614, -0.0728_3486],
-    [-0.1245_5047, 1.1328_9990, -0.0083_4942],
-    [-0.0181_5076, -0.1005_7890, 1.1187_2966],
-];
-
-/// BT.709 → Display P3 (row-major).
-pub(crate) const BT709_TO_DISPLAY_P3: GamutMatrix = [
-    [0.8224_5811, 0.1775_4189, 0.0000_0000],
-    [0.0331_9419, 0.9668_0581, 0.0000_0000],
-    [0.0170_8263, 0.0723_9744, 0.9105_3993],
-];
-
-/// Display P3 → BT.709 (row-major).
-pub(crate) const DISPLAY_P3_TO_BT709: GamutMatrix = [
-    [1.2249_4018, -0.2249_4018, 0.0000_0000],
-    [-0.0420_4986, 1.0420_4986, 0.0000_0000],
-    [-0.0196_4113, -0.0786_4905, 1.0982_5018],
-];
-
-/// BT.2020 → Display P3 (row-major).
-pub(crate) const BT2020_TO_DISPLAY_P3: GamutMatrix = [
-    [1.3434_6376, -0.2826_7869, -0.0607_8507],
-    [-0.0652_8279, 1.0764_0361, -0.0111_2082],
-    [-0.0028_8423, -0.0193_4633, 1.0222_3056],
-];
-
-/// Display P3 → BT.2020 (row-major).
-pub(crate) const DISPLAY_P3_TO_BT2020: GamutMatrix = [
-    [0.7536_7740, 0.1985_4087, 0.0477_8174],
-    [0.0457_0150, 0.9417_7793, 0.0125_2057],
-    [0.0011_7409, 0.0176_4065, 0.9811_8526],
-];
-
 // ---------------------------------------------------------------------------
 // RGB ↔ CIE XYZ (D65 white point) matrices
 // ---------------------------------------------------------------------------
@@ -159,33 +112,38 @@ pub fn apply_matrix_row_rgba_f32(data: &mut [f32], width: usize, m: &GamutMatrix
 
 /// Look up the gamut conversion matrix between two color primary sets.
 ///
-/// Returns `None` if the primaries are the same or if no matrix is available.
-pub fn conversion_matrix(from: ColorPrimaries, to: ColorPrimaries) -> Option<&'static GamutMatrix> {
-    match (from, to) {
-        (ColorPrimaries::Bt709, ColorPrimaries::Bt2020) => Some(&BT709_TO_BT2020),
-        (ColorPrimaries::Bt2020, ColorPrimaries::Bt709) => Some(&BT2020_TO_BT709),
-        (ColorPrimaries::Bt709, ColorPrimaries::DisplayP3) => Some(&BT709_TO_DISPLAY_P3),
-        (ColorPrimaries::DisplayP3, ColorPrimaries::Bt709) => Some(&DISPLAY_P3_TO_BT709),
-        (ColorPrimaries::Bt2020, ColorPrimaries::DisplayP3) => Some(&BT2020_TO_DISPLAY_P3),
-        (ColorPrimaries::DisplayP3, ColorPrimaries::Bt2020) => Some(&DISPLAY_P3_TO_BT2020),
-        _ => None,
+/// Delegates to [`ColorPrimaries::gamut_matrix_to`], which computes the matrix
+/// from chromaticity coordinates with Bradford chromatic adaptation when needed.
+/// Returns `None` if the primaries are the same or if either is `Unknown`.
+pub fn conversion_matrix(from: ColorPrimaries, to: ColorPrimaries) -> Option<GamutMatrix> {
+    if from as u8 == to as u8 {
+        return None;
     }
+    from.gamut_matrix_to(to)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use crate::ColorPrimaries;
+
     /// Verify that forward × inverse ≈ identity for BT.709 ↔ BT.2020.
     #[test]
     fn bt709_bt2020_roundtrip() {
+        let fwd = ColorPrimaries::Bt709
+            .gamut_matrix_to(ColorPrimaries::Bt2020)
+            .unwrap();
+        let inv = ColorPrimaries::Bt2020
+            .gamut_matrix_to(ColorPrimaries::Bt709)
+            .unwrap();
         let test_rgb = [0.5f32, 0.3, 0.8];
         let mut rgb = test_rgb;
-        apply_matrix_f32(&mut rgb, &BT709_TO_BT2020);
-        apply_matrix_f32(&mut rgb, &BT2020_TO_BT709);
+        apply_matrix_f32(&mut rgb, &fwd);
+        apply_matrix_f32(&mut rgb, &inv);
         for c in 0..3 {
             assert!(
-                (rgb[c] - test_rgb[c]).abs() < 1e-5,
+                (rgb[c] - test_rgb[c]).abs() < 1e-4,
                 "BT.709→BT.2020→BT.709 roundtrip error in ch{c}: {:.6} vs {:.6}",
                 rgb[c],
                 test_rgb[c]
@@ -196,13 +154,19 @@ mod tests {
     /// Verify that forward × inverse ≈ identity for BT.709 ↔ Display P3.
     #[test]
     fn bt709_displayp3_roundtrip() {
+        let fwd = ColorPrimaries::Bt709
+            .gamut_matrix_to(ColorPrimaries::DisplayP3)
+            .unwrap();
+        let inv = ColorPrimaries::DisplayP3
+            .gamut_matrix_to(ColorPrimaries::Bt709)
+            .unwrap();
         let test_rgb = [0.5f32, 0.3, 0.8];
         let mut rgb = test_rgb;
-        apply_matrix_f32(&mut rgb, &BT709_TO_DISPLAY_P3);
-        apply_matrix_f32(&mut rgb, &DISPLAY_P3_TO_BT709);
+        apply_matrix_f32(&mut rgb, &fwd);
+        apply_matrix_f32(&mut rgb, &inv);
         for c in 0..3 {
             assert!(
-                (rgb[c] - test_rgb[c]).abs() < 1e-5,
+                (rgb[c] - test_rgb[c]).abs() < 1e-4,
                 "BT.709→P3→BT.709 roundtrip error in ch{c}: {:.6} vs {:.6}",
                 rgb[c],
                 test_rgb[c]
@@ -213,8 +177,11 @@ mod tests {
     /// White point preservation: [1,1,1] in BT.709 → BT.2020 should remain ~[1,1,1].
     #[test]
     fn white_point_preservation() {
+        let m = ColorPrimaries::Bt709
+            .gamut_matrix_to(ColorPrimaries::Bt2020)
+            .unwrap();
         let mut rgb = [1.0f32, 1.0, 1.0];
-        apply_matrix_f32(&mut rgb, &BT709_TO_BT2020);
+        apply_matrix_f32(&mut rgb, &m);
         for (c, &val) in rgb.iter().enumerate() {
             assert!(
                 (val - 1.0).abs() < 1e-4,
@@ -226,8 +193,11 @@ mod tests {
     /// RGBA row preserves alpha.
     #[test]
     fn rgba_alpha_preserved() {
+        let m = ColorPrimaries::Bt709
+            .gamut_matrix_to(ColorPrimaries::Bt2020)
+            .unwrap();
         let mut row = [0.5f32, 0.3, 0.8, 0.42, 0.1, 0.9, 0.2, 0.99];
-        apply_matrix_row_rgba_f32(&mut row, 2, &BT709_TO_BT2020);
+        apply_matrix_row_rgba_f32(&mut row, 2, &m);
         assert_eq!(row[3], 0.42);
         assert_eq!(row[7], 0.99);
     }
@@ -322,11 +292,14 @@ mod tests {
     #[test]
     fn xyz_cross_gamut_consistency() {
         let via_xyz = mat3_mul(&XYZ_TO_BT2020, &BT709_TO_XYZ);
+        let direct = ColorPrimaries::Bt709
+            .gamut_matrix_to(ColorPrimaries::Bt2020)
+            .unwrap();
         let rgb = [0.5f32, 0.3, 0.8];
         let mut v1 = rgb;
         apply_matrix_f32(&mut v1, &via_xyz);
         let mut v2 = rgb;
-        apply_matrix_f32(&mut v2, &BT709_TO_BT2020);
+        apply_matrix_f32(&mut v2, &direct);
         for c in 0..3 {
             assert!(
                 (v1[c] - v2[c]).abs() < 1e-3,

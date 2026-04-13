@@ -100,7 +100,7 @@ fn manual_gamut_pipeline_bt709_to_bt2020() {
         ]),
     ];
     let before = linear_f32;
-    apply_matrix_f32(&mut linear_f32, m);
+    apply_matrix_f32(&mut linear_f32, &m);
 
     // The gamut matrix should change the values (BT.709 → BT.2020 is not identity).
     let changed = linear_f32
@@ -114,7 +114,7 @@ fn manual_gamut_pipeline_bt709_to_bt2020() {
 
     // Step 3: Roundtrip back to BT.709 and verify
     let m_back = conversion_matrix(ColorPrimaries::Bt2020, ColorPrimaries::Bt709).unwrap();
-    apply_matrix_f32(&mut linear_f32, m_back);
+    apply_matrix_f32(&mut linear_f32, &m_back);
 
     for c in 0..3 {
         assert!(
@@ -169,7 +169,7 @@ fn gamut_row_conversion_multi_pixel() {
     ];
 
     let original = data;
-    apply_matrix_row_f32(&mut data, 3, m);
+    apply_matrix_row_f32(&mut data, 3, &m);
 
     // White should be ~preserved
     assert!((data[3] - 1.0).abs() < 1e-4, "white R");
@@ -194,7 +194,7 @@ fn gamut_rgba_row_preserves_alpha() {
     let m = conversion_matrix(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
 
     let mut data = [0.5f32, 0.3, 0.8, 0.42, 0.1, 0.9, 0.2, 0.99];
-    apply_matrix_row_rgba_f32(&mut data, 2, m);
+    apply_matrix_row_rgba_f32(&mut data, 2, &m);
 
     assert_eq!(data[3], 0.42, "alpha pixel 0 must be preserved");
     assert_eq!(data[7], 0.99, "alpha pixel 1 must be preserved");
