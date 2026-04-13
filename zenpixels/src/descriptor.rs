@@ -355,6 +355,26 @@ impl ColorPrimaries {
     pub const WHITE_ACES: (f32, f32) = (0.32168, 0.33767);
     /// DCI white point (theatrical projection, SMPTE RP 431-2).
     pub const WHITE_DCI: (f32, f32) = (0.314, 0.351);
+
+    /// CIE 1931 xy chromaticity coordinates of the RGB primaries.
+    ///
+    /// Returns `((rx, ry), (gx, gy), (bx, by))` or `None` for `Unknown`.
+    /// These are the canonical coordinates from the relevant standards
+    /// (ITU-R BT.709, BT.2020, SMPTE EG 432-1, etc.).
+    pub const fn chromaticity(self) -> Option<((f32, f32), (f32, f32), (f32, f32))> {
+        match self {
+            Self::Bt709 => Some(((0.64, 0.33), (0.30, 0.60), (0.15, 0.06))),
+            Self::DisplayP3 | Self::DciP3 => Some(((0.680, 0.320), (0.265, 0.690), (0.150, 0.060))),
+            Self::Bt2020 => Some(((0.708, 0.292), (0.170, 0.797), (0.131, 0.046))),
+            Self::AdobeRgb => Some(((0.64, 0.33), (0.21, 0.71), (0.15, 0.06))),
+            Self::ProPhoto => Some(((0.7347, 0.2653), (0.1596, 0.8404), (0.0366, 0.0001))),
+            Self::AcesAp0 => Some(((0.7347, 0.2653), (0.0000, 1.0000), (0.0001, -0.0770))),
+            Self::AcesAp1 => Some(((0.713, 0.293), (0.165, 0.830), (0.128, 0.044))),
+            Self::Unknown => None,
+            _ => None,
+        }
+    }
+
     /// Map a CICP `color_primaries` code to a [`ColorPrimaries`].
     #[inline]
     pub const fn from_cicp(code: u8) -> Option<Self> {

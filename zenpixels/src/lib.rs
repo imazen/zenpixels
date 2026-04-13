@@ -47,6 +47,7 @@ pub mod hdr;
 #[cfg(feature = "icc")]
 pub mod icc;
 pub mod pixel_types;
+pub mod registry;
 
 pub mod buffer;
 
