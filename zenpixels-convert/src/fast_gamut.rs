@@ -169,9 +169,9 @@ const_gamut_matrix!(
 // Shared helpers
 // =========================================================================
 
-/// Apply a 3×3 matrix to an RGB triple (public entry point).
+/// Apply a 3×3 matrix to an RGB triple (crate-internal entry point).
 #[inline(always)]
-pub fn mat3x3_pub(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+pub(crate) fn mat3x3_pub(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     mat3x3(m, r, g, b)
 }
 
@@ -748,7 +748,7 @@ pub fn convert_srgb_trc_rgba(m: &[[f32; 3]; 3], data: &mut [f32]) {
 use crate::TransferFunction;
 
 /// Scalar linearization function for a given transfer function.
-pub fn scalar_linearize(trc: TransferFunction) -> Option<fn(f32) -> f32> {
+pub(crate) fn scalar_linearize(trc: TransferFunction) -> Option<fn(f32) -> f32> {
     match trc {
         TransferFunction::Srgb => Some(linear_srgb::tf::srgb_to_linear),
         TransferFunction::Bt709 => Some(linear_srgb::tf::bt709_to_linear),
@@ -762,7 +762,7 @@ pub fn scalar_linearize(trc: TransferFunction) -> Option<fn(f32) -> f32> {
 }
 
 /// Scalar encode function for a given transfer function.
-pub fn scalar_encode(trc: TransferFunction) -> Option<fn(f32) -> f32> {
+pub(crate) fn scalar_encode(trc: TransferFunction) -> Option<fn(f32) -> f32> {
     match trc {
         TransferFunction::Srgb => Some(linear_srgb::tf::linear_to_srgb),
         TransferFunction::Bt709 => Some(linear_srgb::tf::linear_to_bt709),
@@ -780,7 +780,7 @@ pub fn scalar_encode(trc: TransferFunction) -> Option<fn(f32) -> f32> {
 /// Dispatches to fused SIMD kernels when a specialized kernel exists for the
 /// (src_trc, dst_trc) pair. Falls back to scalar linearize → matrix → encode
 /// for unsupported pairs. Returns `false` if either TRC is unknown.
-pub fn convert_f32_rgb_dispatch(
+pub(crate) fn convert_f32_rgb_dispatch(
     m: &[[f32; 3]; 3],
     data: &mut [f32],
     src_trc: TransferFunction,
@@ -832,7 +832,7 @@ pub fn convert_f32_rgb_dispatch(
 
 /// Convert f32 RGBA data in-place using the given gamut matrix and TRC pair.
 /// Alpha channel is preserved unchanged.
-pub fn convert_f32_rgba_dispatch(
+pub(crate) fn convert_f32_rgba_dispatch(
     m: &[[f32; 3]; 3],
     data: &mut [f32],
     src_trc: TransferFunction,
@@ -940,7 +940,7 @@ pub fn srgb_to_p3_f32_extended(data: &mut [f32]) {
 ///
 /// `lut[i] = linearize_fn(i as f32 / 255.0)`. Eliminates per-channel function
 /// calls during conversion — just an array index.
-pub fn build_linearize_lut(linearize_fn: fn(f32) -> f32) -> alloc::boxed::Box<[f32; 256]> {
+pub(crate) fn build_linearize_lut(linearize_fn: fn(f32) -> f32) -> alloc::boxed::Box<[f32; 256]> {
     let mut lut = alloc::vec![0.0f32; 256].into_boxed_slice();
     for i in 0..256 {
         lut[i] = linearize_fn(i as f32 / 255.0);
@@ -952,7 +952,7 @@ pub fn build_linearize_lut(linearize_fn: fn(f32) -> f32) -> alloc::boxed::Box<[f
 ///
 /// Source u8 values are normalized to [0,1], linearized, matrix-transformed,
 /// then re-encoded and quantized to u8 output.
-pub fn convert_u8_rgb(
+pub(crate) fn convert_u8_rgb(
     m: &[[f32; 3]; 3],
     src: &[u8],
     dst: &mut [u8],
@@ -976,7 +976,7 @@ pub fn convert_u8_rgb(
 ///
 /// Same as `convert_u8_rgb` but uses a pre-built 256-entry LUT for linearization.
 /// Build the LUT once with [`build_linearize_lut`], then reuse across rows.
-pub fn convert_u8_rgb_lut(
+pub(crate) fn convert_u8_rgb_lut(
     m: &[[f32; 3]; 3],
     src: &[u8],
     dst: &mut [u8],
@@ -997,7 +997,7 @@ pub fn convert_u8_rgb_lut(
 }
 
 /// Convert u8 RGBA source to u8 RGBA dest via gamut conversion. Alpha copied.
-pub fn convert_u8_rgba(
+pub(crate) fn convert_u8_rgba(
     m: &[[f32; 3]; 3],
     src: &[u8],
     dst: &mut [u8],
@@ -1019,7 +1019,7 @@ pub fn convert_u8_rgba(
 }
 
 /// Convert u8 RGBA via LUT-based linearization. Alpha copied.
-pub fn convert_u8_rgba_lut(
+pub(crate) fn convert_u8_rgba_lut(
     m: &[[f32; 3]; 3],
     src: &[u8],
     dst: &mut [u8],
@@ -1041,7 +1041,7 @@ pub fn convert_u8_rgba_lut(
 }
 
 /// Convert u16 RGB source to u16 RGB dest via gamut conversion.
-pub fn convert_u16_rgb(
+pub(crate) fn convert_u16_rgb(
     m: &[[f32; 3]; 3],
     src: &[u16],
     dst: &mut [u16],
