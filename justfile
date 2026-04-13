@@ -62,11 +62,13 @@ icc-upload dir:
         npx wrangler r2 object put "{{r2_bucket}}/{{r2_prefix}}$name" --file "$f" --content-type application/octet-stream 2>/dev/null
         echo "  uploaded: $name"
     done
-    # Rebuild manifest: list all objects in the prefix
+    # Rebuild manifest: list all objects in the prefix (handles spaces in names)
     echo "Rebuilding manifest..."
-    npx wrangler r2 object list "{{r2_bucket}}" --prefix "{{r2_prefix}}" 2>/dev/null \
-        | grep -oP '"key"\s*:\s*"[^"]*\.(icc|icm)"' \
-        | sed 's/.*"key"\s*:\s*"{{r2_prefix}}//' | sed 's/"//' | sort > /tmp/icc-manifest-update.txt
+    ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+    AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
+        aws s3 ls "s3://{{r2_bucket}}/{{r2_prefix}}" --endpoint-url "$ENDPOINT" 2>/dev/null \
+        | awk '{ for (i=4; i<=NF; i++) printf "%s%s", $i, (i==NF?"\n":" ") }' \
+        | grep -E '\.(icc|icm)$' | sort > /tmp/icc-manifest-update.txt
     npx wrangler r2 object put "{{r2_bucket}}/{{r2_prefix}}MANIFEST.txt" \
         --file /tmp/icc-manifest-update.txt --content-type text/plain 2>/dev/null
     echo "Done. $(wc -l < /tmp/icc-manifest-update.txt) profiles in manifest."
