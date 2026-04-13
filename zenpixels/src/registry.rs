@@ -172,11 +172,14 @@ pub type Mat3 = [[f32; 3]; 3];
 ///
 /// Uses the standard derivation from CIE xy chromaticity coordinates
 /// and white point. Returns `None` for unknown primaries.
-pub fn rgb_to_xyz(primaries: ColorPrimaries) -> Option<Mat3> {
-    let ((rx, ry), (gx, gy), (bx, by)) = primaries.chromaticity()?;
+pub const fn rgb_to_xyz(primaries: ColorPrimaries) -> Option<Mat3> {
+    let chrom = match primaries.chromaticity() {
+        Some(c) => c,
+        None => return None,
+    };
+    let ((rx, ry), (gx, gy), (bx, by)) = chrom;
     let (wx, wy) = primaries.white_point();
 
-    // Convert xy to XYZ (Y=1)
     let xr = rx / ry;
     let zr = (1.0 - rx - ry) / ry;
     let xg = gx / gy;
@@ -187,11 +190,12 @@ pub fn rgb_to_xyz(primaries: ColorPrimaries) -> Option<Mat3> {
     let xw = wx / wy;
     let zw = (1.0 - wx - wy) / wy;
 
-    // M = [[Xr, Xg, Xb], [1, 1, 1], [Zr, Zg, Zb]]
-    // Solve M × S = W for scaling factors S
     let m = [[xr, xg, xb], [1.0, 1.0, 1.0], [zr, zg, zb]];
     let w = [xw, 1.0, zw];
-    let s = solve_3x3(&m, &w)?;
+    let s = match solve_3x3(&m, &w) {
+        Some(s) => s,
+        None => return None,
+    };
 
     Some([
         [xr * s[0], xg * s[1], xb * s[2]],
@@ -204,10 +208,19 @@ pub fn rgb_to_xyz(primaries: ColorPrimaries) -> Option<Mat3> {
 ///
 /// Handles chromatic adaptation (Bradford) when white points differ.
 /// Returns `None` if either primaries set is unknown.
-pub fn gamut_matrix(src: ColorPrimaries, dst: ColorPrimaries) -> Option<Mat3> {
-    let src_xyz = rgb_to_xyz(src)?;
-    let dst_xyz = rgb_to_xyz(dst)?;
-    let dst_inv = invert_3x3(&dst_xyz)?;
+pub const fn gamut_matrix(src: ColorPrimaries, dst: ColorPrimaries) -> Option<Mat3> {
+    let src_xyz = match rgb_to_xyz(src) {
+        Some(m) => m,
+        None => return None,
+    };
+    let dst_xyz = match rgb_to_xyz(dst) {
+        Some(m) => m,
+        None => return None,
+    };
+    let dst_inv = match invert_3x3(&dst_xyz) {
+        Some(m) => m,
+        None => return None,
+    };
 
     if src.needs_chromatic_adaptation(dst) {
         let adapt = bradford_adapt(src.white_point(), dst.white_point());
@@ -218,7 +231,7 @@ pub fn gamut_matrix(src: ColorPrimaries, dst: ColorPrimaries) -> Option<Mat3> {
 }
 
 // =========================================================================
-// Linear algebra helpers (f32)
+// Linear algebra helpers (f32, all const)
 // =========================================================================
 
 /// Bradford chromatic adaptation matrix coefficients.
@@ -228,8 +241,14 @@ const BRADFORD: Mat3 = [
     [0.0389, -0.0685, 1.0296],
 ];
 
+/// Precomputed Bradford inverse (const — avoids runtime inversion).
+const BRADFORD_INV: Mat3 = match invert_3x3(&BRADFORD) {
+    Some(m) => m,
+    None => panic!("Bradford matrix is singular"),
+};
+
 /// Compute a Bradford chromatic adaptation matrix from `src` to `dst` white point.
-fn bradford_adapt(src_wp: (f32, f32), dst_wp: (f32, f32)) -> Mat3 {
+const fn bradford_adapt(src_wp: (f32, f32), dst_wp: (f32, f32)) -> Mat3 {
     let src_xyz = [
         src_wp.0 / src_wp.1,
         1.0,
@@ -250,12 +269,11 @@ fn bradford_adapt(src_wp: (f32, f32), dst_wp: (f32, f32)) -> Mat3 {
         [0.0, 0.0, dst_lms[2] / src_lms[2]],
     ];
 
-    let bradford_inv = invert_3x3(&BRADFORD).unwrap();
-    mul_3x3(&mul_3x3(&bradford_inv, &scale), &BRADFORD)
+    mul_3x3(&mul_3x3(&BRADFORD_INV, &scale), &BRADFORD)
 }
 
 /// 3×3 matrix × 3-vector.
-fn mul_mv(m: &Mat3, v: &[f32; 3]) -> [f32; 3] {
+pub const fn mul_mv(m: &Mat3, v: &[f32; 3]) -> [f32; 3] {
     [
         m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
         m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
@@ -264,18 +282,22 @@ fn mul_mv(m: &Mat3, v: &[f32; 3]) -> [f32; 3] {
 }
 
 /// 3×3 matrix multiply.
-fn mul_3x3(a: &Mat3, b: &Mat3) -> Mat3 {
+pub const fn mul_3x3(a: &Mat3, b: &Mat3) -> Mat3 {
     let mut r = [[0.0f32; 3]; 3];
-    for i in 0..3 {
-        for j in 0..3 {
+    let mut i = 0;
+    while i < 3 {
+        let mut j = 0;
+        while j < 3 {
             r[i][j] = a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j];
+            j += 1;
         }
+        i += 1;
     }
     r
 }
 
 /// 3×3 matrix inverse.
-fn invert_3x3(m: &Mat3) -> Option<Mat3> {
+pub const fn invert_3x3(m: &Mat3) -> Option<Mat3> {
     let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
         - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
         + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
@@ -303,7 +325,7 @@ fn invert_3x3(m: &Mat3) -> Option<Mat3> {
 }
 
 /// Solve A × x = b for x (3×3 system via Cramer's rule).
-fn solve_3x3(a: &Mat3, b: &[f32; 3]) -> Option<[f32; 3]> {
+const fn solve_3x3(a: &Mat3, b: &[f32; 3]) -> Option<[f32; 3]> {
     let det = a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1])
         - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
         + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
@@ -440,9 +462,35 @@ mod tests {
         }
     }
 
+    // Proof: gamut_matrix is usable in const context.
+    const P3_TO_SRGB: Mat3 = match gamut_matrix(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709) {
+        Some(m) => m,
+        None => panic!("failed to compute P3→sRGB matrix"),
+    };
+
+    #[test]
+    fn const_matrix_is_correct() {
+        // Verify the const-computed matrix matches CSS Color 4
+        let css = [
+            [1.2249401_f32, -0.2249402, 0.0],
+            [-0.0420570, 1.0420571, 0.0],
+            [-0.0196376, -0.0786361, 1.0982736],
+        ];
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!(
+                    (P3_TO_SRGB[i][j] - css[i][j]).abs() < 5e-5,
+                    "const P3→sRGB[{i}][{j}]: {}  CSS={}",
+                    P3_TO_SRGB[i][j],
+                    css[i][j]
+                );
+            }
+        }
+    }
+
     #[test]
     fn gamut_matrix_matches_hardcoded_p3_srgb() {
-        // Cross-validate computed matrix against the CSS Color 4 reference
+        // Cross-validate runtime-computed matrix against the CSS Color 4 reference
         let m = gamut_matrix(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709).unwrap();
         let css = [
             [1.2249401_f32, -0.2249402, 0.0],
