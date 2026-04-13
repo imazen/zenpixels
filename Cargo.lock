@@ -847,6 +847,7 @@ dependencies = [
  "magetypes",
  "moxcms",
  "palette",
+ "paste",
  "rgb",
  "whereat",
  "zenbench",

@@ -179,7 +179,7 @@ fn main() {
             g.bench("fast_p3 (in-place)", move |bench| {
                 let mut buf = d.clone();
                 bench.iter(|| {
-                    zenpixels_convert::fast_p3::p3_to_srgb_f32(&mut buf);
+                    zenpixels_convert::fast_gamut::p3_to_srgb_f32(&mut buf);
                     black_box(());
                 });
             });
@@ -202,7 +202,7 @@ fn main() {
             g.bench("fast_p3 (in-place)", move |bench| {
                 let mut buf = d.clone();
                 bench.iter(|| {
-                    zenpixels_convert::fast_p3::p3_to_srgb_f32_rgba(&mut buf);
+                    zenpixels_convert::fast_gamut::p3_to_srgb_f32_rgba(&mut buf);
                     black_box(());
                 });
             });
@@ -225,7 +225,7 @@ fn main() {
             g.bench("fast_p3 (in-place)", move |bench| {
                 let mut buf = d.clone();
                 bench.iter(|| {
-                    zenpixels_convert::fast_p3::srgb_to_p3_f32(&mut buf);
+                    zenpixels_convert::fast_gamut::srgb_to_p3_f32(&mut buf);
                     black_box(());
                 });
             });
