@@ -891,16 +891,82 @@ pub(crate) fn convert_u8_rgb_simd_lut(
     incant!(convert_u8_rgb_lut_simd(m, src, dst, lin_lut, enc_u8));
 }
 
-/// Convert u8 RGBA via LUT linearization AND LUT encoding. Alpha copied.
-pub(crate) fn convert_u8_rgba_lut_lut(
+/// SIMD-batched u8 RGBA: LUT linearize 8 pixels → SIMD matrix → LUT encode. Alpha copied.
+#[rite]
+fn convert_8px_u8_rgba_simd(
+    token: X64V3Token,
     m: &[[f32; 3]; 3],
     src: &[u8],
     dst: &mut [u8],
     lin_lut: &[f32; 256],
     enc_u8: fn(f32) -> u8,
 ) {
-    debug_assert_eq!(src.len() % 4, 0);
-    debug_assert_eq!(src.len(), dst.len());
+    let mut r = [0.0f32; 8];
+    let mut g = [0.0f32; 8];
+    let mut b = [0.0f32; 8];
+    for i in 0..8 {
+        r[i] = lin_lut[src[i * 4] as usize];
+        g[i] = lin_lut[src[i * 4 + 1] as usize];
+        b[i] = lin_lut[src[i * 4 + 2] as usize];
+    }
+    let rv = mt_f32x8::from_array(token, r);
+    let gv = mt_f32x8::from_array(token, g);
+    let bv = mt_f32x8::from_array(token, b);
+    let (or, og, ob) = mat3x3_x8(token, m, rv, gv, bv);
+    let ro = or.to_array();
+    let go = og.to_array();
+    let bo = ob.to_array();
+    for i in 0..8 {
+        dst[i * 4] = enc_u8(ro[i]);
+        dst[i * 4 + 1] = enc_u8(go[i]);
+        dst[i * 4 + 2] = enc_u8(bo[i]);
+        dst[i * 4 + 3] = src[i * 4 + 3]; // alpha passthrough
+    }
+}
+
+#[arcane]
+fn convert_u8_rgba_lut_simd_v3(
+    token: X64V3Token,
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    lin_lut: &[f32; 256],
+    enc_u8: fn(f32) -> u8,
+) {
+    let pixel_count = src.len() / 4;
+    let bulk = (pixel_count / 8) * 8;
+    let bulk_bytes = bulk * 4;
+    for off in (0..bulk_bytes).step_by(32) {
+        convert_8px_u8_rgba_simd(
+            token,
+            m,
+            &src[off..off + 32],
+            &mut dst[off..off + 32],
+            lin_lut,
+            enc_u8,
+        );
+    }
+    for i in bulk..pixel_count {
+        let base = i * 4;
+        let r = lin_lut[src[base] as usize];
+        let g = lin_lut[src[base + 1] as usize];
+        let b = lin_lut[src[base + 2] as usize];
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst[base] = enc_u8(nr);
+        dst[base + 1] = enc_u8(ng);
+        dst[base + 2] = enc_u8(nb);
+        dst[base + 3] = src[base + 3];
+    }
+}
+
+fn convert_u8_rgba_lut_simd_scalar(
+    _token: ScalarToken,
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    lin_lut: &[f32; 256],
+    enc_u8: fn(f32) -> u8,
+) {
     for (src_px, dst_px) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
         let r = lin_lut[src_px[0] as usize];
         let g = lin_lut[src_px[1] as usize];
@@ -911,6 +977,19 @@ pub(crate) fn convert_u8_rgba_lut_lut(
         dst_px[2] = enc_u8(nb);
         dst_px[3] = src_px[3];
     }
+}
+
+/// SIMD-batched u8 RGBA gamut conversion. Alpha copied.
+pub(crate) fn convert_u8_rgba_simd_lut(
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    lin_lut: &[f32; 256],
+    enc_u8: fn(f32) -> u8,
+) {
+    debug_assert_eq!(src.len() % 4, 0);
+    debug_assert_eq!(src.len(), dst.len());
+    incant!(convert_u8_rgba_lut_simd(m, src, dst, lin_lut, enc_u8));
 }
 
 /// Convert u8 RGBA source to u8 RGBA dest via gamut conversion. Alpha copied.

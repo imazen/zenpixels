@@ -34,24 +34,13 @@ fn moxcms_opts() -> TransformOptions {
     }
 }
 
-/// Build a ZenCmsLite f32 RGB transform (src→dst copy-based via RowTransform).
-fn build_lite_f32_xf(
+fn build_lite_xf(
     src: ColorProfileSource<'_>,
     dst: ColorProfileSource<'_>,
+    fmt: PixelFormat,
 ) -> Box<dyn zenpixels_convert::cms::RowTransform> {
-    let cms = ZenCmsLite;
-    cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32)
-        .unwrap()
-        .unwrap()
-}
-
-/// Build a ZenCmsLite u8 RGB transform.
-fn build_lite_u8_xf(
-    src: ColorProfileSource<'_>,
-    dst: ColorProfileSource<'_>,
-) -> Box<dyn zenpixels_convert::cms::RowTransform> {
-    let cms = ZenCmsLite;
-    cms.build_source_transform(src, dst, PixelFormat::Rgb8, PixelFormat::Rgb8)
+    ZenCmsLite
+        .build_source_transform(src, dst, fmt, fmt)
         .unwrap()
         .unwrap()
 }
@@ -62,6 +51,8 @@ fn main() {
     let pixel_count = w * h;
     let data_f32 = make_test_data_f32_rgb(pixel_count);
     let data_u8 = make_test_data_u8_rgb(pixel_count);
+    let f32_bytes = pixel_count * 3 * 4;
+    let u8_bytes = pixel_count * 3;
 
     let opts = moxcms_opts();
     let p3 = ColorProfile::new_display_p3();
@@ -83,29 +74,29 @@ fn main() {
         .unwrap();
 
     // Pre-build ZenCmsLite transforms
-    let lite_p3_srgb_f32 = build_lite_f32_xf(
-        ColorProfileSource::Named(NamedProfile::DisplayP3),
-        ColorProfileSource::Named(NamedProfile::Srgb),
-    );
-    let lite_p3_srgb_u8_scalar = build_lite_u8_xf(
-        ColorProfileSource::Named(NamedProfile::DisplayP3),
-        ColorProfileSource::Named(NamedProfile::Srgb),
-    );
-    let lite_p3_srgb_u8_lut = build_lite_u8_xf(
-        ColorProfileSource::Named(NamedProfile::DisplayP3),
-        ColorProfileSource::Named(NamedProfile::Srgb),
-    );
-    let lite_bt2020_srgb_f32 = build_lite_f32_xf(
+    let p3_srgb = |fmt| {
+        build_lite_xf(
+            ColorProfileSource::Named(NamedProfile::DisplayP3),
+            ColorProfileSource::Named(NamedProfile::Srgb),
+            fmt,
+        )
+    };
+    let lite_p3_srgb_f32 = p3_srgb(PixelFormat::RgbF32);
+    let lite_p3_srgb_u8 = p3_srgb(PixelFormat::Rgb8);
+    let lite_bt2020_srgb_f32 = build_lite_xf(
         ColorProfileSource::Named(NamedProfile::Bt2020),
         ColorProfileSource::Named(NamedProfile::Srgb),
+        PixelFormat::RgbF32,
     );
-    let lite_bt2020pq_srgb_f32 = build_lite_f32_xf(
+    let lite_bt2020pq_srgb_f32 = build_lite_xf(
         ColorProfileSource::Named(NamedProfile::Bt2020Pq),
         ColorProfileSource::Named(NamedProfile::Srgb),
+        PixelFormat::RgbF32,
     );
-    let lite_srgb_p3_f32 = build_lite_f32_xf(
+    let lite_srgb_p3_f32 = build_lite_xf(
         ColorProfileSource::Named(NamedProfile::Srgb),
         ColorProfileSource::Named(NamedProfile::DisplayP3),
+        PixelFormat::RgbF32,
     );
 
     let p3_to_srgb_matrix = ColorPrimaries::DisplayP3
@@ -113,16 +104,14 @@ fn main() {
         .unwrap();
 
     zenbench::run(|suite| {
-        // --- P3 → sRGB ---
+        // --- P3 → sRGB f32 ---
         suite.group("P3→sRGB 1080p f32 RGB", |g| {
-            g.throughput(Throughput::Bytes((pixel_count * 3 * 4) as u64));
-            let d = data_f32.clone();
-            g.bench("fast_gamut", move |bench| {
-                let mut buf = d.clone();
+            g.throughput(Throughput::Bytes(f32_bytes as u64));
+            let src: Vec<u8> = bytemuck::cast_slice(&data_f32).to_vec();
+            g.bench("ZenCmsLite", move |bench| {
+                let mut dst = vec![0u8; src.len()];
                 bench.iter(|| {
-                    let src_copy: Vec<u8> = bytemuck::cast_slice(&buf).to_vec();
-                    let dst_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut buf);
-                    lite_p3_srgb_f32.transform_row(&src_copy, dst_bytes, w as u32);
+                    lite_p3_srgb_f32.transform_row(&src, &mut dst, w as u32);
                     black_box(());
                 });
             });
@@ -139,20 +128,12 @@ fn main() {
 
         // --- P3 → sRGB u8 ---
         suite.group("P3→sRGB 1080p u8 RGB", |g| {
-            g.throughput(Throughput::Bytes((pixel_count * 3) as u64));
+            g.throughput(Throughput::Bytes(u8_bytes as u64));
             let d = data_u8.clone();
-            g.bench("fast_gamut u8 (scalar)", move |bench| {
+            g.bench("ZenCmsLite u8", move |bench| {
                 let mut dst = vec![0u8; d.len()];
                 bench.iter(|| {
-                    lite_p3_srgb_u8_scalar.transform_row(&d, &mut dst, w as u32);
-                    black_box(());
-                });
-            });
-            let d = data_u8.clone();
-            g.bench("ZenCmsLite u8 (LUT)", move |bench| {
-                let mut dst = vec![0u8; d.len()];
-                bench.iter(|| {
-                    lite_p3_srgb_u8_lut.transform_row(&d, &mut dst, w as u32);
+                    lite_p3_srgb_u8.transform_row(&d, &mut dst, w as u32);
                     black_box(());
                 });
             });
@@ -167,16 +148,14 @@ fn main() {
             });
         });
 
-        // --- BT.2020 SDR → sRGB ---
+        // --- BT.2020 SDR → sRGB f32 ---
         suite.group("BT.2020 SDR→sRGB 1080p f32 RGB", |g| {
-            g.throughput(Throughput::Bytes((pixel_count * 3 * 4) as u64));
-            let d = data_f32.clone();
-            g.bench("fast_gamut", move |bench| {
-                let mut buf = d.clone();
+            g.throughput(Throughput::Bytes(f32_bytes as u64));
+            let src: Vec<u8> = bytemuck::cast_slice(&data_f32).to_vec();
+            g.bench("ZenCmsLite", move |bench| {
+                let mut dst = vec![0u8; src.len()];
                 bench.iter(|| {
-                    let src_copy: Vec<u8> = bytemuck::cast_slice(&buf).to_vec();
-                    let dst_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut buf);
-                    lite_bt2020_srgb_f32.transform_row(&src_copy, dst_bytes, w as u32);
+                    lite_bt2020_srgb_f32.transform_row(&src, &mut dst, w as u32);
                     black_box(());
                 });
             });
@@ -191,16 +170,14 @@ fn main() {
             });
         });
 
-        // --- BT.2020 PQ → sRGB ---
+        // --- BT.2020 PQ → sRGB f32 ---
         suite.group("BT.2020 PQ→sRGB 1080p f32 RGB", |g| {
-            g.throughput(Throughput::Bytes((pixel_count * 3 * 4) as u64));
-            let d = data_f32.clone();
-            g.bench("fast_gamut", move |bench| {
-                let mut buf = d.clone();
+            g.throughput(Throughput::Bytes(f32_bytes as u64));
+            let src: Vec<u8> = bytemuck::cast_slice(&data_f32).to_vec();
+            g.bench("ZenCmsLite", move |bench| {
+                let mut dst = vec![0u8; src.len()];
                 bench.iter(|| {
-                    let src_copy: Vec<u8> = bytemuck::cast_slice(&buf).to_vec();
-                    let dst_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut buf);
-                    lite_bt2020pq_srgb_f32.transform_row(&src_copy, dst_bytes, w as u32);
+                    lite_bt2020pq_srgb_f32.transform_row(&src, &mut dst, w as u32);
                     black_box(());
                 });
             });
@@ -215,26 +192,24 @@ fn main() {
             });
         });
 
-        // --- sRGB → P3 ---
+        // --- sRGB → P3 f32 ---
         suite.group("sRGB→P3 1080p f32 RGB", |g| {
-            g.throughput(Throughput::Bytes((pixel_count * 3 * 4) as u64));
-            let d = data_f32.clone();
-            g.bench("fast_gamut", move |bench| {
-                let mut buf = d.clone();
+            g.throughput(Throughput::Bytes(f32_bytes as u64));
+            let src: Vec<u8> = bytemuck::cast_slice(&data_f32).to_vec();
+            g.bench("ZenCmsLite", move |bench| {
+                let mut dst = vec![0u8; src.len()];
                 bench.iter(|| {
-                    let src_copy: Vec<u8> = bytemuck::cast_slice(&buf).to_vec();
-                    let dst_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut buf);
-                    lite_srgb_p3_f32.transform_row(&src_copy, dst_bytes, w as u32);
+                    lite_srgb_p3_f32.transform_row(&src, &mut dst, w as u32);
                     black_box(());
                 });
             });
         });
 
-        // --- Linear (matrix only) ---
+        // --- Linear (matrix only, no TRC) ---
         suite.group("Linear P3→sRGB 1080p f32 RGB", |g| {
-            g.throughput(Throughput::Bytes((pixel_count * 3 * 4) as u64));
+            g.throughput(Throughput::Bytes(f32_bytes as u64));
             let d = data_f32.clone();
-            g.bench("fast_gamut linear", move |bench| {
+            g.bench("matrix only (in-place)", move |bench| {
                 let mut buf = d.clone();
                 bench.iter(|| {
                     zenpixels_convert::fast_gamut::convert_linear_rgb(&p3_to_srgb_matrix, &mut buf);

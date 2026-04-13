@@ -251,8 +251,7 @@ impl LiteTransform {
         if let Some(lut) = &self.linearize_lut {
             // Fast path: LUT linearize + LUT/fast encode (no polynomial on hot path)
             if self.has_alpha {
-                // RGBA: scalar LUT→matrix→LUT (no SIMD batch for RGBA yet)
-                fast_gamut::convert_u8_rgba_lut_lut(&self.matrix, src, dst, lut, self.encode_u8);
+                fast_gamut::convert_u8_rgba_simd_lut(&self.matrix, src, dst, lut, self.encode_u8);
             } else {
                 // RGB: SIMD-batched LUT→matrix→LUT (8 pixels at a time)
                 fast_gamut::convert_u8_rgb_simd_lut(&self.matrix, src, dst, lut, self.encode_u8);
