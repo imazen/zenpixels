@@ -115,8 +115,8 @@ fn unknown_cicp_codes_return_none() {
             "TC code {code} should not be recognized"
         );
     }
-    // ColorPrimaries: only 1, 9, 12 are recognized
-    for code in [0, 2, 3, 4, 5, 6, 7, 8, 10, 11, 13, 22, 99, 255] {
+    // ColorPrimaries: only 1, 9, 11, 12 are recognized
+    for code in [0, 2, 3, 4, 5, 6, 7, 8, 10, 13, 22, 99, 255] {
         assert!(
             ColorPrimaries::from_cicp(code).is_none(),
             "CP code {code} should not be recognized"

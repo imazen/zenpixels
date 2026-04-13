@@ -206,30 +206,41 @@ impl fmt::Display for AlphaMode {
 // Transfer function
 // ---------------------------------------------------------------------------
 
-/// Electro-optical transfer function.
+/// Encoding transfer function (OETF).
+///
+/// Describes how scene-linear light was encoded into the pixel values.
+/// For still image codecs, this is unambiguous: "sRGB" means the IEC 61966-2-1
+/// curve, "PQ" means SMPTE ST 2084, etc. Video pipelines that need to
+/// distinguish OETF from EOTF should use CICP codes directly.
+///
+/// Discriminant values are internal — use [`from_cicp()`](Self::from_cicp) /
+/// [`to_cicp()`](Self::to_cicp) for CICP mapping.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
-#[repr(u8)]
 pub enum TransferFunction {
     /// Linear light (gamma 1.0).
-    Linear = 0,
+    Linear,
     /// sRGB transfer curve (IEC 61966-2-1).
-    Srgb = 1,
+    Srgb,
     /// BT.709 transfer curve.
-    Bt709 = 2,
+    Bt709,
     /// Perceptual Quantizer (SMPTE ST 2084, HDR10).
-    Pq = 3,
+    Pq,
     /// Hybrid Log-Gamma (ARIB STD-B67, HLG).
-    Hlg = 4,
-    /// Pure power-law gamma 2.2 (563/256 ≈ 2.19921875). Adobe RGB (1998).
-    /// No CICP equivalent.
-    Gamma22 = 200,
+    Hlg,
+    /// Pure power-law gamma 2.2. Adobe RGB (1998).
+    Gamma22,
     /// Pure power-law gamma 1.8. ProPhoto RGB, Apple legacy.
-    /// No CICP equivalent.
-    Gamma18 = 201,
+    Gamma18,
+    /// Pure power-law gamma 2.4. BT.1886 display model, ACES display encoding.
+    Gamma24,
+    /// Pure power-law gamma 2.6. DCI-P3 theatrical projection (ST 428-1).
+    Gamma26,
+    /// ACEScct quasi-logarithmic with linear toe (SMPTE ST 2065-1).
+    AcesCct,
     /// Transfer function is not known.
-    Unknown = 255,
+    Unknown,
 }
 
 impl TransferFunction {
@@ -286,8 +297,11 @@ impl fmt::Display for TransferFunction {
             Self::Hlg => f.write_str("HLG"),
             Self::Gamma22 => f.write_str("gamma 2.2"),
             Self::Gamma18 => f.write_str("gamma 1.8"),
+            Self::Gamma24 => f.write_str("gamma 2.4 (BT.1886)"),
+            Self::Gamma26 => f.write_str("gamma 2.6 (DCI)"),
+            Self::AcesCct => f.write_str("ACEScct"),
             Self::Unknown => f.write_str("unknown"),
-            _ => write!(f, "TransferFunction({})", *self as u8),
+            _ => f.write_str("TransferFunction(?)"),
         }
     }
 }
@@ -296,36 +310,58 @@ impl fmt::Display for TransferFunction {
 // Color primaries
 // ---------------------------------------------------------------------------
 
-/// Color primaries (CIE xy chromaticities of R, G, B).
+/// Color primaries (CIE xy chromaticities of R, G, B) and white point.
 ///
-/// Discriminant values match CICP `ColorPrimaries` codes (ITU-T H.273).
+/// Each variant is a complete "named recipe" — primaries and white point
+/// are an inseparable pair (following CICP convention). Use
+/// [`from_cicp()`](Self::from_cicp) / [`to_cicp()`](Self::to_cicp) for
+/// CICP mapping. Discriminant values are internal.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
-#[repr(u8)]
 pub enum ColorPrimaries {
-    /// BT.709 / sRGB (CICP 1).
+    /// BT.709 / sRGB (CICP 1). White point: D65.
     #[default]
-    Bt709 = 1,
-    /// BT.2020 / BT.2100 (CICP 9). Wide gamut for HDR.
-    Bt2020 = 9,
-    /// Display P3 (CICP 12). Apple ecosystem, wide gamut SDR.
-    DisplayP3 = 12,
-    /// Adobe RGB (1998). Wide gamut, gamma 2.2. No CICP code.
-    AdobeRgb = 200,
-    /// ProPhoto RGB (ROMM RGB). Ultra-wide gamut, gamma 1.8. No CICP code.
-    ProPhoto = 201,
+    Bt709,
+    /// BT.2020 / BT.2100 (CICP 9). Wide gamut for HDR. White point: D65.
+    Bt2020,
+    /// DCI-P3 theatrical (CICP 11, SMPTE RP 431-2).
+    /// Same RGB primaries as Display P3, white point: DCI (0.314, 0.351).
+    DciP3,
+    /// Display P3 (CICP 12, SMPTE EG 432-1). Apple ecosystem.
+    /// Same RGB primaries as DCI-P3, white point: D65.
+    DisplayP3,
+    /// ACES AP0 (SMPTE ST 2065-1). Encompasses the entire visible gamut.
+    /// White point: ACES D60 (0.32168, 0.33767). Archival/interchange.
+    AcesAp0,
+    /// ACES AP1 / ACEScg. Rendering and grading gamut.
+    /// White point: ACES D60.
+    AcesAp1,
+    /// Adobe RGB (1998). Wide gamut. White point: D65.
+    AdobeRgb,
+    /// ProPhoto RGB (ROMM RGB). Ultra-wide gamut.
+    /// White point: D50 (0.3457, 0.3585).
+    ProPhoto,
     /// Primaries not known.
-    Unknown = 255,
+    Unknown,
 }
 
 impl ColorPrimaries {
+    /// D65 white point (BT.709, BT.2020, Display P3, Adobe RGB).
+    pub const WHITE_D65: (f32, f32) = (0.3127, 0.3290);
+    /// D50 white point (ICC PCS, ProPhoto RGB).
+    pub const WHITE_D50: (f32, f32) = (0.3457, 0.3585);
+    /// ACES ~D60 white point (SMPTE ST 2065-1).
+    pub const WHITE_ACES: (f32, f32) = (0.32168, 0.33767);
+    /// DCI white point (theatrical projection, SMPTE RP 431-2).
+    pub const WHITE_DCI: (f32, f32) = (0.314, 0.351);
     /// Map a CICP `color_primaries` code to a [`ColorPrimaries`].
     #[inline]
     pub const fn from_cicp(code: u8) -> Option<Self> {
         match code {
             1 => Some(Self::Bt709),
             9 => Some(Self::Bt2020),
+            11 => Some(Self::DciP3),
             12 => Some(Self::DisplayP3),
             _ => None,
         }
@@ -338,18 +374,45 @@ impl ColorPrimaries {
         match self {
             Self::Bt709 => Some(1),
             Self::Bt2020 => Some(9),
+            Self::DciP3 => Some(11),
             Self::DisplayP3 => Some(12),
             Self::Unknown => None,
             _ => None,
         }
     }
 
+    /// CIE 1931 xy chromaticity of this color space's white point.
+    #[allow(unreachable_patterns)]
+    #[inline]
+    pub const fn white_point(self) -> (f32, f32) {
+        match self {
+            Self::Bt709 | Self::Bt2020 | Self::DisplayP3 | Self::AdobeRgb => Self::WHITE_D65,
+            Self::DciP3 => Self::WHITE_DCI,
+            Self::AcesAp0 | Self::AcesAp1 => Self::WHITE_ACES,
+            Self::ProPhoto => Self::WHITE_D50,
+            Self::Unknown => Self::WHITE_D65,
+            _ => Self::WHITE_D65,
+        }
+    }
+
+    /// Whether converting between `self` and `other` requires chromatic
+    /// adaptation (different white points).
+    #[inline]
+    pub const fn needs_chromatic_adaptation(self, other: Self) -> bool {
+        let (sx, sy) = self.white_point();
+        let (ox, oy) = other.white_point();
+        sx.to_bits() != ox.to_bits() || sy.to_bits() != oy.to_bits()
+    }
+
     /// Whether `self` fully contains the gamut of `other`.
     ///
-    /// Gamut hierarchy: BT.2020 > Display P3 > BT.709.
+    /// Returns `false` when white points differ (cross-adapted containment
+    /// is not defined without a chromatic adaptation transform).
+    /// D65 hierarchy: BT.2020 > Display P3 > Adobe RGB > BT.709.
     #[inline]
     pub const fn contains(self, other: Self) -> bool {
-        self.gamut_width() >= other.gamut_width()
+        !self.needs_chromatic_adaptation(other)
+            && self.gamut_width() >= other.gamut_width()
             && !matches!(self, Self::Unknown)
             && !matches!(other, Self::Unknown)
     }
@@ -359,9 +422,11 @@ impl ColorPrimaries {
         match self {
             Self::Bt709 => 1,
             Self::AdobeRgb => 2,
-            Self::DisplayP3 => 3,
-            Self::ProPhoto => 4,
-            Self::Bt2020 => 5,
+            Self::DisplayP3 | Self::DciP3 => 3,
+            Self::Bt2020 => 4,
+            Self::ProPhoto => 5,
+            Self::AcesAp1 => 6,
+            Self::AcesAp0 => 7,
             Self::Unknown => 0,
             _ => 0,
         }
@@ -374,11 +439,14 @@ impl fmt::Display for ColorPrimaries {
         match self {
             Self::Bt709 => f.write_str("BT.709"),
             Self::Bt2020 => f.write_str("BT.2020"),
+            Self::DciP3 => f.write_str("DCI-P3"),
             Self::DisplayP3 => f.write_str("Display P3"),
+            Self::AcesAp0 => f.write_str("ACES AP0"),
+            Self::AcesAp1 => f.write_str("ACES AP1"),
             Self::AdobeRgb => f.write_str("Adobe RGB"),
             Self::ProPhoto => f.write_str("ProPhoto RGB"),
             Self::Unknown => f.write_str("unknown"),
-            _ => write!(f, "ColorPrimaries({})", *self as u8),
+            _ => f.write_str("ColorPrimaries(?)"),
         }
     }
 }
