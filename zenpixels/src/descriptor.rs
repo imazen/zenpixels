@@ -222,6 +222,12 @@ pub enum TransferFunction {
     Pq = 3,
     /// Hybrid Log-Gamma (ARIB STD-B67, HLG).
     Hlg = 4,
+    /// Pure power-law gamma 2.2 (563/256 ≈ 2.19921875). Adobe RGB (1998).
+    /// No CICP equivalent.
+    Gamma22 = 200,
+    /// Pure power-law gamma 1.8. ProPhoto RGB, Apple legacy.
+    /// No CICP equivalent.
+    Gamma18 = 201,
     /// Transfer function is not known.
     Unknown = 255,
 }
@@ -278,6 +284,8 @@ impl fmt::Display for TransferFunction {
             Self::Bt709 => f.write_str("BT.709"),
             Self::Pq => f.write_str("PQ"),
             Self::Hlg => f.write_str("HLG"),
+            Self::Gamma22 => f.write_str("gamma 2.2"),
+            Self::Gamma18 => f.write_str("gamma 1.8"),
             Self::Unknown => f.write_str("unknown"),
             _ => write!(f, "TransferFunction({})", *self as u8),
         }
@@ -303,6 +311,10 @@ pub enum ColorPrimaries {
     Bt2020 = 9,
     /// Display P3 (CICP 12). Apple ecosystem, wide gamut SDR.
     DisplayP3 = 12,
+    /// Adobe RGB (1998). Wide gamut, gamma 2.2. No CICP code.
+    AdobeRgb = 200,
+    /// ProPhoto RGB (ROMM RGB). Ultra-wide gamut, gamma 1.8. No CICP code.
+    ProPhoto = 201,
     /// Primaries not known.
     Unknown = 255,
 }
@@ -346,8 +358,10 @@ impl ColorPrimaries {
     const fn gamut_width(self) -> u8 {
         match self {
             Self::Bt709 => 1,
-            Self::DisplayP3 => 2,
-            Self::Bt2020 => 3,
+            Self::AdobeRgb => 2,
+            Self::DisplayP3 => 3,
+            Self::ProPhoto => 4,
+            Self::Bt2020 => 5,
             Self::Unknown => 0,
             _ => 0,
         }
@@ -361,6 +375,8 @@ impl fmt::Display for ColorPrimaries {
             Self::Bt709 => f.write_str("BT.709"),
             Self::Bt2020 => f.write_str("BT.2020"),
             Self::DisplayP3 => f.write_str("Display P3"),
+            Self::AdobeRgb => f.write_str("Adobe RGB"),
+            Self::ProPhoto => f.write_str("ProPhoto RGB"),
             Self::Unknown => f.write_str("unknown"),
             _ => write!(f, "ColorPrimaries({})", *self as u8),
         }
