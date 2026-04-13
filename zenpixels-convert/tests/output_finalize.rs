@@ -111,6 +111,17 @@ impl ColorManagement for TrackingCms {
         Ok(Box::new(IdentityTransform))
     }
 
+    fn build_transform_from_cicp(
+        &self,
+        _src_cicp: Cicp,
+        _dst_icc: &[u8],
+        _src_format: PixelFormat,
+        _dst_format: PixelFormat,
+    ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
+        self.cicp_calls.fetch_add(1, Ordering::Relaxed);
+        Some(Ok(Box::new(IdentityTransform)))
+    }
+
     fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
         None
     }
@@ -661,6 +672,16 @@ impl ColorManagement for FailingCms {
         _dst_format: PixelFormat,
     ) -> Result<Box<dyn RowTransform>, Self::Error> {
         Err("deliberate ICC failure")
+    }
+
+    fn build_transform_from_cicp(
+        &self,
+        _src_cicp: Cicp,
+        _dst_icc: &[u8],
+        _src_format: PixelFormat,
+        _dst_format: PixelFormat,
+    ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
+        Some(Err("deliberate CICP failure"))
     }
 
     fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
