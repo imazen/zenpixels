@@ -53,20 +53,30 @@ icc-upload dir:
         --endpoint-url "$ENDPOINT" --no-progress
     echo "Done."
 
-# Ensure Compact-ICC-Profiles are in the local cache (clones if missing)
-icc-ensure-compact:
+# Ensure well-known ICC profile collections are in the local cache
+icc-ensure-sources:
     #!/usr/bin/env bash
     set -euo pipefail
+    mkdir -p "{{icc_cache}}"
+    # Compact-ICC-Profiles (saucecontrol)
     COMPACT="/tmp/compact-icc-profiles"
     if [ ! -d "$COMPACT/profiles" ]; then
         echo "Cloning Compact-ICC-Profiles..."
         git clone --depth 1 https://github.com/saucecontrol/Compact-ICC-Profiles.git "$COMPACT"
     fi
     cp -n "$COMPACT"/profiles/*.icc "{{icc_cache}}/" 2>/dev/null || true
-    echo "Compact-ICC-Profiles in cache: $(ls {{icc_cache}}/*.icc 2>/dev/null | wc -l) total profiles"
+    # moxcms test profiles (awxkee)
+    MOXCMS="/tmp/moxcms-profiles"
+    if [ ! -d "$MOXCMS/assets" ]; then
+        echo "Cloning moxcms assets..."
+        git clone --depth 1 --filter=blob:none --sparse https://github.com/awxkee/moxcms.git "$MOXCMS"
+        git -C "$MOXCMS" sparse-checkout set assets
+    fi
+    cp -n "$MOXCMS"/assets/*.icc "$MOXCMS"/assets/*.icm "{{icc_cache}}/" 2>/dev/null || true
+    echo "ICC cache: $(find {{icc_cache}} -name '*.icc' -o -name '*.icm' | wc -l) profiles"
 
 # Regenerate .inc table files from ICC profile cache + bundled profiles
-icc-gen: icc-build-gen icc-ensure-compact
+icc-gen: icc-build-gen icc-ensure-sources
     /tmp/zenpixels-gen-icc-tables "{{icc_cache}}" "zenpixels-convert/src/profiles" "{{icc_out}}"
 
 # Build the table generator
