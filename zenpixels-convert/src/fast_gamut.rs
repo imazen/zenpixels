@@ -936,6 +936,18 @@ pub fn srgb_to_p3_f32_extended(data: &mut [f32]) {
 // u8 ↔ f32 wrappers
 // =========================================================================
 
+/// Build a 256-entry LUT for u8 → f32 linearization.
+///
+/// `lut[i] = linearize_fn(i as f32 / 255.0)`. Eliminates per-channel function
+/// calls during conversion — just an array index.
+pub fn build_linearize_lut(linearize_fn: fn(f32) -> f32) -> alloc::boxed::Box<[f32; 256]> {
+    let mut lut = alloc::vec![0.0f32; 256].into_boxed_slice();
+    for i in 0..256 {
+        lut[i] = linearize_fn(i as f32 / 255.0);
+    }
+    lut.try_into().ok().unwrap()
+}
+
 /// Convert u8 RGB source to u8 RGB dest via gamut conversion.
 ///
 /// Source u8 values are normalized to [0,1], linearized, matrix-transformed,
@@ -960,6 +972,30 @@ pub fn convert_u8_rgb(
     }
 }
 
+/// Convert u8 RGB via LUT-based linearization (much faster than per-channel fn calls).
+///
+/// Same as `convert_u8_rgb` but uses a pre-built 256-entry LUT for linearization.
+/// Build the LUT once with [`build_linearize_lut`], then reuse across rows.
+pub fn convert_u8_rgb_lut(
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    lut: &[f32; 256],
+    encode_fn: fn(f32) -> f32,
+) {
+    debug_assert_eq!(src.len() % 3, 0);
+    debug_assert_eq!(src.len(), dst.len());
+    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+        let r = lut[src_px[0] as usize];
+        let g = lut[src_px[1] as usize];
+        let b = lut[src_px[2] as usize];
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst_px[0] = (encode_fn(nr) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+        dst_px[1] = (encode_fn(ng) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+        dst_px[2] = (encode_fn(nb) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+    }
+}
+
 /// Convert u8 RGBA source to u8 RGBA dest via gamut conversion. Alpha copied.
 pub fn convert_u8_rgba(
     m: &[[f32; 3]; 3],
@@ -974,6 +1010,28 @@ pub fn convert_u8_rgba(
         let r = linearize_fn(src_px[0] as f32 / 255.0);
         let g = linearize_fn(src_px[1] as f32 / 255.0);
         let b = linearize_fn(src_px[2] as f32 / 255.0);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst_px[0] = (encode_fn(nr) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+        dst_px[1] = (encode_fn(ng) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+        dst_px[2] = (encode_fn(nb) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+        dst_px[3] = src_px[3];
+    }
+}
+
+/// Convert u8 RGBA via LUT-based linearization. Alpha copied.
+pub fn convert_u8_rgba_lut(
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    lut: &[f32; 256],
+    encode_fn: fn(f32) -> f32,
+) {
+    debug_assert_eq!(src.len() % 4, 0);
+    debug_assert_eq!(src.len(), dst.len());
+    for (src_px, dst_px) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
+        let r = lut[src_px[0] as usize];
+        let g = lut[src_px[1] as usize];
+        let b = lut[src_px[2] as usize];
         let (nr, ng, nb) = mat3x3(m, r, g, b);
         dst_px[0] = (encode_fn(nr) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
         dst_px[1] = (encode_fn(ng) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;

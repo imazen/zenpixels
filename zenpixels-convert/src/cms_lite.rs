@@ -135,12 +135,21 @@ impl ColorManagement for ZenCmsLite {
         let channel_type = src_format.channel_type();
         let has_alpha = src_format.has_alpha_bytes();
 
+        // Pre-build linearization LUT for u8 path (1KB, one-time cost).
+        let linearize_fn = fast_gamut::scalar_linearize(src_t).unwrap();
+        let linearize_lut = if matches!(channel_type, ChannelType::U8) {
+            Some(fast_gamut::build_linearize_lut(linearize_fn))
+        } else {
+            None
+        };
+
         Some(Ok(Box::new(LiteTransform {
             matrix,
             src_trc: src_t,
             dst_trc: dst_t,
-            linearize: fast_gamut::scalar_linearize(src_t).unwrap(),
+            linearize: linearize_fn,
             encode: fast_gamut::scalar_encode(dst_t).unwrap(),
+            linearize_lut,
             has_alpha,
             channel_type,
             _dst_format: dst_format,
@@ -154,6 +163,8 @@ struct LiteTransform {
     dst_trc: TransferFunction,
     linearize: fn(f32) -> f32,
     encode: fn(f32) -> f32,
+    /// Pre-built u8→f32 linearization LUT. Only allocated for u8 formats.
+    linearize_lut: Option<alloc::boxed::Box<[f32; 256]>>,
     has_alpha: bool,
     channel_type: ChannelType,
     _dst_format: PixelFormat,
@@ -174,10 +185,20 @@ impl RowTransform for LiteTransform {
 
 impl LiteTransform {
     fn transform_u8(&self, src: &[u8], dst: &mut [u8], _width: u32) {
-        if self.has_alpha {
-            fast_gamut::convert_u8_rgba(&self.matrix, src, dst, self.linearize, self.encode);
+        if let Some(lut) = &self.linearize_lut {
+            // Fast path: LUT-based linearization (no per-channel fn calls)
+            if self.has_alpha {
+                fast_gamut::convert_u8_rgba_lut(&self.matrix, src, dst, lut, self.encode);
+            } else {
+                fast_gamut::convert_u8_rgb_lut(&self.matrix, src, dst, lut, self.encode);
+            }
         } else {
-            fast_gamut::convert_u8_rgb(&self.matrix, src, dst, self.linearize, self.encode);
+            // Fallback: per-channel function calls
+            if self.has_alpha {
+                fast_gamut::convert_u8_rgba(&self.matrix, src, dst, self.linearize, self.encode);
+            } else {
+                fast_gamut::convert_u8_rgb(&self.matrix, src, dst, self.linearize, self.encode);
+            }
         }
     }
 
