@@ -391,6 +391,8 @@ pub(crate) mod negotiate;
 
 pub mod adapt;
 pub mod cms;
+#[cfg(feature = "zencms-lite")]
+pub mod cms_lite;
 #[cfg(feature = "cms-moxcms")]
 pub mod cms_moxcms;
 pub mod converter;
@@ -440,6 +442,8 @@ pub use hdr::{
 
 // Re-export CMS traits, enums, and implementations.
 pub use cms::{ColorManagement, ColorPriority, RenderingIntent, RowTransform};
+#[cfg(feature = "zencms-lite")]
+pub use cms_lite::ZenCmsLite;
 #[cfg(feature = "cms-moxcms")]
 pub use cms_moxcms::MoxCms;
 

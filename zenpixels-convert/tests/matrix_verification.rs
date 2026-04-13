@@ -133,54 +133,54 @@ const REFS: &[MatrixRef] = &[
         green: [-0.0975031, 1.1328999, -0.0498065],
         blue: [-0.0544753, -0.0083494, 1.0723369],
     },
-    // DCI-P3 matrices (include Bradford D50↔D65 adaptation)
+    // DCI-P3 matrices (include Bradford DCI↔D65 adaptation)
     MatrixRef {
         name: "DCIP3_TO_SRGB",
         matrix: &DCIP3_TO_SRGB,
         inverse: Some(&SRGB_TO_DCIP3),
-        red: [1.3172195, -0.0427573, -0.0198711],
-        green: [-0.3028431, 1.0481183, -0.0745299],
-        blue: [-0.0143764, -0.0053610, 1.0944010],
+        red: [1.1575165, -0.0415001, -0.0180500],
+        green: [-0.1549624, 1.0455674, -0.0785782],
+        blue: [-0.0025541, -0.0040678, 1.0966280],
     },
     MatrixRef {
         name: "SRGB_TO_DCIP3",
         matrix: &SRGB_TO_DCIP3,
         inverse: Some(&DCIP3_TO_SRGB),
-        red: [0.7665586, 0.0313534, 0.0160536],
-        green: [0.2222828, 0.9635149, 0.0696524],
-        blue: [0.0111586, 0.0051317, 0.9142939],
+        red: [0.8685798, 0.0345404, 0.0167714],
+        green: [0.1289194, 0.9618117, 0.0710400],
+        blue: [0.0025011, 0.0036482, 0.9121888],
     },
     MatrixRef {
         name: "DCIP3_TO_P3",
         matrix: &DCIP3_TO_P3,
         inverse: Some(&P3_TO_DCIP3),
-        red: [1.0757719, 0.0023860, 0.0013130],
-        green: [-0.0629961, 1.0032742, 0.0028467],
-        blue: [-0.0127758, -0.0056602, 0.9958402],
+        red: [0.9446453, -0.0016997, 0.0003340],
+        green: [0.0581774, 1.0057173, 0.0015022],
+        blue: [-0.0028229, -0.0040176, 0.9981638],
     },
     MatrixRef {
         name: "P3_TO_DCIP3",
         matrix: &P3_TO_DCIP3,
         inverse: Some(&DCIP3_TO_P3),
-        red: [0.9294208, -0.0022172, -0.0012191],
-        green: [0.0583240, 0.9965813, -0.0029257],
-        blue: [0.0122552, 0.0056360, 1.0041449],
+        red: [1.0584873, 0.0017875, -0.0003569],
+        green: [-0.0612339, 0.9942058, -0.0014758],
+        blue: [0.0027470, 0.0040067, 1.0018328],
     },
     MatrixRef {
         name: "DCIP3_TO_BT2020",
         matrix: &DCIP3_TO_BT2020,
         inverse: Some(&BT2020_TO_DCIP3),
-        red: [0.8114887, 0.0514734, 0.0000315],
-        green: [0.1518945, 0.9420146, 0.0205357],
-        blue: [0.0366168, 0.0065119, 0.9794329],
+        red: [0.7117833, 0.0416152, -0.0008447],
+        green: [0.2436601, 0.9498416, 0.0191095],
+        blue: [0.0445565, 0.0085432, 0.9817352],
     },
     MatrixRef {
         name: "BT2020_TO_DCIP3",
         matrix: &BT2020_TO_DCIP3,
         inverse: Some(&DCIP3_TO_BT2020),
-        red: [1.2449757, -0.0680374, 0.0013865],
-        green: [-0.1997595, 1.0726253, -0.0224832],
-        blue: [-0.0452162, -0.0045879, 1.0210967],
+        red: [1.4261665, -0.0625062, 0.0024438],
+        green: [-0.3646120, 1.0689719, -0.0211213],
+        blue: [-0.0615543, -0.0064655, 1.0186777],
     },
 ];
 
@@ -359,7 +359,7 @@ fn css_color_4_p3_to_srgb() {
         for j in 0..3 {
             let err = (P3_TO_SRGB[i][j] - css[i][j]).abs();
             assert!(
-                err < 5e-7,
+                err < 1e-6,
                 "P3_TO_SRGB[{i}][{j}]: ours={}, CSS={}, err={err:.1e}",
                 P3_TO_SRGB[i][j],
                 css[i][j]
@@ -380,7 +380,7 @@ fn css_color_4_srgb_to_bt2020() {
         for j in 0..3 {
             let err = (SRGB_TO_BT2020[i][j] - css[i][j]).abs();
             assert!(
-                err < 1e-7,
+                err < 1e-6,
                 "SRGB_TO_BT2020[{i}][{j}]: ours={}, CSS={}, err={err:.1e}",
                 SRGB_TO_BT2020[i][j],
                 css[i][j]

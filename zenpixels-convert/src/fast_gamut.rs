@@ -169,6 +169,12 @@ const_gamut_matrix!(
 // Shared helpers
 // =========================================================================
 
+/// Apply a 3×3 matrix to an RGB triple (public entry point).
+#[inline(always)]
+pub fn mat3x3_pub(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    mat3x3(m, r, g, b)
+}
+
 /// Apply a 3×3 matrix to an RGB triple.
 #[inline(always)]
 fn mat3x3(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
@@ -736,6 +742,144 @@ pub fn convert_srgb_trc_rgba(m: &[[f32; 3]; 3], data: &mut [f32]) {
 }
 
 // =========================================================================
+// Dispatch: pick the right kernel for a given (src_trc, dst_trc) pair
+// =========================================================================
+
+use crate::TransferFunction;
+
+/// Scalar linearization function for a given transfer function.
+pub fn scalar_linearize(trc: TransferFunction) -> Option<fn(f32) -> f32> {
+    match trc {
+        TransferFunction::Srgb => Some(linear_srgb::tf::srgb_to_linear),
+        TransferFunction::Bt709 => Some(linear_srgb::tf::bt709_to_linear),
+        TransferFunction::Pq => Some(linear_srgb::tf::pq_to_linear),
+        TransferFunction::Hlg => Some(linear_srgb::tf::hlg_to_linear),
+        TransferFunction::Gamma22 => Some(adobe_to_linear_scalar),
+        TransferFunction::Gamma26 => Some(dci_to_linear_scalar),
+        TransferFunction::Linear => Some(core::convert::identity),
+        _ => None,
+    }
+}
+
+/// Scalar encode function for a given transfer function.
+pub fn scalar_encode(trc: TransferFunction) -> Option<fn(f32) -> f32> {
+    match trc {
+        TransferFunction::Srgb => Some(linear_srgb::tf::linear_to_srgb),
+        TransferFunction::Bt709 => Some(linear_srgb::tf::linear_to_bt709),
+        TransferFunction::Pq => Some(linear_srgb::tf::linear_to_pq),
+        TransferFunction::Hlg => Some(linear_srgb::tf::linear_to_hlg),
+        TransferFunction::Gamma22 => Some(adobe_from_linear_scalar),
+        TransferFunction::Gamma26 => Some(dci_from_linear_scalar),
+        TransferFunction::Linear => Some(core::convert::identity),
+        _ => None,
+    }
+}
+
+/// Convert f32 RGB data in-place using the given gamut matrix and TRC pair.
+///
+/// Dispatches to fused SIMD kernels when a specialized kernel exists for the
+/// (src_trc, dst_trc) pair. Falls back to scalar linearize → matrix → encode
+/// for unsupported pairs. Returns `false` if either TRC is unknown.
+pub fn convert_f32_rgb_dispatch(
+    m: &[[f32; 3]; 3],
+    data: &mut [f32],
+    src_trc: TransferFunction,
+    dst_trc: TransferFunction,
+) -> bool {
+    use TransferFunction::*;
+    debug_assert_eq!(data.len() % 3, 0);
+    match (src_trc, dst_trc) {
+        // Same-TRC: single fused kernel
+        (Srgb, Srgb) => incant!(convert_rgb_srgb(m, data)),
+        (Bt709, Bt709) => incant!(convert_rgb_bt709(m, data)),
+        (Pq, Pq) => incant!(convert_rgb_pq(m, data)),
+        (Hlg, Hlg) => incant!(convert_rgb_hlg(m, data)),
+        (Gamma22, Gamma22) => incant!(convert_rgb_adobe(m, data)),
+        (Gamma26, Gamma26) => incant!(convert_rgb_dci(m, data)),
+        (Linear, Linear) => convert_linear_rgb(m, data),
+        // Cross-TRC: specialized kernels
+        (Pq, Srgb) => incant!(convert_rgb_pq_to_srgb(m, data)),
+        (Hlg, Srgb) => incant!(convert_rgb_hlg_to_srgb(m, data)),
+        (Srgb, Pq) => incant!(convert_rgb_srgb_to_pq(m, data)),
+        (Bt709, Srgb) => incant!(convert_rgb_bt709_to_srgb(m, data)),
+        (Srgb, Bt709) => incant!(convert_rgb_srgb_to_bt709(m, data)),
+        (Gamma22, Srgb) => incant!(convert_rgb_adobe_to_srgb(m, data)),
+        (Srgb, Gamma22) => incant!(convert_rgb_srgb_to_adobe(m, data)),
+        (Gamma26, Srgb) => incant!(convert_rgb_dci_to_srgb(m, data)),
+        (Srgb, Gamma26) => incant!(convert_rgb_srgb_to_dci(m, data)),
+        // Fallback: scalar path for any other TRC pair
+        _ => {
+            let Some(lin) = scalar_linearize(src_trc) else {
+                return false;
+            };
+            let Some(enc) = scalar_encode(dst_trc) else {
+                return false;
+            };
+            for pixel in data.chunks_exact_mut(3) {
+                let r = lin(pixel[0]);
+                let g = lin(pixel[1]);
+                let b = lin(pixel[2]);
+                let (nr, ng, nb) = mat3x3(m, r, g, b);
+                pixel[0] = enc(nr);
+                pixel[1] = enc(ng);
+                pixel[2] = enc(nb);
+            }
+            return true;
+        }
+    }
+    true
+}
+
+/// Convert f32 RGBA data in-place using the given gamut matrix and TRC pair.
+/// Alpha channel is preserved unchanged.
+pub fn convert_f32_rgba_dispatch(
+    m: &[[f32; 3]; 3],
+    data: &mut [f32],
+    src_trc: TransferFunction,
+    dst_trc: TransferFunction,
+) -> bool {
+    use TransferFunction::*;
+    debug_assert_eq!(data.len() % 4, 0);
+    match (src_trc, dst_trc) {
+        (Srgb, Srgb) => incant!(convert_rgba_srgb(m, data)),
+        (Bt709, Bt709) => incant!(convert_rgba_bt709(m, data)),
+        (Pq, Pq) => incant!(convert_rgba_pq(m, data)),
+        (Hlg, Hlg) => incant!(convert_rgba_hlg(m, data)),
+        (Gamma22, Gamma22) => incant!(convert_rgba_adobe(m, data)),
+        (Gamma26, Gamma26) => incant!(convert_rgba_dci(m, data)),
+        (Linear, Linear) => convert_linear_rgba(m, data),
+        (Pq, Srgb) => incant!(convert_rgba_pq_to_srgb(m, data)),
+        (Hlg, Srgb) => incant!(convert_rgba_hlg_to_srgb(m, data)),
+        (Srgb, Pq) => incant!(convert_rgba_srgb_to_pq(m, data)),
+        (Bt709, Srgb) => incant!(convert_rgba_bt709_to_srgb(m, data)),
+        (Srgb, Bt709) => incant!(convert_rgba_srgb_to_bt709(m, data)),
+        (Gamma22, Srgb) => incant!(convert_rgba_adobe_to_srgb(m, data)),
+        (Srgb, Gamma22) => incant!(convert_rgba_srgb_to_adobe(m, data)),
+        (Gamma26, Srgb) => incant!(convert_rgba_dci_to_srgb(m, data)),
+        (Srgb, Gamma26) => incant!(convert_rgba_srgb_to_dci(m, data)),
+        _ => {
+            let Some(lin) = scalar_linearize(src_trc) else {
+                return false;
+            };
+            let Some(enc) = scalar_encode(dst_trc) else {
+                return false;
+            };
+            for pixel in data.chunks_exact_mut(4) {
+                let r = lin(pixel[0]);
+                let g = lin(pixel[1]);
+                let b = lin(pixel[2]);
+                let (nr, ng, nb) = mat3x3(m, r, g, b);
+                pixel[0] = enc(nr);
+                pixel[1] = enc(ng);
+                pixel[2] = enc(nb);
+            }
+            return true;
+        }
+    }
+    true
+}
+
+// =========================================================================
 // Extended range (sign-preserving scalar TRC, no clamping)
 // =========================================================================
 
@@ -792,13 +936,11 @@ pub fn srgb_to_p3_f32_extended(data: &mut [f32]) {
 // u8 ↔ f32 wrappers
 // =========================================================================
 
-/// Convert u8 RGB source to f32 RGB dest via gamut conversion.
+/// Convert u8 RGB source to u8 RGB dest via gamut conversion.
 ///
-/// Source u8 values are linearized via sRGB TRC LUT (lossless for u8),
-/// matrix-transformed, then re-encoded and quantized to u8 output.
-///
-/// `src_trc_linearize` and `dst_trc_encode` are the per-channel TRC functions.
-fn convert_u8_rgb(
+/// Source u8 values are normalized to [0,1], linearized, matrix-transformed,
+/// then re-encoded and quantized to u8 output.
+pub fn convert_u8_rgb(
     m: &[[f32; 3]; 3],
     src: &[u8],
     dst: &mut [u8],
@@ -819,7 +961,7 @@ fn convert_u8_rgb(
 }
 
 /// Convert u8 RGBA source to u8 RGBA dest via gamut conversion. Alpha copied.
-fn convert_u8_rgba(
+pub fn convert_u8_rgba(
     m: &[[f32; 3]; 3],
     src: &[u8],
     dst: &mut [u8],
@@ -841,7 +983,7 @@ fn convert_u8_rgba(
 }
 
 /// Convert u16 RGB source to u16 RGB dest via gamut conversion.
-fn convert_u16_rgb(
+pub fn convert_u16_rgb(
     m: &[[f32; 3]; 3],
     src: &[u16],
     dst: &mut [u16],
