@@ -9,7 +9,7 @@
 //! 5. Forward × inverse = identity
 //! 6. Matrix elements match independently-computed f64 reference to <1e-5
 
-use zenpixels_convert::fast_gamut::*;
+use zenpixels_convert::ColorPrimaries;
 
 /// Apply a 3×3 matrix to an RGB triple.
 fn apply(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> [f32; 3] {
@@ -24,7 +24,7 @@ fn apply(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> [f32; 3] {
 /// Computed independently from chromaticity coordinates via f64 Python script.
 struct MatrixRef {
     name: &'static str,
-    matrix: &'static [[f32; 3]; 3],
+    matrix: [[f32; 3]; 3],
     /// Expected output for source (1,0,0) — i.e., column 0 / row outputs for red primary.
     red: [f32; 3],
     /// Expected output for source (0,1,0).
@@ -32,167 +32,176 @@ struct MatrixRef {
     /// Expected output for source (0,0,1).
     blue: [f32; 3],
     /// Inverse matrix (if available) for round-trip verification.
-    inverse: Option<&'static [[f32; 3]; 3]>,
+    inverse: Option<[[f32; 3]; 3]>,
 }
 
-const REFS: &[MatrixRef] = &[
-    // D65 ↔ D65 matrices (no chromatic adaptation)
-    MatrixRef {
-        name: "SRGB_TO_P3",
-        matrix: &SRGB_TO_P3,
-        inverse: Some(&P3_TO_SRGB),
-        red: [0.8224620, 0.0331942, 0.0170826],
-        green: [0.1775380, 0.9668058, 0.0723974],
-        blue: [0.0, 0.0, 0.9105199],
-    },
-    MatrixRef {
-        name: "P3_TO_SRGB",
-        matrix: &P3_TO_SRGB,
-        inverse: Some(&SRGB_TO_P3),
-        red: [1.2249402, -0.0420570, -0.0196376],
-        green: [-0.2249402, 1.0420570, -0.0786360],
-        blue: [0.0, 0.0, 1.0982736],
-    },
-    MatrixRef {
-        name: "SRGB_TO_BT2020",
-        matrix: &SRGB_TO_BT2020,
-        inverse: Some(&BT2020_TO_SRGB),
-        red: [0.6274039, 0.0690973, 0.0163914],
-        green: [0.3292830, 0.9195404, 0.0880133],
-        blue: [0.0433131, 0.0113623, 0.8955953],
-    },
-    MatrixRef {
-        name: "BT2020_TO_SRGB",
-        matrix: &BT2020_TO_SRGB,
-        inverse: Some(&SRGB_TO_BT2020),
-        red: [1.6604910, -0.1245505, -0.0181508],
-        green: [-0.5876411, 1.1328999, -0.1005789],
-        blue: [-0.0728499, -0.0083494, 1.1187297],
-    },
-    MatrixRef {
-        name: "P3_TO_BT2020",
-        matrix: &P3_TO_BT2020,
-        inverse: Some(&BT2020_TO_P3),
-        red: [0.7538330, 0.0457438, -0.0012103],
-        green: [0.1985974, 0.9417772, 0.0176017],
-        blue: [0.0475696, 0.0124789, 0.9836086],
-    },
-    MatrixRef {
-        name: "BT2020_TO_P3",
-        matrix: &BT2020_TO_P3,
-        inverse: Some(&P3_TO_BT2020),
-        red: [1.3435783, -0.0652975, 0.0028218],
-        green: [-0.2821797, 1.0757879, -0.0195985],
-        blue: [-0.0613986, -0.0104905, 1.0167767],
-    },
-    MatrixRef {
-        name: "SRGB_TO_ADOBERGB",
-        matrix: &SRGB_TO_ADOBERGB,
-        inverse: Some(&ADOBERGB_TO_SRGB),
-        red: [0.7151256, 0.0, 0.0],
-        green: [0.2848744, 1.0, 0.0411619],
-        blue: [0.0, 0.0, 0.9588381],
-    },
-    MatrixRef {
-        name: "ADOBERGB_TO_SRGB",
-        matrix: &ADOBERGB_TO_SRGB,
-        inverse: Some(&SRGB_TO_ADOBERGB),
-        red: [1.3983557, 0.0, 0.0],
-        green: [-0.3983557, 1.0, -0.0429290],
-        blue: [0.0, 0.0, 1.0429290],
-    },
-    MatrixRef {
-        name: "ADOBERGB_TO_P3",
-        matrix: &ADOBERGB_TO_P3,
-        inverse: Some(&P3_TO_ADOBERGB),
-        red: [1.1500944, 0.0464173, 0.0238876],
-        green: [-0.1500944, 0.9535827, 0.0265048],
-        blue: [0.0, 0.0, 0.9496076],
-    },
-    MatrixRef {
-        name: "P3_TO_ADOBERGB",
-        matrix: &P3_TO_ADOBERGB,
-        inverse: Some(&ADOBERGB_TO_P3),
-        red: [0.8640051, -0.0420570, -0.0205604],
-        green: [0.1359949, 1.0420570, -0.0325061],
-        blue: [0.0, 0.0, 1.0530665],
-    },
-    MatrixRef {
-        name: "ADOBERGB_TO_BT2020",
-        matrix: &ADOBERGB_TO_BT2020,
-        inverse: Some(&BT2020_TO_ADOBERGB),
-        red: [0.8773338, 0.0966226, 0.0229211],
-        green: [0.0774937, 0.8915273, 0.0430367],
-        blue: [0.0451725, 0.0118501, 0.9340423],
-    },
-    MatrixRef {
-        name: "BT2020_TO_ADOBERGB",
-        matrix: &BT2020_TO_ADOBERGB,
-        inverse: Some(&ADOBERGB_TO_BT2020),
-        red: [1.1519784, -0.1245505, -0.0225304],
-        green: [-0.0975031, 1.1328999, -0.0498065],
-        blue: [-0.0544753, -0.0083494, 1.0723369],
-    },
-    // DCI-P3 matrices (include Bradford DCI↔D65 adaptation)
-    MatrixRef {
-        name: "DCIP3_TO_SRGB",
-        matrix: &DCIP3_TO_SRGB,
-        inverse: Some(&SRGB_TO_DCIP3),
-        red: [1.1575165, -0.0415001, -0.0180500],
-        green: [-0.1549624, 1.0455674, -0.0785782],
-        blue: [-0.0025541, -0.0040678, 1.0966280],
-    },
-    MatrixRef {
-        name: "SRGB_TO_DCIP3",
-        matrix: &SRGB_TO_DCIP3,
-        inverse: Some(&DCIP3_TO_SRGB),
-        red: [0.8685798, 0.0345404, 0.0167714],
-        green: [0.1289194, 0.9618117, 0.0710400],
-        blue: [0.0025011, 0.0036482, 0.9121888],
-    },
-    MatrixRef {
-        name: "DCIP3_TO_P3",
-        matrix: &DCIP3_TO_P3,
-        inverse: Some(&P3_TO_DCIP3),
-        red: [0.9446453, -0.0016997, 0.0003340],
-        green: [0.0581774, 1.0057173, 0.0015022],
-        blue: [-0.0028229, -0.0040176, 0.9981638],
-    },
-    MatrixRef {
-        name: "P3_TO_DCIP3",
-        matrix: &P3_TO_DCIP3,
-        inverse: Some(&DCIP3_TO_P3),
-        red: [1.0584873, 0.0017875, -0.0003569],
-        green: [-0.0612339, 0.9942058, -0.0014758],
-        blue: [0.0027470, 0.0040067, 1.0018328],
-    },
-    MatrixRef {
-        name: "DCIP3_TO_BT2020",
-        matrix: &DCIP3_TO_BT2020,
-        inverse: Some(&BT2020_TO_DCIP3),
-        red: [0.7117833, 0.0416152, -0.0008447],
-        green: [0.2436601, 0.9498416, 0.0191095],
-        blue: [0.0445565, 0.0085432, 0.9817352],
-    },
-    MatrixRef {
-        name: "BT2020_TO_DCIP3",
-        matrix: &BT2020_TO_DCIP3,
-        inverse: Some(&DCIP3_TO_BT2020),
-        red: [1.4261665, -0.0625062, 0.0024438],
-        green: [-0.3646120, 1.0689719, -0.0211213],
-        blue: [-0.0615543, -0.0064655, 1.0186777],
-    },
-];
+/// Helper to compute a gamut matrix, panicking if not available.
+fn gm(src: ColorPrimaries, dst: ColorPrimaries) -> [[f32; 3]; 3] {
+    src.gamut_matrix_to(dst)
+        .unwrap_or_else(|| panic!("no gamut matrix for {src:?} → {dst:?}"))
+}
+
+fn build_refs() -> Vec<MatrixRef> {
+    vec![
+        // D65 ↔ D65 matrices (no chromatic adaptation)
+        MatrixRef {
+            name: "SRGB_TO_P3",
+            matrix: gm(ColorPrimaries::Bt709, ColorPrimaries::DisplayP3),
+            inverse: Some(gm(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709)),
+            red: [0.8224620, 0.0331942, 0.0170826],
+            green: [0.1775380, 0.9668058, 0.0723974],
+            blue: [0.0, 0.0, 0.9105199],
+        },
+        MatrixRef {
+            name: "P3_TO_SRGB",
+            matrix: gm(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709),
+            inverse: Some(gm(ColorPrimaries::Bt709, ColorPrimaries::DisplayP3)),
+            red: [1.2249402, -0.0420570, -0.0196376],
+            green: [-0.2249402, 1.0420570, -0.0786360],
+            blue: [0.0, 0.0, 1.0982736],
+        },
+        MatrixRef {
+            name: "SRGB_TO_BT2020",
+            matrix: gm(ColorPrimaries::Bt709, ColorPrimaries::Bt2020),
+            inverse: Some(gm(ColorPrimaries::Bt2020, ColorPrimaries::Bt709)),
+            red: [0.6274039, 0.0690973, 0.0163914],
+            green: [0.3292830, 0.9195404, 0.0880133],
+            blue: [0.0433131, 0.0113623, 0.8955953],
+        },
+        MatrixRef {
+            name: "BT2020_TO_SRGB",
+            matrix: gm(ColorPrimaries::Bt2020, ColorPrimaries::Bt709),
+            inverse: Some(gm(ColorPrimaries::Bt709, ColorPrimaries::Bt2020)),
+            red: [1.6604910, -0.1245505, -0.0181508],
+            green: [-0.5876411, 1.1328999, -0.1005789],
+            blue: [-0.0728499, -0.0083494, 1.1187297],
+        },
+        MatrixRef {
+            name: "P3_TO_BT2020",
+            matrix: gm(ColorPrimaries::DisplayP3, ColorPrimaries::Bt2020),
+            inverse: Some(gm(ColorPrimaries::Bt2020, ColorPrimaries::DisplayP3)),
+            red: [0.7538330, 0.0457438, -0.0012103],
+            green: [0.1985974, 0.9417772, 0.0176017],
+            blue: [0.0475696, 0.0124789, 0.9836086],
+        },
+        MatrixRef {
+            name: "BT2020_TO_P3",
+            matrix: gm(ColorPrimaries::Bt2020, ColorPrimaries::DisplayP3),
+            inverse: Some(gm(ColorPrimaries::DisplayP3, ColorPrimaries::Bt2020)),
+            red: [1.3435783, -0.0652975, 0.0028218],
+            green: [-0.2821797, 1.0757879, -0.0195985],
+            blue: [-0.0613986, -0.0104905, 1.0167767],
+        },
+        MatrixRef {
+            name: "SRGB_TO_ADOBERGB",
+            matrix: gm(ColorPrimaries::Bt709, ColorPrimaries::AdobeRgb),
+            inverse: Some(gm(ColorPrimaries::AdobeRgb, ColorPrimaries::Bt709)),
+            red: [0.7151256, 0.0, 0.0],
+            green: [0.2848744, 1.0, 0.0411619],
+            blue: [0.0, 0.0, 0.9588381],
+        },
+        MatrixRef {
+            name: "ADOBERGB_TO_SRGB",
+            matrix: gm(ColorPrimaries::AdobeRgb, ColorPrimaries::Bt709),
+            inverse: Some(gm(ColorPrimaries::Bt709, ColorPrimaries::AdobeRgb)),
+            red: [1.3983557, 0.0, 0.0],
+            green: [-0.3983557, 1.0, -0.0429290],
+            blue: [0.0, 0.0, 1.0429290],
+        },
+        MatrixRef {
+            name: "ADOBERGB_TO_P3",
+            matrix: gm(ColorPrimaries::AdobeRgb, ColorPrimaries::DisplayP3),
+            inverse: Some(gm(ColorPrimaries::DisplayP3, ColorPrimaries::AdobeRgb)),
+            red: [1.1500944, 0.0464173, 0.0238876],
+            green: [-0.1500944, 0.9535827, 0.0265048],
+            blue: [0.0, 0.0, 0.9496076],
+        },
+        MatrixRef {
+            name: "P3_TO_ADOBERGB",
+            matrix: gm(ColorPrimaries::DisplayP3, ColorPrimaries::AdobeRgb),
+            inverse: Some(gm(ColorPrimaries::AdobeRgb, ColorPrimaries::DisplayP3)),
+            red: [0.8640051, -0.0420570, -0.0205604],
+            green: [0.1359949, 1.0420570, -0.0325061],
+            blue: [0.0, 0.0, 1.0530665],
+        },
+        MatrixRef {
+            name: "ADOBERGB_TO_BT2020",
+            matrix: gm(ColorPrimaries::AdobeRgb, ColorPrimaries::Bt2020),
+            inverse: Some(gm(ColorPrimaries::Bt2020, ColorPrimaries::AdobeRgb)),
+            red: [0.8773338, 0.0966226, 0.0229211],
+            green: [0.0774937, 0.8915273, 0.0430367],
+            blue: [0.0451725, 0.0118501, 0.9340423],
+        },
+        MatrixRef {
+            name: "BT2020_TO_ADOBERGB",
+            matrix: gm(ColorPrimaries::Bt2020, ColorPrimaries::AdobeRgb),
+            inverse: Some(gm(ColorPrimaries::AdobeRgb, ColorPrimaries::Bt2020)),
+            red: [1.1519784, -0.1245505, -0.0225304],
+            green: [-0.0975031, 1.1328999, -0.0498065],
+            blue: [-0.0544753, -0.0083494, 1.0723369],
+        },
+        // DCI-P3 matrices (include Bradford DCI↔D65 adaptation)
+        MatrixRef {
+            name: "DCIP3_TO_SRGB",
+            matrix: gm(ColorPrimaries::DciP3, ColorPrimaries::Bt709),
+            inverse: Some(gm(ColorPrimaries::Bt709, ColorPrimaries::DciP3)),
+            red: [1.1575165, -0.0415001, -0.0180500],
+            green: [-0.1549624, 1.0455674, -0.0785782],
+            blue: [-0.0025541, -0.0040678, 1.0966280],
+        },
+        MatrixRef {
+            name: "SRGB_TO_DCIP3",
+            matrix: gm(ColorPrimaries::Bt709, ColorPrimaries::DciP3),
+            inverse: Some(gm(ColorPrimaries::DciP3, ColorPrimaries::Bt709)),
+            red: [0.8685798, 0.0345404, 0.0167714],
+            green: [0.1289194, 0.9618117, 0.0710400],
+            blue: [0.0025011, 0.0036482, 0.9121888],
+        },
+        MatrixRef {
+            name: "DCIP3_TO_P3",
+            matrix: gm(ColorPrimaries::DciP3, ColorPrimaries::DisplayP3),
+            inverse: Some(gm(ColorPrimaries::DisplayP3, ColorPrimaries::DciP3)),
+            red: [0.9446453, -0.0016997, 0.0003340],
+            green: [0.0581774, 1.0057173, 0.0015022],
+            blue: [-0.0028229, -0.0040176, 0.9981638],
+        },
+        MatrixRef {
+            name: "P3_TO_DCIP3",
+            matrix: gm(ColorPrimaries::DisplayP3, ColorPrimaries::DciP3),
+            inverse: Some(gm(ColorPrimaries::DciP3, ColorPrimaries::DisplayP3)),
+            red: [1.0584873, 0.0017875, -0.0003569],
+            green: [-0.0612339, 0.9942058, -0.0014758],
+            blue: [0.0027470, 0.0040067, 1.0018328],
+        },
+        MatrixRef {
+            name: "DCIP3_TO_BT2020",
+            matrix: gm(ColorPrimaries::DciP3, ColorPrimaries::Bt2020),
+            inverse: Some(gm(ColorPrimaries::Bt2020, ColorPrimaries::DciP3)),
+            red: [0.7117833, 0.0416152, -0.0008447],
+            green: [0.2436601, 0.9498416, 0.0191095],
+            blue: [0.0445565, 0.0085432, 0.9817352],
+        },
+        MatrixRef {
+            name: "BT2020_TO_DCIP3",
+            matrix: gm(ColorPrimaries::Bt2020, ColorPrimaries::DciP3),
+            inverse: Some(gm(ColorPrimaries::DciP3, ColorPrimaries::Bt2020)),
+            red: [1.4261665, -0.0625062, 0.0024438],
+            green: [-0.3646120, 1.0689719, -0.0211213],
+            blue: [-0.0615543, -0.0064655, 1.0186777],
+        },
+    ]
+}
 
 const TOL: f32 = 5e-5;
 
 /// Verify primary color outputs match reference.
 #[test]
 fn all_matrices_primary_colors() {
-    for r in REFS {
-        let out_r = apply(r.matrix, 1.0, 0.0, 0.0);
-        let out_g = apply(r.matrix, 0.0, 1.0, 0.0);
-        let out_b = apply(r.matrix, 0.0, 0.0, 1.0);
+    let refs = build_refs();
+    for r in &refs {
+        let out_r = apply(&r.matrix, 1.0, 0.0, 0.0);
+        let out_g = apply(&r.matrix, 0.0, 1.0, 0.0);
+        let out_b = apply(&r.matrix, 0.0, 0.0, 1.0);
 
         for ch in 0..3 {
             assert!(
@@ -223,8 +232,9 @@ fn all_matrices_primary_colors() {
 /// Verify white (1,1,1) maps to (1,1,1) for all matrices.
 #[test]
 fn all_matrices_white() {
-    for r in REFS {
-        let out = apply(r.matrix, 1.0, 1.0, 1.0);
+    let refs = build_refs();
+    for r in &refs {
+        let out = apply(&r.matrix, 1.0, 1.0, 1.0);
         for ch in 0..3 {
             assert!(
                 (out[ch] - 1.0).abs() < TOL,
@@ -239,8 +249,9 @@ fn all_matrices_white() {
 /// Verify black (0,0,0) maps to (0,0,0) for all matrices.
 #[test]
 fn all_matrices_black() {
-    for r in REFS {
-        let out = apply(r.matrix, 0.0, 0.0, 0.0);
+    let refs = build_refs();
+    for r in &refs {
+        let out = apply(&r.matrix, 0.0, 0.0, 0.0);
         for ch in 0..3 {
             assert!(
                 out[ch].abs() < 1e-7,
@@ -255,7 +266,8 @@ fn all_matrices_black() {
 /// Verify row sums = 1.0 (necessary for white preservation).
 #[test]
 fn all_matrices_row_sums() {
-    for r in REFS {
+    let refs = build_refs();
+    for r in &refs {
         for row in 0..3 {
             let sum: f32 = r.matrix[row].iter().sum();
             assert!(
@@ -270,7 +282,8 @@ fn all_matrices_row_sums() {
 /// Verify forward × inverse ≈ identity for all matrix pairs.
 #[test]
 fn all_matrices_inverse_identity() {
-    for r in REFS {
+    let refs = build_refs();
+    for r in &refs {
         let Some(inv) = r.inverse else { continue };
         for i in 0..3 {
             for j in 0..3 {
@@ -292,7 +305,8 @@ fn all_matrices_inverse_identity() {
 /// swapped, this catches it.
 #[test]
 fn all_matrices_element_match() {
-    for r in REFS {
+    let refs = build_refs();
+    for r in &refs {
         // Matrix row i, column j should equal ref_primary[j][i]
         // because apply(M, 1,0,0) = [M[0][0], M[1][0], M[2][0]] = red output
         let primaries = [&r.red, &r.green, &r.blue];
@@ -315,15 +329,16 @@ fn all_matrices_element_match() {
 /// converting a grid of colors forward then back produces the original.
 #[test]
 fn all_matrices_roundtrip_grid() {
-    for r in REFS {
+    let refs = build_refs();
+    for r in &refs {
         let Some(inv) = r.inverse else { continue };
         let mut max_err: f32 = 0.0;
         for ri in (0..=255).step_by(17) {
             for gi in (0..=255).step_by(17) {
                 for bi in (0..=255).step_by(17) {
                     let orig = [ri as f32 / 255.0, gi as f32 / 255.0, bi as f32 / 255.0];
-                    let fwd = apply(r.matrix, orig[0], orig[1], orig[2]);
-                    let back = apply(inv, fwd[0], fwd[1], fwd[2]);
+                    let fwd = apply(&r.matrix, orig[0], orig[1], orig[2]);
+                    let back = apply(&inv, fwd[0], fwd[1], fwd[2]);
                     for ch in 0..3 {
                         let err = (orig[ch] - back[ch]).abs();
                         if err > max_err {
@@ -349,6 +364,7 @@ fn all_matrices_roundtrip_grid() {
 /// https://www.w3.org/TR/css-color-4/#color-conversion-code
 #[test]
 fn css_color_4_p3_to_srgb() {
+    let p3_to_srgb = gm(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709);
     // CSS spec's lin_P3_to_lin_sRGB matrix (7-digit precision from spec JS code)
     let css: [[f32; 3]; 3] = [
         [1.2249401, -0.2249402, 0.0],
@@ -357,11 +373,11 @@ fn css_color_4_p3_to_srgb() {
     ];
     for i in 0..3 {
         for j in 0..3 {
-            let err = (P3_TO_SRGB[i][j] - css[i][j]).abs();
+            let err = (p3_to_srgb[i][j] - css[i][j]).abs();
             assert!(
                 err < 1e-6,
                 "P3_TO_SRGB[{i}][{j}]: ours={}, CSS={}, err={err:.1e}",
-                P3_TO_SRGB[i][j],
+                p3_to_srgb[i][j],
                 css[i][j]
             );
         }
@@ -370,6 +386,7 @@ fn css_color_4_p3_to_srgb() {
 
 #[test]
 fn css_color_4_srgb_to_bt2020() {
+    let srgb_to_bt2020 = gm(ColorPrimaries::Bt709, ColorPrimaries::Bt2020);
     // CSS spec's lin_sRGB_to_lin_2020 matrix
     let css: [[f32; 3]; 3] = [
         [0.6274039, 0.3292830, 0.0433131],
@@ -378,11 +395,11 @@ fn css_color_4_srgb_to_bt2020() {
     ];
     for i in 0..3 {
         for j in 0..3 {
-            let err = (SRGB_TO_BT2020[i][j] - css[i][j]).abs();
+            let err = (srgb_to_bt2020[i][j] - css[i][j]).abs();
             assert!(
                 err < 1e-6,
                 "SRGB_TO_BT2020[{i}][{j}]: ours={}, CSS={}, err={err:.1e}",
-                SRGB_TO_BT2020[i][j],
+                srgb_to_bt2020[i][j],
                 css[i][j]
             );
         }
@@ -504,6 +521,15 @@ fn icc_colorant_cross_validation() {
         ]
     }
 
+    let srgb_to_p3 = gm(ColorPrimaries::Bt709, ColorPrimaries::DisplayP3);
+    let p3_to_srgb = gm(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709);
+    let srgb_to_bt2020 = gm(ColorPrimaries::Bt709, ColorPrimaries::Bt2020);
+    let bt2020_to_srgb = gm(ColorPrimaries::Bt2020, ColorPrimaries::Bt709);
+    let srgb_to_adobergb = gm(ColorPrimaries::Bt709, ColorPrimaries::AdobeRgb);
+    let adobergb_to_srgb = gm(ColorPrimaries::AdobeRgb, ColorPrimaries::Bt709);
+    let p3_to_bt2020 = gm(ColorPrimaries::DisplayP3, ColorPrimaries::Bt2020);
+    let bt2020_to_p3 = gm(ColorPrimaries::Bt2020, ColorPrimaries::DisplayP3);
+
     let check = |name: &str, our_matrix: &[[f32; 3]; 3], src_file: &str, dst_file: &str| {
         let src_data = std::fs::read(profile_dir.join(src_file)).unwrap();
         let dst_data = std::fs::read(profile_dir.join(dst_file)).unwrap();
@@ -531,41 +557,41 @@ fn icc_colorant_cross_validation() {
         );
     };
 
-    check("SRGB_TO_P3", &SRGB_TO_P3, "sRGB-v4.icc", "DisplayP3-v4.icc");
-    check("P3_TO_SRGB", &P3_TO_SRGB, "DisplayP3-v4.icc", "sRGB-v4.icc");
+    check("SRGB_TO_P3", &srgb_to_p3, "sRGB-v4.icc", "DisplayP3-v4.icc");
+    check("P3_TO_SRGB", &p3_to_srgb, "DisplayP3-v4.icc", "sRGB-v4.icc");
     check(
         "SRGB_TO_BT2020",
-        &SRGB_TO_BT2020,
+        &srgb_to_bt2020,
         "sRGB-v4.icc",
         "Rec2020-v4.icc",
     );
     check(
         "BT2020_TO_SRGB",
-        &BT2020_TO_SRGB,
+        &bt2020_to_srgb,
         "Rec2020-v4.icc",
         "sRGB-v4.icc",
     );
     check(
         "SRGB_TO_ADOBERGB",
-        &SRGB_TO_ADOBERGB,
+        &srgb_to_adobergb,
         "sRGB-v4.icc",
         "AdobeCompat-v4.icc",
     );
     check(
         "ADOBERGB_TO_SRGB",
-        &ADOBERGB_TO_SRGB,
+        &adobergb_to_srgb,
         "AdobeCompat-v4.icc",
         "sRGB-v4.icc",
     );
     check(
         "P3_TO_BT2020",
-        &P3_TO_BT2020,
+        &p3_to_bt2020,
         "DisplayP3-v4.icc",
         "Rec2020-v4.icc",
     );
     check(
         "BT2020_TO_P3",
-        &BT2020_TO_P3,
+        &bt2020_to_p3,
         "Rec2020-v4.icc",
         "DisplayP3-v4.icc",
     );

@@ -21,10 +21,58 @@ fn moxcms_opts() -> TransformOptions {
     }
 }
 
+/// Build a ZenCmsLite u8 RGB transform as a closure.
+fn build_lite_u8_fn(
+    src_profile: zenpixels_convert::ColorProfileSource<'_>,
+    dst_profile: zenpixels_convert::ColorProfileSource<'_>,
+) -> Box<dyn Fn(&[u8], &mut [u8])> {
+    use zenpixels_convert::cms::ColorManagement;
+    let cms = zenpixels_convert::ZenCmsLite;
+    let xf = cms
+        .build_source_transform(
+            src_profile,
+            dst_profile,
+            zenpixels_convert::PixelFormat::Rgb8,
+            zenpixels_convert::PixelFormat::Rgb8,
+        )
+        .unwrap()
+        .unwrap();
+    Box::new(move |src: &[u8], dst: &mut [u8]| {
+        let width = (src.len() / 3) as u32;
+        xf.transform_row(src, dst, width);
+    })
+}
+
+/// Build a ZenCmsLite f32 RGB in-place transform as a closure.
+fn build_lite_f32_fn(
+    src_profile: zenpixels_convert::ColorProfileSource<'_>,
+    dst_profile: zenpixels_convert::ColorProfileSource<'_>,
+) -> Box<dyn Fn(&mut [f32])> {
+    use zenpixels_convert::cms::ColorManagement;
+    let cms = zenpixels_convert::ZenCmsLite;
+    let xf = cms
+        .build_source_transform(
+            src_profile,
+            dst_profile,
+            zenpixels_convert::PixelFormat::RgbF32,
+            zenpixels_convert::PixelFormat::RgbF32,
+        )
+        .unwrap()
+        .unwrap();
+    Box::new(move |data: &mut [f32]| {
+        let width = (data.len() / 3) as u32;
+        let bytes: &[u8] = bytemuck::cast_slice(data);
+        // transform_row needs separate src/dst; copy src first.
+        let src_copy = bytes.to_vec();
+        let dst_bytes: &mut [u8] = bytemuck::cast_slice_mut(data);
+        xf.transform_row(&src_copy, dst_bytes, width);
+    })
+}
+
 /// Compare fast_gamut output vs moxcms for a full 256³ sweep.
 /// Returns (max_delta, differing_pixel_count, total_pixels, example_worst).
 fn compare_exhaustive_u8(
-    fast_fn: fn(&[u8], &mut [u8]),
+    fast_fn: &dyn Fn(&[u8], &mut [u8]),
     moxcms_src: &ColorProfile,
     moxcms_dst: &ColorProfile,
 ) -> (u8, usize, usize, Option<([u8; 3], [u8; 3], [u8; 3])>) {
@@ -74,7 +122,7 @@ fn compare_exhaustive_u8(
 
 /// Same comparison but for f32, sampling a grid (not full 256³).
 fn compare_f32_grid(
-    fast_fn: fn(&mut [f32]),
+    fast_fn: &dyn Fn(&mut [f32]),
     moxcms_src: &ColorProfile,
     moxcms_dst: &ColorProfile,
     step: usize,
@@ -130,8 +178,13 @@ fn compare_f32_grid(
 
 #[test]
 fn p3_to_srgb_u8_vs_moxcms() {
+    use zenpixels_convert::{ColorProfileSource, NamedProfile};
+    let fast_fn = build_lite_u8_fn(
+        ColorProfileSource::Named(NamedProfile::DisplayP3),
+        ColorProfileSource::Named(NamedProfile::Srgb),
+    );
     let (max_delta, diff_count, total, worst) = compare_exhaustive_u8(
-        zenpixels_convert::fast_gamut::p3_to_srgb_u8_rgb,
+        &*fast_fn,
         &ColorProfile::new_display_p3(),
         &ColorProfile::new_srgb(),
     );
@@ -149,8 +202,13 @@ fn p3_to_srgb_u8_vs_moxcms() {
 
 #[test]
 fn srgb_to_p3_u8_vs_moxcms() {
+    use zenpixels_convert::{ColorProfileSource, NamedProfile};
+    let fast_fn = build_lite_u8_fn(
+        ColorProfileSource::Named(NamedProfile::Srgb),
+        ColorProfileSource::Named(NamedProfile::DisplayP3),
+    );
     let (max_delta, diff_count, total, worst) = compare_exhaustive_u8(
-        zenpixels_convert::fast_gamut::srgb_to_p3_u8_rgb,
+        &*fast_fn,
         &ColorProfile::new_srgb(),
         &ColorProfile::new_display_p3(),
     );
@@ -163,8 +221,13 @@ fn srgb_to_p3_u8_vs_moxcms() {
 
 #[test]
 fn bt2020_sdr_to_srgb_u8_vs_moxcms() {
+    use zenpixels_convert::{ColorProfileSource, NamedProfile};
+    let fast_fn = build_lite_u8_fn(
+        ColorProfileSource::Named(NamedProfile::Bt2020),
+        ColorProfileSource::Named(NamedProfile::Srgb),
+    );
     let (max_delta, diff_count, total, worst) = compare_exhaustive_u8(
-        zenpixels_convert::fast_gamut::bt2020_sdr_to_srgb_u8_rgb,
+        &*fast_fn,
         &ColorProfile::new_bt2020(),
         &ColorProfile::new_srgb(),
     );
@@ -183,8 +246,13 @@ fn bt2020_sdr_to_srgb_u8_vs_moxcms() {
 
 #[test]
 fn adobergb_to_srgb_u8_vs_moxcms() {
+    use zenpixels_convert::{ColorProfileSource, NamedProfile};
+    let fast_fn = build_lite_u8_fn(
+        ColorProfileSource::Named(NamedProfile::AdobeRgb),
+        ColorProfileSource::Named(NamedProfile::Srgb),
+    );
     let (max_delta, diff_count, total, worst) = compare_exhaustive_u8(
-        zenpixels_convert::fast_gamut::adobergb_to_srgb_u8_rgb,
+        &*fast_fn,
         &ColorProfile::new_adobe_rgb(),
         &ColorProfile::new_srgb(),
     );
@@ -200,8 +268,13 @@ fn adobergb_to_srgb_u8_vs_moxcms() {
 
 #[test]
 fn p3_to_srgb_f32_vs_moxcms() {
+    use zenpixels_convert::{ColorProfileSource, NamedProfile};
+    let fast_fn = build_lite_f32_fn(
+        ColorProfileSource::Named(NamedProfile::DisplayP3),
+        ColorProfileSource::Named(NamedProfile::Srgb),
+    );
     let (max_delta, diff_count, total) = compare_f32_grid(
-        zenpixels_convert::fast_gamut::p3_to_srgb_f32,
+        &*fast_fn,
         &ColorProfile::new_display_p3(),
         &ColorProfile::new_srgb(),
         4,
@@ -218,8 +291,13 @@ fn p3_to_srgb_f32_vs_moxcms() {
 
 #[test]
 fn bt2020_to_srgb_f32_vs_moxcms() {
+    use zenpixels_convert::{ColorProfileSource, NamedProfile};
+    let fast_fn = build_lite_f32_fn(
+        ColorProfileSource::Named(NamedProfile::Bt2020),
+        ColorProfileSource::Named(NamedProfile::Srgb),
+    );
     let (max_delta, diff_count, total) = compare_f32_grid(
-        zenpixels_convert::fast_gamut::bt2020_sdr_to_srgb_f32,
+        &*fast_fn,
         &ColorProfile::new_bt2020(),
         &ColorProfile::new_srgb(),
         4,

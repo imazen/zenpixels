@@ -297,7 +297,7 @@ fn convert_u16_rgba(
         let r = linearize_fn(src_px[0] as f32 / 65535.0);
         let g = linearize_fn(src_px[1] as f32 / 65535.0);
         let b = linearize_fn(src_px[2] as f32 / 65535.0);
-        let (nr, ng, nb) = fast_gamut::mat3x3_pub(&m, r, g, b);
+        let (nr, ng, nb) = fast_gamut::mat3x3_scalar(m, r, g, b);
         dst_px[0] = (encode_fn(nr) * 65535.0 + 0.5).clamp(0.0, 65535.0) as u16;
         dst_px[1] = (encode_fn(ng) * 65535.0 + 0.5).clamp(0.0, 65535.0) as u16;
         dst_px[2] = (encode_fn(nb) * 65535.0 + 0.5).clamp(0.0, 65535.0) as u16;

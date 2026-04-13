@@ -30,152 +30,16 @@ use archmage::prelude::*;
 use linear_srgb::tokens::x8 as trc_x8;
 use magetypes::simd::f32x8 as mt_f32x8;
 
-use crate::ColorPrimaries;
-
-// =========================================================================
-// Gamut matrices — computed at compile time via `ColorPrimaries::gamut_matrix_to`.
-// Bradford chromatic adaptation is applied automatically when white points differ.
-// =========================================================================
-
-macro_rules! const_gamut_matrix {
-    ($name:ident, $src:ident, $dst:ident, $doc:expr) => {
-        #[doc = $doc]
-        pub const $name: [[f32; 3]; 3] =
-            match ColorPrimaries::$src.gamut_matrix_to(ColorPrimaries::$dst) {
-                Some(m) => m,
-                None => panic!(concat!(
-                    "failed to compute ",
-                    stringify!($src),
-                    " → ",
-                    stringify!($dst),
-                    " matrix"
-                )),
-            };
-    };
-}
-
-const_gamut_matrix!(
-    SRGB_TO_P3,
-    Bt709,
-    DisplayP3,
-    "sRGB linear → Display P3 linear."
-);
-const_gamut_matrix!(
-    SRGB_TO_BT2020,
-    Bt709,
-    Bt2020,
-    "sRGB linear → BT.2020 linear."
-);
-const_gamut_matrix!(
-    P3_TO_SRGB,
-    DisplayP3,
-    Bt709,
-    "Display P3 linear → sRGB linear."
-);
-const_gamut_matrix!(
-    P3_TO_BT2020,
-    DisplayP3,
-    Bt2020,
-    "Display P3 linear → BT.2020 linear."
-);
-const_gamut_matrix!(
-    BT2020_TO_SRGB,
-    Bt2020,
-    Bt709,
-    "BT.2020 linear → sRGB linear."
-);
-const_gamut_matrix!(
-    BT2020_TO_P3,
-    Bt2020,
-    DisplayP3,
-    "BT.2020 linear → Display P3 linear."
-);
-
-const_gamut_matrix!(
-    ADOBERGB_TO_SRGB,
-    AdobeRgb,
-    Bt709,
-    "Adobe RGB (1998) linear → sRGB linear."
-);
-const_gamut_matrix!(
-    SRGB_TO_ADOBERGB,
-    Bt709,
-    AdobeRgb,
-    "sRGB linear → Adobe RGB (1998) linear."
-);
-const_gamut_matrix!(
-    ADOBERGB_TO_P3,
-    AdobeRgb,
-    DisplayP3,
-    "Adobe RGB (1998) linear → Display P3 linear."
-);
-const_gamut_matrix!(
-    P3_TO_ADOBERGB,
-    DisplayP3,
-    AdobeRgb,
-    "Display P3 linear → Adobe RGB (1998) linear."
-);
-const_gamut_matrix!(
-    ADOBERGB_TO_BT2020,
-    AdobeRgb,
-    Bt2020,
-    "Adobe RGB (1998) linear → BT.2020 linear."
-);
-const_gamut_matrix!(
-    BT2020_TO_ADOBERGB,
-    Bt2020,
-    AdobeRgb,
-    "BT.2020 linear → Adobe RGB (1998) linear."
-);
-
-const_gamut_matrix!(
-    DCIP3_TO_SRGB,
-    DciP3,
-    Bt709,
-    "DCI-P3 (D50) linear → sRGB linear (Bradford adaptation)."
-);
-const_gamut_matrix!(
-    SRGB_TO_DCIP3,
-    Bt709,
-    DciP3,
-    "sRGB linear → DCI-P3 (D50) linear (Bradford adaptation)."
-);
-const_gamut_matrix!(
-    DCIP3_TO_P3,
-    DciP3,
-    DisplayP3,
-    "DCI-P3 (D50) linear → Display P3 (D65) linear (Bradford adaptation)."
-);
-const_gamut_matrix!(
-    P3_TO_DCIP3,
-    DisplayP3,
-    DciP3,
-    "Display P3 (D65) linear → DCI-P3 (D50) linear (Bradford adaptation)."
-);
-const_gamut_matrix!(
-    DCIP3_TO_BT2020,
-    DciP3,
-    Bt2020,
-    "DCI-P3 (D50) linear → BT.2020 linear (Bradford adaptation)."
-);
-const_gamut_matrix!(
-    BT2020_TO_DCIP3,
-    Bt2020,
-    DciP3,
-    "BT.2020 linear → DCI-P3 (D50) linear (Bradford adaptation)."
-);
-
 // =========================================================================
 // Shared helpers
 // =========================================================================
 
-/// Apply a 3×3 matrix to an RGB triple (crate-internal entry point).
+/// Apply a 3×3 matrix to an RGB triple.
 #[inline(always)]
-pub(crate) fn mat3x3_pub(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+pub(crate) fn mat3x3_scalar(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     mat3x3(m, r, g, b)
 }
 
-/// Apply a 3×3 matrix to an RGB triple.
 #[inline(always)]
 fn mat3x3(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     (
@@ -546,202 +410,6 @@ stamp_trc_kernels!(srgb_to_dci,
 );
 
 // =========================================================================
-// Public API — named conversions
-// =========================================================================
-
-// --- P3 ↔ sRGB (same TRC: sRGB curve) ---
-
-/// Display P3 → sRGB, f32 RGB in-place. Clamped to [0,1].
-pub fn p3_to_srgb_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_srgb(&P3_TO_SRGB, data));
-}
-/// sRGB → Display P3, f32 RGB in-place. Clamped to [0,1].
-pub fn srgb_to_p3_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_srgb(&SRGB_TO_P3, data));
-}
-/// Display P3 → sRGB, f32 RGBA in-place. Alpha unchanged.
-pub fn p3_to_srgb_f32_rgba(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 4, 0);
-    incant!(convert_rgba_srgb(&P3_TO_SRGB, data));
-}
-/// sRGB → Display P3, f32 RGBA in-place. Alpha unchanged.
-pub fn srgb_to_p3_f32_rgba(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 4, 0);
-    incant!(convert_rgba_srgb(&SRGB_TO_P3, data));
-}
-
-// --- BT.2020 SDR ↔ sRGB (cross-TRC: BT.709 ↔ sRGB) ---
-
-/// BT.2020 SDR → sRGB, f32 RGB in-place.
-pub fn bt2020_sdr_to_srgb_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_bt709_to_srgb(&BT2020_TO_SRGB, data));
-}
-/// sRGB → BT.2020 SDR, f32 RGB in-place.
-pub fn srgb_to_bt2020_sdr_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_srgb_to_bt709(&SRGB_TO_BT2020, data));
-}
-
-// --- BT.2020 PQ ↔ sRGB (cross-TRC: PQ ↔ sRGB) ---
-
-/// BT.2020 PQ → sRGB, f32 RGB in-place. **No tone mapping** — values may clip.
-pub fn bt2020_pq_to_srgb_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_pq_to_srgb(&BT2020_TO_SRGB, data));
-}
-/// sRGB → BT.2020 PQ, f32 RGB in-place.
-pub fn srgb_to_bt2020_pq_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_srgb_to_pq(&SRGB_TO_BT2020, data));
-}
-
-// --- BT.2020 HLG ↔ sRGB (cross-TRC: HLG ↔ sRGB) ---
-
-/// BT.2020 HLG → sRGB, f32 RGB in-place. **No tone mapping** — values may clip.
-pub fn bt2020_hlg_to_srgb_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_hlg_to_srgb(&BT2020_TO_SRGB, data));
-}
-
-// --- P3 ↔ BT.2020 (same TRC for SDR: sRGB curve) ---
-
-/// Display P3 → BT.2020, f32 RGB in-place (sRGB TRC on both sides).
-pub fn p3_to_bt2020_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_srgb(&P3_TO_BT2020, data));
-}
-/// BT.2020 → Display P3, f32 RGB in-place (sRGB TRC on both sides).
-pub fn bt2020_to_p3_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_srgb(&BT2020_TO_P3, data));
-}
-
-// --- Adobe RGB ↔ sRGB (cross-TRC: gamma 2.2 ↔ sRGB) ---
-
-/// Adobe RGB → sRGB, f32 RGB in-place.
-pub fn adobergb_to_srgb_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_adobe_to_srgb(&ADOBERGB_TO_SRGB, data));
-}
-/// sRGB → Adobe RGB, f32 RGB in-place.
-pub fn srgb_to_adobergb_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_srgb_to_adobe(&SRGB_TO_ADOBERGB, data));
-}
-/// Adobe RGB → sRGB, f32 RGBA in-place. Alpha unchanged.
-pub fn adobergb_to_srgb_f32_rgba(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 4, 0);
-    incant!(convert_rgba_adobe_to_srgb(&ADOBERGB_TO_SRGB, data));
-}
-
-// --- Adobe RGB ↔ P3 (cross-TRC: gamma 2.2 ↔ sRGB) ---
-
-/// Adobe RGB → Display P3, f32 RGB in-place.
-pub fn adobergb_to_p3_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_adobe_to_srgb(&ADOBERGB_TO_P3, data));
-}
-/// Display P3 → Adobe RGB, f32 RGB in-place.
-pub fn p3_to_adobergb_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_srgb_to_adobe(&P3_TO_ADOBERGB, data));
-}
-
-// --- Adobe RGB ↔ BT.2020 ---
-
-/// Adobe RGB → BT.2020, f32 RGB in-place (gamma 2.2 both sides).
-pub fn adobergb_to_bt2020_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_adobe(&ADOBERGB_TO_BT2020, data));
-}
-
-// --- Adobe RGB u8 ---
-
-/// Adobe RGB → sRGB, u8 RGB → u8 RGB.
-pub fn adobergb_to_srgb_u8_rgb(src: &[u8], dst: &mut [u8]) {
-    convert_u8_rgb(
-        &ADOBERGB_TO_SRGB,
-        src,
-        dst,
-        adobe_to_linear_scalar,
-        linear_srgb::tf::linear_to_srgb,
-    );
-}
-
-/// sRGB → Adobe RGB, u8 RGB → u8 RGB.
-pub fn srgb_to_adobergb_u8_rgb(src: &[u8], dst: &mut [u8]) {
-    convert_u8_rgb(
-        &SRGB_TO_ADOBERGB,
-        src,
-        dst,
-        linear_srgb::tf::srgb_to_linear,
-        adobe_from_linear_scalar,
-    );
-}
-
-// --- DCI-P3 ↔ sRGB (cross-TRC: γ2.6 ↔ sRGB, Bradford adaptation) ---
-
-/// DCI-P3 → sRGB, f32 RGB in-place.
-pub fn dcip3_to_srgb_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_dci_to_srgb(&DCIP3_TO_SRGB, data));
-}
-/// sRGB → DCI-P3, f32 RGB in-place.
-pub fn srgb_to_dcip3_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_srgb_to_dci(&SRGB_TO_DCIP3, data));
-}
-
-// --- DCI-P3 ↔ Display P3 (cross-TRC: γ2.6 ↔ sRGB, Bradford adaptation) ---
-
-/// DCI-P3 → Display P3, f32 RGB in-place.
-pub fn dcip3_to_p3_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_dci_to_srgb(&DCIP3_TO_P3, data));
-}
-/// Display P3 → DCI-P3, f32 RGB in-place.
-pub fn p3_to_dcip3_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_srgb_to_dci(&P3_TO_DCIP3, data));
-}
-
-// --- DCI-P3 ↔ BT.2020 ---
-
-/// DCI-P3 → BT.2020, f32 RGB in-place (γ2.6 → BT.709 TRC).
-pub fn dcip3_to_bt2020_f32(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    // DCI γ2.6 linearize → matrix → BT.709 encode
-    // Need a dci_to_bt709 stamp... use dci linearize + bt709 encode
-    // For now, go through linear: linearize, matrix, encode
-    for pixel in data.chunks_exact_mut(3) {
-        let r = dci_to_linear_scalar(pixel[0]);
-        let g = dci_to_linear_scalar(pixel[1]);
-        let b = dci_to_linear_scalar(pixel[2]);
-        let (nr, ng, nb) = mat3x3(&DCIP3_TO_BT2020, r, g, b);
-        pixel[0] = linear_srgb::tf::linear_to_bt709(nr);
-        pixel[1] = linear_srgb::tf::linear_to_bt709(ng);
-        pixel[2] = linear_srgb::tf::linear_to_bt709(nb);
-    }
-}
-
-// --- Generic: any matrix + any TRC (advanced users) ---
-
-/// Generic conversion with sRGB TRC and custom matrix, f32 RGB in-place.
-pub fn convert_srgb_trc_rgb(m: &[[f32; 3]; 3], data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    incant!(convert_rgb_srgb(m, data));
-}
-
-/// Generic conversion with sRGB TRC and custom matrix, f32 RGBA in-place.
-pub fn convert_srgb_trc_rgba(m: &[[f32; 3]; 3], data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 4, 0);
-    incant!(convert_rgba_srgb(m, data));
-}
-
-// =========================================================================
 // Dispatch: pick the right kernel for a given (src_trc, dst_trc) pair
 // =========================================================================
 
@@ -880,59 +548,6 @@ pub(crate) fn convert_f32_rgba_dispatch(
 }
 
 // =========================================================================
-// Extended range (sign-preserving scalar TRC, no clamping)
-// =========================================================================
-
-/// Linearize with sign-preserving sRGB TRC (extended range, scalar `powf`).
-#[inline(always)]
-fn linearize_extended(v: f32) -> f32 {
-    if v >= 0.0 {
-        linear_srgb::precise::srgb_to_linear_extended(v)
-    } else {
-        -linear_srgb::precise::srgb_to_linear_extended(-v)
-    }
-}
-
-/// Encode with sign-preserving sRGB TRC (extended range, scalar `powf`).
-#[inline(always)]
-fn encode_extended(v: f32) -> f32 {
-    if v >= 0.0 {
-        linear_srgb::precise::linear_to_srgb_extended(v)
-    } else {
-        -linear_srgb::precise::linear_to_srgb_extended(-v)
-    }
-}
-
-/// Display P3 → sRGB, f32 RGB in-place, **extended range** (no clamping).
-/// Slower than clamped variant due to scalar `powf`.
-pub fn p3_to_srgb_f32_extended(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    for pixel in data.chunks_exact_mut(3) {
-        let r = linearize_extended(pixel[0]);
-        let g = linearize_extended(pixel[1]);
-        let b = linearize_extended(pixel[2]);
-        let (sr, sg, sb) = mat3x3(&P3_TO_SRGB, r, g, b);
-        pixel[0] = encode_extended(sr);
-        pixel[1] = encode_extended(sg);
-        pixel[2] = encode_extended(sb);
-    }
-}
-
-/// sRGB → Display P3, f32 RGB in-place, **extended range**.
-pub fn srgb_to_p3_f32_extended(data: &mut [f32]) {
-    debug_assert_eq!(data.len() % 3, 0);
-    for pixel in data.chunks_exact_mut(3) {
-        let r = linearize_extended(pixel[0]);
-        let g = linearize_extended(pixel[1]);
-        let b = linearize_extended(pixel[2]);
-        let (pr, pg, pb) = mat3x3(&SRGB_TO_P3, r, g, b);
-        pixel[0] = encode_extended(pr);
-        pixel[1] = encode_extended(pg);
-        pixel[2] = encode_extended(pb);
-    }
-}
-
-// =========================================================================
 // u8 ↔ f32 wrappers
 // =========================================================================
 
@@ -1061,98 +676,6 @@ pub(crate) fn convert_u16_rgb(
     }
 }
 
-// --- u8 named conversions ---
-
-/// Display P3 → sRGB, u8 RGB → u8 RGB.
-pub fn p3_to_srgb_u8_rgb(src: &[u8], dst: &mut [u8]) {
-    convert_u8_rgb(
-        &P3_TO_SRGB,
-        src,
-        dst,
-        linear_srgb::tf::srgb_to_linear,
-        linear_srgb::tf::linear_to_srgb,
-    );
-}
-
-/// sRGB → Display P3, u8 RGB → u8 RGB.
-pub fn srgb_to_p3_u8_rgb(src: &[u8], dst: &mut [u8]) {
-    convert_u8_rgb(
-        &SRGB_TO_P3,
-        src,
-        dst,
-        linear_srgb::tf::srgb_to_linear,
-        linear_srgb::tf::linear_to_srgb,
-    );
-}
-
-/// Display P3 → sRGB, u8 RGBA → u8 RGBA. Alpha copied.
-pub fn p3_to_srgb_u8_rgba(src: &[u8], dst: &mut [u8]) {
-    convert_u8_rgba(
-        &P3_TO_SRGB,
-        src,
-        dst,
-        linear_srgb::tf::srgb_to_linear,
-        linear_srgb::tf::linear_to_srgb,
-    );
-}
-
-/// sRGB → Display P3, u8 RGBA → u8 RGBA. Alpha copied.
-pub fn srgb_to_p3_u8_rgba(src: &[u8], dst: &mut [u8]) {
-    convert_u8_rgba(
-        &SRGB_TO_P3,
-        src,
-        dst,
-        linear_srgb::tf::srgb_to_linear,
-        linear_srgb::tf::linear_to_srgb,
-    );
-}
-
-/// BT.2020 SDR → sRGB, u8 RGB → u8 RGB.
-pub fn bt2020_sdr_to_srgb_u8_rgb(src: &[u8], dst: &mut [u8]) {
-    convert_u8_rgb(
-        &BT2020_TO_SRGB,
-        src,
-        dst,
-        linear_srgb::tf::bt709_to_linear,
-        linear_srgb::tf::linear_to_srgb,
-    );
-}
-
-/// sRGB → BT.2020 SDR, u8 RGB → u8 RGB.
-pub fn srgb_to_bt2020_sdr_u8_rgb(src: &[u8], dst: &mut [u8]) {
-    convert_u8_rgb(
-        &SRGB_TO_BT2020,
-        src,
-        dst,
-        linear_srgb::tf::srgb_to_linear,
-        linear_srgb::tf::linear_to_bt709,
-    );
-}
-
-// --- u16 named conversions ---
-
-/// Display P3 → sRGB, u16 RGB → u16 RGB.
-pub fn p3_to_srgb_u16_rgb(src: &[u16], dst: &mut [u16]) {
-    convert_u16_rgb(
-        &P3_TO_SRGB,
-        src,
-        dst,
-        linear_srgb::tf::srgb_to_linear,
-        linear_srgb::tf::linear_to_srgb,
-    );
-}
-
-/// BT.2020 PQ → sRGB, u16 RGB → u16 RGB. **No tone mapping**.
-pub fn bt2020_pq_to_srgb_u16_rgb(src: &[u16], dst: &mut [u16]) {
-    convert_u16_rgb(
-        &BT2020_TO_SRGB,
-        src,
-        dst,
-        linear_srgb::tf::pq_to_linear,
-        linear_srgb::tf::linear_to_srgb,
-    );
-}
-
 // =========================================================================
 // Tests
 // =========================================================================
@@ -1160,256 +683,273 @@ pub fn bt2020_pq_to_srgb_u16_rgb(src: &[u16], dst: &mut [u16]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ColorPrimaries;
 
-    fn assert_white_roundtrip(convert: fn(&mut [f32])) {
-        let mut px = [1.0_f32, 1.0, 1.0];
-        convert(&mut px);
+    fn m(src: ColorPrimaries, dst: ColorPrimaries) -> [[f32; 3]; 3] {
+        src.gamut_matrix_to(dst).unwrap()
+    }
+
+    // --- Dispatch: white/black/roundtrip via convert_f32_rgb_dispatch ---
+
+    #[test]
+    fn dispatch_p3_srgb_white() {
+        let mat = m(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709);
+        let mut px = [1.0f32, 1.0, 1.0];
+        convert_f32_rgb_dispatch(
+            &mat,
+            &mut px,
+            TransferFunction::Srgb,
+            TransferFunction::Srgb,
+        );
         for c in &px {
-            assert!((c - 1.0).abs() < 1e-4, "white should map to white: {px:?}");
+            assert!((c - 1.0).abs() < 1e-4, "white: {px:?}");
         }
     }
 
-    fn assert_black_roundtrip(convert: fn(&mut [f32])) {
-        let mut px = [0.0_f32, 0.0, 0.0];
-        convert(&mut px);
+    #[test]
+    fn dispatch_p3_srgb_black() {
+        let mat = m(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709);
+        let mut px = [0.0f32, 0.0, 0.0];
+        convert_f32_rgb_dispatch(
+            &mat,
+            &mut px,
+            TransferFunction::Srgb,
+            TransferFunction::Srgb,
+        );
         for c in &px {
-            assert!(c.abs() < 1e-6, "black should map to black: {px:?}");
+            assert!(c.abs() < 1e-6, "black: {px:?}");
         }
     }
 
-    fn assert_roundtrip(forward: fn(&mut [f32]), inverse: fn(&mut [f32]), tol: f32) {
-        let original = [0.5_f32, 0.3, 0.7];
+    #[test]
+    fn dispatch_p3_srgb_roundtrip() {
+        let fwd = m(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709);
+        let inv = m(ColorPrimaries::Bt709, ColorPrimaries::DisplayP3);
+        let original = [0.5f32, 0.3, 0.7];
         let mut px = original;
-        forward(&mut px);
-        inverse(&mut px);
-        for (i, (a, b)) in original.iter().zip(px.iter()).enumerate() {
-            assert!((a - b).abs() < tol, "ch{i}: {a} → {b} (tol={tol})");
+        convert_f32_rgb_dispatch(
+            &fwd,
+            &mut px,
+            TransferFunction::Srgb,
+            TransferFunction::Srgb,
+        );
+        convert_f32_rgb_dispatch(
+            &inv,
+            &mut px,
+            TransferFunction::Srgb,
+            TransferFunction::Srgb,
+        );
+        for i in 0..3 {
+            assert!((original[i] - px[i]).abs() < 1e-4, "ch{i}: {}", px[i]);
         }
     }
 
-    // --- P3 ↔ sRGB ---
     #[test]
-    fn p3_srgb_white() {
-        assert_white_roundtrip(p3_to_srgb_f32);
-    }
-    #[test]
-    fn srgb_p3_white() {
-        assert_white_roundtrip(srgb_to_p3_f32);
-    }
-    #[test]
-    fn p3_srgb_black() {
-        assert_black_roundtrip(p3_to_srgb_f32);
-    }
-    #[test]
-    fn p3_srgb_roundtrip() {
-        assert_roundtrip(p3_to_srgb_f32, srgb_to_p3_f32, 1e-5);
+    fn dispatch_bt2020_sdr_srgb_white() {
+        let mat = m(ColorPrimaries::Bt2020, ColorPrimaries::Bt709);
+        let mut px = [1.0f32, 1.0, 1.0];
+        convert_f32_rgb_dispatch(
+            &mat,
+            &mut px,
+            TransferFunction::Bt709,
+            TransferFunction::Srgb,
+        );
+        for c in &px {
+            assert!((c - 1.0).abs() < 1e-4, "white: {px:?}");
+        }
     }
 
-    // --- BT.2020 SDR ↔ sRGB ---
     #[test]
-    fn bt2020_srgb_white() {
-        assert_white_roundtrip(bt2020_sdr_to_srgb_f32);
-    }
-    #[test]
-    fn srgb_bt2020_white() {
-        assert_white_roundtrip(srgb_to_bt2020_sdr_f32);
-    }
-    #[test]
-    fn bt2020_srgb_black() {
-        assert_black_roundtrip(bt2020_sdr_to_srgb_f32);
-    }
-    #[test]
-    fn bt2020_srgb_roundtrip() {
-        assert_roundtrip(bt2020_sdr_to_srgb_f32, srgb_to_bt2020_sdr_f32, 1e-4);
+    fn dispatch_bt2020_pq_srgb_black() {
+        let mat = m(ColorPrimaries::Bt2020, ColorPrimaries::Bt709);
+        let mut px = [0.0f32, 0.0, 0.0];
+        convert_f32_rgb_dispatch(&mat, &mut px, TransferFunction::Pq, TransferFunction::Srgb);
+        for c in &px {
+            assert!(c.abs() < 1e-5, "black: {px:?}");
+        }
     }
 
-    // --- BT.2020 PQ ↔ sRGB ---
     #[test]
-    fn bt2020pq_srgb_black() {
-        assert_black_roundtrip(bt2020_pq_to_srgb_f32);
-    }
-    #[test]
-    fn srgb_bt2020pq_black() {
-        assert_black_roundtrip(srgb_to_bt2020_pq_f32);
-    }
-
-    // --- P3 ↔ BT.2020 ---
-    #[test]
-    fn p3_bt2020_white() {
-        assert_white_roundtrip(p3_to_bt2020_f32);
-    }
-    #[test]
-    fn bt2020_p3_white() {
-        assert_white_roundtrip(bt2020_to_p3_f32);
-    }
-    #[test]
-    fn p3_bt2020_roundtrip() {
-        assert_roundtrip(p3_to_bt2020_f32, bt2020_to_p3_f32, 1e-5);
+    fn dispatch_adobe_srgb_white() {
+        let mat = m(ColorPrimaries::AdobeRgb, ColorPrimaries::Bt709);
+        let mut px = [1.0f32, 1.0, 1.0];
+        convert_f32_rgb_dispatch(
+            &mat,
+            &mut px,
+            TransferFunction::Gamma22,
+            TransferFunction::Srgb,
+        );
+        for c in &px {
+            assert!((c - 1.0).abs() < 1e-4, "white: {px:?}");
+        }
     }
 
-    // --- Linear ---
     #[test]
-    fn linear_white() {
-        let mut px = [1.0_f32, 1.0, 1.0];
-        convert_linear_rgb(&P3_TO_SRGB, &mut px);
+    fn dispatch_dci_srgb_white() {
+        let mat = m(ColorPrimaries::DciP3, ColorPrimaries::Bt709);
+        let mut px = [1.0f32, 1.0, 1.0];
+        convert_f32_rgb_dispatch(
+            &mat,
+            &mut px,
+            TransferFunction::Gamma26,
+            TransferFunction::Srgb,
+        );
+        for c in &px {
+            assert!((c - 1.0).abs() < 1e-4, "white: {px:?}");
+        }
+    }
+
+    #[test]
+    fn dispatch_rgba_alpha_passthrough() {
+        let mat = m(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709);
+        let mut px = [0.5f32, 0.5, 0.5, 0.7];
+        convert_f32_rgba_dispatch(
+            &mat,
+            &mut px,
+            TransferFunction::Srgb,
+            TransferFunction::Srgb,
+        );
+        assert!((px[3] - 0.7).abs() < f32::EPSILON, "alpha: {px:?}");
+    }
+
+    #[test]
+    fn dispatch_linear_white() {
+        let mat = m(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709);
+        let mut px = [1.0f32, 1.0, 1.0];
+        convert_f32_rgb_dispatch(
+            &mat,
+            &mut px,
+            TransferFunction::Linear,
+            TransferFunction::Linear,
+        );
         for c in &px {
             assert!((c - 1.0).abs() < 1e-6, "linear white: {px:?}");
         }
     }
 
-    // --- RGBA alpha passthrough ---
     #[test]
-    fn rgba_alpha_passthrough() {
-        let mut px = [0.5_f32, 0.5, 0.5, 0.7];
-        p3_to_srgb_f32_rgba(&mut px);
-        assert!((px[3] - 0.7).abs() < f32::EPSILON, "alpha changed: {px:?}");
+    fn dispatch_returns_false_for_unknown_trc() {
+        let mat = m(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709);
+        let mut px = [0.5f32, 0.5, 0.5];
+        assert!(!convert_f32_rgb_dispatch(
+            &mat,
+            &mut px,
+            TransferFunction::Unknown,
+            TransferFunction::Srgb
+        ));
     }
 
-    // --- Extended range ---
+    // --- u8/u16 via internal helpers ---
+
     #[test]
-    fn extended_p3_green_negative_srgb_red() {
-        let mut px = [0.0_f32, 1.0, 0.0];
-        p3_to_srgb_f32_extended(&mut px);
-        assert!(
-            px[0] < 0.0,
-            "P3 green should have negative sRGB red: {px:?}"
+    fn u8_white_black() {
+        let mat = m(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709);
+        let mut dst = [0u8; 3];
+        convert_u8_rgb(
+            &mat,
+            &[255, 255, 255],
+            &mut dst,
+            linear_srgb::tf::srgb_to_linear,
+            linear_srgb::tf::linear_to_srgb,
         );
-        assert!(px[1] > 1.0, "P3 green should have >1.0 sRGB green: {px:?}");
-    }
-
-    #[test]
-    fn clamped_p3_green_stays_in_range() {
-        let mut px = [0.0_f32, 1.0, 0.0];
-        p3_to_srgb_f32(&mut px);
-        assert!(px[0] >= 0.0 && px[1] <= 1.0, "should be clamped: {px:?}");
-    }
-
-    // --- sRGB subset of wider gamuts ---
-    #[test]
-    fn srgb_subset_of_p3() {
-        for r in (0..=255).step_by(17) {
-            for g in (0..=255).step_by(17) {
-                for b in (0..=255).step_by(17) {
-                    let mut px = [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0];
-                    srgb_to_p3_f32(&mut px);
-                    for (i, c) in px.iter().enumerate() {
-                        assert!(
-                            *c >= -1e-5 && *c <= 1.0 + 1e-5,
-                            "sRGB ({r},{g},{b}) ch{i} out of P3: {c}"
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn srgb_subset_of_bt2020() {
-        for r in (0..=255).step_by(17) {
-            for g in (0..=255).step_by(17) {
-                for b in (0..=255).step_by(17) {
-                    let mut px = [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0];
-                    srgb_to_bt2020_sdr_f32(&mut px);
-                    for (i, c) in px.iter().enumerate() {
-                        assert!(
-                            *c >= -1e-4 && *c <= 1.0 + 1e-4,
-                            "sRGB ({r},{g},{b}) ch{i} out of BT.2020: {c}"
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    // --- u8 conversions ---
-
-    #[test]
-    fn u8_p3_srgb_white() {
-        let src = [255u8, 255, 255];
-        let mut dst = [0u8; 3];
-        p3_to_srgb_u8_rgb(&src, &mut dst);
         assert_eq!(dst, [255, 255, 255]);
-    }
-
-    #[test]
-    fn u8_p3_srgb_black() {
-        let src = [0u8, 0, 0];
-        let mut dst = [0u8; 3];
-        p3_to_srgb_u8_rgb(&src, &mut dst);
+        convert_u8_rgb(
+            &mat,
+            &[0, 0, 0],
+            &mut dst,
+            linear_srgb::tf::srgb_to_linear,
+            linear_srgb::tf::linear_to_srgb,
+        );
         assert_eq!(dst, [0, 0, 0]);
     }
 
     #[test]
-    fn u8_srgb_p3_roundtrip() {
-        // Mid-gray should survive roundtrip within ±1 code value
-        let original = [128u8, 128, 128];
-        let mut mid = [0u8; 3];
-        let mut result = [0u8; 3];
-        srgb_to_p3_u8_rgb(&original, &mut mid);
-        p3_to_srgb_u8_rgb(&mid, &mut result);
-        for i in 0..3 {
-            assert!(
-                (original[i] as i16 - result[i] as i16).unsigned_abs() <= 1,
-                "ch{i}: {original:?} → {mid:?} → {result:?}"
-            );
-        }
+    fn u8_lut_matches_scalar() {
+        let mat = m(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709);
+        let lut = build_linearize_lut(linear_srgb::tf::srgb_to_linear);
+        let src = [128u8, 64, 200];
+        let mut dst_scalar = [0u8; 3];
+        let mut dst_lut = [0u8; 3];
+        convert_u8_rgb(
+            &mat,
+            &src,
+            &mut dst_scalar,
+            linear_srgb::tf::srgb_to_linear,
+            linear_srgb::tf::linear_to_srgb,
+        );
+        convert_u8_rgb_lut(
+            &mat,
+            &src,
+            &mut dst_lut,
+            &lut,
+            linear_srgb::tf::linear_to_srgb,
+        );
+        assert_eq!(
+            dst_scalar, dst_lut,
+            "LUT and scalar should produce identical u8 output"
+        );
     }
 
     #[test]
     fn u8_rgba_alpha_passthrough() {
-        let src = [128u8, 64, 32, 200];
+        let mat = m(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709);
         let mut dst = [0u8; 4];
-        p3_to_srgb_u8_rgba(&src, &mut dst);
-        assert_eq!(dst[3], 200, "alpha should be copied");
+        convert_u8_rgba(
+            &mat,
+            &[128, 64, 32, 200],
+            &mut dst,
+            linear_srgb::tf::srgb_to_linear,
+            linear_srgb::tf::linear_to_srgb,
+        );
+        assert_eq!(dst[3], 200);
     }
 
     #[test]
-    fn u8_bt2020_sdr_srgb_roundtrip() {
-        let original = [100u8, 150, 200];
-        let mut mid = [0u8; 3];
-        let mut result = [0u8; 3];
-        srgb_to_bt2020_sdr_u8_rgb(&original, &mut mid);
-        bt2020_sdr_to_srgb_u8_rgb(&mid, &mut result);
-        for i in 0..3 {
-            assert!(
-                (original[i] as i16 - result[i] as i16).unsigned_abs() <= 2,
-                "ch{i}: {original:?} → {mid:?} → {result:?}"
-            );
-        }
-    }
-
-    // --- u16 conversions ---
-
-    #[test]
-    fn u16_p3_srgb_white() {
-        let src = [65535u16, 65535, 65535];
+    fn u16_white_black() {
+        let mat = m(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709);
         let mut dst = [0u16; 3];
-        p3_to_srgb_u16_rgb(&src, &mut dst);
+        convert_u16_rgb(
+            &mat,
+            &[65535, 65535, 65535],
+            &mut dst,
+            linear_srgb::tf::srgb_to_linear,
+            linear_srgb::tf::linear_to_srgb,
+        );
         assert_eq!(dst, [65535, 65535, 65535]);
-    }
-
-    #[test]
-    fn u16_p3_srgb_black() {
-        let src = [0u16, 0, 0];
-        let mut dst = [0u16; 3];
-        p3_to_srgb_u16_rgb(&src, &mut dst);
+        convert_u16_rgb(
+            &mat,
+            &[0, 0, 0],
+            &mut dst,
+            linear_srgb::tf::srgb_to_linear,
+            linear_srgb::tf::linear_to_srgb,
+        );
         assert_eq!(dst, [0, 0, 0]);
     }
 
-    // --- Accuracy: f32 roundtrip max error ---
+    // --- Roundtrip accuracy ---
 
     #[test]
-    fn f32_srgb_p3_srgb_roundtrip_accuracy() {
-        // sRGB→P3→sRGB roundtrip: sRGB is a subset of P3, so no clamping.
-        // This tests the pure polynomial + matrix precision.
+    fn f32_roundtrip_accuracy() {
+        let fwd = m(ColorPrimaries::Bt709, ColorPrimaries::DisplayP3);
+        let inv = m(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709);
         let mut max_err: f32 = 0.0;
         for r in (0..=255).step_by(4) {
             for g in (0..=255).step_by(4) {
                 for b in (0..=255).step_by(16) {
                     let original = [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0];
                     let mut px = original;
-                    srgb_to_p3_f32(&mut px);
-                    p3_to_srgb_f32(&mut px);
+                    convert_f32_rgb_dispatch(
+                        &fwd,
+                        &mut px,
+                        TransferFunction::Srgb,
+                        TransferFunction::Srgb,
+                    );
+                    convert_f32_rgb_dispatch(
+                        &inv,
+                        &mut px,
+                        TransferFunction::Srgb,
+                        TransferFunction::Srgb,
+                    );
                     for i in 0..3 {
                         let err = (original[i] - px[i]).abs();
                         if err > max_err {
@@ -1422,213 +962,26 @@ mod tests {
         assert!(max_err < 1e-4, "max roundtrip error: {max_err}");
     }
 
-    // --- Matrix inverse verification ---
+    // --- sRGB subset of wider gamuts ---
 
     #[test]
-    fn matrix_inverse_pairs() {
-        // P3_TO_SRGB × SRGB_TO_P3 ≈ identity
-        let identity = |m1: &[[f32; 3]; 3], m2: &[[f32; 3]; 3]| {
-            for i in 0..3 {
-                for j in 0..3 {
-                    let sum: f32 = (0..3).map(|k| m1[i][k] * m2[k][j]).sum();
-                    let expected = if i == j { 1.0 } else { 0.0 };
-                    assert!(
-                        (sum - expected).abs() < 1e-5,
-                        "M1×M2[{i}][{j}] = {sum}, expected {expected}"
-                    );
-                }
-            }
-        };
-        identity(&P3_TO_SRGB, &SRGB_TO_P3);
-        identity(&BT2020_TO_SRGB, &SRGB_TO_BT2020);
-        identity(&BT2020_TO_P3, &P3_TO_BT2020);
-    }
-
-    // --- All matrices preserve white ---
-
-    #[test]
-    fn all_matrices_preserve_white() {
-        let matrices: &[(&str, &[[f32; 3]; 3])] = &[
-            ("P3_TO_SRGB", &P3_TO_SRGB),
-            ("SRGB_TO_P3", &SRGB_TO_P3),
-            ("BT2020_TO_SRGB", &BT2020_TO_SRGB),
-            ("SRGB_TO_BT2020", &SRGB_TO_BT2020),
-            ("P3_TO_BT2020", &P3_TO_BT2020),
-            ("BT2020_TO_P3", &BT2020_TO_P3),
-        ];
-        for (name, m) in matrices {
-            let (r, g, b) = mat3x3(m, 1.0, 1.0, 1.0);
-            assert!(
-                (r - 1.0).abs() < 1e-5 && (g - 1.0).abs() < 1e-5 && (b - 1.0).abs() < 1e-5,
-                "{name}: white → ({r}, {g}, {b})"
-            );
-        }
-    }
-
-    // --- P3 subset of BT.2020 ---
-
-    #[test]
-    fn p3_subset_of_bt2020() {
+    fn srgb_subset_of_p3() {
+        let mat = m(ColorPrimaries::Bt709, ColorPrimaries::DisplayP3);
         for r in (0..=255).step_by(17) {
             for g in (0..=255).step_by(17) {
                 for b in (0..=255).step_by(17) {
                     let mut px = [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0];
-                    p3_to_bt2020_f32(&mut px);
+                    convert_f32_rgb_dispatch(
+                        &mat,
+                        &mut px,
+                        TransferFunction::Srgb,
+                        TransferFunction::Srgb,
+                    );
                     for (i, c) in px.iter().enumerate() {
-                        assert!(
-                            *c >= -1e-4 && *c <= 1.0 + 1e-4,
-                            "P3 ({r},{g},{b}) ch{i} out of BT.2020: {c}"
-                        );
+                        assert!(*c >= -1e-5 && *c <= 1.0 + 1e-5, "({r},{g},{b}) ch{i}: {c}");
                     }
                 }
             }
-        }
-    }
-
-    // --- Adobe RGB ---
-
-    #[test]
-    fn adobergb_srgb_white() {
-        assert_white_roundtrip(adobergb_to_srgb_f32);
-    }
-    #[test]
-    fn srgb_adobergb_white() {
-        assert_white_roundtrip(srgb_to_adobergb_f32);
-    }
-    #[test]
-    fn adobergb_srgb_black() {
-        assert_black_roundtrip(adobergb_to_srgb_f32);
-    }
-    #[test]
-    fn adobergb_srgb_roundtrip() {
-        // sRGB is a subset of Adobe RGB, so sRGB→Adobe→sRGB roundtrips
-        assert_roundtrip(srgb_to_adobergb_f32, adobergb_to_srgb_f32, 1e-4);
-    }
-    #[test]
-    fn adobergb_p3_white() {
-        assert_white_roundtrip(adobergb_to_p3_f32);
-    }
-    #[test]
-    fn adobergb_rgba_alpha() {
-        let mut px = [0.5_f32, 0.5, 0.5, 0.7];
-        adobergb_to_srgb_f32_rgba(&mut px);
-        assert!((px[3] - 0.7).abs() < f32::EPSILON, "alpha changed: {px:?}");
-    }
-    #[test]
-    fn u8_adobergb_srgb_roundtrip() {
-        let original = [128u8, 128, 128];
-        let mut mid = [0u8; 3];
-        let mut result = [0u8; 3];
-        srgb_to_adobergb_u8_rgb(&original, &mut mid);
-        adobergb_to_srgb_u8_rgb(&mid, &mut result);
-        for i in 0..3 {
-            assert!(
-                (original[i] as i16 - result[i] as i16).unsigned_abs() <= 1,
-                "ch{i}: {original:?} → {mid:?} → {result:?}"
-            );
-        }
-    }
-    #[test]
-    fn all_matrices_preserve_white_with_adobe() {
-        let matrices: &[(&str, &[[f32; 3]; 3])] = &[
-            ("ADOBERGB_TO_SRGB", &ADOBERGB_TO_SRGB),
-            ("SRGB_TO_ADOBERGB", &SRGB_TO_ADOBERGB),
-            ("ADOBERGB_TO_P3", &ADOBERGB_TO_P3),
-            ("P3_TO_ADOBERGB", &P3_TO_ADOBERGB),
-            ("ADOBERGB_TO_BT2020", &ADOBERGB_TO_BT2020),
-            ("BT2020_TO_ADOBERGB", &BT2020_TO_ADOBERGB),
-        ];
-        for (name, m) in matrices {
-            let (r, g, b) = mat3x3(m, 1.0, 1.0, 1.0);
-            assert!(
-                (r - 1.0).abs() < 1e-5 && (g - 1.0).abs() < 1e-5 && (b - 1.0).abs() < 1e-5,
-                "{name}: white → ({r}, {g}, {b})"
-            );
-        }
-    }
-    #[test]
-    fn adobe_matrix_inverse_pairs() {
-        let identity = |m1: &[[f32; 3]; 3], m2: &[[f32; 3]; 3]| {
-            for i in 0..3 {
-                for j in 0..3 {
-                    let sum: f32 = (0..3).map(|k| m1[i][k] * m2[k][j]).sum();
-                    let expected = if i == j { 1.0 } else { 0.0 };
-                    assert!(
-                        (sum - expected).abs() < 1e-4,
-                        "M1×M2[{i}][{j}] = {sum}, expected {expected}"
-                    );
-                }
-            }
-        };
-        identity(&ADOBERGB_TO_SRGB, &SRGB_TO_ADOBERGB);
-        identity(&ADOBERGB_TO_P3, &P3_TO_ADOBERGB);
-        identity(&ADOBERGB_TO_BT2020, &BT2020_TO_ADOBERGB);
-    }
-
-    // --- DCI-P3 ---
-
-    #[test]
-    fn dcip3_srgb_white() {
-        assert_white_roundtrip(dcip3_to_srgb_f32);
-    }
-    #[test]
-    fn srgb_dcip3_white() {
-        assert_white_roundtrip(srgb_to_dcip3_f32);
-    }
-    #[test]
-    fn dcip3_srgb_black() {
-        assert_black_roundtrip(dcip3_to_srgb_f32);
-    }
-    #[test]
-    fn dcip3_p3_white() {
-        assert_white_roundtrip(dcip3_to_p3_f32);
-    }
-    #[test]
-    fn p3_dcip3_white() {
-        assert_white_roundtrip(p3_to_dcip3_f32);
-    }
-    #[test]
-    fn dcip3_srgb_roundtrip() {
-        assert_roundtrip(srgb_to_dcip3_f32, dcip3_to_srgb_f32, 1e-4);
-    }
-    #[test]
-    fn dcip3_p3_roundtrip() {
-        assert_roundtrip(p3_to_dcip3_f32, dcip3_to_p3_f32, 1e-4);
-    }
-    #[test]
-    fn dci_matrix_inverse_pairs() {
-        let identity = |m1: &[[f32; 3]; 3], m2: &[[f32; 3]; 3]| {
-            for i in 0..3 {
-                for j in 0..3 {
-                    let sum: f32 = (0..3).map(|k| m1[i][k] * m2[k][j]).sum();
-                    let expected = if i == j { 1.0 } else { 0.0 };
-                    assert!(
-                        (sum - expected).abs() < 1e-4,
-                        "M1×M2[{i}][{j}] = {sum}, expected {expected}"
-                    );
-                }
-            }
-        };
-        identity(&DCIP3_TO_SRGB, &SRGB_TO_DCIP3);
-        identity(&DCIP3_TO_P3, &P3_TO_DCIP3);
-        identity(&DCIP3_TO_BT2020, &BT2020_TO_DCIP3);
-    }
-    #[test]
-    fn all_dci_matrices_preserve_white() {
-        let matrices: &[(&str, &[[f32; 3]; 3])] = &[
-            ("DCIP3_TO_SRGB", &DCIP3_TO_SRGB),
-            ("SRGB_TO_DCIP3", &SRGB_TO_DCIP3),
-            ("DCIP3_TO_P3", &DCIP3_TO_P3),
-            ("P3_TO_DCIP3", &P3_TO_DCIP3),
-            ("DCIP3_TO_BT2020", &DCIP3_TO_BT2020),
-            ("BT2020_TO_DCIP3", &BT2020_TO_DCIP3),
-        ];
-        for (name, m) in matrices {
-            let (r, g, b) = mat3x3(m, 1.0, 1.0, 1.0);
-            assert!(
-                (r - 1.0).abs() < 1e-4 && (g - 1.0).abs() < 1e-4 && (b - 1.0).abs() < 1e-4,
-                "{name}: white → ({r}, {g}, {b})"
-            );
         }
     }
 }
