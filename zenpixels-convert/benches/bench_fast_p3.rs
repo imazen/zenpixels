@@ -72,7 +72,7 @@ fn main() {
             });
 
             let d = data_linear_rgb.clone();
-            g.bench("matrix only (P3→sRGB)", move |bench| {
+            g.bench("matrix stride-3 scalar", move |bench| {
                 let mut buf = d.clone();
                 bench.iter(|| {
                     for pixel in buf.chunks_exact_mut(3) {
@@ -83,6 +83,81 @@ fn main() {
                             (-0.0420569547_f32).mul_add(r, 1.0420569547_f32.mul_add(g, 0.0 * b));
                         pixel[2] = (-0.0196375546_f32)
                             .mul_add(r, (-0.0786360456_f32).mul_add(g, 1.0982736001_f32 * b));
+                    }
+                    black_box(());
+                });
+            });
+
+            // RGBX approach: pad to stride-4, matrix on stride-4, strip padding
+            let d = data_linear_rgb.clone();
+            g.bench("matrix via RGBX pad+strip", move |bench| {
+                let mut buf = d.clone();
+                let n = buf.len() / 3;
+                let mut rgbx = vec![0.0f32; n * 4];
+                bench.iter(|| {
+                    // Pad RGB → RGBX
+                    for i in 0..n {
+                        rgbx[i * 4] = buf[i * 3];
+                        rgbx[i * 4 + 1] = buf[i * 3 + 1];
+                        rgbx[i * 4 + 2] = buf[i * 3 + 2];
+                        // rgbx[i*4+3] = 0.0; // X channel ignored
+                    }
+                    // Matrix on stride-4
+                    for pixel in rgbx.chunks_exact_mut(4) {
+                        let (r, g, b) = (pixel[0], pixel[1], pixel[2]);
+                        pixel[0] =
+                            1.2249401763_f32.mul_add(r, (-0.2249401763_f32).mul_add(g, 0.0 * b));
+                        pixel[1] =
+                            (-0.0420569547_f32).mul_add(r, 1.0420569547_f32.mul_add(g, 0.0 * b));
+                        pixel[2] = (-0.0196375546_f32)
+                            .mul_add(r, (-0.0786360456_f32).mul_add(g, 1.0982736001_f32 * b));
+                    }
+                    // Strip RGBX → RGB
+                    for i in 0..n {
+                        buf[i * 3] = rgbx[i * 4];
+                        buf[i * 3 + 1] = rgbx[i * 4 + 1];
+                        buf[i * 3 + 2] = rgbx[i * 4 + 2];
+                    }
+                    black_box(());
+                });
+            });
+
+            // Planar approach: separate loops per output channel
+            let d = data_linear_rgb.clone();
+            g.bench("matrix planar separate loops", move |bench| {
+                let mut buf = d.clone();
+                let n = buf.len() / 3;
+                let mut pr = vec![0.0f32; n];
+                let mut pg = vec![0.0f32; n];
+                let mut pb = vec![0.0f32; n];
+                bench.iter(|| {
+                    // Deinterleave
+                    for i in 0..n {
+                        pr[i] = buf[i * 3];
+                        pg[i] = buf[i * 3 + 1];
+                        pb[i] = buf[i * 3 + 2];
+                    }
+                    // Separate loop per output channel — maximizes auto-vectorization
+                    let mut or = vec![0.0f32; n];
+                    let mut og = vec![0.0f32; n];
+                    let mut ob = vec![0.0f32; n];
+                    for i in 0..n {
+                        or[i] = 1.2249401763_f32.mul_add(pr[i], (-0.2249401763_f32) * pg[i]);
+                    }
+                    for i in 0..n {
+                        og[i] = (-0.0420569547_f32).mul_add(pr[i], 1.0420569547_f32 * pg[i]);
+                    }
+                    for i in 0..n {
+                        ob[i] = (-0.0196375546_f32).mul_add(
+                            pr[i],
+                            (-0.0786360456_f32).mul_add(pg[i], 1.0982736001_f32 * pb[i]),
+                        );
+                    }
+                    // Interleave
+                    for i in 0..n {
+                        buf[i * 3] = or[i];
+                        buf[i * 3 + 1] = og[i];
+                        buf[i * 3 + 2] = ob[i];
                     }
                     black_box(());
                 });
