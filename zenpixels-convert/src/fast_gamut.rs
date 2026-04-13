@@ -812,11 +812,13 @@ pub(crate) fn convert_u8_rgb_lut_lut(
 fn convert_8px_u8_rgb_fused(
     token: X64V3Token,
     m: &[[f32; 3]; 3],
-    src: &[u8],
-    dst: &mut [u8],
+    src: &[u8; 24],
+    dst: &mut [u8; 24],
     lin_lut: &[f32; 256],
     dst_trc: TransferFunction,
 ) {
+    // u8 indices are always 0..255 → always in bounds for [f32; 256].
+    // Fixed-size [u8; 24] input eliminates bounds checks on src.
     let mut r = [0.0f32; 8];
     let mut g = [0.0f32; 8];
     let mut b = [0.0f32; 8];
@@ -853,14 +855,9 @@ fn convert_u8_rgb_fused_v3(
     let bulk = (pixel_count / 8) * 8;
     let bulk_bytes = bulk * 3;
     for off in (0..bulk_bytes).step_by(24) {
-        convert_8px_u8_rgb_fused(
-            token,
-            m,
-            &src[off..off + 24],
-            &mut dst[off..off + 24],
-            lin_lut,
-            dst_trc,
-        );
+        let s: &[u8; 24] = src[off..off + 24].try_into().unwrap();
+        let d: &mut [u8; 24] = (&mut dst[off..off + 24]).try_into().unwrap();
+        convert_8px_u8_rgb_fused(token, m, s, d, lin_lut, dst_trc);
     }
     for i in bulk..pixel_count {
         let base = i * 3;
