@@ -44,6 +44,8 @@ pub mod policy;
 pub mod cicp;
 pub mod color;
 pub mod hdr;
+#[cfg(feature = "icc")]
+pub mod icc;
 pub mod pixel_types;
 
 pub mod buffer;

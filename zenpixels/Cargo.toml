@@ -25,9 +25,10 @@ exclude = [
 ]
 
 [features]
-default = ["std"]
+default = ["std", "icc"]
 std = []
 planar = []
+icc = []
 rgb = ["dep:rgb"]
 imgref = ["dep:imgref", "rgb"]
 serde = ["dep:serde"]
