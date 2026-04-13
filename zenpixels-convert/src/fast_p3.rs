@@ -72,52 +72,204 @@ fn mat3x3(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     )
 }
 
-/// Apply the 3×3 gamut matrix to linear f32 RGB data in-place.
-fn apply_matrix_rgb(m: &[[f32; 3]; 3], data: &mut [f32]) {
-    for pixel in data.chunks_exact_mut(3) {
-        let (r, g, b) = (pixel[0], pixel[1], pixel[2]);
-        let (nr, ng, nb) = mat3x3(m, r, g, b);
-        pixel[0] = nr;
-        pixel[1] = ng;
-        pixel[2] = nb;
+// ---------------------------------------------------------------------------
+// Fused SIMD kernel: linearize + matrix + encode in one pass
+// ---------------------------------------------------------------------------
+
+use archmage::prelude::*;
+use linear_srgb::tokens::x8 as trc_x8;
+use magetypes::simd::f32x8 as mt_f32x8;
+
+/// Fused linearize → matrix → encode for 8 RGB pixels (24 f32s).
+///
+/// Processes 8 pixels at a time using AVX2+FMA SIMD for both the rational
+/// polynomial TRC and the matrix multiply. Single pass over data.
+#[rite]
+fn fused_8px_rgb(token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
+    // Deinterleave 8 stride-3 pixels into per-channel [f32; 8]
+    let mut r_arr = [0.0f32; 8];
+    let mut g_arr = [0.0f32; 8];
+    let mut b_arr = [0.0f32; 8];
+    for i in 0..8 {
+        r_arr[i] = data[i * 3];
+        g_arr[i] = data[i * 3 + 1];
+        b_arr[i] = data[i * 3 + 2];
+    }
+
+    // Linearize (SIMD rational polynomial, 8 values at once)
+    let r_lin = trc_x8::srgb_to_linear_v3(token, r_arr);
+    let g_lin = trc_x8::srgb_to_linear_v3(token, g_arr);
+    let b_lin = trc_x8::srgb_to_linear_v3(token, b_arr);
+
+    // Matrix multiply (SIMD FMA, 8 pixels at once per channel)
+    let rl = mt_f32x8::from_array(token, r_lin);
+    let gl = mt_f32x8::from_array(token, g_lin);
+    let bl = mt_f32x8::from_array(token, b_lin);
+
+    let or = mt_f32x8::splat(token, m[0][0]).mul_add(
+        rl,
+        mt_f32x8::splat(token, m[0][1]).mul_add(gl, mt_f32x8::splat(token, m[0][2]) * bl),
+    );
+    let og = mt_f32x8::splat(token, m[1][0]).mul_add(
+        rl,
+        mt_f32x8::splat(token, m[1][1]).mul_add(gl, mt_f32x8::splat(token, m[1][2]) * bl),
+    );
+    let ob = mt_f32x8::splat(token, m[2][0]).mul_add(
+        rl,
+        mt_f32x8::splat(token, m[2][1]).mul_add(gl, mt_f32x8::splat(token, m[2][2]) * bl),
+    );
+
+    // Encode (SIMD rational polynomial, 8 values at once)
+    let r_out = trc_x8::linear_to_srgb_v3(token, or.to_array());
+    let g_out = trc_x8::linear_to_srgb_v3(token, og.to_array());
+    let b_out = trc_x8::linear_to_srgb_v3(token, ob.to_array());
+
+    // Interleave back to stride-3
+    for i in 0..8 {
+        data[i * 3] = r_out[i];
+        data[i * 3 + 1] = g_out[i];
+        data[i * 3 + 2] = b_out[i];
     }
 }
 
-/// Apply the 3×3 gamut matrix to linear f32 RGBA data in-place (alpha unchanged).
-fn apply_matrix_rgba(m: &[[f32; 3]; 3], data: &mut [f32]) {
-    for pixel in data.chunks_exact_mut(4) {
-        let (r, g, b) = (pixel[0], pixel[1], pixel[2]);
-        let (nr, ng, nb) = mat3x3(m, r, g, b);
-        pixel[0] = nr;
-        pixel[1] = ng;
-        pixel[2] = nb;
+/// Fused linearize → matrix → encode for 8 RGBA pixels (32 f32s).
+#[rite]
+fn fused_8px_rgba(token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
+    let mut r_arr = [0.0f32; 8];
+    let mut g_arr = [0.0f32; 8];
+    let mut b_arr = [0.0f32; 8];
+    for i in 0..8 {
+        r_arr[i] = data[i * 4];
+        g_arr[i] = data[i * 4 + 1];
+        b_arr[i] = data[i * 4 + 2];
+    }
+
+    let r_lin = trc_x8::srgb_to_linear_v3(token, r_arr);
+    let g_lin = trc_x8::srgb_to_linear_v3(token, g_arr);
+    let b_lin = trc_x8::srgb_to_linear_v3(token, b_arr);
+
+    let rl = mt_f32x8::from_array(token, r_lin);
+    let gl = mt_f32x8::from_array(token, g_lin);
+    let bl = mt_f32x8::from_array(token, b_lin);
+
+    let or = mt_f32x8::splat(token, m[0][0]).mul_add(
+        rl,
+        mt_f32x8::splat(token, m[0][1]).mul_add(gl, mt_f32x8::splat(token, m[0][2]) * bl),
+    );
+    let og = mt_f32x8::splat(token, m[1][0]).mul_add(
+        rl,
+        mt_f32x8::splat(token, m[1][1]).mul_add(gl, mt_f32x8::splat(token, m[1][2]) * bl),
+    );
+    let ob = mt_f32x8::splat(token, m[2][0]).mul_add(
+        rl,
+        mt_f32x8::splat(token, m[2][1]).mul_add(gl, mt_f32x8::splat(token, m[2][2]) * bl),
+    );
+
+    let r_out = trc_x8::linear_to_srgb_v3(token, or.to_array());
+    let g_out = trc_x8::linear_to_srgb_v3(token, og.to_array());
+    let b_out = trc_x8::linear_to_srgb_v3(token, ob.to_array());
+
+    for i in 0..8 {
+        data[i * 4] = r_out[i];
+        data[i * 4 + 1] = g_out[i];
+        data[i * 4 + 2] = b_out[i];
+        // alpha unchanged
     }
 }
+
+/// Fused SIMD dispatch: 8-pixel SIMD for bulk, scalar remainder.
+#[arcane]
+fn convert_rgb_fused_v3(token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
+    let chunks = data.len() / 24;
+    let bulk = chunks * 24;
+
+    for chunk_start in (0..bulk).step_by(24) {
+        fused_8px_rgb(token, m, &mut data[chunk_start..chunk_start + 24]);
+    }
+
+    for pixel in data[bulk..].chunks_exact_mut(3) {
+        let r = linear_srgb::tf::srgb_to_linear(pixel[0]);
+        let g = linear_srgb::tf::srgb_to_linear(pixel[1]);
+        let b = linear_srgb::tf::srgb_to_linear(pixel[2]);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        pixel[0] = linear_srgb::tf::linear_to_srgb(nr);
+        pixel[1] = linear_srgb::tf::linear_to_srgb(ng);
+        pixel[2] = linear_srgb::tf::linear_to_srgb(nb);
+    }
+}
+
+#[arcane]
+fn convert_rgba_fused_v3(token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
+    let chunks = data.len() / 32;
+    let bulk = chunks * 32;
+
+    for chunk_start in (0..bulk).step_by(32) {
+        fused_8px_rgba(token, m, &mut data[chunk_start..chunk_start + 32]);
+    }
+
+    for pixel in data[bulk..].chunks_exact_mut(4) {
+        let r = linear_srgb::tf::srgb_to_linear(pixel[0]);
+        let g = linear_srgb::tf::srgb_to_linear(pixel[1]);
+        let b = linear_srgb::tf::srgb_to_linear(pixel[2]);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        pixel[0] = linear_srgb::tf::linear_to_srgb(nr);
+        pixel[1] = linear_srgb::tf::linear_to_srgb(ng);
+        pixel[2] = linear_srgb::tf::linear_to_srgb(nb);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scalar fallbacks (for platforms without AVX2+FMA)
+// ---------------------------------------------------------------------------
+
+fn convert_rgb_fused_scalar(_token: ScalarToken, m: &[[f32; 3]; 3], data: &mut [f32]) {
+    for pixel in data.chunks_exact_mut(3) {
+        let r = linear_srgb::tf::srgb_to_linear(pixel[0]);
+        let g = linear_srgb::tf::srgb_to_linear(pixel[1]);
+        let b = linear_srgb::tf::srgb_to_linear(pixel[2]);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        pixel[0] = linear_srgb::tf::linear_to_srgb(nr);
+        pixel[1] = linear_srgb::tf::linear_to_srgb(ng);
+        pixel[2] = linear_srgb::tf::linear_to_srgb(nb);
+    }
+}
+
+fn convert_rgba_fused_scalar(_token: ScalarToken, m: &[[f32; 3]; 3], data: &mut [f32]) {
+    for pixel in data.chunks_exact_mut(4) {
+        let r = linear_srgb::tf::srgb_to_linear(pixel[0]);
+        let g = linear_srgb::tf::srgb_to_linear(pixel[1]);
+        let b = linear_srgb::tf::srgb_to_linear(pixel[2]);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        pixel[0] = linear_srgb::tf::linear_to_srgb(nr);
+        pixel[1] = linear_srgb::tf::linear_to_srgb(ng);
+        pixel[2] = linear_srgb::tf::linear_to_srgb(nb);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 /// Convert Display P3 → sRGB, f32 RGB pixels in-place.
 ///
-/// Three-pass pipeline: SIMD-batch linearize → matrix → SIMD-batch encode.
+/// Fused single-pass SIMD: linearize + matrix + encode for 8 pixels at a time.
 /// Uses rational polynomial TRC (~5e-7 max error vs f64, no LUT quantization).
-/// Values are clamped to [0,1] by the TRC functions.
+/// Values are clamped to [0,1].
 ///
 /// `data` is a slice of `[R, G, B, R, G, B, ...]` f32 values.
 /// Length must be a multiple of 3.
 pub fn p3_to_srgb_f32(data: &mut [f32]) {
     debug_assert_eq!(data.len() % 3, 0);
-    linear_srgb::default::srgb_to_linear_slice(data);
-    apply_matrix_rgb(&P3_TO_SRGB, data);
-    linear_srgb::default::linear_to_srgb_slice(data);
+    incant!(convert_rgb_fused(&P3_TO_SRGB, data));
 }
 
 /// Convert sRGB → Display P3, f32 RGB pixels in-place.
 ///
-/// Three-pass pipeline with rational polynomial TRC.
+/// Fused single-pass SIMD with rational polynomial TRC.
 /// Values are clamped to [0,1].
 pub fn srgb_to_p3_f32(data: &mut [f32]) {
     debug_assert_eq!(data.len() % 3, 0);
-    linear_srgb::default::srgb_to_linear_slice(data);
-    apply_matrix_rgb(&SRGB_TO_P3, data);
-    linear_srgb::default::linear_to_srgb_slice(data);
+    incant!(convert_rgb_fused(&SRGB_TO_P3, data));
 }
 
 /// Convert Display P3 → sRGB, f32 RGBA pixels in-place.
@@ -125,9 +277,7 @@ pub fn srgb_to_p3_f32(data: &mut [f32]) {
 /// Alpha channel is passed through unchanged.
 pub fn p3_to_srgb_f32_rgba(data: &mut [f32]) {
     debug_assert_eq!(data.len() % 4, 0);
-    linear_srgb::default::srgb_to_linear_rgba_slice(data);
-    apply_matrix_rgba(&P3_TO_SRGB, data);
-    linear_srgb::default::linear_to_srgb_rgba_slice(data);
+    incant!(convert_rgba_fused(&P3_TO_SRGB, data));
 }
 
 /// Convert sRGB → Display P3, f32 RGBA pixels in-place.
@@ -135,9 +285,7 @@ pub fn p3_to_srgb_f32_rgba(data: &mut [f32]) {
 /// Alpha channel is passed through unchanged.
 pub fn srgb_to_p3_f32_rgba(data: &mut [f32]) {
     debug_assert_eq!(data.len() % 4, 0);
-    linear_srgb::default::srgb_to_linear_rgba_slice(data);
-    apply_matrix_rgba(&SRGB_TO_P3, data);
-    linear_srgb::default::linear_to_srgb_rgba_slice(data);
+    incant!(convert_rgba_fused(&SRGB_TO_P3, data));
 }
 
 /// Convert Display P3 → sRGB, f32 RGB pixels in-place (extended range).
