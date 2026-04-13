@@ -53,8 +53,20 @@ icc-upload dir:
         --endpoint-url "$ENDPOINT" --no-progress
     echo "Done."
 
+# Ensure Compact-ICC-Profiles are in the local cache (clones if missing)
+icc-ensure-compact:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    COMPACT="/tmp/compact-icc-profiles"
+    if [ ! -d "$COMPACT/profiles" ]; then
+        echo "Cloning Compact-ICC-Profiles..."
+        git clone --depth 1 https://github.com/saucecontrol/Compact-ICC-Profiles.git "$COMPACT"
+    fi
+    cp -n "$COMPACT"/profiles/*.icc "{{icc_cache}}/" 2>/dev/null || true
+    echo "Compact-ICC-Profiles in cache: $(ls {{icc_cache}}/*.icc 2>/dev/null | wc -l) total profiles"
+
 # Regenerate .inc table files from ICC profile cache + bundled profiles
-icc-gen: icc-build-gen
+icc-gen: icc-build-gen icc-ensure-compact
     /tmp/zenpixels-gen-icc-tables "{{icc_cache}}" "zenpixels-convert/src/profiles" "{{icc_out}}"
 
 # Build the table generator
