@@ -283,12 +283,23 @@ impl RowTransform for LiteTransform {
 impl LiteTransform {
     fn transform_u8(&self, src: &[u8], dst: &mut [u8], _width: u32) {
         if let Some(lut) = &self.linearize_lut {
-            // Fast path: LUT linearize + LUT/fast encode (no polynomial on hot path)
+            if !self.has_alpha && fast_gamut::has_simd_encode(self.dst_trc) {
+                // Fused RGB: LUT linearize → SIMD (matrix + poly encode) → quantize
+                fast_gamut::convert_u8_rgb_simd_fused(
+                    &self.matrix,
+                    src,
+                    dst,
+                    lut,
+                    self.dst_trc,
+                    self.encode,
+                );
+                return;
+            }
+            // RGBA or unsupported TRC: LUT→SIMD matrix→LUT encode
             if self.has_alpha {
                 fast_gamut::convert_u8_rgba_simd_lut(&self.matrix, src, dst, lut, self.encode_u8);
             } else {
-                // RGB: SIMD-batched LUT→matrix→LUT (8 pixels at a time)
-                fast_gamut::convert_u8_rgb_simd_lut(&self.matrix, src, dst, lut, self.encode_u8);
+                fast_gamut::convert_u8_rgb_lut_lut(&self.matrix, src, dst, lut, self.encode_u8);
             }
         } else {
             // Fallback: per-channel function calls
