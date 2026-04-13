@@ -1,6 +1,6 @@
 [package]
 name = "zenpixels-convert"
-version = "0.2.5"
+version = "0.3.0"
 edition.workspace = true
 rust-version = "1.89"
 license.workspace = true
@@ -46,7 +46,7 @@ moxcms = { version = "0.8.1", optional = true, features = ["options"] }
 
 [dev-dependencies]
 zenpixels = { workspace = true, features = ["planar", "imgref"] }
-zenpixels-convert = { path = "", features = ["pipeline", "imgref", "cms-moxcms"] , version = "0.2.5" }
+zenpixels-convert = { path = "", features = ["pipeline", "imgref", "cms-moxcms"] , version = "0.3.0" }
 zenbench = { version = "0.1.2"}
 half = "2"
 palette = "0.7"
