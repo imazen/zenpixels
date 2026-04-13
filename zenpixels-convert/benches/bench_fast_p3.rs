@@ -217,5 +217,54 @@ fn main() {
                 });
             });
         });
+
+        // --- f32→u8 encode comparison: LUT vs polynomial ---
+        suite.group("f32→u8 sRGB encode 1080p RGB", |g| {
+            // Throughput measured as output u8 bytes
+            g.throughput(Throughput::Bytes(u8_bytes as u64));
+
+            // Source: linear f32 values in [0,1]
+            let linear_f32 = data_f32.clone();
+
+            // LUT encode: linear_to_srgb_u8_slice (4096-entry const LUT)
+            let d = linear_f32.clone();
+            g.bench("LUT (4096-entry)", move |bench| {
+                let mut dst = vec![0u8; d.len()];
+                bench.iter(|| {
+                    linear_srgb::default::linear_to_srgb_u8_slice(&d, &mut dst);
+                    black_box(());
+                });
+            });
+
+            // Polynomial encode: linear_to_srgb (rational poly) + quantize
+            let d = linear_f32.clone();
+            g.bench("polynomial + quantize", move |bench| {
+                let mut dst = vec![0u8; d.len()];
+                bench.iter(|| {
+                    for (inp, out) in d.iter().zip(dst.iter_mut()) {
+                        *out = (linear_srgb::tf::linear_to_srgb(*inp) * 255.0 + 0.5) as u8;
+                    }
+                    black_box(());
+                });
+            });
+
+            // SIMD polynomial encode: linear_to_srgb f32→f32 slice then quantize
+            let d = linear_f32.clone();
+            g.bench("SIMD poly slice + quantize", move |bench| {
+                let mut f32_buf = d.clone();
+                let mut dst = vec![0u8; d.len()];
+                bench.iter(|| {
+                    // In-place f32 encode via SIMD polynomial
+                    linear_srgb::default::linear_to_srgb_slice(&mut f32_buf);
+                    // Then quantize f32→u8
+                    for (f, out) in f32_buf.iter().zip(dst.iter_mut()) {
+                        *out = (*f * 255.0 + 0.5) as u8;
+                    }
+                    // Reset for next iter
+                    f32_buf.copy_from_slice(&d);
+                    black_box(());
+                });
+            });
+        });
     });
 }
