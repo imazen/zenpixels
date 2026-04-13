@@ -9,6 +9,7 @@
     (0x0ca2_1afc_1a04_4d18, CP::DisplayP3, TF::Srgb,  1),  // display ad0b6802
     (0x0f40_cd19_eb99_13cd, CP::Bt709, TF::Srgb, 13),  // urgb ac46f250
     (0x12aa_1ec5_f4fa_84eb, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 04166d2d
+    (0x134d_8482_9bda_f67d, CP::Bt2020, TF::Gamma24,  1),  // Rec2020-g24-v4
     (0x1585_7e13_3f8d_56c8, CP::DisplayP3, TF::Srgb,  1),  // display 10b11b78
     (0x16db_7fa8_9f3d_3268, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 0958d8ab
     (0x1a51_546f_b3e8_9789, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 c7de586e
@@ -75,6 +76,7 @@
     (0x9915_d212_cbe8_f644, CP::Bt709, TF::Srgb,  1),  // srgb 2a92d4ba
     (0x9b2c_c05c_9ea0_2b2b, CP::DisplayP3, TF::Srgb,  1),  // display p3 03291993
     (0x9bc7_2da2_a9e8_cd7e, CP::DisplayP3, TF::Srgb,  1),  // display 8cd25d60
+    (0x9bea_d47a_027c_2a1c, CP::DciP3, TF::Gamma26,  1),  // DCI-P3-v4
     (0xa06b_cf49_054e_e5a0, CP::DisplayP3, TF::Srgb,  1),  // display 711236e0
     (0xa07d_04ee_0f98_3714, CP::DisplayP3, TF::Srgb,  1),  // display 14b2783e
     (0xa1d7_630b_95b7_f33e, CP::Bt709, TF::Srgb,  1),  // iec61966-2 1 728f6079
@@ -94,6 +96,7 @@
     (0xbc4e_56e8_fe2f_531f, CP::Bt709, TF::Gamma18, 11),  // epson standard rgb - gamma 1 8 24e1d7a0
     (0xbdd8_9a20_39a0_78c9, CP::DisplayP3, TF::Srgb,  1),  // display 227959c8
     (0xbe8a_72e0_eb42_b512, CP::Bt709, TF::Srgb,  1),  // srgb built-in 0627a605
+    (0xca98_e1c6_2e4b_5be8, CP::Bt709, TF::Linear,  0),  // scRGB-v2
     (0xcbd9_22da_b07a_f755, CP::DisplayP3, TF::Pq,  1),  // moxcms display p3 pq
     (0xd0ff_072b_721e_a276, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 211d915b
     (0xd274_a0eb_9670_91cb, CP::Bt709, TF::Srgb,  1),  //  f1932003

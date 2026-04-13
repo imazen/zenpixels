@@ -55,6 +55,9 @@ fn bt709_eotf(v: f64) -> f64 {
 }
 fn gamma22_eotf(v: f64) -> f64 { v.powf(2.19921875) }
 fn gamma18_eotf(v: f64) -> f64 { v.powf(1.8) }
+fn gamma24_eotf(v: f64) -> f64 { v.powf(2.4) }
+fn gamma26_eotf(v: f64) -> f64 { v.powf(2.6) }
+fn linear_eotf(v: f64) -> f64 { v }
 fn pq_eotf(v: f64) -> f64 {
     const M1: f64 = 0.1593017578125;
     const M2: f64 = 78.84375;
@@ -83,6 +86,9 @@ const REFERENCE_TRCS: &[RefTrc] = &[
     RefTrc { name: "BT.709",   cp_name: "Bt709",    tf_name: "Bt709",   eotf: bt709_eotf },
     RefTrc { name: "gamma2.2", cp_name: "AdobeRgb", tf_name: "Gamma22", eotf: gamma22_eotf },
     RefTrc { name: "gamma1.8", cp_name: "ProPhoto",  tf_name: "Gamma18", eotf: gamma18_eotf },
+    RefTrc { name: "gamma2.4", cp_name: "Bt709",    tf_name: "Gamma24", eotf: gamma24_eotf },
+    RefTrc { name: "gamma2.6", cp_name: "DciP3",    tf_name: "Gamma26", eotf: gamma26_eotf },
+    RefTrc { name: "linear",   cp_name: "Bt709",    tf_name: "Linear",  eotf: linear_eotf },
     RefTrc { name: "PQ",       cp_name: "Bt2020",   tf_name: "Pq",      eotf: pq_eotf },
     RefTrc { name: "HLG",      cp_name: "Bt2020",   tf_name: "Hlg",     eotf: hlg_ootf_inv },
 ];
@@ -174,6 +180,7 @@ struct KP { rust_name: &'static str, rx: f64, ry: f64, gx: f64, gy: f64, bx: f64
 const KNOWN_P: &[KP] = &[
     KP { rust_name: "Bt709",    rx: 0.4361, ry: 0.2225, gx: 0.3851, gy: 0.7169, bx: 0.1431, by: 0.0606 },
     KP { rust_name: "DisplayP3", rx: 0.5151, ry: 0.2412, gx: 0.2919, gy: 0.6922, bx: 0.1572, by: 0.0666 },
+    KP { rust_name: "DciP3",    rx: 0.4862, ry: 0.2267, gx: 0.3239, gy: 0.7103, bx: 0.1542, by: 0.0630 },
     KP { rust_name: "Bt2020",   rx: 0.6734, ry: 0.2790, gx: 0.1656, gy: 0.6753, bx: 0.1251, by: 0.0456 },
     KP { rust_name: "AdobeRgb", rx: 0.6097, ry: 0.3111, gx: 0.2053, gy: 0.6257, bx: 0.1492, by: 0.0632 },
     KP { rust_name: "ProPhoto", rx: 0.7977, ry: 0.2880, gx: 0.1352, gy: 0.7119, bx: 0.0313, by: 0.0001 },
