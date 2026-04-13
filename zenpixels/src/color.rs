@@ -186,7 +186,10 @@ impl ColorContext {
     /// **Deprecated:** Codecs should populate only the authoritative field —
     /// use [`from_icc()`](Self::from_icc) or [`from_cicp()`](Self::from_cicp).
     /// Roundtrip metadata belongs on [`ColorOrigin`], not `ColorContext`.
-    #[deprecated(since = "0.2.6", note = "use from_icc() or from_cicp(); roundtrip metadata belongs on ColorOrigin")]
+    #[deprecated(
+        since = "0.2.6",
+        note = "use from_icc() or from_cicp(); roundtrip metadata belongs on ColorOrigin"
+    )]
     pub fn from_icc_and_cicp(icc: impl Into<Arc<[u8]>>, cicp: Cicp) -> Self {
         Self {
             icc: Some(icc.into()),

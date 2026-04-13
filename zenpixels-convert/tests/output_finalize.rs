@@ -31,7 +31,6 @@ impl ColorManagement for NoopCms {
         Err("no-op CMS: ICC transforms not supported")
     }
 
-
     fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
         None
     }
@@ -59,7 +58,6 @@ impl ColorManagement for IdentityCms {
     ) -> Result<Box<dyn RowTransform>, Self::Error> {
         Ok(Box::new(IdentityTransform))
     }
-
 
     fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
         None
@@ -112,7 +110,6 @@ impl ColorManagement for TrackingCms {
         self.icc_calls.fetch_add(1, Ordering::Relaxed);
         Ok(Box::new(IdentityTransform))
     }
-
 
     fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
         None
@@ -665,7 +662,6 @@ impl ColorManagement for FailingCms {
     ) -> Result<Box<dyn RowTransform>, Self::Error> {
         Err("deliberate ICC failure")
     }
-
 
     fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
         None

@@ -320,11 +320,12 @@ fn build_cms_transform<C: ColorManagement>(
             }
             // Fallback: ICC authority but no ICC — try CICP if available.
             if let Some(cicp) = origin.cicp {
-                if let Some(result) = cms
-                    .build_transform_from_cicp(cicp, dst_icc, src_format, dst_format)
+                if let Some(result) =
+                    cms.build_transform_from_cicp(cicp, dst_icc, src_format, dst_format)
                 {
-                    let transform = result
-                        .map_err(|e| whereat::at!(ConvertError::CmsError(alloc::format!("{e:?}"))))?;
+                    let transform = result.map_err(|e| {
+                        whereat::at!(ConvertError::CmsError(alloc::format!("{e:?}")))
+                    })?;
                     return Ok(Some(transform));
                 }
             }
@@ -332,11 +333,12 @@ fn build_cms_transform<C: ColorManagement>(
         }
         ColorAuthority::Cicp => {
             if let Some(cicp) = origin.cicp {
-                if let Some(result) = cms
-                    .build_transform_from_cicp(cicp, dst_icc, src_format, dst_format)
+                if let Some(result) =
+                    cms.build_transform_from_cicp(cicp, dst_icc, src_format, dst_format)
                 {
-                    let transform = result
-                        .map_err(|e| whereat::at!(ConvertError::CmsError(alloc::format!("{e:?}"))))?;
+                    let transform = result.map_err(|e| {
+                        whereat::at!(ConvertError::CmsError(alloc::format!("{e:?}")))
+                    })?;
                     return Ok(Some(transform));
                 }
             }

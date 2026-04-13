@@ -303,10 +303,19 @@ impl ColorManagement for MoxCms {
         });
         let dst_profile = match ColorProfile::new_from_slice(dst_icc) {
             Ok(p) => p,
-            Err(e) => return Some(Err(MoxCmsError(format!("failed to parse destination ICC profile: {e}")))),
+            Err(e) => {
+                return Some(Err(MoxCmsError(format!(
+                    "failed to parse destination ICC profile: {e}"
+                ))));
+            }
         };
 
-        Some(build_transform_inner(&src_profile, &dst_profile, src_format, dst_format))
+        Some(build_transform_inner(
+            &src_profile,
+            &dst_profile,
+            src_format,
+            dst_format,
+        ))
     }
 
     fn identify_profile(&self, icc: &[u8]) -> Option<Cicp> {
