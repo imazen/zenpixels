@@ -83,13 +83,40 @@ fn main() {
         suite.group("P3→sRGB 1080p u8 RGB", |g| {
             g.throughput(Throughput::Bytes((pixel_count * 3) as u64));
             let d = data_u8.clone();
-            g.bench("fast_gamut u8", move |bench| {
+            g.bench("fast_gamut u8 (scalar)", move |bench| {
                 let mut dst = vec![0u8; d.len()];
                 bench.iter(|| {
                     zenpixels_convert::fast_gamut::p3_to_srgb_u8_rgb(&d, &mut dst);
                     black_box(());
                 });
             });
+            let d = data_u8.clone();
+            {
+                use zenpixels_convert::cms::ColorManagement;
+                let cms = zenpixels_convert::ZenCmsLite;
+                let src = zenpixels_convert::ColorProfileSource::Named(
+                    zenpixels_convert::NamedProfile::DisplayP3,
+                );
+                let dst_profile = zenpixels_convert::ColorProfileSource::Named(
+                    zenpixels_convert::NamedProfile::Srgb,
+                );
+                let xf = cms
+                    .build_source_transform(
+                        src,
+                        dst_profile,
+                        zenpixels_convert::PixelFormat::Rgb8,
+                        zenpixels_convert::PixelFormat::Rgb8,
+                    )
+                    .unwrap()
+                    .unwrap();
+                g.bench("ZenCmsLite u8 (LUT)", move |bench| {
+                    let mut dst = vec![0u8; d.len()];
+                    bench.iter(|| {
+                        xf.transform_row(&d, &mut dst, w as u32);
+                        black_box(());
+                    });
+                });
+            }
             let d = data_u8.clone();
             let x = xf_p3_srgb_u8.clone();
             g.bench("moxcms u8", move |bench| {
