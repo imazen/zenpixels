@@ -395,6 +395,7 @@ pub mod cms;
 pub mod cms_moxcms;
 pub mod converter;
 pub mod ext;
+#[cfg(feature = "zencms-lite")]
 pub mod fast_gamut;
 pub mod gamut;
 pub mod hdr;
