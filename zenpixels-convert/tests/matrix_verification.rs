@@ -340,3 +340,233 @@ fn all_matrices_roundtrip_grid() {
         );
     }
 }
+
+// =========================================================================
+// Cross-validation against independent sources
+// =========================================================================
+
+/// CSS Color Level 4 reference matrices (from W3C spec, independent derivation).
+/// https://www.w3.org/TR/css-color-4/#color-conversion-code
+#[test]
+fn css_color_4_p3_to_srgb() {
+    // CSS spec's lin_P3_to_lin_sRGB matrix (7-digit precision from spec JS code)
+    let css: [[f32; 3]; 3] = [
+        [1.2249401, -0.2249402, 0.0],
+        [-0.0420570, 1.0420571, 0.0],
+        [-0.0196376, -0.0786361, 1.0982736],
+    ];
+    for i in 0..3 {
+        for j in 0..3 {
+            let err = (P3_TO_SRGB[i][j] - css[i][j]).abs();
+            assert!(
+                err < 5e-7,
+                "P3_TO_SRGB[{i}][{j}]: ours={}, CSS={}, err={err:.1e}",
+                P3_TO_SRGB[i][j],
+                css[i][j]
+            );
+        }
+    }
+}
+
+#[test]
+fn css_color_4_srgb_to_bt2020() {
+    // CSS spec's lin_sRGB_to_lin_2020 matrix
+    let css: [[f32; 3]; 3] = [
+        [0.6274039, 0.3292830, 0.0433131],
+        [0.0690973, 0.9195404, 0.0113623],
+        [0.0163914, 0.0880133, 0.8955953],
+    ];
+    for i in 0..3 {
+        for j in 0..3 {
+            let err = (SRGB_TO_BT2020[i][j] - css[i][j]).abs();
+            assert!(
+                err < 1e-7,
+                "SRGB_TO_BT2020[{i}][{j}]: ours={}, CSS={}, err={err:.1e}",
+                SRGB_TO_BT2020[i][j],
+                css[i][j]
+            );
+        }
+    }
+}
+
+/// Cross-validate against saucecontrol/Compact-ICC-Profiles colorants.
+/// These profiles were built by an independent tool chain (saucecontrol's
+/// ICC profile generator). We extract the D50 PCS XYZ colorants and derive
+/// matrices from them, then compare to ours.
+///
+/// Expected accuracy: ~1e-4 (limited by ICC s15Fixed16 quantization at
+/// 1/65536 per colorant component).
+#[test]
+fn icc_colorant_cross_validation() {
+    extern crate std;
+    use std::process::Command;
+
+    let tmp = std::env::temp_dir().join("zencodec-compact-icc-profiles");
+    let profile_dir = tmp.join("profiles");
+
+    if !profile_dir.exists() {
+        let status = Command::new("git")
+            .args([
+                "clone",
+                "--depth",
+                "1",
+                "https://github.com/saucecontrol/Compact-ICC-Profiles.git",
+            ])
+            .arg(&tmp)
+            .status();
+        match status {
+            Ok(s) if s.success() => {}
+            _ => {
+                eprintln!("git clone failed, skipping ICC cross-validation");
+                return;
+            }
+        }
+    }
+
+    /// Read s15Fixed16 XYZ from ICC tag data.
+    fn read_xyz(data: &[u8], offset: usize) -> [f64; 3] {
+        let mut v = [0.0f64; 3];
+        for i in 0..3 {
+            let raw =
+                i32::from_be_bytes(data[offset + i * 4..offset + i * 4 + 4].try_into().unwrap());
+            v[i] = raw as f64 / 65536.0;
+        }
+        v
+    }
+
+    /// Extract rXYZ/gXYZ/bXYZ colorants from ICC profile.
+    fn get_colorants(data: &[u8]) -> Option<[[f64; 3]; 3]> {
+        if data.len() < 132 || &data[36..40] != b"acsp" {
+            return None;
+        }
+        let tag_count = u32::from_be_bytes(data[128..132].try_into().unwrap()) as usize;
+        let mut r = None;
+        let mut g = None;
+        let mut b = None;
+        for i in 0..tag_count.min(200) {
+            let off = 132 + i * 12;
+            if off + 12 > data.len() {
+                break;
+            }
+            let sig = &data[off..off + 4];
+            let d_off = u32::from_be_bytes(data[off + 4..off + 8].try_into().unwrap()) as usize;
+            let d_sz = u32::from_be_bytes(data[off + 8..off + 12].try_into().unwrap()) as usize;
+            if d_sz >= 20 && d_off + 20 <= data.len() {
+                match sig {
+                    b"rXYZ" => r = Some(read_xyz(data, d_off + 8)),
+                    b"gXYZ" => g = Some(read_xyz(data, d_off + 8)),
+                    b"bXYZ" => b = Some(read_xyz(data, d_off + 8)),
+                    _ => {}
+                }
+            }
+        }
+        Some([r?, g?, b?])
+    }
+
+    /// 3x3 f64 matrix inverse.
+    fn inv3(m: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
+        let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+        let inv_det = 1.0 / det;
+        let mut r = [[0.0f64; 3]; 3];
+        r[0][0] = (m[1][1] * m[2][2] - m[1][2] * m[2][1]) * inv_det;
+        r[0][1] = (m[0][2] * m[2][1] - m[0][1] * m[2][2]) * inv_det;
+        r[0][2] = (m[0][1] * m[1][2] - m[0][2] * m[1][1]) * inv_det;
+        r[1][0] = (m[1][2] * m[2][0] - m[1][0] * m[2][2]) * inv_det;
+        r[1][1] = (m[0][0] * m[2][2] - m[0][2] * m[2][0]) * inv_det;
+        r[1][2] = (m[0][2] * m[1][0] - m[0][0] * m[1][2]) * inv_det;
+        r[2][0] = (m[1][0] * m[2][1] - m[1][1] * m[2][0]) * inv_det;
+        r[2][1] = (m[0][1] * m[2][0] - m[0][0] * m[2][1]) * inv_det;
+        r[2][2] = (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * inv_det;
+        r
+    }
+
+    /// 3x3 f64 matrix multiply.
+    fn mul3(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
+        let mut r = [[0.0f64; 3]; 3];
+        for i in 0..3 {
+            for j in 0..3 {
+                r[i][j] = a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j];
+            }
+        }
+        r
+    }
+
+    /// Build XYZ(D50) matrix from colorants — columns are the colorant XYZ values.
+    fn colorants_to_xyz(c: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
+        // c[0] = rXYZ, c[1] = gXYZ, c[2] = bXYZ (each is [X, Y, Z])
+        // The XYZ-from-RGB matrix has these as columns:
+        [
+            [c[0][0], c[1][0], c[2][0]], // row 0: X components
+            [c[0][1], c[1][1], c[2][1]], // row 1: Y components
+            [c[0][2], c[1][2], c[2][2]], // row 2: Z components
+        ]
+    }
+
+    let check = |name: &str, our_matrix: &[[f32; 3]; 3], src_file: &str, dst_file: &str| {
+        let src_data = std::fs::read(profile_dir.join(src_file)).unwrap();
+        let dst_data = std::fs::read(profile_dir.join(dst_file)).unwrap();
+        let src_c = get_colorants(&src_data).unwrap();
+        let dst_c = get_colorants(&dst_data).unwrap();
+
+        let src_xyz = colorants_to_xyz(&src_c);
+        let dst_xyz = colorants_to_xyz(&dst_c);
+        let icc_matrix = mul3(&inv3(&dst_xyz), &src_xyz);
+
+        let mut max_err: f64 = 0.0;
+        for i in 0..3 {
+            for j in 0..3 {
+                let err = (our_matrix[i][j] as f64 - icc_matrix[i][j]).abs();
+                if err > max_err {
+                    max_err = err;
+                }
+            }
+        }
+
+        eprintln!("{name}: max error vs ICC colorants = {max_err:.6e}");
+        assert!(
+            max_err < 2e-4,
+            "{name}: max error {max_err:.6e} > 2e-4 vs ICC profile colorants"
+        );
+    };
+
+    check("SRGB_TO_P3", &SRGB_TO_P3, "sRGB-v4.icc", "DisplayP3-v4.icc");
+    check("P3_TO_SRGB", &P3_TO_SRGB, "DisplayP3-v4.icc", "sRGB-v4.icc");
+    check(
+        "SRGB_TO_BT2020",
+        &SRGB_TO_BT2020,
+        "sRGB-v4.icc",
+        "Rec2020-v4.icc",
+    );
+    check(
+        "BT2020_TO_SRGB",
+        &BT2020_TO_SRGB,
+        "Rec2020-v4.icc",
+        "sRGB-v4.icc",
+    );
+    check(
+        "SRGB_TO_ADOBERGB",
+        &SRGB_TO_ADOBERGB,
+        "sRGB-v4.icc",
+        "AdobeCompat-v4.icc",
+    );
+    check(
+        "ADOBERGB_TO_SRGB",
+        &ADOBERGB_TO_SRGB,
+        "AdobeCompat-v4.icc",
+        "sRGB-v4.icc",
+    );
+    check(
+        "P3_TO_BT2020",
+        &P3_TO_BT2020,
+        "DisplayP3-v4.icc",
+        "Rec2020-v4.icc",
+    );
+    check(
+        "BT2020_TO_P3",
+        &BT2020_TO_P3,
+        "Rec2020-v4.icc",
+        "DisplayP3-v4.icc",
+    );
+}
