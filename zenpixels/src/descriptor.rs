@@ -424,6 +424,25 @@ impl ColorPrimaries {
         sx.to_bits() != ox.to_bits() || sy.to_bits() != oy.to_bits()
     }
 
+    /// Compute the 3×3 linear RGB gamut conversion matrix from `self` to `dst`.
+    ///
+    /// Bradford chromatic adaptation is applied automatically when white points
+    /// differ (e.g., DCI-P3 D50 → sRGB D65). Returns `None` for `Unknown`
+    /// primaries. Identity conversions (same primaries) return the identity matrix.
+    ///
+    /// The matrix operates in linear light — apply EOTF before, OETF after.
+    ///
+    /// ```
+    /// # use zenpixels::ColorPrimaries;
+    /// let m = ColorPrimaries::DisplayP3.gamut_matrix_to(ColorPrimaries::Bt709).unwrap();
+    /// // White maps to white
+    /// let r = m[0][0] + m[0][1] + m[0][2];
+    /// assert!((r - 1.0).abs() < 1e-4);
+    /// ```
+    pub const fn gamut_matrix_to(self, dst: Self) -> Option<[[f32; 3]; 3]> {
+        crate::registry::gamut_matrix(self, dst)
+    }
+
     /// Whether `self` fully contains the gamut of `other`.
     ///
     /// Returns `false` when white points differ (cross-adapted containment

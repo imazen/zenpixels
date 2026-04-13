@@ -30,138 +30,140 @@ use archmage::prelude::*;
 use linear_srgb::tokens::x8 as trc_x8;
 use magetypes::simd::f32x8 as mt_f32x8;
 
+use crate::ColorPrimaries;
+
 // =========================================================================
-// Gamut matrices (all D65, no chromatic adaptation needed)
+// Gamut matrices — computed at compile time via `ColorPrimaries::gamut_matrix_to`.
+// Bradford chromatic adaptation is applied automatically when white points differ.
 // =========================================================================
 
-/// sRGB linear → Display P3 linear.
-pub const SRGB_TO_P3: [[f32; 3]; 3] = [
-    [0.8224619687, 0.1775380313, 0.0],
-    [0.0331941989, 0.9668058011, 0.0],
-    [0.0170826307, 0.0723974407, 0.9105199286],
-];
+macro_rules! const_gamut_matrix {
+    ($name:ident, $src:ident, $dst:ident, $doc:expr) => {
+        #[doc = $doc]
+        pub const $name: [[f32; 3]; 3] =
+            match ColorPrimaries::$src.gamut_matrix_to(ColorPrimaries::$dst) {
+                Some(m) => m,
+                None => panic!(concat!(
+                    "failed to compute ",
+                    stringify!($src),
+                    " → ",
+                    stringify!($dst),
+                    " matrix"
+                )),
+            };
+    };
+}
 
-/// sRGB linear → BT.2020 linear.
-pub const SRGB_TO_BT2020: [[f32; 3]; 3] = [
-    [0.6274038959, 0.3292830384, 0.0433130657],
-    [0.0690972894, 0.9195403951, 0.0113623156],
-    [0.0163914389, 0.0880133079, 0.8955952532],
-];
+const_gamut_matrix!(
+    SRGB_TO_P3,
+    Bt709,
+    DisplayP3,
+    "sRGB linear → Display P3 linear."
+);
+const_gamut_matrix!(
+    SRGB_TO_BT2020,
+    Bt709,
+    Bt2020,
+    "sRGB linear → BT.2020 linear."
+);
+const_gamut_matrix!(
+    P3_TO_SRGB,
+    DisplayP3,
+    Bt709,
+    "Display P3 linear → sRGB linear."
+);
+const_gamut_matrix!(
+    P3_TO_BT2020,
+    DisplayP3,
+    Bt2020,
+    "Display P3 linear → BT.2020 linear."
+);
+const_gamut_matrix!(
+    BT2020_TO_SRGB,
+    Bt2020,
+    Bt709,
+    "BT.2020 linear → sRGB linear."
+);
+const_gamut_matrix!(
+    BT2020_TO_P3,
+    Bt2020,
+    DisplayP3,
+    "BT.2020 linear → Display P3 linear."
+);
 
-/// Display P3 linear → sRGB linear.
-pub const P3_TO_SRGB: [[f32; 3]; 3] = [
-    [1.2249401763, -0.2249401763, 0.0],
-    [-0.0420569547, 1.0420569547, 0.0],
-    [-0.0196375546, -0.0786360456, 1.0982736001],
-];
+const_gamut_matrix!(
+    ADOBERGB_TO_SRGB,
+    AdobeRgb,
+    Bt709,
+    "Adobe RGB (1998) linear → sRGB linear."
+);
+const_gamut_matrix!(
+    SRGB_TO_ADOBERGB,
+    Bt709,
+    AdobeRgb,
+    "sRGB linear → Adobe RGB (1998) linear."
+);
+const_gamut_matrix!(
+    ADOBERGB_TO_P3,
+    AdobeRgb,
+    DisplayP3,
+    "Adobe RGB (1998) linear → Display P3 linear."
+);
+const_gamut_matrix!(
+    P3_TO_ADOBERGB,
+    DisplayP3,
+    AdobeRgb,
+    "Display P3 linear → Adobe RGB (1998) linear."
+);
+const_gamut_matrix!(
+    ADOBERGB_TO_BT2020,
+    AdobeRgb,
+    Bt2020,
+    "Adobe RGB (1998) linear → BT.2020 linear."
+);
+const_gamut_matrix!(
+    BT2020_TO_ADOBERGB,
+    Bt2020,
+    AdobeRgb,
+    "BT.2020 linear → Adobe RGB (1998) linear."
+);
 
-/// Display P3 linear → BT.2020 linear.
-pub const P3_TO_BT2020: [[f32; 3]; 3] = [
-    [0.7538330344, 0.1985973691, 0.0475695966],
-    [0.0457438490, 0.9417772198, 0.0124789312],
-    [-0.0012103404, 0.0176017173, 0.9836086231],
-];
-
-/// BT.2020 linear → sRGB linear.
-pub const BT2020_TO_SRGB: [[f32; 3]; 3] = [
-    [1.6604910021, -0.5876411388, -0.0728498633],
-    [-0.1245504745, 1.1328998971, -0.0083494226],
-    [-0.0181507634, -0.1005788980, 1.1187296614],
-];
-
-/// Adobe RGB (1998) linear → sRGB linear.
-///
-/// Adobe RGB shares red/blue primaries with sRGB but has a wider green
-/// (0.21, 0.71 vs 0.30, 0.60). This is NOT the identity matrix.
-pub const ADOBERGB_TO_SRGB: [[f32; 3]; 3] = [
-    [1.3983557440, -0.3983557440, 0.0],
-    [0.0, 1.0, 0.0],
-    [0.0, -0.0429289893, 1.0429289893],
-];
-
-/// sRGB linear → Adobe RGB (1998) linear.
-pub const SRGB_TO_ADOBERGB: [[f32; 3]; 3] = [
-    [0.7151256069, 0.2848743931, 0.0],
-    [0.0, 1.0, 0.0],
-    [0.0, 0.0411619485, 0.9588380515],
-];
-
-/// Adobe RGB (1998) linear → Display P3 linear.
-pub const ADOBERGB_TO_P3: [[f32; 3]; 3] = [
-    [1.1500944181, -0.1500944181, 0.0],
-    [0.0464172986, 0.9535827014, 0.0],
-    [0.0238875948, 0.0265047763, 0.9496076289],
-];
-
-/// Display P3 linear → Adobe RGB (1998) linear.
-pub const P3_TO_ADOBERGB: [[f32; 3]; 3] = [
-    [0.8640051375, 0.1359948625, 0.0],
-    [-0.0420569547, 1.0420569547, 0.0],
-    [-0.0205603808, -0.0325061380, 1.0530665188],
-];
-
-/// Adobe RGB (1998) linear → BT.2020 linear.
-pub const ADOBERGB_TO_BT2020: [[f32; 3]; 3] = [
-    [0.8773338417, 0.0774937065, 0.0451724518],
-    [0.0966225915, 0.8915273202, 0.0118500883],
-    [0.0229210627, 0.0430366850, 0.9340422523],
-];
-
-/// BT.2020 linear → Adobe RGB (1998) linear.
-pub const BT2020_TO_ADOBERGB: [[f32; 3]; 3] = [
-    [1.1519783947, -0.0975030553, -0.0544753394],
-    [-0.1245504745, 1.1328998971, -0.0083494226],
-    [-0.0225303828, -0.0498065074, 1.0723368902],
-];
-
-/// DCI-P3 (D50) linear → sRGB linear (includes Bradford D50→D65 adaptation).
-pub const DCIP3_TO_SRGB: [[f32; 3]; 3] = [
-    [1.3172195039, -0.3028431415, -0.0143763623],
-    [-0.0427573380, 1.0481182934, -0.0053609554],
-    [-0.0198710751, -0.0745299402, 1.0944010153],
-];
-
-/// sRGB linear → DCI-P3 (D50) linear (includes Bradford D65→D50 adaptation).
-pub const SRGB_TO_DCIP3: [[f32; 3]; 3] = [
-    [0.7665586115, 0.2222827982, 0.0111585903],
-    [0.0313533965, 0.9635149303, 0.0051316732],
-    [0.0160536314, 0.0696524466, 0.9142939220],
-];
-
-/// DCI-P3 (D50) linear → Display P3 (D65) linear (Bradford adaptation).
-pub const DCIP3_TO_P3: [[f32; 3]; 3] = [
-    [1.0757718928, -0.0629961080, -0.0127757847],
-    [0.0023860038, 1.0032742109, -0.0056602146],
-    [0.0013130427, 0.0028467286, 0.9958402288],
-];
-
-/// Display P3 (D65) linear → DCI-P3 (D50) linear (Bradford adaptation).
-pub const P3_TO_DCIP3: [[f32; 3]; 3] = [
-    [0.9294207757, 0.0583240392, 0.0122551851],
-    [-0.0022172423, 0.9965812610, 0.0056359812],
-    [-0.0012191285, -0.0029257487, 1.0041448773],
-];
-
-/// DCI-P3 (D50) linear → BT.2020 linear (Bradford D50→D65).
-pub const DCIP3_TO_BT2020: [[f32; 3]; 3] = [
-    [0.8114887052, 0.1518944892, 0.0366168056],
-    [0.0514734163, 0.9420146367, 0.0065119469],
-    [0.0000314677, 0.0205356625, 0.9794328698],
-];
-
-/// BT.2020 linear → DCI-P3 (D50) linear (Bradford D65→D50).
-pub const BT2020_TO_DCIP3: [[f32; 3]; 3] = [
-    [1.2449757120, -0.1997595348, -0.0452161772],
-    [-0.0680373528, 1.0726252817, -0.0045879289],
-    [0.0013865326, -0.0224831997, 1.0210966671],
-];
-
-/// BT.2020 linear → Display P3 linear.
-pub const BT2020_TO_P3: [[f32; 3]; 3] = [
-    [1.3435782526, -0.2821796705, -0.0613985821],
-    [-0.0652974528, 1.0757879158, -0.0104904631],
-    [0.0028217873, -0.0195984945, 1.0167767073],
-];
+const_gamut_matrix!(
+    DCIP3_TO_SRGB,
+    DciP3,
+    Bt709,
+    "DCI-P3 (D50) linear → sRGB linear (Bradford adaptation)."
+);
+const_gamut_matrix!(
+    SRGB_TO_DCIP3,
+    Bt709,
+    DciP3,
+    "sRGB linear → DCI-P3 (D50) linear (Bradford adaptation)."
+);
+const_gamut_matrix!(
+    DCIP3_TO_P3,
+    DciP3,
+    DisplayP3,
+    "DCI-P3 (D50) linear → Display P3 (D65) linear (Bradford adaptation)."
+);
+const_gamut_matrix!(
+    P3_TO_DCIP3,
+    DisplayP3,
+    DciP3,
+    "Display P3 (D65) linear → DCI-P3 (D50) linear (Bradford adaptation)."
+);
+const_gamut_matrix!(
+    DCIP3_TO_BT2020,
+    DciP3,
+    Bt2020,
+    "DCI-P3 (D50) linear → BT.2020 linear (Bradford adaptation)."
+);
+const_gamut_matrix!(
+    BT2020_TO_DCIP3,
+    Bt2020,
+    DciP3,
+    "BT.2020 linear → DCI-P3 (D50) linear (Bradford adaptation)."
+);
 
 // =========================================================================
 // Shared helpers
