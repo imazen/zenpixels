@@ -204,6 +204,7 @@ impl ColorManagement for ZenCmsLite {
             dst_trc: dst_t,
             linearize: linearize_fn,
             encode: fast_gamut::scalar_encode(dst_t).unwrap(),
+            encode_u8: fast_gamut::scalar_encode_u8(dst_t).unwrap(),
             linearize_lut,
             has_alpha,
             channel_type,
@@ -219,6 +220,8 @@ struct LiteTransform {
     dst_trc: TransferFunction,
     linearize: fn(f32) -> f32,
     encode: fn(f32) -> f32,
+    /// f32→u8 encode. Uses LUT for sRGB, polynomial+quantize for others.
+    encode_u8: fn(f32) -> u8,
     /// Pre-built u8→f32 linearization LUT. Only allocated for u8 formats.
     linearize_lut: Option<alloc::boxed::Box<[f32; 256]>>,
     has_alpha: bool,
@@ -246,11 +249,11 @@ impl RowTransform for LiteTransform {
 impl LiteTransform {
     fn transform_u8(&self, src: &[u8], dst: &mut [u8], _width: u32) {
         if let Some(lut) = &self.linearize_lut {
-            // Fast path: LUT-based linearization (no per-channel fn calls)
+            // Fast path: LUT linearize + LUT/fast encode (no polynomial on hot path)
             if self.has_alpha {
-                fast_gamut::convert_u8_rgba_lut(&self.matrix, src, dst, lut, self.encode);
+                fast_gamut::convert_u8_rgba_lut_lut(&self.matrix, src, dst, lut, self.encode_u8);
             } else {
-                fast_gamut::convert_u8_rgb_lut(&self.matrix, src, dst, lut, self.encode);
+                fast_gamut::convert_u8_rgb_lut_lut(&self.matrix, src, dst, lut, self.encode_u8);
             }
         } else {
             // Fallback: per-channel function calls

@@ -710,6 +710,28 @@ pub(crate) fn convert_u8_rgb(
     }
 }
 
+/// Scalar f32→u8 encode function for a given transfer function.
+/// Uses LUT for sRGB (4096-entry const table, no math),
+/// polynomial + quantize for others.
+pub(crate) fn scalar_encode_u8(trc: TransferFunction) -> Option<fn(f32) -> u8> {
+    fn srgb_u8(v: f32) -> u8 {
+        linear_srgb::default::linear_to_srgb_u8(v)
+    }
+    fn quantize_with(enc: fn(f32) -> f32, v: f32) -> u8 {
+        (enc(v) * 255.0 + 0.5).clamp(0.0, 255.0) as u8
+    }
+    match trc {
+        TransferFunction::Srgb => Some(srgb_u8),
+        TransferFunction::Bt709 => Some(|v| quantize_with(linear_srgb::tf::linear_to_bt709, v)),
+        TransferFunction::Pq => Some(|v| quantize_with(linear_srgb::tf::linear_to_pq, v)),
+        TransferFunction::Hlg => Some(|v| quantize_with(linear_srgb::tf::linear_to_hlg, v)),
+        TransferFunction::Gamma22 => Some(|v| quantize_with(adobe_from_linear_scalar, v)),
+        TransferFunction::Gamma26 => Some(|v| quantize_with(dci_from_linear_scalar, v)),
+        TransferFunction::Linear => Some(|v| (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8),
+        _ => None,
+    }
+}
+
 /// Convert u8 RGB via LUT-based linearization (much faster than per-channel fn calls).
 ///
 /// Same as `convert_u8_rgb` but uses a pre-built 256-entry LUT for linearization.
@@ -731,6 +753,52 @@ pub(crate) fn convert_u8_rgb_lut(
         dst_px[0] = (encode_fn(nr) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
         dst_px[1] = (encode_fn(ng) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
         dst_px[2] = (encode_fn(nb) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+    }
+}
+
+/// Convert u8 RGB via LUT linearization AND LUT encoding (fastest u8→u8 path).
+///
+/// Linearize via 256-entry LUT, matrix multiply, encode via 4096-entry LUT.
+/// No polynomial math — pure LUT + matrix.
+pub(crate) fn convert_u8_rgb_lut_lut(
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    lin_lut: &[f32; 256],
+    enc_u8: fn(f32) -> u8,
+) {
+    debug_assert_eq!(src.len() % 3, 0);
+    debug_assert_eq!(src.len(), dst.len());
+    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+        let r = lin_lut[src_px[0] as usize];
+        let g = lin_lut[src_px[1] as usize];
+        let b = lin_lut[src_px[2] as usize];
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst_px[0] = enc_u8(nr);
+        dst_px[1] = enc_u8(ng);
+        dst_px[2] = enc_u8(nb);
+    }
+}
+
+/// Convert u8 RGBA via LUT linearization AND LUT encoding. Alpha copied.
+pub(crate) fn convert_u8_rgba_lut_lut(
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    lin_lut: &[f32; 256],
+    enc_u8: fn(f32) -> u8,
+) {
+    debug_assert_eq!(src.len() % 4, 0);
+    debug_assert_eq!(src.len(), dst.len());
+    for (src_px, dst_px) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
+        let r = lin_lut[src_px[0] as usize];
+        let g = lin_lut[src_px[1] as usize];
+        let b = lin_lut[src_px[2] as usize];
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst_px[0] = enc_u8(nr);
+        dst_px[1] = enc_u8(ng);
+        dst_px[2] = enc_u8(nb);
+        dst_px[3] = src_px[3];
     }
 }
 
