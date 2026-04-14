@@ -52,7 +52,7 @@ zenpixels = { workspace = true, features = ["planar", "imgref"] }
 zenpixels-convert = { path = ".", features = ["pipeline", "imgref", "cms-moxcms", "zencms-lite"] }
 zenbench = { version = "0.1.2"}
 half = "2"
-palette = "0.7"
+palette = { version = "0.7", default-features = false, features = ["std", "approx"] }
 
 [[bench]]
 name = "bench_cms"

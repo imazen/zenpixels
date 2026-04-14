@@ -206,9 +206,13 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
 | `serde` | | Forwards to `zenpixels/serde` |
 
+## Build time
+
+`zenpixels` itself compiles in **~0.28s** (release, 7950X). The cold `cargo build --release -p zenpixels` wall is ~1.9s, but 1.6s of that is the serial prerequisite chain `proc-macro2 → syn → bytemuck_derive → bytemuck` — costs most real Rust projects already pay for something else. Edit-rebuild cycles only pay the 0.3s.
+
 ## MSRV
 
-Rust 1.93+, 2024 edition.
+`zenpixels` requires Rust 1.85+. `zenpixels-convert` requires Rust 1.89+ (for the safe SIMD intrinsics it uses). 2024 edition.
 
 ## Image tech I maintain
 
