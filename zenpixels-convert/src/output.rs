@@ -103,49 +103,9 @@ pub enum OutputProfile {
     Icc(Arc<[u8]>),
 }
 
-/// How to handle HDR source pixels when the target is SDR.
-///
-/// The default (`RejectWithoutToneMapping`) prevents silent highlight
-/// destruction. Callers who know their content is gain-map-derived
-/// (where clipping approximately recovers the SDR base) can opt into
-/// `Clip`.
-///
-/// Once `HdrContext` lands on `PixelSlice` (see imazen/zenpixels#10),
-/// the pipeline can distinguish gain-map-derived HDR from native HDR
-/// automatically and make a smarter default.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum HdrPolicy {
-    /// Return [`ConvertError::HdrTransferRequiresToneMapping`] so the
-    /// caller can apply a tone mapper before retrying.
-    #[default]
-    RejectWithoutToneMapping,
-    /// Clip HDR values to the SDR range after colorimetric conversion.
-    /// For gain-map-derived content this approximately recovers the
-    /// original SDR base image. For native HDR it destroys highlights.
-    Clip,
-}
-
-/// Options for [`finalize_for_output_with`].
-#[derive(Clone, Debug, Default)]
-#[non_exhaustive]
-pub struct ConvertOutputOptions {
-    /// How to handle HDR→SDR conversion. Default: [`HdrPolicy::Clip`].
-    pub hdr_policy: HdrPolicy,
-}
-
-impl ConvertOutputOptions {
-    /// Create with default options (HDR clips to SDR).
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Set the HDR→SDR policy.
-    pub fn hdr_policy(mut self, policy: HdrPolicy) -> Self {
-        self.hdr_policy = policy;
-        self
-    }
-}
+// TODO(0.3.0): Add HdrPolicy enum and ConvertOutputOptions here once
+// ConvertError is #[non_exhaustive] and can carry HdrTransferRequiresToneMapping.
+// See imazen/zenpixels#10 for the full HDR provenance plan.
 
 /// Metadata that the encoder should embed alongside the pixel data.
 ///
@@ -194,32 +154,6 @@ impl EncodeReady {
 
 /// Atomically convert pixel data and generate matching encoder metadata.
 ///
-/// HDR→SDR conversion is rejected by default (returns
-/// [`ConvertError::HdrTransferRequiresToneMapping`]). Use
-/// [`finalize_for_output_with`] with [`HdrPolicy::Clip`] to allow
-/// clipping instead.
-///
-/// See [`finalize_for_output_with`] for full documentation.
-#[track_caller]
-pub fn finalize_for_output<C: ColorManagement>(
-    buffer: &PixelBuffer,
-    origin: &ColorOrigin,
-    target: OutputProfile,
-    pixel_format: PixelFormat,
-    cms: &C,
-) -> Result<EncodeReady, At<ConvertError>> {
-    finalize_for_output_with(
-        buffer,
-        origin,
-        target,
-        pixel_format,
-        cms,
-        &ConvertOutputOptions::default(),
-    )
-}
-
-/// Atomically convert pixel data and generate matching encoder metadata.
-///
 /// This function does three things as a single operation:
 ///
 /// 1. Determines the current pixel color state from `PixelDescriptor` +
@@ -235,7 +169,6 @@ pub fn finalize_for_output<C: ColorManagement>(
 /// - `target` — Desired output color profile.
 /// - `pixel_format` — Target pixel format for the output.
 /// - `cms` — Color management system for ICC profile transforms.
-/// - `options` — Controls HDR→SDR behavior and future conversion knobs.
 ///
 /// # Errors
 ///
@@ -243,27 +176,18 @@ pub fn finalize_for_output<C: ColorManagement>(
 /// - The target format requires a conversion that isn't supported.
 /// - The CMS fails to build a transform for ICC profiles.
 /// - Buffer allocation fails.
-/// - HDR→SDR is rejected by [`HdrPolicy::RejectWithoutToneMapping`].
+// TODO(0.3.0): Add HDR→SDR policy gate here once ConvertError has
+// HdrTransferRequiresToneMapping. See imazen/zenpixels#10.
 #[track_caller]
-pub fn finalize_for_output_with<C: ColorManagement>(
+pub fn finalize_for_output<C: ColorManagement>(
     buffer: &PixelBuffer,
     origin: &ColorOrigin,
     target: OutputProfile,
     pixel_format: PixelFormat,
     cms: &C,
-    options: &ConvertOutputOptions,
 ) -> Result<EncodeReady, At<ConvertError>> {
     let source_desc = buffer.descriptor();
     let target_desc = pixel_format.descriptor();
-
-    // HDR→SDR: reject by default, or clip if caller opted in.
-    if origin_has_hdr_transfer(origin) && !target_has_hdr_transfer(&target) {
-        if options.hdr_policy != HdrPolicy::Clip {
-            return Err(whereat::at!(ConvertError::HdrTransferRequiresToneMapping));
-        }
-        // HdrPolicy::Clip: proceed — values outside [0,1] will be
-        // clamped during quantization to the target bit depth.
-    }
 
     // Determine output metadata based on target profile.
     let (metadata, needs_cms_transform) = match &target {
@@ -445,21 +369,8 @@ fn build_cms_transform<C: ColorManagement>(
     }
 }
 
-/// Check if the origin describes HDR content (PQ or HLG transfer).
-fn origin_has_hdr_transfer(origin: &ColorOrigin) -> bool {
-    origin
-        .cicp
-        .is_some_and(|c| matches!(c.transfer_characteristics, 16 | 18))
-}
-
-/// Check if the output target is HDR-capable (PQ or HLG).
-fn target_has_hdr_transfer(target: &OutputProfile) -> bool {
-    match target {
-        OutputProfile::SameAsOrigin => true, // same as source — if source is HDR, output is too
-        OutputProfile::Named(cicp) => matches!(cicp.transfer_characteristics, 16 | 18),
-        OutputProfile::Icc(_) => false, // can't determine from ICC bytes alone — assume SDR
-    }
-}
+// TODO(0.3.0): restore origin_has_hdr_transfer / target_has_hdr_transfer
+// helpers here for the HDR→SDR policy gate.
 
 /// Resolve the target transfer function.
 fn resolve_transfer(target: &OutputProfile, source: &PixelDescriptor) -> TransferFunction {

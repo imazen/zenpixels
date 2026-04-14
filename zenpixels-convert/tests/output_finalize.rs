@@ -834,7 +834,9 @@ fn named_target_never_uses_cms_with_cicp_authority() {
 }
 
 // ---------------------------------------------------------------------------
-// HDR guard tests
+// HDR passthrough tests
+// TODO(0.3.0): Add HDR→SDR rejection tests once ConvertError has
+// HdrTransferRequiresToneMapping. See imazen/zenpixels#10.
 // ---------------------------------------------------------------------------
 
 fn pq_cicp() -> Cicp {
@@ -843,64 +845,6 @@ fn pq_cicp() -> Cicp {
 
 fn hlg_cicp() -> Cicp {
     Cicp::BT2100_HLG
-}
-
-/// HDR (PQ) origin → SDR ICC target → rejected by default
-#[test]
-fn hdr_pq_to_sdr_icc_rejected() {
-    let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
-    let origin = ColorOrigin::from_cicp(pq_cicp());
-    let result = finalize_for_output(
-        &buf,
-        &origin,
-        OutputProfile::Icc(fake_icc()),
-        PixelFormat::Rgb8,
-        &NoopCms,
-    );
-    let err = result.err().expect("HDR PQ → SDR ICC should be rejected");
-    assert_eq!(
-        *err.error(),
-        zenpixels_convert::error::ConvertError::HdrTransferRequiresToneMapping
-    );
-}
-
-/// HDR (PQ) origin → SDR ICC target → allowed with Clip policy
-#[test]
-fn hdr_pq_to_sdr_icc_clips_with_policy() {
-    use zenpixels_convert::{ConvertOutputOptions, HdrPolicy, finalize_for_output_with};
-    let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
-    let origin = ColorOrigin::from_cicp(pq_cicp());
-    let opts = ConvertOutputOptions::new().hdr_policy(HdrPolicy::Clip);
-    let result = finalize_for_output_with(
-        &buf,
-        &origin,
-        OutputProfile::Icc(fake_icc()),
-        PixelFormat::Rgb8,
-        &NoopCms,
-        &opts,
-    );
-    assert!(result.is_ok(), "HDR PQ → SDR ICC should clip when opted in");
-}
-
-/// HDR (HLG) origin → SDR Named(sRGB) target → rejected by default
-#[test]
-fn hdr_hlg_to_sdr_named_rejected() {
-    let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
-    let origin = ColorOrigin::from_cicp(hlg_cicp());
-    let result = finalize_for_output(
-        &buf,
-        &origin,
-        OutputProfile::Named(srgb_cicp()),
-        PixelFormat::Rgb8,
-        &NoopCms,
-    );
-    let err = result
-        .err()
-        .expect("HDR HLG → SDR Named should be rejected");
-    assert_eq!(
-        *err.error(),
-        zenpixels_convert::error::ConvertError::HdrTransferRequiresToneMapping
-    );
 }
 
 /// HDR origin → SameAsOrigin → allowed (passthrough)

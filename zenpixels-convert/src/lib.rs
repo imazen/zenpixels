@@ -448,7 +448,4 @@ pub use cms_lite::ZenCmsLite;
 pub use cms_moxcms::MoxCms;
 
 // Re-export output types.
-pub use output::{
-    ConvertOutputOptions, EncodeReady, HdrPolicy, OutputMetadata, OutputProfile,
-    finalize_for_output, finalize_for_output_with,
-};
+pub use output::{EncodeReady, OutputMetadata, OutputProfile, finalize_for_output};

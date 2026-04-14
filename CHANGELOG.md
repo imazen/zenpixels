@@ -14,6 +14,11 @@ minor release to batch semver breaks.
   `Option<&'static GamutMatrix>`. `GamutMatrix` is `Copy` (`[[f32;3];3]`),
   so callers just drop the `&`. Now delegates to
   `ColorPrimaries::gamut_matrix_to()`.
+- **`ConvertError::HdrTransferRequiresToneMapping`** — new variant for
+  HDR→SDR rejection (requires `#[non_exhaustive]` first).
+- **`HdrPolicy`** enum, **`ConvertOutputOptions`** struct,
+  **`finalize_for_output_with()`** — configurable HDR→SDR behavior.
+  Deferred until the error variant can land. See imazen/zenpixels#10.
 
 ## 0.2.5
 
@@ -44,14 +49,6 @@ minor release to batch semver breaks.
   directly from CICP codes, avoiding the ICC serialize→deserialize round-trip.
   `MoxCms` implementation uses `ColorProfile::new_from_cicp()`. Shared
   transform-building logic extracted to `build_transform_inner()`.
-- **`ConvertError::HdrTransferRequiresToneMapping`** — error variant for
-  HDR→SDR rejection.
-- **`HdrPolicy`** enum — `RejectWithoutToneMapping` (default) or `Clip`.
-- **`ConvertOutputOptions`** — options struct for `finalize_for_output_with()`,
-  currently controls HDR→SDR behavior via `hdr_policy`.
-- **`finalize_for_output_with()`** — like `finalize_for_output()` but accepts
-  `ConvertOutputOptions` for configurable HDR behavior.
-
 ### zenpixels-convert — behavior change
 
 - **`finalize_for_output()` respects `ColorAuthority`** on the `ColorOrigin`.
@@ -61,12 +58,6 @@ minor release to batch semver breaks.
 - **`SameAsOrigin` no longer invokes the CMS.** It means "keep the color space"
   — only pixel format changes (depth, layout) are applied via `RowConverter`.
   Previously it wastefully built a same-profile-to-same-profile CMS transform.
-- **PQ/HLG → SDR is rejected by default.** `finalize_for_output()` returns
-  `HdrTransferRequiresToneMapping` instead of silently clipping. Callers
-  who know their content is gain-map-derived can opt into clipping via
-  `finalize_for_output_with()` with `HdrPolicy::Clip`. HDR → HDR
-  (SameAsOrigin, Named PQ/HLG) is always allowed. See imazen/zenpixels#10
-  for the future plan to auto-detect gain-map provenance.
 
 ## 0.2.3
 
