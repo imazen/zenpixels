@@ -845,9 +845,9 @@ fn hlg_cicp() -> Cicp {
     Cicp::BT2100_HLG
 }
 
-/// HDR (PQ) origin → SDR ICC target → clips by default (no error)
+/// HDR (PQ) origin → SDR ICC target → rejected by default
 #[test]
-fn hdr_pq_to_sdr_icc_clips_by_default() {
+fn hdr_pq_to_sdr_icc_rejected() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_cicp(pq_cicp());
     let result = finalize_for_output(
@@ -857,16 +857,20 @@ fn hdr_pq_to_sdr_icc_clips_by_default() {
         PixelFormat::Rgb8,
         &NoopCms,
     );
-    assert!(result.is_ok(), "HDR PQ → SDR ICC should clip, not error");
+    let err = result.err().expect("HDR PQ → SDR ICC should be rejected");
+    assert_eq!(
+        *err.error(),
+        zenpixels_convert::error::ConvertError::HdrTransferRequiresToneMapping
+    );
 }
 
-/// HDR (PQ) origin → SDR ICC target → rejected when policy says so
+/// HDR (PQ) origin → SDR ICC target → allowed with Clip policy
 #[test]
-fn hdr_pq_to_sdr_icc_rejected_by_policy() {
+fn hdr_pq_to_sdr_icc_clips_with_policy() {
     use zenpixels_convert::{ConvertOutputOptions, HdrPolicy, finalize_for_output_with};
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_cicp(pq_cicp());
-    let opts = ConvertOutputOptions::new().hdr_policy(HdrPolicy::RejectWithoutToneMapping);
+    let opts = ConvertOutputOptions::new().hdr_policy(HdrPolicy::Clip);
     let result = finalize_for_output_with(
         &buf,
         &origin,
@@ -875,18 +879,12 @@ fn hdr_pq_to_sdr_icc_rejected_by_policy() {
         &NoopCms,
         &opts,
     );
-    let err = result
-        .err()
-        .expect("HDR PQ → SDR ICC should be rejected by policy");
-    assert_eq!(
-        *err.error(),
-        zenpixels_convert::error::ConvertError::HdrTransferRequiresToneMapping
-    );
+    assert!(result.is_ok(), "HDR PQ → SDR ICC should clip when opted in");
 }
 
-/// HDR (HLG) origin → SDR Named(sRGB) target → clips by default
+/// HDR (HLG) origin → SDR Named(sRGB) target → rejected by default
 #[test]
-fn hdr_hlg_to_sdr_named_clips_by_default() {
+fn hdr_hlg_to_sdr_named_rejected() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_cicp(hlg_cicp());
     let result = finalize_for_output(
@@ -896,7 +894,13 @@ fn hdr_hlg_to_sdr_named_clips_by_default() {
         PixelFormat::Rgb8,
         &NoopCms,
     );
-    assert!(result.is_ok(), "HDR HLG → SDR Named should clip, not error");
+    let err = result
+        .err()
+        .expect("HDR HLG → SDR Named should be rejected");
+    assert_eq!(
+        *err.error(),
+        zenpixels_convert::error::ConvertError::HdrTransferRequiresToneMapping
+    );
 }
 
 /// HDR origin → SameAsOrigin → allowed (passthrough)

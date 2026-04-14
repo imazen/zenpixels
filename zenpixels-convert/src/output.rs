@@ -105,11 +105,10 @@ pub enum OutputProfile {
 
 /// How to handle HDR source pixels when the target is SDR.
 ///
-/// The default (`Clip`) is appropriate for the common Ultra HDR pipeline
-/// where HDR pixels were reconstructed from an SDR base + gain map —
-/// clipping approximately recovers the original SDR rendition. For native
-/// HDR content (no SDR base), clipping destroys highlight detail; use
-/// `RejectWithoutToneMapping` and apply a tone mapper first.
+/// The default (`RejectWithoutToneMapping`) prevents silent highlight
+/// destruction. Callers who know their content is gain-map-derived
+/// (where clipping approximately recovers the SDR base) can opt into
+/// `Clip`.
 ///
 /// Once `HdrContext` lands on `PixelSlice` (see imazen/zenpixels#10),
 /// the pipeline can distinguish gain-map-derived HDR from native HDR
@@ -117,14 +116,14 @@ pub enum OutputProfile {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum HdrPolicy {
+    /// Return [`ConvertError::HdrTransferRequiresToneMapping`] so the
+    /// caller can apply a tone mapper before retrying.
+    #[default]
+    RejectWithoutToneMapping,
     /// Clip HDR values to the SDR range after colorimetric conversion.
     /// For gain-map-derived content this approximately recovers the
     /// original SDR base image. For native HDR it destroys highlights.
-    #[default]
     Clip,
-    /// Return [`ConvertError::HdrTransferRequiresToneMapping`] so the
-    /// caller can apply a tone mapper before retrying.
-    RejectWithoutToneMapping,
 }
 
 /// Options for [`finalize_for_output_with`].
@@ -195,9 +194,10 @@ impl EncodeReady {
 
 /// Atomically convert pixel data and generate matching encoder metadata.
 ///
-/// HDR→SDR conversion clips out-of-range values by default. Use
-/// [`finalize_for_output_with`] with [`ConvertOutputOptions`] to change
-/// the HDR policy (e.g., reject without tone mapping).
+/// HDR→SDR conversion is rejected by default (returns
+/// [`ConvertError::HdrTransferRequiresToneMapping`]). Use
+/// [`finalize_for_output_with`] with [`HdrPolicy::Clip`] to allow
+/// clipping instead.
 ///
 /// See [`finalize_for_output_with`] for full documentation.
 #[track_caller]
@@ -256,9 +256,9 @@ pub fn finalize_for_output_with<C: ColorManagement>(
     let source_desc = buffer.descriptor();
     let target_desc = pixel_format.descriptor();
 
-    // HDR→SDR: clip by default, or reject if caller requested it.
+    // HDR→SDR: reject by default, or clip if caller opted in.
     if origin_has_hdr_transfer(origin) && !target_has_hdr_transfer(&target) {
-        if options.hdr_policy == HdrPolicy::RejectWithoutToneMapping {
+        if options.hdr_policy != HdrPolicy::Clip {
             return Err(whereat::at!(ConvertError::HdrTransferRequiresToneMapping));
         }
         // HdrPolicy::Clip: proceed — values outside [0,1] will be

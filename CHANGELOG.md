@@ -46,7 +46,7 @@ minor release to batch semver breaks.
   transform-building logic extracted to `build_transform_inner()`.
 - **`ConvertError::HdrTransferRequiresToneMapping`** — error variant for
   HDR→SDR rejection.
-- **`HdrPolicy`** enum — `Clip` (default) or `RejectWithoutToneMapping`.
+- **`HdrPolicy`** enum — `RejectWithoutToneMapping` (default) or `Clip`.
 - **`ConvertOutputOptions`** — options struct for `finalize_for_output_with()`,
   currently controls HDR→SDR behavior via `hdr_policy`.
 - **`finalize_for_output_with()`** — like `finalize_for_output()` but accepts
@@ -61,11 +61,12 @@ minor release to batch semver breaks.
 - **`SameAsOrigin` no longer invokes the CMS.** It means "keep the color space"
   — only pixel format changes (depth, layout) are applied via `RowConverter`.
   Previously it wastefully built a same-profile-to-same-profile CMS transform.
-- **PQ/HLG → SDR now clips by default.** `finalize_for_output()` clips
-  HDR values to the SDR range instead of returning an error. The old reject
-  behavior is available via `finalize_for_output_with()` with
-  `HdrPolicy::RejectWithoutToneMapping`. HDR → HDR (SameAsOrigin, Named
-  PQ/HLG) is always allowed.
+- **PQ/HLG → SDR is rejected by default.** `finalize_for_output()` returns
+  `HdrTransferRequiresToneMapping` instead of silently clipping. Callers
+  who know their content is gain-map-derived can opt into clipping via
+  `finalize_for_output_with()` with `HdrPolicy::Clip`. HDR → HDR
+  (SameAsOrigin, Named PQ/HLG) is always allowed. See imazen/zenpixels#10
+  for the future plan to auto-detect gain-map provenance.
 
 ## 0.2.3
 
