@@ -4,8 +4,8 @@ use crate::{PixelDescriptor, TransferFunction};
 use core::fmt;
 
 /// Errors that can occur during pixel format negotiation or conversion.
+// TODO(0.3.0): add #[non_exhaustive] — removed to avoid semver break vs 0.2.3.
 #[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
 pub enum ConvertError {
     /// No supported format could be found for the source descriptor.
     NoMatch { source: PixelDescriptor },
@@ -37,11 +37,10 @@ pub enum ConvertError {
     AllocationFailed,
     /// CMS transform could not be built (invalid ICC profile, unsupported color space, etc.).
     CmsError(alloc::string::String),
-    /// HDR source requires tone mapping before conversion to an SDR target.
-    ///
-    /// A colorimetric CMS transform from PQ/HLG to an SDR profile will clip
-    /// highlights. Tone map the pixels first, then retry with SDR metadata.
-    HdrTransferRequiresToneMapping,
+    // TODO(0.3.0): add HdrTransferRequiresToneMapping variant here once
+    // ConvertError is #[non_exhaustive]. Adding a variant to an exhaustive
+    // enum is a semver break. See also HdrPolicy in output.rs and
+    // imazen/zenpixels#10 for the full HDR provenance plan.
 }
 
 impl fmt::Display for ConvertError {
@@ -84,10 +83,6 @@ impl fmt::Display for ConvertError {
             }
             Self::AllocationFailed => write!(f, "buffer allocation failed"),
             Self::CmsError(msg) => write!(f, "CMS transform failed: {msg}"),
-            Self::HdrTransferRequiresToneMapping => write!(
-                f,
-                "HDR source (PQ/HLG) requires tone mapping before conversion to SDR target"
-            ),
         }
     }
 }

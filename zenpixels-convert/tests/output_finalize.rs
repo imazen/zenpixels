@@ -111,25 +111,6 @@ impl ColorManagement for TrackingCms {
         Ok(Box::new(IdentityTransform))
     }
 
-    fn build_source_transform(
-        &self,
-        src: zenpixels_convert::ColorProfileSource<'_>,
-        _dst: zenpixels_convert::ColorProfileSource<'_>,
-        _src_format: PixelFormat,
-        _dst_format: PixelFormat,
-    ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
-        match src {
-            zenpixels_convert::ColorProfileSource::Cicp(_) => {
-                self.cicp_calls.fetch_add(1, Ordering::Relaxed);
-            }
-            zenpixels_convert::ColorProfileSource::Icc(_) => {
-                self.icc_calls.fetch_add(1, Ordering::Relaxed);
-            }
-            _ => {}
-        }
-        Some(Ok(Box::new(IdentityTransform)))
-    }
-
     fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
         None
     }
@@ -484,11 +465,13 @@ fn authority_row03_icc_none_p3icc_to_srgb() {
     assert_eq!(cms.cicp_calls(), 0, "should not use CICP");
 }
 
-/// Row 4: Icc authority, P3 cicp, no icc, Icc(srgb) → fallback CMS from CICP
+/// Row 4: Icc authority, P3 cicp, no icc, Icc(srgb) → no ICC bytes, no CMS call
 #[test]
 fn authority_row04_icc_p3cicp_noicc_fallback() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
-    // Icc authority but no ICC, only CICP — simulates codec bug (wrong authority)
+    // Icc authority but no ICC, only CICP — no ICC bytes available for CMS.
+    // build_cms_transform requires ICC bytes on both sides; CICP-only sources
+    // fall through to the RowConverter path (no CMS call).
     let origin = ColorOrigin::from_cicp(p3_cicp()).with_color_authority(ColorAuthority::Icc);
     let cms = TrackingCms::new();
     let _ready = finalize_for_output(
@@ -499,8 +482,7 @@ fn authority_row04_icc_p3cicp_noicc_fallback() {
         &cms,
     )
     .unwrap();
-    assert_eq!(cms.cicp_calls(), 1, "should fall back to CICP transform");
-    assert_eq!(cms.icc_calls(), 0, "should not use ICC (none available)");
+    assert_eq!(cms.total_calls(), 0, "no ICC bytes on source → no CMS call");
 }
 
 /// Row 5: Icc authority, sRGB cicp, sRGB icc, SameAsOrigin → no transform
@@ -579,10 +561,11 @@ fn authority_row08_cicp_srgb_anyicc_same() {
     assert_eq!(ready.metadata().cicp, Some(srgb_cicp()));
 }
 
-/// Row 9: Cicp authority, P3 cicp, no icc, Icc(srgb) → CMS from CICP
+/// Row 9: Cicp authority, P3 cicp, no icc, Icc(srgb) → no ICC bytes, no CMS call
 #[test]
 fn authority_row09_cicp_p3_noicc_to_srgb() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
+    // CICP authority but no ICC bytes — CMS requires ICC bytes, so no transform.
     let origin = ColorOrigin::from_cicp(p3_cicp());
     let cms = TrackingCms::new();
     let _ready = finalize_for_output(
@@ -593,11 +576,11 @@ fn authority_row09_cicp_p3_noicc_to_srgb() {
         &cms,
     )
     .unwrap();
-    assert_eq!(cms.cicp_calls(), 1, "should use CICP transform");
-    assert_eq!(cms.icc_calls(), 0, "should not use ICC (none available)");
+    assert_eq!(cms.total_calls(), 0, "no ICC bytes on source → no CMS call");
 }
 
-/// Row 10: Cicp authority, P3 cicp, P3 icc, Icc(srgb) → CMS from CICP (ignore ICC)
+/// Row 10: Cicp authority, P3 cicp, P3 icc, Icc(srgb) → CMS uses ICC bytes
+/// (build_cms_transform always uses ICC bytes when available, regardless of authority)
 #[test]
 fn authority_row10_cicp_p3_p3icc_to_srgb() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
@@ -611,8 +594,11 @@ fn authority_row10_cicp_p3_p3icc_to_srgb() {
         &cms,
     )
     .unwrap();
-    assert_eq!(cms.cicp_calls(), 1, "should use CICP (authoritative)");
-    assert_eq!(cms.icc_calls(), 0, "should not use ICC");
+    assert_eq!(
+        cms.icc_calls(),
+        1,
+        "should use ICC bytes (only ICC path available)"
+    );
 }
 
 /// Row 11: Cicp authority, no cicp, P3 icc, Icc(srgb) → fallback CMS from ICC
@@ -682,16 +668,6 @@ impl ColorManagement for FailingCms {
         Err("deliberate ICC failure")
     }
 
-    fn build_source_transform(
-        &self,
-        _src: zenpixels_convert::ColorProfileSource<'_>,
-        _dst: zenpixels_convert::ColorProfileSource<'_>,
-        _src_format: PixelFormat,
-        _dst_format: PixelFormat,
-    ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
-        Some(Err("deliberate source transform failure"))
-    }
-
     fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
         None
     }
@@ -750,9 +726,9 @@ fn authority_icc_transform_error_propagated() {
     assert!(result.is_err(), "ICC transform failure should propagate");
 }
 
-/// CMS CICP transform error is propagated
+/// CICP-only source with no ICC bytes → falls through (no CMS call, no error)
 #[test]
-fn authority_cicp_transform_error_propagated() {
+fn authority_cicp_no_icc_bytes_falls_through() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_cicp(p3_cicp());
     let result = finalize_for_output(
@@ -762,12 +738,13 @@ fn authority_cicp_transform_error_propagated() {
         PixelFormat::Rgb8,
         &FailingCms,
     );
-    assert!(result.is_err(), "CICP transform failure should propagate");
+    // No ICC bytes on source → CMS is never called → no error.
+    assert!(result.is_ok(), "no ICC bytes → no CMS call → no error");
 }
 
-/// CMS CICP fallback error is propagated (Icc authority, no icc, cicp present)
+/// Icc authority, no ICC bytes, CICP present → falls through (no CMS call)
 #[test]
-fn authority_icc_cicp_fallback_error_propagated() {
+fn authority_icc_no_icc_bytes_cicp_present_falls_through() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_cicp(p3_cicp()).with_color_authority(ColorAuthority::Icc);
     let result = finalize_for_output(
@@ -777,7 +754,8 @@ fn authority_icc_cicp_fallback_error_propagated() {
         PixelFormat::Rgb8,
         &FailingCms,
     );
-    assert!(result.is_err(), "CICP fallback failure should propagate");
+    // No ICC bytes on source → CMS is never called → no error.
+    assert!(result.is_ok(), "no ICC bytes → no CMS call → no error");
 }
 
 /// CMS ICC fallback error is propagated (Cicp authority, no cicp, icc present)
@@ -834,7 +812,9 @@ fn named_target_never_uses_cms_with_cicp_authority() {
 }
 
 // ---------------------------------------------------------------------------
-// HDR guard tests
+// HDR passthrough tests
+// TODO(0.3.0): Add HDR→SDR rejection tests once ConvertError has
+// HdrTransferRequiresToneMapping. See imazen/zenpixels#10.
 // ---------------------------------------------------------------------------
 
 fn pq_cicp() -> Cicp {
@@ -843,46 +823,6 @@ fn pq_cicp() -> Cicp {
 
 fn hlg_cicp() -> Cicp {
     Cicp::BT2100_HLG
-}
-
-/// HDR (PQ) origin → SDR ICC target → rejected
-#[test]
-fn hdr_pq_to_sdr_icc_rejected() {
-    let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
-    let origin = ColorOrigin::from_cicp(pq_cicp());
-    let result = finalize_for_output(
-        &buf,
-        &origin,
-        OutputProfile::Icc(fake_icc()),
-        PixelFormat::Rgb8,
-        &NoopCms,
-    );
-    let err = result.err().expect("HDR PQ → SDR ICC should be rejected");
-    assert_eq!(
-        *err.error(),
-        zenpixels_convert::error::ConvertError::HdrTransferRequiresToneMapping
-    );
-}
-
-/// HDR (HLG) origin → SDR Named(sRGB) target → rejected
-#[test]
-fn hdr_hlg_to_sdr_named_rejected() {
-    let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
-    let origin = ColorOrigin::from_cicp(hlg_cicp());
-    let result = finalize_for_output(
-        &buf,
-        &origin,
-        OutputProfile::Named(srgb_cicp()),
-        PixelFormat::Rgb8,
-        &NoopCms,
-    );
-    let err = result
-        .err()
-        .expect("HDR HLG → SDR Named should be rejected");
-    assert_eq!(
-        *err.error(),
-        zenpixels_convert::error::ConvertError::HdrTransferRequiresToneMapping
-    );
 }
 
 /// HDR origin → SameAsOrigin → allowed (passthrough)

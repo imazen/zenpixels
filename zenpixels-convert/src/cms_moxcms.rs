@@ -300,35 +300,15 @@ impl ColorManagement for MoxCms {
         identify_by_colorants(&profile)
     }
 
-    fn build_source_transform(
-        &self,
-        src: crate::ColorProfileSource<'_>,
-        dst: crate::ColorProfileSource<'_>,
-        src_format: PixelFormat,
-        dst_format: PixelFormat,
-    ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
-        let src_profile = match source_to_moxcms_profile(&src) {
-            Ok(Some(p)) => p,
-            Ok(None) => return None,
-            Err(e) => return Some(Err(e)),
-        };
-        let dst_profile = match source_to_moxcms_profile(&dst) {
-            Ok(Some(p)) => p,
-            Ok(None) => return None,
-            Err(e) => return Some(Err(e)),
-        };
-        Some(build_transform_inner(
-            &src_profile,
-            &dst_profile,
-            src_format,
-            dst_format,
-        ))
-    }
+    // TODO(0.3.0): implement build_source_transform once the trait method
+    // is added. The plumbing (source_to_moxcms_profile) is already here.
 }
 
 /// Convert a [`ColorProfileSource`] to a moxcms [`ColorProfile`].
 ///
 /// Returns `Ok(None)` if the source can't be mapped to moxcms.
+// TODO(0.3.0): used by build_source_transform once trait is redesigned.
+#[allow(dead_code)]
 fn source_to_moxcms_profile(
     src: &crate::ColorProfileSource<'_>,
 ) -> Result<Option<ColorProfile>, MoxCmsError> {
@@ -350,6 +330,7 @@ fn source_to_moxcms_profile(
 }
 
 /// Convert CICP to a moxcms ColorProfile.
+#[allow(dead_code)]
 fn cicp_to_moxcms_profile(cicp: &Cicp) -> ColorProfile {
     ColorProfile::new_from_cicp(moxcms::CicpProfile {
         color_primaries: moxcms::CicpColorPrimaries::try_from(cicp.color_primaries)
@@ -365,6 +346,7 @@ fn cicp_to_moxcms_profile(cicp: &Cicp) -> ColorProfile {
 }
 
 /// Convert primaries + transfer to a moxcms ColorProfile via CICP mapping.
+#[allow(dead_code)]
 fn primaries_transfer_to_moxcms_profile(
     primaries: crate::ColorPrimaries,
     transfer: crate::TransferFunction,

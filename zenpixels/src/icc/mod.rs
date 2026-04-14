@@ -5,8 +5,8 @@
 //! - **CICP extraction**: [`extract_cicp`] reads the `cicp` tag from ICC v4.4+
 //!   profiles (~100ns, no allocation).
 //!
-//! - **Hash-based identification**: [`identify`] recognizes 132
-//!   well-known profiles (sRGB, Display P3, BT.2020, Adobe RGB, ProPhoto,
+//! - **Hash-based identification**: [`identify`] recognizes 181
+//!   well-known profiles (sRGB, Display P3, BT.2020, Adobe RGB,
 //!   grayscale) via normalized FNV-1a hash lookup (~100ns).
 //!
 //! The hash table covers profiles found in a web corpus of 55,539 spidered
@@ -19,11 +19,14 @@
 //! # Example
 //!
 //! ```
-//! use zenpixels::icc::{identify_common, Tolerance};
+//! use zenpixels::icc::{identify_common, IdentificationUse};
 //!
 //! # let icc_bytes: &[u8] = &[];
-//! if let Some(id) = identify_common(icc_bytes, Tolerance::Intent) {
-//!     // id.primaries: ColorPrimaries, id.transfer: TransferFunction
+//! if let Some(id) = identify_common(icc_bytes) {
+//!     if id.valid_use == IdentificationUse::MatrixTrcSubstitution {
+//!         // Safe to skip CMS — use matrix+TRC math directly
+//!     }
+//!     // id.primaries and id.transfer are always available for metadata
 //! }
 //! ```
 
@@ -120,15 +123,174 @@ pub fn extract_cicp(data: &[u8]) -> Option<Cicp> {
     None
 }
 
+// ── Profile inspection ───────────────────────────────────────────────────
+
+/// Profile features that can cause a CMS to produce output different from
+/// what a pure matrix+TRC conversion would give.
+///
+/// A profile with any of these features should ideally be handled by a full
+/// CMS (moxcms, lcms2) rather than identified-and-approximated via matrix math.
+#[allow(dead_code)] // used in tests; will be used by zenpixels-convert CMS bypass
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub(crate) struct ProfileFeatures {
+    /// PCS is Lab instead of XYZ. Matrix math assumes XYZ.
+    pub(crate) pcs_is_lab: bool,
+    /// Has `chad` (chromatic adaptation) tag.
+    pub(crate) has_chad: bool,
+    /// `chad` tag is Bradford (within tolerance). Only meaningful if `has_chad`.
+    pub(crate) chad_is_bradford: bool,
+    /// Has `A2B0` LUT (default/relative-colorimetric device→PCS). A CMS
+    /// typically prefers this over colorants when present.
+    pub(crate) has_a2b0: bool,
+    /// Has `A2B1` LUT (perceptual device→PCS, with gamut mapping).
+    pub(crate) has_a2b1: bool,
+    /// Has `A2B2` LUT (saturation device→PCS).
+    pub(crate) has_a2b2: bool,
+    /// Has `B2A0` LUT (default PCS→device).
+    pub(crate) has_b2a0: bool,
+    /// Has `B2A1` LUT (perceptual PCS→device).
+    pub(crate) has_b2a1: bool,
+    /// Has `B2A2` LUT (saturation PCS→device).
+    pub(crate) has_b2a2: bool,
+    /// Has matrix-shaper tags (rXYZ + gXYZ + bXYZ + rTRC + gTRC + bTRC).
+    pub(crate) has_matrix_shaper: bool,
+}
+
+impl ProfileFeatures {
+    /// Whether a CMS would produce identical output to our matrix+TRC math.
+    ///
+    /// True when: PCS is XYZ, chad (if present) is Bradford, no LUT tags
+    /// that a CMS would prefer. Matrix-shaper tags must be present.
+    #[inline]
+    #[allow(dead_code)] // will be used by zenpixels-convert CMS bypass
+    pub(crate) fn is_safe_matrix_shaper(&self) -> bool {
+        self.has_matrix_shaper
+            && !self.pcs_is_lab
+            && !self.has_a2b0
+            && !self.has_a2b1
+            && !self.has_a2b2
+            && !self.has_b2a0
+            && !self.has_b2a1
+            && !self.has_b2a2
+            && (!self.has_chad || self.chad_is_bradford)
+    }
+}
+
+/// Bradford chromatic adaptation matrix (D65→D50 direction, ICC convention).
+/// Used by ICC `chad` tag.
+#[allow(dead_code)] // used by inspect_profile, kept for CMS bypass path
+const BRADFORD_CHAD_D65_TO_D50: [f64; 9] = [
+    1.0478, 0.0229, -0.0501, 0.0295, 0.9905, -0.0171, -0.0092, 0.0151, 0.7517,
+];
+/// Tolerance for `chad` matrix comparison (s15Fixed16 quantization).
+#[allow(dead_code)] // used by inspect_profile, kept for CMS bypass path
+const CHAD_TOL: f64 = 0.005;
+
+/// Inspect an ICC profile and return which features it uses.
+///
+/// Use [`ProfileFeatures::is_safe_matrix_shaper`] to decide whether
+/// matrix+TRC approximation via [`identify_common`] is equivalent to a
+/// full CMS's output.
+///
+/// Returns `None` if the bytes aren't a valid ICC profile.
+#[allow(dead_code)] // used in tests; will be used by zenpixels-convert CMS bypass
+pub(crate) fn inspect_profile(data: &[u8]) -> Option<ProfileFeatures> {
+    if data.len() < ICC_MIN_SIZE {
+        return None;
+    }
+    if data.get(ICC_SIGNATURE_OFFSET..ICC_SIGNATURE_OFFSET + 4)? != b"acsp" {
+        return None;
+    }
+
+    // PCS: bytes 20..24 in header. "XYZ " vs "Lab "
+    let mut feat = ProfileFeatures {
+        pcs_is_lab: data.get(20..24)? == b"Lab ",
+        ..ProfileFeatures::default()
+    };
+
+    let tag_count = u32::from_be_bytes(
+        data[ICC_TAG_COUNT_OFFSET..ICC_TAG_COUNT_OFFSET + 4]
+            .try_into()
+            .ok()?,
+    ) as usize;
+    let tag_count = tag_count.min(ICC_MAX_TAG_COUNT);
+
+    let mut has_rxyz = false;
+    let mut has_gxyz = false;
+    let mut has_bxyz = false;
+    let mut has_rtrc = false;
+    let mut has_gtrc = false;
+    let mut has_btrc = false;
+    let mut chad_off = None;
+
+    for i in 0..tag_count {
+        let entry_offset = ICC_TAG_TABLE_OFFSET + i * ICC_TAG_ENTRY_SIZE;
+        let entry = data.get(entry_offset..entry_offset + ICC_TAG_ENTRY_SIZE)?;
+        let sig = &entry[..4];
+        let d_off = u32::from_be_bytes(entry[4..8].try_into().ok()?) as usize;
+        match sig {
+            b"rXYZ" => has_rxyz = true,
+            b"gXYZ" => has_gxyz = true,
+            b"bXYZ" => has_bxyz = true,
+            b"rTRC" => has_rtrc = true,
+            b"gTRC" => has_gtrc = true,
+            b"bTRC" => has_btrc = true,
+            b"A2B0" => feat.has_a2b0 = true,
+            b"A2B1" => feat.has_a2b1 = true,
+            b"A2B2" => feat.has_a2b2 = true,
+            b"B2A0" => feat.has_b2a0 = true,
+            b"B2A1" => feat.has_b2a1 = true,
+            b"B2A2" => feat.has_b2a2 = true,
+            b"chad" => chad_off = Some(d_off),
+            _ => {}
+        }
+    }
+
+    feat.has_matrix_shaper = has_rxyz && has_gxyz && has_bxyz && has_rtrc && has_gtrc && has_btrc;
+
+    // Parse chad matrix if present
+    if let Some(off) = chad_off {
+        feat.has_chad = true;
+        // chad tag: "sf32" (signature) + 4 reserved + 9 × s15Fixed16 (f64 values)
+        if data.get(off..off + 8)? == b"sf32\0\0\0\0" && data.len() >= off + 8 + 36 {
+            let mut m = [0.0f64; 9];
+            let mut ok = true;
+            for (i, slot) in m.iter_mut().enumerate() {
+                let o = off + 8 + i * 4;
+                if let Ok(bytes) = data[o..o + 4].try_into() {
+                    *slot = i32::from_be_bytes(bytes) as f64 / 65536.0;
+                } else {
+                    ok = false;
+                    break;
+                }
+            }
+            if ok {
+                let mut max_diff = 0.0f64;
+                for (mi, bi) in m.iter().zip(BRADFORD_CHAD_D65_TO_D50.iter()) {
+                    let d = (mi - bi).abs();
+                    if d > max_diff {
+                        max_diff = d;
+                    }
+                }
+                feat.chad_is_bradford = max_diff < CHAD_TOL;
+            }
+        }
+    }
+
+    Some(feat)
+}
+
 // ── Return type ──────────────────────────────────────────────────────────
 
 /// Result of identifying a well-known ICC profile.
 ///
 /// Carries the recognized color primaries and transfer function.
 /// These may or may not have CICP equivalents — [`AdobeRgb`](ColorPrimaries::AdobeRgb)
-/// and [`ProPhoto`](ColorPrimaries::ProPhoto) do not.
+/// does not.
 ///
 /// Use [`to_cicp`](Self::to_cicp) to convert to CICP codes when available.
+/// Check [`valid_use`](Self::valid_use) before deciding whether to skip a CMS.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct IccIdentification {
@@ -136,21 +298,47 @@ pub struct IccIdentification {
     pub primaries: ColorPrimaries,
     /// Recognized transfer function.
     pub transfer: TransferFunction,
+    /// What this identification can be used for.
+    pub valid_use: IdentificationUse,
+}
+
+/// What operations an [`IccIdentification`] supports.
+///
+/// Always check this before deciding whether to skip a CMS — a profile
+/// can be *recognized* (primaries/transfer known) without being *safe*
+/// for fast-path substitution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum IdentificationUse {
+    /// Primaries and transfer are known, but the profile's structure may
+    /// require a full CMS for accurate conversion (e.g., LUT-based
+    /// profiles, non-Bradford chromatic adaptation, Lab PCS). Use for
+    /// metadata, format negotiation, and display — not for pixel math.
+    MetadataOnly,
+    /// Matrix+TRC substitution produces output equivalent to a full CMS
+    /// within the [`Tolerance`] used for identification. Safe to use for
+    /// pixel conversion without a CMS backend.
+    MatrixTrcSubstitution,
 }
 
 impl IccIdentification {
     /// Create a new identification result.
     #[inline]
-    pub fn new(primaries: ColorPrimaries, transfer: TransferFunction) -> Self {
+    pub(crate) fn new(
+        primaries: ColorPrimaries,
+        transfer: TransferFunction,
+        valid_use: IdentificationUse,
+    ) -> Self {
         Self {
             primaries,
             transfer,
+            valid_use,
         }
     }
 
     /// Convert to CICP codes if both primaries and transfer have CICP equivalents.
     ///
-    /// Returns `None` for non-CICP color spaces (Adobe RGB, ProPhoto, etc.).
+    /// Returns `None` for non-CICP color spaces (Adobe RGB, etc.).
     #[inline]
     pub fn to_cicp(&self) -> Option<crate::Cicp> {
         let cp = self.primaries.to_cicp()?;
@@ -190,7 +378,8 @@ impl IccIdentification {
 /// | `Intent` | ±56 | none | + Facebook sRGB, Chrome nano |
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[must_use]
-pub enum Tolerance {
+#[allow(dead_code)] // all levels kept for future fine-grained identification
+pub(crate) enum Tolerance {
     /// ±1 in u16 — parametric v4 profiles only.
     Exact = 1,
     /// ±3 in u16 — includes v2-magic parametric approximations.
@@ -201,6 +390,69 @@ pub enum Tolerance {
     Intent = 56,
 }
 
+// ── Intent-safety flags ──────────────────────────────────────────────────
+
+/// Intent-safety flag: matrix+TRC math matches a CMS's output for the
+/// relative/absolute colorimetric intent.
+///
+/// Set when PCS is XYZ, `chad` (if present) is Bradford, there is no `A2B0`
+/// or `B2A0` LUT, and the matrix-shaper tags are complete.
+pub(crate) const INTENT_COLORIMETRIC_SAFE: u8 = 1 << 0;
+/// Intent-safety flag: matrix+TRC math matches a CMS's output for the
+/// perceptual intent (in addition to [`INTENT_COLORIMETRIC_SAFE`]).
+///
+/// Additionally requires no `A2B1` or `B2A1` LUT.
+pub(crate) const INTENT_PERCEPTUAL_SAFE: u8 = 1 << 1;
+/// Intent-safety flag: matrix+TRC math matches a CMS's output for the
+/// saturation intent (in addition to [`INTENT_COLORIMETRIC_SAFE`]).
+///
+/// Additionally requires no `A2B2` or `B2A2` LUT.
+pub(crate) const INTENT_SATURATION_SAFE: u8 = 1 << 2;
+
+/// ICC rendering intent — controls which intent-safety flags must be set
+/// on a table entry for [`identify_common_for`] to return a match.
+///
+/// Names follow the ICC v4.4 specification (section 7.2.15) and CICP/moxcms
+/// conventions. See also [`Tolerance`] for TRC error tolerance control.
+#[allow(dead_code)] // intent dispatch kept for zenpixels-convert CMS bypass
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub(crate) enum CoalesceForUse {
+    /// All four ICC rendering intents must be safe.
+    AnyIntent,
+    /// Relative colorimetric — CMS uses colorants directly with white-point
+    /// adaptation. The most common default for display-to-display workflows.
+    /// Equivalent to absolute colorimetric for matrix-shaper math (we share
+    /// one safety bit for both).
+    RelativeColorimetric,
+    /// Absolute colorimetric — preserves source white point literally.
+    /// Same intent-safety requirements as relative colorimetric for
+    /// matrix-shaper profiles.
+    AbsoluteColorimetric,
+    /// Perceptual rendering — CMS uses A2B1/B2A1 LUT for gamut mapping
+    /// when present. Matrix math is only equivalent when no perceptual
+    /// LUT exists in the profile.
+    Perceptual,
+    /// Saturation rendering — vivid business graphics. Matrix math is
+    /// only equivalent when no A2B2/B2A2 LUT exists.
+    Saturation,
+}
+
+impl CoalesceForUse {
+    /// The intent-safety mask required for a profile to match this use.
+    #[inline]
+    const fn required_mask(self) -> u8 {
+        match self {
+            Self::AnyIntent => {
+                INTENT_COLORIMETRIC_SAFE | INTENT_PERCEPTUAL_SAFE | INTENT_SATURATION_SAFE
+            }
+            Self::RelativeColorimetric | Self::AbsoluteColorimetric => INTENT_COLORIMETRIC_SAFE,
+            Self::Perceptual => INTENT_PERCEPTUAL_SAFE,
+            Self::Saturation => INTENT_SATURATION_SAFE,
+        }
+    }
+}
+
 // ── Public API ───────────────────────────────────────────────────────────
 
 /// Identify a well-known ICC profile by normalized hash lookup.
@@ -209,27 +461,100 @@ pub enum Tolerance {
 /// checks against tables of known RGB and grayscale ICC profiles.
 ///
 /// Returns `Some(IccIdentification)` for recognized profiles, `None` for
-/// unknown ones. Grayscale profiles return [`Bt709`](ColorPrimaries::Bt709)
-/// primaries (grayscale has no gamut, but D65 white point is assumed).
+/// unknown ones. Check [`IccIdentification::valid_use`] before deciding
+/// whether to skip a CMS — a recognized profile may still require one.
+///
+/// Grayscale profiles return [`Bt709`](ColorPrimaries::Bt709) primaries
+/// (grayscale has no gamut, but D65 white point is assumed).
 ///
 /// ~100ns. For the long tail of vendor/monitor profiles, use structural
 /// analysis via a CMS backend.
-pub fn identify_common(icc_bytes: &[u8], tolerance: Tolerance) -> Option<IccIdentification> {
+pub fn identify_common(icc_bytes: &[u8]) -> Option<IccIdentification> {
+    identify_common_at(icc_bytes, Tolerance::Intent)
+}
+
+/// Internal identification with configurable tolerance.
+fn identify_common_at(icc_bytes: &[u8], tolerance: Tolerance) -> Option<IccIdentification> {
     let hash = fnv1a_64_normalized(icc_bytes);
+    if let Ok(idx) = KNOWN_RGB_PROFILES.binary_search_by_key(&hash, |e| e.0) {
+        let entry = &KNOWN_RGB_PROFILES[idx];
+        if entry.3 <= tolerance as u8 {
+            return Some(IccIdentification::new(
+                entry.1,
+                entry.2,
+                use_from_mask(entry.4),
+            ));
+        }
+    }
+    if let Ok(idx) = KNOWN_GRAY_PROFILES.binary_search_by_key(&hash, |e| e.0) {
+        let entry = &KNOWN_GRAY_PROFILES[idx];
+        if entry.2 <= tolerance as u8 {
+            return Some(IccIdentification::new(
+                ColorPrimaries::Bt709,
+                entry.1,
+                use_from_mask(entry.3),
+            ));
+        }
+    }
+    None
+}
+
+/// Map an intent-safety mask to an [`IdentificationUse`].
+#[inline]
+fn use_from_mask(mask: u8) -> IdentificationUse {
+    const ALL: u8 = INTENT_COLORIMETRIC_SAFE | INTENT_PERCEPTUAL_SAFE | INTENT_SATURATION_SAFE;
+    if mask == ALL {
+        IdentificationUse::MatrixTrcSubstitution
+    } else {
+        IdentificationUse::MetadataOnly
+    }
+}
+
+/// Identify a profile only when matrix+TRC math is equivalent to a CMS's
+/// output for the specified intent.
+///
+/// Each table entry carries a precomputed intent-safety mask derived at
+/// table-generation time from the ICC profile's structural features
+/// (PCS type, `chad` matrix, A2B/B2A LUT presence, matrix-shaper
+/// completeness). Entries whose mask is missing any bit required by
+/// `use_for` are rejected.
+///
+/// Use this when you need byte-exact equivalence with a full CMS for a
+/// specific rendering intent. Use [`identify_common`] for the common
+/// colorimetric-intent case.
+///
+/// Returns `None` if the profile isn't in the table, its measured u16 error
+/// exceeds `tolerance`, or it isn't safe for the requested intent.
+#[allow(dead_code)] // will be used by zenpixels-convert intent-aware CMS bypass
+pub(crate) fn identify_common_for(
+    icc_bytes: &[u8],
+    tolerance: Tolerance,
+    use_for: CoalesceForUse,
+) -> Option<IccIdentification> {
+    let hash = fnv1a_64_normalized(icc_bytes);
+    let required = use_for.required_mask();
 
     // Try RGB table first.
     if let Ok(idx) = KNOWN_RGB_PROFILES.binary_search_by_key(&hash, |e| e.0) {
         let entry = &KNOWN_RGB_PROFILES[idx];
-        if entry.3 <= tolerance as u8 {
-            return Some(IccIdentification::new(entry.1, entry.2));
+        if entry.3 <= tolerance as u8 && (entry.4 & required) == required {
+            return Some(IccIdentification::new(
+                entry.1,
+                entry.2,
+                IdentificationUse::MatrixTrcSubstitution,
+            ));
         }
     }
 
     // Try grayscale table.
     if let Ok(idx) = KNOWN_GRAY_PROFILES.binary_search_by_key(&hash, |e| e.0) {
         let entry = &KNOWN_GRAY_PROFILES[idx];
-        if entry.2 <= tolerance as u8 {
-            return Some(IccIdentification::new(ColorPrimaries::Bt709, entry.1));
+        if entry.2 <= tolerance as u8 && (entry.3 & required) == required {
+            return Some(IccIdentification::new(
+                ColorPrimaries::Bt709,
+                entry.1,
+                IdentificationUse::MatrixTrcSubstitution,
+            ));
         }
     }
 
@@ -238,11 +563,10 @@ pub fn identify_common(icc_bytes: &[u8], tolerance: Tolerance) -> Option<IccIden
 
 /// Check if an ICC profile is a known sRGB profile.
 ///
-/// Convenience wrapper — returns `true` if the profile matches sRGB within
-/// [`Intent`](Tolerance::Intent) tolerance.
+/// Convenience wrapper — returns `true` if the profile is recognized as sRGB.
 #[inline]
 pub fn is_common_srgb(icc_bytes: &[u8]) -> bool {
-    identify_common(icc_bytes, Tolerance::Intent).is_some_and(|id| id.is_srgb())
+    identify_common(icc_bytes).is_some_and(|id| id.is_srgb())
 }
 
 // ── Hash function ────────────────────────────────────────────────────────
@@ -299,19 +623,62 @@ fn fnv1a_64_normalized(data: &[u8]) -> u64 {
 use ColorPrimaries as CP;
 use TransferFunction as TF;
 
-/// Well-known RGB ICC profiles: `(normalized_hash, primaries, transfer, max_u16_err)`.
+/// Intent-safety bitfield aliases used in the generated `.inc` tables.
+///
+/// `AnyIntent` (all three bits set) is the common case: matrix+TRC math
+/// matches a CMS for every rendering intent, so the entry is safe to
+/// substitute unconditionally. `IdOnly` means the profile is recognized
+/// but substitution isn't safe for any intent — use it for identification,
+/// not for math. Partial combinations name each possible subset; they
+/// occur when a profile's structural features make one or more intents
+/// non-equivalent to matrix+TRC math.
+#[allow(non_upper_case_globals)]
+struct Safe;
+#[allow(non_upper_case_globals, dead_code)]
+impl Safe {
+    /// Matrix+TRC output matches a CMS for every rendering intent.
+    const AnyIntent: u8 =
+        INTENT_COLORIMETRIC_SAFE | INTENT_PERCEPTUAL_SAFE | INTENT_SATURATION_SAFE;
+    /// Profile is recognized, but matrix+TRC substitution is not safe for
+    /// any intent — identification only.
+    const IdOnly: u8 = 0;
+    /// Colorimetric intents only (relative + absolute share one bit).
+    const Colorimetric: u8 = INTENT_COLORIMETRIC_SAFE;
+    /// Perceptual intent only.
+    const Perceptual: u8 = INTENT_PERCEPTUAL_SAFE;
+    /// Saturation intent only.
+    const Saturation: u8 = INTENT_SATURATION_SAFE;
+    /// Colorimetric + perceptual.
+    const ColorimetricPerceptual: u8 = INTENT_COLORIMETRIC_SAFE | INTENT_PERCEPTUAL_SAFE;
+    /// Colorimetric + saturation.
+    const ColorimetricSaturation: u8 = INTENT_COLORIMETRIC_SAFE | INTENT_SATURATION_SAFE;
+    /// Perceptual + saturation (no colorimetric equivalence).
+    const PerceptualSaturation: u8 = INTENT_PERCEPTUAL_SAFE | INTENT_SATURATION_SAFE;
+}
+
+/// Well-known RGB ICC profiles: `(normalized_hash, primaries, transfer, max_u16_err, intent_mask)`.
+///
+/// `max_u16_err` is the empirically measured maximum channel error (in u16
+/// units) between matrix+TRC math and a reference CMS; compared directly
+/// against [`Tolerance`] at query time. `intent_mask` is a [`Safe`] alias
+/// (e.g. `Safe::AnyIntent`, `Safe::IdOnly`) precomputed from the profile's
+/// structural features (PCS type, `chad` matrix, A2B/B2A LUT presence,
+/// matrix-shaper completeness).
 ///
 /// Sorted by normalized hash for binary search. Generated by
-/// `scripts/gen_icc_tables.py` from the ICC profile corpus.
+/// `scripts/icc-gen` from the ICC profile corpus.
 #[rustfmt::skip]
-const KNOWN_RGB_PROFILES: &[(u64, CP, TF, u8)] =
+const KNOWN_RGB_PROFILES: &[(u64, CP, TF, u8, u8)] =
     include!("icc_table_rgb.inc");
 
-/// Well-known grayscale ICC profiles: `(normalized_hash, transfer, max_u16_err)`.
+/// Well-known grayscale ICC profiles: `(normalized_hash, transfer, max_u16_err, intent_mask)`.
+///
+/// Columns match [`KNOWN_RGB_PROFILES`] minus the primaries column
+/// (grayscale has no gamut; D65 white point is assumed).
 ///
 /// Sorted by normalized hash for binary search.
 #[rustfmt::skip]
-const KNOWN_GRAY_PROFILES: &[(u64, TF, u8)] =
+const KNOWN_GRAY_PROFILES: &[(u64, TF, u8, u8)] =
     include!("icc_table_gray.inc");
 
 // ── Tests ────────────────────────────────────────────────────────────────
@@ -365,22 +732,43 @@ mod tests {
 
     #[test]
     fn all_errors_within_intent() {
-        for &(h, _, _, err) in KNOWN_RGB_PROFILES {
+        for &(h, _, _, err, _) in KNOWN_RGB_PROFILES {
             assert!(err <= 56, "RGB 0x{h:016x} err={err} > 56");
         }
-        for &(h, _, err) in KNOWN_GRAY_PROFILES {
+        for &(h, _, err, _) in KNOWN_GRAY_PROFILES {
             assert!(err <= 56, "gray 0x{h:016x} err={err} > 56");
         }
     }
 
     #[test]
     fn no_unknown_variants_in_tables() {
-        for &(h, cp, tc, _) in KNOWN_RGB_PROFILES {
+        for &(h, cp, tc, _, _) in KNOWN_RGB_PROFILES {
             assert_ne!(cp, ColorPrimaries::Unknown, "RGB 0x{h:016x}");
             assert_ne!(tc, TransferFunction::Unknown, "RGB 0x{h:016x}");
         }
-        for &(h, tc, _) in KNOWN_GRAY_PROFILES {
+        for &(h, tc, _, _) in KNOWN_GRAY_PROFILES {
             assert_ne!(tc, TransferFunction::Unknown, "gray 0x{h:016x}");
+        }
+    }
+
+    #[test]
+    fn intent_mask_reserved_bits_zero() {
+        // Only bits 0–2 are defined; bits 3–7 must be zero.
+        const ALL_DEFINED: u8 =
+            INTENT_COLORIMETRIC_SAFE | INTENT_PERCEPTUAL_SAFE | INTENT_SATURATION_SAFE;
+        for &(h, _, _, _, mask) in KNOWN_RGB_PROFILES {
+            assert_eq!(
+                mask & !ALL_DEFINED,
+                0,
+                "RGB 0x{h:016x} has reserved bits set: 0x{mask:02x}"
+            );
+        }
+        for &(h, _, _, mask) in KNOWN_GRAY_PROFILES {
+            assert_eq!(
+                mask & !ALL_DEFINED,
+                0,
+                "gray 0x{h:016x} has reserved bits set: 0x{mask:02x}"
+            );
         }
     }
 
@@ -424,7 +812,7 @@ mod tests {
         for len in [410, 456, 480, 524, 548, 656, 736, 3024, 3144] {
             let zeros = alloc::vec![0u8; len];
             assert!(
-                identify_common(&zeros, Tolerance::Intent).is_none(),
+                identify_common(&zeros).is_none(),
                 "zeros({len}) falsely matched"
             );
         }
@@ -546,5 +934,67 @@ mod tests {
         // Absurd tag count — capped to 200
         data[128..132].copy_from_slice(&u32::MAX.to_be_bytes());
         assert!(extract_cicp(&data).is_none());
+    }
+
+    /// Survey profile features across the local ICC cache.
+    /// Run with: cargo test -p zenpixels survey_corpus_features -- --ignored --nocapture
+    #[cfg(feature = "std")]
+    #[test]
+    #[ignore] // only run when explicitly requested
+    fn survey_corpus_features() {
+        let cache = std::env::var("ICC_CACHE").unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            format!("{home}/.cache/zenpixels-icc")
+        });
+        let mut safe = 0;
+        let mut unsafe_lab = 0;
+        let mut unsafe_lut = 0;
+        let mut unsafe_chad = 0;
+        let mut no_matrix = 0;
+        let mut total = 0;
+        let entries = match std::fs::read_dir(&cache) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if !matches!(
+                path.extension().and_then(|s| s.to_str()),
+                Some("icc" | "icm")
+            ) {
+                continue;
+            }
+            let data = match std::fs::read(&path) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            total += 1;
+            if let Some(feat) = inspect_profile(&data) {
+                if feat.is_safe_matrix_shaper() {
+                    safe += 1;
+                } else if !feat.has_matrix_shaper {
+                    no_matrix += 1;
+                } else if feat.pcs_is_lab {
+                    unsafe_lab += 1;
+                } else if feat.has_a2b0
+                    || feat.has_a2b1
+                    || feat.has_a2b2
+                    || feat.has_b2a0
+                    || feat.has_b2a1
+                    || feat.has_b2a2
+                {
+                    unsafe_lut += 1;
+                } else if feat.has_chad && !feat.chad_is_bradford {
+                    unsafe_chad += 1;
+                }
+            }
+        }
+        eprintln!("\n=== ICC Profile Features Survey (cache: {cache}) ===");
+        eprintln!("Total profiles:                  {total}");
+        eprintln!("Safe matrix-shaper:              {safe}");
+        eprintln!("Has matrix tags + LUTs:          {unsafe_lut}");
+        eprintln!("Lab PCS:                         {unsafe_lab}");
+        eprintln!("Non-Bradford chad:               {unsafe_chad}");
+        eprintln!("No matrix-shaper tags:           {no_matrix}");
     }
 }

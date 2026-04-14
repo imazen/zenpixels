@@ -315,29 +315,8 @@ pub trait ColorManagement {
     /// `None` if the profile is custom.
     fn identify_profile(&self, icc: &[u8]) -> Option<crate::Cicp>;
 
-    /// Build a row-level transform between two [`ColorProfileSource`]s.
-    ///
-    /// This is the most flexible entry point — the CMS can handle whichever
-    /// source descriptions it supports:
-    ///
-    /// - `PrimariesTransferPair` — direct matrix + TRC (no ICC parsing)
-    /// - `Named` — decomposed to primaries + transfer internally
-    /// - `Cicp` — mapped to primaries + transfer if recognized
-    /// - `Icc` — full ICC profile parse (most backends)
-    ///
-    /// Returns `None` if this backend can't handle the given source/dest
-    /// combination. Callers should fall back to another CMS or report an error.
-    ///
-    /// The default implementation returns `None`. ICC-only backends don't
-    /// need to override this. Backends that support direct primaries+transfer
-    /// conversion (like zencms-lite) should override to return `Some`.
-    fn build_source_transform(
-        &self,
-        _src: crate::ColorProfileSource<'_>,
-        _dst: crate::ColorProfileSource<'_>,
-        _src_format: PixelFormat,
-        _dst_format: PixelFormat,
-    ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
-        None
-    }
+    // TODO(0.3.0): Add build_source_transform(ColorProfileSource, ...) as the
+    // single entry point, replacing build_transform / build_transform_for_format.
+    // Deferred until the trait is redesigned with options (rendering intent, HDR
+    // policy) and ZenCmsLite is benchmarked against moxcms on all platforms.
 }

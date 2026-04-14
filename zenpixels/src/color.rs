@@ -31,7 +31,7 @@ pub enum ColorProfileSource<'a> {
     ///
     /// Covers the full `ColorPrimaries × TransferFunction` matrix,
     /// including combinations that don't have a [`NamedProfile`] variant
-    /// or a CICP mapping (e.g., Adobe RGB, DCI-P3, ProPhoto, ACES).
+    /// or a CICP mapping (e.g., Adobe RGB).
     ///
     /// A CMS backend that handles this variant can avoid ICC profile
     /// parsing entirely for known primaries/transfer combinations.
@@ -56,7 +56,7 @@ pub enum NamedProfile {
     Bt2020,
     /// BT.2020 with PQ transfer (HDR10, SMPTE ST 2084).
     Bt2020Pq,
-    /// BT.2020 with HLG transfer (ARIB STD-B67, HDR broadcast).
+    /// BT.2020 with HLG transfer (BT.2100 HLG).
     Bt2020Hlg,
     /// Adobe RGB (1998). Used in print workflows.
     AdobeRgb,
@@ -67,7 +67,7 @@ pub enum NamedProfile {
 impl NamedProfile {
     /// Map CICP parameters to a well-known named profile.
     ///
-    /// Recognizes sRGB, Display P3, BT.2020 (SDR), BT.2100 PQ, BT.2100 HLG,
+    /// Recognizes sRGB, Display P3, BT.2020 (SDR), BT.2100 PQ,
     /// and Linear sRGB. Returns `None` for unrecognized combinations.
     pub const fn from_cicp(cicp: Cicp) -> Option<Self> {
         // Match on (primaries, transfer, matrix, full_range).
@@ -178,6 +178,68 @@ impl<'a> ColorProfileSource<'a> {
                 }
             }
             Self::Icc(_) => None,
+        }
+    }
+
+    /// Resolve to a (primaries, transfer) pair using all available methods,
+    /// including ICC profile identification when the `icc` feature is enabled.
+    ///
+    /// This is the most complete resolution path:
+    /// - `PrimariesTransferPair` — returns directly
+    /// - `Named` — decomposes via [`NamedProfile::to_primaries_transfer`]
+    /// - `Cicp` — maps via `from_cicp`, but returns `None` if `matrix_coefficients`
+    ///   is non-zero (YCbCr data requires matrix conversion first) or `full_range`
+    ///   is false (narrow-range data needs range expansion first)
+    /// - `Icc` — hash-based identification (~100ns, 135 known profiles) + CICP-in-ICC
+    ///   extraction. Returns `None` for unknown custom profiles.
+    ///
+    /// Returns `None` when the profile is unknown or when reducing to
+    /// (primaries, transfer) would discard significant information
+    /// (YCbCr matrix coefficients, narrow signal range).
+    #[cfg(feature = "icc")]
+    #[allow(unreachable_patterns)]
+    pub fn resolve(&self) -> Option<(ColorPrimaries, TransferFunction)> {
+        match self {
+            Self::PrimariesTransferPair {
+                primaries,
+                transfer,
+            } => Some((*primaries, *transfer)),
+            Self::Named(named) => Some(named.to_primaries_transfer()),
+            Self::Cicp(cicp) => {
+                // Non-identity matrix coefficients mean YCbCr data — can't reduce
+                // to just primaries+transfer without a YCbCr→RGB matrix step.
+                if cicp.matrix_coefficients != 0 {
+                    return None;
+                }
+                // Narrow range needs expansion before primaries+transfer applies.
+                if !cicp.full_range {
+                    return None;
+                }
+                let p = ColorPrimaries::from_cicp(cicp.color_primaries)?;
+                let t = TransferFunction::from_cicp(cicp.transfer_characteristics)?;
+                Some((p, t))
+            }
+            Self::Icc(icc_bytes) => {
+                // Only use the identification if matrix+TRC substitution is
+                // safe — profiles with LUTs, non-Bradford chad, or Lab PCS
+                // return MetadataOnly and need a full CMS.
+                if let Some(id) = crate::icc::identify_common(icc_bytes) {
+                    if id.valid_use == crate::icc::IdentificationUse::MatrixTrcSubstitution {
+                        return Some((id.primaries, id.transfer));
+                    }
+                }
+                // CICP-in-ICC tag (ICC v4.4+) is authoritative — accept it.
+                if let Some(cicp) = crate::icc::extract_cicp(icc_bytes) {
+                    if cicp.matrix_coefficients != 0 || !cicp.full_range {
+                        return None;
+                    }
+                    let p = ColorPrimaries::from_cicp(cicp.color_primaries)?;
+                    let t = TransferFunction::from_cicp(cicp.transfer_characteristics)?;
+                    return Some((p, t));
+                }
+                None
+            }
+            _ => None,
         }
     }
 }
@@ -444,10 +506,6 @@ mod tests {
             NamedProfile::from_cicp(Cicp::BT2100_PQ),
             Some(NamedProfile::Bt2020Pq)
         );
-        assert_eq!(
-            NamedProfile::from_cicp(Cicp::BT2100_HLG),
-            Some(NamedProfile::Bt2020Hlg)
-        );
         // Linear sRGB
         assert_eq!(
             NamedProfile::from_cicp(Cicp::new(1, 8, 0, true)),
@@ -469,7 +527,6 @@ mod tests {
             NamedProfile::DisplayP3,
             NamedProfile::Bt2020,
             NamedProfile::Bt2020Pq,
-            NamedProfile::Bt2020Hlg,
             NamedProfile::LinearSrgb,
         ] {
             let cicp = profile.to_cicp().unwrap();
@@ -558,14 +615,6 @@ mod tests {
     }
 
     #[test]
-    fn color_context_hlg_transfer() {
-        assert_eq!(
-            ColorContext::from_cicp(Cicp::BT2100_HLG).transfer_function(),
-            TransferFunction::Hlg
-        );
-    }
-
-    #[test]
     fn color_context_eq_and_clone() {
         let a = ColorContext::from_cicp(Cicp::SRGB);
         let b = a.clone();
@@ -620,7 +669,6 @@ mod tests {
         assert!(NamedProfile::DisplayP3.to_cicp().is_some());
         assert!(NamedProfile::Bt2020.to_cicp().is_some());
         assert!(NamedProfile::Bt2020Pq.to_cicp().is_some());
-        assert!(NamedProfile::Bt2020Hlg.to_cicp().is_some());
         assert!(NamedProfile::LinearSrgb.to_cicp().is_some());
         assert!(NamedProfile::AdobeRgb.to_cicp().is_none());
     }

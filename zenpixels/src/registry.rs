@@ -15,11 +15,11 @@
 //!
 //! The Bradford chromatic adaptation is only needed when white points differ.
 
-use crate::cicp::Cicp;
 use crate::color::NamedProfile;
 use crate::{ColorPrimaries, TransferFunction};
 
 /// A known color space entry in the registry.
+#[allow(dead_code)] // used in tests; will back from_cicp/to_cicp derivation
 #[derive(Clone, Copy, Debug)]
 pub struct KnownColorSpace {
     /// Color primaries (gamut + white point).
@@ -37,6 +37,7 @@ pub struct KnownColorSpace {
 /// This is the single source of truth. All `from_cicp`, `to_cicp`,
 /// `to_primaries_transfer`, and `from_primaries_transfer` functions
 /// should be derivable from this table.
+#[allow(dead_code)] // used in tests; will back from_cicp/to_cicp derivation
 pub const REGISTRY: &[KnownColorSpace] = &[
     KnownColorSpace {
         primaries: ColorPrimaries::Bt709,
@@ -81,12 +82,6 @@ pub const REGISTRY: &[KnownColorSpace] = &[
         named: Some(NamedProfile::LinearSrgb),
     },
     KnownColorSpace {
-        primaries: ColorPrimaries::DciP3,
-        transfer: TransferFunction::Gamma26,
-        cicp: Some((11, 17)),
-        named: None,
-    },
-    KnownColorSpace {
         primaries: ColorPrimaries::DisplayP3,
         transfer: TransferFunction::Linear,
         cicp: Some((12, 8)),
@@ -96,12 +91,6 @@ pub const REGISTRY: &[KnownColorSpace] = &[
         primaries: ColorPrimaries::Bt2020,
         transfer: TransferFunction::Linear,
         cicp: Some((9, 8)),
-        named: None,
-    },
-    KnownColorSpace {
-        primaries: ColorPrimaries::ProPhoto,
-        transfer: TransferFunction::Gamma18,
-        cicp: None,
         named: None,
     },
     KnownColorSpace {
@@ -117,6 +106,7 @@ pub const REGISTRY: &[KnownColorSpace] = &[
 // =========================================================================
 
 /// Find a registry entry by CICP codes.
+#[allow(dead_code)] // used in tests; will back from_cicp derivation
 pub const fn find_by_cicp(cp: u8, tc: u8) -> Option<&'static KnownColorSpace> {
     let mut i = 0;
     while i < REGISTRY.len() {
@@ -131,6 +121,7 @@ pub const fn find_by_cicp(cp: u8, tc: u8) -> Option<&'static KnownColorSpace> {
 }
 
 /// Find a registry entry by primaries + transfer.
+#[allow(dead_code)] // used in tests; will back to_primaries_transfer derivation
 pub const fn find_by_primaries_transfer(
     primaries: ColorPrimaries,
     transfer: TransferFunction,
@@ -148,6 +139,7 @@ pub const fn find_by_primaries_transfer(
 }
 
 /// Find a registry entry by named profile.
+#[allow(dead_code)] // used in tests; will back from_named derivation
 pub const fn find_by_named(named: NamedProfile) -> Option<&'static KnownColorSpace> {
     let mut i = 0;
     while i < REGISTRY.len() {
@@ -355,6 +347,7 @@ const fn solve_3x3(a: &Mat3, b: &[f32; 3]) -> Option<[f32; 3]> {
 // =========================================================================
 
 #[cfg(test)]
+#[allow(clippy::needless_range_loop)]
 mod tests {
     use super::*;
 
@@ -445,9 +438,6 @@ mod tests {
             (ColorPrimaries::Bt709, ColorPrimaries::AdobeRgb),
             (ColorPrimaries::AdobeRgb, ColorPrimaries::Bt709),
             (ColorPrimaries::DisplayP3, ColorPrimaries::Bt2020),
-            (ColorPrimaries::DciP3, ColorPrimaries::Bt709),
-            (ColorPrimaries::Bt709, ColorPrimaries::DciP3),
-            (ColorPrimaries::ProPhoto, ColorPrimaries::Bt709),
         ];
         for (src, dst) in pairs {
             let m = gamut_matrix(src, dst).unwrap();
@@ -526,17 +516,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn gamut_matrix_with_chromatic_adaptation() {
-        // DCI-P3 (DCI white) → sRGB (D65) needs Bradford adaptation
-        let m = gamut_matrix(ColorPrimaries::DciP3, ColorPrimaries::Bt709).unwrap();
-        let w = mul_mv(&m, &[1.0, 1.0, 1.0]);
-        assert!(
-            (w[0] - 1.0).abs() < 1e-4 && (w[1] - 1.0).abs() < 1e-4 && (w[2] - 1.0).abs() < 1e-4,
-            "DCI→sRGB white: ({}, {}, {})",
-            w[0],
-            w[1],
-            w[2]
-        );
-    }
+    // gamut_matrix_with_chromatic_adaptation test removed:
+    // DciP3 primaries were removed (theatrical projection only).
+    // Bradford adaptation is still exercised by any future cross-white-
+    // point pair; currently all remaining primaries share D65.
 }

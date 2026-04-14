@@ -391,10 +391,29 @@ pub(crate) mod negotiate;
 
 pub mod adapt;
 pub mod cms;
+#[cfg(feature = "zencms-lite")]
+#[allow(
+    dead_code,
+    unused_variables,
+    clippy::needless_return,
+    clippy::excessive_precision,
+    clippy::derivable_impls
+)]
+pub(crate) mod cms_lite;
 #[cfg(feature = "cms-moxcms")]
 pub mod cms_moxcms;
 pub mod converter;
 pub mod ext;
+#[cfg(feature = "zencms-lite")]
+#[allow(
+    dead_code,
+    unexpected_cfgs,
+    unused_variables,
+    clippy::needless_return,
+    clippy::excessive_precision,
+    clippy::derivable_impls
+)]
+pub(crate) mod fast_gamut;
 pub mod gamut;
 pub mod hdr;
 pub mod icc_profiles;
@@ -438,6 +457,7 @@ pub use hdr::{
 
 // Re-export CMS traits, enums, and implementations.
 pub use cms::{ColorManagement, ColorPriority, RenderingIntent, RowTransform};
+// TODO: pub use cms_lite::ZenCmsLite once benchmarked on aarch64.
 #[cfg(feature = "cms-moxcms")]
 pub use cms_moxcms::MoxCms;
 
