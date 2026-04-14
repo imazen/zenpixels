@@ -82,8 +82,7 @@ fn explicit_depth_forbid_returns_error() {
         data[i * 2 + 1] = bytes[1];
     }
 
-    let options =
-        ConvertOptions::forbid_lossy().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
+    let options = ConvertOptions::forbid_lossy().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
 
     let result = adapt_for_encode_explicit(
         &data,

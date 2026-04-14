@@ -956,8 +956,7 @@ mod tests {
 
     #[test]
     fn new_explicit_allows_when_policies_permit() {
-        let opts =
-            ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
+        let opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
         let plan = ConvertPlan::new_explicit(
             PixelDescriptor::RGBA8_SRGB,
             PixelDescriptor::GRAY8_SRGB,
@@ -991,7 +990,11 @@ mod tests {
 
         let src: [f32; 3] = [0.0, 1.0, 0.0];
         let mut dst = [0.0f32; 3];
-        conv.convert_row(bytemuck::cast_slice(&src), bytemuck::cast_slice_mut(&mut dst), 1);
+        conv.convert_row(
+            bytemuck::cast_slice(&src),
+            bytemuck::cast_slice_mut(&mut dst),
+            1,
+        );
         assert!(
             dst[0] < 0.0,
             "extended range should preserve negative red, got {}",
@@ -1022,7 +1025,11 @@ mod tests {
 
         let src: [f32; 3] = [0.0, 1.0, 0.0];
         let mut dst = [0.0f32; 3];
-        conv.convert_row(bytemuck::cast_slice(&src), bytemuck::cast_slice_mut(&mut dst), 1);
+        conv.convert_row(
+            bytemuck::cast_slice(&src),
+            bytemuck::cast_slice_mut(&mut dst),
+            1,
+        );
         assert!(
             dst[0] >= 0.0,
             "clamped path should not produce negatives, got {}",
