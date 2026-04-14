@@ -2,69 +2,89 @@
 
 ## Queued breaking changes (for 0.3.0)
 
-These are implemented on the development branch but deferred to the next
-minor release to batch semver breaks.
+These are deferred to the next minor release to batch semver breaks.
 
 ### zenpixels
 
-- **`repr(u8)` removed from `ColorPrimaries` and `TransferFunction`**.
-  Discriminant values are no longer part of the public API. Code that
-  transmuted or matched on numeric values will break. The enums are
-  `#[non_exhaustive]`, so `as u8` casts were already unreliable.
+- **`repr(u8)` removal** from `ColorPrimaries` and `TransferFunction`.
 
 ### zenpixels-convert
 
-- **`ConvertError` → `#[non_exhaustive]`**. Error enums should always be
-  non-exhaustive in a library. Callers with exhaustive `match` on
-  `ConvertError` (no `_ =>` arm) will get a compile error.
-- **`conversion_matrix()` returns `Option<GamutMatrix>`** instead of
-  `Option<&'static GamutMatrix>`. `GamutMatrix` is `Copy` (`[[f32;3];3]`),
-  so callers just drop the `&`. Now delegates to
-  `ColorPrimaries::gamut_matrix_to()`.
-- **`ConvertError::HdrTransferRequiresToneMapping`** — new variant for
-  HDR→SDR rejection (requires `#[non_exhaustive]` first).
-- **`HdrPolicy`** enum, **`ConvertOutputOptions`** struct,
-  **`finalize_for_output_with()`** — configurable HDR→SDR behavior.
-  Deferred until the error variant can land. See imazen/zenpixels#10.
+- **`ConvertError` → `#[non_exhaustive]`**.
+- **`ConvertError::HdrTransferRequiresToneMapping`** variant + `HdrPolicy`
+  enum + `ConvertOutputOptions` + `finalize_for_output_with()`. See
+  imazen/zenpixels#10 for HDR provenance plan.
+- **`ColorManagement` trait redesign**: single `build_source_transform`
+  entry point with options (rendering intent, HDR policy).
 
-## 0.2.5
+## zenpixels 0.2.7
 
-### zenpixels — additions
+### Additions
 
-- **`ColorAuthority`** enum (`Icc` | `Cicp`) — declares which color metadata
-  field the CMS should trust for building transforms. Set by the codec during
-  decode based on the format's specification (e.g., AVIF: ICC wins when present;
-  PNG 3rd Ed: cICP wins when present; JPEG/WebP/TIFF: ICC only). Default is
-  `Icc`. Both `icc` and `cicp` fields remain populated regardless of authority
-  for metadata roundtripping during cross-format transcode. Re-exported at
-  crate root.
-- **`color_authority` field** on `ColorContext` and `ColorOrigin`. Constructors
-  set it automatically: `from_icc()` → `Icc`, `from_cicp()` → `Cicp`,
-  `from_icc_and_cicp()` → `Cicp`. Override with `with_color_authority()`.
+- **`ColorPrimaries::AdobeRgb`** and **`TransferFunction::Gamma22`** enum
+  variants for Adobe RGB (1998) identification and conversion.
+- **`icc` module** — lightweight ICC profile identification (~100ns):
+  - `identify_common(icc_bytes)` — hash-based lookup against 163 known RGB
+    + 18 grayscale profiles from a corpus of 1,065 real-world ICC profiles.
+  - `is_common_srgb(icc_bytes)` — convenience sRGB check.
+  - `extract_cicp(data)` — read CICP tag from ICC v4.4+ profiles.
+  - `IccIdentification` struct with `primaries`, `transfer`, `valid_use`.
+  - `IdentificationUse` enum: `MetadataOnly` vs `MatrixTrcSubstitution` —
+    tells callers whether matrix+TRC math is safe or a full CMS is needed.
+- **`ColorPrimaries` methods**: `chromaticity()`, `white_point()`,
+  `gamut_matrix_to()` (const-computed 3×3 Bradford-adapted gamut matrices),
+  `WHITE_D65` constant.
+- **`ColorProfileSource::PrimariesTransferPair`** variant +
+  `from_primaries_transfer()`, `primaries_transfer()`, `resolve()`.
+- **`NamedProfile`**: `from_primaries_transfer()`, `to_primaries_transfer()`.
+- **`PixelDescriptor::color_profile_source()`**.
+- **`ColorAuthority`** enum (`Icc` | `Cicp`) on `ColorContext` / `ColorOrigin`.
+- **`NamedProfile::Bt2020Hlg`** + `TransferFunction::Hlg` CICP 18 round-trip.
 
-### zenpixels — behavior change
+### Behavior changes
 
 - **`ColorContext::as_profile_source()`** now respects `color_authority` instead
-  of hardcoding CICP preference. When authority is `Icc`, returns the ICC
-  profile; when `Cicp`, returns CICP. Falls back to the other field when the
-  authoritative one is absent. Previously always returned CICP when present,
-  which was wrong for AVIF (where ICC takes precedence per MIAF spec).
+  of hardcoding CICP preference.
+- Enum variants trimmed to those with backing conversion math. Removed variants
+  preserved as comments in `descriptor.rs` with chromaticities and rationale.
 
-### zenpixels-convert — additions
+### Internal (not public API)
 
-- **`ColorManagement::build_transform_from_cicp()`** — builds a CMS transform
-  directly from CICP codes, avoiding the ICC serialize→deserialize round-trip.
-  `MoxCms` implementation uses `ColorProfile::new_from_cicp()`. Shared
-  transform-building logic extracted to `build_transform_inner()`.
-### zenpixels-convert — behavior change
+- `scripts/icc-gen` crate for regenerating ICC hash tables with empirical
+  CMS validation via moxcms + lcms2 cross-check.
+- `Safe::AnyIntent` / `Safe::IdOnly` named constants replace magic bitfields
+  in `.inc` table files.
+- `ProfileFeatures`, `inspect_profile()`, `CoalesceForUse`,
+  `identify_common_for()` — kept `pub(crate)` for future use.
+- Color registry with const-computed gamut matrices.
+
+## zenpixels-convert 0.2.4
+
+### Additions
+
+- **`icc_profiles::ADOBE_RGB`** — bundled CC0 Adobe RGB (1998) ICC profile
+  (v2, pure gamma 2.19921875, matching ~85% of real-world profiles).
+- **`ADOBE_RGB_V4`** deprecated alias → `ADOBE_RGB`.
+- **`PROPHOTO_V4`** deprecated (returns empty bytes — ProPhoto not bundled
+  due to TRC fragmentation).
+
+### Behavior changes
 
 - **`finalize_for_output()` respects `ColorAuthority`** on the `ColorOrigin`.
-  When authority is `Icc`, builds the CMS source from ICC bytes. When `Cicp`,
-  uses `build_transform_from_cicp()`. Falls back to the non-authoritative field
-  when the authoritative one is missing (handles codec bugs gracefully).
-- **`SameAsOrigin` no longer invokes the CMS.** It means "keep the color space"
-  — only pixel format changes (depth, layout) are applied via `RowConverter`.
-  Previously it wastefully built a same-profile-to-same-profile CMS transform.
+- **`SameAsOrigin` no longer invokes the CMS.** Only pixel format changes
+  are applied. Previously built a wasteful same-profile-to-same-profile
+  CMS transform.
+- **`conversion_matrix()` returns `Option<GamutMatrix>`** (owned) instead of
+  `Option<&'static GamutMatrix>`. `GamutMatrix` is `Copy` — callers drop
+  the `&`.
+
+### Internal (not public API)
+
+- `ZenCmsLite` + `fast_gamut` — fused SIMD gamut conversion kernels
+  (sRGB ↔ Display P3 ↔ BT.2020 ↔ Adobe RGB). Kept `pub(crate)` pending
+  aarch64 SIMD and benchmarking against moxcms.
+- Bundled Adobe RGB profile switched from v4 paraType-3 to v2 pure-gamma
+  form (matches the spec and ecosystem majority).
 
 ## 0.2.3
 
