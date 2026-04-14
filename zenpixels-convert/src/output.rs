@@ -104,11 +104,22 @@ pub enum OutputProfile {
 }
 
 /// How to handle HDR source pixels when the target is SDR.
+///
+/// The default (`Clip`) is appropriate for the common Ultra HDR pipeline
+/// where HDR pixels were reconstructed from an SDR base + gain map —
+/// clipping approximately recovers the original SDR rendition. For native
+/// HDR content (no SDR base), clipping destroys highlight detail; use
+/// `RejectWithoutToneMapping` and apply a tone mapper first.
+///
+/// Once `HdrContext` lands on `PixelSlice` (see imazen/zenpixels#10),
+/// the pipeline can distinguish gain-map-derived HDR from native HDR
+/// automatically and make a smarter default.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum HdrPolicy {
     /// Clip HDR values to the SDR range after colorimetric conversion.
-    /// Fast and lossless for content that's already within SDR gamut.
+    /// For gain-map-derived content this approximately recovers the
+    /// original SDR base image. For native HDR it destroys highlights.
     #[default]
     Clip,
     /// Return [`ConvertError::HdrTransferRequiresToneMapping`] so the
