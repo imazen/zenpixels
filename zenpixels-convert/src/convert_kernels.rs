@@ -13,7 +13,7 @@ use super::ConvertStep;
 
 /// Apply a single conversion step on raw byte slices.
 pub(super) fn apply_step_u8(
-    step: ConvertStep,
+    step: &ConvertStep,
     src: &[u8],
     dst: &mut [u8],
     width: u32,
@@ -41,7 +41,7 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::MatteComposite { r, g, b } => {
-            matte_composite(src, dst, w, from.channel_type(), r, g, b);
+            matte_composite(src, dst, w, from.channel_type(), *r, *g, *b);
         }
 
         ConvertStep::GrayToRgb => {
@@ -189,11 +189,11 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::GamutMatrixRgbF32(flat) => {
-            gamut_matrix_rgb_f32(src, dst, w, &flat);
+            gamut_matrix_rgb_f32(src, dst, w, flat);
         }
 
         ConvertStep::GamutMatrixRgbaF32(flat) => {
-            gamut_matrix_rgba_f32(src, dst, w, &flat);
+            gamut_matrix_rgba_f32(src, dst, w, flat);
         }
 
         ConvertStep::FusedSrgbU8GamutRgb(flat) => {
@@ -271,6 +271,14 @@ pub(super) fn apply_step_u8(
                 dst,
                 crate::fast_gamut::srgb_enc_lut_u8(),
             );
+        }
+
+        ConvertStep::ExternalTransform {
+            transform, input, ..
+        } => {
+            let src_bytes = width as usize * input.bytes_per_pixel();
+            let dst_bytes = width as usize * _to.bytes_per_pixel();
+            transform.transform_row(&src[..src_bytes], &mut dst[..dst_bytes], width);
         }
     }
 }

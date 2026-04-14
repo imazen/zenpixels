@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### zenpixels-convert
+
+#### Added
+
+- **`PluggableCms` trait** and `ConvertPlan::new_explicit_with_cms` /
+  `RowConverter::new_explicit_with_cms` entrypoints. When a CMS plugin
+  is supplied and the source and destination profiles differ, the plan
+  offers the plugin the full `(from, to)` pair; if it accepts, the plan
+  collapses to a single `ExternalTransform` step that drives the row
+  end-to-end, bypassing built-in gamut-matrix and fused matlut kernels.
+  Plugins that decline (return `None`) fall through to the built-in
+  path. Dyn-compatible interface accepts `ColorProfileSource` (not raw
+  ICC bytes), so plugins can dispatch on named profiles, CICP, or ICC.
+
 ## Queued breaking changes (for 0.3.0)
 
 These are deferred to the next minor release to batch semver breaks.
@@ -17,6 +33,9 @@ These are deferred to the next minor release to batch semver breaks.
 
 ### zenpixels-convert
 
+- **`RowTransform: Send + Sync`** (was `Send`-only). External impls must
+  now be thread-safe. All in-tree impls (`MoxRowTransform`, `LiteTransform`)
+  already satisfy this.
 - **`ConvertError` → `#[non_exhaustive]`**.
 - **`ConvertError::HdrTransferRequiresToneMapping`** variant + `HdrPolicy`
   enum + `ConvertOutputOptions` + `finalize_for_output_with()`. See

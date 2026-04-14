@@ -66,6 +66,32 @@ impl RowConverter {
         })
     }
 
+    /// Create a converter that may delegate the color conversion to a
+    /// [`PluggableCms`].
+    ///
+    /// When `cms` is `Some` and the source and destination have different
+    /// primaries or transfer functions, the plugin is asked to supply a
+    /// row transform for the full `(from, to)` pair. If it accepts, the
+    /// plan becomes a single external-transform step; the built-in gamut
+    /// matrix and matlut fast paths are bypassed for that conversion.
+    /// If the plugin declines or there is no color work to do, behavior
+    /// matches [`new_explicit`](Self::new_explicit).
+    ///
+    /// [`PluggableCms`]: crate::cms::PluggableCms
+    #[track_caller]
+    pub fn new_explicit_with_cms(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &crate::policy::ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
+        let plan = ConvertPlan::new_explicit_with_cms(from, to, options, cms).at()?;
+        Ok(Self {
+            plan,
+            scratch: ConvertScratch::new(),
+        })
+    }
+
     /// Create a converter from a pre-computed plan.
     pub fn from_plan(plan: ConvertPlan) -> Self {
         Self {
@@ -1035,6 +1061,114 @@ mod tests {
             "clamped path should not produce negatives, got {}",
             dst[0]
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Pluggable CMS
+    // -----------------------------------------------------------------------
+
+    /// Mock CMS that paints every output pixel red. Used to verify that the
+    /// plugin gets hooked into the plan and actually drives the row.
+    struct PaintRedCms {
+        accepted: core::sync::atomic::AtomicUsize,
+    }
+
+    struct PaintRedTransform;
+
+    impl crate::cms::RowTransform for PaintRedTransform {
+        fn transform_row(&self, _src: &[u8], dst: &mut [u8], width: u32) {
+            for px in dst.chunks_exact_mut(3).take(width as usize) {
+                px[0] = 255;
+                px[1] = 0;
+                px[2] = 0;
+            }
+        }
+    }
+
+    impl crate::cms::PluggableCms for PaintRedCms {
+        fn build_source_transform(
+            &self,
+            _src: zenpixels::ColorProfileSource<'_>,
+            _dst: zenpixels::ColorProfileSource<'_>,
+            _src_format: zenpixels::PixelFormat,
+            _dst_format: zenpixels::PixelFormat,
+        ) -> Option<alloc::sync::Arc<dyn crate::cms::RowTransform>> {
+            self.accepted
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            Some(alloc::sync::Arc::new(PaintRedTransform))
+        }
+    }
+
+    #[test]
+    fn pluggable_cms_drives_row_when_profiles_differ() {
+        // P3 RGB8 → sRGB RGB8: profiles differ, plugin must be asked and
+        // its transform must be the one that runs.
+        let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(zenpixels::ColorPrimaries::DisplayP3);
+        let srgb = PixelDescriptor::RGB8_SRGB;
+
+        let cms = PaintRedCms {
+            accepted: core::sync::atomic::AtomicUsize::new(0),
+        };
+        let opts = ConvertOptions::permissive();
+        let mut conv =
+            crate::RowConverter::new_explicit_with_cms(p3, srgb, &opts, Some(&cms)).unwrap();
+
+        assert_eq!(cms.accepted.load(core::sync::atomic::Ordering::Relaxed), 1);
+
+        let src = [10u8, 20, 30, 40, 50, 60];
+        let mut dst = [0u8; 6];
+        conv.convert_row(&src, &mut dst, 2);
+        assert_eq!(dst, [255, 0, 0, 255, 0, 0]);
+    }
+
+    #[test]
+    fn pluggable_cms_skipped_when_profiles_match() {
+        // Same profile on both sides — plan is identity, plugin is never
+        // consulted.
+        let cms = PaintRedCms {
+            accepted: core::sync::atomic::AtomicUsize::new(0),
+        };
+        let opts = ConvertOptions::permissive();
+        let conv = crate::RowConverter::new_explicit_with_cms(
+            PixelDescriptor::RGB8_SRGB,
+            PixelDescriptor::RGB8_SRGB,
+            &opts,
+            Some(&cms),
+        )
+        .unwrap();
+        assert!(conv.is_identity());
+        assert_eq!(cms.accepted.load(core::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn pluggable_cms_declines_falls_back_to_builtin() {
+        // Plugin returns None — must fall back to the built-in gamut path.
+        struct DeclineCms;
+        impl crate::cms::PluggableCms for DeclineCms {
+            fn build_source_transform(
+                &self,
+                _src: zenpixels::ColorProfileSource<'_>,
+                _dst: zenpixels::ColorProfileSource<'_>,
+                _src_format: zenpixels::PixelFormat,
+                _dst_format: zenpixels::PixelFormat,
+            ) -> Option<alloc::sync::Arc<dyn crate::cms::RowTransform>> {
+                None
+            }
+        }
+
+        let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(zenpixels::ColorPrimaries::DisplayP3);
+        let srgb = PixelDescriptor::RGB8_SRGB;
+        let opts = ConvertOptions::permissive();
+        let mut conv =
+            crate::RowConverter::new_explicit_with_cms(p3, srgb, &opts, Some(&DeclineCms)).unwrap();
+
+        // Built-in path should produce non-red output from grey source.
+        let src = [128u8, 128, 128];
+        let mut dst = [0u8; 3];
+        conv.convert_row(&src, &mut dst, 1);
+        // P3 grey → sRGB grey: R ≈ G ≈ B. Not the all-red sentinel the
+        // plugin would have written, proving we took the built-in path.
+        assert_ne!(dst, [255, 0, 0]);
     }
 
     // -----------------------------------------------------------------------

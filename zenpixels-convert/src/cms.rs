@@ -247,7 +247,7 @@ pub enum ColorPriority {
 /// Row-level color transform produced by a [`ColorManagement`] implementation.
 ///
 /// Applies an ICC-to-ICC color conversion to a row of pixel data.
-pub trait RowTransform: Send {
+pub trait RowTransform: Send + Sync {
     /// Transform one row of pixels from source to destination color space.
     ///
     /// `src` and `dst` may be different lengths if the transform changes
@@ -319,4 +319,49 @@ pub trait ColorManagement {
     // single entry point, replacing build_transform / build_transform_for_format.
     // Deferred until the trait is redesigned with options (rendering intent, HDR
     // policy) and ZenCmsLite is benchmarked against moxcms on all platforms.
+}
+
+/// Dyn-compatible CMS plugin interface for overriding gamut/profile
+/// conversions inside a [`ConvertPlan`].
+///
+/// When a `PluggableCms` is passed to
+/// [`ConvertPlan::new_explicit_with_cms`] (or the matching `RowConverter`
+/// constructor) and the source and destination profiles differ, the plan
+/// asks the plugin whether it will handle the exact `(src_format,
+/// dst_format)` pair. If the plugin returns a transform, the plan
+/// collapses to a single [`ConvertStep::ExternalTransform`] that drives
+/// the row end-to-end — built-in linearize → gamut-matrix → encode steps
+/// (and their fused matlut kernels) are bypassed for that conversion.
+/// If the plugin returns `None`, the plan falls back to the built-in
+/// path.
+///
+/// `PluggableCms` is intentionally narrower than [`ColorManagement`]:
+/// - It accepts [`ColorProfileSource`] instead of raw ICC bytes, so
+///   plugins can use primaries/transfer shortcuts, named profiles, CICP,
+///   or ICC without forcing the caller to serialize to ICC.
+/// - It is dyn-compatible (no associated `Error` type; no generics).
+///   This is what lets it live behind `&dyn PluggableCms` in API
+///   signatures without forcing every caller to monomorphize.
+///
+/// Returning `None` is a declaration ("this CMS does not handle this
+/// pair"), not an error. Plugins that recognize the profiles but fail to
+/// build a transform should log/report internally and still return
+/// `None` so the plan falls back cleanly.
+///
+/// [`ColorProfileSource`]: crate::ColorProfileSource
+/// [`ConvertPlan::new_explicit_with_cms`]: crate::convert::ConvertPlan::new_explicit_with_cms
+/// [`ConvertStep::ExternalTransform`]: crate::convert::ConvertStep::ExternalTransform
+pub trait PluggableCms: Send + Sync {
+    /// Attempt to build a single row-level transform covering the full
+    /// source → destination conversion for the given pixel formats.
+    ///
+    /// Return `None` to decline (plan falls back to built-in steps).
+    /// Return `Some(transform)` to take ownership of the color step.
+    fn build_source_transform(
+        &self,
+        src: crate::ColorProfileSource<'_>,
+        dst: crate::ColorProfileSource<'_>,
+        src_format: PixelFormat,
+        dst_format: PixelFormat,
+    ) -> Option<alloc::sync::Arc<dyn RowTransform>>;
 }

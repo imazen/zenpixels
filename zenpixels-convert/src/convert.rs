@@ -28,7 +28,13 @@ pub struct ConvertPlan {
 }
 
 /// A single conversion step.
-#[derive(Clone, Copy, Debug, PartialEq)]
+///
+/// Not `Copy` — some variants (e.g., [`ExternalTransform`]) carry an
+/// `Arc`. Peephole rewrites must use `.clone()` or index assignment with
+/// pattern matching instead of `*step` dereferences.
+///
+/// [`ExternalTransform`]: ConvertStep::ExternalTransform
+#[derive(Clone)]
 pub(crate) enum ConvertStep {
     /// No-op (identity).
     Identity,
@@ -139,6 +145,100 @@ pub(crate) enum ConvertStep {
     /// Fused linear-f32 → u8-sRGB RGB primaries conversion (cross-depth).
     /// Always clamps since u8 can't represent out-of-gamut values.
     FusedLinearF32ToSrgbU8Rgb([f32; 9]),
+    /// External row transform supplied by a pluggable CMS backend.
+    ///
+    /// When [`ConvertPlan::new_explicit_with_cms`] is given a
+    /// [`PluggableCms`] and the source and destination profiles differ, the
+    /// CMS is offered the full `(from, to)` pair. If it accepts, the plan
+    /// collapses to a single `ExternalTransform` step that swallows the
+    /// whole linearize → gamut → encode chain (including any intent, CLUT,
+    /// or black-point compensation behavior the CMS implements). The
+    /// built-in fused matlut kernels are bypassed while the CMS drives
+    /// the row.
+    ///
+    /// [`PluggableCms`]: crate::cms::PluggableCms
+    ExternalTransform {
+        /// Row-level transform produced by the plugin.
+        transform: alloc::sync::Arc<dyn crate::cms::RowTransform>,
+        /// Input descriptor fed to the transform.
+        input: PixelDescriptor,
+        /// Output descriptor produced by the transform.
+        output: PixelDescriptor,
+    },
+}
+
+impl core::fmt::Debug for ConvertStep {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Identity => f.write_str("Identity"),
+            Self::SwizzleBgraRgba => f.write_str("SwizzleBgraRgba"),
+            Self::AddAlpha => f.write_str("AddAlpha"),
+            Self::DropAlpha => f.write_str("DropAlpha"),
+            Self::MatteComposite { r, g, b } => f
+                .debug_struct("MatteComposite")
+                .field("r", r)
+                .field("g", g)
+                .field("b", b)
+                .finish(),
+            Self::GrayToRgb => f.write_str("GrayToRgb"),
+            Self::GrayToRgba => f.write_str("GrayToRgba"),
+            Self::RgbToGray => f.write_str("RgbToGray"),
+            Self::RgbaToGray => f.write_str("RgbaToGray"),
+            Self::GrayAlphaToRgba => f.write_str("GrayAlphaToRgba"),
+            Self::GrayAlphaToRgb => f.write_str("GrayAlphaToRgb"),
+            Self::GrayToGrayAlpha => f.write_str("GrayToGrayAlpha"),
+            Self::GrayAlphaToGray => f.write_str("GrayAlphaToGray"),
+            Self::SrgbU8ToLinearF32 => f.write_str("SrgbU8ToLinearF32"),
+            Self::LinearF32ToSrgbU8 => f.write_str("LinearF32ToSrgbU8"),
+            Self::NaiveU8ToF32 => f.write_str("NaiveU8ToF32"),
+            Self::NaiveF32ToU8 => f.write_str("NaiveF32ToU8"),
+            Self::U16ToU8 => f.write_str("U16ToU8"),
+            Self::U8ToU16 => f.write_str("U8ToU16"),
+            Self::U16ToF32 => f.write_str("U16ToF32"),
+            Self::F32ToU16 => f.write_str("F32ToU16"),
+            Self::PqU16ToLinearF32 => f.write_str("PqU16ToLinearF32"),
+            Self::LinearF32ToPqU16 => f.write_str("LinearF32ToPqU16"),
+            Self::PqF32ToLinearF32 => f.write_str("PqF32ToLinearF32"),
+            Self::LinearF32ToPqF32 => f.write_str("LinearF32ToPqF32"),
+            Self::HlgU16ToLinearF32 => f.write_str("HlgU16ToLinearF32"),
+            Self::LinearF32ToHlgU16 => f.write_str("LinearF32ToHlgU16"),
+            Self::HlgF32ToLinearF32 => f.write_str("HlgF32ToLinearF32"),
+            Self::LinearF32ToHlgF32 => f.write_str("LinearF32ToHlgF32"),
+            Self::SrgbF32ToLinearF32 => f.write_str("SrgbF32ToLinearF32"),
+            Self::LinearF32ToSrgbF32 => f.write_str("LinearF32ToSrgbF32"),
+            Self::SrgbF32ToLinearF32Extended => f.write_str("SrgbF32ToLinearF32Extended"),
+            Self::LinearF32ToSrgbF32Extended => f.write_str("LinearF32ToSrgbF32Extended"),
+            Self::Bt709F32ToLinearF32 => f.write_str("Bt709F32ToLinearF32"),
+            Self::LinearF32ToBt709F32 => f.write_str("LinearF32ToBt709F32"),
+            Self::StraightToPremul => f.write_str("StraightToPremul"),
+            Self::PremulToStraight => f.write_str("PremulToStraight"),
+            Self::LinearRgbToOklab => f.write_str("LinearRgbToOklab"),
+            Self::OklabToLinearRgb => f.write_str("OklabToLinearRgb"),
+            Self::LinearRgbaToOklaba => f.write_str("LinearRgbaToOklaba"),
+            Self::OklabaToLinearRgba => f.write_str("OklabaToLinearRgba"),
+            Self::GamutMatrixRgbF32(m) => f.debug_tuple("GamutMatrixRgbF32").field(m).finish(),
+            Self::GamutMatrixRgbaF32(m) => f.debug_tuple("GamutMatrixRgbaF32").field(m).finish(),
+            Self::FusedSrgbU8GamutRgb(m) => f.debug_tuple("FusedSrgbU8GamutRgb").field(m).finish(),
+            Self::FusedSrgbU8GamutRgba(m) => {
+                f.debug_tuple("FusedSrgbU8GamutRgba").field(m).finish()
+            }
+            Self::FusedSrgbU16GamutRgb(m) => {
+                f.debug_tuple("FusedSrgbU16GamutRgb").field(m).finish()
+            }
+            Self::FusedSrgbU8ToLinearF32Rgb(m) => {
+                f.debug_tuple("FusedSrgbU8ToLinearF32Rgb").field(m).finish()
+            }
+            Self::FusedLinearF32ToSrgbU8Rgb(m) => {
+                f.debug_tuple("FusedLinearF32ToSrgbU8Rgb").field(m).finish()
+            }
+            Self::ExternalTransform { input, output, .. } => f
+                .debug_struct("ExternalTransform")
+                .field("transform", &"<dyn RowTransform>")
+                .field("input", input)
+                .field("output", output)
+                .finish(),
+        }
+    }
 }
 
 /// Assert that a descriptor is not CMYK.
@@ -295,7 +395,7 @@ impl ConvertPlan {
             let mut goes_through_linear = false;
             {
                 let mut desc = from;
-                for &step in &steps {
+                for step in &steps {
                     desc = intermediate_desc(desc, step);
                     if desc.channel_type() == ChannelType::F32
                         && desc.transfer() == TransferFunction::Linear
@@ -311,7 +411,7 @@ impl ConvertPlan {
                 // target format.
                 let mut insert_pos = 0;
                 let mut desc = from;
-                for (i, &step) in steps.iter().enumerate() {
+                for (i, step) in steps.iter().enumerate() {
                     desc = intermediate_desc(desc, step);
                     if desc.channel_type() == ChannelType::F32
                         && desc.transfer() == TransferFunction::Linear
@@ -332,7 +432,7 @@ impl ConvertPlan {
                 let has_alpha = from.layout().has_alpha() || to.layout().has_alpha();
                 // Use the layout at the current point in the plan.
                 let mut desc = from;
-                for &step in &steps {
+                for step in &steps {
                     desc = intermediate_desc(desc, step);
                 }
                 let gamut_step = if desc.layout().has_alpha() || has_alpha {
@@ -440,22 +540,22 @@ impl ConvertPlan {
                     } else {
                         // Generic: naive to f32, linearize, gamut, delinearize, naive back
                         gamut_steps.push(ConvertStep::NaiveU8ToF32);
-                        if linearize != ConvertStep::Identity {
+                        if !matches!(linearize, ConvertStep::Identity) {
                             gamut_steps.push(linearize);
                         }
                         gamut_steps.push(gamut_step);
-                        if to_target_tf != ConvertStep::Identity {
+                        if !matches!(to_target_tf, ConvertStep::Identity) {
                             gamut_steps.push(to_target_tf);
                         }
                         gamut_steps.push(ConvertStep::NaiveF32ToU8);
                     }
                 } else {
                     // Already f32, just linearize → gamut → encode
-                    if linearize != ConvertStep::Identity {
+                    if !matches!(linearize, ConvertStep::Identity) {
                         gamut_steps.push(linearize);
                     }
                     gamut_steps.push(gamut_step);
-                    if to_target_tf != ConvertStep::Identity {
+                    if !matches!(to_target_tf, ConvertStep::Identity) {
                         gamut_steps.push(to_target_tf);
                     }
                 }
@@ -548,6 +648,80 @@ impl ConvertPlan {
         Ok(plan)
     }
 
+    /// Like [`new_explicit`](Self::new_explicit), but gives a
+    /// [`PluggableCms`] the chance to take over the whole color
+    /// conversion.
+    ///
+    /// When `cms` is `Some` and the source and destination carry
+    /// different color primaries or transfer functions, the plugin is
+    /// offered the exact `(from, to)` pair. If it returns a transform,
+    /// the plan becomes a single [`ConvertStep::ExternalTransform`] that
+    /// drives the row end-to-end — built-in linearize → gamut-matrix →
+    /// encode steps and their fused matlut kernels are bypassed. The
+    /// plugin is responsible for the entire conversion (depth, layout,
+    /// alpha, gamut, transfer); the plan performs no pre- or
+    /// post-conditioning.
+    ///
+    /// If the plugin declines (returns `None`), or there is no color
+    /// work to do, this method is equivalent to `new_explicit`.
+    ///
+    /// [`PluggableCms`]: crate::cms::PluggableCms
+    #[track_caller]
+    pub fn new_explicit_with_cms(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
+        if let Some(cms) = cms {
+            let profiles_differ =
+                from.primaries != to.primaries || from.transfer() != to.transfer();
+            if profiles_differ {
+                let src_src = from.color_profile_source();
+                let dst_src = to.color_profile_source();
+                if let Some(transform) = cms.build_source_transform(
+                    src_src,
+                    dst_src,
+                    from.pixel_format(),
+                    to.pixel_format(),
+                ) {
+                    // Policy checks still apply — the plugin doesn't get to
+                    // bypass alpha/depth/luma-forbid errors.
+                    let drops_alpha = from.alpha().is_some() && to.alpha().is_none();
+                    if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
+                        return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
+                    }
+                    let reduces_depth =
+                        from.channel_type().byte_size() > to.channel_type().byte_size();
+                    if reduces_depth && options.depth_policy == DepthPolicy::Forbid {
+                        return Err(whereat::at!(ConvertError::DepthReductionForbidden));
+                    }
+                    let src_is_rgb = matches!(
+                        from.layout(),
+                        ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
+                    );
+                    let dst_is_gray =
+                        matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
+                    if src_is_rgb && dst_is_gray && options.luma.is_none() {
+                        return Err(whereat::at!(ConvertError::RgbToGray));
+                    }
+
+                    return Ok(Self {
+                        from,
+                        to,
+                        steps: vec![ConvertStep::ExternalTransform {
+                            transform,
+                            input: from,
+                            output: to,
+                        }],
+                    });
+                }
+            }
+        }
+
+        Self::new_explicit(from, to, options)
+    }
+
     /// Compose two plans into one: apply `self` then `other`.
     ///
     /// The composed plan executes both conversions in a single `convert_row`
@@ -564,11 +738,11 @@ impl ConvertPlan {
         let mut steps = self.steps.clone();
 
         // Append other's steps, skipping its Identity if present.
-        for &step in &other.steps {
-            if step == ConvertStep::Identity {
+        for step in &other.steps {
+            if matches!(step, ConvertStep::Identity) {
                 continue;
             }
-            steps.push(step);
+            steps.push(step.clone());
         }
 
         // Peephole: cancel adjacent inverse pairs.
@@ -577,7 +751,7 @@ impl ConvertPlan {
             changed = false;
             let mut i = 0;
             while i + 1 < steps.len() {
-                if are_inverse(steps[i], steps[i + 1]) {
+                if are_inverse(&steps[i], &steps[i + 1]) {
                     steps.remove(i + 1);
                     steps.remove(i);
                     changed = true;
@@ -595,7 +769,7 @@ impl ConvertPlan {
 
         // Remove leading/trailing Identity if there are real steps.
         if steps.len() > 1 {
-            steps.retain(|s| *s != ConvertStep::Identity);
+            steps.retain(|s| !matches!(s, ConvertStep::Identity));
             if steps.is_empty() {
                 steps.push(ConvertStep::Identity);
             }
@@ -611,7 +785,7 @@ impl ConvertPlan {
     /// True if conversion is a no-op.
     #[must_use]
     pub fn is_identity(&self) -> bool {
-        self.steps.len() == 1 && self.steps[0] == ConvertStep::Identity
+        self.steps.len() == 1 && matches!(self.steps[0], ConvertStep::Identity)
     }
 
     /// Maximum bytes-per-pixel across all intermediate formats in the plan.
@@ -620,7 +794,7 @@ impl ConvertPlan {
     pub(crate) fn max_intermediate_bpp(&self) -> usize {
         let mut desc = self.from;
         let mut max_bpp = desc.bytes_per_pixel();
-        for &step in &self.steps {
+        for step in &self.steps {
             desc = intermediate_desc(desc, step);
             max_bpp = max_bpp.max(desc.bytes_per_pixel());
         }
@@ -1000,7 +1174,7 @@ pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
     }
 
     if plan.steps.len() == 1 {
-        apply_step_u8(plan.steps[0], src, dst, width, plan.from, plan.to);
+        apply_step_u8(&plan.steps[0], src, dst, width, plan.from, plan.to);
         return;
     }
 
@@ -1027,7 +1201,7 @@ pub(crate) fn convert_row_buffered(
     }
 
     if plan.steps.len() == 1 {
-        apply_step_u8(plan.steps[0], src, dst, width, plan.from, plan.to);
+        apply_step_u8(&plan.steps[0], src, dst, width, plan.from, plan.to);
         return;
     }
 
@@ -1040,7 +1214,7 @@ pub(crate) fn convert_row_buffered(
     let num_steps = plan.steps.len();
     let mut current_desc = plan.from;
 
-    for (i, &step) in plan.steps.iter().enumerate() {
+    for (i, step) in plan.steps.iter().enumerate() {
         let is_last = i == num_steps - 1;
         let next_desc = if is_last {
             plan.to
@@ -1094,32 +1268,29 @@ pub(crate) fn convert_row_buffered(
 fn fuse_matlut_patterns(steps: &mut Vec<ConvertStep>) {
     let mut i = 0;
     while i + 2 < steps.len() {
-        match (steps[i], steps[i + 1], steps[i + 2]) {
+        let rewrite = match (&steps[i], &steps[i + 1], &steps[i + 2]) {
             (
                 ConvertStep::SrgbU8ToLinearF32,
                 ConvertStep::GamutMatrixRgbF32(m),
                 ConvertStep::LinearF32ToSrgbU8,
-            ) => {
-                steps[i] = ConvertStep::FusedSrgbU8GamutRgb(m);
-                steps.drain(i + 1..i + 3);
-                continue;
-            }
+            ) => Some(ConvertStep::FusedSrgbU8GamutRgb(*m)),
             (
                 ConvertStep::SrgbU8ToLinearF32,
                 ConvertStep::GamutMatrixRgbaF32(m),
                 ConvertStep::LinearF32ToSrgbU8,
-            ) => {
-                steps[i] = ConvertStep::FusedSrgbU8GamutRgba(m);
-                steps.drain(i + 1..i + 3);
-                continue;
-            }
-            _ => {}
+            ) => Some(ConvertStep::FusedSrgbU8GamutRgba(*m)),
+            _ => None,
+        };
+        if let Some(fused) = rewrite {
+            steps[i] = fused;
+            steps.drain(i + 1..i + 3);
+            continue;
         }
         i += 1;
     }
 }
 
-fn are_inverse(a: ConvertStep, b: ConvertStep) -> bool {
+fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
     matches!(
         (a, b),
         // Self-inverse
@@ -1164,7 +1335,7 @@ fn are_inverse(a: ConvertStep, b: ConvertStep) -> bool {
 }
 
 /// Compute the descriptor after applying one step.
-fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescriptor {
+fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescriptor {
     match step {
         ConvertStep::Identity => current,
         ConvertStep::SwizzleBgraRgba => {
@@ -1381,6 +1552,7 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
             current.alpha(),
             TransferFunction::Srgb,
         ),
+        ConvertStep::ExternalTransform { output, .. } => *output,
     }
 }
 
