@@ -223,9 +223,7 @@ impl<'a> ColorProfileSource<'a> {
                 // Only use the identification if matrix+TRC substitution is
                 // safe — profiles with LUTs, non-Bradford chad, or Lab PCS
                 // return MetadataOnly and need a full CMS.
-                if let Some(id) =
-                    crate::icc::identify_common(icc_bytes, crate::icc::Tolerance::Intent)
-                {
+                if let Some(id) = crate::icc::identify_common(icc_bytes) {
                     if id.valid_use == crate::icc::IdentificationUse::MatrixTrcSubstitution {
                         return Some((id.primaries, id.transfer));
                     }

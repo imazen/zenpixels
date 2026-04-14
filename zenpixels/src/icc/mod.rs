@@ -19,10 +19,10 @@
 //! # Example
 //!
 //! ```
-//! use zenpixels::icc::{identify_common, IdentificationUse, Tolerance};
+//! use zenpixels::icc::{identify_common, IdentificationUse};
 //!
 //! # let icc_bytes: &[u8] = &[];
-//! if let Some(id) = identify_common(icc_bytes, Tolerance::Intent) {
+//! if let Some(id) = identify_common(icc_bytes) {
 //!     if id.valid_use == IdentificationUse::MatrixTrcSubstitution {
 //!         // Safe to skip CMS — use matrix+TRC math directly
 //!     }
@@ -372,7 +372,7 @@ impl IccIdentification {
 /// | `Intent` | ±56 | none | + Facebook sRGB, Chrome nano |
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[must_use]
-pub enum Tolerance {
+pub(crate) enum Tolerance {
     /// ±1 in u16 — parametric v4 profiles only.
     Exact = 1,
     /// ±3 in u16 — includes v2-magic parametric approximations.
@@ -461,7 +461,12 @@ impl CoalesceForUse {
 ///
 /// ~100ns. For the long tail of vendor/monitor profiles, use structural
 /// analysis via a CMS backend.
-pub fn identify_common(icc_bytes: &[u8], tolerance: Tolerance) -> Option<IccIdentification> {
+pub fn identify_common(icc_bytes: &[u8]) -> Option<IccIdentification> {
+    identify_common_at(icc_bytes, Tolerance::Intent)
+}
+
+/// Internal identification with configurable tolerance.
+fn identify_common_at(icc_bytes: &[u8], tolerance: Tolerance) -> Option<IccIdentification> {
     let hash = fnv1a_64_normalized(icc_bytes);
     if let Ok(idx) = KNOWN_RGB_PROFILES.binary_search_by_key(&hash, |e| e.0) {
         let entry = &KNOWN_RGB_PROFILES[idx];
@@ -549,11 +554,10 @@ pub(crate) fn identify_common_for(
 
 /// Check if an ICC profile is a known sRGB profile.
 ///
-/// Convenience wrapper — returns `true` if the profile matches sRGB within
-/// [`Intent`](Tolerance::Intent) tolerance.
+/// Convenience wrapper — returns `true` if the profile is recognized as sRGB.
 #[inline]
 pub fn is_common_srgb(icc_bytes: &[u8]) -> bool {
-    identify_common(icc_bytes, Tolerance::Intent).is_some_and(|id| id.is_srgb())
+    identify_common(icc_bytes).is_some_and(|id| id.is_srgb())
 }
 
 // ── Hash function ────────────────────────────────────────────────────────
@@ -799,7 +803,7 @@ mod tests {
         for len in [410, 456, 480, 524, 548, 656, 736, 3024, 3144] {
             let zeros = alloc::vec![0u8; len];
             assert!(
-                identify_common(&zeros, Tolerance::Intent).is_none(),
+                identify_common(&zeros).is_none(),
                 "zeros({len}) falsely matched"
             );
         }

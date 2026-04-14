@@ -150,9 +150,7 @@ impl ColorManagement for ZenCmsLite {
         // recognized here but rejected by `build_source_transform` when the
         // strict empirical check determined that canonical matrix+TRC math
         // diverges from CMS behavior for any rendering intent.
-        if let Some(id) =
-            zenpixels::icc::identify_common(icc_bytes, zenpixels::icc::Tolerance::Intent)
-        {
+        if let Some(id) = zenpixels::icc::identify_common(icc_bytes) {
             let cp = id.primaries.to_cicp()?;
             let tc = id.transfer.to_cicp()?;
             return Some(Cicp::new(cp, tc, 0, true));
