@@ -167,7 +167,8 @@ impl ZenCmsLite {
     /// Build a transform from resolved `ColorProfileSource`s.
     ///
     /// Returns `None` if either source can't be resolved to known primaries+transfer.
-    pub(crate) fn build_source_transform(
+    #[doc(hidden)]
+    pub fn build_source_transform(
         &self,
         src: crate::ColorProfileSource<'_>,
         dst: crate::ColorProfileSource<'_>,
@@ -277,8 +278,15 @@ impl RowTransform for LiteTransform {
 impl LiteTransform {
     fn transform_u8(&self, src: &[u8], dst: &mut [u8], _width: u32) {
         if let Some(lut) = &self.linearize_lut {
+            // sRGB destination: use the SIMD matlut path (SIMD matrix +
+            // SIMD clamp/scale + LUT gather). Matches moxcms's AVX path.
+            if !self.has_alpha && matches!(self.dst_trc, TransferFunction::Srgb) {
+                fast_gamut::convert_u8_rgb_simd_matlut(&self.matrix, src, dst, lut, self.encode_u8);
+                return;
+            }
+            // Other TRCs: keep the existing SIMD poly encode path for RGB,
+            // SIMD matrix + scalar LUT encode for RGBA.
             if !self.has_alpha && fast_gamut::has_simd_encode(self.dst_trc) {
-                // Fused RGB: LUT linearize → SIMD (matrix + poly encode) → quantize
                 fast_gamut::convert_u8_rgb_simd_fused(
                     &self.matrix,
                     src,
@@ -289,7 +297,6 @@ impl LiteTransform {
                 );
                 return;
             }
-            // RGBA or unsupported TRC: LUT→SIMD matrix→LUT encode
             if self.has_alpha {
                 fast_gamut::convert_u8_rgba_simd_lut(&self.matrix, src, dst, lut, self.encode_u8);
             } else {
