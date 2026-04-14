@@ -1153,6 +1153,7 @@ fn oklab_to_rgb_4ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) 
 // ---------------------------------------------------------------------------
 
 /// Apply a 3×3 gamut matrix to a row of linear RGB f32 pixels.
+#[allow(unused_variables)]
 fn gamut_matrix_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32; 9]) {
     #[cfg(feature = "zencms-lite")]
     {
@@ -1183,6 +1184,7 @@ fn gamut_matrix_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32;
 }
 
 /// Apply a 3×3 gamut matrix to a row of linear RGBA f32 pixels (alpha passthrough).
+#[allow(unused_variables)]
 fn gamut_matrix_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32; 9]) {
     #[cfg(feature = "zencms-lite")]
     {

@@ -378,6 +378,7 @@ fn convert_u16_rgba(
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_range_loop)]
 mod tests {
     use super::*;
     use crate::cms::ColorManagement;
@@ -672,6 +673,7 @@ mod tests {
 
 #[cfg(test)]
 #[cfg(feature = "cms-moxcms")]
+#[allow(clippy::type_complexity)]
 mod accuracy_ground_truth_tests {
     use super::*;
     use crate::{ColorProfileSource, NamedProfile, PixelFormat};
@@ -1025,6 +1027,12 @@ mod accuracy_ground_truth_tests {
 
 #[cfg(test)]
 #[cfg(feature = "cms-moxcms")]
+#[allow(
+    clippy::type_complexity,
+    clippy::manual_div_ceil,
+    clippy::needless_range_loop,
+    clippy::excessive_precision
+)]
 mod gamut_reduction_compare_tests {
     use super::*;
     use crate::{ColorProfileSource, NamedProfile, PixelFormat};

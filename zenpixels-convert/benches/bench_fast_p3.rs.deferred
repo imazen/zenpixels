@@ -1,6 +1,5 @@
 use moxcms::{BarycentricWeightScale, ColorProfile, InterpolationMethod, Layout, TransformOptions};
 use zenbench::prelude::*;
-use zenpixels_convert::cms::ColorManagement;
 use zenpixels_convert::{
     ColorPrimaries, ColorProfileSource, NamedProfile, PixelFormat, ZenCmsLite,
 };

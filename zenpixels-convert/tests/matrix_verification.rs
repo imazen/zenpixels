@@ -1,3 +1,8 @@
+#![allow(
+    clippy::needless_range_loop,
+    clippy::excessive_precision,
+    clippy::type_complexity
+)]
 //! Exhaustive matrix verification against independently-computed reference values.
 //!
 //! For every gamut matrix in fast_gamut, verify:

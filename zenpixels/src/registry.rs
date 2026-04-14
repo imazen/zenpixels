@@ -347,6 +347,7 @@ const fn solve_3x3(a: &Mat3, b: &[f32; 3]) -> Option<[f32; 3]> {
 // =========================================================================
 
 #[cfg(test)]
+#[allow(clippy::needless_range_loop)]
 mod tests {
     use super::*;
 
