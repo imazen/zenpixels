@@ -58,7 +58,7 @@ These are deferred to the next minor release to batch semver breaks.
   `identify_common_for()` — kept `pub(crate)` for future use.
 - Color registry with const-computed gamut matrices.
 
-## zenpixels-convert 0.2.4
+## zenpixels-convert 0.2.7
 
 ### Additions
 
