@@ -217,6 +217,53 @@ pub(super) fn apply_step_u8(
                 linear_srgb::default::linear_to_srgb_u8,
             );
         }
+
+        ConvertStep::FusedSrgbU16GamutRgb(flat) => {
+            let m = [
+                [flat[0], flat[1], flat[2]],
+                [flat[3], flat[4], flat[5]],
+                [flat[6], flat[7], flat[8]],
+            ];
+            let src_u16: &[u16] = bytemuck::cast_slice(src);
+            let dst_u16: &mut [u16] = bytemuck::cast_slice_mut(dst);
+            crate::fast_gamut::convert_u16_rgb_simd_matlut(
+                &m,
+                src_u16,
+                dst_u16,
+                crate::fast_gamut::srgb_lin_lut_u16(),
+                crate::fast_gamut::srgb_enc_lut_u16(),
+            );
+        }
+
+        ConvertStep::FusedSrgbU8ToLinearF32Rgb(flat) => {
+            let m = [
+                [flat[0], flat[1], flat[2]],
+                [flat[3], flat[4], flat[5]],
+                [flat[6], flat[7], flat[8]],
+            ];
+            let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
+            crate::fast_gamut::convert_u8_to_f32_lin_simd(
+                &m,
+                src,
+                dst_f32,
+                crate::fast_gamut::srgb_lin_lut_u8(),
+            );
+        }
+
+        ConvertStep::FusedLinearF32ToSrgbU8Rgb(flat) => {
+            let m = [
+                [flat[0], flat[1], flat[2]],
+                [flat[3], flat[4], flat[5]],
+                [flat[6], flat[7], flat[8]],
+            ];
+            let src_f32: &[f32] = bytemuck::cast_slice(src);
+            crate::fast_gamut::convert_f32_lin_to_u8_simd(
+                &m,
+                src_f32,
+                dst,
+                crate::fast_gamut::srgb_enc_lut_u8(),
+            );
+        }
     }
 }
 
@@ -827,21 +874,25 @@ fn linear_f32_to_hlg_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usi
 // ---------------------------------------------------------------------------
 
 /// sRGB F32 → Linear F32 (EOTF, same depth). SIMD-dispatched.
+/// Uses sign-preserving extended-range transfer to keep out-of-gamut
+/// values (negatives, > 1.0) intact through the f32 pipeline. Callers
+/// that need clipping should clamp before or after this step.
 fn srgb_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
     dstf[..count].copy_from_slice(&srcf[..count]);
-    linear_srgb::default::srgb_to_linear_slice(&mut dstf[..count]);
+    linear_srgb::default::srgb_to_linear_extended_slice(&mut dstf[..count]);
 }
 
 /// Linear F32 → sRGB F32 (OETF, same depth). SIMD-dispatched.
+/// Sign-preserving extended range — clipping is the caller's responsibility.
 fn linear_f32_to_srgb_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
     dstf[..count].copy_from_slice(&srcf[..count]);
-    linear_srgb::default::linear_to_srgb_slice(&mut dstf[..count]);
+    linear_srgb::default::linear_to_srgb_extended_slice(&mut dstf[..count]);
 }
 
 /// BT.709 F32 → Linear F32 (EOTF, same depth).

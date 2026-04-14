@@ -126,6 +126,14 @@ pub(crate) enum ConvertStep {
     FusedSrgbU8GamutRgb([f32; 9]),
     /// Fused u8-sRGB RGBA primaries conversion (alpha passthrough).
     FusedSrgbU8GamutRgba([f32; 9]),
+    /// Fused u16-sRGB RGB primaries conversion via 65K-entry LUTs.
+    FusedSrgbU16GamutRgb([f32; 9]),
+    /// Fused u8-sRGB → linear-f32 RGB primaries conversion (cross-depth).
+    /// Output preserves extended range (no clamp).
+    FusedSrgbU8ToLinearF32Rgb([f32; 9]),
+    /// Fused linear-f32 → u8-sRGB RGB primaries conversion (cross-depth).
+    /// Always clamps since u8 can't represent out-of-gamut values.
+    FusedLinearF32ToSrgbU8Rgb([f32; 9]),
 }
 
 /// Assert that a descriptor is not CMYK.
@@ -349,6 +357,55 @@ impl ConvertPlan {
 
                 // Need to be in f32 first. If current is integer, add naive conversion.
                 let mut gamut_steps = Vec::new();
+                // Direct fused-step emissions for common cases.
+                if desc.channel_type() == ChannelType::U16
+                    && desc.transfer() == TransferFunction::Srgb
+                    && to.channel_type() == ChannelType::U16
+                    && to.transfer() == TransferFunction::Srgb
+                    && !desc.layout().has_alpha()
+                    && !to.layout().has_alpha()
+                {
+                    // u16 sRGB → u16 sRGB RGB: single-step matlut.
+                    gamut_steps.push(ConvertStep::FusedSrgbU16GamutRgb(flat));
+                    steps.extend(gamut_steps);
+                    if steps.is_empty() {
+                        steps.push(ConvertStep::Identity);
+                    }
+                    fuse_matlut_patterns(&mut steps);
+                    return Ok(Self { from, to, steps });
+                }
+                if desc.channel_type() == ChannelType::U8
+                    && matches!(desc.transfer(), TransferFunction::Srgb)
+                    && to.channel_type() == ChannelType::F32
+                    && to.transfer() == TransferFunction::Linear
+                    && !desc.layout().has_alpha()
+                    && !to.layout().has_alpha()
+                {
+                    // u8 sRGB → linear f32 RGB: cross-depth matlut.
+                    gamut_steps.push(ConvertStep::FusedSrgbU8ToLinearF32Rgb(flat));
+                    steps.extend(gamut_steps);
+                    if steps.is_empty() {
+                        steps.push(ConvertStep::Identity);
+                    }
+                    fuse_matlut_patterns(&mut steps);
+                    return Ok(Self { from, to, steps });
+                }
+                if desc.channel_type() == ChannelType::F32
+                    && desc.transfer() == TransferFunction::Linear
+                    && to.channel_type() == ChannelType::U8
+                    && to.transfer() == TransferFunction::Srgb
+                    && !desc.layout().has_alpha()
+                    && !to.layout().has_alpha()
+                {
+                    // linear f32 → u8 sRGB RGB: cross-depth matlut.
+                    gamut_steps.push(ConvertStep::FusedLinearF32ToSrgbU8Rgb(flat));
+                    steps.extend(gamut_steps);
+                    if steps.is_empty() {
+                        steps.push(ConvertStep::Identity);
+                    }
+                    fuse_matlut_patterns(&mut steps);
+                    return Ok(Self { from, to, steps });
+                }
                 if desc.channel_type() != ChannelType::F32 {
                     // Use the fused sRGB u8→linear f32 if applicable.
                     if desc.channel_type() == ChannelType::U8
@@ -1277,6 +1334,24 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
                 TransferFunction::Srgb,
             )
         }
+        ConvertStep::FusedSrgbU16GamutRgb(_) => PixelDescriptor::new(
+            ChannelType::U16,
+            current.layout(),
+            current.alpha(),
+            TransferFunction::Srgb,
+        ),
+        ConvertStep::FusedSrgbU8ToLinearF32Rgb(_) => PixelDescriptor::new(
+            ChannelType::F32,
+            current.layout(),
+            current.alpha(),
+            TransferFunction::Linear,
+        ),
+        ConvertStep::FusedLinearF32ToSrgbU8Rgb(_) => PixelDescriptor::new(
+            ChannelType::U8,
+            current.layout(),
+            current.alpha(),
+            TransferFunction::Srgb,
+        ),
     }
 }
 
