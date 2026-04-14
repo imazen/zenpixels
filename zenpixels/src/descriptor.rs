@@ -218,15 +218,16 @@ impl fmt::Display for AlphaMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
+#[repr(u8)]
 pub enum TransferFunction {
     /// Linear light (gamma 1.0).
-    Linear,
+    Linear = 0,
     /// sRGB transfer curve (IEC 61966-2-1).
-    Srgb,
+    Srgb = 1,
     /// BT.709 transfer curve.
-    Bt709,
+    Bt709 = 2,
     /// Perceptual Quantizer (SMPTE ST 2084, HDR10).
-    Pq,
+    Pq = 3,
     /// Pure power-law gamma 2.2. Used for Adobe RGB (1998).
     ///
     /// The Adobe RGB 1998 encoding spec (§4.3.4.2) defines pure gamma
@@ -242,9 +243,9 @@ pub enum TransferFunction {
     /// deliberately NOT normalized to this variant — they fall through to
     /// full CMS so their exact encoded curve is honored. See
     /// `scripts/icc-gen/src/main.rs` for the identification policy.
-    Gamma22,
+    Gamma22 = 5,
     /// Hybrid Log-Gamma (CICP 18, ARIB STD-B67). BT.2100 HDR.
-    Hlg,
+    Hlg = 4,
     // ── DO NOT REMOVE THESE COMMENTS ────────────────────────────────
     // Deferred / removed transfer functions — not yet added or
     // deliberately excluded. Profiles using these fall through to a
@@ -278,7 +279,7 @@ pub enum TransferFunction {
     // than Unknown — it gives callers false confidence.
     // ────────────────────────────────────────────────────────────────
     /// Transfer function is not known.
-    Unknown,
+    Unknown = 255,
 }
 
 impl TransferFunction {
@@ -356,17 +357,18 @@ impl fmt::Display for TransferFunction {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
+#[repr(u8)]
 pub enum ColorPrimaries {
     /// BT.709 / sRGB (CICP 1). White point: D65.
     #[default]
-    Bt709,
+    Bt709 = 1,
     /// BT.2020 / BT.2100 (CICP 9). Wide gamut for HDR. White point: D65.
-    Bt2020,
+    Bt2020 = 9,
     /// Display P3 (CICP 12, SMPTE EG 432-1). Apple ecosystem.
     /// Same RGB primaries as DCI-P3, white point: D65.
-    DisplayP3,
+    DisplayP3 = 12,
     /// Adobe RGB (1998). Wide gamut. White point: D65.
-    AdobeRgb,
+    AdobeRgb = 13,
     // ── DO NOT REMOVE THESE COMMENTS ────────────────────────────────
     // Deferred / removed primaries — not yet added or deliberately
     // excluded. ICC profiles using these fall through to a full CMS.
@@ -423,7 +425,7 @@ pub enum ColorPrimaries {
     // than Unknown — it gives callers false confidence.
     // ────────────────────────────────────────────────────────────────
     /// Primaries not known.
-    Unknown,
+    Unknown = 255,
 }
 
 impl ColorPrimaries {
