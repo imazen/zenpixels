@@ -212,7 +212,7 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 
 ## MSRV
 
-Rust 1.93+, 2024 edition.
+`zenpixels` requires Rust 1.85+. `zenpixels-convert` requires Rust 1.89+ (for the safe SIMD intrinsics it uses). 2024 edition.
 
 ## Image tech I maintain
 
