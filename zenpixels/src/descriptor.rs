@@ -435,7 +435,7 @@ impl ColorPrimaries {
     // No remaining ColorPrimaries variants use D50. Was used by
     // ColorMatch, WideGamut, EciRgbV2 (all removed).
     /// DCI white point (theatrical projection, SMPTE RP 431-2).
-    pub const WHITE_DCI: (f32, f32) = (0.314, 0.351);
+    pub(crate) const WHITE_DCI: (f32, f32) = (0.314, 0.351);
 
     /// CIE 1931 xy chromaticity coordinates of the RGB primaries.
     ///
@@ -492,7 +492,7 @@ impl ColorPrimaries {
     /// Whether converting between `self` and `other` requires chromatic
     /// adaptation (different white points).
     #[inline]
-    pub const fn needs_chromatic_adaptation(self, other: Self) -> bool {
+    pub(crate) const fn needs_chromatic_adaptation(self, other: Self) -> bool {
         let (sx, sy) = self.white_point();
         let (ox, oy) = other.white_point();
         sx.to_bits() != ox.to_bits() || sy.to_bits() != oy.to_bits()

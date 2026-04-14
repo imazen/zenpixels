@@ -220,16 +220,15 @@ impl<'a> ColorProfileSource<'a> {
                 Some((p, t))
             }
             Self::Icc(icc_bytes) => {
-                // Use the intent-safe variant — rejects profiles whose CMS
-                // output would differ from our matrix+TRC math (non-Bradford
-                // chad, LUT tags, Lab PCS) for the colorimetric intent. For
-                // approximation, use `crate::icc::identify_common` directly.
-                if let Some(id) = crate::icc::identify_common_for(
-                    icc_bytes,
-                    crate::icc::Tolerance::Intent,
-                    crate::icc::CoalesceForUse::RelativeColorimetric,
-                ) {
-                    return Some((id.primaries, id.transfer));
+                // Only use the identification if matrix+TRC substitution is
+                // safe — profiles with LUTs, non-Bradford chad, or Lab PCS
+                // return MetadataOnly and need a full CMS.
+                if let Some(id) =
+                    crate::icc::identify_common(icc_bytes, crate::icc::Tolerance::Intent)
+                {
+                    if id.valid_use == crate::icc::IdentificationUse::MatrixTrcSubstitution {
+                        return Some((id.primaries, id.transfer));
+                    }
                 }
                 // CICP-in-ICC tag (ICC v4.4+) is authoritative — accept it.
                 if let Some(cicp) = crate::icc::extract_cicp(icc_bytes) {
