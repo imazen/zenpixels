@@ -874,25 +874,25 @@ fn linear_f32_to_hlg_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usi
 // ---------------------------------------------------------------------------
 
 /// sRGB F32 → Linear F32 (EOTF, same depth). SIMD-dispatched.
-/// Uses sign-preserving extended-range transfer to keep out-of-gamut
-/// values (negatives, > 1.0) intact through the f32 pipeline. Callers
-/// that need clipping should clamp before or after this step.
+/// Clamps to [0, 1] — use `srgb_to_linear_extended_slice` for HDR/WCG workflows
+/// that need to preserve out-of-gamut values (pending configurable option).
 fn srgb_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
     dstf[..count].copy_from_slice(&srcf[..count]);
-    linear_srgb::default::srgb_to_linear_extended_slice(&mut dstf[..count]);
+    linear_srgb::default::srgb_to_linear_slice(&mut dstf[..count]);
 }
 
 /// Linear F32 → sRGB F32 (OETF, same depth). SIMD-dispatched.
-/// Sign-preserving extended range — clipping is the caller's responsibility.
+/// Clamps to [0, 1] — use `linear_to_srgb_extended_slice` for HDR/WCG workflows
+/// that need to preserve out-of-gamut values (pending configurable option).
 fn linear_f32_to_srgb_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
     dstf[..count].copy_from_slice(&srcf[..count]);
-    linear_srgb::default::linear_to_srgb_extended_slice(&mut dstf[..count]);
+    linear_srgb::default::linear_to_srgb_slice(&mut dstf[..count]);
 }
 
 /// BT.709 F32 → Linear F32 (EOTF, same depth).
