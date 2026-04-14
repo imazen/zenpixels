@@ -27,7 +27,9 @@
 //! the linearize/encode functions are identical.
 
 use archmage::prelude::*;
+#[cfg(target_arch = "x86_64")]
 use linear_srgb::tokens::x8 as trc_x8;
+#[cfg(target_arch = "x86_64")]
 use magetypes::simd::f32x8 as mt_f32x8;
 
 // =========================================================================
@@ -50,6 +52,7 @@ fn mat3x3(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 }
 
 /// SIMD matrix multiply: 3 channels × 8 pixels via FMA.
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn mat3x3_x8(
     token: X64V3Token,
@@ -91,6 +94,7 @@ macro_rules! stamp_trc_kernels {
         scalar_encode: $scalar_enc:path
     ) => {
         paste::paste! {
+            #[cfg(target_arch = "x86_64")]
             #[rite]
             fn [<fused_8px_rgb_ $name>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
                 let mut r = [0.0f32; 8];
@@ -115,6 +119,7 @@ macro_rules! stamp_trc_kernels {
                 }
             }
 
+            #[cfg(target_arch = "x86_64")]
             #[rite]
             fn [<fused_8px_rgba_ $name>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
                 let mut r = [0.0f32; 8];
@@ -139,6 +144,7 @@ macro_rules! stamp_trc_kernels {
                 }
             }
 
+            #[cfg(target_arch = "x86_64")]
             #[arcane]
             fn [<convert_rgb_ $name _v3>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
                 let bulk = (data.len() / 24) * 24;
@@ -156,6 +162,7 @@ macro_rules! stamp_trc_kernels {
                 }
             }
 
+            #[cfg(target_arch = "x86_64")]
             #[arcane]
             fn [<convert_rgba_ $name _v3>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
                 let bulk = (data.len() / 32) * 32;
@@ -315,11 +322,13 @@ stamp_trc_kernels!(srgb_to_bt709,
 
 const ADOBE_GAMMA: f32 = 2.19921875; // Adobe RGB spec: 563/256
 
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn adobe_to_linear_x8(token: X64V3Token, v: [f32; 8]) -> [f32; 8] {
     trc_x8::gamma_to_linear_v3(token, v, ADOBE_GAMMA)
 }
 
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn adobe_from_linear_x8(token: X64V3Token, v: [f32; 8]) -> [f32; 8] {
     trc_x8::linear_to_gamma_v3(token, v, ADOBE_GAMMA)
@@ -378,11 +387,13 @@ stamp_trc_kernels!(srgb_to_adobe,
 
 const DCI_GAMMA: f32 = 2.6;
 
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn dci_to_linear_x8(token: X64V3Token, v: [f32; 8]) -> [f32; 8] {
     trc_x8::gamma_to_linear_v3(token, v, DCI_GAMMA)
 }
 
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn dci_from_linear_x8(token: X64V3Token, v: [f32; 8]) -> [f32; 8] {
     trc_x8::linear_to_gamma_v3(token, v, DCI_GAMMA)
@@ -551,7 +562,8 @@ pub(crate) fn convert_f32_rgba_extended(
 // Scalar TRC lookup (clamped)
 // =========================================================================
 
-/// Whether a TRC has a SIMD x8 encode kernel available.
+/// Whether a TRC has a SIMD x8 encode kernel available (x86_64 only).
+#[cfg(target_arch = "x86_64")]
 pub(crate) fn has_simd_encode(trc: TransferFunction) -> bool {
     matches!(
         trc,
@@ -564,7 +576,13 @@ pub(crate) fn has_simd_encode(trc: TransferFunction) -> bool {
     )
 }
 
+#[cfg(not(target_arch = "x86_64"))]
+pub(crate) fn has_simd_encode(_trc: TransferFunction) -> bool {
+    false
+}
+
 /// SIMD x8 encode dispatch — must be called from a #[rite]/#[arcane] context.
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn simd_encode_x8_dispatch(token: X64V3Token, trc: TransferFunction, v: [f32; 8]) -> [f32; 8] {
     match trc {
@@ -619,44 +637,93 @@ pub(crate) fn convert_f32_rgb_dispatch(
 ) -> bool {
     use TransferFunction::*;
     debug_assert_eq!(data.len() % 3, 0);
+    // Linear is cross-platform — handle before SIMD dispatch.
+    if src_trc == Linear && dst_trc == Linear {
+        convert_linear_rgb(m, data);
+        return true;
+    }
+    // SIMD fast path (x86_64 AVX2+FMA only). Each `incant!` does runtime
+    // capability detection and falls through to a scalar implementation
+    // when AVX2+FMA is unavailable.
+    #[cfg(target_arch = "x86_64")]
     match (src_trc, dst_trc) {
-        // Same-TRC: single fused kernel
-        (Srgb, Srgb) => incant!(convert_rgb_srgb(m, data)),
-        (Bt709, Bt709) => incant!(convert_rgb_bt709(m, data)),
-        (Pq, Pq) => incant!(convert_rgb_pq(m, data)),
-        (Hlg, Hlg) => incant!(convert_rgb_hlg(m, data)),
-        (Gamma22, Gamma22) => incant!(convert_rgb_adobe(m, data)),
-        (Gamma26, Gamma26) => incant!(convert_rgb_dci(m, data)),
-        (Linear, Linear) => convert_linear_rgb(m, data),
-        // Cross-TRC: specialized kernels
-        (Pq, Srgb) => incant!(convert_rgb_pq_to_srgb(m, data)),
-        (Hlg, Srgb) => incant!(convert_rgb_hlg_to_srgb(m, data)),
-        (Srgb, Pq) => incant!(convert_rgb_srgb_to_pq(m, data)),
-        (Bt709, Srgb) => incant!(convert_rgb_bt709_to_srgb(m, data)),
-        (Srgb, Bt709) => incant!(convert_rgb_srgb_to_bt709(m, data)),
-        (Gamma22, Srgb) => incant!(convert_rgb_adobe_to_srgb(m, data)),
-        (Srgb, Gamma22) => incant!(convert_rgb_srgb_to_adobe(m, data)),
-        (Gamma26, Srgb) => incant!(convert_rgb_dci_to_srgb(m, data)),
-        (Srgb, Gamma26) => incant!(convert_rgb_srgb_to_dci(m, data)),
-        // Fallback: scalar path for any other TRC pair
-        _ => {
-            let Some(lin) = scalar_linearize(src_trc) else {
-                return false;
-            };
-            let Some(enc) = scalar_encode(dst_trc) else {
-                return false;
-            };
-            for pixel in data.chunks_exact_mut(3) {
-                let r = lin(pixel[0]);
-                let g = lin(pixel[1]);
-                let b = lin(pixel[2]);
-                let (nr, ng, nb) = mat3x3(m, r, g, b);
-                pixel[0] = enc(nr);
-                pixel[1] = enc(ng);
-                pixel[2] = enc(nb);
-            }
+        (Srgb, Srgb) => {
+            incant!(convert_rgb_srgb(m, data));
             return true;
         }
+        (Bt709, Bt709) => {
+            incant!(convert_rgb_bt709(m, data));
+            return true;
+        }
+        (Pq, Pq) => {
+            incant!(convert_rgb_pq(m, data));
+            return true;
+        }
+        (Hlg, Hlg) => {
+            incant!(convert_rgb_hlg(m, data));
+            return true;
+        }
+        (Gamma22, Gamma22) => {
+            incant!(convert_rgb_adobe(m, data));
+            return true;
+        }
+        (Gamma26, Gamma26) => {
+            incant!(convert_rgb_dci(m, data));
+            return true;
+        }
+        (Pq, Srgb) => {
+            incant!(convert_rgb_pq_to_srgb(m, data));
+            return true;
+        }
+        (Hlg, Srgb) => {
+            incant!(convert_rgb_hlg_to_srgb(m, data));
+            return true;
+        }
+        (Srgb, Pq) => {
+            incant!(convert_rgb_srgb_to_pq(m, data));
+            return true;
+        }
+        (Bt709, Srgb) => {
+            incant!(convert_rgb_bt709_to_srgb(m, data));
+            return true;
+        }
+        (Srgb, Bt709) => {
+            incant!(convert_rgb_srgb_to_bt709(m, data));
+            return true;
+        }
+        (Gamma22, Srgb) => {
+            incant!(convert_rgb_adobe_to_srgb(m, data));
+            return true;
+        }
+        (Srgb, Gamma22) => {
+            incant!(convert_rgb_srgb_to_adobe(m, data));
+            return true;
+        }
+        (Gamma26, Srgb) => {
+            incant!(convert_rgb_dci_to_srgb(m, data));
+            return true;
+        }
+        (Srgb, Gamma26) => {
+            incant!(convert_rgb_srgb_to_dci(m, data));
+            return true;
+        }
+        _ => {} // fall through to scalar
+    }
+    // Scalar fallback — works on all platforms.
+    let Some(lin) = scalar_linearize(src_trc) else {
+        return false;
+    };
+    let Some(enc) = scalar_encode(dst_trc) else {
+        return false;
+    };
+    for pixel in data.chunks_exact_mut(3) {
+        let r = lin(pixel[0]);
+        let g = lin(pixel[1]);
+        let b = lin(pixel[2]);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        pixel[0] = enc(nr);
+        pixel[1] = enc(ng);
+        pixel[2] = enc(nb);
     }
     true
 }
@@ -671,41 +738,88 @@ pub(crate) fn convert_f32_rgba_dispatch(
 ) -> bool {
     use TransferFunction::*;
     debug_assert_eq!(data.len() % 4, 0);
+    if src_trc == Linear && dst_trc == Linear {
+        convert_linear_rgba(m, data);
+        return true;
+    }
+    #[cfg(target_arch = "x86_64")]
     match (src_trc, dst_trc) {
-        (Srgb, Srgb) => incant!(convert_rgba_srgb(m, data)),
-        (Bt709, Bt709) => incant!(convert_rgba_bt709(m, data)),
-        (Pq, Pq) => incant!(convert_rgba_pq(m, data)),
-        (Hlg, Hlg) => incant!(convert_rgba_hlg(m, data)),
-        (Gamma22, Gamma22) => incant!(convert_rgba_adobe(m, data)),
-        (Gamma26, Gamma26) => incant!(convert_rgba_dci(m, data)),
-        (Linear, Linear) => convert_linear_rgba(m, data),
-        (Pq, Srgb) => incant!(convert_rgba_pq_to_srgb(m, data)),
-        (Hlg, Srgb) => incant!(convert_rgba_hlg_to_srgb(m, data)),
-        (Srgb, Pq) => incant!(convert_rgba_srgb_to_pq(m, data)),
-        (Bt709, Srgb) => incant!(convert_rgba_bt709_to_srgb(m, data)),
-        (Srgb, Bt709) => incant!(convert_rgba_srgb_to_bt709(m, data)),
-        (Gamma22, Srgb) => incant!(convert_rgba_adobe_to_srgb(m, data)),
-        (Srgb, Gamma22) => incant!(convert_rgba_srgb_to_adobe(m, data)),
-        (Gamma26, Srgb) => incant!(convert_rgba_dci_to_srgb(m, data)),
-        (Srgb, Gamma26) => incant!(convert_rgba_srgb_to_dci(m, data)),
-        _ => {
-            let Some(lin) = scalar_linearize(src_trc) else {
-                return false;
-            };
-            let Some(enc) = scalar_encode(dst_trc) else {
-                return false;
-            };
-            for pixel in data.chunks_exact_mut(4) {
-                let r = lin(pixel[0]);
-                let g = lin(pixel[1]);
-                let b = lin(pixel[2]);
-                let (nr, ng, nb) = mat3x3(m, r, g, b);
-                pixel[0] = enc(nr);
-                pixel[1] = enc(ng);
-                pixel[2] = enc(nb);
-            }
+        (Srgb, Srgb) => {
+            incant!(convert_rgba_srgb(m, data));
             return true;
         }
+        (Bt709, Bt709) => {
+            incant!(convert_rgba_bt709(m, data));
+            return true;
+        }
+        (Pq, Pq) => {
+            incant!(convert_rgba_pq(m, data));
+            return true;
+        }
+        (Hlg, Hlg) => {
+            incant!(convert_rgba_hlg(m, data));
+            return true;
+        }
+        (Gamma22, Gamma22) => {
+            incant!(convert_rgba_adobe(m, data));
+            return true;
+        }
+        (Gamma26, Gamma26) => {
+            incant!(convert_rgba_dci(m, data));
+            return true;
+        }
+        (Pq, Srgb) => {
+            incant!(convert_rgba_pq_to_srgb(m, data));
+            return true;
+        }
+        (Hlg, Srgb) => {
+            incant!(convert_rgba_hlg_to_srgb(m, data));
+            return true;
+        }
+        (Srgb, Pq) => {
+            incant!(convert_rgba_srgb_to_pq(m, data));
+            return true;
+        }
+        (Bt709, Srgb) => {
+            incant!(convert_rgba_bt709_to_srgb(m, data));
+            return true;
+        }
+        (Srgb, Bt709) => {
+            incant!(convert_rgba_srgb_to_bt709(m, data));
+            return true;
+        }
+        (Gamma22, Srgb) => {
+            incant!(convert_rgba_adobe_to_srgb(m, data));
+            return true;
+        }
+        (Srgb, Gamma22) => {
+            incant!(convert_rgba_srgb_to_adobe(m, data));
+            return true;
+        }
+        (Gamma26, Srgb) => {
+            incant!(convert_rgba_dci_to_srgb(m, data));
+            return true;
+        }
+        (Srgb, Gamma26) => {
+            incant!(convert_rgba_srgb_to_dci(m, data));
+            return true;
+        }
+        _ => {}
+    }
+    let Some(lin) = scalar_linearize(src_trc) else {
+        return false;
+    };
+    let Some(enc) = scalar_encode(dst_trc) else {
+        return false;
+    };
+    for pixel in data.chunks_exact_mut(4) {
+        let r = lin(pixel[0]);
+        let g = lin(pixel[1]);
+        let b = lin(pixel[2]);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        pixel[0] = enc(nr);
+        pixel[1] = enc(ng);
+        pixel[2] = enc(nb);
     }
     true
 }
@@ -797,6 +911,7 @@ pub(crate) fn convert_u8_rgb_lut_lut(
 }
 
 /// Fused u8→u8 RGB: LUT linearize → SIMD (matrix + polynomial encode) → quantize.
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn convert_8px_u8_rgb_fused(
     token: X64V3Token,
@@ -830,6 +945,7 @@ fn convert_8px_u8_rgb_fused(
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn convert_u8_rgb_fused_v3(
     token: X64V3Token,
@@ -891,12 +1007,19 @@ pub(crate) fn convert_u8_rgb_simd_fused(
 ) {
     debug_assert_eq!(src.len() % 3, 0);
     debug_assert_eq!(src.len(), dst.len());
-    incant!(convert_u8_rgb_fused(
-        m, src, dst, lin_lut, dst_trc, scalar_enc
-    ));
+    #[cfg(target_arch = "x86_64")]
+    {
+        incant!(convert_u8_rgb_fused(
+            m, src, dst, lin_lut, dst_trc, scalar_enc
+        ));
+        return;
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    convert_u8_rgb_fused_scalar(ScalarToken, m, src, dst, lin_lut, dst_trc, scalar_enc);
 }
 
 /// SIMD-batched u8 RGBA: LUT linearize 8 pixels → SIMD matrix → LUT encode. Alpha copied.
+#[cfg(target_arch = "x86_64")]
 #[rite]
 fn convert_8px_u8_rgba_simd(
     token: X64V3Token,
@@ -929,6 +1052,7 @@ fn convert_8px_u8_rgba_simd(
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 #[arcane]
 fn convert_u8_rgba_lut_simd_v3(
     token: X64V3Token,
@@ -994,7 +1118,13 @@ pub(crate) fn convert_u8_rgba_simd_lut(
 ) {
     debug_assert_eq!(src.len() % 4, 0);
     debug_assert_eq!(src.len(), dst.len());
-    incant!(convert_u8_rgba_lut_simd(m, src, dst, lin_lut, enc_u8));
+    #[cfg(target_arch = "x86_64")]
+    {
+        incant!(convert_u8_rgba_lut_simd(m, src, dst, lin_lut, enc_u8));
+        return;
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    convert_u8_rgba_lut_simd_scalar(ScalarToken, m, src, dst, lin_lut, enc_u8);
 }
 
 /// Convert u8 RGBA source to u8 RGBA dest via gamut conversion. Alpha copied.

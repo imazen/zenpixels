@@ -520,17 +520,15 @@ mod tests {
     }
 
     #[test]
-    fn build_transform_for_format_icc_to_icc_compat_falls_through() {
+    fn build_transform_for_format_icc_to_icc_compat() {
         // The bundled DisplayP3Compat-v4 / REC2020_V4 profiles from the
-        // saucecontrol Compact-ICC corpus are encoder-friendly compatibility
-        // profiles, not bit-exact canonical encodings. Their encoded XYZ
-        // matrices drift ~590-931 u16 from canonical at saturated pixels —
-        // small enough to identify "near" canonical primaries via tolerance,
-        // but large enough that our matrix+TRC substitution would produce
-        // visibly different output than what a real CMS would do with these
-        // exact bytes. Strict empirical mask therefore rejects them, and
-        // ZenCmsLite returns `Err`. The higher-level converter is expected
-        // to fall back to full CMS for such profiles.
+        // saucecontrol Compact-ICC corpus are matrix-shaper profiles with
+        // no LUTs. Structural inspection marks them as safe for all intents
+        // (pure matrix+TRC path), so ZenCmsLite accepts them for the fast
+        // path. Their encoded XYZ matrices drift ~590-931 u16 from
+        // mathematically-derived canonical, but the structural rule treats
+        // LUT-absence as sufficient — consistent with how other CMSs
+        // route these profiles through matrix-shaper math anyway.
         let cms = ZenCmsLite::default();
         let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
         let bt2020_icc = crate::icc_profiles::REC2020_V4;
@@ -542,8 +540,8 @@ mod tests {
             PixelFormat::RgbF32,
         );
         assert!(
-            result.is_err(),
-            "bundled compat profiles should fall through to full CMS"
+            result.is_ok(),
+            "bundled compat profiles should be handled via lite CMS (matrix-shaper, no LUTs)"
         );
     }
 
@@ -555,19 +553,19 @@ mod tests {
     }
 
     #[test]
-    fn build_source_transform_icc_compat_falls_through() {
-        // Same rationale as build_transform_for_format_icc_to_icc_compat_falls_through:
-        // the bundled compat profiles are intentionally rejected by the lite
-        // CMS so the higher-level converter can route them through full CMS.
+    fn build_source_transform_icc_compat() {
+        // The bundled DisplayP3Compat-v4 is a matrix-shaper profile with no
+        // LUTs → accepted by the structural rule → resolved by lite CMS.
         let cms = ZenCmsLite::default();
         let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
         let src = ColorProfileSource::Icc(p3_icc);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
         let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
         assert!(
-            result.is_none(),
-            "bundled compat profile as Icc source should not resolve in lite CMS"
+            result.is_some(),
+            "bundled compat profile should resolve via lite CMS"
         );
+        assert!(result.unwrap().is_ok());
     }
 
     // --- Clamped vs extended ---
