@@ -226,7 +226,7 @@ impl<'a> ColorProfileSource<'a> {
                 if let Some(id) = crate::icc::identify_common_for(
                     icc_bytes,
                     crate::icc::Tolerance::Intent,
-                    crate::icc::CoalesceForUse::Colorimetric,
+                    crate::icc::CoalesceForUse::RelativeColorimetric,
                 ) {
                     return Some((id.primaries, id.transfer));
                 }

@@ -390,18 +390,31 @@ pub const INTENT_PERCEPTUAL_SAFE: u8 = 1 << 1;
 /// Additionally requires no `A2B2` or `B2A2` LUT.
 pub const INTENT_SATURATION_SAFE: u8 = 1 << 2;
 
-/// How an identified profile will be used, controlling which intent-safety
-/// flags must be set on a table entry for it to match.
+/// ICC rendering intent — controls which intent-safety flags must be set
+/// on a table entry for [`identify_common_for`] to return a match.
+///
+/// Names follow the ICC v4.4 specification (section 7.2.15) and CICP/moxcms
+/// conventions. See also [`Tolerance`] for TRC error tolerance control.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum CoalesceForUse {
-    /// Any CMS intent — most restrictive, requires all flags safe.
+    /// All four ICC rendering intents must be safe.
     AnyIntent,
-    /// Relative or absolute colorimetric (CMS uses colorants directly).
-    Colorimetric,
-    /// Perceptual rendering with gamut mapping.
+    /// Relative colorimetric — CMS uses colorants directly with white-point
+    /// adaptation. The most common default for display-to-display workflows.
+    /// Equivalent to absolute colorimetric for matrix-shaper math (we share
+    /// one safety bit for both).
+    RelativeColorimetric,
+    /// Absolute colorimetric — preserves source white point literally.
+    /// Same intent-safety requirements as relative colorimetric for
+    /// matrix-shaper profiles.
+    AbsoluteColorimetric,
+    /// Perceptual rendering — CMS uses A2B1/B2A1 LUT for gamut mapping
+    /// when present. Matrix math is only equivalent when no perceptual
+    /// LUT exists in the profile.
     Perceptual,
-    /// Saturation rendering (vivid business graphics).
+    /// Saturation rendering — vivid business graphics. Matrix math is
+    /// only equivalent when no A2B2/B2A2 LUT exists.
     Saturation,
 }
 
@@ -413,7 +426,7 @@ impl CoalesceForUse {
             Self::AnyIntent => {
                 INTENT_COLORIMETRIC_SAFE | INTENT_PERCEPTUAL_SAFE | INTENT_SATURATION_SAFE
             }
-            Self::Colorimetric => INTENT_COLORIMETRIC_SAFE,
+            Self::RelativeColorimetric | Self::AbsoluteColorimetric => INTENT_COLORIMETRIC_SAFE,
             Self::Perceptual => INTENT_PERCEPTUAL_SAFE,
             Self::Saturation => INTENT_SATURATION_SAFE,
         }

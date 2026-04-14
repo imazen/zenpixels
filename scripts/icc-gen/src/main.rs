@@ -919,6 +919,9 @@ fn parse_args() -> (Vec<PathBuf>, PathBuf) {
 }
 
 fn write_rgb(rows: &BTreeMap<u64, RgbRow>, out_path: &Path) {
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
     let mut s = String::from("&[\n");
     for row in rows.values() {
         s += &format!(
@@ -937,6 +940,9 @@ fn write_rgb(rows: &BTreeMap<u64, RgbRow>, out_path: &Path) {
 }
 
 fn write_gray(rows: &BTreeMap<u64, GrayRow>, out_path: &Path) {
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
     let mut s = String::from("&[\n");
     for row in rows.values() {
         s += &format!(
