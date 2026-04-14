@@ -229,9 +229,38 @@ pub enum TransferFunction {
     Pq,
     /// Hybrid Log-Gamma (ARIB STD-B67, HLG).
     Hlg,
-    /// Pure power-law gamma 2.2. Adobe RGB (1998).
+    /// Pure power-law gamma 2.2. Used for Adobe RGB (1998).
+    ///
+    /// The Adobe RGB 1998 encoding spec (§4.3.4.2) defines pure gamma
+    /// 2.19921875 with no linear segment near black. About 85% of real-world
+    /// Adobe RGB ICC profiles (Adobe CS4, Windows ClayRGB1998 / AdobeRGB1998,
+    /// macOS AdobeRGB1998, Linux `AdobeRGB1998`/`compatibleWithAdobeRGB1998`,
+    /// Nikon, etc.) encode the TRC as `curv count=1` (pure gamma) or
+    /// equivalent `paraType funcType=0`.
+    ///
+    /// A minority of profiles (saucecontrol's Compact-ICC AdobeCompat-v4,
+    /// some lcms2-generated variants) encode `paraType funcType=3` with a
+    /// linear toe (slope `c=1/32`, break `d=0.05568`). Those profiles are
+    /// deliberately NOT normalized to this variant — they fall through to
+    /// full CMS so their exact encoded curve is honored. See
+    /// `scripts/icc-gen/src/main.rs` for the identification policy.
     Gamma22,
-    /// Pure power-law gamma 1.8. ProPhoto RGB, Apple legacy.
+    /// Pure power-law gamma 1.8. Used historically for ProPhoto / Apple
+    /// legacy workflows.
+    ///
+    /// Real-world ProPhoto / ROMM ICC profiles are fragmented:
+    /// - ~50% encode pure gamma 1.8 (Windows `ProPhoto.icm`, Linux
+    ///   `rommrgb`/`ProPhotoRGB`, saucecontrol pure-gamma variants)
+    /// - ~30% encode `paraType funcType=3` with a linear toe per ISO 22028-2
+    ///   (saucecontrol `ProPhoto-v4`: `c=1/16, d=1/32`; macOS `ROMM RGB`:
+    ///   `c=1/16, d=1/512` — which *deviates* from the ISO spec `d`)
+    /// - 1 profile (`ProPhotoLin.icm`) encodes a linear TRC despite the name
+    /// - Some v4 ISO 22028-2 profiles are LUT-based (no rTRC at all)
+    ///
+    /// Because no single canonical form dominates, ProPhoto is intentionally
+    /// NOT accelerated via our identification hash table — all ProPhoto
+    /// profiles fall through to full CMS. This variant remains for callers
+    /// that explicitly want pure gamma 1.8.
     Gamma18,
     /// Pure power-law gamma 2.4. BT.1886 display model, ACES display encoding.
     Gamma24,

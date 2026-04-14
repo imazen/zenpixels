@@ -335,7 +335,20 @@ fn adobe_from_linear_scalar(v: f32) -> f32 {
     linear_srgb::default::linear_to_gamma(v, ADOBE_GAMMA)
 }
 
-// Adobe RGB same-TRC (both sides gamma 2.2)
+// Adobe RGB same-TRC (both sides gamma 2.2 — pure power, no linear toe).
+//
+// This is the canonical Adobe RGB 1998 encoding per the Adobe RGB 1998
+// spec §4.3.4.2 and matches ~85% of real-world Adobe RGB ICC profiles
+// (Adobe CS4, Windows ClayRGB1998, macOS AdobeRGB1998, Linux
+// `AdobeRGB1998`/`compatibleWithAdobeRGB1998`, Nikon, etc).
+//
+// The `parametricCurveType funcType=3` variant with a linear toe
+// (`c=1/32, d=0.05568`) that some profiles use — saucecontrol's
+// Compact-ICC AdobeCompat-v4 being the notable example — is deliberately
+// NOT accelerated here. Profiles encoding that form fall through to the
+// full CMS (moxcms) so they're rendered via their actual bytes. See
+// `scripts/icc-gen/src/main.rs` for the identification-side policy and
+// the rationale notes in `zenpixels-convert/src/icc_profiles.rs`.
 stamp_trc_kernels!(adobe,
     simd_linearize: adobe_to_linear_x8,
     simd_encode: adobe_from_linear_x8,

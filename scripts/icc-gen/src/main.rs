@@ -1,20 +1,57 @@
 //! Generate ICC hash table `.inc` files for `zenpixels::icc`.
 //!
 //! Scans ICC profiles, computes normalized FNV-1a hashes, identifies primaries
-//! and TRC (measuring max u16 error against reference EOTFs for all 65536 values),
-//! deduplicates by normalized hash, and runs moxcms transforms per rendering
-//! intent to derive an empirical intent-safety mask. Writes Rust include files.
+//! and TRC (measuring max u16 error against reference EOTFs for all 65536
+//! values), deduplicates by normalized hash, and runs moxcms transforms per
+//! rendering intent to derive an empirical intent-safety mask. Under the
+//! default `lcms2-crosscheck` feature the mask is AND-gated against Little CMS
+//! 2's interpretation of the same profile — both CMSs must agree the profile
+//! matches canonical. Writes Rust include files.
 //!
 //! Usage:
 //!   cargo run -p icc-gen --release -- <icc-cache-dir> <bundled-profiles-dir> <out-dir>
 //!
-//! Optional lcms2 cross-check (requires Little CMS 2 C library):
-//!   cargo run -p icc-gen --release --features lcms2-crosscheck -- ...
+//! `lcms2-crosscheck` is enabled by default and requires the Little CMS 2 C
+//! library at system level (`apt install liblcms2-dev` on Debian/Ubuntu,
+//! `brew install little-cms2` on macOS). To run without it:
+//!   cargo run -p icc-gen --release --no-default-features -- ...
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use moxcms::{ColorProfile, Layout, RenderingIntent, TransformOptions};
+use moxcms::{
+    BarycentricWeightScale, ColorProfile, InterpolationMethod, Layout, RenderingIntent,
+    TransformOptions,
+};
+
+/// Transform options for maximum-precision validation.
+///
+/// Mirrors `zenpixels_convert::cms_moxcms::transform_opts(
+/// ColorPriority::PreferIcc, intent)` for the *correctness* knobs (no CICP
+/// shortcut, Tetrahedral interpolation, High barycentric weights), but flips
+/// `prefer_fixed_point` to `false` so the comparison measures true profile
+/// divergence rather than Q2.13 quantization noise.
+///
+/// Runtime drift from this baseline is strictly additive — Q2.13 fixed-point
+/// adds ~1-4 u16 noise on top of the float result without ever closing a
+/// genuine divergence gap. A profile that passes the empirical comparison
+/// here will also pass at runtime; one that fails here may still fail at
+/// runtime by an even larger margin.
+///
+/// Critical: we DO NOT enable the `extended_range` feature on moxcms. That
+/// feature's `try_extended_gamma_evaluator` (moxcms src/trc.rs:1293-1523)
+/// detects sRGB / BT.709 parametric curves by 1e-4 parameter tolerance and
+/// silently substitutes hardcoded canonical TRC code, which would mask any
+/// real divergence in profile-encoded curves. See the icc-gen Cargo.toml.
+fn runtime_opts(intent: RenderingIntent) -> TransformOptions {
+    TransformOptions {
+        rendering_intent: intent,
+        allow_use_cicp_transfer: false,
+        prefer_fixed_point: false,
+        barycentric_weight_scale: BarycentricWeightScale::High,
+        interpolation_method: InterpolationMethod::Tetrahedral,
+    }
+}
 
 // ── Normalized FNV-1a hash ───────────────────────────────────────────────
 //
@@ -267,6 +304,27 @@ fn parse_trc(d: &[u8], o: usize) -> Option<Trc> {
     }
 }
 
+/// Returns `true` if the given TRC tag is a `parametricCurveType` with
+/// `funcType=3` (the ICC-v4 form with a linear toe segment near black).
+///
+/// Adobe RGB paraType-3 profiles are excluded from the identification table
+/// because zenpixels-convert's matrix+TRC substitution uses pure gamma
+/// 2.19921875 (matching the Adobe RGB 1998 encoding spec and ~85% of
+/// real-world Adobe RGB profiles in the wild) — so a profile that encodes
+/// the minority paraType-3 toe form would render visibly different in the
+/// fast path than through a real CMS. Better to let the CMS honor the
+/// exact encoded curve.
+fn is_para_functype3(d: &[u8], trc_tag: &[u8; 4]) -> bool {
+    let Some(off) = find_tag(d, trc_tag) else {
+        return false;
+    };
+    if off + 10 > d.len() || &d[off..off + 4] != b"para" {
+        return false;
+    }
+    let ft = u16::from_be_bytes([d[off + 8], d[off + 9]]);
+    ft == 3
+}
+
 fn find_tag(d: &[u8], s: &[u8; 4]) -> Option<usize> {
     if d.len() < 132 {
         return None;
@@ -308,6 +366,75 @@ struct KP {
     gy: f64,
     bx: f64,
     by: f64,
+}
+
+// ── Identification-table exclusion categories ────────────────────────────
+//
+// Named references into `KNOWN_P::rust_name`. The `rust_name` field is what
+// the generator emits into the `.inc` table, so keeping the exclusion
+// logic string-based on `rust_name` keeps these checks in sync with what
+// the output declares. `assert_exclusion_names_valid()` verifies the names
+// resolve against `KNOWN_P` at startup in debug builds.
+
+/// Skip all profiles whose identified primaries appear in this list — no
+/// fast-path acceleration; callers take the full-CMS path.
+///
+/// **ProPhoto / ROMM**: the in-the-wild encoding is too fragmented to
+/// justify a single canonical form. Surveying real profiles:
+/// - ~50% encode pure gamma 1.8 (Windows `ProPhoto.icm`,
+///   `rommrgb`, Linux `rommrgb`/`ProPhotoRGB`, saucecontrol
+///   pure-gamma variants)
+/// - ~30% encode `paraType funcType=3` with a linear toe:
+///   saucecontrol `ProPhoto-v4` uses the ISO 22028-2 form (`c=1/16,
+///   d=1/32`); Apple's macOS `ROMM RGB` uses a non-standard
+///   `c=1/16, d=1/512`
+/// - 1 profile (`ProPhotoLin.icm`) encodes a linear TRC despite the name
+/// - Two ISO 22028-2 v4 profiles are mAB/mBA LUTs with no rTRC at all
+///
+/// Picking any single "canonical" reference would misrender the others.
+/// Dropping ProPhoto from the acceleration set entirely lets full CMS
+/// honor each profile's exact encoded curve.
+const EXCLUDED_PRIMARIES: &[&str] = &["ProPhoto"];
+
+/// Skip profiles with these primaries *if* their rTRC is
+/// `parametricCurveType funcType=3`.
+///
+/// **Adobe RGB**: the spec body (§4.3.4.2) defines pure gamma 2.19921875
+/// with no toe. Annex C (Informative) *recommends* a slope limit of 1/32
+/// when implementing the inverse transfer — `max(C'^2.19921875, C'/32)` —
+/// which is mathematically equivalent to `paraType funcType=3` with
+/// `c=1/32, d=0.05568`. Annex C explicitly states the slope limit is "an
+/// implementation aspect, not an attribute of the Adobe RGB (1998) color
+/// space encoding" and that "different implementations may use different
+/// slope limits."
+///
+/// Our runtime (and the bundled `ADOBE_RGB` profile) both use pure gamma,
+/// matching the spec body and ~85% of real-world Adobe RGB profiles
+/// (Adobe CS4, Windows `ClayRGB1998` / `AdobeRGB1998`, macOS
+/// `AdobeRGB1998`, Linux `AdobeRGB1998`/`compatibleWithAdobeRGB1998`,
+/// Nikon, per-camera profiles). The ~15% that encode paraType-3 (notably
+/// saucecontrol `AdobeCompat-v4`, ACE-generated profiles following Annex
+/// C) would render with slight shadow lift (8-bit codes 1-14 per Annex C)
+/// if we ran them through the pure-gamma fast path. We let them fall
+/// through to full CMS so their exact encoded curve is honored.
+const PARA3_EXCLUDED_PRIMARIES: &[&str] = &["AdobeRgb"];
+
+fn is_excluded_primary(cp_name: &str) -> bool {
+    EXCLUDED_PRIMARIES.contains(&cp_name)
+}
+
+fn is_para3_excluded_primary(cp_name: &str) -> bool {
+    PARA3_EXCLUDED_PRIMARIES.contains(&cp_name)
+}
+
+#[cfg(debug_assertions)]
+fn assert_exclusion_names_valid() {
+    for name in EXCLUDED_PRIMARIES.iter().chain(PARA3_EXCLUDED_PRIMARIES) {
+        assert!(
+            KNOWN_P.iter().any(|kp| kp.rust_name == *name),
+            "exclusion list references unknown primaries name {name:?}"
+        );
+    }
 }
 const KNOWN_P: &[KP] = &[
     KP {
@@ -494,24 +621,20 @@ fn identify_trc(data: &[u8], trc_tag: &[u8; 4]) -> Option<(&'static str, u32)> {
 // (with our canonical matrix for the identified primaries) matches what
 // a full CMS would produce for a given intent.
 //
-// Static rule (fast path): a matrix-shaper profile with no A2B/B2A LUTs
-// routes through moxcms's matrix+TRC path, so all three intents are
-// structurally safe. A profile carrying an A2B_n or B2A_n LUT routes
-// through that LUT for intent n, which may diverge from our canonical
-// matrix+TRC.
+// Maximally-conservative policy: when moxcms can build a baseline transform
+// for the identified (primaries, transfer), we trust the EMPIRICAL result
+// alone. Structural inspection (LUT-tag presence, matrix-shaper layout)
+// only acts as a fallback when no synth reference exists, because even a
+// "clean" matrix-shaper profile can carry a non-Bradford `chad`, custom
+// per-device chromaticities, or other state that makes runtime substitution
+// disagree with what lcms2/moxcms would produce.
 //
-// Empirical upgrade: a profile with LUTs can still be matrix+TRC-safe
-// at an intent if the LUT happens to reproduce matrix+TRC output. We
-// test this by running both the profile and a canonical synth reference
-// through moxcms at that intent; if the outputs agree within the
-// `COLORIMETRIC_VS_SYNTH_EPSILON_U16` budget, we grant the bit despite
-// the LUT presence.
-//
-// Empirical downgrade: a profile that structurally "looks safe" (matrix
-// shaper, no LUTs) may nonetheless carry non-canonical primaries — common
-// in per-device calibration profiles. If its moxcms output diverges
-// wildly from canonical synth, matrix+TRC substitution would produce
-// visibly wrong pixels, so we drop the bit.
+// Comparison: `moxcms(icc, intent)` (uses the profile's exact bytes,
+// including chad/A2B_n/B2A_n) vs `moxcms(synth_canonical, intent)` (uses
+// canonical primaries with Bradford chad — what zenpixels-convert's runtime
+// matrix+TRC substitution actually does). Bit is granted only if the two
+// agree within COLORIMETRIC_VS_SYNTH_EPSILON_U16 across the whole probe.
+// We do not OR-merge with structural — that would mask legitimate divergences.
 
 /// Bit flags matching zenpixels/src/icc/mod.rs.
 const INTENT_COLORIMETRIC_SAFE: u8 = 1 << 0;
@@ -524,18 +647,33 @@ const INTENT_SATURATION_SAFE: u8 = 1 << 2;
 const INTENT_VS_INTENT_EPSILON_U16: u32 = 64;
 
 /// Max u16 deviation between `moxcms(icc, intent=RelColor)` and
-/// `moxcms(synth_ref, intent=RelColor)` for the COLORIMETRIC bit to be
-/// granted via empirical comparison.
+/// `moxcms(synth_ref, intent=RelColor)` for the COLORIMETRIC bit.
 ///
-/// 640/65535 ≈ 0.98% — about 2.5 8-bit code steps. Absorbs the inherent
-/// rounding drift between an encoder's ICC primaries and moxcms's built-in
-/// canonical chromaticities (typical 100-700 u16 in saturated regions)
-/// while still rejecting profiles with meaningfully-divergent matrices
-/// (Apple per-device calibration profiles drift 1000-2500 u16 and produce
-/// visibly different output from canonical matrix+TRC substitution). Real
-/// LUT-driven gamut mapping produces deviations in the thousands to tens
-/// of thousands of u16.
-const COLORIMETRIC_VS_SYNTH_EPSILON_U16: u32 = 640;
+/// 256/65535 ≈ 0.39% — exactly one 8-bit code step. Profiles whose CMS
+/// output rounds to the same u8 value as our canonical matrix+TRC
+/// substitution pass; profiles whose output would round to a different u8
+/// (≈ visibly distinguishable in 8-bit pipelines) are rejected. This
+/// catches non-Bradford `chad` adaptations, custom encoded primaries,
+/// LUT-driven gamut remapping, and per-device calibration drift, while
+/// tolerating the inherent precision drift between an encoder's 16.16
+/// fixed-point matrix and our canonical floating-point chromaticities.
+const COLORIMETRIC_VS_SYNTH_EPSILON_U16: u32 = 256;
+
+/// Looser epsilon for the lcms2 AND-gate comparison (when the
+/// `lcms2-crosscheck` feature is enabled).
+///
+/// 512/65535 ≈ 0.78% — two 8-bit code steps. Rationale: even for
+/// canonical sRGB profiles, the `paraType funcType=3` representation
+/// used by lcms2's `Profile::new_srgb()` differs slightly from how the
+/// same sRGB curve is encoded in third-party profiles (RawTherapee,
+/// skcms, colord, etc.) — different parameter quantizations and
+/// occasionally `curv count=N` LUT forms in place of paraType. Those
+/// representation differences show up as 260-500 u16 deltas through
+/// lcms2's transform, even though the profiles all describe the same
+/// canonical curve. We use 2× the moxcms epsilon here so the AND-gate
+/// rejects only *real* profile divergence (chad drift, non-canonical
+/// primaries, LUT-driven gamut) and not parametric-representation noise.
+const LCMS2_ANDGATE_EPSILON_U16: u32 = 2 * COLORIMETRIC_VS_SYNTH_EPSILON_U16;
 
 /// Number of pixel samples per ramp.
 const RAMP_STEPS: usize = 64;
@@ -552,7 +690,12 @@ fn build_synth_ref(primaries: &str, transfer: &str) -> Option<ColorProfile> {
         ("Bt2020", "Hlg") => Some(ColorProfile::new_bt2020_hlg()),
         ("DisplayP3", "Pq") => Some(ColorProfile::new_display_p3_pq()),
         ("AdobeRgb", "Gamma22") => Some(ColorProfile::new_adobe_rgb()),
-        ("ProPhoto", "Gamma18") => Some(ColorProfile::new_pro_photo_rgb()),
+        // ProPhoto deliberately omitted — ecosystem is too fragmented (pure
+        // gamma, paraType-3 ISO d=1/32, Apple's d=1/512, linear variants,
+        // mAB/mBA LUT profiles) to justify a single fast-path reference.
+        // All ProPhoto profiles fall through to full CMS for faithful
+        // rendering; see `exclude_adobe_non_pure_gamma` / `is_prophoto_*`
+        // below and the notes in `TransferFunction::Gamma18`'s doc string.
         _ => None,
     }
 }
@@ -597,12 +740,8 @@ fn transform_ramp(
     intent: RenderingIntent,
     ramp: &[u16],
 ) -> Option<Vec<u16>> {
-    let opts = TransformOptions {
-        rendering_intent: intent,
-        ..Default::default()
-    };
     let t = src
-        .create_transform_16bit(Layout::Rgb, dst, Layout::Rgb, opts)
+        .create_transform_16bit(Layout::Rgb, dst, Layout::Rgb, runtime_opts(intent))
         .ok()?;
     let mut out = vec![0u16; ramp.len()];
     t.transform(ramp, &mut out).ok()?;
@@ -628,14 +767,22 @@ enum EmpiricalMask {
 
 /// Compute the empirical intent-safety mask.
 ///
-/// * COLORIMETRIC — set iff moxcms(icc, RelColor) is close to
-///   moxcms(synth, RelColor) within `COLORIMETRIC_VS_SYNTH_EPSILON_U16`.
-///   This tells us the profile's RelColor pipeline is essentially
-///   matrix+TRC (i.e., either no A2B0/B2A0 LUT, or the LUTs reproduce
-///   canonical output).
-/// * PERCEPTUAL / SATURATION — set iff moxcms(icc, Perceptual|Saturation)
-///   matches moxcms(icc, RelColor) within `INTENT_VS_INTENT_EPSILON_U16`.
-///   This tells us the other intents don't pick a different LUT.
+/// Bit is granted only when the profile's moxcms output matches the
+/// canonical synth reference within epsilon. When the `lcms2-crosscheck`
+/// feature is enabled, we additionally require lcms2's output from the
+/// same profile to match moxcms's canonical synth within the same epsilon
+/// (AND-gate). Rationale: moxcms and lcms2 should produce equivalent
+/// results for well-formed matrix-shaper profiles; any divergence flags a
+/// profile where one CMS is doing something the other isn't, and we'd
+/// rather reject such profiles than ship an identification that could
+/// render differently under a different CMS downstream.
+///
+/// * COLORIMETRIC — moxcms(icc, RelCol) ≈ moxcms(synth, RelCol), AND (if
+///   lcms2 enabled) lcms2(icc, RelCol) ≈ moxcms(synth, RelCol), both
+///   within `COLORIMETRIC_VS_SYNTH_EPSILON_U16`.
+/// * PERCEPTUAL / SATURATION — moxcms says intent ≈ RelCol for this
+///   profile, AND (if lcms2 enabled) lcms2 says the same, both within
+///   `INTENT_VS_INTENT_EPSILON_U16`.
 fn measure_intent_mask(icc_data: &[u8], primaries: &str, transfer: &str) -> EmpiricalMask {
     let Ok(icc) = ColorProfile::new_from_slice(icc_data) else {
         return EmpiricalMask::NotAvailable;
@@ -659,11 +806,34 @@ fn measure_intent_mask(icc_data: &[u8], primaries: &str, transfer: &str) -> Empi
         return EmpiricalMask::NotAvailable;
     };
 
+    // lcms2 AND-gate: if the feature is enabled, every bit must ALSO pass
+    // an lcms2-side check (lcms2 comparing the profile against the same
+    // canonical, through lcms2's own math). Comparing lcms2(icc) against
+    // lcms2(synth_canonical) rather than moxcms(synth_out) keeps both
+    // sides in the same CMS and cancels the ~225 u16 cross-CMS noise
+    // floor (f32/f64 `pow` precision drift) so the gate measures real
+    // profile divergence, not libm differences.
+    //
+    // For sRGB we use lcms2's built-in `Profile::new_srgb()` as the
+    // reference — no moxcms encode round-trip. For other combos we fall
+    // back to feeding lcms2 the moxcms-encoded bytes; the s15.16
+    // fixed-point drift there is ~150-300 u16 and pushes a handful of
+    // profiles over the threshold. See `lcms2_synth_ramp`.
+    let synth_bytes = synth.encode().ok();
+    let lcms2_rel_color = lcms2_transform_ramp(icc_data, RenderingIntent::RelativeColorimetric);
+    let lcms2_synth = lcms2_synth_ramp(
+        primaries,
+        transfer,
+        synth_bytes.as_deref(),
+        RenderingIntent::RelativeColorimetric,
+    );
+
     let mut mask = 0u8;
 
     // COLORIMETRIC bit: icc(RelColor) vs synth(RelColor).
-    let colorimetric_ok = max_pair_err(&rel_color, &synth_out) <= COLORIMETRIC_VS_SYNTH_EPSILON_U16;
-    if colorimetric_ok {
+    let mox_col_ok = max_pair_err(&rel_color, &synth_out) <= COLORIMETRIC_VS_SYNTH_EPSILON_U16;
+    let lcms_col_ok = lcms2_agrees_with_synth(lcms2_rel_color.as_deref(), lcms2_synth.as_deref());
+    if mox_col_ok && lcms_col_ok {
         mask |= INTENT_COLORIMETRIC_SAFE;
 
         // PERCEPTUAL / SATURATION bits are only meaningful when
@@ -676,12 +846,129 @@ fn measure_intent_mask(icc_data: &[u8], primaries: &str, transfer: &str) -> Empi
             let Some(alt) = transform_ramp(&icc, &dst, intent, &ramp) else {
                 continue;
             };
-            if max_pair_err(&alt, &rel_color) <= INTENT_VS_INTENT_EPSILON_U16 {
+            let mox_intent_ok = max_pair_err(&alt, &rel_color) <= INTENT_VS_INTENT_EPSILON_U16;
+            let lcms_alt = lcms2_transform_ramp(icc_data, intent);
+            let lcms_intent_ok =
+                lcms2_intent_agrees(lcms_alt.as_deref(), lcms2_rel_color.as_deref());
+            if mox_intent_ok && lcms_intent_ok {
                 mask |= bit;
             }
         }
     }
     EmpiricalMask::Measured(mask)
+}
+
+/// Check whether lcms2's output on the ICC profile agrees with lcms2's
+/// output on the canonical synth reference within the colorimetric epsilon.
+///
+/// Both outputs go through lcms2, so the cross-CMS noise floor
+/// (~225 u16 of `pow` precision drift between moxcms's f32 and lcms2's f64)
+/// cancels and we measure the profile's actual divergence from canonical
+/// as lcms2 sees it.
+///
+/// When the `lcms2-crosscheck` feature is disabled, both args are always
+/// `None` and we return `true` (no extra gate). When the feature is
+/// enabled, `None` on either side means we couldn't run lcms2 — be
+/// conservative and withhold the bit to avoid granting on a single-CMS
+/// signal.
+fn lcms2_agrees_with_synth(lcms2_icc: Option<&[u16]>, lcms2_synth: Option<&[u16]>) -> bool {
+    if cfg!(feature = "lcms2-crosscheck") {
+        match (lcms2_icc, lcms2_synth) {
+            (Some(icc), Some(synth)) => max_pair_err(icc, synth) <= LCMS2_ANDGATE_EPSILON_U16,
+            _ => false,
+        }
+    } else {
+        // No AND-gate when lcms2 is not compiled in.
+        true
+    }
+}
+
+/// Check whether lcms2 confirms `intent` collapses to RelCol for the same
+/// profile (intra-profile intent equality, within the tighter ε).
+fn lcms2_intent_agrees(lcms2_intent: Option<&[u16]>, lcms2_rel_col: Option<&[u16]>) -> bool {
+    if cfg!(feature = "lcms2-crosscheck") {
+        match (lcms2_intent, lcms2_rel_col) {
+            (Some(alt), Some(rel)) => max_pair_err(alt, rel) <= INTENT_VS_INTENT_EPSILON_U16,
+            // Either transform failed — can't confirm; be conservative.
+            _ => false,
+        }
+    } else {
+        true
+    }
+}
+
+/// Run lcms2 at the given intent, returning the u16 ramp output.
+/// Mirrors the configuration used in `lcms2_crosscheck_deltas`
+/// (`NO_OPTIMIZE | HIGHRES_PRECALC`, float-internal, pure-analytic paths).
+#[cfg(feature = "lcms2-crosscheck")]
+fn lcms2_transform_ramp(icc_data: &[u8], intent: RenderingIntent) -> Option<Vec<u16>> {
+    use lcms2::Profile;
+    let lcms_src = Profile::new_icc(icc_data).ok()?;
+    lcms2_transform_from_profile(&lcms_src, intent)
+}
+
+#[cfg(feature = "lcms2-crosscheck")]
+fn lcms2_transform_from_profile(src: &lcms2::Profile, intent: RenderingIntent) -> Option<Vec<u16>> {
+    use lcms2::{Flags, Intent, PixelFormat as LPx, Profile, Transform};
+
+    let lcms_dst = Profile::new_srgb();
+    let lcms_intent = match intent {
+        RenderingIntent::RelativeColorimetric => Intent::RelativeColorimetric,
+        RenderingIntent::AbsoluteColorimetric => Intent::AbsoluteColorimetric,
+        RenderingIntent::Perceptual => Intent::Perceptual,
+        RenderingIntent::Saturation => Intent::Saturation,
+    };
+    let flags = Flags::NO_OPTIMIZE | Flags::HIGHRES_PRECALC;
+    let xform: Transform<[u16; 3], [u16; 3]> =
+        Transform::new_flags(src, LPx::RGB_16, &lcms_dst, LPx::RGB_16, lcms_intent, flags).ok()?;
+    let ramp = make_ramp();
+    let mut out = vec![0u16; ramp.len()];
+    let src_px: &[[u16; 3]] = bytemuck::cast_slice(&ramp);
+    let dst_px: &mut [[u16; 3]] = bytemuck::cast_slice_mut(&mut out);
+    xform.transform_pixels(src_px, dst_px);
+    Some(out)
+}
+
+/// Build the lcms2-native canonical reference for a given (primaries,
+/// transfer) combo, returning the same u16 ramp output. Prefers lcms2's
+/// built-in constructors where available (sRGB) so the AND-gate doesn't
+/// have to round-trip moxcms's encoded bytes through lcms2 (which adds
+/// s15.16/fixed-point drift to the comparison). Falls back to parsing
+/// moxcms-encoded synth bytes for combos where lcms2 has no built-in.
+#[cfg(feature = "lcms2-crosscheck")]
+fn lcms2_synth_ramp(
+    primaries: &str,
+    transfer: &str,
+    moxcms_synth_bytes: Option<&[u8]>,
+    intent: RenderingIntent,
+) -> Option<Vec<u16>> {
+    use lcms2::Profile;
+    // lcms2 has a built-in sRGB constructor; prefer it for sRGB primaries
+    // to avoid the encode/parse round-trip that introduces s15.16 noise.
+    if (primaries, transfer) == ("Bt709", "Srgb") {
+        return lcms2_transform_from_profile(&Profile::new_srgb(), intent);
+    }
+    // Other combos: feed lcms2 the moxcms-encoded synth bytes. Accepts the
+    // s15.16 round-trip noise as the best we can do without handcrafting
+    // lcms2-native canonicals for every combo.
+    let bytes = moxcms_synth_bytes?;
+    let profile = Profile::new_icc(bytes).ok()?;
+    lcms2_transform_from_profile(&profile, intent)
+}
+
+#[cfg(not(feature = "lcms2-crosscheck"))]
+fn lcms2_transform_ramp(_icc_data: &[u8], _intent: RenderingIntent) -> Option<Vec<u16>> {
+    None
+}
+
+#[cfg(not(feature = "lcms2-crosscheck"))]
+fn lcms2_synth_ramp(
+    _primaries: &str,
+    _transfer: &str,
+    _moxcms_synth_bytes: Option<&[u8]>,
+    _intent: RenderingIntent,
+) -> Option<Vec<u16>> {
+    None
 }
 
 /// Which A2B/B2A LUT tags does the profile carry?
@@ -752,28 +1039,28 @@ fn gray_intent_mask(data: &[u8]) -> u8 {
 
 /// Compute the intent-safety mask for an RGB profile.
 ///
-/// Structural rule (LUT tag presence) is the baseline, because moxcms's
-/// matrix+TRC pipeline is what runtime substitution uses and any
-/// matrix-shaper profile without LUTs routes through it.
+/// Maximally-conservative policy: when the empirical moxcms comparison is
+/// available (synth reference exists for the identified primaries+transfer),
+/// it is the SOLE signal — we trust it over structural inspection. A profile
+/// that "looks like" a clean matrix-shaper can still carry a non-Bradford
+/// `chad`, custom per-device chromaticities, or LUTs that diverge from the
+/// canonical matrix+TRC math used by runtime substitution.
 ///
-/// Empirical moxcms pixel comparison can UPGRADE bits — a profile with
-/// structurally-disqualifying features (Lab PCS, non-Bradford chad, or
-/// LUTs) may still produce matrix+TRC-equivalent output through moxcms
-/// in practice. When the empirical test confirms this, we grant the bit.
-///
-/// Empirical comparison does NOT downgrade bits: a matrix-shaper profile
-/// is by definition a matrix+TRC profile, even if its encoded matrix
-/// drifts slightly from our canonical. Runtime substitution still uses
-/// canonical matrix+TRC, which is what users expect when selecting a
-/// well-known color space via CICP.
-fn compute_rgb_intent_mask(data: &[u8], primaries: &str, transfer: &str) -> u8 {
-    let structural = structural_rgb_mask(data);
-    let Some(empirical) = measure_empirical_intent_bits(data, primaries, transfer) else {
-        return structural;
-    };
-    // OR combines signals: a bit is safe if either the structural rule
-    // or the empirical test passes.
-    structural | empirical
+/// Structural inspection is used only as a fallback when no synth reference
+/// exists for the identified pair (e.g., Smpte170m, AppleRgb, WideGamut,
+/// ColorMatch, EciRgbV2, Bt470Bg). In that case we cannot empirically verify
+/// CMS agreement, so we fall back to LUT-tag presence as a coarse signal.
+fn compute_rgb_intent_mask(data: &[u8], primaries: &str, transfer: &str) -> (u8, MaskProvenance) {
+    match measure_empirical_intent_bits(data, primaries, transfer) {
+        Some(empirical) => (empirical, MaskProvenance::Empirical),
+        None => (structural_rgb_mask(data), MaskProvenance::Structural),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MaskProvenance {
+    Empirical,
+    Structural,
 }
 
 /// Structural fallback: derive intent safety from LUT tag presence alone.
@@ -809,21 +1096,231 @@ fn measure_empirical_intent_bits(icc_data: &[u8], primaries: &str, transfer: &st
     }
 }
 
-// ── lcms2 cross-check (optional) ─────────────────────────────────────────
+/// Per-intent max u16 deltas: (relcol_vs_synth, perc_vs_relcol, sat_vs_relcol).
+/// Each `Option` is None when the corresponding moxcms transform couldn't
+/// be built. Used by --report mode for diagnostic output.
+fn measure_intent_deltas(
+    icc_data: &[u8],
+    primaries: &str,
+    transfer: &str,
+) -> Option<(Option<u32>, Option<u32>, Option<u32>)> {
+    let icc = ColorProfile::new_from_slice(icc_data).ok()?;
+    let synth = build_synth_ref(primaries, transfer)?;
+    let dst = ColorProfile::new_srgb();
+    let ramp = make_ramp();
 
-#[cfg(feature = "lcms2-crosscheck")]
-fn lcms2_crosscheck_note(icc_data: &[u8]) -> String {
-    // Currently a smoke test only — we verify the profile parses in lcms2.
-    // Richer comparison could be added once we decide what signal we want.
-    match lcms2::Profile::new_icc(icc_data) {
-        Ok(_) => "lcms2:ok".into(),
-        Err(e) => format!("lcms2:err({e})"),
+    let rel_color = transform_ramp(&icc, &dst, RenderingIntent::RelativeColorimetric, &ramp)?;
+    let synth_out = transform_ramp(&synth, &dst, RenderingIntent::RelativeColorimetric, &ramp)?;
+    let col_delta = max_pair_err(&rel_color, &synth_out);
+    let perc_delta = transform_ramp(&icc, &dst, RenderingIntent::Perceptual, &ramp)
+        .map(|alt| max_pair_err(&alt, &rel_color));
+    let sat_delta = transform_ramp(&icc, &dst, RenderingIntent::Saturation, &ramp)
+        .map(|alt| max_pair_err(&alt, &rel_color));
+    Some((Some(col_delta), perc_delta, sat_delta))
+}
+
+// ── Report-mode rows ─────────────────────────────────────────────────────
+
+struct ReportRow {
+    name: String,
+    cp: &'static str,
+    tf: &'static str,
+    final_mask: u8,
+    provenance: MaskProvenance,
+    structural_mask: u8,
+    /// Per-intent moxcms-vs-canonical-synth deltas, or None if not measurable.
+    deltas: Option<(Option<u32>, Option<u32>, Option<u32>)>,
+    /// Per-intent moxcms-vs-lcms2 deltas (only with `lcms2-crosscheck` feature).
+    /// Profiles where these differ from `deltas` indicate moxcms / lcms2
+    /// disagreement and warrant manual inspection.
+    lcms2_vs_mox: Option<CrossCheckDeltas>,
+    luts: LutTags,
+}
+
+fn build_report_row(
+    name: &str,
+    cp: &'static str,
+    tf: &'static str,
+    data: &[u8],
+    final_mask: u8,
+    provenance: MaskProvenance,
+) -> ReportRow {
+    ReportRow {
+        name: name.into(),
+        cp,
+        tf,
+        final_mask,
+        provenance,
+        structural_mask: structural_rgb_mask(data),
+        deltas: measure_intent_deltas(data, cp, tf),
+        lcms2_vs_mox: lcms2_crosscheck_deltas(data),
+        luts: scan_lut_tags(data),
     }
 }
 
+fn fmt_delta(d: Option<u32>) -> String {
+    match d {
+        Some(v) => format!("{v:>5}"),
+        None => "  n/a".into(),
+    }
+}
+
+fn fmt_lut_tags(t: LutTags) -> String {
+    let mut parts = Vec::new();
+    if t.a2b0 {
+        parts.push("A2B0");
+    }
+    if t.a2b1 {
+        parts.push("A2B1");
+    }
+    if t.a2b2 {
+        parts.push("A2B2");
+    }
+    if t.b2a0 {
+        parts.push("B2A0");
+    }
+    if t.b2a1 {
+        parts.push("B2A1");
+    }
+    if t.b2a2 {
+        parts.push("B2A2");
+    }
+    if parts.is_empty() {
+        "(none)".into()
+    } else {
+        parts.join(",")
+    }
+}
+
+fn print_report(rows: &[ReportRow]) {
+    eprintln!("\n── ICC empirical-vs-structural disagreements ──────────────────────");
+    eprintln!(
+        "Threshold: COLORIMETRIC ≤{COLORIMETRIC_VS_SYNTH_EPSILON_U16} u16 vs synth, \
+         PERC/SAT ≤{INTENT_VS_INTENT_EPSILON_U16} u16 vs RelCol\n"
+    );
+    let mut shown = 0usize;
+    let mut by_kind: BTreeMap<&'static str, usize> = BTreeMap::new();
+    for row in rows {
+        if row.provenance != MaskProvenance::Empirical {
+            continue;
+        }
+        if row.final_mask == row.structural_mask {
+            continue;
+        }
+        // Disagreement: empirical and structural produce different masks.
+        let kind = if row.final_mask & !row.structural_mask != 0 {
+            // Empirical granted a bit structural rejected (LUT reproduces canonical).
+            "empirical-upgraded"
+        } else {
+            // Structural granted a bit empirical rejected (chad/primaries drift).
+            "empirical-downgraded"
+        };
+        *by_kind.entry(kind).or_default() += 1;
+        let (cd, pd, sd) = row.deltas.unwrap_or_default();
+        let xc = match row.lcms2_vs_mox {
+            Some((c, p, s)) => format!(
+                "  lcms2↔mox: c={} p={} s={}",
+                fmt_delta(c),
+                fmt_delta(p),
+                fmt_delta(s)
+            ),
+            None => String::new(),
+        };
+        eprintln!(
+            "  {:<12} {:<10}+{:<8} struct={} → final={} [{}]  Δcol={} Δperc={} Δsat={}  luts={}  {}{}",
+            kind,
+            row.cp,
+            row.tf,
+            fmt_mask(row.structural_mask),
+            fmt_mask(row.final_mask),
+            mask_breakdown(row.final_mask),
+            fmt_delta(cd),
+            fmt_delta(pd),
+            fmt_delta(sd),
+            fmt_lut_tags(row.luts),
+            row.name,
+            xc,
+        );
+        shown += 1;
+    }
+    eprintln!("\nDisagreement summary:");
+    for (k, v) in &by_kind {
+        eprintln!("  {k}: {v}");
+    }
+    eprintln!("Total disagreements shown: {shown}");
+    let structural_only = rows
+        .iter()
+        .filter(|r| r.provenance == MaskProvenance::Structural)
+        .count();
+    if structural_only > 0 {
+        eprintln!(
+            "(Plus {structural_only} profiles with no synth reference — \
+             structural-only verdict, see RGB-by-(cp,tf) summary for which combos.)"
+        );
+    }
+}
+
+// ── lcms2 cross-check (optional) ─────────────────────────────────────────
+//
+// When the `lcms2-crosscheck` feature is enabled, we run the same ramp through
+// Little CMS 2 (the industry-standard reference) at each rendering intent and
+// compare against moxcms's output. If the two CMSs agree, we're confident the
+// profile is being interpreted correctly; if they disagree, the profile may
+// have unusual content that exposes a bug or interpretation difference in one
+// of them, and any decision based on either one's output should be flagged.
+
+/// Per-intent (RelCol, Perceptual, Saturation) max u16 deltas between
+/// `moxcms(icc, intent)` and `lcms2(icc, intent)` over the ramp. Each
+/// `Option` is None when either CMS couldn't build a transform for that
+/// intent on that profile.
+type CrossCheckDeltas = (Option<u32>, Option<u32>, Option<u32>);
+
+#[cfg(feature = "lcms2-crosscheck")]
+fn lcms2_crosscheck_deltas(icc_data: &[u8]) -> Option<CrossCheckDeltas> {
+    use lcms2::{Flags, Intent, PixelFormat as LPx, Profile, Transform};
+
+    let lcms_src = Profile::new_icc(icc_data).ok()?;
+    let lcms_dst = Profile::new_srgb();
+    let mox_src = ColorProfile::new_from_slice(icc_data).ok()?;
+    let mox_dst = ColorProfile::new_srgb();
+    let ramp = make_ramp();
+
+    let measure_one = |mox_intent: RenderingIntent, lcms_intent: Intent| -> Option<u32> {
+        let mox_out = transform_ramp(&mox_src, &mox_dst, mox_intent, &ramp)?;
+        // Use NO_OPTIMIZE | HIGHRES_PRECALC to maximize lcms2 precision and
+        // disable any internal pipeline simplification that might mask
+        // profile-specific behavior.
+        let flags = Flags::NO_OPTIMIZE | Flags::HIGHRES_PRECALC;
+        let xform: Transform<[u16; 3], [u16; 3]> = Transform::new_flags(
+            &lcms_src,
+            LPx::RGB_16,
+            &lcms_dst,
+            LPx::RGB_16,
+            lcms_intent,
+            flags,
+        )
+        .ok()?;
+        let mut lcms_out = vec![0u16; ramp.len()];
+        // lcms2's Transform is typed by *pixel*, so reinterpret the channel
+        // slices as &[[u16; 3]] / &mut [[u16; 3]].
+        let src_px: &[[u16; 3]] = bytemuck::cast_slice(&ramp);
+        let dst_px: &mut [[u16; 3]] = bytemuck::cast_slice_mut(&mut lcms_out);
+        xform.transform_pixels(src_px, dst_px);
+        Some(max_pair_err(&mox_out, &lcms_out))
+    };
+    Some((
+        measure_one(
+            RenderingIntent::RelativeColorimetric,
+            Intent::RelativeColorimetric,
+        ),
+        measure_one(RenderingIntent::Perceptual, Intent::Perceptual),
+        measure_one(RenderingIntent::Saturation, Intent::Saturation),
+    ))
+}
+
 #[cfg(not(feature = "lcms2-crosscheck"))]
-fn lcms2_crosscheck_note(_icc_data: &[u8]) -> String {
-    String::new()
+fn lcms2_crosscheck_deltas(_icc_data: &[u8]) -> Option<CrossCheckDeltas> {
+    None
 }
 
 // ── .inc formatting ──────────────────────────────────────────────────────
@@ -896,9 +1393,24 @@ fn collect_entries(dirs: &[PathBuf]) -> Vec<PathBuf> {
     out
 }
 
-fn parse_args() -> (Vec<PathBuf>, PathBuf) {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.len() {
+struct Args {
+    inputs: Vec<PathBuf>,
+    out: PathBuf,
+    /// When set, print structural-vs-empirical disagreements per profile.
+    report: bool,
+}
+
+fn parse_args() -> Args {
+    let mut positional: Vec<String> = Vec::new();
+    let mut report = false;
+    for arg in std::env::args().skip(1) {
+        if arg == "--report" {
+            report = true;
+        } else {
+            positional.push(arg);
+        }
+    }
+    let (inputs, out) = match positional.len() {
         0 => {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
             let cache = PathBuf::from(&home).join(".cache/zenpixels-icc");
@@ -908,13 +1420,21 @@ fn parse_args() -> (Vec<PathBuf>, PathBuf) {
         }
         1 => {
             let out = PathBuf::from("zenpixels/src/icc");
-            (vec![PathBuf::from(&args[0])], out)
+            (vec![PathBuf::from(&positional[0])], out)
         }
         _ => {
-            let out = PathBuf::from(args.last().unwrap());
-            let inputs: Vec<PathBuf> = args[..args.len() - 1].iter().map(PathBuf::from).collect();
+            let out = PathBuf::from(positional.last().unwrap());
+            let inputs: Vec<PathBuf> = positional[..positional.len() - 1]
+                .iter()
+                .map(PathBuf::from)
+                .collect();
             (inputs, out)
         }
+    };
+    Args {
+        inputs,
+        out,
+        report,
     }
 }
 
@@ -960,12 +1480,18 @@ fn write_gray(rows: &BTreeMap<u64, GrayRow>, out_path: &Path) {
 }
 
 fn main() {
-    let (input_dirs, out_dir) = parse_args();
+    #[cfg(debug_assertions)]
+    assert_exclusion_names_valid();
+
+    let args = parse_args();
+    let input_dirs = args.inputs;
+    let out_dir = args.out;
+    let report_mode = args.report;
 
     for dir in &input_dirs {
         if !dir.exists() {
             eprintln!("Directory not found: {}", dir.display());
-            eprintln!("Usage: icc-gen <dir1> [dir2 ...] <out-dir>");
+            eprintln!("Usage: icc-gen [--report] <dir1> [dir2 ...] <out-dir>");
             std::process::exit(1);
         }
     }
@@ -981,6 +1507,10 @@ fn main() {
     let mut gray: BTreeMap<u64, GrayRow> = BTreeMap::new();
     let mut scanned = 0u32;
     let mut skipped = 0u32;
+
+    // Report-mode bookkeeping: one entry per unique normalized hash, capturing
+    // every disagreement between structural and empirical signals.
+    let mut report_rows: Vec<ReportRow> = Vec::new();
 
     for (idx, path) in entries.iter().enumerate() {
         let data = match std::fs::read(path) {
@@ -1019,10 +1549,28 @@ fn main() {
                 continue;
             }
 
+            // Compatibility-normalization exclusions — see constants above
+            // for rationale. Skips categories of profile where matrix+TRC
+            // substitution would diverge from full-CMS rendering; those
+            // profiles still work, they just take the full-CMS path.
+            if is_excluded_primary(cp_name)
+                || (is_para3_excluded_primary(cp_name) && is_para_functype3(&data, b"rTRC"))
+            {
+                skipped += 1;
+                continue;
+            }
+
             // Empirical intent-safety check only once per unique hash — this
             // is where the cost is (moxcms builds + transforms two profiles
             // over a 320-pixel ramp for each of 3 intents, ~1-5ms).
-            let mask = compute_rgb_intent_mask(&data, cp_name, tf_name);
+            let (mask, provenance) = compute_rgb_intent_mask(&data, cp_name, tf_name);
+
+            if report_mode {
+                report_rows.push(build_report_row(
+                    &fname, cp_name, tf_name, &data, mask, provenance,
+                ));
+            }
+
             rgb.entry(norm_hash)
                 .and_modify(|row| {
                     row.max_err = row.max_err.max(err);
@@ -1064,7 +1612,6 @@ fn main() {
                     desc: fname.clone(),
                 });
         }
-        let _ = lcms2_crosscheck_note(&data);
     }
 
     // ── Write tables ──────────────────────────────────────────────────
@@ -1098,5 +1645,9 @@ fn main() {
     sorted_masks.sort_by(|a, b| b.1.cmp(a.1));
     for (k, v) in sorted_masks {
         eprintln!("  {} [{}]: {}", fmt_mask(*k), mask_breakdown(*k), v);
+    }
+
+    if report_mode {
+        print_report(&report_rows);
     }
 }

@@ -145,11 +145,23 @@ impl ColorManagement for ZenCmsLite {
     }
 
     fn identify_profile(&self, icc_bytes: &[u8]) -> Option<Cicp> {
-        let src = crate::ColorProfileSource::Icc(icc_bytes);
-        let (p, t) = src.resolve()?;
-        let cp = p.to_cicp()?;
-        let tc = t.to_cicp()?;
-        Some(Cicp::new(cp, tc, 0, true))
+        // Metadata-only lookup: returns the profile's claimed (primaries,
+        // transfer) without filtering by intent-safety. A profile may be
+        // recognized here but rejected by `build_source_transform` when the
+        // strict empirical check determined that canonical matrix+TRC math
+        // diverges from CMS behavior for any rendering intent.
+        if let Some(id) =
+            zenpixels::icc::identify_common(icc_bytes, zenpixels::icc::Tolerance::Intent)
+        {
+            let cp = id.primaries.to_cicp()?;
+            let tc = id.transfer.to_cicp()?;
+            return Some(Cicp::new(cp, tc, 0, true));
+        }
+        // CICP-in-ICC tag (ICC v4.4+) is authoritative metadata.
+        if let Some(cicp) = zenpixels::icc::extract_cicp(icc_bytes) {
+            return Some(cicp);
+        }
+        None
     }
 
     fn build_source_transform(
@@ -508,36 +520,31 @@ mod tests {
     }
 
     #[test]
-    fn build_transform_for_format_icc_to_icc() {
+    fn build_transform_for_format_icc_to_icc_compat_falls_through() {
+        // The bundled DisplayP3Compat-v4 / REC2020_V4 profiles from the
+        // saucecontrol Compact-ICC corpus are encoder-friendly compatibility
+        // profiles, not bit-exact canonical encodings. Their encoded XYZ
+        // matrices drift ~590-931 u16 from canonical at saturated pixels —
+        // small enough to identify "near" canonical primaries via tolerance,
+        // but large enough that our matrix+TRC substitution would produce
+        // visibly different output than what a real CMS would do with these
+        // exact bytes. Strict empirical mask therefore rejects them, and
+        // ZenCmsLite returns `Err`. The higher-level converter is expected
+        // to fall back to full CMS for such profiles.
         let cms = ZenCmsLite::default();
         let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
         let bt2020_icc = crate::icc_profiles::REC2020_V4;
 
-        // P3 ICC → BT.2020 ICC should work (both are recognized profiles)
         let result = cms.build_transform_for_format(
             p3_icc,
             bt2020_icc,
             PixelFormat::RgbF32,
             PixelFormat::RgbF32,
         );
-        assert!(result.is_ok(), "should handle recognized ICC→ICC");
-
-        let transform = result.unwrap();
-        // White should map to white
-        let src_px: [f32; 3] = [1.0, 1.0, 1.0];
-        let mut dst_px = [0.0f32; 3];
-        transform.transform_row(
-            bytemuck::cast_slice(&src_px),
-            bytemuck::cast_slice_mut(&mut dst_px),
-            1,
+        assert!(
+            result.is_err(),
+            "bundled compat profiles should fall through to full CMS"
         );
-        for ch in 0..3 {
-            assert!(
-                (dst_px[ch] - 1.0).abs() < 1e-4,
-                "ICC→ICC white ch{ch}: {}",
-                dst_px[ch]
-            );
-        }
     }
 
     #[test]
@@ -548,14 +555,19 @@ mod tests {
     }
 
     #[test]
-    fn build_source_transform_icc_src() {
+    fn build_source_transform_icc_compat_falls_through() {
+        // Same rationale as build_transform_for_format_icc_to_icc_compat_falls_through:
+        // the bundled compat profiles are intentionally rejected by the lite
+        // CMS so the higher-level converter can route them through full CMS.
         let cms = ZenCmsLite::default();
         let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
         let src = ColorProfileSource::Icc(p3_icc);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
         let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
-        assert!(result.is_some(), "ICC P3 src should be recognized");
-        assert!(result.unwrap().is_ok());
+        assert!(
+            result.is_none(),
+            "bundled compat profile as Icc source should not resolve in lite CMS"
+        );
     }
 
     // --- Clamped vs extended ---

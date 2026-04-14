@@ -8,11 +8,18 @@ publish = false
 description = "Internal tool: regenerate zenpixels ICC profile hash tables from a corpus of ICC profiles"
 
 [features]
-default = []
-# Enable lcms2 cross-checking (requires the Little CMS 2 C library system-wide).
-# Run: cargo run -p icc-gen --features lcms2-crosscheck --release -- ...
-lcms2-crosscheck = ["dep:lcms2"]
+default = ["lcms2-crosscheck"]
+# lcms2 cross-checking (AND-gate: require moxcms AND lcms2 to both agree
+# with the canonical synth reference). Requires the Little CMS 2 C library
+# installed system-wide (e.g., `apt install liblcms2-dev` on Debian/Ubuntu,
+# `brew install little-cms2` on macOS).
+#
+# Disable with `--no-default-features` if the C library is unavailable; the
+# generator still runs on moxcms alone and produces the same table on our
+# current corpus, at the cost of losing the independent-CMS sanity check.
+lcms2-crosscheck = ["dep:lcms2", "dep:bytemuck"]
 
 [dependencies]
 moxcms = { version = "0.8.1", features = ["options"] }
 lcms2 = { version = "6.1.1", optional = true }
+bytemuck = { version = "1.18.0", optional = true }
