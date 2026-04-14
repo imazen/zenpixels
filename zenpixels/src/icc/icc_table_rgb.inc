@@ -39,7 +39,7 @@
     (0x40a6_ebb2_9e5a_eded, CP::Bt709, TF::Srgb,  1),  // nikon srgb 4 0 0 3002 49caea94
     (0x4318_0644_9ea6_ffab, CP::Bt709, TF::Srgb,  1),  // display 809d9002
     (0x456c_6127_123e_ec31, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 12484157
-    (0x4642_ec4c_18f0_be12, CP::ProPhoto, TF::Gamma18, 11),  // prophoto rgb 0a8ef7d1
+    (0x4642_ec4c_18f0_be12, CP::ProPhoto, TF::Gamma18, 11),  // Windows-ProPhoto.icm
     (0x4841_e8c9_651b_1501, CP::ProPhoto, TF::Gamma18, 28),  // ProPhoto-v4
     (0x4ce8_0f1f_8cd9_3179, CP::DisplayP3, TF::Srgb,  1),  // display e87d90b7
     (0x4d5f_1ad7_77f2_1cc4, CP::Smpte170m, TF::Bt709,  8),  // Rec601NTSC-v2-micro
@@ -94,6 +94,7 @@
     (0x8eb7_7ac6_4d44_3978, CP::DisplayP3, TF::Srgb,  1),  // display p3 0ff6958f
     (0x8ec2_3212_9fbe_b37e, CP::AdobeRgb, TF::Gamma22,  0),  // nikon adobe rgb 4 0 0 3000 a8d0d753
     (0x8ec4_006c_c288_9df9, CP::Bt709, TF::Srgb,  1),  //  72723b7f
+    (0x8fd9_dd80_0ad2_306c, CP::WideGamut, TF::Gamma22,  0),  // Windows-WideGamutRGB
     (0x936c_65fb_e671_4dd9, CP::DisplayP3, TF::Srgb,  1),  // truncated desc v4
     (0x94a8_4ece_d38f_3857, CP::DisplayP3, TF::Srgb, 13),  // DisplayP3-v2-micro
     (0x97cc_1557_e292_f6b4, CP::Bt709, TF::Srgb, 13),  // compact-icc-sRGB-v2-micro
@@ -116,11 +117,12 @@
     (0xae7a_fcfc_6170_40ad, CP::Bt709, TF::Srgb,  1),  // b iec61966-2 1 15c6e2b8
     (0xaece_c279_e0af_5785, CP::Bt709, TF::Bt709,  3),  // colord-Rec709
     (0xb084_97ed_de11_0ace, CP::Bt709, TF::Srgb,  1),  // srgb 58f10918
+    (0xb173_a9bb_b4de_8131, CP::Bt709, TF::Gamma22,  0),  // Windows-{6b922e74-48fc-5a5f-94cc-68fc8a91bda9}.icm
     (0xb389_fc84_b78a_9a55, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 f94e3409
     (0xb46f_a94c_5401_9d98, CP::AdobeRgb, TF::Gamma22, 33),  // AdobeCompat-v4
     (0xb59f_47eb_015a_d97a, CP::Bt709, TF::Srgb,  1),  // moxcms srgb
     (0xb5fc_f4f5_49dc_2e44, CP::AdobeRgb, TF::Gamma22,  0),  // adobe rgb 1998 2f6457e2
-    (0xbaf0_0f6d_edf3_186e, CP::Bt709, TF::Srgb,  1),  // skcms-sRGB HP
+    (0xbaf0_0f6d_edf3_186e, CP::Bt709, TF::Srgb,  1),  // Windows-sRGB Color Space Profile.icm
     (0xbc4e_56e8_fe2f_531f, CP::Bt709, TF::Gamma18, 11),  // epson standard rgb - gamma 1 8 24e1d7a0
     (0xbcd7_fea2_0e23_8a2e, CP::Smpte170m, TF::Gamma22,  0),  // AdobeCS4-RGB-SMPTE-C
     (0xbdd8_9a20_39a0_78c9, CP::DisplayP3, TF::Srgb,  1),  // display 227959c8

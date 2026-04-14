@@ -12,6 +12,7 @@
     (0x922e_3e93_9b73_5718, TF::Gamma18, 11),  // epson gray - gamma 1 8 03ecbaeb
     (0xa02b_b3b8_ed69_63d3, TF::Gamma18, 11),  // generic gray profile 10233312
     (0xaf06_5a1e_06f8_3c15, TF::Gamma18, 11),  // gray gamma 1 8 a594b85c
+    (0xafd4_7c72_362a_37fe, TF::Gamma18,  1),  // Windows-BlackWhite
     (0xb0bb_06d4_d589_eca9, TF::Gamma22,  0),  // gray gamma 2 2 f00165cf
     (0xb893_86de_37c7_440c, TF::Srgb,  2),  // compact-icc-sGrey-v2-magic
     (0xc3c9_13c7_dbf6_1b16, TF::Srgb,  1),  // with srgb trc 14abccd5
