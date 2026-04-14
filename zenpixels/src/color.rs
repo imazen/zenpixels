@@ -219,13 +219,14 @@ impl<'a> ColorProfileSource<'a> {
                 Some((p, t))
             }
             Self::Icc(icc_bytes) => {
-                // Use the safe-matrix-shaper variant — rejects profiles whose
-                // CMS output would differ from our matrix+TRC math (non-Bradford
-                // chad, LUT tags, Lab PCS). For approximation, use
-                // `crate::icc::identify_common` directly.
-                if let Some(id) = crate::icc::identify_safe_matrix_shaper(
+                // Use the intent-safe variant — rejects profiles whose CMS
+                // output would differ from our matrix+TRC math (non-Bradford
+                // chad, LUT tags, Lab PCS) for the colorimetric intent. For
+                // approximation, use `crate::icc::identify_common` directly.
+                if let Some(id) = crate::icc::identify_common_for(
                     icc_bytes,
                     crate::icc::Tolerance::Intent,
+                    crate::icc::CoalesceForUse::Colorimetric,
                 ) {
                     return Some((id.primaries, id.transfer));
                 }

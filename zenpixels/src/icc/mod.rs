@@ -19,11 +19,16 @@
 //! # Example
 //!
 //! ```
-//! use zenpixels::icc::{identify_common, Tolerance};
+//! use zenpixels::icc::{identify_common, identify_common_for, CoalesceForUse, Tolerance};
 //!
 //! # let icc_bytes: &[u8] = &[];
 //! if let Some(id) = identify_common(icc_bytes, Tolerance::Intent) {
 //!     // id.primaries: ColorPrimaries, id.transfer: TransferFunction
+//! }
+//!
+//! // For stricter CMS-equivalence checks per intent:
+//! if let Some(id) = identify_common_for(icc_bytes, Tolerance::Intent, CoalesceForUse::Perceptual) {
+//!     // Matrix+TRC math matches a CMS's perceptual-intent output.
 //! }
 //! ```
 
@@ -366,6 +371,55 @@ pub enum Tolerance {
     Intent = 56,
 }
 
+// ── Intent-safety flags ──────────────────────────────────────────────────
+
+/// Intent-safety flag: matrix+TRC math matches a CMS's output for the
+/// relative/absolute colorimetric intent.
+///
+/// Set when PCS is XYZ, `chad` (if present) is Bradford, there is no `A2B0`
+/// or `B2A0` LUT, and the matrix-shaper tags are complete.
+pub const INTENT_COLORIMETRIC_SAFE: u8 = 1 << 0;
+/// Intent-safety flag: matrix+TRC math matches a CMS's output for the
+/// perceptual intent (in addition to [`INTENT_COLORIMETRIC_SAFE`]).
+///
+/// Additionally requires no `A2B1` or `B2A1` LUT.
+pub const INTENT_PERCEPTUAL_SAFE: u8 = 1 << 1;
+/// Intent-safety flag: matrix+TRC math matches a CMS's output for the
+/// saturation intent (in addition to [`INTENT_COLORIMETRIC_SAFE`]).
+///
+/// Additionally requires no `A2B2` or `B2A2` LUT.
+pub const INTENT_SATURATION_SAFE: u8 = 1 << 2;
+
+/// How an identified profile will be used, controlling which intent-safety
+/// flags must be set on a table entry for it to match.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum CoalesceForUse {
+    /// Any CMS intent — most restrictive, requires all flags safe.
+    AnyIntent,
+    /// Relative or absolute colorimetric (CMS uses colorants directly).
+    Colorimetric,
+    /// Perceptual rendering with gamut mapping.
+    Perceptual,
+    /// Saturation rendering (vivid business graphics).
+    Saturation,
+}
+
+impl CoalesceForUse {
+    /// The intent-safety mask required for a profile to match this use.
+    #[inline]
+    const fn required_mask(self) -> u8 {
+        match self {
+            Self::AnyIntent => {
+                INTENT_COLORIMETRIC_SAFE | INTENT_PERCEPTUAL_SAFE | INTENT_SATURATION_SAFE
+            }
+            Self::Colorimetric => INTENT_COLORIMETRIC_SAFE,
+            Self::Perceptual => INTENT_PERCEPTUAL_SAFE,
+            Self::Saturation => INTENT_SATURATION_SAFE,
+        }
+    }
+}
+
 // ── Public API ───────────────────────────────────────────────────────────
 
 /// Identify a well-known ICC profile by normalized hash lookup.
@@ -379,13 +433,42 @@ pub enum Tolerance {
 ///
 /// ~100ns. For the long tail of vendor/monitor profiles, use structural
 /// analysis via a CMS backend.
+///
+/// Equivalent to `identify_common_for(_, _, CoalesceForUse::Colorimetric)` —
+/// the most common use case. For stricter intent-safety checks, use
+/// [`identify_common_for`] directly.
+#[inline]
 pub fn identify_common(icc_bytes: &[u8], tolerance: Tolerance) -> Option<IccIdentification> {
+    identify_common_for(icc_bytes, tolerance, CoalesceForUse::Colorimetric)
+}
+
+/// Identify a profile only when matrix+TRC math is equivalent to a CMS's
+/// output for the specified intent.
+///
+/// Each table entry carries a precomputed intent-safety mask derived at
+/// table-generation time from the ICC profile's structural features
+/// (PCS type, `chad` matrix, A2B/B2A LUT presence, matrix-shaper
+/// completeness). Entries whose mask is missing any bit required by
+/// `use_for` are rejected.
+///
+/// Use this when you need byte-exact equivalence with a full CMS for a
+/// specific rendering intent. Use [`identify_common`] for the common
+/// colorimetric-intent case.
+///
+/// Returns `None` if the profile isn't in the table, its measured u16 error
+/// exceeds `tolerance`, or it isn't safe for the requested intent.
+pub fn identify_common_for(
+    icc_bytes: &[u8],
+    tolerance: Tolerance,
+    use_for: CoalesceForUse,
+) -> Option<IccIdentification> {
     let hash = fnv1a_64_normalized(icc_bytes);
+    let required = use_for.required_mask();
 
     // Try RGB table first.
     if let Ok(idx) = KNOWN_RGB_PROFILES.binary_search_by_key(&hash, |e| e.0) {
         let entry = &KNOWN_RGB_PROFILES[idx];
-        if entry.3 <= tolerance as u8 {
+        if entry.3 <= tolerance as u8 && (entry.4 & required) == required {
             return Some(IccIdentification::new(entry.1, entry.2));
         }
     }
@@ -393,7 +476,7 @@ pub fn identify_common(icc_bytes: &[u8], tolerance: Tolerance) -> Option<IccIden
     // Try grayscale table.
     if let Ok(idx) = KNOWN_GRAY_PROFILES.binary_search_by_key(&hash, |e| e.0) {
         let entry = &KNOWN_GRAY_PROFILES[idx];
-        if entry.2 <= tolerance as u8 {
+        if entry.2 <= tolerance as u8 && (entry.3 & required) == required {
             return Some(IccIdentification::new(ColorPrimaries::Bt709, entry.1));
         }
     }
@@ -408,29 +491,6 @@ pub fn identify_common(icc_bytes: &[u8], tolerance: Tolerance) -> Option<IccIden
 #[inline]
 pub fn is_common_srgb(icc_bytes: &[u8]) -> bool {
     identify_common(icc_bytes, Tolerance::Intent).is_some_and(|id| id.is_srgb())
-}
-
-/// Identify a profile, but only if a CMS would produce the same output as
-/// matrix+TRC math on the identified (primaries, transfer) pair.
-///
-/// Rejects profiles with features that would cause CMS divergence:
-/// - Lab PCS (we assume XYZ)
-/// - Non-Bradford `chad` tag (we assume Bradford)
-/// - Any A2B/B2A LUT tags (a CMS typically prefers those over colorants)
-///
-/// Use this when you need *byte-exact* equivalence with a full CMS. Use
-/// [`identify_common`] when approximation within `tolerance` is acceptable.
-///
-/// Returns `None` if the profile isn't safe-equivalent or isn't in the table.
-pub fn identify_safe_matrix_shaper(
-    icc_bytes: &[u8],
-    tolerance: Tolerance,
-) -> Option<IccIdentification> {
-    let feat = inspect_profile(icc_bytes)?;
-    if !feat.is_safe_matrix_shaper() {
-        return None;
-    }
-    identify_common(icc_bytes, tolerance)
 }
 
 // ── Hash function ────────────────────────────────────────────────────────
@@ -487,19 +547,24 @@ fn fnv1a_64_normalized(data: &[u8]) -> u64 {
 use ColorPrimaries as CP;
 use TransferFunction as TF;
 
-/// Well-known RGB ICC profiles: `(normalized_hash, primaries, transfer, max_u16_err)`.
+/// Well-known RGB ICC profiles: `(normalized_hash, primaries, transfer, max_u16_err, intent_mask)`.
+///
+/// `intent_mask` is a bitfield of [`INTENT_COLORIMETRIC_SAFE`],
+/// [`INTENT_PERCEPTUAL_SAFE`], and [`INTENT_SATURATION_SAFE`], precomputed
+/// from the profile's structural features (PCS type, `chad` matrix,
+/// A2B/B2A LUT presence, matrix-shaper completeness).
 ///
 /// Sorted by normalized hash for binary search. Generated by
-/// `scripts/gen_icc_tables.py` from the ICC profile corpus.
+/// `scripts/gen_icc_tables.rs` from the ICC profile corpus.
 #[rustfmt::skip]
-const KNOWN_RGB_PROFILES: &[(u64, CP, TF, u8)] =
+const KNOWN_RGB_PROFILES: &[(u64, CP, TF, u8, u8)] =
     include!("icc_table_rgb.inc");
 
-/// Well-known grayscale ICC profiles: `(normalized_hash, transfer, max_u16_err)`.
+/// Well-known grayscale ICC profiles: `(normalized_hash, transfer, max_u16_err, intent_mask)`.
 ///
 /// Sorted by normalized hash for binary search.
 #[rustfmt::skip]
-const KNOWN_GRAY_PROFILES: &[(u64, TF, u8)] =
+const KNOWN_GRAY_PROFILES: &[(u64, TF, u8, u8)] =
     include!("icc_table_gray.inc");
 
 // ── Tests ────────────────────────────────────────────────────────────────
@@ -553,22 +618,43 @@ mod tests {
 
     #[test]
     fn all_errors_within_intent() {
-        for &(h, _, _, err) in KNOWN_RGB_PROFILES {
+        for &(h, _, _, err, _) in KNOWN_RGB_PROFILES {
             assert!(err <= 56, "RGB 0x{h:016x} err={err} > 56");
         }
-        for &(h, _, err) in KNOWN_GRAY_PROFILES {
+        for &(h, _, err, _) in KNOWN_GRAY_PROFILES {
             assert!(err <= 56, "gray 0x{h:016x} err={err} > 56");
         }
     }
 
     #[test]
     fn no_unknown_variants_in_tables() {
-        for &(h, cp, tc, _) in KNOWN_RGB_PROFILES {
+        for &(h, cp, tc, _, _) in KNOWN_RGB_PROFILES {
             assert_ne!(cp, ColorPrimaries::Unknown, "RGB 0x{h:016x}");
             assert_ne!(tc, TransferFunction::Unknown, "RGB 0x{h:016x}");
         }
-        for &(h, tc, _) in KNOWN_GRAY_PROFILES {
+        for &(h, tc, _, _) in KNOWN_GRAY_PROFILES {
             assert_ne!(tc, TransferFunction::Unknown, "gray 0x{h:016x}");
+        }
+    }
+
+    #[test]
+    fn intent_mask_reserved_bits_zero() {
+        // Only bits 0–2 are defined; bits 3–7 must be zero.
+        const ALL_DEFINED: u8 =
+            INTENT_COLORIMETRIC_SAFE | INTENT_PERCEPTUAL_SAFE | INTENT_SATURATION_SAFE;
+        for &(h, _, _, _, mask) in KNOWN_RGB_PROFILES {
+            assert_eq!(
+                mask & !ALL_DEFINED,
+                0,
+                "RGB 0x{h:016x} has reserved bits set: 0x{mask:02x}"
+            );
+        }
+        for &(h, _, _, mask) in KNOWN_GRAY_PROFILES {
+            assert_eq!(
+                mask & !ALL_DEFINED,
+                0,
+                "gray 0x{h:016x} has reserved bits set: 0x{mask:02x}"
+            );
         }
     }
 
