@@ -17,7 +17,7 @@ These are deferred to the next minor release to batch semver breaks.
 - **`ColorManagement` trait redesign**: single `build_source_transform`
   entry point with options (rendering intent, HDR policy).
 
-## zenpixels 0.2.7
+## zenpixels 0.2.7 (2026-04-14)
 
 ### Additions
 
@@ -58,7 +58,7 @@ These are deferred to the next minor release to batch semver breaks.
   `identify_common_for()` — kept `pub(crate)` for future use.
 - Color registry with const-computed gamut matrices.
 
-## zenpixels-convert 0.2.7
+## zenpixels-convert 0.2.7 (2026-04-14)
 
 ### Additions
 
