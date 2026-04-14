@@ -31,7 +31,7 @@ pub enum ColorProfileSource<'a> {
     ///
     /// Covers the full `ColorPrimaries × TransferFunction` matrix,
     /// including combinations that don't have a [`NamedProfile`] variant
-    /// or a CICP mapping (e.g., Adobe RGB, DCI-P3).
+    /// or a CICP mapping (e.g., Adobe RGB).
     ///
     /// A CMS backend that handles this variant can avoid ICC profile
     /// parsing entirely for known primaries/transfer combinations.
@@ -191,6 +191,7 @@ impl<'a> ColorProfileSource<'a> {
     /// (primaries, transfer) would discard significant information
     /// (YCbCr matrix coefficients, narrow signal range).
     #[cfg(feature = "icc")]
+    #[allow(unreachable_patterns)]
     pub fn resolve(&self) -> Option<(ColorPrimaries, TransferFunction)> {
         match self {
             Self::PrimariesTransferPair {

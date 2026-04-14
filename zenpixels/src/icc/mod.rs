@@ -5,7 +5,7 @@
 //! - **CICP extraction**: [`extract_cicp`] reads the `cicp` tag from ICC v4.4+
 //!   profiles (~100ns, no allocation).
 //!
-//! - **Hash-based identification**: [`identify`] recognizes 132
+//! - **Hash-based identification**: [`identify`] recognizes 181
 //!   well-known profiles (sRGB, Display P3, BT.2020, Adobe RGB,
 //!   grayscale) via normalized FNV-1a hash lookup (~100ns).
 //!

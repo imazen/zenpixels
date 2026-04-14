@@ -74,12 +74,6 @@ pub const REGISTRY: &[KnownColorSpace] = &[
         named: Some(NamedProfile::LinearSrgb),
     },
     KnownColorSpace {
-        primaries: ColorPrimaries::DciP3,
-        transfer: TransferFunction::Gamma26,
-        cicp: Some((11, 17)),
-        named: None,
-    },
-    KnownColorSpace {
         primaries: ColorPrimaries::DisplayP3,
         transfer: TransferFunction::Linear,
         cicp: Some((12, 8)),
@@ -432,8 +426,6 @@ mod tests {
             (ColorPrimaries::Bt709, ColorPrimaries::AdobeRgb),
             (ColorPrimaries::AdobeRgb, ColorPrimaries::Bt709),
             (ColorPrimaries::DisplayP3, ColorPrimaries::Bt2020),
-            (ColorPrimaries::DciP3, ColorPrimaries::Bt709),
-            (ColorPrimaries::Bt709, ColorPrimaries::DciP3),
         ];
         for (src, dst) in pairs {
             let m = gamut_matrix(src, dst).unwrap();
@@ -512,17 +504,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn gamut_matrix_with_chromatic_adaptation() {
-        // DCI-P3 (DCI white) → sRGB (D65) needs Bradford adaptation
-        let m = gamut_matrix(ColorPrimaries::DciP3, ColorPrimaries::Bt709).unwrap();
-        let w = mul_mv(&m, &[1.0, 1.0, 1.0]);
-        assert!(
-            (w[0] - 1.0).abs() < 1e-4 && (w[1] - 1.0).abs() < 1e-4 && (w[2] - 1.0).abs() < 1e-4,
-            "DCI→sRGB white: ({}, {}, {})",
-            w[0],
-            w[1],
-            w[2]
-        );
-    }
+    // gamut_matrix_with_chromatic_adaptation test removed:
+    // DciP3 primaries were removed (theatrical projection only).
+    // Bradford adaptation is still exercised by any future cross-white-
+    // point pair; currently all remaining primaries share D65.
 }

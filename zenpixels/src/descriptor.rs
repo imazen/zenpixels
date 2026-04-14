@@ -243,14 +243,29 @@ pub enum TransferFunction {
     /// full CMS so their exact encoded curve is honored. See
     /// `scripts/icc-gen/src/main.rs` for the identification policy.
     Gamma22,
-    /// Pure power-law gamma 1.8. Used by Apple RGB, ColorMatch RGB,
-    /// ECI-RGB v2, and some legacy workflows.
-    Gamma18,
-    /// Pure power-law gamma 2.4. BT.1886 display model, ACES display encoding.
-    Gamma24,
-    /// Pure power-law gamma 2.6. DCI-P3 theatrical projection (ST 428-1).
-    Gamma26,
-    // ── Not yet added ────────────────────────────────────────────────
+    // ── DO NOT REMOVE THESE COMMENTS ────────────────────────────────
+    // Deferred / removed transfer functions — not yet added or
+    // deliberately excluded. Profiles using these fall through to a
+    // full CMS via the Unknown path.
+    //
+    // Gamma18 — pure power-law gamma 1.8.
+    //   Used by Apple RGB, ColorMatch RGB, ECI-RGB v2, and some legacy
+    //   workflows. All primaries that required it (AppleRgb, ColorMatch,
+    //   EciRgbV2) were removed — no remaining ColorPrimaries variant
+    //   pairs with this transfer. ICC profiles using gamma 1.8 fall
+    //   through to a full CMS.
+    //
+    // Gamma24 — pure power-law gamma 2.4.
+    //   BT.1886 display model, ACES display encoding. Niche — only 3
+    //   profiles in the ICC hash table referenced it (Rec2020-g24-v4,
+    //   bt 2020, ITU-RBT709ReferenceDisplay). Fall through to CMS.
+    //
+    // Gamma26 — pure power-law gamma 2.6.
+    //   DCI-P3 theatrical projection (ST 428-1). Only 3 profiles in
+    //   the ICC hash table (DCI-P3-v4, system DCI(P3) RGB, SMPTE431
+    //   P3.icm). Theatrical projection uses the DCI white point, not
+    //   D65 — images use DisplayP3 with sRGB transfer, not DCI-P3
+    //   with gamma 2.6. Fall through to CMS.
     //
     // Hlg (CICP 18, ARIB STD-B67) — Hybrid Log-Gamma for BT.2100.
     //   OETF/EOTF formulas are simple and standardized. Add when we
@@ -265,7 +280,6 @@ pub enum TransferFunction {
     // tested conversion math. An enum variant without math is worse
     // than Unknown — it gives callers false confidence.
     // ────────────────────────────────────────────────────────────────
-
     /// Transfer function is not known.
     Unknown,
 }
@@ -322,9 +336,6 @@ impl fmt::Display for TransferFunction {
             Self::Bt709 => f.write_str("BT.709"),
             Self::Pq => f.write_str("PQ"),
             Self::Gamma22 => f.write_str("gamma 2.2"),
-            Self::Gamma18 => f.write_str("gamma 1.8"),
-            Self::Gamma24 => f.write_str("gamma 2.4 (BT.1886)"),
-            Self::Gamma26 => f.write_str("gamma 2.6 (DCI)"),
             Self::Unknown => f.write_str("unknown"),
             _ => f.write_str("TransferFunction(?)"),
         }
@@ -350,27 +361,44 @@ pub enum ColorPrimaries {
     Bt709,
     /// BT.2020 / BT.2100 (CICP 9). Wide gamut for HDR. White point: D65.
     Bt2020,
-    /// DCI-P3 theatrical (CICP 11, SMPTE RP 431-2).
-    /// Same RGB primaries as Display P3, white point: DCI (0.314, 0.351).
-    DciP3,
     /// Display P3 (CICP 12, SMPTE EG 432-1). Apple ecosystem.
     /// Same RGB primaries as DCI-P3, white point: D65.
     DisplayP3,
     /// Adobe RGB (1998). Wide gamut. White point: D65.
     AdobeRgb,
-    /// SMPTE 170M / BT.601-7 525-line (CICP 6). NTSC SD broadcast. White point: D65.
-    Smpte170m,
-    /// BT.470-6 System B/G / BT.601-7 625-line (CICP 5). PAL/SECAM SD broadcast. White point: D65.
-    Bt470Bg,
-    /// Apple RGB. Legacy Mac default. White point: D65.
-    AppleRgb,
-    /// ColorMatch RGB (Radius). Print workflow. White point: D50.
-    ColorMatch,
-    /// Adobe Wide Gamut RGB. Print workflow, extremely wide gamut. White point: D50.
-    WideGamut,
-    /// ECI-RGB v2 (European Color Initiative). Print workflow. White point: D50.
-    EciRgbV2,
-    // ── Not yet added ────────────────────────────────────────────────
+    // ── DO NOT REMOVE THESE COMMENTS ────────────────────────────────
+    // Deferred / removed primaries — not yet added or deliberately
+    // excluded. ICC profiles using these fall through to a full CMS.
+    //
+    // DciP3 (CICP 11, SMPTE RP 431-2) — theatrical projection white point.
+    //   Same RGB primaries as DisplayP3: R(0.680, 0.320) G(0.265, 0.690) B(0.150, 0.060).
+    //   White point: DCI (0.314, 0.351), NOT D65. Images use DisplayP3
+    //   (D65), not DCI — DCI is for theatrical projection only. Removed
+    //   because no still-image workflow embeds DCI-P3 with the DCI white.
+    //
+    // Smpte170m (CICP 6) — SMPTE 170M / BT.601-7 525-line, NTSC SD broadcast.
+    //   Chromaticities: R(0.630, 0.340) G(0.310, 0.595) B(0.155, 0.070). White: D65.
+    //   Video-only, never embedded in still images.
+    //
+    // Bt470Bg (CICP 5) — BT.470-6 System B/G / BT.601-7 625-line, PAL/SECAM SD.
+    //   Chromaticities: R(0.64, 0.33) G(0.29, 0.60) B(0.15, 0.06). White: D65.
+    //   Video-only, never embedded in still images.
+    //
+    // AppleRgb — pre-ColorSync Mac default (~2003), essentially extinct.
+    //   Chromaticities: R(0.625, 0.340) G(0.280, 0.595) B(0.155, 0.070). White: D65.
+    //   Paired with Gamma18 transfer (also removed).
+    //
+    // ColorMatch — Radius print workflow from the '90s, dead.
+    //   Chromaticities: R(0.630, 0.340) G(0.295, 0.605) B(0.150, 0.075). White: D50 (0.3457, 0.3585).
+    //   Paired with Gamma18 transfer (also removed).
+    //
+    // WideGamut — Adobe Wide Gamut RGB, working space almost never embedded in output images.
+    //   Chromaticities: R(0.735, 0.265) G(0.115, 0.826) B(0.157, 0.018). White: D50 (0.3457, 0.3585).
+    //   Paired with Gamma22 transfer.
+    //
+    // EciRgbV2 — European Color Initiative prepress working space, never in consumer images.
+    //   Chromaticities: R(0.670, 0.330) G(0.210, 0.710) B(0.140, 0.080). White: D50 (0.3457, 0.3585).
+    //   Paired with Gamma18 transfer (also removed).
     //
     // ProPhoto (ROMM RGB) — ultra-wide gamut, D50 white (0.3457, 0.3585).
     //   Chromaticities: R(0.7347, 0.2653) G(0.1596, 0.8404) B(0.0366, 0.0001).
@@ -393,7 +421,6 @@ pub enum ColorPrimaries {
     // tested conversion math. An enum variant without math is worse
     // than Unknown — it gives callers false confidence.
     // ────────────────────────────────────────────────────────────────
-
     /// Primaries not known.
     Unknown,
 }
@@ -401,8 +428,9 @@ pub enum ColorPrimaries {
 impl ColorPrimaries {
     /// D65 white point (BT.709, BT.2020, Display P3, Adobe RGB).
     pub const WHITE_D65: (f32, f32) = (0.3127, 0.3290);
-    /// D50 white point (ICC PCS, ColorMatch RGB, Wide Gamut RGB, ECI-RGB v2).
-    pub const WHITE_D50: (f32, f32) = (0.3457, 0.3585);
+    // D50 white point value preserved for reference: (0.3457, 0.3585).
+    // No remaining ColorPrimaries variants use D50. Was used by
+    // ColorMatch, WideGamut, EciRgbV2 (all removed).
     /// DCI white point (theatrical projection, SMPTE RP 431-2).
     pub const WHITE_DCI: (f32, f32) = (0.314, 0.351);
 
@@ -411,24 +439,13 @@ impl ColorPrimaries {
     /// Returns `((rx, ry), (gx, gy), (bx, by))` or `None` for `Unknown`.
     /// These are the canonical coordinates from the relevant standards
     /// (ITU-R BT.709, BT.2020, SMPTE EG 432-1, etc.).
+    #[allow(unreachable_patterns)]
     pub const fn chromaticity(self) -> Option<((f32, f32), (f32, f32), (f32, f32))> {
         match self {
             Self::Bt709 => Some(((0.64, 0.33), (0.30, 0.60), (0.15, 0.06))),
-            Self::DisplayP3 | Self::DciP3 => Some(((0.680, 0.320), (0.265, 0.690), (0.150, 0.060))),
+            Self::DisplayP3 => Some(((0.680, 0.320), (0.265, 0.690), (0.150, 0.060))),
             Self::Bt2020 => Some(((0.708, 0.292), (0.170, 0.797), (0.131, 0.046))),
             Self::AdobeRgb => Some(((0.64, 0.33), (0.21, 0.71), (0.15, 0.06))),
-            // SMPTE 170M / BT.601 525-line (CICP 6): SMPTE C phosphors
-            Self::Smpte170m => Some(((0.630, 0.340), (0.310, 0.595), (0.155, 0.070))),
-            // BT.470-6 System B/G / BT.601 625-line (CICP 5): EBU Tech 3213
-            Self::Bt470Bg => Some(((0.64, 0.33), (0.29, 0.60), (0.15, 0.06))),
-            // Apple RGB: Trinitron phosphors (classic Mac)
-            Self::AppleRgb => Some(((0.625, 0.340), (0.280, 0.595), (0.155, 0.070))),
-            // ColorMatch RGB (Radius): print workflow
-            Self::ColorMatch => Some(((0.630, 0.340), (0.295, 0.605), (0.150, 0.075))),
-            // Adobe Wide Gamut RGB: extreme gamut
-            Self::WideGamut => Some(((0.735, 0.265), (0.115, 0.826), (0.157, 0.018))),
-            // ECI-RGB v2 (European Color Initiative)
-            Self::EciRgbV2 => Some(((0.670, 0.330), (0.210, 0.710), (0.140, 0.080))),
             Self::Unknown => None,
             _ => None,
         }
@@ -439,10 +456,7 @@ impl ColorPrimaries {
     pub const fn from_cicp(code: u8) -> Option<Self> {
         match code {
             1 => Some(Self::Bt709),
-            5 => Some(Self::Bt470Bg),
-            6 | 7 => Some(Self::Smpte170m), // 6=SMPTE 170M, 7=SMPTE 240M (same primaries)
             9 => Some(Self::Bt2020),
-            11 => Some(Self::DciP3),
             12 => Some(Self::DisplayP3),
             _ => None,
         }
@@ -454,10 +468,7 @@ impl ColorPrimaries {
     pub const fn to_cicp(self) -> Option<u8> {
         match self {
             Self::Bt709 => Some(1),
-            Self::Bt470Bg => Some(5),
-            Self::Smpte170m => Some(6),
             Self::Bt2020 => Some(9),
-            Self::DciP3 => Some(11),
             Self::DisplayP3 => Some(12),
             Self::Unknown => None,
             _ => None,
@@ -470,9 +481,6 @@ impl ColorPrimaries {
     pub const fn white_point(self) -> (f32, f32) {
         match self {
             Self::Bt709 | Self::Bt2020 | Self::DisplayP3 | Self::AdobeRgb => Self::WHITE_D65,
-            Self::Smpte170m | Self::Bt470Bg | Self::AppleRgb => Self::WHITE_D65,
-            Self::DciP3 => Self::WHITE_DCI,
-            Self::ColorMatch | Self::WideGamut | Self::EciRgbV2 => Self::WHITE_D50,
             Self::Unknown => Self::WHITE_D65,
             _ => Self::WHITE_D65,
         }
@@ -510,7 +518,7 @@ impl ColorPrimaries {
     ///
     /// Returns `false` when white points differ (cross-adapted containment
     /// is not defined without a chromatic adaptation transform).
-    /// D65 hierarchy: BT.2020 > Display P3 > Adobe RGB > BT.709.
+    /// D65 hierarchy: BT.2020 > Display P3 > Adobe RGB ≈ BT.709.
     #[inline]
     pub const fn contains(self, other: Self) -> bool {
         !self.needs_chromatic_adaptation(other)
@@ -522,13 +530,10 @@ impl ColorPrimaries {
     #[allow(unreachable_patterns)]
     const fn gamut_width(self) -> u8 {
         match self {
-            Self::Smpte170m | Self::Bt470Bg | Self::AppleRgb | Self::ColorMatch => 1, // sRGB-ish
             Self::Bt709 => 1,
-            Self::EciRgbV2 => 2,
             Self::AdobeRgb => 2,
-            Self::DisplayP3 | Self::DciP3 => 3,
+            Self::DisplayP3 => 3,
             Self::Bt2020 => 4,
-            Self::WideGamut => 5,
             Self::Unknown => 0,
             _ => 0,
         }
@@ -541,15 +546,8 @@ impl fmt::Display for ColorPrimaries {
         match self {
             Self::Bt709 => f.write_str("BT.709"),
             Self::Bt2020 => f.write_str("BT.2020"),
-            Self::DciP3 => f.write_str("DCI-P3"),
             Self::DisplayP3 => f.write_str("Display P3"),
             Self::AdobeRgb => f.write_str("Adobe RGB"),
-            Self::Smpte170m => f.write_str("SMPTE 170M"),
-            Self::Bt470Bg => f.write_str("BT.470-6 BG"),
-            Self::AppleRgb => f.write_str("Apple RGB"),
-            Self::ColorMatch => f.write_str("ColorMatch RGB"),
-            Self::WideGamut => f.write_str("Wide Gamut RGB"),
-            Self::EciRgbV2 => f.write_str("ECI-RGB v2"),
             Self::Unknown => f.write_str("unknown"),
             _ => f.write_str("ColorPrimaries(?)"),
         }
