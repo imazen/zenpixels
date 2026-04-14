@@ -120,6 +120,171 @@ pub fn extract_cicp(data: &[u8]) -> Option<Cicp> {
     None
 }
 
+// ── Profile inspection ───────────────────────────────────────────────────
+
+/// Profile features that can cause a CMS to produce output different from
+/// what a pure matrix+TRC conversion would give.
+///
+/// A profile with any of these features should ideally be handled by a full
+/// CMS (moxcms, lcms2) rather than identified-and-approximated via matrix math.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct ProfileFeatures {
+    /// PCS is Lab instead of XYZ. Matrix math assumes XYZ.
+    pub pcs_is_lab: bool,
+    /// Has `chad` (chromatic adaptation) tag.
+    pub has_chad: bool,
+    /// `chad` tag is Bradford (within tolerance). Only meaningful if `has_chad`.
+    pub chad_is_bradford: bool,
+    /// Has `A2B0` LUT (default/relative-colorimetric device→PCS). A CMS
+    /// typically prefers this over colorants when present.
+    pub has_a2b0: bool,
+    /// Has `A2B1` LUT (perceptual device→PCS, with gamut mapping).
+    pub has_a2b1: bool,
+    /// Has `A2B2` LUT (saturation device→PCS).
+    pub has_a2b2: bool,
+    /// Has `B2A0` LUT (default PCS→device).
+    pub has_b2a0: bool,
+    /// Has `B2A1` LUT (perceptual PCS→device).
+    pub has_b2a1: bool,
+    /// Has `B2A2` LUT (saturation PCS→device).
+    pub has_b2a2: bool,
+    /// Has matrix-shaper tags (rXYZ + gXYZ + bXYZ + rTRC + gTRC + bTRC).
+    pub has_matrix_shaper: bool,
+}
+
+impl ProfileFeatures {
+    /// Whether a CMS would produce identical output to our matrix+TRC math.
+    ///
+    /// True when: PCS is XYZ, chad (if present) is Bradford, no LUT tags
+    /// that a CMS would prefer. Matrix-shaper tags must be present.
+    #[inline]
+    pub fn is_safe_matrix_shaper(&self) -> bool {
+        self.has_matrix_shaper
+            && !self.pcs_is_lab
+            && !self.has_a2b0
+            && !self.has_a2b1
+            && !self.has_a2b2
+            && !self.has_b2a0
+            && !self.has_b2a1
+            && !self.has_b2a2
+            && (!self.has_chad || self.chad_is_bradford)
+    }
+}
+
+/// Bradford chromatic adaptation matrix (D65→D50 direction, ICC convention).
+/// Used by ICC `chad` tag.
+const BRADFORD_CHAD_D65_TO_D50: [f64; 9] = [
+    1.0478, 0.0229, -0.0501, 0.0295, 0.9905, -0.0171, -0.0092, 0.0151, 0.7517,
+];
+/// Tolerance for `chad` matrix comparison (s15Fixed16 quantization).
+const CHAD_TOL: f64 = 0.005;
+
+/// Inspect an ICC profile and return which features it uses.
+///
+/// Use [`ProfileFeatures::is_safe_matrix_shaper`] to decide whether
+/// matrix+TRC approximation via [`identify_common`] is equivalent to a
+/// full CMS's output.
+///
+/// Returns `None` if the bytes aren't a valid ICC profile.
+///
+/// ```
+/// use zenpixels::icc::{identify_common, inspect_profile, Tolerance};
+/// # let icc_bytes: &[u8] = &[];
+/// if let Some(feat) = inspect_profile(icc_bytes) {
+///     if feat.is_safe_matrix_shaper() {
+///         // Safe to use matrix+TRC math
+///         let id = identify_common(icc_bytes, Tolerance::Intent);
+///     } else {
+///         // Defer to full CMS
+///     }
+/// }
+/// ```
+pub fn inspect_profile(data: &[u8]) -> Option<ProfileFeatures> {
+    if data.len() < ICC_MIN_SIZE {
+        return None;
+    }
+    if data.get(ICC_SIGNATURE_OFFSET..ICC_SIGNATURE_OFFSET + 4)? != b"acsp" {
+        return None;
+    }
+
+    let mut feat = ProfileFeatures::default();
+
+    // PCS: bytes 20..24 in header. "XYZ " vs "Lab "
+    feat.pcs_is_lab = data.get(20..24)? == b"Lab ";
+
+    let tag_count = u32::from_be_bytes(
+        data[ICC_TAG_COUNT_OFFSET..ICC_TAG_COUNT_OFFSET + 4]
+            .try_into()
+            .ok()?,
+    ) as usize;
+    let tag_count = tag_count.min(ICC_MAX_TAG_COUNT);
+
+    let mut has_rxyz = false;
+    let mut has_gxyz = false;
+    let mut has_bxyz = false;
+    let mut has_rtrc = false;
+    let mut has_gtrc = false;
+    let mut has_btrc = false;
+    let mut chad_off = None;
+
+    for i in 0..tag_count {
+        let entry_offset = ICC_TAG_TABLE_OFFSET + i * ICC_TAG_ENTRY_SIZE;
+        let entry = data.get(entry_offset..entry_offset + ICC_TAG_ENTRY_SIZE)?;
+        let sig = &entry[..4];
+        let d_off = u32::from_be_bytes(entry[4..8].try_into().ok()?) as usize;
+        match sig {
+            b"rXYZ" => has_rxyz = true,
+            b"gXYZ" => has_gxyz = true,
+            b"bXYZ" => has_bxyz = true,
+            b"rTRC" => has_rtrc = true,
+            b"gTRC" => has_gtrc = true,
+            b"bTRC" => has_btrc = true,
+            b"A2B0" => feat.has_a2b0 = true,
+            b"A2B1" => feat.has_a2b1 = true,
+            b"A2B2" => feat.has_a2b2 = true,
+            b"B2A0" => feat.has_b2a0 = true,
+            b"B2A1" => feat.has_b2a1 = true,
+            b"B2A2" => feat.has_b2a2 = true,
+            b"chad" => chad_off = Some(d_off),
+            _ => {}
+        }
+    }
+
+    feat.has_matrix_shaper = has_rxyz && has_gxyz && has_bxyz && has_rtrc && has_gtrc && has_btrc;
+
+    // Parse chad matrix if present
+    if let Some(off) = chad_off {
+        feat.has_chad = true;
+        // chad tag: "sf32" (signature) + 4 reserved + 9 × s15Fixed16 (f64 values)
+        if data.get(off..off + 8)? == b"sf32\0\0\0\0" && data.len() >= off + 8 + 36 {
+            let mut m = [0.0f64; 9];
+            let mut ok = true;
+            for i in 0..9 {
+                let o = off + 8 + i * 4;
+                if let Ok(bytes) = data[o..o + 4].try_into() {
+                    m[i] = i32::from_be_bytes(bytes) as f64 / 65536.0;
+                } else {
+                    ok = false;
+                    break;
+                }
+            }
+            if ok {
+                let mut max_diff = 0.0f64;
+                for i in 0..9 {
+                    let d = (m[i] - BRADFORD_CHAD_D65_TO_D50[i]).abs();
+                    if d > max_diff {
+                        max_diff = d;
+                    }
+                }
+                feat.chad_is_bradford = max_diff < CHAD_TOL;
+            }
+        }
+    }
+
+    Some(feat)
+}
+
 // ── Return type ──────────────────────────────────────────────────────────
 
 /// Result of identifying a well-known ICC profile.
@@ -243,6 +408,29 @@ pub fn identify_common(icc_bytes: &[u8], tolerance: Tolerance) -> Option<IccIden
 #[inline]
 pub fn is_common_srgb(icc_bytes: &[u8]) -> bool {
     identify_common(icc_bytes, Tolerance::Intent).is_some_and(|id| id.is_srgb())
+}
+
+/// Identify a profile, but only if a CMS would produce the same output as
+/// matrix+TRC math on the identified (primaries, transfer) pair.
+///
+/// Rejects profiles with features that would cause CMS divergence:
+/// - Lab PCS (we assume XYZ)
+/// - Non-Bradford `chad` tag (we assume Bradford)
+/// - Any A2B/B2A LUT tags (a CMS typically prefers those over colorants)
+///
+/// Use this when you need *byte-exact* equivalence with a full CMS. Use
+/// [`identify_common`] when approximation within `tolerance` is acceptable.
+///
+/// Returns `None` if the profile isn't safe-equivalent or isn't in the table.
+pub fn identify_safe_matrix_shaper(
+    icc_bytes: &[u8],
+    tolerance: Tolerance,
+) -> Option<IccIdentification> {
+    let feat = inspect_profile(icc_bytes)?;
+    if !feat.is_safe_matrix_shaper() {
+        return None;
+    }
+    identify_common(icc_bytes, tolerance)
 }
 
 // ── Hash function ────────────────────────────────────────────────────────

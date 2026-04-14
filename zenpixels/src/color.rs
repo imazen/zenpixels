@@ -219,13 +219,17 @@ impl<'a> ColorProfileSource<'a> {
                 Some((p, t))
             }
             Self::Icc(icc_bytes) => {
-                // Try hash-based identification (covers 135 known profiles).
-                if let Some(id) =
-                    crate::icc::identify_common(icc_bytes, crate::icc::Tolerance::Intent)
-                {
+                // Use the safe-matrix-shaper variant — rejects profiles whose
+                // CMS output would differ from our matrix+TRC math (non-Bradford
+                // chad, LUT tags, Lab PCS). For approximation, use
+                // `crate::icc::identify_common` directly.
+                if let Some(id) = crate::icc::identify_safe_matrix_shaper(
+                    icc_bytes,
+                    crate::icc::Tolerance::Intent,
+                ) {
                     return Some((id.primaries, id.transfer));
                 }
-                // Try CICP-in-ICC tag (ICC v4.4+).
+                // CICP-in-ICC tag (ICC v4.4+) is authoritative — accept it.
                 if let Some(cicp) = crate::icc::extract_cicp(icc_bytes) {
                     if cicp.matrix_coefficients != 0 || !cicp.full_range {
                         return None;
