@@ -56,6 +56,8 @@ pub enum NamedProfile {
     Bt2020,
     /// BT.2020 with PQ transfer (HDR10, SMPTE ST 2084).
     Bt2020Pq,
+    /// BT.2020 with HLG transfer (BT.2100 HLG).
+    Bt2020Hlg,
     /// Adobe RGB (1998). Used in print workflows.
     AdobeRgb,
     /// Linear sRGB (sRGB primaries, gamma 1.0).
@@ -79,6 +81,7 @@ impl NamedProfile {
             (12, 13, 0) => Some(Self::DisplayP3),
             (9, 1, 0) => Some(Self::Bt2020),
             (9, 16, _) => Some(Self::Bt2020Pq), // BT.2100 PQ (any matrix)
+            (9, 18, _) => Some(Self::Bt2020Hlg), // BT.2100 HLG (any matrix)
             (1, 8, 0) => Some(Self::LinearSrgb),
             _ => None,
         }
@@ -96,6 +99,7 @@ impl NamedProfile {
                 full_range: true,
             }),
             Self::Bt2020Pq => Some(Cicp::BT2100_PQ),
+            Self::Bt2020Hlg => Some(Cicp::BT2100_HLG),
             Self::LinearSrgb => Some(Cicp {
                 color_primaries: 1,
                 transfer_characteristics: 8,
@@ -113,6 +117,7 @@ impl NamedProfile {
             Self::DisplayP3 => (ColorPrimaries::DisplayP3, TransferFunction::Srgb),
             Self::Bt2020 => (ColorPrimaries::Bt2020, TransferFunction::Bt709),
             Self::Bt2020Pq => (ColorPrimaries::Bt2020, TransferFunction::Pq),
+            Self::Bt2020Hlg => (ColorPrimaries::Bt2020, TransferFunction::Hlg),
             Self::AdobeRgb => (ColorPrimaries::AdobeRgb, TransferFunction::Gamma22),
             Self::LinearSrgb => (ColorPrimaries::Bt709, TransferFunction::Linear),
         }
@@ -131,6 +136,7 @@ impl NamedProfile {
             (ColorPrimaries::DisplayP3, TransferFunction::Srgb) => Some(Self::DisplayP3),
             (ColorPrimaries::Bt2020, TransferFunction::Bt709) => Some(Self::Bt2020),
             (ColorPrimaries::Bt2020, TransferFunction::Pq) => Some(Self::Bt2020Pq),
+            (ColorPrimaries::Bt2020, TransferFunction::Hlg) => Some(Self::Bt2020Hlg),
             (ColorPrimaries::AdobeRgb, TransferFunction::Gamma22) => Some(Self::AdobeRgb),
             (ColorPrimaries::Bt709, TransferFunction::Linear) => Some(Self::LinearSrgb),
             _ => None,

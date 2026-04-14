@@ -243,6 +243,8 @@ pub enum TransferFunction {
     /// full CMS so their exact encoded curve is honored. See
     /// `scripts/icc-gen/src/main.rs` for the identification policy.
     Gamma22,
+    /// Hybrid Log-Gamma (CICP 18, ARIB STD-B67). BT.2100 HDR.
+    Hlg,
     // ── DO NOT REMOVE THESE COMMENTS ────────────────────────────────
     // Deferred / removed transfer functions — not yet added or
     // deliberately excluded. Profiles using these fall through to a
@@ -266,11 +268,6 @@ pub enum TransferFunction {
     //   P3.icm). Theatrical projection uses the DCI white point, not
     //   D65 — images use DisplayP3 with sRGB transfer, not DCI-P3
     //   with gamma 2.6. Fall through to CMS.
-    //
-    // Hlg (CICP 18, ARIB STD-B67) — Hybrid Log-Gamma for BT.2100.
-    //   OETF/EOTF formulas are simple and standardized. Add when we
-    //   implement HLG ↔ SDR tone mapping in zenpixels-convert; until
-    //   then CICP 18 maps to Unknown and falls through to a CMS.
     //
     // AcesCct — quasi-logarithmic with linear toe (SMPTE ST 2065-1).
     //   Niche VFX/grading transfer. No consumer image format embeds it.
@@ -296,6 +293,7 @@ impl TransferFunction {
             8 => Some(Self::Linear),
             13 => Some(Self::Srgb),
             16 => Some(Self::Pq),
+            18 => Some(Self::Hlg),
             _ => None,
         }
     }
@@ -309,6 +307,7 @@ impl TransferFunction {
             Self::Linear => Some(8),
             Self::Srgb => Some(13),
             Self::Pq => Some(16),
+            Self::Hlg => Some(18),
             Self::Unknown => None,
             _ => None,
         }
@@ -318,6 +317,7 @@ impl TransferFunction {
     ///
     /// - SDR (sRGB, BT.709, Linear, Unknown): `1.0` (relative/scene-referred)
     /// - PQ: `203.0` (ITU-R BT.2408 reference white)
+    /// - HLG: `1.0` (scene-referred)
     #[allow(unreachable_patterns)]
     pub fn reference_white_nits(&self) -> f32 {
         match self {
@@ -336,6 +336,7 @@ impl fmt::Display for TransferFunction {
             Self::Bt709 => f.write_str("BT.709"),
             Self::Pq => f.write_str("PQ"),
             Self::Gamma22 => f.write_str("gamma 2.2"),
+            Self::Hlg => f.write_str("HLG"),
             Self::Unknown => f.write_str("unknown"),
             _ => f.write_str("TransferFunction(?)"),
         }
@@ -1706,7 +1707,7 @@ mod tests {
             Some(TransferFunction::Srgb)
         );
         assert_eq!(TransferFunction::from_cicp(16), Some(TransferFunction::Pq));
-        assert_eq!(TransferFunction::from_cicp(18), None);
+        assert_eq!(TransferFunction::from_cicp(18), Some(TransferFunction::Hlg));
         assert_eq!(TransferFunction::from_cicp(99), None);
     }
 
@@ -1716,6 +1717,7 @@ mod tests {
         assert_eq!(TransferFunction::Linear.to_cicp(), Some(8));
         assert_eq!(TransferFunction::Srgb.to_cicp(), Some(13));
         assert_eq!(TransferFunction::Pq.to_cicp(), Some(16));
+        assert_eq!(TransferFunction::Hlg.to_cicp(), Some(18));
         assert_eq!(TransferFunction::Unknown.to_cicp(), None);
     }
 

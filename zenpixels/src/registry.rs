@@ -62,6 +62,12 @@ pub const REGISTRY: &[KnownColorSpace] = &[
         named: Some(NamedProfile::Bt2020Pq),
     },
     KnownColorSpace {
+        primaries: ColorPrimaries::Bt2020,
+        transfer: TransferFunction::Hlg,
+        cicp: Some((9, 18)),
+        named: Some(NamedProfile::Bt2020Hlg),
+    },
+    KnownColorSpace {
         primaries: ColorPrimaries::AdobeRgb,
         transfer: TransferFunction::Gamma22,
         cicp: None,
