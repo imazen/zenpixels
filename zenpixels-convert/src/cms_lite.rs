@@ -161,14 +161,19 @@ impl ColorManagement for ZenCmsLite {
         }
         None
     }
+}
 
-    fn build_source_transform(
+impl ZenCmsLite {
+    /// Build a transform from resolved `ColorProfileSource`s.
+    ///
+    /// Returns `None` if either source can't be resolved to known primaries+transfer.
+    pub(crate) fn build_source_transform(
         &self,
         src: crate::ColorProfileSource<'_>,
         dst: crate::ColorProfileSource<'_>,
         src_format: PixelFormat,
         dst_format: PixelFormat,
-    ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
+    ) -> Option<Result<Box<dyn RowTransform>, ZenCmsLiteError>> {
         let (src_p, src_t) = src.resolve()?;
         let (dst_p, dst_t) = dst.resolve()?;
 
@@ -654,5 +659,662 @@ mod tests {
                 dst_px[ch]
             );
         }
+    }
+}
+
+// ===========================================================================
+// Accuracy ground truth tests (moved from tests/accuracy_ground_truth.rs)
+//
+// These tests validate fast_gamut accuracy against f64 reference math and
+// compare with moxcms. They live here because they need access to the
+// pub(crate) ZenCmsLite::build_source_transform method.
+// ===========================================================================
+
+#[cfg(test)]
+#[cfg(feature = "cms-moxcms")]
+mod accuracy_ground_truth_tests {
+    use super::*;
+    use crate::{ColorProfileSource, NamedProfile, PixelFormat};
+    use moxcms::{
+        BarycentricWeightScale, ColorProfile, InterpolationMethod, Layout, RenderingIntent,
+        TransformOptions,
+    };
+
+    fn moxcms_opts() -> TransformOptions {
+        TransformOptions {
+            rendering_intent: RenderingIntent::RelativeColorimetric,
+            allow_use_cicp_transfer: false,
+            barycentric_weight_scale: BarycentricWeightScale::High,
+            interpolation_method: InterpolationMethod::Tetrahedral,
+            ..Default::default()
+        }
+    }
+
+    // =====================================================================
+    // f64 ground truth implementation
+    // =====================================================================
+
+    /// sRGB EOTF (encoded -> linear) in f64, C0-continuous constants.
+    fn srgb_to_linear_f64(v: f64) -> f64 {
+        const THRESH: f64 = 0.0392857142857142850819238;
+        if v <= THRESH {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    /// sRGB inverse EOTF (linear -> encoded) in f64, C0-continuous constants.
+    fn linear_to_srgb_f64(v: f64) -> f64 {
+        const THRESH: f64 = 0.00303993464041981300277518;
+        if v <= THRESH {
+            v * 12.92
+        } else {
+            1.055 * v.powf(1.0 / 2.4) - 0.055
+        }
+    }
+
+    /// BT.709 inverse OETF (encoded -> linear) in f64.
+    fn bt709_to_linear_f64(v: f64) -> f64 {
+        if v < 0.08124285829863519 {
+            v / 4.5
+        } else {
+            ((v + 0.09929682680944) / 1.09929682680944).powf(1.0 / 0.45)
+        }
+    }
+
+    /// f64 3x3 matrix multiply.
+    fn mat3x3_f64(m: &[[f64; 3]; 3], r: f64, g: f64, b: f64) -> (f64, f64, f64) {
+        (
+            m[0][0] * r + m[0][1] * g + m[0][2] * b,
+            m[1][0] * r + m[1][1] * g + m[1][2] * b,
+            m[2][0] * r + m[2][1] * g + m[2][2] * b,
+        )
+    }
+
+    /// P3 -> sRGB matrix in f64.
+    const P3_TO_SRGB_F64: [[f64; 3]; 3] = [
+        [1.2249401763_f64, -0.2249401763_f64, 0.0_f64],
+        [-0.0420569547_f64, 1.0420569547_f64, 0.0_f64],
+        [-0.0196375546_f64, -0.0786360456_f64, 1.0982736001_f64],
+    ];
+
+    const BT2020_TO_SRGB_F64: [[f64; 3]; 3] = [
+        [1.6604910021_f64, -0.5876411388_f64, -0.0728498633_f64],
+        [-0.1245504745_f64, 1.1328998971_f64, -0.0083494226_f64],
+        [-0.0181507634_f64, -0.1005788980_f64, 1.1187296614_f64],
+    ];
+
+    const ADOBERGB_TO_SRGB_F64: [[f64; 3]; 3] = [
+        [1.3983557440_f64, -0.3983557440_f64, 0.0_f64],
+        [0.0_f64, 1.0_f64, 0.0_f64],
+        [0.0_f64, -0.0429289893_f64, 1.0429289893_f64],
+    ];
+
+    /// Adobe RGB gamma
+    const ADOBE_GAMMA: f64 = 563.0 / 256.0;
+
+    /// Compute ground truth u8 output via f64 math.
+    fn ground_truth_u8(
+        src: &[u8],
+        matrix: &[[f64; 3]; 3],
+        linearize: fn(f64) -> f64,
+        encode: fn(f64) -> f64,
+    ) -> Vec<u8> {
+        let mut dst = vec![0u8; src.len()];
+        for (s, d) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+            let r = linearize(s[0] as f64 / 255.0);
+            let g = linearize(s[1] as f64 / 255.0);
+            let b = linearize(s[2] as f64 / 255.0);
+            let (nr, ng, nb) = mat3x3_f64(matrix, r, g, b);
+            d[0] = (encode(nr.clamp(0.0, 1.0)) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+            d[1] = (encode(ng.clamp(0.0, 1.0)) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+            d[2] = (encode(nb.clamp(0.0, 1.0)) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+        }
+        dst
+    }
+
+    /// Build full 256^3 source buffer.
+    fn full_rgb_cube() -> Vec<u8> {
+        let total = 256 * 256 * 256;
+        let mut src = vec![0u8; total * 3];
+        for i in 0..total {
+            src[i * 3] = (i & 0xFF) as u8;
+            src[i * 3 + 1] = ((i >> 8) & 0xFF) as u8;
+            src[i * 3 + 2] = ((i >> 16) & 0xFF) as u8;
+        }
+        src
+    }
+
+    struct AccuracyResult {
+        name: &'static str,
+        fast_exact: usize,
+        fast_off1: usize,
+        fast_off2plus: usize,
+        fast_max_delta: u8,
+        mox_exact: usize,
+        mox_off1: usize,
+        mox_off2plus: usize,
+        mox_max_delta: u8,
+        fast_better: usize,
+        mox_better: usize,
+        tied: usize,
+        total: usize,
+    }
+
+    impl AccuracyResult {
+        fn print(&self) {
+            let pct = |n: usize| n as f64 / self.total as f64 * 100.0;
+            eprintln!("\n=== {} ({} pixels) ===", self.name, self.total);
+            eprintln!(
+                "  fast_gamut: exact={:.1}% +/-1={:.1}% +/-2+={:.1}% max_delta={}",
+                pct(self.fast_exact),
+                pct(self.fast_off1),
+                pct(self.fast_off2plus),
+                self.fast_max_delta
+            );
+            eprintln!(
+                "  moxcms:     exact={:.1}% +/-1={:.1}% +/-2+={:.1}% max_delta={}",
+                pct(self.mox_exact),
+                pct(self.mox_off1),
+                pct(self.mox_off2plus),
+                self.mox_max_delta
+            );
+            eprintln!(
+                "  fast_gamut closer to truth: {:.1}%",
+                pct(self.fast_better)
+            );
+            eprintln!("  moxcms closer to truth:     {:.1}%", pct(self.mox_better));
+            eprintln!("  tied (equal distance):      {:.1}%", pct(self.tied));
+        }
+    }
+
+    fn compare_accuracy(
+        name: &'static str,
+        src: &[u8],
+        truth: &[u8],
+        fast_fn: &dyn Fn(&[u8], &mut [u8]),
+        moxcms_src: &ColorProfile,
+        moxcms_dst: &ColorProfile,
+    ) -> AccuracyResult {
+        let total = src.len() / 3;
+
+        let mut fast_dst = vec![0u8; src.len()];
+        let mut mox_dst = vec![0u8; src.len()];
+
+        fast_fn(src, &mut fast_dst);
+        let xform = moxcms_src
+            .create_transform_8bit(Layout::Rgb, moxcms_dst, Layout::Rgb, moxcms_opts())
+            .unwrap();
+        xform.transform(src, &mut mox_dst).unwrap();
+
+        let mut r = AccuracyResult {
+            name,
+            fast_exact: 0,
+            fast_off1: 0,
+            fast_off2plus: 0,
+            fast_max_delta: 0,
+            mox_exact: 0,
+            mox_off1: 0,
+            mox_off2plus: 0,
+            mox_max_delta: 0,
+            fast_better: 0,
+            mox_better: 0,
+            tied: 0,
+            total,
+        };
+
+        for i in 0..total {
+            let off = i * 3;
+            let mut fast_dist: u16 = 0;
+            let mut mox_dist: u16 = 0;
+
+            for ch in 0..3 {
+                let t = truth[off + ch];
+                let f = fast_dst[off + ch];
+                let m = mox_dst[off + ch];
+
+                let fd = f.abs_diff(t);
+                let md = m.abs_diff(t);
+                fast_dist += fd as u16;
+                mox_dist += md as u16;
+
+                if fd > r.fast_max_delta {
+                    r.fast_max_delta = fd;
+                }
+                if md > r.mox_max_delta {
+                    r.mox_max_delta = md;
+                }
+            }
+
+            // Per-pixel: count exact/off1/off2+
+            let f_max_ch = (0..3)
+                .map(|ch| fast_dst[off + ch].abs_diff(truth[off + ch]))
+                .max()
+                .unwrap();
+            let m_max_ch = (0..3)
+                .map(|ch| mox_dst[off + ch].abs_diff(truth[off + ch]))
+                .max()
+                .unwrap();
+
+            match f_max_ch {
+                0 => r.fast_exact += 1,
+                1 => r.fast_off1 += 1,
+                _ => r.fast_off2plus += 1,
+            }
+            match m_max_ch {
+                0 => r.mox_exact += 1,
+                1 => r.mox_off1 += 1,
+                _ => r.mox_off2plus += 1,
+            }
+
+            // Who is closer (sum of absolute channel differences)?
+            if fast_dist < mox_dist {
+                r.fast_better += 1;
+            } else if mox_dist < fast_dist {
+                r.mox_better += 1;
+            } else {
+                r.tied += 1;
+            }
+        }
+
+        r
+    }
+
+    /// Build a ZenCmsLite u8 RGB transform as a closure.
+    fn build_lite_u8_transform(
+        src_profile: ColorProfileSource<'_>,
+        dst_profile: ColorProfileSource<'_>,
+    ) -> alloc::boxed::Box<dyn Fn(&[u8], &mut [u8])> {
+        let cms = ZenCmsLite::default();
+        let xf = cms
+            .build_source_transform(
+                src_profile,
+                dst_profile,
+                PixelFormat::Rgb8,
+                PixelFormat::Rgb8,
+            )
+            .unwrap()
+            .unwrap();
+        alloc::boxed::Box::new(move |src: &[u8], dst: &mut [u8]| {
+            let width = (src.len() / 3) as u32;
+            xf.transform_row(src, dst, width);
+        })
+    }
+
+    #[test]
+    fn p3_to_srgb_accuracy() {
+        let src = full_rgb_cube();
+        let truth = ground_truth_u8(
+            &src,
+            &P3_TO_SRGB_F64,
+            srgb_to_linear_f64,
+            linear_to_srgb_f64,
+        );
+        let fast_fn = build_lite_u8_transform(
+            ColorProfileSource::Named(NamedProfile::DisplayP3),
+            ColorProfileSource::Named(NamedProfile::Srgb),
+        );
+        let r = compare_accuracy(
+            "P3->sRGB",
+            &src,
+            &truth,
+            &*fast_fn,
+            &ColorProfile::new_display_p3(),
+            &ColorProfile::new_srgb(),
+        );
+        r.print();
+    }
+
+    #[test]
+    fn bt2020_to_srgb_accuracy() {
+        let src = full_rgb_cube();
+        let truth = ground_truth_u8(
+            &src,
+            &BT2020_TO_SRGB_F64,
+            bt709_to_linear_f64,
+            linear_to_srgb_f64,
+        );
+        let fast_fn = build_lite_u8_transform(
+            ColorProfileSource::Named(NamedProfile::Bt2020),
+            ColorProfileSource::Named(NamedProfile::Srgb),
+        );
+        let r = compare_accuracy(
+            "BT.2020 SDR->sRGB",
+            &src,
+            &truth,
+            &*fast_fn,
+            &ColorProfile::new_bt2020(),
+            &ColorProfile::new_srgb(),
+        );
+        r.print();
+    }
+
+    #[test]
+    fn adobergb_to_srgb_accuracy() {
+        let src = full_rgb_cube();
+        let truth = ground_truth_u8(
+            &src,
+            &ADOBERGB_TO_SRGB_F64,
+            |v| v.powf(ADOBE_GAMMA),
+            linear_to_srgb_f64,
+        );
+        let fast_fn = build_lite_u8_transform(
+            ColorProfileSource::Named(NamedProfile::AdobeRgb),
+            ColorProfileSource::Named(NamedProfile::Srgb),
+        );
+        let r = compare_accuracy(
+            "AdobeRGB->sRGB",
+            &src,
+            &truth,
+            &*fast_fn,
+            &ColorProfile::new_adobe_rgb(),
+            &ColorProfile::new_srgb(),
+        );
+        r.print();
+    }
+}
+
+// ===========================================================================
+// Gamut reduction comparison tests (moved from tests/gamut_reduction_compare.rs)
+//
+// These tests compare fast_gamut vs moxcms output pixel-by-pixel. They live
+// here because they need access to the pub(crate) ZenCmsLite::build_source_transform
+// method.
+// ===========================================================================
+
+#[cfg(test)]
+#[cfg(feature = "cms-moxcms")]
+mod gamut_reduction_compare_tests {
+    use super::*;
+    use crate::{ColorProfileSource, NamedProfile, PixelFormat};
+    use moxcms::{
+        BarycentricWeightScale, ColorProfile, InterpolationMethod, Layout, RenderingIntent,
+        TransformOptions,
+    };
+
+    fn moxcms_opts() -> TransformOptions {
+        TransformOptions {
+            rendering_intent: RenderingIntent::RelativeColorimetric,
+            allow_use_cicp_transfer: false,
+            barycentric_weight_scale: BarycentricWeightScale::High,
+            interpolation_method: InterpolationMethod::Tetrahedral,
+            ..Default::default()
+        }
+    }
+
+    /// Build a ZenCmsLite u8 RGB transform as a closure.
+    fn build_lite_u8_fn(
+        src_profile: ColorProfileSource<'_>,
+        dst_profile: ColorProfileSource<'_>,
+    ) -> alloc::boxed::Box<dyn Fn(&[u8], &mut [u8])> {
+        let cms = ZenCmsLite::default();
+        let xf = cms
+            .build_source_transform(
+                src_profile,
+                dst_profile,
+                PixelFormat::Rgb8,
+                PixelFormat::Rgb8,
+            )
+            .unwrap()
+            .unwrap();
+        alloc::boxed::Box::new(move |src: &[u8], dst: &mut [u8]| {
+            let width = (src.len() / 3) as u32;
+            xf.transform_row(src, dst, width);
+        })
+    }
+
+    /// Build a ZenCmsLite f32 RGB in-place transform as a closure.
+    fn build_lite_f32_fn(
+        src_profile: ColorProfileSource<'_>,
+        dst_profile: ColorProfileSource<'_>,
+    ) -> alloc::boxed::Box<dyn Fn(&mut [f32])> {
+        let cms = ZenCmsLite::default();
+        let xf = cms
+            .build_source_transform(
+                src_profile,
+                dst_profile,
+                PixelFormat::RgbF32,
+                PixelFormat::RgbF32,
+            )
+            .unwrap()
+            .unwrap();
+        alloc::boxed::Box::new(move |data: &mut [f32]| {
+            let width = (data.len() / 3) as u32;
+            let bytes: &[u8] = bytemuck::cast_slice(data);
+            // transform_row needs separate src/dst; copy src first.
+            let src_copy = bytes.to_vec();
+            let dst_bytes: &mut [u8] = bytemuck::cast_slice_mut(data);
+            xf.transform_row(&src_copy, dst_bytes, width);
+        })
+    }
+
+    /// Compare fast_gamut output vs moxcms for a full 256^3 sweep.
+    /// Returns (max_delta, differing_pixel_count, total_pixels, example_worst).
+    fn compare_exhaustive_u8(
+        fast_fn: &dyn Fn(&[u8], &mut [u8]),
+        moxcms_src: &ColorProfile,
+        moxcms_dst: &ColorProfile,
+    ) -> (u8, usize, usize, Option<([u8; 3], [u8; 3], [u8; 3])>) {
+        let opts = moxcms_opts();
+        let xform = moxcms_src
+            .create_transform_8bit(Layout::Rgb, moxcms_dst, Layout::Rgb, opts)
+            .unwrap();
+
+        let total = 256 * 256 * 256;
+        let mut src = vec![0u8; total * 3];
+        for i in 0..total {
+            src[i * 3] = (i & 0xFF) as u8;
+            src[i * 3 + 1] = ((i >> 8) & 0xFF) as u8;
+            src[i * 3 + 2] = ((i >> 16) & 0xFF) as u8;
+        }
+
+        let mut fast_dst = vec![0u8; src.len()];
+        let mut mox_dst = vec![0u8; src.len()];
+
+        fast_fn(&src, &mut fast_dst);
+        xform.transform(&src, &mut mox_dst).unwrap();
+
+        let mut max_delta: u8 = 0;
+        let mut diff_count: usize = 0;
+        let mut worst: Option<([u8; 3], [u8; 3], [u8; 3])> = None;
+
+        for i in 0..total {
+            let off = i * 3;
+            let f = [fast_dst[off], fast_dst[off + 1], fast_dst[off + 2]];
+            let m = [mox_dst[off], mox_dst[off + 1], mox_dst[off + 2]];
+            let s = [src[off], src[off + 1], src[off + 2]];
+
+            if f != m {
+                diff_count += 1;
+                for ch in 0..3 {
+                    let d = f[ch].abs_diff(m[ch]);
+                    if d > max_delta {
+                        max_delta = d;
+                        worst = Some((s, f, m));
+                    }
+                }
+            }
+        }
+
+        (max_delta, diff_count, total, worst)
+    }
+
+    /// Same comparison but for f32, sampling a grid (not full 256^3).
+    fn compare_f32_grid(
+        fast_fn: &dyn Fn(&mut [f32]),
+        moxcms_src: &ColorProfile,
+        moxcms_dst: &ColorProfile,
+        step: usize,
+    ) -> (f32, usize, usize) {
+        let opts = moxcms_opts();
+        let xform = moxcms_src
+            .create_transform_f32(Layout::Rgb, moxcms_dst, Layout::Rgb, opts)
+            .unwrap();
+
+        let steps = (256 + step - 1) / step;
+        let total = steps * steps * steps;
+        let mut src = vec![0.0f32; total * 3];
+        let mut idx = 0;
+        for r in (0..=255).step_by(step) {
+            for g in (0..=255).step_by(step) {
+                for b in (0..=255).step_by(step) {
+                    src[idx * 3] = r as f32 / 255.0;
+                    src[idx * 3 + 1] = g as f32 / 255.0;
+                    src[idx * 3 + 2] = b as f32 / 255.0;
+                    idx += 1;
+                }
+            }
+        }
+
+        let mut fast_buf = src.clone();
+        let mut mox_dst = vec![0.0f32; src.len()];
+
+        fast_fn(&mut fast_buf);
+        xform.transform(&src, &mut mox_dst).unwrap();
+
+        let mut max_delta: f32 = 0.0;
+        let mut diff_count: usize = 0;
+
+        for i in 0..idx {
+            let off = i * 3;
+            for ch in 0..3 {
+                let d = (fast_buf[off + ch] - mox_dst[off + ch]).abs();
+                if d > 1e-6 {
+                    diff_count += 1;
+                }
+                if d > max_delta {
+                    max_delta = d;
+                }
+            }
+        }
+
+        (max_delta, diff_count, idx)
+    }
+
+    // =====================================================================
+    // Tests
+    // =====================================================================
+
+    #[test]
+    fn p3_to_srgb_u8_vs_moxcms() {
+        let fast_fn = build_lite_u8_fn(
+            ColorProfileSource::Named(NamedProfile::DisplayP3),
+            ColorProfileSource::Named(NamedProfile::Srgb),
+        );
+        let (max_delta, diff_count, total, worst) = compare_exhaustive_u8(
+            &*fast_fn,
+            &ColorProfile::new_display_p3(),
+            &ColorProfile::new_srgb(),
+        );
+        eprintln!("P3->sRGB u8: {diff_count}/{total} pixels differ, max delta={max_delta}");
+        if let Some((src, fast, mox)) = worst {
+            eprintln!("  worst: src={src:?} fast={fast:?} moxcms={mox:?}");
+        }
+        assert!(
+            max_delta <= 2,
+            "P3->sRGB u8: max delta {max_delta} > 2 -- moxcms may use a different algorithm"
+        );
+    }
+
+    #[test]
+    fn srgb_to_p3_u8_vs_moxcms() {
+        let fast_fn = build_lite_u8_fn(
+            ColorProfileSource::Named(NamedProfile::Srgb),
+            ColorProfileSource::Named(NamedProfile::DisplayP3),
+        );
+        let (max_delta, diff_count, total, worst) = compare_exhaustive_u8(
+            &*fast_fn,
+            &ColorProfile::new_srgb(),
+            &ColorProfile::new_display_p3(),
+        );
+        eprintln!("sRGB->P3 u8: {diff_count}/{total} pixels differ, max delta={max_delta}");
+        if let Some((src, fast, mox)) = worst {
+            eprintln!("  worst: src={src:?} fast={fast:?} moxcms={mox:?}");
+        }
+        assert!(max_delta <= 2, "sRGB->P3 u8: max delta {max_delta} > 2");
+    }
+
+    #[test]
+    fn bt2020_sdr_to_srgb_u8_vs_moxcms() {
+        let fast_fn = build_lite_u8_fn(
+            ColorProfileSource::Named(NamedProfile::Bt2020),
+            ColorProfileSource::Named(NamedProfile::Srgb),
+        );
+        let (max_delta, diff_count, total, worst) = compare_exhaustive_u8(
+            &*fast_fn,
+            &ColorProfile::new_bt2020(),
+            &ColorProfile::new_srgb(),
+        );
+        eprintln!(
+            "BT.2020 SDR->sRGB u8: {diff_count}/{total} pixels differ, max delta={max_delta}"
+        );
+        if let Some((src, fast, mox)) = worst {
+            eprintln!("  worst: src={src:?} fast={fast:?} moxcms={mox:?}");
+        }
+        assert!(
+            max_delta <= 3,
+            "BT.2020->sRGB u8: max delta {max_delta} > 3 -- check if moxcms does gamut mapping"
+        );
+    }
+
+    #[test]
+    fn adobergb_to_srgb_u8_vs_moxcms() {
+        let fast_fn = build_lite_u8_fn(
+            ColorProfileSource::Named(NamedProfile::AdobeRgb),
+            ColorProfileSource::Named(NamedProfile::Srgb),
+        );
+        let (max_delta, diff_count, total, worst) = compare_exhaustive_u8(
+            &*fast_fn,
+            &ColorProfile::new_adobe_rgb(),
+            &ColorProfile::new_srgb(),
+        );
+        eprintln!("AdobeRGB->sRGB u8: {diff_count}/{total} pixels differ, max delta={max_delta}");
+        if let Some((src, fast, mox)) = worst {
+            eprintln!("  worst: src={src:?} fast={fast:?} moxcms={mox:?}");
+        }
+        assert!(
+            max_delta <= 2,
+            "AdobeRGB->sRGB u8: max delta {max_delta} > 2"
+        );
+    }
+
+    #[test]
+    fn p3_to_srgb_f32_vs_moxcms() {
+        let fast_fn = build_lite_f32_fn(
+            ColorProfileSource::Named(NamedProfile::DisplayP3),
+            ColorProfileSource::Named(NamedProfile::Srgb),
+        );
+        let (max_delta, diff_count, total) = compare_f32_grid(
+            &*fast_fn,
+            &ColorProfile::new_display_p3(),
+            &ColorProfile::new_srgb(),
+            4,
+        );
+        eprintln!(
+            "P3->sRGB f32: {diff_count}/{total}x3 channels differ >1e-6, max delta={max_delta:.6e}"
+        );
+        assert!(
+            max_delta < 0.01,
+            "P3->sRGB f32: max delta {max_delta} -- unexpected divergence"
+        );
+    }
+
+    #[test]
+    fn bt2020_to_srgb_f32_vs_moxcms() {
+        let fast_fn = build_lite_f32_fn(
+            ColorProfileSource::Named(NamedProfile::Bt2020),
+            ColorProfileSource::Named(NamedProfile::Srgb),
+        );
+        let (max_delta, diff_count, total) = compare_f32_grid(
+            &*fast_fn,
+            &ColorProfile::new_bt2020(),
+            &ColorProfile::new_srgb(),
+            4,
+        );
+        eprintln!(
+            "BT.2020->sRGB f32: {diff_count}/{total}x3 channels differ >1e-6, max delta={max_delta:.6e}"
+        );
+        assert!(max_delta < 0.01, "BT.2020->sRGB f32: max delta {max_delta}");
     }
 }

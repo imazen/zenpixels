@@ -300,30 +300,8 @@ impl ColorManagement for MoxCms {
         identify_by_colorants(&profile)
     }
 
-    fn build_source_transform(
-        &self,
-        src: crate::ColorProfileSource<'_>,
-        dst: crate::ColorProfileSource<'_>,
-        src_format: PixelFormat,
-        dst_format: PixelFormat,
-    ) -> Option<Result<Box<dyn RowTransform>, Self::Error>> {
-        let src_profile = match source_to_moxcms_profile(&src) {
-            Ok(Some(p)) => p,
-            Ok(None) => return None,
-            Err(e) => return Some(Err(e)),
-        };
-        let dst_profile = match source_to_moxcms_profile(&dst) {
-            Ok(Some(p)) => p,
-            Ok(None) => return None,
-            Err(e) => return Some(Err(e)),
-        };
-        Some(build_transform_inner(
-            &src_profile,
-            &dst_profile,
-            src_format,
-            dst_format,
-        ))
-    }
+    // TODO(0.3.0): implement build_source_transform once the trait method
+    // is added. The plumbing (source_to_moxcms_profile) is already here.
 }
 
 /// Convert a [`ColorProfileSource`] to a moxcms [`ColorProfile`].
