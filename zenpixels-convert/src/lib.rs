@@ -391,7 +391,8 @@ pub(crate) mod negotiate;
 
 pub mod adapt;
 pub mod cms;
-// Internal fast-path CMS — always compiled, pub(crate).
+// Internal fast-path CMS — requires zenpixels/icc for profile identification.
+#[cfg(feature = "std")]
 #[allow(
     dead_code,
     unused_variables,
@@ -404,7 +405,8 @@ pub(crate) mod cms_lite;
 pub mod cms_moxcms;
 pub mod converter;
 pub mod ext;
-// Internal fast-path CMS — always compiled, pub(crate).
+// Internal fast-path gamut kernels — requires zenpixels/icc for TRC dispatch.
+#[cfg(feature = "std")]
 #[allow(
     dead_code,
     unexpected_cfgs,

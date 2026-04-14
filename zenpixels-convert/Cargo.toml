@@ -26,7 +26,7 @@ exclude = [
 
 [features]
 default = ["std"]
-std = ["zenpixels/std", "linear-srgb/std", "garb/std"]
+std = ["zenpixels/std", "zenpixels/icc", "linear-srgb/std", "garb/std"]
 rgb = ["zenpixels/rgb", "dep:rgb"]
 imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]
