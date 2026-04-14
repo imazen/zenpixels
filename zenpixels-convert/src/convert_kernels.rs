@@ -148,6 +148,14 @@ pub(super) fn apply_step_u8(
             linear_f32_to_srgb_f32(src, dst, w, from.layout().channels());
         }
 
+        ConvertStep::SrgbF32ToLinearF32Extended => {
+            srgb_f32_to_linear_f32_extended(src, dst, w, from.layout().channels());
+        }
+
+        ConvertStep::LinearF32ToSrgbF32Extended => {
+            linear_f32_to_srgb_f32_extended(src, dst, w, from.layout().channels());
+        }
+
         ConvertStep::Bt709F32ToLinearF32 => {
             bt709_f32_to_linear_f32(src, dst, w, from.layout().channels());
         }
@@ -893,6 +901,24 @@ fn linear_f32_to_srgb_f32(src: &[u8], dst: &mut [u8], width: usize, channels: us
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
     dstf[..count].copy_from_slice(&srcf[..count]);
     linear_srgb::default::linear_to_srgb_slice(&mut dstf[..count]);
+}
+
+/// sRGB F32 → Linear F32 (extended range, sign-preserving).
+fn srgb_f32_to_linear_f32_extended(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::srgb_to_linear_extended_slice(&mut dstf[..count]);
+}
+
+/// Linear F32 → sRGB F32 (extended range, sign-preserving).
+fn linear_f32_to_srgb_f32_extended(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::linear_to_srgb_extended_slice(&mut dstf[..count]);
 }
 
 /// BT.709 F32 → Linear F32 (EOTF, same depth).

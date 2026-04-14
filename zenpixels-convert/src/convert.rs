@@ -92,10 +92,15 @@ pub(crate) enum ConvertStep {
     HlgF32ToLinearF32,
     /// Linear f32 → HLG f32 [0,1] (OETF, no depth change).
     LinearF32ToHlgF32,
-    /// sRGB f32 [0,1] → linear f32 (EOTF, no depth change).
+    /// sRGB f32 [0,1] → linear f32 (EOTF, no depth change). Clamps input.
     SrgbF32ToLinearF32,
-    /// Linear f32 → sRGB f32 [0,1] (OETF, no depth change).
+    /// Linear f32 → sRGB f32 [0,1] (OETF, no depth change). Clamps output.
     LinearF32ToSrgbF32,
+    /// sRGB f32 → linear f32 (EOTF, sign-preserving extended range).
+    /// Emitted when `ConvertOptions::clip_out_of_gamut == false`.
+    SrgbF32ToLinearF32Extended,
+    /// Linear f32 → sRGB f32 (OETF, sign-preserving extended range).
+    LinearF32ToSrgbF32Extended,
     /// BT.709 f32 [0,1] → linear f32 (EOTF, no depth change).
     Bt709F32ToLinearF32,
     /// Linear f32 → BT.709 f32 [0,1] (OETF, no depth change).
@@ -518,6 +523,24 @@ impl ConvertPlan {
             for step in &mut plan.steps {
                 if matches!(step, ConvertStep::DropAlpha) {
                     *step = ConvertStep::MatteComposite { r, g, b };
+                }
+            }
+        }
+
+        // When the caller opts out of clipping, swap pure-f32 sRGB transfer
+        // steps for their sign-preserving extended-range counterparts.
+        // Fused u8/u16 matlut steps are unaffected (integer I/O can't
+        // represent extended range anyway).
+        if !options.clip_out_of_gamut {
+            for step in &mut plan.steps {
+                match step {
+                    ConvertStep::SrgbF32ToLinearF32 => {
+                        *step = ConvertStep::SrgbF32ToLinearF32Extended;
+                    }
+                    ConvertStep::LinearF32ToSrgbF32 => {
+                        *step = ConvertStep::LinearF32ToSrgbF32Extended;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1134,6 +1157,9 @@ fn are_inverse(a: ConvertStep, b: ConvertStep) -> bool {
         | (ConvertStep::LinearF32ToPqU16, ConvertStep::PqU16ToLinearF32)
         | (ConvertStep::HlgU16ToLinearF32, ConvertStep::LinearF32ToHlgU16)
         | (ConvertStep::LinearF32ToHlgU16, ConvertStep::HlgU16ToLinearF32)
+        // Extended-range sRGB f32 pairs
+        | (ConvertStep::SrgbF32ToLinearF32Extended, ConvertStep::LinearF32ToSrgbF32Extended)
+        | (ConvertStep::LinearF32ToSrgbF32Extended, ConvertStep::SrgbF32ToLinearF32Extended)
     )
 }
 
@@ -1216,6 +1242,7 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
         | ConvertStep::PqF32ToLinearF32
         | ConvertStep::HlgF32ToLinearF32
         | ConvertStep::SrgbF32ToLinearF32
+        | ConvertStep::SrgbF32ToLinearF32Extended
         | ConvertStep::Bt709F32ToLinearF32 => PixelDescriptor::new(
             ChannelType::F32,
             current.layout(),
@@ -1256,12 +1283,14 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
             current.alpha(),
             TransferFunction::Hlg,
         ),
-        ConvertStep::LinearF32ToSrgbF32 => PixelDescriptor::new(
-            ChannelType::F32,
-            current.layout(),
-            current.alpha(),
-            TransferFunction::Srgb,
-        ),
+        ConvertStep::LinearF32ToSrgbF32 | ConvertStep::LinearF32ToSrgbF32Extended => {
+            PixelDescriptor::new(
+                ChannelType::F32,
+                current.layout(),
+                current.alpha(),
+                TransferFunction::Srgb,
+            )
+        }
         ConvertStep::LinearF32ToBt709F32 => PixelDescriptor::new(
             ChannelType::F32,
             current.layout(),

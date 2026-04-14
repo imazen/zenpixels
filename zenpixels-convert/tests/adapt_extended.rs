@@ -2,7 +2,7 @@
 //! and edge cases not covered by the basic adapt tests.
 
 use zenpixels_convert::adapt::{adapt_for_encode, adapt_for_encode_explicit, convert_buffer};
-use zenpixels_convert::policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GrayExpand};
+use zenpixels_convert::policy::{AlphaPolicy, ConvertOptions, DepthPolicy};
 use zenpixels_convert::{ConvertError, PixelDescriptor};
 
 use alloc::borrow::Cow;
@@ -82,12 +82,8 @@ fn explicit_depth_forbid_returns_error() {
         data[i * 2 + 1] = bytes[1];
     }
 
-    let options = ConvertOptions {
-        gray_expand: GrayExpand::Broadcast,
-        alpha_policy: AlphaPolicy::DiscardUnchecked,
-        depth_policy: DepthPolicy::Forbid,
-        luma: None,
-    };
+    let options =
+        ConvertOptions::forbid_lossy().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
 
     let result = adapt_for_encode_explicit(
         &data,
@@ -109,12 +105,7 @@ fn explicit_alpha_forbid_returns_error() {
     // Source is RGBA8, target is RGB8 — alpha removal.
     let data = vec![100, 150, 200, 255];
 
-    let options = ConvertOptions {
-        gray_expand: GrayExpand::Broadcast,
-        alpha_policy: AlphaPolicy::Forbid,
-        depth_policy: DepthPolicy::Round,
-        luma: None,
-    };
+    let options = ConvertOptions::forbid_lossy().with_depth_policy(DepthPolicy::Round);
 
     let result = adapt_for_encode_explicit(
         &data,
@@ -136,12 +127,7 @@ fn explicit_discard_if_opaque_succeeds_when_opaque() {
     // Fully opaque RGBA8 → RGB8 with DiscardIfOpaque should succeed.
     let data = vec![100, 150, 200, 255, 50, 100, 150, 255];
 
-    let options = ConvertOptions {
-        gray_expand: GrayExpand::Broadcast,
-        alpha_policy: AlphaPolicy::DiscardIfOpaque,
-        depth_policy: DepthPolicy::Round,
-        luma: None,
-    };
+    let options = ConvertOptions::permissive().with_luma(None);
 
     let result = adapt_for_encode_explicit(
         &data,
@@ -164,12 +150,7 @@ fn explicit_discard_if_opaque_fails_when_semitransparent() {
     // Semi-transparent RGBA8 → RGB8 with DiscardIfOpaque should fail.
     let data = vec![100, 150, 200, 128]; // alpha = 128
 
-    let options = ConvertOptions {
-        gray_expand: GrayExpand::Broadcast,
-        alpha_policy: AlphaPolicy::DiscardIfOpaque,
-        depth_policy: DepthPolicy::Round,
-        luma: None,
-    };
+    let options = ConvertOptions::permissive().with_luma(None);
 
     let result = adapt_for_encode_explicit(
         &data,

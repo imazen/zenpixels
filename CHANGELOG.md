@@ -7,6 +7,13 @@ These are deferred to the next minor release to batch semver breaks.
 ### zenpixels
 
 - **`repr(u8)` removal** from `ColorPrimaries` and `TransferFunction`.
+- **`ConvertOptions` → `#[non_exhaustive]`** + new
+  `clip_out_of_gamut: bool` field (default `true`). Construct via
+  `ConvertOptions::forbid_lossy()` / `::permissive()` + `with_*` builders
+  instead of struct literals. Set `with_clip_out_of_gamut(false)` to emit
+  sign-preserving extended-range f32 sRGB transfers, preserving negative
+  and supernormal values for HDR / wide-gamut pipelines that defer tone or
+  gamut mapping to a later stage.
 
 ### zenpixels-convert
 

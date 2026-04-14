@@ -172,7 +172,7 @@ mod tests {
 
     use super::*;
     use crate::convert::ConvertPlan;
-    use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GrayExpand};
+    use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy};
     use crate::{AlphaMode, ChannelLayout, ChannelType, ConvertError, TransferFunction};
 
     /// Helper: build a RowConverter and convert a single pixel.
@@ -921,12 +921,7 @@ mod tests {
     fn new_explicit_alpha_forbid() {
         let from = PixelDescriptor::RGBA8_SRGB;
         let to = PixelDescriptor::RGB8_SRGB;
-        let opts = ConvertOptions {
-            gray_expand: GrayExpand::Broadcast,
-            alpha_policy: AlphaPolicy::Forbid,
-            depth_policy: DepthPolicy::Round,
-            luma: None,
-        };
+        let opts = ConvertOptions::forbid_lossy().with_depth_policy(DepthPolicy::Round);
         let err = ConvertPlan::new_explicit(from, to, &opts).unwrap_err();
         assert_eq!(*err.error(), ConvertError::AlphaRemovalForbidden);
     }
@@ -940,24 +935,16 @@ mod tests {
             TransferFunction::Srgb,
         );
         let to = PixelDescriptor::RGB8_SRGB;
-        let opts = ConvertOptions {
-            gray_expand: GrayExpand::Broadcast,
-            alpha_policy: AlphaPolicy::DiscardUnchecked,
-            depth_policy: DepthPolicy::Forbid,
-            luma: None,
-        };
+        let opts = ConvertOptions::forbid_lossy().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
         let err = ConvertPlan::new_explicit(from, to, &opts).unwrap_err();
         assert_eq!(*err.error(), ConvertError::DepthReductionForbidden);
     }
 
     #[test]
     fn new_explicit_rgb_to_gray_requires_luma() {
-        let opts = ConvertOptions {
-            gray_expand: GrayExpand::Broadcast,
-            alpha_policy: AlphaPolicy::DiscardUnchecked,
-            depth_policy: DepthPolicy::Round,
-            luma: None,
-        };
+        let opts = ConvertOptions::forbid_lossy()
+            .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
+            .with_depth_policy(DepthPolicy::Round);
         let err = ConvertPlan::new_explicit(
             PixelDescriptor::RGB8_SRGB,
             PixelDescriptor::GRAY8_SRGB,
@@ -969,12 +956,8 @@ mod tests {
 
     #[test]
     fn new_explicit_allows_when_policies_permit() {
-        let opts = ConvertOptions {
-            gray_expand: GrayExpand::Broadcast,
-            alpha_policy: AlphaPolicy::DiscardUnchecked,
-            depth_policy: DepthPolicy::Round,
-            luma: Some(crate::policy::LumaCoefficients::Bt709),
-        };
+        let opts =
+            ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
         let plan = ConvertPlan::new_explicit(
             PixelDescriptor::RGBA8_SRGB,
             PixelDescriptor::GRAY8_SRGB,
@@ -982,6 +965,69 @@ mod tests {
         )
         .unwrap();
         assert!(!plan.is_identity());
+    }
+
+    #[test]
+    fn clip_out_of_gamut_false_preserves_negatives() {
+        // P3 pure green → sRGB produces negative red (out of sRGB gamut).
+        // With clip_out_of_gamut=false, the extended-range transfer must
+        // preserve those negatives instead of clamping to zero.
+        let p3 = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Srgb,
+        )
+        .with_primaries(zenpixels::ColorPrimaries::DisplayP3);
+        let srgb = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Srgb,
+        );
+
+        let opts = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+        let mut conv = crate::RowConverter::new_explicit(p3, srgb, &opts).unwrap();
+
+        let src: [f32; 3] = [0.0, 1.0, 0.0];
+        let mut dst = [0.0f32; 3];
+        conv.convert_row(bytemuck::cast_slice(&src), bytemuck::cast_slice_mut(&mut dst), 1);
+        assert!(
+            dst[0] < 0.0,
+            "extended range should preserve negative red, got {}",
+            dst[0]
+        );
+    }
+
+    #[test]
+    fn clip_out_of_gamut_true_clamps_negatives() {
+        // Default clip_out_of_gamut=true clamps sRGB transfer to [0, 1].
+        let p3 = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Srgb,
+        )
+        .with_primaries(zenpixels::ColorPrimaries::DisplayP3);
+        let srgb = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Srgb,
+        );
+
+        let opts = ConvertOptions::permissive();
+        assert!(opts.clip_out_of_gamut);
+        let mut conv = crate::RowConverter::new_explicit(p3, srgb, &opts).unwrap();
+
+        let src: [f32; 3] = [0.0, 1.0, 0.0];
+        let mut dst = [0.0f32; 3];
+        conv.convert_row(bytemuck::cast_slice(&src), bytemuck::cast_slice_mut(&mut dst), 1);
+        assert!(
+            dst[0] >= 0.0,
+            "clamped path should not produce negatives, got {}",
+            dst[0]
+        );
     }
 
     // -----------------------------------------------------------------------

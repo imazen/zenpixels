@@ -64,33 +64,32 @@ use crate::{Cicp, PixelFormat};
 ///
 /// # Extended range
 ///
-/// By default, f32 conversions clamp to \[0, 1\] and use fused SIMD kernels
-/// (~4 GiB/s). Set `extended: true` to preserve out-of-gamut values
-/// (negatives, >1.0) for HDR or cross-gamut workflows that need to defer
-/// tone mapping or gamut mapping to a later stage. The extended path is
-/// scalar (~200 MiB/s) because sign-preserving TRC requires per-channel
-/// branching.
+/// `ZenCmsLite` delegates to [`RowConverter`] with default
+/// [`ConvertOptions`], which clamps f32 sRGB transfers to \[0, 1\]. To
+/// preserve out-of-gamut values (negatives, >1.0) for HDR or cross-gamut
+/// workflows, build the converter directly with
+/// `ConvertOptions::permissive().with_clip_out_of_gamut(false)` instead of
+/// routing through `ZenCmsLite`.
 ///
-/// ```rust,ignore
-/// // Fast (default): clamp to [0,1], fused SIMD
-/// let cms = ZenCmsLite::default();
-///
-/// // Extended: preserve out-of-gamut, scalar powf
-/// let cms = ZenCmsLite::extended();
-/// ```
+/// [`RowConverter`]: crate::RowConverter
+/// [`ConvertOptions`]: crate::policy::ConvertOptions
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ZenCmsLite {
-    /// Preserve out-of-gamut values (negatives, >1.0) in f32 conversions.
-    /// Default: `true` — extended range is now the default behavior of
-    /// the f32 sRGB transfer kernels. This field is kept for API
-    /// compatibility but no longer controls behavior.
-    #[deprecated(note = "extended range is now default; field is inert")]
+    /// Inert field kept for API compatibility. Use
+    /// [`ConvertOptions::clip_out_of_gamut`] on `RowConverter` for
+    /// extended-range control.
+    ///
+    /// [`ConvertOptions::clip_out_of_gamut`]: crate::policy::ConvertOptions::clip_out_of_gamut
+    #[deprecated(note = "use ConvertOptions::clip_out_of_gamut on RowConverter")]
     pub extended: bool,
 }
 
 impl ZenCmsLite {
-    /// Back-compat alias for `ZenCmsLite::default()`.
-    #[deprecated(note = "use `ZenCmsLite::default()`; extended range is always on")]
+    /// Back-compat alias for `ZenCmsLite::default()`. The `extended` field
+    /// is inert; use
+    /// `ConvertOptions::permissive().with_clip_out_of_gamut(false)` on
+    /// `RowConverter` for extended-range f32 transfers.
+    #[deprecated(note = "use ConvertOptions::clip_out_of_gamut on RowConverter")]
     pub const fn extended() -> Self {
         #[allow(deprecated)]
         Self { extended: true }
