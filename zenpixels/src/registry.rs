@@ -15,7 +15,6 @@
 //!
 //! The Bradford chromatic adaptation is only needed when white points differ.
 
-use crate::cicp::Cicp;
 use crate::color::NamedProfile;
 use crate::{ColorPrimaries, TransferFunction};
 
@@ -63,12 +62,6 @@ pub const REGISTRY: &[KnownColorSpace] = &[
         named: Some(NamedProfile::Bt2020Pq),
     },
     KnownColorSpace {
-        primaries: ColorPrimaries::Bt2020,
-        transfer: TransferFunction::Hlg,
-        cicp: Some((9, 18)),
-        named: Some(NamedProfile::Bt2020Hlg),
-    },
-    KnownColorSpace {
         primaries: ColorPrimaries::AdobeRgb,
         transfer: TransferFunction::Gamma22,
         cicp: None,
@@ -96,12 +89,6 @@ pub const REGISTRY: &[KnownColorSpace] = &[
         primaries: ColorPrimaries::Bt2020,
         transfer: TransferFunction::Linear,
         cicp: Some((9, 8)),
-        named: None,
-    },
-    KnownColorSpace {
-        primaries: ColorPrimaries::ProPhoto,
-        transfer: TransferFunction::Gamma18,
-        cicp: None,
         named: None,
     },
     KnownColorSpace {
@@ -447,7 +434,6 @@ mod tests {
             (ColorPrimaries::DisplayP3, ColorPrimaries::Bt2020),
             (ColorPrimaries::DciP3, ColorPrimaries::Bt709),
             (ColorPrimaries::Bt709, ColorPrimaries::DciP3),
-            (ColorPrimaries::ProPhoto, ColorPrimaries::Bt709),
         ];
         for (src, dst) in pairs {
             let m = gamut_matrix(src, dst).unwrap();

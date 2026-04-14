@@ -31,7 +31,7 @@ pub enum ColorProfileSource<'a> {
     ///
     /// Covers the full `ColorPrimaries × TransferFunction` matrix,
     /// including combinations that don't have a [`NamedProfile`] variant
-    /// or a CICP mapping (e.g., Adobe RGB, DCI-P3, ProPhoto, ACES).
+    /// or a CICP mapping (e.g., Adobe RGB, DCI-P3).
     ///
     /// A CMS backend that handles this variant can avoid ICC profile
     /// parsing entirely for known primaries/transfer combinations.
@@ -56,8 +56,6 @@ pub enum NamedProfile {
     Bt2020,
     /// BT.2020 with PQ transfer (HDR10, SMPTE ST 2084).
     Bt2020Pq,
-    /// BT.2020 with HLG transfer (ARIB STD-B67, HDR broadcast).
-    Bt2020Hlg,
     /// Adobe RGB (1998). Used in print workflows.
     AdobeRgb,
     /// Linear sRGB (sRGB primaries, gamma 1.0).
@@ -67,7 +65,7 @@ pub enum NamedProfile {
 impl NamedProfile {
     /// Map CICP parameters to a well-known named profile.
     ///
-    /// Recognizes sRGB, Display P3, BT.2020 (SDR), BT.2100 PQ, BT.2100 HLG,
+    /// Recognizes sRGB, Display P3, BT.2020 (SDR), BT.2100 PQ,
     /// and Linear sRGB. Returns `None` for unrecognized combinations.
     pub const fn from_cicp(cicp: Cicp) -> Option<Self> {
         // Match on (primaries, transfer, matrix, full_range).
@@ -81,7 +79,6 @@ impl NamedProfile {
             (12, 13, 0) => Some(Self::DisplayP3),
             (9, 1, 0) => Some(Self::Bt2020),
             (9, 16, _) => Some(Self::Bt2020Pq), // BT.2100 PQ (any matrix)
-            (9, 18, _) => Some(Self::Bt2020Hlg), // BT.2100 HLG (any matrix)
             (1, 8, 0) => Some(Self::LinearSrgb),
             _ => None,
         }
@@ -99,7 +96,6 @@ impl NamedProfile {
                 full_range: true,
             }),
             Self::Bt2020Pq => Some(Cicp::BT2100_PQ),
-            Self::Bt2020Hlg => Some(Cicp::BT2100_HLG),
             Self::LinearSrgb => Some(Cicp {
                 color_primaries: 1,
                 transfer_characteristics: 8,
@@ -117,7 +113,6 @@ impl NamedProfile {
             Self::DisplayP3 => (ColorPrimaries::DisplayP3, TransferFunction::Srgb),
             Self::Bt2020 => (ColorPrimaries::Bt2020, TransferFunction::Bt709),
             Self::Bt2020Pq => (ColorPrimaries::Bt2020, TransferFunction::Pq),
-            Self::Bt2020Hlg => (ColorPrimaries::Bt2020, TransferFunction::Hlg),
             Self::AdobeRgb => (ColorPrimaries::AdobeRgb, TransferFunction::Gamma22),
             Self::LinearSrgb => (ColorPrimaries::Bt709, TransferFunction::Linear),
         }
@@ -136,7 +131,6 @@ impl NamedProfile {
             (ColorPrimaries::DisplayP3, TransferFunction::Srgb) => Some(Self::DisplayP3),
             (ColorPrimaries::Bt2020, TransferFunction::Bt709) => Some(Self::Bt2020),
             (ColorPrimaries::Bt2020, TransferFunction::Pq) => Some(Self::Bt2020Pq),
-            (ColorPrimaries::Bt2020, TransferFunction::Hlg) => Some(Self::Bt2020Hlg),
             (ColorPrimaries::AdobeRgb, TransferFunction::Gamma22) => Some(Self::AdobeRgb),
             (ColorPrimaries::Bt709, TransferFunction::Linear) => Some(Self::LinearSrgb),
             _ => None,
@@ -508,10 +502,6 @@ mod tests {
             NamedProfile::from_cicp(Cicp::BT2100_PQ),
             Some(NamedProfile::Bt2020Pq)
         );
-        assert_eq!(
-            NamedProfile::from_cicp(Cicp::BT2100_HLG),
-            Some(NamedProfile::Bt2020Hlg)
-        );
         // Linear sRGB
         assert_eq!(
             NamedProfile::from_cicp(Cicp::new(1, 8, 0, true)),
@@ -533,7 +523,6 @@ mod tests {
             NamedProfile::DisplayP3,
             NamedProfile::Bt2020,
             NamedProfile::Bt2020Pq,
-            NamedProfile::Bt2020Hlg,
             NamedProfile::LinearSrgb,
         ] {
             let cicp = profile.to_cicp().unwrap();
@@ -622,14 +611,6 @@ mod tests {
     }
 
     #[test]
-    fn color_context_hlg_transfer() {
-        assert_eq!(
-            ColorContext::from_cicp(Cicp::BT2100_HLG).transfer_function(),
-            TransferFunction::Hlg
-        );
-    }
-
-    #[test]
     fn color_context_eq_and_clone() {
         let a = ColorContext::from_cicp(Cicp::SRGB);
         let b = a.clone();
@@ -684,7 +665,6 @@ mod tests {
         assert!(NamedProfile::DisplayP3.to_cicp().is_some());
         assert!(NamedProfile::Bt2020.to_cicp().is_some());
         assert!(NamedProfile::Bt2020Pq.to_cicp().is_some());
-        assert!(NamedProfile::Bt2020Hlg.to_cicp().is_some());
         assert!(NamedProfile::LinearSrgb.to_cicp().is_some());
         assert!(NamedProfile::AdobeRgb.to_cicp().is_none());
     }

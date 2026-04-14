@@ -6,7 +6,7 @@
 //!   profiles (~100ns, no allocation).
 //!
 //! - **Hash-based identification**: [`identify`] recognizes 132
-//!   well-known profiles (sRGB, Display P3, BT.2020, Adobe RGB, ProPhoto,
+//!   well-known profiles (sRGB, Display P3, BT.2020, Adobe RGB,
 //!   grayscale) via normalized FNV-1a hash lookup (~100ns).
 //!
 //! The hash table covers profiles found in a web corpus of 55,539 spidered
@@ -296,7 +296,7 @@ pub fn inspect_profile(data: &[u8]) -> Option<ProfileFeatures> {
 ///
 /// Carries the recognized color primaries and transfer function.
 /// These may or may not have CICP equivalents — [`AdobeRgb`](ColorPrimaries::AdobeRgb)
-/// and [`ProPhoto`](ColorPrimaries::ProPhoto) do not.
+/// does not.
 ///
 /// Use [`to_cicp`](Self::to_cicp) to convert to CICP codes when available.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -320,7 +320,7 @@ impl IccIdentification {
 
     /// Convert to CICP codes if both primaries and transfer have CICP equivalents.
     ///
-    /// Returns `None` for non-CICP color spaces (Adobe RGB, ProPhoto, etc.).
+    /// Returns `None` for non-CICP color spaces (Adobe RGB, etc.).
     #[inline]
     pub fn to_cicp(&self) -> Option<crate::Cicp> {
         let cp = self.primaries.to_cicp()?;

@@ -276,7 +276,7 @@ mod tests {
         );
         assert_eq!(
             Cicp::BT2100_HLG.transfer_function_enum(),
-            TransferFunction::Hlg
+            TransferFunction::Unknown
         );
         assert_eq!(
             Cicp::new(1, 255, 0, true).transfer_function_enum(),
@@ -394,12 +394,7 @@ mod tests {
     #[test]
     fn descriptor_roundtrip() {
         use crate::PixelFormat;
-        for cicp in [
-            Cicp::SRGB,
-            Cicp::BT2100_PQ,
-            Cicp::BT2100_HLG,
-            Cicp::DISPLAY_P3,
-        ] {
+        for cicp in [Cicp::SRGB, Cicp::BT2100_PQ, Cicp::DISPLAY_P3] {
             let desc = cicp.to_descriptor(PixelFormat::Rgb8);
             let back = Cicp::from_descriptor(&desc).unwrap();
             assert_eq!(back.color_primaries, cicp.color_primaries);
