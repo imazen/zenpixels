@@ -315,6 +315,20 @@ impl LiteTransform {
     fn transform_u16(&self, src: &[u8], dst: &mut [u8], _width: u32) {
         let src_u16: &[u16] = bytemuck::cast_slice(src);
         let dst_u16: &mut [u16] = bytemuck::cast_slice_mut(dst);
+        // sRGB-in, sRGB-out u16 RGB: use LUT-linearize + SIMD matrix + LUT-encode.
+        if !self.has_alpha
+            && matches!(self.src_trc, TransferFunction::Srgb)
+            && matches!(self.dst_trc, TransferFunction::Srgb)
+        {
+            fast_gamut::convert_u16_rgb_simd_matlut(
+                &self.matrix,
+                src_u16,
+                dst_u16,
+                fast_gamut::srgb_lin_lut_u16(),
+                fast_gamut::srgb_enc_lut_u16(),
+            );
+            return;
+        }
         if self.has_alpha {
             convert_u16_rgba(&self.matrix, src_u16, dst_u16, self.linearize, self.encode);
         } else {
