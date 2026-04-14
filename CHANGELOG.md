@@ -1,5 +1,20 @@
 # Changelog
 
+## Queued breaking changes (for 0.3.0)
+
+These are implemented on the development branch but deferred to the next
+minor release to batch semver breaks.
+
+### zenpixels-convert
+
+- **`ConvertError` → `#[non_exhaustive]`**. Error enums should always be
+  non-exhaustive in a library. Callers with exhaustive `match` on
+  `ConvertError` (no `_ =>` arm) will get a compile error.
+- **`conversion_matrix()` returns `Option<GamutMatrix>`** instead of
+  `Option<&'static GamutMatrix>`. `GamutMatrix` is `Copy` (`[[f32;3];3]`),
+  so callers just drop the `&`. Now delegates to
+  `ColorPrimaries::gamut_matrix_to()`.
+
 ## 0.2.5
 
 ### zenpixels — additions
@@ -29,11 +44,13 @@
   directly from CICP codes, avoiding the ICC serialize→deserialize round-trip.
   `MoxCms` implementation uses `ColorProfile::new_from_cicp()`. Shared
   transform-building logic extracted to `build_transform_inner()`.
-- **`ConvertError::HdrTransferRequiresToneMapping`** — returned by
-  `finalize_for_output()` when a PQ/HLG source targets an SDR output. Prevents
-  silent highlight clipping. Callers must tone map first (e.g., via
-  `ultrahdr_core::color::tonemap::tonemap_image_to_srgb8()`), then retry with
-  SDR metadata.
+- **`ConvertError::HdrTransferRequiresToneMapping`** — error variant for
+  HDR→SDR rejection.
+- **`HdrPolicy`** enum — `Clip` (default) or `RejectWithoutToneMapping`.
+- **`ConvertOutputOptions`** — options struct for `finalize_for_output_with()`,
+  currently controls HDR→SDR behavior via `hdr_policy`.
+- **`finalize_for_output_with()`** — like `finalize_for_output()` but accepts
+  `ConvertOutputOptions` for configurable HDR behavior.
 
 ### zenpixels-convert — behavior change
 
@@ -44,9 +61,11 @@
 - **`SameAsOrigin` no longer invokes the CMS.** It means "keep the color space"
   — only pixel format changes (depth, layout) are applied via `RowConverter`.
   Previously it wastefully built a same-profile-to-same-profile CMS transform.
-- **PQ/HLG → SDR is now rejected.** `finalize_for_output()` returns
-  `HdrTransferRequiresToneMapping` instead of silently clipping. HDR → HDR
-  (SameAsOrigin, Named PQ/HLG) is allowed.
+- **PQ/HLG → SDR now clips by default.** `finalize_for_output()` clips
+  HDR values to the SDR range instead of returning an error. The old reject
+  behavior is available via `finalize_for_output_with()` with
+  `HdrPolicy::RejectWithoutToneMapping`. HDR → HDR (SameAsOrigin, Named
+  PQ/HLG) is always allowed.
 
 ## 0.2.3
 
