@@ -140,55 +140,6 @@ fn build_refs() -> Vec<MatrixRef> {
             green: [-0.0975031, 1.1328999, -0.0498065],
             blue: [-0.0544753, -0.0083494, 1.0723369],
         },
-        // DCI-P3 matrices (include Bradford DCI↔D65 adaptation)
-        MatrixRef {
-            name: "DCIP3_TO_SRGB",
-            matrix: gm(ColorPrimaries::DciP3, ColorPrimaries::Bt709),
-            inverse: Some(gm(ColorPrimaries::Bt709, ColorPrimaries::DciP3)),
-            red: [1.1575165, -0.0415001, -0.0180500],
-            green: [-0.1549624, 1.0455674, -0.0785782],
-            blue: [-0.0025541, -0.0040678, 1.0966280],
-        },
-        MatrixRef {
-            name: "SRGB_TO_DCIP3",
-            matrix: gm(ColorPrimaries::Bt709, ColorPrimaries::DciP3),
-            inverse: Some(gm(ColorPrimaries::DciP3, ColorPrimaries::Bt709)),
-            red: [0.8685798, 0.0345404, 0.0167714],
-            green: [0.1289194, 0.9618117, 0.0710400],
-            blue: [0.0025011, 0.0036482, 0.9121888],
-        },
-        MatrixRef {
-            name: "DCIP3_TO_P3",
-            matrix: gm(ColorPrimaries::DciP3, ColorPrimaries::DisplayP3),
-            inverse: Some(gm(ColorPrimaries::DisplayP3, ColorPrimaries::DciP3)),
-            red: [0.9446453, -0.0016997, 0.0003340],
-            green: [0.0581774, 1.0057173, 0.0015022],
-            blue: [-0.0028229, -0.0040176, 0.9981638],
-        },
-        MatrixRef {
-            name: "P3_TO_DCIP3",
-            matrix: gm(ColorPrimaries::DisplayP3, ColorPrimaries::DciP3),
-            inverse: Some(gm(ColorPrimaries::DciP3, ColorPrimaries::DisplayP3)),
-            red: [1.0584873, 0.0017875, -0.0003569],
-            green: [-0.0612339, 0.9942058, -0.0014758],
-            blue: [0.0027470, 0.0040067, 1.0018328],
-        },
-        MatrixRef {
-            name: "DCIP3_TO_BT2020",
-            matrix: gm(ColorPrimaries::DciP3, ColorPrimaries::Bt2020),
-            inverse: Some(gm(ColorPrimaries::Bt2020, ColorPrimaries::DciP3)),
-            red: [0.7117833, 0.0416152, -0.0008447],
-            green: [0.2436601, 0.9498416, 0.0191095],
-            blue: [0.0445565, 0.0085432, 0.9817352],
-        },
-        MatrixRef {
-            name: "BT2020_TO_DCIP3",
-            matrix: gm(ColorPrimaries::Bt2020, ColorPrimaries::DciP3),
-            inverse: Some(gm(ColorPrimaries::DciP3, ColorPrimaries::Bt2020)),
-            red: [1.4261665, -0.0625062, 0.0024438],
-            green: [-0.3646120, 1.0689719, -0.0211213],
-            blue: [-0.0615543, -0.0064655, 1.0186777],
-        },
     ]
 }
 

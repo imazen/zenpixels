@@ -1,7 +1,7 @@
 //! Lightweight CMS backend using fused SIMD gamut kernels.
 //!
 //! [`ZenCmsLite`] implements [`ColorManagement`] for named-profile conversions
-//! (sRGB, Display P3, BT.2020, Adobe RGB, DCI-P3) without ICC profile parsing.
+//! (sRGB, Display P3, BT.2020, Adobe RGB) without ICC profile parsing.
 //! It delegates to [`fast_gamut`](crate::fast_gamut) kernels for the actual
 //! conversion work — fused TRC + matrix + TRC in a single SIMD pass.
 //!
@@ -44,7 +44,7 @@ use alloc::format;
 
 use crate::cms::{ColorManagement, RowTransform};
 use crate::fast_gamut;
-use crate::{ChannelType, Cicp, ColorPrimaries, PixelFormat, TransferFunction};
+use crate::{ChannelType, Cicp, PixelFormat, TransferFunction};
 
 /// Lightweight CMS using fused SIMD gamut conversion kernels.
 ///
@@ -53,7 +53,7 @@ use crate::{ChannelType, Cicp, ColorPrimaries, PixelFormat, TransferFunction};
 ///
 /// - **ICC profiles**: identified via 132-profile hash table (~100ns) and
 ///   CICP-in-ICC extraction. Covers sRGB, Display P3, BT.2020, Adobe RGB,
-///   ProPhoto, and their variants across ICC v2–v5.
+///   and their variants across ICC v2–v5.
 /// - **CICP codes**: mapped directly to primaries + transfer.
 /// - **Named profiles**: decomposed to primaries + transfer.
 /// - **Explicit primaries + transfer pairs**.
@@ -378,7 +378,7 @@ fn convert_u16_rgba(
 mod tests {
     use super::*;
     use crate::cms::ColorManagement;
-    use crate::{ColorProfileSource, NamedProfile, PixelFormat};
+    use crate::{ColorPrimaries, ColorProfileSource, NamedProfile, PixelFormat};
 
     #[test]
     fn build_source_transform_p3_to_srgb_f32() {

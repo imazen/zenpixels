@@ -87,26 +87,18 @@ fn transfer_function_cicp_bijection() {
     }
 }
 
-/// from_cicp and to_cicp round-trip for primary codes (aliases like 6↔7 may collapse).
+/// from_cicp and to_cicp round-trip for primary codes.
 #[test]
 fn color_primaries_cicp_bijection() {
     // Primary codes that must round-trip exactly
-    for code in [1u8, 5, 6, 9, 11, 12] {
+    for code in [1u8, 9, 12] {
         let cp = ColorPrimaries::from_cicp(code).unwrap();
         assert_eq!(cp.to_cicp(), Some(code));
     }
-    // Alias: SMPTE 240M (7) shares primaries with SMPTE 170M (6)
-    assert_eq!(
-        ColorPrimaries::from_cicp(7),
-        Some(ColorPrimaries::Smpte170m)
-    );
     for cp in [
         ColorPrimaries::Bt709,
         ColorPrimaries::Bt2020,
         ColorPrimaries::DisplayP3,
-        ColorPrimaries::DciP3,
-        ColorPrimaries::Smpte170m,
-        ColorPrimaries::Bt470Bg,
     ] {
         let code = cp.to_cicp().unwrap();
         let back = ColorPrimaries::from_cicp(code).unwrap();
@@ -124,8 +116,8 @@ fn unknown_cicp_codes_return_none() {
             "TC code {code} should not be recognized"
         );
     }
-    // ColorPrimaries: recognized = 1, 5, 6, 7, 9, 11, 12
-    for code in [0, 2, 3, 4, 8, 10, 13, 22, 99, 255] {
+    // ColorPrimaries: recognized = 1, 9, 12
+    for code in [0, 2, 3, 4, 5, 6, 7, 8, 10, 11, 13, 22, 99, 255] {
         assert!(
             ColorPrimaries::from_cicp(code).is_none(),
             "CP code {code} should not be recognized"

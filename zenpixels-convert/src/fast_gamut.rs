@@ -382,58 +382,6 @@ stamp_trc_kernels!(srgb_to_adobe,
 );
 
 // =========================================================================
-// DCI-P3 gamma 2.6 TRC
-// =========================================================================
-
-const DCI_GAMMA: f32 = 2.6;
-
-#[cfg(target_arch = "x86_64")]
-#[rite]
-fn dci_to_linear_x8(token: X64V3Token, v: [f32; 8]) -> [f32; 8] {
-    trc_x8::gamma_to_linear_v3(token, v, DCI_GAMMA)
-}
-
-#[cfg(target_arch = "x86_64")]
-#[rite]
-fn dci_from_linear_x8(token: X64V3Token, v: [f32; 8]) -> [f32; 8] {
-    trc_x8::linear_to_gamma_v3(token, v, DCI_GAMMA)
-}
-
-#[inline(always)]
-fn dci_to_linear_scalar(v: f32) -> f32 {
-    linear_srgb::default::gamma_to_linear(v, DCI_GAMMA)
-}
-
-#[inline(always)]
-fn dci_from_linear_scalar(v: f32) -> f32 {
-    linear_srgb::default::linear_to_gamma(v, DCI_GAMMA)
-}
-
-// DCI-P3 same-TRC (γ2.6 both sides — for DCI↔DCI with different primaries, unlikely)
-stamp_trc_kernels!(dci,
-    simd_linearize: dci_to_linear_x8,
-    simd_encode: dci_from_linear_x8,
-    scalar_linearize: dci_to_linear_scalar,
-    scalar_encode: dci_from_linear_scalar
-);
-
-// DCI-P3 source → sRGB dest (γ2.6 linearize, sRGB encode)
-stamp_trc_kernels!(dci_to_srgb,
-    simd_linearize: dci_to_linear_x8,
-    simd_encode: trc_x8::linear_to_srgb_v3,
-    scalar_linearize: dci_to_linear_scalar,
-    scalar_encode: linear_srgb::tf::linear_to_srgb
-);
-
-// sRGB source → DCI-P3 dest (sRGB linearize, γ2.6 encode)
-stamp_trc_kernels!(srgb_to_dci,
-    simd_linearize: trc_x8::srgb_to_linear_v3,
-    simd_encode: dci_from_linear_x8,
-    scalar_linearize: linear_srgb::tf::srgb_to_linear,
-    scalar_encode: dci_from_linear_scalar
-);
-
-// =========================================================================
 // Dispatch: pick the right kernel for a given (src_trc, dst_trc) pair
 // =========================================================================
 
@@ -488,7 +436,6 @@ fn scalar_linearize_extended(trc: TransferFunction) -> Option<fn(f32) -> f32> {
     match trc {
         TransferFunction::Srgb => Some(linearize_srgb_extended),
         TransferFunction::Gamma22 => Some(|v| linearize_gamma_extended(v, ADOBE_GAMMA)),
-        TransferFunction::Gamma26 => Some(|v| linearize_gamma_extended(v, DCI_GAMMA)),
         TransferFunction::Linear => Some(core::convert::identity),
         // PQ/HLG/BT.709 don't produce negative values in practice,
         // but use the clamped versions as fallback.
@@ -501,7 +448,6 @@ fn scalar_encode_extended(trc: TransferFunction) -> Option<fn(f32) -> f32> {
     match trc {
         TransferFunction::Srgb => Some(encode_srgb_extended),
         TransferFunction::Gamma22 => Some(|v| encode_gamma_extended(v, 1.0 / ADOBE_GAMMA)),
-        TransferFunction::Gamma26 => Some(|v| encode_gamma_extended(v, 1.0 / DCI_GAMMA)),
         TransferFunction::Linear => Some(core::convert::identity),
         _ => scalar_encode(trc),
     }
@@ -572,7 +518,6 @@ pub(crate) fn has_simd_encode(trc: TransferFunction) -> bool {
             | TransferFunction::Pq
             | TransferFunction::Hlg
             | TransferFunction::Gamma22
-            | TransferFunction::Gamma26
     )
 }
 
@@ -591,7 +536,6 @@ fn simd_encode_x8_dispatch(token: X64V3Token, trc: TransferFunction, v: [f32; 8]
         TransferFunction::Pq => trc_x8::linear_to_pq_v3(token, v),
         TransferFunction::Hlg => trc_x8::linear_to_hlg_v3(token, v),
         TransferFunction::Gamma22 => adobe_from_linear_x8(token, v),
-        TransferFunction::Gamma26 => dci_from_linear_x8(token, v),
         _ => v,
     }
 }
@@ -604,7 +548,6 @@ pub(crate) fn scalar_linearize(trc: TransferFunction) -> Option<fn(f32) -> f32> 
         TransferFunction::Pq => Some(linear_srgb::tf::pq_to_linear),
         TransferFunction::Hlg => Some(linear_srgb::tf::hlg_to_linear),
         TransferFunction::Gamma22 => Some(adobe_to_linear_scalar),
-        TransferFunction::Gamma26 => Some(dci_to_linear_scalar),
         TransferFunction::Linear => Some(core::convert::identity),
         _ => None,
     }
@@ -618,7 +561,6 @@ pub(crate) fn scalar_encode(trc: TransferFunction) -> Option<fn(f32) -> f32> {
         TransferFunction::Pq => Some(linear_srgb::tf::linear_to_pq),
         TransferFunction::Hlg => Some(linear_srgb::tf::linear_to_hlg),
         TransferFunction::Gamma22 => Some(adobe_from_linear_scalar),
-        TransferFunction::Gamma26 => Some(dci_from_linear_scalar),
         TransferFunction::Linear => Some(core::convert::identity),
         _ => None,
     }
@@ -667,10 +609,6 @@ pub(crate) fn convert_f32_rgb_dispatch(
             incant!(convert_rgb_adobe(m, data));
             return true;
         }
-        (Gamma26, Gamma26) => {
-            incant!(convert_rgb_dci(m, data));
-            return true;
-        }
         (Pq, Srgb) => {
             incant!(convert_rgb_pq_to_srgb(m, data));
             return true;
@@ -697,14 +635,6 @@ pub(crate) fn convert_f32_rgb_dispatch(
         }
         (Srgb, Gamma22) => {
             incant!(convert_rgb_srgb_to_adobe(m, data));
-            return true;
-        }
-        (Gamma26, Srgb) => {
-            incant!(convert_rgb_dci_to_srgb(m, data));
-            return true;
-        }
-        (Srgb, Gamma26) => {
-            incant!(convert_rgb_srgb_to_dci(m, data));
             return true;
         }
         _ => {} // fall through to scalar
@@ -764,10 +694,6 @@ pub(crate) fn convert_f32_rgba_dispatch(
             incant!(convert_rgba_adobe(m, data));
             return true;
         }
-        (Gamma26, Gamma26) => {
-            incant!(convert_rgba_dci(m, data));
-            return true;
-        }
         (Pq, Srgb) => {
             incant!(convert_rgba_pq_to_srgb(m, data));
             return true;
@@ -794,14 +720,6 @@ pub(crate) fn convert_f32_rgba_dispatch(
         }
         (Srgb, Gamma22) => {
             incant!(convert_rgba_srgb_to_adobe(m, data));
-            return true;
-        }
-        (Gamma26, Srgb) => {
-            incant!(convert_rgba_dci_to_srgb(m, data));
-            return true;
-        }
-        (Srgb, Gamma26) => {
-            incant!(convert_rgba_srgb_to_dci(m, data));
             return true;
         }
         _ => {}
@@ -880,7 +798,6 @@ pub(crate) fn scalar_encode_u8(trc: TransferFunction) -> Option<fn(f32) -> u8> {
         TransferFunction::Pq => Some(|v| quantize_with(linear_srgb::tf::linear_to_pq, v)),
         TransferFunction::Hlg => Some(|v| quantize_with(linear_srgb::tf::linear_to_hlg, v)),
         TransferFunction::Gamma22 => Some(|v| quantize_with(adobe_from_linear_scalar, v)),
-        TransferFunction::Gamma26 => Some(|v| quantize_with(dci_from_linear_scalar, v)),
         TransferFunction::Linear => Some(|v| (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8),
         _ => None,
     }
@@ -1271,21 +1188,6 @@ mod tests {
             &mat,
             &mut px,
             TransferFunction::Gamma22,
-            TransferFunction::Srgb,
-        );
-        for c in &px {
-            assert!((c - 1.0).abs() < 1e-4, "white: {px:?}");
-        }
-    }
-
-    #[test]
-    fn dispatch_dci_srgb_white() {
-        let mat = m(ColorPrimaries::DciP3, ColorPrimaries::Bt709);
-        let mut px = [1.0f32, 1.0, 1.0];
-        convert_f32_rgb_dispatch(
-            &mat,
-            &mut px,
-            TransferFunction::Gamma26,
             TransferFunction::Srgb,
         );
         for c in &px {
