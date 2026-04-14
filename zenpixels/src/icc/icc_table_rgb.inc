@@ -8,8 +8,8 @@
     (0x0001_a480_d314_5797, CP::AppleRgb, TF::Gamma18,  1, Safe::AnyIntent),               // [CPS] installed-linux-arm64-AppleRGB
     (0x006d_6080_8a42_ba21, CP::EciRgbV2, TF::Gamma18,  1, Safe::AnyIntent),               // [CPS] installed-linux-arm64-ECI-RGBv1
     (0x017c_a291_237d_1e12, CP::Smpte170m, TF::Bt709,  3, Safe::AnyIntent),               // [CPS] installed-windows-x64-SMPTE RP145 NTSC.icm
-    (0x0373_482f_2294_c17a, CP::Bt709, TF::Srgb,  1, Safe::IdOnly),                  // [-] srgb v1 31 canon 6578ac5c
-    (0x03d5_20f2_dff3_4ae6, CP::DisplayP3, TF::Srgb,  2, Safe::IdOnly),                  // [-] DisplayP3Compat-v2-magic
+    (0x0373_482f_2294_c17a, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] srgb v1 31 canon 6578ac5c
+    (0x03d5_20f2_dff3_4ae6, CP::DisplayP3, TF::Srgb,  2, Safe::AnyIntent),               // [CPS] DisplayP3Compat-v2-magic
     (0x0582_1f2a_e35b_b471, CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 d904903e
     (0x0796_16e1_1678_df00, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] 敮啓srgb 12afb4d9
     (0x0831_3776_1575_8c5d, CP::Bt709, TF::Srgb, 33, Safe::AnyIntent),               // [CPS] c2 7d61bdc0
@@ -18,8 +18,8 @@
     (0x0a20_b1a9_ec56_beb6, CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] installed-windows-x64-ClayRGB1998.icm
     (0x0ca2_1afc_1a04_4d18, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display ad0b6802
     (0x0e5d_1334_2a49_3ba2, CP::Bt2020, TF::Bt709, 10, Safe::AnyIntent),               // [CPS] Rec2020-v2-magic
-    (0x0e6a_4149_30b0_b278, CP::Bt709, TF::Srgb,  1, Safe::IdOnly),                  // [-] installed-macos-arm64-Apple Virtual-74CC58E0-36CE-
-    (0x0f40_cd19_eb99_13cd, CP::Bt709, TF::Srgb, 13, Safe::IdOnly),                  // [-] urgb ac46f250
+    (0x0e6a_4149_30b0_b278, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] installed-macos-arm64-Apple Virtual-74CC58E0-36CE-
+    (0x0f40_cd19_eb99_13cd, CP::Bt709, TF::Srgb, 13, Safe::AnyIntent),               // [CPS] urgb ac46f250
     (0x12aa_1ec5_f4fa_84eb, CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 04166d2d
     (0x131e_11c6_471b_dac4, CP::Bt709, TF::Bt709,  3, Safe::AnyIntent),               // [CPS] installed-linux-arm64-Rec709
     (0x134d_8482_9bda_f67d, CP::Bt2020, TF::Gamma24,  1, Safe::AnyIntent),               // [CPS] Rec2020-g24-v4
@@ -34,16 +34,16 @@
     (0x21d7_7bd7_333e_4a7d, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] srgb iec61966-2 1 22c894f4
     (0x21ff_ca63_c0f3_0ab3, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display a587aa4f
     (0x23a0_137d_e8e2_5574, CP::DciP3, TF::Gamma26, 15, Safe::AnyIntent),               // [CPS] installed-windows-x64-SMPTE431 P3.icm
-    (0x2594_8312_e5cd_6a48, CP::Bt709, TF::Srgb,  1, Safe::IdOnly),                  // [-] display e01187ad
+    (0x2594_8312_e5cd_6a48, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display e01187ad
     (0x260c_d3fb_9142_5fc2, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] skcms-sRGB lcms
     (0x285e_8614_9334_c025, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display 7ce50c9c
-    (0x2955_b1ae_972b_1d7c, CP::Bt2020, TF::Bt709,  9, Safe::IdOnly),                  // [-] Rec2020Compat-v4
+    (0x2955_b1ae_972b_1d7c, CP::Bt2020, TF::Bt709,  9, Safe::AnyIntent),               // [CPS] Rec2020Compat-v4
     (0x2964_3971_16a9_a063, CP::Bt2020, TF::Gamma24,  1, Safe::AnyIntent),               // [CPS] bt 2020
-    (0x30f1_6600_93c3_8a9c, CP::Bt709, TF::Srgb,  2, Safe::IdOnly),                  // [-] compact-icc-sRGB-v2-magic
+    (0x30f1_6600_93c3_8a9c, CP::Bt709, TF::Srgb,  2, Safe::AnyIntent),               // [CPS] compact-icc-sRGB-v2-magic
     (0x3421_5439_ee9c_77b5, CP::Bt470Bg, TF::Bt709,  8, Safe::AnyIntent),               // [CPS] Rec601PAL-v2-micro
-    (0x3447_1f32_1966_9298, CP::Bt2020, TF::Bt709, 10, Safe::IdOnly),                  // [-] Rec2020Compat-v2-magic
+    (0x3447_1f32_1966_9298, CP::Bt2020, TF::Bt709, 10, Safe::AnyIntent),               // [CPS] Rec2020Compat-v2-magic
     (0x347b_29a9_9718_4c3d, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] srgb transfer d77bd8c4
-    (0x37fe_9a81_9365_5633, CP::Bt709, TF::Srgb, 56, Safe::IdOnly),                  // [-] compact-icc-sRGB-v2-nano
+    (0x37fe_9a81_9365_5633, CP::Bt709, TF::Srgb, 56, Safe::AnyIntent),               // [CPS] compact-icc-sRGB-v2-nano
     (0x3810_063c_dbb3_cb1f, CP::Bt709, TF::Bt709,  8, Safe::AnyIntent),               // [CPS] Rec709-v2-micro
     (0x3980_7a73_90b4_2882, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] installed-linux-arm64-sRGB IEC61966-2-1 black scal
     (0x39a4_2932_a171_cf71, CP::Bt709, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] installed-macos-x64-Unknown Display-19A6386A-27BA-
@@ -51,11 +51,11 @@
     (0x3b32_a0ca_a58a_5705, CP::Bt470Bg, TF::Bt709,  3, Safe::AnyIntent),               // [CPS] Rec601PAL-v2-magic
     (0x3b4c_8aad_1af4_34f8, CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 07c1e073
     (0x3c23_9a35_ce4c_d003, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] iec61966-2 1 2e2fd04e
-    (0x3c4e_15c5_1211_3d7a, CP::Bt2020, TF::Bt709, 12, Safe::IdOnly),                  // [-] Rec2020Compat-v2-micro
+    (0x3c4e_15c5_1211_3d7a, CP::Bt2020, TF::Bt709, 12, Safe::AnyIntent),               // [CPS] Rec2020Compat-v2-micro
     (0x3d84_1280_ff79_e82b, CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 17354309
     (0x3e44_47de_2191_484f, CP::Bt709, TF::Linear,  0, Safe::AnyIntent),               // [CPS] installed-linux-arm64-scrgb
-    (0x40a6_ebb2_9e5a_eded, CP::Bt709, TF::Srgb,  1, Safe::IdOnly),                  // [-] nikon srgb 4 0 0 3002 49caea94
-    (0x4318_0644_9ea6_ffab, CP::Bt709, TF::Srgb,  1, Safe::IdOnly),                  // [-] display 809d9002
+    (0x40a6_ebb2_9e5a_eded, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] nikon srgb 4 0 0 3002 49caea94
+    (0x4318_0644_9ea6_ffab, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display 809d9002
     (0x4354_7c41_aea7_df58, CP::Bt709, TF::Bt709,  4, Safe::AnyIntent),               // [CPS] installed-windows-x64-Rec709.icm
     (0x43a8_d3b2_862c_1263, CP::WideGamut, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] installed-linux-arm64-WideGamutRGB
     (0x456c_6127_123e_ec31, CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 12484157
@@ -78,13 +78,13 @@
     (0x5ab9_e9b9_2dbc_caa9, CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] AdobeCompat-v2
     (0x5d6c_79f5_387f_4938, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display 82813cc1
     (0x5e3f_3a45_56ed_bd7e, CP::Bt709, TF::Srgb, 33, Safe::AnyIntent),               // [CPS] c2ci 88309750
-    (0x5f7f_17d4_33df_3e67, CP::DisplayP3, TF::Srgb,  1, Safe::IdOnly),                  // [-] display 27c17d0f
+    (0x5f7f_17d4_33df_3e67, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display 27c17d0f
     (0x61b2_7ba9_8ca9_e4ec, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] iec61966-2 1 33c34ecf
     (0x61d8_2cfe_4b08_5a07, CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 72860842
     (0x63b9_9fae_af4c_75a2, CP::DisplayP3, TF::Srgb,  5, Safe::AnyIntent),               // [CPS] display p3 7e1c7ec5
     (0x653b_ea14_dc0b_a32b, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] srgb c7cca157
     (0x66cc_d82c_44a1_ac56, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display 57d2c70f
-    (0x6a66_9bf1_e1bf_97d6, CP::Bt709, TF::Srgb,  1, Safe::IdOnly),                  // [-] 敮啓srgb c56e1685
+    (0x6a66_9bf1_e1bf_97d6, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] 敮啓srgb c56e1685
     (0x6b76_9029_87cd_0c1c, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] installed-linux-arm64-Bluish
     (0x6d28_f82d_cf66_70f6, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] srgb built-in 77c085b8
     (0x6db0_9a70_cd33_612a, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display d4bc91ee
@@ -119,7 +119,7 @@
     (0x936c_65fb_e671_4dd9, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] truncated desc v4
     (0x94a8_4ece_d38f_3857, CP::DisplayP3, TF::Srgb, 13, Safe::AnyIntent),               // [CPS] DisplayP3-v2-micro
     (0x962f_97d2_fe9b_e6c0, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] installed-linux-arm64-Gamma6500K
-    (0x97cc_1557_e292_f6b4, CP::Bt709, TF::Srgb, 13, Safe::IdOnly),                  // [-] compact-icc-sRGB-v2-micro
+    (0x97cc_1557_e292_f6b4, CP::Bt709, TF::Srgb, 13, Safe::AnyIntent),               // [CPS] compact-icc-sRGB-v2-micro
     (0x9824_f53a_d528_8765, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display 7b6a7afb
     (0x985d_23d0_dbca_ce46, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] skcms-Display P3 parametric
     (0x98fd_81dd_5187_24c0, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] srgb iec61966-2-1 black scaled 6bce3833
@@ -156,7 +156,7 @@
     (0xc281_663a_1a05_e0cc, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] skcms-Display P3 LUT
     (0xc5c2_1622_d297_a38f, CP::DisplayP3, TF::Srgb,  2, Safe::AnyIntent),               // [CPS] DisplayP3-v2-magic
     (0xc807_45da_e6fb_0982, CP::Bt470Bg, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] AdobeCS4-RGB-PAL SECAM
-    (0xc8ec_64b7_9518_3fce, CP::DisplayP3, TF::Srgb, 13, Safe::IdOnly),                  // [-] DisplayP3Compat-v2-micro
+    (0xc8ec_64b7_9518_3fce, CP::DisplayP3, TF::Srgb, 13, Safe::AnyIntent),               // [CPS] DisplayP3Compat-v2-micro
     (0xc929_c65d_e192_9d15, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] colord-Gamma5500K
     (0xca98_e1c6_2e4b_5be8, CP::Bt709, TF::Linear,  0, Safe::AnyIntent),               // [CPS] compact-icc-scRGB-v2
     (0xcbd9_22da_b07a_f755, CP::DisplayP3, TF::Pq,  1, Safe::AnyIntent),               // [CPS] moxcms display p3 pq
@@ -173,7 +173,7 @@
     (0xda4a_81a2_4496_07bd, CP::Bt709, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] srgb profile e2b447e6
     (0xda62_6fd8_d996_0d4d, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display 1e5b6330
     (0xdaae_d341_bea9_d33c, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] DisplayP3-v4
-    (0xdb45_d405_5d6d_54a1, CP::DisplayP3, TF::Srgb,  1, Safe::IdOnly),                  // [-] DisplayP3Compat-v4
+    (0xdb45_d405_5d6d_54a1, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] DisplayP3Compat-v4
     (0xdd41_6b82_8094_836a, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] moxcms display p3
     (0xdeba_69b6_c951_38bf, CP::ColorMatch, TF::Gamma18,  1, Safe::AnyIntent),               // [CPS] installed-linux-arm64-ColorMatchRGB
     (0xe027_6b27_9678_f216, CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 8551730c
@@ -189,7 +189,7 @@
     (0xeb7a_b433_70ab_125e, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] srgb icc f6bd2776
     (0xebc9_51fd_8875_19a3, CP::Bt709, TF::Gamma18, 11, Safe::AnyIntent),               // [CPS] calibrated rgb colorspace 13d00877
     (0xed62_af70_9d79_1fe2, CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 481ca304
-    (0xed9a_fff9_2bdc_588d, CP::Bt709, TF::Srgb, 13, Safe::IdOnly),                  // [-] urgb 2e2c5534
+    (0xed9a_fff9_2bdc_588d, CP::Bt709, TF::Srgb, 13, Safe::AnyIntent),               // [CPS] urgb 2e2c5534
     (0xede1_371d_d0b8_6f71, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] skcms-sRGB HP 2
     (0xefa2_dde4_44ba_97a6, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display p3 e468e892
     (0xf0ae_366c_2312_5435, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display p3 2eb3480a

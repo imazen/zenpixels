@@ -654,9 +654,14 @@ const INTENT_VS_INTENT_EPSILON_U16: u32 = 64;
 /// substitution pass; profiles whose output would round to a different u8
 /// (≈ visibly distinguishable in 8-bit pipelines) are rejected. This
 /// catches non-Bradford `chad` adaptations, custom encoded primaries,
-/// LUT-driven gamut remapping, and per-device calibration drift, while
-/// tolerating the inherent precision drift between an encoder's 16.16
-/// fixed-point matrix and our canonical floating-point chromaticities.
+/// LUT-driven gamut remapping, and per-device calibration drift.
+///
+/// Note: for pure matrix-shaper profiles (no LUT tags), the s15.16
+/// quantization floor can exceed this threshold for wider gamuts (~275
+/// for BT.709, ~590 for BT.2020, ~930 for Display P3). That's handled
+/// separately by OR-merging with the structural mask in
+/// `compute_rgb_intent_mask` — the structural rule correctly grants all
+/// bits when no LUTs are present, since the only CMS path is matrix+TRC.
 const COLORIMETRIC_VS_SYNTH_EPSILON_U16: u32 = 256;
 
 /// Looser epsilon for the lcms2 AND-gate comparison (when the
@@ -793,6 +798,7 @@ fn measure_intent_mask(icc_data: &[u8], primaries: &str, transfer: &str) -> Empi
     let Some(synth) = build_synth_ref(primaries, transfer) else {
         return EmpiricalMask::NotAvailable;
     };
+
     let dst = ColorProfile::new_srgb();
     let ramp = make_ramp();
 
@@ -1046,14 +1052,24 @@ fn gray_intent_mask(data: &[u8]) -> u8 {
 /// `chad`, custom per-device chromaticities, or LUTs that diverge from the
 /// canonical matrix+TRC math used by runtime substitution.
 ///
-/// Structural inspection is used only as a fallback when no synth reference
-/// exists for the identified pair (e.g., Smpte170m, AppleRgb, WideGamut,
-/// ColorMatch, EciRgbV2, Bt470Bg). In that case we cannot empirically verify
-/// CMS agreement, so we fall back to LUT-tag presence as a coarse signal.
+/// Compute the intent-safety mask for an identified RGB profile.
+///
+/// The empirical check (`moxcms(icc) vs moxcms(synth)`) catches LUT-driven
+/// intent divergence but is penalized by s15.16 quantization noise that
+/// scales with gamut width (~275 u16 for BT.709, ~930 for Display P3).
+/// The structural check (LUT tag presence) is immune to quantization but
+/// can't detect behavioral differences inside LUTs.
+///
+/// We OR-merge both: the structural mask ensures that pure matrix-shaper
+/// profiles (no LUT tags) get all bits — the only CMS path IS matrix+TRC,
+/// so any delta is quantization noise, not a safety issue. The empirical
+/// mask adds bits for profiles whose LUTs happen to produce the same
+/// output as matrix math.
 fn compute_rgb_intent_mask(data: &[u8], primaries: &str, transfer: &str) -> (u8, MaskProvenance) {
+    let structural = structural_rgb_mask(data);
     match measure_empirical_intent_bits(data, primaries, transfer) {
-        Some(empirical) => (empirical, MaskProvenance::Empirical),
-        None => (structural_rgb_mask(data), MaskProvenance::Structural),
+        Some(empirical) => (empirical | structural, MaskProvenance::Empirical),
+        None => (structural, MaskProvenance::Structural),
     }
 }
 
