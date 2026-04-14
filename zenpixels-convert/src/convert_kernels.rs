@@ -1155,7 +1155,7 @@ fn oklab_to_rgb_4ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) 
 /// Apply a 3×3 gamut matrix to a row of linear RGB f32 pixels.
 #[allow(unused_variables)]
 fn gamut_matrix_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32; 9]) {
-    #[cfg(feature = "std")]
+    #[cfg(feature = "zencms-lite")]
     {
         let m = [
             [matrix[0], matrix[1], matrix[2]],
@@ -1166,7 +1166,7 @@ fn gamut_matrix_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32;
         let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
         crate::fast_gamut::convert_linear_rgb(&m, d);
     }
-    #[cfg(not(feature = "std"))]
+    #[cfg(not(feature = "zencms-lite"))]
     {
         let s: &[f32] = bytemuck::cast_slice(src);
         let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
@@ -1186,7 +1186,7 @@ fn gamut_matrix_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32;
 /// Apply a 3×3 gamut matrix to a row of linear RGBA f32 pixels (alpha passthrough).
 #[allow(unused_variables)]
 fn gamut_matrix_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32; 9]) {
-    #[cfg(feature = "std")]
+    #[cfg(feature = "zencms-lite")]
     {
         let m = [
             [matrix[0], matrix[1], matrix[2]],
@@ -1197,7 +1197,7 @@ fn gamut_matrix_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32
         let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
         crate::fast_gamut::convert_linear_rgba(&m, d);
     }
-    #[cfg(not(feature = "std"))]
+    #[cfg(not(feature = "zencms-lite"))]
     {
         let s: &[f32] = bytemuck::cast_slice(src);
         let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
