@@ -117,3 +117,48 @@ icc-dry-run: icc-build-gen
     @tail -3 /tmp/zenpixels-icc-dry-run/icc_table_rgb.inc
     @echo "--- Gray ---"
     @cat /tmp/zenpixels-icc-dry-run/icc_table_gray.inc
+
+# ── Build-time diagnostics ────────────────────────────────────────────
+# Cold release wall-time, three runs. Reports min/avg.
+build-bench n="3" args="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    times=()
+    for i in $(seq 1 {{n}}); do
+        cargo clean -q
+        t=$(/usr/bin/time -f "%e" cargo build --release {{args}} -q 2>&1 | tail -1)
+        echo "  run $i: ${t}s"
+        times+=("$t")
+    done
+    python3 -c "import sys; t=[float(x) for x in sys.argv[1:]]; print(f'min={min(t):.2f}s  avg={sum(t)/len(t):.2f}s  n={len(t)}')" "${times[@]}"
+
+# Generate cargo build --timings HTML and print top units by duration.
+build-timings args="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo clean -q
+    cargo build --release --timings {{args}} 2>&1 | tail -2
+    awk '/const UNIT_DATA = \[/,/^\];$/' target/cargo-timings/cargo-timing.html \
+        | python3 -c "
+    import sys, json
+    text = sys.stdin.read().replace('const UNIT_DATA = ', '').rstrip().rstrip(';')
+    data = sorted(json.loads(text), key=lambda u: -u['duration'])
+    print(f'{\"crate\":36} {\"target\":18} {\"start\":>6} {\"end\":>6} {\"dur\":>6}')
+    for u in data[:20]:
+        tgt = (u.get('target') or 'lib').strip()[:17]
+        print(f'{u[\"name\"][:35]:36} {tgt:18} {u[\"start\"]:6.2f} {u[\"start\"]+u[\"duration\"]:6.2f} {u[\"duration\"]:6.2f}')
+    print(f'Total units: {len(data)}, total CPU-sec: {sum(u[\"duration\"] for u in data):.1f}')
+    "
+    echo "Open target/cargo-timings/cargo-timing.html for full Gantt."
+
+# Per-crate .text contribution to the cdylib bench (uses cargo-bloat).
+build-bloat args="":
+    cargo bloat --release -p cdylib-link-bench --crates -n 15 {{args}}
+
+# Top symbols in the cdylib bench.
+build-bloat-symbols args="":
+    cargo bloat --release -p cdylib-link-bench -n 25 {{args}}
+
+# Cold cdylib build/link wall-time, three runs.
+build-cdylib-bench n="3" args="":
+    just build-bench {{n}} "-p cdylib-link-bench {{args}}"

@@ -1,0 +1,20 @@
+[package]
+name = "cdylib-link-bench"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+license = "Apache-2.0 OR MIT"
+publish = false
+description = "Internal: cdylib build/link-time benchmark surface for zenpixels + zenpixels-convert"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["cms-moxcms"]
+cms-moxcms = ["zenpixels-convert/cms-moxcms"]
+zencms-lite = ["zenpixels-convert/zencms-lite"]
+
+[dependencies]
+zenpixels = { workspace = true, default-features = false, features = ["std", "icc"] }
+zenpixels-convert = { path = "../../zenpixels-convert", default-features = false, features = ["std"] }

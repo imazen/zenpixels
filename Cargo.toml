@@ -1,5 +1,5 @@
 [workspace]
-members = ["zenpixels", "zenpixels-convert", "scripts/icc-gen"]
+members = ["zenpixels", "zenpixels-convert", "scripts/icc-gen", "scripts/cdylib-link-bench"]
 resolver = "2"
 
 [workspace.dependencies]

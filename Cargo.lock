@@ -133,6 +133,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cdylib-link-bench"
+version = "0.0.0"
+dependencies = [
+ "zenpixels",
+ "zenpixels-convert",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
