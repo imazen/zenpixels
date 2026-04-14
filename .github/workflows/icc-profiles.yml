@@ -1,0 +1,375 @@
+name: Export ICC Profiles
+
+# Collects .icc/.icm profiles present on each GitHub-hosted runner image,
+# both pre-installed ("system") and after installing common ICC packages
+# ("installed"). Uploaded as per-runner artifacts for offline inspection.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/icc-export]
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    name: Collect (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,    name: linux-x64,     family: linux }
+          - { os: ubuntu-24.04-arm, name: linux-arm64,   family: linux }
+          - { os: macos-latest,     name: macos-arm64,   family: macos }
+          - { os: macos-26-intel,   name: macos-x64,     family: macos }
+          - { os: windows-latest,   name: windows-x64,   family: windows }
+          - { os: windows-11-arm,   name: windows-arm64, family: windows }
+
+    steps:
+      - name: Runner metadata
+        shell: bash
+        run: |
+          {
+            echo "runner=${{ matrix.name }}"
+            echo "os=${{ matrix.os }}"
+            echo "family=${{ matrix.family }}"
+            echo "image=${ImageOS:-unknown}"
+            echo "image_version=${ImageVersion:-unknown}"
+            echo "arch=$(uname -m 2>/dev/null || echo unknown)"
+            echo "date_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "commit=${{ github.sha }}"
+          } > runner.env
+          cat runner.env
+
+      # -----------------------------------------------------------------
+      # Phase 1: system (pre-installed) profiles
+      # -----------------------------------------------------------------
+      - name: Collect system profiles (Linux)
+        if: matrix.family == 'linux'
+        shell: bash
+        run: |
+          set -u
+          mkdir -p staging-system
+          SEARCH=(
+            /usr/share/color/icc
+            /usr/local/share/color/icc
+            /var/lib/colord/icc
+            "$HOME/.local/share/icc"
+            "$HOME/.color/icc"
+          )
+          for d in "${SEARCH[@]}"; do
+            [ -d "$d" ] || continue
+            echo "::group::$d"
+            # Preserve source tree under a sanitized prefix.
+            rel="${d#/}"; rel="${rel//\//_}"
+            mkdir -p "staging-system/$rel"
+            find "$d" -type f \( -iname '*.icc' -o -iname '*.icm' \) \
+              -exec cp --parents -t "staging-system/$rel" {} + 2>/dev/null || true
+            ls -laR "staging-system/$rel" || true
+            echo "::endgroup::"
+          done
+          # colord / colormgr enumeration (metadata only, not binaries)
+          if command -v colormgr >/dev/null 2>&1; then
+            colormgr get-profiles > staging-system/_colormgr-profiles.txt 2>&1 || true
+          fi
+
+      - name: Collect system profiles (macOS)
+        if: matrix.family == 'macos'
+        shell: bash
+        run: |
+          set -u
+          mkdir -p staging-system
+          SEARCH=(
+            /System/Library/ColorSync/Profiles
+            /Library/ColorSync/Profiles
+            "/Library/Application Support/Adobe/Color/Profiles"
+            "$HOME/Library/ColorSync/Profiles"
+            /System/Library/Frameworks/ApplicationServices.framework/Versions/A/Frameworks/ColorSync.framework/Resources/Profiles
+          )
+          for d in "${SEARCH[@]}"; do
+            [ -d "$d" ] || continue
+            echo "::group::$d"
+            rel="${d#/}"; rel="${rel//\//_}"; rel="${rel// /_}"
+            mkdir -p "staging-system/$rel"
+            # macOS profiles often have no extension, or .icc / .icm; capture all in these dirs
+            while IFS= read -r -d '' f; do
+              # Only keep files whose first 4 bytes look plausible, or that have an ICC extension.
+              case "$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')" in
+                *.icc|*.icm) cp -p "$f" "staging-system/$rel/" 2>/dev/null || true ;;
+                *)
+                  # Heuristic: ICC profiles are >=128 bytes and contain 'acsp' at offset 36.
+                  if [ -f "$f" ] && [ "$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f" 2>/dev/null || echo 0)" -ge 128 ]; then
+                    sig=$(dd if="$f" bs=1 count=4 skip=36 2>/dev/null || true)
+                    [ "$sig" = "acsp" ] && cp -p "$f" "staging-system/$rel/$(basename "$f").icc" 2>/dev/null || true
+                  fi
+                  ;;
+              esac
+            done < <(find "$d" -type f -print0 2>/dev/null)
+            ls -la "staging-system/$rel" || true
+            echo "::endgroup::"
+          done
+
+      - name: Collect system profiles (Windows)
+        if: matrix.family == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force -Path staging-system | Out-Null
+          $searchDirs = @(
+            "$env:SystemRoot\System32\spool\drivers\color",
+            "$env:SystemRoot\SysWOW64\spool\drivers\color",
+            "$env:ProgramData\Adobe\Color\Profiles",
+            "$env:LOCALAPPDATA\Microsoft\Windows\Color"
+          )
+          foreach ($d in $searchDirs) {
+            if (-not (Test-Path -LiteralPath $d)) { continue }
+            Write-Host "::group::$d"
+            $rel = ($d -replace '[:\\\\/ ]', '_')
+            $out = Join-Path 'staging-system' $rel
+            New-Item -ItemType Directory -Force -Path $out | Out-Null
+            Get-ChildItem -LiteralPath $d -File -Recurse -ErrorAction SilentlyContinue `
+              | Where-Object { $_.Extension -match '^\.(icc|icm)$' } `
+              | ForEach-Object {
+                  Copy-Item -LiteralPath $_.FullName -Destination $out -Force -ErrorAction SilentlyContinue
+                }
+            Get-ChildItem -LiteralPath $out -File -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String | Write-Host
+            Write-Host "::endgroup::"
+          }
+
+      - name: Manifest (system)
+        shell: bash
+        run: |
+          set -u
+          python3 - <<'PY' staging-system manifest-system.tsv
+          import hashlib, os, sys
+          root, out = sys.argv[1], sys.argv[2]
+          rows = []
+          for dirpath, _, files in os.walk(root):
+              for name in files:
+                  p = os.path.join(dirpath, name)
+                  try:
+                      with open(p, 'rb') as fh:
+                          data = fh.read()
+                  except OSError:
+                      continue
+                  rel = os.path.relpath(p, root)
+                  sig = data[36:40].decode('ascii', 'replace') if len(data) >= 40 else ''
+                  rows.append((rel, str(len(data)), hashlib.sha256(data).hexdigest(), sig))
+          rows.sort()
+          with open(out, 'w') as fh:
+              fh.write('path\tsize\tsha256\tsignature\n')
+              for r in rows:
+                  fh.write('\t'.join(r) + '\n')
+          print(f'{len(rows)} files -> {out}')
+          PY
+          head -n 40 manifest-system.tsv || true
+          wc -l manifest-system.tsv || true
+
+      - name: Upload system artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: icc-system-${{ matrix.name }}
+          path: |
+            staging-system/**
+            manifest-system.tsv
+            runner.env
+          if-no-files-found: warn
+          retention-days: 30
+
+      # -----------------------------------------------------------------
+      # Phase 2: install common ICC packages, then collect again
+      # -----------------------------------------------------------------
+      - name: Install ICC packages (Linux)
+        if: matrix.family == 'linux'
+        shell: bash
+        run: |
+          set -eux
+          sudo apt-get update -y
+          # Best-effort: don't fail the job if some packages are missing on a given image.
+          sudo apt-get install -y --no-install-recommends \
+            icc-profiles \
+            icc-profiles-free \
+            argyll \
+            colord-data \
+            ghostscript \
+            || true
+
+      - name: Install ICC packages (macOS)
+        if: matrix.family == 'macos'
+        shell: bash
+        run: |
+          set -u
+          # Homebrew provides argyll (DisplayCAL/ArgyllCMS) and little-cms bundled profiles.
+          brew update >/dev/null 2>&1 || true
+          brew install --quiet argyll little-cms2 2>/dev/null || true
+
+      - name: Install ICC packages (Windows)
+        if: matrix.family == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          # Argyll + Ghostscript ship reference ICC profiles.
+          choco install -y --no-progress argyll ghostscript 2>&1 | Select-Object -Last 40
+          # Ignore failures — phase 2 is best-effort.
+          exit 0
+
+      - name: Collect installed profiles (Linux)
+        if: matrix.family == 'linux'
+        shell: bash
+        run: |
+          set -u
+          mkdir -p staging-installed
+          SEARCH=(
+            /usr/share/color/icc
+            /usr/local/share/color/icc
+            /var/lib/colord/icc
+            /usr/share/ghostscript
+            /usr/share/argyllcms
+            "$HOME/.local/share/icc"
+            "$HOME/.color/icc"
+          )
+          for d in "${SEARCH[@]}"; do
+            [ -d "$d" ] || continue
+            rel="${d#/}"; rel="${rel//\//_}"
+            mkdir -p "staging-installed/$rel"
+            find "$d" -type f \( -iname '*.icc' -o -iname '*.icm' \) \
+              -exec cp --parents -t "staging-installed/$rel" {} + 2>/dev/null || true
+          done
+          dpkg -L icc-profiles icc-profiles-free argyll colord-data 2>/dev/null \
+            | grep -Ei '\.(icc|icm)$' > staging-installed/_dpkg-icc-files.txt || true
+
+      - name: Collect installed profiles (macOS)
+        if: matrix.family == 'macos'
+        shell: bash
+        run: |
+          set -u
+          mkdir -p staging-installed
+          BREW_PREFIX="$(brew --prefix 2>/dev/null || echo /opt/homebrew)"
+          SEARCH=(
+            "$BREW_PREFIX/share/argyllcms"
+            "$BREW_PREFIX/Cellar"
+            "$BREW_PREFIX/share/color"
+            "/Library/ColorSync/Profiles"
+            "$HOME/Library/ColorSync/Profiles"
+          )
+          for d in "${SEARCH[@]}"; do
+            [ -d "$d" ] || continue
+            rel="${d#/}"; rel="${rel//\//_}"; rel="${rel// /_}"
+            mkdir -p "staging-installed/$rel"
+            while IFS= read -r -d '' f; do
+              cp -p "$f" "staging-installed/$rel/" 2>/dev/null || true
+            done < <(find "$d" -type f \( -iname '*.icc' -o -iname '*.icm' \) -print0 2>/dev/null)
+          done
+
+      - name: Collect installed profiles (Windows)
+        if: matrix.family == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force -Path staging-installed | Out-Null
+          $searchDirs = @(
+            "$env:SystemRoot\System32\spool\drivers\color",
+            "$env:SystemRoot\SysWOW64\spool\drivers\color",
+            "$env:ProgramData\Adobe\Color\Profiles",
+            "$env:LOCALAPPDATA\Microsoft\Windows\Color",
+            "$env:ProgramFiles\Argyll",
+            "${env:ProgramFiles(x86)}\Argyll",
+            "$env:ProgramFiles\gs",
+            "${env:ProgramFiles(x86)}\gs",
+            "$env:ChocolateyInstall\lib\argyll",
+            "$env:ChocolateyInstall\lib\ghostscript"
+          )
+          foreach ($d in $searchDirs) {
+            if ([string]::IsNullOrWhiteSpace($d)) { continue }
+            if (-not (Test-Path -LiteralPath $d)) { continue }
+            $rel = ($d -replace '[:\\\\/ ]', '_')
+            $out = Join-Path 'staging-installed' $rel
+            New-Item -ItemType Directory -Force -Path $out | Out-Null
+            Get-ChildItem -LiteralPath $d -File -Recurse -ErrorAction SilentlyContinue `
+              | Where-Object { $_.Extension -match '^\.(icc|icm)$' } `
+              | ForEach-Object {
+                  Copy-Item -LiteralPath $_.FullName -Destination $out -Force -ErrorAction SilentlyContinue
+                }
+          }
+
+      - name: Manifest (installed)
+        shell: bash
+        run: |
+          set -u
+          [ -d staging-installed ] || mkdir -p staging-installed
+          python3 - <<'PY' staging-installed manifest-installed.tsv
+          import hashlib, os, sys
+          root, out = sys.argv[1], sys.argv[2]
+          rows = []
+          for dirpath, _, files in os.walk(root):
+              for name in files:
+                  p = os.path.join(dirpath, name)
+                  try:
+                      with open(p, 'rb') as fh:
+                          data = fh.read()
+                  except OSError:
+                      continue
+                  rel = os.path.relpath(p, root)
+                  sig = data[36:40].decode('ascii', 'replace') if len(data) >= 40 else ''
+                  rows.append((rel, str(len(data)), hashlib.sha256(data).hexdigest(), sig))
+          rows.sort()
+          with open(out, 'w') as fh:
+              fh.write('path\tsize\tsha256\tsignature\n')
+              for r in rows:
+                  fh.write('\t'.join(r) + '\n')
+          print(f'{len(rows)} files -> {out}')
+          PY
+          head -n 40 manifest-installed.tsv || true
+          wc -l manifest-installed.tsv || true
+
+      - name: Upload installed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: icc-installed-${{ matrix.name }}
+          path: |
+            staging-installed/**
+            manifest-installed.tsv
+            runner.env
+          if-no-files-found: warn
+          retention-days: 30
+
+  # -----------------------------------------------------------------
+  # Aggregate manifest across all runners for quick inspection
+  # -----------------------------------------------------------------
+  summarize:
+    name: Summarize
+    needs: collect
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+          pattern: icc-*
+
+      - name: Combined manifest
+        shell: bash
+        run: |
+          set -u
+          : > combined-manifest.tsv
+          echo -e "runner\tphase\tpath\tsize\tsha256\tsignature" >> combined-manifest.tsv
+          shopt -s nullglob
+          for dir in artifacts/icc-*; do
+            name="$(basename "$dir")"
+            # icc-system-linux-x64 -> phase=system, runner=linux-x64
+            phase="$(echo "$name" | cut -d- -f2)"
+            runner="$(echo "$name" | cut -d- -f3-)"
+            manifest="$dir/manifest-${phase}.tsv"
+            [ -f "$manifest" ] || continue
+            tail -n +2 "$manifest" | awk -v r="$runner" -v p="$phase" -F'\t' 'BEGIN{OFS="\t"}{print r,p,$1,$2,$3,$4}' >> combined-manifest.tsv
+          done
+          wc -l combined-manifest.tsv
+          head -n 20 combined-manifest.tsv
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: icc-combined-manifest
+          path: combined-manifest.tsv
+          retention-days: 30
