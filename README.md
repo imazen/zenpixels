@@ -49,9 +49,9 @@ Bgra8, Rgbx8, Bgrx8, OklabF32, OklabaF32
 ```rust
 pub struct PixelDescriptor {
     pub format: PixelFormat,
-    pub transfer: TransferFunction,    // Srgb, Linear, Pq, Hlg, Bt709, Unknown
+    pub transfer: TransferFunction,    // Linear, Srgb, Bt709, Pq, Gamma22, Hlg, Unknown
     pub alpha: Option<AlphaMode>,      // Straight, Premultiplied, Opaque, Undefined
-    pub primaries: ColorPrimaries,     // Bt709, DisplayP3, Bt2020, Unknown
+    pub primaries: ColorPrimaries,     // Bt709, DisplayP3, Bt2020, AdobeRgb, Unknown
     pub signal_range: SignalRange,     // Full or Narrow
 }
 ```
@@ -174,6 +174,8 @@ Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `C
 
 **CMS** — `ColorManagement` and `RowTransform` traits for ICC-to-ICC transforms. The `cms-moxcms` feature provides a concrete backend using [moxcms](https://crates.io/crates/moxcms), supporting u8/u16/f32 transforms with automatic profile identification.
 
+**ICC identification** — `zenpixels::icc::identify_common(icc_bytes)` recognizes 163 well-known RGB + 18 grayscale profiles via normalized FNV-1a hash lookup (~100ns). Returns primaries, transfer function, and `IdentificationUse` (whether matrix+TRC substitution is safe vs CMS-only). Covers sRGB, Display P3, BT.2020, Adobe RGB variants across ICC v2–v5.
+
 ### Pipeline planner
 
 `CodecFormats` declares each codec's decode outputs and encode inputs, ICC/CICP support, effective bits, and overshoot behavior. The `pipeline` feature enables the format registry, operation requirements, and path solver for multi-step conversion planning.
@@ -189,6 +191,7 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | Feature | Default | What it enables |
 |---|---|---|
 | `std` | yes | Standard library (currently a no-op; everything is `no_std + alloc`) |
+| `icc` | yes | `icc` module — hash-based ICC profile identification (~100ns) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed `from_pixels()` constructors |
 | `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
 | `planar` | | Multi-plane image types (YCbCr, Oklab, gain maps) |
