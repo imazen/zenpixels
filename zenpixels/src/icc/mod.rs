@@ -130,6 +130,7 @@ pub fn extract_cicp(data: &[u8]) -> Option<Cicp> {
 ///
 /// A profile with any of these features should ideally be handled by a full
 /// CMS (moxcms, lcms2) rather than identified-and-approximated via matrix math.
+#[allow(dead_code)] // used in tests; will be used by zenpixels-convert CMS bypass
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub(crate) struct ProfileFeatures {
@@ -162,6 +163,7 @@ impl ProfileFeatures {
     /// True when: PCS is XYZ, chad (if present) is Bradford, no LUT tags
     /// that a CMS would prefer. Matrix-shaper tags must be present.
     #[inline]
+    #[allow(dead_code)] // will be used by zenpixels-convert CMS bypass
     pub(crate) fn is_safe_matrix_shaper(&self) -> bool {
         self.has_matrix_shaper
             && !self.pcs_is_lab
@@ -177,10 +179,12 @@ impl ProfileFeatures {
 
 /// Bradford chromatic adaptation matrix (D65→D50 direction, ICC convention).
 /// Used by ICC `chad` tag.
+#[allow(dead_code)] // used by inspect_profile, kept for CMS bypass path
 const BRADFORD_CHAD_D65_TO_D50: [f64; 9] = [
     1.0478, 0.0229, -0.0501, 0.0295, 0.9905, -0.0171, -0.0092, 0.0151, 0.7517,
 ];
 /// Tolerance for `chad` matrix comparison (s15Fixed16 quantization).
+#[allow(dead_code)] // used by inspect_profile, kept for CMS bypass path
 const CHAD_TOL: f64 = 0.005;
 
 /// Inspect an ICC profile and return which features it uses.
@@ -190,6 +194,7 @@ const CHAD_TOL: f64 = 0.005;
 /// full CMS's output.
 ///
 /// Returns `None` if the bytes aren't a valid ICC profile.
+#[allow(dead_code)] // used in tests; will be used by zenpixels-convert CMS bypass
 pub(crate) fn inspect_profile(data: &[u8]) -> Option<ProfileFeatures> {
     if data.len() < ICC_MIN_SIZE {
         return None;
@@ -198,10 +203,11 @@ pub(crate) fn inspect_profile(data: &[u8]) -> Option<ProfileFeatures> {
         return None;
     }
 
-    let mut feat = ProfileFeatures::default();
-
     // PCS: bytes 20..24 in header. "XYZ " vs "Lab "
-    feat.pcs_is_lab = data.get(20..24)? == b"Lab ";
+    let mut feat = ProfileFeatures {
+        pcs_is_lab: data.get(20..24)? == b"Lab ",
+        ..ProfileFeatures::default()
+    };
 
     let tag_count = u32::from_be_bytes(
         data[ICC_TAG_COUNT_OFFSET..ICC_TAG_COUNT_OFFSET + 4]
@@ -250,10 +256,10 @@ pub(crate) fn inspect_profile(data: &[u8]) -> Option<ProfileFeatures> {
         if data.get(off..off + 8)? == b"sf32\0\0\0\0" && data.len() >= off + 8 + 36 {
             let mut m = [0.0f64; 9];
             let mut ok = true;
-            for i in 0..9 {
+            for (i, slot) in m.iter_mut().enumerate() {
                 let o = off + 8 + i * 4;
                 if let Ok(bytes) = data[o..o + 4].try_into() {
-                    m[i] = i32::from_be_bytes(bytes) as f64 / 65536.0;
+                    *slot = i32::from_be_bytes(bytes) as f64 / 65536.0;
                 } else {
                     ok = false;
                     break;
@@ -261,8 +267,8 @@ pub(crate) fn inspect_profile(data: &[u8]) -> Option<ProfileFeatures> {
             }
             if ok {
                 let mut max_diff = 0.0f64;
-                for i in 0..9 {
-                    let d = (m[i] - BRADFORD_CHAD_D65_TO_D50[i]).abs();
+                for (mi, bi) in m.iter().zip(BRADFORD_CHAD_D65_TO_D50.iter()) {
+                    let d = (mi - bi).abs();
                     if d > max_diff {
                         max_diff = d;
                     }
@@ -372,6 +378,7 @@ impl IccIdentification {
 /// | `Intent` | ±56 | none | + Facebook sRGB, Chrome nano |
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[must_use]
+#[allow(dead_code)] // all levels kept for future fine-grained identification
 pub(crate) enum Tolerance {
     /// ±1 in u16 — parametric v4 profiles only.
     Exact = 1,
@@ -407,6 +414,7 @@ pub(crate) const INTENT_SATURATION_SAFE: u8 = 1 << 2;
 ///
 /// Names follow the ICC v4.4 specification (section 7.2.15) and CICP/moxcms
 /// conventions. See also [`Tolerance`] for TRC error tolerance control.
+#[allow(dead_code)] // intent dispatch kept for zenpixels-convert CMS bypass
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub(crate) enum CoalesceForUse {
@@ -517,6 +525,7 @@ fn use_from_mask(mask: u8) -> IdentificationUse {
 ///
 /// Returns `None` if the profile isn't in the table, its measured u16 error
 /// exceeds `tolerance`, or it isn't safe for the requested intent.
+#[allow(dead_code)] // will be used by zenpixels-convert intent-aware CMS bypass
 pub(crate) fn identify_common_for(
     icc_bytes: &[u8],
     tolerance: Tolerance,

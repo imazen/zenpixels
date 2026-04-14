@@ -174,7 +174,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check all feature combinations
-        run: cargo hack check --workspace --feature-powerset --depth 3 --group-features imgref,rgb --exclude-features default
+        run: cargo hack check --workspace --exclude icc-gen --feature-powerset --depth 3 --group-features imgref,rgb --exclude-features default
 
   # ==========================================================================
   # Code coverage

@@ -19,6 +19,7 @@ use crate::color::NamedProfile;
 use crate::{ColorPrimaries, TransferFunction};
 
 /// A known color space entry in the registry.
+#[allow(dead_code)] // used in tests; will back from_cicp/to_cicp derivation
 #[derive(Clone, Copy, Debug)]
 pub struct KnownColorSpace {
     /// Color primaries (gamut + white point).
@@ -36,6 +37,7 @@ pub struct KnownColorSpace {
 /// This is the single source of truth. All `from_cicp`, `to_cicp`,
 /// `to_primaries_transfer`, and `from_primaries_transfer` functions
 /// should be derivable from this table.
+#[allow(dead_code)] // used in tests; will back from_cicp/to_cicp derivation
 pub const REGISTRY: &[KnownColorSpace] = &[
     KnownColorSpace {
         primaries: ColorPrimaries::Bt709,
@@ -104,6 +106,7 @@ pub const REGISTRY: &[KnownColorSpace] = &[
 // =========================================================================
 
 /// Find a registry entry by CICP codes.
+#[allow(dead_code)] // used in tests; will back from_cicp derivation
 pub const fn find_by_cicp(cp: u8, tc: u8) -> Option<&'static KnownColorSpace> {
     let mut i = 0;
     while i < REGISTRY.len() {
@@ -118,6 +121,7 @@ pub const fn find_by_cicp(cp: u8, tc: u8) -> Option<&'static KnownColorSpace> {
 }
 
 /// Find a registry entry by primaries + transfer.
+#[allow(dead_code)] // used in tests; will back to_primaries_transfer derivation
 pub const fn find_by_primaries_transfer(
     primaries: ColorPrimaries,
     transfer: TransferFunction,
@@ -135,6 +139,7 @@ pub const fn find_by_primaries_transfer(
 }
 
 /// Find a registry entry by named profile.
+#[allow(dead_code)] // used in tests; will back from_named derivation
 pub const fn find_by_named(named: NamedProfile) -> Option<&'static KnownColorSpace> {
     let mut i = 0;
     while i < REGISTRY.len() {

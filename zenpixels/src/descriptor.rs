@@ -435,6 +435,7 @@ impl ColorPrimaries {
     // No remaining ColorPrimaries variants use D50. Was used by
     // ColorMatch, WideGamut, EciRgbV2 (all removed).
     /// DCI white point (theatrical projection, SMPTE RP 431-2).
+    #[allow(dead_code)] // kept for future DCI-P3 theatrical support
     pub(crate) const WHITE_DCI: (f32, f32) = (0.314, 0.351);
 
     /// CIE 1931 xy chromaticity coordinates of the RGB primaries.
@@ -442,7 +443,7 @@ impl ColorPrimaries {
     /// Returns `((rx, ry), (gx, gy), (bx, by))` or `None` for `Unknown`.
     /// These are the canonical coordinates from the relevant standards
     /// (ITU-R BT.709, BT.2020, SMPTE EG 432-1, etc.).
-    #[allow(unreachable_patterns)]
+    #[allow(unreachable_patterns, clippy::type_complexity)]
     pub const fn chromaticity(self) -> Option<((f32, f32), (f32, f32), (f32, f32))> {
         match self {
             Self::Bt709 => Some(((0.64, 0.33), (0.30, 0.60), (0.15, 0.06))),
