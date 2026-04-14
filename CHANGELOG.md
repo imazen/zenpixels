@@ -5,6 +5,13 @@
 These are implemented on the development branch but deferred to the next
 minor release to batch semver breaks.
 
+### zenpixels
+
+- **`repr(u8)` removed from `ColorPrimaries` and `TransferFunction`**.
+  Discriminant values are no longer part of the public API. Code that
+  transmuted or matched on numeric values will break. The enums are
+  `#[non_exhaustive]`, so `as u8` casts were already unreliable.
+
 ### zenpixels-convert
 
 - **`ConvertError` → `#[non_exhaustive]`**. Error enums should always be
