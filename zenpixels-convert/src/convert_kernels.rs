@@ -187,6 +187,36 @@ pub(super) fn apply_step_u8(
         ConvertStep::GamutMatrixRgbaF32(flat) => {
             gamut_matrix_rgba_f32(src, dst, w, &flat);
         }
+
+        ConvertStep::FusedSrgbU8GamutRgb(flat) => {
+            let m = [
+                [flat[0], flat[1], flat[2]],
+                [flat[3], flat[4], flat[5]],
+                [flat[6], flat[7], flat[8]],
+            ];
+            crate::fast_gamut::convert_u8_rgb_simd_matlut(
+                &m,
+                src,
+                dst,
+                crate::fast_gamut::srgb_lin_lut_u8(),
+                |v: f32| linear_srgb::default::linear_to_srgb_u8(v),
+            );
+        }
+
+        ConvertStep::FusedSrgbU8GamutRgba(flat) => {
+            let m = [
+                [flat[0], flat[1], flat[2]],
+                [flat[3], flat[4], flat[5]],
+                [flat[6], flat[7], flat[8]],
+            ];
+            crate::fast_gamut::convert_u8_rgba_simd_lut(
+                &m,
+                src,
+                dst,
+                crate::fast_gamut::srgb_lin_lut_u8(),
+                linear_srgb::default::linear_to_srgb_u8,
+            );
+        }
     }
 }
 

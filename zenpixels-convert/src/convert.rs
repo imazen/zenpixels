@@ -120,6 +120,12 @@ pub(crate) enum ConvertStep {
     GamutMatrixRgbF32([f32; 9]),
     /// Apply a 3×3 gamut matrix to linear RGBA f32 (4 channels, alpha passthrough).
     GamutMatrixRgbaF32([f32; 9]),
+    /// Fused u8-sRGB RGB primaries conversion: LUT linearize → SIMD matrix →
+    /// SIMD f32→i32 → LUT encode, in one pass. Replaces the 3-step sequence
+    /// `[SrgbU8ToLinearF32, GamutMatrixRgbF32(m), LinearF32ToSrgbU8]`.
+    FusedSrgbU8GamutRgb([f32; 9]),
+    /// Fused u8-sRGB RGBA primaries conversion (alpha passthrough).
+    FusedSrgbU8GamutRgba([f32; 9]),
 }
 
 /// Assert that a descriptor is not CMYK.
@@ -400,6 +406,10 @@ impl ConvertPlan {
             // Transfer-only difference or alpha-mode-only: identity path.
             steps.push(ConvertStep::Identity);
         }
+
+        // Peephole fusion: collapse common 3-step patterns into single fused
+        // kernels that avoid scratch-buffer round-trips.
+        fuse_matlut_patterns(&mut steps);
 
         Ok(Self { from, to, steps })
     }
@@ -999,6 +1009,36 @@ pub(crate) fn convert_row_buffered(
 }
 
 /// Check if two steps are inverses that cancel each other.
+/// Collapse `[SrgbU8ToLinearF32, GamutMatrix*F32(m), LinearF32ToSrgbU8]`
+/// into a single fused matlut step. Mutates in place.
+fn fuse_matlut_patterns(steps: &mut Vec<ConvertStep>) {
+    let mut i = 0;
+    while i + 2 < steps.len() {
+        match (steps[i], steps[i + 1], steps[i + 2]) {
+            (
+                ConvertStep::SrgbU8ToLinearF32,
+                ConvertStep::GamutMatrixRgbF32(m),
+                ConvertStep::LinearF32ToSrgbU8,
+            ) => {
+                steps[i] = ConvertStep::FusedSrgbU8GamutRgb(m);
+                steps.drain(i + 1..i + 3);
+                continue;
+            }
+            (
+                ConvertStep::SrgbU8ToLinearF32,
+                ConvertStep::GamutMatrixRgbaF32(m),
+                ConvertStep::LinearF32ToSrgbU8,
+            ) => {
+                steps[i] = ConvertStep::FusedSrgbU8GamutRgba(m);
+                steps.drain(i + 1..i + 3);
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+}
+
 fn are_inverse(a: ConvertStep, b: ConvertStep) -> bool {
     matches!(
         (a, b),
@@ -1228,6 +1268,15 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
             current.alpha(),
             TransferFunction::Linear,
         ),
+        // Fused steps: u8 sRGB in, u8 sRGB out (same layout, same alpha).
+        ConvertStep::FusedSrgbU8GamutRgb(_) | ConvertStep::FusedSrgbU8GamutRgba(_) => {
+            PixelDescriptor::new(
+                ChannelType::U8,
+                current.layout(),
+                current.alpha(),
+                TransferFunction::Srgb,
+            )
+        }
     }
 }
 
