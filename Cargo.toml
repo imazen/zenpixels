@@ -1,5 +1,5 @@
 [workspace]
-members = ["zenpixels", "zenpixels-convert"]
+members = ["zenpixels", "zenpixels-convert", "scripts/icc-gen"]
 resolver = "2"
 
 [workspace.dependencies]

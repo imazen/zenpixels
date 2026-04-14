@@ -428,18 +428,31 @@ impl CoalesceForUse {
 /// checks against tables of known RGB and grayscale ICC profiles.
 ///
 /// Returns `Some(IccIdentification)` for recognized profiles, `None` for
-/// unknown ones. Grayscale profiles return [`Bt709`](ColorPrimaries::Bt709)
-/// primaries (grayscale has no gamut, but D65 white point is assumed).
+/// unknown ones. **Does not check intent safety** — use this for metadata
+/// identification ("what profile is this?"). For approximation safety
+/// ("can I use matrix+TRC math instead of a CMS?"), use
+/// [`identify_common_for`] with the relevant [`CoalesceForUse`].
+///
+/// Grayscale profiles return [`Bt709`](ColorPrimaries::Bt709) primaries
+/// (grayscale has no gamut, but D65 white point is assumed).
 ///
 /// ~100ns. For the long tail of vendor/monitor profiles, use structural
 /// analysis via a CMS backend.
-///
-/// Equivalent to `identify_common_for(_, _, CoalesceForUse::Colorimetric)` —
-/// the most common use case. For stricter intent-safety checks, use
-/// [`identify_common_for`] directly.
-#[inline]
 pub fn identify_common(icc_bytes: &[u8], tolerance: Tolerance) -> Option<IccIdentification> {
-    identify_common_for(icc_bytes, tolerance, CoalesceForUse::Colorimetric)
+    let hash = fnv1a_64_normalized(icc_bytes);
+    if let Ok(idx) = KNOWN_RGB_PROFILES.binary_search_by_key(&hash, |e| e.0) {
+        let entry = &KNOWN_RGB_PROFILES[idx];
+        if entry.3 <= tolerance as u8 {
+            return Some(IccIdentification::new(entry.1, entry.2));
+        }
+    }
+    if let Ok(idx) = KNOWN_GRAY_PROFILES.binary_search_by_key(&hash, |e| e.0) {
+        let entry = &KNOWN_GRAY_PROFILES[idx];
+        if entry.2 <= tolerance as u8 {
+            return Some(IccIdentification::new(ColorPrimaries::Bt709, entry.1));
+        }
+    }
+    None
 }
 
 /// Identify a profile only when matrix+TRC math is equivalent to a CMS's

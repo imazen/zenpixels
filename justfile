@@ -95,13 +95,13 @@ icc-ensure-sources:
     cp -n "$MOXCMS"/assets/*.icc "$MOXCMS"/assets/*.icm "{{icc_cache}}/" 2>/dev/null || true
     echo "ICC cache: $(find {{icc_cache}} -name '*.icc' -o -name '*.icm' | wc -l) profiles"
 
+# Build the table generator (unpublished workspace crate)
+icc-build-gen:
+    cargo build -p icc-gen --release
+
 # Regenerate .inc table files from ICC profile cache + bundled profiles
 icc-gen: icc-build-gen icc-ensure-sources
-    /tmp/zenpixels-gen-icc-tables "{{icc_cache}}" "zenpixels-convert/src/profiles" "{{icc_out}}"
-
-# Build the table generator
-icc-build-gen:
-    rustc -O scripts/gen_icc_tables.rs -o /tmp/zenpixels-gen-icc-tables
+    ./target/release/icc-gen "{{icc_cache}}" "zenpixels-convert/src/profiles" "{{icc_out}}"
 
 # Full pipeline: fetch profiles, regenerate tables, test
 icc-update: icc-fetch icc-gen test
@@ -109,7 +109,8 @@ icc-update: icc-fetch icc-gen test
 
 # Show what the generator would produce without writing (dry run)
 icc-dry-run: icc-build-gen
-    /tmp/zenpixels-gen-icc-tables "{{icc_cache}}" "zenpixels-convert/src/profiles" /tmp/zenpixels-icc-dry-run
+    mkdir -p /tmp/zenpixels-icc-dry-run
+    ./target/release/icc-gen "{{icc_cache}}" "zenpixels-convert/src/profiles" /tmp/zenpixels-icc-dry-run
     @echo "--- RGB ---"
     @head -5 /tmp/zenpixels-icc-dry-run/icc_table_rgb.inc
     @echo "..."
