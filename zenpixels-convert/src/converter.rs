@@ -46,22 +46,20 @@ enum ExternalTransform {
 impl RowConverter {
     /// Create a converter from `from` to `to`.
     ///
+    /// Cross-profile conversions (different primaries or transfer) go
+    /// through the default CMS dispatch chain — see
+    /// [`new_explicit_with_cms`](Self::new_explicit_with_cms) for details.
     /// Returns `Err` if no conversion path exists between the formats.
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
-        let plan = ConvertPlan::new(from, to).at()?;
-        Ok(Self {
-            plan,
-            scratch: ConvertScratch::new(),
-            external: None,
-        })
+        Self::new_explicit_with_cms(from, to, &crate::policy::ConvertOptions::permissive(), None)
     }
 
     /// Create a converter with explicit policy options.
     ///
     /// Like [`new`](Self::new) but validates [`ConvertOptions`] policies
-    /// (alpha removal, depth reduction, RGB→Gray) before creating the plan.
-    /// Returns a specific error if a forbidden operation would be required.
+    /// (alpha removal, depth reduction, RGB→Gray). Cross-profile
+    /// conversions go through the default CMS dispatch chain.
     ///
     /// [`ConvertOptions`]: crate::policy::ConvertOptions
     #[track_caller]
@@ -70,12 +68,7 @@ impl RowConverter {
         to: PixelDescriptor,
         options: &crate::policy::ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
-        let plan = ConvertPlan::new_explicit(from, to, options).at()?;
-        Ok(Self {
-            plan,
-            scratch: ConvertScratch::new(),
-            external: None,
-        })
+        Self::new_explicit_with_cms(from, to, options, None)
     }
 
     /// Create a converter that may delegate the color conversion to a
@@ -99,69 +92,76 @@ impl RowConverter {
     ) -> Result<Self, At<ConvertError>> {
         use crate::policy::{AlphaPolicy, DepthPolicy};
 
-        // Try plugin first — it may take the whole conversion.
-        if let Some(cms) = cms {
-            let profiles_differ =
-                from.primaries != to.primaries || from.transfer() != to.transfer();
-            if profiles_differ {
-                let src_src = from.color_profile_source();
-                let dst_src = to.color_profile_source();
+        // CMS dispatch chain (runs only when primaries differ — transfer-only
+        // changes stay on the built-in plan path so `compose` can peephole
+        // them and options like `clip_out_of_gamut` propagate through):
+        //   1. user-supplied plugin (if Some)
+        //   2. ZenCmsLite (default) — named-profile matlut fast path
+        // First plugin to accept wins.
+        let primaries_differ = from.primaries != to.primaries;
+        if primaries_differ {
+            let src_src = from.color_profile_source();
+            let dst_src = to.color_profile_source();
+            let src_fmt = from.pixel_format();
+            let dst_fmt = to.pixel_format();
 
-                // Prefer shareable path when the plugin offers one.
-                let external = cms
+            // Helper: ask one plugin for a transform, preferring shared.
+            let try_cms = |plugin: &dyn crate::cms::PluggableCms| -> Option<ExternalTransform> {
+                plugin
                     .build_shared_source_transform(
                         src_src.clone(),
                         dst_src.clone(),
-                        from.pixel_format(),
-                        to.pixel_format(),
+                        src_fmt,
+                        dst_fmt,
                         options,
                     )
                     .map(ExternalTransform::Shared)
                     .or_else(|| {
-                        cms.build_source_transform(
-                            src_src,
-                            dst_src,
-                            from.pixel_format(),
-                            to.pixel_format(),
-                            options,
-                        )
-                        .map(ExternalTransform::Owned)
-                    });
+                        plugin
+                            .build_source_transform(
+                                src_src.clone(),
+                                dst_src.clone(),
+                                src_fmt,
+                                dst_fmt,
+                                options,
+                            )
+                            .map(ExternalTransform::Owned)
+                    })
+            };
 
-                if let Some(external) = external {
-                    // Policy checks still apply.
-                    let drops_alpha = from.alpha().is_some() && to.alpha().is_none();
-                    if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
-                        return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
-                    }
-                    let reduces_depth =
-                        from.channel_type().byte_size() > to.channel_type().byte_size();
-                    if reduces_depth && options.depth_policy == DepthPolicy::Forbid {
-                        return Err(whereat::at!(ConvertError::DepthReductionForbidden));
-                    }
-                    let src_is_rgb = matches!(
-                        from.layout(),
-                        ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
-                    );
-                    let dst_is_gray =
-                        matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
-                    if src_is_rgb && dst_is_gray && options.luma.is_none() {
-                        return Err(whereat::at!(ConvertError::RgbToGray));
-                    }
+            let external = cms
+                .and_then(try_cms)
+                .or_else(|| try_cms(&crate::cms_lite::ZenCmsLite));
 
-                    // Plugin accepted — build an identity plan (the external
-                    // transform drives the row, plan is just a shell for
-                    // from/to metadata).
-                    return Ok(Self {
-                        plan: ConvertPlan::identity(from, to),
-                        scratch: ConvertScratch::new(),
-                        external: Some(external),
-                    });
+            if let Some(external) = external {
+                // Policy checks still apply.
+                let drops_alpha = from.alpha().is_some() && to.alpha().is_none();
+                if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
+                    return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
                 }
+                let reduces_depth = from.channel_type().byte_size() > to.channel_type().byte_size();
+                if reduces_depth && options.depth_policy == DepthPolicy::Forbid {
+                    return Err(whereat::at!(ConvertError::DepthReductionForbidden));
+                }
+                let src_is_rgb = matches!(
+                    from.layout(),
+                    ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
+                );
+                let dst_is_gray =
+                    matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
+                if src_is_rgb && dst_is_gray && options.luma.is_none() {
+                    return Err(whereat::at!(ConvertError::RgbToGray));
+                }
+
+                return Ok(Self {
+                    plan: ConvertPlan::identity(from, to),
+                    scratch: ConvertScratch::new(),
+                    external: Some(external),
+                });
             }
         }
 
-        // Plugin declined or absent — built-in path.
+        // Same profiles, or CMS chain declined — built-in plan.
         let plan = ConvertPlan::new_explicit(from, to, options).at()?;
         Ok(Self {
             plan,
@@ -234,7 +234,10 @@ impl RowConverter {
     #[inline]
     #[must_use]
     pub fn is_identity(&self) -> bool {
-        self.plan.is_identity()
+        // External transforms (CMS plugins, named-profile matlut) shadow
+        // the plan with real conversion work — only identity when no
+        // external is set and the plan itself is identity.
+        self.external.is_none() && self.plan.is_identity()
     }
 
     /// Source pixel format.

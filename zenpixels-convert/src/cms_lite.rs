@@ -211,6 +211,59 @@ impl RowTransform for LiteTransform {
     }
 }
 
+/// Mutex-free `RowTransformMut` wrapper for the [`PluggableCms`] path.
+///
+/// Owns a `RowConverter` directly — no interior mutability needed since
+/// `RowTransformMut::transform_row` takes `&mut self`.
+struct LiteTransformMut {
+    inner: crate::converter::RowConverter,
+}
+
+impl crate::cms::RowTransformMut for LiteTransformMut {
+    fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
+        self.inner.convert_row(src, dst, width);
+    }
+}
+
+impl crate::cms::PluggableCms for ZenCmsLite {
+    fn build_source_transform(
+        &self,
+        src: crate::ColorProfileSource<'_>,
+        dst: crate::ColorProfileSource<'_>,
+        src_format: PixelFormat,
+        dst_format: PixelFormat,
+        options: &crate::policy::ConvertOptions,
+    ) -> Option<Box<dyn crate::cms::RowTransformMut>> {
+        use zenpixels::PixelDescriptor;
+
+        let (src_p, src_t) = src.resolve()?;
+        let (dst_p, dst_t) = dst.resolve()?;
+
+        // Same color space and format — decline; let caller use the
+        // built-in mechanical plan (byte copy / layout swizzle).
+        if src_p as u8 == dst_p as u8
+            && src_t as u8 == dst_t as u8
+            && src_format as u8 == dst_format as u8
+        {
+            return None;
+        }
+
+        let from = PixelDescriptor::from_pixel_format(src_format)
+            .with_primaries(src_p)
+            .with_transfer(src_t);
+        let to = PixelDescriptor::from_pixel_format(dst_format)
+            .with_primaries(dst_p)
+            .with_transfer(dst_t);
+
+        // Build directly from a plan to avoid recursing through the
+        // RowConverter CMS chain. Use new_explicit so ConvertOptions
+        // (clip_out_of_gamut, etc.) propagates into the plan.
+        let plan = crate::convert::ConvertPlan::new_explicit(from, to, options).ok()?;
+        let inner = crate::converter::RowConverter::from_plan(plan);
+        Some(Box::new(LiteTransformMut { inner }))
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::needless_range_loop)]
 mod tests {
