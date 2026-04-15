@@ -32,7 +32,15 @@ pub struct RowConverter {
     scratch: ConvertScratch,
     /// External CMS transform that bypasses the plan entirely.
     /// Set by `new_explicit_with_cms` when a plugin accepts the conversion.
-    external: Option<Box<dyn crate::cms::RowTransformMut>>,
+    external: Option<ExternalTransform>,
+}
+
+/// External CMS transform variant.
+enum ExternalTransform {
+    /// Stateless, shareable. Supports cheap clone and parallel use.
+    Shared(alloc::sync::Arc<dyn crate::cms::RowTransform>),
+    /// Owned, stateful. Unique per `RowConverter`.
+    Owned(Box<dyn crate::cms::RowTransformMut>),
 }
 
 impl RowConverter {
@@ -98,13 +106,29 @@ impl RowConverter {
             if profiles_differ {
                 let src_src = from.color_profile_source();
                 let dst_src = to.color_profile_source();
-                if let Some(transform) = cms.build_source_transform(
-                    src_src,
-                    dst_src,
-                    from.pixel_format(),
-                    to.pixel_format(),
-                    options,
-                ) {
+
+                // Prefer shareable path when the plugin offers one.
+                let external = cms
+                    .build_shared_source_transform(
+                        src_src.clone(),
+                        dst_src.clone(),
+                        from.pixel_format(),
+                        to.pixel_format(),
+                        options,
+                    )
+                    .map(ExternalTransform::Shared)
+                    .or_else(|| {
+                        cms.build_source_transform(
+                            src_src,
+                            dst_src,
+                            from.pixel_format(),
+                            to.pixel_format(),
+                            options,
+                        )
+                        .map(ExternalTransform::Owned)
+                    });
+
+                if let Some(external) = external {
                     // Policy checks still apply.
                     let drops_alpha = from.alpha().is_some() && to.alpha().is_none();
                     if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
@@ -131,7 +155,7 @@ impl RowConverter {
                     return Ok(Self {
                         plan: ConvertPlan::identity(from, to),
                         scratch: ConvertScratch::new(),
-                        external: Some(transform),
+                        external: Some(external),
                     });
                 }
             }
@@ -164,10 +188,10 @@ impl RowConverter {
     /// allocation after the first call at a given width.
     #[inline]
     pub fn convert_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
-        if let Some(ref mut ext) = self.external {
-            ext.transform_row(src, dst, width);
-        } else {
-            convert_row_buffered(&self.plan, src, dst, width, &mut self.scratch);
+        match &mut self.external {
+            Some(ExternalTransform::Shared(arc)) => arc.transform_row(src, dst, width),
+            Some(ExternalTransform::Owned(b)) => b.transform_row(src, dst, width),
+            None => convert_row_buffered(&self.plan, src, dst, width, &mut self.scratch),
         }
     }
 
@@ -244,13 +268,19 @@ impl RowConverter {
 
 impl Clone for RowConverter {
     fn clone(&self) -> Self {
-        // External transforms are not cloneable — the clone falls back
-        // to the built-in plan. Callers with a CMS plugin should build
-        // a new RowConverter instead of cloning.
+        // Shared external transforms clone cheaply via Arc; owned ones
+        // can't be cloned and are dropped (clone falls back to the
+        // built-in plan for that case).
+        let external = match &self.external {
+            Some(ExternalTransform::Shared(arc)) => {
+                Some(ExternalTransform::Shared(alloc::sync::Arc::clone(arc)))
+            }
+            Some(ExternalTransform::Owned(_)) | None => None,
+        };
         Self {
             plan: self.plan.clone(),
             scratch: ConvertScratch::new(),
-            external: None,
+            external,
         }
     }
 }
@@ -1202,6 +1232,65 @@ mod tests {
         .unwrap();
         assert!(conv.is_identity());
         assert_eq!(cms.accepted.load(core::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn pluggable_cms_shared_path_used_when_offered() {
+        // Plugin offers a shareable stateless transform — RowConverter
+        // must pick that path over the owned one.
+        struct SharedPaintBlueCms;
+        struct PaintBlueShared;
+
+        impl crate::cms::RowTransform for PaintBlueShared {
+            fn transform_row(&self, _src: &[u8], dst: &mut [u8], width: u32) {
+                for px in dst.chunks_exact_mut(3).take(width as usize) {
+                    px[0] = 0;
+                    px[1] = 0;
+                    px[2] = 255;
+                }
+            }
+        }
+
+        impl crate::cms::PluggableCms for SharedPaintBlueCms {
+            fn build_source_transform(
+                &self,
+                _src: zenpixels::ColorProfileSource<'_>,
+                _dst: zenpixels::ColorProfileSource<'_>,
+                _src_format: zenpixels::PixelFormat,
+                _dst_format: zenpixels::PixelFormat,
+                _options: &crate::policy::ConvertOptions,
+            ) -> Option<Box<dyn crate::cms::RowTransformMut>> {
+                panic!("owned path must not be used when shared is offered");
+            }
+
+            fn build_shared_source_transform(
+                &self,
+                _src: zenpixels::ColorProfileSource<'_>,
+                _dst: zenpixels::ColorProfileSource<'_>,
+                _src_format: zenpixels::PixelFormat,
+                _dst_format: zenpixels::PixelFormat,
+                _options: &crate::policy::ConvertOptions,
+            ) -> Option<alloc::sync::Arc<dyn crate::cms::RowTransform>> {
+                Some(alloc::sync::Arc::new(PaintBlueShared))
+            }
+        }
+
+        let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(zenpixels::ColorPrimaries::DisplayP3);
+        let srgb = PixelDescriptor::RGB8_SRGB;
+        let opts = ConvertOptions::permissive();
+        let conv =
+            crate::RowConverter::new_explicit_with_cms(p3, srgb, &opts, Some(&SharedPaintBlueCms))
+                .unwrap();
+
+        // Clone must carry the shared transform (via Arc).
+        let mut conv2 = conv.clone();
+        let mut dst = [0u8; 3];
+        conv2.convert_row(&[1, 2, 3], &mut dst, 1);
+        assert_eq!(
+            dst,
+            [0, 0, 255],
+            "cloned converter should inherit shared transform"
+        );
     }
 
     #[test]

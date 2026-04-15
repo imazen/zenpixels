@@ -244,16 +244,16 @@ pub enum ColorPriority {
     PreferCicp,
 }
 
-/// Row-level color transform produced by a [`ColorManagement`] implementation.
+/// Shareable, stateless row-level color transform.
 ///
-/// Applies an ICC-to-ICC color conversion to a row of pixel data.
+/// Takes `&self` — the same instance can be held behind `Arc<dyn RowTransform>`
+/// and reused across threads, converters, or cached for batch workloads.
+/// Appropriate when the transform carries no per-call mutable state: pure
+/// matrix/LUT math, moxcms `TransformExecutor` (whose `transform(&self, ...)`
+/// is already `&self`), or any stateless formula-based conversion.
 ///
-/// # Deprecated
-///
-/// Prefer [`RowTransformMut`] for new code. The `&self` signature forces
-/// implementations to use interior mutability (Mutex, RefCell) for scratch
-/// buffers. `RowTransformMut` takes `&mut self`, eliminating that overhead.
-#[deprecated(since = "0.2.8", note = "use RowTransformMut (&mut self) instead")]
+/// When the transform needs scratch buffers or per-call state, use
+/// [`RowTransformMut`] instead.
 pub trait RowTransform: Send + Sync {
     /// Transform one row of pixels from source to destination color space.
     ///
@@ -263,10 +263,17 @@ pub trait RowTransform: Send + Sync {
     fn transform_row(&self, src: &[u8], dst: &mut [u8], width: u32);
 }
 
-/// Row-level color transform with mutable access to internal state.
+/// Owned, stateful row-level color transform.
 ///
-/// Like [`RowTransform`] but takes `&mut self`, allowing implementations
-/// to reuse scratch buffers without interior mutability.
+/// Takes `&mut self` — each [`RowConverter`] owns its own `Box<dyn
+/// RowTransformMut>`, so implementations can reuse scratch buffers and
+/// update internal state per call without interior mutability.
+///
+/// When the transform is stateless and could be shared, use
+/// [`RowTransform`] instead — [`PluggableCms`] can offer both paths via
+/// [`build_shared_source_transform`](PluggableCms::build_shared_source_transform).
+///
+/// [`RowConverter`]: crate::RowConverter
 pub trait RowTransformMut: Send {
     /// Transform one row of pixels from source to destination color space.
     ///
@@ -373,15 +380,16 @@ pub trait ColorManagement {
 /// [`ColorProfileSource`]: crate::ColorProfileSource
 /// [`ConvertOptions`]: crate::policy::ConvertOptions
 pub trait PluggableCms: Send + Sync {
-    /// Attempt to build a single row-level transform covering the full
+    /// Attempt to build an owned, stateful row transform covering the full
     /// source → destination conversion for the given pixel formats.
     ///
     /// `options` carries policy flags the plugin may honor (e.g.,
     /// `clip_out_of_gamut`). The plugin is free to ignore fields that
     /// don't apply to its implementation.
     ///
-    /// Return `None` to decline (plan falls back to built-in steps).
-    /// Return `Some(transform)` to take ownership of the color step.
+    /// Return `None` to decline (plan falls back to built-in steps, or to
+    /// [`build_shared_source_transform`](Self::build_shared_source_transform)
+    /// if the caller tried that path and it also returned `None`).
     fn build_source_transform(
         &self,
         src: crate::ColorProfileSource<'_>,
@@ -390,4 +398,25 @@ pub trait PluggableCms: Send + Sync {
         dst_format: PixelFormat,
         options: &crate::policy::ConvertOptions,
     ) -> Option<Box<dyn RowTransformMut>>;
+
+    /// Optionally build a shareable, stateless row transform for the same
+    /// conversion.
+    ///
+    /// When the transform carries no per-call mutable state, returning
+    /// `Arc<dyn RowTransform>` enables sharing across threads, caching for
+    /// batch workloads, and cheap `RowConverter` clones. Default returns
+    /// `None` — plugins without a stateless fast path fall through to the
+    /// owned [`build_source_transform`](Self::build_source_transform).
+    ///
+    /// `RowConverter::new_explicit_with_cms` tries this method first.
+    fn build_shared_source_transform(
+        &self,
+        _src: crate::ColorProfileSource<'_>,
+        _dst: crate::ColorProfileSource<'_>,
+        _src_format: PixelFormat,
+        _dst_format: PixelFormat,
+        _options: &crate::policy::ConvertOptions,
+    ) -> Option<alloc::sync::Arc<dyn RowTransform>> {
+        None
+    }
 }
