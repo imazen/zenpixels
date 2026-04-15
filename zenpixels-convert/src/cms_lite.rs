@@ -92,6 +92,11 @@ impl core::fmt::Display for ZenCmsLiteError {
 // identification, CICP-in-ICC extraction, and CICP safety checks
 // (rejects non-identity matrix coefficients and narrow range).
 
+// The deprecated ColorManagement API uses `Box<dyn RowTransform>` with
+// `&self`, which requires Mutex interior mutability to wrap
+// `RowConverter::convert_row(&mut self)`. `Mutex` is std-only, so the
+// impl is gated on std. The new `PluggableCms` path is no_std-compatible.
+#[cfg(feature = "std")]
 impl ColorManagement for ZenCmsLite {
     type Error = ZenCmsLiteError;
 
@@ -139,13 +144,11 @@ impl ColorManagement for ZenCmsLite {
     }
 }
 
+#[cfg(feature = "std")]
 impl ZenCmsLite {
-    /// Build a transform from resolved `ColorProfileSource`s.
-    ///
-    /// Resolves each profile to `(primaries, transfer)` via
-    /// `ColorProfileSource::resolve()`, builds matching `PixelDescriptor`s,
-    /// and delegates to [`RowConverter`]. Plan builder handles matlut
-    /// fusion automatically for supported depth/TRC combinations.
+    /// Build a transform from resolved `ColorProfileSource`s for the
+    /// deprecated [`ColorManagement`] API. std-only because
+    /// `RowTransform::&self` requires a Mutex wrapper.
     ///
     /// Returns `None` if either source can't be resolved or the conversion
     /// is a no-op.
@@ -199,10 +202,12 @@ impl ZenCmsLite {
 /// shared access while `RowConverter::convert_row` needs `&mut self`.
 /// The new `PluggableCms` path stores a `Box<dyn RowTransformMut>` on
 /// `RowConverter` directly, bypassing this wrapper entirely.
+#[cfg(feature = "std")]
 struct LiteTransform {
     inner: std::sync::Mutex<crate::converter::RowConverter>,
 }
 
+#[cfg(feature = "std")]
 #[allow(deprecated)]
 impl RowTransform for LiteTransform {
     fn transform_row(&self, src: &[u8], dst: &mut [u8], width: u32) {

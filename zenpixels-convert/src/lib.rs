@@ -391,7 +391,6 @@ pub(crate) mod negotiate;
 
 pub mod adapt;
 pub mod cms;
-#[cfg(feature = "zencms-lite")]
 #[allow(
     dead_code,
     unused_variables,
@@ -404,7 +403,6 @@ pub(crate) mod cms_lite;
 pub mod cms_moxcms;
 pub mod converter;
 pub mod ext;
-#[cfg(feature = "zencms-lite")]
 #[allow(
     dead_code,
     unexpected_cfgs,

@@ -3,6 +3,8 @@
 //! [`RowConverter`] wraps a [`ConvertPlan`] with pre-allocated scratch
 //! buffers for zero-allocation-per-row streaming conversion.
 
+use alloc::boxed::Box;
+
 use crate::convert::{ConvertPlan, ConvertScratch, convert_row_buffered};
 use crate::{ChannelLayout, ConvertError, PixelDescriptor};
 use whereat::{At, ResultAtExt};

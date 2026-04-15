@@ -936,8 +936,8 @@ fn convert_8px_u8_rgb_matlut(
 
 /// Build a 256-entry LUT mapping u8 sRGB → f32 linear.
 pub(crate) fn srgb_lin_lut_u8() -> &'static [f32; 256] {
-    use std::sync::OnceLock;
-    static LUT: OnceLock<Box<[f32; 256]>> = OnceLock::new();
+    use once_cell::race::OnceBox;
+    static LUT: OnceBox<[f32; 256]> = OnceBox::new();
     LUT.get_or_init(|| {
         let mut t = alloc::boxed::Box::new([0.0f32; 256]);
         for (i, slot) in t.iter_mut().enumerate() {
@@ -949,8 +949,8 @@ pub(crate) fn srgb_lin_lut_u8() -> &'static [f32; 256] {
 
 /// Build a 4096-entry LUT mapping linear f32 → u8 sRGB.
 pub(crate) fn srgb_enc_lut_u8() -> &'static [u8; 4096] {
-    use std::sync::OnceLock;
-    static LUT: OnceLock<Box<[u8; 4096]>> = OnceLock::new();
+    use once_cell::race::OnceBox;
+    static LUT: OnceBox<[u8; 4096]> = OnceBox::new();
     LUT.get_or_init(|| {
         let mut t = alloc::boxed::Box::new([0u8; 4096]);
         for (i, slot) in t.iter_mut().enumerate() {
@@ -968,10 +968,10 @@ fn srgb_enc_lut_4096() -> &'static [u8; 4096] {
 
 /// Build a 65536-entry LUT mapping u16 sRGB → f32 linear.
 pub(crate) fn srgb_lin_lut_u16() -> &'static [f32; 65536] {
-    use std::sync::OnceLock;
-    static LUT: OnceLock<Box<[f32; 65536]>> = OnceLock::new();
+    use once_cell::race::OnceBox;
+    static LUT: OnceBox<[f32; 65536]> = OnceBox::new();
     LUT.get_or_init(|| {
-        let mut t: Box<[f32; 65536]> = vec![0.0f32; 65536]
+        let mut t: alloc::boxed::Box<[f32; 65536]> = alloc::vec![0.0f32; 65536]
             .into_boxed_slice()
             .try_into()
             .ok()
@@ -986,10 +986,10 @@ pub(crate) fn srgb_lin_lut_u16() -> &'static [f32; 65536] {
 /// Build a 65536-entry LUT mapping i32 index (scaled linear) → u16 sRGB.
 /// Indexed by `(linear * 65535 + 0.5) as i32` after clamp.
 pub(crate) fn srgb_enc_lut_u16() -> &'static [u16; 65536] {
-    use std::sync::OnceLock;
-    static LUT: OnceLock<Box<[u16; 65536]>> = OnceLock::new();
+    use once_cell::race::OnceBox;
+    static LUT: OnceBox<[u16; 65536]> = OnceBox::new();
     LUT.get_or_init(|| {
-        let mut t: Box<[u16; 65536]> = vec![0u16; 65536]
+        let mut t: alloc::boxed::Box<[u16; 65536]> = alloc::vec![0u16; 65536]
             .into_boxed_slice()
             .try_into()
             .ok()
