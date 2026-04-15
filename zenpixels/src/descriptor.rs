@@ -116,6 +116,8 @@ pub enum ChannelLayout {
     Oklab = 6,
     /// Oklab perceptual color with alpha: L, a, b, alpha.
     OklabA = 7,
+    /// C, M, Y, K channel order.
+    Cmyk = 8,
 }
 
 impl ChannelLayout {
@@ -127,7 +129,7 @@ impl ChannelLayout {
             Self::Gray => 1,
             Self::GrayAlpha => 2,
             Self::Rgb | Self::Oklab => 3,
-            Self::Rgba | Self::Bgra | Self::OklabA => 4,
+            Self::Rgba | Self::Bgra | Self::OklabA | Self::Cmyk => 4,
             _ => 0,
         }
     }
@@ -154,6 +156,7 @@ impl fmt::Display for ChannelLayout {
             Self::Bgra => f.write_str("BGRA"),
             Self::Oklab => f.write_str("Oklab"),
             Self::OklabA => f.write_str("OklabA"),
+            Self::Cmyk => f.write_str("CMYK"),
             _ => write!(f, "ChannelLayout({})", *self as u8),
         }
     }
@@ -967,6 +970,11 @@ impl PixelDescriptor {
         signal_range: SignalRange::Full,
     };
 
+    // -- CMYK constants --------------------------------------------------------
+
+    /// 8-bit CMYK, no transfer function or primaries.
+    pub const CMYK8: Self = Self::from_pixel_format(PixelFormat::Cmyk8);
+
     // -- Methods --------------------------------------------------------------
 
     /// Number of channels.
@@ -1176,6 +1184,10 @@ pub enum ColorModel {
     YCbCr = 2,
     /// Oklab perceptual color space (L, a, b).
     Oklab = 3,
+    /// Cyan, magenta, yellow, key (black). Device-dependent printing color space.
+    /// RGB primaries and transfer functions do not apply to CMYK data.
+    /// Use a CMS with an ICC profile for CMYK↔RGB conversion.
+    Cmyk = 4,
 }
 
 impl ColorModel {
@@ -1185,18 +1197,22 @@ impl ColorModel {
     pub const fn color_channels(self) -> u8 {
         match self {
             Self::Gray => 1,
+            Self::Cmyk => 4,
             _ => 3,
         }
     }
 }
 
 impl fmt::Display for ColorModel {
+    #[allow(unreachable_patterns)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Gray => f.write_str("Gray"),
             Self::Rgb => f.write_str("RGB"),
             Self::YCbCr => f.write_str("YCbCr"),
             Self::Oklab => f.write_str("Oklab"),
+            Self::Cmyk => f.write_str("CMYK"),
+            _ => write!(f, "ColorModel({})", *self as u8),
         }
     }
 }
@@ -1260,6 +1276,8 @@ pub enum PixelFormat {
     Bgrx8 = 15,
     OklabF32 = 16,
     OklabaF32 = 17,
+    /// 8-bit CMYK (4 bytes per pixel, no transfer function).
+    Cmyk8 = 18,
 }
 
 impl PixelFormat {
@@ -1274,7 +1292,8 @@ impl PixelFormat {
             | Self::GrayA8
             | Self::Bgra8
             | Self::Rgbx8
-            | Self::Bgrx8 => ChannelType::U8,
+            | Self::Bgrx8
+            | Self::Cmyk8 => ChannelType::U8,
             Self::Rgb16 | Self::Rgba16 | Self::Gray16 | Self::GrayA16 => ChannelType::U16,
             Self::RgbF32
             | Self::RgbaF32
@@ -1298,6 +1317,7 @@ impl PixelFormat {
             Self::Bgra8 | Self::Bgrx8 => ChannelLayout::Bgra,
             Self::OklabF32 => ChannelLayout::Oklab,
             Self::OklabaF32 => ChannelLayout::OklabA,
+            Self::Cmyk8 => ChannelLayout::Cmyk,
             _ => ChannelLayout::Rgb,
         }
     }
@@ -1314,6 +1334,7 @@ impl PixelFormat {
             | Self::GrayA16
             | Self::GrayAF32 => ColorModel::Gray,
             Self::OklabF32 | Self::OklabaF32 => ColorModel::Oklab,
+            Self::Cmyk8 => ColorModel::Cmyk,
             _ => ColorModel::Rgb,
         }
     }
@@ -1367,7 +1388,8 @@ impl PixelFormat {
             | Self::Gray8
             | Self::Gray16
             | Self::GrayF32
-            | Self::OklabF32 => None,
+            | Self::OklabF32
+            | Self::Cmyk8 => None,
             Self::Rgbx8 | Self::Bgrx8 => Some(AlphaMode::Undefined),
             _ => Some(AlphaMode::Straight),
         }
@@ -1395,6 +1417,7 @@ impl PixelFormat {
             Self::Bgrx8 => "BGRX8",
             Self::OklabF32 => "OklabF32",
             Self::OklabaF32 => "OklabaF32",
+            Self::Cmyk8 => "CMYK8",
             _ => "Unknown",
         }
     }
@@ -1434,6 +1457,8 @@ impl PixelFormat {
             (ChannelType::F32, ChannelLayout::Oklab, _) => Some(Self::OklabF32),
             (ChannelType::F32, ChannelLayout::OklabA, _) => Some(Self::OklabaF32),
 
+            (ChannelType::U8, ChannelLayout::Cmyk, _) => Some(Self::Cmyk8),
+
             _ => None,
         }
     }
@@ -1460,6 +1485,7 @@ impl PixelFormat {
             Self::Bgrx8 => PixelDescriptor::BGRX8,
             Self::OklabF32 => PixelDescriptor::OKLABF32,
             Self::OklabaF32 => PixelDescriptor::OKLABAF32,
+            Self::Cmyk8 => PixelDescriptor::CMYK8,
             _ => PixelDescriptor::RGB8,
         }
     }
@@ -1599,6 +1625,7 @@ mod tests {
         assert_eq!(ColorModel::Rgb.color_channels(), 3);
         assert_eq!(ColorModel::YCbCr.color_channels(), 3);
         assert_eq!(ColorModel::Oklab.color_channels(), 3);
+        assert_eq!(ColorModel::Cmyk.color_channels(), 4);
     }
 
     // --- PlaneSemantic tests ---
@@ -1914,6 +1941,7 @@ mod tests {
         assert_eq!(format!("{}", ColorModel::Rgb), "RGB");
         assert_eq!(format!("{}", ColorModel::YCbCr), "YCbCr");
         assert_eq!(format!("{}", ColorModel::Oklab), "Oklab");
+        assert_eq!(format!("{}", ColorModel::Cmyk), "CMYK");
     }
 
     // --- SignalRange default ---
@@ -1928,5 +1956,59 @@ mod tests {
     #[test]
     fn color_primaries_default() {
         assert_eq!(ColorPrimaries::default(), ColorPrimaries::Bt709);
+    }
+
+    // --- CMYK tests ---
+
+    #[test]
+    fn cmyk8_descriptor() {
+        let d = PixelDescriptor::CMYK8;
+        assert_eq!(d.color_model(), ColorModel::Cmyk);
+        assert_eq!(d.channels(), 4);
+        assert_eq!(d.bytes_per_pixel(), 4);
+        assert_eq!(d.layout(), ChannelLayout::Cmyk);
+        assert_eq!(d.channel_type(), ChannelType::U8);
+        assert_eq!(d.transfer(), TransferFunction::Unknown);
+        assert_eq!(d.primaries, ColorPrimaries::Bt709);
+        assert!(!d.has_alpha());
+        assert!(d.is_opaque());
+    }
+
+    #[test]
+    fn cmyk8_pixel_format() {
+        let fmt = PixelFormat::Cmyk8;
+        assert_eq!(fmt.channels(), 4);
+        assert_eq!(fmt.bytes_per_pixel(), 4);
+        assert_eq!(fmt.channel_type(), ChannelType::U8);
+        assert_eq!(fmt.layout(), ChannelLayout::Cmyk);
+        assert_eq!(fmt.color_model(), ColorModel::Cmyk);
+        assert!(!fmt.has_alpha_bytes());
+        assert!(!fmt.is_grayscale());
+        assert_eq!(fmt.name(), "CMYK8");
+        assert_eq!(fmt.default_alpha(), None);
+    }
+
+    #[test]
+    fn cmyk8_from_parts_roundtrip() {
+        let fmt = PixelFormat::Cmyk8;
+        let rebuilt =
+            PixelFormat::from_parts(fmt.channel_type(), fmt.layout(), fmt.default_alpha());
+        assert_eq!(rebuilt, Some(fmt));
+    }
+
+    #[test]
+    fn cmyk8_descriptor_roundtrip() {
+        let desc = PixelFormat::Cmyk8.descriptor();
+        assert_eq!(desc, PixelDescriptor::CMYK8);
+    }
+
+    #[test]
+    fn cmyk_channel_layout_display() {
+        assert_eq!(format!("{}", ChannelLayout::Cmyk), "CMYK");
+    }
+
+    #[test]
+    fn cmyk_channel_layout_no_alpha() {
+        assert!(!ChannelLayout::Cmyk.has_alpha());
     }
 }

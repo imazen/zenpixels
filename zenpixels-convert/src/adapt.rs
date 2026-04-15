@@ -66,8 +66,20 @@ use crate::convert::ConvertPlan;
 use crate::converter::RowConverter;
 use crate::negotiate::{ConvertIntent, best_match};
 use crate::policy::{AlphaPolicy, ConvertOptions};
-use crate::{ConvertError, PixelDescriptor};
+use crate::{ColorModel, ConvertError, PixelDescriptor};
 use whereat::{At, ResultAtExt};
+
+/// Assert that a descriptor is not CMYK.
+///
+/// CMYK is device-dependent and cannot be adapted by zenpixels-convert.
+/// Use a CMS (e.g., moxcms) with an ICC profile for CMYK↔RGB conversion.
+fn assert_not_cmyk(desc: &PixelDescriptor) {
+    assert!(
+        desc.color_model() != ColorModel::Cmyk,
+        "CMYK pixel data cannot be processed by zenpixels-convert. \
+         Use a CMS (e.g., moxcms) with an ICC profile for CMYK↔RGB conversion."
+    );
+}
 
 /// Result of format adaptation: the converted data and its descriptor.
 #[derive(Clone, Debug)]
@@ -130,6 +142,7 @@ pub fn adapt_for_encode_with_intent<'a>(
     supported: &[PixelDescriptor],
     intent: ConvertIntent,
 ) -> Result<Adapted<'a>, At<ConvertError>> {
+    assert_not_cmyk(&descriptor);
     if supported.is_empty() {
         return Err(whereat::at!(ConvertError::EmptyFormatList));
     }
@@ -212,6 +225,8 @@ pub fn convert_buffer(
     from: PixelDescriptor,
     to: PixelDescriptor,
 ) -> Result<Vec<u8>, At<ConvertError>> {
+    assert_not_cmyk(&from);
+    assert_not_cmyk(&to);
     if from == to {
         return Ok(src.to_vec());
     }
@@ -253,6 +268,7 @@ pub fn adapt_for_encode_explicit<'a>(
     supported: &[PixelDescriptor],
     options: &ConvertOptions,
 ) -> Result<Adapted<'a>, At<ConvertError>> {
+    assert_not_cmyk(&descriptor);
     if supported.is_empty() {
         return Err(whereat::at!(ConvertError::EmptyFormatList));
     }
@@ -474,6 +490,46 @@ mod tests {
 
         assert!(matches!(result.data, Cow::Borrowed(_)));
         assert_eq!(result.descriptor, desc);
+    }
+
+    #[test]
+    #[should_panic(expected = "CMYK pixel data cannot be processed")]
+    fn cmyk_rejected_by_adapt_for_encode() {
+        let cmyk_data = vec![0u8; 4 * 4]; // 4 pixels
+        let _ = adapt_for_encode(
+            &cmyk_data,
+            PixelDescriptor::CMYK8,
+            2,
+            2,
+            8,
+            &[PixelDescriptor::RGB8_SRGB],
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "CMYK pixel data cannot be processed")]
+    fn cmyk_rejected_by_convert_buffer() {
+        let cmyk_data = vec![0u8; 4 * 4];
+        let _ = convert_buffer(
+            &cmyk_data,
+            2,
+            2,
+            PixelDescriptor::CMYK8,
+            PixelDescriptor::RGB8_SRGB,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "CMYK pixel data cannot be processed")]
+    fn cmyk_rejected_by_convert_buffer_as_target() {
+        let rgb_data = vec![0u8; 3 * 4];
+        let _ = convert_buffer(
+            &rgb_data,
+            2,
+            2,
+            PixelDescriptor::RGB8_SRGB,
+            PixelDescriptor::CMYK8,
+        );
     }
 
     #[test]
