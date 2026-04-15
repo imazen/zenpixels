@@ -122,12 +122,31 @@ pub(crate) enum ConvertStep {
     GamutMatrixRgbaF32([f32; 9]),
 }
 
+/// Assert that a descriptor is not CMYK.
+///
+/// CMYK is device-dependent and cannot be converted by zenpixels-convert.
+/// Use a CMS (e.g., moxcms) with an ICC profile for CMYK↔RGB conversion.
+fn assert_not_cmyk(desc: &PixelDescriptor) {
+    assert!(
+        desc.color_model() != crate::ColorModel::Cmyk,
+        "CMYK pixel data cannot be processed by zenpixels-convert. \
+         Use a CMS (e.g., moxcms) with an ICC profile for CMYK↔RGB conversion."
+    );
+}
+
 impl ConvertPlan {
     /// Create a conversion plan from `from` to `to`.
     ///
     /// Returns `Err` if no conversion path exists.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either `from` or `to` uses [`ColorModel::Cmyk`].
+    /// CMYK requires a CMS with an ICC profile for conversion.
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
+        assert_not_cmyk(&from);
+        assert_not_cmyk(&to);
         if from == to {
             return Ok(Self {
                 from,
@@ -390,12 +409,19 @@ impl ConvertPlan {
     /// Validates that the planned conversion steps are allowed by the given
     /// policies before creating the plan. Returns an error if a forbidden
     /// operation would be required.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either `from` or `to` uses [`ColorModel::Cmyk`].
+    /// CMYK requires a CMS with an ICC profile for conversion.
     #[track_caller]
     pub fn new_explicit(
         from: PixelDescriptor,
         to: PixelDescriptor,
         options: &ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
+        assert_not_cmyk(&from);
+        assert_not_cmyk(&to);
         // Check alpha removal policy.
         let drops_alpha = from.alpha().is_some() && to.alpha().is_none();
         if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {

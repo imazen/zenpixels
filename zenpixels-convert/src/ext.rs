@@ -167,10 +167,21 @@ pub trait PixelBufferConvertTypedExt: PixelBufferConvertExt {
     fn to_bgra8(&self) -> PixelBuffer<rgb::alt::BGRA<u8>>;
 }
 
+/// Assert that a descriptor is not CMYK.
+fn assert_not_cmyk(desc: &PixelDescriptor) {
+    assert!(
+        desc.color_model() != crate::ColorModel::Cmyk,
+        "CMYK pixel data cannot be processed by zenpixels-convert. \
+         Use a CMS (e.g., moxcms) with an ICC profile for CMYK↔RGB conversion."
+    );
+}
+
 impl PixelBufferConvertExt for PixelBuffer {
     #[track_caller]
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>> {
         let src_desc = self.descriptor();
+        assert_not_cmyk(&src_desc);
+        assert_not_cmyk(&target);
         if src_desc == target {
             // Identity — just copy.
             let dst_stride = target.aligned_stride(self.width());
@@ -338,6 +349,24 @@ fn convert_to_typed<Q: Pixel>(buf: &PixelBuffer, target: PixelDescriptor) -> Pix
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- CMYK guard tests ---
+
+    #[test]
+    #[should_panic(expected = "CMYK pixel data cannot be processed")]
+    fn cmyk_rejected_by_convert_to() {
+        let cmyk_data = vec![0u8; 4 * 4]; // 4 pixels
+        let buf = PixelBuffer::from_vec(cmyk_data, 2, 2, PixelDescriptor::CMYK8).unwrap();
+        let _ = buf.convert_to(PixelDescriptor::RGB8_SRGB);
+    }
+
+    #[test]
+    #[should_panic(expected = "CMYK pixel data cannot be processed")]
+    fn cmyk_rejected_as_convert_target() {
+        let rgb_data = vec![0u8; 3 * 4]; // 4 pixels
+        let buf = PixelBuffer::from_vec(rgb_data, 2, 2, PixelDescriptor::RGB8_SRGB).unwrap();
+        let _ = buf.convert_to(PixelDescriptor::CMYK8);
+    }
 
     // --- TransferFunction linearize/delinearize tests ---
 

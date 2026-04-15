@@ -1360,4 +1360,14 @@ mod tests {
             "straight→premul→straight should cancel"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // CMYK guard
+    // -----------------------------------------------------------------------
+
+    #[test]
+    #[should_panic(expected = "CMYK pixel data cannot be processed")]
+    fn cmyk_rejected_by_row_converter() {
+        let _ = RowConverter::new(PixelDescriptor::CMYK8, PixelDescriptor::RGB8_SRGB);
+    }
 }
