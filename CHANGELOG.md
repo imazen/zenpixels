@@ -30,18 +30,42 @@ These are deferred to the next minor release to batch semver breaks.
   sign-preserving extended-range f32 sRGB transfers, preserving negative
   and supernormal values for HDR / wide-gamut pipelines that defer tone or
   gamut mapping to a later stage.
+- **`ColorContext` → `#[non_exhaustive]`**. Construct via
+  `from_icc()` / `from_cicp()` + builders. Direct struct literal
+  construction is already discouraged (fields are `Option` with no
+  authority signal); non-exhaustive makes it enforceable.
+- **Remove `ColorContext::from_icc_and_cicp()`** (deprecated since 0.2.6).
+  Use `from_icc()` or `from_cicp()` — codecs should populate only the
+  authoritative field via `SourceColor::to_color_context()`.
+- **Remove `ColorPrimaries` / `TransferFunction` commented-out variants**
+  (deferred AppleRgb, Smpte170m, Bt470Bg, WideGamut, ColorMatch,
+  EciRgbV2, DciP3, Gamma18, Gamma24, Gamma28) — clean up after the
+  `repr(u8)` removal frees discriminant assignment.
 
 ### zenpixels-convert
 
 - **`RowTransform: Send + Sync`** (was `Send`-only). External impls must
   now be thread-safe. All in-tree impls (`MoxRowTransform`, `LiteTransform`)
   already satisfy this.
-- **`ConvertError` → `#[non_exhaustive]`**.
-- **`ConvertError::HdrTransferRequiresToneMapping`** variant + `HdrPolicy`
-  enum + `ConvertOutputOptions` + `finalize_for_output_with()`. See
-  imazen/zenpixels#10 for HDR provenance plan.
-- **`ColorManagement` trait redesign**: single `build_source_transform`
-  entry point with options (rendering intent, HDR policy).
+- **`ConvertError` → `#[non_exhaustive]`** + new
+  `HdrTransferRequiresToneMapping` variant. See imazen/zenpixels#10 for
+  HDR provenance plan.
+- **`ColorManagement` trait redesign**: deprecate in favor of
+  `PluggableCms` for new code. Add `build_source_transform` entry point
+  accepting `ColorProfileSource` + `RenderingIntent` to
+  `ColorManagement` for backward-compatible use. Old
+  `build_transform(&[u8], &[u8])` stays but is deprecated.
+- **Remove `ZenCmsLite::extended` field and `::extended()` constructor**
+  (deprecated; use `ConvertOptions::clip_out_of_gamut` via
+  `RowConverter` instead).
+- **Remove `lut_transform_opts()` and `cicp_transform_opts()`** in
+  `cms_moxcms` (deprecated since 0.2.3; use `transform_opts()` with
+  explicit `ColorPriority` + `RenderingIntent`).
+- **Remove `ADOBE_RGB_COMPAT` and `PROPHOTO_RGB`** ICC profile constants
+  in `icc_profiles` (deprecated since 0.2.4).
+- **Drop `max_u16_err` from ICC hash table entries** — intent-safety
+  mask is the sole admission criterion; the runtime `Tolerance` enum
+  and per-entry numeric field are unused and misleading.
 
 ## zenpixels 0.2.7 (2026-04-14)
 
