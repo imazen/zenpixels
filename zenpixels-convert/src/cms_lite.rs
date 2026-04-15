@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn build_source_transform_p3_to_srgb_f32() {
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         let src = ColorProfileSource::Named(NamedProfile::DisplayP3);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
         let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn build_source_transform_p3_to_srgb_u8() {
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         let src = ColorProfileSource::Named(NamedProfile::DisplayP3);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
         let result = cms.build_source_transform(src, dst, PixelFormat::Rgb8, PixelFormat::Rgb8);
@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn same_color_space_returns_none() {
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         let src = ColorProfileSource::Named(NamedProfile::Srgb);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
         assert!(
@@ -352,14 +352,14 @@ mod tests {
 
     #[test]
     fn icc_profile_not_supported() {
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         assert!(cms.build_transform(&[0; 100], &[0; 100]).is_err());
         assert!(cms.identify_profile(&[0; 100]).is_none());
     }
 
     #[test]
     fn cicp_source_supported() {
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         let src = ColorProfileSource::Cicp(Cicp::DISPLAY_P3);
         let dst = ColorProfileSource::Cicp(Cicp::SRGB);
         let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn primaries_transfer_pair_supported() {
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         let src = ColorProfileSource::PrimariesTransferPair {
             primaries: ColorPrimaries::DisplayP3,
             transfer: TransferFunction::Srgb,
@@ -385,7 +385,7 @@ mod tests {
 
     #[test]
     fn cross_trc_conversion() {
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         // BT.2020 PQ → sRGB: different primaries AND different TRC
         let src = ColorProfileSource::Named(NamedProfile::Bt2020Pq);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn identify_profile_p3_icc() {
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
         let cicp = cms.identify_profile(p3_icc);
         assert!(cicp.is_some(), "should identify Display P3 ICC profile");
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn identify_profile_unknown_returns_none() {
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         assert!(cms.identify_profile(&[0; 100]).is_none());
         assert!(cms.identify_profile(&[]).is_none());
     }
@@ -439,7 +439,7 @@ mod tests {
         // mathematically-derived canonical, but the structural rule treats
         // LUT-absence as sufficient — consistent with how other CMSs
         // route these profiles through matrix-shaper math anyway.
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
         let bt2020_icc = crate::icc_profiles::REC2020_V4;
 
@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn build_transform_unrecognized_icc_fails() {
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         let garbage = [0u8; 200];
         assert!(cms.build_transform(&garbage, &garbage).is_err());
     }
@@ -466,7 +466,7 @@ mod tests {
     fn build_source_transform_icc_compat() {
         // The bundled DisplayP3Compat-v4 is a matrix-shaper profile with no
         // LUTs → accepted by the structural rule → resolved by lite CMS.
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
         let src = ColorProfileSource::Icc(p3_icc);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
@@ -484,7 +484,7 @@ mod tests {
     fn default_clamps_out_of_gamut() {
         // Default f32 transfer clamps to [0, 1]. P3 pure green is outside
         // sRGB gamut; the clamped path should produce non-negative values.
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         let src = ColorProfileSource::Named(NamedProfile::DisplayP3);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
         let transform = cms
@@ -775,7 +775,7 @@ mod accuracy_ground_truth_tests {
         src_profile: ColorProfileSource<'_>,
         dst_profile: ColorProfileSource<'_>,
     ) -> alloc::boxed::Box<dyn Fn(&[u8], &mut [u8])> {
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         let xf = cms
             .build_source_transform(
                 src_profile,
@@ -903,7 +903,7 @@ mod gamut_reduction_compare_tests {
         src_profile: ColorProfileSource<'_>,
         dst_profile: ColorProfileSource<'_>,
     ) -> alloc::boxed::Box<dyn Fn(&[u8], &mut [u8])> {
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         let xf = cms
             .build_source_transform(
                 src_profile,
@@ -924,7 +924,7 @@ mod gamut_reduction_compare_tests {
         src_profile: ColorProfileSource<'_>,
         dst_profile: ColorProfileSource<'_>,
     ) -> alloc::boxed::Box<dyn Fn(&mut [f32])> {
-        let cms = ZenCmsLite::default();
+        let cms = ZenCmsLite;
         let xf = cms
             .build_source_transform(
                 src_profile,
