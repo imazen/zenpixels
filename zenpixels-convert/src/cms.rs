@@ -196,7 +196,7 @@ pub enum RenderingIntent {
 /// # Which priority to use
 ///
 /// - **Standard ICC workflows** (JPEG, PNG, TIFF, WebP): use
-///   [`PreferIcc`](Self::IccOnly). These formats don't carry CICP metadata;
+///   [`PreferIcc`](Self::PreferIcc). These formats don't carry CICP metadata;
 ///   the ICC profile is the sole authority.
 ///
 /// - **CICP-native formats** (JPEG XL, HEIF, AVIF): use
@@ -365,18 +365,17 @@ pub trait ColorManagement {
 }
 
 /// Dyn-compatible CMS plugin interface for overriding gamut/profile
-/// conversions inside a [`ConvertPlan`].
+/// conversions inside a [`ConvertPlan`](crate::ConvertPlan).
 ///
 /// When a `PluggableCms` is passed to
-/// [`ConvertPlan::new_explicit_with_cms`] (or the matching `RowConverter`
-/// constructor) and the source and destination profiles differ, the plan
-/// asks the plugin whether it will handle the exact `(src_format,
-/// dst_format)` pair. If the plugin returns a transform, the plan
-/// collapses to a single [`ConvertStep::ExternalTransform`] that drives
-/// the row end-to-end — built-in linearize → gamut-matrix → encode steps
-/// (and their fused matlut kernels) are bypassed for that conversion.
-/// If the plugin returns `None`, the plan falls back to the built-in
-/// path.
+/// [`RowConverter::new_explicit_with_cms`](crate::RowConverter::new_explicit_with_cms)
+/// and the source and destination profiles differ, the plan asks the
+/// plugin whether it will handle the exact `(src_format, dst_format)`
+/// pair. If the plugin returns a transform, the plan collapses to a
+/// single external-transform step that drives the row end-to-end —
+/// built-in linearize → gamut-matrix → encode steps (and their fused
+/// matlut kernels) are bypassed for that conversion. If the plugin
+/// returns `None`, the plan falls back to the built-in path.
 ///
 /// `PluggableCms` is intentionally narrower than [`ColorManagement`]:
 /// - It accepts [`ColorProfileSource`] instead of raw ICC bytes, so

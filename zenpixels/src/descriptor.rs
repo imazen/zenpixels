@@ -640,7 +640,7 @@ impl PixelDescriptor {
         self.transfer
     }
 
-    /// Extract the color encoding as a [`ColorProfileSource::PrimariesTransferPair`].
+    /// Extract the color encoding as a [`crate::ColorProfileSource::PrimariesTransferPair`].
     #[inline]
     pub const fn color_profile_source(&self) -> crate::ColorProfileSource<'static> {
         crate::ColorProfileSource::PrimariesTransferPair {

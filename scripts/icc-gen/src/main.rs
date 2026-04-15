@@ -9,7 +9,7 @@
 //! matches canonical. Writes Rust include files.
 //!
 //! Usage:
-//!   cargo run -p icc-gen --release -- <icc-cache-dir> <bundled-profiles-dir> <out-dir>
+//!   `cargo run -p icc-gen --release -- <icc-cache-dir> <bundled-profiles-dir> <out-dir>`
 //!
 //! `lcms2-crosscheck` is enabled by default and requires the Little CMS 2 C
 //! library at system level (`apt install liblcms2-dev` on Debian/Ubuntu,

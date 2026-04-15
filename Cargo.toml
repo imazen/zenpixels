@@ -6,7 +6,7 @@ resolver = "2"
 zenpixels = { path = "zenpixels", version = "0.2.8", default-features = false }
 
 [workspace.package]
-version = "0.2.2"
+version = "0.2.8"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0 OR MIT"

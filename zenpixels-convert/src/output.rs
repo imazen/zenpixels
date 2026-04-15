@@ -344,15 +344,13 @@ fn build_cms_transform<C: ColorManagement>(
 // TODO(0.3.0): restore origin_has_hdr_transfer / target_has_hdr_transfer
 // helpers here for the HDR→SDR policy gate.
 
-/// Finalize a pixel buffer for output using the [`PluggableCms`] dispatch chain.
+/// Finalize a pixel buffer for output using the [`PluggableCms`](crate::cms::PluggableCms) dispatch chain.
 ///
-/// Modern replacement for
-/// [`finalize_for_output`](crate::output::finalize_for_output).
+/// Modern replacement for [`finalize_for_output`].
 ///
 /// When a CMS plugin is supplied, it is offered the conversion first; on
-/// decline the built-in [`ZenCmsLite`](crate::cms_lite::ZenCmsLite)
-/// dispatcher handles named-profile matlut fast paths. When `cms` is
-/// `None`, only `ZenCmsLite` runs.
+/// decline the built-in `ZenCmsLite` dispatcher handles named-profile
+/// matlut fast paths. When `cms` is `None`, only `ZenCmsLite` runs.
 ///
 /// Pass `cms = Some(&MoxCms)` (or another `PluggableCms`) for full ICC
 /// support; pass `None` for named-profile-only builds that avoid pulling

@@ -11,7 +11,7 @@
   when AVX2/FMA is available at runtime, scalar fallback otherwise). Lets
   callers decode XYB JPEGs without a full CMS backend (moxcms 0.8 cannot
   parse the XYB PCS). The XYB ICC bytes come from libjxl / jpegli
-  (Apache-2.0 / BSD-3), copied verbatim into `XYB_ICC_BYTES`.
+  (Apache-2.0 / BSD-3), copied verbatim into `XYB_ICC_BYTES`. (a5fdf9f)
 
 ## zenpixels 0.2.8 + zenpixels-convert 0.2.8 (2026-04-15)
 

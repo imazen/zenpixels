@@ -5,7 +5,7 @@
 //! - **CICP extraction**: [`extract_cicp`] reads the `cicp` tag from ICC v4.4+
 //!   profiles (~100ns, no allocation).
 //!
-//! - **Hash-based identification**: [`identify`] recognizes 181
+//! - **Hash-based identification**: [`identify_common`] recognizes 181
 //!   well-known profiles (sRGB, Display P3, BT.2020, Adobe RGB,
 //!   grayscale) via normalized FNV-1a hash lookup (~100ns).
 //!
@@ -316,7 +316,7 @@ pub enum IdentificationUse {
     /// metadata, format negotiation, and display — not for pixel math.
     MetadataOnly,
     /// Matrix+TRC substitution produces output equivalent to a full CMS
-    /// within the [`Tolerance`] used for identification. Safe to use for
+    /// within the tolerance used for identification. Safe to use for
     /// pixel conversion without a CMS backend.
     MatrixTrcSubstitution,
 }
@@ -571,7 +571,7 @@ pub fn is_common_srgb(icc_bytes: &[u8]) -> bool {
 
 /// Read the ICC profile's data color space from the header (bytes 16–19).
 ///
-/// Returns the [`ColorModel`] corresponding to the four-byte signature
+/// Returns the [`ColorModel`](crate::ColorModel) corresponding to the four-byte signature
 /// at offset 16 in the ICC header, or `None` if the profile is too short
 /// or uses an unrecognized color space.
 pub fn profile_color_space(icc_bytes: &[u8]) -> Option<crate::ColorModel> {

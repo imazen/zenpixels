@@ -239,7 +239,7 @@ impl ConvertPlan {
     ///
     /// # Panics
     ///
-    /// Panics if either `from` or `to` uses [`ColorModel::Cmyk`].
+    /// Panics if either `from` or `to` uses [`ColorModel::Cmyk`](zenpixels::ColorModel::Cmyk).
     /// CMYK requires a CMS with an ICC profile for conversion.
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
@@ -563,7 +563,7 @@ impl ConvertPlan {
     ///
     /// # Panics
     ///
-    /// Panics if either `from` or `to` uses [`ColorModel::Cmyk`].
+    /// Panics if either `from` or `to` uses [`ColorModel::Cmyk`](zenpixels::ColorModel::Cmyk).
     /// CMYK requires a CMS with an ICC profile for conversion.
     #[track_caller]
     pub fn new_explicit(
