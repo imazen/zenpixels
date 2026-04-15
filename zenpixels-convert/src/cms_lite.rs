@@ -212,16 +212,18 @@ impl ZenCmsLite {
     }
 }
 
-/// Row-transform wrapper around `RowConverter`.
+/// Row-transform wrapper around `RowConverter` for the deprecated
+/// [`ColorManagement`] API.
 ///
-/// `RowTransform::transform_row` takes `&self`, while `RowConverter::convert_row`
-/// takes `&mut self` (to reuse internal scratch buffers across plan steps).
-/// A `Mutex` bridges the gap. Lock overhead is negligible compared to per-pixel
-/// work at GiB/s throughputs, and transforms are typically used serially.
+/// Uses a Mutex because `RowTransform::transform_row(&self)` requires
+/// shared access while `RowConverter::convert_row` needs `&mut self`.
+/// The new `PluggableCms` path stores a `Box<dyn RowTransformMut>` on
+/// `RowConverter` directly, bypassing this wrapper entirely.
 struct LiteTransform {
     inner: std::sync::Mutex<crate::converter::RowConverter>,
 }
 
+#[allow(deprecated)]
 impl RowTransform for LiteTransform {
     fn transform_row(&self, src: &[u8], dst: &mut [u8], width: u32) {
         let mut inner = self.inner.lock().unwrap();

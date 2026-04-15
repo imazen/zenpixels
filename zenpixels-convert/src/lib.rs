@@ -456,7 +456,10 @@ pub use hdr::{
 };
 
 // Re-export CMS traits, enums, and implementations.
-pub use cms::{ColorManagement, ColorPriority, PluggableCms, RenderingIntent, RowTransform};
+#[allow(deprecated)]
+pub use cms::{
+    ColorManagement, ColorPriority, PluggableCms, RenderingIntent, RowTransform, RowTransformMut,
+};
 // TODO: pub use cms_lite::ZenCmsLite once benchmarked on aarch64.
 #[cfg(feature = "cms-moxcms")]
 pub use cms_moxcms::MoxCms;

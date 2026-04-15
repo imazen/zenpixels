@@ -183,6 +183,7 @@ struct MoxRowTransform {
     inner: MoxTransformInner,
 }
 
+#[allow(deprecated)]
 impl RowTransform for MoxRowTransform {
     fn transform_row(&self, src: &[u8], dst: &mut [u8], _width: u32) {
         match &self.inner {

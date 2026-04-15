@@ -4,7 +4,7 @@
 //! buffers for zero-allocation-per-row streaming conversion.
 
 use crate::convert::{ConvertPlan, ConvertScratch, convert_row_buffered};
-use crate::{ConvertError, PixelDescriptor};
+use crate::{ChannelLayout, ConvertError, PixelDescriptor};
 use whereat::{At, ResultAtExt};
 
 /// Pre-computed pixel format converter with pre-allocated scratch buffers.
@@ -27,10 +27,12 @@ use whereat::{At, ResultAtExt};
 ///     conv.convert_row(&src_row, &mut dst_row, width);
 /// }
 /// ```
-#[derive(Debug)]
 pub struct RowConverter {
     plan: ConvertPlan,
     scratch: ConvertScratch,
+    /// External CMS transform that bypasses the plan entirely.
+    /// Set by `new_explicit_with_cms` when a plugin accepts the conversion.
+    external: Option<Box<dyn crate::cms::RowTransformMut>>,
 }
 
 impl RowConverter {
@@ -43,6 +45,7 @@ impl RowConverter {
         Ok(Self {
             plan,
             scratch: ConvertScratch::new(),
+            external: None,
         })
     }
 
@@ -63,6 +66,7 @@ impl RowConverter {
         Ok(Self {
             plan,
             scratch: ConvertScratch::new(),
+            external: None,
         })
     }
 
@@ -85,10 +89,59 @@ impl RowConverter {
         options: &crate::policy::ConvertOptions,
         cms: Option<&dyn crate::cms::PluggableCms>,
     ) -> Result<Self, At<ConvertError>> {
-        let plan = ConvertPlan::new_explicit_with_cms(from, to, options, cms).at()?;
+        use crate::policy::{AlphaPolicy, DepthPolicy};
+
+        // Try plugin first — it may take the whole conversion.
+        if let Some(cms) = cms {
+            let profiles_differ =
+                from.primaries != to.primaries || from.transfer() != to.transfer();
+            if profiles_differ {
+                let src_src = from.color_profile_source();
+                let dst_src = to.color_profile_source();
+                if let Some(transform) = cms.build_source_transform(
+                    src_src,
+                    dst_src,
+                    from.pixel_format(),
+                    to.pixel_format(),
+                ) {
+                    // Policy checks still apply.
+                    let drops_alpha = from.alpha().is_some() && to.alpha().is_none();
+                    if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
+                        return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
+                    }
+                    let reduces_depth =
+                        from.channel_type().byte_size() > to.channel_type().byte_size();
+                    if reduces_depth && options.depth_policy == DepthPolicy::Forbid {
+                        return Err(whereat::at!(ConvertError::DepthReductionForbidden));
+                    }
+                    let src_is_rgb = matches!(
+                        from.layout(),
+                        ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
+                    );
+                    let dst_is_gray =
+                        matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
+                    if src_is_rgb && dst_is_gray && options.luma.is_none() {
+                        return Err(whereat::at!(ConvertError::RgbToGray));
+                    }
+
+                    // Plugin accepted — build an identity plan (the external
+                    // transform drives the row, plan is just a shell for
+                    // from/to metadata).
+                    return Ok(Self {
+                        plan: ConvertPlan::identity(from, to),
+                        scratch: ConvertScratch::new(),
+                        external: Some(transform),
+                    });
+                }
+            }
+        }
+
+        // Plugin declined or absent — built-in path.
+        let plan = ConvertPlan::new_explicit(from, to, options).at()?;
         Ok(Self {
             plan,
             scratch: ConvertScratch::new(),
+            external: None,
         })
     }
 
@@ -97,6 +150,7 @@ impl RowConverter {
         Self {
             plan,
             scratch: ConvertScratch::new(),
+            external: None,
         }
     }
 
@@ -109,7 +163,11 @@ impl RowConverter {
     /// allocation after the first call at a given width.
     #[inline]
     pub fn convert_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
-        convert_row_buffered(&self.plan, src, dst, width, &mut self.scratch);
+        if let Some(ref mut ext) = self.external {
+            ext.transform_row(src, dst, width);
+        } else {
+            convert_row_buffered(&self.plan, src, dst, width, &mut self.scratch);
+        }
     }
 
     /// Convert multiple rows from a strided source buffer to a strided destination.
@@ -185,9 +243,13 @@ impl RowConverter {
 
 impl Clone for RowConverter {
     fn clone(&self) -> Self {
+        // External transforms are not cloneable — the clone falls back
+        // to the built-in plan. Callers with a CMS plugin should build
+        // a new RowConverter instead of cloning.
         Self {
             plan: self.plan.clone(),
             scratch: ConvertScratch::new(),
+            external: None,
         }
     }
 }
@@ -1075,8 +1137,8 @@ mod tests {
 
     struct PaintRedTransform;
 
-    impl crate::cms::RowTransform for PaintRedTransform {
-        fn transform_row(&self, _src: &[u8], dst: &mut [u8], width: u32) {
+    impl crate::cms::RowTransformMut for PaintRedTransform {
+        fn transform_row(&mut self, _src: &[u8], dst: &mut [u8], width: u32) {
             for px in dst.chunks_exact_mut(3).take(width as usize) {
                 px[0] = 255;
                 px[1] = 0;
@@ -1092,10 +1154,10 @@ mod tests {
             _dst: zenpixels::ColorProfileSource<'_>,
             _src_format: zenpixels::PixelFormat,
             _dst_format: zenpixels::PixelFormat,
-        ) -> Option<alloc::sync::Arc<dyn crate::cms::RowTransform>> {
+        ) -> Option<Box<dyn crate::cms::RowTransformMut>> {
             self.accepted
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            Some(alloc::sync::Arc::new(PaintRedTransform))
+            Some(Box::new(PaintRedTransform))
         }
     }
 
@@ -1151,7 +1213,7 @@ mod tests {
                 _dst: zenpixels::ColorProfileSource<'_>,
                 _src_format: zenpixels::PixelFormat,
                 _dst_format: zenpixels::PixelFormat,
-            ) -> Option<alloc::sync::Arc<dyn crate::cms::RowTransform>> {
+            ) -> Option<Box<dyn crate::cms::RowTransformMut>> {
                 None
             }
         }

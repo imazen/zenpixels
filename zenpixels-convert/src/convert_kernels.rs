@@ -272,14 +272,6 @@ pub(super) fn apply_step_u8(
                 crate::fast_gamut::srgb_enc_lut_u8(),
             );
         }
-
-        ConvertStep::ExternalTransform {
-            transform, input, ..
-        } => {
-            let src_bytes = width as usize * input.bytes_per_pixel();
-            let dst_bytes = width as usize * _to.bytes_per_pixel();
-            transform.transform_row(&src[..src_bytes], &mut dst[..dst_bytes], width);
-        }
     }
 }
 

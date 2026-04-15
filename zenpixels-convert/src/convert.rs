@@ -145,26 +145,6 @@ pub(crate) enum ConvertStep {
     /// Fused linear-f32 → u8-sRGB RGB primaries conversion (cross-depth).
     /// Always clamps since u8 can't represent out-of-gamut values.
     FusedLinearF32ToSrgbU8Rgb([f32; 9]),
-    /// External row transform supplied by a pluggable CMS backend.
-    ///
-    /// When [`ConvertPlan::new_explicit_with_cms`] is given a
-    /// [`PluggableCms`] and the source and destination profiles differ, the
-    /// CMS is offered the full `(from, to)` pair. If it accepts, the plan
-    /// collapses to a single `ExternalTransform` step that swallows the
-    /// whole linearize → gamut → encode chain (including any intent, CLUT,
-    /// or black-point compensation behavior the CMS implements). The
-    /// built-in fused matlut kernels are bypassed while the CMS drives
-    /// the row.
-    ///
-    /// [`PluggableCms`]: crate::cms::PluggableCms
-    ExternalTransform {
-        /// Row-level transform produced by the plugin.
-        transform: alloc::sync::Arc<dyn crate::cms::RowTransform>,
-        /// Input descriptor fed to the transform.
-        input: PixelDescriptor,
-        /// Output descriptor produced by the transform.
-        output: PixelDescriptor,
-    },
 }
 
 impl core::fmt::Debug for ConvertStep {
@@ -231,12 +211,6 @@ impl core::fmt::Debug for ConvertStep {
             Self::FusedLinearF32ToSrgbU8Rgb(m) => {
                 f.debug_tuple("FusedLinearF32ToSrgbU8Rgb").field(m).finish()
             }
-            Self::ExternalTransform { input, output, .. } => f
-                .debug_struct("ExternalTransform")
-                .field("transform", &"<dyn RowTransform>")
-                .field("input", input)
-                .field("output", output)
-                .finish(),
         }
     }
 }
@@ -648,78 +622,17 @@ impl ConvertPlan {
         Ok(plan)
     }
 
-    /// Like [`new_explicit`](Self::new_explicit), but gives a
-    /// [`PluggableCms`] the chance to take over the whole color
-    /// conversion.
+    /// Create a shell plan that records from/to but has no conversion steps.
     ///
-    /// When `cms` is `Some` and the source and destination carry
-    /// different color primaries or transfer functions, the plugin is
-    /// offered the exact `(from, to)` pair. If it returns a transform,
-    /// the plan becomes a single [`ConvertStep::ExternalTransform`] that
-    /// drives the row end-to-end — built-in linearize → gamut-matrix →
-    /// encode steps and their fused matlut kernels are bypassed. The
-    /// plugin is responsible for the entire conversion (depth, layout,
-    /// alpha, gamut, transfer); the plan performs no pre- or
-    /// post-conditioning.
-    ///
-    /// If the plugin declines (returns `None`), or there is no color
-    /// work to do, this method is equivalent to `new_explicit`.
-    ///
-    /// [`PluggableCms`]: crate::cms::PluggableCms
-    #[track_caller]
-    pub fn new_explicit_with_cms(
-        from: PixelDescriptor,
-        to: PixelDescriptor,
-        options: &ConvertOptions,
-        cms: Option<&dyn crate::cms::PluggableCms>,
-    ) -> Result<Self, At<ConvertError>> {
-        if let Some(cms) = cms {
-            let profiles_differ =
-                from.primaries != to.primaries || from.transfer() != to.transfer();
-            if profiles_differ {
-                let src_src = from.color_profile_source();
-                let dst_src = to.color_profile_source();
-                if let Some(transform) = cms.build_source_transform(
-                    src_src,
-                    dst_src,
-                    from.pixel_format(),
-                    to.pixel_format(),
-                ) {
-                    // Policy checks still apply — the plugin doesn't get to
-                    // bypass alpha/depth/luma-forbid errors.
-                    let drops_alpha = from.alpha().is_some() && to.alpha().is_none();
-                    if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
-                        return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
-                    }
-                    let reduces_depth =
-                        from.channel_type().byte_size() > to.channel_type().byte_size();
-                    if reduces_depth && options.depth_policy == DepthPolicy::Forbid {
-                        return Err(whereat::at!(ConvertError::DepthReductionForbidden));
-                    }
-                    let src_is_rgb = matches!(
-                        from.layout(),
-                        ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
-                    );
-                    let dst_is_gray =
-                        matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
-                    if src_is_rgb && dst_is_gray && options.luma.is_none() {
-                        return Err(whereat::at!(ConvertError::RgbToGray));
-                    }
-
-                    return Ok(Self {
-                        from,
-                        to,
-                        steps: vec![ConvertStep::ExternalTransform {
-                            transform,
-                            input: from,
-                            output: to,
-                        }],
-                    });
-                }
-            }
+    /// Used when an external CMS transform handles the conversion — the
+    /// plan exists only for `from()`/`to()` metadata; the actual row
+    /// work is driven by the external transform stored on `RowConverter`.
+    pub(crate) fn identity(from: PixelDescriptor, to: PixelDescriptor) -> Self {
+        Self {
+            from,
+            to,
+            steps: vec![ConvertStep::Identity],
         }
-
-        Self::new_explicit(from, to, options)
     }
 
     /// Compose two plans into one: apply `self` then `other`.
@@ -1552,7 +1465,6 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.alpha(),
             TransferFunction::Srgb,
         ),
-        ConvertStep::ExternalTransform { output, .. } => *output,
     }
 }
 

@@ -247,6 +247,13 @@ pub enum ColorPriority {
 /// Row-level color transform produced by a [`ColorManagement`] implementation.
 ///
 /// Applies an ICC-to-ICC color conversion to a row of pixel data.
+///
+/// # Deprecated
+///
+/// Prefer [`RowTransformMut`] for new code. The `&self` signature forces
+/// implementations to use interior mutability (Mutex, RefCell) for scratch
+/// buffers. `RowTransformMut` takes `&mut self`, eliminating that overhead.
+#[deprecated(since = "0.2.8", note = "use RowTransformMut (&mut self) instead")]
 pub trait RowTransform: Send + Sync {
     /// Transform one row of pixels from source to destination color space.
     ///
@@ -254,6 +261,19 @@ pub trait RowTransform: Send + Sync {
     /// the pixel format (e.g., CMYK to RGB). `width` is the number of
     /// pixels, not bytes.
     fn transform_row(&self, src: &[u8], dst: &mut [u8], width: u32);
+}
+
+/// Row-level color transform with mutable access to internal state.
+///
+/// Like [`RowTransform`] but takes `&mut self`, allowing implementations
+/// to reuse scratch buffers without interior mutability.
+pub trait RowTransformMut: Send {
+    /// Transform one row of pixels from source to destination color space.
+    ///
+    /// `src` and `dst` may be different lengths if the transform changes
+    /// the pixel format (e.g., CMYK to RGB). `width` is the number of
+    /// pixels, not bytes.
+    fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32);
 }
 
 /// Color management system interface.
@@ -363,5 +383,5 @@ pub trait PluggableCms: Send + Sync {
         dst: crate::ColorProfileSource<'_>,
         src_format: PixelFormat,
         dst_format: PixelFormat,
-    ) -> Option<alloc::sync::Arc<dyn RowTransform>>;
+    ) -> Option<Box<dyn RowTransformMut>>;
 }
