@@ -10,8 +10,13 @@
   `Box<dyn RowTransformMut>`) and `build_shared_source_transform`
   (shared `Arc<dyn RowTransform>`, default `None`). Dyn-compatible,
   accepts `ColorProfileSource` (ICC / CICP / Named / PrimariesTransferPair),
-  carries `&ConvertOptions`. Plugins that decline return `None` so the
-  dispatch chain falls through to the next one.
+  carries `&ConvertOptions`.
+- **`CmsPluginError`** — type-erased error wrapper for plugins.
+  Plugin methods return `Option<Result<T, CmsPluginError>>`: `None` =
+  declined (chain tries next plugin), `Some(Ok)` = accepted, `Some(Err)`
+  = tried-and-failed (error propagates immediately — the chain does not
+  continue past a failed plugin to avoid silently substituting different
+  color math).
 - **`RowTransformMut` trait** (`&mut self`, `Send`) for owned, stateful
   transforms that need scratch buffers without interior mutability.
   `RowTransform` (`&self`, `Send + Sync`) remains for stateless/shareable

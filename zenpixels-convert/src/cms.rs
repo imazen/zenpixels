@@ -388,10 +388,18 @@ pub trait ColorManagement {
 ///   This is what lets it live behind `&dyn PluggableCms` in API
 ///   signatures without forcing every caller to monomorphize.
 ///
-/// Returning `None` is a declaration ("this CMS does not handle this
-/// pair"), not an error. Plugins that recognize the profiles but fail to
-/// build a transform should log/report internally and still return
-/// `None` so the plan falls back cleanly.
+/// # Decline vs. fail
+///
+/// Plugin methods return `Option<Result<T, CmsPluginError>>` with three
+/// outcomes:
+/// - `None` — declined ("not my problem"). The dispatch chain continues
+///   to the next plugin (typically `ZenCmsLite`) or falls through to the
+///   built-in path.
+/// - `Some(Ok(transform))` — accepted. The dispatch chain stops here.
+/// - `Some(Err(e))` — tried-and-failed. The error propagates immediately;
+///   **the chain does not continue**. If a plugin took ownership of a
+///   conversion and failed, we surface that rather than silently producing
+///   different output from a fallback backend.
 ///
 /// [`ColorProfileSource`]: crate::ColorProfileSource
 /// [`ConvertOptions`]: crate::policy::ConvertOptions
@@ -403,9 +411,7 @@ pub trait PluggableCms: Send + Sync {
     /// `clip_out_of_gamut`). The plugin is free to ignore fields that
     /// don't apply to its implementation.
     ///
-    /// Return `None` to decline (plan falls back to built-in steps, or to
-    /// [`build_shared_source_transform`](Self::build_shared_source_transform)
-    /// if the caller tried that path and it also returned `None`).
+    /// See the trait docs for decline vs. fail semantics.
     fn build_source_transform(
         &self,
         src: crate::ColorProfileSource<'_>,
@@ -413,7 +419,7 @@ pub trait PluggableCms: Send + Sync {
         src_format: PixelFormat,
         dst_format: PixelFormat,
         options: &crate::policy::ConvertOptions,
-    ) -> Option<Box<dyn RowTransformMut>>;
+    ) -> Option<Result<Box<dyn RowTransformMut>, CmsPluginError>>;
 
     /// Optionally build a shareable, stateless row transform for the same
     /// conversion.
@@ -425,6 +431,7 @@ pub trait PluggableCms: Send + Sync {
     /// owned [`build_source_transform`](Self::build_source_transform).
     ///
     /// `RowConverter::new_explicit_with_cms` tries this method first.
+    /// See the trait docs for decline vs. fail semantics.
     fn build_shared_source_transform(
         &self,
         _src: crate::ColorProfileSource<'_>,
@@ -432,7 +439,64 @@ pub trait PluggableCms: Send + Sync {
         _src_format: PixelFormat,
         _dst_format: PixelFormat,
         _options: &crate::policy::ConvertOptions,
-    ) -> Option<alloc::sync::Arc<dyn RowTransform>> {
+    ) -> Option<Result<alloc::sync::Arc<dyn RowTransform>, CmsPluginError>> {
         None
+    }
+}
+
+/// Error produced by a [`PluggableCms`] when a plugin recognized a
+/// conversion pair but failed to build a transform.
+///
+/// Type-erased wrapper over any `core::error::Error + Send + Sync`. Use
+/// [`CmsPluginError::new`] or [`From`] to construct.
+pub struct CmsPluginError(Box<dyn core::error::Error + Send + Sync + 'static>);
+
+impl CmsPluginError {
+    /// Construct from any error that implements `core::error::Error`.
+    pub fn new<E>(err: E) -> Self
+    where
+        E: core::error::Error + Send + Sync + 'static,
+    {
+        Self(Box::new(err))
+    }
+
+    /// Construct from a message string.
+    pub fn msg(s: impl Into<alloc::string::String>) -> Self {
+        struct Msg(alloc::string::String);
+        impl core::fmt::Debug for Msg {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+        impl core::fmt::Display for Msg {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+        impl core::error::Error for Msg {}
+        Self(Box::new(Msg(s.into())))
+    }
+
+    /// Borrow the inner error.
+    pub fn as_inner(&self) -> &(dyn core::error::Error + Send + Sync + 'static) {
+        &*self.0
+    }
+}
+
+impl core::fmt::Debug for CmsPluginError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("CmsPluginError").field(&self.0).finish()
+    }
+}
+
+impl core::fmt::Display for CmsPluginError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl core::error::Error for CmsPluginError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        Some(self.0.as_ref())
     }
 }

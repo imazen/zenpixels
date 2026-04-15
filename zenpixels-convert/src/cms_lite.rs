@@ -240,9 +240,12 @@ impl crate::cms::PluggableCms for ZenCmsLite {
         src_format: PixelFormat,
         dst_format: PixelFormat,
         options: &crate::policy::ConvertOptions,
-    ) -> Option<Box<dyn crate::cms::RowTransformMut>> {
+    ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, crate::cms::CmsPluginError>> {
         use zenpixels::PixelDescriptor;
 
+        // Decline when either source can't be resolved to (primaries, transfer)
+        // — custom ICC, narrow-range CICP, YCbCr matrix. Not an error;
+        // another backend (moxcms) should handle it.
         let (src_p, src_t) = src.resolve()?;
         let (dst_p, dst_t) = dst.resolve()?;
 
@@ -263,11 +266,18 @@ impl crate::cms::PluggableCms for ZenCmsLite {
             .with_transfer(dst_t);
 
         // Build directly from a plan to avoid recursing through the
-        // RowConverter CMS chain. Use new_explicit so ConvertOptions
-        // (clip_out_of_gamut, etc.) propagates into the plan.
-        let plan = crate::convert::ConvertPlan::new_explicit(from, to, options).ok()?;
-        let inner = crate::converter::RowConverter::from_plan(plan);
-        Some(Box::new(LiteTransformMut { inner }))
+        // RowConverter CMS chain. Plan construction failing here IS a
+        // failure (we recognized the pair) — surface it instead of
+        // declining.
+        match crate::convert::ConvertPlan::new_explicit(from, to, options) {
+            Ok(plan) => {
+                let inner = crate::converter::RowConverter::from_plan(plan);
+                Some(Ok(Box::new(LiteTransformMut { inner })))
+            }
+            Err(e) => Some(Err(crate::cms::CmsPluginError::msg(alloc::format!(
+                "ZenCmsLite plan construction failed: {e:?}"
+            )))),
+        }
     }
 }
 

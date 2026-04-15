@@ -99,7 +99,13 @@ impl RowConverter {
         // them and options like `clip_out_of_gamut` propagate through):
         //   1. user-supplied plugin (if Some)
         //   2. ZenCmsLite (default) — named-profile matlut fast path
-        // First plugin to accept wins.
+        //
+        // Per-plugin semantics:
+        //   - None → declined, try next plugin
+        //   - Some(Ok(t)) → accepted, stop the chain
+        //   - Some(Err(e)) → tried-and-failed, propagate the error and stop.
+        //     Falling through to another backend could silently produce
+        //     different output — surface the failure instead.
         let primaries_differ = from.primaries != to.primaries;
         if primaries_differ {
             let src_src = from.color_profile_source();
@@ -108,32 +114,54 @@ impl RowConverter {
             let dst_fmt = to.pixel_format();
 
             // Helper: ask one plugin for a transform, preferring shared.
-            let try_cms = |plugin: &dyn crate::cms::PluggableCms| -> Option<ExternalTransform> {
-                plugin
-                    .build_shared_source_transform(
-                        src_src.clone(),
-                        dst_src.clone(),
-                        src_fmt,
-                        dst_fmt,
-                        options,
-                    )
-                    .map(ExternalTransform::Shared)
-                    .or_else(|| {
-                        plugin
-                            .build_source_transform(
-                                src_src.clone(),
-                                dst_src.clone(),
-                                src_fmt,
-                                dst_fmt,
-                                options,
-                            )
-                            .map(ExternalTransform::Owned)
-                    })
+            // Returns:
+            //   Ok(Some(t)) → plugin accepted
+            //   Ok(None)    → plugin declined
+            //   Err(e)      → plugin tried and failed
+            let try_cms = |plugin: &dyn crate::cms::PluggableCms| -> Result<
+                Option<ExternalTransform>,
+                crate::cms::CmsPluginError,
+            > {
+                if let Some(result) = plugin.build_shared_source_transform(
+                    src_src.clone(),
+                    dst_src.clone(),
+                    src_fmt,
+                    dst_fmt,
+                    options,
+                ) {
+                    return result.map(|t| Some(ExternalTransform::Shared(t)));
+                }
+                if let Some(result) = plugin.build_source_transform(
+                    src_src.clone(),
+                    dst_src.clone(),
+                    src_fmt,
+                    dst_fmt,
+                    options,
+                ) {
+                    return result.map(|t| Some(ExternalTransform::Owned(t)));
+                }
+                Ok(None)
             };
 
-            let external = cms
-                .and_then(try_cms)
-                .or_else(|| try_cms(&crate::cms_lite::ZenCmsLite));
+            let mut external: Option<ExternalTransform> = None;
+            if let Some(plugin) = cms {
+                match try_cms(plugin) {
+                    Ok(Some(t)) => external = Some(t),
+                    Ok(None) => {}
+                    Err(e) => {
+                        return Err(whereat::at!(ConvertError::CmsError(alloc::format!("{e}"))));
+                    }
+                }
+            }
+            if external.is_none() {
+                match try_cms(&crate::cms_lite::ZenCmsLite) {
+                    Ok(Some(t)) => external = Some(t),
+                    Ok(None) => {}
+                    Err(e) => {
+                        return Err(whereat::at!(ConvertError::CmsError(alloc::format!("{e}"))));
+                    }
+                }
+            }
 
             if let Some(external) = external {
                 // Policy checks still apply.
@@ -1191,10 +1219,11 @@ mod tests {
             _src_format: zenpixels::PixelFormat,
             _dst_format: zenpixels::PixelFormat,
             _options: &crate::policy::ConvertOptions,
-        ) -> Option<Box<dyn crate::cms::RowTransformMut>> {
+        ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, crate::cms::CmsPluginError>>
+        {
             self.accepted
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            Some(Box::new(PaintRedTransform))
+            Some(Ok(Box::new(PaintRedTransform)))
         }
     }
 
@@ -1264,7 +1293,8 @@ mod tests {
                 _src_format: zenpixels::PixelFormat,
                 _dst_format: zenpixels::PixelFormat,
                 _options: &crate::policy::ConvertOptions,
-            ) -> Option<Box<dyn crate::cms::RowTransformMut>> {
+            ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, crate::cms::CmsPluginError>>
+            {
                 panic!("owned path must not be used when shared is offered");
             }
 
@@ -1275,8 +1305,10 @@ mod tests {
                 _src_format: zenpixels::PixelFormat,
                 _dst_format: zenpixels::PixelFormat,
                 _options: &crate::policy::ConvertOptions,
-            ) -> Option<alloc::sync::Arc<dyn crate::cms::RowTransform>> {
-                Some(alloc::sync::Arc::new(PaintBlueShared))
+            ) -> Option<
+                Result<alloc::sync::Arc<dyn crate::cms::RowTransform>, crate::cms::CmsPluginError>,
+            > {
+                Some(Ok(alloc::sync::Arc::new(PaintBlueShared)))
             }
         }
 
@@ -1310,7 +1342,8 @@ mod tests {
                 _src_format: zenpixels::PixelFormat,
                 _dst_format: zenpixels::PixelFormat,
                 _options: &crate::policy::ConvertOptions,
-            ) -> Option<Box<dyn crate::cms::RowTransformMut>> {
+            ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, crate::cms::CmsPluginError>>
+            {
                 None
             }
         }
