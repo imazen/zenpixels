@@ -40,6 +40,10 @@ pub(crate) enum ConvertStep {
     Identity,
     /// BGRA → RGBA byte swizzle (or vice versa).
     SwizzleBgraRgba,
+    /// Fused RGB → BGRA: byte swap + add opaque alpha in a single SIMD pass.
+    /// Equivalent to `[AddAlpha, SwizzleBgraRgba]` but writes the destination
+    /// once instead of twice.
+    RgbToBgra,
     /// Add alpha channel (3ch → 4ch), filling with opaque.
     AddAlpha,
     /// Drop alpha channel (4ch → 3ch).
@@ -152,6 +156,7 @@ impl core::fmt::Debug for ConvertStep {
         match self {
             Self::Identity => f.write_str("Identity"),
             Self::SwizzleBgraRgba => f.write_str("SwizzleBgraRgba"),
+            Self::RgbToBgra => f.write_str("RgbToBgra"),
             Self::AddAlpha => f.write_str("AddAlpha"),
             Self::DropAlpha => f.write_str("DropAlpha"),
             Self::MatteComposite { r, g, b } => f
@@ -739,8 +744,9 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
         }
         (ChannelLayout::Rgb, ChannelLayout::Rgba) => vec![ConvertStep::AddAlpha],
         (ChannelLayout::Rgb, ChannelLayout::Bgra) => {
-            // Rgb -> RGBA -> BGRA: add alpha then swizzle.
-            vec![ConvertStep::AddAlpha, ConvertStep::SwizzleBgraRgba]
+            // Single fused SIMD pass (garb::bytes::rgb_to_bgra). For non-u8
+            // channel types `apply_step_u8` falls back to AddAlpha+Swizzle.
+            vec![ConvertStep::RgbToBgra]
         }
         (ChannelLayout::Rgba, ChannelLayout::Rgb) => vec![ConvertStep::DropAlpha],
         (ChannelLayout::Bgra, ChannelLayout::Rgb) => {
@@ -1267,6 +1273,12 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
         ConvertStep::AddAlpha => PixelDescriptor::new(
             current.channel_type(),
             ChannelLayout::Rgba,
+            Some(AlphaMode::Straight),
+            current.transfer(),
+        ),
+        ConvertStep::RgbToBgra => PixelDescriptor::new(
+            current.channel_type(),
+            ChannelLayout::Bgra,
             Some(AlphaMode::Straight),
             current.transfer(),
         ),

@@ -36,6 +36,10 @@ pub(super) fn apply_step_u8(
             add_alpha(src, dst, w, from.channel_type());
         }
 
+        ConvertStep::RgbToBgra => {
+            rgb_to_bgra(src, dst, w, from.channel_type());
+        }
+
         ConvertStep::DropAlpha => {
             drop_alpha(src, dst, w, from.channel_type());
         }
@@ -309,6 +313,41 @@ fn swizzle_bgra_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelT
                 dstf[s + 1] = srcf[s + 1];
                 dstf[s + 2] = srcf[s];
                 dstf[s + 3] = srcf[s + 3];
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Fused RGB → BGRA: byte-swap R↔B and add opaque alpha in one SIMD pass.
+///
+/// For u8 input this delegates to `garb::bytes::rgb_to_bgra` (AVX2 8 pixels/iter,
+/// NEON, WASM128, scalar). For wider channel types, falls back to the same
+/// scalar path used by `add_alpha + swizzle_bgra_rgba`.
+fn rgb_to_bgra(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
+    match ch_type {
+        ChannelType::U8 => {
+            garb::bytes::rgb_to_bgra(&src[..width * 3], &mut dst[..width * 4])
+                .expect("pre-validated row size");
+        }
+        ChannelType::U16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * 6]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 8]);
+            for i in 0..width {
+                dst16[i * 4] = src16[i * 3 + 2]; // B
+                dst16[i * 4 + 1] = src16[i * 3 + 1]; // G
+                dst16[i * 4 + 2] = src16[i * 3]; // R
+                dst16[i * 4 + 3] = 65535;
+            }
+        }
+        ChannelType::F32 => {
+            let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
+            let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
+            for i in 0..width {
+                dstf[i * 4] = srcf[i * 3 + 2];
+                dstf[i * 4 + 1] = srcf[i * 3 + 1];
+                dstf[i * 4 + 2] = srcf[i * 3];
+                dstf[i * 4 + 3] = 1.0;
             }
         }
         _ => {}
