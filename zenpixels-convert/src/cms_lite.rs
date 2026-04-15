@@ -74,27 +74,7 @@ use crate::{Cicp, PixelFormat};
 /// [`RowConverter`]: crate::RowConverter
 /// [`ConvertOptions`]: crate::policy::ConvertOptions
 #[derive(Debug, Clone, Copy, Default)]
-pub struct ZenCmsLite {
-    /// Inert field kept for API compatibility. Use
-    /// [`ConvertOptions::clip_out_of_gamut`] on `RowConverter` for
-    /// extended-range control.
-    ///
-    /// [`ConvertOptions::clip_out_of_gamut`]: crate::policy::ConvertOptions::clip_out_of_gamut
-    #[deprecated(note = "use ConvertOptions::clip_out_of_gamut on RowConverter")]
-    pub extended: bool,
-}
-
-impl ZenCmsLite {
-    /// Back-compat alias for `ZenCmsLite::default()`. The `extended` field
-    /// is inert; use
-    /// `ConvertOptions::permissive().with_clip_out_of_gamut(false)` on
-    /// `RowConverter` for extended-range f32 transfers.
-    #[deprecated(note = "use ConvertOptions::clip_out_of_gamut on RowConverter")]
-    pub const fn extended() -> Self {
-        #[allow(deprecated)]
-        Self { extended: true }
-    }
-}
+pub struct ZenCmsLite;
 
 /// Error from the lightweight CMS.
 #[derive(Debug, Clone)]

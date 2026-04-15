@@ -359,6 +359,8 @@ pub trait ColorManagement {
 /// - It accepts [`ColorProfileSource`] instead of raw ICC bytes, so
 ///   plugins can use primaries/transfer shortcuts, named profiles, CICP,
 ///   or ICC without forcing the caller to serialize to ICC.
+/// - It receives [`ConvertOptions`] so plugins can honor
+///   `clip_out_of_gamut` and future fields like rendering intent.
 /// - It is dyn-compatible (no associated `Error` type; no generics).
 ///   This is what lets it live behind `&dyn PluggableCms` in API
 ///   signatures without forcing every caller to monomorphize.
@@ -369,11 +371,14 @@ pub trait ColorManagement {
 /// `None` so the plan falls back cleanly.
 ///
 /// [`ColorProfileSource`]: crate::ColorProfileSource
-/// [`ConvertPlan::new_explicit_with_cms`]: crate::convert::ConvertPlan::new_explicit_with_cms
-/// [`ConvertStep::ExternalTransform`]: crate::convert::ConvertStep::ExternalTransform
+/// [`ConvertOptions`]: crate::policy::ConvertOptions
 pub trait PluggableCms: Send + Sync {
     /// Attempt to build a single row-level transform covering the full
     /// source → destination conversion for the given pixel formats.
+    ///
+    /// `options` carries policy flags the plugin may honor (e.g.,
+    /// `clip_out_of_gamut`). The plugin is free to ignore fields that
+    /// don't apply to its implementation.
     ///
     /// Return `None` to decline (plan falls back to built-in steps).
     /// Return `Some(transform)` to take ownership of the color step.
@@ -383,5 +388,6 @@ pub trait PluggableCms: Send + Sync {
         dst: crate::ColorProfileSource<'_>,
         src_format: PixelFormat,
         dst_format: PixelFormat,
+        options: &crate::policy::ConvertOptions,
     ) -> Option<Box<dyn RowTransformMut>>;
 }

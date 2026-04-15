@@ -103,6 +103,7 @@ impl RowConverter {
                     dst_src,
                     from.pixel_format(),
                     to.pixel_format(),
+                    options,
                 ) {
                     // Policy checks still apply.
                     let drops_alpha = from.alpha().is_some() && to.alpha().is_none();
@@ -1154,6 +1155,7 @@ mod tests {
             _dst: zenpixels::ColorProfileSource<'_>,
             _src_format: zenpixels::PixelFormat,
             _dst_format: zenpixels::PixelFormat,
+            _options: &crate::policy::ConvertOptions,
         ) -> Option<Box<dyn crate::cms::RowTransformMut>> {
             self.accepted
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -1213,6 +1215,7 @@ mod tests {
                 _dst: zenpixels::ColorProfileSource<'_>,
                 _src_format: zenpixels::PixelFormat,
                 _dst_format: zenpixels::PixelFormat,
+                _options: &crate::policy::ConvertOptions,
             ) -> Option<Box<dyn crate::cms::RowTransformMut>> {
                 None
             }
