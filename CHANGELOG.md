@@ -47,9 +47,14 @@
 - **`finalize_for_output<C: ColorManagement>`** — use
   `finalize_for_output_with(..., cms: Option<&dyn PluggableCms>)`.
 
+---
+
 ## Queued breaking changes (for 0.3.0)
 
 These are deferred to the next minor release to batch semver breaks.
+Entries here do **not** ship until the 0.3.0 release — this section
+accumulates across `[Unreleased]` patches and only clears when the
+breaking release cuts.
 
 ### zenpixels
 
@@ -81,11 +86,13 @@ These are deferred to the next minor release to batch semver breaks.
 - **`ConvertError` → `#[non_exhaustive]`** + new
   `HdrTransferRequiresToneMapping` variant. See imazen/zenpixels#10 for
   HDR provenance plan.
-- **`ColorManagement` trait redesign**: deprecate in favor of
-  `PluggableCms` for new code. Add `build_source_transform` entry point
-  accepting `ColorProfileSource` + `RenderingIntent` to
-  `ColorManagement` for backward-compatible use. Old
-  `build_transform(&[u8], &[u8])` stays but is deprecated.
+- **Remove `ColorManagement` trait** (deprecated in 0.2.8). Callers migrate
+  to `PluggableCms`. The dyn-safe `PluggableCms` trait with
+  `ColorProfileSource` + `&ConvertOptions` is already shipping as the
+  replacement; 0.3.0 removes the old generic trait entirely.
+- **Remove `finalize_for_output<C: ColorManagement>`** (deprecated in
+  0.2.8). Callers migrate to `finalize_for_output_with(..., cms:
+  Option<&dyn PluggableCms>)`.
 - **Remove `ZenCmsLite::extended` field and `::extended()` constructor**
   (deprecated; use `ConvertOptions::clip_out_of_gamut` via
   `RowConverter` instead).
@@ -94,6 +101,8 @@ These are deferred to the next minor release to batch semver breaks.
   explicit `ColorPriority` + `RenderingIntent`).
 - **Remove `ADOBE_RGB_COMPAT` and `PROPHOTO_RGB`** ICC profile constants
   in `icc_profiles` (deprecated since 0.2.4).
+
+---
 
 ## zenpixels 0.2.7 (2026-04-14)
 
