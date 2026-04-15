@@ -569,6 +569,23 @@ pub fn is_common_srgb(icc_bytes: &[u8]) -> bool {
     identify_common(icc_bytes).is_some_and(|id| id.is_srgb())
 }
 
+/// Read the ICC profile's data color space from the header (bytes 16–19).
+///
+/// Returns the [`ColorModel`] corresponding to the four-byte signature
+/// at offset 16 in the ICC header, or `None` if the profile is too short
+/// or uses an unrecognized color space.
+pub fn profile_color_space(icc_bytes: &[u8]) -> Option<crate::ColorModel> {
+    if icc_bytes.len() < 20 {
+        return None;
+    }
+    match &icc_bytes[16..20] {
+        b"RGB " => Some(crate::ColorModel::Rgb),
+        b"GRAY" => Some(crate::ColorModel::Gray),
+        b"CMYK" => Some(crate::ColorModel::Cmyk),
+        _ => None,
+    }
+}
+
 // ── Hash function ────────────────────────────────────────────────────────
 
 /// FNV-1a 64-bit hash of ICC profile bytes with metadata normalization.
@@ -996,5 +1013,34 @@ mod tests {
         eprintln!("Lab PCS:                         {unsafe_lab}");
         eprintln!("Non-Bradford chad:               {unsafe_chad}");
         eprintln!("No matrix-shaper tags:           {no_matrix}");
+    }
+
+    // --- profile_color_space tests ---
+
+    #[test]
+    fn profile_color_space_detection() {
+        // Minimal valid ICC header with CMYK color space at bytes 16-19
+        let mut header = vec![0u8; 128];
+        header[16..20].copy_from_slice(b"CMYK");
+        assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Cmyk));
+
+        header[16..20].copy_from_slice(b"RGB ");
+        assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Rgb));
+
+        header[16..20].copy_from_slice(b"GRAY");
+        assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Gray));
+    }
+
+    #[test]
+    fn profile_color_space_too_short() {
+        assert_eq!(profile_color_space(&[0u8; 19]), None);
+        assert_eq!(profile_color_space(&[]), None);
+    }
+
+    #[test]
+    fn profile_color_space_unknown() {
+        let mut header = vec![0u8; 128];
+        header[16..20].copy_from_slice(b"Lab ");
+        assert_eq!(profile_color_space(&header), None);
     }
 }
