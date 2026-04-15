@@ -1,5 +1,8 @@
 .claude/
 
+# Concurrent-agent coordination marker (per ~/.claude/CLAUDE.md)
+.workongoing
+
 # === Standard exclusions (do not depend on user ~/.gitignore) ===
 
 # Rust build artifacts

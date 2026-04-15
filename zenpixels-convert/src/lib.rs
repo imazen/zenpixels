@@ -390,6 +390,7 @@ pub mod error;
 pub(crate) mod negotiate;
 
 pub mod adapt;
+pub mod builtin_profiles;
 pub mod cms;
 #[allow(
     dead_code,

@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### zenpixels-convert — additions
+
+- **`builtin_profiles` module** — built-in profile registry with hand-coded
+  converters for well-known ICC profiles. First entry: jpegli's 720-byte XYB
+  ICC profile. Exposes `recognize()`, `maybe_convert_via_builtin()`, and
+  `convert_xyb_scaled_to_srgb_u8()` (SIMD-accelerated via magetypes on x86_64
+  when AVX2/FMA is available at runtime, scalar fallback otherwise). Lets
+  callers decode XYB JPEGs without a full CMS backend (moxcms 0.8 cannot
+  parse the XYB PCS). The XYB ICC bytes come from libjxl / jpegli
+  (Apache-2.0 / BSD-3), copied verbatim into `XYB_ICC_BYTES`.
+
 ## zenpixels 0.2.8 + zenpixels-convert 0.2.8 (2026-04-15)
 
 Ships `PluggableCms`, `RowTransformMut`, fused matlut kernels,
