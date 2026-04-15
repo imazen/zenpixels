@@ -118,7 +118,9 @@ impl RowConverter {
             //   Ok(Some(t)) → plugin accepted
             //   Ok(None)    → plugin declined
             //   Err(e)      → plugin tried and failed (At<CmsPluginError>
-            //                 records the plugin's internal failure point)
+            //                 carries the plugin's internal failure point
+            //                 plus a zenpixels-convert crate boundary stamp
+            //                 added via `whereat::at_crate!`).
             let try_cms = |plugin: &dyn crate::cms::PluggableCms| -> Result<
                 Option<ExternalTransform>,
                 whereat::At<crate::cms::CmsPluginError>,
@@ -130,7 +132,7 @@ impl RowConverter {
                     dst_fmt,
                     options,
                 ) {
-                    return result.map(|t| Some(ExternalTransform::Shared(t)));
+                    return whereat::at_crate!(result).map(|t| Some(ExternalTransform::Shared(t)));
                 }
                 if let Some(result) = plugin.build_source_transform(
                     src_src.clone(),
@@ -139,13 +141,14 @@ impl RowConverter {
                     dst_fmt,
                     options,
                 ) {
-                    return result.map(|t| Some(ExternalTransform::Owned(t)));
+                    return whereat::at_crate!(result).map(|t| Some(ExternalTransform::Owned(t)));
                 }
                 Ok(None)
             };
 
-            // Convert a plugin failure into ConvertError::CmsError, preserving
-            // the plugin's internal whereat trace in the formatted message.
+            // Convert a plugin failure into ConvertError::CmsError. The
+            // `At<CmsPluginError>` Display impl already renders the full
+            // frame trace + crate info (plugin + crate boundary).
             let plugin_err = |e: whereat::At<crate::cms::CmsPluginError>| {
                 whereat::at!(ConvertError::CmsError(alloc::format!("{e}")))
             };
