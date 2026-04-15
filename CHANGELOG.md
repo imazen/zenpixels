@@ -63,9 +63,6 @@ These are deferred to the next minor release to batch semver breaks.
   explicit `ColorPriority` + `RenderingIntent`).
 - **Remove `ADOBE_RGB_COMPAT` and `PROPHOTO_RGB`** ICC profile constants
   in `icc_profiles` (deprecated since 0.2.4).
-- **Drop `max_u16_err` from ICC hash table entries** — intent-safety
-  mask is the sole admission criterion; the runtime `Tolerance` enum
-  and per-entry numeric field are unused and misleading.
 
 ## zenpixels 0.2.7 (2026-04-14)
 
