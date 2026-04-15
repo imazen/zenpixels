@@ -28,7 +28,13 @@ pub struct ConvertPlan {
 }
 
 /// A single conversion step.
-#[derive(Clone, Copy, Debug, PartialEq)]
+///
+/// Not `Copy` — some variants (e.g., [`ExternalTransform`]) carry an
+/// `Arc`. Peephole rewrites must use `.clone()` or index assignment with
+/// pattern matching instead of `*step` dereferences.
+///
+/// [`ExternalTransform`]: ConvertStep::ExternalTransform
+#[derive(Clone)]
 pub(crate) enum ConvertStep {
     /// No-op (identity).
     Identity,
@@ -92,10 +98,15 @@ pub(crate) enum ConvertStep {
     HlgF32ToLinearF32,
     /// Linear f32 → HLG f32 [0,1] (OETF, no depth change).
     LinearF32ToHlgF32,
-    /// sRGB f32 [0,1] → linear f32 (EOTF, no depth change).
+    /// sRGB f32 [0,1] → linear f32 (EOTF, no depth change). Clamps input.
     SrgbF32ToLinearF32,
-    /// Linear f32 → sRGB f32 [0,1] (OETF, no depth change).
+    /// Linear f32 → sRGB f32 [0,1] (OETF, no depth change). Clamps output.
     LinearF32ToSrgbF32,
+    /// sRGB f32 → linear f32 (EOTF, sign-preserving extended range).
+    /// Emitted when `ConvertOptions::clip_out_of_gamut == false`.
+    SrgbF32ToLinearF32Extended,
+    /// Linear f32 → sRGB f32 (OETF, sign-preserving extended range).
+    LinearF32ToSrgbF32Extended,
     /// BT.709 f32 [0,1] → linear f32 (EOTF, no depth change).
     Bt709F32ToLinearF32,
     /// Linear f32 → BT.709 f32 [0,1] (OETF, no depth change).
@@ -120,6 +131,88 @@ pub(crate) enum ConvertStep {
     GamutMatrixRgbF32([f32; 9]),
     /// Apply a 3×3 gamut matrix to linear RGBA f32 (4 channels, alpha passthrough).
     GamutMatrixRgbaF32([f32; 9]),
+    /// Fused u8-sRGB RGB primaries conversion: LUT linearize → SIMD matrix →
+    /// SIMD f32→i32 → LUT encode, in one pass. Replaces the 3-step sequence
+    /// `[SrgbU8ToLinearF32, GamutMatrixRgbF32(m), LinearF32ToSrgbU8]`.
+    FusedSrgbU8GamutRgb([f32; 9]),
+    /// Fused u8-sRGB RGBA primaries conversion (alpha passthrough).
+    FusedSrgbU8GamutRgba([f32; 9]),
+    /// Fused u16-sRGB RGB primaries conversion via 65K-entry LUTs.
+    FusedSrgbU16GamutRgb([f32; 9]),
+    /// Fused u8-sRGB → linear-f32 RGB primaries conversion (cross-depth).
+    /// Output preserves extended range (no clamp).
+    FusedSrgbU8ToLinearF32Rgb([f32; 9]),
+    /// Fused linear-f32 → u8-sRGB RGB primaries conversion (cross-depth).
+    /// Always clamps since u8 can't represent out-of-gamut values.
+    FusedLinearF32ToSrgbU8Rgb([f32; 9]),
+}
+
+impl core::fmt::Debug for ConvertStep {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Identity => f.write_str("Identity"),
+            Self::SwizzleBgraRgba => f.write_str("SwizzleBgraRgba"),
+            Self::AddAlpha => f.write_str("AddAlpha"),
+            Self::DropAlpha => f.write_str("DropAlpha"),
+            Self::MatteComposite { r, g, b } => f
+                .debug_struct("MatteComposite")
+                .field("r", r)
+                .field("g", g)
+                .field("b", b)
+                .finish(),
+            Self::GrayToRgb => f.write_str("GrayToRgb"),
+            Self::GrayToRgba => f.write_str("GrayToRgba"),
+            Self::RgbToGray => f.write_str("RgbToGray"),
+            Self::RgbaToGray => f.write_str("RgbaToGray"),
+            Self::GrayAlphaToRgba => f.write_str("GrayAlphaToRgba"),
+            Self::GrayAlphaToRgb => f.write_str("GrayAlphaToRgb"),
+            Self::GrayToGrayAlpha => f.write_str("GrayToGrayAlpha"),
+            Self::GrayAlphaToGray => f.write_str("GrayAlphaToGray"),
+            Self::SrgbU8ToLinearF32 => f.write_str("SrgbU8ToLinearF32"),
+            Self::LinearF32ToSrgbU8 => f.write_str("LinearF32ToSrgbU8"),
+            Self::NaiveU8ToF32 => f.write_str("NaiveU8ToF32"),
+            Self::NaiveF32ToU8 => f.write_str("NaiveF32ToU8"),
+            Self::U16ToU8 => f.write_str("U16ToU8"),
+            Self::U8ToU16 => f.write_str("U8ToU16"),
+            Self::U16ToF32 => f.write_str("U16ToF32"),
+            Self::F32ToU16 => f.write_str("F32ToU16"),
+            Self::PqU16ToLinearF32 => f.write_str("PqU16ToLinearF32"),
+            Self::LinearF32ToPqU16 => f.write_str("LinearF32ToPqU16"),
+            Self::PqF32ToLinearF32 => f.write_str("PqF32ToLinearF32"),
+            Self::LinearF32ToPqF32 => f.write_str("LinearF32ToPqF32"),
+            Self::HlgU16ToLinearF32 => f.write_str("HlgU16ToLinearF32"),
+            Self::LinearF32ToHlgU16 => f.write_str("LinearF32ToHlgU16"),
+            Self::HlgF32ToLinearF32 => f.write_str("HlgF32ToLinearF32"),
+            Self::LinearF32ToHlgF32 => f.write_str("LinearF32ToHlgF32"),
+            Self::SrgbF32ToLinearF32 => f.write_str("SrgbF32ToLinearF32"),
+            Self::LinearF32ToSrgbF32 => f.write_str("LinearF32ToSrgbF32"),
+            Self::SrgbF32ToLinearF32Extended => f.write_str("SrgbF32ToLinearF32Extended"),
+            Self::LinearF32ToSrgbF32Extended => f.write_str("LinearF32ToSrgbF32Extended"),
+            Self::Bt709F32ToLinearF32 => f.write_str("Bt709F32ToLinearF32"),
+            Self::LinearF32ToBt709F32 => f.write_str("LinearF32ToBt709F32"),
+            Self::StraightToPremul => f.write_str("StraightToPremul"),
+            Self::PremulToStraight => f.write_str("PremulToStraight"),
+            Self::LinearRgbToOklab => f.write_str("LinearRgbToOklab"),
+            Self::OklabToLinearRgb => f.write_str("OklabToLinearRgb"),
+            Self::LinearRgbaToOklaba => f.write_str("LinearRgbaToOklaba"),
+            Self::OklabaToLinearRgba => f.write_str("OklabaToLinearRgba"),
+            Self::GamutMatrixRgbF32(m) => f.debug_tuple("GamutMatrixRgbF32").field(m).finish(),
+            Self::GamutMatrixRgbaF32(m) => f.debug_tuple("GamutMatrixRgbaF32").field(m).finish(),
+            Self::FusedSrgbU8GamutRgb(m) => f.debug_tuple("FusedSrgbU8GamutRgb").field(m).finish(),
+            Self::FusedSrgbU8GamutRgba(m) => {
+                f.debug_tuple("FusedSrgbU8GamutRgba").field(m).finish()
+            }
+            Self::FusedSrgbU16GamutRgb(m) => {
+                f.debug_tuple("FusedSrgbU16GamutRgb").field(m).finish()
+            }
+            Self::FusedSrgbU8ToLinearF32Rgb(m) => {
+                f.debug_tuple("FusedSrgbU8ToLinearF32Rgb").field(m).finish()
+            }
+            Self::FusedLinearF32ToSrgbU8Rgb(m) => {
+                f.debug_tuple("FusedLinearF32ToSrgbU8Rgb").field(m).finish()
+            }
+        }
+    }
 }
 
 /// Assert that a descriptor is not CMYK.
@@ -276,7 +369,7 @@ impl ConvertPlan {
             let mut goes_through_linear = false;
             {
                 let mut desc = from;
-                for &step in &steps {
+                for step in &steps {
                     desc = intermediate_desc(desc, step);
                     if desc.channel_type() == ChannelType::F32
                         && desc.transfer() == TransferFunction::Linear
@@ -292,7 +385,7 @@ impl ConvertPlan {
                 // target format.
                 let mut insert_pos = 0;
                 let mut desc = from;
-                for (i, &step) in steps.iter().enumerate() {
+                for (i, step) in steps.iter().enumerate() {
                     desc = intermediate_desc(desc, step);
                     if desc.channel_type() == ChannelType::F32
                         && desc.transfer() == TransferFunction::Linear
@@ -313,7 +406,7 @@ impl ConvertPlan {
                 let has_alpha = from.layout().has_alpha() || to.layout().has_alpha();
                 // Use the layout at the current point in the plan.
                 let mut desc = from;
-                for &step in &steps {
+                for step in &steps {
                     desc = intermediate_desc(desc, step);
                 }
                 let gamut_step = if desc.layout().has_alpha() || has_alpha {
@@ -343,6 +436,55 @@ impl ConvertPlan {
 
                 // Need to be in f32 first. If current is integer, add naive conversion.
                 let mut gamut_steps = Vec::new();
+                // Direct fused-step emissions for common cases.
+                if desc.channel_type() == ChannelType::U16
+                    && desc.transfer() == TransferFunction::Srgb
+                    && to.channel_type() == ChannelType::U16
+                    && to.transfer() == TransferFunction::Srgb
+                    && !desc.layout().has_alpha()
+                    && !to.layout().has_alpha()
+                {
+                    // u16 sRGB → u16 sRGB RGB: single-step matlut.
+                    gamut_steps.push(ConvertStep::FusedSrgbU16GamutRgb(flat));
+                    steps.extend(gamut_steps);
+                    if steps.is_empty() {
+                        steps.push(ConvertStep::Identity);
+                    }
+                    fuse_matlut_patterns(&mut steps);
+                    return Ok(Self { from, to, steps });
+                }
+                if desc.channel_type() == ChannelType::U8
+                    && matches!(desc.transfer(), TransferFunction::Srgb)
+                    && to.channel_type() == ChannelType::F32
+                    && to.transfer() == TransferFunction::Linear
+                    && !desc.layout().has_alpha()
+                    && !to.layout().has_alpha()
+                {
+                    // u8 sRGB → linear f32 RGB: cross-depth matlut.
+                    gamut_steps.push(ConvertStep::FusedSrgbU8ToLinearF32Rgb(flat));
+                    steps.extend(gamut_steps);
+                    if steps.is_empty() {
+                        steps.push(ConvertStep::Identity);
+                    }
+                    fuse_matlut_patterns(&mut steps);
+                    return Ok(Self { from, to, steps });
+                }
+                if desc.channel_type() == ChannelType::F32
+                    && desc.transfer() == TransferFunction::Linear
+                    && to.channel_type() == ChannelType::U8
+                    && to.transfer() == TransferFunction::Srgb
+                    && !desc.layout().has_alpha()
+                    && !to.layout().has_alpha()
+                {
+                    // linear f32 → u8 sRGB RGB: cross-depth matlut.
+                    gamut_steps.push(ConvertStep::FusedLinearF32ToSrgbU8Rgb(flat));
+                    steps.extend(gamut_steps);
+                    if steps.is_empty() {
+                        steps.push(ConvertStep::Identity);
+                    }
+                    fuse_matlut_patterns(&mut steps);
+                    return Ok(Self { from, to, steps });
+                }
                 if desc.channel_type() != ChannelType::F32 {
                     // Use the fused sRGB u8→linear f32 if applicable.
                     if desc.channel_type() == ChannelType::U8
@@ -372,22 +514,22 @@ impl ConvertPlan {
                     } else {
                         // Generic: naive to f32, linearize, gamut, delinearize, naive back
                         gamut_steps.push(ConvertStep::NaiveU8ToF32);
-                        if linearize != ConvertStep::Identity {
+                        if !matches!(linearize, ConvertStep::Identity) {
                             gamut_steps.push(linearize);
                         }
                         gamut_steps.push(gamut_step);
-                        if to_target_tf != ConvertStep::Identity {
+                        if !matches!(to_target_tf, ConvertStep::Identity) {
                             gamut_steps.push(to_target_tf);
                         }
                         gamut_steps.push(ConvertStep::NaiveF32ToU8);
                     }
                 } else {
                     // Already f32, just linearize → gamut → encode
-                    if linearize != ConvertStep::Identity {
+                    if !matches!(linearize, ConvertStep::Identity) {
                         gamut_steps.push(linearize);
                     }
                     gamut_steps.push(gamut_step);
-                    if to_target_tf != ConvertStep::Identity {
+                    if !matches!(to_target_tf, ConvertStep::Identity) {
                         gamut_steps.push(to_target_tf);
                     }
                 }
@@ -400,6 +542,10 @@ impl ConvertPlan {
             // Transfer-only difference or alpha-mode-only: identity path.
             steps.push(ConvertStep::Identity);
         }
+
+        // Peephole fusion: collapse common 3-step patterns into single fused
+        // kernels that avoid scratch-buffer round-trips.
+        fuse_matlut_patterns(&mut steps);
 
         Ok(Self { from, to, steps })
     }
@@ -455,7 +601,38 @@ impl ConvertPlan {
             }
         }
 
+        // When the caller opts out of clipping, swap pure-f32 sRGB transfer
+        // steps for their sign-preserving extended-range counterparts.
+        // Fused u8/u16 matlut steps are unaffected (integer I/O can't
+        // represent extended range anyway).
+        if !options.clip_out_of_gamut {
+            for step in &mut plan.steps {
+                match step {
+                    ConvertStep::SrgbF32ToLinearF32 => {
+                        *step = ConvertStep::SrgbF32ToLinearF32Extended;
+                    }
+                    ConvertStep::LinearF32ToSrgbF32 => {
+                        *step = ConvertStep::LinearF32ToSrgbF32Extended;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         Ok(plan)
+    }
+
+    /// Create a shell plan that records from/to but has no conversion steps.
+    ///
+    /// Used when an external CMS transform handles the conversion — the
+    /// plan exists only for `from()`/`to()` metadata; the actual row
+    /// work is driven by the external transform stored on `RowConverter`.
+    pub(crate) fn identity(from: PixelDescriptor, to: PixelDescriptor) -> Self {
+        Self {
+            from,
+            to,
+            steps: vec![ConvertStep::Identity],
+        }
     }
 
     /// Compose two plans into one: apply `self` then `other`.
@@ -474,11 +651,11 @@ impl ConvertPlan {
         let mut steps = self.steps.clone();
 
         // Append other's steps, skipping its Identity if present.
-        for &step in &other.steps {
-            if step == ConvertStep::Identity {
+        for step in &other.steps {
+            if matches!(step, ConvertStep::Identity) {
                 continue;
             }
-            steps.push(step);
+            steps.push(step.clone());
         }
 
         // Peephole: cancel adjacent inverse pairs.
@@ -487,7 +664,7 @@ impl ConvertPlan {
             changed = false;
             let mut i = 0;
             while i + 1 < steps.len() {
-                if are_inverse(steps[i], steps[i + 1]) {
+                if are_inverse(&steps[i], &steps[i + 1]) {
                     steps.remove(i + 1);
                     steps.remove(i);
                     changed = true;
@@ -505,7 +682,7 @@ impl ConvertPlan {
 
         // Remove leading/trailing Identity if there are real steps.
         if steps.len() > 1 {
-            steps.retain(|s| *s != ConvertStep::Identity);
+            steps.retain(|s| !matches!(s, ConvertStep::Identity));
             if steps.is_empty() {
                 steps.push(ConvertStep::Identity);
             }
@@ -521,7 +698,7 @@ impl ConvertPlan {
     /// True if conversion is a no-op.
     #[must_use]
     pub fn is_identity(&self) -> bool {
-        self.steps.len() == 1 && self.steps[0] == ConvertStep::Identity
+        self.steps.len() == 1 && matches!(self.steps[0], ConvertStep::Identity)
     }
 
     /// Maximum bytes-per-pixel across all intermediate formats in the plan.
@@ -530,7 +707,7 @@ impl ConvertPlan {
     pub(crate) fn max_intermediate_bpp(&self) -> usize {
         let mut desc = self.from;
         let mut max_bpp = desc.bytes_per_pixel();
-        for &step in &self.steps {
+        for step in &self.steps {
             desc = intermediate_desc(desc, step);
             max_bpp = max_bpp.max(desc.bytes_per_pixel());
         }
@@ -910,7 +1087,7 @@ pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
     }
 
     if plan.steps.len() == 1 {
-        apply_step_u8(plan.steps[0], src, dst, width, plan.from, plan.to);
+        apply_step_u8(&plan.steps[0], src, dst, width, plan.from, plan.to);
         return;
     }
 
@@ -937,7 +1114,7 @@ pub(crate) fn convert_row_buffered(
     }
 
     if plan.steps.len() == 1 {
-        apply_step_u8(plan.steps[0], src, dst, width, plan.from, plan.to);
+        apply_step_u8(&plan.steps[0], src, dst, width, plan.from, plan.to);
         return;
     }
 
@@ -950,7 +1127,7 @@ pub(crate) fn convert_row_buffered(
     let num_steps = plan.steps.len();
     let mut current_desc = plan.from;
 
-    for (i, &step) in plan.steps.iter().enumerate() {
+    for (i, step) in plan.steps.iter().enumerate() {
         let is_last = i == num_steps - 1;
         let next_desc = if is_last {
             plan.to
@@ -999,7 +1176,34 @@ pub(crate) fn convert_row_buffered(
 }
 
 /// Check if two steps are inverses that cancel each other.
-fn are_inverse(a: ConvertStep, b: ConvertStep) -> bool {
+/// Collapse `[SrgbU8ToLinearF32, GamutMatrix*F32(m), LinearF32ToSrgbU8]`
+/// into a single fused matlut step. Mutates in place.
+fn fuse_matlut_patterns(steps: &mut Vec<ConvertStep>) {
+    let mut i = 0;
+    while i + 2 < steps.len() {
+        let rewrite = match (&steps[i], &steps[i + 1], &steps[i + 2]) {
+            (
+                ConvertStep::SrgbU8ToLinearF32,
+                ConvertStep::GamutMatrixRgbF32(m),
+                ConvertStep::LinearF32ToSrgbU8,
+            ) => Some(ConvertStep::FusedSrgbU8GamutRgb(*m)),
+            (
+                ConvertStep::SrgbU8ToLinearF32,
+                ConvertStep::GamutMatrixRgbaF32(m),
+                ConvertStep::LinearF32ToSrgbU8,
+            ) => Some(ConvertStep::FusedSrgbU8GamutRgba(*m)),
+            _ => None,
+        };
+        if let Some(fused) = rewrite {
+            steps[i] = fused;
+            steps.drain(i + 1..i + 3);
+            continue;
+        }
+        i += 1;
+    }
+}
+
+fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
     matches!(
         (a, b),
         // Self-inverse
@@ -1037,11 +1241,14 @@ fn are_inverse(a: ConvertStep, b: ConvertStep) -> bool {
         | (ConvertStep::LinearF32ToPqU16, ConvertStep::PqU16ToLinearF32)
         | (ConvertStep::HlgU16ToLinearF32, ConvertStep::LinearF32ToHlgU16)
         | (ConvertStep::LinearF32ToHlgU16, ConvertStep::HlgU16ToLinearF32)
+        // Extended-range sRGB f32 pairs
+        | (ConvertStep::SrgbF32ToLinearF32Extended, ConvertStep::LinearF32ToSrgbF32Extended)
+        | (ConvertStep::LinearF32ToSrgbF32Extended, ConvertStep::SrgbF32ToLinearF32Extended)
     )
 }
 
 /// Compute the descriptor after applying one step.
-fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescriptor {
+fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescriptor {
     match step {
         ConvertStep::Identity => current,
         ConvertStep::SwizzleBgraRgba => {
@@ -1119,6 +1326,7 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
         | ConvertStep::PqF32ToLinearF32
         | ConvertStep::HlgF32ToLinearF32
         | ConvertStep::SrgbF32ToLinearF32
+        | ConvertStep::SrgbF32ToLinearF32Extended
         | ConvertStep::Bt709F32ToLinearF32 => PixelDescriptor::new(
             ChannelType::F32,
             current.layout(),
@@ -1159,12 +1367,14 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
             current.alpha(),
             TransferFunction::Hlg,
         ),
-        ConvertStep::LinearF32ToSrgbF32 => PixelDescriptor::new(
-            ChannelType::F32,
-            current.layout(),
-            current.alpha(),
-            TransferFunction::Srgb,
-        ),
+        ConvertStep::LinearF32ToSrgbF32 | ConvertStep::LinearF32ToSrgbF32Extended => {
+            PixelDescriptor::new(
+                ChannelType::F32,
+                current.layout(),
+                current.alpha(),
+                TransferFunction::Srgb,
+            )
+        }
         ConvertStep::LinearF32ToBt709F32 => PixelDescriptor::new(
             ChannelType::F32,
             current.layout(),
@@ -1227,6 +1437,33 @@ fn intermediate_desc(current: PixelDescriptor, step: ConvertStep) -> PixelDescri
             current.layout(),
             current.alpha(),
             TransferFunction::Linear,
+        ),
+        // Fused steps: u8 sRGB in, u8 sRGB out (same layout, same alpha).
+        ConvertStep::FusedSrgbU8GamutRgb(_) | ConvertStep::FusedSrgbU8GamutRgba(_) => {
+            PixelDescriptor::new(
+                ChannelType::U8,
+                current.layout(),
+                current.alpha(),
+                TransferFunction::Srgb,
+            )
+        }
+        ConvertStep::FusedSrgbU16GamutRgb(_) => PixelDescriptor::new(
+            ChannelType::U16,
+            current.layout(),
+            current.alpha(),
+            TransferFunction::Srgb,
+        ),
+        ConvertStep::FusedSrgbU8ToLinearF32Rgb(_) => PixelDescriptor::new(
+            ChannelType::F32,
+            current.layout(),
+            current.alpha(),
+            TransferFunction::Linear,
+        ),
+        ConvertStep::FusedLinearF32ToSrgbU8Rgb(_) => PixelDescriptor::new(
+            ChannelType::U8,
+            current.layout(),
+            current.alpha(),
+            TransferFunction::Srgb,
         ),
     }
 }

@@ -391,7 +391,6 @@ pub(crate) mod negotiate;
 
 pub mod adapt;
 pub mod cms;
-#[cfg(feature = "zencms-lite")]
 #[allow(
     dead_code,
     unused_variables,
@@ -404,7 +403,6 @@ pub(crate) mod cms_lite;
 pub mod cms_moxcms;
 pub mod converter;
 pub mod ext;
-#[cfg(feature = "zencms-lite")]
 #[allow(
     dead_code,
     unexpected_cfgs,
@@ -456,10 +454,16 @@ pub use hdr::{
 };
 
 // Re-export CMS traits, enums, and implementations.
-pub use cms::{ColorManagement, ColorPriority, RenderingIntent, RowTransform};
+#[allow(deprecated)]
+pub use cms::{
+    CmsPluginError, ColorManagement, ColorPriority, PluggableCms, RenderingIntent, RowTransform,
+    RowTransformMut,
+};
 // TODO: pub use cms_lite::ZenCmsLite once benchmarked on aarch64.
 #[cfg(feature = "cms-moxcms")]
 pub use cms_moxcms::MoxCms;
 
 // Re-export output types.
+pub use output::finalize_for_output_with;
+#[allow(deprecated)]
 pub use output::{EncodeReady, OutputMetadata, OutputProfile, finalize_for_output};

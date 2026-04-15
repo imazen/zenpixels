@@ -424,7 +424,7 @@ fn contiguous_from_strided<'a>(
 mod tests {
     use super::*;
     use zenpixels::descriptor::{ColorPrimaries, SignalRange};
-    use zenpixels::policy::{AlphaPolicy, DepthPolicy, GrayExpand};
+    use zenpixels::policy::{AlphaPolicy, DepthPolicy};
 
     /// 2×1 RGB8 pixel data (6 bytes).
     fn test_rgb8_data() -> Vec<u8> {
@@ -537,12 +537,9 @@ mod tests {
         let data = test_rgb8_data();
         let source = PixelDescriptor::RGB8.with_primaries(ColorPrimaries::Bt2020);
         let target = PixelDescriptor::RGB8_SRGB;
-        let options = ConvertOptions {
-            gray_expand: GrayExpand::Broadcast,
-            alpha_policy: AlphaPolicy::DiscardUnchecked,
-            depth_policy: DepthPolicy::Round,
-            luma: None,
-        };
+        let options = ConvertOptions::forbid_lossy()
+            .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
+            .with_depth_policy(DepthPolicy::Round);
 
         let result =
             adapt_for_encode_explicit(&data, source, 2, 1, 6, &[target], &options).unwrap();

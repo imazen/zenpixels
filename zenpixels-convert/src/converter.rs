@@ -3,8 +3,10 @@
 //! [`RowConverter`] wraps a [`ConvertPlan`] with pre-allocated scratch
 //! buffers for zero-allocation-per-row streaming conversion.
 
+use alloc::boxed::Box;
+
 use crate::convert::{ConvertPlan, ConvertScratch, convert_row_buffered};
-use crate::{ConvertError, PixelDescriptor};
+use crate::{ChannelLayout, ConvertError, PixelDescriptor};
 use whereat::{At, ResultAtExt};
 
 /// Pre-computed pixel format converter with pre-allocated scratch buffers.
@@ -27,30 +29,39 @@ use whereat::{At, ResultAtExt};
 ///     conv.convert_row(&src_row, &mut dst_row, width);
 /// }
 /// ```
-#[derive(Debug)]
 pub struct RowConverter {
     plan: ConvertPlan,
     scratch: ConvertScratch,
+    /// External CMS transform that bypasses the plan entirely.
+    /// Set by `new_explicit_with_cms` when a plugin accepts the conversion.
+    external: Option<ExternalTransform>,
+}
+
+/// External CMS transform variant.
+enum ExternalTransform {
+    /// Stateless, shareable. Supports cheap clone and parallel use.
+    Shared(alloc::sync::Arc<dyn crate::cms::RowTransform>),
+    /// Owned, stateful. Unique per `RowConverter`.
+    Owned(Box<dyn crate::cms::RowTransformMut>),
 }
 
 impl RowConverter {
     /// Create a converter from `from` to `to`.
     ///
+    /// Cross-profile conversions (different primaries or transfer) go
+    /// through the default CMS dispatch chain — see
+    /// [`new_explicit_with_cms`](Self::new_explicit_with_cms) for details.
     /// Returns `Err` if no conversion path exists between the formats.
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
-        let plan = ConvertPlan::new(from, to).at()?;
-        Ok(Self {
-            plan,
-            scratch: ConvertScratch::new(),
-        })
+        Self::new_explicit_with_cms(from, to, &crate::policy::ConvertOptions::permissive(), None)
     }
 
     /// Create a converter with explicit policy options.
     ///
     /// Like [`new`](Self::new) but validates [`ConvertOptions`] policies
-    /// (alpha removal, depth reduction, RGB→Gray) before creating the plan.
-    /// Returns a specific error if a forbidden operation would be required.
+    /// (alpha removal, depth reduction, RGB→Gray). Cross-profile
+    /// conversions go through the default CMS dispatch chain.
     ///
     /// [`ConvertOptions`]: crate::policy::ConvertOptions
     #[track_caller]
@@ -59,10 +70,139 @@ impl RowConverter {
         to: PixelDescriptor,
         options: &crate::policy::ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
+        Self::new_explicit_with_cms(from, to, options, None)
+    }
+
+    /// Create a converter that may delegate the color conversion to a
+    /// [`PluggableCms`].
+    ///
+    /// When `cms` is `Some` and the source and destination have different
+    /// primaries or transfer functions, the plugin is asked to supply a
+    /// row transform for the full `(from, to)` pair. If it accepts, the
+    /// plan becomes a single external-transform step; the built-in gamut
+    /// matrix and matlut fast paths are bypassed for that conversion.
+    /// If the plugin declines or there is no color work to do, behavior
+    /// matches [`new_explicit`](Self::new_explicit).
+    ///
+    /// [`PluggableCms`]: crate::cms::PluggableCms
+    #[track_caller]
+    pub fn new_explicit_with_cms(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &crate::policy::ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
+        use crate::policy::{AlphaPolicy, DepthPolicy};
+
+        // CMS dispatch chain (runs only when primaries differ — transfer-only
+        // changes stay on the built-in plan path so `compose` can peephole
+        // them and options like `clip_out_of_gamut` propagate through):
+        //   1. user-supplied plugin (if Some)
+        //   2. ZenCmsLite (default) — named-profile matlut fast path
+        //
+        // Per-plugin semantics:
+        //   - None → declined, try next plugin
+        //   - Some(Ok(t)) → accepted, stop the chain
+        //   - Some(Err(e)) → tried-and-failed, propagate the error and stop.
+        //     Falling through to another backend could silently produce
+        //     different output — surface the failure instead.
+        let primaries_differ = from.primaries != to.primaries;
+        if primaries_differ {
+            let src_src = from.color_profile_source();
+            let dst_src = to.color_profile_source();
+            let src_fmt = from.pixel_format();
+            let dst_fmt = to.pixel_format();
+
+            // Helper: ask one plugin for a transform, preferring shared.
+            // Returns:
+            //   Ok(Some(t)) → plugin accepted
+            //   Ok(None)    → plugin declined
+            //   Err(e)      → plugin tried and failed (At<CmsPluginError>
+            //                 carries the plugin's internal failure point
+            //                 plus a zenpixels-convert crate boundary stamp
+            //                 added via `whereat::at_crate!`).
+            let try_cms = |plugin: &dyn crate::cms::PluggableCms| -> Result<
+                Option<ExternalTransform>,
+                whereat::At<crate::cms::CmsPluginError>,
+            > {
+                if let Some(result) = plugin.build_shared_source_transform(
+                    src_src.clone(),
+                    dst_src.clone(),
+                    src_fmt,
+                    dst_fmt,
+                    options,
+                ) {
+                    return whereat::at_crate!(result).map(|t| Some(ExternalTransform::Shared(t)));
+                }
+                if let Some(result) = plugin.build_source_transform(
+                    src_src.clone(),
+                    dst_src.clone(),
+                    src_fmt,
+                    dst_fmt,
+                    options,
+                ) {
+                    return whereat::at_crate!(result).map(|t| Some(ExternalTransform::Owned(t)));
+                }
+                Ok(None)
+            };
+
+            // Convert a plugin failure into ConvertError::CmsError. The
+            // `At<CmsPluginError>` Display impl already renders the full
+            // frame trace + crate info (plugin + crate boundary).
+            let plugin_err = |e: whereat::At<crate::cms::CmsPluginError>| {
+                whereat::at!(ConvertError::CmsError(alloc::format!("{e}")))
+            };
+
+            let mut external: Option<ExternalTransform> = None;
+            if let Some(plugin) = cms {
+                match try_cms(plugin) {
+                    Ok(Some(t)) => external = Some(t),
+                    Ok(None) => {}
+                    Err(e) => return Err(plugin_err(e)),
+                }
+            }
+            if external.is_none() {
+                match try_cms(&crate::cms_lite::ZenCmsLite) {
+                    Ok(Some(t)) => external = Some(t),
+                    Ok(None) => {}
+                    Err(e) => return Err(plugin_err(e)),
+                }
+            }
+
+            if let Some(external) = external {
+                // Policy checks still apply.
+                let drops_alpha = from.alpha().is_some() && to.alpha().is_none();
+                if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
+                    return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
+                }
+                let reduces_depth = from.channel_type().byte_size() > to.channel_type().byte_size();
+                if reduces_depth && options.depth_policy == DepthPolicy::Forbid {
+                    return Err(whereat::at!(ConvertError::DepthReductionForbidden));
+                }
+                let src_is_rgb = matches!(
+                    from.layout(),
+                    ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
+                );
+                let dst_is_gray =
+                    matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
+                if src_is_rgb && dst_is_gray && options.luma.is_none() {
+                    return Err(whereat::at!(ConvertError::RgbToGray));
+                }
+
+                return Ok(Self {
+                    plan: ConvertPlan::identity(from, to),
+                    scratch: ConvertScratch::new(),
+                    external: Some(external),
+                });
+            }
+        }
+
+        // Same profiles, or CMS chain declined — built-in plan.
         let plan = ConvertPlan::new_explicit(from, to, options).at()?;
         Ok(Self {
             plan,
             scratch: ConvertScratch::new(),
+            external: None,
         })
     }
 
@@ -71,6 +211,7 @@ impl RowConverter {
         Self {
             plan,
             scratch: ConvertScratch::new(),
+            external: None,
         }
     }
 
@@ -83,7 +224,11 @@ impl RowConverter {
     /// allocation after the first call at a given width.
     #[inline]
     pub fn convert_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
-        convert_row_buffered(&self.plan, src, dst, width, &mut self.scratch);
+        match &mut self.external {
+            Some(ExternalTransform::Shared(arc)) => arc.transform_row(src, dst, width),
+            Some(ExternalTransform::Owned(b)) => b.transform_row(src, dst, width),
+            None => convert_row_buffered(&self.plan, src, dst, width, &mut self.scratch),
+        }
     }
 
     /// Convert multiple rows from a strided source buffer to a strided destination.
@@ -125,7 +270,10 @@ impl RowConverter {
     #[inline]
     #[must_use]
     pub fn is_identity(&self) -> bool {
-        self.plan.is_identity()
+        // External transforms (CMS plugins, named-profile matlut) shadow
+        // the plan with real conversion work — only identity when no
+        // external is set and the plan itself is identity.
+        self.external.is_none() && self.plan.is_identity()
     }
 
     /// Source pixel format.
@@ -159,9 +307,19 @@ impl RowConverter {
 
 impl Clone for RowConverter {
     fn clone(&self) -> Self {
+        // Shared external transforms clone cheaply via Arc; owned ones
+        // can't be cloned and are dropped (clone falls back to the
+        // built-in plan for that case).
+        let external = match &self.external {
+            Some(ExternalTransform::Shared(arc)) => {
+                Some(ExternalTransform::Shared(alloc::sync::Arc::clone(arc)))
+            }
+            Some(ExternalTransform::Owned(_)) | None => None,
+        };
         Self {
             plan: self.plan.clone(),
             scratch: ConvertScratch::new(),
+            external,
         }
     }
 }
@@ -172,7 +330,7 @@ mod tests {
 
     use super::*;
     use crate::convert::ConvertPlan;
-    use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GrayExpand};
+    use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy};
     use crate::{AlphaMode, ChannelLayout, ChannelType, ConvertError, TransferFunction};
 
     /// Helper: build a RowConverter and convert a single pixel.
@@ -921,12 +1079,7 @@ mod tests {
     fn new_explicit_alpha_forbid() {
         let from = PixelDescriptor::RGBA8_SRGB;
         let to = PixelDescriptor::RGB8_SRGB;
-        let opts = ConvertOptions {
-            gray_expand: GrayExpand::Broadcast,
-            alpha_policy: AlphaPolicy::Forbid,
-            depth_policy: DepthPolicy::Round,
-            luma: None,
-        };
+        let opts = ConvertOptions::forbid_lossy().with_depth_policy(DepthPolicy::Round);
         let err = ConvertPlan::new_explicit(from, to, &opts).unwrap_err();
         assert_eq!(*err.error(), ConvertError::AlphaRemovalForbidden);
     }
@@ -940,24 +1093,16 @@ mod tests {
             TransferFunction::Srgb,
         );
         let to = PixelDescriptor::RGB8_SRGB;
-        let opts = ConvertOptions {
-            gray_expand: GrayExpand::Broadcast,
-            alpha_policy: AlphaPolicy::DiscardUnchecked,
-            depth_policy: DepthPolicy::Forbid,
-            luma: None,
-        };
+        let opts = ConvertOptions::forbid_lossy().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
         let err = ConvertPlan::new_explicit(from, to, &opts).unwrap_err();
         assert_eq!(*err.error(), ConvertError::DepthReductionForbidden);
     }
 
     #[test]
     fn new_explicit_rgb_to_gray_requires_luma() {
-        let opts = ConvertOptions {
-            gray_expand: GrayExpand::Broadcast,
-            alpha_policy: AlphaPolicy::DiscardUnchecked,
-            depth_policy: DepthPolicy::Round,
-            luma: None,
-        };
+        let opts = ConvertOptions::forbid_lossy()
+            .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
+            .with_depth_policy(DepthPolicy::Round);
         let err = ConvertPlan::new_explicit(
             PixelDescriptor::RGB8_SRGB,
             PixelDescriptor::GRAY8_SRGB,
@@ -969,12 +1114,7 @@ mod tests {
 
     #[test]
     fn new_explicit_allows_when_policies_permit() {
-        let opts = ConvertOptions {
-            gray_expand: GrayExpand::Broadcast,
-            alpha_policy: AlphaPolicy::DiscardUnchecked,
-            depth_policy: DepthPolicy::Round,
-            luma: Some(crate::policy::LumaCoefficients::Bt709),
-        };
+        let opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
         let plan = ConvertPlan::new_explicit(
             PixelDescriptor::RGBA8_SRGB,
             PixelDescriptor::GRAY8_SRGB,
@@ -982,6 +1122,263 @@ mod tests {
         )
         .unwrap();
         assert!(!plan.is_identity());
+    }
+
+    #[test]
+    fn clip_out_of_gamut_false_preserves_negatives() {
+        // P3 pure green → sRGB produces negative red (out of sRGB gamut).
+        // With clip_out_of_gamut=false, the extended-range transfer must
+        // preserve those negatives instead of clamping to zero.
+        let p3 = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Srgb,
+        )
+        .with_primaries(zenpixels::ColorPrimaries::DisplayP3);
+        let srgb = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Srgb,
+        );
+
+        let opts = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+        let mut conv = crate::RowConverter::new_explicit(p3, srgb, &opts).unwrap();
+
+        let src: [f32; 3] = [0.0, 1.0, 0.0];
+        let mut dst = [0.0f32; 3];
+        conv.convert_row(
+            bytemuck::cast_slice(&src),
+            bytemuck::cast_slice_mut(&mut dst),
+            1,
+        );
+        assert!(
+            dst[0] < 0.0,
+            "extended range should preserve negative red, got {}",
+            dst[0]
+        );
+    }
+
+    #[test]
+    fn clip_out_of_gamut_true_clamps_negatives() {
+        // Default clip_out_of_gamut=true clamps sRGB transfer to [0, 1].
+        let p3 = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Srgb,
+        )
+        .with_primaries(zenpixels::ColorPrimaries::DisplayP3);
+        let srgb = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Srgb,
+        );
+
+        let opts = ConvertOptions::permissive();
+        assert!(opts.clip_out_of_gamut);
+        let mut conv = crate::RowConverter::new_explicit(p3, srgb, &opts).unwrap();
+
+        let src: [f32; 3] = [0.0, 1.0, 0.0];
+        let mut dst = [0.0f32; 3];
+        conv.convert_row(
+            bytemuck::cast_slice(&src),
+            bytemuck::cast_slice_mut(&mut dst),
+            1,
+        );
+        assert!(
+            dst[0] >= 0.0,
+            "clamped path should not produce negatives, got {}",
+            dst[0]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Pluggable CMS
+    // -----------------------------------------------------------------------
+
+    /// Mock CMS that paints every output pixel red. Used to verify that the
+    /// plugin gets hooked into the plan and actually drives the row.
+    struct PaintRedCms {
+        accepted: core::sync::atomic::AtomicUsize,
+    }
+
+    struct PaintRedTransform;
+
+    impl crate::cms::RowTransformMut for PaintRedTransform {
+        fn transform_row(&mut self, _src: &[u8], dst: &mut [u8], width: u32) {
+            for px in dst.chunks_exact_mut(3).take(width as usize) {
+                px[0] = 255;
+                px[1] = 0;
+                px[2] = 0;
+            }
+        }
+    }
+
+    impl crate::cms::PluggableCms for PaintRedCms {
+        fn build_source_transform(
+            &self,
+            _src: zenpixels::ColorProfileSource<'_>,
+            _dst: zenpixels::ColorProfileSource<'_>,
+            _src_format: zenpixels::PixelFormat,
+            _dst_format: zenpixels::PixelFormat,
+            _options: &crate::policy::ConvertOptions,
+        ) -> Option<
+            Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>,
+        > {
+            self.accepted
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            Some(Ok(Box::new(PaintRedTransform)))
+        }
+    }
+
+    #[test]
+    fn pluggable_cms_drives_row_when_profiles_differ() {
+        // P3 RGB8 → sRGB RGB8: profiles differ, plugin must be asked and
+        // its transform must be the one that runs.
+        let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(zenpixels::ColorPrimaries::DisplayP3);
+        let srgb = PixelDescriptor::RGB8_SRGB;
+
+        let cms = PaintRedCms {
+            accepted: core::sync::atomic::AtomicUsize::new(0),
+        };
+        let opts = ConvertOptions::permissive();
+        let mut conv =
+            crate::RowConverter::new_explicit_with_cms(p3, srgb, &opts, Some(&cms)).unwrap();
+
+        assert_eq!(cms.accepted.load(core::sync::atomic::Ordering::Relaxed), 1);
+
+        let src = [10u8, 20, 30, 40, 50, 60];
+        let mut dst = [0u8; 6];
+        conv.convert_row(&src, &mut dst, 2);
+        assert_eq!(dst, [255, 0, 0, 255, 0, 0]);
+    }
+
+    #[test]
+    fn pluggable_cms_skipped_when_profiles_match() {
+        // Same profile on both sides — plan is identity, plugin is never
+        // consulted.
+        let cms = PaintRedCms {
+            accepted: core::sync::atomic::AtomicUsize::new(0),
+        };
+        let opts = ConvertOptions::permissive();
+        let conv = crate::RowConverter::new_explicit_with_cms(
+            PixelDescriptor::RGB8_SRGB,
+            PixelDescriptor::RGB8_SRGB,
+            &opts,
+            Some(&cms),
+        )
+        .unwrap();
+        assert!(conv.is_identity());
+        assert_eq!(cms.accepted.load(core::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn pluggable_cms_shared_path_used_when_offered() {
+        // Plugin offers a shareable stateless transform — RowConverter
+        // must pick that path over the owned one.
+        struct SharedPaintBlueCms;
+        struct PaintBlueShared;
+
+        impl crate::cms::RowTransform for PaintBlueShared {
+            fn transform_row(&self, _src: &[u8], dst: &mut [u8], width: u32) {
+                for px in dst.chunks_exact_mut(3).take(width as usize) {
+                    px[0] = 0;
+                    px[1] = 0;
+                    px[2] = 255;
+                }
+            }
+        }
+
+        impl crate::cms::PluggableCms for SharedPaintBlueCms {
+            fn build_source_transform(
+                &self,
+                _src: zenpixels::ColorProfileSource<'_>,
+                _dst: zenpixels::ColorProfileSource<'_>,
+                _src_format: zenpixels::PixelFormat,
+                _dst_format: zenpixels::PixelFormat,
+                _options: &crate::policy::ConvertOptions,
+            ) -> Option<
+                Result<
+                    Box<dyn crate::cms::RowTransformMut>,
+                    whereat::At<crate::cms::CmsPluginError>,
+                >,
+            > {
+                panic!("owned path must not be used when shared is offered");
+            }
+
+            fn build_shared_source_transform(
+                &self,
+                _src: zenpixels::ColorProfileSource<'_>,
+                _dst: zenpixels::ColorProfileSource<'_>,
+                _src_format: zenpixels::PixelFormat,
+                _dst_format: zenpixels::PixelFormat,
+                _options: &crate::policy::ConvertOptions,
+            ) -> Option<
+                Result<
+                    alloc::sync::Arc<dyn crate::cms::RowTransform>,
+                    whereat::At<crate::cms::CmsPluginError>,
+                >,
+            > {
+                Some(Ok(alloc::sync::Arc::new(PaintBlueShared)))
+            }
+        }
+
+        let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(zenpixels::ColorPrimaries::DisplayP3);
+        let srgb = PixelDescriptor::RGB8_SRGB;
+        let opts = ConvertOptions::permissive();
+        let conv =
+            crate::RowConverter::new_explicit_with_cms(p3, srgb, &opts, Some(&SharedPaintBlueCms))
+                .unwrap();
+
+        // Clone must carry the shared transform (via Arc).
+        let mut conv2 = conv.clone();
+        let mut dst = [0u8; 3];
+        conv2.convert_row(&[1, 2, 3], &mut dst, 1);
+        assert_eq!(
+            dst,
+            [0, 0, 255],
+            "cloned converter should inherit shared transform"
+        );
+    }
+
+    #[test]
+    fn pluggable_cms_declines_falls_back_to_builtin() {
+        // Plugin returns None — must fall back to the built-in gamut path.
+        struct DeclineCms;
+        impl crate::cms::PluggableCms for DeclineCms {
+            fn build_source_transform(
+                &self,
+                _src: zenpixels::ColorProfileSource<'_>,
+                _dst: zenpixels::ColorProfileSource<'_>,
+                _src_format: zenpixels::PixelFormat,
+                _dst_format: zenpixels::PixelFormat,
+                _options: &crate::policy::ConvertOptions,
+            ) -> Option<
+                Result<
+                    Box<dyn crate::cms::RowTransformMut>,
+                    whereat::At<crate::cms::CmsPluginError>,
+                >,
+            > {
+                None
+            }
+        }
+
+        let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(zenpixels::ColorPrimaries::DisplayP3);
+        let srgb = PixelDescriptor::RGB8_SRGB;
+        let opts = ConvertOptions::permissive();
+        let mut conv =
+            crate::RowConverter::new_explicit_with_cms(p3, srgb, &opts, Some(&DeclineCms)).unwrap();
+
+        // Built-in path should produce non-red output from grey source.
+        let src = [128u8, 128, 128];
+        let mut dst = [0u8; 3];
+        conv.convert_row(&src, &mut dst, 1);
+        // P3 grey → sRGB grey: R ≈ G ≈ B. Not the all-red sentinel the
+        // plugin would have written, proving we took the built-in path.
+        assert_ne!(dst, [255, 0, 0]);
     }
 
     // -----------------------------------------------------------------------

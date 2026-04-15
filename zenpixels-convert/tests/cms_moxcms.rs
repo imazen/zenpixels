@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! Integration tests for the moxcms CMS backend.
 //!
 //! Uses generated minimal ICC v2 profiles for real CMS transforms, then

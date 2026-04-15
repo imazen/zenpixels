@@ -13,7 +13,7 @@ use super::ConvertStep;
 
 /// Apply a single conversion step on raw byte slices.
 pub(super) fn apply_step_u8(
-    step: ConvertStep,
+    step: &ConvertStep,
     src: &[u8],
     dst: &mut [u8],
     width: u32,
@@ -41,7 +41,7 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::MatteComposite { r, g, b } => {
-            matte_composite(src, dst, w, from.channel_type(), r, g, b);
+            matte_composite(src, dst, w, from.channel_type(), *r, *g, *b);
         }
 
         ConvertStep::GrayToRgb => {
@@ -148,6 +148,14 @@ pub(super) fn apply_step_u8(
             linear_f32_to_srgb_f32(src, dst, w, from.layout().channels());
         }
 
+        ConvertStep::SrgbF32ToLinearF32Extended => {
+            srgb_f32_to_linear_f32_extended(src, dst, w, from.layout().channels());
+        }
+
+        ConvertStep::LinearF32ToSrgbF32Extended => {
+            linear_f32_to_srgb_f32_extended(src, dst, w, from.layout().channels());
+        }
+
         ConvertStep::Bt709F32ToLinearF32 => {
             bt709_f32_to_linear_f32(src, dst, w, from.layout().channels());
         }
@@ -181,11 +189,88 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::GamutMatrixRgbF32(flat) => {
-            gamut_matrix_rgb_f32(src, dst, w, &flat);
+            gamut_matrix_rgb_f32(src, dst, w, flat);
         }
 
         ConvertStep::GamutMatrixRgbaF32(flat) => {
-            gamut_matrix_rgba_f32(src, dst, w, &flat);
+            gamut_matrix_rgba_f32(src, dst, w, flat);
+        }
+
+        ConvertStep::FusedSrgbU8GamutRgb(flat) => {
+            let m = [
+                [flat[0], flat[1], flat[2]],
+                [flat[3], flat[4], flat[5]],
+                [flat[6], flat[7], flat[8]],
+            ];
+            crate::fast_gamut::convert_u8_rgb_simd_matlut(
+                &m,
+                src,
+                dst,
+                crate::fast_gamut::srgb_lin_lut_u8(),
+                |v: f32| linear_srgb::default::linear_to_srgb_u8(v),
+            );
+        }
+
+        ConvertStep::FusedSrgbU8GamutRgba(flat) => {
+            let m = [
+                [flat[0], flat[1], flat[2]],
+                [flat[3], flat[4], flat[5]],
+                [flat[6], flat[7], flat[8]],
+            ];
+            crate::fast_gamut::convert_u8_rgba_simd_lut(
+                &m,
+                src,
+                dst,
+                crate::fast_gamut::srgb_lin_lut_u8(),
+                linear_srgb::default::linear_to_srgb_u8,
+            );
+        }
+
+        ConvertStep::FusedSrgbU16GamutRgb(flat) => {
+            let m = [
+                [flat[0], flat[1], flat[2]],
+                [flat[3], flat[4], flat[5]],
+                [flat[6], flat[7], flat[8]],
+            ];
+            let src_u16: &[u16] = bytemuck::cast_slice(src);
+            let dst_u16: &mut [u16] = bytemuck::cast_slice_mut(dst);
+            crate::fast_gamut::convert_u16_rgb_simd_matlut(
+                &m,
+                src_u16,
+                dst_u16,
+                crate::fast_gamut::srgb_lin_lut_u16(),
+                crate::fast_gamut::srgb_enc_lut_u16(),
+            );
+        }
+
+        ConvertStep::FusedSrgbU8ToLinearF32Rgb(flat) => {
+            let m = [
+                [flat[0], flat[1], flat[2]],
+                [flat[3], flat[4], flat[5]],
+                [flat[6], flat[7], flat[8]],
+            ];
+            let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
+            crate::fast_gamut::convert_u8_to_f32_lin_simd(
+                &m,
+                src,
+                dst_f32,
+                crate::fast_gamut::srgb_lin_lut_u8(),
+            );
+        }
+
+        ConvertStep::FusedLinearF32ToSrgbU8Rgb(flat) => {
+            let m = [
+                [flat[0], flat[1], flat[2]],
+                [flat[3], flat[4], flat[5]],
+                [flat[6], flat[7], flat[8]],
+            ];
+            let src_f32: &[f32] = bytemuck::cast_slice(src);
+            crate::fast_gamut::convert_f32_lin_to_u8_simd(
+                &m,
+                src_f32,
+                dst,
+                crate::fast_gamut::srgb_enc_lut_u8(),
+            );
         }
     }
 }
@@ -797,6 +882,8 @@ fn linear_f32_to_hlg_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usi
 // ---------------------------------------------------------------------------
 
 /// sRGB F32 → Linear F32 (EOTF, same depth). SIMD-dispatched.
+/// Clamps to [0, 1] — use `srgb_to_linear_extended_slice` for HDR/WCG workflows
+/// that need to preserve out-of-gamut values (pending configurable option).
 fn srgb_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
@@ -806,12 +893,32 @@ fn srgb_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: us
 }
 
 /// Linear F32 → sRGB F32 (OETF, same depth). SIMD-dispatched.
+/// Clamps to [0, 1] — use `linear_to_srgb_extended_slice` for HDR/WCG workflows
+/// that need to preserve out-of-gamut values (pending configurable option).
 fn linear_f32_to_srgb_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
     dstf[..count].copy_from_slice(&srcf[..count]);
     linear_srgb::default::linear_to_srgb_slice(&mut dstf[..count]);
+}
+
+/// sRGB F32 → Linear F32 (extended range, sign-preserving).
+fn srgb_f32_to_linear_f32_extended(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::srgb_to_linear_extended_slice(&mut dstf[..count]);
+}
+
+/// Linear F32 → sRGB F32 (extended range, sign-preserving).
+fn linear_f32_to_srgb_f32_extended(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::linear_to_srgb_extended_slice(&mut dstf[..count]);
 }
 
 /// BT.709 F32 → Linear F32 (EOTF, same depth).
@@ -1153,64 +1260,34 @@ fn oklab_to_rgb_4ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) 
 // ---------------------------------------------------------------------------
 
 /// Apply a 3×3 gamut matrix to a row of linear RGB f32 pixels.
-#[allow(unused_variables)]
 fn gamut_matrix_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32; 9]) {
-    #[cfg(feature = "zencms-lite")]
-    {
-        let m = [
-            [matrix[0], matrix[1], matrix[2]],
-            [matrix[3], matrix[4], matrix[5]],
-            [matrix[6], matrix[7], matrix[8]],
-        ];
-        dst.copy_from_slice(src);
-        let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
-        crate::fast_gamut::convert_linear_rgb(&m, d);
-    }
-    #[cfg(not(feature = "zencms-lite"))]
-    {
-        let s: &[f32] = bytemuck::cast_slice(src);
-        let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
-        let m = matrix;
-        for p in 0..width {
-            let base = p * 3;
-            let r = s[base];
-            let g = s[base + 1];
-            let b = s[base + 2];
-            d[base] = m[0] * r + m[1] * g + m[2] * b;
-            d[base + 1] = m[3] * r + m[4] * g + m[5] * b;
-            d[base + 2] = m[6] * r + m[7] * g + m[8] * b;
-        }
+    let s: &[f32] = bytemuck::cast_slice(src);
+    let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
+    let m = matrix;
+    for p in 0..width {
+        let base = p * 3;
+        let r = s[base];
+        let g = s[base + 1];
+        let b = s[base + 2];
+        d[base] = m[0] * r + m[1] * g + m[2] * b;
+        d[base + 1] = m[3] * r + m[4] * g + m[5] * b;
+        d[base + 2] = m[6] * r + m[7] * g + m[8] * b;
     }
 }
 
 /// Apply a 3×3 gamut matrix to a row of linear RGBA f32 pixels (alpha passthrough).
-#[allow(unused_variables)]
 fn gamut_matrix_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32; 9]) {
-    #[cfg(feature = "zencms-lite")]
-    {
-        let m = [
-            [matrix[0], matrix[1], matrix[2]],
-            [matrix[3], matrix[4], matrix[5]],
-            [matrix[6], matrix[7], matrix[8]],
-        ];
-        dst.copy_from_slice(src);
-        let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
-        crate::fast_gamut::convert_linear_rgba(&m, d);
-    }
-    #[cfg(not(feature = "zencms-lite"))]
-    {
-        let s: &[f32] = bytemuck::cast_slice(src);
-        let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
-        let m = matrix;
-        for p in 0..width {
-            let base = p * 4;
-            let r = s[base];
-            let g = s[base + 1];
-            let b = s[base + 2];
-            d[base] = m[0] * r + m[1] * g + m[2] * b;
-            d[base + 1] = m[3] * r + m[4] * g + m[5] * b;
-            d[base + 2] = m[6] * r + m[7] * g + m[8] * b;
-            d[base + 3] = s[base + 3];
-        }
+    let s: &[f32] = bytemuck::cast_slice(src);
+    let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
+    let m = matrix;
+    for p in 0..width {
+        let base = p * 4;
+        let r = s[base];
+        let g = s[base + 1];
+        let b = s[base + 2];
+        d[base] = m[0] * r + m[1] * g + m[2] * b;
+        d[base + 1] = m[3] * r + m[4] * g + m[5] * b;
+        d[base + 2] = m[6] * r + m[7] * g + m[8] * b;
+        d[base + 3] = s[base + 3];
     }
 }

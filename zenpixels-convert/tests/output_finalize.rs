@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! Tests for `finalize_for_output` — the atomic output preparation path.
 //!
 //! This is a critical function with zero prior test coverage.

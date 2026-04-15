@@ -18,6 +18,8 @@ zenpixels-convert = "0.2"
 
 ## Quick start
 
+### Format conversion
+
 ```rust
 use zenpixels_convert::{RowConverter, best_match, ConvertIntent};
 
@@ -31,6 +33,45 @@ for y in 0..height {
     converter.convert_row(src_row, dst_row, width);
 }
 ```
+
+### Color profile conversion
+
+Built-in: named-profile pairs (sRGB ↔ Display P3 ↔ BT.2020 ↔ Adobe RGB) use
+hardcoded matrices with fused SIMD kernels — ~2 GB/s u8, ~3.8 GB/s u16.
+No CMS backend needed.
+
+```rust
+use zenpixels::{PixelDescriptor, ColorPrimaries};
+use zenpixels_convert::{RowConverter, ConvertOptions};
+
+let p3  = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+let srgb = PixelDescriptor::RGB8_SRGB;
+
+let mut conv = RowConverter::new_explicit(
+    p3, srgb, &ConvertOptions::permissive(),
+)?;
+conv.convert_row(p3_row, srgb_row, width);
+```
+
+Custom ICC profiles (vendor-specific, LUT-based, perceptual intent) need a
+CMS backend. Pass one via `PluggableCms` — the plan delegates to the plugin
+when the profiles differ, or uses the built-in matlut fast path when both
+sides are well-known.
+
+```rust
+use zenpixels_convert::{RowConverter, ConvertOptions, cms::PluggableCms};
+
+let cms: &dyn PluggableCms = &MoxCms;  // or any backend
+let mut conv = RowConverter::new_explicit_with_cms(
+    source_desc, target_desc,
+    &ConvertOptions::permissive(),
+    Some(cms),
+)?;
+```
+
+For HDR and wide-gamut pipelines that defer tone/gamut mapping, use
+`with_clip_out_of_gamut(false)` — f32 sRGB transfers then preserve
+negative and supernormal values through the conversion.
 
 ## Type system
 
@@ -172,7 +213,7 @@ Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `C
 
 **Oklab** — primaries-aware `rgb_to_lms_matrix()` / `lms_to_rgb_matrix()`, scalar `rgb_to_oklab()` / `oklab_to_rgb()`, public LMS/XYZ/Oklab matrices. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
 
-**CMS** — `ColorManagement` and `RowTransform` traits for ICC-to-ICC transforms. The `cms-moxcms` feature provides a concrete backend using [moxcms](https://crates.io/crates/moxcms), supporting u8/u16/f32 transforms with automatic profile identification.
+**CMS** — `PluggableCms` trait (dyn-compatible, accepts `ColorProfileSource` directly — CICP, named profiles, or raw ICC bytes) plugs an external backend into `RowConverter`. `RowTransformMut` is the `&mut self` row-level transform returned by plugins. The `cms-moxcms` feature provides a concrete backend using [moxcms](https://crates.io/crates/moxcms), supporting u8/u16/f32 transforms with automatic profile identification. The older `ColorManagement` / `RowTransform` traits (ICC-bytes-only, `&self`) are retained for backward compatibility.
 
 **ICC identification** — `zenpixels::icc::identify_common(icc_bytes)` recognizes 163 well-known RGB + 18 grayscale profiles via normalized FNV-1a hash lookup (~100ns). Returns primaries, transfer function, and `IdentificationUse` (whether matrix+TRC substitution is safe vs CMS-only). Covers sRGB, Display P3, BT.2020, Adobe RGB variants across ICC v2–v5.
 

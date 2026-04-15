@@ -82,6 +82,7 @@
 
 use alloc::sync::Arc;
 
+#[allow(deprecated)]
 use crate::cms::ColorManagement;
 use crate::error::ConvertError;
 use crate::hdr::HdrMetadata;
@@ -179,6 +180,11 @@ impl EncodeReady {
 // TODO(0.3.0): Add HDR→SDR policy gate here once ConvertError has
 // HdrTransferRequiresToneMapping. See imazen/zenpixels#10.
 #[track_caller]
+#[deprecated(
+    since = "0.2.8",
+    note = "use finalize_for_output_with with a PluggableCms"
+)]
+#[allow(deprecated)]
 pub fn finalize_for_output<C: ColorManagement>(
     buffer: &PixelBuffer,
     origin: &ColorOrigin,
@@ -295,6 +301,7 @@ pub fn finalize_for_output<C: ColorManagement>(
 /// back to the non-authoritative field when the authoritative one is missing.
 ///
 /// Returns `Ok(None)` when no source profile can be determined.
+#[allow(deprecated)]
 fn build_cms_transform<C: ColorManagement>(
     origin: &ColorOrigin,
     metadata: &OutputMetadata,
@@ -336,6 +343,108 @@ fn build_cms_transform<C: ColorManagement>(
 
 // TODO(0.3.0): restore origin_has_hdr_transfer / target_has_hdr_transfer
 // helpers here for the HDR→SDR policy gate.
+
+/// Finalize a pixel buffer for output using the [`PluggableCms`] dispatch chain.
+///
+/// Modern replacement for
+/// [`finalize_for_output`](crate::output::finalize_for_output).
+///
+/// When a CMS plugin is supplied, it is offered the conversion first; on
+/// decline the built-in [`ZenCmsLite`](crate::cms_lite::ZenCmsLite)
+/// dispatcher handles named-profile matlut fast paths. When `cms` is
+/// `None`, only `ZenCmsLite` runs.
+///
+/// Pass `cms = Some(&MoxCms)` (or another `PluggableCms`) for full ICC
+/// support; pass `None` for named-profile-only builds that avoid pulling
+/// in a full CMS dependency.
+///
+/// # Errors
+///
+/// Returns [`ConvertError`] when no conversion path is available, buffer
+/// allocation fails, or a policy gate (alpha/depth/luma) forbids a
+/// required operation.
+#[track_caller]
+pub fn finalize_for_output_with(
+    buffer: &PixelBuffer,
+    origin: &ColorOrigin,
+    target: OutputProfile,
+    pixel_format: PixelFormat,
+    cms: Option<&dyn crate::cms::PluggableCms>,
+) -> Result<EncodeReady, At<ConvertError>> {
+    let _ = origin; // reserved for future HDR/intent policy gate
+    let source_desc = buffer.descriptor();
+    let target_desc = pixel_format.descriptor();
+
+    // Determine output metadata based on target profile.
+    let metadata = match &target {
+        OutputProfile::SameAsOrigin => OutputMetadata {
+            icc: origin.icc.clone(),
+            cicp: origin.cicp,
+            hdr: None,
+        },
+        OutputProfile::Named(cicp) => OutputMetadata {
+            icc: None,
+            cicp: Some(*cicp),
+            hdr: None,
+        },
+        OutputProfile::Icc(icc) => OutputMetadata {
+            icc: Some(icc.clone()),
+            cicp: None,
+            hdr: None,
+        },
+    };
+
+    // Build the target descriptor with resolved primaries + transfer so
+    // RowConverter's CMS dispatch chain has a concrete ColorProfileSource
+    // on both sides.
+    let target_desc_full = target_desc
+        .with_transfer(resolve_transfer(&target, &source_desc))
+        .with_primaries(resolve_primaries(&target, &source_desc));
+
+    // Fast path: no conversion needed.
+    if source_desc.layout_compatible(target_desc_full)
+        && descriptors_match(&source_desc, &target_desc_full)
+    {
+        let src_slice = buffer.as_slice();
+        let bytes = src_slice.contiguous_bytes();
+        let out = PixelBuffer::from_vec(
+            bytes.into_owned(),
+            buffer.width(),
+            buffer.height(),
+            target_desc_full,
+        )
+        .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
+        return Ok(EncodeReady {
+            pixels: out,
+            metadata,
+        });
+    }
+
+    // Dispatch through RowConverter — plugin (if Some) → ZenCmsLite default.
+    let mut converter = crate::RowConverter::new_explicit_with_cms(
+        source_desc,
+        target_desc_full,
+        &crate::policy::ConvertOptions::permissive(),
+        cms,
+    )?;
+    let src_slice = buffer.as_slice();
+    let mut out = PixelBuffer::try_new(buffer.width(), buffer.height(), target_desc_full)
+        .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
+
+    {
+        let mut dst_slice = out.as_slice_mut();
+        for y in 0..buffer.height() {
+            let src_row = src_slice.row(y);
+            let dst_row = dst_slice.row_mut(y);
+            converter.convert_row(src_row, dst_row, buffer.width());
+        }
+    }
+
+    Ok(EncodeReady {
+        pixels: out,
+        metadata,
+    })
+}
 
 /// Resolve the target transfer function.
 fn resolve_transfer(target: &OutputProfile, source: &PixelDescriptor) -> TransferFunction {

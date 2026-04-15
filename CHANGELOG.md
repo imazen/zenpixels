@@ -1,5 +1,52 @@
 # Changelog
 
+## [Unreleased]
+
+### zenpixels-convert
+
+#### Added
+
+- **`PluggableCms` trait** with `build_source_transform` (owned
+  `Box<dyn RowTransformMut>`) and `build_shared_source_transform`
+  (shared `Arc<dyn RowTransform>`, default `None`). Dyn-compatible,
+  accepts `ColorProfileSource` (ICC / CICP / Named / PrimariesTransferPair),
+  carries `&ConvertOptions`.
+- **`CmsPluginError`** — type-erased error wrapper for plugins, wraps
+  any `core::error::Error + Send + Sync`. Plugin methods return
+  `Option<Result<T, whereat::At<CmsPluginError>>>`: `None` = declined
+  (chain tries next plugin), `Some(Ok)` = accepted, `Some(Err)` =
+  tried-and-failed (error propagates immediately — the chain does not
+  continue past a failed plugin to avoid silently substituting different
+  color math). The `At<_>` envelope records the plugin's internal
+  failure point via `whereat::at!` / `ResultAtExt::at()`; the receive
+  site in `RowConverter::new_explicit_with_cms` adds a second stamp when
+  wrapping into `ConvertError::CmsError`.
+- **`RowTransformMut` trait** (`&mut self`, `Send`) for owned, stateful
+  transforms that need scratch buffers without interior mutability.
+  `RowTransform` (`&self`, `Send + Sync`) remains for stateless/shareable
+  transforms (e.g., moxcms `TransformExecutor`).
+- **`RowConverter::new_explicit_with_cms`** with ordered dispatch:
+  user-supplied plugin first, then `ZenCmsLite` default (named-profile
+  matlut fast path). Integer profile matches use fused SIMD kernels.
+- **`finalize_for_output_with(...)`** — dyn-safe replacement for
+  `finalize_for_output<C>`. Takes `Option<&dyn PluggableCms>` and routes
+  through `RowConverter::new_explicit_with_cms` so the CMS dispatch
+  chain is honored.
+- **`SourceColor::to_color_context()`** (zencodec) — drops the
+  non-authoritative color field based on `color_authority` so
+  `ColorContext::as_profile_source()` naturally returns the
+  authoritative source without a separate parameter.
+
+#### Deprecated
+
+- **`ColorManagement` trait** — use `PluggableCms` instead.
+  `ColorManagement` is non-dyn-safe (generic `type Error`), takes raw
+  ICC byte pairs, and has no options channel. Existing impls
+  (`MoxCms`, `ZenCmsLite`) are preserved and still work; they gain
+  `#[allow(deprecated)]` on the impl block.
+- **`finalize_for_output<C: ColorManagement>`** — use
+  `finalize_for_output_with(..., cms: Option<&dyn PluggableCms>)`.
+
 ## Queued breaking changes (for 0.3.0)
 
 These are deferred to the next minor release to batch semver breaks.
@@ -7,15 +54,46 @@ These are deferred to the next minor release to batch semver breaks.
 ### zenpixels
 
 - **`repr(u8)` removal** from `ColorPrimaries` and `TransferFunction`.
+- **`ConvertOptions` → `#[non_exhaustive]`** + new
+  `clip_out_of_gamut: bool` field (default `true`). Construct via
+  `ConvertOptions::forbid_lossy()` / `::permissive()` + `with_*` builders
+  instead of struct literals. Set `with_clip_out_of_gamut(false)` to emit
+  sign-preserving extended-range f32 sRGB transfers, preserving negative
+  and supernormal values for HDR / wide-gamut pipelines that defer tone or
+  gamut mapping to a later stage.
+- **`ColorContext` → `#[non_exhaustive]`**. Construct via
+  `from_icc()` / `from_cicp()` + builders. Direct struct literal
+  construction is already discouraged (fields are `Option` with no
+  authority signal); non-exhaustive makes it enforceable.
+- **Remove `ColorContext::from_icc_and_cicp()`** (deprecated since 0.2.6).
+  Use `from_icc()` or `from_cicp()` — codecs should populate only the
+  authoritative field via `SourceColor::to_color_context()`.
+- **Remove `ColorPrimaries` / `TransferFunction` commented-out variants**
+  (deferred AppleRgb, Smpte170m, Bt470Bg, WideGamut, ColorMatch,
+  EciRgbV2, DciP3, Gamma18, Gamma24, Gamma28) — clean up after the
+  `repr(u8)` removal frees discriminant assignment.
 
 ### zenpixels-convert
 
-- **`ConvertError` → `#[non_exhaustive]`**.
-- **`ConvertError::HdrTransferRequiresToneMapping`** variant + `HdrPolicy`
-  enum + `ConvertOutputOptions` + `finalize_for_output_with()`. See
-  imazen/zenpixels#10 for HDR provenance plan.
-- **`ColorManagement` trait redesign**: single `build_source_transform`
-  entry point with options (rendering intent, HDR policy).
+- **`RowTransform: Send + Sync`** (was `Send`-only). External impls must
+  now be thread-safe. All in-tree impls (`MoxRowTransform`, `LiteTransform`)
+  already satisfy this.
+- **`ConvertError` → `#[non_exhaustive]`** + new
+  `HdrTransferRequiresToneMapping` variant. See imazen/zenpixels#10 for
+  HDR provenance plan.
+- **`ColorManagement` trait redesign**: deprecate in favor of
+  `PluggableCms` for new code. Add `build_source_transform` entry point
+  accepting `ColorProfileSource` + `RenderingIntent` to
+  `ColorManagement` for backward-compatible use. Old
+  `build_transform(&[u8], &[u8])` stays but is deprecated.
+- **Remove `ZenCmsLite::extended` field and `::extended()` constructor**
+  (deprecated; use `ConvertOptions::clip_out_of_gamut` via
+  `RowConverter` instead).
+- **Remove `lut_transform_opts()` and `cicp_transform_opts()`** in
+  `cms_moxcms` (deprecated since 0.2.3; use `transform_opts()` with
+  explicit `ColorPriority` + `RenderingIntent`).
+- **Remove `ADOBE_RGB_COMPAT` and `PROPHOTO_RGB`** ICC profile constants
+  in `icc_profiles` (deprecated since 0.2.4).
 
 ## zenpixels 0.2.7 (2026-04-14)
 

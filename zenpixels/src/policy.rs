@@ -78,6 +78,7 @@ pub enum LumaCoefficients {
 ///     .with_depth_policy(DepthPolicy::Truncate);
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct ConvertOptions {
     /// How to expand grayscale to RGB.
     pub gray_expand: GrayExpand,
@@ -88,6 +89,19 @@ pub struct ConvertOptions {
     /// Luma coefficients for RGB→Gray conversion. `None` means
     /// RGB→Gray is forbidden (returns `ConvertError::RgbToGray`).
     pub luma: Option<LumaCoefficients>,
+    /// Whether to clamp out-of-gamut values to [0, 1] during f32 transfer
+    /// function conversions.
+    ///
+    /// - `true` (default): clamp sRGB/BT.709/PQ/HLG transfers to [0, 1].
+    ///   Matches display expectations; safe for standard workflows.
+    /// - `false`: use sign-preserving extended-range transfer functions.
+    ///   Preserves out-of-gamut (negative, > 1.0) values through the f32
+    ///   pipeline for HDR and wide-gamut workflows where tone mapping or
+    ///   gamut mapping happens later in the pipeline.
+    ///
+    /// Only affects f32 intermediate conversions. u8/u16 outputs always
+    /// clip since those formats can't represent out-of-gamut values.
+    pub clip_out_of_gamut: bool,
 }
 
 impl ConvertOptions {
@@ -106,6 +120,7 @@ impl ConvertOptions {
             alpha_policy: AlphaPolicy::Forbid,
             depth_policy: DepthPolicy::Forbid,
             luma: None,
+            clip_out_of_gamut: true,
         }
     }
 
@@ -121,6 +136,7 @@ impl ConvertOptions {
             alpha_policy: AlphaPolicy::DiscardIfOpaque,
             depth_policy: DepthPolicy::Round,
             luma: Some(LumaCoefficients::Bt709),
+            clip_out_of_gamut: true,
         }
     }
 
@@ -139,6 +155,14 @@ impl ConvertOptions {
     /// Set the grayscale expansion method.
     pub const fn with_gray_expand(mut self, expand: GrayExpand) -> Self {
         self.gray_expand = expand;
+        self
+    }
+
+    /// Set whether f32 transfer conversions clamp to [0, 1] (`true`, default)
+    /// or preserve extended-range values via sign-preserving transfers
+    /// (`false`). u8/u16 outputs always clip.
+    pub const fn with_clip_out_of_gamut(mut self, clip: bool) -> Self {
+        self.clip_out_of_gamut = clip;
         self
     }
 
@@ -217,6 +241,7 @@ mod tests {
             alpha_policy: AlphaPolicy::DiscardUnchecked,
             depth_policy: DepthPolicy::Round,
             luma: Some(LumaCoefficients::Bt709),
+            clip_out_of_gamut: true,
         };
         #[allow(clippy::clone_on_copy)]
         let opts2 = opts.clone();
@@ -244,6 +269,7 @@ mod tests {
             alpha_policy: AlphaPolicy::Forbid,
             depth_policy: DepthPolicy::Forbid,
             luma: None,
+            clip_out_of_gamut: true,
         };
         let mut h = std::hash::DefaultHasher::new();
         opts.hash(&mut h);

@@ -32,24 +32,24 @@ imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]
 pipeline = []
 cms-moxcms = ["std", "dep:moxcms"]
-zencms-lite = ["dep:magetypes", "dep:paste", "zenpixels/icc"]
 serde = ["zenpixels/serde"]
 
 [dependencies]
-zenpixels = { workspace = true, default-features = false }
+zenpixels = { workspace = true, default-features = false, features = ["icc"] }
 linear-srgb = { version = "0.6.7", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 garb = { version = "0.2.5", default-features = false, features = ["experimental"] }
 archmage = { version = "0.9.15", default-features = false }
-magetypes = { version = "0.9.18", default-features = false, optional = true }
-paste = { version = "1.0.15", optional = true }
+magetypes = { version = "0.9.18", default-features = false }
+paste = "1.0.15"
+once_cell = { version = "1.21.4", default-features = false, features = ["race", "alloc"] }
 whereat = { version = "0.1.5", default-features = false }
 moxcms = { version = "0.8.1", optional = true, features = ["options"] }
 
 [dev-dependencies]
 zenpixels = { workspace = true, features = ["planar", "imgref"] }
-zenpixels-convert = { path = ".", features = ["pipeline", "imgref", "cms-moxcms", "zencms-lite"] }
+zenpixels-convert = { path = ".", features = ["pipeline", "imgref", "cms-moxcms"] }
 zenbench = { version = "0.1.2"}
 half = "2"
 palette = { version = "0.7", default-features = false, features = ["std", "approx"] }
@@ -65,5 +65,5 @@ required-features = ["cms-moxcms"]
 # name = "bench_fast_p3"
 # path = "benches/bench_fast_p3.rs"
 # harness = false
-# required-features = ["cms-moxcms", "zencms-lite"]
+# required-features = ["cms-moxcms"]
 

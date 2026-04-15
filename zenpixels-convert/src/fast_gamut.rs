@@ -862,6 +862,620 @@ fn convert_8px_u8_rgb_fused(
     }
 }
 
+/// 2-pixel kernel using safe magetypes APIs. Mirrors moxcms rgb_xyz_opt:
+/// each 128-bit lane holds one pixel's [R,G,B,0] after FMA. Clamp+scale+
+/// `to_i32_round` produces i32 indices; aligned store, scalar LUT gather.
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn convert_8px_u8_rgb_matlut(
+    token: X64V3Token,
+    m: &[[f32; 3]; 3],
+    src: &[u8; 24],
+    dst: &mut [u8; 24],
+    lin_lut: &[f32; 256],
+    enc_lut: &[u8; 4096],
+) {
+    // Matrix rows pre-laid-out for the packed 2-pixel layout.
+    // Each 256-bit vector holds the same 3×f32 row twice (low 128, high 128),
+    // with padding in lane 3 and 7.
+    let m0 = mt_f32x8::from_array(
+        token,
+        [
+            m[0][0], m[1][0], m[2][0], 0.0, m[0][0], m[1][0], m[2][0], 0.0,
+        ],
+    );
+    let m1 = mt_f32x8::from_array(
+        token,
+        [
+            m[0][1], m[1][1], m[2][1], 0.0, m[0][1], m[1][1], m[2][1], 0.0,
+        ],
+    );
+    let m2 = mt_f32x8::from_array(
+        token,
+        [
+            m[0][2], m[1][2], m[2][2], 0.0, m[0][2], m[1][2], m[2][2], 0.0,
+        ],
+    );
+    let scale = mt_f32x8::splat(token, 4095.0);
+    let zero = mt_f32x8::zero(token);
+    let one = mt_f32x8::splat(token, 1.0);
+
+    let mut temp = [0i32; 8];
+
+    for pair in 0..4 {
+        let off = pair * 6;
+        let p0r = lin_lut[src[off] as usize];
+        let p0g = lin_lut[src[off + 1] as usize];
+        let p0b = lin_lut[src[off + 2] as usize];
+        let p1r = lin_lut[src[off + 3] as usize];
+        let p1g = lin_lut[src[off + 4] as usize];
+        let p1b = lin_lut[src[off + 5] as usize];
+
+        // Broadcast each channel to fill a 128-bit lane; pack 2 pixels.
+        let r = mt_f32x8::from_array(token, [p0r, p0r, p0r, p0r, p1r, p1r, p1r, p1r]);
+        let g = mt_f32x8::from_array(token, [p0g, p0g, p0g, p0g, p1g, p1g, p1g, p1g]);
+        let b = mt_f32x8::from_array(token, [p0b, p0b, p0b, p0b, p1b, p1b, p1b, p1b]);
+
+        // v = r*m0 + g*m1 + b*m2 — each 128-bit lane ends up as [R', G', B', 0].
+        let v = r * m0 + g * m1 + b * m2;
+
+        // Clamp [0,1], scale, SIMD f32→i32 round, store to aligned i32[8].
+        let clamped = v.max(zero).min(one);
+        let scaled = clamped * scale;
+        let idx = scaled.to_i32_round();
+        idx.store(&mut temp);
+
+        dst[off] = enc_lut[temp[0] as usize & 0xFFF];
+        dst[off + 1] = enc_lut[temp[1] as usize & 0xFFF];
+        dst[off + 2] = enc_lut[temp[2] as usize & 0xFFF];
+        dst[off + 3] = enc_lut[temp[4] as usize & 0xFFF];
+        dst[off + 4] = enc_lut[temp[5] as usize & 0xFFF];
+        dst[off + 5] = enc_lut[temp[6] as usize & 0xFFF];
+    }
+}
+
+/// Build a 256-entry LUT mapping u8 sRGB → f32 linear.
+pub(crate) fn srgb_lin_lut_u8() -> &'static [f32; 256] {
+    use once_cell::race::OnceBox;
+    static LUT: OnceBox<[f32; 256]> = OnceBox::new();
+    LUT.get_or_init(|| {
+        let mut t = alloc::boxed::Box::new([0.0f32; 256]);
+        for (i, slot) in t.iter_mut().enumerate() {
+            *slot = linear_srgb::default::srgb_u8_to_linear(i as u8);
+        }
+        t
+    })
+}
+
+/// Build a 4096-entry LUT mapping linear f32 → u8 sRGB.
+pub(crate) fn srgb_enc_lut_u8() -> &'static [u8; 4096] {
+    use once_cell::race::OnceBox;
+    static LUT: OnceBox<[u8; 4096]> = OnceBox::new();
+    LUT.get_or_init(|| {
+        let mut t = alloc::boxed::Box::new([0u8; 4096]);
+        for (i, slot) in t.iter_mut().enumerate() {
+            let lin = i as f32 / 4095.0;
+            *slot = linear_srgb::default::linear_to_srgb_u8(lin);
+        }
+        t
+    })
+}
+
+/// Back-compat alias; prefer `srgb_enc_lut_u8`.
+fn srgb_enc_lut_4096() -> &'static [u8; 4096] {
+    srgb_enc_lut_u8()
+}
+
+/// Build a 65536-entry LUT mapping u16 sRGB → f32 linear.
+pub(crate) fn srgb_lin_lut_u16() -> &'static [f32; 65536] {
+    use once_cell::race::OnceBox;
+    static LUT: OnceBox<[f32; 65536]> = OnceBox::new();
+    LUT.get_or_init(|| {
+        let mut t: alloc::boxed::Box<[f32; 65536]> = alloc::vec![0.0f32; 65536]
+            .into_boxed_slice()
+            .try_into()
+            .ok()
+            .unwrap();
+        for (i, slot) in t.iter_mut().enumerate() {
+            *slot = linear_srgb::default::srgb_u16_to_linear(i as u16);
+        }
+        t
+    })
+}
+
+/// Build a 65536-entry LUT mapping i32 index (scaled linear) → u16 sRGB.
+/// Indexed by `(linear * 65535 + 0.5) as i32` after clamp.
+pub(crate) fn srgb_enc_lut_u16() -> &'static [u16; 65536] {
+    use once_cell::race::OnceBox;
+    static LUT: OnceBox<[u16; 65536]> = OnceBox::new();
+    LUT.get_or_init(|| {
+        let mut t: alloc::boxed::Box<[u16; 65536]> = alloc::vec![0u16; 65536]
+            .into_boxed_slice()
+            .try_into()
+            .ok()
+            .unwrap();
+        for (i, slot) in t.iter_mut().enumerate() {
+            let lin = i as f32 / 65535.0;
+            *slot = linear_srgb::default::linear_to_srgb_u16(lin);
+        }
+        t
+    })
+}
+
+/// 2-pixel u16 sRGB kernel using safe magetypes APIs.
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn convert_8px_u16_rgb_matlut(
+    token: X64V3Token,
+    m: &[[f32; 3]; 3],
+    src: &[u16; 24],
+    dst: &mut [u16; 24],
+    lin_lut: &[f32; 65536],
+    enc_lut: &[u16; 65536],
+) {
+    let m0 = mt_f32x8::from_array(
+        token,
+        [
+            m[0][0], m[1][0], m[2][0], 0.0, m[0][0], m[1][0], m[2][0], 0.0,
+        ],
+    );
+    let m1 = mt_f32x8::from_array(
+        token,
+        [
+            m[0][1], m[1][1], m[2][1], 0.0, m[0][1], m[1][1], m[2][1], 0.0,
+        ],
+    );
+    let m2 = mt_f32x8::from_array(
+        token,
+        [
+            m[0][2], m[1][2], m[2][2], 0.0, m[0][2], m[1][2], m[2][2], 0.0,
+        ],
+    );
+    let scale = mt_f32x8::splat(token, 65535.0);
+    let zero = mt_f32x8::zero(token);
+    let one = mt_f32x8::splat(token, 1.0);
+
+    let mut temp = [0i32; 8];
+
+    for pair in 0..4 {
+        let off = pair * 6;
+        let p0r = lin_lut[src[off] as usize];
+        let p0g = lin_lut[src[off + 1] as usize];
+        let p0b = lin_lut[src[off + 2] as usize];
+        let p1r = lin_lut[src[off + 3] as usize];
+        let p1g = lin_lut[src[off + 4] as usize];
+        let p1b = lin_lut[src[off + 5] as usize];
+
+        let r = mt_f32x8::from_array(token, [p0r, p0r, p0r, p0r, p1r, p1r, p1r, p1r]);
+        let g = mt_f32x8::from_array(token, [p0g, p0g, p0g, p0g, p1g, p1g, p1g, p1g]);
+        let b = mt_f32x8::from_array(token, [p0b, p0b, p0b, p0b, p1b, p1b, p1b, p1b]);
+
+        let v = r * m0 + g * m1 + b * m2;
+
+        let clamped = v.max(zero).min(one);
+        let scaled = clamped * scale;
+        let idx = scaled.to_i32_round();
+        idx.store(&mut temp);
+
+        dst[off] = enc_lut[temp[0] as usize & 0xFFFF];
+        dst[off + 1] = enc_lut[temp[1] as usize & 0xFFFF];
+        dst[off + 2] = enc_lut[temp[2] as usize & 0xFFFF];
+        dst[off + 3] = enc_lut[temp[4] as usize & 0xFFFF];
+        dst[off + 4] = enc_lut[temp[5] as usize & 0xFFFF];
+        dst[off + 5] = enc_lut[temp[6] as usize & 0xFFFF];
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn convert_u16_rgb_matlut_v3(
+    token: X64V3Token,
+    m: &[[f32; 3]; 3],
+    src: &[u16],
+    dst: &mut [u16],
+    lin_lut: &[f32; 65536],
+    enc_lut: &[u16; 65536],
+) {
+    let pixel_count = src.len() / 3;
+    let bulk = (pixel_count / 8) * 8;
+    let bulk_chans = bulk * 3;
+    for off in (0..bulk_chans).step_by(24) {
+        let s: &[u16; 24] = src[off..off + 24].try_into().unwrap();
+        let d: &mut [u16; 24] = (&mut dst[off..off + 24]).try_into().unwrap();
+        convert_8px_u16_rgb_matlut(token, m, s, d, lin_lut, enc_lut);
+    }
+    // Scalar remainder.
+    for i in bulk..pixel_count {
+        let base = i * 3;
+        let r = lin_lut[src[base] as usize];
+        let g = lin_lut[src[base + 1] as usize];
+        let b = lin_lut[src[base + 2] as usize];
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst[base] = enc_lut[(nr.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+        dst[base + 1] = enc_lut[(ng.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+        dst[base + 2] = enc_lut[(nb.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+    }
+}
+
+fn convert_u16_rgb_matlut_scalar(
+    _token: ScalarToken,
+    m: &[[f32; 3]; 3],
+    src: &[u16],
+    dst: &mut [u16],
+    lin_lut: &[f32; 65536],
+    enc_lut: &[u16; 65536],
+) {
+    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+        let r = lin_lut[src_px[0] as usize];
+        let g = lin_lut[src_px[1] as usize];
+        let b = lin_lut[src_px[2] as usize];
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst_px[0] = enc_lut[(nr.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+        dst_px[1] = enc_lut[(ng.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+        dst_px[2] = enc_lut[(nb.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+    }
+}
+
+/// Fused u16 RGB: LUT linearize → SIMD matrix → SIMD f32→i32 → LUT encode.
+/// sRGB-specific.
+pub(crate) fn convert_u16_rgb_simd_matlut(
+    m: &[[f32; 3]; 3],
+    src: &[u16],
+    dst: &mut [u16],
+    lin_lut: &[f32; 65536],
+    enc_lut: &[u16; 65536],
+) {
+    debug_assert_eq!(src.len() % 3, 0);
+    debug_assert_eq!(src.len(), dst.len());
+    #[cfg(target_arch = "x86_64")]
+    {
+        incant!(convert_u16_rgb_matlut(m, src, dst, lin_lut, enc_lut));
+        return;
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    convert_u16_rgb_matlut_scalar(ScalarToken, m, src, dst, lin_lut, enc_lut);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Cross-depth matlut kernels: integer↔f32 with SIMD matrix. Output f32 is
+// *linear* light (not sRGB-encoded). Input f32 is treated as linear light.
+// Extended range (negatives, >1) flows through unclamped for f32 outputs;
+// u8/u16 outputs implicitly clamp via cvtps_epi32 saturation + LUT gather.
+// ═════════════════════════════════════════════════════════════════════════
+
+/// 2-pixel u8-sRGB → linear-f32 kernel. Output is linear (NOT sRGB-encoded);
+/// extended range flows through after the matrix.
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn convert_8px_u8_to_f32_lin(
+    token: X64V3Token,
+    m: &[[f32; 3]; 3],
+    src: &[u8; 24],
+    dst: &mut [f32; 24],
+    lin_lut: &[f32; 256],
+) {
+    let m0 = mt_f32x8::from_array(
+        token,
+        [
+            m[0][0], m[1][0], m[2][0], 0.0, m[0][0], m[1][0], m[2][0], 0.0,
+        ],
+    );
+    let m1 = mt_f32x8::from_array(
+        token,
+        [
+            m[0][1], m[1][1], m[2][1], 0.0, m[0][1], m[1][1], m[2][1], 0.0,
+        ],
+    );
+    let m2 = mt_f32x8::from_array(
+        token,
+        [
+            m[0][2], m[1][2], m[2][2], 0.0, m[0][2], m[1][2], m[2][2], 0.0,
+        ],
+    );
+    for pair in 0..4 {
+        let off = pair * 6;
+        let off_out = pair * 6;
+        let p0r = lin_lut[src[off] as usize];
+        let p0g = lin_lut[src[off + 1] as usize];
+        let p0b = lin_lut[src[off + 2] as usize];
+        let p1r = lin_lut[src[off + 3] as usize];
+        let p1g = lin_lut[src[off + 4] as usize];
+        let p1b = lin_lut[src[off + 5] as usize];
+        let r = mt_f32x8::from_array(token, [p0r, p0r, p0r, p0r, p1r, p1r, p1r, p1r]);
+        let g = mt_f32x8::from_array(token, [p0g, p0g, p0g, p0g, p1g, p1g, p1g, p1g]);
+        let b = mt_f32x8::from_array(token, [p0b, p0b, p0b, p0b, p1b, p1b, p1b, p1b]);
+        let v = r * m0 + g * m1 + b * m2;
+        let out = v.to_array();
+        dst[off_out] = out[0];
+        dst[off_out + 1] = out[1];
+        dst[off_out + 2] = out[2];
+        dst[off_out + 3] = out[4];
+        dst[off_out + 4] = out[5];
+        dst[off_out + 5] = out[6];
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn convert_u8_to_f32_lin_v3(
+    token: X64V3Token,
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [f32],
+    lin_lut: &[f32; 256],
+) {
+    let pixel_count = src.len() / 3;
+    let bulk = (pixel_count / 8) * 8;
+    for off in (0..bulk).step_by(8) {
+        let s: &[u8; 24] = src[off * 3..off * 3 + 24].try_into().unwrap();
+        let d: &mut [f32; 24] = (&mut dst[off * 3..off * 3 + 24]).try_into().unwrap();
+        convert_8px_u8_to_f32_lin(token, m, s, d, lin_lut);
+    }
+    for i in bulk..pixel_count {
+        let base = i * 3;
+        let r = lin_lut[src[base] as usize];
+        let g = lin_lut[src[base + 1] as usize];
+        let b = lin_lut[src[base + 2] as usize];
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst[base] = nr;
+        dst[base + 1] = ng;
+        dst[base + 2] = nb;
+    }
+}
+
+fn convert_u8_to_f32_lin_scalar(
+    _token: ScalarToken,
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [f32],
+    lin_lut: &[f32; 256],
+) {
+    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+        let r = lin_lut[src_px[0] as usize];
+        let g = lin_lut[src_px[1] as usize];
+        let b = lin_lut[src_px[2] as usize];
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst_px[0] = nr;
+        dst_px[1] = ng;
+        dst_px[2] = nb;
+    }
+}
+
+/// Fused u8-sRGB → linear-f32 RGB with gamut matrix.
+pub(crate) fn convert_u8_to_f32_lin_simd(
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [f32],
+    lin_lut: &[f32; 256],
+) {
+    debug_assert_eq!(src.len() % 3, 0);
+    debug_assert_eq!(src.len(), dst.len());
+    #[cfg(target_arch = "x86_64")]
+    {
+        incant!(convert_u8_to_f32_lin(m, src, dst, lin_lut));
+        return;
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    convert_u8_to_f32_lin_scalar(ScalarToken, m, src, dst, lin_lut);
+}
+
+/// 2-pixel linear-f32 → u8-sRGB kernel with clamp + cvtps_epi32 + LUT gather.
+#[cfg(target_arch = "x86_64")]
+#[rite]
+fn convert_8px_f32_lin_to_u8(
+    token: X64V3Token,
+    m: &[[f32; 3]; 3],
+    src: &[f32; 24],
+    dst: &mut [u8; 24],
+    enc_lut: &[u8; 4096],
+) {
+    let m0 = mt_f32x8::from_array(
+        token,
+        [
+            m[0][0], m[1][0], m[2][0], 0.0, m[0][0], m[1][0], m[2][0], 0.0,
+        ],
+    );
+    let m1 = mt_f32x8::from_array(
+        token,
+        [
+            m[0][1], m[1][1], m[2][1], 0.0, m[0][1], m[1][1], m[2][1], 0.0,
+        ],
+    );
+    let m2 = mt_f32x8::from_array(
+        token,
+        [
+            m[0][2], m[1][2], m[2][2], 0.0, m[0][2], m[1][2], m[2][2], 0.0,
+        ],
+    );
+    let scale = mt_f32x8::splat(token, 4095.0);
+    let zero = mt_f32x8::zero(token);
+    let one = mt_f32x8::splat(token, 1.0);
+    let mut temp = [0i32; 8];
+
+    for pair in 0..4 {
+        let off = pair * 6;
+        let r = mt_f32x8::from_array(
+            token,
+            [
+                src[off],
+                src[off],
+                src[off],
+                src[off],
+                src[off + 3],
+                src[off + 3],
+                src[off + 3],
+                src[off + 3],
+            ],
+        );
+        let g = mt_f32x8::from_array(
+            token,
+            [
+                src[off + 1],
+                src[off + 1],
+                src[off + 1],
+                src[off + 1],
+                src[off + 4],
+                src[off + 4],
+                src[off + 4],
+                src[off + 4],
+            ],
+        );
+        let b = mt_f32x8::from_array(
+            token,
+            [
+                src[off + 2],
+                src[off + 2],
+                src[off + 2],
+                src[off + 2],
+                src[off + 5],
+                src[off + 5],
+                src[off + 5],
+                src[off + 5],
+            ],
+        );
+        let v = r * m0 + g * m1 + b * m2;
+        let clamped = v.max(zero).min(one);
+        let scaled = clamped * scale;
+        let idx = scaled.to_i32_round();
+        idx.store(&mut temp);
+        dst[off] = enc_lut[temp[0] as usize & 0xFFF];
+        dst[off + 1] = enc_lut[temp[1] as usize & 0xFFF];
+        dst[off + 2] = enc_lut[temp[2] as usize & 0xFFF];
+        dst[off + 3] = enc_lut[temp[4] as usize & 0xFFF];
+        dst[off + 4] = enc_lut[temp[5] as usize & 0xFFF];
+        dst[off + 5] = enc_lut[temp[6] as usize & 0xFFF];
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn convert_f32_lin_to_u8_v3(
+    token: X64V3Token,
+    m: &[[f32; 3]; 3],
+    src: &[f32],
+    dst: &mut [u8],
+    enc_lut: &[u8; 4096],
+) {
+    let pixel_count = src.len() / 3;
+    let bulk = (pixel_count / 8) * 8;
+    for off in (0..bulk).step_by(8) {
+        let s: &[f32; 24] = src[off * 3..off * 3 + 24].try_into().unwrap();
+        let d: &mut [u8; 24] = (&mut dst[off * 3..off * 3 + 24]).try_into().unwrap();
+        convert_8px_f32_lin_to_u8(token, m, s, d, enc_lut);
+    }
+    for i in bulk..pixel_count {
+        let base = i * 3;
+        let (nr, ng, nb) = mat3x3(m, src[base], src[base + 1], src[base + 2]);
+        dst[base] = enc_lut[(nr.clamp(0.0, 1.0) * 4095.0 + 0.5) as usize & 0xFFF];
+        dst[base + 1] = enc_lut[(ng.clamp(0.0, 1.0) * 4095.0 + 0.5) as usize & 0xFFF];
+        dst[base + 2] = enc_lut[(nb.clamp(0.0, 1.0) * 4095.0 + 0.5) as usize & 0xFFF];
+    }
+}
+
+fn convert_f32_lin_to_u8_scalar(
+    _token: ScalarToken,
+    m: &[[f32; 3]; 3],
+    src: &[f32],
+    dst: &mut [u8],
+    enc_lut: &[u8; 4096],
+) {
+    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+        let (nr, ng, nb) = mat3x3(m, src_px[0], src_px[1], src_px[2]);
+        dst_px[0] = enc_lut[(nr.clamp(0.0, 1.0) * 4095.0 + 0.5) as usize & 0xFFF];
+        dst_px[1] = enc_lut[(ng.clamp(0.0, 1.0) * 4095.0 + 0.5) as usize & 0xFFF];
+        dst_px[2] = enc_lut[(nb.clamp(0.0, 1.0) * 4095.0 + 0.5) as usize & 0xFFF];
+    }
+}
+
+/// Fused linear-f32 → u8-sRGB RGB with gamut matrix (always clamps).
+pub(crate) fn convert_f32_lin_to_u8_simd(
+    m: &[[f32; 3]; 3],
+    src: &[f32],
+    dst: &mut [u8],
+    enc_lut: &[u8; 4096],
+) {
+    debug_assert_eq!(src.len() % 3, 0);
+    debug_assert_eq!(src.len(), dst.len());
+    #[cfg(target_arch = "x86_64")]
+    {
+        incant!(convert_f32_lin_to_u8(m, src, dst, enc_lut));
+        return;
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    convert_f32_lin_to_u8_scalar(ScalarToken, m, src, dst, enc_lut);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn convert_u8_rgb_matlut_v3(
+    token: X64V3Token,
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    lin_lut: &[f32; 256],
+    enc_u8: fn(f32) -> u8,
+) {
+    let pixel_count = src.len() / 3;
+    let bulk = (pixel_count / 8) * 8;
+    let bulk_bytes = bulk * 3;
+    let enc_lut = srgb_enc_lut_4096();
+    for off in (0..bulk_bytes).step_by(24) {
+        let s: &[u8; 24] = src[off..off + 24].try_into().unwrap();
+        let d: &mut [u8; 24] = (&mut dst[off..off + 24]).try_into().unwrap();
+        convert_8px_u8_rgb_matlut(token, m, s, d, lin_lut, enc_lut);
+    }
+    for i in bulk..pixel_count {
+        let base = i * 3;
+        let r = lin_lut[src[base] as usize];
+        let g = lin_lut[src[base + 1] as usize];
+        let b = lin_lut[src[base + 2] as usize];
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst[base] = enc_u8(nr);
+        dst[base + 1] = enc_u8(ng);
+        dst[base + 2] = enc_u8(nb);
+    }
+}
+
+fn convert_u8_rgb_matlut_scalar(
+    _token: ScalarToken,
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    lin_lut: &[f32; 256],
+    enc_u8: fn(f32) -> u8,
+) {
+    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+        let r = lin_lut[src_px[0] as usize];
+        let g = lin_lut[src_px[1] as usize];
+        let b = lin_lut[src_px[2] as usize];
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        dst_px[0] = enc_u8(nr);
+        dst_px[1] = enc_u8(ng);
+        dst_px[2] = enc_u8(nb);
+    }
+}
+
+/// Fused u8 RGB: LUT linearize → SIMD matrix → SIMD f32→u8 via sRGB LUT.
+/// Currently sRGB-specific (uses `linear_srgb::linear_to_srgb_u8_v3`).
+/// Caller must ensure `enc_u8` is the sRGB encoder for correct remainder.
+pub(crate) fn convert_u8_rgb_simd_matlut(
+    m: &[[f32; 3]; 3],
+    src: &[u8],
+    dst: &mut [u8],
+    lin_lut: &[f32; 256],
+    enc_u8: fn(f32) -> u8,
+) {
+    debug_assert_eq!(src.len() % 3, 0);
+    debug_assert_eq!(src.len(), dst.len());
+    #[cfg(target_arch = "x86_64")]
+    {
+        incant!(convert_u8_rgb_matlut(m, src, dst, lin_lut, enc_u8));
+        return;
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    convert_u8_rgb_matlut_scalar(ScalarToken, m, src, dst, lin_lut, enc_u8);
+}
+
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 fn convert_u8_rgb_fused_v3(
