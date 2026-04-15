@@ -1,6 +1,34 @@
 # Changelog
 
-## [Unreleased]
+## zenpixels 0.2.8 + zenpixels-convert 0.2.8 (2026-04-15)
+
+Ships `PluggableCms`, `RowTransformMut`, fused matlut kernels,
+`ConvertOptions::clip_out_of_gamut`, and `ZenCmsLite` as the default
+CMS backend. Carries a set of **tolerated technical breaks** (see
+[`CLAUDE.md`](CLAUDE.md) §0.2.x versioning policy) that
+`cargo semver-checks` flags as major but which have no known external
+impact. A 0.3.0 bump for these alone was judged too disruptive to the
+`zen*` sibling dependency graph.
+
+### zenpixels
+
+#### Added
+
+- **`ConvertOptions::clip_out_of_gamut: bool`** field (default `true`)
+  plus `with_clip_out_of_gamut(bool)` builder. Set to `false` to emit
+  sign-preserving extended-range f32 sRGB transfers — preserves
+  negative and supernormal values for HDR / wide-gamut pipelines that
+  defer tone or gamut mapping to a later stage.
+- **`ConvertOptions::forbid_lossy()`** / **`::permissive()`** presets
+  plus `with_alpha_policy`, `with_depth_policy`, `with_gray_expand`,
+  `with_luma`, `with_clip_out_of_gamut` builders. Required since
+  `ConvertOptions` became `#[non_exhaustive]`.
+
+#### Changed (tolerated technical breaks)
+
+- **`ConvertOptions` → `#[non_exhaustive]`**. External struct-literal
+  construction breaks; in-tree callers migrated to builder pattern.
+  Audited: no external struct-literal users across `~/work/zen/`.
 
 ### zenpixels-convert
 
@@ -36,6 +64,24 @@
   non-authoritative color field based on `color_authority` so
   `ColorContext::as_profile_source()` naturally returns the
   authoritative source without a separate parameter.
+- **Fused u8/u16 matlut SIMD kernels** on `RowConverter`'s default
+  path. u8 sRGB: ~3× speedup vs prior; u16 sRGB: ~49× speedup.
+
+#### Changed (tolerated technical breaks)
+
+- **`RowTransform: Send + Sync`** (was `Send`-only). In-tree impls
+  (`MoxRowTransform`, `LiteTransform`) already satisfy `Sync` because
+  their inner state does. External impls that were intentionally
+  `!Sync` would break; none are known.
+- **`RowConverter` is no longer `Sync` / `UnwindSafe` /
+  `RefUnwindSafe`**. Mechanical consequence of the new
+  `external: Option<Box<dyn RowTransformMut: Send>>` field.
+  `convert_row` takes `&mut self`, so cross-thread shared-reference
+  use was never useful.
+- **`RowConverter` no longer derives `Debug`**. Plan contents and
+  external transform have no meaningful `Debug` representation.
+- **Feature `zencms-lite` removed**. Functionality became unconditional
+  — LUTs use `OnceBox` for no_std compatibility without a feature gate.
 
 #### Deprecated
 
@@ -51,21 +97,13 @@
 
 ## Queued breaking changes (for 0.3.0)
 
-These are deferred to the next minor release to batch semver breaks.
-Entries here do **not** ship until the 0.3.0 release — this section
-accumulates across `[Unreleased]` patches and only clears when the
-breaking release cuts.
+Non-tolerated breaks (see [`CLAUDE.md`](CLAUDE.md) §0.2.x versioning
+policy) — these require a proper 0.3.0 bump. This section accumulates
+across 0.2.N patches and only clears when the 0.3.0 release cuts.
 
 ### zenpixels
 
 - **`repr(u8)` removal** from `ColorPrimaries` and `TransferFunction`.
-- **`ConvertOptions` → `#[non_exhaustive]`** + new
-  `clip_out_of_gamut: bool` field (default `true`). Construct via
-  `ConvertOptions::forbid_lossy()` / `::permissive()` + `with_*` builders
-  instead of struct literals. Set `with_clip_out_of_gamut(false)` to emit
-  sign-preserving extended-range f32 sRGB transfers, preserving negative
-  and supernormal values for HDR / wide-gamut pipelines that defer tone or
-  gamut mapping to a later stage.
 - **`ColorContext` → `#[non_exhaustive]`**. Construct via
   `from_icc()` / `from_cicp()` + builders. Direct struct literal
   construction is already discouraged (fields are `Option` with no
@@ -80,16 +118,11 @@ breaking release cuts.
 
 ### zenpixels-convert
 
-- **`RowTransform: Send + Sync`** (was `Send`-only). External impls must
-  now be thread-safe. All in-tree impls (`MoxRowTransform`, `LiteTransform`)
-  already satisfy this.
 - **`ConvertError` → `#[non_exhaustive]`** + new
   `HdrTransferRequiresToneMapping` variant. See imazen/zenpixels#10 for
   HDR provenance plan.
-- **Remove `ColorManagement` trait** (deprecated in 0.2.8). Callers migrate
-  to `PluggableCms`. The dyn-safe `PluggableCms` trait with
-  `ColorProfileSource` + `&ConvertOptions` is already shipping as the
-  replacement; 0.3.0 removes the old generic trait entirely.
+- **Remove `ColorManagement` trait** (deprecated in 0.2.8). Callers
+  migrate to `PluggableCms`.
 - **Remove `finalize_for_output<C: ColorManagement>`** (deprecated in
   0.2.8). Callers migrate to `finalize_for_output_with(..., cms:
   Option<&dyn PluggableCms>)`.
