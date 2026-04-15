@@ -117,10 +117,11 @@ impl RowConverter {
             // Returns:
             //   Ok(Some(t)) → plugin accepted
             //   Ok(None)    → plugin declined
-            //   Err(e)      → plugin tried and failed
+            //   Err(e)      → plugin tried and failed (At<CmsPluginError>
+            //                 records the plugin's internal failure point)
             let try_cms = |plugin: &dyn crate::cms::PluggableCms| -> Result<
                 Option<ExternalTransform>,
-                crate::cms::CmsPluginError,
+                whereat::At<crate::cms::CmsPluginError>,
             > {
                 if let Some(result) = plugin.build_shared_source_transform(
                     src_src.clone(),
@@ -143,23 +144,25 @@ impl RowConverter {
                 Ok(None)
             };
 
+            // Convert a plugin failure into ConvertError::CmsError, preserving
+            // the plugin's internal whereat trace in the formatted message.
+            let plugin_err = |e: whereat::At<crate::cms::CmsPluginError>| {
+                whereat::at!(ConvertError::CmsError(alloc::format!("{e}")))
+            };
+
             let mut external: Option<ExternalTransform> = None;
             if let Some(plugin) = cms {
                 match try_cms(plugin) {
                     Ok(Some(t)) => external = Some(t),
                     Ok(None) => {}
-                    Err(e) => {
-                        return Err(whereat::at!(ConvertError::CmsError(alloc::format!("{e}"))));
-                    }
+                    Err(e) => return Err(plugin_err(e)),
                 }
             }
             if external.is_none() {
                 match try_cms(&crate::cms_lite::ZenCmsLite) {
                     Ok(Some(t)) => external = Some(t),
                     Ok(None) => {}
-                    Err(e) => {
-                        return Err(whereat::at!(ConvertError::CmsError(alloc::format!("{e}"))));
-                    }
+                    Err(e) => return Err(plugin_err(e)),
                 }
             }
 
@@ -1219,8 +1222,9 @@ mod tests {
             _src_format: zenpixels::PixelFormat,
             _dst_format: zenpixels::PixelFormat,
             _options: &crate::policy::ConvertOptions,
-        ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, crate::cms::CmsPluginError>>
-        {
+        ) -> Option<
+            Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>,
+        > {
             self.accepted
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             Some(Ok(Box::new(PaintRedTransform)))
@@ -1293,8 +1297,12 @@ mod tests {
                 _src_format: zenpixels::PixelFormat,
                 _dst_format: zenpixels::PixelFormat,
                 _options: &crate::policy::ConvertOptions,
-            ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, crate::cms::CmsPluginError>>
-            {
+            ) -> Option<
+                Result<
+                    Box<dyn crate::cms::RowTransformMut>,
+                    whereat::At<crate::cms::CmsPluginError>,
+                >,
+            > {
                 panic!("owned path must not be used when shared is offered");
             }
 
@@ -1306,7 +1314,10 @@ mod tests {
                 _dst_format: zenpixels::PixelFormat,
                 _options: &crate::policy::ConvertOptions,
             ) -> Option<
-                Result<alloc::sync::Arc<dyn crate::cms::RowTransform>, crate::cms::CmsPluginError>,
+                Result<
+                    alloc::sync::Arc<dyn crate::cms::RowTransform>,
+                    whereat::At<crate::cms::CmsPluginError>,
+                >,
             > {
                 Some(Ok(alloc::sync::Arc::new(PaintBlueShared)))
             }
@@ -1342,8 +1353,12 @@ mod tests {
                 _src_format: zenpixels::PixelFormat,
                 _dst_format: zenpixels::PixelFormat,
                 _options: &crate::policy::ConvertOptions,
-            ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, crate::cms::CmsPluginError>>
-            {
+            ) -> Option<
+                Result<
+                    Box<dyn crate::cms::RowTransformMut>,
+                    whereat::At<crate::cms::CmsPluginError>,
+                >,
+            > {
                 None
             }
         }

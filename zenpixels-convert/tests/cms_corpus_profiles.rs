@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! CMS tests using real-world ICC profiles extracted from non-sRGB images.
 //!
 //! Exercises the moxcms CMS backend against ICC profiles embedded in a corpus

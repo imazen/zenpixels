@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! Comprehensive CMS tests using real-world ICC profiles from the system.
 //!
 //! These tests exercise the moxcms CMS backend against the colord ICC profile

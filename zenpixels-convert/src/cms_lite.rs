@@ -240,7 +240,8 @@ impl crate::cms::PluggableCms for ZenCmsLite {
         src_format: PixelFormat,
         dst_format: PixelFormat,
         options: &crate::policy::ConvertOptions,
-    ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, crate::cms::CmsPluginError>> {
+    ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
+    {
         use zenpixels::PixelDescriptor;
 
         // Decline when either source can't be resolved to (primaries, transfer)
@@ -274,8 +275,8 @@ impl crate::cms::PluggableCms for ZenCmsLite {
                 let inner = crate::converter::RowConverter::from_plan(plan);
                 Some(Ok(Box::new(LiteTransformMut { inner })))
             }
-            Err(e) => Some(Err(crate::cms::CmsPluginError::msg(alloc::format!(
-                "ZenCmsLite plan construction failed: {e:?}"
+            Err(e) => Some(Err(whereat::at!(crate::cms::CmsPluginError::msg(
+                alloc::format!("ZenCmsLite plan construction failed: {e:?}")
             )))),
         }
     }
@@ -283,6 +284,7 @@ impl crate::cms::PluggableCms for ZenCmsLite {
 
 #[cfg(test)]
 #[allow(clippy::needless_range_loop)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::cms::ColorManagement;

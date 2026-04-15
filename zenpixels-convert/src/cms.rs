@@ -412,6 +412,10 @@ pub trait PluggableCms: Send + Sync {
     /// don't apply to its implementation.
     ///
     /// See the trait docs for decline vs. fail semantics.
+    ///
+    /// The `Err` arm is [`whereat::At<CmsPluginError>`] so the plugin's
+    /// internal failure point is recorded for debugging. Use
+    /// [`whereat::at!`] or `ResultAtExt::at()` to construct.
     fn build_source_transform(
         &self,
         src: crate::ColorProfileSource<'_>,
@@ -419,7 +423,7 @@ pub trait PluggableCms: Send + Sync {
         src_format: PixelFormat,
         dst_format: PixelFormat,
         options: &crate::policy::ConvertOptions,
-    ) -> Option<Result<Box<dyn RowTransformMut>, CmsPluginError>>;
+    ) -> Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>>;
 
     /// Optionally build a shareable, stateless row transform for the same
     /// conversion.
@@ -431,7 +435,9 @@ pub trait PluggableCms: Send + Sync {
     /// owned [`build_source_transform`](Self::build_source_transform).
     ///
     /// `RowConverter::new_explicit_with_cms` tries this method first.
-    /// See the trait docs for decline vs. fail semantics.
+    /// See the trait docs for decline vs. fail semantics. `Err` arm is
+    /// [`whereat::At<CmsPluginError>`] — same location-tracking semantics
+    /// as [`build_source_transform`](Self::build_source_transform).
     fn build_shared_source_transform(
         &self,
         _src: crate::ColorProfileSource<'_>,
@@ -439,7 +445,7 @@ pub trait PluggableCms: Send + Sync {
         _src_format: PixelFormat,
         _dst_format: PixelFormat,
         _options: &crate::policy::ConvertOptions,
-    ) -> Option<Result<alloc::sync::Arc<dyn RowTransform>, CmsPluginError>> {
+    ) -> Option<Result<alloc::sync::Arc<dyn RowTransform>, whereat::At<CmsPluginError>>> {
         None
     }
 }
