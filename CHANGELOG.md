@@ -6,15 +6,37 @@
 
 #### Added
 
-- **`PluggableCms` trait** and `ConvertPlan::new_explicit_with_cms` /
-  `RowConverter::new_explicit_with_cms` entrypoints. When a CMS plugin
-  is supplied and the source and destination profiles differ, the plan
-  offers the plugin the full `(from, to)` pair; if it accepts, the plan
-  collapses to a single `ExternalTransform` step that drives the row
-  end-to-end, bypassing built-in gamut-matrix and fused matlut kernels.
-  Plugins that decline (return `None`) fall through to the built-in
-  path. Dyn-compatible interface accepts `ColorProfileSource` (not raw
-  ICC bytes), so plugins can dispatch on named profiles, CICP, or ICC.
+- **`PluggableCms` trait** with `build_source_transform` (owned
+  `Box<dyn RowTransformMut>`) and `build_shared_source_transform`
+  (shared `Arc<dyn RowTransform>`, default `None`). Dyn-compatible,
+  accepts `ColorProfileSource` (ICC / CICP / Named / PrimariesTransferPair),
+  carries `&ConvertOptions`. Plugins that decline return `None` so the
+  dispatch chain falls through to the next one.
+- **`RowTransformMut` trait** (`&mut self`, `Send`) for owned, stateful
+  transforms that need scratch buffers without interior mutability.
+  `RowTransform` (`&self`, `Send + Sync`) remains for stateless/shareable
+  transforms (e.g., moxcms `TransformExecutor`).
+- **`RowConverter::new_explicit_with_cms`** with ordered dispatch:
+  user-supplied plugin first, then `ZenCmsLite` default (named-profile
+  matlut fast path). Integer profile matches use fused SIMD kernels.
+- **`finalize_for_output_with(...)`** — dyn-safe replacement for
+  `finalize_for_output<C>`. Takes `Option<&dyn PluggableCms>` and routes
+  through `RowConverter::new_explicit_with_cms` so the CMS dispatch
+  chain is honored.
+- **`SourceColor::to_color_context()`** (zencodec) — drops the
+  non-authoritative color field based on `color_authority` so
+  `ColorContext::as_profile_source()` naturally returns the
+  authoritative source without a separate parameter.
+
+#### Deprecated
+
+- **`ColorManagement` trait** — use `PluggableCms` instead.
+  `ColorManagement` is non-dyn-safe (generic `type Error`), takes raw
+  ICC byte pairs, and has no options channel. Existing impls
+  (`MoxCms`, `ZenCmsLite`) are preserved and still work; they gain
+  `#[allow(deprecated)]` on the impl block.
+- **`finalize_for_output<C: ColorManagement>`** — use
+  `finalize_for_output_with(..., cms: Option<&dyn PluggableCms>)`.
 
 ## Queued breaking changes (for 0.3.0)
 

@@ -463,4 +463,6 @@ pub use cms::{
 pub use cms_moxcms::MoxCms;
 
 // Re-export output types.
+pub use output::finalize_for_output_with;
+#[allow(deprecated)]
 pub use output::{EncodeReady, OutputMetadata, OutputProfile, finalize_for_output};

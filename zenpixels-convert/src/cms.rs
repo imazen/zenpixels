@@ -293,6 +293,22 @@ pub trait RowTransformMut: Send {
 /// The trait is always available for trait bounds and generic code.
 /// Concrete implementations are provided by feature-gated modules
 /// (e.g., `cms-moxcms`).
+///
+/// # Deprecated
+///
+/// Prefer [`PluggableCms`] for new code. `ColorManagement` is generic,
+/// not dyn-safe, and takes raw ICC byte pairs; `PluggableCms` is
+/// dyn-safe, accepts [`ColorProfileSource`] (ICC / CICP / named /
+/// primaries+transfer), carries [`ConvertOptions`], and composes into
+/// the dispatch chain used by
+/// [`RowConverter::new_explicit_with_cms`](crate::RowConverter::new_explicit_with_cms).
+///
+/// [`ColorProfileSource`]: crate::ColorProfileSource
+/// [`ConvertOptions`]: crate::policy::ConvertOptions
+#[deprecated(
+    since = "0.2.8",
+    note = "use PluggableCms (dyn-safe, ColorProfileSource-based)"
+)]
 pub trait ColorManagement {
     /// Error type for CMS operations.
     type Error: core::fmt::Debug;

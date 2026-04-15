@@ -142,6 +142,7 @@ pub fn cicp_transform_opts() -> TransformOptions {
     )
 }
 
+#[allow(deprecated)]
 use crate::cms::{ColorManagement, RowTransform};
 use crate::{ChannelType, Cicp, PixelFormat};
 
@@ -258,6 +259,7 @@ fn build_transform_inner(
     Ok(Box::new(MoxRowTransform { inner }))
 }
 
+#[allow(deprecated)]
 impl ColorManagement for MoxCms {
     type Error = MoxCmsError;
 

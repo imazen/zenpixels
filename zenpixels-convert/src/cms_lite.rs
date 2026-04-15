@@ -44,6 +44,7 @@ use alloc::format;
 
 #[cfg(test)]
 use crate::TransferFunction;
+#[allow(deprecated)]
 use crate::cms::{ColorManagement, RowTransform};
 use crate::{Cicp, PixelFormat};
 
@@ -97,6 +98,7 @@ impl core::fmt::Display for ZenCmsLiteError {
 // `RowConverter::convert_row(&mut self)`. `Mutex` is std-only, so the
 // impl is gated on std. The new `PluggableCms` path is no_std-compatible.
 #[cfg(feature = "std")]
+#[allow(deprecated)]
 impl ColorManagement for ZenCmsLite {
     type Error = ZenCmsLiteError;
 
