@@ -9,21 +9,10 @@ repository.workspace = true
 categories.workspace = true
 description = "Transfer-function-aware pixel conversion, gamut mapping, and codec format negotiation for zenpixels"
 keywords = ["image", "pixel", "conversion", "srgb", "codec"]
-exclude = [
-    "CLAUDE.md",
-    "CONTEXT-HANDOFF.md",
-    "FEEDBACK.md",
-    ".claude/",
-    ".superwork/",
-    ".zenbench/",
-    "copter-report/",
-    ".github/",
-    "Cross.toml",
-    "justfile",
-    "Cargo.toml.original.txt",
-    "fuzz/",
-    "TONEMAP_EXAMPLE_DESIGN.md",
-    "benches/bench_fast_p3.rs.deferred",
+include = [
+    "/src/**",
+    "/tests/**",
+    "/benches/*.rs",
 ]
 
 [features]
