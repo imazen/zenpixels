@@ -60,12 +60,6 @@ path = "benches/bench_cms.rs"
 harness = false
 required-features = ["cms-moxcms"]
 
-[[bench]]
-name = "bench_xyb_moxcms"
-path = "benches/bench_xyb_moxcms.rs"
-harness = false
-required-features = ["cms-moxcms"]
-
 # TODO: restore when ZenCmsLite is public
 # [[bench]]
 # name = "bench_fast_p3"
