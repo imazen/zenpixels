@@ -590,11 +590,10 @@ mod tests {
 mod integration_tests {
     use super::*;
 
-    
     // =========================================================================
     // Recognition
     // =========================================================================
-    
+
     #[test]
     fn recognize_canonical_xyb_bytes() {
         assert_eq!(
@@ -603,7 +602,7 @@ mod integration_tests {
             "canonical 720-byte XYB profile must be recognized"
         );
     }
-    
+
     #[test]
     fn recognize_rejects_srgb_profile() {
         // A minimally-plausible "not XYB" blob: ICC header shape but with
@@ -617,7 +616,7 @@ mod integration_tests {
         fake_srgb[200..208].copy_from_slice(&[0, b's', 0, b'R', 0, b'G', 0, b'B']);
         assert_eq!(recognize(&fake_srgb), None);
     }
-    
+
     #[test]
     fn recognize_short_buffers_are_unknown() {
         // Buffers shorter than an ICC header are never recognized, even
@@ -627,7 +626,7 @@ mod integration_tests {
         let short = b"random bytes including XYB somewhere";
         assert_eq!(recognize(short), None);
     }
-    
+
     #[test]
     fn recognize_fallback_for_utf16_marker() {
         // Profile with an XYB UTF-16BE description somewhere in the middle
@@ -636,11 +635,11 @@ mod integration_tests {
         blob[128..134].copy_from_slice(&[0, b'X', 0, b'Y', 0, b'B']);
         assert_eq!(recognize(&blob), Some(BuiltinProfile::XybScaled));
     }
-    
+
     // =========================================================================
     // SIMD vs scalar parity
     // =========================================================================
-    
+
     fn grid_samples() -> Vec<u8> {
         // 6 values per channel × 3 channels = 216 triples = 648 bytes.
         // Deliberately spans the full 0..=255 range at step=51.
@@ -658,16 +657,16 @@ mod integration_tests {
         assert_eq!(out.len(), 216 * 3);
         out
     }
-    
+
     #[test]
     fn convert_xyb_scaled_simd_matches_scalar() {
         let src = grid_samples();
         let mut out_simd = vec![0u8; src.len()];
         let mut out_scalar = vec![0u8; src.len()];
-    
+
         convert_xyb_scaled_to_srgb_u8(&src, &mut out_simd);
         convert_xyb_scaled_to_srgb_u8_scalar(&src, &mut out_scalar);
-    
+
         // Tolerance: ≤1 per channel. SIMD uses AVX2/FMA on x86_64 where
         // available, scalar uses plain f32 (no FMA). Fused multiply-add
         // legitimately differs from separate mul+add by ≤1 ULP per stage,
@@ -704,14 +703,14 @@ mod integration_tests {
              ≥2 indicates a real kernel bug."
         );
     }
-    
+
     #[test]
     fn convert_xyb_scaled_single_pixel_vs_buffer() {
         // Sanity: per-pixel API should agree with the buffer API.
         let src = grid_samples();
         let mut out = vec![0u8; src.len()];
         convert_xyb_scaled_to_srgb_u8_scalar(&src, &mut out);
-    
+
         for i in 0..(src.len() / 3) {
             let (r, g, b) = (src[i * 3], src[i * 3 + 1], src[i * 3 + 2]);
             let (pr, pg, pb) = xyb_scaled_u8_pixel_to_srgb(r, g, b);
@@ -722,11 +721,11 @@ mod integration_tests {
             );
         }
     }
-    
+
     // =========================================================================
     // Dispatch helper
     // =========================================================================
-    
+
     #[test]
     fn maybe_convert_returns_true_on_recognized_srgb_target() {
         let src = grid_samples();
@@ -736,12 +735,12 @@ mod integration_tests {
             handled,
             "built-in dispatch must handle (XybScaled, sRGB target)"
         );
-    
+
         // Output should be non-trivial (not all zeros) for a grid that
         // spans the sRGB range.
         assert!(out.iter().any(|&b| b != 0));
     }
-    
+
     #[test]
     fn maybe_convert_returns_false_on_unrecognized_profile() {
         let fake_icc = [0u8; 64];
@@ -752,7 +751,7 @@ mod integration_tests {
         // Output buffer should be untouched (still all zeros).
         assert!(out.iter().all(|&b| b == 0));
     }
-    
+
     #[test]
     fn maybe_convert_returns_false_on_unsupported_target() {
         // Recognized profile, unsupported target CICP (BT.2100 PQ).
@@ -764,16 +763,16 @@ mod integration_tests {
             "only sRGB target is supported today — PQ must fall through"
         );
     }
-    
+
     // =========================================================================
     // Roundtrip via a locally-reimplemented encode side
     // =========================================================================
-    
+
     // We don't want to depend on zenjpeg here (would introduce a cyclic-ish
     // dev-dep), so we reimplement the scalar encode side of the XYB
     // transform in the test. These constants must match
     // `zenjpeg::color::xyb` exactly — see `docs/XYB_ICC_HANDLING.md`.
-    
+
     #[rustfmt::skip]
     const OPSIN_MATRIX: [f32; 9] = [
         0.30,          0.622,         0.078,
@@ -785,14 +784,14 @@ mod integration_tests {
     const SCALED_XYB_OFFSET: [f32; 3] = [0.015_386_134, 0.0, 0.277_704_59];
     #[allow(clippy::inconsistent_digit_grouping, clippy::excessive_precision)]
     const SCALED_XYB_SCALE: [f32; 3] = [22.995_788_804, 1.183_000_077, 1.502_141_333];
-    
+
     fn cbrtf_ref(x: f32) -> f32 {
         // Use libm-free std cbrtf — precision well above the 6-ULP jpegli
         // approximation; that's fine for testing, we'll compare outputs
         // within a ±2 tolerance.
         x.cbrt()
     }
-    
+
     fn srgb_u8_to_linear_exact(v: u8) -> f32 {
         let x = v as f32 / 255.0;
         if x <= 0.040_45 {
@@ -801,7 +800,7 @@ mod integration_tests {
             ((x + 0.055) / 1.055).powf(2.4)
         }
     }
-    
+
     fn linear_rgb_to_xyb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
         let m = &OPSIN_MATRIX;
         let bias = OPSIN_BIAS;
@@ -816,14 +815,14 @@ mod integration_tests {
         let y = 0.5 * (cbrt_r + cbrt_g);
         (x, y, cbrt_b)
     }
-    
+
     fn scale_xyb(x: f32, y: f32, b: f32) -> (f32, f32, f32) {
         let sx = (x + SCALED_XYB_OFFSET[0]) * SCALED_XYB_SCALE[0];
         let sy = (y + SCALED_XYB_OFFSET[1]) * SCALED_XYB_SCALE[1];
         let sb = (b - y + SCALED_XYB_OFFSET[2]) * SCALED_XYB_SCALE[2];
         (sx, sy, sb)
     }
-    
+
     fn encode_srgb_to_scaled_xyb_u8(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
         // Matches zenjpeg's encoder: compute scaled XYB f32, apply the
         // standard JPEG level shift (+128), clamp to u8. The scaled XYB
@@ -838,7 +837,7 @@ mod integration_tests {
         let to_u8 = |v: f32| (v + 128.0).clamp(0.0, 255.0).round() as u8;
         (to_u8(sx), to_u8(sy), to_u8(sb))
     }
-    
+
     #[test]
     fn sanity_decode_produces_reasonable_output() {
         // Scaled XYB at 8-bit precision is lossy by construction — the
@@ -863,11 +862,11 @@ mod integration_tests {
         }
         let mut out = vec![0u8; src.len()];
         convert_xyb_scaled_to_srgb_u8(&src, &mut out);
-    
+
         // Some pixels must exercise both ends of the u8 range.
         assert!(out.iter().any(|&v| v > 200), "saturated highlights missing");
         assert!(out.iter().any(|&v| v < 50), "dark tones missing");
-    
+
         // No stuck values: output should exhibit channel-level variation
         // across the input sweep (not all pixels identical).
         let first = out[0];
@@ -875,7 +874,7 @@ mod integration_tests {
             out.iter().any(|&v| v != first),
             "output is uniformly constant, inverse is likely broken"
         );
-    
+
         // Every byte is a valid u8 (tautology, but this catches any future
         // regression where the round-to-u8 path accidentally returns
         // out-of-range floats cast unsafely).
@@ -883,11 +882,11 @@ mod integration_tests {
             let _: u8 = v;
         }
     }
-    
+
     // =========================================================================
     // Deterministic regression table (cross-platform byte-exact)
     // =========================================================================
-    
+
     /// Golden-reference outputs for the SCALAR inverse XYB kernel.
     ///
     /// Locks in the exact bytes produced by `xyb_scaled_u8_pixel_to_srgb`
@@ -908,7 +907,7 @@ mod integration_tests {
     /// are whatever the inverse happens to produce for each input. That's
     /// fine: the test's only job is "detect any drift in the kernel".
     type Rgb = (u8, u8, u8);
-    
+
     #[rustfmt::skip]
     const XYB_SCALAR_GOLD: &[(Rgb, Rgb)] = &[
         ((128, 128, 128), (0,   25,  0)),
@@ -925,7 +924,7 @@ mod integration_tests {
         ((160, 128, 200), (0,   0,   255)),
         ((100, 200, 60),  (0,   255, 0)),
     ];
-    
+
     #[test]
     fn convert_xyb_scaled_scalar_regression_table() {
         // Per-pixel scalar API: must be byte-exact against the gold table.
@@ -940,7 +939,7 @@ mod integration_tests {
                  indicates the XYB inverse pipeline constants moved."
             );
         }
-    
+
         // Buffer scalar API: must agree with the per-pixel API across the
         // same sample set. This is redundant with
         // `convert_xyb_scaled_single_pixel_vs_buffer` for the grid samples,
@@ -957,7 +956,7 @@ mod integration_tests {
             );
         }
     }
-    
+
     #[test]
     fn convert_xyb_scaled_dispatch_regression_table() {
         // Dispatch path (SIMD on x86_64 with AVX2/FMA, scalar elsewhere).
@@ -986,5 +985,4 @@ mod integration_tests {
             );
         }
     }
-
 }
