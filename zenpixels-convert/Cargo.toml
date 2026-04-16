@@ -33,6 +33,10 @@ planar = ["zenpixels/planar"]
 pipeline = []
 cms-moxcms = ["std", "dep:moxcms"]
 serde = ["zenpixels/serde"]
+# Internal bench-only: re-exports `builtin_profiles` items as `pub` so
+# benches can compare against moxcms. Not for external use; underscore
+# prefix marks it as a private feature.
+_internal-bench = []
 
 [dependencies]
 zenpixels = { workspace = true, default-features = false, features = ["icc"] }
@@ -64,7 +68,7 @@ required-features = ["cms-moxcms"]
 name = "bench_xyb_moxcms"
 path = "benches/bench_xyb_moxcms.rs"
 harness = false
-required-features = ["cms-moxcms"]
+required-features = ["cms-moxcms", "_internal-bench"]
 
 # TODO: restore when ZenCmsLite is public
 # [[bench]]

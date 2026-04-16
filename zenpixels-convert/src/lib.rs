@@ -394,6 +394,24 @@ pub mod adapt;
 // see zenpixels CLAUDE.md YAGNI section.
 #[allow(dead_code)]
 pub(crate) mod builtin_profiles;
+
+// Bench-only thin wrappers so `benches/bench_xyb_moxcms.rs` can compare
+// moxcms throughput against our hand-coded XYB inverse without
+// duplicating the implementation. Off by default; only the bench
+// target enables this feature. Wraps (rather than re-exports) because
+// `pub(crate)` items cannot be re-exported across the crate boundary.
+#[cfg(feature = "_internal-bench")]
+#[doc(hidden)]
+pub mod _internal_bench {
+    /// SIMD-dispatched XYB-scaled u8 → sRGB u8.
+    pub fn convert_xyb_scaled_to_srgb_u8(rgb_in: &[u8], rgb_out: &mut [u8]) {
+        crate::builtin_profiles::convert_xyb_scaled_to_srgb_u8(rgb_in, rgb_out);
+    }
+    /// Scalar reference XYB-scaled u8 → sRGB u8.
+    pub fn convert_xyb_scaled_to_srgb_u8_scalar(rgb_in: &[u8], rgb_out: &mut [u8]) {
+        crate::builtin_profiles::convert_xyb_scaled_to_srgb_u8_scalar(rgb_in, rgb_out);
+    }
+}
 pub mod cms;
 #[allow(
     dead_code,
