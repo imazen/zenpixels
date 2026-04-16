@@ -1,18 +1,14 @@
-//! Benchmark moxcms decoding through the jpegli XYB ICC profile, and
-//! compare against our hand-coded SIMD inverse in `builtin_profiles`.
+//! Benchmark moxcms decoding through the jpegli XYB ICC profile.
 //!
-//! Both transforms have the same input/output shape (interleaved RGB u8 →
-//! interleaved sRGB u8) — the comparison answers "what would we save by
-//! wiring `builtin_profiles` into `ZenCmsLite` instead of letting moxcms
-//! parse the embedded 720-byte ICC every decode?"
-//!
-//! The native zenjpeg path (`xyb_planes_to_srgb_u8_simd`) takes planar
-//! f32 (post-IDCT) instead of interleaved u8, so it isn't directly
-//! comparable here — see zenjpeg's own benches for that number.
+//! Establishes the cost of letting moxcms handle XYB→sRGB via the embedded
+//! 720-byte ICC profile (the path that runs today when an XYB-encoded JPEG
+//! is decoded by something other than zenjpeg's native f32 inverse). The
+//! number quantifies how much we'd save by wiring `builtin_profiles` into
+//! `ZenCmsLite` — see zenpixels CLAUDE.md YAGNI section.
 //!
 //! Run with:
 //!   cargo bench -p zenpixels-convert --bench bench_xyb_moxcms \
-//!     --features cms-moxcms,_internal-bench
+//!     --features cms-moxcms
 
 use moxcms::{
     BarycentricWeightScale, ColorProfile, InterpolationMethod, Layout, Transform8BitExecutor,
@@ -21,9 +17,6 @@ use moxcms::{
 use std::sync::Arc;
 use std::time::Instant;
 use zenbench::prelude::*;
-use zenpixels_convert::_internal_bench::{
-    convert_xyb_scaled_to_srgb_u8, convert_xyb_scaled_to_srgb_u8_scalar,
-};
 
 /// 720-byte XYB ICC profile, copied from
 /// `zenpixels-convert/src/builtin_profiles.rs::XYB_ICC_BYTES`. This is the
@@ -123,10 +116,8 @@ fn main() {
                 })
                 .collect();
 
-            suite.group(format!("XYB→sRGB  {size_label}"), |g| {
+            suite.group(format!("moxcms XYB→sRGB  {size_label}"), |g| {
                 g.throughput(Throughput::Bytes(bytes as u64));
-
-                // moxcms paths (parses 720B ICC, builds LUT, runs CMS)
                 for (name, t) in transforms {
                     let mut dst = vec![0u8; bytes];
                     let s = src.clone();
@@ -134,30 +125,6 @@ fn main() {
                     g.bench(*name, move |bench| {
                         bench.iter(|| {
                             t.transform(&s, &mut dst).unwrap();
-                            black_box(());
-                        })
-                    });
-                }
-
-                // builtin_profiles SIMD path (AVX2/FMA via magetypes f32x8)
-                {
-                    let mut dst = vec![0u8; bytes];
-                    let s = src.clone();
-                    g.bench("builtin SIMD (AVX2/FMA via magetypes)", move |bench| {
-                        bench.iter(|| {
-                            convert_xyb_scaled_to_srgb_u8(&s, &mut dst);
-                            black_box(());
-                        })
-                    });
-                }
-
-                // builtin_profiles scalar reference (portable, no SIMD)
-                {
-                    let mut dst = vec![0u8; bytes];
-                    let s = src.clone();
-                    g.bench("builtin scalar (reference)", move |bench| {
-                        bench.iter(|| {
-                            convert_xyb_scaled_to_srgb_u8_scalar(&s, &mut dst);
                             black_box(());
                         })
                     });
