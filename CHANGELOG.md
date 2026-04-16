@@ -13,6 +13,36 @@
   parse the XYB PCS). The XYB ICC bytes come from libjxl / jpegli
   (Apache-2.0 / BSD-3), copied verbatim into `XYB_ICC_BYTES`. (a5fdf9f)
 
+### zenpixels-convert — performance
+
+- **Fused `RgbToBgra` conversion step** — planner now emits a single
+  `ConvertStep::RgbToBgra` for `(Rgb → Bgra)` u8 conversions instead of the
+  two-pass `[AddAlpha, SwizzleBgraRgba]` sequence. Delegates to
+  `garb::bytes::rgb_to_bgra` (8 px/iter AVX2 with R/B swap and `alpha=255`
+  in one pass), halving destination-buffer write traffic for u8. u16/f32
+  continue to use the existing two-step scalar path. (baa6214)
+
+### zenpixels-convert — fixes
+
+- **Raise `linear-srgb` minimum version to `0.6.10`** (was `0.6.7`).
+  `srgb_to_linear_extended_slice` / `linear_to_srgb_extended_slice` were
+  added in `linear-srgb` 0.6.10; downstream builds resolving to 0.6.7 (e.g.,
+  zenpng fuzz targets) failed to compile. The workspace lockfile already
+  resolved to 0.6.10 — this codifies the actual minimum. (9c53fe0)
+
+### Docs & internal
+
+- Fix 12 `cargo doc` warnings across `zenpixels`, `zenpixels-convert`, and
+  `scripts/icc-gen`: fully qualified intra-doc links for cross-module
+  references (`ColorModel`, `ColorProfileSource`, `ConvertPlan`,
+  `RowConverter::new_explicit_with_cms`, `PluggableCms`), corrected
+  `identify → identify_common` reference in the `icc` module preamble,
+  dropped intra-doc links to private items (`Tolerance`, `ZenCmsLite`),
+  fixed `Self::IccOnly` mislabel in `ColorPriority` docs, and escaped
+  `<icc-cache-dir>` placeholders in `icc-gen` module docs. `cargo doc
+  --no-deps` is now warning-free. Also bumps `[workspace.package]` version
+  `0.2.2 → 0.2.8` to match the member crates. (b58212a)
+
 ## zenpixels 0.2.8 + zenpixels-convert 0.2.8 (2026-04-15)
 
 Ships `PluggableCms`, `RowTransformMut`, fused matlut kernels,
