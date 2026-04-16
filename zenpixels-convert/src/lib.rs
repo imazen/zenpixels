@@ -390,7 +390,10 @@ pub mod error;
 pub(crate) mod negotiate;
 
 pub mod adapt;
-pub mod builtin_profiles;
+// Internal only — zero consumers today. Kept for a future caller;
+// see zenpixels CLAUDE.md YAGNI section.
+#[allow(dead_code)]
+pub(crate) mod builtin_profiles;
 pub mod cms;
 #[allow(
     dead_code,
