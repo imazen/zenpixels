@@ -1,3 +1,38 @@
+## Public API surface — YAGNI is the rule, not a suggestion
+
+**Every public item in zenpixels is forever. Treat each `pub` as a load-bearing external commitment.**
+
+zenpixels is the foundational crate of the zen ecosystem — zencodec, zenpipe, imageflow, and every codec depend on it directly or transitively. Once a type, function, method, field, enum variant, trait method, or feature flag is `pub`, removing or renaming it requires a 0.3.0 bump (see below), and that break ripples through every downstream. We have deliberately chosen to avoid 0.3.0 indefinitely. The practical consequence: **public items added speculatively cannot be taken back.**
+
+### Rules for new public API
+
+1. **No `pub` without a concrete current consumer in this repo or a sibling zen crate.** "Someone might want this" is not a reason. If the hypothetical caller shows up later, they can file a request and we can add it *then* — adding is cheap, removing is impossible.
+2. **Default to `pub(crate)`.** Promote to `pub` only after a concrete caller is merging the code that uses it.
+3. **Builder-style APIs over struct literals** wherever possible. `StructName::new()` + `.with_foo()` lets us add fields without the struct becoming a perma-frozen shape. Avoid public structs with public fields unless they are genuinely trivial data bags (e.g., `Rect`, `Size`).
+4. **Enums should be `#[non_exhaustive]` from the first release** unless we are *absolutely* sure the variant set is fixed (e.g., `Matrix::Bt601 | Bt709 | Bt2020` — the color-space matrix set is standardized; never will be a new one there). When in doubt: `#[non_exhaustive]`.
+5. **Traits should be sealed** (`pub trait Foo: private::Sealed`) unless external implementation is a required feature. Every `impl Foo for MyType` by an external crate turns a supertrait bound addition into a breaking change.
+6. **Feature flags are part of the API.** Once shipped, removing a feature flag is a break (see tolerated-break #4 below — feature removal is *tolerated* only when nobody sets it). Don't add feature flags speculatively.
+7. **Re-exports are commitments too.** `pub use` of an internal or third-party type pins us to that name and that dependency version. Re-export only items downstream code will reach for frequently.
+8. **"Helper" / "convenience" / "shortcut" methods get the strictest scrutiny.** These are the items most commonly added speculatively and most commonly unused. If a user can construct the behavior in 2-3 lines with existing API, do not add a helper. Examples of things to NOT add: `foo_or_default()`, `foo_with_options_fallback()`, `is_probably_bar()`.
+
+### Before adding any `pub` item, you must be able to answer
+
+- Who calls this *today* (file:line references)?
+- If removed tomorrow, what concrete code breaks?
+- Would a caller who wanted this synthesize it from existing API? If yes, reject the addition.
+
+If you cannot answer with a concrete, verified current consumer: the item stays `pub(crate)` or is not added at all.
+
+### Before every release
+
+Audit `src/lib.rs` for items added since the last version. For each new `pub`, verify a consumer exists. If a consumer cannot be found (including `builtin_profiles`-style "positioned for future use" modules), either:
+- Find a real caller and migrate them (simultaneously), OR
+- Demote to `pub(crate)` before publishing.
+
+The `builtin_profiles` module (currently in `[Unreleased]`) is a live example: it exposes 8 public items (enum + const + 6 functions) via `pub mod builtin_profiles` and has zero consumers outside its own tests. Before the next publish, demote to `pub(crate)` or find a real caller. Catching this *before* it ships is the whole point.
+
+---
+
 ## 0.2.x versioning policy — "tolerated technical breaks"
 
 **Do NOT version-gate on `cargo semver-checks` output alone for this repo in 0.2.x.**
