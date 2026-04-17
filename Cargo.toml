@@ -3,10 +3,10 @@ members = ["zenpixels", "zenpixels-convert", "scripts/icc-gen"]
 resolver = "2"
 
 [workspace.dependencies]
-zenpixels = { path = "zenpixels", version = "0.2.8", default-features = false }
+zenpixels = { path = "zenpixels", version = "0.2.9", default-features = false }
 
 [workspace.package]
-version = "0.2.8"
+version = "0.2.9"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0 OR MIT"
