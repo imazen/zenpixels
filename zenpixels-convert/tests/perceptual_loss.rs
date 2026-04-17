@@ -2712,7 +2712,7 @@ fn cost_model_ranking_correlates() {
     }
 
     let mut loss_ranked: Vec<_> = pairs.iter().enumerate().collect();
-    loss_ranked.sort_by(|a, b| a.1.2.cmp(&b.1.2));
+    loss_ranked.sort_by_key(|item| item.1.2);
     let mut loss_ranks = vec![0.0f64; n];
     for (rank, &(idx, _)) in loss_ranked.iter().enumerate() {
         loss_ranks[idx] = rank as f64 + 1.0;
