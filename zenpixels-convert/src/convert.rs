@@ -115,6 +115,11 @@ pub(crate) enum ConvertStep {
     Bt709F32ToLinearF32,
     /// Linear f32 → BT.709 f32 [0,1] (OETF, no depth change).
     LinearF32ToBt709F32,
+    /// Gamma 2.2 (Adobe RGB 1998) f32 [0,1] → linear f32 (EOTF, no depth change).
+    /// Uses the Adobe RGB 1998 canonical exponent 563/256 ≈ 2.19921875.
+    Gamma22F32ToLinearF32,
+    /// Linear f32 → Gamma 2.2 (Adobe RGB 1998) f32 [0,1] (OETF, no depth change).
+    LinearF32ToGamma22F32,
     /// Straight → Premultiplied alpha.
     StraightToPremul,
     /// Premultiplied → Straight alpha.
@@ -195,6 +200,8 @@ impl core::fmt::Debug for ConvertStep {
             Self::LinearF32ToSrgbF32Extended => f.write_str("LinearF32ToSrgbF32Extended"),
             Self::Bt709F32ToLinearF32 => f.write_str("Bt709F32ToLinearF32"),
             Self::LinearF32ToBt709F32 => f.write_str("LinearF32ToBt709F32"),
+            Self::Gamma22F32ToLinearF32 => f.write_str("Gamma22F32ToLinearF32"),
+            Self::LinearF32ToGamma22F32 => f.write_str("LinearF32ToGamma22F32"),
             Self::StraightToPremul => f.write_str("StraightToPremul"),
             Self::PremulToStraight => f.write_str("PremulToStraight"),
             Self::LinearRgbToOklab => f.write_str("LinearRgbToOklab"),
@@ -427,6 +434,7 @@ impl ConvertPlan {
                     TransferFunction::Bt709 => ConvertStep::Bt709F32ToLinearF32,
                     TransferFunction::Pq => ConvertStep::PqF32ToLinearF32,
                     TransferFunction::Hlg => ConvertStep::HlgF32ToLinearF32,
+                    TransferFunction::Gamma22 => ConvertStep::Gamma22F32ToLinearF32,
                     TransferFunction::Linear => ConvertStep::Identity,
                     _ => ConvertStep::SrgbF32ToLinearF32, // assume sRGB for Unknown
                 };
@@ -435,6 +443,7 @@ impl ConvertPlan {
                     TransferFunction::Bt709 => ConvertStep::LinearF32ToBt709F32,
                     TransferFunction::Pq => ConvertStep::LinearF32ToPqF32,
                     TransferFunction::Hlg => ConvertStep::LinearF32ToHlgF32,
+                    TransferFunction::Gamma22 => ConvertStep::LinearF32ToGamma22F32,
                     TransferFunction::Linear => ConvertStep::Identity,
                     _ => ConvertStep::LinearF32ToSrgbF32, // assume sRGB for Unknown
                 };
@@ -968,6 +977,46 @@ fn depth_steps(
                 ConvertStep::HlgF32ToLinearF32,
                 ConvertStep::LinearF32ToBt709F32,
             ]),
+            // Gamma 2.2 (Adobe RGB 1998) ↔ Linear.
+            (TransferFunction::Gamma22, TransferFunction::Linear) => {
+                Ok(vec![ConvertStep::Gamma22F32ToLinearF32])
+            }
+            (TransferFunction::Linear, TransferFunction::Gamma22) => {
+                Ok(vec![ConvertStep::LinearF32ToGamma22F32])
+            }
+            // Gamma 2.2 ↔ {sRGB, BT.709, PQ, HLG}: go through linear.
+            (TransferFunction::Gamma22, TransferFunction::Srgb) => Ok(vec![
+                ConvertStep::Gamma22F32ToLinearF32,
+                ConvertStep::LinearF32ToSrgbF32,
+            ]),
+            (TransferFunction::Srgb, TransferFunction::Gamma22) => Ok(vec![
+                ConvertStep::SrgbF32ToLinearF32,
+                ConvertStep::LinearF32ToGamma22F32,
+            ]),
+            (TransferFunction::Gamma22, TransferFunction::Bt709) => Ok(vec![
+                ConvertStep::Gamma22F32ToLinearF32,
+                ConvertStep::LinearF32ToBt709F32,
+            ]),
+            (TransferFunction::Bt709, TransferFunction::Gamma22) => Ok(vec![
+                ConvertStep::Bt709F32ToLinearF32,
+                ConvertStep::LinearF32ToGamma22F32,
+            ]),
+            (TransferFunction::Gamma22, TransferFunction::Pq) => Ok(vec![
+                ConvertStep::Gamma22F32ToLinearF32,
+                ConvertStep::LinearF32ToPqF32,
+            ]),
+            (TransferFunction::Pq, TransferFunction::Gamma22) => Ok(vec![
+                ConvertStep::PqF32ToLinearF32,
+                ConvertStep::LinearF32ToGamma22F32,
+            ]),
+            (TransferFunction::Gamma22, TransferFunction::Hlg) => Ok(vec![
+                ConvertStep::Gamma22F32ToLinearF32,
+                ConvertStep::LinearF32ToHlgF32,
+            ]),
+            (TransferFunction::Hlg, TransferFunction::Gamma22) => Ok(vec![
+                ConvertStep::HlgF32ToLinearF32,
+                ConvertStep::LinearF32ToGamma22F32,
+            ]),
             _ => Ok(Vec::new()),
         };
     }
@@ -1225,6 +1274,8 @@ fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
         | (ConvertStep::LinearF32ToHlgF32, ConvertStep::HlgF32ToLinearF32)
         | (ConvertStep::Bt709F32ToLinearF32, ConvertStep::LinearF32ToBt709F32)
         | (ConvertStep::LinearF32ToBt709F32, ConvertStep::Bt709F32ToLinearF32)
+        | (ConvertStep::Gamma22F32ToLinearF32, ConvertStep::LinearF32ToGamma22F32)
+        | (ConvertStep::LinearF32ToGamma22F32, ConvertStep::Gamma22F32ToLinearF32)
         // Alpha mode (exact inverses in float)
         | (ConvertStep::StraightToPremul, ConvertStep::PremulToStraight)
         | (ConvertStep::PremulToStraight, ConvertStep::StraightToPremul)
@@ -1339,7 +1390,8 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
         | ConvertStep::HlgF32ToLinearF32
         | ConvertStep::SrgbF32ToLinearF32
         | ConvertStep::SrgbF32ToLinearF32Extended
-        | ConvertStep::Bt709F32ToLinearF32 => PixelDescriptor::new(
+        | ConvertStep::Bt709F32ToLinearF32
+        | ConvertStep::Gamma22F32ToLinearF32 => PixelDescriptor::new(
             ChannelType::F32,
             current.layout(),
             current.alpha(),
@@ -1392,6 +1444,12 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.layout(),
             current.alpha(),
             TransferFunction::Bt709,
+        ),
+        ConvertStep::LinearF32ToGamma22F32 => PixelDescriptor::new(
+            ChannelType::F32,
+            current.layout(),
+            current.alpha(),
+            TransferFunction::Gamma22,
         ),
         ConvertStep::StraightToPremul => PixelDescriptor::new(
             current.channel_type(),
