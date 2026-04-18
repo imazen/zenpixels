@@ -168,6 +168,14 @@ pub(super) fn apply_step_u8(
             linear_f32_to_bt709_f32(src, dst, w, from.layout().channels());
         }
 
+        ConvertStep::Gamma22F32ToLinearF32 => {
+            gamma22_f32_to_linear_f32(src, dst, w, from.layout().channels());
+        }
+
+        ConvertStep::LinearF32ToGamma22F32 => {
+            linear_f32_to_gamma22_f32(src, dst, w, from.layout().channels());
+        }
+
         ConvertStep::StraightToPremul => {
             straight_to_premul(src, dst, w, from.channel_type(), from.layout());
         }
@@ -1006,6 +1014,39 @@ fn linear_f32_to_bt709_f32_inner(src: &[f32], dst: &mut [f32]) {
             dst[off + i] = linear_srgb::tf::linear_to_bt709(src[off + i]);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Gamma 2.2 (Adobe RGB 1998) F32 ↔ Linear F32
+// ---------------------------------------------------------------------------
+
+/// Adobe RGB 1998 canonical exponent (563/256). Matches ~85% of real-world
+/// Adobe RGB ICC profiles (Adobe CS4, Windows ClayRGB1998, macOS AdobeRGB1998,
+/// Linux `AdobeRGB1998`, Nikon). Parametric-curve variants with a linear toe
+/// are routed through full CMS instead.
+///
+/// `2.19921875 = 563/256` is exact in f32; the allow suppresses clippy's
+/// decimal-digit heuristic.
+#[allow(clippy::excessive_precision)]
+const ADOBE_GAMMA: f32 = 2.19921875;
+
+/// Gamma 2.2 F32 → Linear F32 (EOTF, same depth). SIMD-dispatched via
+/// `linear_srgb::default::gamma_to_linear_slice`.
+fn gamma22_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::gamma_to_linear_slice(&mut dstf[..count], ADOBE_GAMMA);
+}
+
+/// Linear F32 → Gamma 2.2 F32 (OETF, same depth). SIMD-dispatched.
+fn linear_f32_to_gamma22_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::linear_to_gamma_slice(&mut dstf[..count], ADOBE_GAMMA);
 }
 
 // ---------------------------------------------------------------------------
