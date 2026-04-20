@@ -607,11 +607,26 @@ impl ConvertPlan {
         let mut plan = Self::new(from, to).at()?;
 
         // Replace DropAlpha with MatteComposite when policy is CompositeOnto.
+        //
+        // The `matte_composite` kernel uses the straight-alpha over operator
+        // `fg*a + bg*(1-a)` after decoding to linear light. If the source is
+        // premultiplied (our library's convention is encoded-space premul,
+        // per Canvas 2D), feeding its bytes into the straight kernel would
+        // multiply by `a` twice, producing `straight*a² + bg*(1-a)`.
+        // Fix: un-premultiply first (in the source byte space, matching how
+        // our StraightToPremul/PremulToStraight kernels operate).
         if drops_alpha && let AlphaPolicy::CompositeOnto { r, g, b } = options.alpha_policy {
-            for step in &mut plan.steps {
-                if matches!(step, ConvertStep::DropAlpha) {
-                    *step = ConvertStep::MatteComposite { r, g, b };
+            let src_is_premul = from.alpha() == Some(AlphaMode::Premultiplied);
+            let mut idx = 0;
+            while idx < plan.steps.len() {
+                if matches!(plan.steps[idx], ConvertStep::DropAlpha) {
+                    plan.steps[idx] = ConvertStep::MatteComposite { r, g, b };
+                    if src_is_premul {
+                        plan.steps.insert(idx, ConvertStep::PremulToStraight);
+                        idx += 1;
+                    }
                 }
+                idx += 1;
             }
         }
 
