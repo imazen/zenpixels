@@ -16,6 +16,20 @@
 
 ### zenpixels-convert — fixed
 
+- **`AlphaPolicy::CompositeOnto` now produces correct pixels for
+  premultiplied source** (fixes issue [#19][] [F]). The `matte_composite`
+  kernel uses the straight-alpha over operator `fg*a + bg*(1-a)` after
+  decoding to linear light. If the source descriptor declared
+  `AlphaMode::Premultiplied`, feeding its bytes into the straight kernel
+  multiplied by `a` a second time, producing
+  `straight*a² + bg*(1-a)` — silently wrong by up to ~24 u8 codes at
+  a ≈ 0.25. Fix: planner inserts `PremulToStraight` before
+  `MatteComposite` when the source alpha mode is `Premultiplied`,
+  recovering straight sRGB bytes (in our library's encoded-space premul
+  convention) that the kernel handles correctly. No API change; kernel
+  unchanged. Straight-source path unaffected. 6 regression tests in
+  `tests/matte_composite_premul.rs`.
+
 - **Planner no longer silently passes bytes through on TF changes** (fixes
   issue [#19][] [A] and [B]). Previously, several descriptor pairs emitted
   `[Identity]` or a naked depth-scale step labeled with the target TF but
