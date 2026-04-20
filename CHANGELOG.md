@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-04-20
+
 ### zenpixels — docs
 
 - **Clarified `PixelDescriptor::with_transfer` / `with_primaries` /
@@ -12,7 +14,7 @@
   actually re-encode pixels is to pass the new descriptor as the
   destination to `RowConverter::new`. Also notes that built-in premul
   kernels operate in encoded byte space (Canvas 2D semantics), not
-  linear light.
+  linear light. (#21, da5ba60)
 
 ### zenpixels-convert — fixed
 
@@ -28,7 +30,7 @@
   recovering straight sRGB bytes (in our library's encoded-space premul
   convention) that the kernel handles correctly. No API change; kernel
   unchanged. Straight-source path unaffected. 6 regression tests in
-  `tests/matte_composite_premul.rs`.
+  `tests/matte_composite_premul.rs`. (#22, ae0ebd8)
 
 - **Planner no longer silently passes bytes through on TF changes** (fixes
   issue [#19][] [A] and [B]). Previously, several descriptor pairs emitted
@@ -53,7 +55,7 @@
   Adds 54 regression tests in `tests/planner_silent_passthrough.rs`
   covering every TF × depth combination, HDR (PQ/HLG), extended-range
   out-of-gamut (`with_clip_out_of_gamut(false)`), and cross-primaries
-  crossings.
+  crossings. (#20, a9cb1c3)
 
 ### zenpixels-convert — added
 
@@ -65,7 +67,21 @@
   Lets AdobeRGB ↔ PQ / HLG / BT.2020 / Linear compose in the built-in planner
   without hitting the moxcms CMS fallback. SIMD via
   `linear_srgb::default::{gamma_to_linear,linear_to_gamma}_slice` with
-  `ADOBE_GAMMA = 563/256 ≈ 2.19921875`.
+  `ADOBE_GAMMA = 563/256 ≈ 2.19921875`. `ConvertStep` is `pub(crate)`;
+  no public API change. (#18, 2238309)
+
+### zenpixels — internal
+
+- Regenerated ICC hash tables with 23 new canonical/test profile entries
+  (jpegli/libjxl testdata V4 canonicals, Rec2020 PQ CICP, RawTherapee
+  working spaces, misc test profiles). RGB table: 209 → 240 lines;
+  gray table: 31 → 34 lines. No existing entries removed or modified.
+  Three skcms iccMAX (ICC v5) sRGB profiles were evaluated but deferred:
+  moxcms rejects them with `InvalidProfile`, and the
+  `imazen/moxcms#permissive-flagged-profiles` branch that attempts to
+  parse them has a mpet matrix-shaper miscalibration producing ~13% FSR
+  channel imbalance — see imazen/moxcms#2. Hard-rejection at the CMS
+  layer is strictly safer than fast-path misrendering. (#17, c876b94)
 
 [#19]: https://github.com/imazen/zenpixels/issues/19
 
