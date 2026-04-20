@@ -1010,21 +1010,60 @@ impl PixelDescriptor {
         matches!(self.format.byte_order(), ByteOrder::Bgr)
     }
 
-    /// Return a copy with a different transfer function.
+    /// Return a copy of this descriptor **relabeled** with a different
+    /// transfer function. Does not touch any pixel bytes.
+    ///
+    /// Use when the source data was mistagged (e.g., a codec decoded a
+    /// profile-less image and you know its true TF from another source)
+    /// or when you want to assert a particular TF for downstream planning
+    /// without round-tripping through EOTF/OETF kernels.
+    ///
+    /// **This is metadata-only.** To actually re-encode pixel bytes from
+    /// one transfer function into another, pass a source buffer and a
+    /// destination descriptor with the new TF into [`RowConverter::new`]
+    /// — that builds a plan with the appropriate EOTF/OETF kernels.
+    ///
+    /// [`RowConverter::new`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.RowConverter.html#method.new
     #[inline]
     #[must_use]
     pub const fn with_transfer(self, transfer: TransferFunction) -> Self {
         Self { transfer, ..self }
     }
 
-    /// Return a copy with different primaries.
+    /// Return a copy of this descriptor **relabeled** with different
+    /// primaries. Does not touch any pixel bytes or apply a gamut matrix.
+    ///
+    /// Use when you know the true primaries of the source data independent
+    /// of whatever upstream tagging said, or to assert a particular primary
+    /// set for downstream planning.
+    ///
+    /// **This is metadata-only.** To actually apply a gamut conversion
+    /// (e.g., BT.709 → Display P3), pass the new descriptor as the
+    /// destination to [`RowConverter::new`] — that inserts the appropriate
+    /// gamut matrix in linear light.
+    ///
+    /// [`RowConverter::new`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.RowConverter.html#method.new
     #[inline]
     #[must_use]
     pub const fn with_primaries(self, primaries: ColorPrimaries) -> Self {
         Self { primaries, ..self }
     }
 
-    /// Return a copy with a different alpha mode.
+    /// Return a copy of this descriptor **relabeled** with a different
+    /// alpha mode. Does not touch any pixel bytes or apply (un)premultiply.
+    ///
+    /// Use when the source alpha mode was mistagged or when you want to
+    /// assert straight/premultiplied without round-tripping through the
+    /// premul kernels.
+    ///
+    /// **This is metadata-only.** To actually premultiply or un-premultiply
+    /// pixel values, pass the new descriptor as the destination to
+    /// [`RowConverter::new`] — that inserts a `StraightToPremul` or
+    /// `PremulToStraight` step. (Note: the built-in premul kernels operate
+    /// in the source byte space — "encoded premul", per Canvas 2D
+    /// semantics — not in linear light.)
+    ///
+    /// [`RowConverter::new`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.RowConverter.html#method.new
     #[inline]
     #[must_use]
     pub const fn with_alpha(self, alpha: Option<AlphaMode>) -> Self {
