@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### zenpixels-convert — fixed
+
+- **Planner no longer silently passes bytes through on TF changes** (fixes
+  issue [#19][] [A] and [B]). Previously, several descriptor pairs emitted
+  `[Identity]` or a naked depth-scale step labeled with the target TF but
+  applying no EOTF/OETF — producing wrong pixels with no error. Affected:
+  - Same-depth integer TF changes (U8 / U16): `Gamma22 → Srgb`, `Srgb →
+    Bt709`, `Pq → Srgb`, every other cross-TF pair. Now routes through an
+    F32 linear intermediate.
+  - Integer↔F32 cross-TF combinations without a fused kernel: `U8 Gamma22
+    → F32 Linear`, `U8 Bt709 → F32 Linear`, `U16 Gamma22 → F32 Linear`,
+    etc. Now composes `NaiveU8ToF32 / U16ToF32` with the appropriate F32
+    EOTF/OETF steps. Mid-gray error was up to 55× off for PQ inputs.
+  - `U8 Bt709 → F32 Linear` and `F32 Linear → U8 Bt709` previously used
+    the sRGB-specific fused kernel (`SrgbU8ToLinearF32` /
+    `LinearF32ToSrgbU8`), producing ~17% linear-light error vs the correct
+    BT.709 EOTF. Fused path now narrowed to sRGB; BT.709 composes through
+    the correct step.
+  - U16↔U8 and U8↔U16 cross-depth cross-TF combinations now compose
+    through F32 linear when a fused kernel doesn't exist.
+  Unknown TF on either side continues to pass bytes through as before (the
+  explicit-intent API is tracked in #19 [C]/[D] for deprecate-and-add).
+  Adds 54 regression tests in `tests/planner_silent_passthrough.rs`
+  covering every TF × depth combination, HDR (PQ/HLG), extended-range
+  out-of-gamut (`with_clip_out_of_gamut(false)`), and cross-primaries
+  crossings.
+
 ### zenpixels-convert — added
 
 - **First-class Gamma 2.2 (Adobe RGB 1998) transfer in the fast path.** New
@@ -13,6 +40,8 @@
   without hitting the moxcms CMS fallback. SIMD via
   `linear_srgb::default::{gamma_to_linear,linear_to_gamma}_slice` with
   `ADOBE_GAMMA = 563/256 ≈ 2.19921875`.
+
+[#19]: https://github.com/imazen/zenpixels/issues/19
 
 ## [0.2.9] - 2026-04-16
 
