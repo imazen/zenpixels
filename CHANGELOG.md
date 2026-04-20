@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### zenpixels-convert — added
+
+- **First-class Gamma 2.2 (Adobe RGB 1998) transfer in the fast path.** New
+  `ConvertStep::Gamma22F32ToLinearF32` / `LinearF32ToGamma22F32` variants plus
+  `depth_steps` arms for Gamma22 ↔ {Linear, sRGB, BT.709, PQ, HLG} same-depth
+  F32. The primaries-conversion injection now routes Gamma22 through the
+  correct EOTF/OETF instead of falling through to the sRGB approximation.
+  Lets AdobeRGB ↔ PQ / HLG / BT.2020 / Linear compose in the built-in planner
+  without hitting the moxcms CMS fallback. SIMD via
+  `linear_srgb::default::{gamma_to_linear,linear_to_gamma}_slice` with
+  `ADOBE_GAMMA = 563/256 ≈ 2.19921875`.
+
 ## [0.2.9] - 2026-04-16
 
 ### zenpixels-convert — internal
