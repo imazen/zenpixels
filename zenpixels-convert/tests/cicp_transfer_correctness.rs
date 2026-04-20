@@ -831,11 +831,14 @@ fn buffer_linearize_bt709_u8() {
     assert_eq!(lin.descriptor().transfer(), TransferFunction::Linear);
     // Black → 0
     assert!(read_f32(&lin, 0).abs() < 1e-6);
-    // Mid-gray → ~0.21
+    // Mid-gray U8=128 (0.502 normalized) through BT.709 EOTF
+    // = ((0.502+0.099)/1.099)^(1/0.45) ≈ 0.2616.
+    // (Prior to the planner fix for issue #19 [B], this path routed through the
+    // sRGB-specific kernel and produced ~0.216 — silently wrong.)
     let mid = read_f32(&lin, 12);
     assert!(
-        mid > 0.18 && mid < 0.25,
-        "BT.709 mid-gray linearized: {mid}"
+        (mid - 0.2616).abs() < 0.01,
+        "BT.709 mid-gray linearized: {mid} (expected ≈0.2616)"
     );
     // White → 1
     assert!((read_f32(&lin, 36) - 1.0).abs() < 1e-5);

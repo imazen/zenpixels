@@ -275,10 +275,10 @@ impl ConvertPlan {
         let need_alpha_change =
             from.alpha() != to.alpha() && from.alpha().is_some() && to.alpha().is_some();
 
-        // Depth/TF steps are needed when depth changes, or when both are F32
-        // and transfer functions differ.
-        let need_depth_or_tf = need_depth_change
-            || (from.channel_type() == ChannelType::F32 && from.transfer() != to.transfer());
+        // Depth/TF steps are needed when depth changes, or when transfer
+        // functions differ (at any depth — integer TF changes route through
+        // an F32 linear intermediate, handled in `depth_steps`).
+        let need_depth_or_tf = need_depth_change || from.transfer() != to.transfer();
 
         // If we need to change depth AND layout, plan the optimal order.
         if need_layout_change {
@@ -878,11 +878,83 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
     }
 }
 
+/// F32→F32 linearize step for a transfer function, or `None` if the TF is
+/// already linear (or Unknown — caller decides how to handle Unknown).
+fn f32_linearize_step(tf: TransferFunction) -> Option<ConvertStep> {
+    match tf {
+        TransferFunction::Linear => None,
+        TransferFunction::Srgb => Some(ConvertStep::SrgbF32ToLinearF32),
+        TransferFunction::Bt709 => Some(ConvertStep::Bt709F32ToLinearF32),
+        TransferFunction::Pq => Some(ConvertStep::PqF32ToLinearF32),
+        TransferFunction::Hlg => Some(ConvertStep::HlgF32ToLinearF32),
+        TransferFunction::Gamma22 => Some(ConvertStep::Gamma22F32ToLinearF32),
+        TransferFunction::Unknown => None,
+        _ => None,
+    }
+}
+
+/// F32→F32 OETF step for a transfer function, or `None` if the TF is linear
+/// (or Unknown).
+fn f32_encode_step(tf: TransferFunction) -> Option<ConvertStep> {
+    match tf {
+        TransferFunction::Linear => None,
+        TransferFunction::Srgb => Some(ConvertStep::LinearF32ToSrgbF32),
+        TransferFunction::Bt709 => Some(ConvertStep::LinearF32ToBt709F32),
+        TransferFunction::Pq => Some(ConvertStep::LinearF32ToPqF32),
+        TransferFunction::Hlg => Some(ConvertStep::LinearF32ToHlgF32),
+        TransferFunction::Gamma22 => Some(ConvertStep::LinearF32ToGamma22F32),
+        TransferFunction::Unknown => None,
+        _ => None,
+    }
+}
+
+/// F32→F32 TF-change steps: linearize (if not already linear) then encode
+/// (if target is not linear).
+///
+/// Returns empty when `from == to`, or when either side is `Unknown` — when
+/// one side's TF is unknown we can't mechanically compute a correct
+/// conversion, so we preserve bytes as-is. Addressing the Unknown ambiguity
+/// via explicit opt-in API is tracked as issue #19 [C]/[D] (deprecate-and-add).
+fn f32_tf_pair_steps(from: TransferFunction, to: TransferFunction) -> Vec<ConvertStep> {
+    if from == to || from == TransferFunction::Unknown || to == TransferFunction::Unknown {
+        return Vec::new();
+    }
+    let mut steps = Vec::with_capacity(2);
+    if let Some(s) = f32_linearize_step(from) {
+        steps.push(s);
+    }
+    if let Some(s) = f32_encode_step(to) {
+        steps.push(s);
+    }
+    steps
+}
+
+/// Integer→F32 scale step for a given integer channel type. Panics for F32
+/// (caller must check); CMYK is rejected upstream by `assert_not_cmyk`.
+fn int_to_f32_step(ct: ChannelType) -> ConvertStep {
+    match ct {
+        ChannelType::U8 => ConvertStep::NaiveU8ToF32,
+        ChannelType::U16 => ConvertStep::U16ToF32,
+        _ => unreachable!("int_to_f32_step called with non-integer channel type"),
+    }
+}
+
+/// F32→integer scale step.
+fn f32_to_int_step(ct: ChannelType) -> ConvertStep {
+    match ct {
+        ChannelType::U8 => ConvertStep::NaiveF32ToU8,
+        ChannelType::U16 => ConvertStep::F32ToU16,
+        _ => unreachable!("f32_to_int_step called with non-integer channel type"),
+    }
+}
+
 /// Determine the depth conversion step(s), considering transfer functions.
 ///
-/// Returns one or two steps. Two steps are needed when the conversion
-/// requires going through an intermediate format (e.g. PQ U16 → sRGB U8
-/// goes PQ U16 → Linear F32 → sRGB U8).
+/// Returns one or more steps. Multi-step conversions route through an F32
+/// linear intermediate (e.g. PQ U16 → sRGB U8 goes PQ U16 → Linear F32 →
+/// sRGB U8), and same-depth integer TF changes route through an F32 linear
+/// intermediate too: passing integer bytes through unchanged under a new
+/// TF label produces wrong pixels.
 fn depth_steps(
     from: ChannelType,
     to: ChannelType,
@@ -893,151 +965,61 @@ fn depth_steps(
         return Ok(Vec::new());
     }
 
-    // Same depth, different transfer function.
-    // For integer types, TF changes are metadata-only (no math).
-    // For F32, we can apply EOTF/OETF in place.
-    if from == to && from != ChannelType::F32 {
-        return Ok(Vec::new());
+    // Same depth, F32: apply EOTF/OETF in place.
+    if from == to && from == ChannelType::F32 {
+        return Ok(f32_tf_pair_steps(from_tf, to_tf));
     }
 
-    if from == to && from == ChannelType::F32 {
-        return match (from_tf, to_tf) {
-            (TransferFunction::Pq, TransferFunction::Linear) => {
-                Ok(vec![ConvertStep::PqF32ToLinearF32])
-            }
-            (TransferFunction::Linear, TransferFunction::Pq) => {
-                Ok(vec![ConvertStep::LinearF32ToPqF32])
-            }
-            (TransferFunction::Hlg, TransferFunction::Linear) => {
-                Ok(vec![ConvertStep::HlgF32ToLinearF32])
-            }
-            (TransferFunction::Linear, TransferFunction::Hlg) => {
-                Ok(vec![ConvertStep::LinearF32ToHlgF32])
-            }
-            // PQ ↔ HLG: go through linear.
-            (TransferFunction::Pq, TransferFunction::Hlg) => Ok(vec![
-                ConvertStep::PqF32ToLinearF32,
-                ConvertStep::LinearF32ToHlgF32,
-            ]),
-            (TransferFunction::Hlg, TransferFunction::Pq) => Ok(vec![
-                ConvertStep::HlgF32ToLinearF32,
-                ConvertStep::LinearF32ToPqF32,
-            ]),
-            (TransferFunction::Srgb, TransferFunction::Linear) => {
-                Ok(vec![ConvertStep::SrgbF32ToLinearF32])
-            }
-            (TransferFunction::Linear, TransferFunction::Srgb) => {
-                Ok(vec![ConvertStep::LinearF32ToSrgbF32])
-            }
-            (TransferFunction::Bt709, TransferFunction::Linear) => {
-                Ok(vec![ConvertStep::Bt709F32ToLinearF32])
-            }
-            (TransferFunction::Linear, TransferFunction::Bt709) => {
-                Ok(vec![ConvertStep::LinearF32ToBt709F32])
-            }
-            // sRGB ↔ BT.709: go through linear.
-            (TransferFunction::Srgb, TransferFunction::Bt709) => Ok(vec![
-                ConvertStep::SrgbF32ToLinearF32,
-                ConvertStep::LinearF32ToBt709F32,
-            ]),
-            (TransferFunction::Bt709, TransferFunction::Srgb) => Ok(vec![
-                ConvertStep::Bt709F32ToLinearF32,
-                ConvertStep::LinearF32ToSrgbF32,
-            ]),
-            // sRGB/BT.709 ↔ PQ/HLG: go through linear.
-            (TransferFunction::Srgb, TransferFunction::Pq) => Ok(vec![
-                ConvertStep::SrgbF32ToLinearF32,
-                ConvertStep::LinearF32ToPqF32,
-            ]),
-            (TransferFunction::Srgb, TransferFunction::Hlg) => Ok(vec![
-                ConvertStep::SrgbF32ToLinearF32,
-                ConvertStep::LinearF32ToHlgF32,
-            ]),
-            (TransferFunction::Pq, TransferFunction::Srgb) => Ok(vec![
-                ConvertStep::PqF32ToLinearF32,
-                ConvertStep::LinearF32ToSrgbF32,
-            ]),
-            (TransferFunction::Hlg, TransferFunction::Srgb) => Ok(vec![
-                ConvertStep::HlgF32ToLinearF32,
-                ConvertStep::LinearF32ToSrgbF32,
-            ]),
-            (TransferFunction::Bt709, TransferFunction::Pq) => Ok(vec![
-                ConvertStep::Bt709F32ToLinearF32,
-                ConvertStep::LinearF32ToPqF32,
-            ]),
-            (TransferFunction::Bt709, TransferFunction::Hlg) => Ok(vec![
-                ConvertStep::Bt709F32ToLinearF32,
-                ConvertStep::LinearF32ToHlgF32,
-            ]),
-            (TransferFunction::Pq, TransferFunction::Bt709) => Ok(vec![
-                ConvertStep::PqF32ToLinearF32,
-                ConvertStep::LinearF32ToBt709F32,
-            ]),
-            (TransferFunction::Hlg, TransferFunction::Bt709) => Ok(vec![
-                ConvertStep::HlgF32ToLinearF32,
-                ConvertStep::LinearF32ToBt709F32,
-            ]),
-            // Gamma 2.2 (Adobe RGB 1998) ↔ Linear.
-            (TransferFunction::Gamma22, TransferFunction::Linear) => {
-                Ok(vec![ConvertStep::Gamma22F32ToLinearF32])
-            }
-            (TransferFunction::Linear, TransferFunction::Gamma22) => {
-                Ok(vec![ConvertStep::LinearF32ToGamma22F32])
-            }
-            // Gamma 2.2 ↔ {sRGB, BT.709, PQ, HLG}: go through linear.
-            (TransferFunction::Gamma22, TransferFunction::Srgb) => Ok(vec![
-                ConvertStep::Gamma22F32ToLinearF32,
-                ConvertStep::LinearF32ToSrgbF32,
-            ]),
-            (TransferFunction::Srgb, TransferFunction::Gamma22) => Ok(vec![
-                ConvertStep::SrgbF32ToLinearF32,
-                ConvertStep::LinearF32ToGamma22F32,
-            ]),
-            (TransferFunction::Gamma22, TransferFunction::Bt709) => Ok(vec![
-                ConvertStep::Gamma22F32ToLinearF32,
-                ConvertStep::LinearF32ToBt709F32,
-            ]),
-            (TransferFunction::Bt709, TransferFunction::Gamma22) => Ok(vec![
-                ConvertStep::Bt709F32ToLinearF32,
-                ConvertStep::LinearF32ToGamma22F32,
-            ]),
-            (TransferFunction::Gamma22, TransferFunction::Pq) => Ok(vec![
-                ConvertStep::Gamma22F32ToLinearF32,
-                ConvertStep::LinearF32ToPqF32,
-            ]),
-            (TransferFunction::Pq, TransferFunction::Gamma22) => Ok(vec![
-                ConvertStep::PqF32ToLinearF32,
-                ConvertStep::LinearF32ToGamma22F32,
-            ]),
-            (TransferFunction::Gamma22, TransferFunction::Hlg) => Ok(vec![
-                ConvertStep::Gamma22F32ToLinearF32,
-                ConvertStep::LinearF32ToHlgF32,
-            ]),
-            (TransferFunction::Hlg, TransferFunction::Gamma22) => Ok(vec![
-                ConvertStep::HlgF32ToLinearF32,
-                ConvertStep::LinearF32ToGamma22F32,
-            ]),
-            _ => Ok(Vec::new()),
-        };
+    // Same depth, integer: TF change requires re-encoding. Route through F32
+    // linear intermediate — passing bytes through labeled as a different TF
+    // produces wrong pixels.
+    //
+    // Exception: if either TF is Unknown, we don't know the correct conversion.
+    // Preserve bytes exactly (no F32 round-trip — that would introduce U8/U16
+    // rounding error for no semantic benefit). Addressed properly by issue
+    // #19 [C]/[D] via opt-in deprecate-and-add.
+    if from == to && from != ChannelType::F32 {
+        if from_tf == TransferFunction::Unknown || to_tf == TransferFunction::Unknown {
+            return Ok(Vec::new());
+        }
+        let mut steps = Vec::with_capacity(4);
+        steps.push(int_to_f32_step(from));
+        steps.extend(f32_tf_pair_steps(from_tf, to_tf));
+        steps.push(f32_to_int_step(to));
+        return Ok(steps);
     }
 
     match (from, to) {
         (ChannelType::U8, ChannelType::F32) => {
-            if (from_tf == TransferFunction::Srgb || from_tf == TransferFunction::Bt709)
-                && to_tf == TransferFunction::Linear
-            {
+            // Fused sRGB EOTF kernel — sRGB only. BT.709 uses a different EOTF
+            // (~17% linear-light error at mid-gray if we routed it through the
+            // sRGB kernel) and must compose through the F32 BT.709 EOTF step.
+            if from_tf == TransferFunction::Srgb && to_tf == TransferFunction::Linear {
                 Ok(vec![ConvertStep::SrgbU8ToLinearF32])
-            } else {
+            } else if from_tf == to_tf {
                 Ok(vec![ConvertStep::NaiveU8ToF32])
+            } else {
+                // Cross-depth + cross-TF: linearize/encode after the U8→F32 scale.
+                // Previously dropped the TF math and returned bytes labeled with
+                // the target TF — silent wrong pixels for any TF pair other than
+                // {Srgb,Bt709}→Linear.
+                let mut steps = Vec::with_capacity(3);
+                steps.push(ConvertStep::NaiveU8ToF32);
+                steps.extend(f32_tf_pair_steps(from_tf, to_tf));
+                Ok(steps)
             }
         }
         (ChannelType::F32, ChannelType::U8) => {
-            if from_tf == TransferFunction::Linear
-                && (to_tf == TransferFunction::Srgb || to_tf == TransferFunction::Bt709)
-            {
+            // Fused sRGB OETF kernel — sRGB only (same reason as above).
+            if from_tf == TransferFunction::Linear && to_tf == TransferFunction::Srgb {
                 Ok(vec![ConvertStep::LinearF32ToSrgbU8])
-            } else {
+            } else if from_tf == to_tf {
                 Ok(vec![ConvertStep::NaiveF32ToU8])
+            } else {
+                // Linearize/encode in F32 first, then compress to U8.
+                let mut steps = f32_tf_pair_steps(from_tf, to_tf);
+                steps.push(ConvertStep::NaiveF32ToU8);
+                Ok(steps)
             }
         }
         (ChannelType::U16, ChannelType::F32) => {
@@ -1049,7 +1031,13 @@ fn depth_steps(
                 (TransferFunction::Hlg, TransferFunction::Linear) => {
                     Ok(vec![ConvertStep::HlgU16ToLinearF32])
                 }
-                _ => Ok(vec![ConvertStep::U16ToF32]),
+                (a, b) if a == b => Ok(vec![ConvertStep::U16ToF32]),
+                _ => {
+                    let mut steps = Vec::with_capacity(3);
+                    steps.push(ConvertStep::U16ToF32);
+                    steps.extend(f32_tf_pair_steps(from_tf, to_tf));
+                    Ok(steps)
+                }
             }
         }
         (ChannelType::F32, ChannelType::U16) => {
@@ -1061,7 +1049,12 @@ fn depth_steps(
                 (TransferFunction::Linear, TransferFunction::Hlg) => {
                     Ok(vec![ConvertStep::LinearF32ToHlgU16])
                 }
-                _ => Ok(vec![ConvertStep::F32ToU16]),
+                (a, b) if a == b => Ok(vec![ConvertStep::F32ToU16]),
+                _ => {
+                    let mut steps = f32_tf_pair_steps(from_tf, to_tf);
+                    steps.push(ConvertStep::F32ToU16);
+                    Ok(steps)
+                }
             }
         }
         (ChannelType::U16, ChannelType::U8) => {
@@ -1076,11 +1069,27 @@ fn depth_steps(
                     ConvertStep::HlgU16ToLinearF32,
                     ConvertStep::LinearF32ToSrgbU8,
                 ])
-            } else {
+            } else if from_tf == to_tf {
                 Ok(vec![ConvertStep::U16ToU8])
+            } else {
+                let mut steps = Vec::with_capacity(4);
+                steps.push(ConvertStep::U16ToF32);
+                steps.extend(f32_tf_pair_steps(from_tf, to_tf));
+                steps.push(ConvertStep::NaiveF32ToU8);
+                Ok(steps)
             }
         }
-        (ChannelType::U8, ChannelType::U16) => Ok(vec![ConvertStep::U8ToU16]),
+        (ChannelType::U8, ChannelType::U16) => {
+            if from_tf == to_tf {
+                Ok(vec![ConvertStep::U8ToU16])
+            } else {
+                let mut steps = Vec::with_capacity(4);
+                steps.push(ConvertStep::NaiveU8ToF32);
+                steps.extend(f32_tf_pair_steps(from_tf, to_tf));
+                steps.push(ConvertStep::F32ToU16);
+                Ok(steps)
+            }
+        }
         _ => Err(ConvertError::NoPath {
             from: PixelDescriptor::new(from, ChannelLayout::Rgb, None, from_tf),
             to: PixelDescriptor::new(to, ChannelLayout::Rgb, None, to_tf),
