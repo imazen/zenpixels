@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### zenpixels — docs
+
+- **Clarified `PixelDescriptor::with_transfer` / `with_primaries` /
+  `with_alpha` as relabel-only operations** (docs-only). Previously the
+  doc comments said "return a copy with a different X" — literally true
+  but understated that no pixel math happens. Updated to explicitly call
+  out that these are metadata-only operations and that the way to
+  actually re-encode pixels is to pass the new descriptor as the
+  destination to `RowConverter::new`. Also notes that built-in premul
+  kernels operate in encoded byte space (Canvas 2D semantics), not
+  linear light.
+
 ### zenpixels-convert — fixed
 
 - **Planner no longer silently passes bytes through on TF changes** (fixes
