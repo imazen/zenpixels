@@ -1,0 +1,28 @@
+# Tier 2 (depth scaling, no TF) baseline
+# Date: 2026-04-23  |  Commit: fb92135  |  Hardware: AMD Ryzen 9 7950X
+# Command: cargo bench --bench bench_t2_depth
+#
+# Throughput at 4096px (bytes/sec = src + dst bytes / wall clock):
+#
+#   U8→U16     112.82 GiB/s    garb::bytes::convert_u8_to_u16  (near memory ceiling)
+#   U8→F32      95.21 GiB/s    garb
+#   U16→F32     88.68 GiB/s    garb
+#   F32→U16     64.33 GiB/s    garb
+#   F32→U8      52.99 GiB/s    garb
+#   U16→U8      34.39 GiB/s    garb
+#   F16→F32      7.09 GiB/s    **local scalar f16_bits_to_f32 loop**
+#   F16→U16      4.09 GiB/s    via F32 (two-step: F16→F32→U16)
+#   F32→F16      3.25 GiB/s    **local scalar f32_to_f16_bits loop**
+#   F16→U8       3.10 GiB/s    via F32
+#   U16→F16      1.86 GiB/s    via F32 (F16 pack is the bottleneck)
+#   U8→F16       1.41 GiB/s    via F32 (F16 pack is the bottleneck)
+#
+# The headline: F16 paths are 20-70× slower than non-F16 equivalents.
+# Every F16 conversion goes through the local scalar f16<->f32 fns in
+# src/f16_scalar.rs. F16C SIMD (stable Rust since 1.27, MSRV-safe at 1.89)
+# would close this gap ~8×.
+#
+# This single tier alone reframes the priority list: F16 SIMD moves from
+# "deferred" to "#1 actionable gap" — the performance cliff is real and
+# any pipeline using F16 buffers (Ultra HDR gain maps, zentiff FP16, HEIF
+# F16 intermediates) is paying it today.

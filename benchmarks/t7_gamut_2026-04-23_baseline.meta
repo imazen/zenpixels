@@ -1,0 +1,43 @@
+# Tier 7 (gamut matrix / primaries conversion) baseline
+# Date: 2026-04-23  |  Commit: fb92135  |  Hardware: AMD Ryzen 9 7950X
+# Command: cargo bench --bench bench_t7_gamut
+#
+# Throughput at 4096px:
+#
+#   Linear F32 gamut (P3→BT.709)                      21.84 GiB/s
+#   Linear F32 gamut (BT.2020→BT.709)                 21.63 GiB/s
+#   sRGB U8 → Linear F32 + gamut (P3→BT.709)          11.19 GiB/s
+#   sRGB U16 fused gamut (P3→BT.709)                   5.84 GiB/s
+#   sRGB U8 fused gamut (P3→BT.709)                    3.79 GiB/s
+#   Linear F32 → sRGB U8 + gamut (P3→BT.709)           3.11 GiB/s
+#
+# Findings:
+#
+# 1. **Standalone Linear F32 gamut (GamutMatrixRgbF32) at ~22 GiB/s** —
+#    a 3×3 f32 matrix multiply per pixel, autovecs well. Gamut is the
+#    cheapest step once we're in linear F32.
+#
+# 2. **sRGB U8 fused gamut at 3.79 GiB/s** — FusedSrgbU8GamutRgb does
+#    LUT linearize → matrix → LUT encode in one pass. Comparable to
+#    Linear F32 → sRGB U8 alone at 4.56 GiB/s in T3; the added gamut
+#    matrix is essentially free because it's amortized into the
+#    LUT-to-matrix-to-LUT pipeline (where the LUT encode dominates).
+#
+# 3. **sRGB U16 fused gamut at 5.84 GiB/s** — slightly faster than the
+#    U8 version at the same size. Surprising; probably LLVM vectorizing
+#    the matrix better with wider register-efficient u16 path.
+#
+# 4. **Linear F32 → sRGB U8 + gamut at 3.11 GiB/s** — the slowest of the
+#    gamut paths. Inherits the Linear→sRGB OETF cost (same asymmetry noted
+#    in T3). The matrix is nearly free; the bottleneck is the per-lane
+#    sRGB encoding.
+#
+# 5. **sRGB U8 → Linear F32 + gamut at 11.19 GiB/s** — roughly 2× faster
+#    than the reverse, same reason: forward sRGB LUT is 1-cycle, reverse
+#    is rational poly + divide.
+#
+# Action items:
+#   - Gamut itself is fine; no dedicated work needed.
+#   - The L→sRGB slowness is a T3 issue (the OETF), not a T7 issue. Any
+#    fix there (e.g., larger LUT approach in linear-srgb) would also
+#    speed up the fused gamut kernels.

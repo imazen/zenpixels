@@ -1,0 +1,32 @@
+# Tier 3 (TF-fused depth conversion) baseline
+# Date: 2026-04-23  |  Commit: fb92135  |  Hardware: AMD Ryzen 9 7950X
+# Command: cargo bench --bench bench_t3_tf_fused
+#
+# Throughput at 4096px:
+#
+#   sRGB U8 → Linear F32   24.26 GiB/s   fast (LUT-based, SIMD-dispatched)
+#   HLG U16 → Linear F32    6.16 GiB/s   scalar
+#   Linear F32 → sRGB U8    4.56 GiB/s   **5× slower than reverse**
+#   Linear F32 → HLG U16    4.44 GiB/s   scalar
+#   PQ U16 → Linear F32     2.68 GiB/s   scalar
+#   Linear F32 → PQ U16     1.39 GiB/s   worst — scalar PQ OETF
+#
+# Findings:
+#
+# 1. sRGB U8 → Linear F32 is the most common conversion in SDR pipelines
+#    (every resize that cares about linear light). Already ~25 GiB/s — good.
+#
+# 2. **sRGB asymmetry**: Linear F32 → sRGB U8 is 5× slower than the reverse.
+#    The forward direction uses a 256-entry LUT indexed by u8. The reverse
+#    has to evaluate a rational polynomial + divide per lane. Divide is ~15-20
+#    cycles on x86 and is the likely bottleneck. Worth checking whether
+#    linear-srgb has a faster OETF variant (possibly a larger LUT approach).
+#
+# 3. PQ and HLG kernels are scalar — confirms the linear-srgb#10 upstream
+#    dispatch gap also affects these fused kernels (not just Tier 4 TF-only).
+#    Worst: Linear F32 → PQ U16 at 1.39 GiB/s (17× slower than sRGB forward).
+#
+# Action items:
+#   - Investigate sRGB OETF asymmetry (linear-srgb local to us or upstream).
+#   - Benefit of linear-srgb#10 extends here: PQ/HLG fused kernels would also
+#     pick up the dispatched rites if #10 lands in a way that covers u16 paths.

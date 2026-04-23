@@ -1,0 +1,29 @@
+# zenbench results (complete)
+# git: fb92135eddb4500b9e6de92639f40c31981d6e0b
+# 2026-04-23T03:54:42Z
+#
+# Re-read this file instead of re-running the benchmark.
+# Formats:  cargo bench -- --format=llm|csv|md|json
+# Env var:  ZENBENCH_FORMAT=llm cargo bench
+# Disable:  ZENBENCH_NO_SAVE=1 cargo bench
+#
+# Fields: group | benchmark | vs_base comparison | min mean median mad | throughput | n cv rounds calls
+#
+group="sRGB U8 → Linear F32    256px" benchmark=RGB  |  vs_base=baseline  |  min=140.0ns mean=144.6ns median=143.8ns mad=2.3ns  |  throughput=24.73 GiB/s  |  n=30 cv=2.4% rounds=30 calls=6993 mean_ci=[143.5ns 145.9ns] cold=160.0ns
+group="sRGB U8 → Linear F32   4096px" benchmark=RGB  |  vs_base=baseline  |  min=2.26µs mean=2.36µs median=2.31µs mad=41.4ns  |  throughput=24.26 GiB/s  |  n=70 cv=8.4% rounds=70 calls=414 mean_ci=[2.32µs 2.41µs] cold=2.32µs
+group="sRGB U8 → Linear F32  1080p  " benchmark=RGB  |  vs_base=baseline  |  min=1.67ms mean=2.14ms median=2.09ms mad=200.98µs  |  throughput=13.53 GiB/s  |  n=180 cv=13.5% rounds=180 calls=3 mean_ci=[2.10ms 2.18ms] cold=1.54ms
+group="Linear F32 → sRGB U8    256px" benchmark=RGB  |  vs_base=baseline  |  min=745.0ns mean=770.2ns median=764.5ns mad=18.8ns  |  throughput=4.64 GiB/s  |  n=30 cv=3.0% rounds=30 calls=1300 mean_ci=[762.7ns 778.6ns] cold=771.0ns
+group="Linear F32 → sRGB U8   4096px" benchmark=RGB  |  vs_base=baseline  |  min=11.82µs mean=12.55µs median=12.23µs mad=379.5ns  |  throughput=4.56 GiB/s  |  n=70 cv=7.6% rounds=70 calls=83 mean_ci=[12.35µs 12.80µs] cold=11.95µs
+group="Linear F32 → sRGB U8  1080p  " benchmark=RGB  |  vs_base=baseline  |  min=6.30ms mean=6.75ms median=6.61ms mad=233.39µs  |  throughput=4.29 GiB/s  |  n=30 cv=5.0% rounds=30 calls=1 mean_ci=[6.64ms 6.88ms] cold=6.49ms
+group="PQ U16 → Linear F32    256px" benchmark=RGB  |  vs_base=baseline  |  min=1.50µs mean=1.56µs median=1.55µs mad=51.0ns  |  throughput=2.74 GiB/s  |  n=30 cv=4.7% rounds=30 calls=659 mean_ci=[1.54µs 1.59µs] cold=1.54µs
+group="PQ U16 → Linear F32   4096px" benchmark=RGB  |  vs_base=baseline  |  min=23.89µs mean=25.61µs median=24.88µs mad=716.5ns  |  throughput=2.68 GiB/s  |  n=110 cv=10.1% rounds=110 calls=37 mean_ci=[25.17µs 26.12µs] cold=24.38µs
+group="PQ U16 → Linear F32  1080p  " benchmark=RGB  |  vs_base=baseline  |  min=12.39ms mean=12.84ms median=12.79ms mad=281.32µs  |  throughput=2.71 GiB/s  |  n=30 cv=2.2% rounds=30 calls=1 mean_ci=[12.75ms 12.94ms] cold=13.02ms
+group="Linear F32 → PQ U16    256px" benchmark=RGB  |  vs_base=baseline  |  min=2.91µs mean=3.07µs median=2.98µs mad=66.3ns  |  throughput=1.40 GiB/s  |  n=70 cv=8.1% rounds=70 calls=286 mean_ci=[3.01µs 3.13µs] cold=2.94µs
+group="Linear F32 → PQ U16   4096px" benchmark=RGB  |  vs_base=baseline  |  min=47.49µs mean=49.46µs median=48.79µs mad=1.27µs  |  throughput=1.39 GiB/s  |  n=30 cv=4.6% rounds=30 calls=21 mean_ci=[48.72µs 50.30µs] cold=47.19µs
+group="Linear F32 → PQ U16  1080p  " benchmark=RGB  |  vs_base=baseline  |  min=24.35ms mean=25.32ms median=25.31ms mad=584.27µs  |  throughput=1.37 GiB/s  |  n=30 cv=2.4% rounds=30 calls=1 mean_ci=[25.11ms 25.54ms] cold=24.80ms
+group="HLG U16 → Linear F32    256px" benchmark=RGB  |  vs_base=baseline  |  min=669.0ns mean=697.2ns median=688.0ns mad=14.7ns  |  throughput=6.15 GiB/s  |  n=30 cv=4.2% rounds=30 calls=1412 mean_ci=[687.6ns 708.4ns] cold=701.0ns
+group="HLG U16 → Linear F32   4096px" benchmark=RGB  |  vs_base=baseline  |  min=10.59µs mean=11.15µs median=10.79µs mad=218.7ns  |  throughput=6.16 GiB/s  |  n=70 cv=8.0% rounds=70 calls=74 mean_ci=[10.96µs 11.37µs] cold=10.58µs
+group="HLG U16 → Linear F32  1080p  " benchmark=RGB  |  vs_base=baseline  |  min=5.40ms mean=5.70ms median=5.62ms mad=162.10µs  |  throughput=6.10 GiB/s  |  n=30 cv=4.6% rounds=30 calls=1 mean_ci=[5.61ms 5.80ms] cold=5.85ms
+group="Linear F32 → HLG U16    256px" benchmark=RGB  |  vs_base=baseline  |  min=916.8ns mean=955.0ns median=946.9ns mad=19.0ns  |  throughput=4.49 GiB/s  |  n=30 cv=2.9% rounds=30 calls=1049 mean_ci=[945.9ns 965.2ns] cold=952.0ns
+group="Linear F32 → HLG U16   4096px" benchmark=RGB  |  vs_base=baseline  |  min=14.79µs mean=15.47µs median=15.11µs mad=353.6ns  |  throughput=4.44 GiB/s  |  n=30 cv=5.5% rounds=30 calls=66 mean_ci=[15.19µs 15.78µs] cold=14.92µs
+group="Linear F32 → HLG U16  1080p  " benchmark=RGB  |  vs_base=baseline  |  min=7.55ms mean=7.77ms median=7.75ms mad=141.08µs  |  throughput=4.47 GiB/s  |  n=30 cv=2.3% rounds=30 calls=1 mean_ci=[7.71ms 7.84ms] cold=8.06ms

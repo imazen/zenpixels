@@ -1,0 +1,31 @@
+# Tier 6 (Oklab color model) baseline
+# Date: 2026-04-23  |  Commit: fb92135  |  Hardware: AMD Ryzen 9 7950X
+# Command: cargo bench --bench bench_t6_oklab
+#
+# Throughput at 4096px (F32 only — Oklab is defined only in F32):
+#
+#   Oklab  → Linear RGB       53.25 GiB/s
+#   Oklaba → Linear RGBA      58.91 GiB/s
+#   Linear RGB  → Oklab        1.61 GiB/s     **30× slower than reverse**
+#   Linear RGBA → Oklaba       2.14 GiB/s
+#
+# Findings:
+#
+# 1. **Asymmetry driven by cbrt.** Oklab→LinearRGB is matrix × + cube
+#    (v*v*v per lane) per value — both autovectorize cleanly. LinearRGB→Oklab
+#    needs `fast_cbrt` per lane, which uses a bit-hack + 2 Newton-Raphson
+#    iterations. The NR iterations with per-lane convergence don't
+#    autovec well.
+#
+# 2. **Not an optimization target here** per user directive: interleaved-data
+#    SIMD Oklab is wasted work; planar processing is zenfilters' domain.
+#    zenfilters scatter/gathers the interleaved data to planar f32x8,
+#    applies magetypes::cbrt_lowp, and writes back interleaved — getting
+#    full SIMD throughput that way.
+#
+# 3. **Documented for reference** so we see the gap if any consumer ever
+#    uses zenpixels-convert's scalar interleaved path directly. At 1.6 GiB/s
+#    it's the slowest non-F16 kernel we've measured — worth knowing if it
+#    ever shows up in a profile.
+#
+# No action here.

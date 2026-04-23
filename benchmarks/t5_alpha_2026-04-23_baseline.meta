@@ -1,0 +1,46 @@
+# Tier 5 (alpha premultiplication) baseline
+# Date: 2026-04-23  |  Commit: fb92135  |  Hardware: AMD Ryzen 9 7950X
+# Command: cargo bench --bench bench_t5_alpha
+#
+# Throughput at 4096px. Straight→Premul (multiply) and Premul→Straight
+# (divide), across U8/U16/F32/F16 × 2ch (GrayA) and 4ch (RGBA):
+#
+#                              Straight→Premul       Premul→Straight
+#   GrayA U8                    170.25 GiB/s            7.55 GiB/s
+#   GrayA U16                    80.37                  6.43
+#   GrayA F32                    33.52                 10.77
+#   GrayA F16                     2.20                  2.19
+#   RGBA U8                      23.01                  3.15
+#   RGBA U16                     22.24                  2.17
+#   RGBA F32                     13.74                  7.51
+#   RGBA F16                      0.99                  0.94     ← worst
+#
+# Findings:
+#
+# 1. **F16 floor: all 4 F16 paths cluster around 1-2 GiB/s**, regardless of
+#    direction or layout. Same root cause as T2: scalar f16_bits_to_f32 /
+#    f32_to_f16_bits per lane. F16C SIMD should lift these 10-15×.
+#
+# 2. **Asymmetry: premul cheaper than unpremul.** Multiply is 1 cycle, divide
+#    is 15-20 cycles on x86. Visible in every type: Straight→Premul is 2-10×
+#    faster than Premul→Straight in the same row.
+#
+# 3. **GrayA U8 Straight→Premul at 170 GiB/s** — essentially at memory
+#    bandwidth. Tight loop: (v * a + 128) / 255 per pixel, autovectorized
+#    perfectly for 2-channel u8.
+#
+# 4. **RGBA U16 and F32 2ch paths** come in at 22-33 GiB/s — the per-type
+#    autoversion refactor paid off here. RGBA F32 Straight→Premul at 13.7
+#    GiB/s uses garb's SIMD path.
+#
+# 5. Premul→Straight paths are consistently ~3× slower than their Straight→
+#    Premul counterparts except for F32 RGBA (2× — garb has a tuned unpremul
+#    variant) and F16 (no gap because f16 conversion dominates the cost).
+#
+# Action items:
+#   - F16 SIMD is the same fix here as in T2. 10-15× expected.
+#   - The U16 Premul→Straight at 2.17 GiB/s is the next-slowest non-F16
+#    case. Our autoversion kernel does `(v * 65535 + a/2) / a` — the
+#    divide-per-lane is the bottleneck. SIMD integer divide is expensive;
+#    could use reciprocal estimate + Newton refinement, or LUT for small
+#    alpha.

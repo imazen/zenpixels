@@ -1,0 +1,29 @@
+# zenbench results (complete)
+# git: fb92135eddb4500b9e6de92639f40c31981d6e0b
+# 2026-04-23T03:59:31Z
+#
+# Re-read this file instead of re-running the benchmark.
+# Formats:  cargo bench -- --format=llm|csv|md|json
+# Env var:  ZENBENCH_FORMAT=llm cargo bench
+# Disable:  ZENBENCH_NO_SAVE=1 cargo bench
+#
+# Fields: group | benchmark | vs_base comparison | min mean median mad | throughput | n cv rounds calls
+#
+group="Linear F32 gamut (P3→BT.709)    256px" benchmark=RGB  |  vs_base=baseline  |  min=251.6ns mean=268.7ns median=262.4ns mad=8.1ns  |  throughput=21.30 GiB/s  |  n=50 cv=7.3% rounds=50 calls=3861 mean_ci=[263.9ns 274.6ns] cold=271.0ns
+group="Linear F32 gamut (P3→BT.709)   4096px" benchmark=RGB  |  vs_base=baseline  |  min=4.04µs mean=4.19µs median=4.12µs mad=97.3ns  |  throughput=21.84 GiB/s  |  n=30 cv=4.6% rounds=30 calls=244 mean_ci=[4.13µs 4.26µs] cold=4.09µs
+group="Linear F32 gamut (P3→BT.709)  1080p  " benchmark=RGB  |  vs_base=baseline  |  min=2.30ms mean=2.60ms median=2.53ms mad=139.05µs  |  throughput=17.81 GiB/s  |  n=100 cv=10.0% rounds=100 calls=2 mean_ci=[2.56ms 2.66ms] cold=2.23ms
+group="Linear F32 gamut (BT.2020→BT.709)    256px" benchmark=RGB  |  vs_base=baseline  |  min=253.6ns mean=271.9ns median=264.7ns mad=7.2ns  |  throughput=21.05 GiB/s  |  n=100 cv=10.1% rounds=100 calls=3937 mean_ci=[267.1ns 277.9ns] cold=271.0ns
+group="Linear F32 gamut (BT.2020→BT.709)   4096px" benchmark=RGB  |  vs_base=baseline  |  min=4.03µs mean=4.23µs median=4.12µs mad=83.2ns  |  throughput=21.63 GiB/s  |  n=60 cv=6.9% rounds=60 calls=242 mean_ci=[4.17µs 4.31µs] cold=4.08µs
+group="Linear F32 gamut (BT.2020→BT.709)  1080p  " benchmark=RGB  |  vs_base=baseline  |  min=2.27ms mean=3.82ms median=3.45ms mad=1.36ms  |  throughput=12.12 GiB/s  |  n=200 cv=37.0% rounds=200 calls=2 mean_ci=[3.63ms 4.02ms] cold=2.29ms
+group="sRGB U8 fused gamut (P3→BT.709)    256px" benchmark=RGB  |  vs_base=baseline  |  min=334.7ns mean=361.7ns median=351.1ns mad=12.2ns  |  throughput=3.96 GiB/s  |  n=80 cv=8.8% rounds=80 calls=2881 mean_ci=[355.2ns 369.0ns] cold=360.0ns
+group="sRGB U8 fused gamut (P3→BT.709)   4096px" benchmark=RGB  |  vs_base=baseline  |  min=5.55µs mean=6.03µs median=5.78µs mad=197.9ns  |  throughput=3.79 GiB/s  |  n=190 cv=13.7% rounds=190 calls=148 mean_ci=[5.92µs 6.16µs] cold=5.65µs
+group="sRGB U8 fused gamut (P3→BT.709)  1080p  " benchmark=RGB  |  vs_base=baseline  |  min=2.71ms mean=3.06ms median=2.87ms mad=172.04µs  |  throughput=3.79 GiB/s  |  n=200 cv=16.7% rounds=200 calls=1 mean_ci=[3.00ms 3.14ms] cold=2.91ms
+group="sRGB U16 fused gamut (P3→BT.709)    256px" benchmark=RGB  |  vs_base=baseline  |  min=451.4ns mean=471.9ns median=470.3ns mad=13.5ns  |  throughput=6.06 GiB/s  |  n=30 cv=2.4% rounds=30 calls=2114 mean_ci=[467.9ns 476.0ns] cold=491.0ns
+group="sRGB U16 fused gamut (P3→BT.709)   4096px" benchmark=RGB  |  vs_base=baseline  |  min=7.22µs mean=7.83µs median=7.66µs mad=399.0ns  |  throughput=5.84 GiB/s  |  n=70 cv=8.4% rounds=70 calls=124 mean_ci=[7.69µs 8.00µs] cold=7.43µs
+group="sRGB U16 fused gamut (P3→BT.709)  1080p  " benchmark=RGB  |  vs_base=baseline  |  min=4.38ms mean=5.74ms median=5.19ms mad=670.22µs  |  throughput=4.03 GiB/s  |  n=200 cv=25.5% rounds=200 calls=1 mean_ci=[5.55ms 5.95ms] cold=5.32ms
+group="sRGB U8 → Linear F32 + gamut (P3→BT.709)    256px" benchmark=RGB  |  vs_base=baseline  |  min=309.1ns mean=330.7ns median=319.8ns mad=9.6ns  |  throughput=10.81 GiB/s  |  n=70 cv=8.2% rounds=70 calls=3194 mean_ci=[324.9ns 337.4ns] cold=330.0ns
+group="sRGB U8 → Linear F32 + gamut (P3→BT.709)   4096px" benchmark=RGB  |  vs_base=baseline  |  min=4.75µs mean=5.12µs median=4.98µs mad=232.0ns  |  throughput=11.19 GiB/s  |  n=60 cv=7.9% rounds=60 calls=207 mean_ci=[5.02µs 5.22µs] cold=4.80µs
+group="sRGB U8 → Linear F32 + gamut (P3→BT.709)  1080p  " benchmark=RGB  |  vs_base=baseline  |  min=4.30ms mean=6.14ms median=5.96ms mad=1.35ms  |  throughput=4.72 GiB/s  |  n=200 cv=21.6% rounds=200 calls=1 mean_ci=[5.96ms 6.33ms] cold=4.00ms
+group="Linear F32 → sRGB U8 + gamut (P3→BT.709)    256px" benchmark=RGB  |  vs_base=baseline  |  min=1.10µs mean=1.21µs median=1.14µs mad=26.9ns  |  throughput=2.96 GiB/s  |  n=200 cv=19.8% rounds=200 calls=878 mean_ci=[1.18µs 1.24µs] cold=1.15µs
+group="Linear F32 → sRGB U8 + gamut (P3→BT.709)   4096px" benchmark=RGB  |  vs_base=baseline  |  min=17.18µs mean=18.40µs median=17.85µs mad=615.1ns  |  throughput=3.11 GiB/s  |  n=100 cv=9.6% rounds=100 calls=29 mean_ci=[18.10µs 18.77µs] cold=30.64µs
+group="Linear F32 → sRGB U8 + gamut (P3→BT.709)  1080p  " benchmark=RGB  |  vs_base=baseline  |  min=9.09ms mean=9.67ms median=9.58ms mad=569.23µs  |  throughput=3.00 GiB/s  |  n=30 cv=5.5% rounds=30 calls=1 mean_ci=[9.49ms 9.87ms] cold=9.33ms

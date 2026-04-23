@@ -1,0 +1,23 @@
+# zenbench results (complete)
+# git: fb92135eddb4500b9e6de92639f40c31981d6e0b
+# 2026-04-23T03:57:08Z
+#
+# Re-read this file instead of re-running the benchmark.
+# Formats:  cargo bench -- --format=llm|csv|md|json
+# Env var:  ZENBENCH_FORMAT=llm cargo bench
+# Disable:  ZENBENCH_NO_SAVE=1 cargo bench
+#
+# Fields: group | benchmark | vs_base comparison | min mean median mad | throughput | n cv rounds calls
+#
+group="Linear RGB  → Oklab    256px" benchmark=F32  |  vs_base=baseline  |  min=3.30µs mean=3.52µs median=3.50µs mad=157.4ns  |  throughput=1.62 GiB/s  |  n=30 cv=5.3% rounds=30 calls=290 mean_ci=[3.46µs 3.60µs] cold=3.43µs
+group="Linear RGB  → Oklab   4096px" benchmark=F32  |  vs_base=baseline  |  min=54.63µs mean=56.93µs median=56.43µs mad=1.54µs  |  throughput=1.61 GiB/s  |  n=30 cv=2.3% rounds=30 calls=90 mean_ci=[56.48µs 57.39µs] cold=54.99µs
+group="Linear RGB  → Oklab  1080p  " benchmark=F32  |  vs_base=baseline  |  min=28.92ms mean=30.16ms median=30.12ms mad=632.56µs  |  throughput=1.54 GiB/s  |  n=30 cv=2.3% rounds=30 calls=1 mean_ci=[29.93ms 30.41ms] cold=31.51ms
+group="Oklab       → Linear RGB    256px" benchmark=F32  |  vs_base=baseline  |  min=106.8ns mean=114.9ns median=110.8ns mad=2.2ns  |  throughput=49.80 GiB/s  |  n=70 cv=8.1% rounds=70 calls=9174 mean_ci=[112.8ns 117.2ns] cold=130.0ns
+group="Oklab       → Linear RGB   4096px" benchmark=F32  |  vs_base=baseline  |  min=1.64µs mean=1.72µs median=1.68µs mad=34.4ns  |  throughput=53.25 GiB/s  |  n=50 cv=6.9% rounds=50 calls=611 mean_ci=[1.69µs 1.75µs] cold=1.61µs
+group="Oklab       → Linear RGB  1080p  " benchmark=F32  |  vs_base=baseline  |  min=1.92ms mean=2.43ms median=2.32ms mad=213.18µs  |  throughput=19.09 GiB/s  |  n=190 cv=13.9% rounds=190 calls=2 mean_ci=[2.38ms 2.48ms] cold=1.56ms
+group="Linear RGBA → Oklaba    256px" benchmark=F32  |  vs_base=baseline  |  min=3.39µs mean=3.50µs median=3.45µs mad=64.8ns  |  throughput=2.18 GiB/s  |  n=40 cv=6.2% rounds=40 calls=207 mean_ci=[3.45µs 3.58µs] cold=4.72µs
+group="Linear RGBA → Oklaba   4096px" benchmark=F32  |  vs_base=baseline  |  min=53.99µs mean=57.08µs median=55.96µs mad=1.39µs  |  throughput=2.14 GiB/s  |  n=40 cv=5.6% rounds=40 calls=89 mean_ci=[56.18µs 58.16µs] cold=54.41µs
+group="Linear RGBA → Oklaba  1080p  " benchmark=F32  |  vs_base=baseline  |  min=27.96ms mean=29.01ms median=28.74ms mad=709.27µs  |  throughput=2.13 GiB/s  |  n=30 cv=3.2% rounds=30 calls=1 mean_ci=[28.70ms 29.35ms] cold=29.55ms
+group="Oklaba      → Linear RGBA    256px" benchmark=F32  |  vs_base=baseline  |  min=129.5ns mean=136.4ns median=134.4ns mad=2.1ns  |  throughput=55.93 GiB/s  |  n=30 cv=4.2% rounds=30 calls=7246 mean_ci=[134.5ns 138.6ns] cold=151.0ns
+group="Oklaba      → Linear RGBA   4096px" benchmark=F32  |  vs_base=baseline  |  min=1.97µs mean=2.07µs median=2.01µs mad=26.7ns  |  throughput=58.91 GiB/s  |  n=130 cv=11.5% rounds=130 calls=500 mean_ci=[2.04µs 2.12µs] cold=1.96µs
+group="Oklaba      → Linear RGBA  1080p  " benchmark=F32  |  vs_base=baseline  |  min=2.61ms mean=3.14ms median=2.99ms mad=239.60µs  |  throughput=19.71 GiB/s  |  n=200 cv=15.3% rounds=200 calls=1 mean_ci=[3.07ms 3.21ms] cold=2.85ms

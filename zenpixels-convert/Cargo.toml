@@ -64,8 +64,33 @@ path = "benches/bench_t1_layout.rs"
 harness = false
 
 [[bench]]
+name = "bench_t2_depth"
+path = "benches/bench_t2_depth.rs"
+harness = false
+
+[[bench]]
+name = "bench_t3_tf_fused"
+path = "benches/bench_t3_tf_fused.rs"
+harness = false
+
+[[bench]]
 name = "bench_t4_tf_f32"
 path = "benches/bench_t4_tf_f32.rs"
+harness = false
+
+[[bench]]
+name = "bench_t5_alpha"
+path = "benches/bench_t5_alpha.rs"
+harness = false
+
+[[bench]]
+name = "bench_t6_oklab"
+path = "benches/bench_t6_oklab.rs"
+harness = false
+
+[[bench]]
+name = "bench_t7_gamut"
+path = "benches/bench_t7_gamut.rs"
 harness = false
 
 # TODO: restore when ZenCmsLite is public

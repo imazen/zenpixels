@@ -1,0 +1,47 @@
+# zenbench results (complete)
+# git: fb92135eddb4500b9e6de92639f40c31981d6e0b
+# 2026-04-23T03:53:37Z
+#
+# Re-read this file instead of re-running the benchmark.
+# Formats:  cargo bench -- --format=llm|csv|md|json
+# Env var:  ZENBENCH_FORMAT=llm cargo bench
+# Disable:  ZENBENCH_NO_SAVE=1 cargo bench
+#
+# Fields: group | benchmark | vs_base comparison | min mean median mad | throughput | n cv rounds calls
+#
+group="depth U8→U16    256px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=21.3ns mean=22.4ns median=21.9ns mad=0.6ns  |  throughput=95.86 GiB/s  |  n=30 cv=5.3% rounds=30 calls=47619 mean_ci=[22.0ns 22.8ns] cold=40.0ns
+group="depth U8→U16   4096px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=290.4ns mean=304.3ns median=300.7ns mad=8.6ns  |  throughput=112.82 GiB/s  |  n=30 cv=3.7% rounds=30 calls=3067 mean_ci=[300.5ns 308.4ns] cold=310.0ns
+group="depth U8→U16  1080p  " benchmark="Linear RGB"  |  vs_base=baseline  |  min=213.87µs mean=309.58µs median=286.28µs mad=45.61µs  |  throughput=56.14 GiB/s  |  n=200 cv=26.8% rounds=200 calls=23 mean_ci=[298.59µs 321.49µs] cold=202.06µs
+group="depth U16→U8    256px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=59.1ns mean=64.3ns median=62.9ns mad=1.5ns  |  throughput=33.39 GiB/s  |  n=70 cv=7.6% rounds=70 calls=16393 mean_ci=[63.3ns 65.5ns] cold=80.0ns
+group="depth U16→U8   4096px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=927.9ns mean=998.2ns median=974.5ns mad=20.4ns  |  throughput=34.39 GiB/s  |  n=60 cv=6.9% rounds=60 calls=1013 mean_ci=[982.3ns 1.02µs] cold=981.0ns
+group="depth U16→U8  1080p  " benchmark="Linear RGB"  |  vs_base=baseline  |  min=545.09µs mean=631.88µs median=614.76µs mad=46.65µs  |  throughput=27.51 GiB/s  |  n=160 cv=12.6% rounds=160 calls=9 mean_ci=[620.22µs 644.68µs] cold=520.93µs
+group="depth U8→F32    256px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=37.7ns mean=41.1ns median=40.1ns mad=1.1ns  |  throughput=86.99 GiB/s  |  n=40 cv=6.3% rounds=40 calls=25641 mean_ci=[40.4ns 42.0ns] cold=60.0ns
+group="depth U8→F32   4096px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=550.5ns mean=601.0ns median=581.6ns mad=13.4ns  |  throughput=95.21 GiB/s  |  n=90 cv=9.5% rounds=90 calls=1697 mean_ci=[590.8ns 613.6ns] cold=591.0ns
+group="depth U8→F32  1080p  " benchmark="Linear RGB"  |  vs_base=baseline  |  min=890.38µs mean=1.16ms median=1.11ms mad=135.13µs  |  throughput=24.99 GiB/s  |  n=200 cv=15.7% rounds=200 calls=7 mean_ci=[1.13ms 1.18ms] cold=590.25µs
+group="depth F32→U8    256px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=65.2ns mean=72.3ns median=69.8ns mad=2.7ns  |  throughput=49.49 GiB/s  |  n=110 cv=10.4% rounds=110 calls=14492 mean_ci=[70.9ns 73.7ns] cold=90.0ns
+group="depth F32→U8   4096px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=1.02µs mean=1.08µs median=1.07µs mad=24.6ns  |  throughput=52.99 GiB/s  |  n=30 cv=5.2% rounds=30 calls=931 mean_ci=[1.06µs 1.10µs] cold=1.09µs
+group="depth F32→U8  1080p  " benchmark="Linear RGB"  |  vs_base=baseline  |  min=973.91µs mean=1.19ms median=1.18ms mad=84.11µs  |  throughput=24.28 GiB/s  |  n=110 cv=10.7% rounds=110 calls=3 mean_ci=[1.17ms 1.22ms] cold=1.64ms
+group="depth U16→F32    256px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=47.8ns mean=52.5ns median=50.7ns mad=1.5ns  |  throughput=81.80 GiB/s  |  n=90 cv=9.6% rounds=90 calls=18867 mean_ci=[51.5ns 53.6ns] cold=70.0ns
+group="depth U16→F32   4096px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=696.8ns mean=774.3ns median=736.7ns mad=21.7ns  |  throughput=88.68 GiB/s  |  n=120 cv=10.5% rounds=120 calls=1353 mean_ci=[760.8ns 789.1ns] cold=762.0ns
+group="depth U16→F32  1080p  " benchmark="Linear RGB"  |  vs_base=baseline  |  min=1.55ms mean=1.67ms median=1.66ms mad=58.89µs  |  throughput=20.76 GiB/s  |  n=30 cv=4.6% rounds=30 calls=2 mean_ci=[1.65ms 1.70ms] cold=2.03ms
+group="depth F32→U16    256px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=65.0ns mean=70.9ns median=69.2ns mad=2.4ns  |  throughput=60.56 GiB/s  |  n=40 cv=6.3% rounds=40 calls=14705 mean_ci=[69.6ns 72.4ns] cold=81.0ns
+group="depth F32→U16   4096px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=972.6ns mean=1.07µs median=1.03µs mad=24.4ns  |  throughput=64.33 GiB/s  |  n=130 cv=11.2% rounds=130 calls=980 mean_ci=[1.05µs 1.09µs] cold=1.02µs
+group="depth F32→U16  1080p  " benchmark="Linear RGB"  |  vs_base=baseline  |  min=1.01ms mean=1.36ms median=1.32ms mad=144.97µs  |  throughput=25.58 GiB/s  |  n=200 cv=16.1% rounds=200 calls=5 mean_ci=[1.33ms 1.39ms] cold=1.06ms
+group="depth F16→F32    256px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=582.5ns mean=639.1ns median=609.8ns mad=24.9ns  |  throughput=6.71 GiB/s  |  n=120 cv=10.7% rounds=120 calls=1033 mean_ci=[627.6ns 652.1ns] cold=612.0ns
+group="depth F16→F32   4096px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=9.13µs mean=9.68µs median=9.57µs mad=151.7ns  |  throughput=7.09 GiB/s  |  n=30 cv=3.6% rounds=30 calls=103 mean_ci=[9.57µs 9.81µs] cold=9.53µs
+group="depth F16→F32  1080p  " benchmark="Linear RGB"  |  vs_base=baseline  |  min=4.86ms mean=5.18ms median=5.13ms mad=253.75µs  |  throughput=6.71 GiB/s  |  n=30 cv=5.1% rounds=30 calls=1 mean_ci=[5.09ms 5.28ms] cold=4.92ms
+group="depth F32→F16    256px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=1.23µs mean=1.32µs median=1.29µs mad=28.0ns  |  throughput=3.25 GiB/s  |  n=40 cv=5.7% rounds=40 calls=779 mean_ci=[1.30µs 1.35µs] cold=1.27µs
+group="depth F32→F16   4096px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=20.14µs mean=21.16µs median=20.48µs mad=223.9ns  |  throughput=3.25 GiB/s  |  n=50 cv=6.8% rounds=50 calls=49 mean_ci=[20.80µs 21.58µs] cold=20.23µs
+group="depth F32→F16  1080p  " benchmark="Linear RGB"  |  vs_base=baseline  |  min=10.42ms mean=10.75ms median=10.64ms mad=259.50µs  |  throughput=3.23 GiB/s  |  n=30 cv=2.9% rounds=30 calls=1 mean_ci=[10.64ms 10.87ms] cold=10.56ms
+group="depth U8→F16    256px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=1.43µs mean=1.50µs median=1.49µs mad=23.2ns  |  throughput=1.43 GiB/s  |  n=30 cv=3.3% rounds=30 calls=667 mean_ci=[1.48µs 1.52µs] cold=1.49µs
+group="depth U8→F16   4096px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=23.14µs mean=24.33µs median=23.72µs mad=487.7ns  |  throughput=1.41 GiB/s  |  n=60 cv=7.6% rounds=60 calls=42 mean_ci=[23.92µs 24.84µs] cold=23.31µs
+group="depth U8→F16  1080p  " benchmark="Linear RGB"  |  vs_base=baseline  |  min=13.19ms mean=13.79ms median=13.71ms mad=424.89µs  |  throughput=1.26 GiB/s  |  n=30 cv=3.4% rounds=30 calls=1 mean_ci=[13.64ms 13.96ms] cold=13.23ms
+group="depth F16→U8    256px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=665.7ns mean=715.4ns median=689.1ns mad=20.2ns  |  throughput=3.00 GiB/s  |  n=90 cv=8.9% rounds=90 calls=1430 mean_ci=[703.2ns 729.3ns] cold=702.0ns
+group="depth F16→U8   4096px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=10.42µs mean=11.07µs median=10.71µs mad=219.9ns  |  throughput=3.10 GiB/s  |  n=60 cv=7.8% rounds=60 calls=91 mean_ci=[10.86µs 11.30µs] cold=10.60µs
+group="depth F16→U8  1080p  " benchmark="Linear RGB"  |  vs_base=baseline  |  min=6.04ms mean=6.45ms median=6.34ms mad=213.34µs  |  throughput=2.69 GiB/s  |  n=30 cv=5.1% rounds=30 calls=1 mean_ci=[6.34ms 6.57ms] cold=6.69ms
+group="depth U16→F16    256px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=1.45µs mean=1.51µs median=1.49µs mad=23.7ns  |  throughput=1.90 GiB/s  |  n=30 cv=3.9% rounds=30 calls=684 mean_ci=[1.49µs 1.53µs] cold=1.67µs
+group="depth U16→F16   4096px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=23.08µs mean=24.59µs median=23.87µs mad=729.9ns  |  throughput=1.86 GiB/s  |  n=80 cv=9.1% rounds=80 calls=42 mean_ci=[24.13µs 25.12µs] cold=23.25µs
+group="depth U16→F16  1080p  " benchmark="Linear RGB"  |  vs_base=baseline  |  min=12.97ms mean=13.69ms median=13.52ms mad=311.38µs  |  throughput=1.69 GiB/s  |  n=40 cv=5.9% rounds=40 calls=1 mean_ci=[13.48ms 13.97ms] cold=13.53ms
+group="depth F16→U16    256px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=668.9ns mean=705.1ns median=693.8ns mad=32.5ns  |  throughput=4.06 GiB/s  |  n=30 cv=5.1% rounds=30 calls=1381 mean_ci=[692.9ns 718.2ns] cold=711.0ns
+group="depth F16→U16   4096px" benchmark="Linear RGB"  |  vs_base=baseline  |  min=10.39µs mean=11.19µs median=10.80µs mad=339.3ns  |  throughput=4.09 GiB/s  |  n=80 cv=9.1% rounds=80 calls=84 mean_ci=[10.98µs 11.42µs] cold=10.62µs
+group="depth F16→U16  1080p  " benchmark="Linear RGB"  |  vs_base=baseline  |  min=6.31ms mean=6.61ms median=6.56ms mad=169.36µs  |  throughput=3.50 GiB/s  |  n=30 cv=4.0% rounds=30 calls=1 mean_ci=[6.53ms 6.72ms] cold=6.81ms
