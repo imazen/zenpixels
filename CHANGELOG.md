@@ -2,6 +2,63 @@
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+
+<!-- Breaking changes that will ship together in the next major (or minor for
+     0.x) release. Add items here as you discover them. Do NOT ship these
+     piecemeal — batch them. -->
+
+- (none currently queued)
+
+### zenpixels — added
+
+- **F16 (IEEE 754 half-precision) pixel format variants and presets.**
+  `PixelFormat::RgbF16`, `RgbaF16`, `GrayF16`, `GrayAF16` on the
+  `#[non_exhaustive]` enum, plus matching `pub const` presets: `RGBF16`,
+  `RGBAF16`, `GRAYF16`, `GRAYAF16` (Unknown TF) and the Linear-TF variants
+  `RGBF16_LINEAR`, `RGBAF16_LINEAR`, `GRAYF16_LINEAR`, `GRAYAF16_LINEAR`.
+  Descriptor-level only — no new `Pixel` trait impls, no `half` crate
+  dependency in zenpixels core. Typed `impl Pixel for Rgb<f16>` etc. will
+  land when Rust stable ships the native `f16` primitive (tracked in #23).
+  Non-breaking: new variants on `#[non_exhaustive]`, new presets are
+  additive. (#23)
+
+### zenpixels-convert — added
+
+- **F16 conversion kernels.** `ConvertStep::F16ToF32` / `F32ToF16`
+  (private enum variants) with scalar `half::f16` implementations. Planner
+  routes F16 ↔ F32, F16 ↔ U8, F16 ↔ U16, and same-F16-TF-change paths
+  through F32 linear intermediate — never passes F16 bytes through
+  unchanged on TF changes. F16 arms added to all layout/swizzle kernels
+  (`swizzle_bgra_rgba`, `rgb_to_bgra`, `add_alpha`, `drop_alpha`,
+  `matte_composite`, `gray_to_rgb`, `gray_to_rgba`, `gray_alpha_to_rgba`,
+  `gray_alpha_to_rgb`, `gray_to_gray_alpha`, `gray_alpha_to_gray`,
+  `straight_to_premul`, `premul_to_straight`). SIMD dispatch for
+  F16C / AVX-512 FP16 / ARMv8.2 FP16 is a deferred optimization.
+  `half = "2.7.1"` promoted from dev-dep to dep; feature-flag-free per
+  the middleman-tax analysis in #23. 5 round-trip tests in
+  `tests/roundtrip.rs`. (#23)
+
+### zenpixels-convert — fixed
+
+- **Depth-reduction policy now catches U16 → F16.** Previous gate used
+  `ChannelType::byte_size()`, which misses U16 → F16 since both are 2
+  bytes — but U16 carries 16 bits of precision in [0,1] vs F16's ~11,
+  so U16 → F16 is a precision reduction. Switched to
+  `channel_bits()` (already used by the cost model in `negotiate.rs`)
+  so `DepthPolicy::Forbid` correctly rejects U16 → F16 and U16 → F16
+  inside RGBA → RGBA plans. No API change.
+
+### zenpixels-convert — known limitations (not new, surfaced during F16 work)
+
+- **`MatteComposite` assumes linear pixel data but the planner doesn't
+  always guarantee that.** For `F32 sRGB RGBA → F32 sRGB RGB` (or the new
+  F16 equivalent) with `AlphaPolicy::CompositeOnto`, the plan is
+  `[MatteComposite]` with no prior linearize step — the kernel blends
+  sRGB-encoded pixel data against a linearized matte, producing
+  mathematically wrong colors. Pre-existing issue inherited by the new
+  F16 arm; tracked separately (not fixed in this release).
+
 ## [0.2.10] - 2026-04-20
 
 ### zenpixels — docs

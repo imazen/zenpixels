@@ -175,7 +175,9 @@ impl RowConverter {
                 if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
                     return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
                 }
-                let reduces_depth = from.channel_type().byte_size() > to.channel_type().byte_size();
+                // Precision bits, not byte size — see convert.rs for rationale.
+                let reduces_depth = crate::negotiate::channel_bits(from.channel_type())
+                    > crate::negotiate::channel_bits(to.channel_type());
                 if reduces_depth && options.depth_policy == DepthPolicy::Forbid {
                     return Err(whereat::at!(ConvertError::DepthReductionForbidden));
                 }
