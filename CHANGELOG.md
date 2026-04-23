@@ -12,6 +12,15 @@
 
 ### zenpixels — added
 
+- **`LumaCoefficients::DisplayP3` variant.** Adds the DisplayP3 luma recipe
+  (`0.2289746R + 0.6917385G + 0.0792869B`), derived from the DCI-P3 primaries
+  with a D65 whitepoint (the middle row of the DisplayP3→XYZ matrix).
+  Unlike BT.709/BT.2020 there is no ITU recommendation prescribing these —
+  they match what libultrahdr (`gainmapmath.cpp:162`) and other HDR tooling
+  use for RGB→luma on DisplayP3 content. Verified against zenpixels' own
+  `rgb_to_xyz(DisplayP3)` Y row within 1 f32 ULP. Non-breaking: new variant
+  on `#[non_exhaustive]` enum, new arm on `coefficients()`.
+
 - **`LumaCoefficients::Bt2020` variant and `coefficients()` accessor.**
   Adds the UHDTV BT.2020 luma recipe (`0.2627R + 0.6780G + 0.0593B`, same
   primaries as BT.2100 — the HDR case shares this variant). The new

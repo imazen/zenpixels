@@ -63,6 +63,15 @@ pub enum LumaCoefficients {
     /// BT.2100 (HDR) uses the same primaries as BT.2020, so this is the
     /// variant to use for both SDR BT.2020 and HDR BT.2100 content.
     Bt2020,
+    /// Display P3 (DCI-P3 primaries + D65): `0.2289746R + 0.6917385G + 0.0792869B`
+    /// (Apple wide-gamut consumer displays).
+    ///
+    /// Unlike BT.709 and BT.2020, no ITU recommendation prescribes these
+    /// weights — they are derived as the middle (Y) row of the
+    /// DisplayP3→XYZ matrix from the P3 primaries and D65 white point, and
+    /// match what libultrahdr and other HDR tooling use in practice for
+    /// RGB→luma on DisplayP3 content.
+    DisplayP3,
 }
 
 impl LumaCoefficients {
@@ -71,6 +80,7 @@ impl LumaCoefficients {
     /// - [`Bt709`](Self::Bt709): `[0.2126, 0.7152, 0.0722]`
     /// - [`Bt601`](Self::Bt601): `[0.299, 0.587, 0.114]`
     /// - [`Bt2020`](Self::Bt2020): `[0.2627, 0.6780, 0.0593]` (same as BT.2100)
+    /// - [`DisplayP3`](Self::DisplayP3): `[0.2289746, 0.6917385, 0.0792869]`
     ///
     /// The three weights always sum to exactly 1.0 in IEEE 754 double
     /// precision, but may sum to 1.0 ± 1 ULP in `f32`. Callers that need
@@ -82,6 +92,7 @@ impl LumaCoefficients {
             Self::Bt709 => [0.2126, 0.7152, 0.0722],
             Self::Bt601 => [0.299, 0.587, 0.114],
             Self::Bt2020 => [0.2627, 0.6780, 0.0593],
+            Self::DisplayP3 => [0.2289746, 0.6917385, 0.0792869],
         }
     }
 }
@@ -260,6 +271,9 @@ mod tests {
         assert_ne!(LumaCoefficients::Bt709, LumaCoefficients::Bt601);
         assert_ne!(LumaCoefficients::Bt709, LumaCoefficients::Bt2020);
         assert_ne!(LumaCoefficients::Bt601, LumaCoefficients::Bt2020);
+        assert_ne!(LumaCoefficients::Bt709, LumaCoefficients::DisplayP3);
+        assert_ne!(LumaCoefficients::Bt601, LumaCoefficients::DisplayP3);
+        assert_ne!(LumaCoefficients::Bt2020, LumaCoefficients::DisplayP3);
         let a = LumaCoefficients::Bt709;
         let b = a;
         assert_eq!(a, b);
@@ -281,6 +295,10 @@ mod tests {
             LumaCoefficients::Bt2020.coefficients(),
             [0.2627_f32, 0.6780, 0.0593],
         );
+        assert_eq!(
+            LumaCoefficients::DisplayP3.coefficients(),
+            [0.2289746_f32, 0.6917385, 0.0792869],
+        );
     }
 
     #[test]
@@ -293,6 +311,7 @@ mod tests {
             LumaCoefficients::Bt709,
             LumaCoefficients::Bt601,
             LumaCoefficients::Bt2020,
+            LumaCoefficients::DisplayP3,
         ] {
             let [r, g, b] = luma.coefficients();
             let sum = r + g + b;
