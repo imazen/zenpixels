@@ -17,10 +17,6 @@ include = [
 
 [features]
 default = ["std"]
-# Enables AVX-512 tier in archmage's incant! dispatch. Off by default;
-# the presence of the feature name in Cargo.toml is what silences
-# unexpected_cfgs warnings from the macro.
-avx512 = []
 std = ["zenpixels/std", "linear-srgb/std", "garb/std"]
 rgb = ["zenpixels/rgb", "dep:rgb"]
 imgref = ["zenpixels/imgref", "rgb"]

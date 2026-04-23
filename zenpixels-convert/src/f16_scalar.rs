@@ -220,7 +220,14 @@ pub(crate) fn f16_bits_to_f32_slice(src: &[u16], dst: &mut [f32]) {
     // The default incant! list also includes _neon and _wasm128, which we
     // haven't implemented — NEON FP16 intrinsics require Rust 1.94 (>MSRV
     // 1.89), so on aarch64 we fall back to scalar.
-    archmage::incant!(cvt_f16_to_f32(src, dst), [v3, scalar])
+    //
+    // The macro emits a `cfg(feature = "avx512")` check we don't participate
+    // in (opting into that feature would cascade V4-tier requirements into
+    // unrelated fast_gamut.rs incant! sites that don't define `_v4` variants).
+    #[allow(unexpected_cfgs)]
+    {
+        archmage::incant!(cvt_f16_to_f32(src, dst), [v3, scalar])
+    }
 }
 
 /// Convert a slice of f32 values into a slice of f16 bits with
@@ -232,7 +239,10 @@ pub(crate) fn f32_to_f16_bits_slice(src: &[f32], dst: &mut [u16]) {
         dst.len(),
         "f32_to_f16_bits_slice length mismatch"
     );
-    archmage::incant!(cvt_f32_to_f16(src, dst), [v3, scalar])
+    #[allow(unexpected_cfgs)]
+    {
+        archmage::incant!(cvt_f32_to_f16(src, dst), [v3, scalar])
+    }
 }
 
 // -- Scalar tier -------------------------------------------------------------

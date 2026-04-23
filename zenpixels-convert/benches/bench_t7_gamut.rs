@@ -27,6 +27,7 @@ fn make_row(width: usize, ct: ChannelType, channels: usize) -> Vec<u8> {
     (0..bytes).map(|i| (i * 31 % 251) as u8).collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn bench_primaries_pair(
     suite: &mut Suite,
     name: &str,
