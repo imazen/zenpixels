@@ -550,39 +550,235 @@ fn drop_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
     }
 }
 
-/// Apply the F32 EOTF for a given transfer function. For Linear, returns
-/// the value unchanged. For Unknown, returns the value unchanged (we don't
-/// know the correct math; preserve bytes matches the rest of the pipeline's
-/// Unknown-TF convention).
-///
-/// TODO(perf): called 3x per pixel from inside the MatteComposite loop; the
-/// per-pixel TF match prevents `#[autoversion]` SIMD. Follow-up: hoist TF
-/// dispatch to the row level with one monomorphized `#[autoversion]` kernel
-/// per (ChannelType, TransferFunction) combo the planner actually emits.
-#[inline]
-fn f32_eotf(v: f32, tf: TransferFunction) -> f32 {
-    match tf {
-        TransferFunction::Linear | TransferFunction::Unknown => v,
-        TransferFunction::Srgb => linear_srgb::tf::srgb_to_linear(v),
-        TransferFunction::Bt709 => linear_srgb::tf::bt709_to_linear(v),
-        TransferFunction::Pq => linear_srgb::tf::pq_to_linear(v),
-        TransferFunction::Hlg => linear_srgb::tf::hlg_to_linear(v),
-        TransferFunction::Gamma22 => linear_srgb::default::gamma_to_linear(v, ADOBE_GAMMA),
-        _ => v,
+// ----------------------------------------------------------------------------
+// Transfer-function trait for const-generic matte_composite dispatch.
+//
+// Each impl is a unit struct whose static methods inline into the caller
+// at monomorphization. Calling `T::eotf(v)` is indistinguishable from
+// calling the underlying TF function directly once LLVM inlines — so the
+// generic `matte_composite_*_rgba<T>` body, once monomorphized per TF,
+// becomes a pure f32 arithmetic loop that autovectorizes cleanly.
+// ----------------------------------------------------------------------------
+
+trait MatteTf {
+    fn eotf(v: f32) -> f32;
+    fn oetf(v: f32) -> f32;
+}
+
+struct LinearTf;
+impl MatteTf for LinearTf {
+    #[inline(always)]
+    fn eotf(v: f32) -> f32 {
+        v
+    }
+    #[inline(always)]
+    fn oetf(v: f32) -> f32 {
+        v
     }
 }
 
-/// Apply the F32 OETF (inverse EOTF) for a given transfer function.
+struct SrgbTf;
+impl MatteTf for SrgbTf {
+    #[inline(always)]
+    fn eotf(v: f32) -> f32 {
+        linear_srgb::tf::srgb_to_linear(v)
+    }
+    #[inline(always)]
+    fn oetf(v: f32) -> f32 {
+        linear_srgb::tf::linear_to_srgb(v)
+    }
+}
+
+struct Bt709Tf;
+impl MatteTf for Bt709Tf {
+    #[inline(always)]
+    fn eotf(v: f32) -> f32 {
+        linear_srgb::tf::bt709_to_linear(v)
+    }
+    #[inline(always)]
+    fn oetf(v: f32) -> f32 {
+        linear_srgb::tf::linear_to_bt709(v)
+    }
+}
+
+struct PqTf;
+impl MatteTf for PqTf {
+    #[inline(always)]
+    fn eotf(v: f32) -> f32 {
+        linear_srgb::tf::pq_to_linear(v)
+    }
+    #[inline(always)]
+    fn oetf(v: f32) -> f32 {
+        linear_srgb::tf::linear_to_pq(v)
+    }
+}
+
+struct HlgTf;
+impl MatteTf for HlgTf {
+    #[inline(always)]
+    fn eotf(v: f32) -> f32 {
+        linear_srgb::tf::hlg_to_linear(v)
+    }
+    #[inline(always)]
+    fn oetf(v: f32) -> f32 {
+        linear_srgb::tf::linear_to_hlg(v)
+    }
+}
+
+struct Gamma22Tf;
+impl MatteTf for Gamma22Tf {
+    #[inline(always)]
+    fn eotf(v: f32) -> f32 {
+        linear_srgb::default::gamma_to_linear(v, ADOBE_GAMMA)
+    }
+    #[inline(always)]
+    fn oetf(v: f32) -> f32 {
+        linear_srgb::default::linear_to_gamma(v, ADOBE_GAMMA)
+    }
+}
+
+/// F32 RGBA → RGB matte composite, monomorphized per TF. Alpha stays
+/// linear; RGB is EOTF'd to linear, blended with the pre-linearized matte,
+/// then OETF'd back to the source TF.
 #[inline]
-fn f32_oetf(v: f32, tf: TransferFunction) -> f32 {
+fn matte_composite_f32_rgba<T: MatteTf>(
+    src: &[f32],
+    dst: &mut [f32],
+    width: usize,
+    mr_lin: f32,
+    mg_lin: f32,
+    mb_lin: f32,
+) {
+    for i in 0..width {
+        let s: &[f32; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
+        let d: &mut [f32; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
+        let a = s[3].clamp(0.0, 1.0);
+        let inv_a = 1.0 - a;
+        let r_lin = T::eotf(s[0]);
+        let g_lin = T::eotf(s[1]);
+        let b_lin = T::eotf(s[2]);
+        d[0] = T::oetf(r_lin * a + mr_lin * inv_a);
+        d[1] = T::oetf(g_lin * a + mg_lin * inv_a);
+        d[2] = T::oetf(b_lin * a + mb_lin * inv_a);
+    }
+}
+
+/// F16 RGBA → RGB matte composite, monomorphized per TF. Chunked 3-pass:
+/// batch F16C unpack → generic blend → batch F16C pack.
+#[inline]
+fn matte_composite_f16_rgba<T: MatteTf>(
+    src: &[u16],
+    dst: &mut [u16],
+    width: usize,
+    mr_lin: f32,
+    mg_lin: f32,
+    mb_lin: f32,
+) {
+    const CHUNK_PIXELS: usize = 8;
+    const SRC_LANES: usize = CHUNK_PIXELS * 4;
+    const DST_LANES: usize = CHUNK_PIXELS * 3;
+
+    let mut scratch_src = [0.0f32; SRC_LANES];
+    let mut scratch_dst = [0.0f32; DST_LANES];
+
+    let whole = width / CHUNK_PIXELS;
+    for c in 0..whole {
+        let src_start = c * SRC_LANES;
+        let dst_start = c * DST_LANES;
+        f16_bits_to_f32_slice(&src[src_start..src_start + SRC_LANES], &mut scratch_src);
+        matte_composite_f32_rgba::<T>(
+            &scratch_src,
+            &mut scratch_dst,
+            CHUNK_PIXELS,
+            mr_lin,
+            mg_lin,
+            mb_lin,
+        );
+        f32_to_f16_bits_slice(&scratch_dst, &mut dst[dst_start..dst_start + DST_LANES]);
+    }
+
+    // Tail: per-pixel scalar for any remainder.
+    let tail_start = whole * CHUNK_PIXELS;
+    for i in tail_start..width {
+        let r = f16_bits_to_f32(src[i * 4]);
+        let g = f16_bits_to_f32(src[i * 4 + 1]);
+        let b = f16_bits_to_f32(src[i * 4 + 2]);
+        let a = f16_bits_to_f32(src[i * 4 + 3]).clamp(0.0, 1.0);
+        let inv_a = 1.0 - a;
+        let r_lin = T::eotf(r);
+        let g_lin = T::eotf(g);
+        let b_lin = T::eotf(b);
+        dst[i * 3] = f32_to_f16_bits(T::oetf(r_lin * a + mr_lin * inv_a));
+        dst[i * 3 + 1] = f32_to_f16_bits(T::oetf(g_lin * a + mg_lin * inv_a));
+        dst[i * 3 + 2] = f32_to_f16_bits(T::oetf(b_lin * a + mb_lin * inv_a));
+    }
+}
+
+/// Dispatch table: pick the TF monomorphization at row entry.
+fn dispatch_matte_f32_rgba(
+    src: &[f32],
+    dst: &mut [f32],
+    width: usize,
+    tf: TransferFunction,
+    mr_lin: f32,
+    mg_lin: f32,
+    mb_lin: f32,
+) {
     match tf {
-        TransferFunction::Linear | TransferFunction::Unknown => v,
-        TransferFunction::Srgb => linear_srgb::tf::linear_to_srgb(v),
-        TransferFunction::Bt709 => linear_srgb::tf::linear_to_bt709(v),
-        TransferFunction::Pq => linear_srgb::tf::linear_to_pq(v),
-        TransferFunction::Hlg => linear_srgb::tf::linear_to_hlg(v),
-        TransferFunction::Gamma22 => linear_srgb::default::linear_to_gamma(v, ADOBE_GAMMA),
-        _ => v,
+        TransferFunction::Linear | TransferFunction::Unknown => {
+            matte_composite_f32_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Srgb => {
+            matte_composite_f32_rgba::<SrgbTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Bt709 => {
+            matte_composite_f32_rgba::<Bt709Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Pq => {
+            matte_composite_f32_rgba::<PqTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Hlg => {
+            matte_composite_f32_rgba::<HlgTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Gamma22 => {
+            matte_composite_f32_rgba::<Gamma22Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        // Any future non-exhaustive TF falls back to Linear treatment
+        // (preserves bytes in linear-space math; same convention as
+        // elsewhere in the pipeline for Unknown-ish cases).
+        _ => matte_composite_f32_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin),
+    }
+}
+
+fn dispatch_matte_f16_rgba(
+    src: &[u16],
+    dst: &mut [u16],
+    width: usize,
+    tf: TransferFunction,
+    mr_lin: f32,
+    mg_lin: f32,
+    mb_lin: f32,
+) {
+    match tf {
+        TransferFunction::Linear | TransferFunction::Unknown => {
+            matte_composite_f16_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Srgb => {
+            matte_composite_f16_rgba::<SrgbTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Bt709 => {
+            matte_composite_f16_rgba::<Bt709Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Pq => {
+            matte_composite_f16_rgba::<PqTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Hlg => {
+            matte_composite_f16_rgba::<HlgTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Gamma22 => {
+            matte_composite_f16_rgba::<Gamma22Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        _ => matte_composite_f16_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin),
     }
 }
 
@@ -648,65 +844,14 @@ fn matte_composite(
             }
         }
         ChannelType::F32 => {
-            // Linearize RGB inline per the source TF; alpha stays linear.
             let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
             let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-            for i in 0..width {
-                let a = srcf[i * 4 + 3].clamp(0.0, 1.0);
-                let inv_a = 1.0 - a;
-                let r_lin = f32_eotf(srcf[i * 4], tf);
-                let g_lin = f32_eotf(srcf[i * 4 + 1], tf);
-                let b_lin = f32_eotf(srcf[i * 4 + 2], tf);
-                dstf[i * 3] = f32_oetf(r_lin * a + mr_lin * inv_a, tf);
-                dstf[i * 3 + 1] = f32_oetf(g_lin * a + mg_lin * inv_a, tf);
-                dstf[i * 3 + 2] = f32_oetf(b_lin * a + mb_lin * inv_a, tf);
-            }
+            dispatch_matte_f32_rgba(srcf, dstf, width, tf, mr_lin, mg_lin, mb_lin);
         }
         ChannelType::F16 => {
-            // 3-pass scratch: batch F16C unpack → scalar TF-aware blend →
-            // batch F16C pack. Replaces a per-pixel scalar f16↔f32 round-trip.
-            const CHUNK_PIXELS: usize = 8;
-            const SRC_LANES: usize = CHUNK_PIXELS * 4;
-            const DST_LANES: usize = CHUNK_PIXELS * 3;
-
             let src16: &[u16] = bytemuck::cast_slice(&src[..width * 8]);
             let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 6]);
-
-            let mut scratch_src = [0.0f32; SRC_LANES];
-            let mut scratch_dst = [0.0f32; DST_LANES];
-
-            let whole = width / CHUNK_PIXELS;
-            for c in 0..whole {
-                let src_start = c * SRC_LANES;
-                let dst_start = c * DST_LANES;
-                f16_bits_to_f32_slice(&src16[src_start..src_start + SRC_LANES], &mut scratch_src);
-                for i in 0..CHUNK_PIXELS {
-                    let a = scratch_src[i * 4 + 3].clamp(0.0, 1.0);
-                    let inv_a = 1.0 - a;
-                    let r_lin = f32_eotf(scratch_src[i * 4], tf);
-                    let g_lin = f32_eotf(scratch_src[i * 4 + 1], tf);
-                    let b_lin = f32_eotf(scratch_src[i * 4 + 2], tf);
-                    scratch_dst[i * 3] = f32_oetf(r_lin * a + mr_lin * inv_a, tf);
-                    scratch_dst[i * 3 + 1] = f32_oetf(g_lin * a + mg_lin * inv_a, tf);
-                    scratch_dst[i * 3 + 2] = f32_oetf(b_lin * a + mb_lin * inv_a, tf);
-                }
-                f32_to_f16_bits_slice(&scratch_dst, &mut dst16[dst_start..dst_start + DST_LANES]);
-            }
-
-            let tail_start = whole * CHUNK_PIXELS;
-            for i in tail_start..width {
-                let r = f16_bits_to_f32(src16[i * 4]);
-                let g = f16_bits_to_f32(src16[i * 4 + 1]);
-                let b = f16_bits_to_f32(src16[i * 4 + 2]);
-                let a = f16_bits_to_f32(src16[i * 4 + 3]).clamp(0.0, 1.0);
-                let inv_a = 1.0 - a;
-                let r_lin = f32_eotf(r, tf);
-                let g_lin = f32_eotf(g, tf);
-                let b_lin = f32_eotf(b, tf);
-                dst16[i * 3] = f32_to_f16_bits(f32_oetf(r_lin * a + mr_lin * inv_a, tf));
-                dst16[i * 3 + 1] = f32_to_f16_bits(f32_oetf(g_lin * a + mg_lin * inv_a, tf));
-                dst16[i * 3 + 2] = f32_to_f16_bits(f32_oetf(b_lin * a + mb_lin * inv_a, tf));
-            }
+            dispatch_matte_f16_rgba(src16, dst16, width, tf, mr_lin, mg_lin, mb_lin);
         }
         _ => {
             // Fallback: just drop alpha

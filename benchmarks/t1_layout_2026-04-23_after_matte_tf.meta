@@ -1,0 +1,38 @@
+# Tier 1 — after matte_composite TF-dispatch refactor
+# Date: 2026-04-23
+# Parent commit: d826e24 (post CI fixes)
+# Hardware: AMD Ryzen 9 7950X
+# Command: cargo bench --bench bench_t1_layout
+#
+# Refactored matte_composite F32 and F16 arms to use const-generic
+# `MatteTf` trait dispatch. The per-pixel `match tf { ... }` inside
+# `f32_eotf`/`f32_oetf` is now hoisted to row level via 12
+# monomorphizations (F32/F16 × Linear/Srgb/Bt709/Pq/Hlg/Gamma22).
+#
+# matte_composite progression at 4096px vs baseline:
+#
+#                              baseline      after         net lift
+#   F32 Linear                1.37 GiB/s →  13.28 GiB/s    9.69x  ★
+#   F16 Linear                0.94       →   6.73          7.35x  ★
+#   F16 HLG                  462 MiB/s  →    799           1.73x
+#   F16 sRGB                 301        →    408           1.36x
+#   F32 HLG                  529        →    717           1.35x
+#   F32 sRGB                 365        →    461           1.26x
+#   F16 PQ                   208        →    259           1.25x
+#   F32 PQ                   248        →    288           1.16x
+#
+# Interpretation:
+#
+# Linear TF (no-op) hit 10× because hoisting the match unblocked
+# full autovec on the blend-only arithmetic. The compiler-generated
+# AVX2/AVX-512 pure-f32 multiply-add kernel is within 4× of memory
+# bandwidth for RGBA-in, RGB-out.
+#
+# Non-Linear TFs get 1.2-1.7× because the scalar TF polynomial inside
+# each `T::eotf`/`T::oetf` call now inlines cleanly but its own
+# per-value divide/branch prevents the outer blend loop from
+# vectorizing fully. Getting more would require calling linear-srgb's
+# f32x8 rites directly via `incant!` — a separate piece of work that
+# mirrors the F16C pattern we used for f16↔f32.
+#
+# All non-matte kernels unchanged within ±5% noise.
