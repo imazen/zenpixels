@@ -24,6 +24,11 @@ planar = ["zenpixels/planar"]
 pipeline = []
 cms-moxcms = ["std", "dep:moxcms"]
 serde = ["zenpixels/serde"]
+# Enables u16 RGB gamut hybrid kernels (LUT+poly, poly+LUT, poly+poly)
+# for benchmarking. Requires unreleased linear-srgb ≥ 0.6.12 with the
+# srgb_u16_to_linear_v3 / linear_to_srgb_u16_v3 rites. Off by default
+# so the crate builds against crates.io linear-srgb 0.6.11.
+__bench_u16_hybrids = []
 
 [dependencies]
 zenpixels = { workspace = true, default-features = false, features = ["icc"] }
@@ -107,6 +112,12 @@ harness = false
 name = "bench_u16_encode"
 path = "benches/bench_u16_encode.rs"
 harness = false
+
+[[bench]]
+name = "bench_u16_hybrids"
+path = "benches/bench_u16_hybrids.rs"
+harness = false
+required-features = ["__bench_u16_hybrids"]
 
 # TODO: restore when ZenCmsLite is public
 # [[bench]]

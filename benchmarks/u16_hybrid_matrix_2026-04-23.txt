@@ -1,0 +1,89 @@
+u16 RGB fused-gamut hybrid kernel matrix
+Date: 2026-04-23
+zenpixels-convert commit: 337e4ecb → refactor (this commit)
+linear-srgb: local perf/simd-tf-magetypes (has srgb_u16_to_linear_v3
+             AND linear_to_srgb_u16_v3 SIMD polynomial rites)
+Hardware: AMD Ryzen 9 7950X (Zen 4)
+Command: cargo bench --bench bench_u16_hybrids
+
+Question
+────────
+The pure-poly u16 kernel lost to matlut by 43% (doubled polynomial
+compute). Earlier writeup claimed "keep matlut" — but skipped the
+hybrid configurations. This probe measures all four.
+
+Setup
+─────
+Four fused-gamut kernels for sRGB u16 RGB P3→BT.709, full pipeline
+(no scratch buffers — single-pass decode + SoA matrix + encode):
+
+  - LUT dec + LUT enc   — current matlut: 256 KB decode + 128 KB
+                          encode LUT, scalar gathers bracket SIMD
+                          matrix
+  - LUT dec + poly enc  — LUT decode (same 256 KB), SIMD polynomial
+                          encode via linear_to_srgb_u16_v3 (no LUT)
+  - poly dec + LUT enc  — SIMD polynomial decode via
+                          srgb_u16_to_linear_v3 (no LUT), LUT encode
+                          (128 KB)
+  - poly dec + poly enc — pure polynomial both sides, no LUTs
+
+Results (full pipeline throughput, src u16 + dst u16)
+─────────────────────────────────────────────────────
+
+                            256px    4096px   1080p
+  LUT dec + LUT enc         6.52     6.23     5.02     GiB/s
+  LUT dec + poly enc        6.01     5.73     5.37   ★
+  poly dec + LUT enc        5.18     5.10     4.80
+  poly dec + poly enc       3.44     3.39     3.39
+
+Deltas vs LUT+LUT baseline:
+                            256px    4096px   1080p
+  LUT dec + poly enc        -7.8%    -8.0%    +7.0%  ★
+  poly dec + LUT enc       -20.5%   -18.1%    -4.4%
+  poly dec + poly enc      -47.2%   -45.6%   -32.5%
+
+Why LUT+poly wins at 1080p
+───────────────────────────
+At 1080p the input buffer is ~6 MB. The current matlut's 128 KB encode
+LUT competes with data for L2 residency. Dropping the encode LUT (by
+using SIMD polynomial instead) frees that budget; data streams through
+L2 more efficiently; the polynomial compute is cheap enough in isolation
+(17 GiB/s measured) that it doesn't dominate the pipeline.
+
+At smaller sizes (256px, 4096px) everything fits in L1/L2 anyway —
+the LUT's gather-speed advantage (one mem-op vs ~10 FMAs + sqrt + div)
+shows through and matlut wins by ~8%.
+
+Why poly+LUT loses
+──────────────────
+Decode LUT is only 256 KB scalar f32 gather — Zen 4's 3 loads/cycle
+eats this for breakfast, so there's no cache-relief payoff to
+swapping it for polynomial compute. Poly encode's win comes from
+freeing the encode LUT AND getting faster compute; poly decode gets
+neither.
+
+Production decision
+───────────────────
+Switched FusedSrgbU16GamutRgb in convert_kernels.rs from matlut
+(LUT+LUT) → LUT+poly. Full T7 bench (production path via
+RowConverter) confirms:
+
+  sRGB U16 fused gamut (P3→BT.709)
+                    old matlut   new LUT+poly   delta
+    256px           6.00         5.87           -2.2%
+    4096px          5.93         5.90           ~flat
+    1080p          *4.89         *5.75          +17.6%   ★
+
+Bonus: LUT+poly gets 100% exact u16 roundtrip. Matlut's linear-
+indexed 128 KB encode LUT had 71.3% exact ±6 u16 error per
+linear-srgb u16_lut docs — a latent precision bug not caught by
+the existing test suite.
+
+Open items (not this commit)
+────────────────────────────
+- The 128 KB encode LUT is still built (needed by the four-way bench
+  probe in __bench_u16_*). Next pass: remove srgb_enc_lut_u16() and
+  the LUT+LUT / poly+LUT kernels entirely once the bench is no
+  longer useful. Keep for now as regression comparator.
+- imazen/linear-srgb#22 still relevant for decode LUT dedup
+  (256 KB). We're still on our own copy of that one.

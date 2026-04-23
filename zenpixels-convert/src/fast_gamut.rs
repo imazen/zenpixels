@@ -1133,6 +1133,339 @@ pub(crate) fn convert_u16_rgb_simd_matlut(
     convert_u16_rgb_matlut_scalar(ScalarToken, m, src, dst, lin_lut, enc_lut);
 }
 
+// =========================================================================
+// u16 RGB fused-gamut hybrid kernels (bench-only, not on a hot path).
+//
+// Four combinations of decode and encode: {LUT, poly} × {LUT, poly}. Used
+// to find the optimal point in the mix for sRGB u16 gamut conversion.
+// All use mat3x3_x8 for the matrix step. Requires the u16↔f32 polynomial
+// rites which ship in linear-srgb ≥ 0.6.12 (not yet released on
+// crates.io). Gated behind `__bench_u16_hybrids` feature for now.
+//
+// When linear-srgb 0.6.12 lands on crates.io, remove this feature gate,
+// bump zenpixels-convert's linear-srgb minimum to 0.6.12, and switch
+// FusedSrgbU16GamutRgb in convert_kernels.rs to call
+// `convert_u16_rgb_simd_lutdec_polyenc` (LUT+poly wins by +17% at 1080p
+// and gets exact u16 roundtrip).
+// =========================================================================
+
+#[cfg(feature = "__bench_u16_hybrids")]
+mod hybrids {
+    use super::*;
+
+    #[cfg(target_arch = "x86_64")]
+    #[rite]
+    fn convert_8px_u16_rgb_lutdec_polyenc(
+        token: X64V3Token,
+        m: &[[f32; 3]; 3],
+        src: &[u16; 24],
+        dst: &mut [u16; 24],
+        lin_lut: &[f32; 65536],
+    ) {
+        let mut rl_arr = [0.0f32; 8];
+        let mut gl_arr = [0.0f32; 8];
+        let mut bl_arr = [0.0f32; 8];
+        for i in 0..8 {
+            rl_arr[i] = lin_lut[src[i * 3] as usize];
+            gl_arr[i] = lin_lut[src[i * 3 + 1] as usize];
+            bl_arr[i] = lin_lut[src[i * 3 + 2] as usize];
+        }
+        let rl = mt_f32x8::from_array(token, rl_arr);
+        let gl = mt_f32x8::from_array(token, gl_arr);
+        let bl = mt_f32x8::from_array(token, bl_arr);
+        let (or_v, og_v, ob_v) = mat3x3_x8(token, m, rl, gl, bl);
+        let ro = trc_x8::linear_to_srgb_u16_v3(token, or_v.to_array());
+        let go = trc_x8::linear_to_srgb_u16_v3(token, og_v.to_array());
+        let bo = trc_x8::linear_to_srgb_u16_v3(token, ob_v.to_array());
+        for i in 0..8 {
+            dst[i * 3] = ro[i];
+            dst[i * 3 + 1] = go[i];
+            dst[i * 3 + 2] = bo[i];
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[rite]
+    fn convert_8px_u16_rgb_polydec_lutenc(
+        token: X64V3Token,
+        m: &[[f32; 3]; 3],
+        src: &[u16; 24],
+        dst: &mut [u16; 24],
+        enc_lut: &[u16; 65536],
+    ) {
+        let mut r_u16 = [0u16; 8];
+        let mut g_u16 = [0u16; 8];
+        let mut b_u16 = [0u16; 8];
+        for i in 0..8 {
+            r_u16[i] = src[i * 3];
+            g_u16[i] = src[i * 3 + 1];
+            b_u16[i] = src[i * 3 + 2];
+        }
+        let rl = mt_f32x8::from_array(token, trc_x8::srgb_u16_to_linear_v3(token, r_u16));
+        let gl = mt_f32x8::from_array(token, trc_x8::srgb_u16_to_linear_v3(token, g_u16));
+        let bl = mt_f32x8::from_array(token, trc_x8::srgb_u16_to_linear_v3(token, b_u16));
+        let (or_v, og_v, ob_v) = mat3x3_x8(token, m, rl, gl, bl);
+        let scale = mt_f32x8::splat(token, 65535.0);
+        let zero = mt_f32x8::zero(token);
+        let one = mt_f32x8::splat(token, 1.0);
+        let r_idx = (or_v.max(zero).min(one) * scale).to_i32_round().to_array();
+        let g_idx = (og_v.max(zero).min(one) * scale).to_i32_round().to_array();
+        let b_idx = (ob_v.max(zero).min(one) * scale).to_i32_round().to_array();
+        for i in 0..8 {
+            dst[i * 3] = enc_lut[r_idx[i] as usize & 0xFFFF];
+            dst[i * 3 + 1] = enc_lut[g_idx[i] as usize & 0xFFFF];
+            dst[i * 3 + 2] = enc_lut[b_idx[i] as usize & 0xFFFF];
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[rite]
+    fn convert_8px_u16_rgb_polydec_polyenc(
+        token: X64V3Token,
+        m: &[[f32; 3]; 3],
+        src: &[u16; 24],
+        dst: &mut [u16; 24],
+    ) {
+        let mut r_u16 = [0u16; 8];
+        let mut g_u16 = [0u16; 8];
+        let mut b_u16 = [0u16; 8];
+        for i in 0..8 {
+            r_u16[i] = src[i * 3];
+            g_u16[i] = src[i * 3 + 1];
+            b_u16[i] = src[i * 3 + 2];
+        }
+        let rl = mt_f32x8::from_array(token, trc_x8::srgb_u16_to_linear_v3(token, r_u16));
+        let gl = mt_f32x8::from_array(token, trc_x8::srgb_u16_to_linear_v3(token, g_u16));
+        let bl = mt_f32x8::from_array(token, trc_x8::srgb_u16_to_linear_v3(token, b_u16));
+        let (or_v, og_v, ob_v) = mat3x3_x8(token, m, rl, gl, bl);
+        let ro = trc_x8::linear_to_srgb_u16_v3(token, or_v.to_array());
+        let go = trc_x8::linear_to_srgb_u16_v3(token, og_v.to_array());
+        let bo = trc_x8::linear_to_srgb_u16_v3(token, ob_v.to_array());
+        for i in 0..8 {
+            dst[i * 3] = ro[i];
+            dst[i * 3 + 1] = go[i];
+            dst[i * 3 + 2] = bo[i];
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[arcane]
+    fn convert_u16_rgb_lutdec_polyenc_v3(
+        token: X64V3Token,
+        m: &[[f32; 3]; 3],
+        src: &[u16],
+        dst: &mut [u16],
+        lin_lut: &[f32; 65536],
+    ) {
+        let pixel_count = src.len() / 3;
+        let bulk = (pixel_count / 8) * 8;
+        let bulk_chans = bulk * 3;
+        for off in (0..bulk_chans).step_by(24) {
+            let s: &[u16; 24] = src[off..off + 24].try_into().unwrap();
+            let d: &mut [u16; 24] = (&mut dst[off..off + 24]).try_into().unwrap();
+            convert_8px_u16_rgb_lutdec_polyenc(token, m, s, d, lin_lut);
+        }
+        for i in bulk..pixel_count {
+            let base = i * 3;
+            let r = lin_lut[src[base] as usize];
+            let g = lin_lut[src[base + 1] as usize];
+            let b = lin_lut[src[base + 2] as usize];
+            let (nr, ng, nb) = mat3x3(m, r, g, b);
+            dst[base] = linear_srgb::default::linear_to_srgb_u16(nr);
+            dst[base + 1] = linear_srgb::default::linear_to_srgb_u16(ng);
+            dst[base + 2] = linear_srgb::default::linear_to_srgb_u16(nb);
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[arcane]
+    fn convert_u16_rgb_polydec_lutenc_v3(
+        token: X64V3Token,
+        m: &[[f32; 3]; 3],
+        src: &[u16],
+        dst: &mut [u16],
+        enc_lut: &[u16; 65536],
+    ) {
+        let pixel_count = src.len() / 3;
+        let bulk = (pixel_count / 8) * 8;
+        let bulk_chans = bulk * 3;
+        for off in (0..bulk_chans).step_by(24) {
+            let s: &[u16; 24] = src[off..off + 24].try_into().unwrap();
+            let d: &mut [u16; 24] = (&mut dst[off..off + 24]).try_into().unwrap();
+            convert_8px_u16_rgb_polydec_lutenc(token, m, s, d, enc_lut);
+        }
+        for i in bulk..pixel_count {
+            let base = i * 3;
+            let r = linear_srgb::default::srgb_u16_to_linear(src[base]);
+            let g = linear_srgb::default::srgb_u16_to_linear(src[base + 1]);
+            let b = linear_srgb::default::srgb_u16_to_linear(src[base + 2]);
+            let (nr, ng, nb) = mat3x3(m, r, g, b);
+            dst[base] = enc_lut[(nr.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+            dst[base + 1] = enc_lut[(ng.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+            dst[base + 2] = enc_lut[(nb.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[arcane]
+    fn convert_u16_rgb_polydec_polyenc_v3(
+        token: X64V3Token,
+        m: &[[f32; 3]; 3],
+        src: &[u16],
+        dst: &mut [u16],
+    ) {
+        let pixel_count = src.len() / 3;
+        let bulk = (pixel_count / 8) * 8;
+        let bulk_chans = bulk * 3;
+        for off in (0..bulk_chans).step_by(24) {
+            let s: &[u16; 24] = src[off..off + 24].try_into().unwrap();
+            let d: &mut [u16; 24] = (&mut dst[off..off + 24]).try_into().unwrap();
+            convert_8px_u16_rgb_polydec_polyenc(token, m, s, d);
+        }
+        for i in bulk..pixel_count {
+            let base = i * 3;
+            let r = linear_srgb::default::srgb_u16_to_linear(src[base]);
+            let g = linear_srgb::default::srgb_u16_to_linear(src[base + 1]);
+            let b = linear_srgb::default::srgb_u16_to_linear(src[base + 2]);
+            let (nr, ng, nb) = mat3x3(m, r, g, b);
+            dst[base] = linear_srgb::default::linear_to_srgb_u16(nr);
+            dst[base + 1] = linear_srgb::default::linear_to_srgb_u16(ng);
+            dst[base + 2] = linear_srgb::default::linear_to_srgb_u16(nb);
+        }
+    }
+
+    fn convert_u16_rgb_lutdec_polyenc_scalar(
+        _token: ScalarToken,
+        m: &[[f32; 3]; 3],
+        src: &[u16],
+        dst: &mut [u16],
+        lin_lut: &[f32; 65536],
+    ) {
+        for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+            let r = lin_lut[src_px[0] as usize];
+            let g = lin_lut[src_px[1] as usize];
+            let b = lin_lut[src_px[2] as usize];
+            let (nr, ng, nb) = mat3x3(m, r, g, b);
+            dst_px[0] = linear_srgb::default::linear_to_srgb_u16(nr);
+            dst_px[1] = linear_srgb::default::linear_to_srgb_u16(ng);
+            dst_px[2] = linear_srgb::default::linear_to_srgb_u16(nb);
+        }
+    }
+
+    fn convert_u16_rgb_polydec_lutenc_scalar(
+        _token: ScalarToken,
+        m: &[[f32; 3]; 3],
+        src: &[u16],
+        dst: &mut [u16],
+        enc_lut: &[u16; 65536],
+    ) {
+        for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+            let r = linear_srgb::default::srgb_u16_to_linear(src_px[0]);
+            let g = linear_srgb::default::srgb_u16_to_linear(src_px[1]);
+            let b = linear_srgb::default::srgb_u16_to_linear(src_px[2]);
+            let (nr, ng, nb) = mat3x3(m, r, g, b);
+            dst_px[0] = enc_lut[(nr.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+            dst_px[1] = enc_lut[(ng.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+            dst_px[2] = enc_lut[(nb.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+        }
+    }
+
+    fn convert_u16_rgb_polydec_polyenc_scalar(
+        _token: ScalarToken,
+        m: &[[f32; 3]; 3],
+        src: &[u16],
+        dst: &mut [u16],
+    ) {
+        for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+            let r = linear_srgb::default::srgb_u16_to_linear(src_px[0]);
+            let g = linear_srgb::default::srgb_u16_to_linear(src_px[1]);
+            let b = linear_srgb::default::srgb_u16_to_linear(src_px[2]);
+            let (nr, ng, nb) = mat3x3(m, r, g, b);
+            dst_px[0] = linear_srgb::default::linear_to_srgb_u16(nr);
+            dst_px[1] = linear_srgb::default::linear_to_srgb_u16(ng);
+            dst_px[2] = linear_srgb::default::linear_to_srgb_u16(nb);
+        }
+    }
+
+    /// Bench-only dispatch wrappers. Exposed via `#[doc(hidden)] pub` so
+    /// benches can reach them without promoting the kernels to permanent
+    /// public API.
+    /// Fused u16 RGB: 256 KB LUT decode → SIMD matrix → SIMD polynomial encode.
+    /// sRGB-specific. The production path for sRGB u16 RGB gamut conversion
+    /// as of 2026-04-23 — wins matlut (LUT+LUT) at 1080p by +7% and trades
+    /// ~8% at smaller sizes for 100% exact u16 roundtrip (matlut's linear-
+    /// indexed 128 KB encode LUT has ±6 u16 error; polynomial is ±0).
+    pub(crate) fn convert_u16_rgb_simd_lutdec_polyenc(
+        m: &[[f32; 3]; 3],
+        src: &[u16],
+        dst: &mut [u16],
+    ) {
+        let lin_lut = srgb_lin_lut_u16();
+        #[cfg(target_arch = "x86_64")]
+        {
+            incant!(convert_u16_rgb_lutdec_polyenc(m, src, dst, lin_lut));
+            return;
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        convert_u16_rgb_lutdec_polyenc_scalar(ScalarToken, m, src, dst, lin_lut);
+    }
+
+    #[doc(hidden)]
+    pub(crate) fn __bench_u16_lut_decode_lut_encode(
+        m: &[[f32; 3]; 3],
+        src: &[u16],
+        dst: &mut [u16],
+    ) {
+        convert_u16_rgb_simd_matlut(m, src, dst, srgb_lin_lut_u16(), srgb_enc_lut_u16());
+    }
+
+    #[doc(hidden)]
+    pub(crate) fn __bench_u16_lut_decode_poly_encode(
+        m: &[[f32; 3]; 3],
+        src: &[u16],
+        dst: &mut [u16],
+    ) {
+        convert_u16_rgb_simd_lutdec_polyenc(m, src, dst);
+    }
+
+    #[doc(hidden)]
+    pub(crate) fn __bench_u16_poly_decode_lut_encode(
+        m: &[[f32; 3]; 3],
+        src: &[u16],
+        dst: &mut [u16],
+    ) {
+        let enc_lut = srgb_enc_lut_u16();
+        #[cfg(target_arch = "x86_64")]
+        {
+            incant!(convert_u16_rgb_polydec_lutenc(m, src, dst, enc_lut));
+            return;
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        convert_u16_rgb_polydec_lutenc_scalar(ScalarToken, m, src, dst, enc_lut);
+    }
+
+    #[doc(hidden)]
+    pub(crate) fn __bench_u16_poly_decode_poly_encode(
+        m: &[[f32; 3]; 3],
+        src: &[u16],
+        dst: &mut [u16],
+    ) {
+        #[cfg(target_arch = "x86_64")]
+        {
+            incant!(convert_u16_rgb_polydec_polyenc(m, src, dst));
+            return;
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        convert_u16_rgb_polydec_polyenc_scalar(ScalarToken, m, src, dst);
+    }
+} // end of hybrids module
+
+#[cfg(feature = "__bench_u16_hybrids")]
+pub(crate) use hybrids::{
+    __bench_u16_lut_decode_lut_encode, __bench_u16_lut_decode_poly_encode,
+    __bench_u16_poly_decode_lut_encode, __bench_u16_poly_decode_poly_encode,
+};
+
 // ═════════════════════════════════════════════════════════════════════════
 // Cross-depth matlut kernels: integer↔f32 with SIMD matrix. Output f32 is
 // *linear* light (not sRGB-encoded). Input f32 is treated as linear light.

@@ -417,6 +417,26 @@ pub mod ext;
     clippy::derivable_impls
 )]
 pub(crate) mod fast_gamut;
+
+/// Bench-only shims for u16 RGB gamut hybrid kernels.
+/// Gated behind `__bench_u16_hybrids` — requires unreleased linear-srgb ≥ 0.6.12.
+/// Not public API — for internal measurement probes only.
+#[cfg(feature = "__bench_u16_hybrids")]
+#[doc(hidden)]
+pub mod __bench_u16_hybrids {
+    pub fn lut_lut(m: &[[f32; 3]; 3], src: &[u16], dst: &mut [u16]) {
+        crate::fast_gamut::__bench_u16_lut_decode_lut_encode(m, src, dst)
+    }
+    pub fn lut_poly(m: &[[f32; 3]; 3], src: &[u16], dst: &mut [u16]) {
+        crate::fast_gamut::__bench_u16_lut_decode_poly_encode(m, src, dst)
+    }
+    pub fn poly_lut(m: &[[f32; 3]; 3], src: &[u16], dst: &mut [u16]) {
+        crate::fast_gamut::__bench_u16_poly_decode_lut_encode(m, src, dst)
+    }
+    pub fn poly_poly(m: &[[f32; 3]; 3], src: &[u16], dst: &mut [u16]) {
+        crate::fast_gamut::__bench_u16_poly_decode_poly_encode(m, src, dst)
+    }
+}
 pub mod gamut;
 pub mod hdr;
 pub mod icc_profiles;

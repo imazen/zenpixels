@@ -262,6 +262,11 @@ pub(super) fn apply_step_u8(
             ];
             let src_u16: &[u16] = bytemuck::cast_slice(src);
             let dst_u16: &mut [u16] = bytemuck::cast_slice_mut(dst);
+            // LUT decode (256 KB lin_lut) + SIMD matrix + LUT encode
+            // (128 KB, linearly-indexed). Pending linear-srgb 0.6.12:
+            // switch to `convert_u16_rgb_simd_lutdec_polyenc` for +17%
+            // at 1080p and exact u16 roundtrip (it needs
+            // linear_to_srgb_u16_v3 rite which is unreleased).
             crate::fast_gamut::convert_u16_rgb_simd_matlut(
                 &m,
                 src_u16,
