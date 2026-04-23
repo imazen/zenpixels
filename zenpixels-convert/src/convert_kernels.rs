@@ -11,7 +11,9 @@ use crate::{ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor};
 
 use super::ConvertStep;
 use crate::TransferFunction;
-use crate::f16_scalar::{f16_bits_to_f32, f32_to_f16_bits};
+use crate::f16_scalar::{
+    f16_bits_to_f32, f16_bits_to_f32_slice, f32_to_f16_bits, f32_to_f16_bits_slice,
+};
 
 /// IEEE 754 half-precision encoding of 1.0: sign=0, exponent=01111 (bias 15),
 /// mantissa=0000000000 → bits 0b0_01111_0000000000 = 0x3C00.
@@ -1046,27 +1048,25 @@ fn f32_to_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
 
 /// f16 → f32: IEEE 754 half-precision unpack (no TF, no scale).
 ///
-/// Scalar via the `half` crate. SIMD dispatch (F16C / AVX-512 FP16 /
-/// ARMv8.2 FP16) is a future optimization — see tracking issue #23.
+/// Dispatched via `f16_bits_to_f32_slice` — F16C (VCVTPH2PS) on x86-64
+/// CPUs that have it, scalar elsewhere.
 fn f16_to_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let src_bits: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
     let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    for (s, d) in src_bits.iter().zip(dst_f32.iter_mut()) {
-        *d = f16_bits_to_f32(*s);
-    }
+    f16_bits_to_f32_slice(src_bits, dst_f32);
 }
 
 /// f32 → f16: IEEE 754 half-precision pack (round-to-nearest-even, no TF).
 ///
-/// Values outside ±65504 are clamped to ±infinity in f16; NaNs are preserved.
+/// Dispatched via `f32_to_f16_bits_slice` — F16C (VCVTPS2PH) on x86-64
+/// CPUs that have it, scalar elsewhere. Values outside ±65504 saturate
+/// to ±infinity; NaNs are preserved.
 fn f32_to_f16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let src_f32: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dst_bits: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
-    for (s, d) in src_f32.iter().zip(dst_bits.iter_mut()) {
-        *d = f32_to_f16_bits(*s);
-    }
+    f32_to_f16_bits_slice(src_f32, dst_bits);
 }
 
 // ---------------------------------------------------------------------------

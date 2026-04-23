@@ -1,0 +1,37 @@
+# Tier 2 (depth scaling) — after F16C SIMD for f16 <-> f32
+# Date: 2026-04-23
+# Commit parent: f81d9a6 (baseline)
+# Hardware: AMD Ryzen 9 7950X
+# Command: cargo bench --bench bench_t2_depth
+#
+# Change: src/f16_scalar.rs grew `f16_bits_to_f32_slice` and
+# `f32_to_f16_bits_slice`, dispatched via archmage's #[arcane] +
+# incant!. On x86-64 V3 (any post-Haswell CPU with F16C), these route
+# to 8-lane `_mm256_cvtph_ps` / `_mm256_cvtps_ph`. Scalar fallback on
+# other archs and on x86 CPUs without F16C.
+#
+# #[forbid(unsafe_code)] preserved — all unsafe lives inside the
+# archmage macro expansion.
+#
+# Speedups at 4096px (only F16-involving kernels shown; others
+# unchanged within noise):
+#
+#                    before         after    speedup
+#   F32 → F16      3.25 GiB/s  →  111.47 GiB/s   34.3x
+#   F16 → F32      7.09        →  135.35         19.1x
+#   U8  → F16      1.41        →   28.43         20.2x
+#   U16 → F16      1.86        →   32.74         17.6x
+#   F16 → U16      4.09        →   28.44          6.9x
+#   F16 → U8       3.10        →   21.17          6.8x
+#
+# Direct F16<->F32 kernels are now near memory-bandwidth ceiling.
+# Via-F32 paths get 7x (only one leg has F16; the F32<->U8/U16 leg
+# was already garb-SIMD at ~90 GiB/s).
+#
+# Not yet addressed in this commit:
+#   - T5 alpha kernels (premul_f16_rgba, unpremul_f16_rgba, etc.)
+#     still call f16_bits_to_f32() per-pixel scalar. They need a
+#     batch-convert restructure (load chunk → f32, do math, pack
+#     chunk back to f16) to benefit. Expected 10-15x on those.
+#   - F16 MatteComposite also uses per-pixel scalar.
+#   - ARMv8.2 NEON FP16 deferred (requires Rust 1.94; MSRV is 1.89).

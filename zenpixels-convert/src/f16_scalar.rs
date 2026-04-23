@@ -1,10 +1,12 @@
-//! Local scalar IEEE 754 binary16 (half-precision) conversion.
+//! Local IEEE 754 binary16 (half-precision) conversion with scalar
+//! fallback and F16C SIMD dispatch.
 //!
-//! Two functions — `f16_bits_to_f32` and `f32_to_f16_bits` — cover every
-//! production call site that the `half` crate served. The `half` crate stays
-//! on as a `[dev-dependencies]` entry solely for cross-validation tests and
-//! the perceptual-loss suite (which needs `from_f64` / `to_f64` paths not
-//! implemented here).
+//! The two **scalar** functions (`f16_bits_to_f32`, `f32_to_f16_bits`)
+//! cover every platform and are the source of truth for correctness. The
+//! **slice** wrappers (`f16_bits_to_f32_slice`, `f32_to_f16_bits_slice`)
+//! dispatch to F16C intrinsics on x86-64 when the CPU has them (via
+//! archmage's `X64V3Token`, which carries `f16c`), processing 8 lanes
+//! per instruction; they fall back to the scalar loop otherwise.
 //!
 //! Binary16 format:
 //! ```text
@@ -19,7 +21,11 @@
 //!
 //! Round-to-nearest-even (the IEEE 754 default) is used for f32→f16
 //! rounding. f16→f32 is exact (f32 can represent every finite f16 value
-//! without loss).
+//! without loss). The F16C instruction set uses the same semantics, so
+//! SIMD and scalar paths produce bit-identical output for non-NaN inputs.
+//!
+//! NEON FP16 intrinsics (ARMv8.2-A FEAT_FP16) are deferred — they
+//! stabilized in Rust 1.94, but our MSRV is 1.89.
 
 /// Convert raw f16 bits to an f32 value. Lossless.
 #[inline]
@@ -188,6 +194,91 @@ pub(crate) fn f32_to_f16_bits(v: f32) -> u16 {
     sign | (result as u16)
 }
 
+// ---------------------------------------------------------------------------
+// Slice-level f16 ↔ f32 conversion with archmage dispatch.
+//
+// Pattern: each tier implementation uses `#[archmage::arcane]` to mark
+// itself as safely callable via its CPU-capability token. The outer
+// dispatcher uses `archmage::incant!` to pick the best tier at runtime.
+// No `unsafe` in the source — `#[forbid(unsafe_code)]` compatible; the
+// macro-generated unsafe wrapping is internal to archmage.
+//
+// Tier layout (archmage suffix convention):
+//   `{prefix}_scalar`  — always available
+//   `{prefix}_v3`      — x86-64 V3 (Haswell+, carries F16C + AVX2)
+// ---------------------------------------------------------------------------
+
+/// Convert a slice of f16 bits into a slice of f32 values. Lossless. Uses
+/// 8-lane F16C (`vcvtph2ps`) on x86-64 CPUs that have it; scalar otherwise.
+pub(crate) fn f16_bits_to_f32_slice(src: &[u16], dst: &mut [f32]) {
+    assert_eq!(src.len(), dst.len(), "f16_bits_to_f32_slice length mismatch");
+    archmage::incant!(cvt_f16_to_f32(src, dst))
+}
+
+/// Convert a slice of f32 values into a slice of f16 bits with
+/// round-to-nearest-even. Uses 8-lane F16C (`vcvtps2ph`) on x86-64 CPUs
+/// that have it; scalar otherwise.
+pub(crate) fn f32_to_f16_bits_slice(src: &[f32], dst: &mut [u16]) {
+    assert_eq!(src.len(), dst.len(), "f32_to_f16_bits_slice length mismatch");
+    archmage::incant!(cvt_f32_to_f16(src, dst))
+}
+
+// -- Scalar tier -------------------------------------------------------------
+
+fn cvt_f16_to_f32_scalar(_tok: archmage::ScalarToken, src: &[u16], dst: &mut [f32]) {
+    for (s, d) in src.iter().zip(dst.iter_mut()) {
+        *d = f16_bits_to_f32(*s);
+    }
+}
+
+fn cvt_f32_to_f16_scalar(_tok: archmage::ScalarToken, src: &[f32], dst: &mut [u16]) {
+    for (s, d) in src.iter().zip(dst.iter_mut()) {
+        *d = f32_to_f16_bits(*s);
+    }
+}
+
+// -- x86-64 V3 tier (F16C, 8 lanes per conversion) ---------------------------
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane(import_intrinsics)]
+fn cvt_f16_to_f32_v3(_tok: archmage::X64V3Token, src: &[u16], dst: &mut [f32]) {
+    let n = src.len();
+    let chunks = n / 8;
+    for i in 0..chunks {
+        let s_chunk: &[u16; 8] = (&src[i * 8..i * 8 + 8]).try_into().unwrap();
+        let d_chunk: &mut [f32; 8] = (&mut dst[i * 8..i * 8 + 8]).try_into().unwrap();
+        // safe_unaligned_simd accepts any `&T: Is128BitsUnaligned` or
+        // `Is256BitsUnaligned` — [u16; 8] and [f32; 8] both qualify.
+        let packed = _mm_loadu_si128(s_chunk);
+        let lanes = _mm256_cvtph_ps(packed);
+        _mm256_storeu_ps(d_chunk, lanes);
+    }
+    let tail_start = chunks * 8;
+    for i in tail_start..n {
+        dst[i] = f16_bits_to_f32(src[i]);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane(import_intrinsics)]
+fn cvt_f32_to_f16_v3(_tok: archmage::X64V3Token, src: &[f32], dst: &mut [u16]) {
+    let n = src.len();
+    let chunks = n / 8;
+    for i in 0..chunks {
+        let s_chunk: &[f32; 8] = (&src[i * 8..i * 8 + 8]).try_into().unwrap();
+        let d_chunk: &mut [u16; 8] = (&mut dst[i * 8..i * 8 + 8]).try_into().unwrap();
+        let lanes = _mm256_loadu_ps(s_chunk);
+        // imm8 is a 3-bit rounding mode per Intel docs for VCVTPS2PH.
+        // _MM_FROUND_TO_NEAREST_INT = 0 → IEEE 754 round-to-nearest-even.
+        let packed = _mm256_cvtps_ph::<_MM_FROUND_TO_NEAREST_INT>(lanes);
+        _mm_storeu_si128(d_chunk, packed);
+    }
+    let tail_start = chunks * 8;
+    for i in tail_start..n {
+        dst[i] = f32_to_f16_bits(src[i]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +369,85 @@ mod tests {
                     theirs
                 );
             }
+        }
+    }
+
+    /// Exhaustive cross-check: for all 65536 f16 bit patterns, the scalar
+    /// and SIMD paths (when available) produce identical f32 output.
+    /// Exercises F16C when the CPU has it.
+    #[test]
+    fn slice_f16_to_f32_simd_matches_scalar_exhaustive() {
+        let bits: Vec<u16> = (0u16..=0xffff).collect();
+        let mut via_slice = vec![0.0f32; bits.len()];
+        let mut via_scalar = vec![0.0f32; bits.len()];
+
+        f16_bits_to_f32_slice(&bits, &mut via_slice);
+        for (i, &b) in bits.iter().enumerate() {
+            via_scalar[i] = f16_bits_to_f32(b);
+        }
+
+        for i in 0..bits.len() {
+            let a = via_slice[i];
+            let b = via_scalar[i];
+            if a.is_nan() && b.is_nan() {
+                continue;
+            }
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "f16 bits {:#06x}: slice={} (bits {:#010x}), scalar={} (bits {:#010x})",
+                bits[i],
+                a,
+                a.to_bits(),
+                b,
+                b.to_bits()
+            );
+        }
+    }
+
+    /// Cross-check f32 → f16 across sampled f32 values: the slice (SIMD)
+    /// path and scalar path must agree bit-exactly (modulo NaN canonicalization).
+    #[test]
+    fn slice_f32_to_f16_simd_matches_scalar_sampled() {
+        // Build a diverse sample: every f16 value as its f32, nearby f32
+        // neighbors, and the rounding midpoints.
+        let mut samples: Vec<f32> = Vec::new();
+        for b in 0u16..=0xffff {
+            let c = f16_bits_to_f32(b);
+            samples.push(c);
+            if c.is_finite() {
+                samples.push(c.next_up());
+                samples.push(c.next_down());
+                let next = f16_bits_to_f32(b.wrapping_add(1));
+                if next.is_finite() {
+                    samples.push(c + (next - c) * 0.5);
+                }
+            }
+        }
+        let mut via_slice = vec![0u16; samples.len()];
+        let mut via_scalar = vec![0u16; samples.len()];
+
+        f32_to_f16_bits_slice(&samples, &mut via_slice);
+        for (i, &v) in samples.iter().enumerate() {
+            via_scalar[i] = f32_to_f16_bits(v);
+        }
+
+        for i in 0..samples.len() {
+            if samples[i].is_nan() {
+                // Both paths should produce NaN. Bit patterns may differ.
+                let a_nan = (via_slice[i] & 0x7c00) == 0x7c00 && (via_slice[i] & 0x03ff) != 0;
+                let b_nan = (via_scalar[i] & 0x7c00) == 0x7c00 && (via_scalar[i] & 0x03ff) != 0;
+                assert!(a_nan && b_nan, "NaN input lost NaN-ness");
+                continue;
+            }
+            assert_eq!(
+                via_slice[i], via_scalar[i],
+                "f32 {} ({:#010x}): slice={:#06x}, scalar={:#06x}",
+                samples[i],
+                samples[i].to_bits(),
+                via_slice[i],
+                via_scalar[i],
+            );
         }
     }
 
