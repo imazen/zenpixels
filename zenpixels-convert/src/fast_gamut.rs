@@ -900,8 +900,6 @@ fn convert_8px_u8_rgb_matlut(
     let zero = mt_f32x8::zero(token);
     let one = mt_f32x8::splat(token, 1.0);
 
-    let mut temp = [0i32; 8];
-
     for pair in 0..4 {
         let off = pair * 6;
         let p0r = lin_lut[src[off] as usize];
@@ -919,18 +917,17 @@ fn convert_8px_u8_rgb_matlut(
         // v = r*m0 + g*m1 + b*m2 — each 128-bit lane ends up as [R', G', B', 0].
         let v = r * m0 + g * m1 + b * m2;
 
-        // Clamp [0,1], scale, SIMD f32→i32 round, store to aligned i32[8].
+        // Clamp [0,1], scale, SIMD f32→i32 round, extract as array (in-register).
         let clamped = v.max(zero).min(one);
         let scaled = clamped * scale;
-        let idx = scaled.to_i32_round();
-        idx.store(&mut temp);
+        let idx = scaled.to_i32_round().to_array();
 
-        dst[off] = enc_lut[temp[0] as usize & 0xFFF];
-        dst[off + 1] = enc_lut[temp[1] as usize & 0xFFF];
-        dst[off + 2] = enc_lut[temp[2] as usize & 0xFFF];
-        dst[off + 3] = enc_lut[temp[4] as usize & 0xFFF];
-        dst[off + 4] = enc_lut[temp[5] as usize & 0xFFF];
-        dst[off + 5] = enc_lut[temp[6] as usize & 0xFFF];
+        dst[off] = enc_lut[idx[0] as usize & 0xFFF];
+        dst[off + 1] = enc_lut[idx[1] as usize & 0xFFF];
+        dst[off + 2] = enc_lut[idx[2] as usize & 0xFFF];
+        dst[off + 3] = enc_lut[idx[4] as usize & 0xFFF];
+        dst[off + 4] = enc_lut[idx[5] as usize & 0xFFF];
+        dst[off + 5] = enc_lut[idx[6] as usize & 0xFFF];
     }
 }
 
@@ -1290,7 +1287,6 @@ fn convert_8px_f32_lin_to_u8(
     let scale = mt_f32x8::splat(token, 4095.0);
     let zero = mt_f32x8::zero(token);
     let one = mt_f32x8::splat(token, 1.0);
-    let mut temp = [0i32; 8];
 
     for pair in 0..4 {
         let off = pair * 6;
@@ -1336,14 +1332,13 @@ fn convert_8px_f32_lin_to_u8(
         let v = r * m0 + g * m1 + b * m2;
         let clamped = v.max(zero).min(one);
         let scaled = clamped * scale;
-        let idx = scaled.to_i32_round();
-        idx.store(&mut temp);
-        dst[off] = enc_lut[temp[0] as usize & 0xFFF];
-        dst[off + 1] = enc_lut[temp[1] as usize & 0xFFF];
-        dst[off + 2] = enc_lut[temp[2] as usize & 0xFFF];
-        dst[off + 3] = enc_lut[temp[4] as usize & 0xFFF];
-        dst[off + 4] = enc_lut[temp[5] as usize & 0xFFF];
-        dst[off + 5] = enc_lut[temp[6] as usize & 0xFFF];
+        let idx = scaled.to_i32_round().to_array();
+        dst[off] = enc_lut[idx[0] as usize & 0xFFF];
+        dst[off + 1] = enc_lut[idx[1] as usize & 0xFFF];
+        dst[off + 2] = enc_lut[idx[2] as usize & 0xFFF];
+        dst[off + 3] = enc_lut[idx[4] as usize & 0xFFF];
+        dst[off + 4] = enc_lut[idx[5] as usize & 0xFFF];
+        dst[off + 5] = enc_lut[idx[6] as usize & 0xFFF];
     }
 }
 
