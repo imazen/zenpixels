@@ -1,0 +1,60 @@
+f32 linear → u16 sRGB encode-step probe
+Date: 2026-04-23
+zenpixels-convert commit: 758f4132 (main)
+linear-srgb revision: local perf/simd-tf-magetypes @ a8b6b3d1 + WIP
+Hardware: AMD Ryzen 9 7950X
+Command: cargo bench --bench bench_u16_encode
+
+Encode step only. Same f32 linear input, three different algorithms.
+Throughput counted as src (n*4) + dst (n*2) bytes — one-sided.
+
+                            256px       4096px      1080p
+  matlut_lut_scalar         7.56        7.63        5.72 GiB/s
+  linsrgb_sqrtlut_simd     12.9        12.6         7.54 GiB/s
+  linsrgb_poly_simd        16.5        16.9        15.2 GiB/s
+
+  linsrgb_poly vs matlut   +118%      +121%      +166%  ★★★
+  linsrgb_sqrtlut vs matlut +70%       +65%       +32%
+
+Key findings:
+
+1. linear-srgb's SIMD rational polynomial f32→u16 encode is 2–2.7×
+   faster than the matlut-style SIMD-clamp-round + scalar 128 KB LUT
+   gather. Wisdom #4 ("SIMD polynomial beats LUT for large LUTs")
+   qualitatively confirmed, though the specific 51× headline probably
+   came from a different comparison (scalar-LUT baseline).
+
+2. The gap WIDENS at 1080p: polynomial 15.2 vs matlut 5.72 (+166%).
+   The 128 KB encode LUT falls out of L2 when the working set grows;
+   polynomial carries zero cache state and stays at ~full speed.
+
+3. sqrt-indexed LUT (same shape as matlut but implemented as a clean
+   magetypes SIMD kernel) lands between them — beats matlut by ~60%
+   because of better SIMD codegen, but still eats the 128 KB LUT
+   cache cost at 1080p.
+
+Implication for zenpixels-convert u16 matlut rewrite
+────────────────────────────────────────────────────
+
+Current full-pipeline u16 matlut (decode LUT + SIMD matrix + encode LUT,
+fused single-pass):
+  4096px: 6.2 GiB/s  (t7 sRGB U16 fused gamut)
+  1080p:  5.0 GiB/s
+
+A fully-fused polynomial u16 kernel would need:
+  - SIMD polynomial u16→f32 decode rite in linear-srgb
+    (currently the decode slice path is scalar LUT; filed as request)
+  - SIMD polynomial f32→u16 encode rite (exists, measured above)
+
+Expected result: u16 matlut path 5-6 → ~10-15 GiB/s. Memory-bound at
+1080p either way, but the larger-than-L2 LUT footprint is the thing
+we'd cut.
+
+Next steps
+──────────
+  - File linear-srgb enhancement: add SIMD polynomial u16→f32 decode
+    rite (mirror of the existing SIMD encode).
+  - Once upstream lands, rewrite the u16 matlut kernel as a fused
+    polynomial pipeline using linear-srgb rites.
+  - Probe retained in benches/bench_u16_encode.rs for regression
+    tracking.
