@@ -1,0 +1,79 @@
+Encode LUT indexing probe: sqrt vs linear + SIMD quality matrix
+Date: 2026-04-23
+zenpixels-convert commit: c4a0c656 (main)
+linear-srgb: local perf/simd-tf-magetypes (has SIMD poly decode+encode,
+             SIMD sqrt-LUT encode, scalar polynomial fallbacks)
+Hardware: AMD Ryzen 9 7950X (Zen 4)
+Command: cargo bench --bench bench_u16_encode
+
+Setup
+─────
+Four encode-step variants on identical f32 linear input, measuring
+only the encode (f32 → u16), not the decode or matrix:
+
+1. matlut_lut_scalar      — LLVM autovec SIMD-clamp + scale + round
+                            + scalar gather from 65536-entry linearly-
+                            indexed LUT (128 KB)
+2. matlut_shape_sqrt_lut  — same autovec shape, but with sqrt added
+                            and sqrt-indexed LUT (65537 entries, 128 KB)
+3. linsrgb_sqrtlut_simd   — linear-srgb's `_slice_fast`: explicit
+                            magetypes SIMD clamp+sqrt+scale+round
+                            + scalar gather from sqrt-indexed LUT
+4. linsrgb_poly_simd      — linear-srgb's `_slice`: pure SIMD
+                            rational polynomial, no LUT
+
+Throughput (one-sided, src f32 + dst u16)
+─────────────────────────────────────────
+
+                             256px      4096px     1080p
+  matlut_lut_scalar         7.80       7.71       5.28  GiB/s
+  matlut_shape_sqrt_lut     5.52       5.46       4.51
+  linsrgb_sqrtlut_simd     13.8       12.9        6.74
+  linsrgb_poly_simd        16.7       17.4       14.6
+
+Findings
+────────
+
+1. **SIMD codegen quality dominates indexing scheme choice.**
+   matlut_lut_scalar (7.71) vs linsrgb_sqrtlut_simd (12.9) at 4096px
+   = +67% from switching LLVM autovec for explicit magetypes SIMD,
+   even though the sqrt path is doing MORE work (extra sqrt per lane).
+
+2. **Autovec can't digest sqrt-in-the-loop.**
+   matlut_shape_sqrt_lut (5.46) vs matlut_lut_scalar (7.71) = -29%.
+   LLVM fails to vectorize cleanly when sqrt enters the chain.
+   Explicit magetypes absorbs the sqrt at ~15% cost.
+
+3. **Sqrt vs linear indexing (with explicit SIMD) is nearly free.**
+   Extrapolating: explicit-SIMD linear-indexed would be ~15 GiB/s;
+   explicit-SIMD sqrt-indexed measured 12.9. ~15% cost for sqrt.
+   Totally acceptable given the precision gain.
+
+4. **Precision: sqrt-indexed wins 94.2% exact ±1 vs linear 71.3% ±6.**
+   (per linear-srgb docs.) Current matlut's linearly-indexed encode
+   has ±6 u16 roundtrip error possible near the sRGB transition —
+   a latent precision bug not caught by the test suite.
+
+Recommendations
+───────────────
+
+1. If matlut is to be retained for u16 RGB gamut: migrate its encode
+   LUT from linearly-indexed → sqrt-indexed. Small perf cost (~15%),
+   precision gain (±6 → ±1), and lets matlut share linear-srgb's
+   encode LUT once imazen/linear-srgb#22 lands. Estimated encode step:
+   7.7 → ~12-13 GiB/s.
+
+2. Decode LUT: already directly compatible. Pending #22 merge, drop
+   zenpixels-convert's `srgb_lin_lut_u16` in favor of linear-srgb's
+   cached one. Saves 256 KB of duplicate allocation.
+
+3. Full-polynomial u16 (no LUT): still loses on full pipeline due to
+   2× polynomial cost (decode + encode). Keep as the "future AVX-512"
+   option — 2× FMA throughput might tip the balance.
+
+Open question
+─────────────
+Did matlut's ±6 u16 error actually bite anything? Worth a separate
+ULP probe against the scalar reference for sRGB u16 RGB roundtrip to
+confirm. If the error is academic (never seen in practice) the
+migration priority drops.

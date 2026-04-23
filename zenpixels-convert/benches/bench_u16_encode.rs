@@ -97,6 +97,46 @@ fn matlut_decode(input: &[u16], output: &mut [f32], lut: &[f32; 65536]) {
     }
 }
 
+/// Build a sqrt-indexed encode LUT (65537 entries, ~128 KB), mirroring
+/// linear-srgb's `u16_lut::generate_encode_lut`. Entry i stores the sRGB
+/// u16 value for `linear = (i / 65536)²`. Lookup is:
+///   idx = (sqrt(linear) * 65536 + 0.5) as usize
+const SQRT_LUT_N: usize = 65537;
+const SQRT_LUT_SCALE: f32 = (SQRT_LUT_N - 1) as f32;
+
+fn build_sqrt_lut() -> Box<[u16; SQRT_LUT_N]> {
+    let v: Vec<u16> = (0..SQRT_LUT_N as u32)
+        .map(|i| {
+            let t = i as f32 * (1.0 / SQRT_LUT_SCALE);
+            let linear = t * t;
+            linear_to_srgb_u16(linear)
+        })
+        .collect();
+    v.into_boxed_slice().try_into().ok().unwrap()
+}
+
+/// Matlut-shape encode but with sqrt-indexing. Same SIMD-clamp +
+/// scalar-gather shape as `matlut_encode` above, plus one `sqrt` per
+/// lane before the index computation.
+fn sqrt_lut_encode(input: &[f32], output: &mut [u16], lut: &[u16; SQRT_LUT_N]) {
+    let (in_chunks, in_rem) = input.as_chunks::<8>();
+    let (out_chunks, out_rem) = output.as_chunks_mut::<8>();
+    for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
+        let mut idx = [0i32; 8];
+        for j in 0..8 {
+            let v = inp[j].clamp(0.0, 1.0).sqrt() * SQRT_LUT_SCALE + 0.5;
+            idx[j] = v as i32;
+        }
+        for j in 0..8 {
+            out[j] = lut[(idx[j] as usize).min(SQRT_LUT_N - 1)];
+        }
+    }
+    for (v, slot) in in_rem.iter().zip(out_rem.iter_mut()) {
+        let idx = (v.clamp(0.0, 1.0).sqrt() * SQRT_LUT_SCALE + 0.5) as usize;
+        *slot = lut[idx.min(SQRT_LUT_N - 1)];
+    }
+}
+
 fn make_u16_input(n: usize) -> Vec<u16> {
     (0..n)
         .map(|i| ((i as u64).wrapping_mul(2654435761) % 65536) as u16)
@@ -106,8 +146,10 @@ fn make_u16_input(n: usize) -> Vec<u16> {
 fn main() {
     let enc_lut = build_matlut_lut();
     let dec_lut = build_matlut_dec_lut();
+    let sqrt_lut = build_sqrt_lut();
     let enc_lut_static: &'static [u16; 65536] = Box::leak(enc_lut);
     let dec_lut_static: &'static [f32; 65536] = Box::leak(dec_lut);
+    let sqrt_lut_static: &'static [u16; SQRT_LUT_N] = Box::leak(sqrt_lut);
     zenbench::run(|suite| {
         // ---- Decode side: u16 → f32 ----
         for &(label, width) in SIZES {
@@ -165,11 +207,22 @@ fn main() {
                     })
                 });
 
-                let src = input;
+                let src = input.clone();
                 let mut dst = vec![0u16; n];
                 g.bench("linsrgb_sqrtlut_simd", move |b| {
                     b.iter(|| {
                         linear_to_srgb_u16_slice_fast(&src, &mut dst);
+                        black_box(());
+                    })
+                });
+
+                // Matlut-shape (LLVM autovec SIMD-clamp + scalar gather) but
+                // with sqrt-indexing. Isolates the sqrt vs linear trade.
+                let src = input;
+                let mut dst = vec![0u16; n];
+                g.bench("matlut_shape_sqrt_lut", move |b| {
+                    b.iter(|| {
+                        sqrt_lut_encode(&src, &mut dst, sqrt_lut_static);
                         black_box(());
                     })
                 });
