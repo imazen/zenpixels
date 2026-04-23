@@ -1425,9 +1425,15 @@ pub struct PixelBuffer<P = ()> {
 impl PixelBuffer {
     /// Allocate a zero-filled buffer for the given dimensions and format.
     ///
+    /// The default path is infallible for speed — see the
+    /// [allocation policy](crate#allocation-policy) for the rationale and
+    /// for guidance on when to reach for the `try_*` sibling.
+    ///
     /// # Panics
     ///
-    /// Panics if allocation fails. Use [`try_new`](Self::try_new) for fallible allocation.
+    /// Panics if allocation fails. Use [`try_new`](Self::try_new) for
+    /// fallible allocation when handling untrusted sizes or when OOM must
+    /// be recoverable.
     pub fn new(width: u32, height: u32, descriptor: PixelDescriptor) -> Self {
         Self::try_new(width, height, descriptor).expect("pixel buffer allocation failed")
     }
@@ -1473,10 +1479,16 @@ impl PixelBuffer {
     ///
     /// `simd_align` must be a power of 2 (e.g. 16, 32, 64).
     ///
+    /// The default path is infallible for speed — see the
+    /// [allocation policy](crate#allocation-policy) for the rationale and
+    /// for guidance on when to reach for the `try_*` sibling.
+    ///
     /// # Panics
     ///
-    /// Panics if allocation fails. Use [`try_new_simd_aligned`](Self::try_new_simd_aligned)
-    /// for fallible allocation.
+    /// Panics if allocation fails. Use
+    /// [`try_new_simd_aligned`](Self::try_new_simd_aligned) for fallible
+    /// allocation when handling untrusted sizes or when OOM must be
+    /// recoverable.
     pub fn new_simd_aligned(
         width: u32,
         height: u32,
@@ -1564,10 +1576,15 @@ impl<P: Pixel> PixelBuffer<P> {
     ///
     /// The descriptor is derived from `P::DESCRIPTOR`.
     ///
+    /// The default path is infallible for speed — see the
+    /// [allocation policy](crate#allocation-policy) for the rationale and
+    /// for guidance on when to reach for the `try_*` sibling.
+    ///
     /// # Panics
     ///
-    /// Panics if allocation fails. Use [`try_new_typed`](Self::try_new_typed)
-    /// for fallible allocation.
+    /// Panics if allocation fails. Use
+    /// [`try_new_typed`](Self::try_new_typed) for fallible allocation when
+    /// handling untrusted sizes or when OOM must be recoverable.
     pub fn new_typed(width: u32, height: u32) -> Self {
         Self::try_new_typed(width, height).expect("typed pixel buffer allocation failed")
     }
@@ -1645,6 +1662,15 @@ impl<P: Pixel> PixelBuffer<P> {
     ///
     /// Zero-copy when `P` has alignment 1 (u8-component types).
     /// Copies for higher-alignment types.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the copy path (triggered for `P` with alignment > 1) fails
+    /// to allocate. There is no fallible sibling today; if you need one,
+    /// pre-convert the `ImgVec` into a `Vec<P>` and use
+    /// [`try_new_typed`](Self::try_new_typed) followed by a manual copy, or
+    /// file a request against the crate (see the
+    /// [allocation policy](crate#allocation-policy)).
     pub fn from_imgvec(img: ImgVec<P>) -> Self {
         const { assert!(core::mem::size_of::<P>() == P::DESCRIPTOR.bytes_per_pixel()) }
         let width = img.width() as u32;

@@ -48,6 +48,9 @@ pub enum DepthPolicy {
 }
 
 /// Luma coefficients for RGB→Gray conversion.
+///
+/// Use [`coefficients()`](Self::coefficients) to get the concrete `[f32; 3]`
+/// weights for each variant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum LumaCoefficients {
@@ -55,6 +58,32 @@ pub enum LumaCoefficients {
     Bt709,
     /// BT.601: `0.299R + 0.587G + 0.114B` (SDTV, JPEG).
     Bt601,
+    /// BT.2020 / BT.2100: `0.2627R + 0.6780G + 0.0593B` (UHDTV, wide gamut).
+    ///
+    /// BT.2100 (HDR) uses the same primaries as BT.2020, so this is the
+    /// variant to use for both SDR BT.2020 and HDR BT.2100 content.
+    Bt2020,
+}
+
+impl LumaCoefficients {
+    /// Return the `[R, G, B]` weights for this luma recipe.
+    ///
+    /// - [`Bt709`](Self::Bt709): `[0.2126, 0.7152, 0.0722]`
+    /// - [`Bt601`](Self::Bt601): `[0.299, 0.587, 0.114]`
+    /// - [`Bt2020`](Self::Bt2020): `[0.2627, 0.6780, 0.0593]` (same as BT.2100)
+    ///
+    /// The three weights always sum to exactly 1.0 in IEEE 754 double
+    /// precision, but may sum to 1.0 ± 1 ULP in `f32`. Callers that need
+    /// the weights to sum to exactly 1.0 in f32 should use double-precision
+    /// accumulation in their inner loop.
+    #[inline]
+    pub const fn coefficients(self) -> [f32; 3] {
+        match self {
+            Self::Bt709 => [0.2126, 0.7152, 0.0722],
+            Self::Bt601 => [0.299, 0.587, 0.114],
+            Self::Bt2020 => [0.2627, 0.6780, 0.0593],
+        }
+    }
 }
 
 /// Explicit options for pixel format conversion. All lossy
@@ -229,9 +258,49 @@ mod tests {
     #[test]
     fn luma_coefficients_variants() {
         assert_ne!(LumaCoefficients::Bt709, LumaCoefficients::Bt601);
+        assert_ne!(LumaCoefficients::Bt709, LumaCoefficients::Bt2020);
+        assert_ne!(LumaCoefficients::Bt601, LumaCoefficients::Bt2020);
         let a = LumaCoefficients::Bt709;
         let b = a;
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn luma_coefficients_accessor_values() {
+        // Exact bit patterns of documented coefficients — any numeric drift
+        // in the enum is a behavior break for downstream RGB→Gray kernels.
+        assert_eq!(
+            LumaCoefficients::Bt709.coefficients(),
+            [0.2126_f32, 0.7152, 0.0722],
+        );
+        assert_eq!(
+            LumaCoefficients::Bt601.coefficients(),
+            [0.299_f32, 0.587, 0.114],
+        );
+        assert_eq!(
+            LumaCoefficients::Bt2020.coefficients(),
+            [0.2627_f32, 0.6780, 0.0593],
+        );
+    }
+
+    #[test]
+    fn luma_coefficients_sum_to_near_unity() {
+        // All three recipes are constructed from spec chromaticities and
+        // must normalize to white = 1.0. Allow 1 f32 ULP of slack for
+        // BT.2020 (its double-precision sum is exactly 1.0 but single
+        // precision may round).
+        for luma in [
+            LumaCoefficients::Bt709,
+            LumaCoefficients::Bt601,
+            LumaCoefficients::Bt2020,
+        ] {
+            let [r, g, b] = luma.coefficients();
+            let sum = r + g + b;
+            assert!(
+                (sum - 1.0).abs() < 1e-6,
+                "{luma:?} coefficients sum to {sum}, expected ~1.0"
+            );
+        }
     }
 
     #[test]
