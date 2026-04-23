@@ -52,10 +52,30 @@ Conclusions
 
 Action items
 ────────────
-  - Filed upstream issue on imazen/linear-srgb linking this data.
+  - Filed upstream issue imazen/linear-srgb#18 linking this data.
   - `benches/bench_hlg_regress.rs` kept committed so the regression
     can be validated when upstream lands a fix.
   - T4 meta updated to correct my earlier speculation.
+
+Second run (later same day, 2026-04-23)
+───────────────────────────────────────
+
+Re-ran probe against an updated local linear-srgb
+(perf/simd-tf-magetypes @ a8b6b3d1 + WIP changes in tf/hlg.rs,
+tf/pq.rs, tf/bt709.rs, tf/fast_math.rs, simd.rs). Partial
+improvement:
+
+  input (uniform [0,1], 4096px)  one-sided GiB/s
+    crates.io 0.6.11 (baseline)   14.6
+    local (prev, 148dc154)        10.8   -26%
+    local (new, a8b6b3d1 + WIP)   11.9   -18%   ← +10% vs prev
+
+T4 two-sided at 4096px:
+    Linear → HLG:  29.44 (base) → 19.9 (prev) → 21.8 (new)  still -26%
+    HLG → Linear:   9.27 (base) → 21.2 (prev) → 23.4 (new)  still +2.5×
+
+Regression is shrinking but not gone. Keeping the probe + issue
+open until parity or better is reached.
 
 Other notes
 ───────────
