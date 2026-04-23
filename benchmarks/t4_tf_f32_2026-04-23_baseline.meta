@@ -1,0 +1,45 @@
+# Tier 4 (F32 transfer function only, same depth) baseline
+#
+# Date: 2026-04-23
+# Commit: 89020ee
+# Hardware: AMD Ryzen 9 7950X
+# Command: cargo bench --bench bench_t4_tf_f32
+#
+# Each bench is F32 RGB with one TF → F32 RGB Linear (or reverse). Triggers
+# a single-step plan hitting the relevant `{Tf}F32ToLinearF32` kernel.
+#
+# Headlines at 4096 px (L1/L2 sized row, f32 RGB = 48 KB src + 48 KB dst):
+#
+#   TF → Linear                 Linear → TF
+#   sRGB     33.58 GiB/s        sRGB     24.95 GiB/s   (linear-srgb SIMD-dispatched)
+#   HLG       9.27 GiB/s        HLG      29.44 GiB/s   (Linear→HLG unexpectedly faster than sRGB!)
+#   Gamma22   9.99 GiB/s        Gamma22   9.71 GiB/s
+#   BT.709    5.79 GiB/s        BT.709    6.51 GiB/s
+#   PQ        4.36 GiB/s        PQ        2.72 GiB/s   (worst — scalar polynomial + pow)
+#
+# Observations:
+#
+# 1. sRGB dispatched path is 3-10× faster than the others. Confirms
+#    the linear-srgb#10 issue hypothesis: upstream has SIMD rites for
+#    BT.709/PQ/HLG but they are NOT wired into the public slice APIs,
+#    so these calls end up scalar.
+#
+# 2. HLG Linear→HLG is somehow FASTER than sRGB Linear→sRGB (29.44 vs
+#    24.95 GiB/s). Counter-intuitive. Hypothesis: HLG's linear_to_hlg
+#    branches early for v<=1/12 using a quadratic, and most of our
+#    pseudo-random f32 inputs in [0,1] have v<=1/12 half the time; the
+#    quadratic path is simpler than sRGB's rational-polynomial divide.
+#    Worth confirming with an input distribution matching real HDR.
+#
+# 3. PQ is the slowest across both directions (4.4 and 2.7 GiB/s) —
+#    expected. PQ's `fast_pow2f` / rational polynomial is the heaviest
+#    scalar path. Biggest win from upstream dispatch.
+#
+# Action items informed by this data:
+#   - Linear-srgb#10 priority confirmed: upstream dispatched slice APIs
+#     for BT.709/PQ/HLG/Gamma22 would move each to ~25-35 GiB/s (sRGB
+#     range). 5-10× potential speedup on these kernels.
+#   - Matte_composite spike: use sRGB as the baseline because that TF
+#     already has fast slice dispatch upstream. A fused const-generic
+#     kernel calling linear_srgb::tf::srgb_to_linear inline will
+#     auto-vectorize better than the current per-pixel match.

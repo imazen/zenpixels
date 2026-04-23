@@ -58,6 +58,16 @@ name = "bench_premul_u16"
 path = "benches/bench_premul_u16.rs"
 harness = false
 
+[[bench]]
+name = "bench_t1_layout"
+path = "benches/bench_t1_layout.rs"
+harness = false
+
+[[bench]]
+name = "bench_t4_tf_f32"
+path = "benches/bench_t4_tf_f32.rs"
+harness = false
+
 # TODO: restore when ZenCmsLite is public
 # [[bench]]
 # name = "bench_fast_p3"

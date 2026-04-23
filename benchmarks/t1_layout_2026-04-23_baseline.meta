@@ -1,0 +1,52 @@
+# Tier 1 (layout / swizzle / matte_composite) baseline
+#
+# Date: 2026-04-23
+# Commit: 89020ee (post-shuffle-refactor, pre-matte-TF-refactor)
+# Hardware: AMD Ryzen 9 7950X (water-cooled)
+#   zenbench calibration on this run: int 0.25 ns/iter, mem_bw 85.7 GiB/s, TSC 4.491 ticks/ns
+# Command: cargo bench --bench bench_t1_layout
+# Total time: 336s (131 noisy rounds at 1080p)
+#
+# Headlines (see .txt for the full table):
+#
+# ── Simple shuffle/replicate kernels ────────────────────────────────
+# All well above memory bandwidth on L1-sized rows; hit memory ceiling
+# at 1080p for the 2-byte/pixel variants. U16 and F16 for byte-equivalent
+# operations (drop_alpha, gray_to_rgb, gray_alpha_to_rgb, etc.) should
+# be identical — they use the shared 2-byte kernel. They are.
+#
+# ── Suspicious finding: add_alpha F16 vs U16 2× gap ────────────────
+# At 4096px: U16 sRGB 40.6 GiB/s, F16 sRGB 19.1 GiB/s.
+# At 1080p:  U16 sRGB 28.0 GiB/s, F16 sRGB 18.0 GiB/s.
+# Both kernels are byte-identical except for the opaque-alpha constant
+# (65535 vs F16_ONE_BITS=0x3C00). Investigate: probably autovec picked
+# a different strategy, or one of them got a suboptimal path. TODO.
+#
+# ── matte_composite: the spike target ───────────────────────────────
+# All in MiB/s (not GiB/s). U8 sRGB fast via LUT (~3 GiB/s). Everything
+# else: 200 MiB/s – 1 GiB/s. Per-pixel TF dispatch + f16 conversion
+# is the cost.
+#
+# 4096px (L2) throughput:
+#   U8  sRGB     3.06 GiB/s    baseline (LUT-based, no per-pixel dispatch)
+#   F32 Linear   1.37 GiB/s    2.2× slower (no TF; just blend + clamp)
+#   F16 Linear   937 MiB/s     3.3× slower (f16<->f32 round-trip)
+#   F32 HLG      529 MiB/s     5.9× slower (fast_pow2f sometimes)
+#   F16 HLG      462 MiB/s
+#   U16 sRGB     372 MiB/s     (LUT-based sRGB — but still slow vs U8!)
+#   F32 sRGB     365 MiB/s     8.6× slower (rational polynomial inline)
+#   F16 sRGB     301 MiB/s
+#   F32 PQ       248 MiB/s    12.6× slower (worst case: PQ's math + dispatch)
+#   F16 PQ       208 MiB/s
+#
+# Two improvements to chase:
+#   1. Hoist per-pixel TF dispatch (the spike). Expected: 3-5× on float TFs.
+#   2. Investigate U16 sRGB being 8× slower than U8 sRGB despite both using
+#      LUTs. U16 LUT is 256 KB vs U8 LUT 1 KB, so cache pressure differs,
+#      but 8× is extreme. Likely kernel structure issue inherited from
+#      pre-refactor code.
+#
+# ── swizzle_bgra_rgba ────────────────────────────────────────────────
+# Only U8 sRGB path triggers public API (no BGRA descriptors for U16/F32/F16).
+# Internal kernel works for other types via PremulToStraight's generic path
+# but that's not hit in this bench.
