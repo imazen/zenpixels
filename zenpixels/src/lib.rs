@@ -19,6 +19,35 @@
 //! - [`ColorContext`] — ICC profile bytes and/or CICP, `Arc`-shared
 //! - [`ConvertOptions`] — policies for lossy operations (alpha removal, depth reduction)
 //!
+//! # Allocation policy
+//!
+//! All default [`PixelBuffer`] constructors (`new`, `new_simd_aligned`,
+//! `new_typed`, `from_imgvec`) **panic on allocation failure**. This is a
+//! deliberate default: the infallible path lowers to a single `calloc` and
+//! keeps hot construction sites branch-free, which matters for codecs that
+//! allocate one buffer per frame or strip.
+//!
+//! For code that handles untrusted input or must recover from OOM, use the
+//! fallible siblings instead:
+//!
+//! | Panicking                         | Fallible sibling                       |
+//! |-----------------------------------|----------------------------------------|
+//! | [`PixelBuffer::new`]              | [`PixelBuffer::try_new`]               |
+//! | [`PixelBuffer::new_simd_aligned`] | [`PixelBuffer::try_new_simd_aligned`]  |
+//! | `PixelBuffer::<P>::new_typed`     | `PixelBuffer::<P>::try_new_typed`      |
+//!
+//! The fallible siblings return
+//! [`BufferError::AllocationFailed`]
+//! via [`Vec::try_reserve_exact`] + `resize(_, 0)`. They are slightly slower
+//! than the panicking path because the reserve-then-zero pattern cannot be
+//! collapsed into a single `calloc` the way `vec![0; n]` can.
+//!
+//! There is currently **no runtime or compile-time toggle** to make the
+//! default constructors fallible. If a Cargo feature (e.g. `fallible-alloc`)
+//! or a runtime option would better fit your use case, please open an issue
+//! at <https://github.com/imazen/zen/issues> describing the caller and we'll
+//! evaluate adding one. Until then, reach directly for the `try_*` variants.
+//!
 //! # Feature flags
 //!
 //! | Feature | What it enables |
