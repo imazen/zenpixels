@@ -1,0 +1,22 @@
+# After: kernel refactored to split-per-type + #[autoversion] + fixed-size [T; N] arrays
+#
+# Same bench, same hardware. Production `straight_to_premul` now dispatches
+# on (ChannelType, channels) to `premul_u16_rgba` (among others), whose body
+# is identical to V3 in this bench. V0 in the bench is kept as a regression
+# reference — it's the previous match-in-fn shape, no longer in production.
+#
+# Kernel: `premul_u16_rgba` in convert_kernels.rs (new post-refactor)
+# Date: 2026-04-23
+# Hardware: AMD Ryzen 9 7950X
+# Command: cargo bench --bench bench_premul_u16
+#
+# Confirmed speedup (same numbers as baseline because V3 was already the
+# new production shape — the bench just validated the pattern before the
+# refactor, and the pattern carried verbatim into production):
+#
+#   256 px (L1):   V0 2.36 → V3 19.1 GiB/s   (8.1×)
+#   4096 px (L2):  V0 2.21 → V3 22.8 GiB/s  (10.3×)
+#   1920×1080:     V0 2.30 → V3  8.15 GiB/s (3.5×; memory-bound ceiling)
+#
+# V2 (chunks_exact) stays as a negative example — don't add manual chunking,
+# LLVM autovectorizes the plain flat loop better on its own.

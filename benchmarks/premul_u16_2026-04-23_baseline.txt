@@ -1,0 +1,52 @@
+    Finished `bench` profile [optimized] target(s) in 0.04s
+     Running benches/bench_premul_u16.rs (target/release/deps/bench_premul_u16-38a197ee79bc50b7)
+[zenbench] calibration: int=0.26ns/iter mem_bw=119.0GiB/s mem_lat=9.6ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.37ns/iter, TSC: 4.488 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1776908340-503ee.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1776908340-503ee
+  git: 47eb81e0a98cd0d760ba6215c8bc352027e58f6a
+═══════════════════════════════════════════════════════════════
+
+  u16 RGBA straight_to_premul    256 px  (L1, 2 KB/2 KB)  30 rounds × 2K calls
+                                 mean ±mad ns  95% CI vs base      iB/s
+  ├─ V0 match-in-fn (current)     811 ±17ns  [801–821]ns        2.35G
+  ├─ V1 split + autoversion        114 ±2ns  [-87.5%–-85.9%]    16.7G [1]
+  ├─ V2 split + autoversion + …    450 ±9ns  [-47.0%–-44.7%]    4.24G
+  ╰─ V3 split + autoversion + …     97 ±2ns  [-88.9%–-87.2%]    19.7G
+
+  V3 split + autoversion + …  ███████████████████████████████████████ 19.7 GiB/s
+  V1 split + autoversion      █████████████████████████████████ 16.7 GiB/s
+  V2 split + autoversion + …  ████████ 4.24 GiB/s
+  V0 match-in-fn (current)    █████ 2.35 GiB/s
+  [1] CV=29%
+
+  u16 RGBA straight_to_premul   4096 px  (L1/L2, 32 KB/32 KB)  30 rounds × 142 calls
+                                  mean ±mad µs  95% CI vs base      iB/s
+  ├─ V0 match-in-fn (current)     14.5 ±0.5µs  [14.2–14.8]µs      2.11G
+  ├─ V1 split + autoversion        1.3 ±0.0µs  [-92.3%–-89.5%]    23.3G
+  ├─ V2 split + autoversion + …    7.2 ±0.1µs  [-50.7%–-47.8%]    4.24G
+  ╰─ V3 split + autoversion + …    1.4 ±0.0µs  [-91.9%–-88.6%]    21.9G [1]
+
+  V1 split + autoversion      ███████████████████████████████████████ 23.3 GiB/s
+  V3 split + autoversion + …  █████████████████████████████████████ 21.9 GiB/s
+  V2 split + autoversion + …  ███████ 4.24 GiB/s
+  V0 match-in-fn (current)    ████ 2.11 GiB/s
+  [1] CV=20%
+
+  u16 RGBA straight_to_premul  1920x1080 frame (L3/memory)  30 rounds × 1 calls
+                                 mean ±mad ms  95% CI vs base      iB/s
+  ├─ V0 match-in-fn (current)     6.7 ±0.1ms  [6.7–6.8]ms        2.29G
+  ├─ V1 split + autoversion       1.9 ±0.3ms  [-74.1%–-70.7%]    8.22G
+  ├─ V2 split + autoversion + …   3.6 ±0.1ms  [-46.7%–-44.6%]    4.25G
+  ╰─ V3 split + autoversion + …   1.8 ±0.3ms  [-74.9%–-72.3%]    8.69G
+
+  V3 split + autoversion + …  ███████████████████████████████████████ 8.69 GiB/s
+  V1 split + autoversion      █████████████████████████████████████ 8.22 GiB/s
+  V2 split + autoversion + …  ███████████████████ 4.25 GiB/s
+  V0 match-in-fn (current)    ██████████ 2.29 GiB/s
+
+  total: 12.2s  (44 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json

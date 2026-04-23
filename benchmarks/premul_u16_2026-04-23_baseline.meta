@@ -1,0 +1,19 @@
+# Baseline: match-in-fn vs split+autoversion, before kernel refactor
+#
+# Kernel: straight_to_premul U16 RGBA 4-channel (generic scalar path)
+# Date: 2026-04-23
+# Commit: 47eb81e0 (post-icc_profile_for, pre match-to-split refactor)
+# Hardware: AMD Ryzen 9 7950X (water-cooled, no thermal throttling)
+#          - per zenbench calibration: mem_bw 91.6 GiB/s, int 0.25 ns/iter, TSC 4.491 ticks/ns
+# Command: cargo bench --bench bench_premul_u16
+# Tool: zenbench v0.1.7, interleaved round-robin
+# Variants:
+#   V0 match-in-fn (current): the code the refactor is about to replace
+#   V1 split + autoversion + plain for-loop
+#   V2 split + autoversion + chunks_exact(16)
+#   V3 split + autoversion + [u16; 4] fixed-size per pixel
+#
+# Headline: V1 and V3 ~10× V0 on L2-sized rows; V2 surprisingly only 2×
+# (chunks_exact interferes with LLVM's natural autovectorization of the
+# outer loop). V3 marginally edges V1, so adopt V3 for RGBA-natural
+# kernels and V1 for irregular shapes.

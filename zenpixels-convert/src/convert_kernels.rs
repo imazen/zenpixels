@@ -1255,8 +1255,93 @@ fn linear_f32_to_gamma22_f32(src: &[u8], dst: &mut [u8], width: usize, channels:
 // ---------------------------------------------------------------------------
 // Alpha premultiplication
 // ---------------------------------------------------------------------------
+//
+// Pattern: dispatch on (ChannelType, channels) to concrete #[autoversion]
+// kernels. Each kernel has a flat per-pixel loop with fixed-size array
+// slicing at the pixel boundary so LLVM can drop bounds checks and
+// vectorize. Empirically ~10× faster than the previous big-match-in-fn
+// shape on L2-sized rows (see benchmarks/premul_u16_2026-04-23_baseline).
+// ---------------------------------------------------------------------------
 
-/// Straight → Premultiplied alpha (in-place copy from src to dst).
+// -- Straight → Premultiplied: per-(type, channels) kernels ------------------
+
+#[autoversion]
+fn premul_u8_ga(src: &[u8], dst: &mut [u8], width: usize) {
+    for i in 0..width {
+        let base = i * 2;
+        let s: &[u8; 2] = (&src[base..base + 2]).try_into().unwrap();
+        let d: &mut [u8; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
+        let a = s[1] as u32;
+        d[0] = ((s[0] as u32 * a + 128) / 255) as u8;
+        d[1] = s[1];
+    }
+}
+
+#[autoversion]
+fn premul_u16_ga(src: &[u16], dst: &mut [u16], width: usize) {
+    for i in 0..width {
+        let base = i * 2;
+        let s: &[u16; 2] = (&src[base..base + 2]).try_into().unwrap();
+        let d: &mut [u16; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
+        let a = s[1] as u32;
+        d[0] = ((s[0] as u32 * a + 32768) / 65535) as u16;
+        d[1] = s[1];
+    }
+}
+
+#[autoversion]
+fn premul_u16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
+    for i in 0..width {
+        let base = i * 4;
+        let s: &[u16; 4] = (&src[base..base + 4]).try_into().unwrap();
+        let d: &mut [u16; 4] = (&mut dst[base..base + 4]).try_into().unwrap();
+        let a = s[3] as u32;
+        d[0] = ((s[0] as u32 * a + 32768) / 65535) as u16;
+        d[1] = ((s[1] as u32 * a + 32768) / 65535) as u16;
+        d[2] = ((s[2] as u32 * a + 32768) / 65535) as u16;
+        d[3] = s[3];
+    }
+}
+
+#[autoversion]
+fn premul_f32_ga(src: &[f32], dst: &mut [f32], width: usize) {
+    for i in 0..width {
+        let base = i * 2;
+        let s: &[f32; 2] = (&src[base..base + 2]).try_into().unwrap();
+        let d: &mut [f32; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
+        let a = s[1];
+        d[0] = s[0] * a;
+        d[1] = a;
+    }
+}
+
+#[autoversion]
+fn premul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
+    for i in 0..width {
+        let base = i * 2;
+        let s: &[u16; 2] = (&src[base..base + 2]).try_into().unwrap();
+        let d: &mut [u16; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
+        let a = f16_bits_to_f32(s[1]);
+        d[0] = f32_to_f16_bits(f16_bits_to_f32(s[0]) * a);
+        d[1] = s[1];
+    }
+}
+
+#[autoversion]
+fn premul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
+    for i in 0..width {
+        let base = i * 4;
+        let s: &[u16; 4] = (&src[base..base + 4]).try_into().unwrap();
+        let d: &mut [u16; 4] = (&mut dst[base..base + 4]).try_into().unwrap();
+        let a = f16_bits_to_f32(s[3]);
+        d[0] = f32_to_f16_bits(f16_bits_to_f32(s[0]) * a);
+        d[1] = f32_to_f16_bits(f16_bits_to_f32(s[1]) * a);
+        d[2] = f32_to_f16_bits(f16_bits_to_f32(s[2]) * a);
+        d[3] = s[3];
+    }
+}
+
+/// Straight → Premultiplied alpha (copy from src to dst).
 fn straight_to_premul(
     src: &[u8],
     dst: &mut [u8],
@@ -1265,80 +1350,207 @@ fn straight_to_premul(
     layout: ChannelLayout,
 ) {
     let channels = layout.channels();
-    let alpha_idx = channels - 1;
-
-    // Fast path: 4-channel layouts (RGBA, BGRA, OklabA) delegate to garb.
-    if channels == 4 {
-        match ch_type {
-            ChannelType::U8 => {
-                let n = width * 4;
-                garb::bytes::premultiply_alpha_rgba_u8_copy(&src[..n], &mut dst[..n])
-                    .expect("pre-validated row size");
-                return;
-            }
-            ChannelType::F32 => {
-                let n = width * 16;
-                garb::bytes::premultiply_alpha_f32_copy(&src[..n], &mut dst[..n])
-                    .expect("pre-validated row size");
-                return;
-            }
-            _ => {}
+    match (ch_type, channels) {
+        // Garb fast paths (SIMD, RGBA 4-channel).
+        (ChannelType::U8, 4) => {
+            let n = width * 4;
+            garb::bytes::premultiply_alpha_rgba_u8_copy(&src[..n], &mut dst[..n])
+                .expect("pre-validated row size");
         }
-    }
-
-    // Generic path for 2-channel (GrayAlpha) or other layouts.
-    match ch_type {
-        ChannelType::U8 => {
-            for i in 0..width {
-                let base = i * channels;
-                let a = src[base + alpha_idx] as u32;
-                for c in 0..alpha_idx {
-                    dst[base + c] = ((src[base + c] as u32 * a + 128) / 255) as u8;
-                }
-                dst[base + alpha_idx] = src[base + alpha_idx];
-            }
+        (ChannelType::F32, 4) => {
+            let n = width * 16;
+            garb::bytes::premultiply_alpha_f32_copy(&src[..n], &mut dst[..n])
+                .expect("pre-validated row size");
         }
-        ChannelType::F32 => {
-            let srcf: &[f32] = bytemuck::cast_slice(&src[..width * channels * 4]);
-            let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * channels * 4]);
-            for i in 0..width {
-                let base = i * channels;
-                let a = srcf[base + alpha_idx];
-                for c in 0..alpha_idx {
-                    dstf[base + c] = srcf[base + c] * a;
-                }
-                dstf[base + alpha_idx] = a;
-            }
+        // Per-type autoversion kernels for the remaining shapes.
+        (ChannelType::U8, 2) => premul_u8_ga(&src[..width * 2], &mut dst[..width * 2], width),
+        (ChannelType::U16, 2) => {
+            let n = width * 4;
+            premul_u16_ga(
+                bytemuck::cast_slice(&src[..n]),
+                bytemuck::cast_slice_mut(&mut dst[..n]),
+                width,
+            );
         }
-        ChannelType::U16 => {
-            let src16: &[u16] = bytemuck::cast_slice(&src[..width * channels * 2]);
-            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * channels * 2]);
-            for i in 0..width {
-                let base = i * channels;
-                let a = src16[base + alpha_idx] as u32;
-                for c in 0..alpha_idx {
-                    dst16[base + c] = ((src16[base + c] as u32 * a + 32768) / 65535) as u16;
-                }
-                dst16[base + alpha_idx] = src16[base + alpha_idx];
-            }
+        (ChannelType::U16, 4) => {
+            let n = width * 8;
+            premul_u16_rgba(
+                bytemuck::cast_slice(&src[..n]),
+                bytemuck::cast_slice_mut(&mut dst[..n]),
+                width,
+            );
         }
-        ChannelType::F16 => {
-            let src16: &[u16] = bytemuck::cast_slice(&src[..width * channels * 2]);
-            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * channels * 2]);
-            for i in 0..width {
-                let base = i * channels;
-                let a = f16_bits_to_f32(src16[base + alpha_idx]);
-                for c in 0..alpha_idx {
-                    let v = f16_bits_to_f32(src16[base + c]);
-                    dst16[base + c] = f32_to_f16_bits(v * a);
-                }
-                dst16[base + alpha_idx] = src16[base + alpha_idx];
-            }
+        (ChannelType::F32, 2) => {
+            let n = width * 8;
+            premul_f32_ga(
+                bytemuck::cast_slice(&src[..n]),
+                bytemuck::cast_slice_mut(&mut dst[..n]),
+                width,
+            );
+        }
+        (ChannelType::F16, 2) => {
+            let n = width * 4;
+            premul_f16_ga(
+                bytemuck::cast_slice(&src[..n]),
+                bytemuck::cast_slice_mut(&mut dst[..n]),
+                width,
+            );
+        }
+        (ChannelType::F16, 4) => {
+            let n = width * 8;
+            premul_f16_rgba(
+                bytemuck::cast_slice(&src[..n]),
+                bytemuck::cast_slice_mut(&mut dst[..n]),
+                width,
+            );
         }
         _ => {
-            // Fallback: copy.
+            // Fallback: byte copy.
             let len = min(src.len(), dst.len());
             dst[..len].copy_from_slice(&src[..len]);
+        }
+    }
+}
+
+// -- Premultiplied → Straight: per-(type, channels) kernels ------------------
+//
+// Each arm handles a == 0 by zeroing all channels (that's the only
+// useful answer for a premultiplied pixel with zero alpha — the color
+// channels are already zero, but we defensively zero anyway).
+
+#[autoversion]
+fn unpremul_u8_ga(src: &[u8], dst: &mut [u8], width: usize) {
+    for i in 0..width {
+        let base = i * 2;
+        let s: &[u8; 2] = (&src[base..base + 2]).try_into().unwrap();
+        let d: &mut [u8; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
+        let a = s[1];
+        if a == 0 {
+            d[0] = 0;
+            d[1] = 0;
+        } else {
+            let a32 = a as u32;
+            d[0] = ((s[0] as u32 * 255 + a32 / 2) / a32).min(255) as u8;
+            d[1] = a;
+        }
+    }
+}
+
+#[autoversion]
+fn unpremul_u8_rgba(src: &[u8], dst: &mut [u8], width: usize) {
+    for i in 0..width {
+        let base = i * 4;
+        let s: &[u8; 4] = (&src[base..base + 4]).try_into().unwrap();
+        let d: &mut [u8; 4] = (&mut dst[base..base + 4]).try_into().unwrap();
+        let a = s[3];
+        if a == 0 {
+            d[0] = 0;
+            d[1] = 0;
+            d[2] = 0;
+            d[3] = 0;
+        } else {
+            let a32 = a as u32;
+            d[0] = ((s[0] as u32 * 255 + a32 / 2) / a32).min(255) as u8;
+            d[1] = ((s[1] as u32 * 255 + a32 / 2) / a32).min(255) as u8;
+            d[2] = ((s[2] as u32 * 255 + a32 / 2) / a32).min(255) as u8;
+            d[3] = a;
+        }
+    }
+}
+
+#[autoversion]
+fn unpremul_u16_ga(src: &[u16], dst: &mut [u16], width: usize) {
+    for i in 0..width {
+        let base = i * 2;
+        let s: &[u16; 2] = (&src[base..base + 2]).try_into().unwrap();
+        let d: &mut [u16; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
+        let a = s[1];
+        if a == 0 {
+            d[0] = 0;
+            d[1] = 0;
+        } else {
+            let a32 = a as u32;
+            d[0] = ((s[0] as u32 * 65535 + a32 / 2) / a32).min(65535) as u16;
+            d[1] = a;
+        }
+    }
+}
+
+#[autoversion]
+fn unpremul_u16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
+    for i in 0..width {
+        let base = i * 4;
+        let s: &[u16; 4] = (&src[base..base + 4]).try_into().unwrap();
+        let d: &mut [u16; 4] = (&mut dst[base..base + 4]).try_into().unwrap();
+        let a = s[3];
+        if a == 0 {
+            d[0] = 0;
+            d[1] = 0;
+            d[2] = 0;
+            d[3] = 0;
+        } else {
+            let a32 = a as u32;
+            d[0] = ((s[0] as u32 * 65535 + a32 / 2) / a32).min(65535) as u16;
+            d[1] = ((s[1] as u32 * 65535 + a32 / 2) / a32).min(65535) as u16;
+            d[2] = ((s[2] as u32 * 65535 + a32 / 2) / a32).min(65535) as u16;
+            d[3] = a;
+        }
+    }
+}
+
+#[autoversion]
+fn unpremul_f32_ga(src: &[f32], dst: &mut [f32], width: usize) {
+    for i in 0..width {
+        let base = i * 2;
+        let s: &[f32; 2] = (&src[base..base + 2]).try_into().unwrap();
+        let d: &mut [f32; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
+        let a = s[1];
+        if a == 0.0 {
+            d[0] = 0.0;
+            d[1] = 0.0;
+        } else {
+            d[0] = s[0] / a;
+            d[1] = a;
+        }
+    }
+}
+
+#[autoversion]
+fn unpremul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
+    for i in 0..width {
+        let base = i * 2;
+        let s: &[u16; 2] = (&src[base..base + 2]).try_into().unwrap();
+        let d: &mut [u16; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
+        let a = f16_bits_to_f32(s[1]);
+        if a == 0.0 {
+            d[0] = 0;
+            d[1] = 0;
+        } else {
+            let inv_a = 1.0 / a;
+            d[0] = f32_to_f16_bits(f16_bits_to_f32(s[0]) * inv_a);
+            d[1] = s[1];
+        }
+    }
+}
+
+#[autoversion]
+fn unpremul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
+    for i in 0..width {
+        let base = i * 4;
+        let s: &[u16; 4] = (&src[base..base + 4]).try_into().unwrap();
+        let d: &mut [u16; 4] = (&mut dst[base..base + 4]).try_into().unwrap();
+        let a = f16_bits_to_f32(s[3]);
+        if a == 0.0 {
+            d[0] = 0;
+            d[1] = 0;
+            d[2] = 0;
+            d[3] = 0;
+        } else {
+            let inv_a = 1.0 / a;
+            d[0] = f32_to_f16_bits(f16_bits_to_f32(s[0]) * inv_a);
+            d[1] = f32_to_f16_bits(f16_bits_to_f32(s[1]) * inv_a);
+            d[2] = f32_to_f16_bits(f16_bits_to_f32(s[2]) * inv_a);
+            d[3] = s[3];
         }
     }
 }
@@ -1352,94 +1564,55 @@ fn premul_to_straight(
     layout: ChannelLayout,
 ) {
     let channels = layout.channels();
-    let alpha_idx = channels - 1;
-
-    // Fast path: 4-channel f32 layouts delegate to garb.
-    if channels == 4 && ch_type == ChannelType::F32 {
-        let n = width * 16;
-        garb::bytes::unpremultiply_alpha_f32_copy(&src[..n], &mut dst[..n])
-            .expect("pre-validated row size");
-        return;
-    }
-
-    // Generic path.
-    match ch_type {
-        ChannelType::U8 => {
-            for i in 0..width {
-                let base = i * channels;
-                let a = src[base + alpha_idx];
-                if a == 0 {
-                    for c in 0..channels {
-                        dst[base + c] = 0;
-                    }
-                } else {
-                    let a32 = a as u32;
-                    for c in 0..alpha_idx {
-                        dst[base + c] = ((src[base + c] as u32 * 255 + a32 / 2) / a32) as u8;
-                    }
-                    dst[base + alpha_idx] = a;
-                }
-            }
+    match (ch_type, channels) {
+        // Garb fast path (SIMD, f32 RGBA).
+        (ChannelType::F32, 4) => {
+            let n = width * 16;
+            garb::bytes::unpremultiply_alpha_f32_copy(&src[..n], &mut dst[..n])
+                .expect("pre-validated row size");
         }
-        ChannelType::F32 => {
-            // 2-channel (GrayAlpha) or other non-4ch layouts.
-            let srcf: &[f32] = bytemuck::cast_slice(&src[..width * channels * 4]);
-            let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * channels * 4]);
-            for i in 0..width {
-                let base = i * channels;
-                let a = srcf[base + alpha_idx];
-                if a == 0.0 {
-                    for c in 0..channels {
-                        dstf[base + c] = 0.0;
-                    }
-                } else {
-                    let inv_a = 1.0 / a;
-                    for c in 0..alpha_idx {
-                        dstf[base + c] = srcf[base + c] * inv_a;
-                    }
-                    dstf[base + alpha_idx] = a;
-                }
-            }
+        // Per-type autoversion kernels.
+        (ChannelType::U8, 2) => unpremul_u8_ga(&src[..width * 2], &mut dst[..width * 2], width),
+        (ChannelType::U8, 4) => unpremul_u8_rgba(&src[..width * 4], &mut dst[..width * 4], width),
+        (ChannelType::U16, 2) => {
+            let n = width * 4;
+            unpremul_u16_ga(
+                bytemuck::cast_slice(&src[..n]),
+                bytemuck::cast_slice_mut(&mut dst[..n]),
+                width,
+            );
         }
-        ChannelType::U16 => {
-            let src16: &[u16] = bytemuck::cast_slice(&src[..width * channels * 2]);
-            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * channels * 2]);
-            for i in 0..width {
-                let base = i * channels;
-                let a = src16[base + alpha_idx];
-                if a == 0 {
-                    for c in 0..channels {
-                        dst16[base + c] = 0;
-                    }
-                } else {
-                    let a32 = a as u32;
-                    for c in 0..alpha_idx {
-                        dst16[base + c] =
-                            ((src16[base + c] as u32 * 65535 + a32 / 2) / a32).min(65535) as u16;
-                    }
-                    dst16[base + alpha_idx] = a;
-                }
-            }
+        (ChannelType::U16, 4) => {
+            let n = width * 8;
+            unpremul_u16_rgba(
+                bytemuck::cast_slice(&src[..n]),
+                bytemuck::cast_slice_mut(&mut dst[..n]),
+                width,
+            );
         }
-        ChannelType::F16 => {
-            let src16: &[u16] = bytemuck::cast_slice(&src[..width * channels * 2]);
-            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * channels * 2]);
-            for i in 0..width {
-                let base = i * channels;
-                let a = f16_bits_to_f32(src16[base + alpha_idx]);
-                if a == 0.0 {
-                    for c in 0..channels {
-                        dst16[base + c] = 0;
-                    }
-                } else {
-                    let inv_a = 1.0 / a;
-                    for c in 0..alpha_idx {
-                        let v = f16_bits_to_f32(src16[base + c]);
-                        dst16[base + c] = f32_to_f16_bits(v * inv_a);
-                    }
-                    dst16[base + alpha_idx] = src16[base + alpha_idx];
-                }
-            }
+        (ChannelType::F32, 2) => {
+            let n = width * 8;
+            unpremul_f32_ga(
+                bytemuck::cast_slice(&src[..n]),
+                bytemuck::cast_slice_mut(&mut dst[..n]),
+                width,
+            );
+        }
+        (ChannelType::F16, 2) => {
+            let n = width * 4;
+            unpremul_f16_ga(
+                bytemuck::cast_slice(&src[..n]),
+                bytemuck::cast_slice_mut(&mut dst[..n]),
+                width,
+            );
+        }
+        (ChannelType::F16, 4) => {
+            let n = width * 8;
+            unpremul_f16_rgba(
+                bytemuck::cast_slice(&src[..n]),
+                bytemuck::cast_slice_mut(&mut dst[..n]),
+                width,
+            );
         }
         _ => {
             let len = min(src.len(), dst.len());
