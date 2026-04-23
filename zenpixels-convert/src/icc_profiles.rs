@@ -65,7 +65,7 @@
 //! Rec. 2020 has a very wide gamut. Using 8-bit precision with Rec. 2020
 //! will cause visible banding in gradients. Use 16-bit or f32 precision.
 
-use crate::ColorPrimaries;
+use crate::{ColorPrimaries, TransferFunction};
 
 // ---------------------------------------------------------------------------
 // Embedded ICC profiles (CC0 license from Compact-ICC-Profiles)
@@ -168,6 +168,66 @@ pub const fn display_p3_icc(prefer_v2: bool) -> &'static [u8] {
         DISPLAY_P3_V2
     } else {
         DISPLAY_P3_V4
+    }
+}
+
+/// Get a bundled ICC profile matching both a primaries set and a transfer
+/// function.
+///
+/// This is a finer-grained accessor than [`icc_profile_for_primaries`]: it
+/// matches against the TRC encoded in each bundled profile, so a caller
+/// that asks for `(Bt2020, Bt709)` gets the same Rec. 2020 profile, but a
+/// caller asking for `(Bt2020, Pq)` gets `None` (no PQ profile bundled).
+///
+/// # Currently bundled combinations
+///
+/// | Primaries | Transfer | Returned profile |
+/// |-----------|----------|------------------|
+/// | [`Bt709`](ColorPrimaries::Bt709) | [`Srgb`](TransferFunction::Srgb) | `None` — sRGB is the assumed default |
+/// | [`DisplayP3`](ColorPrimaries::DisplayP3) | [`Srgb`](TransferFunction::Srgb) | [`DISPLAY_P3_V4`] |
+/// | [`Bt2020`](ColorPrimaries::Bt2020) | [`Bt709`](TransferFunction::Bt709) | [`REC2020_V4`] |
+/// | [`AdobeRgb`](ColorPrimaries::AdobeRgb) | [`Gamma22`](TransferFunction::Gamma22) | [`ADOBE_RGB`] |
+///
+/// # Not bundled (returns `None`)
+///
+/// - HDR transfers ([`Pq`](TransferFunction::Pq), [`Hlg`](TransferFunction::Hlg))
+///   on any primaries. Ultra HDR / HDR10 / HLG broadcast workflows that need
+///   a PQ- or HLG-tagged profile should either generate one via a CMS crate
+///   (e.g., `moxcms::ColorProfile::new_bt2020_pq().encode()`) or signal color
+///   via CICP instead of ICC.
+/// - [`Linear`](TransferFunction::Linear) on any primaries. Linear-light
+///   working spaces are typically expressed with CICP transfer code 8
+///   rather than an ICC profile.
+/// - Adobe RGB with any transfer other than `Gamma22`.
+/// - BT.2020 primaries with sRGB or BT.709 `Gamma22` / `Linear` transfers
+///   other than the single bundled BT.709 paraType-3 form.
+///
+/// When this function returns `None`, call [`icc_profile_for_primaries`] as
+/// a fallback if you can tolerate the profile's encoded TRC differing from
+/// your requested transfer (e.g., accept the bundled BT.709 TRC for an
+/// SDR BT.2020 export regardless of whether the caller asked for `Srgb` or
+/// `Bt709`).
+#[inline]
+pub const fn icc_profile_for(
+    primaries: ColorPrimaries,
+    transfer: TransferFunction,
+) -> Option<&'static [u8]> {
+    match (primaries, transfer) {
+        // Display P3 + sRGB: saucecontrol's DisplayP3Compat uses paraType-3
+        // sRGB TRC, so both the sRGB and BT.709 transfer callers (which differ
+        // only in the near-black linear segment) get the same profile.
+        (ColorPrimaries::DisplayP3, TransferFunction::Srgb)
+        | (ColorPrimaries::DisplayP3, TransferFunction::Bt709) => Some(DISPLAY_P3_V4),
+        // BT.2020 + BT.709 TRC: saucecontrol's Rec2020Compat uses paraType-3
+        // BT.709 TRC. Accept the sRGB request alias (same curve shape
+        // outside the near-black toe), as this matches what ultrahdr-style
+        // SDR BT.2020 base images need.
+        (ColorPrimaries::Bt2020, TransferFunction::Bt709)
+        | (ColorPrimaries::Bt2020, TransferFunction::Srgb) => Some(REC2020_V4),
+        // Adobe RGB + Gamma22: bundled v2 pure-gamma variant.
+        (ColorPrimaries::AdobeRgb, TransferFunction::Gamma22) => Some(ADOBE_RGB),
+        // Everything else: no bundled profile with that exact TRC.
+        _ => None,
     }
 }
 
@@ -297,5 +357,68 @@ mod tests {
         );
         assert!(icc_profile_for_primaries(ColorPrimaries::Bt709).is_none());
         assert!(icc_profile_for_primaries(ColorPrimaries::Unknown).is_none());
+    }
+
+    #[test]
+    fn icc_profile_for_hits_bundled_combinations() {
+        // Display P3 + sRGB / BT.709 paraType-3 curves both map to the bundled
+        // DisplayP3Compat-v4 profile.
+        assert_eq!(
+            icc_profile_for(ColorPrimaries::DisplayP3, TransferFunction::Srgb),
+            Some(DISPLAY_P3_V4)
+        );
+        assert_eq!(
+            icc_profile_for(ColorPrimaries::DisplayP3, TransferFunction::Bt709),
+            Some(DISPLAY_P3_V4)
+        );
+        // Rec 2020 SDR: BT.709 TRC profile is the canonical export for SDR
+        // BT.2020 base images (matches the ultrahdr 8-bit base JPEG case).
+        assert_eq!(
+            icc_profile_for(ColorPrimaries::Bt2020, TransferFunction::Bt709),
+            Some(REC2020_V4)
+        );
+        assert_eq!(
+            icc_profile_for(ColorPrimaries::Bt2020, TransferFunction::Srgb),
+            Some(REC2020_V4)
+        );
+        // Adobe RGB: pure-gamma-2.2 TRC.
+        assert_eq!(
+            icc_profile_for(ColorPrimaries::AdobeRgb, TransferFunction::Gamma22),
+            Some(ADOBE_RGB)
+        );
+    }
+
+    #[test]
+    fn icc_profile_for_rejects_hdr_transfers() {
+        // HDR PQ / HLG profiles aren't bundled; callers should use CICP or
+        // a CMS-side generator.
+        assert!(icc_profile_for(ColorPrimaries::Bt2020, TransferFunction::Pq).is_none());
+        assert!(icc_profile_for(ColorPrimaries::Bt2020, TransferFunction::Hlg).is_none());
+        assert!(icc_profile_for(ColorPrimaries::DisplayP3, TransferFunction::Pq).is_none());
+        assert!(icc_profile_for(ColorPrimaries::DisplayP3, TransferFunction::Hlg).is_none());
+        // Linear likewise isn't bundled — CICP 8 is the canonical signal.
+        assert!(icc_profile_for(ColorPrimaries::Bt2020, TransferFunction::Linear).is_none());
+        assert!(icc_profile_for(ColorPrimaries::DisplayP3, TransferFunction::Linear).is_none());
+    }
+
+    #[test]
+    fn icc_profile_for_rejects_mismatched_trc_on_bundled_primaries() {
+        // We only bundle Adobe RGB with gamma 2.2 — asking for sRGB TRC on
+        // Adobe RGB primaries returns None rather than lying with a mismatched
+        // curve. Callers who want a fallback use icc_profile_for_primaries.
+        assert!(icc_profile_for(ColorPrimaries::AdobeRgb, TransferFunction::Srgb).is_none());
+        assert!(icc_profile_for(ColorPrimaries::AdobeRgb, TransferFunction::Bt709).is_none());
+        // Gamma 2.2 on DisplayP3 / Bt2020 isn't bundled either.
+        assert!(icc_profile_for(ColorPrimaries::DisplayP3, TransferFunction::Gamma22).is_none());
+        assert!(icc_profile_for(ColorPrimaries::Bt2020, TransferFunction::Gamma22).is_none());
+    }
+
+    #[test]
+    fn icc_profile_for_bt709_returns_none() {
+        // Same as icc_profile_for_primaries: BT.709 / sRGB is the assumed
+        // default and isn't bundled.
+        assert!(icc_profile_for(ColorPrimaries::Bt709, TransferFunction::Srgb).is_none());
+        assert!(icc_profile_for(ColorPrimaries::Bt709, TransferFunction::Bt709).is_none());
+        assert!(icc_profile_for(ColorPrimaries::Unknown, TransferFunction::Unknown).is_none());
     }
 }
