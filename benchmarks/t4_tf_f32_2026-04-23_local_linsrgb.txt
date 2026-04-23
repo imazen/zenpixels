@@ -1,0 +1,54 @@
+Tier 4 re-bench against local linear-srgb (ahead of 0.6.11)
+Date: 2026-04-23
+zenpixels-convert commit: 33421aef (main)
+linear-srgb revision: 148dc154 on branch perf/simd-tf-magetypes
+Hardware: AMD Ryzen 9 7950X
+Command: cargo bench --bench bench_t4_tf_f32
+          (with [patch.crates-io] linear-srgb = local path)
+
+Throughput at 4096px (F32 transfer function only, same depth):
+
+  TF → Linear F32
+  kernel          baseline    after       delta
+  ─────────────── ──────────  ──────────  ──────────
+  sRGB            33.58       33.3        flat
+  HLG              9.27       21.2        +2.3×  ★★
+  PQ               4.36       20.6        +4.7×  ★★★
+  Gamma22          9.99        9.99       flat
+  BT.709           5.79        5.82       flat
+
+  Linear F32 → TF
+  kernel          baseline    after       delta
+  ─────────────── ──────────  ──────────  ──────────
+  HLG             29.44       19.9        -32%   (see note)
+  sRGB            24.95       24.5        flat
+  PQ               2.72       13.1        +4.8×  ★★★
+  Gamma22          9.71        9.77       flat
+  BT.709           6.51        6.47       flat
+
+Headlines:
+
+1. PQ went from worst (1.4 / 2.7 GiB/s) to ~15 GiB/s in both directions
+   — the single biggest win from upstream magetypes-based SIMD dispatch.
+2. HLG → Linear got +2.3× from the same refactor.
+3. BT.709 and Gamma22 did NOT move — the upstream refactor didn't cover
+   these TF kernels yet, or their polynomial shape didn't SIMDify as
+   cleanly.
+
+Note on Linear → HLG regression (29.44 → 19.9):
+
+The baseline meta flagged this number as suspicious ("Linear→HLG
+unexpectedly faster than sRGB") and hypothesized it was the scalar
+quadratic early-exit for v ≤ 1/12 biasing results on our pseudo-random
+test distribution. After the SIMD refactor the kernel is consistent
+across input distributions; the observed 19.9 GiB/s is likely the more
+honest number. Worth re-measuring with a real HDR luma distribution
+before concluding it's a real regression.
+
+Action items informed by this data:
+  - Wait for linear-srgb 0.6.12 (perf/simd-tf-magetypes release) to
+    land, then bump zenpixels-convert's minimum linear-srgb version.
+  - BT.709 and Gamma22 still scalar — file upstream issue or contribute.
+  - Revisit the matte_composite TF-dispatch numbers: the non-Linear
+    arms (1.2-1.7× lift) may also benefit from the new PQ/HLG SIMD
+    slice paths.

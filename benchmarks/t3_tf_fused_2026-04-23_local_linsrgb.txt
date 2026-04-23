@@ -1,0 +1,34 @@
+Tier 3 re-bench against local linear-srgb (ahead of 0.6.11)
+Date: 2026-04-23
+zenpixels-convert commit: 33421aef (main)
+linear-srgb revision: 148dc154 on branch perf/simd-tf-magetypes
+  (+ wip: collapse sRGB extended-range slice tier wrappers)
+Hardware: AMD Ryzen 9 7950X
+Command: cargo bench --bench bench_t3_tf_fused
+          (with [patch.crates-io] linear-srgb = local path)
+
+Throughput at 4096px (TF-fused depth conversion):
+
+  kernel                         baseline    after       delta
+  ────────────────────────────── ──────────  ──────────  ──────────
+  sRGB U8 → Linear F32           24.26       23.8        flat
+  HLG U16 → Linear F32            6.16        6.03       flat
+  Linear F32 → sRGB U8            4.56       16.8        +3.7×  ★★★
+  Linear F32 → HLG U16            4.44        4.47       flat
+  PQ U16 → Linear F32             2.68        2.69       flat
+  Linear F32 → PQ U16             1.39        1.40       flat
+
+Headline: the "sRGB forward-reverse asymmetry" flagged in the baseline
+meta is SOLVED upstream. Linear F32 → sRGB U8 now runs at 16.8 GiB/s,
+roughly on par with the reverse direction. This is issue #10 landing.
+
+Unresolved asymmetries (now with context):
+
+  HLG U16 ↔ Linear F32 stayed at ~6 / ~4.4 GiB/s. The encode LUT path
+  for u16 isn't part of the upstream SIMD-quantize fix.
+
+  PQ U16 ↔ Linear F32 stayed ~2.7 / 1.4 GiB/s. Same story — u16 PQ
+  encode/decode LUT paths aren't touched by the upstream work.
+
+  Action: a future linear-srgb pass (or zenpixels-convert-side
+  polynomial encode) would target the u16 PQ/HLG paths specifically.
