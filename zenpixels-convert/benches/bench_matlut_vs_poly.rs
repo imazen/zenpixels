@@ -1,6 +1,7 @@
 //! A/B probe: matlut (fused SIMD matrix + LUT linearize/encode, sRGB-only)
-//! vs polynomial path (linear-srgb SIMD slice linearize → scalar matrix →
-//! SIMD slice encode).
+//! vs polynomial path — both the naive 3-pass version and (for u16) a
+//! semi-fused version that decodes via the new SIMD polynomial rite
+//! and encodes via the SIMD polynomial slice API.
 //!
 //! Matlut was added in 66c4d4b (u8) / f312e7e (u16) to beat the then-scalar
 //! quantize tail in the polynomial path. Upstream linear-srgb has since

@@ -1,18 +1,24 @@
-//! f32 linear → u16 sRGB encode-step probe.
+//! f32 linear ↔ u16 sRGB encode/decode probe.
 //!
-//! Matlut uses a 65536-entry linear-indexed u16 encode LUT (128 KB, L2).
-//! linear-srgb now exposes three SIMD-dispatched encode paths:
+//! Matlut uses a 65536-entry linear-indexed u16 encode LUT (128 KB, L2)
+//! and a 65536-entry u16→f32 decode LUT (256 KB, L2). linear-srgb now
+//! exposes SIMD-dispatched paths for both directions:
 //!
-//! 1. `linear_to_srgb_u16_slice`       — SIMD rational polynomial, exact
-//! 2. `linear_to_srgb_u16_slice_fast`  — SIMD sqrt-indexed LUT (128 KB, ±1 LSB)
-//! 3. matlut                           — linearly-indexed LUT (128 KB, ±0 in-band)
+//! Encode (f32 → u16):
+//!   1. `linear_to_srgb_u16_slice`       — SIMD rational polynomial, exact
+//!   2. `linear_to_srgb_u16_slice_fast`  — SIMD sqrt-indexed LUT (128 KB, ±1 LSB)
+//!   3. matlut-style                     — linearly-indexed LUT (128 KB, ±0 in-band)
 //!
-//! Wisdom #4 claimed "SIMD polynomial beats LUT for large LUTs, u16 encode
-//! was 51×" — test that claim in isolation, encode step only, on identical
-//! f32 linear input. No matrix step, no decode step.
+//! Decode (u16 → f32):
+//!   1. `srgb_u16_to_linear_slice`       — NEW: SIMD rational polynomial
+//!   2. matlut-style                     — linearly-indexed LUT (256 KB)
+//!
+//! Together these determine whether a fused polynomial u16 RGB gamut
+//! kernel would beat matlut's current LUT-pair pipeline.
 
 use linear_srgb::default::{
     linear_to_srgb_u16, linear_to_srgb_u16_slice, linear_to_srgb_u16_slice_fast,
+    srgb_u16_to_linear, srgb_u16_to_linear_slice,
 };
 use zenbench::prelude::*;
 
@@ -70,15 +76,73 @@ fn matlut_encode(input: &[f32], output: &mut [u16], lut: &[u16; 65536]) {
     }
 }
 
+/// Rebuild matlut's 65536-entry u16 → f32 decode LUT. Mirrors
+/// `srgb_lin_lut_u16()` in zenpixels-convert (256 KB footprint).
+fn build_matlut_dec_lut() -> Box<[f32; 65536]> {
+    let mut t: Box<[f32; 65536]> = vec![0.0f32; 65536]
+        .into_boxed_slice()
+        .try_into()
+        .ok()
+        .unwrap();
+    for (i, slot) in t.iter_mut().enumerate() {
+        *slot = srgb_u16_to_linear(i as u16);
+    }
+    t
+}
+
+/// Matlut-style decode: scalar per-pixel LUT gather.
+fn matlut_decode(input: &[u16], output: &mut [f32], lut: &[f32; 65536]) {
+    for (v, slot) in input.iter().zip(output.iter_mut()) {
+        *slot = lut[*v as usize];
+    }
+}
+
+fn make_u16_input(n: usize) -> Vec<u16> {
+    (0..n)
+        .map(|i| ((i as u64).wrapping_mul(2654435761) % 65536) as u16)
+        .collect()
+}
+
 fn main() {
-    let lut = build_matlut_lut();
+    let enc_lut = build_matlut_lut();
+    let dec_lut = build_matlut_dec_lut();
+    let enc_lut_static: &'static [u16; 65536] = Box::leak(enc_lut);
+    let dec_lut_static: &'static [f32; 65536] = Box::leak(dec_lut);
     zenbench::run(|suite| {
+        // ---- Decode side: u16 → f32 ----
         for &(label, width) in SIZES {
             let n = width * CHANNELS;
-            // Encode-step throughput: count src f32 bytes in + dst u16 bytes out.
+            let bytes = (n * 2 + n * 4) as u64;
+            let input = make_u16_input(n);
+
+            suite.group(format!("u16→f32 decode  {label}"), move |g| {
+                g.throughput(Throughput::Bytes(bytes));
+
+                let src = input.clone();
+                let mut dst = vec![0.0f32; n];
+                g.bench("matlut_lut_scalar", move |b| {
+                    b.iter(|| {
+                        matlut_decode(&src, &mut dst, dec_lut_static);
+                        black_box(());
+                    })
+                });
+
+                let src = input;
+                let mut dst = vec![0.0f32; n];
+                g.bench("linsrgb_poly_simd", move |b| {
+                    b.iter(|| {
+                        srgb_u16_to_linear_slice(&src, &mut dst);
+                        black_box(());
+                    })
+                });
+            });
+        }
+
+        // ---- Encode side: f32 → u16 ----
+        for &(label, width) in SIZES {
+            let n = width * CHANNELS;
             let bytes = (n * 4 + n * 2) as u64;
             let input = make_linear_input(n);
-            let lut_arc: &'static [u16; 65536] = Box::leak(lut.clone());
 
             suite.group(format!("f32→u16 encode  {label}"), move |g| {
                 g.throughput(Throughput::Bytes(bytes));
@@ -87,7 +151,7 @@ fn main() {
                 let mut dst = vec![0u16; n];
                 g.bench("matlut_lut_scalar", move |b| {
                     b.iter(|| {
-                        matlut_encode(&src, &mut dst, lut_arc);
+                        matlut_encode(&src, &mut dst, enc_lut_static);
                         black_box(());
                     })
                 });

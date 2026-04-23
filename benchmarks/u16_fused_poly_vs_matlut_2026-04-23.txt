@@ -1,0 +1,84 @@
+Fused polynomial u16 RGB gamut kernel vs matlut
+Date: 2026-04-23
+zenpixels-convert: commit 4171ca46 + temporary fused_poly refactor
+linear-srgb: local perf/simd-tf-magetypes (has srgb_u16_to_linear_v3
+             AND linear_to_srgb_u16_v3 rites)
+Hardware: AMD Ryzen 9 7950X (Zen 4)
+
+Setup
+─────
+Wrote convert_8px_u16_rgb_fused_poly — a single-pass SoA kernel that
+uses the new linear-srgb SIMD polynomial rites for both decode and
+encode, with mat3x3_x8 for the matrix step. No LUTs at all (no 256 KB
+decode LUT, no 128 KB encode LUT).
+
+Swapped FusedSrgbU16GamutRgb to call the new kernel. Tests pass
+(all 242 lib + 23 integration). Benched via bench_t7_gamut.
+
+Result
+──────
+
+  sRGB U16 fused gamut (P3→BT.709)
+                    matlut (baseline)    fused_poly    delta
+    256px           6.00 GiB/s           3.34 GiB/s    -44%
+   4096px           5.93                 3.37          -43%
+   1080p            4.89                 3.38          -31%
+
+Fused poly is ~3.37 GiB/s flat across all working-set sizes —
+compute-bound, not memory-bound.
+
+Why
+───
+
+Per 8-pixel chunk the fused-poly kernel does:
+  - 3× srgb_u16_to_linear_v3 (decode)
+  - mat3x3_x8 (3 FMA triples = 9 FMAs)
+  - 3× linear_to_srgb_u16_v3 (encode)
+
+Each polynomial rite is:
+  - 1× sqrt f32x8
+  - 1× u16/f32 convert
+  - 8× FMA on P coefficients (rational poly degree 4)
+  - 8× FMA on Q coefficients
+  - 1× f32 divide
+  - clamp + blend
+
+Per chunk: ~60 FMAs + 6 sqrt + 6 divide. On Zen 4 AVX2:
+  - FMA f32x8: 1/cycle throughput → 60 cycles
+  - sqrt f32x8: 1/6 cycles → 6 × 6 = 36 cycles
+  - div f32x8: 1/7 cycles → 6 × 7 = 42 cycles
+  - Independent, so roughly max(60, 36, 42) = 60 cycles/chunk
+
+60 cyc/chunk at 4.5 GHz = 13.3 ns/chunk. 8 pixels × 12 bytes = 96 B.
+96 / 13.3e-9 = 7.2 GiB/s theoretical ceiling. Observed 3.37 is about
+half that — likely a combination of deinterleave/interleave overhead
+(24 scalar loads + 24 scalar stores per chunk) and data-dependency
+chain through the polynomial.
+
+Matlut per 8-pixel chunk: 48 scalar LUT gathers (24 decode + 24
+encode) + SIMD matrix + SIMD clamp/round. On Zen 4 with both LUTs
+L2-resident, 48 gathers finish in 48/3 = 16 cycles + matrix
+overhead. ~6 GiB/s observed matches.
+
+Conclusion
+──────────
+
+For sRGB u16 RGB fused gamut on Zen 4 with L2 ≥ 384 KB, **matlut
+wins**. The wisdom-#4 "51× poly over LUT" scenario was encode-step
+only; once decode and encode polynomials BOTH run in the pipeline
+the compute cost doubles and the LUT approach reclaims the win.
+
+Refactor reverted. Keeping matlut as production.
+
+Pivots worth considering (not this session)
+───────────────────────────────────────────
+
+1. Hybrid: matlut for the common sRGB path, poly for when the
+   matrix+TF combination implies different primaries+TF pair (where
+   writing a LUT per combo would explode cache footprint).
+2. AVX-512 evaluation: 2× FMA throughput, 2× divide throughput.
+   Polynomial compute cost would halve; poly might cross matlut.
+   Not available on this CPU's Zen 4.
+3. Use `linear_to_srgb_u16_slice_fast` (sqrt-LUT) for encode path
+   specifically — keeps the 128 KB LUT (same as matlut encode) but
+   SIMD-driven. Would need a rite-shaped version.
