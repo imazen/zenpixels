@@ -26,20 +26,46 @@
 ### zenpixels-convert — added
 
 - **F16 conversion kernels.** `ConvertStep::F16ToF32` / `F32ToF16`
-  (private enum variants) with scalar `half::f16` implementations. Planner
-  routes F16 ↔ F32, F16 ↔ U8, F16 ↔ U16, and same-F16-TF-change paths
-  through F32 linear intermediate — never passes F16 bytes through
-  unchanged on TF changes. F16 arms added to all layout/swizzle kernels
+  (private enum variants) with scalar implementations. Planner routes
+  F16 ↔ F32, F16 ↔ U8, F16 ↔ U16, and same-F16-TF-change paths through
+  F32 linear intermediate — never passes F16 bytes through unchanged on
+  TF changes. F16 arms added to all layout/swizzle kernels
   (`swizzle_bgra_rgba`, `rgb_to_bgra`, `add_alpha`, `drop_alpha`,
   `matte_composite`, `gray_to_rgb`, `gray_to_rgba`, `gray_alpha_to_rgba`,
   `gray_alpha_to_rgb`, `gray_to_gray_alpha`, `gray_alpha_to_gray`,
   `straight_to_premul`, `premul_to_straight`). SIMD dispatch for
   F16C / AVX-512 FP16 / ARMv8.2 FP16 is a deferred optimization.
-  `half = "2.7.1"` promoted from dev-dep to dep; feature-flag-free per
-  the middleman-tax analysis in #23. 5 round-trip tests in
-  `tests/roundtrip.rs`. (#23)
+  5 round-trip tests in `tests/roundtrip.rs`. (#23)
+
+- **Local scalar f16 conversion (`src/f16_scalar.rs`, `pub(crate)`).**
+  Two functions, `f16_bits_to_f32` and `f32_to_f16_bits`, cover every
+  production call site that previously used `half::f16`. Correct IEEE
+  754 binary16 semantics: zero, subnormals, normals, infinity, NaN,
+  overflow, underflow, round-to-nearest-even. Cross-validated against
+  the `half` crate exhaustively for all 65,536 f16 bit patterns
+  (f16→f32 is bit-exact) and sampled broadly for f32→f16 rounding.
+  The `half` crate is no longer a production dependency — demoted to
+  `[dev-dependencies]` for cross-validation and the perceptual-loss
+  suite only. (#23)
 
 ### zenpixels-convert — fixed
+
+- **MatteComposite now linearizes non-Linear F32/F16 pixel data
+  correctly** (fixes #25). Previously the F32 and F16 kernel arms
+  assumed pixel color channels were already in linear light — true
+  when the planner inserted a linearize step before the kernel, but
+  false for same-TF same-depth float plans (e.g. F32 sRGB RGBA →
+  F32 sRGB RGB with `AlphaPolicy::CompositeOnto`), where the plan
+  degenerated to `[MatteComposite]`. Error on mid-gray sRGB pixels
+  over a grey matte was up to ~12% of the normalized range. The
+  kernel now reads the source descriptor's `TransferFunction` and
+  linearizes only the RGB channels inline (alpha stays linear as it
+  always was), mirroring the pattern the U8/U16 arms already use for
+  sRGB. Integer arms continue to hardcode sRGB EOTF/OETF — correct
+  for the common sRGB case, latently wrong for BT.709 u8 / PQ u16 /
+  HLG u16; extending the integer arms is a separate follow-up (also
+  tracked under #25). 5 regression tests in
+  `tests/matte_composite_linearize.rs`.
 
 - **Depth-reduction policy now catches U16 → F16.** Previous gate used
   `ChannelType::byte_size()`, which misses U16 → F16 since both are 2
@@ -48,16 +74,6 @@
   `channel_bits()` (already used by the cost model in `negotiate.rs`)
   so `DepthPolicy::Forbid` correctly rejects U16 → F16 and U16 → F16
   inside RGBA → RGBA plans. No API change.
-
-### zenpixels-convert — known limitations (not new, surfaced during F16 work)
-
-- **`MatteComposite` assumes linear pixel data but the planner doesn't
-  always guarantee that.** For `F32 sRGB RGBA → F32 sRGB RGB` (or the new
-  F16 equivalent) with `AlphaPolicy::CompositeOnto`, the plan is
-  `[MatteComposite]` with no prior linearize step — the kernel blends
-  sRGB-encoded pixel data against a linearized matte, producing
-  mathematically wrong colors. Pre-existing issue inherited by the new
-  F16 arm; tracked separately (not fixed in this release).
 
 ## [0.2.10] - 2026-04-20
 

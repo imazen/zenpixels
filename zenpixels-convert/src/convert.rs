@@ -619,12 +619,27 @@ impl ConvertPlan {
         // Replace DropAlpha with MatteComposite when policy is CompositeOnto.
         //
         // The `matte_composite` kernel uses the straight-alpha over operator
-        // `fg*a + bg*(1-a)` after decoding to linear light. If the source is
-        // premultiplied (our library's convention is encoded-space premul,
-        // per Canvas 2D), feeding its bytes into the straight kernel would
-        // multiply by `a` twice, producing `straight*a² + bg*(1-a)`.
-        // Fix: un-premultiply first (in the source byte space, matching how
-        // our StraightToPremul/PremulToStraight kernels operate).
+        // `fg*a + bg*(1-a)` and linearizes the sRGB matte to linear f32. It
+        // expects pixel color channels (RGB) in linear light — alpha stays
+        // as-is (alpha is always linear, regardless of color-channel TF).
+        //
+        // Two caveats handled here:
+        //
+        // 1. **Premultiplied source.** Planner-side. If the source is
+        //    premultiplied (our library's convention is encoded-space
+        //    premul, per Canvas 2D), the straight kernel would multiply by
+        //    `a` twice: `straight*a² + bg*(1-a)`. Fix: insert
+        //    `PremulToStraight` before `MatteComposite`.
+        //
+        // 2. **Non-linear float pixel data (issue #25).** Kernel-side. For
+        //    F32/F16 plans at same-TF same-depth (no prior linearize step),
+        //    pixel color channels are NOT in linear light. The kernel looks
+        //    at the source descriptor's transfer function and linearizes
+        //    RGB inline — same pattern the U8/U16 arms already use for
+        //    sRGB (they just hardcode sRGB; see issue #25 for extending
+        //    the integer arms to other TFs). We can't just wrap with
+        //    `SrgbF32ToLinearF32` because it linearizes alpha too, which
+        //    breaks the blend's alpha math.
         if drops_alpha && let AlphaPolicy::CompositeOnto { r, g, b } = options.alpha_policy {
             let src_is_premul = from.alpha() == Some(AlphaMode::Premultiplied);
             let mut idx = 0;

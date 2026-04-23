@@ -387,6 +387,7 @@ pub use zenpixels::*;
 // Conversion modules.
 pub(crate) mod convert;
 pub mod error;
+pub(crate) mod f16_scalar;
 pub(crate) mod negotiate;
 
 pub mod adapt;

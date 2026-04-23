@@ -10,6 +10,8 @@ use archmage::prelude::*;
 use crate::{ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor};
 
 use super::ConvertStep;
+use crate::TransferFunction;
+use crate::f16_scalar::{f16_bits_to_f32, f32_to_f16_bits};
 
 /// IEEE 754 half-precision encoding of 1.0: sign=0, exponent=01111 (bias 15),
 /// mantissa=0000000000 → bits 0b0_01111_0000000000 = 0x3C00.
@@ -49,7 +51,7 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::MatteComposite { r, g, b } => {
-            matte_composite(src, dst, w, from.channel_type(), *r, *g, *b);
+            matte_composite(src, dst, w, from, *r, *g, *b);
         }
 
         ConvertStep::GrayToRgb => {
@@ -474,20 +476,65 @@ fn drop_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
     }
 }
 
+/// Apply the F32 EOTF for a given transfer function. For Linear, returns
+/// the value unchanged. For Unknown, returns the value unchanged (we don't
+/// know the correct math; preserve bytes matches the rest of the pipeline's
+/// Unknown-TF convention).
+///
+/// TODO(perf): called 3x per pixel from inside the MatteComposite loop; the
+/// per-pixel TF match prevents `#[autoversion]` SIMD. Follow-up: hoist TF
+/// dispatch to the row level with one monomorphized `#[autoversion]` kernel
+/// per (ChannelType, TransferFunction) combo the planner actually emits.
+#[inline]
+fn f32_eotf(v: f32, tf: TransferFunction) -> f32 {
+    match tf {
+        TransferFunction::Linear | TransferFunction::Unknown => v,
+        TransferFunction::Srgb => linear_srgb::tf::srgb_to_linear(v),
+        TransferFunction::Bt709 => linear_srgb::tf::bt709_to_linear(v),
+        TransferFunction::Pq => linear_srgb::tf::pq_to_linear(v),
+        TransferFunction::Hlg => linear_srgb::tf::hlg_to_linear(v),
+        TransferFunction::Gamma22 => linear_srgb::default::gamma_to_linear(v, ADOBE_GAMMA),
+        _ => v,
+    }
+}
+
+/// Apply the F32 OETF (inverse EOTF) for a given transfer function.
+#[inline]
+fn f32_oetf(v: f32, tf: TransferFunction) -> f32 {
+    match tf {
+        TransferFunction::Linear | TransferFunction::Unknown => v,
+        TransferFunction::Srgb => linear_srgb::tf::linear_to_srgb(v),
+        TransferFunction::Bt709 => linear_srgb::tf::linear_to_bt709(v),
+        TransferFunction::Pq => linear_srgb::tf::linear_to_pq(v),
+        TransferFunction::Hlg => linear_srgb::tf::linear_to_hlg(v),
+        TransferFunction::Gamma22 => linear_srgb::default::linear_to_gamma(v, ADOBE_GAMMA),
+        _ => v,
+    }
+}
+
 /// Composite RGBA onto a solid matte color, producing RGB (4ch → 3ch).
 ///
-/// Blending in linear light to avoid sRGB-space color errors.
-/// The matte color (r, g, b) is sRGB u8; pixel data is converted to linear
-/// for blending, then converted back to the original encoding.
+/// Blends in linear light to avoid color errors. The matte color (r, g, b)
+/// is sRGB u8; pixel RGB channels are linearized per the source TF (alpha
+/// is always linear and is used as-is). Result is re-encoded to the source
+/// TF.
+///
+/// U8 and U16 arms hardcode sRGB EOTF/OETF — correct for the overwhelmingly
+/// common sRGB case, latently wrong for e.g. BT.709 u8 or PQ u16 input.
+/// Extending the integer arms to honor `from.transfer()` is tracked in #25
+/// and is a follow-up; not fixed here.
 fn matte_composite(
     src: &[u8],
     dst: &mut [u8],
     width: usize,
-    ch_type: ChannelType,
+    from: PixelDescriptor,
     mr: u8,
     mg: u8,
     mb: u8,
 ) {
+    let ch_type = from.channel_type();
+    let tf = from.transfer();
+
     // Pre-convert sRGB u8 matte to linear f32 (used by all paths).
     let mr_lin = linear_srgb::default::srgb_u8_to_linear(mr);
     let mg_lin = linear_srgb::default::srgb_u8_to_linear(mg);
@@ -527,40 +574,37 @@ fn matte_composite(
             }
         }
         ChannelType::F32 => {
-            // F32 pixel data is assumed to be in linear light already.
-            // Convert the sRGB matte to linear to match.
+            // Linearize RGB inline per the source TF; alpha stays linear.
             let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
             let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
             for i in 0..width {
                 let a = srcf[i * 4 + 3].clamp(0.0, 1.0);
                 let inv_a = 1.0 - a;
-                dstf[i * 3] = srcf[i * 4] * a + mr_lin * inv_a;
-                dstf[i * 3 + 1] = srcf[i * 4 + 1] * a + mg_lin * inv_a;
-                dstf[i * 3 + 2] = srcf[i * 4 + 2] * a + mb_lin * inv_a;
+                let r_lin = f32_eotf(srcf[i * 4], tf);
+                let g_lin = f32_eotf(srcf[i * 4 + 1], tf);
+                let b_lin = f32_eotf(srcf[i * 4 + 2], tf);
+                dstf[i * 3] = f32_oetf(r_lin * a + mr_lin * inv_a, tf);
+                dstf[i * 3 + 1] = f32_oetf(g_lin * a + mg_lin * inv_a, tf);
+                dstf[i * 3 + 2] = f32_oetf(b_lin * a + mb_lin * inv_a, tf);
             }
         }
         ChannelType::F16 => {
-            // Same pre-existing assumption as the F32 arm: pixel data is
-            // treated as linear here, matching the matte (which is linearized
-            // from sRGB u8 above). The planner normally inserts a linearize
-            // step before MatteComposite, but for "same-TF same-depth float"
-            // (e.g. sRGB F16 → sRGB F16 with CompositeOnto) there's no such
-            // step and the blend is mathematically wrong in sRGB space. This
-            // is a known limitation inherited from the F32 path, not specific
-            // to F16. Unpack to f32 for blending, pack back to f16.
+            // Unpack to f32, linearize RGB inline per source TF, blend,
+            // re-encode, pack back to f16. Alpha stays linear.
             let src16: &[u16] = bytemuck::cast_slice(&src[..width * 8]);
             let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 6]);
             for i in 0..width {
-                let r = half::f16::from_bits(src16[i * 4]).to_f32();
-                let g = half::f16::from_bits(src16[i * 4 + 1]).to_f32();
-                let b = half::f16::from_bits(src16[i * 4 + 2]).to_f32();
-                let a = half::f16::from_bits(src16[i * 4 + 3])
-                    .to_f32()
-                    .clamp(0.0, 1.0);
+                let r = f16_bits_to_f32(src16[i * 4]);
+                let g = f16_bits_to_f32(src16[i * 4 + 1]);
+                let b = f16_bits_to_f32(src16[i * 4 + 2]);
+                let a = f16_bits_to_f32(src16[i * 4 + 3]).clamp(0.0, 1.0);
                 let inv_a = 1.0 - a;
-                dst16[i * 3] = half::f16::from_f32(r * a + mr_lin * inv_a).to_bits();
-                dst16[i * 3 + 1] = half::f16::from_f32(g * a + mg_lin * inv_a).to_bits();
-                dst16[i * 3 + 2] = half::f16::from_f32(b * a + mb_lin * inv_a).to_bits();
+                let r_lin = f32_eotf(r, tf);
+                let g_lin = f32_eotf(g, tf);
+                let b_lin = f32_eotf(b, tf);
+                dst16[i * 3] = f32_to_f16_bits(f32_oetf(r_lin * a + mr_lin * inv_a, tf));
+                dst16[i * 3 + 1] = f32_to_f16_bits(f32_oetf(g_lin * a + mg_lin * inv_a, tf));
+                dst16[i * 3 + 2] = f32_to_f16_bits(f32_oetf(b_lin * a + mb_lin * inv_a, tf));
             }
         }
         _ => {
@@ -891,7 +935,7 @@ fn f16_to_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let src_bits: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
     let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
     for (s, d) in src_bits.iter().zip(dst_f32.iter_mut()) {
-        *d = half::f16::from_bits(*s).to_f32();
+        *d = f16_bits_to_f32(*s);
     }
 }
 
@@ -903,7 +947,7 @@ fn f32_to_f16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let src_f32: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dst_bits: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
     for (s, d) in src_f32.iter().zip(dst_bits.iter_mut()) {
-        *d = half::f16::from_f32(*s).to_bits();
+        *d = f32_to_f16_bits(*s);
     }
 }
 
@@ -1283,10 +1327,10 @@ fn straight_to_premul(
             let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * channels * 2]);
             for i in 0..width {
                 let base = i * channels;
-                let a = half::f16::from_bits(src16[base + alpha_idx]).to_f32();
+                let a = f16_bits_to_f32(src16[base + alpha_idx]);
                 for c in 0..alpha_idx {
-                    let v = half::f16::from_bits(src16[base + c]).to_f32();
-                    dst16[base + c] = half::f16::from_f32(v * a).to_bits();
+                    let v = f16_bits_to_f32(src16[base + c]);
+                    dst16[base + c] = f32_to_f16_bits(v * a);
                 }
                 dst16[base + alpha_idx] = src16[base + alpha_idx];
             }
@@ -1382,7 +1426,7 @@ fn premul_to_straight(
             let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * channels * 2]);
             for i in 0..width {
                 let base = i * channels;
-                let a = half::f16::from_bits(src16[base + alpha_idx]).to_f32();
+                let a = f16_bits_to_f32(src16[base + alpha_idx]);
                 if a == 0.0 {
                     for c in 0..channels {
                         dst16[base + c] = 0;
@@ -1390,8 +1434,8 @@ fn premul_to_straight(
                 } else {
                     let inv_a = 1.0 / a;
                     for c in 0..alpha_idx {
-                        let v = half::f16::from_bits(src16[base + c]).to_f32();
-                        dst16[base + c] = half::f16::from_f32(v * inv_a).to_bits();
+                        let v = f16_bits_to_f32(src16[base + c]);
+                        dst16[base + c] = f32_to_f16_bits(v * inv_a);
                     }
                     dst16[base + alpha_idx] = src16[base + alpha_idx];
                 }
