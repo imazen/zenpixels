@@ -554,3 +554,216 @@ fn gray_to_gray_alpha_roundtrip() {
 
     assert_eq!(src, back);
 }
+
+// ---------------------------------------------------------------------------
+// F16 roundtrip tests
+// ---------------------------------------------------------------------------
+
+/// Helper: build a row of f16 pixel bytes from f32 values.
+fn f32s_to_f16_bytes(values: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(values.len() * 2);
+    for v in values {
+        out.extend_from_slice(&half::f16::from_f32(*v).to_le_bytes());
+    }
+    out
+}
+
+/// Helper: read f16 pixel bytes into f32 values.
+fn f16_bytes_to_f32s(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(2)
+        .map(|c| half::f16::from_le_bytes([c[0], c[1]]).to_f32())
+        .collect()
+}
+
+/// F16 linear RGBA → F32 linear RGBA → F16 linear RGBA. Round-trip must be
+/// bit-exact because F16→F32 is lossless by IEEE 754 and F32→F16 rounds back
+/// to the same bits for any value originally representable as f16.
+#[test]
+fn f16_linear_to_f32_linear_and_back_is_exact() {
+    let width = 32u32;
+    // Sample across the full f16 SDR range including sub-normals, near-1.0,
+    // and some HDR values.
+    let f32_vals: Vec<f32> = (0..width as usize * 4)
+        .map(|i| {
+            let t = i as f32 / 16.0;
+            if i % 3 == 0 {
+                t * 0.25
+            } else if i % 3 == 1 {
+                1.0 - t * 0.01
+            } else {
+                2.0 + t * 0.1
+            }
+        })
+        .collect();
+    // Quantize to f16 first so we have exact source values.
+    let src: Vec<u8> = {
+        let mut s = Vec::with_capacity(f32_vals.len() * 2);
+        for v in &f32_vals {
+            s.extend_from_slice(&half::f16::from_f32(*v).to_le_bytes());
+        }
+        s
+    };
+
+    let from = PixelDescriptor::RGBAF16_LINEAR;
+    let to = PixelDescriptor::RGBAF32_LINEAR;
+
+    let mut up = RowConverter::new(from, to).unwrap();
+    let mut down = RowConverter::new(to, from).unwrap();
+
+    let mut f32_row = vec![0u8; width as usize * 4 * 4];
+    let mut back = vec![0u8; width as usize * 4 * 2];
+
+    up.convert_row(&src, &mut f32_row, width);
+    down.convert_row(&f32_row, &mut back, width);
+
+    assert_eq!(
+        src, back,
+        "F16 linear → F32 linear → F16 linear should be bit-exact"
+    );
+}
+
+/// F16 sRGB RGB → U8 sRGB RGB → F16 sRGB RGB. Checks the cross-depth F16 ↔ U8
+/// path routes correctly through F32 and the planner picks fused sRGB kernels.
+#[test]
+fn f16_srgb_to_u8_srgb_roundtrip_within_tolerance() {
+    let width = 16u32;
+    // sRGB-encoded f16 values representing typical 8-bit-quantizable inputs.
+    let u8_vals: Vec<u8> = (0..width as usize * 3).map(|i| (i * 7 % 256) as u8).collect();
+    let f16_vals: Vec<f32> = u8_vals.iter().map(|v| *v as f32 / 255.0).collect();
+    let src = f32s_to_f16_bytes(&f16_vals);
+
+    let f16_srgb = PixelDescriptor::new(
+        ChannelType::F16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    );
+    let u8_srgb = PixelDescriptor::RGB8_SRGB;
+
+    let mut to_u8 = RowConverter::new(f16_srgb, u8_srgb).unwrap();
+    let mut to_f16 = RowConverter::new(u8_srgb, f16_srgb).unwrap();
+
+    let mut u8_row = vec![0u8; width as usize * 3];
+    let mut back = vec![0u8; width as usize * 3 * 2];
+
+    to_u8.convert_row(&src, &mut u8_row, width);
+    to_f16.convert_row(&u8_row, &mut back, width);
+
+    // u8 round-trip quantizes to 1/255, but re-packing back into f16 is exact.
+    // Compare against the u8 ground truth: every round-tripped f16 must decode
+    // to the same u8 value as u8_vals.
+    for (i, (a, b)) in u8_vals.iter().zip(u8_row.iter()).enumerate() {
+        assert_eq!(a, b, "u8 mismatch at pixel {}", i);
+    }
+    let back_f32 = f16_bytes_to_f32s(&back);
+    for (i, (orig, rt)) in f16_vals.iter().zip(back_f32.iter()).enumerate() {
+        let diff = (orig - rt).abs();
+        assert!(
+            diff < 1.5 / 255.0,
+            "f16→u8→f16 roundtrip diff > 1.5/255 at pixel {}: {} vs {}",
+            i,
+            orig,
+            rt
+        );
+    }
+}
+
+/// F16 linear → U16 linear → F16 linear. U16 is more precise than F16 in [0,1]
+/// SDR, so F16 values should survive the round-trip within ~1 f16 ULP.
+#[test]
+fn f16_linear_to_u16_linear_roundtrip_within_f16_ulp() {
+    let width = 16u32;
+    let f32_vals: Vec<f32> = (0..width as usize * 3)
+        .map(|i| (i as f32 / 48.0).min(1.0))
+        .collect();
+    let src = f32s_to_f16_bytes(&f32_vals);
+
+    let f16_lin = PixelDescriptor::RGBF16_LINEAR;
+    let u16_lin = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Linear,
+    );
+
+    let mut to_u16 = RowConverter::new(f16_lin, u16_lin).unwrap();
+    let mut to_f16 = RowConverter::new(u16_lin, f16_lin).unwrap();
+
+    let mut u16_row = vec![0u8; width as usize * 3 * 2];
+    let mut back = vec![0u8; width as usize * 3 * 2];
+
+    to_u16.convert_row(&src, &mut u16_row, width);
+    to_f16.convert_row(&u16_row, &mut back, width);
+
+    let src_f32 = f16_bytes_to_f32s(&src);
+    let back_f32 = f16_bytes_to_f32s(&back);
+    for (i, (orig, rt)) in src_f32.iter().zip(back_f32.iter()).enumerate() {
+        // f16 ULP at value near 1.0 is ~2^-11 ≈ 4.88e-4; allow 2 ULP slack.
+        let tolerance = 1e-3;
+        let diff = (orig - rt).abs();
+        assert!(
+            diff < tolerance,
+            "f16→u16→f16 roundtrip exceeded tolerance at pixel {}: {} vs {} (diff {})",
+            i,
+            orig,
+            rt,
+            diff
+        );
+    }
+}
+
+/// Depth-reduction policy catches U16 → F16 (precision loss from 16 bits to
+/// 11 effective bits) even though both are 2 bytes.
+#[test]
+fn u16_to_f16_triggers_depth_reduction_policy() {
+    use zenpixels_convert::{ConvertError, ConvertOptions, DepthPolicy, RowConverter};
+
+    let from = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Linear,
+    );
+    let to = PixelDescriptor::RGBF16_LINEAR;
+
+    let opts = ConvertOptions::permissive().with_depth_policy(DepthPolicy::Forbid);
+
+    let result = RowConverter::new_explicit(from, to, &opts);
+    match result {
+        Err(e) => assert_eq!(*e.error(), ConvertError::DepthReductionForbidden),
+        Ok(_) => panic!("expected DepthReductionForbidden for U16 → F16 with Forbid policy"),
+    }
+}
+
+/// F16 → F16 with a TF change (sRGB → Linear) must round through F32, not
+/// pass bytes through unchanged.
+#[test]
+fn f16_srgb_to_f16_linear_changes_values() {
+    let width = 8u32;
+    // sRGB-encoded 0.5 (mid-gray) decodes to linear ~0.2140.
+    let f32_vals = vec![0.5_f32; width as usize * 3];
+    let src = f32s_to_f16_bytes(&f32_vals);
+
+    let from = PixelDescriptor::new(
+        ChannelType::F16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    );
+    let to = PixelDescriptor::RGBF16_LINEAR;
+
+    let mut conv = RowConverter::new(from, to).unwrap();
+    let mut out = vec![0u8; width as usize * 3 * 2];
+    conv.convert_row(&src, &mut out, width);
+
+    let out_f32 = f16_bytes_to_f32s(&out);
+    // sRGB EOTF of 0.5 ≈ 0.2140. Allow generous tolerance for F16 quantization.
+    for v in &out_f32 {
+        assert!(
+            (v - 0.2140).abs() < 0.01,
+            "expected linear ~0.2140 after sRGB F16 → Linear F16, got {}",
+            v
+        );
+    }
+}

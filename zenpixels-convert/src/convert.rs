@@ -86,6 +86,10 @@ pub(crate) enum ConvertStep {
     U16ToF32,
     /// f32 → u16 (clamp * 65535 + 0.5).
     F32ToU16,
+    /// f16 → f32 (IEEE 754 half-precision unpack, no TF).
+    F16ToF32,
+    /// f32 → f16 (round-to-nearest-even, no TF).
+    F32ToF16,
     /// PQ (SMPTE ST 2084) u16 → linear f32 (EOTF).
     PqU16ToLinearF32,
     /// Linear f32 → PQ u16 (inverse EOTF / OETF).
@@ -186,6 +190,8 @@ impl core::fmt::Debug for ConvertStep {
             Self::U8ToU16 => f.write_str("U8ToU16"),
             Self::U16ToF32 => f.write_str("U16ToF32"),
             Self::F32ToU16 => f.write_str("F32ToU16"),
+            Self::F16ToF32 => f.write_str("F16ToF32"),
+            Self::F32ToF16 => f.write_str("F32ToF16"),
             Self::PqU16ToLinearF32 => f.write_str("PqU16ToLinearF32"),
             Self::LinearF32ToPqU16 => f.write_str("LinearF32ToPqU16"),
             Self::PqF32ToLinearF32 => f.write_str("PqF32ToLinearF32"),
@@ -588,8 +594,12 @@ impl ConvertPlan {
             return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
         }
 
-        // Check depth reduction policy.
-        let reduces_depth = from.channel_type().byte_size() > to.channel_type().byte_size();
+        // Check depth reduction policy. Compare by precision bits, not byte
+        // size — F16 and U16 are both 2 bytes but F16 carries only ~11 bits of
+        // precision vs U16's 16, so a U16→F16 hop IS a precision reduction and
+        // must be policy-gated.
+        let reduces_depth = crate::negotiate::channel_bits(from.channel_type())
+            > crate::negotiate::channel_bits(to.channel_type());
         if reduces_depth && options.depth_policy == DepthPolicy::Forbid {
             return Err(whereat::at!(ConvertError::DepthReductionForbidden));
         }
@@ -944,22 +954,24 @@ fn f32_tf_pair_steps(from: TransferFunction, to: TransferFunction) -> Vec<Conver
     steps
 }
 
-/// Integer→F32 scale step for a given integer channel type. Panics for F32
-/// (caller must check); CMYK is rejected upstream by `assert_not_cmyk`.
-fn int_to_f32_step(ct: ChannelType) -> ConvertStep {
+/// Depth conversion step into F32 for any non-F32 channel type (U8, U16, F16).
+/// Panics for F32 (caller must check); CMYK is rejected upstream by `assert_not_cmyk`.
+fn to_f32_step(ct: ChannelType) -> ConvertStep {
     match ct {
         ChannelType::U8 => ConvertStep::NaiveU8ToF32,
         ChannelType::U16 => ConvertStep::U16ToF32,
-        _ => unreachable!("int_to_f32_step called with non-integer channel type"),
+        ChannelType::F16 => ConvertStep::F16ToF32,
+        _ => unreachable!("to_f32_step called with F32 or unsupported channel type"),
     }
 }
 
-/// F32→integer scale step.
-fn f32_to_int_step(ct: ChannelType) -> ConvertStep {
+/// F32→depth step for any non-F32 channel type.
+fn f32_to_depth_step(ct: ChannelType) -> ConvertStep {
     match ct {
         ChannelType::U8 => ConvertStep::NaiveF32ToU8,
         ChannelType::U16 => ConvertStep::F32ToU16,
-        _ => unreachable!("f32_to_int_step called with non-integer channel type"),
+        ChannelType::F16 => ConvertStep::F32ToF16,
+        _ => unreachable!("f32_to_depth_step called with F32 or unsupported channel type"),
     }
 }
 
@@ -985,9 +997,9 @@ fn depth_steps(
         return Ok(f32_tf_pair_steps(from_tf, to_tf));
     }
 
-    // Same depth, integer: TF change requires re-encoding. Route through F32
-    // linear intermediate — passing bytes through labeled as a different TF
-    // produces wrong pixels.
+    // Same depth, non-F32 (U8/U16/F16): TF change requires re-encoding. Route
+    // through F32 linear intermediate — passing bytes through labeled as a
+    // different TF produces wrong pixels.
     //
     // Exception: if either TF is Unknown, we don't know the correct conversion.
     // Preserve bytes exactly (no F32 round-trip — that would introduce U8/U16
@@ -998,9 +1010,9 @@ fn depth_steps(
             return Ok(Vec::new());
         }
         let mut steps = Vec::with_capacity(4);
-        steps.push(int_to_f32_step(from));
+        steps.push(to_f32_step(from));
         steps.extend(f32_tf_pair_steps(from_tf, to_tf));
-        steps.push(f32_to_int_step(to));
+        steps.push(f32_to_depth_step(to));
         return Ok(steps);
     }
 
@@ -1104,6 +1116,80 @@ fn depth_steps(
                 steps.push(ConvertStep::F32ToU16);
                 Ok(steps)
             }
+        }
+        // F16 paths route through F32. No fused TF kernels yet — these are
+        // optimization targets for a future pass.
+        (ChannelType::F16, ChannelType::F32) => {
+            let mut steps = Vec::with_capacity(3);
+            steps.push(ConvertStep::F16ToF32);
+            if from_tf != to_tf {
+                steps.extend(f32_tf_pair_steps(from_tf, to_tf));
+            }
+            Ok(steps)
+        }
+        (ChannelType::F32, ChannelType::F16) => {
+            let mut steps = Vec::with_capacity(3);
+            if from_tf != to_tf {
+                steps.extend(f32_tf_pair_steps(from_tf, to_tf));
+            }
+            steps.push(ConvertStep::F32ToF16);
+            Ok(steps)
+        }
+        (ChannelType::F16, ChannelType::U8) => {
+            let mut steps = Vec::with_capacity(4);
+            steps.push(ConvertStep::F16ToF32);
+            if from_tf == TransferFunction::Linear && to_tf == TransferFunction::Srgb {
+                steps.push(ConvertStep::LinearF32ToSrgbU8);
+            } else if from_tf == to_tf {
+                steps.push(ConvertStep::NaiveF32ToU8);
+            } else {
+                steps.extend(f32_tf_pair_steps(from_tf, to_tf));
+                steps.push(ConvertStep::NaiveF32ToU8);
+            }
+            Ok(steps)
+        }
+        (ChannelType::U8, ChannelType::F16) => {
+            let mut steps = Vec::with_capacity(4);
+            if from_tf == TransferFunction::Srgb && to_tf == TransferFunction::Linear {
+                steps.push(ConvertStep::SrgbU8ToLinearF32);
+            } else if from_tf == to_tf {
+                steps.push(ConvertStep::NaiveU8ToF32);
+            } else {
+                steps.push(ConvertStep::NaiveU8ToF32);
+                steps.extend(f32_tf_pair_steps(from_tf, to_tf));
+            }
+            steps.push(ConvertStep::F32ToF16);
+            Ok(steps)
+        }
+        (ChannelType::F16, ChannelType::U16) => {
+            let mut steps = Vec::with_capacity(4);
+            steps.push(ConvertStep::F16ToF32);
+            if from_tf == TransferFunction::Linear && to_tf == TransferFunction::Pq {
+                steps.push(ConvertStep::LinearF32ToPqU16);
+            } else if from_tf == TransferFunction::Linear && to_tf == TransferFunction::Hlg {
+                steps.push(ConvertStep::LinearF32ToHlgU16);
+            } else if from_tf == to_tf {
+                steps.push(ConvertStep::F32ToU16);
+            } else {
+                steps.extend(f32_tf_pair_steps(from_tf, to_tf));
+                steps.push(ConvertStep::F32ToU16);
+            }
+            Ok(steps)
+        }
+        (ChannelType::U16, ChannelType::F16) => {
+            let mut steps = Vec::with_capacity(4);
+            if from_tf == TransferFunction::Pq && to_tf == TransferFunction::Linear {
+                steps.push(ConvertStep::PqU16ToLinearF32);
+            } else if from_tf == TransferFunction::Hlg && to_tf == TransferFunction::Linear {
+                steps.push(ConvertStep::HlgU16ToLinearF32);
+            } else if from_tf == to_tf {
+                steps.push(ConvertStep::U16ToF32);
+            } else {
+                steps.push(ConvertStep::U16ToF32);
+                steps.extend(f32_tf_pair_steps(from_tf, to_tf));
+            }
+            steps.push(ConvertStep::F32ToF16);
+            Ok(steps)
         }
         _ => Err(ConvertError::NoPath {
             from: PixelDescriptor::new(from, ChannelLayout::Rgb, None, from_tf),
@@ -1315,6 +1401,8 @@ fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
         | (ConvertStep::U16ToU8, ConvertStep::U8ToU16)
         | (ConvertStep::U16ToF32, ConvertStep::F32ToU16)
         | (ConvertStep::F32ToU16, ConvertStep::U16ToF32)
+        | (ConvertStep::F16ToF32, ConvertStep::F32ToF16)
+        | (ConvertStep::F32ToF16, ConvertStep::F16ToF32)
         // Cross-depth with transfer (near-lossless roundtrip)
         | (ConvertStep::SrgbU8ToLinearF32, ConvertStep::LinearF32ToSrgbU8)
         | (ConvertStep::LinearF32ToSrgbU8, ConvertStep::SrgbU8ToLinearF32)
@@ -1558,6 +1646,19 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.layout(),
             current.alpha(),
             TransferFunction::Srgb,
+        ),
+        // F16↔F32 depth-only steps. No TF implication: same TF on both sides.
+        ConvertStep::F16ToF32 => PixelDescriptor::new(
+            ChannelType::F32,
+            current.layout(),
+            current.alpha(),
+            current.transfer(),
+        ),
+        ConvertStep::F32ToF16 => PixelDescriptor::new(
+            ChannelType::F16,
+            current.layout(),
+            current.alpha(),
+            current.transfer(),
         ),
     }
 }

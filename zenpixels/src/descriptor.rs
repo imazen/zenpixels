@@ -929,6 +929,65 @@ impl PixelDescriptor {
         Some(AlphaMode::Straight),
         TransferFunction::Unknown,
     );
+
+    // -- F16 constants --------------------------------------------------------
+
+    /// f16 RGB, transfer unknown.
+    pub const RGBF16: Self = Self::new(
+        ChannelType::F16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Unknown,
+    );
+    /// f16 RGBA, transfer unknown.
+    pub const RGBAF16: Self = Self::new(
+        ChannelType::F16,
+        ChannelLayout::Rgba,
+        Some(AlphaMode::Straight),
+        TransferFunction::Unknown,
+    );
+    /// f16 grayscale, transfer unknown.
+    pub const GRAYF16: Self = Self::new(
+        ChannelType::F16,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Unknown,
+    );
+    /// f16 grayscale with alpha, transfer unknown.
+    pub const GRAYAF16: Self = Self::new(
+        ChannelType::F16,
+        ChannelLayout::GrayAlpha,
+        Some(AlphaMode::Straight),
+        TransferFunction::Unknown,
+    );
+    /// Linear-light f16 RGB.
+    pub const RGBF16_LINEAR: Self = Self::new(
+        ChannelType::F16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Linear,
+    );
+    /// Linear-light f16 RGBA with straight alpha.
+    pub const RGBAF16_LINEAR: Self = Self::new(
+        ChannelType::F16,
+        ChannelLayout::Rgba,
+        Some(AlphaMode::Straight),
+        TransferFunction::Linear,
+    );
+    /// Linear-light f16 grayscale.
+    pub const GRAYF16_LINEAR: Self = Self::new(
+        ChannelType::F16,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Linear,
+    );
+    /// Linear-light f16 grayscale with straight alpha.
+    pub const GRAYAF16_LINEAR: Self = Self::new(
+        ChannelType::F16,
+        ChannelLayout::GrayAlpha,
+        Some(AlphaMode::Straight),
+        TransferFunction::Linear,
+    );
     /// 8-bit BGRA, transfer unknown.
     pub const BGRA8: Self = Self::new(
         ChannelType::U8,
@@ -1317,6 +1376,14 @@ pub enum PixelFormat {
     OklabaF32 = 17,
     /// 8-bit CMYK (4 bytes per pixel, no transfer function).
     Cmyk8 = 18,
+    /// f16 (IEEE 754 half-precision) RGB.
+    RgbF16 = 19,
+    /// f16 (IEEE 754 half-precision) RGBA.
+    RgbaF16 = 20,
+    /// f16 (IEEE 754 half-precision) grayscale.
+    GrayF16 = 21,
+    /// f16 (IEEE 754 half-precision) grayscale with alpha.
+    GrayAF16 = 22,
 }
 
 impl PixelFormat {
@@ -1340,6 +1407,7 @@ impl PixelFormat {
             | Self::GrayAF32
             | Self::OklabF32
             | Self::OklabaF32 => ChannelType::F32,
+            Self::RgbF16 | Self::RgbaF16 | Self::GrayF16 | Self::GrayAF16 => ChannelType::F16,
             _ => ChannelType::U8,
         }
     }
@@ -1349,10 +1417,14 @@ impl PixelFormat {
     #[allow(unreachable_patterns)]
     pub const fn layout(self) -> ChannelLayout {
         match self {
-            Self::Rgb8 | Self::Rgb16 | Self::RgbF32 => ChannelLayout::Rgb,
-            Self::Rgba8 | Self::Rgba16 | Self::RgbaF32 | Self::Rgbx8 => ChannelLayout::Rgba,
-            Self::Gray8 | Self::Gray16 | Self::GrayF32 => ChannelLayout::Gray,
-            Self::GrayA8 | Self::GrayA16 | Self::GrayAF32 => ChannelLayout::GrayAlpha,
+            Self::Rgb8 | Self::Rgb16 | Self::RgbF32 | Self::RgbF16 => ChannelLayout::Rgb,
+            Self::Rgba8 | Self::Rgba16 | Self::RgbaF32 | Self::RgbaF16 | Self::Rgbx8 => {
+                ChannelLayout::Rgba
+            }
+            Self::Gray8 | Self::Gray16 | Self::GrayF32 | Self::GrayF16 => ChannelLayout::Gray,
+            Self::GrayA8 | Self::GrayA16 | Self::GrayAF32 | Self::GrayAF16 => {
+                ChannelLayout::GrayAlpha
+            }
             Self::Bgra8 | Self::Bgrx8 => ChannelLayout::Bgra,
             Self::OklabF32 => ChannelLayout::Oklab,
             Self::OklabaF32 => ChannelLayout::OklabA,
@@ -1369,9 +1441,11 @@ impl PixelFormat {
             Self::Gray8
             | Self::Gray16
             | Self::GrayF32
+            | Self::GrayF16
             | Self::GrayA8
             | Self::GrayA16
-            | Self::GrayAF32 => ColorModel::Gray,
+            | Self::GrayAF32
+            | Self::GrayAF16 => ColorModel::Gray,
             Self::OklabF32 | Self::OklabaF32 => ColorModel::Oklab,
             Self::Cmyk8 => ColorModel::Cmyk,
             _ => ColorModel::Rgb,
@@ -1424,9 +1498,11 @@ impl PixelFormat {
             Self::Rgb8
             | Self::Rgb16
             | Self::RgbF32
+            | Self::RgbF16
             | Self::Gray8
             | Self::Gray16
             | Self::GrayF32
+            | Self::GrayF16
             | Self::OklabF32
             | Self::Cmyk8 => None,
             Self::Rgbx8 | Self::Bgrx8 => Some(AlphaMode::Undefined),
@@ -1457,6 +1533,10 @@ impl PixelFormat {
             Self::OklabF32 => "OklabF32",
             Self::OklabaF32 => "OklabaF32",
             Self::Cmyk8 => "CMYK8",
+            Self::RgbF16 => "RgbF16",
+            Self::RgbaF16 => "RgbaF16",
+            Self::GrayF16 => "GrayF16",
+            Self::GrayAF16 => "GrayAF16",
             _ => "Unknown",
         }
     }
@@ -1476,19 +1556,23 @@ impl PixelFormat {
             (ChannelType::U8, ChannelLayout::Rgb, _) => Some(Self::Rgb8),
             (ChannelType::U16, ChannelLayout::Rgb, _) => Some(Self::Rgb16),
             (ChannelType::F32, ChannelLayout::Rgb, _) => Some(Self::RgbF32),
+            (ChannelType::F16, ChannelLayout::Rgb, _) => Some(Self::RgbF16),
 
             (ChannelType::U8, ChannelLayout::Rgba, true) => Some(Self::Rgbx8),
             (ChannelType::U8, ChannelLayout::Rgba, false) => Some(Self::Rgba8),
             (ChannelType::U16, ChannelLayout::Rgba, _) => Some(Self::Rgba16),
             (ChannelType::F32, ChannelLayout::Rgba, _) => Some(Self::RgbaF32),
+            (ChannelType::F16, ChannelLayout::Rgba, _) => Some(Self::RgbaF16),
 
             (ChannelType::U8, ChannelLayout::Gray, _) => Some(Self::Gray8),
             (ChannelType::U16, ChannelLayout::Gray, _) => Some(Self::Gray16),
             (ChannelType::F32, ChannelLayout::Gray, _) => Some(Self::GrayF32),
+            (ChannelType::F16, ChannelLayout::Gray, _) => Some(Self::GrayF16),
 
             (ChannelType::U8, ChannelLayout::GrayAlpha, _) => Some(Self::GrayA8),
             (ChannelType::U16, ChannelLayout::GrayAlpha, _) => Some(Self::GrayA16),
             (ChannelType::F32, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAF32),
+            (ChannelType::F16, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAF16),
 
             (ChannelType::U8, ChannelLayout::Bgra, true) => Some(Self::Bgrx8),
             (ChannelType::U8, ChannelLayout::Bgra, false) => Some(Self::Bgra8),
@@ -1525,6 +1609,10 @@ impl PixelFormat {
             Self::OklabF32 => PixelDescriptor::OKLABF32,
             Self::OklabaF32 => PixelDescriptor::OKLABAF32,
             Self::Cmyk8 => PixelDescriptor::CMYK8,
+            Self::RgbF16 => PixelDescriptor::RGBF16,
+            Self::RgbaF16 => PixelDescriptor::RGBAF16,
+            Self::GrayF16 => PixelDescriptor::GRAYF16,
+            Self::GrayAF16 => PixelDescriptor::GRAYAF16,
             _ => PixelDescriptor::RGB8,
         }
     }

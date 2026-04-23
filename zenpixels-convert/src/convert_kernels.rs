@@ -11,6 +11,10 @@ use crate::{ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor};
 
 use super::ConvertStep;
 
+/// IEEE 754 half-precision encoding of 1.0: sign=0, exponent=01111 (bias 15),
+/// mantissa=0000000000 → bits 0b0_01111_0000000000 = 0x3C00.
+const F16_ONE_BITS: u16 = 0x3C00;
+
 /// Apply a single conversion step on raw byte slices.
 pub(super) fn apply_step_u8(
     step: &ConvertStep,
@@ -110,6 +114,14 @@ pub(super) fn apply_step_u8(
 
         ConvertStep::F32ToU16 => {
             f32_to_u16(src, dst, w, from.layout().channels());
+        }
+
+        ConvertStep::F16ToF32 => {
+            f16_to_f32(src, dst, w, from.layout().channels());
+        }
+
+        ConvertStep::F32ToF16 => {
+            f32_to_f16(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::PqU16ToLinearF32 => {
@@ -323,6 +335,17 @@ fn swizzle_bgra_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelT
                 dstf[s + 3] = srcf[s + 3];
             }
         }
+        ChannelType::F16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * pixel_bytes]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * pixel_bytes]);
+            for i in 0..width {
+                let s = i * 4;
+                dst16[s] = src16[s + 2];
+                dst16[s + 1] = src16[s + 1];
+                dst16[s + 2] = src16[s];
+                dst16[s + 3] = src16[s + 3];
+            }
+        }
         _ => {}
     }
 }
@@ -358,6 +381,16 @@ fn rgb_to_bgra(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
                 dstf[i * 4 + 3] = 1.0;
             }
         }
+        ChannelType::F16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * 6]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 8]);
+            for i in 0..width {
+                dst16[i * 4] = src16[i * 3 + 2]; // B
+                dst16[i * 4 + 1] = src16[i * 3 + 1]; // G
+                dst16[i * 4 + 2] = src16[i * 3]; // R
+                dst16[i * 4 + 3] = F16_ONE_BITS;
+            }
+        }
         _ => {}
     }
 }
@@ -389,6 +422,16 @@ fn add_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
                 dstf[i * 4 + 3] = 1.0;
             }
         }
+        ChannelType::F16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * 6]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 8]);
+            for i in 0..width {
+                dst16[i * 4] = src16[i * 3];
+                dst16[i * 4 + 1] = src16[i * 3 + 1];
+                dst16[i * 4 + 2] = src16[i * 3 + 2];
+                dst16[i * 4 + 3] = F16_ONE_BITS;
+            }
+        }
         _ => {}
     }
 }
@@ -416,6 +459,15 @@ fn drop_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
                 dstf[i * 3] = srcf[i * 4];
                 dstf[i * 3 + 1] = srcf[i * 4 + 1];
                 dstf[i * 3 + 2] = srcf[i * 4 + 2];
+            }
+        }
+        ChannelType::F16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * 8]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 6]);
+            for i in 0..width {
+                dst16[i * 3] = src16[i * 4];
+                dst16[i * 3 + 1] = src16[i * 4 + 1];
+                dst16[i * 3 + 2] = src16[i * 4 + 2];
             }
         }
         _ => {}
@@ -487,6 +539,30 @@ fn matte_composite(
                 dstf[i * 3 + 2] = srcf[i * 4 + 2] * a + mb_lin * inv_a;
             }
         }
+        ChannelType::F16 => {
+            // Same pre-existing assumption as the F32 arm: pixel data is
+            // treated as linear here, matching the matte (which is linearized
+            // from sRGB u8 above). The planner normally inserts a linearize
+            // step before MatteComposite, but for "same-TF same-depth float"
+            // (e.g. sRGB F16 → sRGB F16 with CompositeOnto) there's no such
+            // step and the blend is mathematically wrong in sRGB space. This
+            // is a known limitation inherited from the F32 path, not specific
+            // to F16. Unpack to f32 for blending, pack back to f16.
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * 8]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 6]);
+            for i in 0..width {
+                let r = half::f16::from_bits(src16[i * 4]).to_f32();
+                let g = half::f16::from_bits(src16[i * 4 + 1]).to_f32();
+                let b = half::f16::from_bits(src16[i * 4 + 2]).to_f32();
+                let a = half::f16::from_bits(src16[i * 4 + 3])
+                    .to_f32()
+                    .clamp(0.0, 1.0);
+                let inv_a = 1.0 - a;
+                dst16[i * 3] = half::f16::from_f32(r * a + mr_lin * inv_a).to_bits();
+                dst16[i * 3 + 1] = half::f16::from_f32(g * a + mg_lin * inv_a).to_bits();
+                dst16[i * 3 + 2] = half::f16::from_f32(b * a + mb_lin * inv_a).to_bits();
+            }
+        }
         _ => {
             // Fallback: just drop alpha
             drop_alpha(src, dst, width, ch_type);
@@ -521,6 +597,16 @@ fn gray_to_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
                 dstf[i * 3 + 2] = g;
             }
         }
+        ChannelType::F16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * 2]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 6]);
+            for i in 0..width {
+                let g = src16[i];
+                dst16[i * 3] = g;
+                dst16[i * 3 + 1] = g;
+                dst16[i * 3 + 2] = g;
+            }
+        }
         _ => {}
     }
 }
@@ -552,6 +638,17 @@ fn gray_to_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) 
                 dstf[i * 4 + 1] = g;
                 dstf[i * 4 + 2] = g;
                 dstf[i * 4 + 3] = 1.0;
+            }
+        }
+        ChannelType::F16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * 2]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 8]);
+            for i in 0..width {
+                let g = src16[i];
+                dst16[i * 4] = g;
+                dst16[i * 4 + 1] = g;
+                dst16[i * 4 + 2] = g;
+                dst16[i * 4 + 3] = F16_ONE_BITS;
             }
         }
         _ => {}
@@ -601,6 +698,18 @@ fn gray_alpha_to_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: Channel
                 dstf[i * 4 + 3] = a;
             }
         }
+        ChannelType::F16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * 4]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 8]);
+            for i in 0..width {
+                let g = src16[i * 2];
+                let a = src16[i * 2 + 1];
+                dst16[i * 4] = g;
+                dst16[i * 4 + 1] = g;
+                dst16[i * 4 + 2] = g;
+                dst16[i * 4 + 3] = a;
+            }
+        }
         _ => {}
     }
 }
@@ -632,6 +741,16 @@ fn gray_alpha_to_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelT
                 dstf[i * 3 + 2] = g;
             }
         }
+        ChannelType::F16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * 4]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 6]);
+            for i in 0..width {
+                let g = src16[i * 2];
+                dst16[i * 3] = g;
+                dst16[i * 3 + 1] = g;
+                dst16[i * 3 + 2] = g;
+            }
+        }
         _ => {}
     }
 }
@@ -659,6 +778,14 @@ fn gray_to_gray_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: Channel
                 dstf[i * 2 + 1] = 1.0;
             }
         }
+        ChannelType::F16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * 2]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 4]);
+            for i in 0..width {
+                dst16[i * 2] = src16[i];
+                dst16[i * 2 + 1] = F16_ONE_BITS;
+            }
+        }
         _ => {}
     }
 }
@@ -682,6 +809,13 @@ fn gray_alpha_to_gray(src: &[u8], dst: &mut [u8], width: usize, ch_type: Channel
             let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 4]);
             for i in 0..width {
                 dstf[i] = srcf[i * 2];
+            }
+        }
+        ChannelType::F16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * 4]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 2]);
+            for i in 0..width {
+                dst16[i] = src16[i * 2];
             }
         }
         _ => {}
@@ -746,6 +880,31 @@ fn f32_to_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     garb::bytes::convert_f32_to_u16(&src[..count * 4], &mut dst[..count * 2])
         .expect("pre-validated row size");
+}
+
+/// f16 → f32: IEEE 754 half-precision unpack (no TF, no scale).
+///
+/// Scalar via the `half` crate. SIMD dispatch (F16C / AVX-512 FP16 /
+/// ARMv8.2 FP16) is a future optimization — see tracking issue #23.
+fn f16_to_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let src_bits: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
+    let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    for (s, d) in src_bits.iter().zip(dst_f32.iter_mut()) {
+        *d = half::f16::from_bits(*s).to_f32();
+    }
+}
+
+/// f32 → f16: IEEE 754 half-precision pack (round-to-nearest-even, no TF).
+///
+/// Values outside ±65504 are clamped to ±infinity in f16; NaNs are preserved.
+fn f32_to_f16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let src_f32: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dst_bits: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
+    for (s, d) in src_f32.iter().zip(dst_bits.iter_mut()) {
+        *d = half::f16::from_f32(*s).to_bits();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1107,6 +1266,31 @@ fn straight_to_premul(
                 dstf[base + alpha_idx] = a;
             }
         }
+        ChannelType::U16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * channels * 2]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * channels * 2]);
+            for i in 0..width {
+                let base = i * channels;
+                let a = src16[base + alpha_idx] as u32;
+                for c in 0..alpha_idx {
+                    dst16[base + c] = ((src16[base + c] as u32 * a + 32768) / 65535) as u16;
+                }
+                dst16[base + alpha_idx] = src16[base + alpha_idx];
+            }
+        }
+        ChannelType::F16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * channels * 2]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * channels * 2]);
+            for i in 0..width {
+                let base = i * channels;
+                let a = half::f16::from_bits(src16[base + alpha_idx]).to_f32();
+                for c in 0..alpha_idx {
+                    let v = half::f16::from_bits(src16[base + c]).to_f32();
+                    dst16[base + c] = half::f16::from_f32(v * a).to_bits();
+                }
+                dst16[base + alpha_idx] = src16[base + alpha_idx];
+            }
+        }
         _ => {
             // Fallback: copy.
             let len = min(src.len(), dst.len());
@@ -1170,6 +1354,46 @@ fn premul_to_straight(
                         dstf[base + c] = srcf[base + c] * inv_a;
                     }
                     dstf[base + alpha_idx] = a;
+                }
+            }
+        }
+        ChannelType::U16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * channels * 2]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * channels * 2]);
+            for i in 0..width {
+                let base = i * channels;
+                let a = src16[base + alpha_idx];
+                if a == 0 {
+                    for c in 0..channels {
+                        dst16[base + c] = 0;
+                    }
+                } else {
+                    let a32 = a as u32;
+                    for c in 0..alpha_idx {
+                        dst16[base + c] =
+                            ((src16[base + c] as u32 * 65535 + a32 / 2) / a32).min(65535) as u16;
+                    }
+                    dst16[base + alpha_idx] = a;
+                }
+            }
+        }
+        ChannelType::F16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * channels * 2]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * channels * 2]);
+            for i in 0..width {
+                let base = i * channels;
+                let a = half::f16::from_bits(src16[base + alpha_idx]).to_f32();
+                if a == 0.0 {
+                    for c in 0..channels {
+                        dst16[base + c] = 0;
+                    }
+                } else {
+                    let inv_a = 1.0 / a;
+                    for c in 0..alpha_idx {
+                        let v = half::f16::from_bits(src16[base + c]).to_f32();
+                        dst16[base + c] = half::f16::from_f32(v * inv_a).to_bits();
+                    }
+                    dst16[base + alpha_idx] = src16[base + alpha_idx];
                 }
             }
         }
