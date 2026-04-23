@@ -12,6 +12,19 @@
 
 ### zenpixels — added
 
+- **`LumaCoefficients::Bt2020` variant and `coefficients()` accessor.**
+  Adds the UHDTV BT.2020 luma recipe (`0.2627R + 0.6780G + 0.0593B`, same
+  primaries as BT.2100 — the HDR case shares this variant). The new
+  `pub const fn coefficients(self) -> [f32; 3]` returns the `[R, G, B]`
+  weights for any variant so downstream crates can pull numeric values
+  directly instead of maintaining their own tables. Motivated by
+  ultrahdr-core's `luma_coefficients()` table, which duplicates this data
+  for its BT.2100 HDR base-image path — this landing lets ultrahdr-core
+  delete its copy and pass the enum through instead. Non-breaking: new
+  variant on `#[non_exhaustive]` enum, new inherent method. `ConvertStep`
+  RGB→Gray kernels still hardcode BT.709 internally; wiring `options.luma`
+  through the planner is a separate follow-up (7562dd0).
+
 - **F16 (IEEE 754 half-precision) pixel format variants and presets.**
   `PixelFormat::RgbF16`, `RgbaF16`, `GrayF16`, `GrayAF16` on the
   `#[non_exhaustive]` enum, plus matching `pub const` presets: `RGBF16`,
@@ -24,6 +37,23 @@
   additive. (#23)
 
 ### zenpixels-convert — added
+
+- **`icc_profiles::icc_profile_for(primaries, transfer)` accessor.**
+  Companion to the primaries-only `icc_profile_for_primaries`; matches a
+  `(ColorPrimaries, TransferFunction)` pair against the bundled profile
+  set and returns `None` if nothing matches the requested TRC exactly.
+  Currently routes:
+  `(DisplayP3, Srgb|Bt709)` → `DISPLAY_P3_V4`,
+  `(Bt2020, Bt709|Srgb)` → `REC2020_V4`,
+  `(AdobeRgb, Gamma22)` → `ADOBE_RGB`.
+  HDR transfers (`Pq`, `Hlg`) and `Linear` return `None` on every primaries
+  set — no PQ/HLG ICC profiles are bundled, and those workflows should
+  signal color via CICP or generate the profile through a CMS. Motivated
+  by ultrahdr-rs's `get_icc_profile_for_gamut`, which currently regenerates
+  profiles via `moxcms::ColorProfile::new_bt2020()` on every call. Adds 4
+  unit tests covering the bundled hits, HDR rejection, mismatched-TRC
+  rejection, and BT.709 fall-through. Non-breaking: new public function,
+  no existing API changed (47eb81e).
 
 - **F16 conversion kernels.** `ConvertStep::F16ToF32` / `F32ToF16`
   (private enum variants) with scalar implementations. Planner routes
