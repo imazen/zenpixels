@@ -1,0 +1,25 @@
+# Tier 1 re-bench — after Phase 2 (F16 alpha + matte_composite F16 + add_alpha attempt)
+# Date: 2026-04-23
+# Parent commit: d3d8707
+# Hardware: AMD Ryzen 9 7950X
+# Command: cargo bench --bench bench_t1_layout
+#
+# Relevant deltas vs t1_layout_2026-04-23_baseline:
+#
+#   matte_composite F16 Linear   937 MiB/s →  1.39 GiB/s    1.52×   (batch F16C)
+#   matte_composite F16 HLG      462       →    569 MiB/s   1.23×   (partial — TF dispatch still dominates)
+#   matte_composite F16 sRGB     301       →    341 MiB/s   1.13×
+#   matte_composite F16 PQ       208       →    233 MiB/s   1.12×
+#
+#   All other T1 kernels unchanged within noise (±5%).
+#
+# Interpretation: F16C batch conversion lifts the "pure" F16 path
+# (Linear) by 1.5×, but for non-Linear TFs the per-pixel match
+# dispatch in f32_eotf/f32_oetf still dominates and caps the speedup.
+# Fixing that is the matte_composite TF-dispatch refactor (const-
+# generic trait kernels, task #22). Expected additional 3-5× on the
+# sRGB/PQ/HLG F16 paths once that lands.
+#
+# add_alpha_f16 did not improve (19.27 GiB/s before/after). The
+# hoist-to-local-const attempt did not change LLVM's codegen —
+# still per-pixel vpinsrw. See t5 meta for the full story.

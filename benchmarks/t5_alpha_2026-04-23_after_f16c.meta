@@ -1,0 +1,46 @@
+# Tier 5 (alpha) — after F16 batch-convert refactor
+# Date: 2026-04-23
+# Parent commit: d3d8707 (F16C phase 1)
+# Hardware: AMD Ryzen 9 7950X
+# Command: cargo bench --bench bench_t5_alpha
+#
+# All 4 F16 alpha kernels refactored from per-pixel scalar
+# f16_bits_to_f32/f32_to_f16_bits to a 3-pass chunk pattern:
+#   1. f16 → f32 slice (F16C batch via dispatched slice API)
+#   2. scalar math in f32 scratch (LLVM autovec)
+#   3. f32 → f16 slice (F16C batch)
+# Chunk size: 16 px for GrayA, 8 px for RGBA. Stack-allocated scratch.
+#
+# Speedups at 4096px:
+#
+#                              before          after         speedup
+#   Straight→Premul GrayA F16  2.20 GiB/s →  11.82 GiB/s    5.37×
+#   Premul→Straight GrayA F16  2.19 GiB/s →  12.69 GiB/s    5.79×
+#   Straight→Premul RGBA  F16  0.99 GiB/s →   5.55 GiB/s    5.74×
+#   Premul→Straight RGBA  F16  0.94 GiB/s →   4.75 GiB/s    5.19×
+#
+# Consistent ~5× lift. Lower than the ~15× the pure F16↔F32 kernels
+# got because the 3-pass scratch has memory-traffic overhead: each
+# pixel crosses scratch buffers 2x on top of the src/dst read/write.
+# To get the last ~3× would require fusing the math with the F16C
+# conversion inside a single #[arcane] kernel — f32 ops in __m256
+# registers between the VCVTPH2PS and VCVTPS2PH. Deferred; 5× is
+# solid and the pattern is general enough to reuse.
+#
+# All non-F16 kernels unchanged within noise (≤5%).
+#
+# Other F16 kernels updated in this pass:
+#   - matte_composite F16 arm: 3-pass scratch, same pattern.
+#     Lift: 1.5× on Linear TF (no per-pixel TF math), 1.1-1.2× on
+#     sRGB/PQ/HLG (per-pixel f32_eotf/f32_oetf match still dominates).
+#     Fixing the TF-match axis is the matte_composite TF-dispatch
+#     spike from the earlier priority list (separate refactor).
+#
+# Attempted but unsuccessful: add_alpha_f16 vs add_alpha_u16 2× gap.
+# Hoisting F16_ONE_BITS (0x3C00) to a `let` local did not change
+# LLVM's codegen — it still chooses `vpinsrw` per pixel (insert one
+# word into lane 3) whereas U16 gets `vpblendw` with a precomputed
+# all-ones register (`vpcmpeqd` + blend). The fix requires explicit
+# `#[arcane]` + `_mm_set1_epi16(0x3C00)` outside the loop + manual
+# shuffle. Not critical — kernel is at 19 GiB/s which is fast enough
+# for common use; deferred.

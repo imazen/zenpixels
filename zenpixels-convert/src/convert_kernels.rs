@@ -462,13 +462,20 @@ fn add_alpha_f32(src: &[f32], dst: &mut [f32], width: usize) {
 
 #[autoversion]
 fn add_alpha_f16(src: &[u16], dst: &mut [u16], width: usize) {
+    // Hoist the const into a local so LLVM treats it as loop-invariant
+    // (and ideally lifts a SIMD broadcast out of the inner loop). Without
+    // this the codegen devolves to per-pixel `mov ebx, 15360` +
+    // `vpinsrw` (2-3 cycles) whereas the U16 equivalent uses
+    // `vpcmpeqd` + `vpblendw` (1 cycle). See the T1 add_alpha F16 2×
+    // anomaly noted in benchmarks/t1_layout_2026-04-23_baseline.meta.
+    let opaque: u16 = 0x3C00;
     for i in 0..width {
         let s: &[u16; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
         let d: &mut [u16; 4] = (&mut dst[i * 4..i * 4 + 4]).try_into().unwrap();
         d[0] = s[0];
         d[1] = s[1];
         d[2] = s[2];
-        d[3] = F16_ONE_BITS;
+        d[3] = opaque;
     }
 }
 
@@ -656,11 +663,44 @@ fn matte_composite(
             }
         }
         ChannelType::F16 => {
-            // Unpack to f32, linearize RGB inline per source TF, blend,
-            // re-encode, pack back to f16. Alpha stays linear.
+            // 3-pass scratch: batch F16C unpack → scalar TF-aware blend →
+            // batch F16C pack. Replaces a per-pixel scalar f16↔f32 round-trip.
+            const CHUNK_PIXELS: usize = 8;
+            const SRC_LANES: usize = CHUNK_PIXELS * 4;
+            const DST_LANES: usize = CHUNK_PIXELS * 3;
+
             let src16: &[u16] = bytemuck::cast_slice(&src[..width * 8]);
             let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 6]);
-            for i in 0..width {
+
+            let mut scratch_src = [0.0f32; SRC_LANES];
+            let mut scratch_dst = [0.0f32; DST_LANES];
+
+            let whole = width / CHUNK_PIXELS;
+            for c in 0..whole {
+                let src_start = c * SRC_LANES;
+                let dst_start = c * DST_LANES;
+                f16_bits_to_f32_slice(
+                    &src16[src_start..src_start + SRC_LANES],
+                    &mut scratch_src,
+                );
+                for i in 0..CHUNK_PIXELS {
+                    let a = scratch_src[i * 4 + 3].clamp(0.0, 1.0);
+                    let inv_a = 1.0 - a;
+                    let r_lin = f32_eotf(scratch_src[i * 4], tf);
+                    let g_lin = f32_eotf(scratch_src[i * 4 + 1], tf);
+                    let b_lin = f32_eotf(scratch_src[i * 4 + 2], tf);
+                    scratch_dst[i * 3] = f32_oetf(r_lin * a + mr_lin * inv_a, tf);
+                    scratch_dst[i * 3 + 1] = f32_oetf(g_lin * a + mg_lin * inv_a, tf);
+                    scratch_dst[i * 3 + 2] = f32_oetf(b_lin * a + mb_lin * inv_a, tf);
+                }
+                f32_to_f16_bits_slice(
+                    &scratch_dst,
+                    &mut dst16[dst_start..dst_start + DST_LANES],
+                );
+            }
+
+            let tail_start = whole * CHUNK_PIXELS;
+            for i in tail_start..width {
                 let r = f16_bits_to_f32(src16[i * 4]);
                 let g = f16_bits_to_f32(src16[i * 4 + 1]);
                 let b = f16_bits_to_f32(src16[i * 4 + 2]);
@@ -1433,29 +1473,72 @@ fn premul_f32_ga(src: &[f32], dst: &mut [f32], width: usize) {
     }
 }
 
-#[autoversion]
+/// F16 premul via 3-pass scratch: f16→f32 slice (F16C SIMD) → scalar math
+/// (LLVM autovec) → f32→f16 slice (F16C SIMD). Beats per-pixel scalar
+/// `f16_bits_to_f32` because the conversion cost dominates.
 fn premul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
+    const CHUNK_PIXELS: usize = 16;
+    const CHUNK_LANES: usize = CHUNK_PIXELS * 2;
+
+    let mut scratch_src = [0.0f32; CHUNK_LANES];
+    let mut scratch_dst = [0.0f32; CHUNK_LANES];
+
+    let whole = width / CHUNK_PIXELS;
+    for c in 0..whole {
+        let start = c * CHUNK_LANES;
+        f16_bits_to_f32_slice(&src[start..start + CHUNK_LANES], &mut scratch_src);
+
+        for i in 0..CHUNK_PIXELS {
+            let base = i * 2;
+            let a = scratch_src[base + 1];
+            scratch_dst[base] = scratch_src[base] * a;
+            scratch_dst[base + 1] = a;
+        }
+
+        f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+    }
+
+    let tail_start = whole * CHUNK_PIXELS;
+    for i in tail_start..width {
         let base = i * 2;
-        let s: &[u16; 2] = (&src[base..base + 2]).try_into().unwrap();
-        let d: &mut [u16; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
-        let a = f16_bits_to_f32(s[1]);
-        d[0] = f32_to_f16_bits(f16_bits_to_f32(s[0]) * a);
-        d[1] = s[1];
+        let a = f16_bits_to_f32(src[base + 1]);
+        dst[base] = f32_to_f16_bits(f16_bits_to_f32(src[base]) * a);
+        dst[base + 1] = src[base + 1];
     }
 }
 
-#[autoversion]
 fn premul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
+    const CHUNK_PIXELS: usize = 8;
+    const CHUNK_LANES: usize = CHUNK_PIXELS * 4;
+
+    let mut scratch_src = [0.0f32; CHUNK_LANES];
+    let mut scratch_dst = [0.0f32; CHUNK_LANES];
+
+    let whole = width / CHUNK_PIXELS;
+    for c in 0..whole {
+        let start = c * CHUNK_LANES;
+        f16_bits_to_f32_slice(&src[start..start + CHUNK_LANES], &mut scratch_src);
+
+        for i in 0..CHUNK_PIXELS {
+            let base = i * 4;
+            let a = scratch_src[base + 3];
+            scratch_dst[base] = scratch_src[base] * a;
+            scratch_dst[base + 1] = scratch_src[base + 1] * a;
+            scratch_dst[base + 2] = scratch_src[base + 2] * a;
+            scratch_dst[base + 3] = a;
+        }
+
+        f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+    }
+
+    let tail_start = whole * CHUNK_PIXELS;
+    for i in tail_start..width {
         let base = i * 4;
-        let s: &[u16; 4] = (&src[base..base + 4]).try_into().unwrap();
-        let d: &mut [u16; 4] = (&mut dst[base..base + 4]).try_into().unwrap();
-        let a = f16_bits_to_f32(s[3]);
-        d[0] = f32_to_f16_bits(f16_bits_to_f32(s[0]) * a);
-        d[1] = f32_to_f16_bits(f16_bits_to_f32(s[1]) * a);
-        d[2] = f32_to_f16_bits(f16_bits_to_f32(s[2]) * a);
-        d[3] = s[3];
+        let a = f16_bits_to_f32(src[base + 3]);
+        dst[base] = f32_to_f16_bits(f16_bits_to_f32(src[base]) * a);
+        dst[base + 1] = f32_to_f16_bits(f16_bits_to_f32(src[base + 1]) * a);
+        dst[base + 2] = f32_to_f16_bits(f16_bits_to_f32(src[base + 2]) * a);
+        dst[base + 3] = src[base + 3];
     }
 }
 
@@ -1633,42 +1716,98 @@ fn unpremul_f32_ga(src: &[f32], dst: &mut [f32], width: usize) {
     }
 }
 
-#[autoversion]
+/// F16 unpremul via 3-pass scratch. `a == 0` branch preserved — produces
+/// all-zero pixels for that case, otherwise divides RGB by alpha.
 fn unpremul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
+    const CHUNK_PIXELS: usize = 16;
+    const CHUNK_LANES: usize = CHUNK_PIXELS * 2;
+
+    let mut scratch_src = [0.0f32; CHUNK_LANES];
+    let mut scratch_dst = [0.0f32; CHUNK_LANES];
+
+    let whole = width / CHUNK_PIXELS;
+    for c in 0..whole {
+        let start = c * CHUNK_LANES;
+        f16_bits_to_f32_slice(&src[start..start + CHUNK_LANES], &mut scratch_src);
+
+        for i in 0..CHUNK_PIXELS {
+            let base = i * 2;
+            let a = scratch_src[base + 1];
+            if a == 0.0 {
+                scratch_dst[base] = 0.0;
+                scratch_dst[base + 1] = 0.0;
+            } else {
+                let inv_a = 1.0 / a;
+                scratch_dst[base] = scratch_src[base] * inv_a;
+                scratch_dst[base + 1] = a;
+            }
+        }
+
+        f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+    }
+
+    let tail_start = whole * CHUNK_PIXELS;
+    for i in tail_start..width {
         let base = i * 2;
-        let s: &[u16; 2] = (&src[base..base + 2]).try_into().unwrap();
-        let d: &mut [u16; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
-        let a = f16_bits_to_f32(s[1]);
+        let a = f16_bits_to_f32(src[base + 1]);
         if a == 0.0 {
-            d[0] = 0;
-            d[1] = 0;
+            dst[base] = 0;
+            dst[base + 1] = 0;
         } else {
             let inv_a = 1.0 / a;
-            d[0] = f32_to_f16_bits(f16_bits_to_f32(s[0]) * inv_a);
-            d[1] = s[1];
+            dst[base] = f32_to_f16_bits(f16_bits_to_f32(src[base]) * inv_a);
+            dst[base + 1] = src[base + 1];
         }
     }
 }
 
-#[autoversion]
 fn unpremul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
+    const CHUNK_PIXELS: usize = 8;
+    const CHUNK_LANES: usize = CHUNK_PIXELS * 4;
+
+    let mut scratch_src = [0.0f32; CHUNK_LANES];
+    let mut scratch_dst = [0.0f32; CHUNK_LANES];
+
+    let whole = width / CHUNK_PIXELS;
+    for c in 0..whole {
+        let start = c * CHUNK_LANES;
+        f16_bits_to_f32_slice(&src[start..start + CHUNK_LANES], &mut scratch_src);
+
+        for i in 0..CHUNK_PIXELS {
+            let base = i * 4;
+            let a = scratch_src[base + 3];
+            if a == 0.0 {
+                scratch_dst[base] = 0.0;
+                scratch_dst[base + 1] = 0.0;
+                scratch_dst[base + 2] = 0.0;
+                scratch_dst[base + 3] = 0.0;
+            } else {
+                let inv_a = 1.0 / a;
+                scratch_dst[base] = scratch_src[base] * inv_a;
+                scratch_dst[base + 1] = scratch_src[base + 1] * inv_a;
+                scratch_dst[base + 2] = scratch_src[base + 2] * inv_a;
+                scratch_dst[base + 3] = a;
+            }
+        }
+
+        f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+    }
+
+    let tail_start = whole * CHUNK_PIXELS;
+    for i in tail_start..width {
         let base = i * 4;
-        let s: &[u16; 4] = (&src[base..base + 4]).try_into().unwrap();
-        let d: &mut [u16; 4] = (&mut dst[base..base + 4]).try_into().unwrap();
-        let a = f16_bits_to_f32(s[3]);
+        let a = f16_bits_to_f32(src[base + 3]);
         if a == 0.0 {
-            d[0] = 0;
-            d[1] = 0;
-            d[2] = 0;
-            d[3] = 0;
+            dst[base] = 0;
+            dst[base + 1] = 0;
+            dst[base + 2] = 0;
+            dst[base + 3] = 0;
         } else {
             let inv_a = 1.0 / a;
-            d[0] = f32_to_f16_bits(f16_bits_to_f32(s[0]) * inv_a);
-            d[1] = f32_to_f16_bits(f16_bits_to_f32(s[1]) * inv_a);
-            d[2] = f32_to_f16_bits(f16_bits_to_f32(s[2]) * inv_a);
-            d[3] = s[3];
+            dst[base] = f32_to_f16_bits(f16_bits_to_f32(src[base]) * inv_a);
+            dst[base + 1] = f32_to_f16_bits(f16_bits_to_f32(src[base + 1]) * inv_a);
+            dst[base + 2] = f32_to_f16_bits(f16_bits_to_f32(src[base + 2]) * inv_a);
+            dst[base + 3] = src[base + 3];
         }
     }
 }
