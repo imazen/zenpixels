@@ -93,6 +93,11 @@ name = "bench_t7_gamut"
 path = "benches/bench_t7_gamut.rs"
 harness = false
 
+[[bench]]
+name = "bench_matlut_vs_poly"
+path = "benches/bench_matlut_vs_poly.rs"
+harness = false
+
 # TODO: restore when ZenCmsLite is public
 # [[bench]]
 # name = "bench_fast_p3"

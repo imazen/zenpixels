@@ -1,0 +1,13 @@
+path,ct,size_label,width_px,mean,stddev,throughput_gibs,delta_vs_matlut
+matlut,u8,256px,256,353ns,7ns,4.05,baseline
+poly+scalar_mat,u8,256px,256,484ns,13ns,2.96,+37%
+matlut,u8,4096px,4096,5.5us,0.1us,4.16,baseline
+poly+scalar_mat,u8,4096px,4096,7.8us,0.2us,2.92,+42%
+matlut,u8,1080p,2073600,2.8ms,0.1ms,4.08,baseline
+poly+scalar_mat,u8,1080p,2073600,6.1ms,0.4ms,1.90,+115%
+matlut,u16,256px,256,431ns,12ns,6.63,baseline
+poly+scalar_mat,u16,256px,256,679ns,11ns,4.21,+57%
+matlut,u16,4096px,4096,7.4us,0.4us,6.18,baseline
+poly+scalar_mat,u16,4096px,4096,11.3us,0.5us,4.07,+52%
+matlut,u16,1080p,2073600,4.6ms,0.2ms,5.04,baseline
+poly+scalar_mat,u16,1080p,2073600,7.9ms,0.4ms,2.92,+73%

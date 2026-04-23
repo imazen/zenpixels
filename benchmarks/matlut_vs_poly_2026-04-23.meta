@@ -1,0 +1,49 @@
+# A/B probe — matlut vs polynomial path for fused sRGB+gamut
+# Date: 2026-04-23
+# Parent commit: 3eae345 (main, post matte_composite TF-dispatch)
+# linear-srgb: 0.6.11 local path /home/lilith/work/zen/linear-srgb (incl. upstream #10)
+# Hardware: AMD Ryzen 9 7950X
+# Command: cargo bench --bench bench_matlut_vs_poly
+#
+# Question: is the matlut kernel family in src/fast_gamut.rs still worth
+# keeping now that linear-srgb's SIMD f32→u8/u16 quantize has tightened
+# (was the original justification for the matlut addition)?
+#
+# matlut   = LUT linearize + SIMD 3×3 matrix + LUT encode (1 pass)
+# polynomial = linear-srgb srgb_u*_to_linear_slice
+#            + scalar 3×3 matrix (mirrors convert_kernels::gamut_matrix_rgb_f32)
+#            + linear-srgb linear_to_srgb_u*_slice (3 passes, pre-allocated scratch)
+#
+# Results (P3→BT.709, sRGB same on both sides):
+#
+#                              matlut        polynomial    matlut lift
+#   u8   256px                4.05 GiB/s →  2.96 GiB/s    +37%
+#   u8  4096px                4.16       →  2.92          +42%
+#   u8  1080p                 4.08       →  1.90          +115%   ★
+#   u16  256px                6.63       →  4.21          +57%
+#   u16 4096px                6.18       →  4.07          +52%
+#   u16 1080p                 5.04       →  2.92          +73%    ★
+#
+# Interpretation:
+#
+# matlut is NOT vestigial. Wins everywhere, and the gap WIDENS with working-
+# set size because the polynomial path traverses memory 3× (u8→f32 scratch,
+# matrix in place on scratch, f32→u8 dst). At 1080p the scratch buffer
+# (24 MB of f32 for 1080p RGB) blows L2 and the polynomial path spends most
+# of its time on DRAM traffic. matlut stays in one pass: u8 src streams in,
+# u8 dst streams out, LUT stays cached.
+#
+# u16 matlut wins too, even though its encode LUT is 128 KB (L2-resident).
+# L2 bandwidth on Zen 4 is enough to keep the LUT gather ahead of the
+# polynomial path's 3-pass memory traffic.
+#
+# Recommendation: KEEP matlut. Do NOT retire. Option B (hold steady) is the
+# right call. If we revisit, the next lever is unchaining the scalar LUT
+# gather inside convert_8px_u8_rgb_matlut / convert_8px_u16_rgb_matlut
+# (hoist the 6-8 scalar loads into a short queue so OoO can overlap them
+# with the next iteration's SIMD matrix).
+#
+# Note: this doesn't say matlut would beat a hypothetical *fully-fused*
+# polynomial kernel that never materializes a scratch f32 buffer. It says
+# matlut beats the polynomial path we can actually dispatch to today using
+# existing linear-srgb slice APIs + a standalone matrix kernel.
