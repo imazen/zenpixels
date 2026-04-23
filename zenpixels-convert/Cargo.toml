@@ -98,6 +98,11 @@ name = "bench_matlut_vs_poly"
 path = "benches/bench_matlut_vs_poly.rs"
 harness = false
 
+[[bench]]
+name = "bench_hlg_regress"
+path = "benches/bench_hlg_regress.rs"
+harness = false
+
 # TODO: restore when ZenCmsLite is public
 # [[bench]]
 # name = "bench_fast_p3"

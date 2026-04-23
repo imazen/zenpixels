@@ -1,0 +1,65 @@
+HLG Linear→HLG regression probe
+Date: 2026-04-23
+zenpixels-convert commit: ac9116ff (main)
+Hardware: AMD Ryzen 9 7950X
+Command: cargo bench --bench bench_hlg_regress
+
+Background
+──────────
+T4 re-bench at 4096px showed Linear→HLG dropping from 29.44 to 19.9
+GiB/s (two-sided) when comparing crates.io linear-srgb 0.6.10 against
+local perf/simd-tf-magetypes branch. My initial writeup speculated
+that the baseline was biased by the scalar quadratic early-exit on
+our pseudo-random input distribution. This probe tests that claim.
+
+Probe: call linear_srgb::default::linear_to_hlg_slice directly on
+four input distributions — uniform [0,1], all-small (<1/12, 100%
+quadratic), all-large (>1/12, 100% sinh/log), and HDR luma (u^3,
+~44% below 1/12). Bench throughput one-sided (in-place transform).
+
+Distribution verification: uniform 8.5% ≤ 1/12, hdr 43.8% ≤ 1/12.
+
+Results at 4096px (one-sided GiB/s)
+───────────────────────────────────
+
+                              crates.io 0.6.11   local (perf SIMD)   delta
+                              (autoversion)       (hand magetypes)
+  uniform [0,1]               14.6                10.8                -26%
+  all-small (quadratic)       14.2                10.6                -25%
+  all-large (sinh/log)        14.3                10.5                -27%
+  HDR luma (u^3)              14.2                10.7                -25%
+
+Conclusions
+───────────
+1. Regression is REAL, not an input-distribution artifact. My earlier
+   "likely honest number" dismissal was wrong. Filed as a correction.
+
+2. Distribution invariance on the new kernel is correct behavior —
+   `linear_to_hlg_x8` computes both branches (sqrt and fast_log2f_x8)
+   per lane and blends via mask. Constant cost regardless of input.
+
+3. The old 0.6.10 `#[archmage::autoversion]` scalar loop was being
+   auto-vectorized by LLVM into something faster than the hand-rolled
+   magetypes SIMD kernel. Likely because:
+     - the old path's inlined scalar fast_log2f let LLVM co-optimize
+       constants and masking more tightly,
+     - or the new `fast_log2f_x8` in magetypes carries overhead
+       (extra splats / min / max clamps) that the autovec didn't.
+
+4. At 256px the regression is larger (-30%) because the hand-SIMD
+   kernel's per-call constant setup dominates. At 1080p it shrinks
+   to -12% as memory bandwidth takes over.
+
+Action items
+────────────
+  - Filed upstream issue on imazen/linear-srgb linking this data.
+  - `benches/bench_hlg_regress.rs` kept committed so the regression
+    can be validated when upstream lands a fix.
+  - T4 meta updated to correct my earlier speculation.
+
+Other notes
+───────────
+Uniform [0,1] was the baseline distribution used by bench_t4_tf_f32.rs.
+Only 8.5% of uniform values hit the quadratic early-exit — the input
+is NOT biased toward early-exit as my first writeup implied. The
+~92% log branch dominates baseline cost and the comparison stands.

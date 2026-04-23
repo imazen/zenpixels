@@ -37,13 +37,22 @@ Headlines:
 
 Note on Linear → HLG regression (29.44 → 19.9):
 
-The baseline meta flagged this number as suspicious ("Linear→HLG
-unexpectedly faster than sRGB") and hypothesized it was the scalar
-quadratic early-exit for v ≤ 1/12 biasing results on our pseudo-random
-test distribution. After the SIMD refactor the kernel is consistent
-across input distributions; the observed 19.9 GiB/s is likely the more
-honest number. Worth re-measuring with a real HDR luma distribution
-before concluding it's a real regression.
+  *** CORRECTION (probed 2026-04-23) ***
+
+  Initial speculation here said the baseline was biased by the scalar
+  quadratic early-exit — WRONG. A distribution probe confirms the
+  regression is REAL and distribution-invariant:
+
+    input                      old autovec      new hand-SIMD
+    uniform [0,1]   (8.5%)     14.6 GiB/s       10.8 GiB/s   -26%
+    all-small (quadratic)      14.2             10.6         -25%
+    all-large (sinh/log)       14.3             10.5         -27%
+    HDR luma u^3    (44%)      14.2             10.7         -25%
+
+  See benchmarks/hlg_regression_probe_2026-04-23.txt for full detail.
+  The new magetypes-based SIMD kernel is consistent across branches
+  (correct) but ~25% slower than LLVM's autovectorization of the
+  old `#[archmage::autoversion]` scalar loop. Filed upstream.
 
 Action items informed by this data:
   - Wait for linear-srgb 0.6.12 (perf/simd-tf-magetypes release) to
