@@ -51,10 +51,12 @@ fn sweep<F: Fn(f32) -> f32>(name: &str, f: F) -> (u32, u64, usize) {
         bits = bits.wrapping_add(step);
     }
 
-    let mean = if count == 0 { 0 } else { sum_ulp / count as u64 };
-    println!(
-        "{name:26}  max ULP = {max_ulp:>8}   mean ULP = {mean:>6}   n = {count}"
-    );
+    let mean = if count == 0 {
+        0
+    } else {
+        sum_ulp / count as u64
+    };
+    println!("{name:26}  max ULP = {max_ulp:>8}   mean ULP = {mean:>6}   n = {count}");
     (max_ulp, sum_ulp, count)
 }
 
@@ -104,10 +106,12 @@ fn cbrt_precision_oklab_range() {
             bits = bits.wrapping_add(step);
         }
 
-        let mean = if count == 0 { 0 } else { sum_ulp / count as u64 };
-        println!(
-            "{name:26}  max ULP = {max_ulp:>8}   mean ULP = {mean:>6}   n = {count}"
-        );
+        let mean = if count == 0 {
+            0
+        } else {
+            sum_ulp / count as u64
+        };
+        println!("{name:26}  max ULP = {max_ulp:>8}   mean ULP = {mean:>6}   n = {count}");
     }
 
     sweep_range("oklab::fast_cbrt        ", fast_cbrt);

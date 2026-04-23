@@ -112,7 +112,12 @@ fn bench_swizzle_bgra_rgba(suite: &mut Suite) {
 /// RGB → RGBA (add opaque alpha).
 fn bench_add_alpha(suite: &mut Suite) {
     for &(label, width) in SIZES {
-        for &ct in &[ChannelType::U8, ChannelType::U16, ChannelType::F32, ChannelType::F16] {
+        for &ct in &[
+            ChannelType::U8,
+            ChannelType::U16,
+            ChannelType::F32,
+            ChannelType::F16,
+        ] {
             let src_desc = rgb_desc(ct, TransferFunction::Srgb);
             let dst_desc = rgba_desc(ct, TransferFunction::Srgb, AlphaMode::Straight);
             let src = make_rgb_bytes(width, ct);
@@ -137,7 +142,12 @@ fn bench_add_alpha(suite: &mut Suite) {
 /// RGBA → RGB (drop alpha, pure shuffle).
 fn bench_drop_alpha(suite: &mut Suite) {
     for &(label, width) in SIZES {
-        for &ct in &[ChannelType::U8, ChannelType::U16, ChannelType::F32, ChannelType::F16] {
+        for &ct in &[
+            ChannelType::U8,
+            ChannelType::U16,
+            ChannelType::F32,
+            ChannelType::F16,
+        ] {
             let src_desc = rgba_desc(ct, TransferFunction::Srgb, AlphaMode::Straight);
             let dst_desc = rgb_desc(ct, TransferFunction::Srgb);
             let src = make_rgba_bytes(width, ct);
@@ -162,7 +172,12 @@ fn bench_drop_alpha(suite: &mut Suite) {
 /// GrayAlpha → RGBA (replicate gray, preserve alpha — U16/F16 shared path).
 fn bench_gray_alpha_to_rgba(suite: &mut Suite) {
     for &(label, width) in SIZES {
-        for &ct in &[ChannelType::U8, ChannelType::U16, ChannelType::F32, ChannelType::F16] {
+        for &ct in &[
+            ChannelType::U8,
+            ChannelType::U16,
+            ChannelType::F32,
+            ChannelType::F16,
+        ] {
             let src_desc = ga_desc(ct, TransferFunction::Srgb);
             let dst_desc = rgba_desc(ct, TransferFunction::Srgb, AlphaMode::Straight);
             let src = make_ga_bytes(width, ct);
@@ -187,7 +202,12 @@ fn bench_gray_alpha_to_rgba(suite: &mut Suite) {
 /// Gray → RGB (replicate).
 fn bench_gray_to_rgb(suite: &mut Suite) {
     for &(label, width) in SIZES {
-        for &ct in &[ChannelType::U8, ChannelType::U16, ChannelType::F32, ChannelType::F16] {
+        for &ct in &[
+            ChannelType::U8,
+            ChannelType::U16,
+            ChannelType::F32,
+            ChannelType::F16,
+        ] {
             let src_desc = gray_desc(ct, TransferFunction::Srgb);
             let dst_desc = rgb_desc(ct, TransferFunction::Srgb);
             let src = make_gray_bytes(width, ct);
@@ -249,13 +269,17 @@ fn bench_matte_composite(suite: &mut Suite) {
                 for &tf in tfs {
                     let src_desc = rgba_desc(ct, tf, AlphaMode::Straight);
                     let dst_desc = rgb_desc(ct, tf);
-                    let opts = ConvertOptions::permissive()
-                        .with_alpha_policy(AlphaPolicy::CompositeOnto { r: 64, g: 64, b: 64 });
-                    let mut conv =
-                        match RowConverter::new_explicit(src_desc, dst_desc, &opts) {
-                            Ok(c) => c,
-                            Err(_) => continue,
-                        };
+                    let opts = ConvertOptions::permissive().with_alpha_policy(
+                        AlphaPolicy::CompositeOnto {
+                            r: 64,
+                            g: 64,
+                            b: 64,
+                        },
+                    );
+                    let mut conv = match RowConverter::new_explicit(src_desc, dst_desc, &opts) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
                     let src = make_rgba_bytes(width, ct);
                     let dst_bytes = width * bytes_per_pixel_dst * ct.byte_size();
                     let src_bytes = width * bytes_per_pixel_src * ct.byte_size();

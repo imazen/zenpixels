@@ -83,7 +83,11 @@ fn reference_srgb_composite(pixel: [f32; 4], matte_u8: (u8, u8, u8)) -> [f32; 3]
     let out_g_lin = pg_lin * a + mg_lin * inv_a;
     let out_b_lin = pb_lin * a + mb_lin * inv_a;
 
-    [srgb_oetf(out_r_lin), srgb_oetf(out_g_lin), srgb_oetf(out_b_lin)]
+    [
+        srgb_oetf(out_r_lin),
+        srgb_oetf(out_g_lin),
+        srgb_oetf(out_b_lin),
+    ]
 }
 
 /// F32 sRGB RGBA → F32 sRGB RGB with a grey matte. The sRGB-encoded pixel

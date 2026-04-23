@@ -629,7 +629,9 @@ fn f16_linear_to_f32_linear_and_back_is_exact() {
 fn f16_srgb_to_u8_srgb_roundtrip_within_tolerance() {
     let width = 16u32;
     // sRGB-encoded f16 values representing typical 8-bit-quantizable inputs.
-    let u8_vals: Vec<u8> = (0..width as usize * 3).map(|i| (i * 7 % 256) as u8).collect();
+    let u8_vals: Vec<u8> = (0..width as usize * 3)
+        .map(|i| (i * 7 % 256) as u8)
+        .collect();
     let f16_vals: Vec<f32> = u8_vals.iter().map(|v| *v as f32 / 255.0).collect();
     let src = f32s_to_f16_bytes(&f16_vals);
 

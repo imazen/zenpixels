@@ -9,9 +9,7 @@
 //!   FusedLinearF32ToSrgbU8Rgb                  — fused linear f32 → u8 sRGB with matrix
 
 use zenbench::prelude::*;
-use zenpixels::{
-    ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
-};
+use zenpixels::{ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction};
 use zenpixels_convert::RowConverter;
 
 const SIZES: &[(&str, usize)] = &[
@@ -20,11 +18,7 @@ const SIZES: &[(&str, usize)] = &[
     ("1080p  ", 1920 * 1080),
 ];
 
-fn rgb_desc(
-    ct: ChannelType,
-    tf: TransferFunction,
-    primaries: ColorPrimaries,
-) -> PixelDescriptor {
+fn rgb_desc(ct: ChannelType, tf: TransferFunction, primaries: ColorPrimaries) -> PixelDescriptor {
     PixelDescriptor::new_full(ct, ChannelLayout::Rgb, None, tf, primaries)
 }
 

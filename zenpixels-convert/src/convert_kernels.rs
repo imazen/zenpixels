@@ -679,10 +679,7 @@ fn matte_composite(
             for c in 0..whole {
                 let src_start = c * SRC_LANES;
                 let dst_start = c * DST_LANES;
-                f16_bits_to_f32_slice(
-                    &src16[src_start..src_start + SRC_LANES],
-                    &mut scratch_src,
-                );
+                f16_bits_to_f32_slice(&src16[src_start..src_start + SRC_LANES], &mut scratch_src);
                 for i in 0..CHUNK_PIXELS {
                     let a = scratch_src[i * 4 + 3].clamp(0.0, 1.0);
                     let inv_a = 1.0 - a;
@@ -693,10 +690,7 @@ fn matte_composite(
                     scratch_dst[i * 3 + 1] = f32_oetf(g_lin * a + mg_lin * inv_a, tf);
                     scratch_dst[i * 3 + 2] = f32_oetf(b_lin * a + mb_lin * inv_a, tf);
                 }
-                f32_to_f16_bits_slice(
-                    &scratch_dst,
-                    &mut dst16[dst_start..dst_start + DST_LANES],
-                );
+                f32_to_f16_bits_slice(&scratch_dst, &mut dst16[dst_start..dst_start + DST_LANES]);
             }
 
             let tail_start = whole * CHUNK_PIXELS;

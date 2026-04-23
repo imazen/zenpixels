@@ -211,16 +211,28 @@ pub(crate) fn f32_to_f16_bits(v: f32) -> u16 {
 /// Convert a slice of f16 bits into a slice of f32 values. Lossless. Uses
 /// 8-lane F16C (`vcvtph2ps`) on x86-64 CPUs that have it; scalar otherwise.
 pub(crate) fn f16_bits_to_f32_slice(src: &[u16], dst: &mut [f32]) {
-    assert_eq!(src.len(), dst.len(), "f16_bits_to_f32_slice length mismatch");
-    archmage::incant!(cvt_f16_to_f32(src, dst))
+    assert_eq!(
+        src.len(),
+        dst.len(),
+        "f16_bits_to_f32_slice length mismatch"
+    );
+    // Explicit tier list: only _v3 (x86-64 F16C) and _scalar are defined.
+    // The default incant! list also includes _neon and _wasm128, which we
+    // haven't implemented — NEON FP16 intrinsics require Rust 1.94 (>MSRV
+    // 1.89), so on aarch64 we fall back to scalar.
+    archmage::incant!(cvt_f16_to_f32(src, dst), [v3, scalar])
 }
 
 /// Convert a slice of f32 values into a slice of f16 bits with
 /// round-to-nearest-even. Uses 8-lane F16C (`vcvtps2ph`) on x86-64 CPUs
 /// that have it; scalar otherwise.
 pub(crate) fn f32_to_f16_bits_slice(src: &[f32], dst: &mut [u16]) {
-    assert_eq!(src.len(), dst.len(), "f32_to_f16_bits_slice length mismatch");
-    archmage::incant!(cvt_f32_to_f16(src, dst))
+    assert_eq!(
+        src.len(),
+        dst.len(),
+        "f32_to_f16_bits_slice length mismatch"
+    );
+    archmage::incant!(cvt_f32_to_f16(src, dst), [v3, scalar])
 }
 
 // -- Scalar tier -------------------------------------------------------------
@@ -295,7 +307,12 @@ mod tests {
             // NaN → NaN (bit pattern may canonicalize)
             let is_f16_nan = (bits & 0x7c00) == 0x7c00 && (bits & 0x03ff) != 0;
             if is_f16_nan {
-                assert!(f.is_nan(), "bits {:#06x} should produce f32 NaN, got {}", bits, f);
+                assert!(
+                    f.is_nan(),
+                    "bits {:#06x} should produce f32 NaN, got {}",
+                    bits,
+                    f
+                );
                 let back_is_nan = (back & 0x7c00) == 0x7c00 && (back & 0x03ff) != 0;
                 assert!(
                     back_is_nan,
@@ -361,7 +378,8 @@ mod tests {
                 let ours = f32_to_f16_bits(v);
                 let theirs = half::f16::from_f32(v).to_bits();
                 assert_eq!(
-                    ours, theirs,
+                    ours,
+                    theirs,
                     "f32 {} ({:#010x}): ours={:#06x}, theirs={:#06x}",
                     v,
                     v.to_bits(),
@@ -441,7 +459,8 @@ mod tests {
                 continue;
             }
             assert_eq!(
-                via_slice[i], via_scalar[i],
+                via_slice[i],
+                via_scalar[i],
                 "f32 {} ({:#010x}): slice={:#06x}, scalar={:#06x}",
                 samples[i],
                 samples[i].to_bits(),

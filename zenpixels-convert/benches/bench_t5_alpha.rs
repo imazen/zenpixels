@@ -4,9 +4,7 @@
 //! `PremulToStraight` step.
 
 use zenbench::prelude::*;
-use zenpixels::{
-    AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction,
-};
+use zenpixels::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
 use zenpixels_convert::RowConverter;
 
 const SIZES: &[(&str, usize)] = &[
@@ -27,7 +25,12 @@ fn ct_label(ct: ChannelType) -> &'static str {
 
 fn rgba_desc(ct: ChannelType, alpha: AlphaMode) -> PixelDescriptor {
     // Linear TF so no TF conversion kicks in; isolates the alpha-mode step.
-    PixelDescriptor::new(ct, ChannelLayout::Rgba, Some(alpha), TransferFunction::Linear)
+    PixelDescriptor::new(
+        ct,
+        ChannelLayout::Rgba,
+        Some(alpha),
+        TransferFunction::Linear,
+    )
 }
 
 fn ga_desc(ct: ChannelType, alpha: AlphaMode) -> PixelDescriptor {

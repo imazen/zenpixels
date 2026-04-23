@@ -55,24 +55,27 @@ fn bench_tf_to_linear(suite: &mut Suite) {
     ];
 
     for &(label, width) in SIZES {
-        suite.group(format!("{tf} F32 → Linear F32  {label}", tf = "TF"), move |g| {
-            let channels = 3;
-            let bytes = (width * channels * 4 * 2) as u64; // src + dst
-            g.throughput(Throughput::Bytes(bytes));
-            for &tf in tfs {
-                let src_desc = rgb_f32(tf);
-                let dst_desc = rgb_f32(TransferFunction::Linear);
-                let mut conv = RowConverter::new(src_desc, dst_desc).unwrap();
-                let src = make_f32_row(width, channels);
-                let mut dst = vec![0u8; width * channels * 4];
-                g.bench(tf_label(tf), move |b| {
-                    b.iter(|| {
-                        conv.convert_row(&src, &mut dst, width as u32);
-                        black_box(());
-                    })
-                });
-            }
-        });
+        suite.group(
+            format!("{tf} F32 → Linear F32  {label}", tf = "TF"),
+            move |g| {
+                let channels = 3;
+                let bytes = (width * channels * 4 * 2) as u64; // src + dst
+                g.throughput(Throughput::Bytes(bytes));
+                for &tf in tfs {
+                    let src_desc = rgb_f32(tf);
+                    let dst_desc = rgb_f32(TransferFunction::Linear);
+                    let mut conv = RowConverter::new(src_desc, dst_desc).unwrap();
+                    let src = make_f32_row(width, channels);
+                    let mut dst = vec![0u8; width * channels * 4];
+                    g.bench(tf_label(tf), move |b| {
+                        b.iter(|| {
+                            conv.convert_row(&src, &mut dst, width as u32);
+                            black_box(());
+                        })
+                    });
+                }
+            },
+        );
     }
 }
 
