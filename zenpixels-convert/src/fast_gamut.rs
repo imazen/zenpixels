@@ -982,6 +982,16 @@ pub(crate) fn srgb_lin_lut_u16() -> &'static [f32; 65536] {
 
 /// Build a 65536-entry LUT mapping i32 index (scaled linear) → u16 sRGB.
 /// Indexed by `(linear * 65535 + 0.5) as i32` after clamp.
+/// Build a 65536-entry linearly-indexed u16 encode LUT. Lookup is
+/// `idx = (linear * 65535 + 0.5) as usize & 0xFFFF`.
+///
+/// Sqrt-indexing (measured 2026-04-24, benchmarks/u16_sqrt_vs_linear_*)
+/// was rejected for production: while the encode step in isolation is
+/// tied at 13.1 GiB/s, the full matlut pipeline has a 2-pixel-per-vector
+/// AoS layout that does 4 sqrts per 8-pixel chunk — 1.33× the sqrt
+/// density of an isolated encode, and the cycles no longer hide behind
+/// gather AGU dispatch. Ended up -17% on T7. See
+/// benchmarks/u16_sqrt_aos_regression_2026-04-24.txt.
 pub(crate) fn srgb_enc_lut_u16() -> &'static [u16; 65536] {
     use once_cell::race::OnceBox;
     static LUT: OnceBox<[u16; 65536]> = OnceBox::new();

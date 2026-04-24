@@ -1,0 +1,69 @@
+Sqrt-indexed LUT swap for u16 matlut: attempted and rejected
+Date: 2026-04-24
+zenpixels-convert: attempted at 99-series commit, reverted
+
+Prior expectation
+─────────────────
+From benchmarks/u16_sqrt_vs_linear_2026-04-23.txt addendum:
+
+  explicit_simd_linear_lut   13.1 GiB/s  (4096px, encode-step only)
+  explicit_simd_sqrt_lut     13.1 GiB/s
+
+Tied. The prediction was that swapping matlut's linear-indexed encode
+LUT for sqrt-indexed would be a free precision upgrade (71.3% ±6
+→ 94.2% ±1 u16 roundtrip).
+
+What actually happened
+──────────────────────
+Swapped `srgb_enc_lut_u16()` to 65537-entry sqrt-indexed; updated
+`convert_8px_u16_rgb_matlut` to do `clamped.sqrt() * 65536.0` before
+round-to-i32. All 265 tests pass. Ran T7 gamut bench:
+
+  sRGB U16 fused gamut (P3→BT.709):
+                   old matlut     new (sqrt-indexed)   delta
+    256px          6.00           4.95                 -17.5%
+    4096px         5.93           4.93                 -16.9%
+    1080p          4.89           4.45                  -9.0%
+
+Reverted. Why the isolated bench misled
+────────────────────────────────────────
+
+The isolated encode probe runs a standalone kernel:
+  - 1 f32x8 input chunk per iteration
+  - 1 sqrt per 8 f32 input values
+
+The production matlut kernel has a 2-pixel-per-vector AoS layout:
+  - 4 iterations per 8-pixel chunk (`for pair in 0..4`)
+  - each iteration processes 2 pixels packed into f32x8
+  - 1 sqrt per iteration → 4 sqrts per 8-pixel chunk
+  - 8 pixels × 3 channels = 24 output values
+  - **1 sqrt per 6 output values** (vs 1 per 8 in the isolated bench)
+
+1.33× the sqrt density. Zen 4: sqrt f32x8 throughput 1/6 cyc. 4 sqrts
+per chunk = ~24 extra cycles, or ~3.3 ns at 4.5 GHz. 8-pixel chunk's
+baseline cost is ~16 ns; adding 3.3 ns → ~20% slowdown. Matches the
+observed 17%.
+
+In the isolated encode bench, the sqrt latency overlapped with the
+scalar-gather AGU chain (OoO window hides it). In the full pipeline,
+the matrix FMA chain + broadcast shuffles already saturate the OoO
+window, and the sqrts don't have idle cycles to slot into.
+
+Takeaway
+────────
+"Encode-step-only" probes don't predict "inserted-into-pipeline"
+costs when the surrounding kernel is already compute-dense. The
+OoO-hides-the-sqrt argument only works when the surrounding ops
+have idle cycles; matlut's matrix + broadcast layout doesn't.
+
+Still the right move for matlut u16: keep linear-indexed until the
+LUT+poly path (already gated behind `__bench_u16_hybrids` feature)
+becomes the production path when linear-srgb 0.6.12 ships. LUT+poly
+gives 100% exact u16 roundtrip AND +17% at 1080p — strictly better
+than either LUT variant.
+
+Next time
+─────────
+Before shipping a "free precision" swap, bench against the target's
+actual kernel shape — not a standalone probe that isolates the one
+operation being changed.
