@@ -77,3 +77,40 @@ Did matlut's ±6 u16 error actually bite anything? Worth a separate
 ULP probe against the scalar reference for sRGB u16 RGB roundtrip to
 confirm. If the error is academic (never seen in practice) the
 migration priority drops.
+
+Addendum (same day): explicit-SIMD across both indexing schemes
+───────────────────────────────────────────────────────────────
+
+Added two more variants to the probe — linear-indexed and sqrt-indexed
+LUT encoders, both using explicit magetypes f32x8 + #[arcane] dispatch
+(not LLVM autovec). This fills the missing cell in the perf matrix.
+
+f32→u16 encode step, one-sided GiB/s:
+
+                              256px    4096px   1080p
+  explicit_simd_linear_lut    12.6     13.1     6.85
+  explicit_simd_sqrt_lut      13.1     13.1     6.67
+  delta                       +4%      tied     +3% linear
+
+Verdict: once index creation is fully SIMD, sqrt vs linear indexing
+is a WASH — within noise at every size.
+
+Why the sqrt is free when done right:
+  - sqrt f32x8 on Zen 4: ~6 cyc latency, 1/6 cyc throughput
+  - scalar gather after: 8 gathers / 3 load ports ≈ 8 cyc AGU
+  - sqrt pipelines in parallel with gather dispatch → hidden
+
+The earlier "-29% sqrt penalty" (matlut_lut_scalar autovec vs
+matlut_shape_sqrt_lut autovec) was PURELY a codegen artifact, not
+a real cost of the sqrt operation.
+
+Full autovec-vs-explicit matrix at 4096px:
+
+                   autovec    explicit-SIMD
+  linear-indexed   7.63       13.1         (+72%)
+  sqrt-indexed     5.46       13.1         (+140%)
+
+Recommendation (supersedes previous): if matlut u16 ever retains
+a LUT encoder, use sqrt-indexed. Free perf, precision jumps from
+71.3% exact ±6 to 94.2% exact ±1. The autovec penalty that made
+sqrt look expensive isn't on the production path.

@@ -16,11 +16,125 @@
 //! Together these determine whether a fused polynomial u16 RGB gamut
 //! kernel would beat matlut's current LUT-pair pipeline.
 
+use archmage::prelude::*;
 use linear_srgb::default::{
     linear_to_srgb_u16, linear_to_srgb_u16_slice, linear_to_srgb_u16_slice_fast,
     srgb_u16_to_linear, srgb_u16_to_linear_slice,
 };
+use magetypes::simd::f32x8 as mt_f32x8;
 use zenbench::prelude::*;
+
+// Explicit-SIMD linear-indexed encode: clamp+scale+round in magetypes f32x8,
+// scalar gather from the 65536-entry linear-indexed LUT. Same shape as the
+// production matlut u16 encode.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn explicit_simd_linear_lut_v3(
+    token: X64V3Token,
+    input: &[f32],
+    output: &mut [u16],
+    lut: &[u16; 65536],
+) {
+    let (in_chunks, in_rem) = input.as_chunks::<8>();
+    let (out_chunks, out_rem) = output.as_chunks_mut::<8>();
+    let zero = mt_f32x8::zero(token);
+    let one = mt_f32x8::splat(token, 1.0);
+    let scale = mt_f32x8::splat(token, 65535.0);
+    for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
+        let v = mt_f32x8::from_array(token, *inp);
+        let idx = (v.max(zero).min(one) * scale).to_i32_round().to_array();
+        for j in 0..8 {
+            out[j] = lut[idx[j] as usize & 0xFFFF];
+        }
+    }
+    for (v, slot) in in_rem.iter().zip(out_rem.iter_mut()) {
+        let idx = (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize;
+        *slot = lut[idx & 0xFFFF];
+    }
+}
+
+// Explicit-SIMD sqrt-indexed encode: clamp+sqrt+scale+round in magetypes
+// f32x8, scalar gather from the 65537-entry sqrt-indexed LUT.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn explicit_simd_sqrt_lut_v3(
+    token: X64V3Token,
+    input: &[f32],
+    output: &mut [u16],
+    lut: &[u16; 65537],
+) {
+    let (in_chunks, in_rem) = input.as_chunks::<8>();
+    let (out_chunks, out_rem) = output.as_chunks_mut::<8>();
+    let zero = mt_f32x8::zero(token);
+    let one = mt_f32x8::splat(token, 1.0);
+    let scale = mt_f32x8::splat(token, 65536.0);
+    for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
+        let v = mt_f32x8::from_array(token, *inp);
+        let idx = ((v.max(zero).min(one)).sqrt() * scale)
+            .to_i32_round()
+            .to_array();
+        for j in 0..8 {
+            out[j] = lut[(idx[j] as usize).min(65536)];
+        }
+    }
+    for (v, slot) in in_rem.iter().zip(out_rem.iter_mut()) {
+        let idx = (v.clamp(0.0, 1.0).sqrt() * 65536.0 + 0.5) as usize;
+        *slot = lut[idx.min(65536)];
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[allow(unexpected_cfgs)]
+fn explicit_simd_linear_encode(input: &[f32], output: &mut [u16], lut: &[u16; 65536]) {
+    archmage::incant!(explicit_simd_linear_lut(input, output, lut));
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn explicit_simd_linear_encode(input: &[f32], output: &mut [u16], lut: &[u16; 65536]) {
+    for (v, slot) in input.iter().zip(output.iter_mut()) {
+        let idx = (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize;
+        *slot = lut[idx & 0xFFFF];
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[allow(unexpected_cfgs)]
+fn explicit_simd_sqrt_encode(input: &[f32], output: &mut [u16], lut: &[u16; 65537]) {
+    archmage::incant!(explicit_simd_sqrt_lut(input, output, lut));
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn explicit_simd_sqrt_encode(input: &[f32], output: &mut [u16], lut: &[u16; 65537]) {
+    for (v, slot) in input.iter().zip(output.iter_mut()) {
+        let idx = (v.clamp(0.0, 1.0).sqrt() * 65536.0 + 0.5) as usize;
+        *slot = lut[idx.min(65536)];
+    }
+}
+
+// Scalar fallbacks to satisfy incant! dispatch.
+fn explicit_simd_linear_lut_scalar(
+    _token: ScalarToken,
+    input: &[f32],
+    output: &mut [u16],
+    lut: &[u16; 65536],
+) {
+    for (v, slot) in input.iter().zip(output.iter_mut()) {
+        let idx = (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize;
+        *slot = lut[idx & 0xFFFF];
+    }
+}
+
+fn explicit_simd_sqrt_lut_scalar(
+    _token: ScalarToken,
+    input: &[f32],
+    output: &mut [u16],
+    lut: &[u16; 65537],
+) {
+    for (v, slot) in input.iter().zip(output.iter_mut()) {
+        let idx = (v.clamp(0.0, 1.0).sqrt() * 65536.0 + 0.5) as usize;
+        *slot = lut[idx.min(65536)];
+    }
+}
 
 const SIZES: &[(&str, usize)] = &[
     ("  256px", 256),
@@ -218,11 +332,34 @@ fn main() {
 
                 // Matlut-shape (LLVM autovec SIMD-clamp + scalar gather) but
                 // with sqrt-indexing. Isolates the sqrt vs linear trade.
-                let src = input;
+                let src = input.clone();
                 let mut dst = vec![0u16; n];
                 g.bench("matlut_shape_sqrt_lut", move |b| {
                     b.iter(|| {
                         sqrt_lut_encode(&src, &mut dst, sqrt_lut_static);
+                        black_box(());
+                    })
+                });
+
+                // Explicit-magetypes SIMD + linear-indexed LUT. Same shape as
+                // the production matlut u16 encode (isolated).
+                let src = input.clone();
+                let mut dst = vec![0u16; n];
+                g.bench("explicit_simd_linear_lut", move |b| {
+                    b.iter(|| {
+                        explicit_simd_linear_encode(&src, &mut dst, enc_lut_static);
+                        black_box(());
+                    })
+                });
+
+                // Explicit-magetypes SIMD + sqrt-indexed LUT (adds sqrt to the
+                // pipeline above). Isolates the sqrt cost when autovec isn't
+                // the limiting factor.
+                let src = input;
+                let mut dst = vec![0u16; n];
+                g.bench("explicit_simd_sqrt_lut", move |b| {
+                    b.iter(|| {
+                        explicit_simd_sqrt_encode(&src, &mut dst, sqrt_lut_static);
                         black_box(());
                     })
                 });
