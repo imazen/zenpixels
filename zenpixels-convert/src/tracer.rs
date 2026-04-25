@@ -145,5 +145,5 @@ mod inner {
     pub(crate) fn record_step(_step: &ConvertStep) {}
 }
 
-pub use inner::{start_recording, stop_recording};
 pub(crate) use inner::record_step;
+pub use inner::{start_recording, stop_recording};

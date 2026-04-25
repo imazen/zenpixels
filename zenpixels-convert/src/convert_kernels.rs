@@ -7,8 +7,8 @@ use core::cmp::min;
 
 use archmage::prelude::*;
 
-use crate::{ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor};
 use crate::policy::LumaCoefficients;
+use crate::{ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor};
 
 use super::ConvertStep;
 use crate::TransferFunction;

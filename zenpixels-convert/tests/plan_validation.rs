@@ -149,12 +149,11 @@ fn matte_composite_is_single_step_for_every_tf() {
     ] {
         let src = rgba_u16(tf);
         let dst = rgb_u16(tf);
-        let opts =
-            ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-                r: 0,
-                g: 0,
-                b: 0,
-            });
+        let opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
+            r: 0,
+            g: 0,
+            b: 0,
+        });
         let mut conv = RowConverter::new_explicit(src, dst, &opts).unwrap();
         let pixel: [u16; 4] = [32768, 32768, 32768, 32768];
         let src_bytes: [u8; 8] = bytemuck::cast(pixel);
@@ -223,14 +222,17 @@ fn matte_composite_does_not_double_linearize_floats() {
         Some(AlphaMode::Straight),
         TransferFunction::Srgb,
     );
-    let dst =
-        PixelDescriptor::new(ChannelType::F32, ChannelLayout::Rgb, None, TransferFunction::Srgb);
-    let opts =
-        ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-            r: 0,
-            g: 0,
-            b: 0,
-        });
+    let dst = PixelDescriptor::new(
+        ChannelType::F32,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    );
+    let opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
+        r: 0,
+        g: 0,
+        b: 0,
+    });
     let mut conv = RowConverter::new_explicit(src, dst, &opts).unwrap();
     let pixel: [f32; 4] = [0.5, 0.5, 0.5, 0.5];
     let src_bytes: [u8; 16] = bytemuck::cast(pixel);
@@ -262,12 +264,11 @@ fn linear_u16_matte_composite_has_only_one_kernel() {
     // step before MatteComposite for Linear data.
     let src = rgba_u16(TransferFunction::Linear);
     let dst = rgb_u16(TransferFunction::Linear);
-    let opts =
-        ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-            r: 0,
-            g: 0,
-            b: 0,
-        });
+    let opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
+        r: 0,
+        g: 0,
+        b: 0,
+    });
     let mut conv = RowConverter::new_explicit(src, dst, &opts).unwrap();
     let pixel: [u16; 4] = [32768; 4];
     let src_bytes: [u8; 8] = bytemuck::cast(pixel);

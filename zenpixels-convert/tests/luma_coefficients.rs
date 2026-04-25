@@ -122,7 +122,11 @@ fn u8_displayp3_distinct_from_others() {
         1,
     );
     // 0.2289746 * 255 = 58.388 → 58
-    assert_eq!(dst_p3[0], 58, "DisplayP3 red expected 58, got {}", dst_p3[0]);
+    assert_eq!(
+        dst_p3[0], 58,
+        "DisplayP3 red expected 58, got {}",
+        dst_p3[0]
+    );
 }
 
 /// RGBA→Gray honors coefficients too.

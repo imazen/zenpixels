@@ -408,8 +408,6 @@ pub(crate) mod cms_lite;
 pub mod cms_moxcms;
 pub mod converter;
 pub mod ext;
-/// Runtime op tracer (gated on `feature = "trace_ops"`). See module docs.
-pub mod tracer;
 #[allow(
     dead_code,
     unexpected_cfgs,
@@ -419,6 +417,8 @@ pub mod tracer;
     clippy::derivable_impls
 )]
 pub(crate) mod fast_gamut;
+/// Runtime op tracer (gated on `feature = "trace_ops"`). See module docs.
+pub mod tracer;
 
 /// Bench-only shims for u16 RGB gamut hybrid kernels.
 /// Gated behind `__bench_u16_hybrids` — requires unreleased linear-srgb ≥ 0.6.12.
