@@ -50,9 +50,14 @@ pub(crate) enum ConvertStep {
     DropAlpha,
     /// Composite onto solid matte color, then drop alpha (4ch → 3ch).
     ///
-    /// Blends in linear light: src and matte are converted from sRGB to linear,
-    /// alpha-blended, then converted back. For f32 data, pixel values are
-    /// assumed already linear; only the sRGB u8 matte is linearized.
+    /// Blends in linear light using the source descriptor's transfer
+    /// function: pixel RGB is EOTF'd per source TF, alpha-blended against
+    /// the pre-linearized matte, then OETF'd back to source TF. Alpha is
+    /// treated as linear regardless of color-channel TF. The matte
+    /// `(r, g, b)` is always interpreted as sRGB u8 (CSS-style background).
+    ///
+    /// Implemented uniformly across U8/U16/F32/F16 via per-TF
+    /// monomorphization; sRGB integer paths use LUT-based EOTF/OETF.
     MatteComposite { r: u8, g: u8, b: u8 },
     /// Gray → RGB (replicate gray to all 3 channels).
     GrayToRgb,
@@ -619,27 +624,22 @@ impl ConvertPlan {
         // Replace DropAlpha with MatteComposite when policy is CompositeOnto.
         //
         // The `matte_composite` kernel uses the straight-alpha over operator
-        // `fg*a + bg*(1-a)` and linearizes the sRGB matte to linear f32. It
-        // expects pixel color channels (RGB) in linear light — alpha stays
-        // as-is (alpha is always linear, regardless of color-channel TF).
+        // `fg*a + bg*(1-a)`, linearizing the sRGB matte and pixel RGB
+        // per-pixel using the source TF (kernel-side TF dispatch via the
+        // `MatteTf` trait). Alpha stays as-is (alpha is always linear,
+        // regardless of color-channel TF).
         //
-        // Two caveats handled here:
+        // One planner-side caveat handled here:
         //
-        // 1. **Premultiplied source.** Planner-side. If the source is
-        //    premultiplied (our library's convention is encoded-space
-        //    premul, per Canvas 2D), the straight kernel would multiply by
-        //    `a` twice: `straight*a² + bg*(1-a)`. Fix: insert
-        //    `PremulToStraight` before `MatteComposite`.
+        // **Premultiplied source.** If the source is premultiplied (our
+        // library's convention is encoded-space premul, per Canvas 2D),
+        // the straight kernel would multiply by `a` twice:
+        // `straight*a² + bg*(1-a)`. Fix: insert `PremulToStraight` before
+        // `MatteComposite`.
         //
-        // 2. **Non-linear float pixel data (issue #25).** Kernel-side. For
-        //    F32/F16 plans at same-TF same-depth (no prior linearize step),
-        //    pixel color channels are NOT in linear light. The kernel looks
-        //    at the source descriptor's transfer function and linearizes
-        //    RGB inline — same pattern the U8/U16 arms already use for
-        //    sRGB (they just hardcode sRGB; see issue #25 for extending
-        //    the integer arms to other TFs). We can't just wrap with
-        //    `SrgbF32ToLinearF32` because it linearizes alpha too, which
-        //    breaks the blend's alpha math.
+        // We deliberately do NOT wrap with `SrgbF32ToLinearF32` /
+        // `LinearF32ToSrgbF32` to handle non-linear data: those steps
+        // linearize alpha too, which breaks the blend math.
         if drops_alpha && let AlphaPolicy::CompositeOnto { r, g, b } = options.alpha_policy {
             let src_is_premul = from.alpha() == Some(AlphaMode::Premultiplied);
             let mut idx = 0;

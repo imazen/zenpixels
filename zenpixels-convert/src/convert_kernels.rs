@@ -568,6 +568,36 @@ fn drop_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
 trait MatteTf {
     fn eotf(v: f32) -> f32;
     fn oetf(v: f32) -> f32;
+
+    /// Decode an u8 sample to linear f32. Default routes through f32 EOTF;
+    /// `SrgbTf` overrides with a 256-entry LUT.
+    #[inline(always)]
+    fn eotf_u8(b: u8) -> f32 {
+        Self::eotf(b as f32 * (1.0 / 255.0))
+    }
+
+    /// Encode a linear f32 to u8. Default routes through f32 OETF + clamp +
+    /// quantize; `SrgbTf` overrides with a LUT-based encode.
+    #[inline(always)]
+    fn oetf_u8(lin: f32) -> u8 {
+        let v = Self::oetf(lin).clamp(0.0, 1.0);
+        (v * 255.0 + 0.5) as u8
+    }
+
+    /// Decode a u16 sample to linear f32. Default routes through f32 EOTF;
+    /// `SrgbTf` overrides with the 65536-entry LUT.
+    #[inline(always)]
+    fn eotf_u16(b: u16) -> f32 {
+        Self::eotf(b as f32 * (1.0 / 65535.0))
+    }
+
+    /// Encode a linear f32 to u16. Default routes through f32 OETF + clamp +
+    /// quantize; `SrgbTf` overrides with a LUT-based encode.
+    #[inline(always)]
+    fn oetf_u16(lin: f32) -> u16 {
+        let v = Self::oetf(lin).clamp(0.0, 1.0);
+        (v * 65535.0 + 0.5) as u16
+    }
 }
 
 struct LinearTf;
@@ -591,6 +621,22 @@ impl MatteTf for SrgbTf {
     #[inline(always)]
     fn oetf(v: f32) -> f32 {
         linear_srgb::tf::linear_to_srgb(v)
+    }
+    #[inline(always)]
+    fn eotf_u8(b: u8) -> f32 {
+        linear_srgb::default::srgb_u8_to_linear(b)
+    }
+    #[inline(always)]
+    fn oetf_u8(lin: f32) -> u8 {
+        linear_srgb::default::linear_to_srgb_u8(lin)
+    }
+    #[inline(always)]
+    fn eotf_u16(b: u16) -> f32 {
+        linear_srgb::default::srgb_u16_to_linear(b)
+    }
+    #[inline(always)]
+    fn oetf_u16(lin: f32) -> u16 {
+        linear_srgb::default::linear_to_srgb_u16(lin)
     }
 }
 
@@ -787,17 +833,134 @@ fn dispatch_matte_f16_rgba(
     }
 }
 
+/// U8 RGBA → RGB matte composite, monomorphized per TF. Uses the trait's
+/// u8 methods so `SrgbTf` picks up the LUT fast path without the rest of
+/// the loop changing.
+#[inline]
+fn matte_composite_u8_rgba<T: MatteTf>(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    mr_lin: f32,
+    mg_lin: f32,
+    mb_lin: f32,
+) {
+    let alpha_scale = 1.0 / 255.0;
+    for i in 0..width {
+        let s: &[u8; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
+        let d: &mut [u8; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
+        let a = s[3] as f32 * alpha_scale;
+        let inv_a = 1.0 - a;
+        let r_lin = T::eotf_u8(s[0]);
+        let g_lin = T::eotf_u8(s[1]);
+        let b_lin = T::eotf_u8(s[2]);
+        d[0] = T::oetf_u8(r_lin * a + mr_lin * inv_a);
+        d[1] = T::oetf_u8(g_lin * a + mg_lin * inv_a);
+        d[2] = T::oetf_u8(b_lin * a + mb_lin * inv_a);
+    }
+}
+
+/// U16 RGBA → RGB matte composite, monomorphized per TF.
+#[inline]
+fn matte_composite_u16_rgba<T: MatteTf>(
+    src: &[u16],
+    dst: &mut [u16],
+    width: usize,
+    mr_lin: f32,
+    mg_lin: f32,
+    mb_lin: f32,
+) {
+    let alpha_scale = 1.0 / 65535.0;
+    for i in 0..width {
+        let s: &[u16; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
+        let d: &mut [u16; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
+        let a = s[3] as f32 * alpha_scale;
+        let inv_a = 1.0 - a;
+        let r_lin = T::eotf_u16(s[0]);
+        let g_lin = T::eotf_u16(s[1]);
+        let b_lin = T::eotf_u16(s[2]);
+        d[0] = T::oetf_u16(r_lin * a + mr_lin * inv_a);
+        d[1] = T::oetf_u16(g_lin * a + mg_lin * inv_a);
+        d[2] = T::oetf_u16(b_lin * a + mb_lin * inv_a);
+    }
+}
+
+fn dispatch_matte_u8_rgba(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    tf: TransferFunction,
+    mr_lin: f32,
+    mg_lin: f32,
+    mb_lin: f32,
+) {
+    match tf {
+        TransferFunction::Linear | TransferFunction::Unknown => {
+            matte_composite_u8_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Srgb => {
+            matte_composite_u8_rgba::<SrgbTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Bt709 => {
+            matte_composite_u8_rgba::<Bt709Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Pq => {
+            matte_composite_u8_rgba::<PqTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Hlg => {
+            matte_composite_u8_rgba::<HlgTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Gamma22 => {
+            matte_composite_u8_rgba::<Gamma22Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        _ => matte_composite_u8_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin),
+    }
+}
+
+fn dispatch_matte_u16_rgba(
+    src: &[u16],
+    dst: &mut [u16],
+    width: usize,
+    tf: TransferFunction,
+    mr_lin: f32,
+    mg_lin: f32,
+    mb_lin: f32,
+) {
+    match tf {
+        TransferFunction::Linear | TransferFunction::Unknown => {
+            matte_composite_u16_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Srgb => {
+            matte_composite_u16_rgba::<SrgbTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Bt709 => {
+            matte_composite_u16_rgba::<Bt709Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Pq => {
+            matte_composite_u16_rgba::<PqTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Hlg => {
+            matte_composite_u16_rgba::<HlgTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        TransferFunction::Gamma22 => {
+            matte_composite_u16_rgba::<Gamma22Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
+        }
+        _ => matte_composite_u16_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin),
+    }
+}
+
 /// Composite RGBA onto a solid matte color, producing RGB (4ch → 3ch).
 ///
-/// Blends in linear light to avoid color errors. The matte color (r, g, b)
-/// is sRGB u8; pixel RGB channels are linearized per the source TF (alpha
-/// is always linear and is used as-is). Result is re-encoded to the source
-/// TF.
+/// Blends in linear light: pixel RGB channels are linearized per the
+/// source TF, alpha-blended against a pre-linearized matte, then re-encoded
+/// to the source TF. Alpha stays linear and is used as-is. All four channel
+/// types (U8/U16/F32/F16) dispatch through the same per-TF monomorphized
+/// kernel; `SrgbTf` keeps a LUT-based fast path for U8 and U16.
 ///
-/// U8 and U16 arms hardcode sRGB EOTF/OETF — correct for the overwhelmingly
-/// common sRGB case, latently wrong for e.g. BT.709 u8 or PQ u16 input.
-/// Extending the integer arms to honor `from.transfer()` is tracked in #25
-/// and is a follow-up; not fixed here.
+/// **Matte interpretation.** The matte (r, g, b) is specified as sRGB u8
+/// regardless of source TF — this matches the common usage (CSS-style
+/// background colors). For HDR sources (PQ/HLG), the matte is implicitly
+/// SDR-range since u8 caps at 255 = 1.0 normalized.
 fn matte_composite(
     src: &[u8],
     dst: &mut [u8],
@@ -810,43 +973,27 @@ fn matte_composite(
     let ch_type = from.channel_type();
     let tf = from.transfer();
 
-    // Pre-convert sRGB u8 matte to linear f32 (used by all paths).
+    // Matte is specified in sRGB regardless of source TF (see doc above).
     let mr_lin = linear_srgb::default::srgb_u8_to_linear(mr);
     let mg_lin = linear_srgb::default::srgb_u8_to_linear(mg);
     let mb_lin = linear_srgb::default::srgb_u8_to_linear(mb);
 
     match ch_type {
         ChannelType::U8 => {
-            for i in 0..width {
-                let si = i * 4;
-                let di = i * 3;
-                let a = src[si + 3] as f32 * (1.0 / 255.0);
-                let inv_a = 1.0 - a;
-                // sRGB u8 → linear f32, blend, linear f32 → sRGB u8
-                let sr = linear_srgb::default::srgb_u8_to_linear(src[si]);
-                let sg = linear_srgb::default::srgb_u8_to_linear(src[si + 1]);
-                let sb = linear_srgb::default::srgb_u8_to_linear(src[si + 2]);
-                dst[di] = linear_srgb::default::linear_to_srgb_u8(sr * a + mr_lin * inv_a);
-                dst[di + 1] = linear_srgb::default::linear_to_srgb_u8(sg * a + mg_lin * inv_a);
-                dst[di + 2] = linear_srgb::default::linear_to_srgb_u8(sb * a + mb_lin * inv_a);
-            }
+            dispatch_matte_u8_rgba(
+                &src[..width * 4],
+                &mut dst[..width * 3],
+                width,
+                tf,
+                mr_lin,
+                mg_lin,
+                mb_lin,
+            );
         }
         ChannelType::U16 => {
             let src16: &[u16] = bytemuck::cast_slice(&src[..width * 8]);
             let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 6]);
-            for i in 0..width {
-                let a = src16[i * 4 + 3] as f32 * (1.0 / 65535.0);
-                let inv_a = 1.0 - a;
-                // sRGB u16 → linear f32, blend, linear f32 → sRGB u16
-                let sr = linear_srgb::default::srgb_u16_to_linear(src16[i * 4]);
-                let sg = linear_srgb::default::srgb_u16_to_linear(src16[i * 4 + 1]);
-                let sb = linear_srgb::default::srgb_u16_to_linear(src16[i * 4 + 2]);
-                dst16[i * 3] = linear_srgb::default::linear_to_srgb_u16(sr * a + mr_lin * inv_a);
-                dst16[i * 3 + 1] =
-                    linear_srgb::default::linear_to_srgb_u16(sg * a + mg_lin * inv_a);
-                dst16[i * 3 + 2] =
-                    linear_srgb::default::linear_to_srgb_u16(sb * a + mb_lin * inv_a);
-            }
+            dispatch_matte_u16_rgba(src16, dst16, width, tf, mr_lin, mg_lin, mb_lin);
         }
         ChannelType::F32 => {
             let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
