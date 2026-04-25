@@ -8,6 +8,7 @@ use core::cmp::min;
 use archmage::prelude::*;
 
 use crate::{ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor};
+use crate::policy::LumaCoefficients;
 
 use super::ConvertStep;
 use crate::TransferFunction;
@@ -64,12 +65,12 @@ pub(super) fn apply_step_u8(
             gray_to_rgba(src, dst, w, from.channel_type());
         }
 
-        ConvertStep::RgbToGray => {
-            rgb_to_gray_u8(src, dst, w);
+        ConvertStep::RgbToGray { coefficients } => {
+            rgb_to_gray(src, dst, w, from.channel_type(), *coefficients);
         }
 
-        ConvertStep::RgbaToGray => {
-            rgba_to_gray_u8(src, dst, w);
+        ConvertStep::RgbaToGray { coefficients } => {
+            rgba_to_gray(src, dst, w, from.channel_type(), *coefficients);
         }
 
         ConvertStep::GrayAlphaToRgba => {
@@ -1121,16 +1122,172 @@ fn gray_to_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) 
     }
 }
 
-/// RGB → Gray using BT.709 luma coefficients (u8 only).
-fn rgb_to_gray_u8(src: &[u8], dst: &mut [u8], width: usize) {
-    garb::bytes::rgb_to_gray_bt709(&src[..width * 3], &mut dst[..width])
-        .expect("pre-validated row size");
+// ----- RGB → Gray ----------------------------------------------------------
+//
+// Y' (encoded luma) semantic: coefficients are applied directly to encoded
+// (gamma'd) RGB samples, NOT to linear-light values. This is the JPEG/video
+// convention, gives bit-exact gray→RGB→gray round-trip when R=G=B, and is
+// what the rest of the zen ecosystem expects (see ultrahdr's separate
+// linear-luminance computation in `ultrahdr-core/src/color/gamut.rs` —
+// linear L is a different quantity, computed where it's actually needed).
+//
+// Coefficient resolution happens at plan build time; kernels just consume
+// the coefficients triple. BT.709 u8 paths keep garb's fixed-point fast
+// path; other coefficient choices on u8 + all U16/F32/F16 paths use the
+// generic f32 path.
+
+#[autoversion]
+fn rgb_to_gray_u8_generic(src: &[u8], dst: &mut [u8], width: usize, w: [f32; 3]) {
+    for i in 0..width {
+        let s: &[u8; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
+        let y = (s[0] as f32) * w[0] + (s[1] as f32) * w[1] + (s[2] as f32) * w[2];
+        dst[i] = (y + 0.5).clamp(0.0, 255.0) as u8;
+    }
 }
 
-/// RGBA → Gray using BT.709 luma, drop alpha (u8 only).
-fn rgba_to_gray_u8(src: &[u8], dst: &mut [u8], width: usize) {
-    garb::bytes::rgba_to_gray_bt709(&src[..width * 4], &mut dst[..width])
-        .expect("pre-validated row size");
+#[autoversion]
+fn rgba_to_gray_u8_generic(src: &[u8], dst: &mut [u8], width: usize, w: [f32; 3]) {
+    for i in 0..width {
+        let s: &[u8; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
+        let y = (s[0] as f32) * w[0] + (s[1] as f32) * w[1] + (s[2] as f32) * w[2];
+        dst[i] = (y + 0.5).clamp(0.0, 255.0) as u8;
+    }
+}
+
+#[autoversion]
+fn rgb_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
+    for i in 0..width {
+        let s: &[u16; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
+        let y = (s[0] as f32) * w[0] + (s[1] as f32) * w[1] + (s[2] as f32) * w[2];
+        dst[i] = (y + 0.5).clamp(0.0, 65535.0) as u16;
+    }
+}
+
+#[autoversion]
+fn rgba_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
+    for i in 0..width {
+        let s: &[u16; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
+        let y = (s[0] as f32) * w[0] + (s[1] as f32) * w[1] + (s[2] as f32) * w[2];
+        dst[i] = (y + 0.5).clamp(0.0, 65535.0) as u16;
+    }
+}
+
+#[autoversion]
+fn rgb_to_gray_f32(src: &[f32], dst: &mut [f32], width: usize, w: [f32; 3]) {
+    for i in 0..width {
+        let s: &[f32; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
+        dst[i] = s[0] * w[0] + s[1] * w[1] + s[2] * w[2];
+    }
+}
+
+#[autoversion]
+fn rgba_to_gray_f32(src: &[f32], dst: &mut [f32], width: usize, w: [f32; 3]) {
+    for i in 0..width {
+        let s: &[f32; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
+        dst[i] = s[0] * w[0] + s[1] * w[1] + s[2] * w[2];
+    }
+}
+
+#[autoversion]
+fn rgb_to_gray_f16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
+    for i in 0..width {
+        let r = f16_bits_to_f32(src[i * 3]);
+        let g = f16_bits_to_f32(src[i * 3 + 1]);
+        let b = f16_bits_to_f32(src[i * 3 + 2]);
+        let y = r * w[0] + g * w[1] + b * w[2];
+        dst[i] = f32_to_f16_bits(y);
+    }
+}
+
+#[autoversion]
+fn rgba_to_gray_f16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
+    for i in 0..width {
+        let r = f16_bits_to_f32(src[i * 4]);
+        let g = f16_bits_to_f32(src[i * 4 + 1]);
+        let b = f16_bits_to_f32(src[i * 4 + 2]);
+        let y = r * w[0] + g * w[1] + b * w[2];
+        dst[i] = f32_to_f16_bits(y);
+    }
+}
+
+/// RGB → Gray using user-specified luma coefficients. Y' (encoded) semantic.
+fn rgb_to_gray(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    ch_type: ChannelType,
+    coefficients: LumaCoefficients,
+) {
+    let w = coefficients.coefficients();
+    match ch_type {
+        ChannelType::U8 => {
+            if coefficients == LumaCoefficients::Bt709 {
+                garb::bytes::rgb_to_gray_bt709(&src[..width * 3], &mut dst[..width])
+                    .expect("pre-validated row size");
+            } else {
+                rgb_to_gray_u8_generic(&src[..width * 3], &mut dst[..width], width, w);
+            }
+        }
+        ChannelType::U16 => rgb_to_gray_u16(
+            bytemuck::cast_slice(&src[..width * 6]),
+            bytemuck::cast_slice_mut(&mut dst[..width * 2]),
+            width,
+            w,
+        ),
+        ChannelType::F32 => rgb_to_gray_f32(
+            bytemuck::cast_slice(&src[..width * 12]),
+            bytemuck::cast_slice_mut(&mut dst[..width * 4]),
+            width,
+            w,
+        ),
+        ChannelType::F16 => rgb_to_gray_f16(
+            bytemuck::cast_slice(&src[..width * 6]),
+            bytemuck::cast_slice_mut(&mut dst[..width * 2]),
+            width,
+            w,
+        ),
+        _ => {}
+    }
+}
+
+/// RGBA → Gray (drop alpha) using user-specified luma coefficients.
+fn rgba_to_gray(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    ch_type: ChannelType,
+    coefficients: LumaCoefficients,
+) {
+    let w = coefficients.coefficients();
+    match ch_type {
+        ChannelType::U8 => {
+            if coefficients == LumaCoefficients::Bt709 {
+                garb::bytes::rgba_to_gray_bt709(&src[..width * 4], &mut dst[..width])
+                    .expect("pre-validated row size");
+            } else {
+                rgba_to_gray_u8_generic(&src[..width * 4], &mut dst[..width], width, w);
+            }
+        }
+        ChannelType::U16 => rgba_to_gray_u16(
+            bytemuck::cast_slice(&src[..width * 8]),
+            bytemuck::cast_slice_mut(&mut dst[..width * 2]),
+            width,
+            w,
+        ),
+        ChannelType::F32 => rgba_to_gray_f32(
+            bytemuck::cast_slice(&src[..width * 16]),
+            bytemuck::cast_slice_mut(&mut dst[..width * 4]),
+            width,
+            w,
+        ),
+        ChannelType::F16 => rgba_to_gray_f16(
+            bytemuck::cast_slice(&src[..width * 8]),
+            bytemuck::cast_slice_mut(&mut dst[..width * 2]),
+            width,
+            w,
+        ),
+        _ => {}
+    }
 }
 
 // -- gray_alpha_to_rgba (pure replicate + alpha-preserve — U16 and F16 share)

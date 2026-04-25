@@ -9,7 +9,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::min;
 
-use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy};
+use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy, LumaCoefficients};
 use crate::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, ConvertError, PixelDescriptor,
     TransferFunction,
@@ -63,10 +63,21 @@ pub(crate) enum ConvertStep {
     GrayToRgb,
     /// Gray → RGBA (replicate + opaque alpha).
     GrayToRgba,
-    /// RGB → Gray (BT.709 luma).
-    RgbToGray,
-    /// RGBA → Gray (BT.709 luma, drop alpha).
-    RgbaToGray,
+    /// RGB → Gray (Y' encoded luma — coefficients applied to encoded bytes).
+    ///
+    /// The semantic is BT.709/BT.601/etc. Y' (encoded luma), NOT linear-light
+    /// luminance L. This is fast, exactly round-trips for `R==G==B` inputs,
+    /// and matches what JPEG/video pipelines compute. Linear-light luminance
+    /// would require linearize → weight → encode and is not currently
+    /// surfaced; document any future linear-L pathway as a separate variant.
+    ///
+    /// Coefficients are resolved from `ConvertOptions::luma` at plan build
+    /// time (`new_explicit`). Default for plans built via `Self::new`
+    /// without options is `LumaCoefficients::Bt709`.
+    RgbToGray { coefficients: LumaCoefficients },
+    /// RGBA → Gray, drop alpha. See [`RgbToGray`](Self::RgbToGray) for
+    /// semantic and coefficient resolution.
+    RgbaToGray { coefficients: LumaCoefficients },
     /// GrayAlpha → RGBA (replicate gray, keep alpha).
     GrayAlphaToRgba,
     /// GrayAlpha → RGB (replicate gray, drop alpha).
@@ -181,8 +192,14 @@ impl core::fmt::Debug for ConvertStep {
                 .finish(),
             Self::GrayToRgb => f.write_str("GrayToRgb"),
             Self::GrayToRgba => f.write_str("GrayToRgba"),
-            Self::RgbToGray => f.write_str("RgbToGray"),
-            Self::RgbaToGray => f.write_str("RgbaToGray"),
+            Self::RgbToGray { coefficients } => f
+                .debug_struct("RgbToGray")
+                .field("coefficients", coefficients)
+                .finish(),
+            Self::RgbaToGray { coefficients } => f
+                .debug_struct("RgbaToGray")
+                .field("coefficients", coefficients)
+                .finish(),
             Self::GrayAlphaToRgba => f.write_str("GrayAlphaToRgba"),
             Self::GrayAlphaToRgb => f.write_str("GrayAlphaToRgb"),
             Self::GrayToGrayAlpha => f.write_str("GrayToGrayAlpha"),
@@ -673,6 +690,22 @@ impl ConvertPlan {
             }
         }
 
+        // Resolve luma coefficients on RgbToGray / RgbaToGray steps. The
+        // None case was rejected above (line 636), so unwrap is safe here.
+        // `layout_steps` constructs these variants with a Bt709 placeholder
+        // because it has no access to options; we replace with the user's
+        // explicit choice (or the permissive default of Bt709) here.
+        let user_luma = options.luma.unwrap_or(LumaCoefficients::Bt709);
+        for step in &mut plan.steps {
+            match step {
+                ConvertStep::RgbToGray { coefficients }
+                | ConvertStep::RgbaToGray { coefficients } => {
+                    *coefficients = user_luma;
+                }
+                _ => {}
+            }
+        }
+
         Ok(plan)
     }
 
@@ -808,11 +841,20 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
             // Gray -> RGBA -> BGRA: expand then swizzle.
             vec![ConvertStep::GrayToRgba, ConvertStep::SwizzleBgraRgba]
         }
-        (ChannelLayout::Rgb, ChannelLayout::Gray) => vec![ConvertStep::RgbToGray],
-        (ChannelLayout::Rgba, ChannelLayout::Gray) => vec![ConvertStep::RgbaToGray],
+        (ChannelLayout::Rgb, ChannelLayout::Gray) => vec![ConvertStep::RgbToGray {
+            coefficients: LumaCoefficients::Bt709,
+        }],
+        (ChannelLayout::Rgba, ChannelLayout::Gray) => vec![ConvertStep::RgbaToGray {
+            coefficients: LumaCoefficients::Bt709,
+        }],
         (ChannelLayout::Bgra, ChannelLayout::Gray) => {
             // BGRA -> RGBA -> Gray: swizzle then to gray.
-            vec![ConvertStep::SwizzleBgraRgba, ConvertStep::RgbaToGray]
+            vec![
+                ConvertStep::SwizzleBgraRgba,
+                ConvertStep::RgbaToGray {
+                    coefficients: LumaCoefficients::Bt709,
+                },
+            ]
         }
         (ChannelLayout::GrayAlpha, ChannelLayout::Rgba) => vec![ConvertStep::GrayAlphaToRgba],
         (ChannelLayout::GrayAlpha, ChannelLayout::Bgra) => {
@@ -876,13 +918,23 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
             vec![ConvertStep::GrayToRgb, ConvertStep::LinearRgbToOklab]
         }
         (ChannelLayout::Oklab, ChannelLayout::Gray) => {
-            vec![ConvertStep::OklabToLinearRgb, ConvertStep::RgbToGray]
+            vec![
+                ConvertStep::OklabToLinearRgb,
+                ConvertStep::RgbToGray {
+                    coefficients: LumaCoefficients::Bt709,
+                },
+            ]
         }
         (ChannelLayout::Gray, ChannelLayout::OklabA) => {
             vec![ConvertStep::GrayToRgba, ConvertStep::LinearRgbaToOklaba]
         }
         (ChannelLayout::OklabA, ChannelLayout::Gray) => {
-            vec![ConvertStep::OklabaToLinearRgba, ConvertStep::RgbaToGray]
+            vec![
+                ConvertStep::OklabaToLinearRgba,
+                ConvertStep::RgbaToGray {
+                    coefficients: LumaCoefficients::Bt709,
+                },
+            ]
         }
         (ChannelLayout::GrayAlpha, ChannelLayout::OklabA) => {
             vec![
@@ -895,7 +947,9 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
             // Alpha is lost; this is inherently lossy.
             vec![
                 ConvertStep::OklabaToLinearRgba,
-                ConvertStep::RgbaToGray,
+                ConvertStep::RgbaToGray {
+                    coefficients: LumaCoefficients::Bt709,
+                },
                 ConvertStep::GrayToGrayAlpha,
             ]
         }
@@ -905,7 +959,9 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
         (ChannelLayout::Oklab, ChannelLayout::GrayAlpha) => {
             vec![
                 ConvertStep::OklabToLinearRgb,
-                ConvertStep::RgbToGray,
+                ConvertStep::RgbToGray {
+                    coefficients: LumaCoefficients::Bt709,
+                },
                 ConvertStep::GrayToGrayAlpha,
             ]
         }
@@ -1478,7 +1534,7 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             Some(AlphaMode::Straight),
             current.transfer(),
         ),
-        ConvertStep::RgbToGray | ConvertStep::RgbaToGray => PixelDescriptor::new(
+        ConvertStep::RgbToGray { .. } | ConvertStep::RgbaToGray { .. } => PixelDescriptor::new(
             current.channel_type(),
             ChannelLayout::Gray,
             None,
