@@ -10,6 +10,8 @@
 
 - (none currently queued)
 
+## [0.2.11] - 2026-04-25
+
 ### zenpixels — added
 
 - **`LumaCoefficients::DisplayP3` variant.** Adds the DisplayP3 luma recipe
