@@ -44,6 +44,9 @@ jobs:
       - name: Test (workspace)
         run: cargo test --workspace
 
+      - name: Test (zenpixels-convert with trace_ops)
+        run: cargo test -p zenpixels-convert --features trace_ops --test plan_validation
+
       - name: Check no_std (zenpixels)
         run: cargo check -p zenpixels --no-default-features
 
@@ -174,7 +177,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check all feature combinations
-        run: cargo hack check --workspace --exclude icc-gen --feature-powerset --depth 3 --group-features imgref,rgb --exclude-features default,__bench_u16_hybrids
+        run: cargo hack check --workspace --exclude icc-gen --feature-powerset --depth 3 --group-features imgref,rgb --exclude-features default,__bench_u16_hybrids,trace_ops
 
   # ==========================================================================
   # Code coverage

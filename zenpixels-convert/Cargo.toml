@@ -29,6 +29,12 @@ serde = ["zenpixels/serde"]
 # srgb_u16_to_linear_v3 / linear_to_srgb_u16_v3 rites. Off by default
 # so the crate builds against crates.io linear-srgb 0.6.11.
 __bench_u16_hybrids = []
+# Enables runtime op tracing — ConvertSteps executed during convert_row
+# are recorded to a thread-local buffer so tests can verify plan and
+# kernel-level behavior. Off by default; the recording function compiles
+# to an empty body when this feature is disabled, keeping production
+# builds zero-overhead. Requires `std`.
+trace_ops = ["std"]
 
 [dependencies]
 zenpixels = { workspace = true, default-features = false, features = ["icc"] }

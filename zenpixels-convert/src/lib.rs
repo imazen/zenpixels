@@ -408,6 +408,8 @@ pub(crate) mod cms_lite;
 pub mod cms_moxcms;
 pub mod converter;
 pub mod ext;
+/// Runtime op tracer (gated on `feature = "trace_ops"`). See module docs.
+pub mod tracer;
 #[allow(
     dead_code,
     unexpected_cfgs,

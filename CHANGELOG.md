@@ -47,6 +47,19 @@
 
 ### zenpixels-convert — added
 
+- **`tracer` module + `trace_ops` feature flag.** Runtime op tracer. With
+  the feature on, every `ConvertStep` dispatched through the kernel is
+  recorded by name to a thread-local `Vec<&'static str>` for inspection
+  in tests. With the feature off (default), `record_step` is an
+  `#[inline(always)]` empty function — call sites lower to no
+  instructions, production builds pay literally nothing. Public surface
+  is `pub fn start_recording()` / `pub fn stop_recording() -> Vec<&'static str>`.
+  Tests in `tests/plan_validation.rs` use this to lock plan shape for
+  representative `(from, to, options)` tuples (no waste, no skips).
+  CI runs the trace-gated tests on each platform via
+  `cargo test -p zenpixels-convert --features trace_ops --test plan_validation`.
+  Feature requires `std`.
+
 - **`icc_profiles::icc_profile_for(primaries, transfer)` accessor.**
   Companion to the primaries-only `icc_profile_for_primaries`; matches a
   `(ColorPrimaries, TransferFunction)` pair against the bundled profile
@@ -88,6 +101,35 @@
   suite only. (#23)
 
 ### zenpixels-convert — fixed
+
+- **MatteComposite integer (U8/U16) arms now honor the source TF.**
+  Pre-fix the U8 and U16 `matte_composite` kernel arms always linearized
+  via `srgb_u8_to_linear` / `srgb_u16_to_linear` regardless of the
+  descriptor's transfer function — silently wrong for every non-sRGB TF,
+  including `Linear` (sRGB EOTF applied to already-linear data). The
+  `MatteTf` trait gained `eotf_u8`/`oetf_u8`/`eotf_u16`/`oetf_u16` default
+  methods (route through f32 EOTF/OETF); `SrgbTf` overrides them with the
+  LUT-based fast path so the dominant case keeps its speed. New
+  `dispatch_matte_u8_rgba` / `dispatch_matte_u16_rgba` mirror the float
+  side. Tests in `matte_composite_linearize.rs` exercise sRGB, Linear,
+  and BT.709 on both U8 and U16, with the Linear u8 case hard-rejecting
+  the pre-fix buggy output. (d7965b1)
+
+- **`ConvertOptions::luma` is now actually honored in `RgbToGray` /
+  `RgbaToGray`.** Pre-fix the kernels hardcoded BT.709 via garb regardless
+  of the user's coefficient choice — DisplayP3, BT.601, BT.2020 silently
+  ignored. Additionally the U8-only kernel ran on cast bytes for
+  U16/F32/F16 inputs, producing garbage. Now: `ConvertStep::RgbToGray` and
+  `RgbaToGray` carry resolved `LumaCoefficients`; `ConvertPlan::new_explicit`
+  walks the plan after build and substitutes the user's choice. New per-
+  channel-type kernels (`rgb/rgba_to_gray_{u8_generic, u16, f32, f16}`)
+  apply the configured coefficients. BT.709 u8 keeps garb's fixed-point
+  fast path; other coefficients on u8 + all U16/F32/F16 use the generic
+  f32 path. Y' (encoded luma) semantic preserved — round-trip identity
+  invariant tested in `ulp_exhaustive.rs:561-564` still holds. New
+  `tests/luma_coefficients.rs` (8 cases) verifies each coefficient
+  produces distinct output. `ConvertStep` is `pub(crate)` so the variant
+  shape change is internal only. (d8c28fc)
 
 - **MatteComposite now linearizes non-Linear F32/F16 pixel data
   correctly** (fixes #25). Previously the F32 and F16 kernel arms
