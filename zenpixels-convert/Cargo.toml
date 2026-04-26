@@ -24,10 +24,9 @@ planar = ["zenpixels/planar"]
 pipeline = []
 cms-moxcms = ["std", "dep:moxcms"]
 serde = ["zenpixels/serde"]
-# Enables u16 RGB gamut hybrid kernels (LUT+poly, poly+LUT, poly+poly)
-# for benchmarking. Requires unreleased linear-srgb ≥ 0.6.12 with the
-# srgb_u16_to_linear_v3 / linear_to_srgb_u16_v3 rites. Off by default
-# so the crate builds against crates.io linear-srgb 0.6.11.
+# Bench-only: exposes `pub mod __bench_u16_hybrids` shims for
+# `bench_u16_hybrids`. Not intended for non-bench use; the production u16
+# RGB gamut path uses `convert_u16_rgb_simd_lutdec_polyenc` directly.
 __bench_u16_hybrids = []
 # Enables runtime op tracing — ConvertSteps executed during convert_row
 # are recorded to a thread-local buffer so tests can verify plan and
@@ -38,7 +37,7 @@ trace_ops = ["std"]
 
 [dependencies]
 zenpixels = { workspace = true, default-features = false, features = ["icc"] }
-linear-srgb = { version = "0.6.10", default-features = false, features = ["transfer"] }
+linear-srgb = { version = "0.6.12", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 garb = { version = "0.2.5", default-features = false, features = ["experimental"] }

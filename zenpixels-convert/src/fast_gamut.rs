@@ -1144,22 +1144,16 @@ pub(crate) fn convert_u16_rgb_simd_matlut(
 }
 
 // =========================================================================
-// u16 RGB fused-gamut hybrid kernels (bench-only, not on a hot path).
+// u16 RGB fused-gamut hybrid kernels.
 //
-// Four combinations of decode and encode: {LUT, poly} × {LUT, poly}. Used
-// to find the optimal point in the mix for sRGB u16 gamut conversion.
-// All use mat3x3_x8 for the matrix step. Requires the u16↔f32 polynomial
-// rites which ship in linear-srgb ≥ 0.6.12 (not yet released on
-// crates.io). Gated behind `__bench_u16_hybrids` feature for now.
-//
-// When linear-srgb 0.6.12 lands on crates.io, remove this feature gate,
-// bump zenpixels-convert's linear-srgb minimum to 0.6.12, and switch
-// FusedSrgbU16GamutRgb in convert_kernels.rs to call
-// `convert_u16_rgb_simd_lutdec_polyenc` (LUT+poly wins by +17% at 1080p
-// and gets exact u16 roundtrip).
+// `convert_u16_rgb_simd_lutdec_polyenc` is the production sRGB u16 RGB
+// gamut kernel as of linear-srgb 0.6.12 — LUT-decode + SIMD polynomial
+// encode wins matlut (LUT+LUT) at 1080p by +17% and produces 100% exact
+// u16 roundtrip (matlut's linear-indexed 128 KB encode LUT had ±6 u16
+// error). Bench wrappers expose the four {LUT, poly} × {LUT, poly}
+// combinations for regression detection — used by `bench_u16_hybrids`.
 // =========================================================================
 
-#[cfg(feature = "__bench_u16_hybrids")]
 mod hybrids {
     use super::*;
 
@@ -1469,6 +1463,8 @@ mod hybrids {
         convert_u16_rgb_polydec_polyenc_scalar(ScalarToken, m, src, dst);
     }
 } // end of hybrids module
+
+pub(crate) use hybrids::convert_u16_rgb_simd_lutdec_polyenc;
 
 #[cfg(feature = "__bench_u16_hybrids")]
 pub(crate) use hybrids::{

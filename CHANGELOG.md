@@ -102,6 +102,18 @@
   `[dev-dependencies]` for cross-validation and the perceptual-loss
   suite only. (#23)
 
+### zenpixels-convert — performance
+
+- **Fused sRGB U16 RGB gamut conversion now uses LUT-decode + SIMD
+  polynomial encode** (was LUT-decode + linear-indexed LUT-encode).
+  +17% throughput at 1080p in T7 gamut benchmarks, and 100% bit-exact
+  u16 roundtrip (was ~71% ±6 with the old 128 KB encode LUT — see
+  `benchmarks/u16_hybrid_matrix_2026-04-23.txt`). Unblocked by
+  `linear-srgb` 0.6.12 shipping the SIMD `linear_to_srgb_u16_v3` rite.
+  `ConvertStep::FusedSrgbU16GamutRgb` now dispatches through
+  `convert_u16_rgb_simd_lutdec_polyenc`. Bumped `linear-srgb` minimum
+  to 0.6.12.
+
 ### zenpixels-convert — fixed
 
 - **MatteComposite integer (U8/U16) arms now honor the source TF.**

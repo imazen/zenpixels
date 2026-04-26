@@ -420,9 +420,10 @@ pub(crate) mod fast_gamut;
 /// Runtime op tracer (gated on `feature = "trace_ops"`). See module docs.
 pub mod tracer;
 
-/// Bench-only shims for u16 RGB gamut hybrid kernels.
-/// Gated behind `__bench_u16_hybrids` — requires unreleased linear-srgb ≥ 0.6.12.
-/// Not public API — for internal measurement probes only.
+/// Bench-only shims for u16 RGB gamut hybrid kernels — comparative
+/// benchmarks for {LUT, poly} × {LUT, poly} decode/encode combinations.
+/// Gated behind `__bench_u16_hybrids` so the surface stays out of
+/// non-bench builds. Not public API in any sense beyond the bench file.
 #[cfg(feature = "__bench_u16_hybrids")]
 #[doc(hidden)]
 pub mod __bench_u16_hybrids {
