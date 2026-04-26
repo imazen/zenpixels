@@ -208,7 +208,9 @@ pub const fn display_p3_icc(prefer_v2: bool) -> &'static [u8] {
 /// SDR BT.2020 export regardless of whether the caller asked for `Srgb` or
 /// `Bt709`).
 #[inline]
-pub const fn icc_profile_for(
+#[allow(dead_code)] // consumed only by unit tests in this module today;
+// promote to pub when an external codec consumer (e.g. ultrahdr-rs) lands.
+pub(crate) const fn icc_profile_for(
     primaries: ColorPrimaries,
     transfer: TransferFunction,
 ) -> Option<&'static [u8]> {

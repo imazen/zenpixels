@@ -605,7 +605,12 @@ fn f16_linear_to_f32_linear_and_back_is_exact() {
         s
     };
 
-    let from = PixelDescriptor::RGBAF16_LINEAR;
+    let from = PixelDescriptor::new(
+        ChannelType::F16,
+        ChannelLayout::Rgba,
+        Some(AlphaMode::Straight),
+        TransferFunction::Linear,
+    );
     let to = PixelDescriptor::RGBAF32_LINEAR;
 
     let mut up = RowConverter::new(from, to).unwrap();
@@ -681,7 +686,12 @@ fn f16_linear_to_u16_linear_roundtrip_within_f16_ulp() {
         .collect();
     let src = f32s_to_f16_bytes(&f32_vals);
 
-    let f16_lin = PixelDescriptor::RGBF16_LINEAR;
+    let f16_lin = PixelDescriptor::new(
+        ChannelType::F16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Linear,
+    );
     let u16_lin = PixelDescriptor::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
@@ -727,7 +737,12 @@ fn u16_to_f16_triggers_depth_reduction_policy() {
         None,
         TransferFunction::Linear,
     );
-    let to = PixelDescriptor::RGBF16_LINEAR;
+    let to = PixelDescriptor::new(
+        ChannelType::F16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Linear,
+    );
 
     let opts = ConvertOptions::permissive().with_depth_policy(DepthPolicy::Forbid);
 
@@ -753,7 +768,12 @@ fn f16_srgb_to_f16_linear_changes_values() {
         None,
         TransferFunction::Srgb,
     );
-    let to = PixelDescriptor::RGBF16_LINEAR;
+    let to = PixelDescriptor::new(
+        ChannelType::F16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Linear,
+    );
 
     let mut conv = RowConverter::new(from, to).unwrap();
     let mut out = vec![0u8; width as usize * 3 * 2];

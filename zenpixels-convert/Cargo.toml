@@ -28,12 +28,13 @@ serde = ["zenpixels/serde"]
 # `bench_u16_hybrids`. Not intended for non-bench use; the production u16
 # RGB gamut path uses `convert_u16_rgb_simd_lutdec_polyenc` directly.
 __bench_u16_hybrids = []
-# Enables runtime op tracing — ConvertSteps executed during convert_row
-# are recorded to a thread-local buffer so tests can verify plan and
-# kernel-level behavior. Off by default; the recording function compiles
-# to an empty body when this feature is disabled, keeping production
-# builds zero-overhead. Requires `std`.
-trace_ops = ["std"]
+# Internal: enables runtime op tracing for in-repo tests. ConvertSteps
+# executed during convert_row are recorded to a thread-local buffer.
+# Off by default; the recording function compiles to an empty body when
+# disabled, keeping production builds zero-overhead. Requires `std`.
+# `__` prefix follows the same internal-API convention as
+# `__bench_u16_hybrids`. Not part of the stable public surface.
+__trace_ops = ["std"]
 
 [dependencies]
 zenpixels = { workspace = true, default-features = false, features = ["icc"] }

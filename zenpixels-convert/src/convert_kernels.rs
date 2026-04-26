@@ -29,7 +29,7 @@ pub(super) fn apply_step_u8(
     from: PixelDescriptor,
     _to: PixelDescriptor,
 ) {
-    crate::tracer::record_step(step);
+    crate::__trace_ops::record_step(step);
     let w = width as usize;
 
     match step {

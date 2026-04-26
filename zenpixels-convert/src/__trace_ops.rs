@@ -1,6 +1,9 @@
-//! Runtime op tracer for `convert_row`.
+//! Internal: runtime op tracer for in-repo tests. Not stable public API —
+//! the `__` module prefix and `#[doc(hidden)]` mark it as internal-only,
+//! same convention as `__bench_u16_hybrids`. Do not depend on this
+//! externally; the surface may change without a semver bump.
 //!
-//! When the `trace_ops` feature is enabled, every `ConvertStep` dispatched
+//! When the `__trace_ops` feature is enabled, every `ConvertStep` dispatched
 //! through `apply_step_u8` is recorded by name to a thread-local
 //! `Vec<&'static str>`. Tests use this to assert that conversions execute
 //! the expected sequence of kernels without redundant work or silent skips.
@@ -15,13 +18,13 @@
 //! `Debug` impl, which already shows the resolved parameters and is not
 //! feature-gated.
 //!
-//! Usage in tests (gated on `cfg(feature = "trace_ops")`):
+//! Usage in tests (gated on `cfg(feature = "__trace_ops")`):
 //!
 //! ```ignore
-//! use zenpixels_convert::tracer;
-//! tracer::start_recording();
+//! use zenpixels_convert::__trace_ops;
+//! __trace_ops::start_recording();
 //! conv.convert_row(&src, &mut dst, width);
-//! let steps = tracer::stop_recording();
+//! let steps = __trace_ops::stop_recording();
 //! assert_eq!(steps, vec!["RgbToGray"]);
 //! ```
 //!
@@ -36,7 +39,7 @@ use alloc::vec::Vec;
 /// The variant name of a `ConvertStep` — used by the tracer. Exhaustive
 /// match: adding a variant to `ConvertStep` without adding it here is a
 /// compile error, so the tracer can't silently miss new ops.
-#[cfg(feature = "trace_ops")]
+#[cfg(feature = "__trace_ops")]
 fn step_name(step: &ConvertStep) -> &'static str {
     match step {
         ConvertStep::Identity => "Identity",
@@ -95,7 +98,7 @@ fn step_name(step: &ConvertStep) -> &'static str {
     }
 }
 
-#[cfg(feature = "trace_ops")]
+#[cfg(feature = "__trace_ops")]
 mod inner {
     use super::*;
     use std::cell::RefCell;
@@ -128,7 +131,7 @@ mod inner {
     }
 }
 
-#[cfg(not(feature = "trace_ops"))]
+#[cfg(not(feature = "__trace_ops"))]
 mod inner {
     use super::*;
 

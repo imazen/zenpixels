@@ -1,21 +1,21 @@
-//! Plan-shape regression tests using the `trace_ops` feature.
+//! Plan-shape regression tests using the `__trace_ops` internal feature.
 //!
 //! These tests assert that representative `(from, to, options)` tuples
 //! produce a *minimal* op sequence: no redundant TF round-trips, no missing
 //! linearization, no skipped depth changes. Lock the planner against
 //! future drift.
 //!
-//! Run with `cargo test --features trace_ops`. Without the feature, the
+//! Run with `cargo test --features __trace_ops`. Without the feature, the
 //! tracer returns empty Vecs and assertions intentionally fail — these
-//! tests are skipped entirely via `cfg(feature = "trace_ops")`.
+//! tests are skipped entirely via `cfg(feature = "__trace_ops")`.
 
-#![cfg(feature = "trace_ops")]
+#![cfg(feature = "__trace_ops")]
 
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
     policy::{AlphaPolicy, ConvertOptions, LumaCoefficients},
 };
-use zenpixels_convert::{RowConverter, tracer};
+use zenpixels_convert::{__trace_ops as tracer, RowConverter};
 
 fn rgba_u8(tf: TransferFunction) -> PixelDescriptor {
     PixelDescriptor::new(

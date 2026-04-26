@@ -930,63 +930,34 @@ impl PixelDescriptor {
         TransferFunction::Unknown,
     );
 
-    // -- F16 constants --------------------------------------------------------
+    // -- F16 constants (pub(crate) — internal use by PixelFormat::descriptor()
+    //    mapping. Tests construct via PixelDescriptor::new(). Linear-TF
+    //    F16 variants would be added if an external codec consumer needs
+    //    them — none today.) -----------------------------------------------
 
-    /// f16 RGB, transfer unknown.
-    pub const RGBF16: Self = Self::new(
+    pub(crate) const RGBF16: Self = Self::new(
         ChannelType::F16,
         ChannelLayout::Rgb,
         None,
         TransferFunction::Unknown,
     );
-    /// f16 RGBA, transfer unknown.
-    pub const RGBAF16: Self = Self::new(
+    pub(crate) const RGBAF16: Self = Self::new(
         ChannelType::F16,
         ChannelLayout::Rgba,
         Some(AlphaMode::Straight),
         TransferFunction::Unknown,
     );
-    /// f16 grayscale, transfer unknown.
-    pub const GRAYF16: Self = Self::new(
+    pub(crate) const GRAYF16: Self = Self::new(
         ChannelType::F16,
         ChannelLayout::Gray,
         None,
         TransferFunction::Unknown,
     );
-    /// f16 grayscale with alpha, transfer unknown.
-    pub const GRAYAF16: Self = Self::new(
+    pub(crate) const GRAYAF16: Self = Self::new(
         ChannelType::F16,
         ChannelLayout::GrayAlpha,
         Some(AlphaMode::Straight),
         TransferFunction::Unknown,
-    );
-    /// Linear-light f16 RGB.
-    pub const RGBF16_LINEAR: Self = Self::new(
-        ChannelType::F16,
-        ChannelLayout::Rgb,
-        None,
-        TransferFunction::Linear,
-    );
-    /// Linear-light f16 RGBA with straight alpha.
-    pub const RGBAF16_LINEAR: Self = Self::new(
-        ChannelType::F16,
-        ChannelLayout::Rgba,
-        Some(AlphaMode::Straight),
-        TransferFunction::Linear,
-    );
-    /// Linear-light f16 grayscale.
-    pub const GRAYF16_LINEAR: Self = Self::new(
-        ChannelType::F16,
-        ChannelLayout::Gray,
-        None,
-        TransferFunction::Linear,
-    );
-    /// Linear-light f16 grayscale with straight alpha.
-    pub const GRAYAF16_LINEAR: Self = Self::new(
-        ChannelType::F16,
-        ChannelLayout::GrayAlpha,
-        Some(AlphaMode::Straight),
-        TransferFunction::Linear,
     );
     /// 8-bit BGRA, transfer unknown.
     pub const BGRA8: Self = Self::new(

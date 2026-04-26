@@ -393,6 +393,12 @@ pub(crate) mod negotiate;
 pub mod adapt;
 // Internal only — zero consumers today. Kept for a future caller;
 // see zenpixels CLAUDE.md YAGNI section.
+/// Internal: runtime op tracer for in-repo tests. Gated on
+/// `feature = "__trace_ops"`. The `__` prefix and `#[doc(hidden)]`
+/// signal that this is unstable internal surface — see module docs.
+#[doc(hidden)]
+#[path = "__trace_ops.rs"]
+pub mod __trace_ops;
 #[allow(dead_code)]
 pub(crate) mod builtin_profiles;
 pub mod cms;
@@ -417,8 +423,6 @@ pub mod ext;
     clippy::derivable_impls
 )]
 pub(crate) mod fast_gamut;
-/// Runtime op tracer (gated on `feature = "trace_ops"`). See module docs.
-pub mod tracer;
 
 /// Bench-only shims for u16 RGB gamut hybrid kernels — comparative
 /// benchmarks for {LUT, poly} × {LUT, poly} decode/encode combinations.

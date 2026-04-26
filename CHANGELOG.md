@@ -36,48 +36,46 @@
   RGB→Gray kernels still hardcode BT.709 internally; wiring `options.luma`
   through the planner is a separate follow-up (7562dd0).
 
-- **F16 (IEEE 754 half-precision) pixel format variants and presets.**
+- **F16 (IEEE 754 half-precision) pixel format variants.**
   `PixelFormat::RgbF16`, `RgbaF16`, `GrayF16`, `GrayAF16` on the
-  `#[non_exhaustive]` enum, plus matching `pub const` presets: `RGBF16`,
-  `RGBAF16`, `GRAYF16`, `GRAYAF16` (Unknown TF) and the Linear-TF variants
-  `RGBF16_LINEAR`, `RGBAF16_LINEAR`, `GRAYF16_LINEAR`, `GRAYAF16_LINEAR`.
-  Descriptor-level only — no new `Pixel` trait impls, no `half` crate
-  dependency in zenpixels core. Typed `impl Pixel for Rgb<f16>` etc. will
-  land when Rust stable ships the native `f16` primitive (tracked in #23).
-  Non-breaking: new variants on `#[non_exhaustive]`, new presets are
-  additive. (#23)
+  `#[non_exhaustive]` enum. Construct via `PixelDescriptor::new()` —
+  preset constants stay `pub(crate)` per YAGNI until an external codec
+  consumer requires them. Descriptor-level only — no new `Pixel` trait
+  impls, no `half` crate dependency in zenpixels core. Typed
+  `impl Pixel for Rgb<f16>` etc. will land when Rust stable ships the
+  native `f16` primitive (tracked in #23). Non-breaking: new variants on
+  `#[non_exhaustive]`. (#23)
 
 ### zenpixels-convert — added
 
-- **`tracer` module + `trace_ops` feature flag.** Runtime op tracer. With
-  the feature on, every `ConvertStep` dispatched through the kernel is
-  recorded by name to a thread-local `Vec<&'static str>` for inspection
-  in tests. With the feature off (default), `record_step` is an
-  `#[inline(always)]` empty function — call sites lower to no
-  instructions, production builds pay literally nothing. Public surface
-  is `pub fn start_recording()` / `pub fn stop_recording() -> Vec<&'static str>`.
-  Tests in `tests/plan_validation.rs` use this to lock plan shape for
-  representative `(from, to, options)` tuples (no waste, no skips).
-  CI runs the trace-gated tests on each platform via
-  `cargo test -p zenpixels-convert --features trace_ops --test plan_validation`.
+- **`__trace_ops` internal feature flag** (gated module
+  `pub mod __trace_ops` with `#[doc(hidden)]`). Runtime op tracer for
+  in-repo plan validation tests. With the feature on, every
+  `ConvertStep` dispatched through the kernel is recorded by name to a
+  thread-local `Vec<&'static str>`. With the feature off (default),
+  `record_step` is an `#[inline(always)]` empty function — call sites
+  lower to no instructions, production builds pay literally nothing.
+  Surface (`start_recording`, `stop_recording`) is internal-only; the
+  `__` prefix and `#[doc(hidden)]` follow the same convention as
+  `__bench_u16_hybrids`. Tests in `tests/plan_validation.rs` use this
+  to lock plan shape for representative `(from, to, options)` tuples
+  (no waste, no skips). CI runs the trace-gated tests on each platform
+  via `cargo test -p zenpixels-convert --features __trace_ops --test plan_validation`.
   Feature requires `std`.
 
-- **`icc_profiles::icc_profile_for(primaries, transfer)` accessor.**
-  Companion to the primaries-only `icc_profile_for_primaries`; matches a
-  `(ColorPrimaries, TransferFunction)` pair against the bundled profile
-  set and returns `None` if nothing matches the requested TRC exactly.
-  Currently routes:
+- **`icc_profiles::icc_profile_for(primaries, transfer)` accessor**
+  (`pub(crate)` — internal, currently consumed only by unit tests; will
+  be promoted to `pub` when an external codec consumer such as
+  ultrahdr-rs lands). Companion to the primaries-only
+  `icc_profile_for_primaries`; matches a `(ColorPrimaries, TransferFunction)`
+  pair against the bundled profile set and returns `None` if nothing
+  matches the requested TRC exactly. Currently routes:
   `(DisplayP3, Srgb|Bt709)` → `DISPLAY_P3_V4`,
   `(Bt2020, Bt709|Srgb)` → `REC2020_V4`,
-  `(AdobeRgb, Gamma22)` → `ADOBE_RGB`.
-  HDR transfers (`Pq`, `Hlg`) and `Linear` return `None` on every primaries
-  set — no PQ/HLG ICC profiles are bundled, and those workflows should
-  signal color via CICP or generate the profile through a CMS. Motivated
-  by ultrahdr-rs's `get_icc_profile_for_gamut`, which currently regenerates
-  profiles via `moxcms::ColorProfile::new_bt2020()` on every call. Adds 4
-  unit tests covering the bundled hits, HDR rejection, mismatched-TRC
-  rejection, and BT.709 fall-through. Non-breaking: new public function,
-  no existing API changed (47eb81e).
+  `(AdobeRgb, Gamma22)` → `ADOBE_RGB`. HDR transfers (`Pq`, `Hlg`) and
+  `Linear` return `None` on every primaries set — no PQ/HLG ICC profiles
+  are bundled, and those workflows should signal color via CICP or
+  generate the profile through a CMS. (47eb81e)
 
 - **F16 conversion kernels.** `ConvertStep::F16ToF32` / `F32ToF16`
   (private enum variants) with scalar implementations. Planner routes
