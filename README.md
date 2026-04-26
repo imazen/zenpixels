@@ -37,8 +37,8 @@ for y in 0..height {
 ### Color profile conversion
 
 Built-in: named-profile pairs (sRGB ↔ Display P3 ↔ BT.2020 ↔ Adobe RGB) use
-hardcoded matrices with fused SIMD kernels — ~2 GB/s u8, ~3.8 GB/s u16.
-No CMS backend needed.
+hardcoded matrices with fused SIMD kernels — LUT-decode + SIMD matrix +
+SIMD polynomial encode for u16, fused matlut for u8. No CMS backend needed.
 
 ```rust
 use zenpixels::{PixelDescriptor, ColorPrimaries};
@@ -80,10 +80,13 @@ The core split: *what the bytes are* vs. *what the bytes mean*.
 **`PixelFormat`** is a flat enum of byte layouts — channel count, depth, memory order. No color semantics.
 
 ```
-Rgb8, Rgba8, Rgb16, Rgba16, RgbF32, RgbaF32,
-Gray8, Gray16, GrayF32, GrayA8, GrayA16, GrayAF32,
-Bgra8, Rgbx8, Bgrx8, OklabF32, OklabaF32
+Rgb8, Rgba8, Rgb16, Rgba16, RgbF16, RgbaF16, RgbF32, RgbaF32,
+Gray8, Gray16, GrayF16, GrayAF16, GrayF32, GrayA8, GrayA16, GrayAF32,
+Bgra8, Rgbx8, Bgrx8, Cmyk8, OklabF32, OklabaF32
 ```
+
+F16 variants are descriptor-only today — typed `Pixel` impls land when Rust
+stable ships native `f16`.
 
 **`PixelDescriptor`** wraps a `PixelFormat` with everything needed to interpret the color data:
 
@@ -97,7 +100,7 @@ pub struct PixelDescriptor {
 }
 ```
 
-Every buffer carries one. Every codec declares which ones it produces and consumes. 40+ predefined constants:
+Every buffer carries one. Every codec declares which ones it produces and consumes. Predefined constants for the common cases:
 
 ```rust
 PixelDescriptor::RGB8_SRGB        // u8 RGB, sRGB transfer, BT.709 primaries
@@ -197,7 +200,7 @@ Every operation that destroys information requires an explicit policy via `Conve
 
 - **Alpha removal**: `DiscardIfOpaque`, `CompositeOnto { r, g, b }`, `DiscardUnchecked`, or `Forbid`
 - **Depth reduction**: `Round`, `Truncate`, or `Forbid`
-- **RGB to gray**: requires explicit luma coefficients (`Bt709` or `Bt601`), or `None` to forbid
+- **RGB to gray**: requires explicit luma coefficients (`Bt709`, `Bt601`, `Bt2020`, or `DisplayP3`), or `None` to forbid. Y' (encoded luma) semantic — round-trips bit-exactly for `R==G==B`.
 
 Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `ConvertOptions::permissive()` (sensible lossy defaults), with `with_alpha_policy()`, `with_depth_policy()`, etc. for customization.
 
@@ -215,7 +218,7 @@ Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `C
 
 **CMS** — `PluggableCms` trait (dyn-compatible, accepts `ColorProfileSource` directly — CICP, named profiles, or raw ICC bytes) plugs an external backend into `RowConverter`. `RowTransformMut` is the `&mut self` row-level transform returned by plugins. The `cms-moxcms` feature provides a concrete backend using [moxcms](https://crates.io/crates/moxcms), supporting u8/u16/f32 transforms with automatic profile identification. The older `ColorManagement` / `RowTransform` traits (ICC-bytes-only, `&self`) are retained for backward compatibility.
 
-**ICC identification** — `zenpixels::icc::identify_common(icc_bytes)` recognizes 163 well-known RGB + 18 grayscale profiles via normalized FNV-1a hash lookup (~100ns). Returns primaries, transfer function, and `IdentificationUse` (whether matrix+TRC substitution is safe vs CMS-only). Covers sRGB, Display P3, BT.2020, Adobe RGB variants across ICC v2–v5.
+**ICC identification** — `zenpixels::icc::identify_common(icc_bytes)` recognizes 183 well-known RGB + 21 grayscale profiles via normalized FNV-1a hash lookup (~100ns). Returns primaries, transfer function, and `IdentificationUse` (whether matrix+TRC substitution is safe vs CMS-only). Covers sRGB, Display P3, BT.2020, Adobe RGB variants across ICC v2–v5.
 
 ### Pipeline planner
 
