@@ -633,6 +633,254 @@ fn alpha_is_binary_ga16_impl(token: Token, ga: &[u16]) -> bool {
     true
 }
 
+// ── F32 channel-layout predicates ──────────────────────────────────────
+//
+// Same shape as the U8 variants but operate on `&[f32]` directly.
+// Channel-max is 1.0; alpha-binary checks {0.0, 1.0}. Float SIMD
+// comparison results are bit-pattern masks (all-ones-bits or all-zero
+// per lane); we bitcast to `i32x16` to use the high-bit `any_true`
+// reduction the same way as integer paths.
+
+/// `[0,0,0,-1, 0,0,0,-1, …]` as i32 — alpha-lane mask in F32 RGBA.
+const ALPHA_MASK_RGBA_I32: [i32; 16] = {
+    let mut a = [0i32; 16];
+    let mut i = 3;
+    while i < 16 {
+        a[i] = -1;
+        i += 4;
+    }
+    a
+};
+
+/// `[-1,-1,0,0, -1,-1,0,0, …]` as i32 — `R^G` and `G^B` lane mask
+/// when comparing F32 RGBA against itself shifted by one element.
+const RGB_DELTA_MASK_RGBA_I32: [i32; 16] = {
+    let mut a = [0i32; 16];
+    let mut i = 0;
+    while i < 16 {
+        a[i] = -1;
+        a[i + 1] = -1;
+        i += 4;
+    }
+    a
+};
+
+/// `[0,-1, 0,-1, …]` — alpha-lane mask in F32 GrayAlpha.
+const ALPHA_MASK_GA_I32: [i32; 16] = {
+    let mut a = [0i32; 16];
+    let mut i = 1;
+    while i < 16 {
+        a[i] = -1;
+        i += 2;
+    }
+    a
+};
+
+const fn rgb_phase_mask_i32(start_phase: usize) -> [i32; 16] {
+    let mut a = [0i32; 16];
+    let mut k = 0;
+    while k < 16 {
+        let phase = (start_phase + k) % 3;
+        if phase == 0 || phase == 1 {
+            a[k] = -1;
+        }
+        k += 1;
+    }
+    a
+}
+
+/// Returns true iff every alpha sample equals 1.0. Layout: f32 RGBA.
+/// Early-exit on the first non-opaque pixel.
+pub fn is_opaque_rgba_f32(rgba: &[f32]) -> bool {
+    incant!(
+        is_opaque_rgba_f32_impl(rgba),
+        [v4x, v4, v3, neon, wasm128, scalar]
+    )
+}
+
+#[magetypes(define(f32x16, i32x16), v4x, v4, v3, neon, wasm128, scalar)]
+fn is_opaque_rgba_f32_impl(token: Token, rgba: &[f32]) -> bool {
+    let alpha_mask = i32x16::from_array(token, ALPHA_MASK_RGBA_I32);
+    let one = f32x16::splat(token, 1.0);
+    let (chunks, tail) = f32x16::partition_slice(token, rgba);
+    for chunk in chunks {
+        let v = f32x16::load(token, chunk);
+        let bad = v.simd_ne(one).bitcast_to_i32() & alpha_mask;
+        if bad.any_true() {
+            return false;
+        }
+    }
+    for px in tail.chunks_exact(4) {
+        if px[3] != 1.0 {
+            return false;
+        }
+    }
+    true
+}
+
+/// Returns true iff every f32 RGBA pixel has `R == G == B`. Alpha is
+/// ignored. Strict equality (no epsilon — float-exact). Early-exit.
+pub fn is_grayscale_rgba_f32(rgba: &[f32]) -> bool {
+    incant!(
+        is_grayscale_rgba_f32_impl(rgba),
+        [v4x, v4, v3, neon, wasm128, scalar]
+    )
+}
+
+#[magetypes(define(f32x16, i32x16), v4x, v4, v3, neon, wasm128, scalar)]
+fn is_grayscale_rgba_f32_impl(token: Token, rgba: &[f32]) -> bool {
+    let mask = i32x16::from_array(token, RGB_DELTA_MASK_RGBA_I32);
+    // Shifted-load: load at i and at i+1 (one f32 element offset).
+    let mut i = 0;
+    while i + 17 <= rgba.len() {
+        let c0: &[f32; 16] = (&rgba[i..i + 16]).try_into().unwrap();
+        let c1: &[f32; 16] = (&rgba[i + 1..i + 17]).try_into().unwrap();
+        let v0 = f32x16::load(token, c0);
+        let v1 = f32x16::load(token, c1);
+        let masked = v0.simd_ne(v1).bitcast_to_i32() & mask;
+        if masked.any_true() {
+            return false;
+        }
+        i += 16;
+    }
+    for px in rgba[i..].chunks_exact(4) {
+        if px[0] != px[1] || px[1] != px[2] {
+            return false;
+        }
+    }
+    true
+}
+
+/// Returns true iff every f32 RGB pixel has `R == G == B`. 3-element
+/// stride doesn't tile evenly into f32x16 chunks (gcd(3,16)=1) so we
+/// process 48-element super-chunks (16 RGB pixels) with three phase-
+/// rotated masks.
+pub fn is_grayscale_rgb_f32(rgb: &[f32]) -> bool {
+    incant!(
+        is_grayscale_rgb_f32_impl(rgb),
+        [v4x, v4, v3, neon, wasm128, scalar]
+    )
+}
+
+#[magetypes(define(f32x16, i32x16), v4x, v4, v3, neon, wasm128, scalar)]
+fn is_grayscale_rgb_f32_impl(token: Token, rgb: &[f32]) -> bool {
+    let m0 = i32x16::from_array(token, rgb_phase_mask_i32(0));
+    // 16 % 3 == 1 → phase shifts by 1 each chunk.
+    let m1 = i32x16::from_array(token, rgb_phase_mask_i32(1));
+    let m2 = i32x16::from_array(token, rgb_phase_mask_i32(2));
+
+    let mut i = 0;
+    while i + 49 <= rgb.len() {
+        for (off, mask) in [(0usize, m0), (16, m1), (32, m2)] {
+            let c0: &[f32; 16] = (&rgb[i + off..i + off + 16]).try_into().unwrap();
+            let c1: &[f32; 16] = (&rgb[i + off + 1..i + off + 17]).try_into().unwrap();
+            let v0 = f32x16::load(token, c0);
+            let v1 = f32x16::load(token, c1);
+            let masked = v0.simd_ne(v1).bitcast_to_i32() & mask;
+            if masked.any_true() {
+                return false;
+            }
+        }
+        i += 48;
+    }
+    for px in rgb[i..].chunks_exact(3) {
+        if px[0] != px[1] || px[1] != px[2] {
+            return false;
+        }
+    }
+    true
+}
+
+/// Returns true iff every alpha sample is exactly 0.0 or 1.0.
+pub fn alpha_is_binary_rgba_f32(rgba: &[f32]) -> bool {
+    incant!(
+        alpha_is_binary_rgba_f32_impl(rgba),
+        [v4x, v4, v3, neon, wasm128, scalar]
+    )
+}
+
+#[magetypes(define(f32x16, i32x16), v4x, v4, v3, neon, wasm128, scalar)]
+fn alpha_is_binary_rgba_f32_impl(token: Token, rgba: &[f32]) -> bool {
+    let alpha_mask = i32x16::from_array(token, ALPHA_MASK_RGBA_I32);
+    let zero = f32x16::splat(token, 0.0);
+    let one = f32x16::splat(token, 1.0);
+    let (chunks, tail) = f32x16::partition_slice(token, rgba);
+    for chunk in chunks {
+        let v = f32x16::load(token, chunk);
+        let bad = (v.simd_ne(zero).bitcast_to_i32() & v.simd_ne(one).bitcast_to_i32())
+            & alpha_mask;
+        if bad.any_true() {
+            return false;
+        }
+    }
+    for px in tail.chunks_exact(4) {
+        let a = px[3];
+        if a != 0.0 && a != 1.0 {
+            return false;
+        }
+    }
+    true
+}
+
+/// Returns true iff every f32 GrayAlpha alpha sample equals 1.0.
+pub fn is_opaque_ga_f32(ga: &[f32]) -> bool {
+    incant!(
+        is_opaque_ga_f32_impl(ga),
+        [v4x, v4, v3, neon, wasm128, scalar]
+    )
+}
+
+#[magetypes(define(f32x16, i32x16), v4x, v4, v3, neon, wasm128, scalar)]
+fn is_opaque_ga_f32_impl(token: Token, ga: &[f32]) -> bool {
+    let alpha_mask = i32x16::from_array(token, ALPHA_MASK_GA_I32);
+    let one = f32x16::splat(token, 1.0);
+    let (chunks, tail) = f32x16::partition_slice(token, ga);
+    for chunk in chunks {
+        let v = f32x16::load(token, chunk);
+        let bad = v.simd_ne(one).bitcast_to_i32() & alpha_mask;
+        if bad.any_true() {
+            return false;
+        }
+    }
+    for px in tail.chunks_exact(2) {
+        if px[1] != 1.0 {
+            return false;
+        }
+    }
+    true
+}
+
+/// Returns true iff every f32 GrayAlpha alpha sample is 0.0 or 1.0.
+pub fn alpha_is_binary_ga_f32(ga: &[f32]) -> bool {
+    incant!(
+        alpha_is_binary_ga_f32_impl(ga),
+        [v4x, v4, v3, neon, wasm128, scalar]
+    )
+}
+
+#[magetypes(define(f32x16, i32x16), v4x, v4, v3, neon, wasm128, scalar)]
+fn alpha_is_binary_ga_f32_impl(token: Token, ga: &[f32]) -> bool {
+    let alpha_mask = i32x16::from_array(token, ALPHA_MASK_GA_I32);
+    let zero = f32x16::splat(token, 0.0);
+    let one = f32x16::splat(token, 1.0);
+    let (chunks, tail) = f32x16::partition_slice(token, ga);
+    for chunk in chunks {
+        let v = f32x16::load(token, chunk);
+        let bad = (v.simd_ne(zero).bitcast_to_i32() & v.simd_ne(one).bitcast_to_i32())
+            & alpha_mask;
+        if bad.any_true() {
+            return false;
+        }
+    }
+    for px in tail.chunks_exact(2) {
+        let a = px[1];
+        if a != 0.0 && a != 1.0 {
+            return false;
+        }
+    }
+    true
+}
+
 // ── Fused single-pass RGBA8 predicates ─────────────────────────────────
 //
 // Runs `is_opaque`, `is_grayscale`, and `alpha_is_binary` against the
@@ -1490,6 +1738,161 @@ mod tests {
         });
     }
 
+    // ── F32 predicate tests ──────────────────────────────────────
+
+    #[test]
+    fn rgba_f32_opaque_true() {
+        run_at_all_tiers("rgba_f32_opaque_true", || {
+            assert!(super::is_opaque_rgba_f32(&[
+                0.1, 0.2, 0.3, 1.0, //
+                0.4, 0.5, 0.6, 1.0,
+            ]));
+        });
+    }
+
+    #[test]
+    fn rgba_f32_opaque_false_alpha_lt_one() {
+        run_at_all_tiers("rgba_f32_opaque_false", || {
+            assert!(!super::is_opaque_rgba_f32(&[
+                0.1, 0.2, 0.3, 0.999, // alpha < 1.0
+            ]));
+        });
+    }
+
+    #[test]
+    fn rgba_f32_opaque_false_in_simd_chunk() {
+        // 8 pixels = 32 floats: full f32x16 chunks of 4 pixels each.
+        run_at_all_tiers("rgba_f32_opaque_simd_chunk", || {
+            let mut v = vec![0.5_f32; 32];
+            for i in 0..8 {
+                v[i * 4 + 3] = 1.0;
+            }
+            v[5 * 4 + 3] = 0.5; // pixel 5: alpha 0.5
+            assert!(!super::is_opaque_rgba_f32(&v));
+        });
+    }
+
+    #[test]
+    fn rgba_f32_grayscale_true() {
+        run_at_all_tiers("rgba_f32_gray_true", || {
+            assert!(super::is_grayscale_rgba_f32(&[
+                0.42, 0.42, 0.42, 1.0, //
+                0.99, 0.99, 0.99, 0.5, //
+                0.0, 0.0, 0.0, 0.0,
+            ]));
+        });
+    }
+
+    #[test]
+    fn rgba_f32_grayscale_false() {
+        run_at_all_tiers("rgba_f32_gray_false", || {
+            // R != G by even tiny amount → not grayscale (strict).
+            assert!(!super::is_grayscale_rgba_f32(&[
+                0.42, 0.420001, 0.42, 1.0,
+            ]));
+        });
+    }
+
+    #[test]
+    fn rgba_f32_grayscale_false_in_simd_chunk() {
+        run_at_all_tiers("rgba_f32_gray_simd_chunk", || {
+            let mut v = vec![0.0_f32; 8 * 4];
+            for i in 0..8 {
+                let g = (i as f32) * 0.1;
+                v[i * 4] = g;
+                v[i * 4 + 1] = g;
+                v[i * 4 + 2] = g;
+                v[i * 4 + 3] = 1.0;
+            }
+            v[6 * 4 + 1] = v[6 * 4] + 0.001; // pixel 6: G != R
+            assert!(!super::is_grayscale_rgba_f32(&v));
+        });
+    }
+
+    #[test]
+    fn rgba_f32_alpha_binary_true_mix() {
+        run_at_all_tiers("rgba_f32_ab_true", || {
+            assert!(super::alpha_is_binary_rgba_f32(&[
+                0.1, 0.2, 0.3, 0.0, //
+                0.4, 0.5, 0.6, 1.0, //
+                0.7, 0.8, 0.9, 0.0,
+            ]));
+        });
+    }
+
+    #[test]
+    fn rgba_f32_alpha_binary_false_mid() {
+        run_at_all_tiers("rgba_f32_ab_false", || {
+            assert!(!super::alpha_is_binary_rgba_f32(&[
+                0.1, 0.2, 0.3, 0.5, // alpha 0.5 — neither 0 nor 1
+            ]));
+        });
+    }
+
+    #[test]
+    fn rgb_f32_grayscale_true() {
+        run_at_all_tiers("rgb_f32_gray_true", || {
+            assert!(super::is_grayscale_rgb_f32(&[
+                0.42, 0.42, 0.42, //
+                0.99, 0.99, 0.99, //
+                0.0, 0.0, 0.0,
+            ]));
+        });
+    }
+
+    #[test]
+    fn rgb_f32_grayscale_false() {
+        run_at_all_tiers("rgb_f32_gray_false", || {
+            assert!(!super::is_grayscale_rgb_f32(&[0.5, 0.5001, 0.5]));
+        });
+    }
+
+    #[test]
+    fn rgb_f32_grayscale_false_in_super_chunk() {
+        // 16 RGB pixels = 48 floats — one full super-chunk.
+        run_at_all_tiers("rgb_f32_gray_super_chunk", || {
+            let mut v = vec![0.0_f32; 16 * 3];
+            for i in 0..16 {
+                let g = (i as f32) * 0.05;
+                v[i * 3] = g;
+                v[i * 3 + 1] = g;
+                v[i * 3 + 2] = g;
+            }
+            v[10 * 3 + 1] = v[10 * 3] + 0.01;
+            assert!(!super::is_grayscale_rgb_f32(&v));
+        });
+    }
+
+    #[test]
+    fn ga_f32_opaque_true() {
+        run_at_all_tiers("ga_f32_opaque_true", || {
+            assert!(super::is_opaque_ga_f32(&[0.5, 1.0, 0.7, 1.0, 0.2, 1.0]));
+        });
+    }
+
+    #[test]
+    fn ga_f32_opaque_false() {
+        run_at_all_tiers("ga_f32_opaque_false", || {
+            assert!(!super::is_opaque_ga_f32(&[0.5, 1.0, 0.7, 0.5]));
+        });
+    }
+
+    #[test]
+    fn ga_f32_alpha_binary_true_mix() {
+        run_at_all_tiers("ga_f32_ab_true", || {
+            assert!(super::alpha_is_binary_ga_f32(&[
+                0.5, 0.0, 0.7, 1.0, 0.2, 0.0,
+            ]));
+        });
+    }
+
+    #[test]
+    fn ga_f32_alpha_binary_false() {
+        run_at_all_tiers("ga_f32_ab_false", || {
+            assert!(!super::alpha_is_binary_ga_f32(&[0.5, 0.5]));
+        });
+    }
+
     // ── Fused predicate tests ────────────────────────────────────────
 
     fn scalar_fused(rgba: &[u8], req: super::FusedRequest) -> super::FusedResult {
@@ -1839,5 +2242,297 @@ mod tests {
             }
         });
         eprintln!("bit_replication_lossless_be16: {report}");
+    }
+
+    // ── Edge cases: empty / vacuous-truth ────────────────────────
+    //
+    // Every predicate must return `true` on an empty buffer (the
+    // intuitive behavior — vacuously every pixel satisfies the test).
+
+    #[test]
+    fn empty_buffers_are_vacuously_true_for_every_predicate() {
+        // u8 layouts
+        assert!(super::is_opaque_rgba8(&[]));
+        assert!(super::is_grayscale_rgba8(&[]));
+        assert!(super::is_grayscale_rgb8(&[]));
+        assert!(super::alpha_is_binary_rgba8(&[]));
+        assert!(super::is_opaque_ga8(&[]));
+        assert!(super::alpha_is_binary_ga8(&[]));
+        // u16 layouts
+        assert!(super::is_opaque_rgba16(&[]));
+        assert!(super::is_grayscale_rgba16(&[]));
+        assert!(super::is_grayscale_rgb16(&[]));
+        assert!(super::alpha_is_binary_rgba16(&[]));
+        assert!(super::is_opaque_ga16(&[]));
+        assert!(super::alpha_is_binary_ga16(&[]));
+        // bit-replication
+        assert!(super::bit_replication_lossless_u16(&[]));
+        assert!(super::bit_replication_lossless_be16(&[]));
+        // f32 layouts
+        assert!(super::is_opaque_rgba_f32(&[]));
+        assert!(super::is_grayscale_rgba_f32(&[]));
+        assert!(super::is_grayscale_rgb_f32(&[]));
+        assert!(super::alpha_is_binary_rgba_f32(&[]));
+        assert!(super::is_opaque_ga_f32(&[]));
+        assert!(super::alpha_is_binary_ga_f32(&[]));
+        // fused
+        let r = super::fused_predicates_rgba8(&[], super::FusedRequest::all());
+        assert!(r.is_opaque && r.is_grayscale && r.is_binary_alpha);
+        let r = super::fused_predicates_rgba8_cg(&[], super::FusedRequest::all());
+        assert!(r.is_opaque && r.is_grayscale && r.is_binary_alpha);
+    }
+
+    // ── Edge cases: SIMD boundary sizes ─────────────────────────
+    //
+    // Each predicate has a 64-byte SIMD chunk size (or 65 for shifted
+    // loads). Test buffers at exactly the boundary, just below, and
+    // just above to exercise the chunk-vs-tail code paths.
+
+    #[test]
+    fn is_opaque_rgba8_at_simd_boundaries() {
+        // 64-byte chunks = 16 RGBA pixels exactly. Test sizes around it.
+        for &n_pixels in &[15usize, 16, 17, 31, 32, 33, 63, 64, 65] {
+            let mut v = vec![0u8; n_pixels * 4];
+            for i in 0..n_pixels {
+                v[i * 4 + 3] = 255;
+            }
+            assert!(
+                super::is_opaque_rgba8(&v),
+                "all-opaque at n={n_pixels}"
+            );
+            // Make the LAST pixel non-opaque — must still be detected
+            // regardless of where it falls in SIMD chunk vs tail.
+            if n_pixels > 0 {
+                v[(n_pixels - 1) * 4 + 3] = 128;
+                assert!(
+                    !super::is_opaque_rgba8(&v),
+                    "last-pixel-non-opaque at n={n_pixels}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn is_grayscale_rgba8_at_shifted_load_boundaries() {
+        // Shifted-load needs 65 bytes per chunk = 16 RGBA pixels + 1 byte.
+        // Test sizes around the chunk boundary.
+        for &n_pixels in &[16usize, 17, 32, 33, 48, 64, 65, 80] {
+            let mut v = vec![0u8; n_pixels * 4];
+            for i in 0..n_pixels {
+                let g = ((i * 11) & 0xFF) as u8;
+                v[i * 4] = g;
+                v[i * 4 + 1] = g;
+                v[i * 4 + 2] = g;
+                v[i * 4 + 3] = 255;
+            }
+            assert!(
+                super::is_grayscale_rgba8(&v),
+                "all-gray at n={n_pixels}"
+            );
+            if n_pixels > 1 {
+                v[(n_pixels - 1) * 4 + 1] = v[(n_pixels - 1) * 4].wrapping_add(1);
+                assert!(
+                    !super::is_grayscale_rgba8(&v),
+                    "last-pixel-color at n={n_pixels}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn is_grayscale_rgb8_at_super_chunk_boundaries() {
+        // 192-byte super-chunk = 64 RGB pixels. Test around it.
+        for &n_pixels in &[63usize, 64, 65, 127, 128, 129, 191, 192, 193] {
+            let mut v = vec![0u8; n_pixels * 3];
+            for i in 0..n_pixels {
+                let g = ((i * 7) & 0xFF) as u8;
+                v[i * 3] = g;
+                v[i * 3 + 1] = g;
+                v[i * 3 + 2] = g;
+            }
+            assert!(super::is_grayscale_rgb8(&v), "all-gray at n={n_pixels}");
+            // Mid-buffer break
+            let mid = n_pixels / 2;
+            if n_pixels > 5 {
+                v[mid * 3 + 1] = v[mid * 3].wrapping_add(1);
+                assert!(
+                    !super::is_grayscale_rgb8(&v),
+                    "mid-pixel-color at n={n_pixels}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bit_replication_at_simd_boundaries() {
+        // 64-byte chunks = 32 u16 pairs. Test around the boundary.
+        for &n_pairs in &[31usize, 32, 33, 63, 64, 65] {
+            let mut v = vec![0u8; n_pairs * 2];
+            for i in 0..n_pairs {
+                let b = (i * 11 + 7) as u8;
+                v[i * 2] = b;
+                v[i * 2 + 1] = b;
+            }
+            assert!(
+                super::bit_replication_lossless_be16(&v),
+                "replicated at n={n_pairs}"
+            );
+            // Break the last pair specifically (scalar tail at non-multiples).
+            if n_pairs > 0 {
+                v[(n_pairs - 1) * 2 + 1] = v[(n_pairs - 1) * 2].wrapping_add(1);
+                assert!(
+                    !super::bit_replication_lossless_be16(&v),
+                    "last-pair-broken at n={n_pairs}"
+                );
+            }
+        }
+    }
+
+    // ── Edge cases: position coverage ───────────────────────────
+    //
+    // Verify that the predicate flips at every interesting position:
+    // first byte, mid-SIMD-chunk, last-byte-of-chunk, scalar-tail.
+
+    #[test]
+    fn is_opaque_rgba8_breaks_at_every_position_class() {
+        // 32 pixels = 128 bytes = 2 SIMD chunks.
+        let make_buf = || {
+            let mut v = vec![0u8; 32 * 4];
+            for i in 0..32 {
+                v[i * 4] = 50;
+                v[i * 4 + 1] = 60;
+                v[i * 4 + 2] = 70;
+                v[i * 4 + 3] = 255;
+            }
+            v
+        };
+        // Pixel 0 (first byte's pixel)
+        let mut v = make_buf();
+        v[3] = 0;
+        assert!(!super::is_opaque_rgba8(&v));
+        // Pixel 15 (end of first SIMD chunk)
+        let mut v = make_buf();
+        v[15 * 4 + 3] = 254;
+        assert!(!super::is_opaque_rgba8(&v));
+        // Pixel 16 (start of second SIMD chunk)
+        let mut v = make_buf();
+        v[16 * 4 + 3] = 0;
+        assert!(!super::is_opaque_rgba8(&v));
+        // Pixel 31 (last pixel — second-chunk end)
+        let mut v = make_buf();
+        v[31 * 4 + 3] = 200;
+        assert!(!super::is_opaque_rgba8(&v));
+    }
+
+    // ── Edge cases: tiny inputs (1, 2, 3 pixels) ────────────────
+
+    #[test]
+    fn predicates_handle_single_pixel_inputs() {
+        // RGBA8: 1 pixel = 4 bytes — no SIMD chunk possible, scalar tail only.
+        assert!(super::is_opaque_rgba8(&[10, 20, 30, 255]));
+        assert!(!super::is_opaque_rgba8(&[10, 20, 30, 254]));
+        assert!(super::is_grayscale_rgba8(&[42, 42, 42, 255]));
+        assert!(!super::is_grayscale_rgba8(&[42, 43, 42, 255]));
+        assert!(super::alpha_is_binary_rgba8(&[10, 20, 30, 0]));
+        assert!(super::alpha_is_binary_rgba8(&[10, 20, 30, 255]));
+        assert!(!super::alpha_is_binary_rgba8(&[10, 20, 30, 1]));
+
+        // RGB8: 1 pixel = 3 bytes
+        assert!(super::is_grayscale_rgb8(&[42, 42, 42]));
+        assert!(!super::is_grayscale_rgb8(&[42, 42, 43]));
+
+        // GA8: 1 pixel = 2 bytes
+        assert!(super::is_opaque_ga8(&[42, 255]));
+        assert!(!super::is_opaque_ga8(&[42, 254]));
+
+        // Bit replication: 1 pair = 2 bytes
+        assert!(super::bit_replication_lossless_be16(&[0x42, 0x42]));
+        assert!(!super::bit_replication_lossless_be16(&[0x42, 0x43]));
+    }
+
+    // ── Edge cases: GrayAlpha 0-only / 255-only specials ────────
+
+    #[test]
+    fn ga_predicates_handle_extreme_alphas() {
+        // All alpha = 0 — opaque is false, binary is true.
+        let v = [10u8, 0, 50, 0, 100, 0, 200, 0];
+        assert!(!super::is_opaque_ga8(&v));
+        assert!(super::alpha_is_binary_ga8(&v));
+
+        // All alpha = 255 — opaque is true, binary is true.
+        let v = [10u8, 255, 50, 255, 100, 255, 200, 255];
+        assert!(super::is_opaque_ga8(&v));
+        assert!(super::alpha_is_binary_ga8(&v));
+
+        // Mid alpha — binary fails, opaque fails.
+        let v = [10u8, 128, 50, 128];
+        assert!(!super::is_opaque_ga8(&v));
+        assert!(!super::alpha_is_binary_ga8(&v));
+    }
+
+    // ── Edge cases: bit-replication extremes ────────────────────
+
+    #[test]
+    fn bit_replication_handles_extreme_pairs() {
+        // 0x0000 (both bytes 0) — replicated.
+        assert!(super::bit_replication_lossless_u16(&[0x0000]));
+        // 0xFFFF (both bytes 0xFF) — replicated.
+        assert!(super::bit_replication_lossless_u16(&[0xFFFF]));
+        // 0x0001 / 0x0100 — single-bit asymmetry.
+        assert!(!super::bit_replication_lossless_u16(&[0x0001]));
+        assert!(!super::bit_replication_lossless_u16(&[0x0100]));
+        // 0x7F7F — bit-replicated middle.
+        assert!(super::bit_replication_lossless_u16(&[0x7F7F]));
+        // 0x8080 — high-bit replicated.
+        assert!(super::bit_replication_lossless_u16(&[0x8080]));
+        // Bit-replicated 0xFE alongside plain 0xFE00 in same buffer.
+        assert!(!super::bit_replication_lossless_u16(&[0xFEFE, 0xFE00]));
+    }
+
+    // ── Edge cases: F32 NaN / inf / signed zero ─────────────────
+
+    #[test]
+    fn f32_predicates_handle_nan_inf() {
+        // NaN: simd_eq with anything is false; simd_ne is true. So a
+        // pixel with alpha=NaN should make is_opaque return false.
+        assert!(!super::is_opaque_rgba_f32(&[0.5, 0.5, 0.5, f32::NAN]));
+        // Pixel where R is NaN — R==G fails, so is_grayscale false.
+        assert!(!super::is_grayscale_rgba_f32(&[f32::NAN, 0.5, 0.5, 1.0]));
+        // alpha = +inf — not binary.
+        assert!(!super::alpha_is_binary_rgba_f32(&[0.0, 0.0, 0.0, f32::INFINITY]));
+        // alpha = -0.0 vs 0.0 — IEEE compare: -0.0 == 0.0 (yes).
+        assert!(super::alpha_is_binary_rgba_f32(&[0.0, 0.0, 0.0, -0.0]));
+    }
+
+    // ── Edge cases: F32 boundary sizes ──────────────────────────
+
+    #[test]
+    fn f32_predicates_at_simd_boundaries() {
+        // f32x16 chunk = 16 floats = 4 RGBA pixels. Test around the boundary.
+        for &n_pixels in &[3usize, 4, 5, 7, 8, 9] {
+            let mut v = vec![0.0_f32; n_pixels * 4];
+            for i in 0..n_pixels {
+                let g = i as f32 * 0.1;
+                v[i * 4] = g;
+                v[i * 4 + 1] = g;
+                v[i * 4 + 2] = g;
+                v[i * 4 + 3] = 1.0;
+            }
+            assert!(
+                super::is_opaque_rgba_f32(&v),
+                "all-opaque at n={n_pixels}"
+            );
+            assert!(
+                super::is_grayscale_rgba_f32(&v),
+                "all-gray at n={n_pixels}"
+            );
+            if n_pixels > 0 {
+                v[(n_pixels - 1) * 4 + 3] = 0.5;
+                assert!(
+                    !super::is_opaque_rgba_f32(&v),
+                    "last-pixel-non-opaque at n={n_pixels}"
+                );
+            }
+        }
     }
 }

@@ -495,6 +495,9 @@ pub use scan::{
     // U16 layouts
     alpha_is_binary_ga16, alpha_is_binary_rgba16, is_grayscale_rgb16, is_grayscale_rgba16,
     is_opaque_ga16, is_opaque_rgba16,
+    // F32 layouts
+    alpha_is_binary_ga_f32, alpha_is_binary_rgba_f32, is_grayscale_rgb_f32,
+    is_grayscale_rgba_f32, is_opaque_ga_f32, is_opaque_rgba_f32,
     // Bit-replication (channel-type narrowing)
     bit_replication_lossless_be16, bit_replication_lossless_u16,
 };
