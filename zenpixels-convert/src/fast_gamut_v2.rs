@@ -1358,4 +1358,208 @@ mod tests {
             }
         });
     }
+
+    // ---- Native V3 (f32x8) body parity ---------------------------------
+    //
+    // The dispatcher routes V3 hosts to `convert_rgb_<name>_native_impl_v3`
+    // (f32x8) instead of the wide body's V3 expansion. These tests call
+    // the native V3 impl directly with a summoned X64V3Token and verify
+    // byte-exact-within-tolerance equivalence to the scalar reference.
+    //
+    // x86_64-only — V3 token is only summon-able on hosts with AVX2+FMA.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn native_v3_parity_same_trc_rgb() {
+        let Some(token) = archmage::X64V3Token::summon() else {
+            // No V3 on this host; skip. (No graceful skip mid-test — this is
+            // a host-capability gate visible to the developer running tests.)
+            eprintln!("native_v3_parity_same_trc_rgb: V3 not available, host capability gate");
+            return;
+        };
+        let m = srgb_to_bt2020_matrix();
+        // 19 pixels — V3 body chunk = 8 px, so this exercises 2 chunks + 3 tail.
+        let original = ramp(19, 3);
+
+        macro_rules! check_pair {
+            ($impl_fn:ident, $trc:expr) => {{
+                let mut got = original.clone();
+                $impl_fn(token, &m, &mut got);
+                let mut want = original.clone();
+                scalar_reference_rgb(&m, &mut want, $trc, $trc);
+                for (i, (a, b)) in got.iter().zip(want.iter()).enumerate() {
+                    let err = (a - b).abs();
+                    assert!(
+                        err < TOL_PARITY,
+                        "native_v3 RGB {} lane {i}: got={a}, want={b} (err={err:e})",
+                        stringify!($trc),
+                    );
+                }
+            }};
+        }
+
+        check_pair!(convert_rgb_srgb_native_impl_v3, TransferFunction::Srgb);
+        check_pair!(convert_rgb_bt709_native_impl_v3, TransferFunction::Bt709);
+        check_pair!(convert_rgb_pq_native_impl_v3, TransferFunction::Pq);
+        check_pair!(convert_rgb_hlg_native_impl_v3, TransferFunction::Hlg);
+        check_pair!(convert_rgb_adobe_native_impl_v3, TransferFunction::Gamma22);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn native_v3_parity_same_trc_rgba() {
+        let Some(token) = archmage::X64V3Token::summon() else {
+            eprintln!("native_v3_parity_same_trc_rgba: V3 not available");
+            return;
+        };
+        let m = srgb_to_bt2020_matrix();
+        let mut original = ramp(19, 4);
+        // Stamp arbitrary alpha values to verify byte-exact passthrough.
+        for i in 0..19 {
+            original[i * 4 + 3] = (i as f32 / 18.0) * 0.7 + 0.1;
+        }
+
+        macro_rules! check_pair {
+            ($impl_fn:ident, $trc:expr) => {{
+                let mut got = original.clone();
+                $impl_fn(token, &m, &mut got);
+                let mut want = original.clone();
+                scalar_reference_rgba(&m, &mut want, $trc, $trc);
+                for i in 0..19 {
+                    for c in 0..3 {
+                        let a = got[i * 4 + c];
+                        let b = want[i * 4 + c];
+                        let err = (a - b).abs();
+                        assert!(
+                            err < TOL_PARITY,
+                            "native_v3 RGBA {} px {i} ch {c}: got={a}, want={b} \
+                             (err={err:e})",
+                            stringify!($trc),
+                        );
+                    }
+                    // Alpha must be byte-exact identical.
+                    assert_eq!(
+                        got[i * 4 + 3].to_bits(),
+                        original[i * 4 + 3].to_bits(),
+                        "native_v3 RGBA {} px {i}: alpha mutated",
+                        stringify!($trc),
+                    );
+                }
+            }};
+        }
+
+        check_pair!(convert_rgba_srgb_native_impl_v3, TransferFunction::Srgb);
+        check_pair!(convert_rgba_bt709_native_impl_v3, TransferFunction::Bt709);
+        check_pair!(convert_rgba_pq_native_impl_v3, TransferFunction::Pq);
+        check_pair!(convert_rgba_hlg_native_impl_v3, TransferFunction::Hlg);
+        check_pair!(convert_rgba_adobe_native_impl_v3, TransferFunction::Gamma22);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn native_v3_parity_cross_trc_rgb() {
+        let Some(token) = archmage::X64V3Token::summon() else {
+            eprintln!("native_v3_parity_cross_trc_rgb: V3 not available");
+            return;
+        };
+        let m = srgb_to_bt2020_matrix();
+        let original = ramp(23, 3);
+
+        macro_rules! check_pair {
+            ($impl_fn:ident, $src:expr, $dst:expr) => {{
+                let mut got = original.clone();
+                $impl_fn(token, &m, &mut got);
+                let mut want = original.clone();
+                scalar_reference_rgb(&m, &mut want, $src, $dst);
+                for (i, (a, b)) in got.iter().zip(want.iter()).enumerate() {
+                    let err = (a - b).abs();
+                    assert!(
+                        err < TOL_PARITY,
+                        "native_v3 cross {}->{} lane {i}: got={a}, want={b} (err={err:e})",
+                        stringify!($src), stringify!($dst),
+                    );
+                }
+            }};
+        }
+
+        use TransferFunction::*;
+        check_pair!(convert_rgb_pq_to_srgb_native_impl_v3, Pq, Srgb);
+        check_pair!(convert_rgb_hlg_to_srgb_native_impl_v3, Hlg, Srgb);
+        check_pair!(convert_rgb_srgb_to_pq_native_impl_v3, Srgb, Pq);
+        check_pair!(convert_rgb_bt709_to_srgb_native_impl_v3, Bt709, Srgb);
+        check_pair!(convert_rgb_srgb_to_bt709_native_impl_v3, Srgb, Bt709);
+        check_pair!(convert_rgb_adobe_to_srgb_native_impl_v3, Gamma22, Srgb);
+        check_pair!(convert_rgb_srgb_to_adobe_native_impl_v3, Srgb, Gamma22);
+    }
+
+    /// Force the public dispatcher onto the native V3 path by disabling V4 /
+    /// V4x tokens at runtime, then verify the result still matches the scalar
+    /// reference. Exercises the dispatcher's V3 branch end-to-end (not just
+    /// the impl function in isolation).
+    ///
+    /// Skips on hosts without V3 (where the dispatcher would fall through to
+    /// the scalar wide impl anyway).
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn dispatcher_routes_to_native_v3_when_avx512_disabled() {
+        use archmage::testing::lock_token_testing;
+
+        let _guard = lock_token_testing();
+        if archmage::X64V3Token::summon().is_none() {
+            eprintln!("dispatcher_routes_to_native_v3: V3 unavailable, skipping");
+            return;
+        }
+
+        // Disable V4 / V4x at process scope so the dispatcher must fall
+        // through to V3.
+        #[cfg(feature = "avx512")]
+        {
+            let _ = archmage::X64V4xToken::dangerously_disable_token_process_wide(true);
+            let _ = archmage::X64V4Token::dangerously_disable_token_process_wide(true);
+        }
+
+        let m = srgb_to_bt2020_matrix();
+        // 17 pixels — exercises the V3 body's 8-px chunks + 1-px tail.
+        let original_rgb = ramp(17, 3);
+        let original_rgba = ramp(17, 4);
+
+        for &(trc, _) in same_trc_pairs() {
+            // RGB
+            let mut got = original_rgb.clone();
+            assert!(convert_f32_rgb_v2(&m, &mut got, trc, trc));
+            let mut want = original_rgb.clone();
+            scalar_reference_rgb(&m, &mut want, trc, trc);
+            for (i, (a, b)) in got.iter().zip(want.iter()).enumerate() {
+                let err = (a - b).abs();
+                assert!(
+                    err < TOL_PARITY,
+                    "dispatcher V3 RGB {trc:?} lane {i}: got={a}, want={b} \
+                     (err={err:e})",
+                );
+            }
+            // RGBA
+            let mut got = original_rgba.clone();
+            assert!(convert_f32_rgba_v2(&m, &mut got, trc, trc));
+            let mut want = original_rgba.clone();
+            scalar_reference_rgba(&m, &mut want, trc, trc);
+            for i in 0..17 {
+                for c in 0..3 {
+                    let a = got[i * 4 + c];
+                    let b = want[i * 4 + c];
+                    let err = (a - b).abs();
+                    assert!(
+                        err < TOL_PARITY,
+                        "dispatcher V3 RGBA {trc:?} px {i} ch {c}: got={a}, \
+                         want={b} (err={err:e})",
+                    );
+                }
+            }
+        }
+
+        // Restore — leave global state clean for other tests.
+        #[cfg(feature = "avx512")]
+        {
+            let _ = archmage::X64V4xToken::dangerously_disable_token_process_wide(false);
+            let _ = archmage::X64V4Token::dangerously_disable_token_process_wide(false);
+        }
+    }
 }
