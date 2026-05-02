@@ -96,6 +96,7 @@ fn mat3x3(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 /// {`TRC_SRGB`, `TRC_BT709`, `TRC_PQ`, `TRC_HLG`, `TRC_GAMMA22`}.
 #[inline(always)]
 fn scalar_linearize<const SRC_TRC: u8>(v: f32) -> f32 {
+    const { assert!(SRC_TRC < 5, "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
     match SRC_TRC {
         TRC_SRGB => tf::srgb_to_linear(v),
         TRC_BT709 => tf::bt709_to_linear(v),
@@ -113,6 +114,7 @@ fn scalar_linearize<const SRC_TRC: u8>(v: f32) -> f32 {
 /// {`TRC_SRGB`, `TRC_BT709`, `TRC_PQ`, `TRC_HLG`, `TRC_GAMMA22`}.
 #[inline(always)]
 fn scalar_encode<const DST_TRC: u8>(v: f32) -> f32 {
+    const { assert!(DST_TRC < 5, "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
     match DST_TRC {
         TRC_SRGB => tf::linear_to_srgb(v),
         TRC_BT709 => tf::linear_to_bt709(v),
@@ -138,6 +140,7 @@ fn linearize_x16<const SRC_TRC: u8, T: F32x16Convert>(
     t: T,
     v: GenericF32x16<T>,
 ) -> GenericF32x16<T> {
+    const { assert!(SRC_TRC < 5, "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
     match SRC_TRC {
         TRC_SRGB => {
             let z = GenericF32x16::zero(t);
@@ -157,6 +160,7 @@ fn encode_x16<const DST_TRC: u8, T: F32x16Convert>(
     t: T,
     v: GenericF32x16<T>,
 ) -> GenericF32x16<T> {
+    const { assert!(DST_TRC < 5, "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
     match DST_TRC {
         TRC_SRGB => {
             let z = GenericF32x16::zero(t);
@@ -176,6 +180,7 @@ fn linearize_x8<const SRC_TRC: u8, T: F32x8Convert>(
     t: T,
     v: GenericF32x8<T>,
 ) -> GenericF32x8<T> {
+    const { assert!(SRC_TRC < 5, "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
     match SRC_TRC {
         TRC_SRGB => {
             let z = GenericF32x8::zero(t);
@@ -195,6 +200,7 @@ fn encode_x8<const DST_TRC: u8, T: F32x8Convert>(
     t: T,
     v: GenericF32x8<T>,
 ) -> GenericF32x8<T> {
+    const { assert!(DST_TRC < 5, "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
     match DST_TRC {
         TRC_SRGB => {
             let z = GenericF32x8::zero(t);
@@ -214,6 +220,7 @@ fn linearize_x4<const SRC_TRC: u8, T: F32x4Convert>(
     t: T,
     v: GenericF32x4<T>,
 ) -> GenericF32x4<T> {
+    const { assert!(SRC_TRC < 5, "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
     match SRC_TRC {
         TRC_SRGB => {
             let z = GenericF32x4::zero(t);
@@ -233,6 +240,7 @@ fn encode_x4<const DST_TRC: u8, T: F32x4Convert>(
     t: T,
     v: GenericF32x4<T>,
 ) -> GenericF32x4<T> {
+    const { assert!(DST_TRC < 5, "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
     match DST_TRC {
         TRC_SRGB => {
             let z = GenericF32x4::zero(t);
@@ -351,10 +359,13 @@ fn convert_wide<
     m: &[[f32; 3]; 3],
     data: &mut [f32],
 ) {
+    const { assert!(SRC_TRC < 5, "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
+    const { assert!(DST_TRC < 5, "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
+    const { assert!(CHANNELS == 3 || CHANNELS == 4, "CHANNELS must be 3 (RGB) or 4 (RGBA)"); }
+    const { assert!(CHUNK == 16 * CHANNELS, "CHUNK must equal PIXELS (16) * CHANNELS for the wide body"); }
     #[allow(non_camel_case_types)]
     type f32x16 = GenericF32x16<Token>;
     const PIXELS: usize = 16;
-    debug_assert_eq!(CHUNK, PIXELS * CHANNELS);
 
     let chunks = data.len() / CHUNK;
     let bulk = chunks * CHUNK;
@@ -428,10 +439,13 @@ fn convert_native<
     m: &[[f32; 3]; 3],
     data: &mut [f32],
 ) {
+    const { assert!(SRC_TRC < 5, "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
+    const { assert!(DST_TRC < 5, "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
+    const { assert!(CHANNELS == 3 || CHANNELS == 4, "CHANNELS must be 3 (RGB) or 4 (RGBA)"); }
+    const { assert!(CHUNK == 8 * CHANNELS, "CHUNK must equal PIXELS (8) * CHANNELS for the native V3 body"); }
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
     const PIXELS: usize = 8;
-    debug_assert_eq!(CHUNK, PIXELS * CHANNELS);
 
     let chunks = data.len() / CHUNK;
     let bulk = chunks * CHUNK;
@@ -500,9 +514,12 @@ fn convert_narrow<
     data: &mut [f32],
 ) {
     #[allow(non_camel_case_types)]
+    const { assert!(SRC_TRC < 5, "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
+    const { assert!(DST_TRC < 5, "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
+    const { assert!(CHANNELS == 3 || CHANNELS == 4, "CHANNELS must be 3 (RGB) or 4 (RGBA)"); }
+    const { assert!(CHUNK == 4 * CHANNELS, "CHUNK must equal PIXELS (4) * CHANNELS for the narrow body"); }
     type f32x4 = GenericF32x4<Token>;
     const PIXELS: usize = 4;
-    debug_assert_eq!(CHUNK, PIXELS * CHANNELS);
 
     let chunks = data.len() / CHUNK;
     let bulk = chunks * CHUNK;
