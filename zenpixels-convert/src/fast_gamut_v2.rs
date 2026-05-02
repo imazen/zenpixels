@@ -1,11 +1,17 @@
 //! `fast_gamut_v2` — magetypes-driven replacement for the v1 `stamp_trc_kernels!` family.
 //!
 //! See `fast_gamut_DESIGN.md` for the full plan. This module provides a
-//! drop-in replacement for the v1 fused TRC + 3×3 matrix kernels with two
+//! drop-in replacement for the v1 fused TRC + 3×3 matrix kernels with three
 //! per-pair bodies:
 //!
-//! - **wide body** (`#[magetypes(v4x, v4, v3, scalar)]`) over `f32x16<T>` —
-//!   active on x86_64 (V3/V4/V4x) and on the scalar fallback for any host.
+//! - **wide body** (`#[magetypes(v4x, v4, scalar)]`) over `f32x16<T>` —
+//!   active on x86_64 hosts with AVX-512 (V4 / V4x) and on the scalar
+//!   fallback for any host. Native f32x16 lanes on V4 / V4x; the scalar
+//!   variant generates portable scalar code.
+//! - **native V3 body** (`#[magetypes(v3)]`) over `f32x8<T>` — active on
+//!   x86_64 V3 (AVX2 + FMA) hosts. Matches the v1 `fused_8px_rgb_<name>`
+//!   shape: 8 pixels per chunk through native 256-bit ops, avoiding the
+//!   register-pressure cost of polyfilling f32x16 to 2× 256-bit on AVX2.
 //! - **narrow body** (`#[magetypes(neon, wasm128)]`) over `f32x4<T>` —
 //!   active on AArch64 / WASM hosts where the wide polyfill incurs heavy
 //!   register pressure.
@@ -36,7 +42,9 @@
 
 use archmage::prelude::*;
 use linear_srgb::tf;
-use magetypes::simd::generic::{f32x4 as GenericF32x4, f32x16 as GenericF32x16};
+use magetypes::simd::generic::{
+    f32x4 as GenericF32x4, f32x8 as GenericF32x8, f32x16 as GenericF32x16,
+};
 
 use crate::TransferFunction;
 
@@ -66,13 +74,15 @@ fn adobe_from_linear_scalar(v: f32) -> f32 {
 }
 
 // =============================================================================
-// Macro — stamps wide + narrow bodies + dispatchers for one TRC pair.
+// Macro — stamps wide + native V3 + narrow bodies + dispatchers for one TRC pair.
 //
 // Inputs:
 //   $name        — pair tag (e.g. `srgb`, `pq_to_srgb`, `adobe`)
 //   $lin_x16     — generic SIMD linearize: fn<T: F32x16Convert>(t, v) -> v
+//   $lin_x8      — generic SIMD linearize: fn<T: F32x8Convert>(t, v) -> v
 //   $lin_x4      — generic SIMD linearize: fn<T: F32x4Convert>(t, v) -> v
 //   $enc_x16     — generic SIMD encode:    fn<T: F32x16Convert>(t, v) -> v
+//   $enc_x8      — generic SIMD encode:    fn<T: F32x8Convert>(t, v) -> v
 //   $enc_x4      — generic SIMD encode:    fn<T: F32x4Convert>(t, v) -> v
 //   $lin_scalar  — scalar fn(f32) -> f32
 //   $enc_scalar  — scalar fn(f32) -> f32
@@ -82,24 +92,29 @@ fn adobe_from_linear_scalar(v: f32) -> f32 {
 //   convert_f32_rgb_<name>_v2 (matrix, slice)
 //   convert_f32_rgba_<name>_v2 (matrix, slice)
 //
-// plus their internal `_wide_impl` / `_narrow_impl` magetypes-stamped bodies.
+// plus their internal `_wide_impl_*` / `_native_impl_v3` / `_narrow_impl_*`
+// magetypes-stamped bodies.
 // =============================================================================
 
 macro_rules! stamp_v2_pair {
     (
         name: $name:ident,
         lin_x16: $lin_x16:expr,
+        lin_x8: $lin_x8:expr,
         lin_x4: $lin_x4:expr,
         enc_x16: $enc_x16:expr,
+        enc_x8: $enc_x8:expr,
         enc_x4: $enc_x4:expr,
         lin_scalar: $lin_scalar:expr,
         enc_scalar: $enc_scalar:expr,
     ) => {
         paste::paste! {
             // -----------------------------------------------------------------
-            // Wide body: f32x16, dispatched across V4x / V4 / V3 / scalar.
+            // Wide body: f32x16, dispatched across V4x / V4 / scalar.
+            // V3 dropped — handled by the native f32x8 body below to avoid
+            // 2x256-bit polyfill register pressure on AVX2.
             // -----------------------------------------------------------------
-            #[magetypes(v4x, v4, v3, scalar)]
+            #[magetypes(v4x, v4, scalar)]
             fn [<convert_rgb_ $name _wide_impl>](
                 token: Token,
                 m: &[[f32; 3]; 3],
@@ -171,7 +186,7 @@ macro_rules! stamp_v2_pair {
                 }
             }
 
-            #[magetypes(v4x, v4, v3, scalar)]
+            #[magetypes(v4x, v4, scalar)]
             fn [<convert_rgba_ $name _wide_impl>](
                 token: Token,
                 m: &[[f32; 3]; 3],
@@ -242,6 +257,155 @@ macro_rules! stamp_v2_pair {
                     pixel[1] = ($enc_scalar)(ng);
                     pixel[2] = ($enc_scalar)(nb);
                     // pixel[3] unchanged.
+                }
+            }
+
+            // -----------------------------------------------------------------
+            // Native V3 body: f32x8 over X64V3Token, native AVX2 width.
+            // Mirrors v1's fused_8px_rgb_<name> / fused_8px_rgba_<name> shape.
+            // -----------------------------------------------------------------
+            #[magetypes(v3)]
+            fn [<convert_rgb_ $name _native_impl>](
+                token: Token,
+                m: &[[f32; 3]; 3],
+                data: &mut [f32],
+            ) {
+                #[allow(non_camel_case_types)]
+                type f32x8 = GenericF32x8<Token>;
+                const PIXELS: usize = 8;
+                const CHUNK: usize = PIXELS * 3;
+
+                let m00 = f32x8::splat(token, m[0][0]);
+                let m01 = f32x8::splat(token, m[0][1]);
+                let m02 = f32x8::splat(token, m[0][2]);
+                let m10 = f32x8::splat(token, m[1][0]);
+                let m11 = f32x8::splat(token, m[1][1]);
+                let m12 = f32x8::splat(token, m[1][2]);
+                let m20 = f32x8::splat(token, m[2][0]);
+                let m21 = f32x8::splat(token, m[2][1]);
+                let m22 = f32x8::splat(token, m[2][2]);
+
+                let chunks = data.len() / CHUNK;
+                for chunk_i in 0..chunks {
+                    let off = chunk_i * CHUNK;
+                    let mut r = [0.0f32; PIXELS];
+                    let mut g = [0.0f32; PIXELS];
+                    let mut b = [0.0f32; PIXELS];
+                    for i in 0..PIXELS {
+                        r[i] = data[off + i * 3];
+                        g[i] = data[off + i * 3 + 1];
+                        b[i] = data[off + i * 3 + 2];
+                    }
+                    let rv = f32x8::load(token, &r);
+                    let gv = f32x8::load(token, &g);
+                    let bv = f32x8::load(token, &b);
+
+                    let rl = ($lin_x8)(token, rv);
+                    let gl = ($lin_x8)(token, gv);
+                    let bl = ($lin_x8)(token, bv);
+
+                    let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
+                    let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
+                    let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
+
+                    let or_ = ($enc_x8)(token, nr);
+                    let og_ = ($enc_x8)(token, ng);
+                    let ob_ = ($enc_x8)(token, nb);
+
+                    let mut ro = [0.0f32; PIXELS];
+                    let mut go = [0.0f32; PIXELS];
+                    let mut bo = [0.0f32; PIXELS];
+                    or_.store(&mut ro);
+                    og_.store(&mut go);
+                    ob_.store(&mut bo);
+                    for i in 0..PIXELS {
+                        data[off + i * 3] = ro[i];
+                        data[off + i * 3 + 1] = go[i];
+                        data[off + i * 3 + 2] = bo[i];
+                    }
+                }
+
+                for pixel in data[chunks * CHUNK..].chunks_exact_mut(3) {
+                    let r = ($lin_scalar)(pixel[0]);
+                    let g = ($lin_scalar)(pixel[1]);
+                    let b = ($lin_scalar)(pixel[2]);
+                    let (nr, ng, nb) = mat3x3(m, r, g, b);
+                    pixel[0] = ($enc_scalar)(nr);
+                    pixel[1] = ($enc_scalar)(ng);
+                    pixel[2] = ($enc_scalar)(nb);
+                }
+            }
+
+            #[magetypes(v3)]
+            fn [<convert_rgba_ $name _native_impl>](
+                token: Token,
+                m: &[[f32; 3]; 3],
+                data: &mut [f32],
+            ) {
+                #[allow(non_camel_case_types)]
+                type f32x8 = GenericF32x8<Token>;
+                const PIXELS: usize = 8;
+                const CHUNK: usize = PIXELS * 4;
+
+                let m00 = f32x8::splat(token, m[0][0]);
+                let m01 = f32x8::splat(token, m[0][1]);
+                let m02 = f32x8::splat(token, m[0][2]);
+                let m10 = f32x8::splat(token, m[1][0]);
+                let m11 = f32x8::splat(token, m[1][1]);
+                let m12 = f32x8::splat(token, m[1][2]);
+                let m20 = f32x8::splat(token, m[2][0]);
+                let m21 = f32x8::splat(token, m[2][1]);
+                let m22 = f32x8::splat(token, m[2][2]);
+
+                let chunks = data.len() / CHUNK;
+                for chunk_i in 0..chunks {
+                    let off = chunk_i * CHUNK;
+                    let mut r = [0.0f32; PIXELS];
+                    let mut g = [0.0f32; PIXELS];
+                    let mut b = [0.0f32; PIXELS];
+                    for i in 0..PIXELS {
+                        r[i] = data[off + i * 4];
+                        g[i] = data[off + i * 4 + 1];
+                        b[i] = data[off + i * 4 + 2];
+                    }
+                    let rv = f32x8::load(token, &r);
+                    let gv = f32x8::load(token, &g);
+                    let bv = f32x8::load(token, &b);
+
+                    let rl = ($lin_x8)(token, rv);
+                    let gl = ($lin_x8)(token, gv);
+                    let bl = ($lin_x8)(token, bv);
+
+                    let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
+                    let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
+                    let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
+
+                    let or_ = ($enc_x8)(token, nr);
+                    let og_ = ($enc_x8)(token, ng);
+                    let ob_ = ($enc_x8)(token, nb);
+
+                    let mut ro = [0.0f32; PIXELS];
+                    let mut go = [0.0f32; PIXELS];
+                    let mut bo = [0.0f32; PIXELS];
+                    or_.store(&mut ro);
+                    og_.store(&mut go);
+                    ob_.store(&mut bo);
+                    for i in 0..PIXELS {
+                        data[off + i * 4] = ro[i];
+                        data[off + i * 4 + 1] = go[i];
+                        data[off + i * 4 + 2] = bo[i];
+                        // alpha unchanged.
+                    }
+                }
+
+                for pixel in data[chunks * CHUNK..].chunks_exact_mut(4) {
+                    let r = ($lin_scalar)(pixel[0]);
+                    let g = ($lin_scalar)(pixel[1]);
+                    let b = ($lin_scalar)(pixel[2]);
+                    let (nr, ng, nb) = mat3x3(m, r, g, b);
+                    pixel[0] = ($enc_scalar)(nr);
+                    pixel[1] = ($enc_scalar)(ng);
+                    pixel[2] = ($enc_scalar)(nb);
                 }
             }
 
@@ -413,37 +577,56 @@ macro_rules! stamp_v2_pair {
             }
 
             // -----------------------------------------------------------------
-            // Public dispatchers — pick wide on x86 / scalar, narrow on
-            // arm / wasm.
+            // Public dispatchers — manual try-tier cascade (Option A).
+            //
+            // x86_64: V4x → wide_impl_v4x; V4 → wide_impl_v4;
+            //         V3 → native_impl_v3 (native f32x8, no AVX2 polyfill);
+            //         else → wide_impl_scalar.
+            // aarch64 / arm64ec: NEON → narrow_impl_neon, else scalar.
+            // wasm32: WASM128 → narrow_impl_wasm128, else scalar.
             // -----------------------------------------------------------------
             /// Convert RGB f32 in-place via the sRGB/{TRC} pipeline for the
             /// `$name` pair. `data.len()` must be a multiple of 3.
             pub fn [<convert_f32_rgb_ $name _v2>](m: &[[f32; 3]; 3], data: &mut [f32]) {
                 debug_assert_eq!(data.len() % 3, 0);
-                #[cfg(any(target_arch = "x86_64", not(any(
-                    target_arch = "aarch64",
-                    target_arch = "arm64ec",
-                    target_arch = "wasm32",
-                ))))]
+                #[cfg(target_arch = "x86_64")]
                 {
-                    incant!(
-                        [<convert_rgb_ $name _wide_impl>](m, data),
-                        [v4x, v4, v3, scalar]
-                    );
+                    #[cfg(feature = "avx512")]
+                    {
+                        if let Some(t) = X64V4xToken::summon() {
+                            return [<convert_rgb_ $name _wide_impl_v4x>](t, m, data);
+                        }
+                        if let Some(t) = X64V4Token::summon() {
+                            return [<convert_rgb_ $name _wide_impl_v4>](t, m, data);
+                        }
+                    }
+                    if let Some(t) = X64V3Token::summon() {
+                        return [<convert_rgb_ $name _native_impl_v3>](t, m, data);
+                    }
+                    return [<convert_rgb_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data);
                 }
                 #[cfg(any(target_arch = "aarch64", target_arch = "arm64ec"))]
                 {
-                    incant!(
-                        [<convert_rgb_ $name _narrow_impl>](m, data),
-                        [neon, scalar]
-                    );
+                    if let Some(t) = NeonToken::summon() {
+                        return [<convert_rgb_ $name _narrow_impl_neon>](t, m, data);
+                    }
+                    return [<convert_rgb_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data);
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
-                    incant!(
-                        [<convert_rgb_ $name _narrow_impl>](m, data),
-                        [wasm128, scalar]
-                    );
+                    if let Some(t) = Wasm128Token::summon() {
+                        return [<convert_rgb_ $name _narrow_impl_wasm128>](t, m, data);
+                    }
+                    return [<convert_rgb_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data);
+                }
+                #[cfg(not(any(
+                    target_arch = "x86_64",
+                    target_arch = "aarch64",
+                    target_arch = "arm64ec",
+                    target_arch = "wasm32",
+                )))]
+                {
+                    [<convert_rgb_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data)
                 }
             }
 
@@ -451,30 +634,44 @@ macro_rules! stamp_v2_pair {
             /// `$name` pair. Alpha is byte-exact unchanged.
             pub fn [<convert_f32_rgba_ $name _v2>](m: &[[f32; 3]; 3], data: &mut [f32]) {
                 debug_assert_eq!(data.len() % 4, 0);
-                #[cfg(any(target_arch = "x86_64", not(any(
-                    target_arch = "aarch64",
-                    target_arch = "arm64ec",
-                    target_arch = "wasm32",
-                ))))]
+                #[cfg(target_arch = "x86_64")]
                 {
-                    incant!(
-                        [<convert_rgba_ $name _wide_impl>](m, data),
-                        [v4x, v4, v3, scalar]
-                    );
+                    #[cfg(feature = "avx512")]
+                    {
+                        if let Some(t) = X64V4xToken::summon() {
+                            return [<convert_rgba_ $name _wide_impl_v4x>](t, m, data);
+                        }
+                        if let Some(t) = X64V4Token::summon() {
+                            return [<convert_rgba_ $name _wide_impl_v4>](t, m, data);
+                        }
+                    }
+                    if let Some(t) = X64V3Token::summon() {
+                        return [<convert_rgba_ $name _native_impl_v3>](t, m, data);
+                    }
+                    return [<convert_rgba_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data);
                 }
                 #[cfg(any(target_arch = "aarch64", target_arch = "arm64ec"))]
                 {
-                    incant!(
-                        [<convert_rgba_ $name _narrow_impl>](m, data),
-                        [neon, scalar]
-                    );
+                    if let Some(t) = NeonToken::summon() {
+                        return [<convert_rgba_ $name _narrow_impl_neon>](t, m, data);
+                    }
+                    return [<convert_rgba_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data);
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
-                    incant!(
-                        [<convert_rgba_ $name _narrow_impl>](m, data),
-                        [wasm128, scalar]
-                    );
+                    if let Some(t) = Wasm128Token::summon() {
+                        return [<convert_rgba_ $name _narrow_impl_wasm128>](t, m, data);
+                    }
+                    return [<convert_rgba_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data);
+                }
+                #[cfg(not(any(
+                    target_arch = "x86_64",
+                    target_arch = "aarch64",
+                    target_arch = "arm64ec",
+                    target_arch = "wasm32",
+                )))]
+                {
+                    [<convert_rgba_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data)
                 }
             }
         }
@@ -494,8 +691,10 @@ macro_rules! stamp_v2_pair {
 stamp_v2_pair!(
     name: srgb,
     lin_x16: tf::srgb::srgb_to_linear_x16,
+    lin_x8: tf::srgb::srgb_to_linear_x8,
     lin_x4: tf::srgb::srgb_to_linear_x4,
     enc_x16: tf::srgb::linear_to_srgb_x16,
+    enc_x8: tf::srgb::linear_to_srgb_x8,
     enc_x4: tf::srgb::linear_to_srgb_x4,
     lin_scalar: tf::srgb_to_linear,
     enc_scalar: tf::linear_to_srgb,
@@ -504,8 +703,10 @@ stamp_v2_pair!(
 stamp_v2_pair!(
     name: bt709,
     lin_x16: tf::bt709::bt709_to_linear_x16,
+    lin_x8: tf::bt709::bt709_to_linear_x8,
     lin_x4: tf::bt709::bt709_to_linear_x4,
     enc_x16: tf::bt709::linear_to_bt709_x16,
+    enc_x8: tf::bt709::linear_to_bt709_x8,
     enc_x4: tf::bt709::linear_to_bt709_x4,
     lin_scalar: tf::bt709_to_linear,
     enc_scalar: tf::linear_to_bt709,
@@ -514,8 +715,10 @@ stamp_v2_pair!(
 stamp_v2_pair!(
     name: pq,
     lin_x16: tf::pq::pq_to_linear_x16,
+    lin_x8: tf::pq::pq_to_linear_x8,
     lin_x4: tf::pq::pq_to_linear_x4,
     enc_x16: tf::pq::linear_to_pq_x16,
+    enc_x8: tf::pq::linear_to_pq_x8,
     enc_x4: tf::pq::linear_to_pq_x4,
     lin_scalar: tf::pq_to_linear,
     enc_scalar: tf::linear_to_pq,
@@ -524,8 +727,10 @@ stamp_v2_pair!(
 stamp_v2_pair!(
     name: hlg,
     lin_x16: tf::hlg::hlg_to_linear_x16,
+    lin_x8: tf::hlg::hlg_to_linear_x8,
     lin_x4: tf::hlg::hlg_to_linear_x4,
     enc_x16: tf::hlg::linear_to_hlg_x16,
+    enc_x8: tf::hlg::linear_to_hlg_x8,
     enc_x4: tf::hlg::linear_to_hlg_x4,
     lin_scalar: tf::hlg_to_linear,
     enc_scalar: tf::linear_to_hlg,
@@ -535,8 +740,10 @@ stamp_v2_pair!(
 stamp_v2_pair!(
     name: adobe,
     lin_x16: |t, v| tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
+    lin_x8: |t, v| tf::gamma::gamma_to_linear_x8(t, v, ADOBE_GAMMA),
     lin_x4: |t, v| tf::gamma::gamma_to_linear_x4(t, v, ADOBE_GAMMA),
     enc_x16: |t, v| tf::gamma::linear_to_gamma_x16(t, v, ADOBE_GAMMA),
+    enc_x8: |t, v| tf::gamma::linear_to_gamma_x8(t, v, ADOBE_GAMMA),
     enc_x4: |t, v| tf::gamma::linear_to_gamma_x4(t, v, ADOBE_GAMMA),
     lin_scalar: adobe_to_linear_scalar,
     enc_scalar: adobe_from_linear_scalar,
@@ -547,8 +754,10 @@ stamp_v2_pair!(
 stamp_v2_pair!(
     name: pq_to_srgb,
     lin_x16: tf::pq::pq_to_linear_x16,
+    lin_x8: tf::pq::pq_to_linear_x8,
     lin_x4: tf::pq::pq_to_linear_x4,
     enc_x16: tf::srgb::linear_to_srgb_x16,
+    enc_x8: tf::srgb::linear_to_srgb_x8,
     enc_x4: tf::srgb::linear_to_srgb_x4,
     lin_scalar: tf::pq_to_linear,
     enc_scalar: tf::linear_to_srgb,
@@ -557,8 +766,10 @@ stamp_v2_pair!(
 stamp_v2_pair!(
     name: hlg_to_srgb,
     lin_x16: tf::hlg::hlg_to_linear_x16,
+    lin_x8: tf::hlg::hlg_to_linear_x8,
     lin_x4: tf::hlg::hlg_to_linear_x4,
     enc_x16: tf::srgb::linear_to_srgb_x16,
+    enc_x8: tf::srgb::linear_to_srgb_x8,
     enc_x4: tf::srgb::linear_to_srgb_x4,
     lin_scalar: tf::hlg_to_linear,
     enc_scalar: tf::linear_to_srgb,
@@ -567,8 +778,10 @@ stamp_v2_pair!(
 stamp_v2_pair!(
     name: srgb_to_pq,
     lin_x16: tf::srgb::srgb_to_linear_x16,
+    lin_x8: tf::srgb::srgb_to_linear_x8,
     lin_x4: tf::srgb::srgb_to_linear_x4,
     enc_x16: tf::pq::linear_to_pq_x16,
+    enc_x8: tf::pq::linear_to_pq_x8,
     enc_x4: tf::pq::linear_to_pq_x4,
     lin_scalar: tf::srgb_to_linear,
     enc_scalar: tf::linear_to_pq,
@@ -577,8 +790,10 @@ stamp_v2_pair!(
 stamp_v2_pair!(
     name: bt709_to_srgb,
     lin_x16: tf::bt709::bt709_to_linear_x16,
+    lin_x8: tf::bt709::bt709_to_linear_x8,
     lin_x4: tf::bt709::bt709_to_linear_x4,
     enc_x16: tf::srgb::linear_to_srgb_x16,
+    enc_x8: tf::srgb::linear_to_srgb_x8,
     enc_x4: tf::srgb::linear_to_srgb_x4,
     lin_scalar: tf::bt709_to_linear,
     enc_scalar: tf::linear_to_srgb,
@@ -587,8 +802,10 @@ stamp_v2_pair!(
 stamp_v2_pair!(
     name: srgb_to_bt709,
     lin_x16: tf::srgb::srgb_to_linear_x16,
+    lin_x8: tf::srgb::srgb_to_linear_x8,
     lin_x4: tf::srgb::srgb_to_linear_x4,
     enc_x16: tf::bt709::linear_to_bt709_x16,
+    enc_x8: tf::bt709::linear_to_bt709_x8,
     enc_x4: tf::bt709::linear_to_bt709_x4,
     lin_scalar: tf::srgb_to_linear,
     enc_scalar: tf::linear_to_bt709,
@@ -597,8 +814,10 @@ stamp_v2_pair!(
 stamp_v2_pair!(
     name: adobe_to_srgb,
     lin_x16: |t, v| tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
+    lin_x8: |t, v| tf::gamma::gamma_to_linear_x8(t, v, ADOBE_GAMMA),
     lin_x4: |t, v| tf::gamma::gamma_to_linear_x4(t, v, ADOBE_GAMMA),
     enc_x16: tf::srgb::linear_to_srgb_x16,
+    enc_x8: tf::srgb::linear_to_srgb_x8,
     enc_x4: tf::srgb::linear_to_srgb_x4,
     lin_scalar: adobe_to_linear_scalar,
     enc_scalar: tf::linear_to_srgb,
@@ -607,8 +826,10 @@ stamp_v2_pair!(
 stamp_v2_pair!(
     name: srgb_to_adobe,
     lin_x16: tf::srgb::srgb_to_linear_x16,
+    lin_x8: tf::srgb::srgb_to_linear_x8,
     lin_x4: tf::srgb::srgb_to_linear_x4,
     enc_x16: |t, v| tf::gamma::linear_to_gamma_x16(t, v, ADOBE_GAMMA),
+    enc_x8: |t, v| tf::gamma::linear_to_gamma_x8(t, v, ADOBE_GAMMA),
     enc_x4: |t, v| tf::gamma::linear_to_gamma_x4(t, v, ADOBE_GAMMA),
     lin_scalar: tf::srgb_to_linear,
     enc_scalar: adobe_from_linear_scalar,
