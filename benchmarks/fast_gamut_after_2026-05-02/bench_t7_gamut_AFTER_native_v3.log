@@ -1,0 +1,1054 @@
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/bt709.rs:37:1
+    |
+ 37 | pub fn bt709_to_linear_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: the lint level is defined here
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/lib.rs:186:9
+    |
+186 | #![warn(missing_docs)]
+    |         ^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/bt709.rs:58:1
+   |
+58 | pub fn linear_to_bt709_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/bt709.rs:83:1
+   |
+83 | pub fn bt709_to_linear_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/bt709.rs:100:1
+    |
+100 | pub fn linear_to_bt709_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/bt709.rs:124:1
+    |
+124 | pub fn bt709_to_linear_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/bt709.rs:141:1
+    |
+141 | pub fn linear_to_bt709_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/hlg.rs:50:1
+   |
+50 | pub fn hlg_to_linear_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/hlg.rs:75:1
+   |
+75 | pub fn linear_to_hlg_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/hlg.rs:107:1
+    |
+107 | pub fn hlg_to_linear_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/hlg.rs:129:1
+    |
+129 | pub fn linear_to_hlg_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/hlg.rs:158:1
+    |
+158 | pub fn hlg_to_linear_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/hlg.rs:180:1
+    |
+180 | pub fn linear_to_hlg_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/pq.rs:140:1
+    |
+140 | pub fn pq_to_linear_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/pq.rs:158:1
+    |
+158 | pub fn linear_to_pq_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/pq.rs:182:1
+    |
+182 | pub fn pq_to_linear_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/pq.rs:199:1
+    |
+199 | pub fn linear_to_pq_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/pq.rs:223:1
+    |
+223 | pub fn pq_to_linear_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/pq.rs:240:1
+    |
+240 | pub fn linear_to_pq_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/srgb.rs:13:1
+   |
+13 | pub fn srgb_to_linear_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/srgb.rs:29:1
+   |
+29 | pub fn linear_to_srgb_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/srgb.rs:48:1
+   |
+48 | pub fn srgb_to_linear_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/srgb.rs:63:1
+   |
+63 | pub fn linear_to_srgb_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/srgb.rs:86:1
+   |
+86 | pub fn srgb_to_linear_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/srgb.rs:101:1
+    |
+101 | pub fn linear_to_srgb_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `linear-srgb` (lib) generated 24 warnings
+warning: function `convert_rgb_srgb_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:268:16
+    |
+268 |               fn [<convert_rgb_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+691 | / stamp_v2_pair!(
+692 | |     name: srgb,
+693 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+694 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+700 | |     enc_scalar: tf::linear_to_srgb,
+701 | | );
+    | |_- in this macro invocation
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_srgb_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:340:16
+    |
+340 |               fn [<convert_rgba_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+691 | / stamp_v2_pair!(
+692 | |     name: srgb,
+693 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+694 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+700 | |     enc_scalar: tf::linear_to_srgb,
+701 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_srgb_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:416:16
+    |
+416 |               fn [<convert_rgb_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+691 | / stamp_v2_pair!(
+692 | |     name: srgb,
+693 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+694 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+700 | |     enc_scalar: tf::linear_to_srgb,
+701 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_srgb_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:498:16
+    |
+498 |               fn [<convert_rgba_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+691 | / stamp_v2_pair!(
+692 | |     name: srgb,
+693 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+694 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+700 | |     enc_scalar: tf::linear_to_srgb,
+701 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_bt709_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:268:16
+    |
+268 |               fn [<convert_rgb_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+703 | / stamp_v2_pair!(
+704 | |     name: bt709,
+705 | |     lin_x16: tf::bt709::bt709_to_linear_x16,
+706 | |     lin_x8: tf::bt709::bt709_to_linear_x8,
+...   |
+712 | |     enc_scalar: tf::linear_to_bt709,
+713 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_bt709_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:340:16
+    |
+340 |               fn [<convert_rgba_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+703 | / stamp_v2_pair!(
+704 | |     name: bt709,
+705 | |     lin_x16: tf::bt709::bt709_to_linear_x16,
+706 | |     lin_x8: tf::bt709::bt709_to_linear_x8,
+...   |
+712 | |     enc_scalar: tf::linear_to_bt709,
+713 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_bt709_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:416:16
+    |
+416 |               fn [<convert_rgb_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+703 | / stamp_v2_pair!(
+704 | |     name: bt709,
+705 | |     lin_x16: tf::bt709::bt709_to_linear_x16,
+706 | |     lin_x8: tf::bt709::bt709_to_linear_x8,
+...   |
+712 | |     enc_scalar: tf::linear_to_bt709,
+713 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_bt709_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:498:16
+    |
+498 |               fn [<convert_rgba_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+703 | / stamp_v2_pair!(
+704 | |     name: bt709,
+705 | |     lin_x16: tf::bt709::bt709_to_linear_x16,
+706 | |     lin_x8: tf::bt709::bt709_to_linear_x8,
+...   |
+712 | |     enc_scalar: tf::linear_to_bt709,
+713 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_pq_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:268:16
+    |
+268 |               fn [<convert_rgb_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+715 | / stamp_v2_pair!(
+716 | |     name: pq,
+717 | |     lin_x16: tf::pq::pq_to_linear_x16,
+718 | |     lin_x8: tf::pq::pq_to_linear_x8,
+...   |
+724 | |     enc_scalar: tf::linear_to_pq,
+725 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_pq_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:340:16
+    |
+340 |               fn [<convert_rgba_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+715 | / stamp_v2_pair!(
+716 | |     name: pq,
+717 | |     lin_x16: tf::pq::pq_to_linear_x16,
+718 | |     lin_x8: tf::pq::pq_to_linear_x8,
+...   |
+724 | |     enc_scalar: tf::linear_to_pq,
+725 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_pq_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:416:16
+    |
+416 |               fn [<convert_rgb_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+715 | / stamp_v2_pair!(
+716 | |     name: pq,
+717 | |     lin_x16: tf::pq::pq_to_linear_x16,
+718 | |     lin_x8: tf::pq::pq_to_linear_x8,
+...   |
+724 | |     enc_scalar: tf::linear_to_pq,
+725 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_pq_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:498:16
+    |
+498 |               fn [<convert_rgba_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+715 | / stamp_v2_pair!(
+716 | |     name: pq,
+717 | |     lin_x16: tf::pq::pq_to_linear_x16,
+718 | |     lin_x8: tf::pq::pq_to_linear_x8,
+...   |
+724 | |     enc_scalar: tf::linear_to_pq,
+725 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_hlg_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:268:16
+    |
+268 |               fn [<convert_rgb_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+727 | / stamp_v2_pair!(
+728 | |     name: hlg,
+729 | |     lin_x16: tf::hlg::hlg_to_linear_x16,
+730 | |     lin_x8: tf::hlg::hlg_to_linear_x8,
+...   |
+736 | |     enc_scalar: tf::linear_to_hlg,
+737 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_hlg_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:340:16
+    |
+340 |               fn [<convert_rgba_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+727 | / stamp_v2_pair!(
+728 | |     name: hlg,
+729 | |     lin_x16: tf::hlg::hlg_to_linear_x16,
+730 | |     lin_x8: tf::hlg::hlg_to_linear_x8,
+...   |
+736 | |     enc_scalar: tf::linear_to_hlg,
+737 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_hlg_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:416:16
+    |
+416 |               fn [<convert_rgb_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+727 | / stamp_v2_pair!(
+728 | |     name: hlg,
+729 | |     lin_x16: tf::hlg::hlg_to_linear_x16,
+730 | |     lin_x8: tf::hlg::hlg_to_linear_x8,
+...   |
+736 | |     enc_scalar: tf::linear_to_hlg,
+737 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_hlg_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:498:16
+    |
+498 |               fn [<convert_rgba_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+727 | / stamp_v2_pair!(
+728 | |     name: hlg,
+729 | |     lin_x16: tf::hlg::hlg_to_linear_x16,
+730 | |     lin_x8: tf::hlg::hlg_to_linear_x8,
+...   |
+736 | |     enc_scalar: tf::linear_to_hlg,
+737 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_adobe_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:268:16
+    |
+268 |               fn [<convert_rgb_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+740 | / stamp_v2_pair!(
+741 | |     name: adobe,
+742 | |     lin_x16: |t, v| tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
+743 | |     lin_x8: |t, v| tf::gamma::gamma_to_linear_x8(t, v, ADOBE_GAMMA),
+...   |
+749 | |     enc_scalar: adobe_from_linear_scalar,
+750 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_adobe_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:340:16
+    |
+340 |               fn [<convert_rgba_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+740 | / stamp_v2_pair!(
+741 | |     name: adobe,
+742 | |     lin_x16: |t, v| tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
+743 | |     lin_x8: |t, v| tf::gamma::gamma_to_linear_x8(t, v, ADOBE_GAMMA),
+...   |
+749 | |     enc_scalar: adobe_from_linear_scalar,
+750 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_adobe_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:416:16
+    |
+416 |               fn [<convert_rgb_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+740 | / stamp_v2_pair!(
+741 | |     name: adobe,
+742 | |     lin_x16: |t, v| tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
+743 | |     lin_x8: |t, v| tf::gamma::gamma_to_linear_x8(t, v, ADOBE_GAMMA),
+...   |
+749 | |     enc_scalar: adobe_from_linear_scalar,
+750 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_adobe_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:498:16
+    |
+498 |               fn [<convert_rgba_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+740 | / stamp_v2_pair!(
+741 | |     name: adobe,
+742 | |     lin_x16: |t, v| tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
+743 | |     lin_x8: |t, v| tf::gamma::gamma_to_linear_x8(t, v, ADOBE_GAMMA),
+...   |
+749 | |     enc_scalar: adobe_from_linear_scalar,
+750 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_pq_to_srgb_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:268:16
+    |
+268 |               fn [<convert_rgb_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+754 | / stamp_v2_pair!(
+755 | |     name: pq_to_srgb,
+756 | |     lin_x16: tf::pq::pq_to_linear_x16,
+757 | |     lin_x8: tf::pq::pq_to_linear_x8,
+...   |
+763 | |     enc_scalar: tf::linear_to_srgb,
+764 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_pq_to_srgb_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:340:16
+    |
+340 |               fn [<convert_rgba_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+754 | / stamp_v2_pair!(
+755 | |     name: pq_to_srgb,
+756 | |     lin_x16: tf::pq::pq_to_linear_x16,
+757 | |     lin_x8: tf::pq::pq_to_linear_x8,
+...   |
+763 | |     enc_scalar: tf::linear_to_srgb,
+764 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_pq_to_srgb_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:416:16
+    |
+416 |               fn [<convert_rgb_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+754 | / stamp_v2_pair!(
+755 | |     name: pq_to_srgb,
+756 | |     lin_x16: tf::pq::pq_to_linear_x16,
+757 | |     lin_x8: tf::pq::pq_to_linear_x8,
+...   |
+763 | |     enc_scalar: tf::linear_to_srgb,
+764 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_pq_to_srgb_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:498:16
+    |
+498 |               fn [<convert_rgba_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+754 | / stamp_v2_pair!(
+755 | |     name: pq_to_srgb,
+756 | |     lin_x16: tf::pq::pq_to_linear_x16,
+757 | |     lin_x8: tf::pq::pq_to_linear_x8,
+...   |
+763 | |     enc_scalar: tf::linear_to_srgb,
+764 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_hlg_to_srgb_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:268:16
+    |
+268 |               fn [<convert_rgb_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+766 | / stamp_v2_pair!(
+767 | |     name: hlg_to_srgb,
+768 | |     lin_x16: tf::hlg::hlg_to_linear_x16,
+769 | |     lin_x8: tf::hlg::hlg_to_linear_x8,
+...   |
+775 | |     enc_scalar: tf::linear_to_srgb,
+776 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_hlg_to_srgb_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:340:16
+    |
+340 |               fn [<convert_rgba_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+766 | / stamp_v2_pair!(
+767 | |     name: hlg_to_srgb,
+768 | |     lin_x16: tf::hlg::hlg_to_linear_x16,
+769 | |     lin_x8: tf::hlg::hlg_to_linear_x8,
+...   |
+775 | |     enc_scalar: tf::linear_to_srgb,
+776 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_hlg_to_srgb_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:416:16
+    |
+416 |               fn [<convert_rgb_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+766 | / stamp_v2_pair!(
+767 | |     name: hlg_to_srgb,
+768 | |     lin_x16: tf::hlg::hlg_to_linear_x16,
+769 | |     lin_x8: tf::hlg::hlg_to_linear_x8,
+...   |
+775 | |     enc_scalar: tf::linear_to_srgb,
+776 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_hlg_to_srgb_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:498:16
+    |
+498 |               fn [<convert_rgba_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+766 | / stamp_v2_pair!(
+767 | |     name: hlg_to_srgb,
+768 | |     lin_x16: tf::hlg::hlg_to_linear_x16,
+769 | |     lin_x8: tf::hlg::hlg_to_linear_x8,
+...   |
+775 | |     enc_scalar: tf::linear_to_srgb,
+776 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_srgb_to_pq_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:268:16
+    |
+268 |               fn [<convert_rgb_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+778 | / stamp_v2_pair!(
+779 | |     name: srgb_to_pq,
+780 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+781 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+787 | |     enc_scalar: tf::linear_to_pq,
+788 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_srgb_to_pq_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:340:16
+    |
+340 |               fn [<convert_rgba_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+778 | / stamp_v2_pair!(
+779 | |     name: srgb_to_pq,
+780 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+781 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+787 | |     enc_scalar: tf::linear_to_pq,
+788 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_srgb_to_pq_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:416:16
+    |
+416 |               fn [<convert_rgb_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+778 | / stamp_v2_pair!(
+779 | |     name: srgb_to_pq,
+780 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+781 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+787 | |     enc_scalar: tf::linear_to_pq,
+788 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_srgb_to_pq_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:498:16
+    |
+498 |               fn [<convert_rgba_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+778 | / stamp_v2_pair!(
+779 | |     name: srgb_to_pq,
+780 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+781 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+787 | |     enc_scalar: tf::linear_to_pq,
+788 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_bt709_to_srgb_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:268:16
+    |
+268 |               fn [<convert_rgb_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+790 | / stamp_v2_pair!(
+791 | |     name: bt709_to_srgb,
+792 | |     lin_x16: tf::bt709::bt709_to_linear_x16,
+793 | |     lin_x8: tf::bt709::bt709_to_linear_x8,
+...   |
+799 | |     enc_scalar: tf::linear_to_srgb,
+800 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_bt709_to_srgb_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:340:16
+    |
+340 |               fn [<convert_rgba_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+790 | / stamp_v2_pair!(
+791 | |     name: bt709_to_srgb,
+792 | |     lin_x16: tf::bt709::bt709_to_linear_x16,
+793 | |     lin_x8: tf::bt709::bt709_to_linear_x8,
+...   |
+799 | |     enc_scalar: tf::linear_to_srgb,
+800 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_bt709_to_srgb_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:416:16
+    |
+416 |               fn [<convert_rgb_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+790 | / stamp_v2_pair!(
+791 | |     name: bt709_to_srgb,
+792 | |     lin_x16: tf::bt709::bt709_to_linear_x16,
+793 | |     lin_x8: tf::bt709::bt709_to_linear_x8,
+...   |
+799 | |     enc_scalar: tf::linear_to_srgb,
+800 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_bt709_to_srgb_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:498:16
+    |
+498 |               fn [<convert_rgba_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+790 | / stamp_v2_pair!(
+791 | |     name: bt709_to_srgb,
+792 | |     lin_x16: tf::bt709::bt709_to_linear_x16,
+793 | |     lin_x8: tf::bt709::bt709_to_linear_x8,
+...   |
+799 | |     enc_scalar: tf::linear_to_srgb,
+800 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_srgb_to_bt709_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:268:16
+    |
+268 |               fn [<convert_rgb_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+802 | / stamp_v2_pair!(
+803 | |     name: srgb_to_bt709,
+804 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+805 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+811 | |     enc_scalar: tf::linear_to_bt709,
+812 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_srgb_to_bt709_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:340:16
+    |
+340 |               fn [<convert_rgba_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+802 | / stamp_v2_pair!(
+803 | |     name: srgb_to_bt709,
+804 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+805 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+811 | |     enc_scalar: tf::linear_to_bt709,
+812 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_srgb_to_bt709_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:416:16
+    |
+416 |               fn [<convert_rgb_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+802 | / stamp_v2_pair!(
+803 | |     name: srgb_to_bt709,
+804 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+805 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+811 | |     enc_scalar: tf::linear_to_bt709,
+812 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_srgb_to_bt709_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:498:16
+    |
+498 |               fn [<convert_rgba_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+802 | / stamp_v2_pair!(
+803 | |     name: srgb_to_bt709,
+804 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+805 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+811 | |     enc_scalar: tf::linear_to_bt709,
+812 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_adobe_to_srgb_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:268:16
+    |
+268 |               fn [<convert_rgb_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+814 | / stamp_v2_pair!(
+815 | |     name: adobe_to_srgb,
+816 | |     lin_x16: |t, v| tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
+817 | |     lin_x8: |t, v| tf::gamma::gamma_to_linear_x8(t, v, ADOBE_GAMMA),
+...   |
+823 | |     enc_scalar: tf::linear_to_srgb,
+824 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_adobe_to_srgb_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:340:16
+    |
+340 |               fn [<convert_rgba_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+814 | / stamp_v2_pair!(
+815 | |     name: adobe_to_srgb,
+816 | |     lin_x16: |t, v| tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
+817 | |     lin_x8: |t, v| tf::gamma::gamma_to_linear_x8(t, v, ADOBE_GAMMA),
+...   |
+823 | |     enc_scalar: tf::linear_to_srgb,
+824 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_adobe_to_srgb_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:416:16
+    |
+416 |               fn [<convert_rgb_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+814 | / stamp_v2_pair!(
+815 | |     name: adobe_to_srgb,
+816 | |     lin_x16: |t, v| tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
+817 | |     lin_x8: |t, v| tf::gamma::gamma_to_linear_x8(t, v, ADOBE_GAMMA),
+...   |
+823 | |     enc_scalar: tf::linear_to_srgb,
+824 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_adobe_to_srgb_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:498:16
+    |
+498 |               fn [<convert_rgba_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+814 | / stamp_v2_pair!(
+815 | |     name: adobe_to_srgb,
+816 | |     lin_x16: |t, v| tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
+817 | |     lin_x8: |t, v| tf::gamma::gamma_to_linear_x8(t, v, ADOBE_GAMMA),
+...   |
+823 | |     enc_scalar: tf::linear_to_srgb,
+824 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_srgb_to_adobe_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:268:16
+    |
+268 |               fn [<convert_rgb_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+826 | / stamp_v2_pair!(
+827 | |     name: srgb_to_adobe,
+828 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+829 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+835 | |     enc_scalar: adobe_from_linear_scalar,
+836 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_srgb_to_adobe_native_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:340:16
+    |
+340 |               fn [<convert_rgba_ $name _native_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+826 | / stamp_v2_pair!(
+827 | |     name: srgb_to_adobe,
+828 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+829 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+835 | |     enc_scalar: adobe_from_linear_scalar,
+836 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgb_srgb_to_adobe_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:416:16
+    |
+416 |               fn [<convert_rgb_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+826 | / stamp_v2_pair!(
+827 | |     name: srgb_to_adobe,
+828 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+829 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+835 | |     enc_scalar: adobe_from_linear_scalar,
+836 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: function `convert_rgba_srgb_to_adobe_narrow_impl_scalar` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:498:16
+    |
+498 |               fn [<convert_rgba_ $name _narrow_impl>](
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+826 | / stamp_v2_pair!(
+827 | |     name: srgb_to_adobe,
+828 | |     lin_x16: tf::srgb::srgb_to_linear_x16,
+829 | |     lin_x8: tf::srgb::srgb_to_linear_x8,
+...   |
+835 | |     enc_scalar: adobe_from_linear_scalar,
+836 | | );
+    | |_- in this macro invocation
+    |
+    = note: this warning originates in the macro `stamp_v2_pair` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: `zenpixels-convert` (lib) generated 48 warnings
+    Finished `bench` profile [optimized] target(s) in 0.05s
+     Running benches/bench_t7_gamut.rs (/home/lilith/work/zen/zenpixels--fast-gamut-refactor/target/release/deps/bench_t7_gamut-b951884970df8926)
+[zenbench] calibration: int=0.24ns/iter mem_bw=117.0GiB/s mem_lat=9.7ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.36ns/iter, TSC: 4.491 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1777717703-3a5f7c.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1777717703-3a5f7c
+═══════════════════════════════════════════════════════════════
+
+  Linear F32 gamut (P3→BT.709)    256px  30 rounds × 3K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    263 ±5ns  [261–265]ns    21.7G
+
+  Linear F32 gamut (P3→BT.709)   4096px  100 rounds × 241 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    4.3 ±0.1µs  [4.3–4.4]µs     21.2G
+
+  Linear F32 gamut (P3→BT.709)  1080p    30 rounds × 2 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    2.4 ±0.1ms  [2.4–2.5]ms    19.1G
+
+  Linear F32 gamut (BT.2020→BT.709)    256px  170 rounds × 3K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    269 ±7ns  [265–275]ns    21.2G
+
+  Linear F32 gamut (BT.2020→BT.709)   4096px  40 rounds × 246 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    4.1 ±0.1µs  [4.1–4.2]µs     22.1G
+
+  Linear F32 gamut (BT.2020→BT.709)  1080p    30 rounds × 2 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    2.4 ±0.1ms  [2.4–2.4]ms    19.2G
+
+  sRGB U8 fused gamut (P3→BT.709)    256px  200 rounds × 2K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    340 ±13ns  [333–350]ns    4.20G
+
+  sRGB U8 fused gamut (P3→BT.709)   4096px  50 rounds × 200 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    5.2 ±0.2µs  [5.1–5.3]µs     4.40G
+
+  sRGB U8 fused gamut (P3→BT.709)  1080p    60 rounds × 1 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    2.8 ±0.2ms  [2.8–2.9]ms    4.10G
+
+  sRGB U16 fused gamut (P3→BT.709)    256px  120 rounds × 2K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    495 ±22ns  [485–505]ns    5.79G
+
+  sRGB U16 fused gamut (P3→BT.709)   4096px  90 rounds × 133 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    8.0 ±0.3µs  [7.9–8.2]µs     5.72G
+
+  sRGB U16 fused gamut (P3→BT.709)  1080p    30 rounds × 1 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    4.0 ±0.1ms  [4.0–4.1]ms    5.73G
+
+  sRGB U8 → Linear F32 + gamut (P3→BT.709)    256px  200 rounds × 3K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    334 ±13ns  [327–342]ns    10.7G
+
+  sRGB U8 → Linear F32 + gamut (P3→BT.709)   4096px  100 rounds × 198 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    5.0 ±0.2µs  [4.9–5.1]µs     11.5G
+
+  sRGB U8 → Linear F32 + gamut (P3→BT.709)  1080p    50 rounds × 1 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    4.0 ±0.2ms  [3.9–4.1]ms    7.24G
+
+  Linear F32 → sRGB U8 + gamut (P3→BT.709)    256px  30 rounds × 1K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    568 ±17ns  [559–580]ns    6.30G
+
+  Linear F32 → sRGB U8 + gamut (P3→BT.709)   4096px  30 rounds × 109 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    8.7 ±0.2µs  [8.6–8.8]µs     6.56G
+
+  Linear F32 → sRGB U8 + gamut (P3→BT.709)  1080p    110 rounds × 1 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    4.9 ±0.3ms  [4.8–5.0]ms    5.94G
+
+  total: 109.4s  (11 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
