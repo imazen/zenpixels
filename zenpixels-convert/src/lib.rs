@@ -451,6 +451,27 @@ pub mod __bench_u16_hybrids {
         crate::fast_gamut::__bench_u16_poly_decode_poly_encode(m, src, dst)
     }
 }
+
+/// Bench-only paired-comparison surface: v1 (`stamp_trc_kernels!`) and
+/// v2 (`fast_gamut_v2`) dispatch entry points side-by-side for
+/// `bench_v1_vs_v2_paired`. Gated behind `__bench_v1_v2`.
+#[cfg(feature = "__bench_v1_v2")]
+#[doc(hidden)]
+pub mod __bench_v1_v2 {
+    use crate::TransferFunction;
+    pub fn rgb_v1(m: &[[f32; 3]; 3], data: &mut [f32], src: TransferFunction, dst: TransferFunction) -> bool {
+        crate::fast_gamut::__v1_convert_f32_rgb_dispatch(m, data, src, dst)
+    }
+    pub fn rgb_v2(m: &[[f32; 3]; 3], data: &mut [f32], src: TransferFunction, dst: TransferFunction) -> bool {
+        crate::fast_gamut_v2::convert_f32_rgb_v2(m, data, src, dst)
+    }
+    pub fn rgba_v1(m: &[[f32; 3]; 3], data: &mut [f32], src: TransferFunction, dst: TransferFunction) -> bool {
+        crate::fast_gamut::__v1_convert_f32_rgba_dispatch(m, data, src, dst)
+    }
+    pub fn rgba_v2(m: &[[f32; 3]; 3], data: &mut [f32], src: TransferFunction, dst: TransferFunction) -> bool {
+        crate::fast_gamut_v2::convert_f32_rgba_v2(m, data, src, dst)
+    }
+}
 pub mod gamut;
 pub mod hdr;
 pub mod icc_profiles;

@@ -605,6 +605,99 @@ pub(crate) fn convert_f32_rgb_dispatch(
     true
 }
 
+/// Bench-only: invoke the v1 stamp_trc_kernels! dispatch directly,
+/// bypassing the v2 redirect that production `convert_f32_rgb_dispatch`
+/// now uses. Mirrors the inline match-on-(src,dst) the dispatcher had
+/// before commit `d207f3b6`. Enabled only under `__bench_v1_v2`.
+#[cfg(feature = "__bench_v1_v2")]
+#[doc(hidden)]
+pub fn __v1_convert_f32_rgb_dispatch(
+    m: &[[f32; 3]; 3],
+    data: &mut [f32],
+    src_trc: TransferFunction,
+    dst_trc: TransferFunction,
+) -> bool {
+    use TransferFunction::*;
+    debug_assert_eq!(data.len() % 3, 0);
+    if src_trc == Linear && dst_trc == Linear {
+        convert_linear_rgb(m, data);
+        return true;
+    }
+    #[cfg(target_arch = "x86_64")]
+    match (src_trc, dst_trc) {
+        (Srgb, Srgb) => { incant!(convert_rgb_srgb(m, data)); return true; }
+        (Bt709, Bt709) => { incant!(convert_rgb_bt709(m, data)); return true; }
+        (Pq, Pq) => { incant!(convert_rgb_pq(m, data)); return true; }
+        (Hlg, Hlg) => { incant!(convert_rgb_hlg(m, data)); return true; }
+        (Gamma22, Gamma22) => { incant!(convert_rgb_adobe(m, data)); return true; }
+        (Pq, Srgb) => { incant!(convert_rgb_pq_to_srgb(m, data)); return true; }
+        (Hlg, Srgb) => { incant!(convert_rgb_hlg_to_srgb(m, data)); return true; }
+        (Srgb, Pq) => { incant!(convert_rgb_srgb_to_pq(m, data)); return true; }
+        (Bt709, Srgb) => { incant!(convert_rgb_bt709_to_srgb(m, data)); return true; }
+        (Srgb, Bt709) => { incant!(convert_rgb_srgb_to_bt709(m, data)); return true; }
+        (Gamma22, Srgb) => { incant!(convert_rgb_adobe_to_srgb(m, data)); return true; }
+        (Srgb, Gamma22) => { incant!(convert_rgb_srgb_to_adobe(m, data)); return true; }
+        _ => {}
+    }
+    let Some(lin) = scalar_linearize(src_trc) else { return false; };
+    let Some(enc) = scalar_encode(dst_trc) else { return false; };
+    for pixel in data.chunks_exact_mut(3) {
+        let r = lin(pixel[0]);
+        let g = lin(pixel[1]);
+        let b = lin(pixel[2]);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        pixel[0] = enc(nr);
+        pixel[1] = enc(ng);
+        pixel[2] = enc(nb);
+    }
+    true
+}
+
+/// Bench-only: v1 dispatch for RGBA. Mirror of `__v1_convert_f32_rgb_dispatch`.
+#[cfg(feature = "__bench_v1_v2")]
+#[doc(hidden)]
+pub fn __v1_convert_f32_rgba_dispatch(
+    m: &[[f32; 3]; 3],
+    data: &mut [f32],
+    src_trc: TransferFunction,
+    dst_trc: TransferFunction,
+) -> bool {
+    use TransferFunction::*;
+    debug_assert_eq!(data.len() % 4, 0);
+    if src_trc == Linear && dst_trc == Linear {
+        convert_linear_rgba(m, data);
+        return true;
+    }
+    #[cfg(target_arch = "x86_64")]
+    match (src_trc, dst_trc) {
+        (Srgb, Srgb) => { incant!(convert_rgba_srgb(m, data)); return true; }
+        (Bt709, Bt709) => { incant!(convert_rgba_bt709(m, data)); return true; }
+        (Pq, Pq) => { incant!(convert_rgba_pq(m, data)); return true; }
+        (Hlg, Hlg) => { incant!(convert_rgba_hlg(m, data)); return true; }
+        (Gamma22, Gamma22) => { incant!(convert_rgba_adobe(m, data)); return true; }
+        (Pq, Srgb) => { incant!(convert_rgba_pq_to_srgb(m, data)); return true; }
+        (Hlg, Srgb) => { incant!(convert_rgba_hlg_to_srgb(m, data)); return true; }
+        (Srgb, Pq) => { incant!(convert_rgba_srgb_to_pq(m, data)); return true; }
+        (Bt709, Srgb) => { incant!(convert_rgba_bt709_to_srgb(m, data)); return true; }
+        (Srgb, Bt709) => { incant!(convert_rgba_srgb_to_bt709(m, data)); return true; }
+        (Gamma22, Srgb) => { incant!(convert_rgba_adobe_to_srgb(m, data)); return true; }
+        (Srgb, Gamma22) => { incant!(convert_rgba_srgb_to_adobe(m, data)); return true; }
+        _ => {}
+    }
+    let Some(lin) = scalar_linearize(src_trc) else { return false; };
+    let Some(enc) = scalar_encode(dst_trc) else { return false; };
+    for pixel in data.chunks_exact_mut(4) {
+        let r = lin(pixel[0]);
+        let g = lin(pixel[1]);
+        let b = lin(pixel[2]);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        pixel[0] = enc(nr);
+        pixel[1] = enc(ng);
+        pixel[2] = enc(nb);
+    }
+    true
+}
+
 /// Convert f32 RGBA data in-place using the given gamut matrix and TRC pair.
 /// Alpha channel is preserved unchanged.
 pub(crate) fn convert_f32_rgba_dispatch(

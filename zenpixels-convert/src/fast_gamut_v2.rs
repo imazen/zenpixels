@@ -136,15 +136,20 @@ macro_rules! stamp_v2_pair {
                 let m22 = f32x16::splat(token, m[2][2]);
 
                 let chunks = data.len() / CHUNK;
-                for chunk_i in 0..chunks {
-                    let off = chunk_i * CHUNK;
+                let bulk = chunks * CHUNK;
+                let (bulk_data, tail) = data.split_at_mut(bulk);
+                for chunk in bulk_data.chunks_exact_mut(CHUNK) {
+                    // Fixed-size array pattern: one try_into at chunk start
+                    // proves all interior indexes safe (CLAUDE.md "Fixed-size
+                    // array pattern eliminates bounds checks").
+                    let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
                     let mut r = [0.0f32; PIXELS];
                     let mut g = [0.0f32; PIXELS];
                     let mut b = [0.0f32; PIXELS];
                     for i in 0..PIXELS {
-                        r[i] = data[off + i * 3];
-                        g[i] = data[off + i * 3 + 1];
-                        b[i] = data[off + i * 3 + 2];
+                        r[i] = chunk[i * 3];
+                        g[i] = chunk[i * 3 + 1];
+                        b[i] = chunk[i * 3 + 2];
                     }
                     let rv = f32x16::load(token, &r);
                     let gv = f32x16::load(token, &g);
@@ -169,13 +174,13 @@ macro_rules! stamp_v2_pair {
                     og_.store(&mut go);
                     ob_.store(&mut bo);
                     for i in 0..PIXELS {
-                        data[off + i * 3] = ro[i];
-                        data[off + i * 3 + 1] = go[i];
-                        data[off + i * 3 + 2] = bo[i];
+                        chunk[i * 3] = ro[i];
+                        chunk[i * 3 + 1] = go[i];
+                        chunk[i * 3 + 2] = bo[i];
                     }
                 }
 
-                for pixel in data[chunks * CHUNK..].chunks_exact_mut(3) {
+                for pixel in tail.chunks_exact_mut(3) {
                     let r = ($lin_scalar)(pixel[0]);
                     let g = ($lin_scalar)(pixel[1]);
                     let b = ($lin_scalar)(pixel[2]);
@@ -208,15 +213,17 @@ macro_rules! stamp_v2_pair {
                 let m22 = f32x16::splat(token, m[2][2]);
 
                 let chunks = data.len() / CHUNK;
-                for chunk_i in 0..chunks {
-                    let off = chunk_i * CHUNK;
+                let bulk = chunks * CHUNK;
+                let (bulk_data, tail) = data.split_at_mut(bulk);
+                for chunk in bulk_data.chunks_exact_mut(CHUNK) {
+                    let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
                     let mut r = [0.0f32; PIXELS];
                     let mut g = [0.0f32; PIXELS];
                     let mut b = [0.0f32; PIXELS];
                     for i in 0..PIXELS {
-                        r[i] = data[off + i * 4];
-                        g[i] = data[off + i * 4 + 1];
-                        b[i] = data[off + i * 4 + 2];
+                        r[i] = chunk[i * 4];
+                        g[i] = chunk[i * 4 + 1];
+                        b[i] = chunk[i * 4 + 2];
                     }
                     let rv = f32x16::load(token, &r);
                     let gv = f32x16::load(token, &g);
@@ -241,14 +248,14 @@ macro_rules! stamp_v2_pair {
                     og_.store(&mut go);
                     ob_.store(&mut bo);
                     for i in 0..PIXELS {
-                        data[off + i * 4] = ro[i];
-                        data[off + i * 4 + 1] = go[i];
-                        data[off + i * 4 + 2] = bo[i];
-                        // alpha (data[off + i*4 + 3]) is byte-exact unchanged.
+                        chunk[i * 4] = ro[i];
+                        chunk[i * 4 + 1] = go[i];
+                        chunk[i * 4 + 2] = bo[i];
+                        // alpha (chunk[i*4 + 3]) is byte-exact unchanged.
                     }
                 }
 
-                for pixel in data[chunks * CHUNK..].chunks_exact_mut(4) {
+                for pixel in tail.chunks_exact_mut(4) {
                     let r = ($lin_scalar)(pixel[0]);
                     let g = ($lin_scalar)(pixel[1]);
                     let b = ($lin_scalar)(pixel[2]);
@@ -286,15 +293,17 @@ macro_rules! stamp_v2_pair {
                 let m22 = f32x8::splat(token, m[2][2]);
 
                 let chunks = data.len() / CHUNK;
-                for chunk_i in 0..chunks {
-                    let off = chunk_i * CHUNK;
+                let bulk = chunks * CHUNK;
+                let (bulk_data, tail) = data.split_at_mut(bulk);
+                for chunk in bulk_data.chunks_exact_mut(CHUNK) {
+                    let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
                     let mut r = [0.0f32; PIXELS];
                     let mut g = [0.0f32; PIXELS];
                     let mut b = [0.0f32; PIXELS];
                     for i in 0..PIXELS {
-                        r[i] = data[off + i * 3];
-                        g[i] = data[off + i * 3 + 1];
-                        b[i] = data[off + i * 3 + 2];
+                        r[i] = chunk[i * 3];
+                        g[i] = chunk[i * 3 + 1];
+                        b[i] = chunk[i * 3 + 2];
                     }
                     let rv = f32x8::load(token, &r);
                     let gv = f32x8::load(token, &g);
@@ -319,13 +328,13 @@ macro_rules! stamp_v2_pair {
                     og_.store(&mut go);
                     ob_.store(&mut bo);
                     for i in 0..PIXELS {
-                        data[off + i * 3] = ro[i];
-                        data[off + i * 3 + 1] = go[i];
-                        data[off + i * 3 + 2] = bo[i];
+                        chunk[i * 3] = ro[i];
+                        chunk[i * 3 + 1] = go[i];
+                        chunk[i * 3 + 2] = bo[i];
                     }
                 }
 
-                for pixel in data[chunks * CHUNK..].chunks_exact_mut(3) {
+                for pixel in tail.chunks_exact_mut(3) {
                     let r = ($lin_scalar)(pixel[0]);
                     let g = ($lin_scalar)(pixel[1]);
                     let b = ($lin_scalar)(pixel[2]);
@@ -358,15 +367,17 @@ macro_rules! stamp_v2_pair {
                 let m22 = f32x8::splat(token, m[2][2]);
 
                 let chunks = data.len() / CHUNK;
-                for chunk_i in 0..chunks {
-                    let off = chunk_i * CHUNK;
+                let bulk = chunks * CHUNK;
+                let (bulk_data, tail) = data.split_at_mut(bulk);
+                for chunk in bulk_data.chunks_exact_mut(CHUNK) {
+                    let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
                     let mut r = [0.0f32; PIXELS];
                     let mut g = [0.0f32; PIXELS];
                     let mut b = [0.0f32; PIXELS];
                     for i in 0..PIXELS {
-                        r[i] = data[off + i * 4];
-                        g[i] = data[off + i * 4 + 1];
-                        b[i] = data[off + i * 4 + 2];
+                        r[i] = chunk[i * 4];
+                        g[i] = chunk[i * 4 + 1];
+                        b[i] = chunk[i * 4 + 2];
                     }
                     let rv = f32x8::load(token, &r);
                     let gv = f32x8::load(token, &g);
@@ -391,14 +402,14 @@ macro_rules! stamp_v2_pair {
                     og_.store(&mut go);
                     ob_.store(&mut bo);
                     for i in 0..PIXELS {
-                        data[off + i * 4] = ro[i];
-                        data[off + i * 4 + 1] = go[i];
-                        data[off + i * 4 + 2] = bo[i];
+                        chunk[i * 4] = ro[i];
+                        chunk[i * 4 + 1] = go[i];
+                        chunk[i * 4 + 2] = bo[i];
                         // alpha unchanged.
                     }
                 }
 
-                for pixel in data[chunks * CHUNK..].chunks_exact_mut(4) {
+                for pixel in tail.chunks_exact_mut(4) {
                     let r = ($lin_scalar)(pixel[0]);
                     let g = ($lin_scalar)(pixel[1]);
                     let b = ($lin_scalar)(pixel[2]);
@@ -434,26 +445,13 @@ macro_rules! stamp_v2_pair {
                 let m22 = f32x4::splat(token, m[2][2]);
 
                 let chunks = data.len() / CHUNK;
-                for chunk_i in 0..chunks {
-                    let off = chunk_i * CHUNK;
-                    let r = [
-                        data[off],
-                        data[off + 3],
-                        data[off + 6],
-                        data[off + 9],
-                    ];
-                    let g = [
-                        data[off + 1],
-                        data[off + 4],
-                        data[off + 7],
-                        data[off + 10],
-                    ];
-                    let b = [
-                        data[off + 2],
-                        data[off + 5],
-                        data[off + 8],
-                        data[off + 11],
-                    ];
+                let bulk = chunks * CHUNK;
+                let (bulk_data, tail) = data.split_at_mut(bulk);
+                for chunk in bulk_data.chunks_exact_mut(CHUNK) {
+                    let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
+                    let r = [chunk[0], chunk[3], chunk[6], chunk[9]];
+                    let g = [chunk[1], chunk[4], chunk[7], chunk[10]];
+                    let b = [chunk[2], chunk[5], chunk[8], chunk[11]];
                     let rv = f32x4::load(token, &r);
                     let gv = f32x4::load(token, &g);
                     let bv = f32x4::load(token, &b);
@@ -477,13 +475,13 @@ macro_rules! stamp_v2_pair {
                     og_.store(&mut go);
                     ob_.store(&mut bo);
                     for i in 0..PIXELS {
-                        data[off + i * 3] = ro[i];
-                        data[off + i * 3 + 1] = go[i];
-                        data[off + i * 3 + 2] = bo[i];
+                        chunk[i * 3] = ro[i];
+                        chunk[i * 3 + 1] = go[i];
+                        chunk[i * 3 + 2] = bo[i];
                     }
                 }
 
-                for pixel in data[chunks * CHUNK..].chunks_exact_mut(3) {
+                for pixel in tail.chunks_exact_mut(3) {
                     let r = ($lin_scalar)(pixel[0]);
                     let g = ($lin_scalar)(pixel[1]);
                     let b = ($lin_scalar)(pixel[2]);
@@ -516,26 +514,13 @@ macro_rules! stamp_v2_pair {
                 let m22 = f32x4::splat(token, m[2][2]);
 
                 let chunks = data.len() / CHUNK;
-                for chunk_i in 0..chunks {
-                    let off = chunk_i * CHUNK;
-                    let r = [
-                        data[off],
-                        data[off + 4],
-                        data[off + 8],
-                        data[off + 12],
-                    ];
-                    let g = [
-                        data[off + 1],
-                        data[off + 5],
-                        data[off + 9],
-                        data[off + 13],
-                    ];
-                    let b = [
-                        data[off + 2],
-                        data[off + 6],
-                        data[off + 10],
-                        data[off + 14],
-                    ];
+                let bulk = chunks * CHUNK;
+                let (bulk_data, tail) = data.split_at_mut(bulk);
+                for chunk in bulk_data.chunks_exact_mut(CHUNK) {
+                    let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
+                    let r = [chunk[0], chunk[4], chunk[8], chunk[12]];
+                    let g = [chunk[1], chunk[5], chunk[9], chunk[13]];
+                    let b = [chunk[2], chunk[6], chunk[10], chunk[14]];
                     let rv = f32x4::load(token, &r);
                     let gv = f32x4::load(token, &g);
                     let bv = f32x4::load(token, &b);
@@ -559,13 +544,13 @@ macro_rules! stamp_v2_pair {
                     og_.store(&mut go);
                     ob_.store(&mut bo);
                     for i in 0..PIXELS {
-                        data[off + i * 4] = ro[i];
-                        data[off + i * 4 + 1] = go[i];
-                        data[off + i * 4 + 2] = bo[i];
+                        chunk[i * 4] = ro[i];
+                        chunk[i * 4 + 1] = go[i];
+                        chunk[i * 4 + 2] = bo[i];
                     }
                 }
 
-                for pixel in data[chunks * CHUNK..].chunks_exact_mut(4) {
+                for pixel in tail.chunks_exact_mut(4) {
                     let r = ($lin_scalar)(pixel[0]);
                     let g = ($lin_scalar)(pixel[1]);
                     let b = ($lin_scalar)(pixel[2]);
