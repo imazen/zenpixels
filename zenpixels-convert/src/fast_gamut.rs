@@ -590,51 +590,51 @@ pub(crate) fn convert_f32_rgb_dispatch(
     #[cfg(target_arch = "x86_64")]
     match (src_trc, dst_trc) {
         (Srgb, Srgb) => {
-            incant!(convert_rgb_srgb(m, data));
+            incant!(convert_rgb_srgb(m, data), [v3, scalar]);
             return true;
         }
         (Bt709, Bt709) => {
-            incant!(convert_rgb_bt709(m, data));
+            incant!(convert_rgb_bt709(m, data), [v3, scalar]);
             return true;
         }
         (Pq, Pq) => {
-            incant!(convert_rgb_pq(m, data));
+            incant!(convert_rgb_pq(m, data), [v3, scalar]);
             return true;
         }
         (Hlg, Hlg) => {
-            incant!(convert_rgb_hlg(m, data));
+            incant!(convert_rgb_hlg(m, data), [v3, scalar]);
             return true;
         }
         (Gamma22, Gamma22) => {
-            incant!(convert_rgb_adobe(m, data));
+            incant!(convert_rgb_adobe(m, data), [v3, scalar]);
             return true;
         }
         (Pq, Srgb) => {
-            incant!(convert_rgb_pq_to_srgb(m, data));
+            incant!(convert_rgb_pq_to_srgb(m, data), [v3, scalar]);
             return true;
         }
         (Hlg, Srgb) => {
-            incant!(convert_rgb_hlg_to_srgb(m, data));
+            incant!(convert_rgb_hlg_to_srgb(m, data), [v3, scalar]);
             return true;
         }
         (Srgb, Pq) => {
-            incant!(convert_rgb_srgb_to_pq(m, data));
+            incant!(convert_rgb_srgb_to_pq(m, data), [v3, scalar]);
             return true;
         }
         (Bt709, Srgb) => {
-            incant!(convert_rgb_bt709_to_srgb(m, data));
+            incant!(convert_rgb_bt709_to_srgb(m, data), [v3, scalar]);
             return true;
         }
         (Srgb, Bt709) => {
-            incant!(convert_rgb_srgb_to_bt709(m, data));
+            incant!(convert_rgb_srgb_to_bt709(m, data), [v3, scalar]);
             return true;
         }
         (Gamma22, Srgb) => {
-            incant!(convert_rgb_adobe_to_srgb(m, data));
+            incant!(convert_rgb_adobe_to_srgb(m, data), [v3, scalar]);
             return true;
         }
         (Srgb, Gamma22) => {
-            incant!(convert_rgb_srgb_to_adobe(m, data));
+            incant!(convert_rgb_srgb_to_adobe(m, data), [v3, scalar]);
             return true;
         }
         _ => {} // fall through to scalar
@@ -675,51 +675,51 @@ pub(crate) fn convert_f32_rgba_dispatch(
     #[cfg(target_arch = "x86_64")]
     match (src_trc, dst_trc) {
         (Srgb, Srgb) => {
-            incant!(convert_rgba_srgb(m, data));
+            incant!(convert_rgba_srgb(m, data), [v3, scalar]);
             return true;
         }
         (Bt709, Bt709) => {
-            incant!(convert_rgba_bt709(m, data));
+            incant!(convert_rgba_bt709(m, data), [v3, scalar]);
             return true;
         }
         (Pq, Pq) => {
-            incant!(convert_rgba_pq(m, data));
+            incant!(convert_rgba_pq(m, data), [v3, scalar]);
             return true;
         }
         (Hlg, Hlg) => {
-            incant!(convert_rgba_hlg(m, data));
+            incant!(convert_rgba_hlg(m, data), [v3, scalar]);
             return true;
         }
         (Gamma22, Gamma22) => {
-            incant!(convert_rgba_adobe(m, data));
+            incant!(convert_rgba_adobe(m, data), [v3, scalar]);
             return true;
         }
         (Pq, Srgb) => {
-            incant!(convert_rgba_pq_to_srgb(m, data));
+            incant!(convert_rgba_pq_to_srgb(m, data), [v3, scalar]);
             return true;
         }
         (Hlg, Srgb) => {
-            incant!(convert_rgba_hlg_to_srgb(m, data));
+            incant!(convert_rgba_hlg_to_srgb(m, data), [v3, scalar]);
             return true;
         }
         (Srgb, Pq) => {
-            incant!(convert_rgba_srgb_to_pq(m, data));
+            incant!(convert_rgba_srgb_to_pq(m, data), [v3, scalar]);
             return true;
         }
         (Bt709, Srgb) => {
-            incant!(convert_rgba_bt709_to_srgb(m, data));
+            incant!(convert_rgba_bt709_to_srgb(m, data), [v3, scalar]);
             return true;
         }
         (Srgb, Bt709) => {
-            incant!(convert_rgba_srgb_to_bt709(m, data));
+            incant!(convert_rgba_srgb_to_bt709(m, data), [v3, scalar]);
             return true;
         }
         (Gamma22, Srgb) => {
-            incant!(convert_rgba_adobe_to_srgb(m, data));
+            incant!(convert_rgba_adobe_to_srgb(m, data), [v3, scalar]);
             return true;
         }
         (Srgb, Gamma22) => {
-            incant!(convert_rgba_srgb_to_adobe(m, data));
+            incant!(convert_rgba_srgb_to_adobe(m, data), [v3, scalar]);
             return true;
         }
         _ => {}
@@ -1136,7 +1136,10 @@ pub(crate) fn convert_u16_rgb_simd_matlut(
     debug_assert_eq!(src.len(), dst.len());
     #[cfg(target_arch = "x86_64")]
     {
-        incant!(convert_u16_rgb_matlut(m, src, dst, lin_lut, enc_lut));
+        incant!(
+            convert_u16_rgb_matlut(m, src, dst, lin_lut, enc_lut),
+            [v3, scalar]
+        );
         return;
     }
     #[cfg(not(target_arch = "x86_64"))]
@@ -1407,7 +1410,10 @@ mod hybrids {
         let lin_lut = srgb_lin_lut_u16();
         #[cfg(target_arch = "x86_64")]
         {
-            incant!(convert_u16_rgb_lutdec_polyenc(m, src, dst, lin_lut));
+            incant!(
+                convert_u16_rgb_lutdec_polyenc(m, src, dst, lin_lut),
+                [v3, scalar]
+            );
             return;
         }
         #[cfg(not(target_arch = "x86_64"))]
@@ -1441,7 +1447,10 @@ mod hybrids {
         let enc_lut = srgb_enc_lut_u16();
         #[cfg(target_arch = "x86_64")]
         {
-            incant!(convert_u16_rgb_polydec_lutenc(m, src, dst, enc_lut));
+            incant!(
+                convert_u16_rgb_polydec_lutenc(m, src, dst, enc_lut),
+                [v3, scalar]
+            );
             return;
         }
         #[cfg(not(target_arch = "x86_64"))]
@@ -1456,7 +1465,7 @@ mod hybrids {
     ) {
         #[cfg(target_arch = "x86_64")]
         {
-            incant!(convert_u16_rgb_polydec_polyenc(m, src, dst));
+            incant!(convert_u16_rgb_polydec_polyenc(m, src, dst), [v3, scalar]);
             return;
         }
         #[cfg(not(target_arch = "x86_64"))]
@@ -1588,7 +1597,7 @@ pub(crate) fn convert_u8_to_f32_lin_simd(
     debug_assert_eq!(src.len(), dst.len());
     #[cfg(target_arch = "x86_64")]
     {
-        incant!(convert_u8_to_f32_lin(m, src, dst, lin_lut));
+        incant!(convert_u8_to_f32_lin(m, src, dst, lin_lut), [v3, scalar]);
         return;
     }
     #[cfg(not(target_arch = "x86_64"))]
@@ -1732,7 +1741,7 @@ pub(crate) fn convert_f32_lin_to_u8_simd(
     debug_assert_eq!(src.len(), dst.len());
     #[cfg(target_arch = "x86_64")]
     {
-        incant!(convert_f32_lin_to_u8(m, src, dst, enc_lut));
+        incant!(convert_f32_lin_to_u8(m, src, dst, enc_lut), [v3, scalar]);
         return;
     }
     #[cfg(not(target_arch = "x86_64"))]
@@ -1803,7 +1812,10 @@ pub(crate) fn convert_u8_rgb_simd_matlut(
     debug_assert_eq!(src.len(), dst.len());
     #[cfg(target_arch = "x86_64")]
     {
-        incant!(convert_u8_rgb_matlut(m, src, dst, lin_lut, enc_u8));
+        incant!(
+            convert_u8_rgb_matlut(m, src, dst, lin_lut, enc_u8),
+            [v3, scalar]
+        );
         return;
     }
     #[cfg(not(target_arch = "x86_64"))]
@@ -1874,9 +1886,10 @@ pub(crate) fn convert_u8_rgb_simd_fused(
     debug_assert_eq!(src.len(), dst.len());
     #[cfg(target_arch = "x86_64")]
     {
-        incant!(convert_u8_rgb_fused(
-            m, src, dst, lin_lut, dst_trc, scalar_enc
-        ));
+        incant!(
+            convert_u8_rgb_fused(m, src, dst, lin_lut, dst_trc, scalar_enc),
+            [v3, scalar]
+        );
         return;
     }
     #[cfg(not(target_arch = "x86_64"))]
@@ -1985,7 +1998,10 @@ pub(crate) fn convert_u8_rgba_simd_lut(
     debug_assert_eq!(src.len(), dst.len());
     #[cfg(target_arch = "x86_64")]
     {
-        incant!(convert_u8_rgba_lut_simd(m, src, dst, lin_lut, enc_u8));
+        incant!(
+            convert_u8_rgba_lut_simd(m, src, dst, lin_lut, enc_u8),
+            [v3, scalar]
+        );
         return;
     }
     #[cfg(not(target_arch = "x86_64"))]

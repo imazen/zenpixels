@@ -447,10 +447,12 @@ pub mod __bench_u16_hybrids {
 pub mod gamut;
 pub mod hdr;
 pub mod icc_profiles;
+pub mod load_bearing;
 pub mod oklab;
 pub mod output;
 #[cfg(feature = "pipeline")]
 pub mod pipeline;
+pub mod scan;
 
 // Re-export key conversion types at crate root.
 pub use adapt::adapt_for_encode_explicit;
@@ -474,8 +476,45 @@ pub use ext::{ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
 
 // Re-export gamut conversion utilities.
 pub use gamut::{
-    GamutMatrix, apply_matrix_f32, apply_matrix_row_f32, apply_matrix_row_rgba_f32,
-    conversion_matrix,
+    DEFAULT_GAMUT_EPSILON, GamutFit, GamutMatrix, apply_matrix_f32, apply_matrix_row_f32,
+    apply_matrix_row_rgba_f32, check_fits_in_gamut_linear_f32_rgb,
+    check_fits_in_gamut_linear_f32_rgba, conversion_matrix, fit_and_transform_linear_f32_rgb,
+    fit_and_transform_linear_f32_rgba,
+};
+
+// Re-export load-bearing analysis types and trait.
+pub use load_bearing::{GrayBitDepth, LoadBearingReport, PixelSliceLoadBearingExt};
+
+// Re-export the SIMD descriptor-level predicates at crate root.
+pub use scan::{
+    FusedRequest,
+    FusedResult,
+    // F32 layouts
+    alpha_is_binary_ga_f32,
+    // U8 layouts
+    alpha_is_binary_ga8,
+    // U16 layouts
+    alpha_is_binary_ga16,
+    alpha_is_binary_rgba_f32,
+    alpha_is_binary_rgba8,
+    alpha_is_binary_rgba16,
+    // Bit-replication (channel-type narrowing)
+    bit_replication_lossless_be16,
+    bit_replication_lossless_u16,
+    fused_predicates_rgba8,
+    fused_predicates_rgba8_cg,
+    is_grayscale_rgb_f32,
+    is_grayscale_rgb8,
+    is_grayscale_rgb16,
+    is_grayscale_rgba_f32,
+    is_grayscale_rgba8,
+    is_grayscale_rgba16,
+    is_opaque_ga_f32,
+    is_opaque_ga8,
+    is_opaque_ga16,
+    is_opaque_rgba_f32,
+    is_opaque_rgba8,
+    is_opaque_rgba16,
 };
 
 // Re-export HDR types and tone mapping.
