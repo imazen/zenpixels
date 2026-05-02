@@ -1,0 +1,37 @@
+# fast_gamut.rs baseline benchmarks — 2026-05-02
+
+Worktree: zenpixels--fast-gamut-refactor
+Branch: based on main (commit f51224f8)
+Host: AMD Ryzen 9 7950X (water-cooled), 128 GB
+Cargo: cargo bench (release profile)
+
+## Baseline files captured
+
+  bench_t3_tf_fused_BEFORE.log         — TF-fused depth conversions (sRGB↔U8, PQ↔U16, HLG↔U16)
+                                          Exercises stamp_trc_kernels output for sRGB / PQ / HLG.
+                                          138s, 18 measurement groups.
+
+  bench_t7_gamut_BEFORE.log             — Full gamut+TF conversion (P3↔BT.709 with sRGB transfer)
+                                          Exercises convert_rgb_p3_to_srgb / etc. — the
+                                          stamp_trc_kernels float family fused with mat3x3.
+                                          146s, 18 measurement groups.
+
+  bench_matlut_vs_poly_BEFORE.log       — Matlut vs polynomial integer paths
+                                          Exercises convert_u8_rgb_matlut / lutdec_polyenc /
+                                          polydec_lutenc / polydec_polyenc.
+                                          68s, ~30 measurement groups.
+
+## Per-tier coverage today (V3 + scalar only)
+
+  All measurements are V3 (AVX2) on the test host. fast_gamut.rs has
+  no V4 / V4x / NEON / WASM128 path — that's the whole point of the
+  redesign.
+
+## Next session: capture matching benchmarks AFTER refactor
+
+  Re-run the same three benches against the redesigned fast_gamut.rs
+  and diff. Goal: V4 / V4x land somewhere ≥ V3 (faster on AVX-512
+  hosts), V3 stays within 10% of baseline (polyfill of f32x16 to
+  2× 256-bit shouldn't hurt much on register-rich AVX2 — but watch
+  for polynomial spills), NEON / WASM128 benchmarked separately
+  via cross targets.

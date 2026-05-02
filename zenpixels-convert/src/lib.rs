@@ -424,6 +424,13 @@ pub mod ext;
 )]
 pub(crate) mod fast_gamut;
 
+/// Proof-of-concept rewrite of fast_gamut.rs as a magetypes-driven
+/// pipeline across V4x / V4 / V3 / NEON / WASM128 / scalar. Currently
+/// implements only the sRGB→sRGB RGB wide path (f32x16). See
+/// `fast_gamut_DESIGN.md` for the full plan.
+#[doc(hidden)]
+pub mod fast_gamut_v2;
+
 /// Bench-only shims for u16 RGB gamut hybrid kernels — comparative
 /// benchmarks for {LUT, poly} × {LUT, poly} decode/encode combinations.
 /// Gated behind `__bench_u16_hybrids` so the surface stays out of
