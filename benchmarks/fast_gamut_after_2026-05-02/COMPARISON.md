@@ -80,6 +80,27 @@ route through the v2 dispatcher → native V3 body on this host.
   -2.2% to -13.0% — large MAD on the BEFORE run (±0.3 ms) overlaps,
   so attribute to a fortunate quiet sample rather than a structural win.
 
+### Verification rerun (2026-05-02 04:43 UTC)
+
+Re-ran `bench_t7_gamut` to test the +6.5% outlier-as-noise hypothesis.
+Saved as `bench_t7_gamut_RERUN_v3body_quiet.log`. Result:
+**inconclusive — the rerun itself was contaminated.** Load avg jumped
+from 1.72 at bench start to 7.05 by completion (the same 9-claude-
+process contention that the prior run had hoped to escape). The three
+`Linear F32 → sRGB U8 + gamut` rows came in even noisier this time —
++15.9%/+9.2%/+10.9% with the 256px row carrying a `CV=26%` marker —
+which is *worse* than the original native_v3 AFTER, not better.
+
+The 15 non-`Linear F32 → sRGB U8` rows replicated within ±2% of the
+AFTER snapshot, including the `-13.0%` win on `sRGB U8 → Linear F32
+1080p` (3.9 ±0.2ms here vs 4.0 ±0.2ms in AFTER vs 4.6 ±0.3ms in
+BEFORE) — that win is **not** a fortunate quiet sample, it replicates.
+
+Bottom line: the +6.5% outlier hypothesis (load contention on the
+1080p `Linear F32 → sRGB U8` iteration) survives; we couldn't confirm
+or refute it on this dev box. **For a structural verdict, re-run on a
+quiet machine with `nice -n -19` and no concurrent load.**
+
 ## bench_t3_tf_fused — TF-only depth conversions (sanity check)
 
 `bench_t3_tf_fused` exercises pure TF depth conversions
