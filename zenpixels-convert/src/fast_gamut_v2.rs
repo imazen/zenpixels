@@ -356,16 +356,6 @@ fn convert_wide<
     const PIXELS: usize = 16;
     debug_assert_eq!(CHUNK, PIXELS * CHANNELS);
 
-    let m00 = f32x16::splat(token, m[0][0]);
-    let m01 = f32x16::splat(token, m[0][1]);
-    let m02 = f32x16::splat(token, m[0][2]);
-    let m10 = f32x16::splat(token, m[1][0]);
-    let m11 = f32x16::splat(token, m[1][1]);
-    let m12 = f32x16::splat(token, m[1][2]);
-    let m20 = f32x16::splat(token, m[2][0]);
-    let m21 = f32x16::splat(token, m[2][1]);
-    let m22 = f32x16::splat(token, m[2][2]);
-
     let chunks = data.len() / CHUNK;
     let bulk = chunks * CHUNK;
     let (bulk_data, tail) = data.split_at_mut(bulk);
@@ -389,9 +379,7 @@ fn convert_wide<
         let gl = linearize_x16::<SRC_TRC, _>(token, gv);
         let bl = linearize_x16::<SRC_TRC, _>(token, bv);
 
-        let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
-        let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
-        let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
+        let (nr, ng, nb) = mat3x3_x16(token, m, rl, gl, bl);
 
         let or_ = encode_x16::<DST_TRC, _>(token, nr);
         let og_ = encode_x16::<DST_TRC, _>(token, ng);
@@ -445,16 +433,6 @@ fn convert_native<
     const PIXELS: usize = 8;
     debug_assert_eq!(CHUNK, PIXELS * CHANNELS);
 
-    let m00 = f32x8::splat(token, m[0][0]);
-    let m01 = f32x8::splat(token, m[0][1]);
-    let m02 = f32x8::splat(token, m[0][2]);
-    let m10 = f32x8::splat(token, m[1][0]);
-    let m11 = f32x8::splat(token, m[1][1]);
-    let m12 = f32x8::splat(token, m[1][2]);
-    let m20 = f32x8::splat(token, m[2][0]);
-    let m21 = f32x8::splat(token, m[2][1]);
-    let m22 = f32x8::splat(token, m[2][2]);
-
     let chunks = data.len() / CHUNK;
     let bulk = chunks * CHUNK;
     let (bulk_data, tail) = data.split_at_mut(bulk);
@@ -476,9 +454,7 @@ fn convert_native<
         let gl = linearize_x8::<SRC_TRC, _>(token, gv);
         let bl = linearize_x8::<SRC_TRC, _>(token, bv);
 
-        let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
-        let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
-        let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
+        let (nr, ng, nb) = mat3x3_x8(token, m, rl, gl, bl);
 
         let or_ = encode_x8::<DST_TRC, _>(token, nr);
         let og_ = encode_x8::<DST_TRC, _>(token, ng);
@@ -528,16 +504,6 @@ fn convert_narrow<
     const PIXELS: usize = 4;
     debug_assert_eq!(CHUNK, PIXELS * CHANNELS);
 
-    let m00 = f32x4::splat(token, m[0][0]);
-    let m01 = f32x4::splat(token, m[0][1]);
-    let m02 = f32x4::splat(token, m[0][2]);
-    let m10 = f32x4::splat(token, m[1][0]);
-    let m11 = f32x4::splat(token, m[1][1]);
-    let m12 = f32x4::splat(token, m[1][2]);
-    let m20 = f32x4::splat(token, m[2][0]);
-    let m21 = f32x4::splat(token, m[2][1]);
-    let m22 = f32x4::splat(token, m[2][2]);
-
     let chunks = data.len() / CHUNK;
     let bulk = chunks * CHUNK;
     let (bulk_data, tail) = data.split_at_mut(bulk);
@@ -559,9 +525,7 @@ fn convert_narrow<
         let gl = linearize_x4::<SRC_TRC, _>(token, gv);
         let bl = linearize_x4::<SRC_TRC, _>(token, bv);
 
-        let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
-        let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
-        let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
+        let (nr, ng, nb) = mat3x3_x4(token, m, rl, gl, bl);
 
         let or_ = encode_x4::<DST_TRC, _>(token, nr);
         let og_ = encode_x4::<DST_TRC, _>(token, ng);
