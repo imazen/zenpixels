@@ -577,69 +577,16 @@ pub(crate) fn convert_f32_rgb_dispatch(
     src_trc: TransferFunction,
     dst_trc: TransferFunction,
 ) -> bool {
-    use TransferFunction::*;
     debug_assert_eq!(data.len() % 3, 0);
-    // Linear is cross-platform — handle before SIMD dispatch.
-    if src_trc == Linear && dst_trc == Linear {
-        convert_linear_rgb(m, data);
+    // v2 path covers Linear→Linear plus all 12 same-TRC + cross-TRC pairs
+    // that v1 supported. Routes through magetypes-driven wide (V4x/V4/V3/
+    // scalar) and narrow (NEON/WASM128) bodies — drop-in replacement for
+    // the v1 stamp_trc_kernels! family.
+    if crate::fast_gamut_v2::convert_f32_rgb_v2(m, data, src_trc, dst_trc) {
         return true;
     }
-    // SIMD fast path (x86_64 AVX2+FMA only). Each `incant!` does runtime
-    // capability detection and falls through to a scalar implementation
-    // when AVX2+FMA is unavailable.
-    #[cfg(target_arch = "x86_64")]
-    match (src_trc, dst_trc) {
-        (Srgb, Srgb) => {
-            incant!(convert_rgb_srgb(m, data));
-            return true;
-        }
-        (Bt709, Bt709) => {
-            incant!(convert_rgb_bt709(m, data));
-            return true;
-        }
-        (Pq, Pq) => {
-            incant!(convert_rgb_pq(m, data));
-            return true;
-        }
-        (Hlg, Hlg) => {
-            incant!(convert_rgb_hlg(m, data));
-            return true;
-        }
-        (Gamma22, Gamma22) => {
-            incant!(convert_rgb_adobe(m, data));
-            return true;
-        }
-        (Pq, Srgb) => {
-            incant!(convert_rgb_pq_to_srgb(m, data));
-            return true;
-        }
-        (Hlg, Srgb) => {
-            incant!(convert_rgb_hlg_to_srgb(m, data));
-            return true;
-        }
-        (Srgb, Pq) => {
-            incant!(convert_rgb_srgb_to_pq(m, data));
-            return true;
-        }
-        (Bt709, Srgb) => {
-            incant!(convert_rgb_bt709_to_srgb(m, data));
-            return true;
-        }
-        (Srgb, Bt709) => {
-            incant!(convert_rgb_srgb_to_bt709(m, data));
-            return true;
-        }
-        (Gamma22, Srgb) => {
-            incant!(convert_rgb_adobe_to_srgb(m, data));
-            return true;
-        }
-        (Srgb, Gamma22) => {
-            incant!(convert_rgb_srgb_to_adobe(m, data));
-            return true;
-        }
-        _ => {} // fall through to scalar
-    }
-    // Scalar fallback — works on all platforms.
+    // Scalar fallback for any TRC the v2 surface doesn't cover (none of
+    // the v1-accelerated pairs hit this; reserved for future TRC tags).
     let Some(lin) = scalar_linearize(src_trc) else {
         return false;
     };
@@ -666,63 +613,11 @@ pub(crate) fn convert_f32_rgba_dispatch(
     src_trc: TransferFunction,
     dst_trc: TransferFunction,
 ) -> bool {
-    use TransferFunction::*;
     debug_assert_eq!(data.len() % 4, 0);
-    if src_trc == Linear && dst_trc == Linear {
-        convert_linear_rgba(m, data);
+    // See convert_f32_rgb_dispatch. v2 owns the SIMD path for Linear→Linear
+    // and all 12 v1-supported pairs (alpha is byte-exact unchanged in v2).
+    if crate::fast_gamut_v2::convert_f32_rgba_v2(m, data, src_trc, dst_trc) {
         return true;
-    }
-    #[cfg(target_arch = "x86_64")]
-    match (src_trc, dst_trc) {
-        (Srgb, Srgb) => {
-            incant!(convert_rgba_srgb(m, data));
-            return true;
-        }
-        (Bt709, Bt709) => {
-            incant!(convert_rgba_bt709(m, data));
-            return true;
-        }
-        (Pq, Pq) => {
-            incant!(convert_rgba_pq(m, data));
-            return true;
-        }
-        (Hlg, Hlg) => {
-            incant!(convert_rgba_hlg(m, data));
-            return true;
-        }
-        (Gamma22, Gamma22) => {
-            incant!(convert_rgba_adobe(m, data));
-            return true;
-        }
-        (Pq, Srgb) => {
-            incant!(convert_rgba_pq_to_srgb(m, data));
-            return true;
-        }
-        (Hlg, Srgb) => {
-            incant!(convert_rgba_hlg_to_srgb(m, data));
-            return true;
-        }
-        (Srgb, Pq) => {
-            incant!(convert_rgba_srgb_to_pq(m, data));
-            return true;
-        }
-        (Bt709, Srgb) => {
-            incant!(convert_rgba_bt709_to_srgb(m, data));
-            return true;
-        }
-        (Srgb, Bt709) => {
-            incant!(convert_rgba_srgb_to_bt709(m, data));
-            return true;
-        }
-        (Gamma22, Srgb) => {
-            incant!(convert_rgba_adobe_to_srgb(m, data));
-            return true;
-        }
-        (Srgb, Gamma22) => {
-            incant!(convert_rgba_srgb_to_adobe(m, data));
-            return true;
-        }
-        _ => {}
     }
     let Some(lin) = scalar_linearize(src_trc) else {
         return false;
