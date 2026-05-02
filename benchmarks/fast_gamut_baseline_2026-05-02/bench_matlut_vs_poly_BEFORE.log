@@ -1,0 +1,63 @@
+    Finished `bench` profile [optimized] target(s) in 0.04s
+     Running benches/bench_matlut_vs_poly.rs (target/release/deps/bench_matlut_vs_poly-fdae0dd6345a7797)
+[zenbench] calibration: int=0.26ns/iter mem_bw=115.4GiB/s mem_lat=9.6ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.19ns/iter, TSC: 4.489 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1777709719-382e79.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1777709719-382e79
+═══════════════════════════════════════════════════════════════
+
+  u8 P3→709    256px  30 rounds × 2K calls
+                      mean ±mad ns  95% CI vs base      iB/s
+  ├─ matlut            353 ±11ns  [336–376]ns        4.06G
+  ╰─ poly+scalar_mat    495 ±8ns  [+39.6%–+43.9%]    2.89G
+
+  matlut           ██████████████████████████████████████████████████ 4.06 GiB/s
+  poly+scalar_mat  ████████████████████████████████████ 2.89 GiB/s
+
+  u8 P3→709   4096px  30 rounds × 108 calls
+                      mean ±mad µs  95% CI vs base      iB/s
+  ├─ matlut            5.6 ±0.1µs  [5.3–6.0]µs        4.10G
+  ╰─ poly+scalar_mat   8.0 ±0.2µs  [+47.3%–+49.8%]    2.85G
+
+  matlut           ██████████████████████████████████████████████████ 4.10 GiB/s
+  poly+scalar_mat  ███████████████████████████████████ 2.85 GiB/s
+
+  u8 P3→709  1080p    30 rounds × 1 calls
+                      mean ±mad ms  95% CI vs base      iB/s
+  ├─ matlut            2.7 ±0.1ms  [2.7–2.7]ms        4.27G
+  ╰─ poly+scalar_mat   5.1 ±0.3ms  [+83.8%–+90.2%]    2.26G
+
+  matlut           ██████████████████████████████████████████████████ 4.27 GiB/s
+  poly+scalar_mat  ██████████████████████████ 2.26 GiB/s
+
+  u16 P3→709    256px  200 rounds × 1K calls
+                      mean ±mad ns  95% CI vs base     iB/s
+  ├─ matlut            518 ±15ns  [498–550]ns       5.52G [1]
+  ╰─ poly+scalar_mat   547 ±14ns  [+9.6%–+10.9%]    5.23G
+
+  matlut           ██████████████████████████████████████████████████ 5.52 GiB/s
+  poly+scalar_mat  ███████████████████████████████████████████████ 5.23 GiB/s
+  [1] CV=37%
+
+  u16 P3→709   4096px  200 rounds × 122 calls
+                      mean ±mad µs  95% CI vs base    iB/s
+  ├─ matlut            8.7 ±0.3µs  [8.5–8.9]µs      5.29G
+  ╰─ poly+scalar_mat   9.0 ±0.3µs  [+4.4%–+5.6%]    5.06G
+
+  matlut           ██████████████████████████████████████████████████ 5.29 GiB/s
+  poly+scalar_mat  ████████████████████████████████████████████████ 5.06 GiB/s
+
+  u16 P3→709  1080p    200 rounds × 1 calls
+                      mean ±mad ms  95% CI vs base      iB/s
+  ├─ matlut            5.2 ±0.5ms  [5.0–5.6]ms        4.45G [1]
+  ╰─ poly+scalar_mat   6.5 ±0.9ms  [+25.2%–+29.3%]    3.56G
+
+  matlut           ██████████████████████████████████████████████████ 4.45 GiB/s
+  poly+scalar_mat  ████████████████████████████████████████ 3.56 GiB/s
+  [1] CV=43%
+
+  total: 68.2s  (605 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json

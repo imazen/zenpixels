@@ -1,0 +1,85 @@
+    Finished `bench` profile [optimized] target(s) in 0.04s
+     Running benches/bench_t7_gamut.rs (target/release/deps/bench_t7_gamut-cce0b9e6323d3784)
+[zenbench] calibration: int=0.26ns/iter mem_bw=97.7GiB/s mem_lat=9.6ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.19ns/iter, TSC: 4.491 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1777709541-382966.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1777709541-382966
+═══════════════════════════════════════════════════════════════
+
+  Linear F32 gamut (P3→BT.709)    256px  30 rounds × 3K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    268 ±4ns  [265–271]ns    21.4G
+
+  Linear F32 gamut (P3→BT.709)   4096px  60 rounds × 238 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    4.3 ±0.1µs  [4.2–4.4]µs     21.3G
+
+  Linear F32 gamut (P3→BT.709)  1080p    30 rounds × 2 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    2.3 ±0.1ms  [2.3–2.4]ms    19.7G
+
+  Linear F32 gamut (BT.2020→BT.709)    256px  70 rounds × 3K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    273 ±4ns  [268–279]ns    20.9G
+
+  Linear F32 gamut (BT.2020→BT.709)   4096px  30 rounds × 242 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    4.2 ±0.1µs  [4.2–4.3]µs     21.6G
+
+  Linear F32 gamut (BT.2020→BT.709)  1080p    30 rounds × 2 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    2.4 ±0.1ms  [2.3–2.4]ms    19.6G
+
+  sRGB U8 fused gamut (P3→BT.709)    256px  30 rounds × 1K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    335 ±6ns  [330–341]ns    4.27G
+
+  sRGB U8 fused gamut (P3→BT.709)   4096px  30 rounds × 197 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    5.2 ±0.1µs  [5.1–5.2]µs     4.44G
+
+  sRGB U8 fused gamut (P3→BT.709)  1080p    200 rounds × 1 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    2.8 ±0.1ms  [2.8–2.9]ms    4.07G
+
+  sRGB U16 fused gamut (P3→BT.709)    256px  30 rounds × 2K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    489 ±13ns  [484–496]ns    5.85G
+
+  sRGB U16 fused gamut (P3→BT.709)   4096px  200 rounds × 130 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    8.2 ±0.2µs  [8.0–8.4]µs     5.59G
+
+  sRGB U16 fused gamut (P3→BT.709)  1080p    170 rounds × 1 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    4.1 ±0.1ms  [4.1–4.2]ms    5.59G
+
+  sRGB U8 → Linear F32 + gamut (P3→BT.709)    256px  180 rounds × 3K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    329 ±6ns  [323–336]ns    10.9G
+
+  sRGB U8 → Linear F32 + gamut (P3→BT.709)   4096px  160 rounds × 205 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    5.1 ±0.1µs  [5.0–5.2]µs     11.3G
+
+  sRGB U8 → Linear F32 + gamut (P3→BT.709)  1080p    200 rounds × 1 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    4.6 ±0.3ms  [4.5–4.7]ms    6.36G
+
+  Linear F32 → sRGB U8 + gamut (P3→BT.709)    256px  180 rounds × 1K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    567 ±9ns  [557–579]ns    6.31G
+
+  Linear F32 → sRGB U8 + gamut (P3→BT.709)   4096px  120 rounds × 101 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    8.7 ±0.2µs  [8.6–8.9]µs     6.54G
+
+  Linear F32 → sRGB U8 + gamut (P3→BT.709)  1080p    30 rounds × 1 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    4.6 ±0.1ms  [4.5–4.6]ms    6.37G
+
+  total: 145.9s  (1074 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
