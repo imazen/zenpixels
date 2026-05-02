@@ -77,173 +77,6 @@ fn mat3x3_x8(
 }
 
 // =========================================================================
-// Macro: stamp fused kernels per TRC pair
-// =========================================================================
-
-/// Stamps out a complete set of fused SIMD + scalar kernels for a given
-/// source/dest TRC pair. Each invocation generates:
-/// - `fused_8px_rgb_{name}` / `fused_8px_rgba_{name}` (#[rite] SIMD inner)
-/// - `convert_rgb_{name}_v3` / `convert_rgba_{name}_v3` (#[arcane] dispatch)
-/// - `convert_rgb_{name}_scalar` / `convert_rgba_{name}_scalar` (fallback)
-macro_rules! stamp_trc_kernels {
-    (
-        $name:ident,
-        simd_linearize: $simd_lin:path,
-        simd_encode: $simd_enc:path,
-        scalar_linearize: $scalar_lin:path,
-        scalar_encode: $scalar_enc:path
-    ) => {
-        paste::paste! {
-            #[cfg(target_arch = "x86_64")]
-            #[rite]
-            fn [<fused_8px_rgb_ $name>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
-                let mut r = [0.0f32; 8];
-                let mut g = [0.0f32; 8];
-                let mut b = [0.0f32; 8];
-                for i in 0..8 {
-                    r[i] = data[i * 3];
-                    g[i] = data[i * 3 + 1];
-                    b[i] = data[i * 3 + 2];
-                }
-                let rl = mt_f32x8::from_array(token, $simd_lin(token, r));
-                let gl = mt_f32x8::from_array(token, $simd_lin(token, g));
-                let bl = mt_f32x8::from_array(token, $simd_lin(token, b));
-                let (or, og, ob) = mat3x3_x8(token, m, rl, gl, bl);
-                let ro = $simd_enc(token, or.to_array());
-                let go = $simd_enc(token, og.to_array());
-                let bo = $simd_enc(token, ob.to_array());
-                for i in 0..8 {
-                    data[i * 3] = ro[i];
-                    data[i * 3 + 1] = go[i];
-                    data[i * 3 + 2] = bo[i];
-                }
-            }
-
-            #[cfg(target_arch = "x86_64")]
-            #[rite]
-            fn [<fused_8px_rgba_ $name>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
-                let mut r = [0.0f32; 8];
-                let mut g = [0.0f32; 8];
-                let mut b = [0.0f32; 8];
-                for i in 0..8 {
-                    r[i] = data[i * 4];
-                    g[i] = data[i * 4 + 1];
-                    b[i] = data[i * 4 + 2];
-                }
-                let rl = mt_f32x8::from_array(token, $simd_lin(token, r));
-                let gl = mt_f32x8::from_array(token, $simd_lin(token, g));
-                let bl = mt_f32x8::from_array(token, $simd_lin(token, b));
-                let (or, og, ob) = mat3x3_x8(token, m, rl, gl, bl);
-                let ro = $simd_enc(token, or.to_array());
-                let go = $simd_enc(token, og.to_array());
-                let bo = $simd_enc(token, ob.to_array());
-                for i in 0..8 {
-                    data[i * 4] = ro[i];
-                    data[i * 4 + 1] = go[i];
-                    data[i * 4 + 2] = bo[i];
-                }
-            }
-
-            #[cfg(target_arch = "x86_64")]
-            #[arcane]
-            fn [<convert_rgb_ $name _v3>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
-                let bulk = (data.len() / 24) * 24;
-                for off in (0..bulk).step_by(24) {
-                    [<fused_8px_rgb_ $name>](token, m, &mut data[off..off + 24]);
-                }
-                for pixel in data[bulk..].chunks_exact_mut(3) {
-                    let r = $scalar_lin(pixel[0]);
-                    let g = $scalar_lin(pixel[1]);
-                    let b = $scalar_lin(pixel[2]);
-                    let (nr, ng, nb) = mat3x3(m, r, g, b);
-                    pixel[0] = $scalar_enc(nr);
-                    pixel[1] = $scalar_enc(ng);
-                    pixel[2] = $scalar_enc(nb);
-                }
-            }
-
-            #[cfg(target_arch = "x86_64")]
-            #[arcane]
-            fn [<convert_rgba_ $name _v3>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
-                let bulk = (data.len() / 32) * 32;
-                for off in (0..bulk).step_by(32) {
-                    [<fused_8px_rgba_ $name>](token, m, &mut data[off..off + 32]);
-                }
-                for pixel in data[bulk..].chunks_exact_mut(4) {
-                    let r = $scalar_lin(pixel[0]);
-                    let g = $scalar_lin(pixel[1]);
-                    let b = $scalar_lin(pixel[2]);
-                    let (nr, ng, nb) = mat3x3(m, r, g, b);
-                    pixel[0] = $scalar_enc(nr);
-                    pixel[1] = $scalar_enc(ng);
-                    pixel[2] = $scalar_enc(nb);
-                }
-            }
-
-            fn [<convert_rgb_ $name _scalar>](_token: ScalarToken, m: &[[f32; 3]; 3], data: &mut [f32]) {
-                for pixel in data.chunks_exact_mut(3) {
-                    let r = $scalar_lin(pixel[0]);
-                    let g = $scalar_lin(pixel[1]);
-                    let b = $scalar_lin(pixel[2]);
-                    let (nr, ng, nb) = mat3x3(m, r, g, b);
-                    pixel[0] = $scalar_enc(nr);
-                    pixel[1] = $scalar_enc(ng);
-                    pixel[2] = $scalar_enc(nb);
-                }
-            }
-
-            fn [<convert_rgba_ $name _scalar>](_token: ScalarToken, m: &[[f32; 3]; 3], data: &mut [f32]) {
-                for pixel in data.chunks_exact_mut(4) {
-                    let r = $scalar_lin(pixel[0]);
-                    let g = $scalar_lin(pixel[1]);
-                    let b = $scalar_lin(pixel[2]);
-                    let (nr, ng, nb) = mat3x3(m, r, g, b);
-                    pixel[0] = $scalar_enc(nr);
-                    pixel[1] = $scalar_enc(ng);
-                    pixel[2] = $scalar_enc(nb);
-                }
-            }
-        }
-    };
-}
-
-// =========================================================================
-// Stamp kernels for each TRC family
-// =========================================================================
-
-// sRGB TRC (sRGB ↔ P3, both use sRGB curve)
-stamp_trc_kernels!(srgb,
-    simd_linearize: trc_x8::srgb_to_linear_v3,
-    simd_encode: trc_x8::linear_to_srgb_v3,
-    scalar_linearize: linear_srgb::tf::srgb_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_srgb
-);
-
-// BT.709 TRC (BT.2020 SDR)
-stamp_trc_kernels!(bt709,
-    simd_linearize: trc_x8::bt709_to_linear_v3,
-    simd_encode: trc_x8::linear_to_bt709_v3,
-    scalar_linearize: linear_srgb::tf::bt709_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_bt709
-);
-
-// PQ TRC (BT.2020 PQ / HDR10)
-stamp_trc_kernels!(pq,
-    simd_linearize: trc_x8::pq_to_linear_v3,
-    simd_encode: trc_x8::linear_to_pq_v3,
-    scalar_linearize: linear_srgb::tf::pq_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_pq
-);
-
-// HLG TRC (BT.2020 HLG)
-stamp_trc_kernels!(hlg,
-    simd_linearize: trc_x8::hlg_to_linear_v3,
-    simd_encode: trc_x8::linear_to_hlg_v3,
-    scalar_linearize: linear_srgb::tf::hlg_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_hlg
-);
-
-// =========================================================================
 // Linear (identity TRC) — matrix only, no TRC
 // =========================================================================
 
@@ -273,60 +106,10 @@ pub fn convert_linear_rgba(m: &[[f32; 3]; 3], data: &mut [f32]) {
 }
 
 // =========================================================================
-// Cross-TRC kernels (source and dest use different TRCs)
-// =========================================================================
-
-// PQ source → sRGB dest (BT.2020 PQ → sRGB: PQ linearize, sRGB encode)
-stamp_trc_kernels!(pq_to_srgb,
-    simd_linearize: trc_x8::pq_to_linear_v3,
-    simd_encode: trc_x8::linear_to_srgb_v3,
-    scalar_linearize: linear_srgb::tf::pq_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_srgb
-);
-
-// HLG source → sRGB dest
-stamp_trc_kernels!(hlg_to_srgb,
-    simd_linearize: trc_x8::hlg_to_linear_v3,
-    simd_encode: trc_x8::linear_to_srgb_v3,
-    scalar_linearize: linear_srgb::tf::hlg_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_srgb
-);
-
-// sRGB source → PQ dest
-stamp_trc_kernels!(srgb_to_pq,
-    simd_linearize: trc_x8::srgb_to_linear_v3,
-    simd_encode: trc_x8::linear_to_pq_v3,
-    scalar_linearize: linear_srgb::tf::srgb_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_pq
-);
-
-// BT.709 source → sRGB dest (BT.2020 SDR → sRGB)
-stamp_trc_kernels!(bt709_to_srgb,
-    simd_linearize: trc_x8::bt709_to_linear_v3,
-    simd_encode: trc_x8::linear_to_srgb_v3,
-    scalar_linearize: linear_srgb::tf::bt709_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_srgb
-);
-
-// sRGB source → BT.709 dest (sRGB → BT.2020 SDR)
-stamp_trc_kernels!(srgb_to_bt709,
-    simd_linearize: trc_x8::srgb_to_linear_v3,
-    simd_encode: trc_x8::linear_to_bt709_v3,
-    scalar_linearize: linear_srgb::tf::srgb_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_bt709
-);
-
-// =========================================================================
 // Adobe RGB gamma 2.2 TRC wrappers (bind gamma parameter for macro compat)
 // =========================================================================
 
 const ADOBE_GAMMA: f32 = 2.19921875; // Adobe RGB spec: 563/256
-
-#[cfg(target_arch = "x86_64")]
-#[rite]
-fn adobe_to_linear_x8(token: X64V3Token, v: [f32; 8]) -> [f32; 8] {
-    trc_x8::gamma_to_linear_v3(token, v, ADOBE_GAMMA)
-}
 
 #[cfg(target_arch = "x86_64")]
 #[rite]
@@ -343,43 +126,6 @@ fn adobe_to_linear_scalar(v: f32) -> f32 {
 fn adobe_from_linear_scalar(v: f32) -> f32 {
     linear_srgb::default::linear_to_gamma(v, ADOBE_GAMMA)
 }
-
-// Adobe RGB same-TRC (both sides gamma 2.2 — pure power, no linear toe).
-//
-// This is the canonical Adobe RGB 1998 encoding per the Adobe RGB 1998
-// spec §4.3.4.2 and matches ~85% of real-world Adobe RGB ICC profiles
-// (Adobe CS4, Windows ClayRGB1998, macOS AdobeRGB1998, Linux
-// `AdobeRGB1998`/`compatibleWithAdobeRGB1998`, Nikon, etc).
-//
-// The `parametricCurveType funcType=3` variant with a linear toe
-// (`c=1/32, d=0.05568`) that some profiles use — saucecontrol's
-// Compact-ICC AdobeCompat-v4 being the notable example — is deliberately
-// NOT accelerated here. Profiles encoding that form fall through to the
-// full CMS (moxcms) so they're rendered via their actual bytes. See
-// `scripts/icc-gen/src/main.rs` for the identification-side policy and
-// the rationale notes in `zenpixels-convert/src/icc_profiles.rs`.
-stamp_trc_kernels!(adobe,
-    simd_linearize: adobe_to_linear_x8,
-    simd_encode: adobe_from_linear_x8,
-    scalar_linearize: adobe_to_linear_scalar,
-    scalar_encode: adobe_from_linear_scalar
-);
-
-// Adobe RGB source → sRGB dest (gamma 2.2 linearize, sRGB encode)
-stamp_trc_kernels!(adobe_to_srgb,
-    simd_linearize: adobe_to_linear_x8,
-    simd_encode: trc_x8::linear_to_srgb_v3,
-    scalar_linearize: adobe_to_linear_scalar,
-    scalar_encode: linear_srgb::tf::linear_to_srgb
-);
-
-// sRGB source → Adobe RGB dest (sRGB linearize, gamma 2.2 encode)
-stamp_trc_kernels!(srgb_to_adobe,
-    simd_linearize: trc_x8::srgb_to_linear_v3,
-    simd_encode: adobe_from_linear_x8,
-    scalar_linearize: linear_srgb::tf::srgb_to_linear,
-    scalar_encode: adobe_from_linear_scalar
-);
 
 // =========================================================================
 // Dispatch: pick the right kernel for a given (src_trc, dst_trc) pair
@@ -508,24 +254,6 @@ pub(crate) fn convert_f32_rgba_extended(
 // Scalar TRC lookup (clamped)
 // =========================================================================
 
-/// Whether a TRC has a SIMD x8 encode kernel available (x86_64 only).
-#[cfg(target_arch = "x86_64")]
-pub(crate) fn has_simd_encode(trc: TransferFunction) -> bool {
-    matches!(
-        trc,
-        TransferFunction::Srgb
-            | TransferFunction::Bt709
-            | TransferFunction::Pq
-            | TransferFunction::Hlg
-            | TransferFunction::Gamma22
-    )
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-pub(crate) fn has_simd_encode(_trc: TransferFunction) -> bool {
-    false
-}
-
 /// SIMD x8 encode dispatch — must be called from a #[rite]/#[arcane] context.
 #[cfg(target_arch = "x86_64")]
 #[rite]
@@ -578,15 +306,15 @@ pub(crate) fn convert_f32_rgb_dispatch(
     dst_trc: TransferFunction,
 ) -> bool {
     debug_assert_eq!(data.len() % 3, 0);
-    // v2 path covers Linear→Linear plus all 12 same-TRC + cross-TRC pairs
-    // that v1 supported. Routes through magetypes-driven wide (V4x/V4/V3/
-    // scalar) and narrow (NEON/WASM128) bodies — drop-in replacement for
-    // the v1 stamp_trc_kernels! family.
+    // fast_gamut_v2 covers Linear→Linear plus all 12 same-TRC and
+    // cross-TRC pairs the SIMD acceleration supports. Routes through
+    // magetypes-driven wide (V4x/V4/scalar f32x16), native (V3 f32x8),
+    // and narrow (NEON/WASM128 f32x4) bodies.
     if crate::fast_gamut_v2::convert_f32_rgb_v2(m, data, src_trc, dst_trc) {
         return true;
     }
-    // Scalar fallback for any TRC the v2 surface doesn't cover (none of
-    // the v1-accelerated pairs hit this; reserved for future TRC tags).
+    // Scalar fallback for any TRC the SIMD path doesn't cover. Reserved
+    // for future TRC tags; today every supported TRC pair is SIMD.
     let Some(lin) = scalar_linearize(src_trc) else {
         return false;
     };
@@ -594,99 +322,6 @@ pub(crate) fn convert_f32_rgb_dispatch(
         return false;
     };
     for pixel in data.chunks_exact_mut(3) {
-        let r = lin(pixel[0]);
-        let g = lin(pixel[1]);
-        let b = lin(pixel[2]);
-        let (nr, ng, nb) = mat3x3(m, r, g, b);
-        pixel[0] = enc(nr);
-        pixel[1] = enc(ng);
-        pixel[2] = enc(nb);
-    }
-    true
-}
-
-/// Bench-only: invoke the v1 stamp_trc_kernels! dispatch directly,
-/// bypassing the v2 redirect that production `convert_f32_rgb_dispatch`
-/// now uses. Mirrors the inline match-on-(src,dst) the dispatcher had
-/// before commit `d207f3b6`. Enabled only under `__bench_v1_v2`.
-#[cfg(feature = "__bench_v1_v2")]
-#[doc(hidden)]
-pub fn __v1_convert_f32_rgb_dispatch(
-    m: &[[f32; 3]; 3],
-    data: &mut [f32],
-    src_trc: TransferFunction,
-    dst_trc: TransferFunction,
-) -> bool {
-    use TransferFunction::*;
-    debug_assert_eq!(data.len() % 3, 0);
-    if src_trc == Linear && dst_trc == Linear {
-        convert_linear_rgb(m, data);
-        return true;
-    }
-    #[cfg(target_arch = "x86_64")]
-    match (src_trc, dst_trc) {
-        (Srgb, Srgb) => { incant!(convert_rgb_srgb(m, data)); return true; }
-        (Bt709, Bt709) => { incant!(convert_rgb_bt709(m, data)); return true; }
-        (Pq, Pq) => { incant!(convert_rgb_pq(m, data)); return true; }
-        (Hlg, Hlg) => { incant!(convert_rgb_hlg(m, data)); return true; }
-        (Gamma22, Gamma22) => { incant!(convert_rgb_adobe(m, data)); return true; }
-        (Pq, Srgb) => { incant!(convert_rgb_pq_to_srgb(m, data)); return true; }
-        (Hlg, Srgb) => { incant!(convert_rgb_hlg_to_srgb(m, data)); return true; }
-        (Srgb, Pq) => { incant!(convert_rgb_srgb_to_pq(m, data)); return true; }
-        (Bt709, Srgb) => { incant!(convert_rgb_bt709_to_srgb(m, data)); return true; }
-        (Srgb, Bt709) => { incant!(convert_rgb_srgb_to_bt709(m, data)); return true; }
-        (Gamma22, Srgb) => { incant!(convert_rgb_adobe_to_srgb(m, data)); return true; }
-        (Srgb, Gamma22) => { incant!(convert_rgb_srgb_to_adobe(m, data)); return true; }
-        _ => {}
-    }
-    let Some(lin) = scalar_linearize(src_trc) else { return false; };
-    let Some(enc) = scalar_encode(dst_trc) else { return false; };
-    for pixel in data.chunks_exact_mut(3) {
-        let r = lin(pixel[0]);
-        let g = lin(pixel[1]);
-        let b = lin(pixel[2]);
-        let (nr, ng, nb) = mat3x3(m, r, g, b);
-        pixel[0] = enc(nr);
-        pixel[1] = enc(ng);
-        pixel[2] = enc(nb);
-    }
-    true
-}
-
-/// Bench-only: v1 dispatch for RGBA. Mirror of `__v1_convert_f32_rgb_dispatch`.
-#[cfg(feature = "__bench_v1_v2")]
-#[doc(hidden)]
-pub fn __v1_convert_f32_rgba_dispatch(
-    m: &[[f32; 3]; 3],
-    data: &mut [f32],
-    src_trc: TransferFunction,
-    dst_trc: TransferFunction,
-) -> bool {
-    use TransferFunction::*;
-    debug_assert_eq!(data.len() % 4, 0);
-    if src_trc == Linear && dst_trc == Linear {
-        convert_linear_rgba(m, data);
-        return true;
-    }
-    #[cfg(target_arch = "x86_64")]
-    match (src_trc, dst_trc) {
-        (Srgb, Srgb) => { incant!(convert_rgba_srgb(m, data)); return true; }
-        (Bt709, Bt709) => { incant!(convert_rgba_bt709(m, data)); return true; }
-        (Pq, Pq) => { incant!(convert_rgba_pq(m, data)); return true; }
-        (Hlg, Hlg) => { incant!(convert_rgba_hlg(m, data)); return true; }
-        (Gamma22, Gamma22) => { incant!(convert_rgba_adobe(m, data)); return true; }
-        (Pq, Srgb) => { incant!(convert_rgba_pq_to_srgb(m, data)); return true; }
-        (Hlg, Srgb) => { incant!(convert_rgba_hlg_to_srgb(m, data)); return true; }
-        (Srgb, Pq) => { incant!(convert_rgba_srgb_to_pq(m, data)); return true; }
-        (Bt709, Srgb) => { incant!(convert_rgba_bt709_to_srgb(m, data)); return true; }
-        (Srgb, Bt709) => { incant!(convert_rgba_srgb_to_bt709(m, data)); return true; }
-        (Gamma22, Srgb) => { incant!(convert_rgba_adobe_to_srgb(m, data)); return true; }
-        (Srgb, Gamma22) => { incant!(convert_rgba_srgb_to_adobe(m, data)); return true; }
-        _ => {}
-    }
-    let Some(lin) = scalar_linearize(src_trc) else { return false; };
-    let Some(enc) = scalar_encode(dst_trc) else { return false; };
-    for pixel in data.chunks_exact_mut(4) {
         let r = lin(pixel[0]);
         let g = lin(pixel[1]);
         let b = lin(pixel[2]);
@@ -707,8 +342,9 @@ pub(crate) fn convert_f32_rgba_dispatch(
     dst_trc: TransferFunction,
 ) -> bool {
     debug_assert_eq!(data.len() % 4, 0);
-    // See convert_f32_rgb_dispatch. v2 owns the SIMD path for Linear→Linear
-    // and all 12 v1-supported pairs (alpha is byte-exact unchanged in v2).
+    // See convert_f32_rgb_dispatch. fast_gamut_v2 owns the SIMD path for
+    // Linear→Linear and all 12 supported TRC pairs (alpha is byte-exact
+    // unchanged through the v2 bodies, verified by brute-force parity).
     if crate::fast_gamut_v2::convert_f32_rgba_v2(m, data, src_trc, dst_trc) {
         return true;
     }

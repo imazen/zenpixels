@@ -41,12 +41,6 @@ __trace_ops = ["std"]
 # Default off in this crate; archmage's avx512 feature is enabled at
 # the dep level so V4x **tokens** are always available regardless.
 avx512 = []
-# Bench-only: exposes v1 (stamp_trc_kernels!) and v2 (fast_gamut_v2)
-# dispatch entry points side-by-side so `bench_v1_vs_v2_paired` can
-# register both as zenbench paired benches in a single interleaved run.
-# Production builds keep v1 unreachable; this feature only flips
-# additional `pub` accessors, no behavior change.
-__bench_v1_v2 = []
 
 [dependencies]
 zenpixels = { workspace = true, default-features = false, features = ["icc"] }
@@ -137,11 +131,6 @@ path = "benches/bench_u16_hybrids.rs"
 harness = false
 required-features = ["__bench_u16_hybrids"]
 
-[[bench]]
-name = "bench_v1_vs_v2_paired"
-path = "benches/bench_v1_vs_v2_paired.rs"
-harness = false
-required-features = ["__bench_v1_v2"]
 
 # TODO: restore when ZenCmsLite is public
 # [[bench]]
