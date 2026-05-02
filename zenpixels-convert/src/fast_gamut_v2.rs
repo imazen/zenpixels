@@ -1,8 +1,16 @@
-//! `fast_gamut_v2` — magetypes-driven replacement for the v1 `stamp_trc_kernels!` family.
+//! `fast_gamut_v2` — magetypes-driven, const-generic-specialized fused TRC + 3×3
+//! matrix kernels.
 //!
-//! See `fast_gamut_DESIGN.md` for the full plan. This module provides a
-//! drop-in replacement for the v1 fused TRC + 3×3 matrix kernels with three
-//! per-pair bodies:
+//! This module is the SIMD-backed implementation invoked by the production
+//! gamut row converter. The 12 supported (src TRC, dst TRC) pairs are
+//! specialized at compile time via `const SRC_TRC: u8` / `const DST_TRC: u8`
+//! generic parameters. LLVM const-folds the per-TRC `match` inside the helpers
+//! down to the single arm chosen by each monomorphization, producing the same
+//! machine code as if each pair had a hand-written body.
+//!
+//! # Tier layout
+//!
+//! Three magetypes-stamped const-generic bodies cover all targets:
 //!
 //! - **wide body** (`#[magetypes(v4x, v4, scalar)]`) over `f32x16<T>` —
 //!   active on x86_64 hosts with AVX-512 (V4 / V4x) and on the scalar
@@ -16,29 +24,21 @@
 //!   active on AArch64 / WASM hosts where the wide polyfill incurs heavy
 //!   register pressure.
 //!
-//! Each TRC pair (e.g. `srgb`, `bt709`, `pq`, `hlg`, `adobe`, `pq_to_srgb`,
-//! `bt709_to_srgb`, …) ships an RGB and an RGBA dispatcher that drives the
-//! right body via `incant!`.
-//!
-//! # Layout
-//!
-//! - `stamp_v2_pair!` — generates wide + narrow bodies + an `incant!`-fronted
-//!   public dispatch pair for one (linearize, encode, name) tuple.
-//! - `convert_f32_rgb_v2 / convert_f32_rgba_v2` — the public match-on-TRC
-//!   entry that v1's `convert_f32_rgb_dispatch` / `convert_f32_rgba_dispatch`
-//!   forwards to. Linear→Linear bypasses TRC entirely.
-//!
 //! # Numerics
 //!
-//! The wide body's matrix multiply uses `mul_add` chained right-to-left, the
-//! same shape as the v1 `mat3x3_x8` helper. Forward TRC calls
-//! `linear_srgb::tf::*::*_to_linear_x{4,16}<T>`; encode calls
-//! `linear_srgb::tf::*::linear_to_*_x{4,16}<T>`. Adobe (gamma 2.2) goes
-//! through `linear_srgb::tf::gamma::{gamma_to_linear,linear_to_gamma}_x{4,16}`,
-//! which clamp to `[0,1]` then call `pow_midp` (~9 ULP).
+//! The SIMD matrix multiply uses `mul_add` chained right-to-left, identical
+//! shape to the v1 `mat3x3_x8` helper. Forward TRC calls
+//! `linear_srgb::tf::*::*_to_linear_x{4,8,16}<T>`; encode calls
+//! `linear_srgb::tf::*::linear_to_*_x{4,8,16}<T>`. Adobe (gamma 2.2) goes
+//! through `linear_srgb::tf::gamma::{gamma_to_linear,linear_to_gamma}_x{4,8,16}`
+//! with `ADOBE_GAMMA = 2.19921875`. The sRGB linearize / encode arms clamp to
+//! `[0, 1]` before the kernel call to match the v1 production behavior; all
+//! other TRCs (BT.709, PQ, HLG) accept HDR extended range and pass through
+//! unclamped.
 //!
 //! Tail pixels (count not divisible by chunk width) take the scalar
-//! linearize → matrix → encode path.
+//! linearize → matrix → encode path through `scalar_linearize` /
+//! `scalar_encode`.
 
 use archmage::prelude::*;
 use linear_srgb::tf;
@@ -52,7 +52,24 @@ use crate::TransferFunction;
 const ADOBE_GAMMA: f32 = 2.19921875; // Adobe RGB spec: 563/256
 
 // =============================================================================
-// Shared scalar helpers
+// TRC integer tags — encode the discriminant for const-generic specialization.
+//
+// Crate-private. The public API still takes `TransferFunction`; `trc_tag` maps
+// the enum to one of these tags. `TRC_LINEAR` is included for completeness even
+// though the (Linear, Linear) pair short-circuits to `convert_*_linear_v2`
+// before const-generic dispatch.
+// =============================================================================
+
+pub(crate) const TRC_SRGB: u8 = 0;
+pub(crate) const TRC_BT709: u8 = 1;
+pub(crate) const TRC_PQ: u8 = 2;
+pub(crate) const TRC_HLG: u8 = 3;
+pub(crate) const TRC_GAMMA22: u8 = 4;
+#[allow(dead_code)]
+pub(crate) const TRC_LINEAR: u8 = 5;
+
+// =============================================================================
+// Shared scalar matrix helper
 // =============================================================================
 
 #[inline(always)]
@@ -65,820 +82,510 @@ fn mat3x3(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 }
 
 // =============================================================================
-// Per-TF clamping wrappers — match v1 (tokens::x{4,8}::*_v3) clamp behavior
+// Scalar linearize / encode helpers, const-generic on TRC tag.
 //
-// linear-srgb's per-TF SIMD APIs are inconsistent re: clamping:
-//   - tokens::x{4,8}::{srgb,gamma}_to_linear_v3 / linear_to_{srgb,gamma}_v3:
-//     clamp input to [0, 1] at function entry.
-//   - tokens::x{4,8}::{bt709,pq,hlg}_*_v3: do NOT clamp (HDR extended range).
-//   - tf::srgb::srgb_to_linear_x{4,8,16}<T>: do NOT clamp (raw kernel).
-//   - tf::gamma::gamma_to_linear_x{4,8,16}<T>: DO clamp (built into kernel).
-//   - tf::{bt709,pq,hlg}::*_x{4,8,16}<T>: do NOT clamp.
+// `match SRC_TRC` const-folds to the chosen arm at every monomorphization,
+// because `SRC_TRC` is a const generic parameter visible to LLVM. The wildcard
+// arm uses `unreachable_unchecked` so LLVM provably eliminates the catch-all
+// branch — `convert_f32_v2_inner` is the only caller and it only ever
+// instantiates these with the five named tag values.
+// =============================================================================
+
+/// # Safety
+/// Called only from the const-generic dispatcher with `SRC_TRC` ∈
+/// {`TRC_SRGB`, `TRC_BT709`, `TRC_PQ`, `TRC_HLG`, `TRC_GAMMA22`}.
+#[inline(always)]
+fn scalar_linearize<const SRC_TRC: u8>(v: f32) -> f32 {
+    match SRC_TRC {
+        TRC_SRGB => tf::srgb_to_linear(v),
+        TRC_BT709 => tf::bt709_to_linear(v),
+        TRC_PQ => tf::pq_to_linear(v),
+        TRC_HLG => tf::hlg_to_linear(v),
+        TRC_GAMMA22 => linear_srgb::default::gamma_to_linear(v, ADOBE_GAMMA),
+        // SAFETY: dispatcher only ever instantiates with the five tag values
+        // matched above. LLVM eliminates the wildcard arm entirely.
+        _ => unreachable!(),
+    }
+}
+
+/// # Safety
+/// Called only from the const-generic dispatcher with `DST_TRC` ∈
+/// {`TRC_SRGB`, `TRC_BT709`, `TRC_PQ`, `TRC_HLG`, `TRC_GAMMA22`}.
+#[inline(always)]
+fn scalar_encode<const DST_TRC: u8>(v: f32) -> f32 {
+    match DST_TRC {
+        TRC_SRGB => tf::linear_to_srgb(v),
+        TRC_BT709 => tf::linear_to_bt709(v),
+        TRC_PQ => tf::linear_to_pq(v),
+        TRC_HLG => tf::linear_to_hlg(v),
+        TRC_GAMMA22 => linear_srgb::default::linear_to_gamma(v, ADOBE_GAMMA),
+        _ => unreachable!(),
+    }
+}
+
+// =============================================================================
+// SIMD linearize / encode helpers, const-generic on TRC tag, one per width.
 //
-// For v2 to match v1 behavior pair-by-pair (CLAUDE.md zero-tolerance for
-// pixel divergence), the sRGB-side calls need clamping wrappers; everything
-// else uses the raw kernel directly. Adobe is already-clamped via gamma.rs.
+// Mirror the scalar helpers. The `TRC_SRGB` arm folds in the `[0, 1]` clamp
+// that the v1 production path applied — `tf::srgb::*_x{4,8,16}` are raw
+// kernels that don't clamp. `TRC_GAMMA22` uses `tf::gamma::*` which already
+// clamps internally. `TRC_BT709` / `TRC_PQ` / `TRC_HLG` accept HDR extended
+// range and run the raw kernel.
 // =============================================================================
 
 #[inline(always)]
-fn srgb_to_linear_x16_clamped<T: F32x16Convert>(
+fn linearize_x16<const SRC_TRC: u8, T: F32x16Convert>(
     t: T,
     v: GenericF32x16<T>,
 ) -> GenericF32x16<T> {
-    let z = GenericF32x16::zero(t);
-    let o = GenericF32x16::splat(t, 1.0);
-    tf::srgb::srgb_to_linear_x16(t, v.max(z).min(o))
+    match SRC_TRC {
+        TRC_SRGB => {
+            let z = GenericF32x16::zero(t);
+            let o = GenericF32x16::splat(t, 1.0);
+            tf::srgb::srgb_to_linear_x16(t, v.max(z).min(o))
+        }
+        TRC_BT709 => tf::bt709::bt709_to_linear_x16(t, v),
+        TRC_PQ => tf::pq::pq_to_linear_x16(t, v),
+        TRC_HLG => tf::hlg::hlg_to_linear_x16(t, v),
+        TRC_GAMMA22 => tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
+        _ => unreachable!(),
+    }
 }
+
 #[inline(always)]
-fn srgb_to_linear_x8_clamped<T: F32x8Convert>(t: T, v: GenericF32x8<T>) -> GenericF32x8<T> {
-    let z = GenericF32x8::zero(t);
-    let o = GenericF32x8::splat(t, 1.0);
-    tf::srgb::srgb_to_linear_x8(t, v.max(z).min(o))
-}
-#[inline(always)]
-fn srgb_to_linear_x4_clamped<T: F32x4Convert>(t: T, v: GenericF32x4<T>) -> GenericF32x4<T> {
-    let z = GenericF32x4::zero(t);
-    let o = GenericF32x4::splat(t, 1.0);
-    tf::srgb::srgb_to_linear_x4(t, v.max(z).min(o))
-}
-#[inline(always)]
-fn linear_to_srgb_x16_clamped<T: F32x16Convert>(
+fn encode_x16<const DST_TRC: u8, T: F32x16Convert>(
     t: T,
     v: GenericF32x16<T>,
 ) -> GenericF32x16<T> {
-    let z = GenericF32x16::zero(t);
-    let o = GenericF32x16::splat(t, 1.0);
-    tf::srgb::linear_to_srgb_x16(t, v.max(z).min(o))
-}
-#[inline(always)]
-fn linear_to_srgb_x8_clamped<T: F32x8Convert>(t: T, v: GenericF32x8<T>) -> GenericF32x8<T> {
-    let z = GenericF32x8::zero(t);
-    let o = GenericF32x8::splat(t, 1.0);
-    tf::srgb::linear_to_srgb_x8(t, v.max(z).min(o))
-}
-#[inline(always)]
-fn linear_to_srgb_x4_clamped<T: F32x4Convert>(t: T, v: GenericF32x4<T>) -> GenericF32x4<T> {
-    let z = GenericF32x4::zero(t);
-    let o = GenericF32x4::splat(t, 1.0);
-    tf::srgb::linear_to_srgb_x4(t, v.max(z).min(o))
+    match DST_TRC {
+        TRC_SRGB => {
+            let z = GenericF32x16::zero(t);
+            let o = GenericF32x16::splat(t, 1.0);
+            tf::srgb::linear_to_srgb_x16(t, v.max(z).min(o))
+        }
+        TRC_BT709 => tf::bt709::linear_to_bt709_x16(t, v),
+        TRC_PQ => tf::pq::linear_to_pq_x16(t, v),
+        TRC_HLG => tf::hlg::linear_to_hlg_x16(t, v),
+        TRC_GAMMA22 => tf::gamma::linear_to_gamma_x16(t, v, ADOBE_GAMMA),
+        _ => unreachable!(),
+    }
 }
 
 #[inline(always)]
-fn adobe_to_linear_scalar(v: f32) -> f32 {
-    linear_srgb::default::gamma_to_linear(v, ADOBE_GAMMA)
+fn linearize_x8<const SRC_TRC: u8, T: F32x8Convert>(
+    t: T,
+    v: GenericF32x8<T>,
+) -> GenericF32x8<T> {
+    match SRC_TRC {
+        TRC_SRGB => {
+            let z = GenericF32x8::zero(t);
+            let o = GenericF32x8::splat(t, 1.0);
+            tf::srgb::srgb_to_linear_x8(t, v.max(z).min(o))
+        }
+        TRC_BT709 => tf::bt709::bt709_to_linear_x8(t, v),
+        TRC_PQ => tf::pq::pq_to_linear_x8(t, v),
+        TRC_HLG => tf::hlg::hlg_to_linear_x8(t, v),
+        TRC_GAMMA22 => tf::gamma::gamma_to_linear_x8(t, v, ADOBE_GAMMA),
+        _ => unreachable!(),
+    }
 }
 
 #[inline(always)]
-fn adobe_from_linear_scalar(v: f32) -> f32 {
-    linear_srgb::default::linear_to_gamma(v, ADOBE_GAMMA)
+fn encode_x8<const DST_TRC: u8, T: F32x8Convert>(
+    t: T,
+    v: GenericF32x8<T>,
+) -> GenericF32x8<T> {
+    match DST_TRC {
+        TRC_SRGB => {
+            let z = GenericF32x8::zero(t);
+            let o = GenericF32x8::splat(t, 1.0);
+            tf::srgb::linear_to_srgb_x8(t, v.max(z).min(o))
+        }
+        TRC_BT709 => tf::bt709::linear_to_bt709_x8(t, v),
+        TRC_PQ => tf::pq::linear_to_pq_x8(t, v),
+        TRC_HLG => tf::hlg::linear_to_hlg_x8(t, v),
+        TRC_GAMMA22 => tf::gamma::linear_to_gamma_x8(t, v, ADOBE_GAMMA),
+        _ => unreachable!(),
+    }
+}
+
+#[inline(always)]
+fn linearize_x4<const SRC_TRC: u8, T: F32x4Convert>(
+    t: T,
+    v: GenericF32x4<T>,
+) -> GenericF32x4<T> {
+    match SRC_TRC {
+        TRC_SRGB => {
+            let z = GenericF32x4::zero(t);
+            let o = GenericF32x4::splat(t, 1.0);
+            tf::srgb::srgb_to_linear_x4(t, v.max(z).min(o))
+        }
+        TRC_BT709 => tf::bt709::bt709_to_linear_x4(t, v),
+        TRC_PQ => tf::pq::pq_to_linear_x4(t, v),
+        TRC_HLG => tf::hlg::hlg_to_linear_x4(t, v),
+        TRC_GAMMA22 => tf::gamma::gamma_to_linear_x4(t, v, ADOBE_GAMMA),
+        _ => unreachable!(),
+    }
+}
+
+#[inline(always)]
+fn encode_x4<const DST_TRC: u8, T: F32x4Convert>(
+    t: T,
+    v: GenericF32x4<T>,
+) -> GenericF32x4<T> {
+    match DST_TRC {
+        TRC_SRGB => {
+            let z = GenericF32x4::zero(t);
+            let o = GenericF32x4::splat(t, 1.0);
+            tf::srgb::linear_to_srgb_x4(t, v.max(z).min(o))
+        }
+        TRC_BT709 => tf::bt709::linear_to_bt709_x4(t, v),
+        TRC_PQ => tf::pq::linear_to_pq_x4(t, v),
+        TRC_HLG => tf::hlg::linear_to_hlg_x4(t, v),
+        TRC_GAMMA22 => tf::gamma::linear_to_gamma_x4(t, v, ADOBE_GAMMA),
+        _ => unreachable!(),
+    }
 }
 
 // =============================================================================
-// Macro — stamps wide + native V3 + narrow bodies + dispatchers for one TRC pair.
+// Wide body — f32x16, dispatched across V4x / V4 / scalar.
 //
-// Inputs:
-//   $name        — pair tag (e.g. `srgb`, `pq_to_srgb`, `adobe`)
-//   $lin_x16     — generic SIMD linearize: fn<T: F32x16Convert>(t, v) -> v
-//   $lin_x8      — generic SIMD linearize: fn<T: F32x8Convert>(t, v) -> v
-//   $lin_x4      — generic SIMD linearize: fn<T: F32x4Convert>(t, v) -> v
-//   $enc_x16     — generic SIMD encode:    fn<T: F32x16Convert>(t, v) -> v
-//   $enc_x8      — generic SIMD encode:    fn<T: F32x8Convert>(t, v) -> v
-//   $enc_x4      — generic SIMD encode:    fn<T: F32x4Convert>(t, v) -> v
-//   $lin_scalar  — scalar fn(f32) -> f32
-//   $enc_scalar  — scalar fn(f32) -> f32
+// `CHANNELS` is 3 (RGB) or 4 (RGBA). `CHUNK` is `16 * CHANNELS` and must be
+// passed explicitly because `[f32; PIXELS * CHANNELS]` would require the
+// unstable `generic_const_exprs` feature. The `debug_assert_eq!` documents
+// the invariant; release builds elide it.
 //
-// Generates (per pair, for both RGB and RGBA):
-//
-//   convert_f32_rgb_<name>_v2 (matrix, slice)
-//   convert_f32_rgba_<name>_v2 (matrix, slice)
-//
-// plus their internal `_wide_impl_*` / `_native_impl_v3` / `_narrow_impl_*`
-// magetypes-stamped bodies.
+// V3 is intentionally absent — the AVX2 polyfill of f32x16 to 2× 256-bit
+// generates significant register pressure on this kernel. The native f32x8
+// body below picks up V3.
 // =============================================================================
 
-macro_rules! stamp_v2_pair {
-    (
-        name: $name:ident,
-        lin_x16: $lin_x16:expr,
-        lin_x8: $lin_x8:expr,
-        lin_x4: $lin_x4:expr,
-        enc_x16: $enc_x16:expr,
-        enc_x8: $enc_x8:expr,
-        enc_x4: $enc_x4:expr,
-        lin_scalar: $lin_scalar:expr,
-        enc_scalar: $enc_scalar:expr,
-    ) => {
-        paste::paste! {
-            // -----------------------------------------------------------------
-            // Wide body: f32x16, dispatched across V4x / V4 / scalar.
-            // V3 dropped — handled by the native f32x8 body below to avoid
-            // 2x256-bit polyfill register pressure on AVX2.
-            // -----------------------------------------------------------------
-            #[magetypes(v4x, v4, scalar)]
-            fn [<convert_rgb_ $name _wide_impl>](
-                token: Token,
-                m: &[[f32; 3]; 3],
-                data: &mut [f32],
-            ) {
-                #[allow(non_camel_case_types)]
-                type f32x16 = GenericF32x16<Token>;
-                const PIXELS: usize = 16;
-                const CHUNK: usize = PIXELS * 3;
+#[magetypes(v4x, v4, scalar)]
+fn convert_wide<
+    const SRC_TRC: u8,
+    const DST_TRC: u8,
+    const CHANNELS: usize,
+    const CHUNK: usize,
+>(
+    token: Token,
+    m: &[[f32; 3]; 3],
+    data: &mut [f32],
+) {
+    #[allow(non_camel_case_types)]
+    type f32x16 = GenericF32x16<Token>;
+    const PIXELS: usize = 16;
+    debug_assert_eq!(CHUNK, PIXELS * CHANNELS);
 
-                let m00 = f32x16::splat(token, m[0][0]);
-                let m01 = f32x16::splat(token, m[0][1]);
-                let m02 = f32x16::splat(token, m[0][2]);
-                let m10 = f32x16::splat(token, m[1][0]);
-                let m11 = f32x16::splat(token, m[1][1]);
-                let m12 = f32x16::splat(token, m[1][2]);
-                let m20 = f32x16::splat(token, m[2][0]);
-                let m21 = f32x16::splat(token, m[2][1]);
-                let m22 = f32x16::splat(token, m[2][2]);
+    let m00 = f32x16::splat(token, m[0][0]);
+    let m01 = f32x16::splat(token, m[0][1]);
+    let m02 = f32x16::splat(token, m[0][2]);
+    let m10 = f32x16::splat(token, m[1][0]);
+    let m11 = f32x16::splat(token, m[1][1]);
+    let m12 = f32x16::splat(token, m[1][2]);
+    let m20 = f32x16::splat(token, m[2][0]);
+    let m21 = f32x16::splat(token, m[2][1]);
+    let m22 = f32x16::splat(token, m[2][2]);
 
-                let chunks = data.len() / CHUNK;
-                let bulk = chunks * CHUNK;
-                let (bulk_data, tail) = data.split_at_mut(bulk);
-                for chunk in bulk_data.chunks_exact_mut(CHUNK) {
-                    // Fixed-size array pattern: one try_into at chunk start
-                    // proves all interior indexes safe (CLAUDE.md "Fixed-size
-                    // array pattern eliminates bounds checks").
-                    let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
-                    let mut r = [0.0f32; PIXELS];
-                    let mut g = [0.0f32; PIXELS];
-                    let mut b = [0.0f32; PIXELS];
-                    for i in 0..PIXELS {
-                        r[i] = chunk[i * 3];
-                        g[i] = chunk[i * 3 + 1];
-                        b[i] = chunk[i * 3 + 2];
-                    }
-                    let rv = f32x16::load(token, &r);
-                    let gv = f32x16::load(token, &g);
-                    let bv = f32x16::load(token, &b);
+    let chunks = data.len() / CHUNK;
+    let bulk = chunks * CHUNK;
+    let (bulk_data, tail) = data.split_at_mut(bulk);
+    for chunk in bulk_data.chunks_exact_mut(CHUNK) {
+        // Fixed-size array pattern (CLAUDE.md): one try_into at chunk start
+        // proves all interior indexes safe.
+        let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
+        let mut r = [0.0f32; PIXELS];
+        let mut g = [0.0f32; PIXELS];
+        let mut b = [0.0f32; PIXELS];
+        for i in 0..PIXELS {
+            r[i] = chunk[i * CHANNELS];
+            g[i] = chunk[i * CHANNELS + 1];
+            b[i] = chunk[i * CHANNELS + 2];
+        }
+        let rv = f32x16::load(token, &r);
+        let gv = f32x16::load(token, &g);
+        let bv = f32x16::load(token, &b);
 
-                    let rl = ($lin_x16)(token, rv);
-                    let gl = ($lin_x16)(token, gv);
-                    let bl = ($lin_x16)(token, bv);
+        let rl = linearize_x16::<SRC_TRC, _>(token, rv);
+        let gl = linearize_x16::<SRC_TRC, _>(token, gv);
+        let bl = linearize_x16::<SRC_TRC, _>(token, bv);
 
-                    let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
-                    let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
-                    let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
+        let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
+        let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
+        let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
 
-                    let or_ = ($enc_x16)(token, nr);
-                    let og_ = ($enc_x16)(token, ng);
-                    let ob_ = ($enc_x16)(token, nb);
+        let or_ = encode_x16::<DST_TRC, _>(token, nr);
+        let og_ = encode_x16::<DST_TRC, _>(token, ng);
+        let ob_ = encode_x16::<DST_TRC, _>(token, nb);
 
-                    let mut ro = [0.0f32; PIXELS];
-                    let mut go = [0.0f32; PIXELS];
-                    let mut bo = [0.0f32; PIXELS];
-                    or_.store(&mut ro);
-                    og_.store(&mut go);
-                    ob_.store(&mut bo);
-                    for i in 0..PIXELS {
-                        chunk[i * 3] = ro[i];
-                        chunk[i * 3 + 1] = go[i];
-                        chunk[i * 3 + 2] = bo[i];
-                    }
-                }
+        let mut ro = [0.0f32; PIXELS];
+        let mut go = [0.0f32; PIXELS];
+        let mut bo = [0.0f32; PIXELS];
+        or_.store(&mut ro);
+        og_.store(&mut go);
+        ob_.store(&mut bo);
+        for i in 0..PIXELS {
+            chunk[i * CHANNELS] = ro[i];
+            chunk[i * CHANNELS + 1] = go[i];
+            chunk[i * CHANNELS + 2] = bo[i];
+            // alpha (chunk[i*CHANNELS + 3]) is byte-exact unchanged.
+        }
+    }
 
-                for pixel in tail.chunks_exact_mut(3) {
-                    let r = ($lin_scalar)(pixel[0]);
-                    let g = ($lin_scalar)(pixel[1]);
-                    let b = ($lin_scalar)(pixel[2]);
-                    let (nr, ng, nb) = mat3x3(m, r, g, b);
-                    pixel[0] = ($enc_scalar)(nr);
-                    pixel[1] = ($enc_scalar)(ng);
-                    pixel[2] = ($enc_scalar)(nb);
-                }
+    for pixel in tail.chunks_exact_mut(CHANNELS) {
+        let r = scalar_linearize::<SRC_TRC>(pixel[0]);
+        let g = scalar_linearize::<SRC_TRC>(pixel[1]);
+        let b = scalar_linearize::<SRC_TRC>(pixel[2]);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        pixel[0] = scalar_encode::<DST_TRC>(nr);
+        pixel[1] = scalar_encode::<DST_TRC>(ng);
+        pixel[2] = scalar_encode::<DST_TRC>(nb);
+        // pixel[3] unchanged (RGBA).
+    }
+}
+
+// =============================================================================
+// Native V3 body — f32x8 over X64V3Token. Native AVX2 width.
+//
+// Mirrors the v1 `fused_8px_rgb_<name>` / `fused_8px_rgba_<name>` shape.
+// =============================================================================
+
+#[magetypes(v3)]
+fn convert_native<
+    const SRC_TRC: u8,
+    const DST_TRC: u8,
+    const CHANNELS: usize,
+    const CHUNK: usize,
+>(
+    token: Token,
+    m: &[[f32; 3]; 3],
+    data: &mut [f32],
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+    const PIXELS: usize = 8;
+    debug_assert_eq!(CHUNK, PIXELS * CHANNELS);
+
+    let m00 = f32x8::splat(token, m[0][0]);
+    let m01 = f32x8::splat(token, m[0][1]);
+    let m02 = f32x8::splat(token, m[0][2]);
+    let m10 = f32x8::splat(token, m[1][0]);
+    let m11 = f32x8::splat(token, m[1][1]);
+    let m12 = f32x8::splat(token, m[1][2]);
+    let m20 = f32x8::splat(token, m[2][0]);
+    let m21 = f32x8::splat(token, m[2][1]);
+    let m22 = f32x8::splat(token, m[2][2]);
+
+    let chunks = data.len() / CHUNK;
+    let bulk = chunks * CHUNK;
+    let (bulk_data, tail) = data.split_at_mut(bulk);
+    for chunk in bulk_data.chunks_exact_mut(CHUNK) {
+        let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
+        let mut r = [0.0f32; PIXELS];
+        let mut g = [0.0f32; PIXELS];
+        let mut b = [0.0f32; PIXELS];
+        for i in 0..PIXELS {
+            r[i] = chunk[i * CHANNELS];
+            g[i] = chunk[i * CHANNELS + 1];
+            b[i] = chunk[i * CHANNELS + 2];
+        }
+        let rv = f32x8::load(token, &r);
+        let gv = f32x8::load(token, &g);
+        let bv = f32x8::load(token, &b);
+
+        let rl = linearize_x8::<SRC_TRC, _>(token, rv);
+        let gl = linearize_x8::<SRC_TRC, _>(token, gv);
+        let bl = linearize_x8::<SRC_TRC, _>(token, bv);
+
+        let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
+        let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
+        let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
+
+        let or_ = encode_x8::<DST_TRC, _>(token, nr);
+        let og_ = encode_x8::<DST_TRC, _>(token, ng);
+        let ob_ = encode_x8::<DST_TRC, _>(token, nb);
+
+        let mut ro = [0.0f32; PIXELS];
+        let mut go = [0.0f32; PIXELS];
+        let mut bo = [0.0f32; PIXELS];
+        or_.store(&mut ro);
+        og_.store(&mut go);
+        ob_.store(&mut bo);
+        for i in 0..PIXELS {
+            chunk[i * CHANNELS] = ro[i];
+            chunk[i * CHANNELS + 1] = go[i];
+            chunk[i * CHANNELS + 2] = bo[i];
+        }
+    }
+
+    for pixel in tail.chunks_exact_mut(CHANNELS) {
+        let r = scalar_linearize::<SRC_TRC>(pixel[0]);
+        let g = scalar_linearize::<SRC_TRC>(pixel[1]);
+        let b = scalar_linearize::<SRC_TRC>(pixel[2]);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        pixel[0] = scalar_encode::<DST_TRC>(nr);
+        pixel[1] = scalar_encode::<DST_TRC>(ng);
+        pixel[2] = scalar_encode::<DST_TRC>(nb);
+    }
+}
+
+// =============================================================================
+// Narrow body — f32x4, dispatched across NEON / WASM128.
+// =============================================================================
+
+#[magetypes(neon, wasm128)]
+fn convert_narrow<
+    const SRC_TRC: u8,
+    const DST_TRC: u8,
+    const CHANNELS: usize,
+    const CHUNK: usize,
+>(
+    token: Token,
+    m: &[[f32; 3]; 3],
+    data: &mut [f32],
+) {
+    #[allow(non_camel_case_types)]
+    type f32x4 = GenericF32x4<Token>;
+    const PIXELS: usize = 4;
+    debug_assert_eq!(CHUNK, PIXELS * CHANNELS);
+
+    let m00 = f32x4::splat(token, m[0][0]);
+    let m01 = f32x4::splat(token, m[0][1]);
+    let m02 = f32x4::splat(token, m[0][2]);
+    let m10 = f32x4::splat(token, m[1][0]);
+    let m11 = f32x4::splat(token, m[1][1]);
+    let m12 = f32x4::splat(token, m[1][2]);
+    let m20 = f32x4::splat(token, m[2][0]);
+    let m21 = f32x4::splat(token, m[2][1]);
+    let m22 = f32x4::splat(token, m[2][2]);
+
+    let chunks = data.len() / CHUNK;
+    let bulk = chunks * CHUNK;
+    let (bulk_data, tail) = data.split_at_mut(bulk);
+    for chunk in bulk_data.chunks_exact_mut(CHUNK) {
+        let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
+        let mut r = [0.0f32; PIXELS];
+        let mut g = [0.0f32; PIXELS];
+        let mut b = [0.0f32; PIXELS];
+        for i in 0..PIXELS {
+            r[i] = chunk[i * CHANNELS];
+            g[i] = chunk[i * CHANNELS + 1];
+            b[i] = chunk[i * CHANNELS + 2];
+        }
+        let rv = f32x4::load(token, &r);
+        let gv = f32x4::load(token, &g);
+        let bv = f32x4::load(token, &b);
+
+        let rl = linearize_x4::<SRC_TRC, _>(token, rv);
+        let gl = linearize_x4::<SRC_TRC, _>(token, gv);
+        let bl = linearize_x4::<SRC_TRC, _>(token, bv);
+
+        let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
+        let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
+        let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
+
+        let or_ = encode_x4::<DST_TRC, _>(token, nr);
+        let og_ = encode_x4::<DST_TRC, _>(token, ng);
+        let ob_ = encode_x4::<DST_TRC, _>(token, nb);
+
+        let mut ro = [0.0f32; PIXELS];
+        let mut go = [0.0f32; PIXELS];
+        let mut bo = [0.0f32; PIXELS];
+        or_.store(&mut ro);
+        og_.store(&mut go);
+        ob_.store(&mut bo);
+        for i in 0..PIXELS {
+            chunk[i * CHANNELS] = ro[i];
+            chunk[i * CHANNELS + 1] = go[i];
+            chunk[i * CHANNELS + 2] = bo[i];
+        }
+    }
+
+    for pixel in tail.chunks_exact_mut(CHANNELS) {
+        let r = scalar_linearize::<SRC_TRC>(pixel[0]);
+        let g = scalar_linearize::<SRC_TRC>(pixel[1]);
+        let b = scalar_linearize::<SRC_TRC>(pixel[2]);
+        let (nr, ng, nb) = mat3x3(m, r, g, b);
+        pixel[0] = scalar_encode::<DST_TRC>(nr);
+        pixel[1] = scalar_encode::<DST_TRC>(ng);
+        pixel[2] = scalar_encode::<DST_TRC>(nb);
+    }
+}
+
+// =============================================================================
+// Per-pair tier dispatcher — chooses wide / native / narrow body based on
+// runtime CPU capability, then forwards the four const generics through.
+// =============================================================================
+
+#[inline]
+fn dispatch_pair<
+    const SRC_TRC: u8,
+    const DST_TRC: u8,
+    const CHANNELS: usize,
+    const WIDE_CHUNK: usize,
+    const NATIVE_CHUNK: usize,
+    const NARROW_CHUNK: usize,
+>(
+    m: &[[f32; 3]; 3],
+    data: &mut [f32],
+) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        #[cfg(feature = "avx512")]
+        {
+            if let Some(t) = X64V4xToken::summon() {
+                return convert_wide_v4x::<SRC_TRC, DST_TRC, CHANNELS, WIDE_CHUNK>(t, m, data);
             }
-
-            #[magetypes(v4x, v4, scalar)]
-            fn [<convert_rgba_ $name _wide_impl>](
-                token: Token,
-                m: &[[f32; 3]; 3],
-                data: &mut [f32],
-            ) {
-                #[allow(non_camel_case_types)]
-                type f32x16 = GenericF32x16<Token>;
-                const PIXELS: usize = 16;
-                const CHUNK: usize = PIXELS * 4;
-
-                let m00 = f32x16::splat(token, m[0][0]);
-                let m01 = f32x16::splat(token, m[0][1]);
-                let m02 = f32x16::splat(token, m[0][2]);
-                let m10 = f32x16::splat(token, m[1][0]);
-                let m11 = f32x16::splat(token, m[1][1]);
-                let m12 = f32x16::splat(token, m[1][2]);
-                let m20 = f32x16::splat(token, m[2][0]);
-                let m21 = f32x16::splat(token, m[2][1]);
-                let m22 = f32x16::splat(token, m[2][2]);
-
-                let chunks = data.len() / CHUNK;
-                let bulk = chunks * CHUNK;
-                let (bulk_data, tail) = data.split_at_mut(bulk);
-                for chunk in bulk_data.chunks_exact_mut(CHUNK) {
-                    let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
-                    let mut r = [0.0f32; PIXELS];
-                    let mut g = [0.0f32; PIXELS];
-                    let mut b = [0.0f32; PIXELS];
-                    for i in 0..PIXELS {
-                        r[i] = chunk[i * 4];
-                        g[i] = chunk[i * 4 + 1];
-                        b[i] = chunk[i * 4 + 2];
-                    }
-                    let rv = f32x16::load(token, &r);
-                    let gv = f32x16::load(token, &g);
-                    let bv = f32x16::load(token, &b);
-
-                    let rl = ($lin_x16)(token, rv);
-                    let gl = ($lin_x16)(token, gv);
-                    let bl = ($lin_x16)(token, bv);
-
-                    let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
-                    let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
-                    let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
-
-                    let or_ = ($enc_x16)(token, nr);
-                    let og_ = ($enc_x16)(token, ng);
-                    let ob_ = ($enc_x16)(token, nb);
-
-                    let mut ro = [0.0f32; PIXELS];
-                    let mut go = [0.0f32; PIXELS];
-                    let mut bo = [0.0f32; PIXELS];
-                    or_.store(&mut ro);
-                    og_.store(&mut go);
-                    ob_.store(&mut bo);
-                    for i in 0..PIXELS {
-                        chunk[i * 4] = ro[i];
-                        chunk[i * 4 + 1] = go[i];
-                        chunk[i * 4 + 2] = bo[i];
-                        // alpha (chunk[i*4 + 3]) is byte-exact unchanged.
-                    }
-                }
-
-                for pixel in tail.chunks_exact_mut(4) {
-                    let r = ($lin_scalar)(pixel[0]);
-                    let g = ($lin_scalar)(pixel[1]);
-                    let b = ($lin_scalar)(pixel[2]);
-                    let (nr, ng, nb) = mat3x3(m, r, g, b);
-                    pixel[0] = ($enc_scalar)(nr);
-                    pixel[1] = ($enc_scalar)(ng);
-                    pixel[2] = ($enc_scalar)(nb);
-                    // pixel[3] unchanged.
-                }
-            }
-
-            // -----------------------------------------------------------------
-            // Native V3 body: f32x8 over X64V3Token, native AVX2 width.
-            // Mirrors v1's fused_8px_rgb_<name> / fused_8px_rgba_<name> shape.
-            // -----------------------------------------------------------------
-            #[magetypes(v3)]
-            fn [<convert_rgb_ $name _native_impl>](
-                token: Token,
-                m: &[[f32; 3]; 3],
-                data: &mut [f32],
-            ) {
-                #[allow(non_camel_case_types)]
-                type f32x8 = GenericF32x8<Token>;
-                const PIXELS: usize = 8;
-                const CHUNK: usize = PIXELS * 3;
-
-                let m00 = f32x8::splat(token, m[0][0]);
-                let m01 = f32x8::splat(token, m[0][1]);
-                let m02 = f32x8::splat(token, m[0][2]);
-                let m10 = f32x8::splat(token, m[1][0]);
-                let m11 = f32x8::splat(token, m[1][1]);
-                let m12 = f32x8::splat(token, m[1][2]);
-                let m20 = f32x8::splat(token, m[2][0]);
-                let m21 = f32x8::splat(token, m[2][1]);
-                let m22 = f32x8::splat(token, m[2][2]);
-
-                let chunks = data.len() / CHUNK;
-                let bulk = chunks * CHUNK;
-                let (bulk_data, tail) = data.split_at_mut(bulk);
-                for chunk in bulk_data.chunks_exact_mut(CHUNK) {
-                    let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
-                    let mut r = [0.0f32; PIXELS];
-                    let mut g = [0.0f32; PIXELS];
-                    let mut b = [0.0f32; PIXELS];
-                    for i in 0..PIXELS {
-                        r[i] = chunk[i * 3];
-                        g[i] = chunk[i * 3 + 1];
-                        b[i] = chunk[i * 3 + 2];
-                    }
-                    let rv = f32x8::load(token, &r);
-                    let gv = f32x8::load(token, &g);
-                    let bv = f32x8::load(token, &b);
-
-                    let rl = ($lin_x8)(token, rv);
-                    let gl = ($lin_x8)(token, gv);
-                    let bl = ($lin_x8)(token, bv);
-
-                    let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
-                    let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
-                    let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
-
-                    let or_ = ($enc_x8)(token, nr);
-                    let og_ = ($enc_x8)(token, ng);
-                    let ob_ = ($enc_x8)(token, nb);
-
-                    let mut ro = [0.0f32; PIXELS];
-                    let mut go = [0.0f32; PIXELS];
-                    let mut bo = [0.0f32; PIXELS];
-                    or_.store(&mut ro);
-                    og_.store(&mut go);
-                    ob_.store(&mut bo);
-                    for i in 0..PIXELS {
-                        chunk[i * 3] = ro[i];
-                        chunk[i * 3 + 1] = go[i];
-                        chunk[i * 3 + 2] = bo[i];
-                    }
-                }
-
-                for pixel in tail.chunks_exact_mut(3) {
-                    let r = ($lin_scalar)(pixel[0]);
-                    let g = ($lin_scalar)(pixel[1]);
-                    let b = ($lin_scalar)(pixel[2]);
-                    let (nr, ng, nb) = mat3x3(m, r, g, b);
-                    pixel[0] = ($enc_scalar)(nr);
-                    pixel[1] = ($enc_scalar)(ng);
-                    pixel[2] = ($enc_scalar)(nb);
-                }
-            }
-
-            #[magetypes(v3)]
-            fn [<convert_rgba_ $name _native_impl>](
-                token: Token,
-                m: &[[f32; 3]; 3],
-                data: &mut [f32],
-            ) {
-                #[allow(non_camel_case_types)]
-                type f32x8 = GenericF32x8<Token>;
-                const PIXELS: usize = 8;
-                const CHUNK: usize = PIXELS * 4;
-
-                let m00 = f32x8::splat(token, m[0][0]);
-                let m01 = f32x8::splat(token, m[0][1]);
-                let m02 = f32x8::splat(token, m[0][2]);
-                let m10 = f32x8::splat(token, m[1][0]);
-                let m11 = f32x8::splat(token, m[1][1]);
-                let m12 = f32x8::splat(token, m[1][2]);
-                let m20 = f32x8::splat(token, m[2][0]);
-                let m21 = f32x8::splat(token, m[2][1]);
-                let m22 = f32x8::splat(token, m[2][2]);
-
-                let chunks = data.len() / CHUNK;
-                let bulk = chunks * CHUNK;
-                let (bulk_data, tail) = data.split_at_mut(bulk);
-                for chunk in bulk_data.chunks_exact_mut(CHUNK) {
-                    let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
-                    let mut r = [0.0f32; PIXELS];
-                    let mut g = [0.0f32; PIXELS];
-                    let mut b = [0.0f32; PIXELS];
-                    for i in 0..PIXELS {
-                        r[i] = chunk[i * 4];
-                        g[i] = chunk[i * 4 + 1];
-                        b[i] = chunk[i * 4 + 2];
-                    }
-                    let rv = f32x8::load(token, &r);
-                    let gv = f32x8::load(token, &g);
-                    let bv = f32x8::load(token, &b);
-
-                    let rl = ($lin_x8)(token, rv);
-                    let gl = ($lin_x8)(token, gv);
-                    let bl = ($lin_x8)(token, bv);
-
-                    let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
-                    let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
-                    let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
-
-                    let or_ = ($enc_x8)(token, nr);
-                    let og_ = ($enc_x8)(token, ng);
-                    let ob_ = ($enc_x8)(token, nb);
-
-                    let mut ro = [0.0f32; PIXELS];
-                    let mut go = [0.0f32; PIXELS];
-                    let mut bo = [0.0f32; PIXELS];
-                    or_.store(&mut ro);
-                    og_.store(&mut go);
-                    ob_.store(&mut bo);
-                    for i in 0..PIXELS {
-                        chunk[i * 4] = ro[i];
-                        chunk[i * 4 + 1] = go[i];
-                        chunk[i * 4 + 2] = bo[i];
-                        // alpha unchanged.
-                    }
-                }
-
-                for pixel in tail.chunks_exact_mut(4) {
-                    let r = ($lin_scalar)(pixel[0]);
-                    let g = ($lin_scalar)(pixel[1]);
-                    let b = ($lin_scalar)(pixel[2]);
-                    let (nr, ng, nb) = mat3x3(m, r, g, b);
-                    pixel[0] = ($enc_scalar)(nr);
-                    pixel[1] = ($enc_scalar)(ng);
-                    pixel[2] = ($enc_scalar)(nb);
-                }
-            }
-
-            // -----------------------------------------------------------------
-            // Narrow body: f32x4, dispatched across NEON / WASM128.
-            // -----------------------------------------------------------------
-            #[magetypes(neon, wasm128)]
-            fn [<convert_rgb_ $name _narrow_impl>](
-                token: Token,
-                m: &[[f32; 3]; 3],
-                data: &mut [f32],
-            ) {
-                #[allow(non_camel_case_types)]
-                type f32x4 = GenericF32x4<Token>;
-                const PIXELS: usize = 4;
-                const CHUNK: usize = PIXELS * 3;
-
-                let m00 = f32x4::splat(token, m[0][0]);
-                let m01 = f32x4::splat(token, m[0][1]);
-                let m02 = f32x4::splat(token, m[0][2]);
-                let m10 = f32x4::splat(token, m[1][0]);
-                let m11 = f32x4::splat(token, m[1][1]);
-                let m12 = f32x4::splat(token, m[1][2]);
-                let m20 = f32x4::splat(token, m[2][0]);
-                let m21 = f32x4::splat(token, m[2][1]);
-                let m22 = f32x4::splat(token, m[2][2]);
-
-                let chunks = data.len() / CHUNK;
-                let bulk = chunks * CHUNK;
-                let (bulk_data, tail) = data.split_at_mut(bulk);
-                for chunk in bulk_data.chunks_exact_mut(CHUNK) {
-                    let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
-                    let r = [chunk[0], chunk[3], chunk[6], chunk[9]];
-                    let g = [chunk[1], chunk[4], chunk[7], chunk[10]];
-                    let b = [chunk[2], chunk[5], chunk[8], chunk[11]];
-                    let rv = f32x4::load(token, &r);
-                    let gv = f32x4::load(token, &g);
-                    let bv = f32x4::load(token, &b);
-
-                    let rl = ($lin_x4)(token, rv);
-                    let gl = ($lin_x4)(token, gv);
-                    let bl = ($lin_x4)(token, bv);
-
-                    let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
-                    let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
-                    let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
-
-                    let or_ = ($enc_x4)(token, nr);
-                    let og_ = ($enc_x4)(token, ng);
-                    let ob_ = ($enc_x4)(token, nb);
-
-                    let mut ro = [0.0f32; PIXELS];
-                    let mut go = [0.0f32; PIXELS];
-                    let mut bo = [0.0f32; PIXELS];
-                    or_.store(&mut ro);
-                    og_.store(&mut go);
-                    ob_.store(&mut bo);
-                    for i in 0..PIXELS {
-                        chunk[i * 3] = ro[i];
-                        chunk[i * 3 + 1] = go[i];
-                        chunk[i * 3 + 2] = bo[i];
-                    }
-                }
-
-                for pixel in tail.chunks_exact_mut(3) {
-                    let r = ($lin_scalar)(pixel[0]);
-                    let g = ($lin_scalar)(pixel[1]);
-                    let b = ($lin_scalar)(pixel[2]);
-                    let (nr, ng, nb) = mat3x3(m, r, g, b);
-                    pixel[0] = ($enc_scalar)(nr);
-                    pixel[1] = ($enc_scalar)(ng);
-                    pixel[2] = ($enc_scalar)(nb);
-                }
-            }
-
-            #[magetypes(neon, wasm128)]
-            fn [<convert_rgba_ $name _narrow_impl>](
-                token: Token,
-                m: &[[f32; 3]; 3],
-                data: &mut [f32],
-            ) {
-                #[allow(non_camel_case_types)]
-                type f32x4 = GenericF32x4<Token>;
-                const PIXELS: usize = 4;
-                const CHUNK: usize = PIXELS * 4;
-
-                let m00 = f32x4::splat(token, m[0][0]);
-                let m01 = f32x4::splat(token, m[0][1]);
-                let m02 = f32x4::splat(token, m[0][2]);
-                let m10 = f32x4::splat(token, m[1][0]);
-                let m11 = f32x4::splat(token, m[1][1]);
-                let m12 = f32x4::splat(token, m[1][2]);
-                let m20 = f32x4::splat(token, m[2][0]);
-                let m21 = f32x4::splat(token, m[2][1]);
-                let m22 = f32x4::splat(token, m[2][2]);
-
-                let chunks = data.len() / CHUNK;
-                let bulk = chunks * CHUNK;
-                let (bulk_data, tail) = data.split_at_mut(bulk);
-                for chunk in bulk_data.chunks_exact_mut(CHUNK) {
-                    let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
-                    let r = [chunk[0], chunk[4], chunk[8], chunk[12]];
-                    let g = [chunk[1], chunk[5], chunk[9], chunk[13]];
-                    let b = [chunk[2], chunk[6], chunk[10], chunk[14]];
-                    let rv = f32x4::load(token, &r);
-                    let gv = f32x4::load(token, &g);
-                    let bv = f32x4::load(token, &b);
-
-                    let rl = ($lin_x4)(token, rv);
-                    let gl = ($lin_x4)(token, gv);
-                    let bl = ($lin_x4)(token, bv);
-
-                    let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
-                    let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
-                    let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
-
-                    let or_ = ($enc_x4)(token, nr);
-                    let og_ = ($enc_x4)(token, ng);
-                    let ob_ = ($enc_x4)(token, nb);
-
-                    let mut ro = [0.0f32; PIXELS];
-                    let mut go = [0.0f32; PIXELS];
-                    let mut bo = [0.0f32; PIXELS];
-                    or_.store(&mut ro);
-                    og_.store(&mut go);
-                    ob_.store(&mut bo);
-                    for i in 0..PIXELS {
-                        chunk[i * 4] = ro[i];
-                        chunk[i * 4 + 1] = go[i];
-                        chunk[i * 4 + 2] = bo[i];
-                    }
-                }
-
-                for pixel in tail.chunks_exact_mut(4) {
-                    let r = ($lin_scalar)(pixel[0]);
-                    let g = ($lin_scalar)(pixel[1]);
-                    let b = ($lin_scalar)(pixel[2]);
-                    let (nr, ng, nb) = mat3x3(m, r, g, b);
-                    pixel[0] = ($enc_scalar)(nr);
-                    pixel[1] = ($enc_scalar)(ng);
-                    pixel[2] = ($enc_scalar)(nb);
-                }
-            }
-
-            // -----------------------------------------------------------------
-            // Public dispatchers — manual try-tier cascade (Option A).
-            //
-            // x86_64: V4x → wide_impl_v4x; V4 → wide_impl_v4;
-            //         V3 → native_impl_v3 (native f32x8, no AVX2 polyfill);
-            //         else → wide_impl_scalar.
-            // aarch64 / arm64ec: NEON → narrow_impl_neon, else scalar.
-            // wasm32: WASM128 → narrow_impl_wasm128, else scalar.
-            // -----------------------------------------------------------------
-            /// Convert RGB f32 in-place via the sRGB/{TRC} pipeline for the
-            /// `$name` pair. `data.len()` must be a multiple of 3.
-            pub fn [<convert_f32_rgb_ $name _v2>](m: &[[f32; 3]; 3], data: &mut [f32]) {
-                debug_assert_eq!(data.len() % 3, 0);
-                #[cfg(target_arch = "x86_64")]
-                {
-                    #[cfg(feature = "avx512")]
-                    {
-                        if let Some(t) = X64V4xToken::summon() {
-                            return [<convert_rgb_ $name _wide_impl_v4x>](t, m, data);
-                        }
-                        if let Some(t) = X64V4Token::summon() {
-                            return [<convert_rgb_ $name _wide_impl_v4>](t, m, data);
-                        }
-                    }
-                    if let Some(t) = X64V3Token::summon() {
-                        return [<convert_rgb_ $name _native_impl_v3>](t, m, data);
-                    }
-                    return [<convert_rgb_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data);
-                }
-                #[cfg(any(target_arch = "aarch64", target_arch = "arm64ec"))]
-                {
-                    if let Some(t) = NeonToken::summon() {
-                        return [<convert_rgb_ $name _narrow_impl_neon>](t, m, data);
-                    }
-                    return [<convert_rgb_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data);
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    if let Some(t) = Wasm128Token::summon() {
-                        return [<convert_rgb_ $name _narrow_impl_wasm128>](t, m, data);
-                    }
-                    return [<convert_rgb_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data);
-                }
-                #[cfg(not(any(
-                    target_arch = "x86_64",
-                    target_arch = "aarch64",
-                    target_arch = "arm64ec",
-                    target_arch = "wasm32",
-                )))]
-                {
-                    [<convert_rgb_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data)
-                }
-            }
-
-            /// Convert RGBA f32 in-place via the sRGB/{TRC} pipeline for the
-            /// `$name` pair. Alpha is byte-exact unchanged.
-            pub fn [<convert_f32_rgba_ $name _v2>](m: &[[f32; 3]; 3], data: &mut [f32]) {
-                debug_assert_eq!(data.len() % 4, 0);
-                #[cfg(target_arch = "x86_64")]
-                {
-                    #[cfg(feature = "avx512")]
-                    {
-                        if let Some(t) = X64V4xToken::summon() {
-                            return [<convert_rgba_ $name _wide_impl_v4x>](t, m, data);
-                        }
-                        if let Some(t) = X64V4Token::summon() {
-                            return [<convert_rgba_ $name _wide_impl_v4>](t, m, data);
-                        }
-                    }
-                    if let Some(t) = X64V3Token::summon() {
-                        return [<convert_rgba_ $name _native_impl_v3>](t, m, data);
-                    }
-                    return [<convert_rgba_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data);
-                }
-                #[cfg(any(target_arch = "aarch64", target_arch = "arm64ec"))]
-                {
-                    if let Some(t) = NeonToken::summon() {
-                        return [<convert_rgba_ $name _narrow_impl_neon>](t, m, data);
-                    }
-                    return [<convert_rgba_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data);
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    if let Some(t) = Wasm128Token::summon() {
-                        return [<convert_rgba_ $name _narrow_impl_wasm128>](t, m, data);
-                    }
-                    return [<convert_rgba_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data);
-                }
-                #[cfg(not(any(
-                    target_arch = "x86_64",
-                    target_arch = "aarch64",
-                    target_arch = "arm64ec",
-                    target_arch = "wasm32",
-                )))]
-                {
-                    [<convert_rgba_ $name _wide_impl_scalar>](ScalarToken::summon().unwrap(), m, data)
-                }
+            if let Some(t) = X64V4Token::summon() {
+                return convert_wide_v4::<SRC_TRC, DST_TRC, CHANNELS, WIDE_CHUNK>(t, m, data);
             }
         }
-    };
+        if let Some(t) = X64V3Token::summon() {
+            return convert_native_v3::<SRC_TRC, DST_TRC, CHANNELS, NATIVE_CHUNK>(t, m, data);
+        }
+        return convert_wide_scalar::<SRC_TRC, DST_TRC, CHANNELS, WIDE_CHUNK>(
+            ScalarToken::summon().unwrap(),
+            m,
+            data,
+        );
+    }
+    #[cfg(any(target_arch = "aarch64", target_arch = "arm64ec"))]
+    {
+        if let Some(t) = NeonToken::summon() {
+            return convert_narrow_neon::<SRC_TRC, DST_TRC, CHANNELS, NARROW_CHUNK>(t, m, data);
+        }
+        return convert_wide_scalar::<SRC_TRC, DST_TRC, CHANNELS, WIDE_CHUNK>(
+            ScalarToken::summon().unwrap(),
+            m,
+            data,
+        );
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(t) = Wasm128Token::summon() {
+            return convert_narrow_wasm128::<SRC_TRC, DST_TRC, CHANNELS, NARROW_CHUNK>(
+                t, m, data,
+            );
+        }
+        return convert_wide_scalar::<SRC_TRC, DST_TRC, CHANNELS, WIDE_CHUNK>(
+            ScalarToken::summon().unwrap(),
+            m,
+            data,
+        );
+    }
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "arm64ec",
+        target_arch = "wasm32",
+    )))]
+    {
+        convert_wide_scalar::<SRC_TRC, DST_TRC, CHANNELS, WIDE_CHUNK>(
+            ScalarToken::summon().unwrap(),
+            m,
+            data,
+        )
+    }
 }
-
-// =============================================================================
-// TRC pair stamps
-// =============================================================================
-//
-// Each stamp covers one (src TRC, dst TRC) pair, identical lookups for the
-// single-TRC pairs. Linear → Linear has no TRC, dispatched directly in
-// the public match below.
-
-// --- Same-TRC pairs ---
-
-stamp_v2_pair!(
-    name: srgb,
-    lin_x16: srgb_to_linear_x16_clamped,
-    lin_x8: srgb_to_linear_x8_clamped,
-    lin_x4: srgb_to_linear_x4_clamped,
-    enc_x16: linear_to_srgb_x16_clamped,
-    enc_x8: linear_to_srgb_x8_clamped,
-    enc_x4: linear_to_srgb_x4_clamped,
-    lin_scalar: tf::srgb_to_linear,
-    enc_scalar: tf::linear_to_srgb,
-);
-
-stamp_v2_pair!(
-    name: bt709,
-    lin_x16: tf::bt709::bt709_to_linear_x16,
-    lin_x8: tf::bt709::bt709_to_linear_x8,
-    lin_x4: tf::bt709::bt709_to_linear_x4,
-    enc_x16: tf::bt709::linear_to_bt709_x16,
-    enc_x8: tf::bt709::linear_to_bt709_x8,
-    enc_x4: tf::bt709::linear_to_bt709_x4,
-    lin_scalar: tf::bt709_to_linear,
-    enc_scalar: tf::linear_to_bt709,
-);
-
-stamp_v2_pair!(
-    name: pq,
-    lin_x16: tf::pq::pq_to_linear_x16,
-    lin_x8: tf::pq::pq_to_linear_x8,
-    lin_x4: tf::pq::pq_to_linear_x4,
-    enc_x16: tf::pq::linear_to_pq_x16,
-    enc_x8: tf::pq::linear_to_pq_x8,
-    enc_x4: tf::pq::linear_to_pq_x4,
-    lin_scalar: tf::pq_to_linear,
-    enc_scalar: tf::linear_to_pq,
-);
-
-stamp_v2_pair!(
-    name: hlg,
-    lin_x16: tf::hlg::hlg_to_linear_x16,
-    lin_x8: tf::hlg::hlg_to_linear_x8,
-    lin_x4: tf::hlg::hlg_to_linear_x4,
-    enc_x16: tf::hlg::linear_to_hlg_x16,
-    enc_x8: tf::hlg::linear_to_hlg_x8,
-    enc_x4: tf::hlg::linear_to_hlg_x4,
-    lin_scalar: tf::hlg_to_linear,
-    enc_scalar: tf::linear_to_hlg,
-);
-
-// Adobe (gamma 2.2 — pure power, no linear toe). Bind ADOBE_GAMMA via closures.
-stamp_v2_pair!(
-    name: adobe,
-    lin_x16: |t, v| tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
-    lin_x8: |t, v| tf::gamma::gamma_to_linear_x8(t, v, ADOBE_GAMMA),
-    lin_x4: |t, v| tf::gamma::gamma_to_linear_x4(t, v, ADOBE_GAMMA),
-    enc_x16: |t, v| tf::gamma::linear_to_gamma_x16(t, v, ADOBE_GAMMA),
-    enc_x8: |t, v| tf::gamma::linear_to_gamma_x8(t, v, ADOBE_GAMMA),
-    enc_x4: |t, v| tf::gamma::linear_to_gamma_x4(t, v, ADOBE_GAMMA),
-    lin_scalar: adobe_to_linear_scalar,
-    enc_scalar: adobe_from_linear_scalar,
-);
-
-// --- Cross-TRC pairs ---
-
-stamp_v2_pair!(
-    name: pq_to_srgb,
-    lin_x16: tf::pq::pq_to_linear_x16,
-    lin_x8: tf::pq::pq_to_linear_x8,
-    lin_x4: tf::pq::pq_to_linear_x4,
-    enc_x16: linear_to_srgb_x16_clamped,
-    enc_x8: linear_to_srgb_x8_clamped,
-    enc_x4: linear_to_srgb_x4_clamped,
-    lin_scalar: tf::pq_to_linear,
-    enc_scalar: tf::linear_to_srgb,
-);
-
-stamp_v2_pair!(
-    name: hlg_to_srgb,
-    lin_x16: tf::hlg::hlg_to_linear_x16,
-    lin_x8: tf::hlg::hlg_to_linear_x8,
-    lin_x4: tf::hlg::hlg_to_linear_x4,
-    enc_x16: linear_to_srgb_x16_clamped,
-    enc_x8: linear_to_srgb_x8_clamped,
-    enc_x4: linear_to_srgb_x4_clamped,
-    lin_scalar: tf::hlg_to_linear,
-    enc_scalar: tf::linear_to_srgb,
-);
-
-stamp_v2_pair!(
-    name: srgb_to_pq,
-    lin_x16: srgb_to_linear_x16_clamped,
-    lin_x8: srgb_to_linear_x8_clamped,
-    lin_x4: srgb_to_linear_x4_clamped,
-    enc_x16: tf::pq::linear_to_pq_x16,
-    enc_x8: tf::pq::linear_to_pq_x8,
-    enc_x4: tf::pq::linear_to_pq_x4,
-    lin_scalar: tf::srgb_to_linear,
-    enc_scalar: tf::linear_to_pq,
-);
-
-stamp_v2_pair!(
-    name: bt709_to_srgb,
-    lin_x16: tf::bt709::bt709_to_linear_x16,
-    lin_x8: tf::bt709::bt709_to_linear_x8,
-    lin_x4: tf::bt709::bt709_to_linear_x4,
-    enc_x16: linear_to_srgb_x16_clamped,
-    enc_x8: linear_to_srgb_x8_clamped,
-    enc_x4: linear_to_srgb_x4_clamped,
-    lin_scalar: tf::bt709_to_linear,
-    enc_scalar: tf::linear_to_srgb,
-);
-
-stamp_v2_pair!(
-    name: srgb_to_bt709,
-    lin_x16: srgb_to_linear_x16_clamped,
-    lin_x8: srgb_to_linear_x8_clamped,
-    lin_x4: srgb_to_linear_x4_clamped,
-    enc_x16: tf::bt709::linear_to_bt709_x16,
-    enc_x8: tf::bt709::linear_to_bt709_x8,
-    enc_x4: tf::bt709::linear_to_bt709_x4,
-    lin_scalar: tf::srgb_to_linear,
-    enc_scalar: tf::linear_to_bt709,
-);
-
-stamp_v2_pair!(
-    name: adobe_to_srgb,
-    lin_x16: |t, v| tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
-    lin_x8: |t, v| tf::gamma::gamma_to_linear_x8(t, v, ADOBE_GAMMA),
-    lin_x4: |t, v| tf::gamma::gamma_to_linear_x4(t, v, ADOBE_GAMMA),
-    enc_x16: linear_to_srgb_x16_clamped,
-    enc_x8: linear_to_srgb_x8_clamped,
-    enc_x4: linear_to_srgb_x4_clamped,
-    lin_scalar: adobe_to_linear_scalar,
-    enc_scalar: tf::linear_to_srgb,
-);
-
-stamp_v2_pair!(
-    name: srgb_to_adobe,
-    lin_x16: srgb_to_linear_x16_clamped,
-    lin_x8: srgb_to_linear_x8_clamped,
-    lin_x4: srgb_to_linear_x4_clamped,
-    enc_x16: |t, v| tf::gamma::linear_to_gamma_x16(t, v, ADOBE_GAMMA),
-    enc_x8: |t, v| tf::gamma::linear_to_gamma_x8(t, v, ADOBE_GAMMA),
-    enc_x4: |t, v| tf::gamma::linear_to_gamma_x4(t, v, ADOBE_GAMMA),
-    lin_scalar: tf::srgb_to_linear,
-    enc_scalar: adobe_from_linear_scalar,
-);
 
 // =============================================================================
 // Linear (identity TRC) — matrix only
@@ -907,7 +614,160 @@ pub fn convert_f32_rgba_linear_v2(m: &[[f32; 3]; 3], data: &mut [f32]) {
 }
 
 // =============================================================================
-// Public match-on-TRC dispatch
+// Inner generic dispatcher — translates runtime (src_trc, dst_trc) pair to one
+// of 12 const-generic specializations. Each arm becomes a direct call to a
+// fully-monomorphized `dispatch_pair` instance, matching the v1 stamp shape.
+// =============================================================================
+
+#[inline]
+fn convert_f32_v2_inner<
+    const CHANNELS: usize,
+    const WIDE_CHUNK: usize,
+    const NATIVE_CHUNK: usize,
+    const NARROW_CHUNK: usize,
+>(
+    m: &[[f32; 3]; 3],
+    data: &mut [f32],
+    src_trc: TransferFunction,
+    dst_trc: TransferFunction,
+) -> bool {
+    use TransferFunction::*;
+
+    // Linear→Linear bypasses the const-generic SIMD dispatch entirely (no TRC).
+    if matches!((src_trc, dst_trc), (Linear, Linear)) {
+        if CHANNELS == 3 {
+            convert_f32_rgb_linear_v2(m, data);
+        } else {
+            convert_f32_rgba_linear_v2(m, data);
+        }
+        return true;
+    }
+
+    // Map enum pair → integer tag pair so the inner match can fold on consts.
+    let pair = match (src_trc, dst_trc) {
+        (Srgb, Srgb) => (TRC_SRGB, TRC_SRGB),
+        (Bt709, Bt709) => (TRC_BT709, TRC_BT709),
+        (Pq, Pq) => (TRC_PQ, TRC_PQ),
+        (Hlg, Hlg) => (TRC_HLG, TRC_HLG),
+        (Gamma22, Gamma22) => (TRC_GAMMA22, TRC_GAMMA22),
+        (Pq, Srgb) => (TRC_PQ, TRC_SRGB),
+        (Hlg, Srgb) => (TRC_HLG, TRC_SRGB),
+        (Srgb, Pq) => (TRC_SRGB, TRC_PQ),
+        (Bt709, Srgb) => (TRC_BT709, TRC_SRGB),
+        (Srgb, Bt709) => (TRC_SRGB, TRC_BT709),
+        (Gamma22, Srgb) => (TRC_GAMMA22, TRC_SRGB),
+        (Srgb, Gamma22) => (TRC_SRGB, TRC_GAMMA22),
+        _ => return false,
+    };
+
+    // 12 const-generic specializations. Each arm const-folds to a direct call
+    // to the matching monomorph; LLVM will not emit a runtime tag check.
+    match pair {
+        (TRC_SRGB, TRC_SRGB) => dispatch_pair::<
+            TRC_SRGB,
+            TRC_SRGB,
+            CHANNELS,
+            WIDE_CHUNK,
+            NATIVE_CHUNK,
+            NARROW_CHUNK,
+        >(m, data),
+        (TRC_BT709, TRC_BT709) => dispatch_pair::<
+            TRC_BT709,
+            TRC_BT709,
+            CHANNELS,
+            WIDE_CHUNK,
+            NATIVE_CHUNK,
+            NARROW_CHUNK,
+        >(m, data),
+        (TRC_PQ, TRC_PQ) => dispatch_pair::<
+            TRC_PQ,
+            TRC_PQ,
+            CHANNELS,
+            WIDE_CHUNK,
+            NATIVE_CHUNK,
+            NARROW_CHUNK,
+        >(m, data),
+        (TRC_HLG, TRC_HLG) => dispatch_pair::<
+            TRC_HLG,
+            TRC_HLG,
+            CHANNELS,
+            WIDE_CHUNK,
+            NATIVE_CHUNK,
+            NARROW_CHUNK,
+        >(m, data),
+        (TRC_GAMMA22, TRC_GAMMA22) => dispatch_pair::<
+            TRC_GAMMA22,
+            TRC_GAMMA22,
+            CHANNELS,
+            WIDE_CHUNK,
+            NATIVE_CHUNK,
+            NARROW_CHUNK,
+        >(m, data),
+        (TRC_PQ, TRC_SRGB) => dispatch_pair::<
+            TRC_PQ,
+            TRC_SRGB,
+            CHANNELS,
+            WIDE_CHUNK,
+            NATIVE_CHUNK,
+            NARROW_CHUNK,
+        >(m, data),
+        (TRC_HLG, TRC_SRGB) => dispatch_pair::<
+            TRC_HLG,
+            TRC_SRGB,
+            CHANNELS,
+            WIDE_CHUNK,
+            NATIVE_CHUNK,
+            NARROW_CHUNK,
+        >(m, data),
+        (TRC_SRGB, TRC_PQ) => dispatch_pair::<
+            TRC_SRGB,
+            TRC_PQ,
+            CHANNELS,
+            WIDE_CHUNK,
+            NATIVE_CHUNK,
+            NARROW_CHUNK,
+        >(m, data),
+        (TRC_BT709, TRC_SRGB) => dispatch_pair::<
+            TRC_BT709,
+            TRC_SRGB,
+            CHANNELS,
+            WIDE_CHUNK,
+            NATIVE_CHUNK,
+            NARROW_CHUNK,
+        >(m, data),
+        (TRC_SRGB, TRC_BT709) => dispatch_pair::<
+            TRC_SRGB,
+            TRC_BT709,
+            CHANNELS,
+            WIDE_CHUNK,
+            NATIVE_CHUNK,
+            NARROW_CHUNK,
+        >(m, data),
+        (TRC_GAMMA22, TRC_SRGB) => dispatch_pair::<
+            TRC_GAMMA22,
+            TRC_SRGB,
+            CHANNELS,
+            WIDE_CHUNK,
+            NATIVE_CHUNK,
+            NARROW_CHUNK,
+        >(m, data),
+        (TRC_SRGB, TRC_GAMMA22) => dispatch_pair::<
+            TRC_SRGB,
+            TRC_GAMMA22,
+            CHANNELS,
+            WIDE_CHUNK,
+            NATIVE_CHUNK,
+            NARROW_CHUNK,
+        >(m, data),
+        // SAFETY: the outer `match (src_trc, dst_trc)` only emits the 12 pairs
+        // listed above. LLVM eliminates this arm.
+        _ => unreachable!(),
+    }
+    true
+}
+
+// =============================================================================
+// Public dispatchers — runtime entry points used by `fast_gamut.rs`.
 // =============================================================================
 
 /// Convert RGB f32 in-place using the given matrix and TRC pair. Returns
@@ -918,53 +778,20 @@ pub fn convert_f32_rgb_v2(
     src_trc: TransferFunction,
     dst_trc: TransferFunction,
 ) -> bool {
-    use TransferFunction::*;
     debug_assert_eq!(data.len() % 3, 0);
-    match (src_trc, dst_trc) {
-        (Linear, Linear) => convert_f32_rgb_linear_v2(m, data),
-        (Srgb, Srgb) => convert_f32_rgb_srgb_v2(m, data),
-        (Bt709, Bt709) => convert_f32_rgb_bt709_v2(m, data),
-        (Pq, Pq) => convert_f32_rgb_pq_v2(m, data),
-        (Hlg, Hlg) => convert_f32_rgb_hlg_v2(m, data),
-        (Gamma22, Gamma22) => convert_f32_rgb_adobe_v2(m, data),
-        (Pq, Srgb) => convert_f32_rgb_pq_to_srgb_v2(m, data),
-        (Hlg, Srgb) => convert_f32_rgb_hlg_to_srgb_v2(m, data),
-        (Srgb, Pq) => convert_f32_rgb_srgb_to_pq_v2(m, data),
-        (Bt709, Srgb) => convert_f32_rgb_bt709_to_srgb_v2(m, data),
-        (Srgb, Bt709) => convert_f32_rgb_srgb_to_bt709_v2(m, data),
-        (Gamma22, Srgb) => convert_f32_rgb_adobe_to_srgb_v2(m, data),
-        (Srgb, Gamma22) => convert_f32_rgb_srgb_to_adobe_v2(m, data),
-        _ => return false,
-    }
-    true
+    convert_f32_v2_inner::<3, { 16 * 3 }, { 8 * 3 }, { 4 * 3 }>(m, data, src_trc, dst_trc)
 }
 
-/// Convert RGBA f32 in-place. Alpha unchanged.
+/// Convert RGBA f32 in-place using the given matrix and TRC pair. Alpha is
+/// byte-exact unchanged. Returns `false` if either TRC is unsupported.
 pub fn convert_f32_rgba_v2(
     m: &[[f32; 3]; 3],
     data: &mut [f32],
     src_trc: TransferFunction,
     dst_trc: TransferFunction,
 ) -> bool {
-    use TransferFunction::*;
     debug_assert_eq!(data.len() % 4, 0);
-    match (src_trc, dst_trc) {
-        (Linear, Linear) => convert_f32_rgba_linear_v2(m, data),
-        (Srgb, Srgb) => convert_f32_rgba_srgb_v2(m, data),
-        (Bt709, Bt709) => convert_f32_rgba_bt709_v2(m, data),
-        (Pq, Pq) => convert_f32_rgba_pq_v2(m, data),
-        (Hlg, Hlg) => convert_f32_rgba_hlg_v2(m, data),
-        (Gamma22, Gamma22) => convert_f32_rgba_adobe_v2(m, data),
-        (Pq, Srgb) => convert_f32_rgba_pq_to_srgb_v2(m, data),
-        (Hlg, Srgb) => convert_f32_rgba_hlg_to_srgb_v2(m, data),
-        (Srgb, Pq) => convert_f32_rgba_srgb_to_pq_v2(m, data),
-        (Bt709, Srgb) => convert_f32_rgba_bt709_to_srgb_v2(m, data),
-        (Srgb, Bt709) => convert_f32_rgba_srgb_to_bt709_v2(m, data),
-        (Gamma22, Srgb) => convert_f32_rgba_adobe_to_srgb_v2(m, data),
-        (Srgb, Gamma22) => convert_f32_rgba_srgb_to_adobe_v2(m, data),
-        _ => return false,
-    }
-    true
+    convert_f32_v2_inner::<4, { 16 * 4 }, { 8 * 4 }, { 4 * 4 }>(m, data, src_trc, dst_trc)
 }
 
 // =============================================================================
@@ -1180,7 +1007,7 @@ mod tests {
             Bt709 => tf::bt709_to_linear,
             Pq => tf::pq_to_linear,
             Hlg => tf::hlg_to_linear,
-            Gamma22 => adobe_to_linear_scalar,
+            Gamma22 => |v| linear_srgb::default::gamma_to_linear(v, ADOBE_GAMMA),
             Linear => |v| v,
             _ => panic!("unsupported TRC {trc:?}"),
         }
@@ -1193,7 +1020,7 @@ mod tests {
             Bt709 => tf::linear_to_bt709,
             Pq => tf::linear_to_pq,
             Hlg => tf::linear_to_hlg,
-            Gamma22 => adobe_from_linear_scalar,
+            Gamma22 => |v| linear_srgb::default::linear_to_gamma(v, ADOBE_GAMMA),
             Linear => |v| v,
             _ => panic!("unsupported TRC {trc:?}"),
         }
@@ -1393,7 +1220,7 @@ mod tests {
 
         let _ = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| {
             let mut data = original.clone();
-            convert_f32_rgb_srgb_v2(&m, &mut data);
+            convert_f32_rgb_v2(&m, &mut data, TransferFunction::Srgb, TransferFunction::Srgb);
             for (i, (a, b)) in data.iter().zip(ref_out.iter()).enumerate() {
                 let err = (a - b).abs();
                 assert!(
@@ -1406,10 +1233,11 @@ mod tests {
 
     // ---- Native V3 (f32x8) body parity ---------------------------------
     //
-    // The dispatcher routes V3 hosts to `convert_rgb_<name>_native_impl_v3`
-    // (f32x8) instead of the wide body's V3 expansion. These tests call
-    // the native V3 impl directly with a summoned X64V3Token and verify
-    // byte-exact-within-tolerance equivalence to the scalar reference.
+    // The dispatcher routes V3 hosts to the const-generic `convert_native_v3`
+    // (f32x8) monomorph instead of the wide body's V3 expansion. These tests
+    // call `convert_native_v3` directly with a summoned X64V3Token and the
+    // matching const-generic TRC tags, verifying byte-exact-within-tolerance
+    // equivalence to the scalar reference.
     //
     // x86_64-only — V3 token is only summon-able on hosts with AVX2+FMA.
     #[cfg(target_arch = "x86_64")]
@@ -1426,9 +1254,9 @@ mod tests {
         let original = ramp(19, 3);
 
         macro_rules! check_pair {
-            ($impl_fn:ident, $trc:expr) => {{
+            ($trc_tag:expr, $trc:expr) => {{
                 let mut got = original.clone();
-                $impl_fn(token, &m, &mut got);
+                convert_native_v3::<{ $trc_tag }, { $trc_tag }, 3, 24>(token, &m, &mut got);
                 let mut want = original.clone();
                 scalar_reference_rgb(&m, &mut want, $trc, $trc);
                 for (i, (a, b)) in got.iter().zip(want.iter()).enumerate() {
@@ -1442,11 +1270,11 @@ mod tests {
             }};
         }
 
-        check_pair!(convert_rgb_srgb_native_impl_v3, TransferFunction::Srgb);
-        check_pair!(convert_rgb_bt709_native_impl_v3, TransferFunction::Bt709);
-        check_pair!(convert_rgb_pq_native_impl_v3, TransferFunction::Pq);
-        check_pair!(convert_rgb_hlg_native_impl_v3, TransferFunction::Hlg);
-        check_pair!(convert_rgb_adobe_native_impl_v3, TransferFunction::Gamma22);
+        check_pair!(TRC_SRGB, TransferFunction::Srgb);
+        check_pair!(TRC_BT709, TransferFunction::Bt709);
+        check_pair!(TRC_PQ, TransferFunction::Pq);
+        check_pair!(TRC_HLG, TransferFunction::Hlg);
+        check_pair!(TRC_GAMMA22, TransferFunction::Gamma22);
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -1464,9 +1292,9 @@ mod tests {
         }
 
         macro_rules! check_pair {
-            ($impl_fn:ident, $trc:expr) => {{
+            ($trc_tag:expr, $trc:expr) => {{
                 let mut got = original.clone();
-                $impl_fn(token, &m, &mut got);
+                convert_native_v3::<{ $trc_tag }, { $trc_tag }, 4, 32>(token, &m, &mut got);
                 let mut want = original.clone();
                 scalar_reference_rgba(&m, &mut want, $trc, $trc);
                 for i in 0..19 {
@@ -1492,11 +1320,11 @@ mod tests {
             }};
         }
 
-        check_pair!(convert_rgba_srgb_native_impl_v3, TransferFunction::Srgb);
-        check_pair!(convert_rgba_bt709_native_impl_v3, TransferFunction::Bt709);
-        check_pair!(convert_rgba_pq_native_impl_v3, TransferFunction::Pq);
-        check_pair!(convert_rgba_hlg_native_impl_v3, TransferFunction::Hlg);
-        check_pair!(convert_rgba_adobe_native_impl_v3, TransferFunction::Gamma22);
+        check_pair!(TRC_SRGB, TransferFunction::Srgb);
+        check_pair!(TRC_BT709, TransferFunction::Bt709);
+        check_pair!(TRC_PQ, TransferFunction::Pq);
+        check_pair!(TRC_HLG, TransferFunction::Hlg);
+        check_pair!(TRC_GAMMA22, TransferFunction::Gamma22);
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -1510,9 +1338,9 @@ mod tests {
         let original = ramp(23, 3);
 
         macro_rules! check_pair {
-            ($impl_fn:ident, $src:expr, $dst:expr) => {{
+            ($src_tag:expr, $dst_tag:expr, $src:expr, $dst:expr) => {{
                 let mut got = original.clone();
-                $impl_fn(token, &m, &mut got);
+                convert_native_v3::<{ $src_tag }, { $dst_tag }, 3, 24>(token, &m, &mut got);
                 let mut want = original.clone();
                 scalar_reference_rgb(&m, &mut want, $src, $dst);
                 for (i, (a, b)) in got.iter().zip(want.iter()).enumerate() {
@@ -1527,13 +1355,13 @@ mod tests {
         }
 
         use TransferFunction::*;
-        check_pair!(convert_rgb_pq_to_srgb_native_impl_v3, Pq, Srgb);
-        check_pair!(convert_rgb_hlg_to_srgb_native_impl_v3, Hlg, Srgb);
-        check_pair!(convert_rgb_srgb_to_pq_native_impl_v3, Srgb, Pq);
-        check_pair!(convert_rgb_bt709_to_srgb_native_impl_v3, Bt709, Srgb);
-        check_pair!(convert_rgb_srgb_to_bt709_native_impl_v3, Srgb, Bt709);
-        check_pair!(convert_rgb_adobe_to_srgb_native_impl_v3, Gamma22, Srgb);
-        check_pair!(convert_rgb_srgb_to_adobe_native_impl_v3, Srgb, Gamma22);
+        check_pair!(TRC_PQ, TRC_SRGB, Pq, Srgb);
+        check_pair!(TRC_HLG, TRC_SRGB, Hlg, Srgb);
+        check_pair!(TRC_SRGB, TRC_PQ, Srgb, Pq);
+        check_pair!(TRC_BT709, TRC_SRGB, Bt709, Srgb);
+        check_pair!(TRC_SRGB, TRC_BT709, Srgb, Bt709);
+        check_pair!(TRC_GAMMA22, TRC_SRGB, Gamma22, Srgb);
+        check_pair!(TRC_SRGB, TRC_GAMMA22, Srgb, Gamma22);
     }
 
     /// Force the public dispatcher onto the native V3 path by disabling V4 /
