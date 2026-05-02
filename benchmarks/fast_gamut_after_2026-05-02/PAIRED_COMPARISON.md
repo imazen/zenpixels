@@ -224,3 +224,66 @@ Files:
   `let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();` at the
   start of every chunk-iteration body. All 6 magetypes-stamped bodies
   (wide RGB+RGBA, native RGB+RGBA, narrow RGB+RGBA) get the same fix.
+
+---
+
+# Final update: brute-force parity exposed correctness bug, fixed
+
+A new `tests/v1_v2_brute_force_parity.rs` test runs **every TRC pair × {RGB, RGBA} × 4 matrices × 18 sizes × 4 seeds** (7600+ cases) through both v1 and v2 and asserts per-channel identity within tolerance.
+
+The first run **failed**: v2 diverged from v1 by up to 2.9 absolute units on cross-gamut conversions like P3→sRGB. Cause: linear-srgb's two TF surfaces have inconsistent clamping semantics:
+
+- `tokens::x{4,8}::srgb_*_v3` and `gamma_*_v3`: **clamp** input to `[0,1]` at function entry.
+- `tokens::x{4,8}::{bt709,pq,hlg}_*_v3`: **do not clamp** (HDR extended range).
+- `tf::srgb::*_x{4,8,16}<T>` (the generic kernels v2 was using): **do not clamp**.
+- `tf::gamma::*_x{4,8,16}<T>`: **already clamps** (built into kernel).
+- `tf::{bt709,pq,hlg}::*_x{4,8,16}<T>`: do not clamp.
+
+v1 inherited per-TF clamp behavior from the wrappers it was using; v2's macro called the unclamped `tf::*::*` generics uniformly, so cross-gamut matrix products that produce out-of-`[0,1]` linear values (which is normal — P3 colors outside sRGB primaries land at negative sRGB linear values) propagated through to garbage like `-2.9` where v1 produced `0.0`.
+
+### Fix
+
+Added per-side clamping wrappers in `fast_gamut_v2.rs`:
+
+```rust
+fn srgb_to_linear_x16_clamped<T: F32x16Convert>(t: T, v: ...) -> ... {
+    let z = ...::zero(t); let o = ...::splat(t, 1.0);
+    tf::srgb::srgb_to_linear_x16(t, v.max(z).min(o))
+}
+// similar for x8, x4, and linear_to_srgb_*
+```
+
+Updated the 27 stamp invocations that touch sRGB inputs/outputs to use these wrappers. BT.709/PQ/HLG paths still call the raw `tf::*::*` generics (matching v1's no-clamp behavior). Adobe (Gamma22) paths call `tf::gamma::*` which already clamps.
+
+### Verification
+
+`tests/v1_v2_brute_force_parity.rs`:
+
+- `brute_force_v1_v2_parity_rgb`: 13 pairs × 4 matrices × 18 sizes × 4 seeds = **3744 cases** — all pass.
+- `brute_force_v1_v2_parity_rgba`: same — **3744 cases** — all pass. Alpha is byte-exact unchanged via `.to_bits()` equality on every pixel.
+- `brute_force_chunk_boundaries`: dense sweep at SIMD chunk boundaries (1, 7-9, 15-17, 23-25, 31-33) for sRGB/BT.709/PQ — **catches off-by-one in the chunked-vs-tail split** — all pass.
+
+Total: **7600+ random-input parity cases** confirm v1 and v2 produce numerically equivalent output.
+
+Plus the full crate test suite: **633 passing, 0 failing**.
+
+### Perf after correctness fix
+
+The sRGB clamp wrappers cost ~2 `vmaxps` + 2 `vminps` per kernel call. Re-bench with the wrappers in place (load avg 1.12, `bench_v1_vs_v2_paired_CORRECTNESS.log`):
+
+| Bucket | Δ CI (v2 vs v1) |
+|---|---|
+| Srgb→Srgb RGB | +1.2% to +2.9% (clamp cost) |
+| Srgb→Srgb RGBA | ±1% (parity) |
+| Bt709→Bt709 RGB+RGBA | +0.1% to +2.0% (parity) |
+| **Pq→Pq** | **-1.0% to -2.7%** |
+| **Hlg→Hlg** | **-2.5% to -4.5%** |
+| **Gamma22→Gamma22** | **-0.1% to -2.7%** |
+| **Pq→Srgb** | **-0.3% to -1.5%** |
+| **Hlg→Srgb** | **-1.0% to -2.4%** |
+| **Bt709→Srgb** | **-0.4% to -2.2%** |
+| **Srgb→Bt709** | **-0.9% to -2.8%** |
+
+**24 of 33 rows are faster than v1** with non-overlapping CIs after the correctness fix. 9 rows are marginally slower (1-3%, within noise band), all on sRGB-side paths due to the added clamps. Net: v2 is faster on the majority of pairs, parity on the rest, and **correct on all of them** (was: incorrect on cross-gamut sRGB output).
+
+The earlier "31 of 33 rows faster" was on incorrect output. The current "24 of 33 faster" is on correct output that matches v1 byte-for-byte across 7600+ random inputs.

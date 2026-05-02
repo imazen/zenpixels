@@ -42,6 +42,7 @@
 
 use archmage::prelude::*;
 use linear_srgb::tf;
+use magetypes::simd::backends::{F32x16Convert, F32x4Convert, F32x8Convert};
 use magetypes::simd::generic::{
     f32x4 as GenericF32x4, f32x8 as GenericF32x8, f32x16 as GenericF32x16,
 };
@@ -61,6 +62,65 @@ fn mat3x3(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
         m[1][0].mul_add(r, m[1][1].mul_add(g, m[1][2] * b)),
         m[2][0].mul_add(r, m[2][1].mul_add(g, m[2][2] * b)),
     )
+}
+
+// =============================================================================
+// Per-TF clamping wrappers — match v1 (tokens::x{4,8}::*_v3) clamp behavior
+//
+// linear-srgb's per-TF SIMD APIs are inconsistent re: clamping:
+//   - tokens::x{4,8}::{srgb,gamma}_to_linear_v3 / linear_to_{srgb,gamma}_v3:
+//     clamp input to [0, 1] at function entry.
+//   - tokens::x{4,8}::{bt709,pq,hlg}_*_v3: do NOT clamp (HDR extended range).
+//   - tf::srgb::srgb_to_linear_x{4,8,16}<T>: do NOT clamp (raw kernel).
+//   - tf::gamma::gamma_to_linear_x{4,8,16}<T>: DO clamp (built into kernel).
+//   - tf::{bt709,pq,hlg}::*_x{4,8,16}<T>: do NOT clamp.
+//
+// For v2 to match v1 behavior pair-by-pair (CLAUDE.md zero-tolerance for
+// pixel divergence), the sRGB-side calls need clamping wrappers; everything
+// else uses the raw kernel directly. Adobe is already-clamped via gamma.rs.
+// =============================================================================
+
+#[inline(always)]
+fn srgb_to_linear_x16_clamped<T: F32x16Convert>(
+    t: T,
+    v: GenericF32x16<T>,
+) -> GenericF32x16<T> {
+    let z = GenericF32x16::zero(t);
+    let o = GenericF32x16::splat(t, 1.0);
+    tf::srgb::srgb_to_linear_x16(t, v.max(z).min(o))
+}
+#[inline(always)]
+fn srgb_to_linear_x8_clamped<T: F32x8Convert>(t: T, v: GenericF32x8<T>) -> GenericF32x8<T> {
+    let z = GenericF32x8::zero(t);
+    let o = GenericF32x8::splat(t, 1.0);
+    tf::srgb::srgb_to_linear_x8(t, v.max(z).min(o))
+}
+#[inline(always)]
+fn srgb_to_linear_x4_clamped<T: F32x4Convert>(t: T, v: GenericF32x4<T>) -> GenericF32x4<T> {
+    let z = GenericF32x4::zero(t);
+    let o = GenericF32x4::splat(t, 1.0);
+    tf::srgb::srgb_to_linear_x4(t, v.max(z).min(o))
+}
+#[inline(always)]
+fn linear_to_srgb_x16_clamped<T: F32x16Convert>(
+    t: T,
+    v: GenericF32x16<T>,
+) -> GenericF32x16<T> {
+    let z = GenericF32x16::zero(t);
+    let o = GenericF32x16::splat(t, 1.0);
+    tf::srgb::linear_to_srgb_x16(t, v.max(z).min(o))
+}
+#[inline(always)]
+fn linear_to_srgb_x8_clamped<T: F32x8Convert>(t: T, v: GenericF32x8<T>) -> GenericF32x8<T> {
+    let z = GenericF32x8::zero(t);
+    let o = GenericF32x8::splat(t, 1.0);
+    tf::srgb::linear_to_srgb_x8(t, v.max(z).min(o))
+}
+#[inline(always)]
+fn linear_to_srgb_x4_clamped<T: F32x4Convert>(t: T, v: GenericF32x4<T>) -> GenericF32x4<T> {
+    let z = GenericF32x4::zero(t);
+    let o = GenericF32x4::splat(t, 1.0);
+    tf::srgb::linear_to_srgb_x4(t, v.max(z).min(o))
 }
 
 #[inline(always)]
@@ -675,12 +735,12 @@ macro_rules! stamp_v2_pair {
 
 stamp_v2_pair!(
     name: srgb,
-    lin_x16: tf::srgb::srgb_to_linear_x16,
-    lin_x8: tf::srgb::srgb_to_linear_x8,
-    lin_x4: tf::srgb::srgb_to_linear_x4,
-    enc_x16: tf::srgb::linear_to_srgb_x16,
-    enc_x8: tf::srgb::linear_to_srgb_x8,
-    enc_x4: tf::srgb::linear_to_srgb_x4,
+    lin_x16: srgb_to_linear_x16_clamped,
+    lin_x8: srgb_to_linear_x8_clamped,
+    lin_x4: srgb_to_linear_x4_clamped,
+    enc_x16: linear_to_srgb_x16_clamped,
+    enc_x8: linear_to_srgb_x8_clamped,
+    enc_x4: linear_to_srgb_x4_clamped,
     lin_scalar: tf::srgb_to_linear,
     enc_scalar: tf::linear_to_srgb,
 );
@@ -741,9 +801,9 @@ stamp_v2_pair!(
     lin_x16: tf::pq::pq_to_linear_x16,
     lin_x8: tf::pq::pq_to_linear_x8,
     lin_x4: tf::pq::pq_to_linear_x4,
-    enc_x16: tf::srgb::linear_to_srgb_x16,
-    enc_x8: tf::srgb::linear_to_srgb_x8,
-    enc_x4: tf::srgb::linear_to_srgb_x4,
+    enc_x16: linear_to_srgb_x16_clamped,
+    enc_x8: linear_to_srgb_x8_clamped,
+    enc_x4: linear_to_srgb_x4_clamped,
     lin_scalar: tf::pq_to_linear,
     enc_scalar: tf::linear_to_srgb,
 );
@@ -753,18 +813,18 @@ stamp_v2_pair!(
     lin_x16: tf::hlg::hlg_to_linear_x16,
     lin_x8: tf::hlg::hlg_to_linear_x8,
     lin_x4: tf::hlg::hlg_to_linear_x4,
-    enc_x16: tf::srgb::linear_to_srgb_x16,
-    enc_x8: tf::srgb::linear_to_srgb_x8,
-    enc_x4: tf::srgb::linear_to_srgb_x4,
+    enc_x16: linear_to_srgb_x16_clamped,
+    enc_x8: linear_to_srgb_x8_clamped,
+    enc_x4: linear_to_srgb_x4_clamped,
     lin_scalar: tf::hlg_to_linear,
     enc_scalar: tf::linear_to_srgb,
 );
 
 stamp_v2_pair!(
     name: srgb_to_pq,
-    lin_x16: tf::srgb::srgb_to_linear_x16,
-    lin_x8: tf::srgb::srgb_to_linear_x8,
-    lin_x4: tf::srgb::srgb_to_linear_x4,
+    lin_x16: srgb_to_linear_x16_clamped,
+    lin_x8: srgb_to_linear_x8_clamped,
+    lin_x4: srgb_to_linear_x4_clamped,
     enc_x16: tf::pq::linear_to_pq_x16,
     enc_x8: tf::pq::linear_to_pq_x8,
     enc_x4: tf::pq::linear_to_pq_x4,
@@ -777,18 +837,18 @@ stamp_v2_pair!(
     lin_x16: tf::bt709::bt709_to_linear_x16,
     lin_x8: tf::bt709::bt709_to_linear_x8,
     lin_x4: tf::bt709::bt709_to_linear_x4,
-    enc_x16: tf::srgb::linear_to_srgb_x16,
-    enc_x8: tf::srgb::linear_to_srgb_x8,
-    enc_x4: tf::srgb::linear_to_srgb_x4,
+    enc_x16: linear_to_srgb_x16_clamped,
+    enc_x8: linear_to_srgb_x8_clamped,
+    enc_x4: linear_to_srgb_x4_clamped,
     lin_scalar: tf::bt709_to_linear,
     enc_scalar: tf::linear_to_srgb,
 );
 
 stamp_v2_pair!(
     name: srgb_to_bt709,
-    lin_x16: tf::srgb::srgb_to_linear_x16,
-    lin_x8: tf::srgb::srgb_to_linear_x8,
-    lin_x4: tf::srgb::srgb_to_linear_x4,
+    lin_x16: srgb_to_linear_x16_clamped,
+    lin_x8: srgb_to_linear_x8_clamped,
+    lin_x4: srgb_to_linear_x4_clamped,
     enc_x16: tf::bt709::linear_to_bt709_x16,
     enc_x8: tf::bt709::linear_to_bt709_x8,
     enc_x4: tf::bt709::linear_to_bt709_x4,
@@ -801,18 +861,18 @@ stamp_v2_pair!(
     lin_x16: |t, v| tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
     lin_x8: |t, v| tf::gamma::gamma_to_linear_x8(t, v, ADOBE_GAMMA),
     lin_x4: |t, v| tf::gamma::gamma_to_linear_x4(t, v, ADOBE_GAMMA),
-    enc_x16: tf::srgb::linear_to_srgb_x16,
-    enc_x8: tf::srgb::linear_to_srgb_x8,
-    enc_x4: tf::srgb::linear_to_srgb_x4,
+    enc_x16: linear_to_srgb_x16_clamped,
+    enc_x8: linear_to_srgb_x8_clamped,
+    enc_x4: linear_to_srgb_x4_clamped,
     lin_scalar: adobe_to_linear_scalar,
     enc_scalar: tf::linear_to_srgb,
 );
 
 stamp_v2_pair!(
     name: srgb_to_adobe,
-    lin_x16: tf::srgb::srgb_to_linear_x16,
-    lin_x8: tf::srgb::srgb_to_linear_x8,
-    lin_x4: tf::srgb::srgb_to_linear_x4,
+    lin_x16: srgb_to_linear_x16_clamped,
+    lin_x8: srgb_to_linear_x8_clamped,
+    lin_x4: srgb_to_linear_x4_clamped,
     enc_x16: |t, v| tf::gamma::linear_to_gamma_x16(t, v, ADOBE_GAMMA),
     enc_x8: |t, v| tf::gamma::linear_to_gamma_x8(t, v, ADOBE_GAMMA),
     enc_x4: |t, v| tf::gamma::linear_to_gamma_x4(t, v, ADOBE_GAMMA),
