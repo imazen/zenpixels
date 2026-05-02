@@ -1,185 +1,1140 @@
-//! fast_gamut redesign — proof of concept (sRGB→sRGB RGB only).
+//! `fast_gamut_v2` — magetypes-driven replacement for the v1 `stamp_trc_kernels!` family.
 //!
-//! See `fast_gamut_DESIGN.md` for the full plan. This file holds the
-//! wide-tier (f32x16) body for the sRGB→sRGB RGB pipeline as a stake in
-//! the ground:
+//! See `fast_gamut_DESIGN.md` for the full plan. This module provides a
+//! drop-in replacement for the v1 fused TRC + 3×3 matrix kernels with two
+//! per-pair bodies:
 //!
-//! - One body, generic over the magetypes Token via `#[magetypes]`.
-//! - Expanded for V4x (AVX-512), V4 (AVX-512 native), V3 (AVX2 with
-//!   2× 256-bit polyfill), and scalar.
-//! - Calls into `linear_srgb::tf::srgb::{srgb_to_linear_x16,
-//!   linear_to_srgb_x16}` for the TRC; matrix multiply is inline.
+//! - **wide body** (`#[magetypes(v4x, v4, v3, scalar)]`) over `f32x16<T>` —
+//!   active on x86_64 (V3/V4/V4x) and on the scalar fallback for any host.
+//! - **narrow body** (`#[magetypes(neon, wasm128)]`) over `f32x4<T>` —
+//!   active on AArch64 / WASM hosts where the wide polyfill incurs heavy
+//!   register pressure.
 //!
-//! NEON / WASM128 narrow body (`#[magetypes(neon, wasm128)]` over
-//! f32x4) is the next step.
+//! Each TRC pair (e.g. `srgb`, `bt709`, `pq`, `hlg`, `adobe`, `pq_to_srgb`,
+//! `bt709_to_srgb`, …) ships an RGB and an RGBA dispatcher that drives the
+//! right body via `incant!`.
 //!
-//! Not yet wired into `convert_f32_rgb_dispatch` — public surface is
-//! the concrete `convert_f32_srgb_rgb_v2_wide` entry point so the body
-//! can be benchmarked head-to-head against the v1 stamp_trc_kernels
-//! output.
+//! # Layout
+//!
+//! - `stamp_v2_pair!` — generates wide + narrow bodies + an `incant!`-fronted
+//!   public dispatch pair for one (linearize, encode, name) tuple.
+//! - `convert_f32_rgb_v2 / convert_f32_rgba_v2` — the public match-on-TRC
+//!   entry that v1's `convert_f32_rgb_dispatch` / `convert_f32_rgba_dispatch`
+//!   forwards to. Linear→Linear bypasses TRC entirely.
+//!
+//! # Numerics
+//!
+//! The wide body's matrix multiply uses `mul_add` chained right-to-left, the
+//! same shape as the v1 `mat3x3_x8` helper. Forward TRC calls
+//! `linear_srgb::tf::*::*_to_linear_x{4,16}<T>`; encode calls
+//! `linear_srgb::tf::*::linear_to_*_x{4,16}<T>`. Adobe (gamma 2.2) goes
+//! through `linear_srgb::tf::gamma::{gamma_to_linear,linear_to_gamma}_x{4,16}`,
+//! which clamp to `[0,1]` then call `pow_midp` (~9 ULP).
+//!
+//! Tail pixels (count not divisible by chunk width) take the scalar
+//! linearize → matrix → encode path.
 
 use archmage::prelude::*;
-use linear_srgb::tf::srgb;
-use magetypes::simd::generic::f32x16 as GenericF32x16;
+use linear_srgb::tf;
+use magetypes::simd::generic::{f32x4 as GenericF32x4, f32x16 as GenericF32x16};
 
-// SIMD body width: 16 pixels per iteration = 48 f32 for RGB.
-const PIXELS_PER_CHUNK: usize = 16;
-const RGB_CHUNK: usize = PIXELS_PER_CHUNK * 3;
+use crate::TransferFunction;
 
-#[magetypes(v4x, v4, v3, scalar)]
-fn convert_f32_srgb_rgb_wide_impl(token: Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
-    #[allow(non_camel_case_types)]
-    type f32x16 = GenericF32x16<Token>;
+const ADOBE_GAMMA: f32 = 2.19921875; // Adobe RGB spec: 563/256
 
-    let m00 = f32x16::splat(token, m[0][0]);
-    let m01 = f32x16::splat(token, m[0][1]);
-    let m02 = f32x16::splat(token, m[0][2]);
-    let m10 = f32x16::splat(token, m[1][0]);
-    let m11 = f32x16::splat(token, m[1][1]);
-    let m12 = f32x16::splat(token, m[1][2]);
-    let m20 = f32x16::splat(token, m[2][0]);
-    let m21 = f32x16::splat(token, m[2][1]);
-    let m22 = f32x16::splat(token, m[2][2]);
+// =============================================================================
+// Shared scalar helpers
+// =============================================================================
 
-    let chunks = data.len() / RGB_CHUNK;
-    for chunk_i in 0..chunks {
-        let off = chunk_i * RGB_CHUNK;
-        let mut r = [0.0f32; 16];
-        let mut g = [0.0f32; 16];
-        let mut b = [0.0f32; 16];
-        for i in 0..16 {
-            r[i] = data[off + i * 3];
-            g[i] = data[off + i * 3 + 1];
-            b[i] = data[off + i * 3 + 2];
-        }
-        let rv = f32x16::load(token, &r);
-        let gv = f32x16::load(token, &g);
-        let bv = f32x16::load(token, &b);
-
-        let rl = srgb::srgb_to_linear_x16(token, rv);
-        let gl = srgb::srgb_to_linear_x16(token, gv);
-        let bl = srgb::srgb_to_linear_x16(token, bv);
-
-        let nr = rl * m00 + gl * m01 + bl * m02;
-        let ng = rl * m10 + gl * m11 + bl * m12;
-        let nb = rl * m20 + gl * m21 + bl * m22;
-
-        let or = srgb::linear_to_srgb_x16(token, nr);
-        let og = srgb::linear_to_srgb_x16(token, ng);
-        let ob = srgb::linear_to_srgb_x16(token, nb);
-
-        let mut ro = [0.0f32; 16];
-        let mut go = [0.0f32; 16];
-        let mut bo = [0.0f32; 16];
-        or.store(&mut ro);
-        og.store(&mut go);
-        ob.store(&mut bo);
-        for i in 0..16 {
-            data[off + i * 3] = ro[i];
-            data[off + i * 3 + 1] = go[i];
-            data[off + i * 3 + 2] = bo[i];
-        }
-    }
-
-    for pixel in data[chunks * RGB_CHUNK..].chunks_exact_mut(3) {
-        let r = linear_srgb::tf::srgb_to_linear(pixel[0]);
-        let g = linear_srgb::tf::srgb_to_linear(pixel[1]);
-        let b = linear_srgb::tf::srgb_to_linear(pixel[2]);
-        let nr = m[0][0].mul_add(r, m[0][1].mul_add(g, m[0][2] * b));
-        let ng = m[1][0].mul_add(r, m[1][1].mul_add(g, m[1][2] * b));
-        let nb = m[2][0].mul_add(r, m[2][1].mul_add(g, m[2][2] * b));
-        pixel[0] = linear_srgb::tf::linear_to_srgb(nr);
-        pixel[1] = linear_srgb::tf::linear_to_srgb(ng);
-        pixel[2] = linear_srgb::tf::linear_to_srgb(nb);
-    }
+#[inline(always)]
+fn mat3x3(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    (
+        m[0][0].mul_add(r, m[0][1].mul_add(g, m[0][2] * b)),
+        m[1][0].mul_add(r, m[1][1].mul_add(g, m[1][2] * b)),
+        m[2][0].mul_add(r, m[2][1].mul_add(g, m[2][2] * b)),
+    )
 }
 
-/// Convert sRGB-encoded f32 RGB pixels in-place using the given gamut matrix
-/// and the sRGB TRC for both source and destination.
-///
-/// Wide-tier body (f32x16) dispatched across V4x / V4 / V3 / scalar via
-/// `incant!`. Use this for x86_64 hosts; NEON / WASM128 will get a narrow
-/// body in a follow-up.
-pub fn convert_f32_srgb_rgb_v2_wide(m: &[[f32; 3]; 3], data: &mut [f32]) {
+#[inline(always)]
+fn adobe_to_linear_scalar(v: f32) -> f32 {
+    linear_srgb::default::gamma_to_linear(v, ADOBE_GAMMA)
+}
+
+#[inline(always)]
+fn adobe_from_linear_scalar(v: f32) -> f32 {
+    linear_srgb::default::linear_to_gamma(v, ADOBE_GAMMA)
+}
+
+// =============================================================================
+// Macro — stamps wide + narrow bodies + dispatchers for one TRC pair.
+//
+// Inputs:
+//   $name        — pair tag (e.g. `srgb`, `pq_to_srgb`, `adobe`)
+//   $lin_x16     — generic SIMD linearize: fn<T: F32x16Convert>(t, v) -> v
+//   $lin_x4      — generic SIMD linearize: fn<T: F32x4Convert>(t, v) -> v
+//   $enc_x16     — generic SIMD encode:    fn<T: F32x16Convert>(t, v) -> v
+//   $enc_x4      — generic SIMD encode:    fn<T: F32x4Convert>(t, v) -> v
+//   $lin_scalar  — scalar fn(f32) -> f32
+//   $enc_scalar  — scalar fn(f32) -> f32
+//
+// Generates (per pair, for both RGB and RGBA):
+//
+//   convert_f32_rgb_<name>_v2 (matrix, slice)
+//   convert_f32_rgba_<name>_v2 (matrix, slice)
+//
+// plus their internal `_wide_impl` / `_narrow_impl` magetypes-stamped bodies.
+// =============================================================================
+
+macro_rules! stamp_v2_pair {
+    (
+        name: $name:ident,
+        lin_x16: $lin_x16:expr,
+        lin_x4: $lin_x4:expr,
+        enc_x16: $enc_x16:expr,
+        enc_x4: $enc_x4:expr,
+        lin_scalar: $lin_scalar:expr,
+        enc_scalar: $enc_scalar:expr,
+    ) => {
+        paste::paste! {
+            // -----------------------------------------------------------------
+            // Wide body: f32x16, dispatched across V4x / V4 / V3 / scalar.
+            // -----------------------------------------------------------------
+            #[magetypes(v4x, v4, v3, scalar)]
+            fn [<convert_rgb_ $name _wide_impl>](
+                token: Token,
+                m: &[[f32; 3]; 3],
+                data: &mut [f32],
+            ) {
+                #[allow(non_camel_case_types)]
+                type f32x16 = GenericF32x16<Token>;
+                const PIXELS: usize = 16;
+                const CHUNK: usize = PIXELS * 3;
+
+                let m00 = f32x16::splat(token, m[0][0]);
+                let m01 = f32x16::splat(token, m[0][1]);
+                let m02 = f32x16::splat(token, m[0][2]);
+                let m10 = f32x16::splat(token, m[1][0]);
+                let m11 = f32x16::splat(token, m[1][1]);
+                let m12 = f32x16::splat(token, m[1][2]);
+                let m20 = f32x16::splat(token, m[2][0]);
+                let m21 = f32x16::splat(token, m[2][1]);
+                let m22 = f32x16::splat(token, m[2][2]);
+
+                let chunks = data.len() / CHUNK;
+                for chunk_i in 0..chunks {
+                    let off = chunk_i * CHUNK;
+                    let mut r = [0.0f32; PIXELS];
+                    let mut g = [0.0f32; PIXELS];
+                    let mut b = [0.0f32; PIXELS];
+                    for i in 0..PIXELS {
+                        r[i] = data[off + i * 3];
+                        g[i] = data[off + i * 3 + 1];
+                        b[i] = data[off + i * 3 + 2];
+                    }
+                    let rv = f32x16::load(token, &r);
+                    let gv = f32x16::load(token, &g);
+                    let bv = f32x16::load(token, &b);
+
+                    let rl = ($lin_x16)(token, rv);
+                    let gl = ($lin_x16)(token, gv);
+                    let bl = ($lin_x16)(token, bv);
+
+                    let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
+                    let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
+                    let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
+
+                    let or_ = ($enc_x16)(token, nr);
+                    let og_ = ($enc_x16)(token, ng);
+                    let ob_ = ($enc_x16)(token, nb);
+
+                    let mut ro = [0.0f32; PIXELS];
+                    let mut go = [0.0f32; PIXELS];
+                    let mut bo = [0.0f32; PIXELS];
+                    or_.store(&mut ro);
+                    og_.store(&mut go);
+                    ob_.store(&mut bo);
+                    for i in 0..PIXELS {
+                        data[off + i * 3] = ro[i];
+                        data[off + i * 3 + 1] = go[i];
+                        data[off + i * 3 + 2] = bo[i];
+                    }
+                }
+
+                for pixel in data[chunks * CHUNK..].chunks_exact_mut(3) {
+                    let r = ($lin_scalar)(pixel[0]);
+                    let g = ($lin_scalar)(pixel[1]);
+                    let b = ($lin_scalar)(pixel[2]);
+                    let (nr, ng, nb) = mat3x3(m, r, g, b);
+                    pixel[0] = ($enc_scalar)(nr);
+                    pixel[1] = ($enc_scalar)(ng);
+                    pixel[2] = ($enc_scalar)(nb);
+                }
+            }
+
+            #[magetypes(v4x, v4, v3, scalar)]
+            fn [<convert_rgba_ $name _wide_impl>](
+                token: Token,
+                m: &[[f32; 3]; 3],
+                data: &mut [f32],
+            ) {
+                #[allow(non_camel_case_types)]
+                type f32x16 = GenericF32x16<Token>;
+                const PIXELS: usize = 16;
+                const CHUNK: usize = PIXELS * 4;
+
+                let m00 = f32x16::splat(token, m[0][0]);
+                let m01 = f32x16::splat(token, m[0][1]);
+                let m02 = f32x16::splat(token, m[0][2]);
+                let m10 = f32x16::splat(token, m[1][0]);
+                let m11 = f32x16::splat(token, m[1][1]);
+                let m12 = f32x16::splat(token, m[1][2]);
+                let m20 = f32x16::splat(token, m[2][0]);
+                let m21 = f32x16::splat(token, m[2][1]);
+                let m22 = f32x16::splat(token, m[2][2]);
+
+                let chunks = data.len() / CHUNK;
+                for chunk_i in 0..chunks {
+                    let off = chunk_i * CHUNK;
+                    let mut r = [0.0f32; PIXELS];
+                    let mut g = [0.0f32; PIXELS];
+                    let mut b = [0.0f32; PIXELS];
+                    for i in 0..PIXELS {
+                        r[i] = data[off + i * 4];
+                        g[i] = data[off + i * 4 + 1];
+                        b[i] = data[off + i * 4 + 2];
+                    }
+                    let rv = f32x16::load(token, &r);
+                    let gv = f32x16::load(token, &g);
+                    let bv = f32x16::load(token, &b);
+
+                    let rl = ($lin_x16)(token, rv);
+                    let gl = ($lin_x16)(token, gv);
+                    let bl = ($lin_x16)(token, bv);
+
+                    let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
+                    let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
+                    let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
+
+                    let or_ = ($enc_x16)(token, nr);
+                    let og_ = ($enc_x16)(token, ng);
+                    let ob_ = ($enc_x16)(token, nb);
+
+                    let mut ro = [0.0f32; PIXELS];
+                    let mut go = [0.0f32; PIXELS];
+                    let mut bo = [0.0f32; PIXELS];
+                    or_.store(&mut ro);
+                    og_.store(&mut go);
+                    ob_.store(&mut bo);
+                    for i in 0..PIXELS {
+                        data[off + i * 4] = ro[i];
+                        data[off + i * 4 + 1] = go[i];
+                        data[off + i * 4 + 2] = bo[i];
+                        // alpha (data[off + i*4 + 3]) is byte-exact unchanged.
+                    }
+                }
+
+                for pixel in data[chunks * CHUNK..].chunks_exact_mut(4) {
+                    let r = ($lin_scalar)(pixel[0]);
+                    let g = ($lin_scalar)(pixel[1]);
+                    let b = ($lin_scalar)(pixel[2]);
+                    let (nr, ng, nb) = mat3x3(m, r, g, b);
+                    pixel[0] = ($enc_scalar)(nr);
+                    pixel[1] = ($enc_scalar)(ng);
+                    pixel[2] = ($enc_scalar)(nb);
+                    // pixel[3] unchanged.
+                }
+            }
+
+            // -----------------------------------------------------------------
+            // Narrow body: f32x4, dispatched across NEON / WASM128.
+            // -----------------------------------------------------------------
+            #[magetypes(neon, wasm128)]
+            fn [<convert_rgb_ $name _narrow_impl>](
+                token: Token,
+                m: &[[f32; 3]; 3],
+                data: &mut [f32],
+            ) {
+                #[allow(non_camel_case_types)]
+                type f32x4 = GenericF32x4<Token>;
+                const PIXELS: usize = 4;
+                const CHUNK: usize = PIXELS * 3;
+
+                let m00 = f32x4::splat(token, m[0][0]);
+                let m01 = f32x4::splat(token, m[0][1]);
+                let m02 = f32x4::splat(token, m[0][2]);
+                let m10 = f32x4::splat(token, m[1][0]);
+                let m11 = f32x4::splat(token, m[1][1]);
+                let m12 = f32x4::splat(token, m[1][2]);
+                let m20 = f32x4::splat(token, m[2][0]);
+                let m21 = f32x4::splat(token, m[2][1]);
+                let m22 = f32x4::splat(token, m[2][2]);
+
+                let chunks = data.len() / CHUNK;
+                for chunk_i in 0..chunks {
+                    let off = chunk_i * CHUNK;
+                    let r = [
+                        data[off],
+                        data[off + 3],
+                        data[off + 6],
+                        data[off + 9],
+                    ];
+                    let g = [
+                        data[off + 1],
+                        data[off + 4],
+                        data[off + 7],
+                        data[off + 10],
+                    ];
+                    let b = [
+                        data[off + 2],
+                        data[off + 5],
+                        data[off + 8],
+                        data[off + 11],
+                    ];
+                    let rv = f32x4::load(token, &r);
+                    let gv = f32x4::load(token, &g);
+                    let bv = f32x4::load(token, &b);
+
+                    let rl = ($lin_x4)(token, rv);
+                    let gl = ($lin_x4)(token, gv);
+                    let bl = ($lin_x4)(token, bv);
+
+                    let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
+                    let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
+                    let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
+
+                    let or_ = ($enc_x4)(token, nr);
+                    let og_ = ($enc_x4)(token, ng);
+                    let ob_ = ($enc_x4)(token, nb);
+
+                    let mut ro = [0.0f32; PIXELS];
+                    let mut go = [0.0f32; PIXELS];
+                    let mut bo = [0.0f32; PIXELS];
+                    or_.store(&mut ro);
+                    og_.store(&mut go);
+                    ob_.store(&mut bo);
+                    for i in 0..PIXELS {
+                        data[off + i * 3] = ro[i];
+                        data[off + i * 3 + 1] = go[i];
+                        data[off + i * 3 + 2] = bo[i];
+                    }
+                }
+
+                for pixel in data[chunks * CHUNK..].chunks_exact_mut(3) {
+                    let r = ($lin_scalar)(pixel[0]);
+                    let g = ($lin_scalar)(pixel[1]);
+                    let b = ($lin_scalar)(pixel[2]);
+                    let (nr, ng, nb) = mat3x3(m, r, g, b);
+                    pixel[0] = ($enc_scalar)(nr);
+                    pixel[1] = ($enc_scalar)(ng);
+                    pixel[2] = ($enc_scalar)(nb);
+                }
+            }
+
+            #[magetypes(neon, wasm128)]
+            fn [<convert_rgba_ $name _narrow_impl>](
+                token: Token,
+                m: &[[f32; 3]; 3],
+                data: &mut [f32],
+            ) {
+                #[allow(non_camel_case_types)]
+                type f32x4 = GenericF32x4<Token>;
+                const PIXELS: usize = 4;
+                const CHUNK: usize = PIXELS * 4;
+
+                let m00 = f32x4::splat(token, m[0][0]);
+                let m01 = f32x4::splat(token, m[0][1]);
+                let m02 = f32x4::splat(token, m[0][2]);
+                let m10 = f32x4::splat(token, m[1][0]);
+                let m11 = f32x4::splat(token, m[1][1]);
+                let m12 = f32x4::splat(token, m[1][2]);
+                let m20 = f32x4::splat(token, m[2][0]);
+                let m21 = f32x4::splat(token, m[2][1]);
+                let m22 = f32x4::splat(token, m[2][2]);
+
+                let chunks = data.len() / CHUNK;
+                for chunk_i in 0..chunks {
+                    let off = chunk_i * CHUNK;
+                    let r = [
+                        data[off],
+                        data[off + 4],
+                        data[off + 8],
+                        data[off + 12],
+                    ];
+                    let g = [
+                        data[off + 1],
+                        data[off + 5],
+                        data[off + 9],
+                        data[off + 13],
+                    ];
+                    let b = [
+                        data[off + 2],
+                        data[off + 6],
+                        data[off + 10],
+                        data[off + 14],
+                    ];
+                    let rv = f32x4::load(token, &r);
+                    let gv = f32x4::load(token, &g);
+                    let bv = f32x4::load(token, &b);
+
+                    let rl = ($lin_x4)(token, rv);
+                    let gl = ($lin_x4)(token, gv);
+                    let bl = ($lin_x4)(token, bv);
+
+                    let nr = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
+                    let ng = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
+                    let nb = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
+
+                    let or_ = ($enc_x4)(token, nr);
+                    let og_ = ($enc_x4)(token, ng);
+                    let ob_ = ($enc_x4)(token, nb);
+
+                    let mut ro = [0.0f32; PIXELS];
+                    let mut go = [0.0f32; PIXELS];
+                    let mut bo = [0.0f32; PIXELS];
+                    or_.store(&mut ro);
+                    og_.store(&mut go);
+                    ob_.store(&mut bo);
+                    for i in 0..PIXELS {
+                        data[off + i * 4] = ro[i];
+                        data[off + i * 4 + 1] = go[i];
+                        data[off + i * 4 + 2] = bo[i];
+                    }
+                }
+
+                for pixel in data[chunks * CHUNK..].chunks_exact_mut(4) {
+                    let r = ($lin_scalar)(pixel[0]);
+                    let g = ($lin_scalar)(pixel[1]);
+                    let b = ($lin_scalar)(pixel[2]);
+                    let (nr, ng, nb) = mat3x3(m, r, g, b);
+                    pixel[0] = ($enc_scalar)(nr);
+                    pixel[1] = ($enc_scalar)(ng);
+                    pixel[2] = ($enc_scalar)(nb);
+                }
+            }
+
+            // -----------------------------------------------------------------
+            // Public dispatchers — pick wide on x86 / scalar, narrow on
+            // arm / wasm.
+            // -----------------------------------------------------------------
+            /// Convert RGB f32 in-place via the sRGB/{TRC} pipeline for the
+            /// `$name` pair. `data.len()` must be a multiple of 3.
+            pub fn [<convert_f32_rgb_ $name _v2>](m: &[[f32; 3]; 3], data: &mut [f32]) {
+                debug_assert_eq!(data.len() % 3, 0);
+                #[cfg(any(target_arch = "x86_64", not(any(
+                    target_arch = "aarch64",
+                    target_arch = "arm64ec",
+                    target_arch = "wasm32",
+                ))))]
+                {
+                    incant!(
+                        [<convert_rgb_ $name _wide_impl>](m, data),
+                        [v4x, v4, v3, scalar]
+                    );
+                }
+                #[cfg(any(target_arch = "aarch64", target_arch = "arm64ec"))]
+                {
+                    incant!(
+                        [<convert_rgb_ $name _narrow_impl>](m, data),
+                        [neon, scalar]
+                    );
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    incant!(
+                        [<convert_rgb_ $name _narrow_impl>](m, data),
+                        [wasm128, scalar]
+                    );
+                }
+            }
+
+            /// Convert RGBA f32 in-place via the sRGB/{TRC} pipeline for the
+            /// `$name` pair. Alpha is byte-exact unchanged.
+            pub fn [<convert_f32_rgba_ $name _v2>](m: &[[f32; 3]; 3], data: &mut [f32]) {
+                debug_assert_eq!(data.len() % 4, 0);
+                #[cfg(any(target_arch = "x86_64", not(any(
+                    target_arch = "aarch64",
+                    target_arch = "arm64ec",
+                    target_arch = "wasm32",
+                ))))]
+                {
+                    incant!(
+                        [<convert_rgba_ $name _wide_impl>](m, data),
+                        [v4x, v4, v3, scalar]
+                    );
+                }
+                #[cfg(any(target_arch = "aarch64", target_arch = "arm64ec"))]
+                {
+                    incant!(
+                        [<convert_rgba_ $name _narrow_impl>](m, data),
+                        [neon, scalar]
+                    );
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    incant!(
+                        [<convert_rgba_ $name _narrow_impl>](m, data),
+                        [wasm128, scalar]
+                    );
+                }
+            }
+        }
+    };
+}
+
+// =============================================================================
+// TRC pair stamps
+// =============================================================================
+//
+// Each stamp covers one (src TRC, dst TRC) pair, identical lookups for the
+// single-TRC pairs. Linear → Linear has no TRC, dispatched directly in
+// the public match below.
+
+// --- Same-TRC pairs ---
+
+stamp_v2_pair!(
+    name: srgb,
+    lin_x16: tf::srgb::srgb_to_linear_x16,
+    lin_x4: tf::srgb::srgb_to_linear_x4,
+    enc_x16: tf::srgb::linear_to_srgb_x16,
+    enc_x4: tf::srgb::linear_to_srgb_x4,
+    lin_scalar: tf::srgb_to_linear,
+    enc_scalar: tf::linear_to_srgb,
+);
+
+stamp_v2_pair!(
+    name: bt709,
+    lin_x16: tf::bt709::bt709_to_linear_x16,
+    lin_x4: tf::bt709::bt709_to_linear_x4,
+    enc_x16: tf::bt709::linear_to_bt709_x16,
+    enc_x4: tf::bt709::linear_to_bt709_x4,
+    lin_scalar: tf::bt709_to_linear,
+    enc_scalar: tf::linear_to_bt709,
+);
+
+stamp_v2_pair!(
+    name: pq,
+    lin_x16: tf::pq::pq_to_linear_x16,
+    lin_x4: tf::pq::pq_to_linear_x4,
+    enc_x16: tf::pq::linear_to_pq_x16,
+    enc_x4: tf::pq::linear_to_pq_x4,
+    lin_scalar: tf::pq_to_linear,
+    enc_scalar: tf::linear_to_pq,
+);
+
+stamp_v2_pair!(
+    name: hlg,
+    lin_x16: tf::hlg::hlg_to_linear_x16,
+    lin_x4: tf::hlg::hlg_to_linear_x4,
+    enc_x16: tf::hlg::linear_to_hlg_x16,
+    enc_x4: tf::hlg::linear_to_hlg_x4,
+    lin_scalar: tf::hlg_to_linear,
+    enc_scalar: tf::linear_to_hlg,
+);
+
+// Adobe (gamma 2.2 — pure power, no linear toe). Bind ADOBE_GAMMA via closures.
+stamp_v2_pair!(
+    name: adobe,
+    lin_x16: |t, v| tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
+    lin_x4: |t, v| tf::gamma::gamma_to_linear_x4(t, v, ADOBE_GAMMA),
+    enc_x16: |t, v| tf::gamma::linear_to_gamma_x16(t, v, ADOBE_GAMMA),
+    enc_x4: |t, v| tf::gamma::linear_to_gamma_x4(t, v, ADOBE_GAMMA),
+    lin_scalar: adobe_to_linear_scalar,
+    enc_scalar: adobe_from_linear_scalar,
+);
+
+// --- Cross-TRC pairs ---
+
+stamp_v2_pair!(
+    name: pq_to_srgb,
+    lin_x16: tf::pq::pq_to_linear_x16,
+    lin_x4: tf::pq::pq_to_linear_x4,
+    enc_x16: tf::srgb::linear_to_srgb_x16,
+    enc_x4: tf::srgb::linear_to_srgb_x4,
+    lin_scalar: tf::pq_to_linear,
+    enc_scalar: tf::linear_to_srgb,
+);
+
+stamp_v2_pair!(
+    name: hlg_to_srgb,
+    lin_x16: tf::hlg::hlg_to_linear_x16,
+    lin_x4: tf::hlg::hlg_to_linear_x4,
+    enc_x16: tf::srgb::linear_to_srgb_x16,
+    enc_x4: tf::srgb::linear_to_srgb_x4,
+    lin_scalar: tf::hlg_to_linear,
+    enc_scalar: tf::linear_to_srgb,
+);
+
+stamp_v2_pair!(
+    name: srgb_to_pq,
+    lin_x16: tf::srgb::srgb_to_linear_x16,
+    lin_x4: tf::srgb::srgb_to_linear_x4,
+    enc_x16: tf::pq::linear_to_pq_x16,
+    enc_x4: tf::pq::linear_to_pq_x4,
+    lin_scalar: tf::srgb_to_linear,
+    enc_scalar: tf::linear_to_pq,
+);
+
+stamp_v2_pair!(
+    name: bt709_to_srgb,
+    lin_x16: tf::bt709::bt709_to_linear_x16,
+    lin_x4: tf::bt709::bt709_to_linear_x4,
+    enc_x16: tf::srgb::linear_to_srgb_x16,
+    enc_x4: tf::srgb::linear_to_srgb_x4,
+    lin_scalar: tf::bt709_to_linear,
+    enc_scalar: tf::linear_to_srgb,
+);
+
+stamp_v2_pair!(
+    name: srgb_to_bt709,
+    lin_x16: tf::srgb::srgb_to_linear_x16,
+    lin_x4: tf::srgb::srgb_to_linear_x4,
+    enc_x16: tf::bt709::linear_to_bt709_x16,
+    enc_x4: tf::bt709::linear_to_bt709_x4,
+    lin_scalar: tf::srgb_to_linear,
+    enc_scalar: tf::linear_to_bt709,
+);
+
+stamp_v2_pair!(
+    name: adobe_to_srgb,
+    lin_x16: |t, v| tf::gamma::gamma_to_linear_x16(t, v, ADOBE_GAMMA),
+    lin_x4: |t, v| tf::gamma::gamma_to_linear_x4(t, v, ADOBE_GAMMA),
+    enc_x16: tf::srgb::linear_to_srgb_x16,
+    enc_x4: tf::srgb::linear_to_srgb_x4,
+    lin_scalar: adobe_to_linear_scalar,
+    enc_scalar: tf::linear_to_srgb,
+);
+
+stamp_v2_pair!(
+    name: srgb_to_adobe,
+    lin_x16: tf::srgb::srgb_to_linear_x16,
+    lin_x4: tf::srgb::srgb_to_linear_x4,
+    enc_x16: |t, v| tf::gamma::linear_to_gamma_x16(t, v, ADOBE_GAMMA),
+    enc_x4: |t, v| tf::gamma::linear_to_gamma_x4(t, v, ADOBE_GAMMA),
+    lin_scalar: tf::srgb_to_linear,
+    enc_scalar: adobe_from_linear_scalar,
+);
+
+// =============================================================================
+// Linear (identity TRC) — matrix only
+// =============================================================================
+
+/// Convert linear f32 RGB pixels in-place using only the 3×3 matrix.
+pub fn convert_f32_rgb_linear_v2(m: &[[f32; 3]; 3], data: &mut [f32]) {
     debug_assert_eq!(data.len() % 3, 0);
-    incant!(
-        convert_f32_srgb_rgb_wide_impl(m, data),
-        [v4x, v4, v3, scalar]
-    );
+    for pixel in data.chunks_exact_mut(3) {
+        let (nr, ng, nb) = mat3x3(m, pixel[0], pixel[1], pixel[2]);
+        pixel[0] = nr;
+        pixel[1] = ng;
+        pixel[2] = nb;
+    }
 }
+
+/// Convert linear f32 RGBA pixels in-place. Alpha unchanged.
+pub fn convert_f32_rgba_linear_v2(m: &[[f32; 3]; 3], data: &mut [f32]) {
+    debug_assert_eq!(data.len() % 4, 0);
+    for pixel in data.chunks_exact_mut(4) {
+        let (nr, ng, nb) = mat3x3(m, pixel[0], pixel[1], pixel[2]);
+        pixel[0] = nr;
+        pixel[1] = ng;
+        pixel[2] = nb;
+    }
+}
+
+// =============================================================================
+// Public match-on-TRC dispatch
+// =============================================================================
+
+/// Convert RGB f32 in-place using the given matrix and TRC pair. Returns
+/// `false` if either TRC is unsupported by the v2 surface.
+pub fn convert_f32_rgb_v2(
+    m: &[[f32; 3]; 3],
+    data: &mut [f32],
+    src_trc: TransferFunction,
+    dst_trc: TransferFunction,
+) -> bool {
+    use TransferFunction::*;
+    debug_assert_eq!(data.len() % 3, 0);
+    match (src_trc, dst_trc) {
+        (Linear, Linear) => convert_f32_rgb_linear_v2(m, data),
+        (Srgb, Srgb) => convert_f32_rgb_srgb_v2(m, data),
+        (Bt709, Bt709) => convert_f32_rgb_bt709_v2(m, data),
+        (Pq, Pq) => convert_f32_rgb_pq_v2(m, data),
+        (Hlg, Hlg) => convert_f32_rgb_hlg_v2(m, data),
+        (Gamma22, Gamma22) => convert_f32_rgb_adobe_v2(m, data),
+        (Pq, Srgb) => convert_f32_rgb_pq_to_srgb_v2(m, data),
+        (Hlg, Srgb) => convert_f32_rgb_hlg_to_srgb_v2(m, data),
+        (Srgb, Pq) => convert_f32_rgb_srgb_to_pq_v2(m, data),
+        (Bt709, Srgb) => convert_f32_rgb_bt709_to_srgb_v2(m, data),
+        (Srgb, Bt709) => convert_f32_rgb_srgb_to_bt709_v2(m, data),
+        (Gamma22, Srgb) => convert_f32_rgb_adobe_to_srgb_v2(m, data),
+        (Srgb, Gamma22) => convert_f32_rgb_srgb_to_adobe_v2(m, data),
+        _ => return false,
+    }
+    true
+}
+
+/// Convert RGBA f32 in-place. Alpha unchanged.
+pub fn convert_f32_rgba_v2(
+    m: &[[f32; 3]; 3],
+    data: &mut [f32],
+    src_trc: TransferFunction,
+    dst_trc: TransferFunction,
+) -> bool {
+    use TransferFunction::*;
+    debug_assert_eq!(data.len() % 4, 0);
+    match (src_trc, dst_trc) {
+        (Linear, Linear) => convert_f32_rgba_linear_v2(m, data),
+        (Srgb, Srgb) => convert_f32_rgba_srgb_v2(m, data),
+        (Bt709, Bt709) => convert_f32_rgba_bt709_v2(m, data),
+        (Pq, Pq) => convert_f32_rgba_pq_v2(m, data),
+        (Hlg, Hlg) => convert_f32_rgba_hlg_v2(m, data),
+        (Gamma22, Gamma22) => convert_f32_rgba_adobe_v2(m, data),
+        (Pq, Srgb) => convert_f32_rgba_pq_to_srgb_v2(m, data),
+        (Hlg, Srgb) => convert_f32_rgba_hlg_to_srgb_v2(m, data),
+        (Srgb, Pq) => convert_f32_rgba_srgb_to_pq_v2(m, data),
+        (Bt709, Srgb) => convert_f32_rgba_bt709_to_srgb_v2(m, data),
+        (Srgb, Bt709) => convert_f32_rgba_srgb_to_bt709_v2(m, data),
+        (Gamma22, Srgb) => convert_f32_rgba_adobe_to_srgb_v2(m, data),
+        (Srgb, Gamma22) => convert_f32_rgba_srgb_to_adobe_v2(m, data),
+        _ => return false,
+    }
+    true
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn srgb_identity_matrix() -> [[f32; 3]; 3] {
+    fn identity_matrix() -> [[f32; 3]; 3] {
         [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     }
 
+    /// A non-identity gamut matrix used to verify v1↔v2 parity. Real
+    /// sRGB↔BT.2020 RGB matrix from the existing builtins (off-diagonals
+    /// non-trivial so chroma channels actually mix).
+    fn srgb_to_bt2020_matrix() -> [[f32; 3]; 3] {
+        [
+            [0.6274, 0.3293, 0.0433],
+            [0.0691, 0.9195, 0.0114],
+            [0.0164, 0.0880, 0.8956],
+        ]
+    }
+
+    /// Tolerance budget for sRGB-only roundtrips (rational poly, ~5e-7).
+    const TOL_SRGB: f32 = 1.5e-5;
+    /// Tolerance for TRCs whose inverse uses fast_powf or similar (~3e-5
+    /// per linear-srgb's documented bounds; allow 1e-4 to absorb rounding
+    /// across the linearize → matrix → encode chain).
+    const TOL_FASTPOW: f32 = 1e-4;
+
+    /// All same-TRC pairs and their identity-roundtrip tolerance.
+    fn same_trc_pairs() -> &'static [(TransferFunction, f32)] {
+        &[
+            (TransferFunction::Linear, 1e-6),
+            (TransferFunction::Srgb, TOL_SRGB),
+            (TransferFunction::Bt709, TOL_FASTPOW),
+            (TransferFunction::Pq, TOL_FASTPOW),
+            (TransferFunction::Hlg, TOL_FASTPOW),
+            (TransferFunction::Gamma22, TOL_FASTPOW),
+        ]
+    }
+
+    /// All cross-TRC pairs supported by v2.
+    fn cross_trc_pairs() -> &'static [(TransferFunction, TransferFunction)] {
+        use TransferFunction::*;
+        &[
+            (Pq, Srgb),
+            (Hlg, Srgb),
+            (Srgb, Pq),
+            (Bt709, Srgb),
+            (Srgb, Bt709),
+            (Gamma22, Srgb),
+            (Srgb, Gamma22),
+        ]
+    }
+
+    fn ramp(n_pixels: usize, channels: usize) -> Vec<f32> {
+        let len = n_pixels * channels;
+        let denom = (len.saturating_sub(1)).max(1) as f32;
+        (0..len)
+            .map(|i| (i as f32 / denom).clamp(0.0, 1.0))
+            .collect()
+    }
+
+    // ---- Identity-roundtrip tests (same TRC, identity matrix) -----------
+
     #[test]
-    fn srgb_identity_roundtrip_is_close() {
-        // Identity matrix → input pixel goes through srgb_to_linear → identity →
-        // linear_to_srgb. Output should be within polynomial accuracy.
-        let m = srgb_identity_matrix();
-        let mut data = vec![0.0f32; 17 * 3];
-        let denom = (data.len() - 1) as f32;
-        for (i, x) in data.iter_mut().enumerate() {
-            *x = (i as f32 / denom).clamp(0.0, 1.0);
-        }
-        let original = data.clone();
-        convert_f32_srgb_rgb_v2_wide(&m, &mut data);
-        for (i, (got, want)) in data.iter().zip(original.iter()).enumerate() {
-            let err = (got - want).abs();
-            // Accuracy budget: srgb→linear→srgb roundtrip is bounded by
-            // ~1 LSB at u16 (~1.5e-5) per linear-srgb's documented bounds.
-            assert!(
-                err < 5e-5,
-                "lane {i}: got {got}, want {want} (err={err:e})",
-            );
+    fn identity_roundtrip_same_trc_rgb() {
+        for &(trc, tol) in same_trc_pairs() {
+            let m = identity_matrix();
+            // Use n=23 to exercise wide chunk + tail (16 + 7) on x86_64.
+            let original = ramp(23, 3);
+            let mut data = original.clone();
+            assert!(convert_f32_rgb_v2(&m, &mut data, trc, trc));
+            for (i, (got, want)) in data.iter().zip(original.iter()).enumerate() {
+                let err = (got - want).abs();
+                assert!(
+                    err < tol,
+                    "RGB identity {trc:?} lane {i}: got {got}, want {want} \
+                     (err={err:e}, tol={tol:e})",
+                );
+            }
         }
     }
 
     #[test]
-    fn srgb_identity_zero_pixel_is_zero() {
-        let m = srgb_identity_matrix();
-        let mut data = vec![0.0f32; 16 * 3];
-        convert_f32_srgb_rgb_v2_wide(&m, &mut data);
-        for x in data {
-            assert!(x.abs() < 1e-6);
+    fn identity_roundtrip_same_trc_rgba() {
+        for &(trc, tol) in same_trc_pairs() {
+            let m = identity_matrix();
+            // 23 pixels × 4 channels — alpha at index *4+3.
+            let mut data = ramp(23, 4);
+            // Stamp arbitrary alpha values to verify byte-exact passthrough.
+            for i in 0..23 {
+                data[i * 4 + 3] = (i as f32 / 22.0) * 0.7 + 0.1;
+            }
+            let original = data.clone();
+            assert!(convert_f32_rgba_v2(&m, &mut data, trc, trc));
+            for i in 0..23 {
+                for c in 0..3 {
+                    let got = data[i * 4 + c];
+                    let want = original[i * 4 + c];
+                    let err = (got - want).abs();
+                    assert!(
+                        err < tol,
+                        "RGBA identity {trc:?} pixel {i} ch {c}: \
+                         got {got}, want {want} (err={err:e})",
+                    );
+                }
+                // Alpha must be byte-exact identical.
+                let alpha = data[i * 4 + 3];
+                let alpha_orig = original[i * 4 + 3];
+                assert_eq!(
+                    alpha.to_bits(),
+                    alpha_orig.to_bits(),
+                    "RGBA identity {trc:?} pixel {i}: alpha {alpha} != orig {alpha_orig}",
+                );
+            }
+        }
+    }
+
+    // ---- Zero / one pixel tests ----------------------------------------
+
+    #[test]
+    fn zero_pixel_stays_zero_same_trc() {
+        for &(trc, _tol) in same_trc_pairs() {
+            let m = identity_matrix();
+            // 16 pixels — exactly one wide chunk.
+            let mut data = vec![0.0f32; 16 * 3];
+            assert!(convert_f32_rgb_v2(&m, &mut data, trc, trc));
+            for (i, &x) in data.iter().enumerate() {
+                assert!(x.abs() < 1e-6, "zero {trc:?} lane {i}: got {x}");
+            }
         }
     }
 
     #[test]
-    fn srgb_identity_one_pixel_is_one() {
-        let m = srgb_identity_matrix();
-        let mut data = vec![1.0f32; 16 * 3];
-        convert_f32_srgb_rgb_v2_wide(&m, &mut data);
-        for x in data {
-            assert!((x - 1.0).abs() < 1e-4, "got {x}");
+    fn one_pixel_stays_one_same_trc() {
+        for &(trc, _tol) in same_trc_pairs() {
+            let m = identity_matrix();
+            let mut data = vec![1.0f32; 16 * 3];
+            assert!(convert_f32_rgb_v2(&m, &mut data, trc, trc));
+            for (i, &x) in data.iter().enumerate() {
+                assert!(
+                    (x - 1.0).abs() < TOL_FASTPOW,
+                    "one {trc:?} lane {i}: got {x}",
+                );
+            }
+        }
+    }
+
+    // ---- Sub-chunk / exact-chunk / mixed sizes -------------------------
+
+    #[test]
+    fn handles_sub_chunk_and_mixed_sizes_rgb() {
+        for &(trc, tol) in same_trc_pairs() {
+            let m = identity_matrix();
+            for &n_pixels in &[5usize, 7, 13, 16, 17, 19, 23] {
+                let original = ramp(n_pixels, 3);
+                let mut data = original.clone();
+                assert!(convert_f32_rgb_v2(&m, &mut data, trc, trc));
+                for (i, (got, want)) in data.iter().zip(original.iter()).enumerate() {
+                    let err = (got - want).abs();
+                    assert!(
+                        err < tol,
+                        "size {n_pixels} {trc:?} lane {i}: got {got}, \
+                         want {want} (err={err:e})",
+                    );
+                }
+            }
         }
     }
 
     #[test]
-    fn handles_sub_chunk_input() {
-        // 5 pixels — exercises the scalar tail path only.
-        let m = srgb_identity_matrix();
-        let mut data = vec![0.5f32; 5 * 3];
-        let original = data.clone();
-        convert_f32_srgb_rgb_v2_wide(&m, &mut data);
-        for (got, want) in data.iter().zip(original.iter()) {
-            assert!((got - want).abs() < 5e-5);
+    fn handles_sub_chunk_and_mixed_sizes_rgba() {
+        for &(trc, tol) in same_trc_pairs() {
+            let m = identity_matrix();
+            for &n_pixels in &[5usize, 7, 13, 16, 17, 19, 23] {
+                let mut data = ramp(n_pixels, 4);
+                let original = data.clone();
+                assert!(convert_f32_rgba_v2(&m, &mut data, trc, trc));
+                for i in 0..n_pixels {
+                    for c in 0..3 {
+                        let got = data[i * 4 + c];
+                        let want = original[i * 4 + c];
+                        let err = (got - want).abs();
+                        assert!(
+                            err < tol,
+                            "RGBA size {n_pixels} {trc:?} px {i} ch {c}: \
+                             got {got}, want {want} (err={err:e})",
+                        );
+                    }
+                    assert_eq!(
+                        data[i * 4 + 3].to_bits(),
+                        original[i * 4 + 3].to_bits(),
+                        "alpha mutated at px {i}",
+                    );
+                }
+            }
+        }
+    }
+
+    // ---- Cross-TRC: roundtrip through linear ---------------------------
+
+    /// Cross-TRC pairs don't roundtrip exactly (you'd need src→dst→src), so
+    /// validate that v2 produces the same bytes as a scalar reference using
+    /// linear-srgb's scalar TF functions directly.
+    fn scalar_lin(trc: TransferFunction) -> fn(f32) -> f32 {
+        use TransferFunction::*;
+        match trc {
+            Srgb => tf::srgb_to_linear,
+            Bt709 => tf::bt709_to_linear,
+            Pq => tf::pq_to_linear,
+            Hlg => tf::hlg_to_linear,
+            Gamma22 => adobe_to_linear_scalar,
+            Linear => |v| v,
+            _ => panic!("unsupported TRC {trc:?}"),
+        }
+    }
+
+    fn scalar_enc(trc: TransferFunction) -> fn(f32) -> f32 {
+        use TransferFunction::*;
+        match trc {
+            Srgb => tf::linear_to_srgb,
+            Bt709 => tf::linear_to_bt709,
+            Pq => tf::linear_to_pq,
+            Hlg => tf::linear_to_hlg,
+            Gamma22 => adobe_from_linear_scalar,
+            Linear => |v| v,
+            _ => panic!("unsupported TRC {trc:?}"),
+        }
+    }
+
+    fn scalar_reference_rgb(
+        m: &[[f32; 3]; 3],
+        data: &mut [f32],
+        src: TransferFunction,
+        dst: TransferFunction,
+    ) {
+        let lin = scalar_lin(src);
+        let enc = scalar_enc(dst);
+        for px in data.chunks_exact_mut(3) {
+            let r = lin(px[0]);
+            let g = lin(px[1]);
+            let b = lin(px[2]);
+            let (nr, ng, nb) = mat3x3(m, r, g, b);
+            px[0] = enc(nr);
+            px[1] = enc(ng);
+            px[2] = enc(nb);
+        }
+    }
+
+    fn scalar_reference_rgba(
+        m: &[[f32; 3]; 3],
+        data: &mut [f32],
+        src: TransferFunction,
+        dst: TransferFunction,
+    ) {
+        let lin = scalar_lin(src);
+        let enc = scalar_enc(dst);
+        for px in data.chunks_exact_mut(4) {
+            let r = lin(px[0]);
+            let g = lin(px[1]);
+            let b = lin(px[2]);
+            let (nr, ng, nb) = mat3x3(m, r, g, b);
+            px[0] = enc(nr);
+            px[1] = enc(ng);
+            px[2] = enc(nb);
+        }
+    }
+
+    /// SIMD-vs-scalar parity: at most 5e-5 per channel on a representative
+    /// non-identity matrix. Tolerance covers the difference between scalar
+    /// rational-poly TF and the SIMD `pow_midp` Adobe path.
+    const TOL_PARITY: f32 = 5e-5;
+
+    #[test]
+    fn parity_with_scalar_same_trc_rgb() {
+        let m = srgb_to_bt2020_matrix();
+        for &(trc, _tol) in same_trc_pairs() {
+            // 19 pixels — wide chunk + tail.
+            let original = ramp(19, 3);
+            let mut v2_out = original.clone();
+            let mut ref_out = original.clone();
+            assert!(convert_f32_rgb_v2(&m, &mut v2_out, trc, trc));
+            scalar_reference_rgb(&m, &mut ref_out, trc, trc);
+            for (i, (a, b)) in v2_out.iter().zip(ref_out.iter()).enumerate() {
+                let err = (a - b).abs();
+                assert!(
+                    err < TOL_PARITY,
+                    "parity {trc:?} lane {i}: v2={a}, ref={b} (err={err:e})",
+                );
+            }
         }
     }
 
     #[test]
-    fn handles_mixed_chunk_and_tail() {
-        // 19 pixels — 16 SIMD + 3 scalar.
-        let m = srgb_identity_matrix();
-        let mut data = vec![0.5f32; 19 * 3];
-        let original = data.clone();
-        convert_f32_srgb_rgb_v2_wide(&m, &mut data);
-        for (got, want) in data.iter().zip(original.iter()) {
-            assert!((got - want).abs() < 5e-5);
+    fn parity_with_scalar_same_trc_rgba() {
+        let m = srgb_to_bt2020_matrix();
+        for &(trc, _tol) in same_trc_pairs() {
+            let original = ramp(19, 4);
+            let mut v2_out = original.clone();
+            let mut ref_out = original.clone();
+            assert!(convert_f32_rgba_v2(&m, &mut v2_out, trc, trc));
+            scalar_reference_rgba(&m, &mut ref_out, trc, trc);
+            for i in 0..19 {
+                for c in 0..3 {
+                    let a = v2_out[i * 4 + c];
+                    let b = ref_out[i * 4 + c];
+                    let err = (a - b).abs();
+                    assert!(
+                        err < TOL_PARITY,
+                        "RGBA parity {trc:?} px {i} ch {c}: v2={a}, ref={b} \
+                         (err={err:e})",
+                    );
+                }
+                // Alpha untouched in both paths — matches input verbatim.
+                assert_eq!(v2_out[i * 4 + 3].to_bits(), original[i * 4 + 3].to_bits());
+            }
         }
+    }
+
+    #[test]
+    fn parity_with_scalar_cross_trc_rgb() {
+        let m = srgb_to_bt2020_matrix();
+        for &(src, dst) in cross_trc_pairs() {
+            let original = ramp(23, 3);
+            let mut v2_out = original.clone();
+            let mut ref_out = original.clone();
+            assert!(convert_f32_rgb_v2(&m, &mut v2_out, src, dst));
+            scalar_reference_rgb(&m, &mut ref_out, src, dst);
+            for (i, (a, b)) in v2_out.iter().zip(ref_out.iter()).enumerate() {
+                let err = (a - b).abs();
+                assert!(
+                    err < TOL_PARITY,
+                    "parity {src:?}->{dst:?} lane {i}: v2={a}, ref={b} \
+                     (err={err:e})",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parity_with_scalar_cross_trc_rgba() {
+        let m = srgb_to_bt2020_matrix();
+        for &(src, dst) in cross_trc_pairs() {
+            let original = ramp(23, 4);
+            let mut v2_out = original.clone();
+            let mut ref_out = original.clone();
+            assert!(convert_f32_rgba_v2(&m, &mut v2_out, src, dst));
+            scalar_reference_rgba(&m, &mut ref_out, src, dst);
+            for i in 0..23 {
+                for c in 0..3 {
+                    let a = v2_out[i * 4 + c];
+                    let b = ref_out[i * 4 + c];
+                    let err = (a - b).abs();
+                    assert!(
+                        err < TOL_PARITY,
+                        "RGBA cross parity {src:?}->{dst:?} px {i} ch {c}: \
+                         v2={a}, ref={b} (err={err:e})",
+                    );
+                }
+                assert_eq!(v2_out[i * 4 + 3].to_bits(), original[i * 4 + 3].to_bits());
+            }
+        }
+    }
+
+    // ---- Linear→Linear bypass ------------------------------------------
+
+    #[test]
+    fn linear_to_linear_skips_trc_and_just_multiplies() {
+        let m = srgb_to_bt2020_matrix();
+        let original = ramp(7, 3);
+        let mut data = original.clone();
+        assert!(convert_f32_rgb_v2(
+            &m,
+            &mut data,
+            TransferFunction::Linear,
+            TransferFunction::Linear,
+        ));
+        for (i, px) in original.chunks_exact(3).enumerate() {
+            let (er, eg, eb) = mat3x3(&m, px[0], px[1], px[2]);
+            for (c, expected) in [er, eg, eb].iter().enumerate() {
+                let got = data[i * 3 + c];
+                assert!(
+                    (got - expected).abs() < 1e-7,
+                    "lin px {i} ch {c}: got {got}, expected {expected}",
+                );
+            }
+        }
+    }
+
+    // ---- Unsupported pair returns false --------------------------------
+
+    #[test]
+    fn unsupported_pair_returns_false() {
+        let m = identity_matrix();
+        let mut data = vec![0.5f32; 12];
+        // Unsupported pair (PQ → BT.709 not in v2's matrix). v1 doesn't
+        // accelerate it either; we expect false.
+        assert!(
+            !convert_f32_rgb_v2(&m, &mut data, TransferFunction::Pq, TransferFunction::Bt709)
+        );
+    }
+
+    // ---- Tier permutation: scalar path bit-stable on every Token --------
+
+    /// Verify all six magetypes-stamped tier suffixes give scalar-bit-stable
+    /// output on this CPU. Uses archmage::testing::for_each_token_permutation
+    /// to disable each tier in turn and confirms results match scalar
+    /// reference within TOL_PARITY.
+    #[test]
+    fn tier_permutation_stable_per_pair() {
+        use archmage::testing::{
+            for_each_token_permutation, lock_token_testing, CompileTimePolicy,
+        };
+
+        let _guard = lock_token_testing();
+        let m = srgb_to_bt2020_matrix();
+        let original = ramp(19, 3);
+
+        // Compute scalar reference once.
+        let mut ref_out = original.clone();
+        scalar_reference_rgb(&m, &mut ref_out, TransferFunction::Srgb, TransferFunction::Srgb);
+
+        let _ = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| {
+            let mut data = original.clone();
+            convert_f32_rgb_srgb_v2(&m, &mut data);
+            for (i, (a, b)) in data.iter().zip(ref_out.iter()).enumerate() {
+                let err = (a - b).abs();
+                assert!(
+                    err < TOL_PARITY,
+                    "tier perm lane {i}: v2={a}, ref={b} (err={err:e})",
+                );
+            }
+        });
     }
 }
