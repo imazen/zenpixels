@@ -248,6 +248,86 @@ fn encode_x4<const DST_TRC: u8, T: F32x4Convert>(
 }
 
 // =============================================================================
+// SIMD 3×3 matrix multiply, one per width.
+//
+// Each helper splats the nine matrix coefficients and performs the same
+// `mul_add`-chained-right-to-left contraction as the scalar `mat3x3` above.
+// The splats live inside the helper (not hoisted into the caller) so that
+// every chunk-loop call site looks identical; with `#[inline(always)]` LLVM
+// hoists the splat materialization to the loop preheader on its own, matching
+// the asm produced by the previous hand-inlined form.
+// =============================================================================
+
+#[inline(always)]
+fn mat3x3_x16<T: F32x16Convert>(
+    t: T,
+    m: &[[f32; 3]; 3],
+    r: GenericF32x16<T>,
+    g: GenericF32x16<T>,
+    b: GenericF32x16<T>,
+) -> (GenericF32x16<T>, GenericF32x16<T>, GenericF32x16<T>) {
+    let m00 = GenericF32x16::splat(t, m[0][0]);
+    let m01 = GenericF32x16::splat(t, m[0][1]);
+    let m02 = GenericF32x16::splat(t, m[0][2]);
+    let m10 = GenericF32x16::splat(t, m[1][0]);
+    let m11 = GenericF32x16::splat(t, m[1][1]);
+    let m12 = GenericF32x16::splat(t, m[1][2]);
+    let m20 = GenericF32x16::splat(t, m[2][0]);
+    let m21 = GenericF32x16::splat(t, m[2][1]);
+    let m22 = GenericF32x16::splat(t, m[2][2]);
+    let nr = m00.mul_add(r, m01.mul_add(g, m02 * b));
+    let ng = m10.mul_add(r, m11.mul_add(g, m12 * b));
+    let nb = m20.mul_add(r, m21.mul_add(g, m22 * b));
+    (nr, ng, nb)
+}
+
+#[inline(always)]
+fn mat3x3_x8<T: F32x8Convert>(
+    t: T,
+    m: &[[f32; 3]; 3],
+    r: GenericF32x8<T>,
+    g: GenericF32x8<T>,
+    b: GenericF32x8<T>,
+) -> (GenericF32x8<T>, GenericF32x8<T>, GenericF32x8<T>) {
+    let m00 = GenericF32x8::splat(t, m[0][0]);
+    let m01 = GenericF32x8::splat(t, m[0][1]);
+    let m02 = GenericF32x8::splat(t, m[0][2]);
+    let m10 = GenericF32x8::splat(t, m[1][0]);
+    let m11 = GenericF32x8::splat(t, m[1][1]);
+    let m12 = GenericF32x8::splat(t, m[1][2]);
+    let m20 = GenericF32x8::splat(t, m[2][0]);
+    let m21 = GenericF32x8::splat(t, m[2][1]);
+    let m22 = GenericF32x8::splat(t, m[2][2]);
+    let nr = m00.mul_add(r, m01.mul_add(g, m02 * b));
+    let ng = m10.mul_add(r, m11.mul_add(g, m12 * b));
+    let nb = m20.mul_add(r, m21.mul_add(g, m22 * b));
+    (nr, ng, nb)
+}
+
+#[inline(always)]
+fn mat3x3_x4<T: F32x4Convert>(
+    t: T,
+    m: &[[f32; 3]; 3],
+    r: GenericF32x4<T>,
+    g: GenericF32x4<T>,
+    b: GenericF32x4<T>,
+) -> (GenericF32x4<T>, GenericF32x4<T>, GenericF32x4<T>) {
+    let m00 = GenericF32x4::splat(t, m[0][0]);
+    let m01 = GenericF32x4::splat(t, m[0][1]);
+    let m02 = GenericF32x4::splat(t, m[0][2]);
+    let m10 = GenericF32x4::splat(t, m[1][0]);
+    let m11 = GenericF32x4::splat(t, m[1][1]);
+    let m12 = GenericF32x4::splat(t, m[1][2]);
+    let m20 = GenericF32x4::splat(t, m[2][0]);
+    let m21 = GenericF32x4::splat(t, m[2][1]);
+    let m22 = GenericF32x4::splat(t, m[2][2]);
+    let nr = m00.mul_add(r, m01.mul_add(g, m02 * b));
+    let ng = m10.mul_add(r, m11.mul_add(g, m12 * b));
+    let nb = m20.mul_add(r, m21.mul_add(g, m22 * b));
+    (nr, ng, nb)
+}
+
+// =============================================================================
 // Wide body — f32x16, dispatched across V4x / V4 / scalar.
 //
 // `CHANNELS` is 3 (RGB) or 4 (RGBA). `CHUNK` is `16 * CHANNELS` and must be
