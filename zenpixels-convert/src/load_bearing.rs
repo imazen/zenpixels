@@ -212,8 +212,7 @@ impl LoadBearingReport {
 
         // Assemble the new format. PixelFormat::from_parts returns None
         // for unrepresentable triples; in that case keep the source.
-        let format =
-            PixelFormat::from_parts(channel_type, layout, alpha).unwrap_or(src.format);
+        let format = PixelFormat::from_parts(channel_type, layout, alpha).unwrap_or(src.format);
 
         // 4. Primaries narrowing.
         let primaries = self.uses_gamut.unwrap_or(src.primaries);
@@ -334,13 +333,12 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
         // ── Sub-byte gray ───────────────────────────────────────
         // Only meaningful when the buffer is (or becomes) grayscale
         // at U8 channel-type and the analysis ran for chroma.
-        let uses_gray_bit_depth = if matches!(uses_chroma, Some(false))
-            && channel_type == ChannelType::U8
-        {
-            sub_byte_gray_over_rows(self, layout)
-        } else {
-            None
-        };
+        let uses_gray_bit_depth =
+            if matches!(uses_chroma, Some(false)) && channel_type == ChannelType::U8 {
+                sub_byte_gray_over_rows(self, layout)
+            } else {
+                None
+            };
 
         // ── Gamut narrowing ─────────────────────────────────────
         let uses_gamut = detect_gamut_narrowing_over_rows(self, &descriptor);
@@ -484,26 +482,23 @@ fn sub_byte_gray_over_rows<P>(
     let mut can_1 = true;
     let mut can_2 = true;
     let mut can_4 = true;
-    let process_row = |bytes: &[u8],
-                       can_1: &mut bool,
-                       can_2: &mut bool,
-                       can_4: &mut bool|
-     -> bool {
-        for i in (0..bytes.len()).step_by(stride) {
-            let v = bytes[i];
-            if *can_4 && !v.is_multiple_of(17) {
-                return false; // signals bail
+    let process_row =
+        |bytes: &[u8], can_1: &mut bool, can_2: &mut bool, can_4: &mut bool| -> bool {
+            for i in (0..bytes.len()).step_by(stride) {
+                let v = bytes[i];
+                if *can_4 && !v.is_multiple_of(17) {
+                    return false; // signals bail
+                }
+                if *can_2 && !v.is_multiple_of(85) {
+                    *can_2 = false;
+                    *can_1 = false;
+                }
+                if *can_1 && v != 0 && v != 255 {
+                    *can_1 = false;
+                }
             }
-            if *can_2 && !v.is_multiple_of(85) {
-                *can_2 = false;
-                *can_1 = false;
-            }
-            if *can_1 && v != 0 && v != 255 {
-                *can_1 = false;
-            }
-        }
-        true
-    };
+            true
+        };
     if let Some(bytes) = slice.as_contiguous_bytes() {
         if !process_row(bytes, &mut can_1, &mut can_2, &mut can_4) {
             return None;
@@ -623,7 +618,10 @@ fn detect_gamut_narrowing_over_rows<P>(
 /// present) is converted as plain unit-range, not gamma.
 fn linearize_row(bytes: &[u8], layout: ChannelLayout) -> Vec<f32> {
     match layout {
-        ChannelLayout::Rgb => bytes.iter().map(|&b| srgb_to_linear(b as f32 / 255.0)).collect(),
+        ChannelLayout::Rgb => bytes
+            .iter()
+            .map(|&b| srgb_to_linear(b as f32 / 255.0))
+            .collect(),
         ChannelLayout::Rgba | ChannelLayout::Bgra => {
             let mut v = Vec::with_capacity(bytes.len());
             for chunk in bytes.chunks_exact(4) {
@@ -715,11 +713,7 @@ fn byte_from_unit_f32(v: f32) -> u8 {
 
 /// Build the rewritten buffer for the supported descriptor transitions.
 /// Returns `None` for descriptor pairs we don't know how to convert.
-fn transform_to(
-    bytes: &[u8],
-    src: &PixelDescriptor,
-    dst: &PixelDescriptor,
-) -> Option<Vec<u8>> {
+fn transform_to(bytes: &[u8], src: &PixelDescriptor, dst: &PixelDescriptor) -> Option<Vec<u8>> {
     // Step 0: gamut narrowing first when requested. A successful step
     // rewrites pixel values in-place but keeps layout / channel-type;
     // the subsequent steps operate on the rewritten buffer.
@@ -742,9 +736,10 @@ fn transform_to(
             working_descriptor = src.with_primaries(dst.primaries);
         } else if ct == ChannelType::U8 && transfer == TransferFunction::Srgb {
             let mut linear: Vec<f32> = match layout {
-                ChannelLayout::Rgb => {
-                    bytes.iter().map(|&b| srgb_to_linear(b as f32 / 255.0)).collect()
-                }
+                ChannelLayout::Rgb => bytes
+                    .iter()
+                    .map(|&b| srgb_to_linear(b as f32 / 255.0))
+                    .collect(),
                 ChannelLayout::Rgba | ChannelLayout::Bgra => {
                     let mut v = Vec::with_capacity(bytes.len());
                     for chunk in bytes.chunks_exact(4) {
@@ -816,8 +811,7 @@ fn transform_to(
             }
             out
         }
-        (ChannelLayout::Rgba, ChannelLayout::Gray)
-        | (ChannelLayout::Bgra, ChannelLayout::Gray) => {
+        (ChannelLayout::Rgba, ChannelLayout::Gray) | (ChannelLayout::Bgra, ChannelLayout::Gray) => {
             let mut out = Vec::with_capacity(n / 4 * elem);
             for px in post_ct.chunks_exact(in_pixel) {
                 copy_channels(px, &mut out, &[0]);
@@ -855,8 +849,8 @@ mod tests {
         height: u32,
         format: PixelFormat,
     ) -> PixelSlice<'a> {
-        let descriptor = PixelDescriptor::from_pixel_format(format)
-            .with_transfer(TransferFunction::Srgb);
+        let descriptor =
+            PixelDescriptor::from_pixel_format(format).with_transfer(TransferFunction::Srgb);
         let stride = width as usize * format.bytes_per_pixel();
         PixelSlice::new(bytes, width, height, stride, descriptor).unwrap()
     }
@@ -890,7 +884,11 @@ mod tests {
         // analyzed bool removed
         assert_eq!(r.uses_alpha, Some(false));
         assert_eq!(r.uses_chroma, Some(false));
-        assert_eq!(r.alpha_is_binary, Some(true), "all-opaque qualifies as binary");
+        assert_eq!(
+            r.alpha_is_binary,
+            Some(true),
+            "all-opaque qualifies as binary"
+        );
 
         let target = r.apply_to(&slice.descriptor());
         assert_eq!(target.format, PixelFormat::Gray8);
@@ -929,7 +927,11 @@ mod tests {
         let slice = make_slice(&bytes, 4, 1, PixelFormat::Rgba8);
         let r = slice.determine_load_bearing();
         assert_eq!(r.uses_alpha, Some(true), "alpha varies → load-bearing");
-        assert_eq!(r.alpha_is_binary, Some(true), "but the variation is 0/255 only");
+        assert_eq!(
+            r.alpha_is_binary,
+            Some(true),
+            "but the variation is 0/255 only"
+        );
         assert_eq!(r.uses_chroma, Some(false));
     }
 
@@ -939,7 +941,11 @@ mod tests {
         let slice = make_slice(&bytes, 2, 1, PixelFormat::Rgba8);
         let r = slice.determine_load_bearing();
         assert_eq!(r.uses_alpha, Some(true));
-        assert_eq!(r.alpha_is_binary, Some(false), "128 and 64 are intermediate");
+        assert_eq!(
+            r.alpha_is_binary,
+            Some(false),
+            "128 and 64 are intermediate"
+        );
     }
 
     #[test]
@@ -1034,7 +1040,9 @@ mod tests {
 
     #[test]
     fn try_reduce_returns_none_when_already_minimal() {
-        let bytes: Vec<u8> = (0..4).flat_map(|i| [i * 60, 100, 200, i * 40 + 1]).collect();
+        let bytes: Vec<u8> = (0..4)
+            .flat_map(|i| [i * 60, 100, 200, i * 40 + 1])
+            .collect();
         let slice = make_slice(&bytes, 4, 1, PixelFormat::Rgba8);
         assert!(slice.try_reduce_to_load_bearing_format().is_none());
     }
@@ -1077,13 +1085,8 @@ mod tests {
         // (128,128,128) in P3 with sRGB transfer fits sRGB primaries
         // (white points coincide so gray maps to gray).
         let bytes: Vec<u8> = (0..4).flat_map(|_| [128u8, 128, 128, 255]).collect();
-        let slice = make_slice_with_primaries(
-            &bytes,
-            4,
-            1,
-            PixelFormat::Rgba8,
-            ColorPrimaries::DisplayP3,
-        );
+        let slice =
+            make_slice_with_primaries(&bytes, 4, 1, PixelFormat::Rgba8, ColorPrimaries::DisplayP3);
         let r = slice.determine_load_bearing();
         assert_eq!(r.uses_gamut, Some(ColorPrimaries::Bt709));
     }
@@ -1092,13 +1095,8 @@ mod tests {
     fn p3_with_saturated_red_keeps_p3() {
         // P3 (255, 0, 0) is brighter than sRGB max red -- out of gamut.
         let bytes = [255u8, 0, 0, 255];
-        let slice = make_slice_with_primaries(
-            &bytes,
-            1,
-            1,
-            PixelFormat::Rgba8,
-            ColorPrimaries::DisplayP3,
-        );
+        let slice =
+            make_slice_with_primaries(&bytes, 1, 1, PixelFormat::Rgba8, ColorPrimaries::DisplayP3);
         let r = slice.determine_load_bearing();
         assert_eq!(r.uses_gamut, None, "saturated P3 red is load-bearing");
     }
@@ -1108,13 +1106,8 @@ mod tests {
         // Detection succeeds → try_reduce should produce a buffer
         // tagged sRGB primaries.
         let bytes: Vec<u8> = (0..4).flat_map(|_| [128u8, 128, 128, 255]).collect();
-        let slice = make_slice_with_primaries(
-            &bytes,
-            4,
-            1,
-            PixelFormat::Rgba8,
-            ColorPrimaries::DisplayP3,
-        );
+        let slice =
+            make_slice_with_primaries(&bytes, 4, 1, PixelFormat::Rgba8, ColorPrimaries::DisplayP3);
         let (target, out) = slice
             .try_reduce_to_load_bearing_format()
             .expect("should reduce");
@@ -1124,20 +1117,15 @@ mod tests {
         // Gray content stays mid-gray after the chromatically-aligned
         // P3→sRGB matrix.
         for &b in &out {
-            assert!(b >= 127 && b <= 129, "drift after gamut transform: {b}");
+            assert!((127..=129).contains(&b), "drift after gamut transform: {b}");
         }
     }
 
     #[test]
     fn srgb_buffer_unaffected_by_gamut_check() {
         let bytes = [128u8, 128, 128, 255];
-        let slice = make_slice_with_primaries(
-            &bytes,
-            1,
-            1,
-            PixelFormat::Rgba8,
-            ColorPrimaries::Bt709,
-        );
+        let slice =
+            make_slice_with_primaries(&bytes, 1, 1, PixelFormat::Rgba8, ColorPrimaries::Bt709);
         let r = slice.determine_load_bearing();
         assert_eq!(r.uses_gamut, None, "already at sRGB");
     }
@@ -1236,8 +1224,8 @@ mod tests {
         stride: usize,
         format: PixelFormat,
     ) -> PixelSlice<'a> {
-        let descriptor = PixelDescriptor::from_pixel_format(format)
-            .with_transfer(TransferFunction::Srgb);
+        let descriptor =
+            PixelDescriptor::from_pixel_format(format).with_transfer(TransferFunction::Srgb);
         PixelSlice::new(bytes, width, height, stride, descriptor).unwrap()
     }
 
@@ -1268,14 +1256,26 @@ mod tests {
         let (buf, stride) = build_strided_rgba8(8, 3, 16, |_x, _y| [50, 50, 50, 255]);
         let slice = slice_from_strided(&buf, 8, 3, stride, PixelFormat::Rgba8);
         let r = slice.determine_load_bearing();
-        assert_eq!(r.uses_alpha, Some(false), "alpha is uniformly 255 -- must not be confused by 0xCD padding");
+        assert_eq!(
+            r.uses_alpha,
+            Some(false),
+            "alpha is uniformly 255 -- must not be confused by 0xCD padding"
+        );
         // Same buffer but with one real non-opaque pixel -- predicate should fire.
         let (buf, stride) = build_strided_rgba8(8, 3, 16, |x, y| {
-            if x == 2 && y == 1 { [10, 10, 10, 0] } else { [50, 50, 50, 255] }
+            if x == 2 && y == 1 {
+                [10, 10, 10, 0]
+            } else {
+                [50, 50, 50, 255]
+            }
         });
         let slice = slice_from_strided(&buf, 8, 3, stride, PixelFormat::Rgba8);
         let r = slice.determine_load_bearing();
-        assert_eq!(r.uses_alpha, Some(true), "real transparent pixel must be detected");
+        assert_eq!(
+            r.uses_alpha,
+            Some(true),
+            "real transparent pixel must be detected"
+        );
     }
 
     #[test]
@@ -1576,14 +1576,15 @@ mod tests {
 
     #[test]
     fn apply_to_is_idempotent() {
-        let bytes: Vec<u8> = (0..4)
-            .flat_map(|i| [i * 30, i * 30, i * 30, 255])
-            .collect();
+        let bytes: Vec<u8> = (0..4).flat_map(|i| [i * 30, i * 30, i * 30, 255]).collect();
         let slice = make_slice(&bytes, 4, 1, PixelFormat::Rgba8);
         let r = slice.determine_load_bearing();
         let target_a = r.apply_to(&slice.descriptor());
         let target_b = r.apply_to(&target_a);
-        assert_eq!(target_a, target_b, "apply_to twice must equal apply_to once");
+        assert_eq!(
+            target_a, target_b,
+            "apply_to twice must equal apply_to once"
+        );
     }
 
     #[test]
@@ -1608,9 +1609,7 @@ mod tests {
 
     #[test]
     fn try_reduce_descriptor_matches_determine_reduced() {
-        let bytes: Vec<u8> = (0..8)
-            .flat_map(|i| [i * 30, i * 30, i * 30, 255])
-            .collect();
+        let bytes: Vec<u8> = (0..8).flat_map(|i| [i * 30, i * 30, i * 30, 255]).collect();
         let slice = make_slice(&bytes, 8, 1, PixelFormat::Rgba8);
         let determined = slice.determine_load_bearing_reduced_descriptor();
         let (reduced_target, _) = slice.try_reduce_to_load_bearing_format().unwrap();
@@ -1664,9 +1663,7 @@ mod tests {
     #[test]
     fn single_row_tall_buffer() {
         // 1 row, many cols -- exercises the per-row loop with one pass.
-        let bytes: Vec<u8> = (0..32)
-            .flat_map(|i| [i * 7, i * 7, i * 7, 255])
-            .collect();
+        let bytes: Vec<u8> = (0..32).flat_map(|i| [i * 7, i * 7, i * 7, 255]).collect();
         let s = make_slice(&bytes, 32, 1, PixelFormat::Rgba8);
         assert_eq!(
             s.determine_load_bearing_reduced_descriptor().format,
@@ -1688,9 +1685,9 @@ mod tests {
             .with_transfer(TransferFunction::Srgb);
         let s = PixelSlice::new(&buf, width, height, stride, descriptor).unwrap();
         assert!(!s.is_contiguous());
-        // Should analyze without panicking; gray bit depth depends on values.
-        let r = s.determine_load_bearing();
-        // analyzed bool removed
+        // Should run without panicking; at least the structural
+        // bools (alpha, chroma) populate for any U8 layout.
+        assert!(s.determine_load_bearing().any_analyzed());
     }
 
     // ── Edge cases: full PixelFormat matrix ──────────────────
@@ -1715,8 +1712,10 @@ mod tests {
         ] {
             let bytes = dummy_bytes_for(fmt);
             let s = make_slice(&bytes, 1, 1, fmt);
-            let r = s.determine_load_bearing();
-            // analyzed bool removed
+            assert!(
+                s.determine_load_bearing().any_analyzed(),
+                "{fmt:?} should produce at least one Some field"
+            );
         }
         // U16 layouts: should analyze.
         for fmt in [
@@ -1727,8 +1726,10 @@ mod tests {
         ] {
             let bytes = dummy_bytes_for(fmt);
             let s = make_slice(&bytes, 1, 1, fmt);
-            let r = s.determine_load_bearing();
-            // analyzed bool removed
+            assert!(
+                s.determine_load_bearing().any_analyzed(),
+                "{fmt:?} should produce at least one Some field"
+            );
         }
         // F32 RGB(A) / GA -- should analyze.
         for fmt in [
@@ -1738,8 +1739,10 @@ mod tests {
         ] {
             let bytes = dummy_bytes_for(fmt);
             let s = make_slice(&bytes, 1, 1, fmt);
-            let r = s.determine_load_bearing();
-            // analyzed bool removed
+            assert!(
+                s.determine_load_bearing().any_analyzed(),
+                "{fmt:?} should produce at least one Some field"
+            );
         }
         // Gray-layout formats analyze trivially regardless of channel
         // type -- there's no chroma or alpha to test (those fields are
@@ -1774,7 +1777,10 @@ mod tests {
             // every field stays None.
             assert_eq!(r.uses_alpha, None, "{fmt:?} alpha should be None");
             assert_eq!(r.uses_chroma, None, "{fmt:?} chroma should be None");
-            assert_eq!(r.alpha_is_binary, None, "{fmt:?} alpha-binary should be None");
+            assert_eq!(
+                r.alpha_is_binary, None,
+                "{fmt:?} alpha-binary should be None"
+            );
         }
     }
 
@@ -1903,7 +1909,11 @@ mod tests {
             // analyzed bool removed
             assert_eq!(r.uses_alpha, Some(false));
             assert_eq!(r.uses_chroma, Some(false));
-            assert_eq!(r.alpha_is_binary, Some(true), "vacuous: every alpha is in {{0,255}}");
+            assert_eq!(
+                r.alpha_is_binary,
+                Some(true),
+                "vacuous: every alpha is in {{0,255}}"
+            );
         }
         // Some validators reject 0-dimensional descriptors. If so,
         // we don't lose semantics -- codecs won't see this case in
@@ -1928,21 +1938,24 @@ mod tests {
             Case {
                 src: PixelFormat::Rgba8,
                 bytes: vec![10, 10, 10, 255, 20, 20, 20, 255],
-                width: 2, height: 1,
+                width: 2,
+                height: 1,
                 expect_format: PixelFormat::Gray8,
                 expect_size: 2,
             },
             Case {
                 src: PixelFormat::Rgba8,
                 bytes: vec![10, 20, 30, 255, 40, 50, 60, 255],
-                width: 2, height: 1,
+                width: 2,
+                height: 1,
                 expect_format: PixelFormat::Rgb8,
                 expect_size: 6,
             },
             Case {
                 src: PixelFormat::GrayA8,
                 bytes: vec![10, 255, 50, 255],
-                width: 2, height: 1,
+                width: 2,
+                height: 1,
                 expect_format: PixelFormat::Gray8,
                 expect_size: 2,
             },
@@ -1952,7 +1965,8 @@ mod tests {
                     10, 10, 10, 10, 10, 10, 0xFF, 0xFF, // gray opaque (bit-rep)
                     20, 20, 20, 20, 20, 20, 0xFF, 0xFF,
                 ],
-                width: 2, height: 1,
+                width: 2,
+                height: 1,
                 expect_format: PixelFormat::Gray8,
                 expect_size: 2,
             },

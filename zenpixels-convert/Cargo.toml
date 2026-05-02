@@ -35,9 +35,11 @@ __bench_u16_hybrids = []
 # `__` prefix follows the same internal-API convention as
 # `__bench_u16_hybrids`. Not part of the stable public surface.
 __trace_ops = ["std"]
-# Acknowledged by archmage's `incant!` cfg expansion. We always compile
-# the AVX-512 (V4x) dispatch path so V4x runtime selection works on
-# capable CPUs; this feature is a no-op for users.
+# Activates V4x (AVX-512) dispatch in `incant!` calls that use the
+# implicit default tier list. `incant!` calls with explicit tier lists
+# are unaffected — they include / exclude tiers per their own list.
+# Default off in this crate; archmage's avx512 feature is enabled at
+# the dep level so V4x **tokens** are always available regardless.
 avx512 = []
 
 [dependencies]

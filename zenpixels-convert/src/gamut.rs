@@ -151,11 +151,7 @@ pub const DEFAULT_GAMUT_EPSILON: f32 = 5e-4;
 ///
 /// `data.len()` must be a multiple of 3 (one f32 per channel, RGB layout).
 /// Returns [`GamutFit::AllInside`] for empty inputs.
-pub fn check_fits_in_gamut_linear_f32_rgb(
-    data: &[f32],
-    m: &GamutMatrix,
-    epsilon: f32,
-) -> GamutFit {
+pub fn check_fits_in_gamut_linear_f32_rgb(data: &[f32], m: &GamutMatrix, epsilon: f32) -> GamutFit {
     debug_assert_eq!(data.len() % 3, 0, "rgb buffer must be multiple of 3 floats");
     let lo = -epsilon;
     let hi = 1.0 + epsilon;
@@ -183,7 +179,11 @@ pub fn check_fits_in_gamut_linear_f32_rgba(
     m: &GamutMatrix,
     epsilon: f32,
 ) -> GamutFit {
-    debug_assert_eq!(data.len() % 4, 0, "rgba buffer must be multiple of 4 floats");
+    debug_assert_eq!(
+        data.len() % 4,
+        0,
+        "rgba buffer must be multiple of 4 floats"
+    );
     let lo = -epsilon;
     let hi = 1.0 + epsilon;
     for px in data.chunks_exact(4) {
@@ -357,11 +357,7 @@ mod tests {
         // Slightly above-1.0 input — simulates roundoff.
         let data = [1.0001_f32, 1.0001, 1.0001];
         // sRGB → sRGB matrix is identity
-        let m: GamutMatrix = [
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-        ];
+        let m: GamutMatrix = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         assert_eq!(
             check_fits_in_gamut_linear_f32_rgb(&data, &m, DEFAULT_GAMUT_EPSILON),
             GamutFit::AllInside
