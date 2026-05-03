@@ -872,24 +872,24 @@ fn convert_native<
     let (bulk_data, tail) = data.split_at_mut(bulk);
     for chunk in bulk_data.chunks_exact_mut(CHUNK) {
         let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
-        // Deinterleave via the per-token `ChunkXform8` trait. The V3 impl
-        // forwards to garb's `_v3` chunk fns (5-shuffle AVX2 stride-3 recipe
-        // for RGB; AVX2 unpack + permute2f128 for RGBA). `#[rite]` on the
-        // garb fns + `#[inline(always)]` on the trait method means the SIMD
-        // body fuses into this `#[arcane]` outer fn — no `call` to garb at
-        // the use site. The scalar fallback variant uses the manual loop.
-        // CHANNELS / CHUNK are const generics; LLVM elides the unused arm.
+        // Deinterleave: direct call into garb's `_v3` chunk fns (5-shuffle
+        // AVX2 stride-3 recipe for RGB; AVX2 unpack + permute2f128 for RGBA).
+        // `#[rite]` on the garb fns means the SIMD body fuses into this
+        // `#[arcane]` outer fn — no `call` to garb at the use site. CHANNELS
+        // / CHUNK are const generics; LLVM elides the unused arm. Alpha
+        // plane is byte-exact passthrough for RGBA — captured here, written
+        // back below unchanged so bit patterns (incl. NaN payloads) survive.
         let (r, g, b, alpha) = match CHANNELS {
             3 => {
                 // CHUNK == 24 here; const-asserted at fn entry.
                 let c: &[f32; 24] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b) = token.rgb8_to_planes(c);
+                let (r, g, b) = garb::deinterleave::rgb_f32_chunk8_to_planes_v3(token, c);
                 (r, g, b, [0.0f32; PIXELS])
             }
             4 => {
                 // CHUNK == 32 here.
                 let c: &[f32; 32] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b, a) = token.rgba8_to_planes(c);
+                let (r, g, b, a) = garb::deinterleave::rgba_f32_chunk8_to_planes_v3(token, c);
                 (r, g, b, a)
             }
             _ => unreachable!(),
@@ -916,17 +916,18 @@ fn convert_native<
         og_.store(&mut go);
         ob_.store(&mut bo);
 
-        // Reinterleave via the trait. Alpha plane is byte-exact passthrough
-        // for RGBA — we read it out above and write it back unchanged here,
-        // so bit patterns (incl. NaN payloads) survive identically.
+        // Reinterleave: direct garb call. Alpha plane round-trips byte-exact.
         match CHANNELS {
             3 => {
-                let out_arr: [f32; 24] = token.planes_to_rgb8(&ro, &go, &bo);
+                let out_arr: [f32; 24] =
+                    garb::deinterleave::planes_to_rgb_f32_chunk8_v3(token, &ro, &go, &bo);
                 let dst: &mut [f32; 24] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
             4 => {
-                let out_arr: [f32; 32] = token.planes_to_rgba8(&ro, &go, &bo, &alpha);
+                let out_arr: [f32; 32] = garb::deinterleave::planes_to_rgba_f32_chunk8_v3(
+                    token, &ro, &go, &bo, &alpha,
+                );
                 let dst: &mut [f32; 32] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
@@ -973,23 +974,40 @@ fn convert_narrow<
     let (bulk_data, tail) = data.split_at_mut(bulk);
     for chunk in bulk_data.chunks_exact_mut(CHUNK) {
         let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
-        // Deinterleave via the per-token `ChunkXform4` trait. The NEON impl
-        // forwards to garb's `vld3q_f32` / `vld4q_f32` (single-instruction
-        // hardware structure-loads); the WASM128 impl forwards to the
-        // `i32x4_shuffle!`-based recipe. Scalar fallback keeps the manual
-        // loop. CHANNELS / CHUNK are const generics; LLVM elides the unused
-        // arm. Alpha is byte-exact passthrough for RGBA.
+        // Deinterleave: direct call into garb's per-arch chunk-4 fns. NEON
+        // uses `vld3q_f32` / `vld4q_f32` (single-instruction hardware
+        // structure-loads); WASM128 uses the `i32x4_shuffle!`-based recipe.
+        // `#[rite]` on the garb fns means the SIMD body fuses into this
+        // `#[arcane]` outer fn. NEON and WASM128 monomorphizations are
+        // arch-mutually-exclusive, so `#[cfg]` picks the right call per body.
+        // CHANNELS / CHUNK are const generics; LLVM elides the unused arm.
+        // Alpha is byte-exact passthrough for RGBA — captured here, written
+        // back below unchanged.
+        #[cfg(target_arch = "aarch64")]
         let (r, g, b, alpha) = match CHANNELS {
             3 => {
-                // CHUNK == 12 here; const-asserted at fn entry.
                 let c: &[f32; 12] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b) = token.rgb4_to_planes(c);
+                let (r, g, b) = garb::deinterleave::rgb_f32_chunk4_to_planes_neon(token, c);
                 (r, g, b, [0.0f32; PIXELS])
             }
             4 => {
-                // CHUNK == 16 here.
                 let c: &[f32; 16] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b, a) = token.rgba4_to_planes(c);
+                let (r, g, b, a) = garb::deinterleave::rgba_f32_chunk4_to_planes_neon(token, c);
+                (r, g, b, a)
+            }
+            _ => unreachable!(),
+        };
+        #[cfg(target_arch = "wasm32")]
+        let (r, g, b, alpha) = match CHANNELS {
+            3 => {
+                let c: &[f32; 12] = (&chunk[..]).try_into().unwrap();
+                let (r, g, b) = garb::deinterleave::rgb_f32_chunk4_to_planes_wasm128(token, c);
+                (r, g, b, [0.0f32; PIXELS])
+            }
+            4 => {
+                let c: &[f32; 16] = (&chunk[..]).try_into().unwrap();
+                let (r, g, b, a) =
+                    garb::deinterleave::rgba_f32_chunk4_to_planes_wasm128(token, c);
                 (r, g, b, a)
             }
             _ => unreachable!(),
@@ -1016,14 +1034,36 @@ fn convert_narrow<
         og_.store(&mut go);
         ob_.store(&mut bo);
 
+        // Reinterleave: direct garb call, arch-split via `#[cfg]`.
+        #[cfg(target_arch = "aarch64")]
         match CHANNELS {
             3 => {
-                let out_arr: [f32; 12] = token.planes_to_rgb4(&ro, &go, &bo);
+                let out_arr: [f32; 12] =
+                    garb::deinterleave::planes_to_rgb_f32_chunk4_neon(token, &ro, &go, &bo);
                 let dst: &mut [f32; 12] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
             4 => {
-                let out_arr: [f32; 16] = token.planes_to_rgba4(&ro, &go, &bo, &alpha);
+                let out_arr: [f32; 16] = garb::deinterleave::planes_to_rgba_f32_chunk4_neon(
+                    token, &ro, &go, &bo, &alpha,
+                );
+                let dst: &mut [f32; 16] = (&mut chunk[..]).try_into().unwrap();
+                *dst = out_arr;
+            }
+            _ => unreachable!(),
+        }
+        #[cfg(target_arch = "wasm32")]
+        match CHANNELS {
+            3 => {
+                let out_arr: [f32; 12] =
+                    garb::deinterleave::planes_to_rgb_f32_chunk4_wasm128(token, &ro, &go, &bo);
+                let dst: &mut [f32; 12] = (&mut chunk[..]).try_into().unwrap();
+                *dst = out_arr;
+            }
+            4 => {
+                let out_arr: [f32; 16] = garb::deinterleave::planes_to_rgba_f32_chunk4_wasm128(
+                    token, &ro, &go, &bo, &alpha,
+                );
                 let dst: &mut [f32; 16] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
