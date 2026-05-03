@@ -973,14 +973,28 @@ fn convert_narrow<
     let (bulk_data, tail) = data.split_at_mut(bulk);
     for chunk in bulk_data.chunks_exact_mut(CHUNK) {
         let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
-        let mut r = [0.0f32; PIXELS];
-        let mut g = [0.0f32; PIXELS];
-        let mut b = [0.0f32; PIXELS];
-        for i in 0..PIXELS {
-            r[i] = chunk[i * CHANNELS];
-            g[i] = chunk[i * CHANNELS + 1];
-            b[i] = chunk[i * CHANNELS + 2];
-        }
+        // Deinterleave via the per-token `ChunkXform4` trait. The NEON impl
+        // forwards to garb's `vld3q_f32` / `vld4q_f32` (single-instruction
+        // hardware structure-loads); the WASM128 impl forwards to the
+        // `i32x4_shuffle!`-based recipe. Scalar fallback keeps the manual
+        // loop. CHANNELS / CHUNK are const generics; LLVM elides the unused
+        // arm. Alpha is byte-exact passthrough for RGBA.
+        let (r, g, b, alpha) = match CHANNELS {
+            3 => {
+                // CHUNK == 12 here; const-asserted at fn entry.
+                let c: &[f32; 12] = (&chunk[..]).try_into().unwrap();
+                let (r, g, b) = token.rgb4_to_planes(c);
+                (r, g, b, [0.0f32; PIXELS])
+            }
+            4 => {
+                // CHUNK == 16 here.
+                let c: &[f32; 16] = (&chunk[..]).try_into().unwrap();
+                let (r, g, b, a) = token.rgba4_to_planes(c);
+                (r, g, b, a)
+            }
+            _ => unreachable!(),
+        };
+
         let rv = f32x4::load(token, &r);
         let gv = f32x4::load(token, &g);
         let bv = f32x4::load(token, &b);
@@ -1001,10 +1015,19 @@ fn convert_narrow<
         or_.store(&mut ro);
         og_.store(&mut go);
         ob_.store(&mut bo);
-        for i in 0..PIXELS {
-            chunk[i * CHANNELS] = ro[i];
-            chunk[i * CHANNELS + 1] = go[i];
-            chunk[i * CHANNELS + 2] = bo[i];
+
+        match CHANNELS {
+            3 => {
+                let out_arr: [f32; 12] = token.planes_to_rgb4(&ro, &go, &bo);
+                let dst: &mut [f32; 12] = (&mut chunk[..]).try_into().unwrap();
+                *dst = out_arr;
+            }
+            4 => {
+                let out_arr: [f32; 16] = token.planes_to_rgba4(&ro, &go, &bo, &alpha);
+                let dst: &mut [f32; 16] = (&mut chunk[..]).try_into().unwrap();
+                *dst = out_arr;
+            }
+            _ => unreachable!(),
         }
     }
 
