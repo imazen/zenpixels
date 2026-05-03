@@ -336,426 +336,6 @@ fn mat3x3_x4<T: F32x4Convert>(
 }
 
 // =============================================================================
-// Per-token chunk deinterleave / interleave helpers.
-//
-// Inside a `#[magetypes]`-stamped body, `Token` is a different concrete type
-// per emitted variant (`X64V3Token`, `NeonToken`, `Wasm128Token`,
-// `ScalarToken`, ...). garb's chunk SIMD fns are tier-specific and take a
-// concrete token. We bridge with a trait: each token type implements
-// `ChunkXform{8,4}`, the SIMD ones forwarding to garb's `_v3` / `_neon` /
-// `_wasm128` chunk fns, the scalar one falling back to a manual loop.
-//
-// `#[rite]` on the trait methods isn't possible (trait method attributes
-// don't reach the function body), but `#[inline(always)]` plus calling
-// `#[rite]` garb fns means the garb body still inlines into the magetypes
-// `#[arcane]` region — there's just one extra Rust call frame between the
-// `#[arcane]` outer fn and the garb fn, and `#[inline(always)]` collapses it.
-//
-// Verified post-integration via `cargo asm` — see commit log.
-// =============================================================================
-
-#[allow(dead_code)] // some impls are unused on hosts that lack the feature
-trait ChunkXform8: Copy {
-    /// Deinterleave 8-pixel RGB chunk into 3 planes of 8 f32 each.
-    fn rgb8_to_planes(self, chunk: &[f32; 24]) -> ([f32; 8], [f32; 8], [f32; 8]);
-    /// Deinterleave 8-pixel RGBA chunk into 4 planes of 8 f32 each.
-    fn rgba8_to_planes(
-        self,
-        chunk: &[f32; 32],
-    ) -> ([f32; 8], [f32; 8], [f32; 8], [f32; 8]);
-    /// Interleave 3 planes of 8 f32 into an 8-pixel RGB chunk.
-    fn planes_to_rgb8(self, r: &[f32; 8], g: &[f32; 8], b: &[f32; 8]) -> [f32; 24];
-    /// Interleave 4 planes of 8 f32 into an 8-pixel RGBA chunk.
-    fn planes_to_rgba8(
-        self,
-        r: &[f32; 8],
-        g: &[f32; 8],
-        b: &[f32; 8],
-        a: &[f32; 8],
-    ) -> [f32; 32];
-}
-
-// Default scalar impl for any Copy token. The magetypes-emitted `_scalar`
-// fallback variant of `convert_native` resolves to this. Hot path lives
-// in the per-token impls below.
-#[inline(always)]
-fn scalar_rgb8_to_planes(chunk: &[f32; 24]) -> ([f32; 8], [f32; 8], [f32; 8]) {
-    let mut r = [0.0f32; 8];
-    let mut g = [0.0f32; 8];
-    let mut b = [0.0f32; 8];
-    for i in 0..8 {
-        r[i] = chunk[i * 3];
-        g[i] = chunk[i * 3 + 1];
-        b[i] = chunk[i * 3 + 2];
-    }
-    (r, g, b)
-}
-
-#[inline(always)]
-fn scalar_rgba8_to_planes(
-    chunk: &[f32; 32],
-) -> ([f32; 8], [f32; 8], [f32; 8], [f32; 8]) {
-    let mut r = [0.0f32; 8];
-    let mut g = [0.0f32; 8];
-    let mut b = [0.0f32; 8];
-    let mut a = [0.0f32; 8];
-    for i in 0..8 {
-        r[i] = chunk[i * 4];
-        g[i] = chunk[i * 4 + 1];
-        b[i] = chunk[i * 4 + 2];
-        a[i] = chunk[i * 4 + 3];
-    }
-    (r, g, b, a)
-}
-
-#[inline(always)]
-fn scalar_planes_to_rgb8(r: &[f32; 8], g: &[f32; 8], b: &[f32; 8]) -> [f32; 24] {
-    let mut out = [0.0f32; 24];
-    for i in 0..8 {
-        out[i * 3] = r[i];
-        out[i * 3 + 1] = g[i];
-        out[i * 3 + 2] = b[i];
-    }
-    out
-}
-
-#[inline(always)]
-fn scalar_planes_to_rgba8(
-    r: &[f32; 8],
-    g: &[f32; 8],
-    b: &[f32; 8],
-    a: &[f32; 8],
-) -> [f32; 32] {
-    let mut out = [0.0f32; 32];
-    for i in 0..8 {
-        out[i * 4] = r[i];
-        out[i * 4 + 1] = g[i];
-        out[i * 4 + 2] = b[i];
-        out[i * 4 + 3] = a[i];
-    }
-    out
-}
-
-impl ChunkXform8 for archmage::ScalarToken {
-    #[inline(always)]
-    fn rgb8_to_planes(self, c: &[f32; 24]) -> ([f32; 8], [f32; 8], [f32; 8]) {
-        scalar_rgb8_to_planes(c)
-    }
-    #[inline(always)]
-    fn rgba8_to_planes(self, c: &[f32; 32]) -> ([f32; 8], [f32; 8], [f32; 8], [f32; 8]) {
-        scalar_rgba8_to_planes(c)
-    }
-    #[inline(always)]
-    fn planes_to_rgb8(self, r: &[f32; 8], g: &[f32; 8], b: &[f32; 8]) -> [f32; 24] {
-        scalar_planes_to_rgb8(r, g, b)
-    }
-    #[inline(always)]
-    fn planes_to_rgba8(
-        self,
-        r: &[f32; 8],
-        g: &[f32; 8],
-        b: &[f32; 8],
-        a: &[f32; 8],
-    ) -> [f32; 32] {
-        scalar_planes_to_rgba8(r, g, b, a)
-    }
-}
-
-// V3 impl: wrap each garb call in an `#[arcane]` free fn so the trait
-// method is a safe call. `#[arcane]` is the safe-wrapper macro that
-// requires the token type as proof and emits a `#[target_feature]` inner
-// fn. archmage inlines the wrapper away (zero overhead), and the inner
-// `#[rite]` garb body inlines into that target_feature region.
-#[cfg(target_arch = "x86_64")]
-mod x64v3_chunk_calls {
-    use super::*;
-    use archmage::X64V3Token;
-
-    #[archmage::arcane]
-    pub fn rgb8(_t: X64V3Token, c: &[f32; 24]) -> ([f32; 8], [f32; 8], [f32; 8]) {
-        garb::deinterleave::rgb_f32_chunk8_to_planes_v3(_t, c)
-    }
-    #[archmage::arcane]
-    pub fn rgba8(
-        _t: X64V3Token,
-        c: &[f32; 32],
-    ) -> ([f32; 8], [f32; 8], [f32; 8], [f32; 8]) {
-        garb::deinterleave::rgba_f32_chunk8_to_planes_v3(_t, c)
-    }
-    #[archmage::arcane]
-    pub fn rgb8_back(
-        _t: X64V3Token,
-        r: &[f32; 8],
-        g: &[f32; 8],
-        b: &[f32; 8],
-    ) -> [f32; 24] {
-        garb::deinterleave::planes_to_rgb_f32_chunk8_v3(_t, r, g, b)
-    }
-    #[archmage::arcane]
-    pub fn rgba8_back(
-        _t: X64V3Token,
-        r: &[f32; 8],
-        g: &[f32; 8],
-        b: &[f32; 8],
-        a: &[f32; 8],
-    ) -> [f32; 32] {
-        garb::deinterleave::planes_to_rgba_f32_chunk8_v3(_t, r, g, b, a)
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-impl ChunkXform8 for archmage::X64V3Token {
-    #[inline(always)]
-    fn rgb8_to_planes(self, c: &[f32; 24]) -> ([f32; 8], [f32; 8], [f32; 8]) {
-        x64v3_chunk_calls::rgb8(self, c)
-    }
-    #[inline(always)]
-    fn rgba8_to_planes(self, c: &[f32; 32]) -> ([f32; 8], [f32; 8], [f32; 8], [f32; 8]) {
-        x64v3_chunk_calls::rgba8(self, c)
-    }
-    #[inline(always)]
-    fn planes_to_rgb8(self, r: &[f32; 8], g: &[f32; 8], b: &[f32; 8]) -> [f32; 24] {
-        x64v3_chunk_calls::rgb8_back(self, r, g, b)
-    }
-    #[inline(always)]
-    fn planes_to_rgba8(
-        self,
-        r: &[f32; 8],
-        g: &[f32; 8],
-        b: &[f32; 8],
-        a: &[f32; 8],
-    ) -> [f32; 32] {
-        x64v3_chunk_calls::rgba8_back(self, r, g, b, a)
-    }
-}
-
-#[allow(dead_code)] // some impls unused on hosts that lack the feature
-trait ChunkXform4: Copy {
-    fn rgb4_to_planes(self, chunk: &[f32; 12]) -> ([f32; 4], [f32; 4], [f32; 4]);
-    fn rgba4_to_planes(
-        self,
-        chunk: &[f32; 16],
-    ) -> ([f32; 4], [f32; 4], [f32; 4], [f32; 4]);
-    fn planes_to_rgb4(self, r: &[f32; 4], g: &[f32; 4], b: &[f32; 4]) -> [f32; 12];
-    fn planes_to_rgba4(
-        self,
-        r: &[f32; 4],
-        g: &[f32; 4],
-        b: &[f32; 4],
-        a: &[f32; 4],
-    ) -> [f32; 16];
-}
-
-#[inline(always)]
-fn scalar_rgb4_to_planes(chunk: &[f32; 12]) -> ([f32; 4], [f32; 4], [f32; 4]) {
-    let mut r = [0.0f32; 4];
-    let mut g = [0.0f32; 4];
-    let mut b = [0.0f32; 4];
-    for i in 0..4 {
-        r[i] = chunk[i * 3];
-        g[i] = chunk[i * 3 + 1];
-        b[i] = chunk[i * 3 + 2];
-    }
-    (r, g, b)
-}
-
-#[inline(always)]
-fn scalar_rgba4_to_planes(
-    chunk: &[f32; 16],
-) -> ([f32; 4], [f32; 4], [f32; 4], [f32; 4]) {
-    let mut r = [0.0f32; 4];
-    let mut g = [0.0f32; 4];
-    let mut b = [0.0f32; 4];
-    let mut a = [0.0f32; 4];
-    for i in 0..4 {
-        r[i] = chunk[i * 4];
-        g[i] = chunk[i * 4 + 1];
-        b[i] = chunk[i * 4 + 2];
-        a[i] = chunk[i * 4 + 3];
-    }
-    (r, g, b, a)
-}
-
-#[inline(always)]
-fn scalar_planes_to_rgb4(r: &[f32; 4], g: &[f32; 4], b: &[f32; 4]) -> [f32; 12] {
-    let mut out = [0.0f32; 12];
-    for i in 0..4 {
-        out[i * 3] = r[i];
-        out[i * 3 + 1] = g[i];
-        out[i * 3 + 2] = b[i];
-    }
-    out
-}
-
-#[inline(always)]
-fn scalar_planes_to_rgba4(
-    r: &[f32; 4],
-    g: &[f32; 4],
-    b: &[f32; 4],
-    a: &[f32; 4],
-) -> [f32; 16] {
-    let mut out = [0.0f32; 16];
-    for i in 0..4 {
-        out[i * 4] = r[i];
-        out[i * 4 + 1] = g[i];
-        out[i * 4 + 2] = b[i];
-        out[i * 4 + 3] = a[i];
-    }
-    out
-}
-
-impl ChunkXform4 for archmage::ScalarToken {
-    #[inline(always)]
-    fn rgb4_to_planes(self, c: &[f32; 12]) -> ([f32; 4], [f32; 4], [f32; 4]) {
-        scalar_rgb4_to_planes(c)
-    }
-    #[inline(always)]
-    fn rgba4_to_planes(self, c: &[f32; 16]) -> ([f32; 4], [f32; 4], [f32; 4], [f32; 4]) {
-        scalar_rgba4_to_planes(c)
-    }
-    #[inline(always)]
-    fn planes_to_rgb4(self, r: &[f32; 4], g: &[f32; 4], b: &[f32; 4]) -> [f32; 12] {
-        scalar_planes_to_rgb4(r, g, b)
-    }
-    #[inline(always)]
-    fn planes_to_rgba4(
-        self,
-        r: &[f32; 4],
-        g: &[f32; 4],
-        b: &[f32; 4],
-        a: &[f32; 4],
-    ) -> [f32; 16] {
-        scalar_planes_to_rgba4(r, g, b, a)
-    }
-}
-
-#[cfg(target_arch = "aarch64")]
-mod neon_chunk_calls {
-    use super::*;
-    use archmage::NeonToken;
-
-    #[archmage::arcane]
-    pub fn rgb4(_t: NeonToken, c: &[f32; 12]) -> ([f32; 4], [f32; 4], [f32; 4]) {
-        garb::deinterleave::rgb_f32_chunk4_to_planes_neon(_t, c)
-    }
-    #[archmage::arcane]
-    pub fn rgba4(
-        _t: NeonToken,
-        c: &[f32; 16],
-    ) -> ([f32; 4], [f32; 4], [f32; 4], [f32; 4]) {
-        garb::deinterleave::rgba_f32_chunk4_to_planes_neon(_t, c)
-    }
-    #[archmage::arcane]
-    pub fn rgb4_back(
-        _t: NeonToken,
-        r: &[f32; 4],
-        g: &[f32; 4],
-        b: &[f32; 4],
-    ) -> [f32; 12] {
-        garb::deinterleave::planes_to_rgb_f32_chunk4_neon(_t, r, g, b)
-    }
-    #[archmage::arcane]
-    pub fn rgba4_back(
-        _t: NeonToken,
-        r: &[f32; 4],
-        g: &[f32; 4],
-        b: &[f32; 4],
-        a: &[f32; 4],
-    ) -> [f32; 16] {
-        garb::deinterleave::planes_to_rgba_f32_chunk4_neon(_t, r, g, b, a)
-    }
-}
-
-#[cfg(target_arch = "aarch64")]
-impl ChunkXform4 for archmage::NeonToken {
-    #[inline(always)]
-    fn rgb4_to_planes(self, c: &[f32; 12]) -> ([f32; 4], [f32; 4], [f32; 4]) {
-        neon_chunk_calls::rgb4(self, c)
-    }
-    #[inline(always)]
-    fn rgba4_to_planes(self, c: &[f32; 16]) -> ([f32; 4], [f32; 4], [f32; 4], [f32; 4]) {
-        neon_chunk_calls::rgba4(self, c)
-    }
-    #[inline(always)]
-    fn planes_to_rgb4(self, r: &[f32; 4], g: &[f32; 4], b: &[f32; 4]) -> [f32; 12] {
-        neon_chunk_calls::rgb4_back(self, r, g, b)
-    }
-    #[inline(always)]
-    fn planes_to_rgba4(
-        self,
-        r: &[f32; 4],
-        g: &[f32; 4],
-        b: &[f32; 4],
-        a: &[f32; 4],
-    ) -> [f32; 16] {
-        neon_chunk_calls::rgba4_back(self, r, g, b, a)
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-mod wasm128_chunk_calls {
-    use super::*;
-    use archmage::Wasm128Token;
-
-    #[archmage::arcane]
-    pub fn rgb4(_t: Wasm128Token, c: &[f32; 12]) -> ([f32; 4], [f32; 4], [f32; 4]) {
-        garb::deinterleave::rgb_f32_chunk4_to_planes_wasm128(_t, c)
-    }
-    #[archmage::arcane]
-    pub fn rgba4(
-        _t: Wasm128Token,
-        c: &[f32; 16],
-    ) -> ([f32; 4], [f32; 4], [f32; 4], [f32; 4]) {
-        garb::deinterleave::rgba_f32_chunk4_to_planes_wasm128(_t, c)
-    }
-    #[archmage::arcane]
-    pub fn rgb4_back(
-        _t: Wasm128Token,
-        r: &[f32; 4],
-        g: &[f32; 4],
-        b: &[f32; 4],
-    ) -> [f32; 12] {
-        garb::deinterleave::planes_to_rgb_f32_chunk4_wasm128(_t, r, g, b)
-    }
-    #[archmage::arcane]
-    pub fn rgba4_back(
-        _t: Wasm128Token,
-        r: &[f32; 4],
-        g: &[f32; 4],
-        b: &[f32; 4],
-        a: &[f32; 4],
-    ) -> [f32; 16] {
-        garb::deinterleave::planes_to_rgba_f32_chunk4_wasm128(_t, r, g, b, a)
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl ChunkXform4 for archmage::Wasm128Token {
-    #[inline(always)]
-    fn rgb4_to_planes(self, c: &[f32; 12]) -> ([f32; 4], [f32; 4], [f32; 4]) {
-        wasm128_chunk_calls::rgb4(self, c)
-    }
-    #[inline(always)]
-    fn rgba4_to_planes(self, c: &[f32; 16]) -> ([f32; 4], [f32; 4], [f32; 4], [f32; 4]) {
-        wasm128_chunk_calls::rgba4(self, c)
-    }
-    #[inline(always)]
-    fn planes_to_rgb4(self, r: &[f32; 4], g: &[f32; 4], b: &[f32; 4]) -> [f32; 12] {
-        wasm128_chunk_calls::rgb4_back(self, r, g, b)
-    }
-    #[inline(always)]
-    fn planes_to_rgba4(
-        self,
-        r: &[f32; 4],
-        g: &[f32; 4],
-        b: &[f32; 4],
-        a: &[f32; 4],
-    ) -> [f32; 16] {
-        wasm128_chunk_calls::rgba4_back(self, r, g, b, a)
-    }
-}
-
-// =============================================================================
 // Wide body — f32x16, dispatched across V4x / V4 / scalar.
 //
 // `CHANNELS` is 3 (RGB) or 4 (RGBA). `CHUNK` is `16 * CHANNELS` and must be
@@ -872,7 +452,10 @@ fn convert_native<
     let (bulk_data, tail) = data.split_at_mut(bulk);
     for chunk in bulk_data.chunks_exact_mut(CHUNK) {
         let chunk: &mut [f32; CHUNK] = chunk.try_into().unwrap();
-        // Deinterleave: direct call into garb's `_v3` chunk fns (5-shuffle
+        // Deinterleave: direct call into garb's `_scalar` chunk fns. Caller is
+        // inside an `#[arcane(v3)]` region so LLVM autovec lifts these to 256-bit
+        // YMM ops — verified faster than the old hand-written 128-bit chunk SIMD
+        // (see garb's benchmarks/deinterleave_autovec_vs_chunk_2026-05-07).
         // AVX2 stride-3 recipe for RGB; AVX2 unpack + permute2f128 for RGBA).
         // `#[rite]` on the garb fns means the SIMD body fuses into this
         // `#[arcane]` outer fn — no `call` to garb at the use site. CHANNELS
@@ -883,13 +466,13 @@ fn convert_native<
             3 => {
                 // CHUNK == 24 here; const-asserted at fn entry.
                 let c: &[f32; 24] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b) = garb::deinterleave::rgb_f32_chunk8_to_planes_v3(token, c);
+                let (r, g, b) = garb::deinterleave::rgb_f32_chunk8_to_planes_scalar(c);
                 (r, g, b, [0.0f32; PIXELS])
             }
             4 => {
                 // CHUNK == 32 here.
                 let c: &[f32; 32] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b, a) = garb::deinterleave::rgba_f32_chunk8_to_planes_v3(token, c);
+                let (r, g, b, a) = garb::deinterleave::rgba_f32_chunk8_to_planes_scalar(c);
                 (r, g, b, a)
             }
             _ => unreachable!(),
@@ -920,14 +503,13 @@ fn convert_native<
         match CHANNELS {
             3 => {
                 let out_arr: [f32; 24] =
-                    garb::deinterleave::planes_to_rgb_f32_chunk8_v3(token, &ro, &go, &bo);
+                    garb::deinterleave::planes_to_rgb_f32_chunk8_scalar(&ro, &go, &bo);
                 let dst: &mut [f32; 24] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
             4 => {
-                let out_arr: [f32; 32] = garb::deinterleave::planes_to_rgba_f32_chunk8_v3(
-                    token, &ro, &go, &bo, &alpha,
-                );
+                let out_arr: [f32; 32] =
+                    garb::deinterleave::planes_to_rgba_f32_chunk8_scalar(&ro, &go, &bo, &alpha);
                 let dst: &mut [f32; 32] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
@@ -987,12 +569,12 @@ fn convert_narrow<
         let (r, g, b, alpha) = match CHANNELS {
             3 => {
                 let c: &[f32; 12] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b) = garb::deinterleave::rgb_f32_chunk4_to_planes_neon(token, c);
+                let (r, g, b) = garb::deinterleave::rgb_f32_chunk4_to_planes_scalar(c);
                 (r, g, b, [0.0f32; PIXELS])
             }
             4 => {
                 let c: &[f32; 16] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b, a) = garb::deinterleave::rgba_f32_chunk4_to_planes_neon(token, c);
+                let (r, g, b, a) = garb::deinterleave::rgba_f32_chunk4_to_planes_scalar(c);
                 (r, g, b, a)
             }
             _ => unreachable!(),
@@ -1001,13 +583,12 @@ fn convert_narrow<
         let (r, g, b, alpha) = match CHANNELS {
             3 => {
                 let c: &[f32; 12] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b) = garb::deinterleave::rgb_f32_chunk4_to_planes_wasm128(token, c);
+                let (r, g, b) = garb::deinterleave::rgb_f32_chunk4_to_planes_scalar(c);
                 (r, g, b, [0.0f32; PIXELS])
             }
             4 => {
                 let c: &[f32; 16] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b, a) =
-                    garb::deinterleave::rgba_f32_chunk4_to_planes_wasm128(token, c);
+                let (r, g, b, a) = garb::deinterleave::rgba_f32_chunk4_to_planes_scalar(c);
                 (r, g, b, a)
             }
             _ => unreachable!(),
@@ -1039,14 +620,13 @@ fn convert_narrow<
         match CHANNELS {
             3 => {
                 let out_arr: [f32; 12] =
-                    garb::deinterleave::planes_to_rgb_f32_chunk4_neon(token, &ro, &go, &bo);
+                    garb::deinterleave::planes_to_rgb_f32_chunk4_scalar(&ro, &go, &bo);
                 let dst: &mut [f32; 12] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
             4 => {
-                let out_arr: [f32; 16] = garb::deinterleave::planes_to_rgba_f32_chunk4_neon(
-                    token, &ro, &go, &bo, &alpha,
-                );
+                let out_arr: [f32; 16] =
+                    garb::deinterleave::planes_to_rgba_f32_chunk4_scalar(&ro, &go, &bo, &alpha);
                 let dst: &mut [f32; 16] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
@@ -1056,14 +636,13 @@ fn convert_narrow<
         match CHANNELS {
             3 => {
                 let out_arr: [f32; 12] =
-                    garb::deinterleave::planes_to_rgb_f32_chunk4_wasm128(token, &ro, &go, &bo);
+                    garb::deinterleave::planes_to_rgb_f32_chunk4_scalar(&ro, &go, &bo);
                 let dst: &mut [f32; 12] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
             4 => {
-                let out_arr: [f32; 16] = garb::deinterleave::planes_to_rgba_f32_chunk4_wasm128(
-                    token, &ro, &go, &bo, &alpha,
-                );
+                let out_arr: [f32; 16] =
+                    garb::deinterleave::planes_to_rgba_f32_chunk4_scalar(&ro, &go, &bo, &alpha);
                 let dst: &mut [f32; 16] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
