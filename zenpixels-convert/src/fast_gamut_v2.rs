@@ -848,7 +848,7 @@ fn convert_wide<
 // Mirrors the v1 `fused_8px_rgb_<name>` / `fused_8px_rgba_<name>` shape.
 // =============================================================================
 
-#[magetypes(v3)]
+#[magetypes(-v4, -neon, -wasm128, -scalar)]
 fn convert_native<
     const SRC_TRC: u8,
     const DST_TRC: u8,
@@ -949,7 +949,7 @@ fn convert_native<
 // Narrow body — f32x4, dispatched across NEON / WASM128.
 // =============================================================================
 
-#[magetypes(neon, wasm128)]
+#[magetypes(-v4, -v3, -scalar)]
 fn convert_narrow<
     const SRC_TRC: u8,
     const DST_TRC: u8,
