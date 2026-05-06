@@ -1642,7 +1642,14 @@ impl<P: Pixel> PixelBuffer<P> {
     #[track_caller]
     pub fn from_pixels(pixels: Vec<P>, width: u32, height: u32) -> Result<Self, At<BufferError>> {
         const { assert!(core::mem::size_of::<P>() == P::DESCRIPTOR.bytes_per_pixel()) }
-        let expected = width as usize * height as usize;
+        // On 32-bit targets, `width * height` (as usize) can wrap to a small
+        // value (e.g. 2^16 * 2^16 = 0), which would silently bypass the
+        // length check below and accept a buffer of any size. Use
+        // `checked_mul` so overflow is reported as `InvalidDimensions`
+        // instead of producing a misshapen `PixelBuffer`.
+        let expected = (width as usize)
+            .checked_mul(height as usize)
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         if pixels.len() != expected {
             return Err(whereat::at!(BufferError::InvalidDimensions));
         }
