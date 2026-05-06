@@ -2252,13 +2252,22 @@ impl<P> PixelBuffer<P> {
     ///
     /// # Panics
     ///
-    /// Panics if the crop region is out of bounds.
+    /// Panics if the crop region is out of bounds, or if the destination
+    /// allocation size (`aligned_stride(w) * h + min_alignment - 1`)
+    /// overflows `usize`. On 64-bit targets the overflow case is
+    /// unreachable for `u32` dimensions; on 32-bit targets it can be
+    /// reached with adversarial inputs and panics eagerly here rather
+    /// than producing a deferred slice-bounds panic.
     pub fn crop_copy(&self, x: u32, y: u32, w: u32, h: u32) -> PixelBuffer<P> {
         let src = self.crop_view(x, y, w, h);
         let stride = self.descriptor.aligned_stride(w);
-        let total = stride * h as usize;
         let align = self.descriptor.min_alignment();
-        let alloc_size = total + align - 1;
+        let total = stride
+            .checked_mul(h as usize)
+            .expect("crop_copy: stride * height overflows usize");
+        let alloc_size = total
+            .checked_add(align - 1)
+            .expect("crop_copy: aligned allocation size overflows usize");
         let data = vec![0u8; alloc_size];
         let offset = align_offset(data.as_ptr(), align);
         let mut dst = PixelBuffer {
@@ -3018,6 +3027,79 @@ mod tests {
         let buf = PixelBuffer::new(2, 2, PixelDescriptor::RGB8_SRGB);
         let typed: Option<PixelBuffer<Rgba<u8>>> = buf.try_typed();
         assert!(typed.is_none());
+    }
+
+    // --- Security audit 2026-05-06: 32-bit overflow safety regressions ---
+    //
+    // These dimensions overflow `usize` arithmetic on 32-bit targets but are
+    // representable on 64-bit, so the tests are gated to run under `cross`
+    // or any other 32-bit build (e.g. i686-unknown-linux-gnu). On 64-bit the
+    // overflow path is unreachable for `u32 x u32 x small-const` inputs;
+    // running the suite under 32-bit exercises the actual guard.
+
+    #[cfg(target_pointer_width = "32")]
+    #[test]
+    fn from_vec_rejects_stride_height_overflow_32bit() {
+        // RGB8: bpp=3. stride * height overflows 32-bit usize.
+        // 0xFFFF * 3 = 0x2FFFD, * 0xFFFF heights overflows.
+        let data = alloc::vec::Vec::<u8>::new();
+        let err = PixelBuffer::from_vec(data, 0xFFFF, 0xFFFF, PixelDescriptor::RGB8_SRGB)
+            .expect_err("expected overflow to be reported");
+        assert_eq!(*err.error(), BufferError::InvalidDimensions);
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    #[test]
+    #[cfg(feature = "rgb")]
+    fn from_pixels_rejects_width_height_overflow_32bit() {
+        use rgb::Rgb;
+        // 2^16 * 2^16 == 2^32, wraps to 0 on 32-bit. With the fix this
+        // returns InvalidDimensions instead of accepting an empty vec
+        // for a (65536, 65536) buffer.
+        let pixels: alloc::vec::Vec<Rgb<u8>> = alloc::vec::Vec::new();
+        let err = PixelBuffer::<Rgb<u8>>::from_pixels(pixels, 1 << 16, 1 << 16)
+            .expect_err("expected width*height overflow to be reported");
+        assert_eq!(*err.error(), BufferError::InvalidDimensions);
+    }
+
+    #[cfg(feature = "rgb")]
+    #[test]
+    fn from_pixels_length_mismatch_does_not_panic() {
+        // On 64-bit this is the normal length-mismatch path; on 32-bit the
+        // overflow guard activates first. Either way, we get a clean error
+        // and never index out of bounds.
+        use rgb::Rgb;
+        let pixels: alloc::vec::Vec<Rgb<u8>> = alloc::vec![Rgb { r: 0, g: 0, b: 0 }; 4];
+        // (3, 3) wants 9 pixels; we provided 4.
+        let err = PixelBuffer::<Rgb<u8>>::from_pixels(pixels, 3, 3)
+            .expect_err("length mismatch must error");
+        assert_eq!(*err.error(), BufferError::InvalidDimensions);
+    }
+
+    #[test]
+    fn from_vec_insufficient_data_clean_error() {
+        // Standard insufficient-data path -- guards offset+total before the
+        // length check post-fix. Verify the existing happy-path negative
+        // still surfaces as InsufficientData (not panic) under the new
+        // checked_add guard.
+        let data = alloc::vec::Vec::<u8>::new();
+        let err = PixelBuffer::from_vec(data, 4, 4, PixelDescriptor::RGB8_SRGB)
+            .expect_err("empty data must error for non-zero dims");
+        assert_eq!(*err.error(), BufferError::InsufficientData);
+    }
+
+    #[test]
+    fn crop_copy_round_trip_does_not_overflow() {
+        // Sanity check that crop_copy still works for normal inputs after
+        // the overflow guard was added. The H1 fix only changes overflow
+        // behavior (deferred slice OOB -> eager panic with named message);
+        // we exercise that the happy path still returns a tightly-packed
+        // buffer of the requested size.
+        let buf = PixelBuffer::new(8, 4, PixelDescriptor::RGB8_SRGB);
+        let cropped = buf.crop_copy(1, 1, 3, 2);
+        assert_eq!(cropped.width(), 3);
+        assert_eq!(cropped.height(), 2);
+        assert_eq!(cropped.stride(), 3 * 3); // tightly packed RGB8
     }
 }
 
