@@ -1554,7 +1554,14 @@ impl PixelBuffer {
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let align = descriptor.min_alignment();
         let offset = align_offset(data.as_ptr(), align);
-        if data.len() < offset + total {
+        // `offset + total` must not overflow `usize`; on 32-bit targets this is
+        // reachable from large `width * height * bpp` even when `total` itself
+        // fit. Guard with `checked_add` to surface as `InvalidDimensions`
+        // rather than a deferred slice/index panic.
+        let required = offset
+            .checked_add(total)
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        if data.len() < required {
             return Err(whereat::at!(BufferError::InsufficientData));
         }
         Ok(Self {
