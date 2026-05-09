@@ -333,15 +333,14 @@ mod simd {
 
     #[rite]
     fn invert_8px(token: X64V3Token, rgb_in: &[u8; 24], rgb_out: &mut [u8; 24]) {
-        // Deinterleave 8 RGB triples into three lanes of f32x8.
-        let mut r_in = [0.0f32; 8];
-        let mut g_in = [0.0f32; 8];
-        let mut b_in = [0.0f32; 8];
-        for i in 0..8 {
-            r_in[i] = rgb_in[i * 3] as f32;
-            g_in[i] = rgb_in[i * 3 + 1] as f32;
-            b_in[i] = rgb_in[i * 3 + 2] as f32;
-        }
+        // Deinterleave 8 RGB triples into three lanes of f32x8 via garb's
+        // hand-tuned `_mm_shuffle_epi8` + 256-bit AVX2 widening kernel
+        // (`vpshufb` + `vpmovzxbd` + `vcvtdq2ps`). +21-52% over LLVM
+        // autovec on the equivalent scalar loop at L1-L3 sizes per garb's
+        // `benchmarks/rgb24_chunk_vs_autovec_2026-05-07`. The kernel is
+        // `#[rite(v3)]` so it inlines into this `#[rite]` region with no
+        // dispatch boundary.
+        let (r_in, g_in, b_in) = garb::deinterleave::rgb24_chunk8_to_planes_tokenless_v3(rgb_in);
 
         // Undo the JPEG level shift (+128) applied during encode.
         let shift = mt_f32x8::splat(token, super::JPEG_LEVEL_SHIFT);
