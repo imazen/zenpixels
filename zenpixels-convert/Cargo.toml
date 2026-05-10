@@ -47,7 +47,7 @@ zenpixels = { workspace = true, default-features = false, features = ["icc"] }
 linear-srgb = { path = "../../linear-srgb--pub-tf-x16", default-features = false, features = ["transfer", "avx512"] }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
-garb = { path = "../../../garb", default-features = false, features = ["experimental"] }
+garb = { version = "0.2.8", default-features = false, features = ["experimental"] }
 archmage = { version = "0.9.23", default-features = false, features = ["avx512"] }
 magetypes = { version = "0.9.23", default-features = false, features = ["w512", "avx512"] }
 paste = "1.0.15"

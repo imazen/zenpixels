@@ -42,7 +42,7 @@
 
 use archmage::prelude::*;
 use linear_srgb::tf;
-use magetypes::simd::backends::{F32x16Convert, F32x4Convert, F32x8Convert};
+use magetypes::simd::backends::{F32x4Convert, F32x8Convert, F32x16Convert};
 use magetypes::simd::generic::{
     f32x4 as GenericF32x4, f32x8 as GenericF32x8, f32x16 as GenericF32x16,
 };
@@ -96,7 +96,12 @@ fn mat3x3(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 /// {`TRC_SRGB`, `TRC_BT709`, `TRC_PQ`, `TRC_HLG`, `TRC_GAMMA22`}.
 #[inline(always)]
 fn scalar_linearize<const SRC_TRC: u8>(v: f32) -> f32 {
-    const { assert!(SRC_TRC < 5, "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
+    const {
+        assert!(
+            SRC_TRC < 5,
+            "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"
+        );
+    }
     match SRC_TRC {
         TRC_SRGB => tf::srgb_to_linear(v),
         TRC_BT709 => tf::bt709_to_linear(v),
@@ -114,7 +119,12 @@ fn scalar_linearize<const SRC_TRC: u8>(v: f32) -> f32 {
 /// {`TRC_SRGB`, `TRC_BT709`, `TRC_PQ`, `TRC_HLG`, `TRC_GAMMA22`}.
 #[inline(always)]
 fn scalar_encode<const DST_TRC: u8>(v: f32) -> f32 {
-    const { assert!(DST_TRC < 5, "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
+    const {
+        assert!(
+            DST_TRC < 5,
+            "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"
+        );
+    }
     match DST_TRC {
         TRC_SRGB => tf::linear_to_srgb(v),
         TRC_BT709 => tf::linear_to_bt709(v),
@@ -140,7 +150,12 @@ fn linearize_x16<const SRC_TRC: u8, T: F32x16Convert>(
     t: T,
     v: GenericF32x16<T>,
 ) -> GenericF32x16<T> {
-    const { assert!(SRC_TRC < 5, "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
+    const {
+        assert!(
+            SRC_TRC < 5,
+            "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"
+        );
+    }
     match SRC_TRC {
         TRC_SRGB => {
             let z = GenericF32x16::zero(t);
@@ -156,11 +171,13 @@ fn linearize_x16<const SRC_TRC: u8, T: F32x16Convert>(
 }
 
 #[inline(always)]
-fn encode_x16<const DST_TRC: u8, T: F32x16Convert>(
-    t: T,
-    v: GenericF32x16<T>,
-) -> GenericF32x16<T> {
-    const { assert!(DST_TRC < 5, "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
+fn encode_x16<const DST_TRC: u8, T: F32x16Convert>(t: T, v: GenericF32x16<T>) -> GenericF32x16<T> {
+    const {
+        assert!(
+            DST_TRC < 5,
+            "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"
+        );
+    }
     match DST_TRC {
         TRC_SRGB => {
             let z = GenericF32x16::zero(t);
@@ -176,11 +193,13 @@ fn encode_x16<const DST_TRC: u8, T: F32x16Convert>(
 }
 
 #[inline(always)]
-fn linearize_x8<const SRC_TRC: u8, T: F32x8Convert>(
-    t: T,
-    v: GenericF32x8<T>,
-) -> GenericF32x8<T> {
-    const { assert!(SRC_TRC < 5, "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
+fn linearize_x8<const SRC_TRC: u8, T: F32x8Convert>(t: T, v: GenericF32x8<T>) -> GenericF32x8<T> {
+    const {
+        assert!(
+            SRC_TRC < 5,
+            "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"
+        );
+    }
     match SRC_TRC {
         TRC_SRGB => {
             let z = GenericF32x8::zero(t);
@@ -196,11 +215,13 @@ fn linearize_x8<const SRC_TRC: u8, T: F32x8Convert>(
 }
 
 #[inline(always)]
-fn encode_x8<const DST_TRC: u8, T: F32x8Convert>(
-    t: T,
-    v: GenericF32x8<T>,
-) -> GenericF32x8<T> {
-    const { assert!(DST_TRC < 5, "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
+fn encode_x8<const DST_TRC: u8, T: F32x8Convert>(t: T, v: GenericF32x8<T>) -> GenericF32x8<T> {
+    const {
+        assert!(
+            DST_TRC < 5,
+            "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"
+        );
+    }
     match DST_TRC {
         TRC_SRGB => {
             let z = GenericF32x8::zero(t);
@@ -216,11 +237,13 @@ fn encode_x8<const DST_TRC: u8, T: F32x8Convert>(
 }
 
 #[inline(always)]
-fn linearize_x4<const SRC_TRC: u8, T: F32x4Convert>(
-    t: T,
-    v: GenericF32x4<T>,
-) -> GenericF32x4<T> {
-    const { assert!(SRC_TRC < 5, "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
+fn linearize_x4<const SRC_TRC: u8, T: F32x4Convert>(t: T, v: GenericF32x4<T>) -> GenericF32x4<T> {
+    const {
+        assert!(
+            SRC_TRC < 5,
+            "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"
+        );
+    }
     match SRC_TRC {
         TRC_SRGB => {
             let z = GenericF32x4::zero(t);
@@ -236,11 +259,13 @@ fn linearize_x4<const SRC_TRC: u8, T: F32x4Convert>(
 }
 
 #[inline(always)]
-fn encode_x4<const DST_TRC: u8, T: F32x4Convert>(
-    t: T,
-    v: GenericF32x4<T>,
-) -> GenericF32x4<T> {
-    const { assert!(DST_TRC < 5, "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
+fn encode_x4<const DST_TRC: u8, T: F32x4Convert>(t: T, v: GenericF32x4<T>) -> GenericF32x4<T> {
+    const {
+        assert!(
+            DST_TRC < 5,
+            "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"
+        );
+    }
     match DST_TRC {
         TRC_SRGB => {
             let z = GenericF32x4::zero(t);
@@ -349,20 +374,35 @@ fn mat3x3_x4<T: F32x4Convert>(
 // =============================================================================
 
 #[magetypes(v4x, v4, scalar)]
-fn convert_wide<
-    const SRC_TRC: u8,
-    const DST_TRC: u8,
-    const CHANNELS: usize,
-    const CHUNK: usize,
->(
+fn convert_wide<const SRC_TRC: u8, const DST_TRC: u8, const CHANNELS: usize, const CHUNK: usize>(
     token: Token,
     m: &[[f32; 3]; 3],
     data: &mut [f32],
 ) {
-    const { assert!(SRC_TRC < 5, "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
-    const { assert!(DST_TRC < 5, "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
-    const { assert!(CHANNELS == 3 || CHANNELS == 4, "CHANNELS must be 3 (RGB) or 4 (RGBA)"); }
-    const { assert!(CHUNK == 16 * CHANNELS, "CHUNK must equal PIXELS (16) * CHANNELS for the wide body"); }
+    const {
+        assert!(
+            SRC_TRC < 5,
+            "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"
+        );
+    }
+    const {
+        assert!(
+            DST_TRC < 5,
+            "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"
+        );
+    }
+    const {
+        assert!(
+            CHANNELS == 3 || CHANNELS == 4,
+            "CHANNELS must be 3 (RGB) or 4 (RGBA)"
+        );
+    }
+    const {
+        assert!(
+            CHUNK == 16 * CHANNELS,
+            "CHUNK must equal PIXELS (16) * CHANNELS for the wide body"
+        );
+    }
     #[allow(non_camel_case_types)]
     type f32x16 = GenericF32x16<Token>;
     const PIXELS: usize = 16;
@@ -439,10 +479,30 @@ fn convert_native<
     m: &[[f32; 3]; 3],
     data: &mut [f32],
 ) {
-    const { assert!(SRC_TRC < 5, "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
-    const { assert!(DST_TRC < 5, "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
-    const { assert!(CHANNELS == 3 || CHANNELS == 4, "CHANNELS must be 3 (RGB) or 4 (RGBA)"); }
-    const { assert!(CHUNK == 8 * CHANNELS, "CHUNK must equal PIXELS (8) * CHANNELS for the native V3 body"); }
+    const {
+        assert!(
+            SRC_TRC < 5,
+            "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"
+        );
+    }
+    const {
+        assert!(
+            DST_TRC < 5,
+            "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"
+        );
+    }
+    const {
+        assert!(
+            CHANNELS == 3 || CHANNELS == 4,
+            "CHANNELS must be 3 (RGB) or 4 (RGBA)"
+        );
+    }
+    const {
+        assert!(
+            CHUNK == 8 * CHANNELS,
+            "CHUNK must equal PIXELS (8) * CHANNELS for the native V3 body"
+        );
+    }
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
     const PIXELS: usize = 8;
@@ -463,13 +523,13 @@ fn convert_native<
             3 => {
                 // CHUNK == 24 here; const-asserted at fn entry.
                 let c: &[f32; 24] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b) = garb::deinterleave::rgb_f32_chunk8_to_planes_v3(token, c);
+                let (r, g, b) = garb::deinterleave::rgb_f32_chunk8_to_planes_scalar(c);
                 (r, g, b, [0.0f32; PIXELS])
             }
             4 => {
                 // CHUNK == 32 here.
                 let c: &[f32; 32] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b, a) = garb::deinterleave::rgba_f32_chunk8_to_planes_v3(token, c);
+                let (r, g, b, a) = garb::deinterleave::rgba_f32_chunk8_to_planes_scalar(c);
                 (r, g, b, a)
             }
             _ => unreachable!(),
@@ -500,14 +560,13 @@ fn convert_native<
         match CHANNELS {
             3 => {
                 let out_arr: [f32; 24] =
-                    garb::deinterleave::planes_to_rgb_f32_chunk8_v3(token, &ro, &go, &bo);
+                    garb::deinterleave::planes_to_rgb_f32_chunk8_scalar(&ro, &go, &bo);
                 let dst: &mut [f32; 24] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
             4 => {
-                let out_arr: [f32; 32] = garb::deinterleave::planes_to_rgba_f32_chunk8_v3(
-                    token, &ro, &go, &bo, &alpha,
-                );
+                let out_arr: [f32; 32] =
+                    garb::deinterleave::planes_to_rgba_f32_chunk8_scalar(&ro, &go, &bo, &alpha);
                 let dst: &mut [f32; 32] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
@@ -542,10 +601,30 @@ fn convert_narrow<
     data: &mut [f32],
 ) {
     #[allow(non_camel_case_types)]
-    const { assert!(SRC_TRC < 5, "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
-    const { assert!(DST_TRC < 5, "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"); }
-    const { assert!(CHANNELS == 3 || CHANNELS == 4, "CHANNELS must be 3 (RGB) or 4 (RGBA)"); }
-    const { assert!(CHUNK == 4 * CHANNELS, "CHUNK must equal PIXELS (4) * CHANNELS for the narrow body"); }
+    const {
+        assert!(
+            SRC_TRC < 5,
+            "SRC_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"
+        );
+    }
+    const {
+        assert!(
+            DST_TRC < 5,
+            "DST_TRC must be one of TRC_SRGB|BT709|PQ|HLG|GAMMA22"
+        );
+    }
+    const {
+        assert!(
+            CHANNELS == 3 || CHANNELS == 4,
+            "CHANNELS must be 3 (RGB) or 4 (RGBA)"
+        );
+    }
+    const {
+        assert!(
+            CHUNK == 4 * CHANNELS,
+            "CHUNK must equal PIXELS (4) * CHANNELS for the narrow body"
+        );
+    }
     type f32x4 = GenericF32x4<Token>;
     const PIXELS: usize = 4;
 
@@ -567,12 +646,12 @@ fn convert_narrow<
         let (r, g, b, alpha) = match CHANNELS {
             3 => {
                 let c: &[f32; 12] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b) = garb::deinterleave::rgb_f32_chunk4_to_planes_neon(token, c);
+                let (r, g, b) = garb::deinterleave::rgb_f32_chunk4_to_planes_scalar(c);
                 (r, g, b, [0.0f32; PIXELS])
             }
             4 => {
                 let c: &[f32; 16] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b, a) = garb::deinterleave::rgba_f32_chunk4_to_planes_neon(token, c);
+                let (r, g, b, a) = garb::deinterleave::rgba_f32_chunk4_to_planes_scalar(c);
                 (r, g, b, a)
             }
             _ => unreachable!(),
@@ -581,13 +660,12 @@ fn convert_narrow<
         let (r, g, b, alpha) = match CHANNELS {
             3 => {
                 let c: &[f32; 12] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b) = garb::deinterleave::rgb_f32_chunk4_to_planes_wasm128(token, c);
+                let (r, g, b) = garb::deinterleave::rgb_f32_chunk4_to_planes_scalar(c);
                 (r, g, b, [0.0f32; PIXELS])
             }
             4 => {
                 let c: &[f32; 16] = (&chunk[..]).try_into().unwrap();
-                let (r, g, b, a) =
-                    garb::deinterleave::rgba_f32_chunk4_to_planes_wasm128(token, c);
+                let (r, g, b, a) = garb::deinterleave::rgba_f32_chunk4_to_planes_scalar(c);
                 (r, g, b, a)
             }
             _ => unreachable!(),
@@ -619,14 +697,13 @@ fn convert_narrow<
         match CHANNELS {
             3 => {
                 let out_arr: [f32; 12] =
-                    garb::deinterleave::planes_to_rgb_f32_chunk4_neon(token, &ro, &go, &bo);
+                    garb::deinterleave::planes_to_rgb_f32_chunk4_scalar(&ro, &go, &bo);
                 let dst: &mut [f32; 12] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
             4 => {
-                let out_arr: [f32; 16] = garb::deinterleave::planes_to_rgba_f32_chunk4_neon(
-                    token, &ro, &go, &bo, &alpha,
-                );
+                let out_arr: [f32; 16] =
+                    garb::deinterleave::planes_to_rgba_f32_chunk4_scalar(&ro, &go, &bo, &alpha);
                 let dst: &mut [f32; 16] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
@@ -636,14 +713,13 @@ fn convert_narrow<
         match CHANNELS {
             3 => {
                 let out_arr: [f32; 12] =
-                    garb::deinterleave::planes_to_rgb_f32_chunk4_wasm128(token, &ro, &go, &bo);
+                    garb::deinterleave::planes_to_rgb_f32_chunk4_scalar(&ro, &go, &bo);
                 let dst: &mut [f32; 12] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
             4 => {
-                let out_arr: [f32; 16] = garb::deinterleave::planes_to_rgba_f32_chunk4_wasm128(
-                    token, &ro, &go, &bo, &alpha,
-                );
+                let out_arr: [f32; 16] =
+                    garb::deinterleave::planes_to_rgba_f32_chunk4_scalar(&ro, &go, &bo, &alpha);
                 let dst: &mut [f32; 16] = (&mut chunk[..]).try_into().unwrap();
                 *dst = out_arr;
             }
@@ -713,9 +789,7 @@ fn dispatch_pair<
     #[cfg(target_arch = "wasm32")]
     {
         if let Some(t) = Wasm128Token::summon() {
-            return convert_narrow_wasm128::<SRC_TRC, DST_TRC, CHANNELS, NARROW_CHUNK>(
-                t, m, data,
-            );
+            return convert_narrow_wasm128::<SRC_TRC, DST_TRC, CHANNELS, NARROW_CHUNK>(t, m, data);
         }
         return convert_wide_scalar::<SRC_TRC, DST_TRC, CHANNELS, WIDE_CHUNK>(
             ScalarToken::summon().unwrap(),
@@ -814,38 +888,26 @@ fn convert_f32_v2_inner<
     // 12 const-generic specializations. Each arm const-folds to a direct call
     // to the matching monomorph; LLVM will not emit a runtime tag check.
     match pair {
-        (TRC_SRGB, TRC_SRGB) => dispatch_pair::<
-            TRC_SRGB,
-            TRC_SRGB,
-            CHANNELS,
-            WIDE_CHUNK,
-            NATIVE_CHUNK,
-            NARROW_CHUNK,
-        >(m, data),
-        (TRC_BT709, TRC_BT709) => dispatch_pair::<
-            TRC_BT709,
-            TRC_BT709,
-            CHANNELS,
-            WIDE_CHUNK,
-            NATIVE_CHUNK,
-            NARROW_CHUNK,
-        >(m, data),
-        (TRC_PQ, TRC_PQ) => dispatch_pair::<
-            TRC_PQ,
-            TRC_PQ,
-            CHANNELS,
-            WIDE_CHUNK,
-            NATIVE_CHUNK,
-            NARROW_CHUNK,
-        >(m, data),
-        (TRC_HLG, TRC_HLG) => dispatch_pair::<
-            TRC_HLG,
-            TRC_HLG,
-            CHANNELS,
-            WIDE_CHUNK,
-            NATIVE_CHUNK,
-            NARROW_CHUNK,
-        >(m, data),
+        (TRC_SRGB, TRC_SRGB) => {
+            dispatch_pair::<TRC_SRGB, TRC_SRGB, CHANNELS, WIDE_CHUNK, NATIVE_CHUNK, NARROW_CHUNK>(
+                m, data,
+            )
+        }
+        (TRC_BT709, TRC_BT709) => {
+            dispatch_pair::<TRC_BT709, TRC_BT709, CHANNELS, WIDE_CHUNK, NATIVE_CHUNK, NARROW_CHUNK>(
+                m, data,
+            )
+        }
+        (TRC_PQ, TRC_PQ) => {
+            dispatch_pair::<TRC_PQ, TRC_PQ, CHANNELS, WIDE_CHUNK, NATIVE_CHUNK, NARROW_CHUNK>(
+                m, data,
+            )
+        }
+        (TRC_HLG, TRC_HLG) => {
+            dispatch_pair::<TRC_HLG, TRC_HLG, CHANNELS, WIDE_CHUNK, NATIVE_CHUNK, NARROW_CHUNK>(
+                m, data,
+            )
+        }
         (TRC_GAMMA22, TRC_GAMMA22) => dispatch_pair::<
             TRC_GAMMA22,
             TRC_GAMMA22,
@@ -854,62 +916,41 @@ fn convert_f32_v2_inner<
             NATIVE_CHUNK,
             NARROW_CHUNK,
         >(m, data),
-        (TRC_PQ, TRC_SRGB) => dispatch_pair::<
-            TRC_PQ,
-            TRC_SRGB,
-            CHANNELS,
-            WIDE_CHUNK,
-            NATIVE_CHUNK,
-            NARROW_CHUNK,
-        >(m, data),
-        (TRC_HLG, TRC_SRGB) => dispatch_pair::<
-            TRC_HLG,
-            TRC_SRGB,
-            CHANNELS,
-            WIDE_CHUNK,
-            NATIVE_CHUNK,
-            NARROW_CHUNK,
-        >(m, data),
-        (TRC_SRGB, TRC_PQ) => dispatch_pair::<
-            TRC_SRGB,
-            TRC_PQ,
-            CHANNELS,
-            WIDE_CHUNK,
-            NATIVE_CHUNK,
-            NARROW_CHUNK,
-        >(m, data),
-        (TRC_BT709, TRC_SRGB) => dispatch_pair::<
-            TRC_BT709,
-            TRC_SRGB,
-            CHANNELS,
-            WIDE_CHUNK,
-            NATIVE_CHUNK,
-            NARROW_CHUNK,
-        >(m, data),
-        (TRC_SRGB, TRC_BT709) => dispatch_pair::<
-            TRC_SRGB,
-            TRC_BT709,
-            CHANNELS,
-            WIDE_CHUNK,
-            NATIVE_CHUNK,
-            NARROW_CHUNK,
-        >(m, data),
-        (TRC_GAMMA22, TRC_SRGB) => dispatch_pair::<
-            TRC_GAMMA22,
-            TRC_SRGB,
-            CHANNELS,
-            WIDE_CHUNK,
-            NATIVE_CHUNK,
-            NARROW_CHUNK,
-        >(m, data),
-        (TRC_SRGB, TRC_GAMMA22) => dispatch_pair::<
-            TRC_SRGB,
-            TRC_GAMMA22,
-            CHANNELS,
-            WIDE_CHUNK,
-            NATIVE_CHUNK,
-            NARROW_CHUNK,
-        >(m, data),
+        (TRC_PQ, TRC_SRGB) => {
+            dispatch_pair::<TRC_PQ, TRC_SRGB, CHANNELS, WIDE_CHUNK, NATIVE_CHUNK, NARROW_CHUNK>(
+                m, data,
+            )
+        }
+        (TRC_HLG, TRC_SRGB) => {
+            dispatch_pair::<TRC_HLG, TRC_SRGB, CHANNELS, WIDE_CHUNK, NATIVE_CHUNK, NARROW_CHUNK>(
+                m, data,
+            )
+        }
+        (TRC_SRGB, TRC_PQ) => {
+            dispatch_pair::<TRC_SRGB, TRC_PQ, CHANNELS, WIDE_CHUNK, NATIVE_CHUNK, NARROW_CHUNK>(
+                m, data,
+            )
+        }
+        (TRC_BT709, TRC_SRGB) => {
+            dispatch_pair::<TRC_BT709, TRC_SRGB, CHANNELS, WIDE_CHUNK, NATIVE_CHUNK, NARROW_CHUNK>(
+                m, data,
+            )
+        }
+        (TRC_SRGB, TRC_BT709) => {
+            dispatch_pair::<TRC_SRGB, TRC_BT709, CHANNELS, WIDE_CHUNK, NATIVE_CHUNK, NARROW_CHUNK>(
+                m, data,
+            )
+        }
+        (TRC_GAMMA22, TRC_SRGB) => {
+            dispatch_pair::<TRC_GAMMA22, TRC_SRGB, CHANNELS, WIDE_CHUNK, NATIVE_CHUNK, NARROW_CHUNK>(
+                m, data,
+            )
+        }
+        (TRC_SRGB, TRC_GAMMA22) => {
+            dispatch_pair::<TRC_SRGB, TRC_GAMMA22, CHANNELS, WIDE_CHUNK, NATIVE_CHUNK, NARROW_CHUNK>(
+                m, data,
+            )
+        }
         // SAFETY: the outer `match (src_trc, dst_trc)` only emits the 12 pairs
         // listed above. LLVM eliminates this arm.
         _ => unreachable!(),
@@ -1344,9 +1385,12 @@ mod tests {
         let mut data = vec![0.5f32; 12];
         // Unsupported pair (PQ → BT.709 not in v2's matrix). v1 doesn't
         // accelerate it either; we expect false.
-        assert!(
-            !convert_f32_rgb_v2(&m, &mut data, TransferFunction::Pq, TransferFunction::Bt709)
-        );
+        assert!(!convert_f32_rgb_v2(
+            &m,
+            &mut data,
+            TransferFunction::Pq,
+            TransferFunction::Bt709
+        ));
     }
 
     // ---- Tier permutation: scalar path bit-stable on every Token --------
@@ -1358,7 +1402,7 @@ mod tests {
     #[test]
     fn tier_permutation_stable_per_pair() {
         use archmage::testing::{
-            for_each_token_permutation, lock_token_testing, CompileTimePolicy,
+            CompileTimePolicy, for_each_token_permutation, lock_token_testing,
         };
 
         let _guard = lock_token_testing();
@@ -1367,11 +1411,21 @@ mod tests {
 
         // Compute scalar reference once.
         let mut ref_out = original.clone();
-        scalar_reference_rgb(&m, &mut ref_out, TransferFunction::Srgb, TransferFunction::Srgb);
+        scalar_reference_rgb(
+            &m,
+            &mut ref_out,
+            TransferFunction::Srgb,
+            TransferFunction::Srgb,
+        );
 
         let _ = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| {
             let mut data = original.clone();
-            convert_f32_rgb_v2(&m, &mut data, TransferFunction::Srgb, TransferFunction::Srgb);
+            convert_f32_rgb_v2(
+                &m,
+                &mut data,
+                TransferFunction::Srgb,
+                TransferFunction::Srgb,
+            );
             for (i, (a, b)) in data.iter().zip(ref_out.iter()).enumerate() {
                 let err = (a - b).abs();
                 assert!(
@@ -1499,7 +1553,8 @@ mod tests {
                     assert!(
                         err < TOL_PARITY,
                         "native_v3 cross {}->{} lane {i}: got={a}, want={b} (err={err:e})",
-                        stringify!($src), stringify!($dst),
+                        stringify!($src),
+                        stringify!($dst),
                     );
                 }
             }};
