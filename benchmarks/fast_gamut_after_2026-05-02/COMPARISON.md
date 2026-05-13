@@ -1,5 +1,18 @@
 # fast_gamut_v2 vs v1 — V3 (AVX2) parity benchmark
 
+> **⚠️ SUPERSEDED — historical only.**
+>
+> This was the criterion-style A-then-B comparison (v1 run, then v2 run on
+> a different commit, hand-diffed). The headline "median 0.0% Δ, 9 of 18
+> faster than v1" was a thermal-drift artifact. `PAIRED_COMPARISON.md` did
+> the same measurement properly with zenbench paired interleaving and got
+> a different (and on-balance-faster) answer — but that file is also
+> historical now, see its banner.
+>
+> Both v1 and the garb 0.2.7 hand-written chunk SIMD that v2 used are
+> deleted on HEAD. For current-HEAD throughput numbers, see
+> `../fast_gamut_head_2026-05-13/`.
+
 Hardware: AMD Ryzen 9 7950X (water-cooled), no AVX-512 → V3 is the
 highest tier the runtime activates. Release profile, default features.
 

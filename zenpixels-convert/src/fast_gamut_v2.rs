@@ -54,10 +54,18 @@ const ADOBE_GAMMA: f32 = 2.19921875; // Adobe RGB spec: 563/256
 // =============================================================================
 // TRC integer tags — encode the discriminant for const-generic specialization.
 //
-// Crate-private. The public API still takes `TransferFunction`; `trc_tag` maps
-// the enum to one of these tags. `TRC_LINEAR` is included for completeness even
-// though the (Linear, Linear) pair short-circuits to `convert_*_linear_v2`
-// before const-generic dispatch.
+// Crate-private. The public API still takes `TransferFunction`; the runtime
+// match in `convert_f32_v2_inner` maps the enum pair to a (TRC_, TRC_) tag
+// pair, then dispatches to the matching const-generic monomorph.
+//
+// `TransferFunction::Linear` is intentionally NOT represented here. The
+// (Linear, Linear) pair short-circuits to `convert_*_linear_v2` (matrix-only
+// scalar loop, no TRC step) before this tag space is consulted. Mixed
+// Linear↔tagged pairs are unsupported today and return `false` from the
+// public entry — v1 didn't support them either. If a caller materializes,
+// add a dedicated enum-pair branch alongside the existing `(Linear, Linear)`
+// short-circuit so the linearize/encode stages can be elided rather than
+// monomorphized as identity arms.
 // =============================================================================
 
 pub(crate) const TRC_SRGB: u8 = 0;
@@ -65,8 +73,6 @@ pub(crate) const TRC_BT709: u8 = 1;
 pub(crate) const TRC_PQ: u8 = 2;
 pub(crate) const TRC_HLG: u8 = 3;
 pub(crate) const TRC_GAMMA22: u8 = 4;
-#[allow(dead_code)]
-pub(crate) const TRC_LINEAR: u8 = 5;
 
 // =============================================================================
 // Shared scalar matrix helper

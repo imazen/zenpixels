@@ -1,5 +1,32 @@
 # v1 vs v2 — paired zenbench comparison (bias-free)
 
+> **⚠️ HISTORICAL — not reproducible on HEAD.**
+>
+> These numbers were measured when both code paths existed:
+> 1. v1 `stamp_trc_kernels!` — deleted by this PR.
+> 2. v2 calling garb 0.2.7's hand-written 128-bit-XMM f32 chunk SIMD
+>    (`_v3 / _neon / _wasm128` chunk fns) — never published; dropped
+>    from garb 0.2.8 entirely because LLVM autovec under
+>    `target_feature avx2,fma` was +26-37% faster at 1024px (see
+>    `imazen/garb`'s `benchmarks/deinterleave_autovec_vs_chunk_2026-05-07`).
+>
+> Neither baseline exists on HEAD. v2 on HEAD calls
+> `garb::deinterleave::*_chunk*_to_planes_scalar`, which under the
+> surrounding `#[arcane(<tier>)]` region autovec's to 256-bit YMM /
+> NEON `vld3q` / wasm SIMD128 — same or better performance characteristic
+> as the deleted hand-written chunks per garb's bench, but not the
+> identical instruction sequence these tables measured.
+>
+> The directional finding (v2 has parity-or-better with v1 on V3 after
+> the correctness clamp fix) is still load-bearing for the design
+> review. The exact ±% deltas should not be cited as current-HEAD
+> performance claims.
+>
+> For a current-HEAD throughput snapshot of the v2 path, see
+> `../fast_gamut_head_2026-05-13/`.
+
+---
+
 This is the comparison that should have been done first. The earlier
 `bench_t7_gamut` BEFORE/AFTER tables ran v1 once and v2 once on
 different commits, then hand-diffed — that's criterion-style A-then-B,

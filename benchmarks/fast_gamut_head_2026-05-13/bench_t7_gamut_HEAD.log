@@ -1,0 +1,259 @@
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/bt709.rs:37:1
+    |
+ 37 | pub fn bt709_to_linear_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: the lint level is defined here
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/lib.rs:186:9
+    |
+186 | #![warn(missing_docs)]
+    |         ^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/bt709.rs:58:1
+   |
+58 | pub fn linear_to_bt709_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/bt709.rs:83:1
+   |
+83 | pub fn bt709_to_linear_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/bt709.rs:100:1
+    |
+100 | pub fn linear_to_bt709_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/bt709.rs:124:1
+    |
+124 | pub fn bt709_to_linear_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/bt709.rs:141:1
+    |
+141 | pub fn linear_to_bt709_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/hlg.rs:50:1
+   |
+50 | pub fn hlg_to_linear_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/hlg.rs:75:1
+   |
+75 | pub fn linear_to_hlg_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/hlg.rs:107:1
+    |
+107 | pub fn hlg_to_linear_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/hlg.rs:129:1
+    |
+129 | pub fn linear_to_hlg_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/hlg.rs:158:1
+    |
+158 | pub fn hlg_to_linear_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/hlg.rs:180:1
+    |
+180 | pub fn linear_to_hlg_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/pq.rs:140:1
+    |
+140 | pub fn pq_to_linear_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/pq.rs:158:1
+    |
+158 | pub fn linear_to_pq_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/pq.rs:182:1
+    |
+182 | pub fn pq_to_linear_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/pq.rs:199:1
+    |
+199 | pub fn linear_to_pq_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/pq.rs:223:1
+    |
+223 | pub fn pq_to_linear_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/pq.rs:240:1
+    |
+240 | pub fn linear_to_pq_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/srgb.rs:13:1
+   |
+13 | pub fn srgb_to_linear_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/srgb.rs:29:1
+   |
+29 | pub fn linear_to_srgb_x4<T: F32x4Convert>(t: T, v: f32x4<T>) -> f32x4<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/srgb.rs:48:1
+   |
+48 | pub fn srgb_to_linear_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/srgb.rs:63:1
+   |
+63 | pub fn linear_to_srgb_x8<T: F32x8Convert>(t: T, v: f32x8<T>) -> f32x8<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+  --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/srgb.rs:86:1
+   |
+86 | pub fn srgb_to_linear_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a function
+   --> /home/lilith/work/zen/linear-srgb--pub-tf-x16/src/tf/srgb.rs:101:1
+    |
+101 | pub fn linear_to_srgb_x16<T: F32x16Convert>(t: T, v: f32x16<T>) -> f32x16<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `linear-srgb` (lib) generated 24 warnings
+   Compiling zenpixels-convert v0.2.11 (/home/lilith/work/zen/zenpixels--pr33/zenpixels-convert)
+warning: function `linearize_x4` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:246:4
+    |
+246 | fn linearize_x4<const SRC_TRC: u8, T: F32x4Convert>(t: T, v: GenericF32x4<T>) -> GenericF32x4<T> {
+    |    ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `encode_x4` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:268:4
+    |
+268 | fn encode_x4<const DST_TRC: u8, T: F32x4Convert>(t: T, v: GenericF32x4<T>) -> GenericF32x4<T> {
+    |    ^^^^^^^^^
+
+warning: function `mat3x3_x4` is never used
+   --> zenpixels-convert/src/fast_gamut_v2.rs:347:4
+    |
+347 | fn mat3x3_x4<T: F32x4Convert>(
+    |    ^^^^^^^^^
+
+warning: `zenpixels-convert` (lib) generated 3 warnings
+    Finished `bench` profile [optimized] target(s) in 6.73s
+     Running benches/bench_t7_gamut.rs (target/release/deps/bench_t7_gamut-75d42324a84a4847)
+[zenbench] calibration: int=0.23ns/iter mem_bw=112.3GiB/s mem_lat=9.5ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.18ns/iter, TSC: 4.491 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1778709411-8b487.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1778709411-8b487
+  git: 6bd659a5740f2a59995134d701abbd08231efde2
+═══════════════════════════════════════════════════════════════
+
+  Linear F32 gamut (P3→BT.709)    256px  100 rounds × 3K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    263 ±7ns  [259–269]ns    21.7G
+
+  Linear F32 gamut (P3→BT.709)   4096px  130 rounds × 243 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    4.2 ±0.1µs  [4.1–4.3]µs     21.9G
+
+  Linear F32 gamut (P3→BT.709)  1080p    60 rounds × 2 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    2.5 ±0.1ms  [2.4–2.5]ms    18.8G
+
+  Linear F32 gamut (BT.2020→BT.709)    256px  200 rounds × 1K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    267 ±8ns  [262–273]ns    21.4G
+
+  Linear F32 gamut (BT.2020→BT.709)   4096px  140 rounds × 248 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    4.2 ±0.1µs  [4.1–4.3]µs     21.7G
+
+  Linear F32 gamut (BT.2020→BT.709)  1080p    30 rounds × 2 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    2.4 ±0.1ms  [2.4–2.4]ms    19.3G
+
+  sRGB U8 fused gamut (P3→BT.709)    256px  100 rounds × 3K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    329 ±5ns  [323–336]ns    4.35G
+
+  sRGB U8 fused gamut (P3→BT.709)   4096px  180 rounds × 198 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    5.3 ±0.1µs  [5.2–5.4]µs     4.33G
+
+  sRGB U8 fused gamut (P3→BT.709)  1080p    140 rounds × 1 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    2.8 ±0.1ms  [2.7–2.8]ms    4.20G
+
+  sRGB U16 fused gamut (P3→BT.709)    256px  40 rounds × 2K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    485 ±10ns  [477–496]ns    5.89G
+
+  sRGB U16 fused gamut (P3→BT.709)   4096px  200 rounds × 131 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    8.0 ±0.2µs  [7.8–8.1]µs     5.75G
+
+  sRGB U16 fused gamut (P3→BT.709)  1080p    120 rounds × 1 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    4.1 ±0.2ms  [4.0–4.2]ms    5.66G
+
+  sRGB U8 → Linear F32 + gamut (P3→BT.709)    256px  200 rounds × 3K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    332 ±6ns  [325–339]ns    10.8G
+
+  sRGB U8 → Linear F32 + gamut (P3→BT.709)   4096px  30 rounds × 203 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    4.9 ±0.1µs  [4.9–5.0]µs     11.7G
+
+  sRGB U8 → Linear F32 + gamut (P3→BT.709)  1080p    60 rounds × 1 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    4.1 ±0.3ms  [4.0–4.2]ms    7.02G
+
+  Linear F32 → sRGB U8 + gamut (P3→BT.709)    256px  200 rounds × 1K calls
+           mean ±mad ns  95% CI vs base   iB/s
+  ╰─ RGB    574 ±20ns  [562–587]ns    6.23G
+
+  Linear F32 → sRGB U8 + gamut (P3→BT.709)   4096px  170 rounds × 115 calls
+           mean ±mad µs  95% CI vs base   iB/s
+  ╰─ RGB    8.9 ±0.2µs  [8.8–9.1]µs     6.41G
+
+  Linear F32 → sRGB U8 + gamut (P3→BT.709)  1080p    50 rounds × 1 calls
+           mean ±mad ms  95% CI vs base   iB/s
+  ╰─ RGB    4.7 ±0.2ms  [4.6–4.8]ms    6.13G
+
+  total: 143.9s  (1167 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
