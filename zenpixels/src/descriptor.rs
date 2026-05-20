@@ -329,6 +329,34 @@ impl TransferFunction {
             _ => 1.0,
         }
     }
+
+    /// Peak luminance in cd/m² that the transfer function's signal `1.0`
+    /// represents in absolute terms.
+    ///
+    /// **`#[doc(hidden)]`**: HDR-IQA-specific niche surface — used by
+    /// downstream quality metrics (zensim, zenmetrics, zenanalyze) via
+    /// `zenpixels_convert::hdr_iqa`. Not a general-purpose color-space
+    /// API. See imazen/zenmetrics#13 for the cross-crate arc.
+    ///
+    /// Used by HDR-IQA front-ends to convert linear `[0, 1]` signal to
+    /// absolute luminance before PU encoding:
+    /// `absolute_nits = linear * transfer.peak_luminance_nits()`.
+    ///
+    /// - SDR (sRGB, BT.709, Linear, Gamma22, Unknown): `1.0` (relative).
+    ///   Callers tracking SDR display peak should override.
+    /// - PQ: `10_000.0` (SMPTE ST 2084 peak).
+    /// - HLG: `1_000.0` (ITU-R BT.2100 reference HLG display peak).
+    ///   Real displays vary; callers that know the display peak should
+    ///   pass it through `HdrMetadata::peak_luminance_nits` instead.
+    #[doc(hidden)]
+    #[allow(unreachable_patterns)]
+    pub fn peak_luminance_nits(&self) -> f32 {
+        match self {
+            Self::Pq => 10_000.0,
+            Self::Hlg => 1_000.0,
+            _ => 1.0,
+        }
+    }
 }
 
 impl fmt::Display for TransferFunction {
@@ -1744,6 +1772,20 @@ mod tests {
         assert_eq!(TransferFunction::Srgb.reference_white_nits(), 1.0);
         assert_eq!(TransferFunction::Linear.reference_white_nits(), 1.0);
         assert_eq!(TransferFunction::Unknown.reference_white_nits(), 1.0);
+    }
+
+    #[test]
+    fn peak_luminance_nits_values() {
+        // PQ peak is the SMPTE ST 2084 spec maximum.
+        assert_eq!(TransferFunction::Pq.peak_luminance_nits(), 10_000.0);
+        // HLG reference display peak is BT.2100's nominal 1000 cd/m².
+        assert_eq!(TransferFunction::Hlg.peak_luminance_nits(), 1_000.0);
+        // SDR transfers report relative peak.
+        assert_eq!(TransferFunction::Srgb.peak_luminance_nits(), 1.0);
+        assert_eq!(TransferFunction::Bt709.peak_luminance_nits(), 1.0);
+        assert_eq!(TransferFunction::Linear.peak_luminance_nits(), 1.0);
+        assert_eq!(TransferFunction::Gamma22.peak_luminance_nits(), 1.0);
+        assert_eq!(TransferFunction::Unknown.peak_luminance_nits(), 1.0);
     }
 
     // --- PlaneLayout mask tests ---

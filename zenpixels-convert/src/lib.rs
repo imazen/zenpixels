@@ -446,6 +446,11 @@ pub mod __bench_u16_hybrids {
 }
 pub mod gamut;
 pub mod hdr;
+/// HDR-IQA primitives (PU encoding, luma constants) for downstream
+/// quality metrics. `#[doc(hidden)]` — niche, experimental, see
+/// imazen/zenmetrics#13 for the cross-crate arc.
+#[doc(hidden)]
+pub mod hdr_iqa;
 pub mod icc_profiles;
 pub mod oklab;
 pub mod output;

@@ -213,6 +213,86 @@ impl Cicp {
     }
 }
 
+impl Cicp {
+    /// Resolve unspecified (`matrix_coefficients == 2`) per ITU-T H.273.
+    ///
+    /// **`#[doc(hidden)]`**: HDR-IQA-specific niche surface — used by
+    /// downstream metric decode pipelines (zenmetrics) to disambiguate
+    /// CICP extracted from PNG cICP / AVIF nclx / JXL frame headers.
+    /// Not a general-purpose CICP API. See imazen/zenmetrics#13.
+    ///
+    /// When a container signals `MC=2`, the matrix is **not** derivable
+    /// from the primaries alone — H.273 explicitly forbids auto-deriving
+    /// BT.2020 NCL from `CP=9`, since that's a documented silent-failure
+    /// mode. The container or higher-level metadata must disambiguate.
+    ///
+    /// Behaviour:
+    /// - If `self.matrix_coefficients != 2`, returns `Ok(self)` unchanged.
+    /// - If `MC=2` and `container_hint` is `Some`, returns a copy with
+    ///   `matrix_coefficients` taken from the hint.
+    /// - If `MC=2` and `container_hint` is `None`, returns
+    ///   `Err(UnspecifiedMatrixError { primaries, transfer })` so the
+    ///   caller can decide whether to fall back, error, or warn.
+    ///
+    /// Consumers (decode pipelines that extract CICP from PNG cICP,
+    /// AVIF `nclx`, JXL frame headers) pass the codec's canonical
+    /// container default as the hint: AVIF's `nclx` defaults MC=9 when
+    /// CP=9, the JXL frame header carries an explicit matrix indication,
+    /// PNG cICP allows MC=0 only.
+    #[doc(hidden)]
+    pub const fn resolve_matrix(
+        self,
+        container_hint: Option<Cicp>,
+    ) -> Result<Cicp, UnspecifiedMatrixError> {
+        if self.matrix_coefficients != 2 {
+            return Ok(self);
+        }
+        match container_hint {
+            Some(hint) => Ok(Cicp {
+                color_primaries: self.color_primaries,
+                transfer_characteristics: self.transfer_characteristics,
+                matrix_coefficients: hint.matrix_coefficients,
+                full_range: self.full_range,
+            }),
+            None => Err(UnspecifiedMatrixError {
+                primaries: self.color_primaries,
+                transfer: self.transfer_characteristics,
+            }),
+        }
+    }
+}
+
+/// Error returned when [`Cicp::resolve_matrix`] cannot disambiguate
+/// `matrix_coefficients == 2` because no container hint was provided.
+///
+/// **`#[doc(hidden)]`**: niche surface alongside `Cicp::resolve_matrix`.
+///
+/// Per ITU-T H.273, the matrix is not derivable from primaries alone —
+/// callers must supply a hint, fall back to an explicit default, or
+/// surface the error so the codec layer can decide.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UnspecifiedMatrixError {
+    /// CICP `color_primaries` code from the source CICP.
+    pub primaries: u8,
+    /// CICP `transfer_characteristics` code from the source CICP.
+    pub transfer: u8,
+}
+
+impl core::fmt::Display for UnspecifiedMatrixError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "CICP matrix_coefficients=2 (unspecified) with no container hint (primaries={}, transfer={})",
+            self.primaries, self.transfer,
+        )
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for UnspecifiedMatrixError {}
+
 impl core::fmt::Display for Cicp {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
@@ -389,6 +469,47 @@ mod tests {
         let desc = cicp.to_descriptor(PixelFormat::Rgb8);
         assert_eq!(desc.signal_range, SignalRange::Narrow);
         assert!(desc.alpha.is_none());
+    }
+
+    #[test]
+    fn resolve_matrix_passthrough_when_specified() {
+        // MC != 2 returns the input unchanged regardless of hint.
+        let c = Cicp::SRGB;
+        assert_eq!(c.resolve_matrix(None).unwrap(), c);
+        assert_eq!(c.resolve_matrix(Some(Cicp::BT2100_PQ)).unwrap(), c);
+    }
+
+    #[test]
+    fn resolve_matrix_uses_hint_for_unspecified() {
+        // MC=2 with a hint replaces the matrix from the hint.
+        let unspecified = Cicp::new(9, 16, 2, true);
+        let hint = Cicp::BT2100_PQ; // MC=9 (BT.2020 NCL)
+        let resolved = unspecified.resolve_matrix(Some(hint)).unwrap();
+        assert_eq!(resolved.color_primaries, 9);
+        assert_eq!(resolved.transfer_characteristics, 16);
+        assert_eq!(resolved.matrix_coefficients, 9);
+        assert!(resolved.full_range);
+    }
+
+    #[test]
+    fn resolve_matrix_errors_without_hint() {
+        // MC=2 with no hint must NOT silently derive — return the error.
+        let unspecified = Cicp::new(9, 16, 2, true);
+        let err = unspecified.resolve_matrix(None).unwrap_err();
+        assert_eq!(err.primaries, 9);
+        assert_eq!(err.transfer, 16);
+    }
+
+    #[test]
+    fn unspecified_matrix_error_display_includes_codes() {
+        let err = UnspecifiedMatrixError {
+            primaries: 9,
+            transfer: 16,
+        };
+        let s = format!("{err}");
+        assert!(s.contains("matrix_coefficients=2"));
+        assert!(s.contains("primaries=9"));
+        assert!(s.contains("transfer=16"));
     }
 
     #[test]

@@ -56,6 +56,35 @@ impl HdrMetadata {
             mastering_display: None,
         }
     }
+
+    /// Absolute peak luminance in cd/m² for this metadata.
+    ///
+    /// **`#[doc(hidden)]`**: HDR-IQA-specific niche surface — see
+    /// `zenpixels_convert::hdr_iqa` and imazen/zenmetrics#13.
+    ///
+    /// Resolves in order:
+    /// 1. `mastering_display.max_luminance` if present (explicit signaling).
+    /// 2. `content_light_level.max_content_light_level` if present and non-zero.
+    /// 3. Default from `TransferFunction::peak_luminance_nits`.
+    ///
+    /// Used by HDR-IQA front-ends to convert linear `[0, 1]` signal to
+    /// absolute luminance before PU encoding. The result is always
+    /// `> 0`; SDR / Unknown transfers report `1.0` (relative).
+    #[doc(hidden)]
+    #[must_use]
+    pub fn peak_luminance_nits(&self) -> f32 {
+        if let Some(md) = self.mastering_display
+            && md.max_luminance > 0.0
+        {
+            return md.max_luminance;
+        }
+        if let Some(cll) = self.content_light_level
+            && cll.max_content_light_level > 0
+        {
+            return f32::from(cll.max_content_light_level);
+        }
+        self.transfer.peak_luminance_nits()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +131,58 @@ pub fn exposure_tonemap(v: f32, exposure: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peak_luminance_prefers_mastering_display() {
+        // mastering_display.max_luminance wins when present.
+        let meta = HdrMetadata {
+            transfer: TransferFunction::Pq,
+            content_light_level: Some(ContentLightLevel::new(4_000, 400)),
+            mastering_display: Some(MasteringDisplay::HDR10_REFERENCE),
+        };
+        // HDR10_REFERENCE is 10 000 cd/m².
+        assert_eq!(meta.peak_luminance_nits(), 10_000.0);
+    }
+
+    #[test]
+    fn peak_luminance_falls_back_to_max_cll() {
+        // No mastering display → use max_content_light_level.
+        let meta = HdrMetadata {
+            transfer: TransferFunction::Pq,
+            content_light_level: Some(ContentLightLevel::new(1_400, 400)),
+            mastering_display: None,
+        };
+        assert_eq!(meta.peak_luminance_nits(), 1_400.0);
+    }
+
+    #[test]
+    fn peak_luminance_falls_back_to_transfer_default() {
+        // No mastering display, no CLL → use TransferFunction default.
+        let meta = HdrMetadata {
+            transfer: TransferFunction::Pq,
+            content_light_level: None,
+            mastering_display: None,
+        };
+        assert_eq!(meta.peak_luminance_nits(), 10_000.0);
+
+        let meta = HdrMetadata {
+            transfer: TransferFunction::Hlg,
+            content_light_level: None,
+            mastering_display: None,
+        };
+        assert_eq!(meta.peak_luminance_nits(), 1_000.0);
+    }
+
+    #[test]
+    fn peak_luminance_sdr_is_relative() {
+        // SDR metadata (no transfer hint) defaults to relative 1.0.
+        let meta = HdrMetadata {
+            transfer: TransferFunction::Srgb,
+            content_light_level: None,
+            mastering_display: None,
+        };
+        assert_eq!(meta.peak_luminance_nits(), 1.0);
+    }
 
     #[test]
     fn reinhard_boundaries() {
