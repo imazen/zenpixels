@@ -10,15 +10,61 @@ Two crates: **zenpixels** (types, buffers, metadata) and **zenpixels-convert** (
 
 ```toml
 # Types only — for codec crates
-zenpixels = "0.2"
+zenpixels = "0.2.11"
 
 # Types + conversion — for processing pipelines
-zenpixels-convert = "0.2"
+zenpixels-convert = "0.2.11"
 ```
 
 ## Quick start
 
-### Format conversion
+`zenpixels` gives you a [`PixelBuffer`] that carries its [`PixelDescriptor`]
+(format + color semantics) so the bytes never travel without a description of
+what they mean. Allocate one, hand the rows to a codec, recover the `Vec` when
+done. (`Rgba<u8>` comes from the [`rgb`](https://crates.io/crates/rgb) crate
+and needs the `rgb` feature; the descriptor-based path below works without it.)
+
+```rust
+use zenpixels::{PixelBuffer, PixelDescriptor};
+use rgb::Rgba;
+
+// Typed buffer — format enforced at compile time, SIMD-aligned rows.
+// A typed buffer knows its byte layout but leaves color semantics
+// Unknown: the `rgb` crate's `Rgba<u8>` says nothing about sRGB vs
+// linear, so stamp the encoding when you know it. `with_descriptor`
+// keeps the layout and only changes the transfer/primaries.
+let pixels = vec![Rgba::new(255u8, 128, 0, 255); 64 * 48];
+let buf = PixelBuffer::<Rgba<u8>>::from_pixels(pixels, 64, 48)?
+    .with_descriptor(PixelDescriptor::RGBA8_SRGB);
+
+// Row and byte access live on the view; `as_slice()` is the entry point.
+// `row(y)` is unpadded; `as_strided_bytes()` is the whole backing buffer
+// (stride included) — zero-copy passthrough to a codec or GPU upload.
+let view = buf.as_slice();
+let first_row: &[u8] = view.row(0);
+let strided: &[u8]   = view.as_strided_bytes();
+
+// Recover the allocation for pool reuse.
+let raw: Vec<u8> = buf.into_vec();
+# Ok::<(), zenpixels::At<zenpixels::BufferError>>(())
+```
+
+Don't know the format at compile time? Build a [`PixelDescriptor`] from a
+[`PixelFormat`] plus the color semantics, then use a type-erased
+`PixelBuffer`:
+
+```rust
+use zenpixels::{PixelBuffer, PixelDescriptor, PixelFormat, TransferFunction, ColorPrimaries};
+
+let desc = PixelDescriptor::RGB8_SRGB
+    .with_transfer(TransferFunction::Linear)   // same bytes, linear light
+    .with_primaries(ColorPrimaries::DisplayP3);
+
+let buf = PixelBuffer::new(64, 48, desc);      // panics on OOM; try_new for fallible
+assert_eq!(buf.descriptor().format, PixelFormat::Rgb8);
+```
+
+## Format conversion (zenpixels-convert)
 
 ```rust
 use zenpixels_convert::{RowConverter, best_match, ConvertIntent};
@@ -152,6 +198,8 @@ let typed = erased.try_typed::<Rgba<u8>>().unwrap();
 ```
 
 ### Data access
+
+Row and byte accessors live on `PixelSlice` / `PixelSliceMut`; reach them from a buffer via `as_slice()` / `as_slice_mut()`. `as_contiguous_bytes()`, `copy_to_contiguous_bytes()`, and the `rows(y, count)` / `crop_view(...)` windowing methods are also available directly on `PixelBuffer`.
 
 Row-level: `row(y)` returns pixel bytes without padding. `row_with_stride(y)` includes padding.
 
