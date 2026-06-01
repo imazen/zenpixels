@@ -195,110 +195,64 @@ pub(crate) fn f32_to_f16_bits(v: f32) -> u16 {
 }
 
 // ---------------------------------------------------------------------------
-// Slice-level f16 ↔ f32 conversion with archmage dispatch.
+// Slice-level f16 ↔ f32 conversion via magetypes `F16Convert`.
 //
-// Pattern: each tier implementation uses `#[archmage::arcane]` to mark
-// itself as safely callable via its CPU-capability token. The outer
-// dispatcher uses `archmage::incant!` to pick the best tier at runtime.
-// No `unsafe` in the source — `#[forbid(unsafe_code)]` compatible; the
-// macro-generated unsafe wrapping is internal to archmage.
+// magetypes 0.9.25 provides hardware-backed slice converters keyed on the
+// archmage SIMD token: native F16C (`vcvtph2ps`/`vcvtps2ph`, 8 lanes) on an
+// x86-64 `X64V3Token`, native NEON-fp16 (`vcvt_f32_f16`/`vcvt_f16_f32`, 4
+// lanes) on an aarch64 token whose tier presents `fp16` (rustversion-gated to
+// Rust ≥ 1.94 — below that, and on every other target, a branchless 4-lane
+// software kernel runs; our MSRV 1.89 is unaffected). It is verified
+// bit-identical to a scalar IEEE reference for all finite/subnormal/inf inputs
+// (NaN payloads may differ between HW and SW — both valid f32/f16 NaNs).
 //
-// Tier layout (archmage suffix convention):
-//   `{prefix}_scalar`  — always available
-//   `{prefix}_v3`      — x86-64 V3 (Haswell+, carries F16C + AVX2)
+// We dispatch the best token at runtime with `incant!` over `#[rite]`
+// forwarders, then call the token's `F16Convert` slice method. This replaces
+// the crate's former bespoke x86-only F16C path (which fell back to scalar on
+// aarch64) and removes the hand-written intrinsics. No `unsafe` in source.
 // ---------------------------------------------------------------------------
 
+use archmage::prelude::*;
+use magetypes::simd::F16Convert;
+
 /// Convert a slice of f16 bits into a slice of f32 values. Lossless. Uses
-/// 8-lane F16C (`vcvtph2ps`) on x86-64 CPUs that have it; scalar otherwise.
+/// native F16C (x86-64-v3) / NEON-fp16 (aarch64 ≥1.94) when available, else a
+/// branchless software kernel.
 pub(crate) fn f16_bits_to_f32_slice(src: &[u16], dst: &mut [f32]) {
     assert_eq!(
         src.len(),
         dst.len(),
         "f16_bits_to_f32_slice length mismatch"
     );
-    // Explicit tier list: only _v3 (x86-64 F16C) and _scalar are defined.
-    // The default incant! list also includes _neon and _wasm128, which we
-    // haven't implemented — NEON FP16 intrinsics require Rust 1.94 (>MSRV
-    // 1.89), so on aarch64 we fall back to scalar.
-    //
-    // The macro emits a `cfg(feature = "avx512")` check we don't participate
-    // in (opting into that feature would cascade V4-tier requirements into
-    // unrelated fast_gamut.rs incant! sites that don't define `_v4` variants).
-    #[allow(unexpected_cfgs)]
-    {
-        archmage::incant!(cvt_f16_to_f32(src, dst), [v3, scalar])
-    }
+    archmage::incant!(cvt_f16_to_f32(src, dst))
 }
 
 /// Convert a slice of f32 values into a slice of f16 bits with
-/// round-to-nearest-even. Uses 8-lane F16C (`vcvtps2ph`) on x86-64 CPUs
-/// that have it; scalar otherwise.
+/// round-to-nearest-even. Uses native F16C / NEON-fp16 when available, else a
+/// branchless software kernel.
 pub(crate) fn f32_to_f16_bits_slice(src: &[f32], dst: &mut [u16]) {
     assert_eq!(
         src.len(),
         dst.len(),
         "f32_to_f16_bits_slice length mismatch"
     );
-    #[allow(unexpected_cfgs)]
-    {
-        archmage::incant!(cvt_f32_to_f16(src, dst), [v3, scalar])
-    }
+    archmage::incant!(cvt_f32_to_f16(src, dst))
 }
 
-// -- Scalar tier -------------------------------------------------------------
-
-fn cvt_f16_to_f32_scalar(_tok: archmage::ScalarToken, src: &[u16], dst: &mut [f32]) {
-    for (s, d) in src.iter().zip(dst.iter_mut()) {
-        *d = f16_bits_to_f32(*s);
-    }
+/// Token-keyed forwarder to `F16Convert::f16_to_f32_slice`. `#[magetypes]`
+/// generates the per-tier variants (`_v3`/`_v4`/`_neon`/`_wasm128`/`_scalar`)
+/// that `incant!` dispatches to; each receives a concrete `Token` that
+/// implements `F16Convert`, so the trait method's own backend dispatch (F16C /
+/// NEON-fp16 / software) selects the hardware path for that tier.
+#[magetypes(v4, v3, neon, wasm128)]
+fn cvt_f16_to_f32(token: Token, src: &[u16], dst: &mut [f32]) {
+    token.f16_to_f32_slice(src, dst);
 }
 
-fn cvt_f32_to_f16_scalar(_tok: archmage::ScalarToken, src: &[f32], dst: &mut [u16]) {
-    for (s, d) in src.iter().zip(dst.iter_mut()) {
-        *d = f32_to_f16_bits(*s);
-    }
-}
-
-// -- x86-64 V3 tier (F16C, 8 lanes per conversion) ---------------------------
-
-#[cfg(target_arch = "x86_64")]
-#[archmage::arcane(import_intrinsics)]
-fn cvt_f16_to_f32_v3(_tok: archmage::X64V3Token, src: &[u16], dst: &mut [f32]) {
-    let n = src.len();
-    let chunks = n / 8;
-    for i in 0..chunks {
-        let s_chunk: &[u16; 8] = (&src[i * 8..i * 8 + 8]).try_into().unwrap();
-        let d_chunk: &mut [f32; 8] = (&mut dst[i * 8..i * 8 + 8]).try_into().unwrap();
-        // safe_unaligned_simd accepts any `&T: Is128BitsUnaligned` or
-        // `Is256BitsUnaligned` — [u16; 8] and [f32; 8] both qualify.
-        let packed = _mm_loadu_si128(s_chunk);
-        let lanes = _mm256_cvtph_ps(packed);
-        _mm256_storeu_ps(d_chunk, lanes);
-    }
-    let tail_start = chunks * 8;
-    for i in tail_start..n {
-        dst[i] = f16_bits_to_f32(src[i]);
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[archmage::arcane(import_intrinsics)]
-fn cvt_f32_to_f16_v3(_tok: archmage::X64V3Token, src: &[f32], dst: &mut [u16]) {
-    let n = src.len();
-    let chunks = n / 8;
-    for i in 0..chunks {
-        let s_chunk: &[f32; 8] = (&src[i * 8..i * 8 + 8]).try_into().unwrap();
-        let d_chunk: &mut [u16; 8] = (&mut dst[i * 8..i * 8 + 8]).try_into().unwrap();
-        let lanes = _mm256_loadu_ps(s_chunk);
-        // imm8 is a 3-bit rounding mode per Intel docs for VCVTPS2PH.
-        // _MM_FROUND_TO_NEAREST_INT = 0 → IEEE 754 round-to-nearest-even.
-        let packed = _mm256_cvtps_ph::<_MM_FROUND_TO_NEAREST_INT>(lanes);
-        _mm_storeu_si128(d_chunk, packed);
-    }
-    let tail_start = chunks * 8;
-    for i in tail_start..n {
-        dst[i] = f32_to_f16_bits(src[i]);
-    }
+/// Token-keyed forwarder to `F16Convert::f32_to_f16_slice`.
+#[magetypes(v4, v3, neon, wasm128)]
+fn cvt_f32_to_f16(token: Token, src: &[f32], dst: &mut [u16]) {
+    token.f32_to_f16_slice(src, dst);
 }
 
 #[cfg(test)]
