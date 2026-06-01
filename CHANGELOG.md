@@ -12,7 +12,7 @@
 
 ### zenpixels-convert — changed
 
-- Exclude `tests/` from the published package (540 KB of integration tests); benches remain (required by declared `[[bench]]` targets). (TBD)
+- Exclude `tests/` from the published package (540 KB of integration tests); benches remain (required by declared `[[bench]]` targets). (b60bf694)
 
 ## [0.2.11] - 2026-04-25
 
