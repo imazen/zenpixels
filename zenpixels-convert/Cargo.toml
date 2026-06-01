@@ -11,7 +11,6 @@ description = "Transfer-function-aware pixel conversion, gamut mapping, and code
 keywords = ["image", "pixel", "conversion", "srgb", "codec"]
 include = [
     "/src/**",
-    "/tests/**",
     "/benches/*.rs",
 ]
 

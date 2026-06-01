@@ -10,6 +10,10 @@
 
 - (none currently queued)
 
+### zenpixels-convert — changed
+
+- Exclude `tests/` from the published package (540 KB of integration tests); benches remain (required by declared `[[bench]]` targets). (TBD)
+
 ## [0.2.11] - 2026-04-25
 
 ### zenpixels — added
