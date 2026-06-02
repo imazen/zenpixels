@@ -17,6 +17,15 @@ include = [
 [features]
 default = ["std"]
 std = ["zenpixels/std", "linear-srgb/std", "garb/std"]
+# Unlocks the f16 16-wide AVX-512F summon-up inside the V3 `F16Convert` slice
+# entry (magetypes' `avx512` kernels are cfg-gated on this; it transitively
+# brings `archmage/avx512` for the V4 token tier). The f16 forwarders in
+# f16_scalar.rs carry `v4(cfg(avx512))` to pick up the wider path; every other
+# `incant!` site in fast_gamut.rs explicitly drops v4 with `[-v4]` (those
+# kernels are hardwired 8-wide AVX2 — no clean 16-wide variant, so no `_v4` is
+# defined for them). x86 without this feature still gets 8-wide F16C; aarch64
+# gets NEON-fp16 regardless.
+avx512 = ["magetypes/avx512", "archmage/avx512"]
 rgb = ["zenpixels/rgb", "dep:rgb"]
 imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]
@@ -41,12 +50,12 @@ linear-srgb = { version = "0.6.12", default-features = false, features = ["trans
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 garb = { version = "0.2.8", default-features = false, features = ["experimental"] }
-archmage = { version = "0.9.25", default-features = false }
+archmage = { version = "0.9.26", default-features = false }
 # 0.9.25 adds the F16Convert trait: hardware f16<->f32 slice converters with
 # native F16C (x86-64-v3) AND NEON-fp16 (aarch64, rustversion-gated, MSRV-safe)
 # backends + a branchless software fallback — replacing this crate's bespoke
 # x86-only F16C dispatch (which fell back to scalar on aarch64).
-magetypes = { version = "0.9.25", default-features = false }
+magetypes = { version = "0.9.26", default-features = false }
 paste = "1.0.15"
 once_cell = { version = "1.21.4", default-features = false, features = ["race", "alloc"] }
 whereat = { version = "0.1.5", default-features = false }

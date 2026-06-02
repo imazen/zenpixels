@@ -224,7 +224,7 @@ pub(crate) fn f16_bits_to_f32_slice(src: &[u16], dst: &mut [f32]) {
         dst.len(),
         "f16_bits_to_f32_slice length mismatch"
     );
-    archmage::incant!(cvt_f16_to_f32(src, dst))
+    archmage::incant!(cvt_f16_to_f32(src, dst), [-v4])
 }
 
 /// Convert a slice of f32 values into a slice of f16 bits with
@@ -236,21 +236,25 @@ pub(crate) fn f32_to_f16_bits_slice(src: &[f32], dst: &mut [u16]) {
         dst.len(),
         "f32_to_f16_bits_slice length mismatch"
     );
-    archmage::incant!(cvt_f32_to_f16(src, dst))
+    archmage::incant!(cvt_f32_to_f16(src, dst), [-v4])
 }
 
 /// Token-keyed forwarder to `F16Convert::f16_to_f32_slice`. `#[magetypes]`
-/// generates the per-tier variants (`_v3`/`_v4`/`_neon`/`_wasm128`/`_scalar`)
-/// that `incant!` dispatches to; each receives a concrete `Token` that
-/// implements `F16Convert`, so the trait method's own backend dispatch (F16C /
-/// NEON-fp16 / software) selects the hardware path for that tier.
-#[magetypes(v4, v3, neon, wasm128)]
+/// generates the `_v3`/`_neon`/`_wasm128`/`_scalar` variants `incant!`
+/// dispatches to. There is deliberately **no `_v4`**: AVX-512 tokens do not
+/// implement `F16Convert` (they cannot satisfy its `F32x4Convert` supertrait),
+/// and they don't need to — the V3 slice method's own `f16c_*_select` summons
+/// up to the 16-wide AVX-512F kernel at runtime when the CPU proves V4 and the
+/// `avx512` feature is built. So on a V4 machine `incant!` picks `_v3` and the
+/// wider path is still taken inside it. The call sites pass `[-v4]` to match.
+#[magetypes(v3, neon, wasm128)]
 fn cvt_f16_to_f32(token: Token, src: &[u16], dst: &mut [f32]) {
     token.f16_to_f32_slice(src, dst);
 }
 
-/// Token-keyed forwarder to `F16Convert::f32_to_f16_slice`.
-#[magetypes(v4, v3, neon, wasm128)]
+/// Token-keyed forwarder to `F16Convert::f32_to_f16_slice`. No `_v4` — the V3
+/// entry summons-up to AVX-512F internally; see [`cvt_f16_to_f32`].
+#[magetypes(v3, neon, wasm128)]
 fn cvt_f32_to_f16(token: Token, src: &[f32], dst: &mut [u16]) {
     token.f32_to_f16_slice(src, dst);
 }
