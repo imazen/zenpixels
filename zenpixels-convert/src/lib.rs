@@ -480,7 +480,8 @@ pub use gamut::{
 };
 
 // Re-export gamut-mapping strategies (detail-preserving narrowing).
-pub use gamut_clip::{GamutClip, GamutMapper, OklabSnap, PerChannelClip};
+// `GamutClip` itself comes from `zenpixels` via the glob re-export above.
+pub use gamut_clip::{GamutMapper, OklabSnap, PerChannelClip, mapper_for};
 
 // Re-export HDR types and tone mapping.
 #[cfg(feature = "std")]

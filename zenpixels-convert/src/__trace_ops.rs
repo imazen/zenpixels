@@ -90,6 +90,8 @@ fn step_name(step: &ConvertStep) -> &'static str {
         ConvertStep::OklabaToLinearRgba => "OklabaToLinearRgba",
         ConvertStep::GamutMatrixRgbF32(_) => "GamutMatrixRgbF32",
         ConvertStep::GamutMatrixRgbaF32(_) => "GamutMatrixRgbaF32",
+        ConvertStep::GamutClipRgbF32(_) => "GamutClipRgbF32",
+        ConvertStep::GamutClipRgbaF32(_) => "GamutClipRgbaF32",
         ConvertStep::FusedSrgbU8GamutRgb(_) => "FusedSrgbU8GamutRgb",
         ConvertStep::FusedSrgbU8GamutRgba(_) => "FusedSrgbU8GamutRgba",
         ConvertStep::FusedSrgbU16GamutRgb(_) => "FusedSrgbU16GamutRgb",

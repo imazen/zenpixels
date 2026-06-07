@@ -226,6 +226,14 @@ pub(super) fn apply_step_u8(
             gamut_matrix_rgba_f32(src, dst, w, flat);
         }
 
+        ConvertStep::GamutClipRgbF32(mapper) => {
+            gamut_clip_rgb_f32(src, dst, w, mapper.as_ref());
+        }
+
+        ConvertStep::GamutClipRgbaF32(mapper) => {
+            gamut_clip_rgba_f32(src, dst, w, mapper.as_ref());
+        }
+
         ConvertStep::FusedSrgbU8GamutRgb(flat) => {
             let m = [
                 [flat[0], flat[1], flat[2]],
@@ -2508,6 +2516,41 @@ fn gamut_matrix_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32
         d[base] = m[0] * r + m[1] * g + m[2] * b;
         d[base + 1] = m[3] * r + m[4] * g + m[5] * b;
         d[base + 2] = m[6] * r + m[7] * g + m[8] * b;
+        d[base + 3] = s[base + 3];
+    }
+}
+
+/// Snap a row of extended-range linear RGB f32 into the destination gamut via
+/// the given [`GamutMapper`] (in-gamut pixels pass through unchanged).
+fn gamut_clip_rgb_f32(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    mapper: &dyn crate::gamut_clip::GamutMapper,
+) {
+    let s: &[f32] = bytemuck::cast_slice(src);
+    let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
+    let n = width * 3;
+    d[..n].copy_from_slice(&s[..n]);
+    mapper.map_rgb_row(&mut d[..n]);
+}
+
+/// Snap a row of extended-range linear RGBA f32 into gamut (alpha passthrough).
+fn gamut_clip_rgba_f32(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    mapper: &dyn crate::gamut_clip::GamutMapper,
+) {
+    let s: &[f32] = bytemuck::cast_slice(src);
+    let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
+    for p in 0..width {
+        let base = p * 4;
+        let mut rgb = [s[base], s[base + 1], s[base + 2]];
+        mapper.map_rgb(&mut rgb);
+        d[base] = rgb[0];
+        d[base + 1] = rgb[1];
+        d[base + 2] = rgb[2];
         d[base + 3] = s[base + 3];
     }
 }

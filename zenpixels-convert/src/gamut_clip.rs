@@ -31,7 +31,7 @@ use alloc::boxed::Box;
 
 use crate::gamut::GamutMatrix;
 use crate::oklab::{lms_to_rgb_matrix, oklab_to_rgb, rgb_to_lms_matrix, rgb_to_oklab};
-use crate::ColorPrimaries;
+use crate::{ColorPrimaries, GamutClip};
 
 /// In-gamut tolerance, ≈ half an 8-bit code value in the linear `[0, 1]` range.
 /// A pixel within this of the cube is treated as representable (the final
@@ -161,34 +161,23 @@ impl GamutMapper for OklabSnap {
     }
 }
 
-/// Which gamut-mapping strategy to use when narrowing to a smaller destination.
+/// Resolve a [`GamutClip`] policy into a boxed [`GamutMapper`] for the
+/// destination `primaries`.
 ///
-/// The default is [`PerChannel`](GamutClip::PerChannel) so behavior is
-/// unchanged unless a caller opts in. [`from`](GamutClip::mapper) resolves the
-/// enum into a boxed [`GamutMapper`] for the destination primaries.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum GamutClip {
-    /// Independent per-channel clamp to `[0, 1]` (current behavior).
-    #[default]
-    PerChannel,
-    /// Oklab snap-to-boundary: preserve lightness + hue, clip only chroma.
-    Preserve,
-}
-
-impl GamutClip {
-    /// Resolve to a boxed [`GamutMapper`] for the destination `primaries`.
-    ///
-    /// Returns `None` when no extra mapping step is needed — either the variant
-    /// is [`PerChannel`](GamutClip::PerChannel) (the transfer-function encode
-    /// already clamps), or `Preserve` was requested for primaries without a
-    /// defined matrix (falls back to the encode's per-channel clamp).
-    #[must_use]
-    pub fn mapper(self, primaries: ColorPrimaries) -> Option<Box<dyn GamutMapper>> {
-        match self {
-            GamutClip::PerChannel => None,
-            GamutClip::Preserve => {
-                OklabSnap::new(primaries).map(|s| Box::new(s) as Box<dyn GamutMapper>)
-            }
+/// Returns `None` when no extra mapping step is needed — either the policy is
+/// [`GamutClip::PerChannel`] (the transfer-function encode already clamps), or
+/// [`GamutClip::Preserve`] was requested for primaries without a defined matrix
+/// (falls back to the encode's per-channel clamp).
+///
+/// The [`GamutClip`] enum itself lives in `zenpixels` so it can be a field of
+/// `ConvertOptions`; this resolver lives here because the snap needs the Oklab
+/// matrices defined in this crate.
+#[must_use]
+pub fn mapper_for(clip: GamutClip, primaries: ColorPrimaries) -> Option<Box<dyn GamutMapper>> {
+    match clip {
+        GamutClip::PerChannel => None,
+        GamutClip::Preserve => {
+            OklabSnap::new(primaries).map(|s| Box::new(s) as Box<dyn GamutMapper>)
         }
     }
 }
@@ -286,11 +275,11 @@ mod tests {
         assert_eq!(&row[3..6], &[0.5, 0.2, 0.1]); // in-gamut pixel untouched
     }
 
-    /// The `GamutClip` enum resolves to the expected mapper presence.
+    /// The `GamutClip` policy resolves to the expected mapper presence.
     #[test]
     fn gamut_clip_enum_resolves() {
-        assert!(GamutClip::PerChannel.mapper(ColorPrimaries::Bt709).is_none());
-        assert!(GamutClip::Preserve.mapper(ColorPrimaries::Bt709).is_some());
+        assert!(mapper_for(GamutClip::PerChannel, ColorPrimaries::Bt709).is_none());
+        assert!(mapper_for(GamutClip::Preserve, ColorPrimaries::Bt709).is_some());
         assert_eq!(GamutClip::default(), GamutClip::PerChannel);
     }
 }

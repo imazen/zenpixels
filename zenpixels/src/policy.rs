@@ -97,6 +97,29 @@ impl LumaCoefficients {
     }
 }
 
+/// How out-of-gamut colors are mapped into the destination gamut when a
+/// wide-gamut image is narrowed (e.g. Display P3 → sRGB) and encoded to a
+/// format that can't represent extended range (u8/u16).
+///
+/// Only affects pixels that fall outside the destination's `[0, 1]^3` cube
+/// after the primaries conversion. In-gamut pixels are unaffected either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum GamutClip {
+    /// Independent per-channel clamp to `[0, 1]` (the long-standing default).
+    ///
+    /// Cheap, but for a saturated out-of-gamut color it shifts hue and crushes
+    /// the lightness gradation — a Display P3 red flattens to a flat sRGB red,
+    /// losing the shading that was present in the source.
+    #[default]
+    PerChannel,
+    /// Perceptual snap-to-boundary: preserve the color's lightness and hue,
+    /// reducing only its chroma until it reaches the destination gamut boundary.
+    ///
+    /// Keeps the detail (shading) in clipped highlights at the cost of some
+    /// saturation. Resolved to an Oklab-based mapper by `zenpixels-convert`.
+    Preserve,
+}
+
 /// Explicit options for pixel format conversion. All lossy
 /// operations require a policy choice — no silent defaults.
 ///
@@ -142,6 +165,15 @@ pub struct ConvertOptions {
     /// Only affects f32 intermediate conversions. u8/u16 outputs always
     /// clip since those formats can't represent out-of-gamut values.
     pub clip_out_of_gamut: bool,
+    /// How out-of-gamut colors are mapped when narrowing to a smaller
+    /// destination gamut (e.g. Display P3 → sRGB) for a clamped output.
+    ///
+    /// Defaults to [`GamutClip::PerChannel`] (the long-standing per-channel
+    /// clamp). Set [`GamutClip::Preserve`] to keep lightness + hue and snap
+    /// only chroma to the gamut boundary, preserving shading detail in clipped
+    /// highlights. Only `zenpixels-convert` acts on this; the conversion is
+    /// otherwise unchanged.
+    pub gamut_clip: GamutClip,
 }
 
 impl ConvertOptions {
@@ -161,6 +193,7 @@ impl ConvertOptions {
             depth_policy: DepthPolicy::Forbid,
             luma: None,
             clip_out_of_gamut: true,
+            gamut_clip: GamutClip::PerChannel,
         }
     }
 
@@ -177,6 +210,7 @@ impl ConvertOptions {
             depth_policy: DepthPolicy::Round,
             luma: Some(LumaCoefficients::Bt709),
             clip_out_of_gamut: true,
+            gamut_clip: GamutClip::PerChannel,
         }
     }
 
@@ -203,6 +237,15 @@ impl ConvertOptions {
     /// (`false`). u8/u16 outputs always clip.
     pub const fn with_clip_out_of_gamut(mut self, clip: bool) -> Self {
         self.clip_out_of_gamut = clip;
+        self
+    }
+
+    /// Set how out-of-gamut colors are mapped when narrowing to a smaller
+    /// destination gamut. [`GamutClip::PerChannel`] (default) clamps each
+    /// channel; [`GamutClip::Preserve`] keeps lightness + hue and snaps only
+    /// chroma to the gamut boundary.
+    pub const fn with_gamut_clip(mut self, gamut_clip: GamutClip) -> Self {
+        self.gamut_clip = gamut_clip;
         self
     }
 
@@ -330,6 +373,7 @@ mod tests {
             depth_policy: DepthPolicy::Round,
             luma: Some(LumaCoefficients::Bt709),
             clip_out_of_gamut: true,
+            gamut_clip: GamutClip::PerChannel,
         };
         #[allow(clippy::clone_on_copy)]
         let opts2 = opts.clone();
@@ -358,6 +402,7 @@ mod tests {
             depth_policy: DepthPolicy::Forbid,
             luma: None,
             clip_out_of_gamut: true,
+            gamut_clip: GamutClip::PerChannel,
         };
         let mut h = std::hash::DefaultHasher::new();
         opts.hash(&mut h);

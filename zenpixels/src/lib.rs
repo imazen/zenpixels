@@ -111,7 +111,9 @@ pub use hdr::{ContentLightLevel, MasteringDisplay};
 // Re-export GrayAlpha pixel types at crate root.
 pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
 
-pub use policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GrayExpand, LumaCoefficients};
+pub use policy::{
+    AlphaPolicy, ConvertOptions, DepthPolicy, GamutClip, GrayExpand, LumaCoefficients,
+};
 
 // Re-export whereat types for error tracing.
 pub use whereat::{At, ResultAtExt, at};

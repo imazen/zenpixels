@@ -5,11 +5,13 @@
 //! no allocation. Multi-step plans use [`ConvertScratch`] ping-pong
 //! buffers to avoid per-row heap allocation in streaming loops.
 
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::min;
 
-use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy, LumaCoefficients};
+use crate::gamut_clip::GamutMapper;
+use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GamutClip, LumaCoefficients};
 use crate::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, ConvertError, PixelDescriptor,
     TransferFunction,
@@ -160,6 +162,15 @@ pub(crate) enum ConvertStep {
     GamutMatrixRgbF32([f32; 9]),
     /// Apply a 3×3 gamut matrix to linear RGBA f32 (4 channels, alpha passthrough).
     GamutMatrixRgbaF32([f32; 9]),
+    /// Map extended-range linear RGB f32 into the destination `[0, 1]^3` gamut
+    /// via a pluggable [`GamutMapper`] (e.g. Oklab snap-to-boundary).
+    ///
+    /// Inserted right after the gamut matrix when `GamutClip::Preserve` is
+    /// requested, so out-of-gamut colors keep lightness + hue while only their
+    /// chroma is clipped — before the destination transfer-function encode.
+    GamutClipRgbF32(Arc<dyn GamutMapper>),
+    /// Map extended-range linear RGBA f32 into gamut (alpha passthrough).
+    GamutClipRgbaF32(Arc<dyn GamutMapper>),
     /// Fused u8-sRGB RGB primaries conversion: LUT linearize → SIMD matrix →
     /// SIMD f32→i32 → LUT encode, in one pass. Replaces the 3-step sequence
     /// `[SrgbU8ToLinearF32, GamutMatrixRgbF32(m), LinearF32ToSrgbU8]`.
@@ -238,6 +249,8 @@ impl core::fmt::Debug for ConvertStep {
             Self::OklabaToLinearRgba => f.write_str("OklabaToLinearRgba"),
             Self::GamutMatrixRgbF32(m) => f.debug_tuple("GamutMatrixRgbF32").field(m).finish(),
             Self::GamutMatrixRgbaF32(m) => f.debug_tuple("GamutMatrixRgbaF32").field(m).finish(),
+            Self::GamutClipRgbF32(_) => f.write_str("GamutClipRgbF32"),
+            Self::GamutClipRgbaF32(_) => f.write_str("GamutClipRgbaF32"),
             Self::FusedSrgbU8GamutRgb(m) => f.debug_tuple("FusedSrgbU8GamutRgb").field(m).finish(),
             Self::FusedSrgbU8GamutRgba(m) => {
                 f.debug_tuple("FusedSrgbU8GamutRgba").field(m).finish()
@@ -704,6 +717,19 @@ impl ConvertPlan {
                 }
                 _ => {}
             }
+        }
+
+        // Perceptual gamut clip: when narrowing across primaries with
+        // `GamutClip::Preserve`, insert a clip step on the extended-range linear
+        // destination RGB (right after the gamut matrix, before the TF encode),
+        // so out-of-gamut colors keep lightness + hue while only their chroma is
+        // snapped to the destination boundary. `PerChannel` (the default) leaves
+        // the plan untouched — the encode's per-channel clamp is what we want.
+        if options.gamut_clip != GamutClip::PerChannel
+            && let Some(mapper) = crate::gamut_clip::mapper_for(options.gamut_clip, to.primaries)
+        {
+            let mapper: Arc<dyn GamutMapper> = Arc::from(mapper);
+            insert_gamut_clip_steps(&mut plan.steps, &mapper);
         }
 
         Ok(plan)
@@ -1414,6 +1440,59 @@ pub(crate) fn convert_row_buffered(
 /// Check if two steps are inverses that cancel each other.
 /// Collapse `[SrgbU8ToLinearF32, GamutMatrix*F32(m), LinearF32ToSrgbU8]`
 /// into a single fused matlut step. Mutates in place.
+/// Insert a perceptual gamut-clip step after each gamut-matrix step so the
+/// mapper acts on extended-range linear destination RGB before the transfer
+/// encode. Fused matrix steps are un-fused into their `[linearize, matrix,
+/// clip, encode]` sequence (the linearize/encode bracket round-trips alpha
+/// exactly, so RGBA stays correct).
+///
+/// Two cases are deliberately not rewritten:
+/// - [`ConvertStep::FusedSrgbU8ToLinearF32Rgb`] outputs extended-range linear
+///   f32; its consumer wants the unclipped values, so snapping would be wrong.
+/// - [`ConvertStep::FusedSrgbU16GamutRgb`] has no scalar u16↔linear-f32 steps to
+///   un-fuse through yet, so it keeps the per-channel clamp (documented gap;
+///   8-bit is the common narrowing target).
+fn insert_gamut_clip_steps(steps: &mut Vec<ConvertStep>, mapper: &Arc<dyn GamutMapper>) {
+    let mut i = 0;
+    while i < steps.len() {
+        let replacement: Option<Vec<ConvertStep>> = match &steps[i] {
+            ConvertStep::GamutMatrixRgbF32(m) => Some(vec![
+                ConvertStep::GamutMatrixRgbF32(*m),
+                ConvertStep::GamutClipRgbF32(mapper.clone()),
+            ]),
+            ConvertStep::GamutMatrixRgbaF32(m) => Some(vec![
+                ConvertStep::GamutMatrixRgbaF32(*m),
+                ConvertStep::GamutClipRgbaF32(mapper.clone()),
+            ]),
+            ConvertStep::FusedSrgbU8GamutRgb(m) => Some(vec![
+                ConvertStep::SrgbU8ToLinearF32,
+                ConvertStep::GamutMatrixRgbF32(*m),
+                ConvertStep::GamutClipRgbF32(mapper.clone()),
+                ConvertStep::LinearF32ToSrgbU8,
+            ]),
+            ConvertStep::FusedSrgbU8GamutRgba(m) => Some(vec![
+                ConvertStep::SrgbU8ToLinearF32,
+                ConvertStep::GamutMatrixRgbaF32(*m),
+                ConvertStep::GamutClipRgbaF32(mapper.clone()),
+                ConvertStep::LinearF32ToSrgbU8,
+            ]),
+            ConvertStep::FusedLinearF32ToSrgbU8Rgb(m) => Some(vec![
+                ConvertStep::GamutMatrixRgbF32(*m),
+                ConvertStep::GamutClipRgbF32(mapper.clone()),
+                ConvertStep::LinearF32ToSrgbU8,
+            ]),
+            _ => None,
+        };
+        if let Some(rep) = replacement {
+            let n = rep.len();
+            steps.splice(i..=i, rep);
+            i += n;
+        } else {
+            i += 1;
+        }
+    }
+}
+
 fn fuse_matlut_patterns(steps: &mut Vec<ConvertStep>) {
     let mut i = 0;
     while i + 2 < steps.len() {
@@ -1691,6 +1770,8 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.alpha(),
             TransferFunction::Linear,
         ),
+        // Gamut clip is in-place on linear f32: descriptor is unchanged.
+        ConvertStep::GamutClipRgbF32(_) | ConvertStep::GamutClipRgbaF32(_) => current,
         // Fused steps: u8 sRGB in, u8 sRGB out (same layout, same alpha).
         ConvertStep::FusedSrgbU8GamutRgb(_) | ConvertStep::FusedSrgbU8GamutRgba(_) => {
             PixelDescriptor::new(
