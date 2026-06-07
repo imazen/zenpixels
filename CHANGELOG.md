@@ -10,6 +10,14 @@
 
 - (none currently queued)
 
+### zenpixels — added
+
+- **`GamutClip` enum + `ConvertOptions::gamut_clip` field** (with `with_gamut_clip` builder). Controls how out-of-gamut colors are mapped when narrowing to a smaller destination gamut (e.g. Display P3 → sRGB). Defaults to `GamutClip::PerChannel` (the long-standing per-channel clamp), so behavior is unchanged unless a caller opts in. Non-breaking: new variant-defaulted field on a `#[non_exhaustive]` struct. (e579fd1e, 97b31e9e)
+
+### zenpixels-convert — added
+
+- **`GamutMapper` trait + Oklab snap-to-boundary gamut mapping** (`OklabSnap`, `PerChannelClip`, `mapper_for`). Detail-preserving alternative to the per-channel hard clip: in-gamut pixels pass through untouched, while out-of-gamut pixels keep their Oklab lightness and hue with only chroma snapped to the destination boundary. Wired through `ConvertOptions::gamut_clip = GamutClip::Preserve`; the clip step acts on extended-range linear destination RGB right after the gamut matrix (un-fusing the fused u8 matrix steps to expose the seam), so two distinct bright P3 reds that the per-channel clip collapses to the same flat sRGB red stay distinct — the washed-out-poppy fix. (e579fd1e, 97b31e9e)
+
 ### zenpixels-convert — changed
 
 - Exclude `tests/` from the published package (540 KB of integration tests); benches remain (required by declared `[[bench]]` targets). (b60bf694)
