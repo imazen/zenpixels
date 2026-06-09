@@ -1986,7 +1986,10 @@ pub(crate) fn convert_u8_rgba_simd_lut(
     debug_assert_eq!(src.len(), dst.len());
     #[cfg(target_arch = "x86_64")]
     {
-        incant!(convert_u8_rgba_lut_simd(m, src, dst, lin_lut, enc_u8), [-v4]);
+        incant!(
+            convert_u8_rgba_lut_simd(m, src, dst, lin_lut, enc_u8),
+            [-v4]
+        );
         return;
     }
     #[cfg(not(target_arch = "x86_64"))]

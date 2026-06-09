@@ -9,9 +9,7 @@
 //! `PerChannel` for the out-of-gamut pixel and `differs_for_out_of_gamut_red`
 //! would fail loudly.
 
-use zenpixels_convert::{
-    ColorPrimaries, ConvertOptions, GamutClip, PixelDescriptor, RowConverter,
-};
+use zenpixels_convert::{ColorPrimaries, ConvertOptions, GamutClip, PixelDescriptor, RowConverter};
 
 /// Display P3 source: u8, sRGB transfer, P3 primaries.
 fn p3_rgb8() -> PixelDescriptor {
@@ -111,7 +109,10 @@ fn distinct_reds_survive_snap_but_collapse_under_hard_clip() {
     let b = [255u8, 40, 30];
     let hard_a = convert(a, GamutClip::PerChannel);
     let hard_b = convert(b, GamutClip::PerChannel);
-    assert_eq!(hard_a, hard_b, "hard clip is expected to collapse these reds");
+    assert_eq!(
+        hard_a, hard_b,
+        "hard clip is expected to collapse these reds"
+    );
 
     let soft_a = convert(a, GamutClip::Preserve);
     let soft_b = convert(b, GamutClip::Preserve);

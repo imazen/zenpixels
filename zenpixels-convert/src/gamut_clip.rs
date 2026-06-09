@@ -196,7 +196,12 @@ mod tests {
     #[test]
     fn in_gamut_pixel_untouched() {
         let clip = srgb();
-        for px in [[0.5, 0.2, 0.1], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [0.8, 0.05, 0.4]] {
+        for px in [
+            [0.5, 0.2, 0.1],
+            [0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [0.8, 0.05, 0.4],
+        ] {
             let mut rgb = px;
             clip.map_rgb(&mut rgb);
             assert_eq!(rgb, px, "in-gamut pixel changed");
@@ -219,7 +224,10 @@ mod tests {
         clip.map_rgb(&mut rgb);
 
         // now representable
-        assert!(rgb.iter().all(|&v| (0.0..=1.0).contains(&v)), "not in gamut: {rgb:?}");
+        assert!(
+            rgb.iter().all(|&v| (0.0..=1.0).contains(&v)),
+            "not in gamut: {rgb:?}"
+        );
         // it WAS out of gamut, so it must have moved
         assert!(rgb != src);
 

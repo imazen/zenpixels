@@ -19,9 +19,7 @@
 use std::fs;
 use std::io::Write;
 
-use zenpixels_convert::{
-    ColorPrimaries, ConvertOptions, GamutClip, PixelDescriptor, RowConverter,
-};
+use zenpixels_convert::{ColorPrimaries, ConvertOptions, GamutClip, PixelDescriptor, RowConverter};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -64,9 +62,18 @@ fn main() {
         }
     }
     let pct = |c: usize| 100.0 * c as f64 / n as f64;
-    println!("Out of sRGB gamut (snap moved):     {out_of_gamut:>10} px ({:.2}%)", pct(out_of_gamut));
-    println!("Hard-clip pinned a channel to 255:  {hard_pinned:>10} px ({:.2}%)", pct(hard_pinned));
-    println!("Detail-collapse (255 & 0 crushed):  {collapse_pairs:>10} px ({:.2}%)", pct(collapse_pairs));
+    println!(
+        "Out of sRGB gamut (snap moved):     {out_of_gamut:>10} px ({:.2}%)",
+        pct(out_of_gamut)
+    );
+    println!(
+        "Hard-clip pinned a channel to 255:  {hard_pinned:>10} px ({:.2}%)",
+        pct(hard_pinned)
+    );
+    println!(
+        "Detail-collapse (255 & 0 crushed):  {collapse_pairs:>10} px ({:.2}%)",
+        pct(collapse_pairs)
+    );
 
     write_ppm(&format!("{prefix}_hardclip.ppm"), w, h, &hard).unwrap();
     write_ppm(&format!("{prefix}_preserve.ppm"), w, h, &soft).unwrap();
