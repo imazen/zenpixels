@@ -18,6 +18,12 @@
 
 - **`GamutMapper` trait + Oklab snap-to-boundary gamut mapping** (`OklabSnap`, `PerChannelClip`, `mapper_for`). Detail-preserving alternative to the per-channel hard clip: in-gamut pixels pass through untouched, while out-of-gamut pixels keep their Oklab lightness and hue with only chroma snapped to the destination boundary. Wired through `ConvertOptions::gamut_clip = GamutClip::Preserve`; the clip step acts on extended-range linear destination RGB right after the gamut matrix (un-fusing the fused u8 matrix steps to expose the seam), so two distinct bright P3 reds that the per-channel clip collapses to the same flat sRGB red stay distinct — the washed-out-poppy fix. (e579fd1e, 97b31e9e)
 
+- **`icc_profiles::synthesize_icc_for_cicp(Cicp) -> SynthesizedIcc`** — transfer-aware ICC synthesis for a full CICP, with a typed `SynthesizedIcc` outcome (`#[non_exhaustive]`: `Profile(Cow)` / `NotNeeded` / `NeedsCms` / `CmsUnsupported`) that distinguishes "got bytes" from "needs a CMS", "CMS couldn't", and "sRGB default, none needed". The verb name reflects that it *creates* a profile (bundled fast-path, else generated via the `cms-moxcms` feature). Unlike `icc_profile_for_primaries` (primaries-only, which would hand a BT.2020-**PQ** source the SDR-TRC Rec.2020 profile) it matches the TRC and never mis-tags: the `cms-moxcms` path gates on a populated `red_trc` so a `Reserved`/`Unspecified` code yields `CmsUnsupported` rather than a degenerate profile. (#37)
+
+### zenpixels-convert — deprecated
+
+- **`icc_profiles::icc_profile_for_primaries`** — transfer-blind (returns a gamut's bundled SDR profile regardless of the actual TRC, so it can mis-tag an HDR source). Use `synthesize_icc_for_cicp` for transfer-aware synthesis, or embed a bundled const (`DISPLAY_P3_V4` / `REC2020_V4` / `ADOBE_RGB`) directly. (#37)
+
 ### zenpixels-convert — changed
 
 - Exclude `tests/` from the published package (540 KB of integration tests); benches remain (required by declared `[[bench]]` targets). (b60bf694)
