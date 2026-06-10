@@ -93,8 +93,17 @@ pub struct LoadBearingReport {
     /// F16, etc.).
     pub uses_low_bits: Option<bool>,
 
-    /// `Some(true)` → alpha varies but stays in `{0, channel_max}`;
-    /// codec can use binary-mask alpha (PNG `tRNS`, GIF transparency).
+    /// `Some(true)` → every alpha sample is exactly 0 or channel-max.
+    /// Enables single-transparent-slot encodings: GIF's transparent
+    /// index, and PNG color-key `tRNS` on *truecolor/gray* (given a
+    /// key color no opaque pixel uses). Indexed-PNG `tRNS` is NOT
+    /// gated on this — it carries full 8-bit alpha per palette entry;
+    /// there the value of binary alpha is palette budget (every
+    /// transparent pixel can share one entry). Also a sane default
+    /// hint to encode alpha planes losslessly (AVIF/JXL/WebP): a
+    /// two-level plane is already near its rate floor, so quantizing
+    /// it buys little and fringes hard matte edges — while soft alpha
+    /// (`Some(false)`) remains a legitimate quantization target.
     /// `Some(false)` → alpha varies through intermediate values; full
     /// alpha channel needed. `None` → either no alpha channel, or
     /// predicate didn't run.
