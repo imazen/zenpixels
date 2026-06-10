@@ -14,6 +14,8 @@
 
 - 32-bit overflow safety in `PixelBuffer` constructors and `crop_copy` — checked arithmetic guards `width × height × bytes_per_pixel` from wrapping on 32-bit targets. (#31, 4ebad3e)
 
+## [0.2.12] - 2026-06-10
+
 ### zenpixels-convert — added
 
 - **`icc_profiles::synthesize_icc_for_cicp(Cicp) -> SynthesizedIcc`** — transfer-aware ICC synthesis for a full CICP, with a typed `SynthesizedIcc` outcome (`#[non_exhaustive]`: `Profile(Cow)` / `NotNeeded` / `NeedsCms` / `CmsUnsupported`) that distinguishes "got bytes" from "needs a CMS", "CMS couldn't", and "sRGB default, none needed". The verb name reflects that it *creates* a profile (bundled fast-path, else generated via the `cms-moxcms` feature). Unlike `icc_profile_for_primaries` (primaries-only, which would hand a BT.2020-**PQ** source the SDR-TRC Rec.2020 profile) it matches the TRC and never mis-tags: the `cms-moxcms` path gates on a populated `red_trc` so a `Reserved`/`Unspecified` code yields `CmsUnsupported` rather than a degenerate profile. (#37)
