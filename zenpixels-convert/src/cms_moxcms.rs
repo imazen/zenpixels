@@ -342,6 +342,13 @@ fn source_to_moxcms_profile(
 /// so the caller carries the color via CICP instead of embedding a wrong profile.
 /// Matrix coefficients are irrelevant to an RGB ICC, so they're defaulted rather
 /// than required.
+///
+/// Test-only: the bundled blob (generated from this exact logic at build time) is
+/// the runtime coverage source, so `synthesize_icc_for_cicp` no longer calls this.
+/// It's retained as the oracle the `blob_decodes_byte_identical_to_moxcms` guard
+/// compares the committed blob against — catching a moxcms version bump that would
+/// shift the canonical bytes.
+#[cfg(test)]
 pub(crate) fn icc_bytes_for_cicp(cicp: &Cicp) -> Option<alloc::vec::Vec<u8>> {
     // `try_from` on these moxcms enums never errors: every u8 maps to a variant,
     // with reserved/unassigned codes folding into `Reserved`. So these conversions
