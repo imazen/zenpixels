@@ -993,6 +993,25 @@ impl<'a, P> PixelSliceMut<'a, P> {
         self.data
     }
 
+    /// Consume the slice, returning the full backing bytes (including any
+    /// stride padding) with the original `'a` lifetime.
+    ///
+    /// This is the escape hatch for in-place transforms that change
+    /// bytes-per-pixel and therefore cannot keep the current descriptor:
+    /// take the bytes, rewrite the rows, then re-wrap with
+    /// [`PixelSliceMut::new`] under the new descriptor.
+    /// `zenpixels-convert`'s in-place load-bearing reduction is the
+    /// canonical consumer.
+    ///
+    /// (The immutable counterpart is [`PixelSlice::as_strided_bytes`],
+    /// which can hand out `&'a [u8]` without consuming; a mutable
+    /// reborrow can't, hence `self` here.)
+    #[inline]
+    #[must_use]
+    pub fn into_strided_bytes(self) -> &'a mut [u8] {
+        self.data
+    }
+
     /// Pixel bytes for row `y` (immutable, no padding).
     ///
     /// # Panics

@@ -12,7 +12,11 @@
 //!   * [`PixelSliceLoadBearingExt::determine_load_bearing`] -- analysis,
 //!     no buffer modification
 //!   * [`PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format`]
-//!     -- analysis + buffer rewrite, `None` when no narrowing is possible
+//!     -- analysis + buffer rewrite into a fresh allocation, `None` when
+//!     no narrowing is possible
+//!   * [`PixelSliceMutLoadBearingExt::reduce_to_load_bearing_format_in_place`]
+//!     -- analysis + buffer rewrite into the buffer's own bytes (no
+//!     allocation), returning a re-described [`PixelSliceMut`]
 //!
 //! Every reduction this module reports is **bit-exact invertible**: drop
 //! an all-max alpha lane and a decoder resynthesizes it; collapse
@@ -28,8 +32,11 @@
 #[cfg(test)]
 use alloc::vec::Vec;
 
+use alloc::sync::Arc;
+
 use zenpixels::{
-    AlphaMode, ChannelLayout, ChannelType, PixelBuffer, PixelDescriptor, PixelFormat, PixelSlice,
+    AlphaMode, ChannelLayout, ChannelType, ColorContext, PixelBuffer, PixelDescriptor, PixelFormat,
+    PixelSlice, PixelSliceMut,
 };
 
 use crate::scan::{self, FusedRequest};
@@ -159,11 +166,13 @@ impl LoadBearingReport {
 // ── Extension trait on PixelSlice ──────────────────────────────────────
 
 mod sealed {
-    /// Seals [`super::PixelSliceLoadBearingExt`] to `PixelSlice` -- the
-    /// analysis is keyed off `PixelSlice`'s descriptor + row iteration
+    /// Seals [`super::PixelSliceLoadBearingExt`] /
+    /// [`super::PixelSliceMutLoadBearingExt`] to the two slice types --
+    /// the analysis is keyed off their descriptor + row iteration
     /// contract, so external impls have nothing valid to implement.
     pub trait Sealed {}
     impl<P> Sealed for zenpixels::PixelSlice<'_, P> {}
+    impl<P> Sealed for zenpixels::PixelSliceMut<'_, P> {}
 }
 
 /// Run all relevant load-bearing predicates against a [`PixelSlice`] and
@@ -317,7 +326,15 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
 
     fn try_reduce_to_load_bearing_format(&self) -> Option<PixelBuffer> {
         let src = self.descriptor();
-        let report = self.determine_load_bearing();
+        let mut report = self.determine_load_bearing();
+        // Color-signaling gate: collapsing RGB(A) to gray would pair an
+        // attached ICC profile (RGB device-class) with a Gray layout --
+        // invalid signaling that consumers like libpng reject. Mask the
+        // chroma signal for the *rewrite* instead of dropping the
+        // profile; see [`chroma_collapse_signal_safe`].
+        if !chroma_collapse_signal_safe(self.color_context()) {
+            report.uses_chroma = None;
+        }
         let target = report.apply_to(&src);
         if target == src {
             return None;
@@ -327,7 +344,274 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
         // no per-pixel Vec growth anywhere in the rewrite.
         let mut out = PixelBuffer::try_new(self.width(), self.rows(), target).ok()?;
         transform_into(self, &src, &target, &mut out)?;
-        Some(out)
+        // Every reduction is value-exact and (with the gate above)
+        // color-class-preserving, so the source's ICC/CICP metadata
+        // stays valid for the reduced buffer and must travel with it.
+        Some(match self.color_context() {
+            Some(ctx) => out.with_color_context(ctx.clone()),
+            None => out,
+        })
+    }
+}
+
+/// Whether the chroma-collapse rewrite (RGB(A)/BGRA -> Gray/GrayAlpha)
+/// is allowed under this buffer's color signaling.
+///
+/// An ICC profile's header declares a device color space class
+/// (`'RGB '`, `'GRAY'`, ...); pairing a Gray-layout image with an
+/// RGB-class profile is invalid signaling (libpng, among others,
+/// rejects it). Until a gray-variant synthesis exists (extract the
+/// profile's neutral-axis TRC + white point into a `GRAY` profile --
+/// moxcms can author these via `gray_trc`), the rewrite keeps the RGB
+/// form whenever ICC bytes are attached. Alpha-drop and U16 -> U8
+/// narrowing are class-preserving and stay available.
+///
+/// CICP has no class to violate: H.273 primaries (the white point) and
+/// transfer characteristics remain meaningful for single-channel data,
+/// and matrix coefficients describe a YCbCr<->RGB mapping that gray
+/// consumers ignore -- so a CICP-only context carries over unchanged.
+///
+/// Note this gates only the buffer-rewriting APIs. The
+/// [`LoadBearingReport`] still reports measured chroma truth; encoders
+/// with their own color-emit pipelines can act on it and synthesize /
+/// re-resolve signaling themselves.
+fn chroma_collapse_signal_safe(ctx: Option<&Arc<ColorContext>>) -> bool {
+    ctx.is_none_or(|c| c.icc.is_none())
+}
+
+// ── In-place reduction on PixelSliceMut ────────────────────────────────
+
+/// In-place load-bearing reduction: rewrite a [`PixelSliceMut`]'s own
+/// bytes to the narrowest justified format -- no allocation.
+///
+/// Sealed: implemented for [`PixelSliceMut`] only.
+pub trait PixelSliceMutLoadBearingExt<'a>: sealed::Sealed {
+    /// Run the load-bearing analysis and rewrite this buffer in place,
+    /// returning a [`PixelSliceMut`] over the same backing memory with
+    /// the narrowed descriptor (type-erased) and a tight row stride
+    /// (`width * bytes_per_pixel`). When no reduction applies, the
+    /// slice comes back unchanged -- compare descriptors to detect it.
+    ///
+    /// Every rewrite is the same bit-exact byte selection
+    /// [`PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format`]
+    /// performs; only the destination is the buffer itself. Rows are
+    /// compacted front-to-back (narrowing means every write lands at or
+    /// before the bytes it just consumed), so strided input works and
+    /// the result is always tightly packed.
+    ///
+    /// `force_alpha_restructuring` controls the one reduction that has a
+    /// tag-only alternative:
+    ///
+    /// * `false` -- a provably non-load-bearing alpha lane is **not**
+    ///   compacted away. A scanned-opaque `Straight`/`Premultiplied`
+    ///   buffer is re-tagged [`AlphaMode::Opaque`] instead (zero data
+    ///   movement -- encoders that re-layout internally only need the
+    ///   contract); RGBX/BGRX padding keeps its
+    ///   [`AlphaMode::Undefined`] tag. Channel-type narrowing and chroma
+    ///   collapse still rewrite, keeping the alpha lane in the layout
+    ///   (RGBA16 -> GrayA8, not Gray8).
+    /// * `true` -- the alpha/padding lane is physically removed
+    ///   (RGBA/BGRA -> RGB, GrayAlpha -> Gray), for consumers that need
+    ///   the packed narrow form (TIFF/JXL-style writers).
+    ///
+    /// Color metadata ([`ColorContext`]) follows the same rules as the
+    /// allocating variant: it travels with the returned slice, and gray
+    /// collapse is suppressed while ICC bytes are attached (an RGB-class
+    /// profile cannot describe a Gray layout); CICP-only contexts stay
+    /// valid for gray and carry over unchanged.
+    ///
+    /// The returned slice is the **only** valid view of the rewritten
+    /// bytes. If this `PixelSliceMut` borrowed from a descriptor-carrying
+    /// owner (e.g. [`PixelBuffer::as_slice_mut`]), the owner's stale
+    /// descriptor must not be used to read the buffer afterwards --
+    /// intended use is caller-owned `&mut [u8]` / `Vec<u8>` backing.
+    #[must_use]
+    fn reduce_to_load_bearing_format_in_place(
+        self,
+        force_alpha_restructuring: bool,
+    ) -> PixelSliceMut<'a>;
+}
+
+impl<'a, P> PixelSliceMutLoadBearingExt<'a> for PixelSliceMut<'a, P> {
+    fn reduce_to_load_bearing_format_in_place(
+        self,
+        force_alpha_restructuring: bool,
+    ) -> PixelSliceMut<'a> {
+        let src = self.descriptor();
+        let width = self.width();
+        let rows = self.rows();
+        if width == 0 || rows == 0 {
+            return self.erase();
+        }
+
+        let mut report = self.as_pixel_slice().determine_load_bearing();
+        let ctx = self.color_context().cloned();
+
+        // Same color-signaling gate as the allocating variant.
+        if !chroma_collapse_signal_safe(ctx.as_ref()) {
+            report.uses_chroma = None;
+        }
+
+        // Alpha plan: physical drop only on request. Otherwise the lane
+        // stays in the layout and a scanned-opaque Straight/Premultiplied
+        // tag upgrades to the contract the scan just measured.
+        let alpha_droppable = matches!(report.uses_alpha, Some(false)) && src.layout().has_alpha();
+        if !force_alpha_restructuring {
+            report.uses_alpha = None;
+        }
+
+        let mut target = report.apply_to(&src);
+        if !force_alpha_restructuring
+            && alpha_droppable
+            && target.layout().has_alpha()
+            && !matches!(
+                src.alpha,
+                Some(AlphaMode::Undefined) | Some(AlphaMode::Opaque)
+            )
+        {
+            target = target.with_alpha(Some(AlphaMode::Opaque));
+        }
+
+        if target == src {
+            return self.erase();
+        }
+
+        // Equal-bpp target: no physical narrowing happened.
+        // `apply_to`'s `from_parts` can re-spell a same-shape format
+        // (Rgba8 + Undefined alpha normalizes to Rgbx8); a reduction
+        // API must narrow, not re-spell, so keep the source format and
+        // apply only the alpha re-tag if one was earned above. No
+        // bytes move and the original stride is kept.
+        if target.bytes_per_pixel() == src.bytes_per_pixel() {
+            let retagged = src.with_alpha(target.alpha);
+            return if retagged == src {
+                self.erase()
+            } else {
+                self.erase().with_descriptor(retagged)
+            };
+        }
+
+        // Physical rewrite. `apply_to` only produces transitions
+        // `selection_map` knows, so the fallback is unreachable -- but
+        // stay total and hand the slice back rather than panic.
+        let narrow16 =
+            src.channel_type() == ChannelType::U16 && target.channel_type() == ChannelType::U8;
+        let Some(map) = selection_map(src.layout(), target.layout()) else {
+            return self.erase();
+        };
+
+        let in_stride = self.stride();
+        let in_bpp = src.bytes_per_pixel();
+        let out_bpp = target.bytes_per_pixel();
+        debug_assert!(out_bpp < in_bpp, "reduction always shrinks bpp");
+        let out_stride = width as usize * out_bpp;
+
+        let data = self.into_strided_bytes();
+        compact_rows_in_place(
+            data,
+            width as usize,
+            rows as usize,
+            in_stride,
+            in_bpp,
+            out_bpp,
+            src.layout(),
+            target.layout(),
+            map,
+            narrow16,
+        );
+
+        let total = rows as usize * out_stride;
+        let out = PixelSliceMut::new(&mut data[..total], width, rows, out_stride, target)
+            .expect("narrowed in-place geometry is always valid");
+        match ctx {
+            Some(c) => out.with_color_context(c),
+            None => out,
+        }
+    }
+}
+
+/// Rewrite rows front-to-back in place, narrowing `in_bpp` -> `out_bpp`
+/// per pixel (channel selection via `map`, optional U16 -> U8
+/// narrowing). Output rows are tightly packed at `width * out_bpp`.
+///
+/// Overlap safety (plain index math, no `unsafe`): for pixel `(y, x)`,
+/// `dst_end = y*out_stride + (x+1)*out_bpp <= y*in_stride +
+/// (x+1)*in_bpp`, the start of the next unread source pixel -- every
+/// write lands at or before the bytes already consumed. Rows whose
+/// destination span is disjoint from their source span (all but the
+/// first `~out_bpp / (in_bpp - out_bpp)` rows on tight input) borrow
+/// both spans via `split_at_mut` and reuse the allocating path's
+/// SIMD/shuffle row kernels; the overlapping prefix rows stage each
+/// pixel through a fixed temp so the within-pixel read stays ahead of
+/// the write (dst == src only at the very first pixel).
+#[allow(clippy::too_many_arguments)]
+fn compact_rows_in_place(
+    data: &mut [u8],
+    width: usize,
+    rows: usize,
+    in_stride: usize,
+    in_bpp: usize,
+    out_bpp: usize,
+    src_layout: ChannelLayout,
+    dst_layout: ChannelLayout,
+    map: &[usize],
+    narrow16: bool,
+) {
+    let out_stride = width * out_bpp;
+    let in_ch = src_layout.channels();
+    let elem = if narrow16 { 2 } else { in_bpp / in_ch };
+    let row_in_len = width * in_bpp;
+    for y in 0..rows {
+        let src_start = y * in_stride;
+        let dst_start = y * out_stride;
+        let dst_end = dst_start + out_stride;
+        if dst_end <= src_start {
+            // Disjoint spans: same row kernels as the allocating rewrite.
+            let (head, tail) = data.split_at_mut(src_start);
+            let row_in = &tail[..row_in_len];
+            let row_out = &mut head[dst_start..dst_end];
+            if narrow16 {
+                select_row_u16_to_u8(row_in, row_out, in_ch, map);
+            } else {
+                match (elem, src_layout, dst_layout) {
+                    (1, ChannelLayout::Rgba, ChannelLayout::Rgb) => {
+                        // Length mismatch is impossible here; the scalar
+                        // fallback keeps the loop total instead of
+                        // propagating an unreachable error.
+                        if garb::bytes::rgba_to_rgb(row_in, row_out).is_err() {
+                            select_row::<1>(row_in, row_out, in_ch, map);
+                        }
+                    }
+                    (1, ChannelLayout::Bgra, ChannelLayout::Rgb) => {
+                        if garb::bytes::bgra_to_rgb(row_in, row_out).is_err() {
+                            select_row::<1>(row_in, row_out, in_ch, map);
+                        }
+                    }
+                    (1, ..) => select_row::<1>(row_in, row_out, in_ch, map),
+                    (2, ..) => select_row::<2>(row_in, row_out, in_ch, map),
+                    _ => select_row::<4>(row_in, row_out, in_ch, map),
+                }
+            }
+        } else {
+            // Overlapping prefix rows: per-pixel staging through a
+            // fixed temp (max in_bpp = RgbaF32 = 16 bytes).
+            for x in 0..width {
+                let s = src_start + x * in_bpp;
+                let mut tmp = [0u8; 16];
+                tmp[..in_bpp].copy_from_slice(&data[s..s + in_bpp]);
+                let d = dst_start + x * out_bpp;
+                if narrow16 {
+                    for (k, &c) in map.iter().enumerate() {
+                        data[d + k] = tmp[c * 2];
+                    }
+                } else {
+                    for (k, &c) in map.iter().enumerate() {
+                        data[d + k * elem..d + (k + 1) * elem]
+                            .copy_from_slice(&tmp[c * elem..(c + 1) * elem]);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -437,25 +721,9 @@ fn transform_into<P>(
         return None;
     }
 
-    // Source-channel selection map for the layout transition. Identity
-    // when only the channel type narrows.
-    const IDENTITY: [usize; 4] = [0, 1, 2, 3];
+    // Source-channel selection map for the layout transition.
     let in_ch = src_layout.channels();
-    let map: &[usize] = match (src_layout, dst_layout) {
-        _ if src_layout == dst_layout => &IDENTITY[..in_ch],
-        (ChannelLayout::Rgba, ChannelLayout::Rgb) => &[0, 1, 2],
-        // Bgra stores B,G,R,A -- dropping alpha into the Rgb layout
-        // requires the B↔R reorder, not a prefix copy.
-        (ChannelLayout::Bgra, ChannelLayout::Rgb) => &[2, 1, 0],
-        // Channel 0 is R for Rgba and B for Bgra; either is the gray
-        // value because these transitions only fire when R == G == B
-        // held for every pixel.
-        (ChannelLayout::Rgba | ChannelLayout::Bgra, ChannelLayout::GrayAlpha) => &[0, 3],
-        (ChannelLayout::Rgba | ChannelLayout::Bgra, ChannelLayout::Gray) => &[0],
-        (ChannelLayout::Rgb, ChannelLayout::Gray) => &[0],
-        (ChannelLayout::GrayAlpha, ChannelLayout::Gray) => &[0],
-        _ => return None,
-    };
+    let map: &[usize] = selection_map(src_layout, dst_layout)?;
 
     let mut out_rows = out.as_slice_mut();
     for y in 0..slice.rows() {
@@ -479,6 +747,28 @@ fn transform_into<P>(
         }
     }
     Some(())
+}
+
+/// Source-channel selection map for a layout transition, in element
+/// units. Identity when the layout doesn't change (channel-type-only
+/// narrowing); `None` for pairs the reducer never produces.
+fn selection_map(src_layout: ChannelLayout, dst_layout: ChannelLayout) -> Option<&'static [usize]> {
+    static IDENTITY: [usize; 4] = [0, 1, 2, 3];
+    Some(match (src_layout, dst_layout) {
+        _ if src_layout == dst_layout => &IDENTITY[..src_layout.channels()],
+        (ChannelLayout::Rgba, ChannelLayout::Rgb) => &[0, 1, 2],
+        // Bgra stores B,G,R,A -- dropping alpha into the Rgb layout
+        // requires the B↔R reorder, not a prefix copy.
+        (ChannelLayout::Bgra, ChannelLayout::Rgb) => &[2, 1, 0],
+        // Channel 0 is R for Rgba and B for Bgra; either is the gray
+        // value because these transitions only fire when R == G == B
+        // held for every pixel.
+        (ChannelLayout::Rgba | ChannelLayout::Bgra, ChannelLayout::GrayAlpha) => &[0, 3],
+        (ChannelLayout::Rgba | ChannelLayout::Bgra, ChannelLayout::Gray) => &[0],
+        (ChannelLayout::Rgb, ChannelLayout::Gray) => &[0],
+        (ChannelLayout::GrayAlpha, ChannelLayout::Gray) => &[0],
+        _ => return None,
+    })
 }
 
 /// Copy the `map`-selected channels (element size `E` bytes) of each
@@ -516,7 +806,7 @@ fn select_row_u16_to_u8(row_in: &[u8], row_out: &mut [u8], in_ch: usize, map: &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zenpixels::{ColorPrimaries, PixelSlice, TransferFunction};
+    use zenpixels::{Cicp, ColorPrimaries, PixelSlice, TransferFunction};
 
     fn make_slice<'a>(
         bytes: &'a [u8],
@@ -1375,6 +1665,430 @@ mod tests {
     }
 
     // ── Sanity: every layout's reduced format round-trips ────
+
+    // ── In-place reduction ─────────────────────────────────────
+
+    fn make_slice_mut<'a>(
+        bytes: &'a mut [u8],
+        width: u32,
+        height: u32,
+        format: PixelFormat,
+    ) -> PixelSliceMut<'a> {
+        let descriptor =
+            PixelDescriptor::from_pixel_format(format).with_transfer(TransferFunction::Srgb);
+        let stride = width as usize * format.bytes_per_pixel();
+        PixelSliceMut::new(bytes, width, height, stride, descriptor).unwrap()
+    }
+
+    #[test]
+    fn in_place_rgba8_gray_opaque_force_true_compacts_to_gray8() {
+        let mut bytes: Vec<u8> = (0..4).flat_map(|i| [i * 30, i * 30, i * 30, 255]).collect();
+        let slice = make_slice_mut(&mut bytes, 4, 1, PixelFormat::Rgba8);
+        let out = slice.reduce_to_load_bearing_format_in_place(true);
+        assert_eq!(out.descriptor().format, PixelFormat::Gray8);
+        assert_eq!(out.stride(), 4, "tight stride");
+        assert_eq!(out.row(0), &[0u8, 30, 60, 90]);
+    }
+
+    #[test]
+    fn in_place_rgba8_gray_opaque_force_false_keeps_alpha_lane() {
+        // Chroma collapse still rewrites, but the (non-load-bearing)
+        // alpha lane stays in the layout and re-tags Opaque.
+        let mut bytes: Vec<u8> = (0..4).flat_map(|i| [i * 30, i * 30, i * 30, 255]).collect();
+        let slice = make_slice_mut(&mut bytes, 4, 1, PixelFormat::Rgba8);
+        let out = slice.reduce_to_load_bearing_format_in_place(false);
+        assert_eq!(out.descriptor().format, PixelFormat::GrayA8);
+        assert_eq!(out.descriptor().alpha, Some(AlphaMode::Opaque));
+        assert_eq!(out.row(0), &[0u8, 255, 30, 255, 60, 255, 90, 255]);
+    }
+
+    #[test]
+    fn in_place_colorful_opaque_force_false_is_retag_only() {
+        let original: Vec<u8> = (0..4i32)
+            .flat_map(|i| {
+                [
+                    (i * 60 + 10) as u8,
+                    (i * 30 + 50) as u8,
+                    (i * 90 + 20) as u8,
+                    255,
+                ]
+            })
+            .collect();
+        let mut bytes = original.clone();
+        let slice = make_slice_mut(&mut bytes, 4, 1, PixelFormat::Rgba8);
+        let in_stride = slice.stride();
+        let out = slice.reduce_to_load_bearing_format_in_place(false);
+        assert_eq!(out.descriptor().format, PixelFormat::Rgba8, "layout kept");
+        assert_eq!(
+            out.descriptor().alpha,
+            Some(AlphaMode::Opaque),
+            "scanned-opaque straight alpha upgrades to the Opaque contract"
+        );
+        assert_eq!(out.stride(), in_stride, "no bytes moved");
+        assert_eq!(out.row(0), &original[..], "no bytes changed");
+    }
+
+    #[test]
+    fn in_place_colorful_opaque_force_true_drops_alpha() {
+        let mut bytes: Vec<u8> = (0..4i32)
+            .flat_map(|i| {
+                [
+                    (i * 60 + 10) as u8,
+                    (i * 30 + 50) as u8,
+                    (i * 90 + 20) as u8,
+                    255,
+                ]
+            })
+            .collect();
+        let slice = make_slice_mut(&mut bytes, 4, 1, PixelFormat::Rgba8);
+        let out = slice.reduce_to_load_bearing_format_in_place(true);
+        assert_eq!(out.descriptor().format, PixelFormat::Rgb8);
+        assert_eq!(
+            out.row(0),
+            &[10u8, 50, 20, 70, 80, 110, 130, 110, 200, 190, 140, 34]
+        );
+    }
+
+    #[test]
+    fn in_place_bgra8_force_true_reorders_to_rgb8() {
+        let mut bytes = [50u8, 100, 150, 255, 60, 110, 160, 255];
+        let descriptor = PixelDescriptor::from_pixel_format(PixelFormat::Bgra8)
+            .with_transfer(TransferFunction::Srgb);
+        let slice = PixelSliceMut::new(&mut bytes, 2, 1, 8, descriptor).unwrap();
+        let out = slice.reduce_to_load_bearing_format_in_place(true);
+        assert_eq!(out.descriptor().format, PixelFormat::Rgb8);
+        assert_eq!(out.row(0), &[150u8, 100, 50, 160, 110, 60]);
+    }
+
+    #[test]
+    fn in_place_rgba16_replicated_gray_opaque_both_force_modes() {
+        let build = |i: u8| {
+            let g = i * 60;
+            [g, g, g, g, g, g, 0xFF, 0xFF]
+        };
+        let mut bytes: Vec<u8> = (0..4).flat_map(build).collect();
+        let slice = make_slice_mut(&mut bytes, 4, 1, PixelFormat::Rgba16);
+        let out = slice.reduce_to_load_bearing_format_in_place(true);
+        assert_eq!(out.descriptor().format, PixelFormat::Gray8);
+        assert_eq!(out.row(0), &[0u8, 60, 120, 180]);
+
+        let mut bytes: Vec<u8> = (0..4).flat_map(build).collect();
+        let slice = make_slice_mut(&mut bytes, 4, 1, PixelFormat::Rgba16);
+        let out = slice.reduce_to_load_bearing_format_in_place(false);
+        assert_eq!(out.descriptor().format, PixelFormat::GrayA8);
+        assert_eq!(out.descriptor().alpha, Some(AlphaMode::Opaque));
+        assert_eq!(out.row(0), &[0u8, 255, 60, 255, 120, 255, 180, 255]);
+    }
+
+    #[test]
+    fn in_place_gray16_replicated_single_row_overlap_path() {
+        // Gray16 -> Gray8 on one row: dst and src spans share the same
+        // start, so the entire row takes the overlapping per-pixel path.
+        let mut bytes: Vec<u8> = (0..64u16).flat_map(|i| [(i * 4) as u8; 2]).collect();
+        let slice = make_slice_mut(&mut bytes, 64, 1, PixelFormat::Gray16);
+        let out = slice.reduce_to_load_bearing_format_in_place(true);
+        assert_eq!(out.descriptor().format, PixelFormat::Gray8);
+        let expected: Vec<u8> = (0..64u16).map(|i| (i * 4) as u8).collect();
+        assert_eq!(out.row(0), &expected[..]);
+    }
+
+    #[test]
+    fn in_place_undefined_padding_retag_vs_restructure() {
+        // RGBX padding: force=false leaves the buffer alone entirely
+        // (the Undefined tag already says "ignore the lane" -- it must
+        // NOT be upgraded to Opaque, the bytes are garbage).
+        let original = [10u8, 20, 30, 0x7B, 40, 50, 60, 0x01];
+        let descriptor = PixelDescriptor::from_pixel_format(PixelFormat::Rgba8)
+            .with_transfer(TransferFunction::Srgb)
+            .with_alpha(Some(AlphaMode::Undefined));
+        let mut bytes = original;
+        let slice = PixelSliceMut::new(&mut bytes, 2, 1, 8, descriptor).unwrap();
+        let out = slice.reduce_to_load_bearing_format_in_place(false);
+        assert_eq!(out.descriptor(), descriptor, "fully unchanged");
+        assert_eq!(out.row(0), &original[..]);
+
+        let mut bytes = original;
+        let slice = PixelSliceMut::new(&mut bytes, 2, 1, 8, descriptor).unwrap();
+        let out = slice.reduce_to_load_bearing_format_in_place(true);
+        assert_eq!(out.descriptor().format, PixelFormat::Rgb8);
+        assert_eq!(out.row(0), &[10u8, 20, 30, 40, 50, 60]);
+    }
+
+    #[test]
+    fn in_place_load_bearing_alpha_is_untouched() {
+        // Varying premultiplied alpha + real chroma: nothing reduces,
+        // both force modes hand the slice back unchanged.
+        let original = [10u8, 20, 30, 128, 40, 50, 60, 64];
+        for force in [false, true] {
+            let mut bytes = original;
+            let descriptor = PixelDescriptor::from_pixel_format(PixelFormat::Rgba8)
+                .with_transfer(TransferFunction::Srgb)
+                .with_alpha(Some(AlphaMode::Premultiplied));
+            let slice = PixelSliceMut::new(&mut bytes, 2, 1, 8, descriptor).unwrap();
+            let out = slice.reduce_to_load_bearing_format_in_place(force);
+            assert_eq!(out.descriptor(), descriptor, "force={force}");
+            assert_eq!(out.row(0), &original[..]);
+        }
+    }
+
+    #[test]
+    fn in_place_strided_input_compacts_like_allocating() {
+        let (buf, stride) = build_strided_rgba8(5, 4, 24, |x, y| {
+            let g = ((x + y) * 19) as u8;
+            [g, g, g, 255]
+        });
+        let descriptor = PixelDescriptor::from_pixel_format(PixelFormat::Rgba8)
+            .with_transfer(TransferFunction::Srgb);
+        let reference = PixelSlice::new(&buf, 5, 4, stride, descriptor)
+            .unwrap()
+            .try_reduce_to_load_bearing_format()
+            .expect("reduces");
+
+        let mut mut_buf = buf.clone();
+        let slice = PixelSliceMut::new(&mut mut_buf, 5, 4, stride, descriptor).unwrap();
+        let out = slice.reduce_to_load_bearing_format_in_place(true);
+        assert_eq!(out.descriptor(), reference.descriptor());
+        for y in 0..4 {
+            assert_eq!(out.row(y), reference.as_slice().row(y), "row {y}");
+        }
+    }
+
+    #[test]
+    fn in_place_matches_allocating_across_geometries() {
+        // Differential: every (width, rows) drives the overlap-prefix /
+        // disjoint-row split differently; in-place output must be
+        // byte-identical to the allocating rewrite for every content
+        // class that triggers a distinct transition.
+        #[derive(Clone, Copy)]
+        enum Content {
+            GrayOpaque,    // Rgba8 -> Gray8 (4 -> 1)
+            ColorOpaque,   // Rgba8 -> Rgb8  (4 -> 3, garb path)
+            GrayVaryAlpha, // Rgba8 -> GrayA8 (4 -> 2)
+            Replicated16,  // Rgba16 -> Gray8 (8 -> 1)
+        }
+        let mut lcg: u32 = 0x2F6E_2B1D;
+        let mut next = move || {
+            lcg = lcg.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (lcg >> 24) as u8
+        };
+        for content in [
+            Content::GrayOpaque,
+            Content::ColorOpaque,
+            Content::GrayVaryAlpha,
+            Content::Replicated16,
+        ] {
+            for (width, rows) in [
+                (1u32, 1u32),
+                (1, 7),
+                (2, 3),
+                (3, 2),
+                (5, 5),
+                (17, 3),
+                (64, 4),
+                (65, 2),
+            ] {
+                let (format, bytes): (PixelFormat, Vec<u8>) = match content {
+                    Content::GrayOpaque => (
+                        PixelFormat::Rgba8,
+                        (0..width * rows)
+                            .flat_map(|_| {
+                                let g = next();
+                                [g, g, g, 255]
+                            })
+                            .collect(),
+                    ),
+                    Content::ColorOpaque => (
+                        PixelFormat::Rgba8,
+                        (0..width * rows)
+                            .flat_map(|_| [next(), next(), next(), 255])
+                            .collect(),
+                    ),
+                    Content::GrayVaryAlpha => (
+                        PixelFormat::Rgba8,
+                        (0..width * rows)
+                            .flat_map(|_| {
+                                let g = next();
+                                [g, g, g, next()]
+                            })
+                            .collect(),
+                    ),
+                    Content::Replicated16 => (
+                        PixelFormat::Rgba16,
+                        (0..width * rows)
+                            .flat_map(|_| {
+                                let g = next();
+                                [g, g, g, g, g, g, 0xFF, 0xFF]
+                            })
+                            .collect(),
+                    ),
+                };
+                let reference =
+                    make_slice(&bytes, width, rows, format).try_reduce_to_load_bearing_format();
+                let mut mut_bytes = bytes.clone();
+                let out = make_slice_mut(&mut mut_bytes, width, rows, format)
+                    .reduce_to_load_bearing_format_in_place(true);
+                match reference {
+                    Some(reference) => {
+                        assert_eq!(
+                            out.descriptor(),
+                            reference.descriptor(),
+                            "{width}x{rows} descriptor"
+                        );
+                        for y in 0..rows {
+                            assert_eq!(
+                                out.row(y),
+                                reference.as_slice().row(y),
+                                "{width}x{rows} row {y}"
+                            );
+                        }
+                    }
+                    None => {
+                        // Every content class above guarantees at least
+                        // one reduction (gray collapse or alpha drop).
+                        panic!("{width}x{rows} expected a reduction");
+                    }
+                }
+            }
+        }
+    }
+
+    // ── ColorContext propagation ───────────────────────────────
+
+    #[test]
+    fn color_context_carries_through_class_preserving_reductions() {
+        // Alpha drop keeps the RGB class -- ICC must travel, unchanged.
+        let ctx = Arc::new(ColorContext::from_icc(alloc::vec![0u8; 8]));
+        let bytes: Vec<u8> = (0..4i32)
+            .flat_map(|i| {
+                [
+                    (i * 60 + 10) as u8,
+                    (i * 30 + 50) as u8,
+                    (i * 90 + 20) as u8,
+                    255,
+                ]
+            })
+            .collect();
+        let slice = make_slice(&bytes, 4, 1, PixelFormat::Rgba8).with_color_context(ctx.clone());
+        let out = slice
+            .try_reduce_to_load_bearing_format()
+            .expect("alpha drop available");
+        assert_eq!(out.descriptor().format, PixelFormat::Rgb8);
+        assert!(
+            out.as_slice()
+                .color_context()
+                .is_some_and(|c| Arc::ptr_eq(c, &ctx)),
+            "ICC context must carry over for class-preserving reductions"
+        );
+
+        let mut mut_bytes = bytes.clone();
+        let out = make_slice_mut(&mut mut_bytes, 4, 1, PixelFormat::Rgba8)
+            .with_color_context(ctx.clone())
+            .reduce_to_load_bearing_format_in_place(true);
+        assert_eq!(out.descriptor().format, PixelFormat::Rgb8);
+        assert!(out.color_context().is_some_and(|c| Arc::ptr_eq(c, &ctx)));
+    }
+
+    #[test]
+    fn icc_context_suppresses_gray_collapse_but_not_other_reductions() {
+        // Gray + opaque RGBA with ICC bytes attached: collapsing to a
+        // Gray layout would pair an RGB-class profile with gray pixels
+        // (invalid signaling), so the rewrite stops at the
+        // class-preserving alpha drop. The report itself still measures
+        // chroma truthfully.
+        let ctx = Arc::new(ColorContext::from_icc(alloc::vec![0u8; 8]));
+        let bytes: Vec<u8> = (0..4).flat_map(|i| [i * 30, i * 30, i * 30, 255]).collect();
+        let slice = make_slice(&bytes, 4, 1, PixelFormat::Rgba8).with_color_context(ctx.clone());
+        assert_eq!(
+            slice.determine_load_bearing().uses_chroma,
+            Some(false),
+            "analysis stays truthful"
+        );
+        let out = slice
+            .try_reduce_to_load_bearing_format()
+            .expect("alpha drop still available");
+        assert_eq!(
+            out.descriptor().format,
+            PixelFormat::Rgb8,
+            "gray collapse suppressed, alpha drop kept"
+        );
+        assert!(
+            out.as_slice()
+                .color_context()
+                .is_some_and(|c| Arc::ptr_eq(c, &ctx))
+        );
+
+        let mut mut_bytes = bytes.clone();
+        let out = make_slice_mut(&mut mut_bytes, 4, 1, PixelFormat::Rgba8)
+            .with_color_context(ctx.clone())
+            .reduce_to_load_bearing_format_in_place(true);
+        assert_eq!(out.descriptor().format, PixelFormat::Rgb8);
+        assert!(out.color_context().is_some_and(|c| Arc::ptr_eq(c, &ctx)));
+    }
+
+    #[test]
+    fn cicp_only_context_carries_through_gray_collapse() {
+        // CICP has no device-class to violate: primaries/transfer stay
+        // meaningful for gray and matrix coefficients don't apply to
+        // single-channel data -- the collapse proceeds and the context
+        // travels.
+        let ctx = Arc::new(ColorContext::from_cicp(Cicp::DISPLAY_P3));
+        let bytes: Vec<u8> = (0..4).flat_map(|i| [i * 30, i * 30, i * 30, 255]).collect();
+        let slice = make_slice(&bytes, 4, 1, PixelFormat::Rgba8).with_color_context(ctx.clone());
+        let out = slice
+            .try_reduce_to_load_bearing_format()
+            .expect("gray collapse available");
+        assert_eq!(out.descriptor().format, PixelFormat::Gray8);
+        assert!(
+            out.as_slice()
+                .color_context()
+                .is_some_and(|c| Arc::ptr_eq(c, &ctx))
+        );
+
+        let mut mut_bytes = bytes.clone();
+        let out = make_slice_mut(&mut mut_bytes, 4, 1, PixelFormat::Rgba8)
+            .with_color_context(ctx.clone())
+            .reduce_to_load_bearing_format_in_place(true);
+        assert_eq!(out.descriptor().format, PixelFormat::Gray8);
+        assert!(out.color_context().is_some_and(|c| Arc::ptr_eq(c, &ctx)));
+    }
+
+    #[test]
+    fn in_place_rgba_f32_gray_opaque_force_true() {
+        let pixels: [f32; 16] = [
+            0.1, 0.1, 0.1, 1.0, //
+            0.5, 0.5, 0.5, 1.0, //
+            0.9, 0.9, 0.9, 1.0, //
+            0.4, 0.4, 0.4, 1.0,
+        ];
+        let mut bytes: Vec<u8> = bytemuck::cast_slice(&pixels).to_vec();
+        let descriptor = PixelDescriptor::from_pixel_format(PixelFormat::RgbaF32)
+            .with_transfer(TransferFunction::Linear);
+        let slice = PixelSliceMut::new(&mut bytes, 4, 1, 64, descriptor).unwrap();
+        let out = slice.reduce_to_load_bearing_format_in_place(true);
+        assert_eq!(out.descriptor().format, PixelFormat::GrayF32);
+        let gray: &[f32] = bytemuck::cast_slice(out.row(0));
+        assert_eq!(gray, &[0.1_f32, 0.5, 0.9, 0.4], "values bit-exact");
+    }
+
+    #[test]
+    fn in_place_true_u16_keeps_channel_type() {
+        // Genuine 16-bit data (lo != hi): no narrowing, and with
+        // colorful opaque pixels + force=false only the alpha re-tag
+        // applies.
+        let mut bytes: Vec<u8> = (0..4u16)
+            .flat_map(|i| {
+                let r = 0x1234 + i * 0x0101;
+                let g = 0x4567;
+                let b = 0x89AB;
+                [r, g, b, 0xFFFF]
+            })
+            .flat_map(u16::to_ne_bytes)
+            .collect();
+        let slice = make_slice_mut(&mut bytes, 4, 1, PixelFormat::Rgba16);
+        let out = slice.reduce_to_load_bearing_format_in_place(false);
+        assert_eq!(out.descriptor().format, PixelFormat::Rgba16);
+        assert_eq!(out.descriptor().alpha, Some(AlphaMode::Opaque));
+    }
 
     #[test]
     fn every_reduction_target_is_constructable() {
