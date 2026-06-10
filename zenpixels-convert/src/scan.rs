@@ -33,10 +33,11 @@
 //!
 //! [`fused_predicates_rgba8_cg`] is the production RGBA8/BGRA8 entry —
 //! it runs all three RGBA8 checks in one streaming pass at the
-//! bandwidth cost of one. Measured (Zen 4 / 7950X, AVX2 tier,
-//! `benchmarks/load_bearing_bench_2026-06-10.md`): 2.76× vs three
-//! separate passes at DRAM-bound 16 MP (22.4 vs 8.1 GiB/s), ~10× vs
-//! scalar when cache-resident.
+//! bandwidth cost of one, deferring the mask reduction to once per
+//! 512-byte block. Measured (Zen 4 / 7950X, AVX2 tier,
+//! `benchmarks/load_bearing_bench_2026-06-10.md`): 67–78 GiB/s
+//! cache-resident (~25× scalar; 2.1–2.4× the per-chunk-reduction
+//! version), single-core DRAM-bound past L3 (~23 GiB/s at 64 MB).
 
 use archmage::prelude::*;
 
@@ -1018,6 +1019,66 @@ fn fused_cg<const A: bool, const B: bool, const C: bool>(rgba: &[u8]) -> FusedRe
     )
 }
 
+/// Resume scanning `rest` in the specialization matching the surviving
+/// checks, then merge: a check that just flipped reports `false`; a
+/// still-alive check takes the resumed scan's verdict. Factored out of
+/// the kernel so the 8-arm match monomorphizes once, not once per
+/// dispatch tier.
+fn fused_cg_resume(rest: &[u8], next_a: bool, next_b: bool, next_c: bool) -> FusedResult {
+    match (next_a, next_b, next_c) {
+        (true, true, true) => unreachable!("resume only runs after a flip"),
+        (true, true, false) => {
+            let s = fused_cg::<true, true, false>(rest);
+            FusedResult {
+                is_opaque: s.is_opaque,
+                is_grayscale: s.is_grayscale,
+                is_binary_alpha: false,
+            }
+        }
+        (true, false, true) => {
+            let s = fused_cg::<true, false, true>(rest);
+            FusedResult {
+                is_opaque: s.is_opaque,
+                is_grayscale: false,
+                is_binary_alpha: s.is_binary_alpha,
+            }
+        }
+        (false, true, true) => {
+            let s = fused_cg::<false, true, true>(rest);
+            FusedResult {
+                is_opaque: false,
+                is_grayscale: s.is_grayscale,
+                is_binary_alpha: s.is_binary_alpha,
+            }
+        }
+        (true, false, false) => {
+            let s = fused_cg::<true, false, false>(rest);
+            FusedResult {
+                is_opaque: s.is_opaque,
+                is_grayscale: false,
+                is_binary_alpha: false,
+            }
+        }
+        (false, true, false) => {
+            let s = fused_cg::<false, true, false>(rest);
+            FusedResult {
+                is_opaque: false,
+                is_grayscale: s.is_grayscale,
+                is_binary_alpha: false,
+            }
+        }
+        (false, false, true) => {
+            let s = fused_cg::<false, false, true>(rest);
+            FusedResult {
+                is_opaque: false,
+                is_grayscale: false,
+                is_binary_alpha: s.is_binary_alpha,
+            }
+        }
+        (false, false, false) => FusedResult::default(),
+    }
+}
+
 #[magetypes(define(u8x64), v4x, v4, v3, neon, wasm128, scalar)]
 fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
     token: Token,
@@ -1036,10 +1097,83 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
 
     let len = rgba.len();
     let mut i = 0;
-    // With B alive we need the shifted load; otherwise just 64. The
-    // ternary is on a const, so it const-propagates.
-    let bound = if B { 65 } else { 64 };
 
+    // ── Blocked hot loop: one mask reduction per 512 B ──────────────
+    //
+    // A per-chunk `any_true` is a vector→scalar reduction plus a
+    // branch; with three checks alive that serialized chain is the
+    // compute ceiling (measured ~33 GiB/s cache-resident on Zen 4
+    // AVX2 — below single-core DRAM bandwidth). Here every alive
+    // check's violation lanes OR into ONE accumulator and the
+    // reduction runs once per BLOCK_CHUNKS chunks. The accumulator
+    // firing is a content transition — rare by definition — and a
+    // ≤512 B scalar re-scan of the block localizes which checks
+    // flipped before resuming in the narrower specialization.
+    //
+    // The +1 shifted load for grayscale needs one byte past the last
+    // chunk, hence the const-propagated `+ 1` bound. Lanes k with
+    // k % 4 ∈ {2, 3} are masked out of the delta compare, so the
+    // overhang byte never influences a verdict — the bound exists for
+    // the load, not the math.
+    const BLOCK_CHUNKS: usize = 8;
+    const BLOCK_BYTES: usize = BLOCK_CHUNKS * 64;
+    let block_bound = if B { BLOCK_BYTES + 1 } else { BLOCK_BYTES };
+    while i + block_bound <= len {
+        let mut acc = u8x64::splat(token, 0);
+        let mut j = i;
+        while j < i + BLOCK_BYTES {
+            let chunk0: &[u8; 64] = (&rgba[j..j + 64]).try_into().unwrap();
+            let v0 = u8x64::load(token, chunk0);
+            if A || C {
+                // (alpha ≠ 255) on alpha lanes — feeds both checks:
+                // binary-bad is (≠ 255 AND ≠ 0), so it reuses this.
+                let ne_opaque = v0.simd_ne(opaque) & alpha_mask;
+                if A {
+                    acc |= ne_opaque;
+                }
+                if C {
+                    acc |= ne_opaque & v0.simd_ne(zero);
+                }
+            }
+            if B {
+                let chunk1: &[u8; 64] = (&rgba[j + 1..j + 65]).try_into().unwrap();
+                let v1 = u8x64::load(token, chunk1);
+                acc |= v0.simd_ne(v1) & rgb_delta_mask;
+            }
+            j += 64;
+        }
+        if acc.any_true() {
+            // Rare path: some alive check broke inside this block.
+            // Pixel-aligned scalar re-scan (the SIMD conditions above
+            // are exactly these per-pixel tests) finds every check
+            // that flipped; the rest of the buffer continues in the
+            // narrowed specialization.
+            let mut next_a = A;
+            let mut next_b = B;
+            let mut next_c = C;
+            for px in rgba[i..i + BLOCK_BYTES].chunks_exact(4) {
+                if A && px[3] != 255 {
+                    next_a = false;
+                }
+                if B && (px[0] != px[1] || px[1] != px[2]) {
+                    next_b = false;
+                }
+                if C && px[3] != 0 && px[3] != 255 {
+                    next_c = false;
+                }
+            }
+            debug_assert!(
+                (next_a, next_b, next_c) != (A, B, C),
+                "accumulator fired but the re-scan found no flip"
+            );
+            return fused_cg_resume(&rgba[i + BLOCK_BYTES..], next_a, next_b, next_c);
+        }
+        i += BLOCK_BYTES;
+    }
+
+    // ── Remaining full chunks (< BLOCK_CHUNKS of them) ───────────────
+    // Same checks at single-chunk granularity, reduction per chunk.
+    let bound = if B { 65 } else { 64 };
     while i + bound <= len {
         let chunk0: &[u8; 64] = (&rgba[i..i + 64]).try_into().unwrap();
         let v0 = u8x64::load(token, chunk0);
@@ -1050,15 +1184,12 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
         let mut next_b = B;
         let mut next_c = C;
 
-        if A {
-            let bad = v0.simd_ne(opaque) & alpha_mask;
-            if bad.any_true() {
+        if A || C {
+            let ne_opaque = v0.simd_ne(opaque) & alpha_mask;
+            if A && ne_opaque.any_true() {
                 next_a = false;
             }
-        }
-        if C {
-            let bad = v0.simd_ne(zero) & v0.simd_ne(opaque) & alpha_mask;
-            if bad.any_true() {
+            if C && (ne_opaque & v0.simd_ne(zero)).any_true() {
                 next_c = false;
             }
         }
@@ -1076,65 +1207,7 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
             i += 64;
             continue;
         }
-
-        // Something flipped. Recurse into the matching specialization
-        // with the remainder. Each arm wires up the resulting fields:
-        // for any flipped check, the field is `false`; for still-live
-        // checks, the recursion's result carries through. The compiler
-        // dead-code-eliminates arms unreachable from this specialization.
-        let rest = &rgba[i + 64..];
-        return match (next_a, next_b, next_c) {
-            (true, true, true) => unreachable!(),
-            (true, true, false) => {
-                let s = fused_cg::<true, true, false>(rest);
-                FusedResult {
-                    is_opaque: s.is_opaque,
-                    is_grayscale: s.is_grayscale,
-                    is_binary_alpha: false,
-                }
-            }
-            (true, false, true) => {
-                let s = fused_cg::<true, false, true>(rest);
-                FusedResult {
-                    is_opaque: s.is_opaque,
-                    is_grayscale: false,
-                    is_binary_alpha: s.is_binary_alpha,
-                }
-            }
-            (false, true, true) => {
-                let s = fused_cg::<false, true, true>(rest);
-                FusedResult {
-                    is_opaque: false,
-                    is_grayscale: s.is_grayscale,
-                    is_binary_alpha: s.is_binary_alpha,
-                }
-            }
-            (true, false, false) => {
-                let s = fused_cg::<true, false, false>(rest);
-                FusedResult {
-                    is_opaque: s.is_opaque,
-                    is_grayscale: false,
-                    is_binary_alpha: false,
-                }
-            }
-            (false, true, false) => {
-                let s = fused_cg::<false, true, false>(rest);
-                FusedResult {
-                    is_opaque: false,
-                    is_grayscale: s.is_grayscale,
-                    is_binary_alpha: false,
-                }
-            }
-            (false, false, true) => {
-                let s = fused_cg::<false, false, true>(rest);
-                FusedResult {
-                    is_opaque: false,
-                    is_grayscale: false,
-                    is_binary_alpha: s.is_binary_alpha,
-                }
-            }
-            (false, false, false) => FusedResult::default(),
-        };
+        return fused_cg_resume(&rgba[i + 64..], next_a, next_b, next_c);
     }
 
     // Scalar tail. The const params collapse the per-pixel branches.
@@ -1974,6 +2047,62 @@ mod tests {
             80, 80, 80, 255,
         ];
         run_fused_match_test("short_tail_only", &v, super::FusedRequest::all());
+    }
+
+    // ── Blocked-loop boundary coverage ───────────────────────────────
+    // The const-generic kernel reduces once per 8-chunk (512 B = 128 px)
+    // block. Breaks planted around block edges, in the post-block
+    // remainder chunks, and in the scalar tail must all be caught, and
+    // multiple flips across different regions must compose.
+
+    #[test]
+    fn fused_breaks_around_block_boundaries() {
+        // 3 full blocks + 1 remainder chunk + scalar tail = 401 px.
+        let n = 3 * 128 + 16 + 1;
+        for &break_px in &[
+            0usize, 126, 127, 128, 129, 255, 256, 257, 383, 384, 399, 400,
+        ] {
+            // Opacity break at the probe pixel.
+            let mut v = rgba_pattern(n, |_, _| {});
+            v[break_px * 4 + 3] = 128;
+            run_fused_match_test(
+                &format!("blk_opaque_at_{break_px}"),
+                &v,
+                super::FusedRequest::all(),
+            );
+
+            // Grayscale break at the probe pixel.
+            let mut v = rgba_pattern(n, |_, _| {});
+            v[break_px * 4 + 1] = v[break_px * 4].wrapping_add(1);
+            run_fused_match_test(
+                &format!("blk_gray_at_{break_px}"),
+                &v,
+                super::FusedRequest::all(),
+            );
+        }
+    }
+
+    #[test]
+    fn fused_flips_land_in_different_blocks() {
+        // Gray flips in block 0 (px 10), opacity+binary flip in block 2
+        // (px 300): the block-0 re-scan must narrow to (A, !B, C) and the
+        // resumed scan must catch the later flips.
+        let n = 3 * 128 + 7;
+        let mut v = rgba_pattern(n, |_, _| {});
+        v[10 * 4 + 2] = v[10 * 4].wrapping_add(3);
+        v[300 * 4 + 3] = 77;
+        run_fused_match_test("blk_gray_b0_alpha_b2", &v, super::FusedRequest::all());
+    }
+
+    #[test]
+    fn fused_flip_in_block_then_scalar_tail() {
+        // Binary alpha flips in block 0; grayscale survives until the
+        // scalar tail (last partial pixel run after the chunk loops).
+        let n = 128 + 3; // 1 block + 12 tail bytes
+        let mut v = rgba_pattern(n, |_, _| {});
+        v[5 * 4 + 3] = 9; // block 0: binary + opacity break
+        v[(n - 1) * 4 + 1] = v[(n - 1) * 4].wrapping_add(1); // tail: gray break
+        run_fused_match_test("blk_alpha_b0_gray_tail", &v, super::FusedRequest::all());
     }
 
     #[test]

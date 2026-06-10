@@ -37,3 +37,37 @@ read either way).
 
 Raw log: captured at /tmp/pr30-bench.log during the run; regenerate with
 the command above.
+
+---
+
+# Blocked-reduction kernel (same day, optimization pass)
+
+The tables above showed the kernel compute-limited at ~33 GiB/s
+cache-resident: 1–3 `any_true` mask reductions + branches per 64-byte
+chunk were the ceiling, not memory. The kernel was rewritten to
+OR-accumulate violations into one register and reduce once per
+8-chunk (512 B) block, with a rare ≤512 B scalar re-scan when the
+accumulator fires (content transition → resume in the narrower
+const-generic specialization).
+
+## After (same command, same content, same host)
+
+| size | fused 3-check 1-pass | vs before | three 1-check passes | scalar |
+|---|---|---|---|---|
+|   64×64 | 203 ns — 75.2 GiB/s | **2.36×** | +72% | 27× slower |
+|  256×256 | 3.1 µs — 78.3 GiB/s | **2.37×** | +108% | 29× slower |
+| 1024×1024 | 57.9 µs — 67.4 GiB/s | **2.07×** | +127% | 22× slower |
+| 4096×4096 | 2.7 ±0.4 ms — 23.1 GiB/s | ~parity | +206% | 6.6× slower |
+
+`determine_load_bearing` (Rgba8 straight): 222 ns at 64×64 (was 480),
+2.6 µs at 256×256 (was 7.4), **59 µs at 1 MP (was 120)**. At 16 MP both
+kernels converge on the single-core DRAM read wall — 20–26 GiB/s run to
+run on this box (2.4–3.2 ms for 64 MB, high inter-run variance under
+WSL2; zenbench flagged the noisy rounds). A cold 16 MP buffer cannot go
+faster single-threaded; the fix at that size is analyzing strips while
+they are cache-warm inside the pipeline (the per-row API composes for
+free) or caller-side threading, not more kernel work.
+
+The `AlphaMode::Opaque` elision now matters only at tiny sizes (177 vs
+222 ns at 64×64); past L2 both variants saturate the same load
+bandwidth.
