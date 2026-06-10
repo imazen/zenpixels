@@ -444,6 +444,16 @@ pub mod __bench_u16_hybrids {
         crate::fast_gamut::__bench_u16_poly_decode_poly_encode(m, src, dst)
     }
 }
+
+/// Bench-only shims exposing the crate-private `scan` fused kernel to
+/// `benches/bench_load_bearing.rs` for pass-structure comparison.
+/// Gated behind `__bench_scan`; not public API in any sense beyond the
+/// bench file.
+#[cfg(feature = "__bench_scan")]
+#[doc(hidden)]
+pub mod __bench_scan {
+    pub use crate::scan::{FusedRequest, FusedResult, fused_predicates_rgba8_cg};
+}
 pub mod gamut;
 pub mod hdr;
 pub mod icc_profiles;

@@ -33,7 +33,10 @@
 //!
 //! [`fused_predicates_rgba8_cg`] is the production RGBA8/BGRA8 entry —
 //! it runs all three RGBA8 checks in one streaming pass at the
-//! bandwidth cost of one (~2× vs separate passes at DRAM-bound sizes).
+//! bandwidth cost of one. Measured (Zen 4 / 7950X, AVX2 tier,
+//! `benchmarks/load_bearing_bench_2026-06-10.md`): 2.76× vs three
+//! separate passes at DRAM-bound 16 MP (22.4 vs 8.1 GiB/s), ~10× vs
+//! scalar when cache-resident.
 
 use archmage::prelude::*;
 

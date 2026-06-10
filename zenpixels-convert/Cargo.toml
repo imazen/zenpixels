@@ -43,6 +43,9 @@ __bench_u16_hybrids = []
 # `__` prefix follows the same internal-API convention as
 # `__bench_u16_hybrids`. Not part of the stable public surface.
 __trace_ops = ["std"]
+# Bench-only: exposes `pub mod __bench_scan` shims for
+# `bench_load_bearing`. Same convention as `__bench_u16_hybrids`.
+__bench_scan = []
 
 [dependencies]
 zenpixels = { workspace = true, default-features = false, features = ["icc"] }
@@ -118,6 +121,12 @@ harness = false
 name = "bench_t7_gamut"
 path = "benches/bench_t7_gamut.rs"
 harness = false
+
+[[bench]]
+name = "bench_load_bearing"
+path = "benches/bench_load_bearing.rs"
+harness = false
+required-features = ["__bench_scan"]
 
 [[bench]]
 name = "bench_matlut_vs_poly"
