@@ -447,10 +447,15 @@ pub mod __bench_u16_hybrids {
 pub mod gamut;
 pub mod hdr;
 pub mod icc_profiles;
+pub mod load_bearing;
 pub mod oklab;
 pub mod output;
 #[cfg(feature = "pipeline")]
 pub mod pipeline;
+// Crate-internal SIMD predicates backing `load_bearing` -- the module
+// stays private so the per-(layout × channel-type) kernel set never
+// becomes public API surface. Consume via `PixelSliceLoadBearingExt`.
+mod scan;
 
 // Re-export key conversion types at crate root.
 pub use adapt::adapt_for_encode_explicit;
@@ -477,6 +482,10 @@ pub use gamut::{
     GamutMatrix, apply_matrix_f32, apply_matrix_row_f32, apply_matrix_row_rgba_f32,
     conversion_matrix,
 };
+
+// Re-export the load-bearing analysis surface: one trait, one report,
+// one enum. The scan-level predicates stay crate-internal.
+pub use load_bearing::{GrayBitDepth, LoadBearingReport, PixelSliceLoadBearingExt};
 
 // Re-export HDR types and tone mapping.
 #[cfg(feature = "std")]

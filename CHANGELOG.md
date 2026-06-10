@@ -14,6 +14,10 @@
 
 - 32-bit overflow safety in `PixelBuffer` constructors and `crop_copy` — checked arithmetic guards `width × height × bytes_per_pixel` from wrapping on 32-bit targets. (#31, 4ebad3e)
 
+### zenpixels-convert — added
+
+- **`load_bearing` module — bit-exact descriptor narrowing analysis** (#30). `PixelSliceLoadBearingExt` (sealed, on `PixelSlice`) answers "which parts of this buffer's declared descriptor actually carry information?": `determine_load_bearing() -> LoadBearingReport` (`uses_alpha` / `uses_chroma` / `uses_low_bits` / `alpha_is_binary` / `uses_gray_bit_depth`), `LoadBearingReport::apply_to` (descriptor combiner), and `try_reduce_to_load_bearing_format()` (tightly-packed buffer rewrite: alpha drop, gray collapse, bit-replicated U16→U8, Bgra→Rgb with channel reorder). Backed by a crate-private `scan` module of magetypes 5-tier SIMD predicates (single-pass fused RGBA8/BGRA8 kernel; strided rows supported per-row at no cost to the contiguous path). `AlphaMode::Undefined`/`Opaque` answer alpha questions from the descriptor without scanning. Every reduction is bit-exact invertible — primaries/gamut narrowing is deliberately excluded (it re-encodes pixel values; a future explicit opt-in conversion API owns that).
+
 ## [0.2.12] - 2026-06-10
 
 ### zenpixels-convert — added
