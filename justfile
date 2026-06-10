@@ -8,9 +8,18 @@ r2_prefix := "icc-profiles/"
 # Run all checks (fmt, clippy, test)
 ci: fmt clippy test
 
-# Format
+# Format + regenerate the public-API surface snapshots (docs/public-api/)
 fmt:
     cargo fmt --check
+    cargo test -p zenpixels --test public_api_doc
+
+# Regenerate the public-API surface snapshots only
+api-doc:
+    cargo test -p zenpixels --test public_api_doc
+
+# Verify the committed snapshots are current (what CI runs)
+api-doc-check:
+    ZEN_API_DOC=check cargo test -p zenpixels --test public_api_doc
 
 # Clippy
 clippy:
