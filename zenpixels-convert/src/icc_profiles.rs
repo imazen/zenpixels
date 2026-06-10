@@ -69,6 +69,15 @@ use alloc::borrow::Cow;
 
 use crate::{Cicp, ColorPrimaries, TransferFunction};
 
+// Bundled, transfer-grouped CICP→ICC blob: a build-time-generated index
+// (`cicp_bundle_index`) over an LZ4-HC compressed asset, decoded lazily per
+// transfer group at runtime (`cicp_bundle`). This gives `synthesize_icc_for_cicp`
+// full H.273-grid coverage with no CMS dependency — moxcms becomes a build-time
+// generator only. Both submodules are internal implementation detail.
+mod cicp_bundle;
+#[rustfmt::skip]
+mod cicp_bundle_index;
+
 // ---------------------------------------------------------------------------
 // Embedded ICC profiles (CC0 license from Compact-ICC-Profiles)
 // https://github.com/saucecontrol/Compact-ICC-Profiles
@@ -330,12 +339,30 @@ pub fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
     let primaries = cicp.color_primaries_enum();
     let transfer = cicp.transfer_function_enum();
 
-    // A bundled, transfer-matched profile (const, no allocation).
+    // 1. A bundled, transfer-matched `&'static` const (the hot path — the
+    //    saucecontrol DisplayP3 / Rec.2020 / Adobe RGB profiles, no allocation,
+    //    no decode). These take precedence over the blob so the curated
+    //    in-the-wild-matching bytes win for the common gamuts.
     if let Some(bytes) = bundled_icc_profile(primaries, transfer) {
         return SynthesizedIcc::Profile(Cow::Borrowed(bytes));
     }
 
-    // No bundled match → a CMS is required to generate one.
+    // 2. The bundled, LZ4-compressed blob covering the *full* H.273 grid
+    //    (174 combos). Keyed on the raw code points — moxcms-equivalent bytes,
+    //    decoded once per transfer group and cached. This is what lets a
+    //    default (no-CMS) build give full coverage without moxcms.
+    if let Some(bytes) = cicp_bundle::bundled_profile_for_cicp(
+        cicp.color_primaries,
+        cicp.transfer_characteristics,
+    ) {
+        return SynthesizedIcc::Profile(bytes);
+    }
+
+    // 3. Not in the const set or the blob. The blob already covers every CICP
+    //    moxcms can represent, so a `cms-moxcms` build reaching here means
+    //    moxcms can't represent this CICP either → `CmsUnsupported`. (Kept as a
+    //    belt-and-suspenders fallback; it will not produce bytes the blob
+    //    lacks.)
     #[cfg(feature = "cms-moxcms")]
     {
         match crate::cms_moxcms::icc_bytes_for_cicp(&cicp) {
@@ -345,7 +372,10 @@ pub fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
     }
     #[cfg(not(feature = "cms-moxcms"))]
     {
-        SynthesizedIcc::NeedsCms
+        // The blob is the coverage source now, not moxcms. Reaching here means
+        // the CICP is outside the assigned H.273 grid (e.g. a reserved code
+        // point) — genuinely unrepresentable, not merely "needs a CMS".
+        SynthesizedIcc::CmsUnsupported
     }
 }
 
@@ -563,34 +593,33 @@ mod tests {
     }
 
     #[test]
-    fn synthesize_icc_for_cicp_hdr_pq_needs_cms_or_generates() {
-        // BT.2020 PQ: no bundled profile (HDR TRC). The outcome distinguishes the
-        // two builds — never a mis-tagged SDR profile.
+    fn synthesize_icc_for_cicp_hdr_pq_is_bundled_in_every_build() {
+        // BT.2020 PQ: an HDR transfer with no `&'static` const, but it IS in the
+        // full-grid blob now — so a profile comes back in BOTH builds, never a
+        // mis-tagged SDR profile and never `NeedsCms`. (The bytes are the
+        // blob's; byte-equality with moxcms is verified by the roundtrip test.)
         let bt2020_pq = Cicp::new(9, 16, 9, false); // primaries 9, transfer 16 (PQ)
-        let got = synthesize_icc_for_cicp(bt2020_pq);
-        #[cfg(feature = "cms-moxcms")]
-        match got {
-            // moxcms recognizes BT.2020 PQ → generates an owned, non-empty profile.
-            SynthesizedIcc::Profile(Cow::Owned(bytes)) => assert!(!bytes.is_empty()),
-            other => panic!("expected CMS-generated owned PQ profile, got {other:?}"),
+        match synthesize_icc_for_cicp(bt2020_pq) {
+            SynthesizedIcc::Profile(bytes) => {
+                assert!(!bytes.is_empty());
+                assert_eq!(&bytes[36..40], b"acsp", "must be a valid ICC profile");
+            }
+            other => panic!("expected a bundled PQ profile, got {other:?}"),
         }
-        #[cfg(not(feature = "cms-moxcms"))]
-        // No CMS in this build → caller is told a CMS is required, not handed an
-        // SDR-TRC profile that contradicts the PQ pixels.
-        assert_eq!(got, SynthesizedIcc::NeedsCms);
     }
 
     #[test]
     fn synthesize_icc_for_cicp_reserved_transfer_is_unsupported_not_mistagged() {
-        // Recognized primaries (BT.2020) but a reserved transfer code (0). moxcms
-        // folds reserved codes into `Reserved` and `new_from_cicp` would silently
-        // emit a TRC-less base profile — so synthesis must refuse, not mis-tag.
+        // Recognized primaries (BT.2020) but a *reserved* transfer code (0). It's
+        // outside the assigned H.273 grid, so it isn't in the blob — synthesis
+        // must refuse rather than mis-tag. The blob is the coverage source now,
+        // so a no-CMS build reports `CmsUnsupported` (not `NeedsCms`): there is
+        // no CMS that could add what the blob lacks for an unassigned code.
         let bt2020_reserved_trc = Cicp::new(9, 0, 9, false);
-        let got = synthesize_icc_for_cicp(bt2020_reserved_trc);
-        #[cfg(feature = "cms-moxcms")]
-        assert_eq!(got, SynthesizedIcc::CmsUnsupported);
-        #[cfg(not(feature = "cms-moxcms"))]
-        assert_eq!(got, SynthesizedIcc::NeedsCms);
+        assert_eq!(
+            synthesize_icc_for_cicp(bt2020_reserved_trc),
+            SynthesizedIcc::CmsUnsupported
+        );
     }
 
     #[test]
@@ -598,8 +627,8 @@ mod tests {
         // BT.601 primaries (code 6) + gamma-2.2 transfer (code 4): a real, non-sRGB
         // colour description that zenpixels' enum folds into `Unknown`/`Unknown`.
         // It must NOT be treated as the sRGB default — that would silently drop the
-        // gamut. The `NotNeeded` gate keys on raw code points, so this falls through
-        // to the CMS path (synthesizable — moxcms recognizes both codes).
+        // gamut. The `NotNeeded` gate keys on raw code points, and it's an assigned
+        // grid point, so it resolves from the blob in EVERY build.
         let bt601_g22 = Cicp::new(6, 4, 0, false);
         let got = synthesize_icc_for_cicp(bt601_g22);
         assert_ne!(
@@ -607,9 +636,46 @@ mod tests {
             SynthesizedIcc::NotNeeded,
             "a real non-sRGB gamut must never be assumed to be the sRGB default"
         );
-        #[cfg(feature = "cms-moxcms")]
-        assert!(matches!(got, SynthesizedIcc::Profile(_)));
-        #[cfg(not(feature = "cms-moxcms"))]
-        assert_eq!(got, SynthesizedIcc::NeedsCms);
+        assert!(
+            matches!(got, SynthesizedIcc::Profile(_)),
+            "an assigned H.273 grid point must resolve from the blob in every build, got {got:?}"
+        );
+    }
+
+    #[test]
+    fn synthesize_icc_for_cicp_full_grid_coverage_without_cms() {
+        // The headline property: with NO CMS feature, the blob gives a profile for
+        // every assigned-grid combo except the two sRGB-default `NotNeeded` ones.
+        // Walk the whole 11×16 grid and assert every covered combo yields bytes.
+        const ASSIGNED_PRIMARIES: &[u8] = &[1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 22];
+        const ASSIGNED_TRANSFERS: &[u8] = &[1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+        let mut profiles = 0usize;
+        let mut not_needed = 0usize;
+        for &p in ASSIGNED_PRIMARIES {
+            for &t in ASSIGNED_TRANSFERS {
+                let got = synthesize_icc_for_cicp(Cicp::new(p, t, 0, true));
+                match got {
+                    SynthesizedIcc::Profile(bytes) => {
+                        assert_eq!(
+                            &bytes[36..40],
+                            b"acsp",
+                            "({p}, {t}) produced non-ICC bytes"
+                        );
+                        profiles += 1;
+                    }
+                    SynthesizedIcc::NotNeeded => {
+                        // Only the BT.709 sRGB-default pairs.
+                        assert!(
+                            p == 1 && matches!(t, 1 | 13),
+                            "({p}, {t}) unexpectedly NotNeeded"
+                        );
+                        not_needed += 1;
+                    }
+                    other => panic!("({p}, {t}) gave {other:?} — expected full blob coverage"),
+                }
+            }
+        }
+        assert_eq!(profiles, 174, "expected 174 profile-yielding combos");
+        assert_eq!(not_needed, 2, "expected exactly 2 sRGB-default NotNeeded combos");
     }
 }
