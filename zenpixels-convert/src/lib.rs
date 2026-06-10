@@ -448,6 +448,7 @@ pub mod gamut;
 pub mod hdr;
 pub mod icc_profiles;
 pub mod oklab;
+pub mod orient;
 pub mod output;
 #[cfg(feature = "pipeline")]
 pub mod pipeline;

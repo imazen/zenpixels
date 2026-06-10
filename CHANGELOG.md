@@ -14,6 +14,10 @@
 
 - 32-bit overflow safety in `PixelBuffer` constructors and `crop_copy` — checked arithmetic guards `width × height × bytes_per_pixel` from wrapping on 32-bit targets. (#31, 4ebad3e)
 
+### zenpixels-convert — added
+
+- `orient::apply_orientation(PixelSlice, Orientation) -> PixelBuffer` — physically bakes any of the eight EXIF orientations into a fresh buffer (rotate/flip). Descriptor-, channel-, and bit-depth-agnostic (moves whole `bpp`-sized pixels); strided input handled. Flips are row memcpy / element-reverse; the four transposing orientations use a cache-blocked (loop-tiled) transpose with the reflection folded into the destination address. This is the buffer-baking half of the zen orientation model — codecs that decode to a raster buffer call it when `OrientationHint::bakes()` is true (the coordinate math stays in `zenpixels::Orientation`). Cache-blocked scalar; SIMD register transpose (magetypes `transpose_4x4`/`8x8`) to follow.
+
 ## [0.2.12] - 2026-06-10
 
 ### zenpixels-convert — added
