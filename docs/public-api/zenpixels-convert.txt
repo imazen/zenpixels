@@ -5,7 +5,7 @@
 # all-features section.
 # DO NOT EDIT BY HAND — commit regenerated changes together with the code.
 
-## default features (676 items)
+## default features (677 items)
 
 pub mod zenpixels_convert
 pub use zenpixels_convert::<<zenpixels::*>>
@@ -278,6 +278,7 @@ pub fn zenpixels_convert::oklab::rgb_to_lms_matrix(zenpixels::descriptor::ColorP
 pub fn zenpixels_convert::oklab::rgb_to_oklab(f32, f32, f32, &zenpixels_convert::gamut::GamutMatrix) -> [f32; 3]
 pub mod zenpixels_convert::orient
 pub fn zenpixels_convert::orient::apply_orientation(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation) -> zenpixels::buffer::PixelBuffer
+pub fn zenpixels_convert::orient::apply_orientation_into(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), zenpixels_convert::error::ConvertError>
 pub mod zenpixels_convert::output
 #[non_exhaustive] pub enum zenpixels_convert::output::OutputProfile
 pub zenpixels_convert::output::OutputProfile::Icc(alloc::sync::Arc<[u8]>)
@@ -684,7 +685,7 @@ pub fn zenpixels_convert::reinhard_inverse(f32) -> f32
 pub fn zenpixels_convert::reinhard_tonemap(f32) -> f32
 pub type zenpixels_convert::GamutMatrix = [[f32; 3]; 3]
 
-## all features except _* (1379 items)
+## all features except _* (1380 items)
 
 pub mod zenpixels_convert
 pub use zenpixels_convert::<<zenpixels::*>>
@@ -1010,6 +1011,7 @@ pub fn zenpixels_convert::oklab::rgb_to_lms_matrix(zenpixels::descriptor::ColorP
 pub fn zenpixels_convert::oklab::rgb_to_oklab(f32, f32, f32, &zenpixels_convert::gamut::GamutMatrix) -> [f32; 3]
 pub mod zenpixels_convert::orient
 pub fn zenpixels_convert::orient::apply_orientation(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation) -> zenpixels::buffer::PixelBuffer
+pub fn zenpixels_convert::orient::apply_orientation_into(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), zenpixels_convert::error::ConvertError>
 pub mod zenpixels_convert::output
 #[non_exhaustive] pub enum zenpixels_convert::output::OutputProfile
 pub zenpixels_convert::output::OutputProfile::Icc(alloc::sync::Arc<[u8]>)

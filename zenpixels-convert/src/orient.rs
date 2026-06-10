@@ -48,6 +48,8 @@ use core::cmp::min;
 
 use zenpixels::{Orientation, PixelBuffer, PixelSlice, PixelSliceMut};
 
+use crate::error::ConvertError;
+
 // SIMD path imports (x86_64): `incant!`, `X64V3Token`, `ScalarToken`,
 // `#[arcane]` from the archmage prelude; the generic `f32x4` from magetypes.
 #[cfg(target_arch = "x86_64")]
@@ -61,8 +63,8 @@ use magetypes::simd::f32x4;
 /// the per-tile loop overhead.
 const TILE: u32 = 32;
 
-/// Apply `orientation` to `src`, returning a new buffer with the pixels
-/// physically rearranged.
+/// Apply `orientation` to `src`, returning a freshly-allocated buffer with the
+/// pixels physically rearranged.
 ///
 /// The returned buffer's dimensions are
 /// [`orientation.output_dimensions(src.width(), src.rows())`](Orientation::output_dimensions)
@@ -71,23 +73,53 @@ const TILE: u32 = 32;
 /// never touches their contents), so it is format-, channel-, and bit-depth
 /// agnostic. Strided input is handled.
 ///
-/// `Orientation::Identity` still allocates and copies (callers that want to
-/// skip the copy should check `orientation.is_identity()` themselves).
+/// This allocates the output every call. Callers that reuse or pool a target
+/// buffer (e.g. a codec `decode_into`, or an image proxy processing same-size
+/// images) should use [`apply_orientation_into`] to avoid the allocation.
+/// `Orientation::Identity` still allocates and copies (callers that want to skip
+/// the copy entirely should check `orientation.is_identity()` themselves).
 #[must_use]
 pub fn apply_orientation(src: PixelSlice<'_>, orientation: Orientation) -> PixelBuffer {
+    let (ow, oh) = orientation.output_dimensions(src.width(), src.rows());
+    let desc = src.descriptor();
+    let mut out = PixelBuffer::new(ow, oh, desc);
+    // The buffer is constructed to the exact output geometry + descriptor, so
+    // the size/format check inside `apply_orientation_into` cannot fail.
+    apply_orientation_into(src, orientation, out.as_slice_mut())
+        .expect("apply_orientation: freshly allocated buffer matches output geometry");
+    out
+}
+
+/// Apply `orientation` to `src`, writing into a caller-provided `dst` — **no
+/// allocation**, so callers can reuse / pool the target across many calls.
+///
+/// `dst` must already have the oriented geometry
+/// ([`orientation.output_dimensions(src.width(), src.rows())`](Orientation::output_dimensions))
+/// and the same bytes-per-pixel as `src`; otherwise [`ConvertError::BufferSize`]
+/// is returned and `dst` is left untouched. The allocating [`apply_orientation`]
+/// is a thin wrapper over this.
+pub fn apply_orientation_into(
+    src: PixelSlice<'_>,
+    orientation: Orientation,
+    mut dst: PixelSliceMut<'_>,
+) -> Result<(), ConvertError> {
     let w = src.width();
     let h = src.rows();
-    let desc = src.descriptor();
-    let bpp = desc.bytes_per_pixel();
+    let bpp = src.descriptor().bytes_per_pixel();
     let (ow, oh) = orientation.output_dimensions(w, h);
 
-    let mut out = PixelBuffer::new(ow, oh, desc);
+    let dst_bpp = dst.descriptor().bytes_per_pixel();
+    if dst.width() != ow || dst.rows() != oh || dst_bpp != bpp {
+        return Err(ConvertError::BufferSize {
+            expected: ow as usize * oh as usize * bpp,
+            actual: dst.width() as usize * dst.rows() as usize * dst_bpp,
+        });
+    }
     if w == 0 || h == 0 || bpp == 0 {
-        return out;
+        return Ok(());
     }
 
     {
-        let mut dst = out.as_slice_mut();
         match orientation {
             Orientation::Identity => {
                 for y in 0..h {
@@ -123,7 +155,7 @@ pub fn apply_orientation(src: PixelSlice<'_>, orientation: Orientation) -> Pixel
             }
         }
     }
-    out
+    Ok(())
 }
 
 /// Bench-only A/B handle: bake `orientation` via the cache-blocked **scalar**
@@ -594,5 +626,53 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn into_writes_caller_buffer_and_is_reusable() {
+        // One target buffer, reused across four transposing orientations (all
+        // share the swapped 13×17 geometry for a 17×13 input) — proves the
+        // no-alloc reuse path and that it matches the allocating version.
+        let desc = PixelDescriptor::RGBA8;
+        let (w, h) = (17u32, 13u32);
+        let data = fill(w as usize * h as usize * 4);
+        let (ow, oh) = Orientation::Rotate90.output_dimensions(w, h);
+        let mut target = PixelBuffer::new(ow, oh, desc);
+        for &o in &[
+            Orientation::Rotate90,
+            Orientation::Rotate270,
+            Orientation::Transverse,
+            Orientation::Transpose,
+        ] {
+            apply_orientation_into(slice(&data, w, h, desc), o, target.as_slice_mut())
+                .expect("into should accept a correctly-sized buffer");
+            let want = apply_orientation(slice(&data, w, h, desc), o);
+            for y in 0..oh {
+                assert_eq!(
+                    target.as_slice().row(y),
+                    want.as_slice().row(y),
+                    "{o:?} row {y}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn into_rejects_wrong_sized_dst() {
+        // Rotate90 of 8×6 needs a 6×8 target; an 8×6 buffer (same byte count,
+        // wrong dims) must be rejected with BufferSize, leaving dst untouched.
+        let desc = PixelDescriptor::RGBA8;
+        let (w, h) = (8u32, 6u32);
+        let data = fill(w as usize * h as usize * 4);
+        let mut wrong = PixelBuffer::new(w, h, desc); // 8×6, but Rotate90 → 6×8
+        let result = apply_orientation_into(
+            slice(&data, w, h, desc),
+            Orientation::Rotate90,
+            wrong.as_slice_mut(),
+        );
+        assert!(
+            matches!(result, Err(ConvertError::BufferSize { .. })),
+            "expected BufferSize, got {result:?}"
+        );
     }
 }
