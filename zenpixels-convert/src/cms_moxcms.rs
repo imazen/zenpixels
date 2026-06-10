@@ -332,6 +332,47 @@ fn source_to_moxcms_profile(
     }
 }
 
+/// Generate ICC profile bytes for a CICP via moxcms, or `None` if moxcms doesn't
+/// recognize the **color-defining** code points (primaries / transfer).
+///
+/// Strict on purpose: unlike [`cicp_to_moxcms_profile`] (the transform path, which
+/// falls back to Bt709/sRGB defaults), synthesis must never emit a profile whose
+/// TRC/gamut contradicts the source — a `None` here surfaces as
+/// [`SynthesizedIcc::CmsUnsupported`](crate::icc_profiles::SynthesizedIcc::CmsUnsupported)
+/// so the caller carries the color via CICP instead of embedding a wrong profile.
+/// Matrix coefficients are irrelevant to an RGB ICC, so they're defaulted rather
+/// than required.
+pub(crate) fn icc_bytes_for_cicp(cicp: &Cicp) -> Option<alloc::vec::Vec<u8>> {
+    // `try_from` on these moxcms enums never errors: every u8 maps to a variant,
+    // with reserved/unassigned codes folding into `Reserved`. So these conversions
+    // are NOT the validity gate — the real check is whether moxcms could populate
+    // the colorimetry below.
+    let color_primaries = moxcms::CicpColorPrimaries::try_from(cicp.color_primaries).ok()?;
+    let transfer_characteristics =
+        moxcms::TransferCharacteristics::try_from(cicp.transfer_characteristics).ok()?;
+    // Matrix coefficients don't affect an RGB ICC's colorimetry; default rather
+    // than reject so an unusual matrix code doesn't block synthesis.
+    let matrix_coefficients = moxcms::MatrixCoefficients::try_from(cicp.matrix_coefficients)
+        .unwrap_or(moxcms::MatrixCoefficients::Identity);
+
+    let profile = ColorProfile::new_from_cicp(moxcms::CicpProfile {
+        color_primaries,
+        transfer_characteristics,
+        matrix_coefficients,
+        full_range: cicp.full_range,
+    });
+
+    // `new_from_cicp` discards the bool from `update_rgb_colorimetry_from_cicp`, so
+    // for `Reserved`/`Unspecified` primaries or transfer it silently returns a base
+    // profile with no colorants and no TRC. moxcms sets `red_trc` only after every
+    // primaries + white-point + transfer-curve gate passes, so a populated `red_trc`
+    // is the signal synthesis was faithful. No TRC ⇒ moxcms can't represent this
+    // CICP — bail with None (surfaces as `CmsUnsupported`) rather than emit a
+    // degenerate profile whose colorimetry omits or contradicts the requested color.
+    profile.red_trc.as_ref()?;
+    profile.encode().ok()
+}
+
 /// Convert CICP to a moxcms ColorProfile.
 #[allow(dead_code)]
 fn cicp_to_moxcms_profile(cicp: &Cicp) -> ColorProfile {
