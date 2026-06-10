@@ -23,3 +23,17 @@ lcms2-crosscheck = ["dep:lcms2", "dep:bytemuck"]
 moxcms = { version = "0.8.1", features = ["options"] }
 lcms2 = { version = "6.1.1", optional = true }
 bytemuck = { version = "1.18.0", optional = true }
+# Build-time only: LZ4-HC(12) block compression for the CICP bundle generator
+# (`cicp_bundle_gen` bin). C-backed; output is standard LZ4 blocks that the
+# runtime's pure-Rust `lz4_flex` safe-decode reads byte-for-byte.
+lz4 = "1.28.1"
+
+# Default binary: the ICC hash-table generator (src/main.rs).
+[[bin]]
+name = "icc-gen"
+path = "src/main.rs"
+
+# CICP→ICC bundle generator: emits the transfer-grouped LZ4-HC blob + index.
+[[bin]]
+name = "cicp_bundle_gen"
+path = "src/bin/cicp_bundle_gen.rs"
