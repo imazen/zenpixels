@@ -928,9 +928,9 @@ mod tests {
         let view = out.as_slice();
         for y in 0..4u32 {
             let row = view.row(y);
-            for x in 0..4usize {
+            for (x, &g) in row.iter().enumerate() {
                 let expected = ((x as u32 + y) * 20) as u8;
-                assert_eq!(row[x], expected, "gray byte at ({x},{y}) wrong");
+                assert_eq!(g, expected, "gray byte at ({x},{y}) wrong");
             }
         }
     }
