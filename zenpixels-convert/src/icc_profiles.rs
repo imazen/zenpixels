@@ -280,13 +280,12 @@ pub enum SynthesizedIcc {
     /// asks to synthesize for sRGB (its `synth_worthwhile` test excludes it) — but
     /// it's surfaced explicitly rather than masquerading as a missing profile.
     NotNeeded,
-    /// No bundled `&'static` profile matches this CICP, and producing one needs a
-    /// CMS — but the `cms-moxcms` feature is **off** in this build. Enable it to
-    /// synthesize a profile, or carry the color via the CICP carrier alone.
+    /// A CMS would be required to produce a profile for this CICP.
     ///
-    /// A non-CMS build can't tell whether a CMS *would* succeed; a `cms-moxcms`
-    /// build answers that with [`Profile`](Self::Profile) or
-    /// [`CmsUnsupported`](Self::CmsUnsupported).
+    /// Retained for API stability: [`synthesize_icc_for_cicp`] no longer returns
+    /// this — the bundled full-grid blob serves every assigned H.273 CICP with no
+    /// CMS, so a no-CMS build reports [`CmsUnsupported`](Self::CmsUnsupported) for an
+    /// unassigned / reserved code rather than `NeedsCms`.
     NeedsCms,
     /// The `cms-moxcms` CMS is enabled but could not generate a profile for this
     /// CICP — e.g. unrecognized primaries/transfer code points. Genuinely
@@ -299,17 +298,29 @@ pub enum SynthesizedIcc {
 ///
 /// This is the transfer-aware lowering for `IccDisposition::SynthesizeFrom`. Unlike
 /// [`icc_profile_for_primaries`] (primaries-only — which would hand a BT.2020-**PQ**
-/// source the SDR-TRC Rec.2020 profile), this never mis-tags: an HDR transfer with
-/// no bundled match returns [`NeedsCms`](SynthesizedIcc::NeedsCms) /
-/// [`CmsUnsupported`](SynthesizedIcc::CmsUnsupported), so you embed a CMS-generated
-/// profile or none — never a profile whose TRC contradicts the pixels.
+/// source the SDR-TRC Rec.2020 profile), this never mis-tags: a CICP outside the
+/// assigned H.273 grid (e.g. a reserved code point) returns
+/// [`CmsUnsupported`](SynthesizedIcc::CmsUnsupported), so you carry the colour via the
+/// CICP carrier or embed nothing — never a profile whose TRC contradicts the pixels.
 ///
-/// Coverage:
-/// - **Bundled** (`no_std`, no CMS): the bundled `&'static` set ([`DISPLAY_P3_V4`],
-///   [`REC2020_V4`]) — Display-P3 (sRGB TRC) and BT.2020 (BT.709 TRC) are reachable
-///   via CICP; Adobe RGB has no CICP code point.
-/// - **`cms-moxcms`**: generated for any CICP moxcms recognizes, including PQ/HLG.
+/// Coverage — full, with **no CMS required** (a default `no_std` build serves all of it):
+/// - **Curated `&'static` consts** for the common gamuts ([`DISPLAY_P3_V4`],
+///   [`REC2020_V4`], Adobe RGB) — zero-copy, no decode.
+/// - **The full assigned H.273 grid** (174 primaries×transfer combos, **including HDR
+///   PQ and HLG**), from a bundled LZ4-compressed blob decoded once per transfer group
+///   on first use. These bytes are byte-for-byte what the `cms-moxcms` CMS generates.
 /// - **sRGB / BT.709 default** → [`NotNeeded`](SynthesizedIcc::NotNeeded).
+///
+/// The optional `cms-moxcms` feature is now only a belt-and-suspenders fallback — the
+/// blob already covers every CICP moxcms can represent.
+///
+/// # HDR caveat (PQ)
+/// HLG round-trips cleanly through a CMS. The **PQ** / P3-PQ profiles are faithful
+/// above ~10 nits but, as ICC `curv`-LUT encodings, soften in the deep toe (≈8 %
+/// relative at ~1 nit) — inherent to representing PQ's range as a finite ICC tone
+/// curve, not specific to these bytes. Where the container signals PQ/HLG natively
+/// (AVIF, JXL, HEIC, PNG `cICP`), prefer CICP-native signalling and treat an embedded
+/// PQ ICC as a fallback for ICC-only containers (JPEG, WebP, PNG without `cICP`).
 ///
 /// # Examples
 /// ```

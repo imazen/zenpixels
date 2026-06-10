@@ -99,9 +99,9 @@ sha256sum zenpixels-convert/src/profiles/cicp_bundle.lz4
 
 ## What it writes
 
-- **`zenpixels-convert/src/profiles/cicp_bundle.lz4`** — 16 LZ4-HC(12) blocks
-  (one per transfer that yields profiles) concatenated into one asset (~27 KB).
-  Grouping by transfer is load-bearing: LZ4's match window is 64 KiB, so
+- **`zenpixels-convert/src/profiles/cicp_bundle.lz4`** — 16 LZ4 blocks (pure-Rust
+  `lz4_flex`, one per transfer that yields profiles) concatenated into one asset
+  (~28 KB). Grouping by transfer is load-bearing: LZ4's match window is 64 KiB, so
   clustering the identical TRC/LUT payload (same transfer, varying primaries)
   is what lets the compressor collapse it.
 - **`src/icc_profiles/cicp_bundle_index.rs`** — a generated module with the

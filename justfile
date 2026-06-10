@@ -129,8 +129,8 @@ icc-dry-run: icc-build-gen
 
 # ── CICP→ICC bundle (full-coverage compressed blob) ───────────────────
 #
-# Regenerates the bundled, transfer-grouped LZ4-HC ICC blob that gives
-# `synthesize_icc_for_cicp` full H.273-grid coverage with no CMS at runtime.
+# Regenerates the bundled, transfer-grouped LZ4 ICC blob (pure-Rust lz4_flex)
+# that gives `synthesize_icc_for_cicp` full H.273-grid coverage with no CMS.
 # moxcms is used here (build-time) only; nothing in the normal build runs this.
 # Run after a moxcms version bump (the golden sha256 test flags drift), then
 # update the pinned hash in zenpixels-convert/src/icc_profiles/cicp_bundle.rs.
