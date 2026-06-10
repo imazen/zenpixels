@@ -58,10 +58,10 @@ archmage = { version = "0.9.26", default-features = false }
 # native F16C (x86-64-v3) AND NEON-fp16 (aarch64, rustversion-gated, MSRV-safe)
 # backends + a branchless software fallback — replacing this crate's bespoke
 # x86-only F16C dispatch (which fell back to scalar on aarch64).
-# `w512` gates the 512-bit-wide types (u8x64 / u16x32 / f32x16) that the
-# `scan` predicates are written against; they polyfill as 2×256 on V4 and
-# 4×128 on V3/NEON/WASM, so this costs nothing on narrower hardware.
-magetypes = { version = "0.9.26", default-features = false, features = ["w512"] }
+# Deliberately no `w512`: the `scan` predicates use 256-bit types (native
+# on AVX2, 2×128 polyfill below), and the 512-bit type set isn't worth its
+# compile-time cost without a stronger AVX-512 use case in this crate.
+magetypes = { version = "0.9.26", default-features = false }
 paste = "1.0.15"
 once_cell = { version = "1.21.4", default-features = false, features = ["race", "alloc"] }
 whereat = { version = "0.1.5", default-features = false }

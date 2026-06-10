@@ -25,9 +25,12 @@
 //! the buffer rewrite -- never to a descriptor-level "reduction" where
 //! a re-tag without the rewrite would silently misinterpret pixels.
 
+#[cfg(test)]
 use alloc::vec::Vec;
 
-use zenpixels::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, PixelFormat, PixelSlice};
+use zenpixels::{
+    AlphaMode, ChannelLayout, ChannelType, PixelBuffer, PixelDescriptor, PixelFormat, PixelSlice,
+};
 
 use crate::scan::{self, FusedRequest};
 
@@ -176,10 +179,15 @@ pub trait PixelSliceLoadBearingExt: sealed::Sealed {
     /// [`Self::try_reduce_to_load_bearing_format`] to actually build it.
     fn determine_load_bearing(&self) -> LoadBearingReport;
 
-    /// Run analysis and return the rewritten contiguous buffer if any
-    /// reduction is available; `None` if the buffer is already at its
-    /// load-bearing minimum (or the predicates couldn't run).
-    fn try_reduce_to_load_bearing_format(&self) -> Option<(PixelDescriptor, Vec<u8>)>;
+    /// Run analysis and return the rewritten buffer if any reduction is
+    /// available; `None` if the buffer is already at its load-bearing
+    /// minimum, the predicates couldn't run, or allocation failed.
+    ///
+    /// The returned [`PixelBuffer`] carries the narrowed descriptor and
+    /// the buffer's standard SIMD-aligned row stride (it is not
+    /// byte-tightly packed; use the buffer's own accessors or
+    /// [`PixelBuffer::as_slice`] downstream).
+    fn try_reduce_to_load_bearing_format(&self) -> Option<PixelBuffer>;
 }
 
 impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
@@ -307,17 +315,19 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
         }
     }
 
-    fn try_reduce_to_load_bearing_format(&self) -> Option<(PixelDescriptor, Vec<u8>)> {
+    fn try_reduce_to_load_bearing_format(&self) -> Option<PixelBuffer> {
         let src = self.descriptor();
         let report = self.determine_load_bearing();
         let target = report.apply_to(&src);
         if target == src {
             return None;
         }
-        // Output is tightly packed (no stride padding) -- we control
-        // the new buffer's layout. Caller can always re-stride later.
-        let out = transform_over_rows(self, &src, &target)?;
-        Some((target, out))
+        // One fallible zeroed allocation (calloc path) at the target's
+        // standard aligned stride; rows are then written in place --
+        // no per-pixel Vec growth anywhere in the rewrite.
+        let mut out = PixelBuffer::try_new(self.width(), self.rows(), target).ok()?;
+        transform_into(self, &src, &target, &mut out)?;
+        Some(out)
     }
 }
 
@@ -383,26 +393,6 @@ fn fused_rgba8_over_rows<P>(slice: &PixelSlice<'_, P>, request: FusedRequest) ->
     total
 }
 
-/// Row-aware transform: produce a tightly-packed output buffer from a
-/// (possibly strided) source by transforming row-by-row and appending.
-fn transform_over_rows<P>(
-    slice: &PixelSlice<'_, P>,
-    src: &PixelDescriptor,
-    dst: &PixelDescriptor,
-) -> Option<Vec<u8>> {
-    if let Some(bytes) = slice.as_contiguous_bytes() {
-        return transform_to(bytes, src, dst);
-    }
-    // Strided: process each row independently and concatenate. Each
-    // row is tightly-packed in the output.
-    let mut out = Vec::new();
-    for y in 0..slice.rows() {
-        let row_out = transform_to(slice.row(y), src, dst)?;
-        out.extend_from_slice(&row_out);
-    }
-    Some(out)
-}
-
 // ── Helpers ────────────────────────────────────────────────────────────
 
 fn cast_u8(bytes: &[u8]) -> &[u8] {
@@ -417,99 +407,110 @@ fn cast_f32(bytes: &[u8]) -> &[f32] {
     bytemuck::cast_slice(bytes)
 }
 
-/// Build the rewritten buffer for the supported descriptor transitions.
-/// Returns `None` for descriptor pairs we don't know how to convert.
-/// Every transition is a pure byte shuffle -- no sample value changes.
-fn transform_to(bytes: &[u8], src: &PixelDescriptor, dst: &PixelDescriptor) -> Option<Vec<u8>> {
+/// Fill `out` (pre-zeroed, target descriptor, aligned stride) from
+/// `slice`, row by row. Strided input costs nothing extra -- the loop
+/// is per-row either way. Returns `None` for descriptor pairs this
+/// module doesn't know how to rewrite.
+///
+/// Every transition is a pure byte selection -- no sample value
+/// changes. The two RGBA-family alpha drops delegate to `garb`'s SIMD
+/// swizzles; the remaining selections are fixed-stride copy loops that
+/// LLVM turns into shuffles (and they only run when the corresponding
+/// scan proved the dropped bytes redundant).
+fn transform_into<P>(
+    slice: &PixelSlice<'_, P>,
+    src: &PixelDescriptor,
+    dst: &PixelDescriptor,
+    out: &mut PixelBuffer,
+) -> Option<()> {
     let src_ct = src.channel_type();
     let dst_ct = dst.channel_type();
     let src_layout = src.layout();
     let dst_layout = dst.layout();
 
-    // Step 1: channel-type narrowing.
-    //   U16 → U8 (bit-replicated): both bytes of each sample are equal
-    //   (that's the precondition `uses_low_bits == Some(false)` proves),
-    //   so taking byte 0 is the high byte regardless of endianness.
-    //   F32 → F32, U8 → U8, U16 → U16: pass through.
-    //   Anything else: not yet supported.
-    let post_ct: Vec<u8> = if src_ct == ChannelType::U16 && dst_ct == ChannelType::U8 {
-        bytes.chunks_exact(2).map(|p| p[0]).collect()
-    } else if src_ct == dst_ct {
-        bytes.to_vec()
-    } else {
+    // U16 → U8 narrowing is the only channel-type transition. The
+    // bit-replication precondition (`uses_low_bits == Some(false)`)
+    // proves both bytes of every sample are equal, so byte 0 is the
+    // (replicated) high byte regardless of endianness.
+    let narrow16 = src_ct == ChannelType::U16 && dst_ct == ChannelType::U8;
+    if !narrow16 && src_ct != dst_ct {
         return None;
-    };
-
-    // Step 2: layout narrowing -- element-size-parameterized so the
-    // same code shape handles U8, U16, and F32 alike. `elem` is the
-    // bytes per channel for the post-step-1 buffer.
-    let elem = dst_ct.byte_size();
-    let in_pixel = src_layout.channels() * elem;
-    let n = post_ct.len() / src_layout.channels(); // total channel-samples
-
-    if src_layout == dst_layout {
-        return Some(post_ct);
     }
 
-    let copy_channels = |px: &[u8], out: &mut Vec<u8>, indices: &[usize]| {
-        for &c in indices {
-            out.extend_from_slice(&px[c * elem..(c + 1) * elem]);
-        }
-    };
-
-    let out: Vec<u8> = match (src_layout, dst_layout) {
-        (ChannelLayout::Rgba, ChannelLayout::Rgb) => {
-            let mut out = Vec::with_capacity(n / 4 * 3 * elem);
-            for px in post_ct.chunks_exact(in_pixel) {
-                copy_channels(px, &mut out, &[0, 1, 2]);
-            }
-            out
-        }
-        (ChannelLayout::Bgra, ChannelLayout::Rgb) => {
-            // Bgra stores B,G,R,A -- dropping alpha into the Rgb layout
-            // requires the B↔R reorder, not a prefix copy.
-            let mut out = Vec::with_capacity(n / 4 * 3 * elem);
-            for px in post_ct.chunks_exact(in_pixel) {
-                copy_channels(px, &mut out, &[2, 1, 0]);
-            }
-            out
-        }
-        (ChannelLayout::Rgba, ChannelLayout::GrayAlpha)
-        | (ChannelLayout::Bgra, ChannelLayout::GrayAlpha) => {
-            // Channel 0 is R for Rgba and B for Bgra; either is the
-            // gray value because this transition only fires when
-            // R == G == B held for every pixel.
-            let mut out = Vec::with_capacity(n / 4 * 2 * elem);
-            for px in post_ct.chunks_exact(in_pixel) {
-                copy_channels(px, &mut out, &[0, 3]); // gray + alpha
-            }
-            out
-        }
-        (ChannelLayout::Rgba, ChannelLayout::Gray) | (ChannelLayout::Bgra, ChannelLayout::Gray) => {
-            let mut out = Vec::with_capacity(n / 4 * elem);
-            for px in post_ct.chunks_exact(in_pixel) {
-                copy_channels(px, &mut out, &[0]);
-            }
-            out
-        }
-        (ChannelLayout::Rgb, ChannelLayout::Gray) => {
-            let mut out = Vec::with_capacity(n / 3 * elem);
-            for px in post_ct.chunks_exact(in_pixel) {
-                copy_channels(px, &mut out, &[0]);
-            }
-            out
-        }
-        (ChannelLayout::GrayAlpha, ChannelLayout::Gray) => {
-            let mut out = Vec::with_capacity(n / 2 * elem);
-            for px in post_ct.chunks_exact(in_pixel) {
-                copy_channels(px, &mut out, &[0]);
-            }
-            out
-        }
+    // Source-channel selection map for the layout transition. Identity
+    // when only the channel type narrows.
+    const IDENTITY: [usize; 4] = [0, 1, 2, 3];
+    let in_ch = src_layout.channels();
+    let map: &[usize] = match (src_layout, dst_layout) {
+        _ if src_layout == dst_layout => &IDENTITY[..in_ch],
+        (ChannelLayout::Rgba, ChannelLayout::Rgb) => &[0, 1, 2],
+        // Bgra stores B,G,R,A -- dropping alpha into the Rgb layout
+        // requires the B↔R reorder, not a prefix copy.
+        (ChannelLayout::Bgra, ChannelLayout::Rgb) => &[2, 1, 0],
+        // Channel 0 is R for Rgba and B for Bgra; either is the gray
+        // value because these transitions only fire when R == G == B
+        // held for every pixel.
+        (ChannelLayout::Rgba | ChannelLayout::Bgra, ChannelLayout::GrayAlpha) => &[0, 3],
+        (ChannelLayout::Rgba | ChannelLayout::Bgra, ChannelLayout::Gray) => &[0],
+        (ChannelLayout::Rgb, ChannelLayout::Gray) => &[0],
+        (ChannelLayout::GrayAlpha, ChannelLayout::Gray) => &[0],
         _ => return None,
     };
 
-    Some(out)
+    let mut out_rows = out.as_slice_mut();
+    for y in 0..slice.rows() {
+        let row_in = slice.row(y);
+        let row_out = out_rows.row_mut(y);
+        if narrow16 {
+            select_row_u16_to_u8(row_in, row_out, in_ch, map);
+        } else {
+            match (dst_ct.byte_size(), src_layout, dst_layout) {
+                (1, ChannelLayout::Rgba, ChannelLayout::Rgb) => {
+                    garb::bytes::rgba_to_rgb(row_in, row_out).ok()?;
+                }
+                (1, ChannelLayout::Bgra, ChannelLayout::Rgb) => {
+                    garb::bytes::bgra_to_rgb(row_in, row_out).ok()?;
+                }
+                (1, ..) => select_row::<1>(row_in, row_out, in_ch, map),
+                (2, ..) => select_row::<2>(row_in, row_out, in_ch, map),
+                (4, ..) => select_row::<4>(row_in, row_out, in_ch, map),
+                _ => return None,
+            }
+        }
+    }
+    Some(())
+}
+
+/// Copy the `map`-selected channels (element size `E` bytes) of each
+/// pixel in `row_in` into `row_out`. Fixed `E` + `chunks_exact` keeps
+/// the loop bounds-check-free and auto-vectorizable.
+#[inline]
+fn select_row<const E: usize>(row_in: &[u8], row_out: &mut [u8], in_ch: usize, map: &[usize]) {
+    let out_px = map.len() * E;
+    let in_px = in_ch * E;
+    for (dst, src) in row_out
+        .chunks_exact_mut(out_px)
+        .zip(row_in.chunks_exact(in_px))
+    {
+        for (k, &c) in map.iter().enumerate() {
+            dst[k * E..(k + 1) * E].copy_from_slice(&src[c * E..c * E + E]);
+        }
+    }
+}
+
+/// Like [`select_row`] but narrows each selected u16 sample to u8 by
+/// taking byte 0 (valid because bit-replication was proven first).
+#[inline]
+fn select_row_u16_to_u8(row_in: &[u8], row_out: &mut [u8], in_ch: usize, map: &[usize]) {
+    let in_px = in_ch * 2;
+    for (dst, src) in row_out
+        .chunks_exact_mut(map.len())
+        .zip(row_in.chunks_exact(in_px))
+    {
+        for (k, &c) in map.iter().enumerate() {
+            dst[k] = src[c * 2];
+        }
+    }
 }
 
 #[cfg(test)]
@@ -647,9 +648,9 @@ mod tests {
         let bytes: Vec<u8> = (0..4).flat_map(|i| [i * 30, i * 30, i * 30, 255]).collect();
         let slice = make_slice(&bytes, 4, 1, PixelFormat::Rgba8);
         let result = slice.try_reduce_to_load_bearing_format();
-        let (target, out) = result.expect("should reduce");
-        assert_eq!(target.format, PixelFormat::Gray8);
-        assert_eq!(out.len(), 4);
+        let out = result.expect("should reduce");
+        assert_eq!(out.descriptor().format, PixelFormat::Gray8);
+        assert_eq!(out.as_slice().row(0), &[0u8, 30, 60, 90]);
     }
 
     #[test]
@@ -711,17 +712,17 @@ mod tests {
         assert_eq!(r_p3.uses_alpha, r_srgb.uses_alpha);
         assert_eq!(r_p3.uses_chroma, r_srgb.uses_chroma);
 
-        let (target, out) = p3
+        let out = p3
             .try_reduce_to_load_bearing_format()
             .expect("gray+opaque should reduce");
-        assert_eq!(target.format, PixelFormat::Gray8);
+        assert_eq!(out.descriptor().format, PixelFormat::Gray8);
         assert_eq!(
-            target.primaries,
+            out.descriptor().primaries,
             ColorPrimaries::DisplayP3,
             "primaries tag must carry over untouched"
         );
         // Bit-exact: the gray bytes are the original channel values.
-        assert_eq!(out, &[0u8, 30, 60, 90]);
+        assert_eq!(out.as_slice().row(0), &[0u8, 30, 60, 90]);
     }
 
     // ── Apply combiner ──────────────────────────────────────────
@@ -773,11 +774,11 @@ mod tests {
         );
         assert_eq!(r.uses_chroma, Some(true), "chroma still measured");
         // try_reduce drops the padding lane.
-        let (target, out) = slice
+        let out = slice
             .try_reduce_to_load_bearing_format()
             .expect("padding drop is a reduction");
-        assert_eq!(target.format, PixelFormat::Rgb8);
-        assert_eq!(out, &[10u8, 20, 30, 40, 50, 60]);
+        assert_eq!(out.descriptor().format, PixelFormat::Rgb8);
+        assert_eq!(out.as_slice().row(0), &[10u8, 20, 30, 40, 50, 60]);
     }
 
     #[test]
@@ -919,20 +920,17 @@ mod tests {
             [g, g, g, 255]
         });
         let slice = slice_from_strided(&buf, 4, 4, stride, PixelFormat::Rgba8);
-        let (target, out) = slice
+        let out = slice
             .try_reduce_to_load_bearing_format()
             .expect("strided buffer should reduce");
-        assert_eq!(target.format, PixelFormat::Gray8);
-        // Tightly-packed output: 4 × 4 = 16 grayscale bytes, no stride padding.
-        assert_eq!(out.len(), 16);
-        for y in 0..4 {
-            for x in 0..4 {
-                let expected = ((x + y) * 20) as u8;
-                assert_eq!(
-                    out[y * 4 + x],
-                    expected,
-                    "tight gray byte at ({x},{y}) wrong"
-                );
+        assert_eq!(out.descriptor().format, PixelFormat::Gray8);
+        // Logical content survives independent of the output stride.
+        let view = out.as_slice();
+        for y in 0..4u32 {
+            let row = view.row(y);
+            for x in 0..4usize {
+                let expected = ((x as u32 + y) * 20) as u8;
+                assert_eq!(row[x], expected, "gray byte at ({x},{y}) wrong");
             }
         }
     }
@@ -1042,12 +1040,12 @@ mod tests {
         ];
         let bytes: &[u8] = bytemuck::cast_slice(&pixels);
         let slice = make_f32_slice(bytes, 4, 1, PixelFormat::RgbaF32, TransferFunction::Linear);
-        let (target, out) = slice
+        let out = slice
             .try_reduce_to_load_bearing_format()
             .expect("should reduce");
-        assert_eq!(target.format, PixelFormat::GrayF32);
-        assert_eq!(out.len(), 4 * 4); // 4 f32 grayscale samples = 16 bytes
-        let gray: &[f32] = bytemuck::cast_slice(&out);
+        assert_eq!(out.descriptor().format, PixelFormat::GrayF32);
+        let view = out.as_slice();
+        let gray: &[f32] = bytemuck::cast_slice(view.row(0));
         assert_eq!(gray, &[0.1, 0.5, 0.9, 0.4]);
     }
 
@@ -1064,12 +1062,13 @@ mod tests {
             .with_transfer(TransferFunction::Linear)
             .with_primaries(ColorPrimaries::DisplayP3);
         let slice = PixelSlice::new(bytes, 4, 1, 4 * 16, descriptor).unwrap();
-        let (target, out) = slice
+        let out = slice
             .try_reduce_to_load_bearing_format()
             .expect("should reduce");
-        assert_eq!(target.format, PixelFormat::GrayF32);
-        assert_eq!(target.primaries, ColorPrimaries::DisplayP3);
-        let gray: &[f32] = bytemuck::cast_slice(&out);
+        assert_eq!(out.descriptor().format, PixelFormat::GrayF32);
+        assert_eq!(out.descriptor().primaries, ColorPrimaries::DisplayP3);
+        let view = out.as_slice();
+        let gray: &[f32] = bytemuck::cast_slice(view.row(0));
         assert_eq!(gray, &[0.5_f32, 0.25, 0.75, 0.1], "values bit-exact");
     }
 
@@ -1134,8 +1133,8 @@ mod tests {
         let bytes: Vec<u8> = (0..8).flat_map(|i| [i * 30, i * 30, i * 30, 255]).collect();
         let slice = make_slice(&bytes, 8, 1, PixelFormat::Rgba8);
         let determined = reduced(&slice);
-        let (reduced_target, _) = slice.try_reduce_to_load_bearing_format().unwrap();
-        assert_eq!(determined, reduced_target);
+        let out = slice.try_reduce_to_load_bearing_format().unwrap();
+        assert_eq!(determined, out.descriptor());
     }
 
     #[test]
@@ -1303,12 +1302,12 @@ mod tests {
         let target = r.apply_to(&s.descriptor());
         assert_eq!(target.format, PixelFormat::Rgb8);
 
-        let (reduced_target, out) = s
+        let out = s
             .try_reduce_to_load_bearing_format()
             .expect("opaque Bgra8 should reduce");
-        assert_eq!(reduced_target.format, PixelFormat::Rgb8);
+        assert_eq!(out.descriptor().format, PixelFormat::Rgb8);
         assert_eq!(
-            out,
+            out.as_slice().row(0),
             &[150u8, 100, 50, 160, 110, 60],
             "B,G,R,A → R,G,B requires the B↔R swap"
         );
@@ -1326,9 +1325,9 @@ mod tests {
         assert_eq!(reduced(&s).format, PixelFormat::GrayA8);
         assert_eq!(r.uses_chroma, Some(false));
         // Rewrite keeps gray + alpha pairs.
-        let (target, out) = s.try_reduce_to_load_bearing_format().unwrap();
-        assert_eq!(target.format, PixelFormat::GrayA8);
-        assert_eq!(out, &[42u8, 100, 99, 200]);
+        let out = s.try_reduce_to_load_bearing_format().unwrap();
+        assert_eq!(out.descriptor().format, PixelFormat::GrayA8);
+        assert_eq!(out.as_slice().row(0), &[42u8, 100, 99, 200]);
     }
 
     // ── Edge cases: report.fully_load_bearing as starting state ─
@@ -1428,11 +1427,21 @@ mod tests {
         ];
         for c in cases {
             let s = make_slice(&c.bytes, c.width, c.height, c.src);
-            let (target, out) = s
+            let out = s
                 .try_reduce_to_load_bearing_format()
                 .unwrap_or_else(|| panic!("{:?} should reduce", c.src));
-            assert_eq!(target.format, c.expect_format, "format from {:?}", c.src);
-            assert_eq!(out.len(), c.expect_size, "size from {:?}", c.src);
+            assert_eq!(
+                out.descriptor().format,
+                c.expect_format,
+                "format from {:?}",
+                c.src
+            );
+            assert_eq!(
+                out.as_slice().row(0).len(),
+                c.expect_size,
+                "row size from {:?}",
+                c.src
+            );
         }
     }
 }

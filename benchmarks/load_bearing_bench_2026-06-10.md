@@ -95,3 +95,23 @@ unchanged within noise — the blocked kernel was load-bound, not
 check-bound: 71–74 GiB/s cache-resident, ~22 GiB/s at 16 MP DRAM;
 `determine_load_bearing` 55 µs at 1 MP, ~2.5 ms at 16 MP. The ablation
 is a pure code-size/API win (−~700 lines, 3-field report).
+
+---
+
+# Final shape: 256-bit types, v3 tier set, PixelBuffer output (same day)
+
+The kernels moved from 512-bit magetypes types (which required the
+`w512` feature and its compile-time cost) to 256-bit types on the
+crate's standard `[v3, neon, wasm128, scalar]` tier set — the same
+tiers garb and the f16/fast_gamut kernels use (magetypes has no V4
+backend for 256-bit integer types; wider machines summon down to
+`_v3`, running 2×128). `try_reduce_to_load_bearing_format` now fills a
+`PixelBuffer` (one fallible zeroed alloc, rows written in place; the
+RGBA→RGB and BGRA→RGB drops delegate to garb's SIMD swizzles; no
+per-pixel Vec growth anywhere).
+
+Measured after the change: 60–64 GiB/s cache-resident (within the
+60–78 GiB/s run-to-run band observed across this file's runs), 16 MP
+unchanged at the single-core DRAM wall (22.4 GiB/s, ~2.5 ms);
+`determine_load_bearing` 65 µs at 1 MP. The wall, not the SIMD width,
+remains the constraint everywhere past L3.
