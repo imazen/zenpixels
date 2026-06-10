@@ -351,10 +351,9 @@ pub fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
     //    (174 combos). Keyed on the raw code points — moxcms-equivalent bytes,
     //    decoded once per transfer group and cached. This is what lets a
     //    default (no-CMS) build give full coverage without moxcms.
-    if let Some(bytes) = cicp_bundle::bundled_profile_for_cicp(
-        cicp.color_primaries,
-        cicp.transfer_characteristics,
-    ) {
+    if let Some(bytes) =
+        cicp_bundle::bundled_profile_for_cicp(cicp.color_primaries, cicp.transfer_characteristics)
+    {
         return SynthesizedIcc::Profile(bytes);
     }
 
@@ -653,7 +652,8 @@ mod tests {
         // path serves these regardless of whether `cms-moxcms` is compiled in
         // (it's forced on for this crate's tests by a dev-dependency).
         const ASSIGNED_PRIMARIES: &[u8] = &[1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 22];
-        const ASSIGNED_TRANSFERS: &[u8] = &[1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+        const ASSIGNED_TRANSFERS: &[u8] =
+            &[1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
         let mut profiles = 0usize;
         let mut not_needed = 0usize;
         for &p in ASSIGNED_PRIMARIES {
@@ -666,11 +666,7 @@ mod tests {
                             "({p}, {t}) was served by the CMS (Cow::Owned) — must come \
                              from the blob/const (Cow::Borrowed) so coverage holds without a CMS"
                         );
-                        assert_eq!(
-                            &bytes[36..40],
-                            b"acsp",
-                            "({p}, {t}) produced non-ICC bytes"
-                        );
+                        assert_eq!(&bytes[36..40], b"acsp", "({p}, {t}) produced non-ICC bytes");
                         profiles += 1;
                     }
                     SynthesizedIcc::NotNeeded => {
@@ -686,6 +682,9 @@ mod tests {
             }
         }
         assert_eq!(profiles, 174, "expected 174 profile-yielding combos");
-        assert_eq!(not_needed, 2, "expected exactly 2 sRGB-default NotNeeded combos");
+        assert_eq!(
+            not_needed, 2,
+            "expected exactly 2 sRGB-default NotNeeded combos"
+        );
     }
 }

@@ -31,7 +31,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use lz4::block::{compress, CompressionMode};
+use lz4::block::{CompressionMode, compress};
 use moxcms::{
     CicpColorPrimaries, CicpProfile, ColorProfile, MatrixCoefficients, TransferCharacteristics,
 };
@@ -196,8 +196,7 @@ fn build_bundle() -> BuiltBundle {
 
     for (group_index, &transfer) in transfers_in_order.iter().enumerate() {
         // Collect this group's entries (primaries ascending).
-        let mut entries: Vec<&GridEntry> =
-            grid.iter().filter(|e| e.transfer == transfer).collect();
+        let mut entries: Vec<&GridEntry> = grid.iter().filter(|e| e.transfer == transfer).collect();
         entries.sort_by_key(|e| e.primaries);
 
         // Pack the group's decoded bytes, deduping identical profiles.
@@ -252,7 +251,7 @@ fn build_bundle() -> BuiltBundle {
 
     // Sort the profile locator by (primaries, transfer) for a deterministic,
     // binary-searchable table.
-    profiles.sort_by(|a, b| (a.primaries, a.transfer).cmp(&(b.primaries, b.transfer)));
+    profiles.sort_by_key(|p| (p.primaries, p.transfer));
 
     BuiltBundle {
         blob,
@@ -323,9 +322,7 @@ fn render_index(b: &BuiltBundle) -> String {
 
     // Group array.
     s.push_str("/// Group table, indexed by group index (also the order in the blob).\n");
-    s.push_str(&format!(
-        "pub(crate) static BUNDLE_GROUPS: [BundleGroup; NUM_GROUPS] = [\n"
-    ));
+    s.push_str("pub(crate) static BUNDLE_GROUPS: [BundleGroup; NUM_GROUPS] = [\n");
     for g in &b.groups {
         s.push_str(&format!(
             "    BundleGroup {{ transfer: {}, blob_offset: {}, compressed_len: {}, decompressed_len: {} }}, // {} profile(s)\n",
@@ -452,9 +449,8 @@ mod tests {
     fn regenerated_blob_matches_committed() {
         let committed = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../zenpixels-convert/src/profiles/cicp_bundle.lz4");
-        let on_disk = std::fs::read(&committed).unwrap_or_else(|e| {
-            panic!("cannot read committed blob {}: {e}", committed.display())
-        });
+        let on_disk = std::fs::read(&committed)
+            .unwrap_or_else(|e| panic!("cannot read committed blob {}: {e}", committed.display()));
         let fresh = build_bundle();
         assert_eq!(
             fresh.blob.len(),
@@ -477,7 +473,10 @@ mod tests {
     fn grid_shape_is_stable() {
         let b = build_bundle();
         assert_eq!(b.total_combos, 176, "expected 11×16 assigned grid");
-        assert_eq!(b.profile_combos, 174, "expected 174 profile-yielding combos");
+        assert_eq!(
+            b.profile_combos, 174,
+            "expected 174 profile-yielding combos"
+        );
         assert_eq!(b.unique_profiles, 174);
         assert_eq!(b.groups.len(), 16, "expected 16 transfer groups");
     }

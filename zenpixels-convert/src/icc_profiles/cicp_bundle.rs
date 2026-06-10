@@ -106,11 +106,11 @@ mod tests {
 
     #[test]
     fn every_group_decodes_to_its_declared_length() {
-        for i in 0..NUM_GROUPS {
+        for (i, g) in BUNDLE_GROUPS.iter().enumerate() {
             let decoded = decode_group(i);
             assert_eq!(
                 decoded.len(),
-                BUNDLE_GROUPS[i].decompressed_len,
+                g.decompressed_len,
                 "group {i} decoded length mismatch"
             );
         }
@@ -150,13 +150,12 @@ mod tests {
     #[test]
     fn golden_blob_sha256_is_pinned() {
         use sha2::{Digest, Sha256};
-        const EXPECTED: &str =
-            "c3d6d080d40137a3fb9128dd3d0e765b6e013d53b4980ce7bac591fad5096325";
+        const EXPECTED: &str = "c3d6d080d40137a3fb9128dd3d0e765b6e013d53b4980ce7bac591fad5096325";
         let digest = Sha256::digest(CICP_BUNDLE_LZ4);
-        let hex: alloc::string::String =
-            digest.iter().map(|b| alloc::format!("{b:02x}")).collect();
+        let hex: alloc::string::String = digest.iter().map(|b| alloc::format!("{b:02x}")).collect();
         assert_eq!(
-            hex, EXPECTED,
+            hex,
+            EXPECTED,
             "committed cicp_bundle.lz4 sha256 changed — was the blob regenerated? \
              (len = {})",
             CICP_BUNDLE_LZ4.len()
@@ -208,6 +207,9 @@ mod tests {
             );
             checked += 1;
         }
-        assert_eq!(checked, 174, "expected to roundtrip all 174 bundled profiles");
+        assert_eq!(
+            checked, 174,
+            "expected to roundtrip all 174 bundled profiles"
+        );
     }
 }
