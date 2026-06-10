@@ -200,8 +200,8 @@ fn srgb_u8_p3_to_srgb_u8_bt709_uses_fused_matlut() {
     // with a single FusedSrgbU8GamutRgb step. Any decomposition into the
     // 3-step sequence is wasted work.
     let saw_fused = trace.iter().any(|s| s.contains("FusedSrgb"));
-    let saw_unfused_pair = trace.iter().any(|s| *s == "SrgbU8ToLinearF32")
-        && trace.iter().any(|s| *s == "LinearF32ToSrgbU8");
+    let saw_unfused_pair =
+        trace.contains(&"SrgbU8ToLinearF32") && trace.contains(&"LinearF32ToSrgbU8");
     assert!(
         saw_fused || !saw_unfused_pair,
         "sRGB U8 P3→BT.709 should use fused matlut, not the 3-step decomposition. got {trace:?}"

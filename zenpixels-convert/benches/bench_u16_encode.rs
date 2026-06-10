@@ -86,7 +86,10 @@ fn explicit_simd_sqrt_lut_v3(
 #[cfg(target_arch = "x86_64")]
 #[allow(unexpected_cfgs)]
 fn explicit_simd_linear_encode(input: &[f32], output: &mut [u16], lut: &[u16; 65536]) {
-    archmage::incant!(explicit_simd_linear_lut(input, output, lut));
+    // Only a `_v3` (AVX2) kernel is defined; drop the v4/v4x (AVX-512) tiers the
+    // `avx512` feature would otherwise require so the bench builds under
+    // `--all-features`.
+    archmage::incant!(explicit_simd_linear_lut(input, output, lut), [-v4, -v4x]);
 }
 
 #[cfg(not(target_arch = "x86_64"))]
@@ -100,7 +103,10 @@ fn explicit_simd_linear_encode(input: &[f32], output: &mut [u16], lut: &[u16; 65
 #[cfg(target_arch = "x86_64")]
 #[allow(unexpected_cfgs)]
 fn explicit_simd_sqrt_encode(input: &[f32], output: &mut [u16], lut: &[u16; 65537]) {
-    archmage::incant!(explicit_simd_sqrt_lut(input, output, lut));
+    // Only a `_v3` (AVX2) kernel is defined; drop the v4/v4x (AVX-512) tiers the
+    // `avx512` feature would otherwise require so the bench builds under
+    // `--all-features`.
+    archmage::incant!(explicit_simd_sqrt_lut(input, output, lut), [-v4, -v4x]);
 }
 
 #[cfg(not(target_arch = "x86_64"))]
