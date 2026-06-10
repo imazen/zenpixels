@@ -10,6 +10,10 @@
 
 - (none currently queued)
 
+### zenpixels — added
+
+- **`PixelSliceMut::into_strided_bytes(self) -> &'a mut [u8]`** — consuming accessor returning the full backing bytes at the original lifetime; the escape hatch for in-place transforms that change bytes-per-pixel (rewrite rows, re-wrap with `PixelSliceMut::new` under the new descriptor). Concrete consumer: zenpixels-convert's in-place load-bearing reduction. (#30)
+
 ### zenpixels — fixed
 
 - 32-bit overflow safety in `PixelBuffer` constructors and `crop_copy` — checked arithmetic guards `width × height × bytes_per_pixel` from wrapping on 32-bit targets. (#31, 4ebad3e)
@@ -17,6 +21,12 @@
 ### zenpixels-convert — added
 
 - **`load_bearing` module — bit-exact descriptor narrowing analysis** (#30). `PixelSliceLoadBearingExt` (sealed, on `PixelSlice`) answers "which parts of this buffer's declared descriptor actually carry information?": `determine_load_bearing() -> LoadBearingReport` (`uses_alpha` / `uses_chroma` / `uses_low_bits` — each field validated against a concrete consumer site in zenwebp/zenavif/zenjxl/zentiff via per-encoder audit), `LoadBearingReport::apply_to` (descriptor combiner), and `try_reduce_to_load_bearing_format() -> Option<PixelBuffer>` (rows written in place into one fallible zeroed allocation; alpha drop, gray collapse, bit-replicated U16→U8, Bgra→Rgb with channel reorder — the two RGBA-family drops delegate to garb's SIMD swizzles). Backed by a crate-private `scan` module of magetypes SIMD predicates on 256-bit types over the crate's standard v3/neon/wasm128/scalar tier set — no `w512` feature, no 512-bit types (single-pass fused RGBA8/BGRA8 kernel with blocked deferred reduction; strided rows supported per-row at no cost to the contiguous path). `AlphaMode::Undefined`/`Opaque` answer the alpha question from the descriptor without scanning. Every reduction is bit-exact invertible — primaries/gamut narrowing is deliberately excluded (it re-encodes pixel values; a future explicit opt-in conversion API owns that), and `alpha_is_binary`/`uses_gray_bit_depth` were dropped pre-merge after the audit found no encoder consumer (recoverable from PR history if one materializes).
+- **`PixelSliceMutLoadBearingExt::reduce_to_load_bearing_format_in_place(force_alpha_restructuring)`** (#30) — allocation-free sibling of `try_reduce_to_load_bearing_format`: consumes a `PixelSliceMut`, compacts rows forward into the buffer's own bytes (overlap-safe by construction; the few overlapping prefix rows stage per-pixel, all later rows reuse the allocating path's garb/shuffle row kernels via `split_at_mut`), and returns a re-described tight-stride `PixelSliceMut` over the same memory. `force_alpha_restructuring=false` keeps the alpha lane and re-tags scanned-opaque `Straight`/`Premultiplied` buffers `AlphaMode::Opaque` (tag-only, zero data movement; `Undefined` padding stays untouched); `true` physically drops the lane for packed-form consumers (TIFF/JXL-style writers).
+- **`ColorContext` propagation through both reduce variants** (#30) — previously the reduced `PixelBuffer` silently dropped the source's ICC/CICP context. It now carries over for class-preserving reductions (alpha drop, U16→U8, Bgra reorder); gray collapse is suppressed in the *rewrite* while ICC bytes are attached (an RGB-class profile cannot describe a Gray layout — libpng rejects the pairing) but proceeds for CICP-only contexts (H.273 primaries/transfer stay meaningful for gray; matrix coefficients don't apply to single-channel data). The report itself still measures chroma truthfully. Follow-up owns gray-variant ICC synthesis (extract neutral-axis TRC + white point into a `GRAY`-class profile; moxcms can author these via `gray_trc`) so ICC-bearing sources can collapse too.
+
+### zenpixels-convert — docs
+
+- **U16 widening reality survey** (#30, `benchmarks/u16_widening_survey_2026-06-10.md`) — measured/source-verified what "secretly 8-bit" 16-bit data looks like: libpng `expand_16`, ImageMagick `-depth 16`, and Rust `image` all emit exact `v*257` byte replication (65535 = 255×257 — correct scaling *is* replication), while `v<<8`, ffmpeg's near-shift-with-YUV-noise, and raw-8-bit-in-16 (`astype`) forms exist in the wild but are value-rescaling, not bit-exact. `bit_replication_lossless_u16` therefore stays `lo == hi` only; a new test pins rejection of all three wild patterns at every dispatch tier.
 
 ## [0.2.12] - 2026-06-10
 
