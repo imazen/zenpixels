@@ -32,18 +32,28 @@
 //!   `forward_map`, so the whole thing is a single pass with no intermediate
 //!   buffer.
 //!
-//! The inner per-tile transpose here is scalar. The fast follow-up replaces it
-//! with a SIMD register transpose for the common element widths — magetypes
-//! ships `transpose_4x4` / `transpose_8x8` and the `interleave_lo/hi` unpack
-//! primitives, which map a 4-byte pixel onto a `u32` lane (the classic
-//! `_MM_TRANSPOSE4_PS`-style shuffle cascade) and a 1-byte pixel onto the
-//! 16×16 `punpck` cascade. The tiling structure here is exactly the scaffold
-//! that kernel slots into, and the scalar path stays as the odd-`bpp` fallback
-//! and the parity oracle.
+//! For **4-byte pixels on x86_64** the per-tile transpose is SIMD: full 4×4
+//! tiles go through magetypes' `f32x4::transpose_4x4` (the classic
+//! `_MM_TRANSPOSE4_PS` `unpacklo/hi` + `movelh/hl` cascade), dispatched by
+//! `incant!` with a scalar fallback when AVX2 is absent. Each pixel rides as one
+//! f32 lane — the kernel only shuffles whole 32-bit lanes (no float math), so
+//! reinterpreting the bytes as f32 is bit-exact for any 4-byte format, NaN bit
+//! patterns included. The non-multiple-of-4 edge strips, every other element
+//! width, and non-x86 targets use the cache-blocked scalar path, which is also
+//! the parity oracle (`simd_transpose_matches_scalar_reference_rgba8`).
+//! (1- and 2-byte SIMD transpose — the 16×16 `punpck` cascade — is a possible
+//! follow-up; gray / 16-bit currently go scalar.)
 
 use core::cmp::min;
 
 use zenpixels::{Orientation, PixelBuffer, PixelSlice, PixelSliceMut};
+
+// SIMD path imports (x86_64): `incant!`, `X64V3Token`, `ScalarToken`,
+// `#[arcane]` from the archmage prelude; the generic `f32x4` from magetypes.
+#[cfg(target_arch = "x86_64")]
+use archmage::prelude::*;
+#[cfg(target_arch = "x86_64")]
+use magetypes::simd::f32x4;
 
 /// Side length of the cache-blocking tile for transposing orientations, in
 /// pixels. At `bpp = 4` a 32×32 tile touches 4 KiB of source and 4 KiB of
@@ -109,7 +119,7 @@ pub fn apply_orientation(src: PixelSlice<'_>, orientation: Orientation) -> Pixel
             | Orientation::Rotate270
             | Orientation::Transverse
             | _ => {
-                transpose_blocked(&src, &mut dst, orientation, w, h, bpp);
+                do_transpose(&src, &mut dst, orientation, w, h, bpp);
             }
         }
     }
@@ -126,10 +136,61 @@ fn reverse_row(s: &[u8], d: &mut [u8], width: usize, bpp: usize) {
     }
 }
 
-/// Cache-blocked transpose for the four axis-swapping orientations. The
+/// Scatter one source pixel `(sx, sy)` to its oriented destination.
+#[inline]
+#[allow(clippy::too_many_arguments)] // per-pixel helper; an args struct would add overhead/noise
+fn scatter_pixel(
+    s: &[u8],
+    dst: &mut PixelSliceMut<'_>,
+    orientation: Orientation,
+    sx: u32,
+    sy: u32,
+    w: u32,
+    h: u32,
+    bpp: usize,
+) {
+    let (dx, dy) = orientation.forward_map(sx, sy, w, h);
+    let si = sx as usize * bpp;
+    let di = dx as usize * bpp;
+    dst.row_mut(dy)[di..di + bpp].copy_from_slice(&s[si..si + bpp]);
+}
+
+/// Dispatch the axis-swapping orientations: an x86_64 SIMD 4×4 register
+/// transpose for 4-byte pixels (the common decoder output), the cache-blocked
+/// scalar path otherwise.
+fn do_transpose(
+    src: &PixelSlice<'_>,
+    dst: &mut PixelSliceMut<'_>,
+    orientation: Orientation,
+    w: u32,
+    h: u32,
+    bpp: usize,
+) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // Only the four known transposing orientations have a `tile_dest`
+        // mapping; a future `#[non_exhaustive]` variant falls through to scalar.
+        if bpp == 4
+            && matches!(
+                orientation,
+                Orientation::Transpose
+                    | Orientation::Rotate90
+                    | Orientation::Rotate270
+                    | Orientation::Transverse
+            )
+        {
+            incant!(transpose4(src, dst, orientation, w, h), [-v4]);
+            return;
+        }
+    }
+    transpose_blocked(src, dst, orientation, w, h, bpp);
+}
+
+/// Cache-blocked scalar transpose for the four axis-swapping orientations. The
 /// per-element destination is `orientation.forward_map(sx, sy, w, h)`, which
 /// encodes transpose + whatever reflection the orientation adds; tiling keeps
-/// each block's scattered destination writes inside the cache.
+/// each block's scattered destination writes inside the cache. This is the
+/// portable path and the parity oracle for the SIMD kernel.
 fn transpose_blocked(
     src: &PixelSlice<'_>,
     dst: &mut PixelSliceMut<'_>,
@@ -147,16 +208,141 @@ fn transpose_blocked(
             for sy in tile_y..y_end {
                 let s = src.row(sy);
                 for sx in tile_x..x_end {
-                    let (dx, dy) = orientation.forward_map(sx, sy, w, h);
-                    let si = sx as usize * bpp;
-                    let di = dx as usize * bpp;
-                    dst.row_mut(dy)[di..di + bpp].copy_from_slice(&s[si..si + bpp]);
+                    scatter_pixel(s, dst, orientation, sx, sy, w, h, bpp);
                 }
             }
             tile_x += TILE;
         }
         tile_y += TILE;
     }
+}
+
+/// Scalar scatter for the edge strips a 4×4-tiled SIMD pass leaves uncovered:
+/// the right strip (`cols [full_w, w)`) and the bottom strip (`rows [full_h,
+/// h)`, which also covers the bottom-right corner). No overlap between strips.
+#[allow(clippy::too_many_arguments)] // edge-strip helper; mirrors the scatter-loop signature
+fn transpose_edges(
+    src: &PixelSlice<'_>,
+    dst: &mut PixelSliceMut<'_>,
+    orientation: Orientation,
+    w: u32,
+    h: u32,
+    bpp: usize,
+    full_w: u32,
+    full_h: u32,
+) {
+    for sy in 0..full_h {
+        let s = src.row(sy);
+        for sx in full_w..w {
+            scatter_pixel(s, dst, orientation, sx, sy, w, h, bpp);
+        }
+    }
+    for sy in full_h..h {
+        let s = src.row(sy);
+        for sx in 0..w {
+            scatter_pixel(s, dst, orientation, sx, sy, w, h, bpp);
+        }
+    }
+}
+
+// ── SIMD 4×4 register transpose (x86_64, 4-byte pixels) ──────────────────────
+
+/// Destination of transposed-tile row `r` (transposed row index 0..4) for a
+/// source 4×4 tile at `(bx, by)`, as `(dst_row, dst_col_start, reverse_lanes)`.
+/// Derived from `Orientation::forward_map`: a bare `Transpose` writes row `r` to
+/// `dst[bx+r][by..]`; the rotations/anti-diagonal add a row/col reflection.
+/// `by`/`bx` are multiples of 4 with `by+4 ≤ h`, `bx+4 ≤ w`, so the subtractions
+/// never underflow.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn tile_dest(
+    orientation: Orientation,
+    bx: u32,
+    by: u32,
+    r: u32,
+    w: u32,
+    h: u32,
+) -> (u32, u32, bool) {
+    match orientation {
+        Orientation::Transpose => (bx + r, by, false),
+        Orientation::Rotate90 => (bx + r, h - 4 - by, true),
+        Orientation::Rotate270 => (w - 1 - bx - r, by, false),
+        Orientation::Transverse => (w - 1 - bx - r, h - 4 - by, true),
+        _ => unreachable!("tile_dest only handles the four transposing orientations"),
+    }
+}
+
+/// SIMD path: transpose full 4×4 RGBA8 tiles via `f32x4::transpose_4x4`
+/// (the classic `_MM_TRANSPOSE4_PS` shuffle cascade), scalar for the edges.
+///
+/// Each 4-byte pixel rides as one f32 lane. The transpose only *shuffles whole
+/// 32-bit lanes* (`unpacklo/hi`, `movelh/hl` — no float arithmetic), so the
+/// reinterpret is bit-exact for any 4-byte pixel format, including bit patterns
+/// that happen to be NaN.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn transpose4_v3(
+    token: X64V3Token,
+    src: &PixelSlice<'_>,
+    dst: &mut PixelSliceMut<'_>,
+    orientation: Orientation,
+    w: u32,
+    h: u32,
+) {
+    let full_w = w & !3; // largest multiple of 4 ≤ w
+    let full_h = h & !3;
+
+    let mut by = 0;
+    while by < full_h {
+        let mut bx = 0;
+        while bx < full_w {
+            let xb = bx as usize * 4;
+            let f0: [f32; 4] =
+                bytemuck::cast::<[u8; 16], _>(src.row(by)[xb..xb + 16].try_into().unwrap());
+            let f1: [f32; 4] =
+                bytemuck::cast::<[u8; 16], _>(src.row(by + 1)[xb..xb + 16].try_into().unwrap());
+            let f2: [f32; 4] =
+                bytemuck::cast::<[u8; 16], _>(src.row(by + 2)[xb..xb + 16].try_into().unwrap());
+            let f3: [f32; 4] =
+                bytemuck::cast::<[u8; 16], _>(src.row(by + 3)[xb..xb + 16].try_into().unwrap());
+            let mut rows = [
+                f32x4::load(token, &f0),
+                f32x4::load(token, &f1),
+                f32x4::load(token, &f2),
+                f32x4::load(token, &f3),
+            ];
+            f32x4::transpose_4x4(&mut rows);
+
+            for r in 0..4u32 {
+                let mut lanes = [0f32; 4];
+                rows[r as usize].store(&mut lanes);
+                let (drow, dcol, rev) = tile_dest(orientation, bx, by, r, w, h);
+                if rev {
+                    lanes.reverse();
+                }
+                let bytes: [u8; 16] = bytemuck::cast(lanes);
+                let db = dcol as usize * 4;
+                dst.row_mut(drow)[db..db + 16].copy_from_slice(&bytes);
+            }
+            bx += 4;
+        }
+        by += 4;
+    }
+
+    transpose_edges(src, dst, orientation, w, h, 4, full_w, full_h);
+}
+
+/// Scalar fallback selected by `incant!` when AVX2 is unavailable.
+#[cfg(target_arch = "x86_64")]
+fn transpose4_scalar(
+    _token: ScalarToken,
+    src: &PixelSlice<'_>,
+    dst: &mut PixelSliceMut<'_>,
+    orientation: Orientation,
+    w: u32,
+    h: u32,
+) {
+    transpose_blocked(src, dst, orientation, w, h, 4);
 }
 
 #[cfg(test)]
@@ -330,6 +516,56 @@ mod tests {
             let b = apply_orientation(padded_slice, o);
             for y in 0..a.height() {
                 assert_eq!(a.as_slice().row(y), b.as_slice().row(y), "{o:?} row {y}");
+            }
+        }
+    }
+
+    /// Gold-standard parity gate: the (SIMD on x86_64) `apply_orientation` must
+    /// match the explicit scalar `transpose_blocked` for 4-byte pixels across
+    /// the four transposing orientations and a spread of dimensions — full 4×4
+    /// tiles (8×8, 16×16, 64×48), edge-only (3×3, 1×1), and mixed full+edge
+    /// (17×13, 9×7, 12×4, 4×12, 5×5). This is what proves the SIMD kernel +
+    /// edge handling are correct against the portable oracle.
+    #[test]
+    fn simd_transpose_matches_scalar_reference_rgba8() {
+        let desc = PixelDescriptor::RGBA8;
+        let dims = [
+            (8u32, 8u32),
+            (16, 16),
+            (64, 48),
+            (17, 13),
+            (9, 7),
+            (12, 4),
+            (4, 12),
+            (3, 3),
+            (1, 1),
+            (5, 5),
+        ];
+        for &(w, h) in &dims {
+            let data = fill(w as usize * h as usize * 4);
+            for &o in &[
+                Orientation::Transpose,
+                Orientation::Rotate90,
+                Orientation::Rotate270,
+                Orientation::Transverse,
+            ] {
+                // Path under test (SIMD on x86_64, scalar elsewhere).
+                let got = apply_orientation(slice(&data, w, h, desc), o);
+                // Explicit scalar reference via the cache-blocked oracle.
+                let (ow, oh) = o.output_dimensions(w, h);
+                let mut reference = PixelBuffer::new(ow, oh, desc);
+                {
+                    let src = slice(&data, w, h, desc);
+                    let mut d = reference.as_slice_mut();
+                    transpose_blocked(&src, &mut d, o, w, h, 4);
+                }
+                for y in 0..oh {
+                    assert_eq!(
+                        got.as_slice().row(y),
+                        reference.as_slice().row(y),
+                        "{o:?} {w}x{h} row {y}"
+                    );
+                }
             }
         }
     }
