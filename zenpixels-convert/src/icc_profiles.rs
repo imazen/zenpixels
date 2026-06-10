@@ -644,9 +644,14 @@ mod tests {
 
     #[test]
     fn synthesize_icc_for_cicp_full_grid_coverage_without_cms() {
-        // The headline property: with NO CMS feature, the blob gives a profile for
-        // every assigned-grid combo except the two sRGB-default `NotNeeded` ones.
-        // Walk the whole 11×16 grid and assert every covered combo yields bytes.
+        // The headline property: the blob gives a profile for every assigned-grid
+        // combo except the two sRGB-default `NotNeeded` ones — with no dependence
+        // on a CMS. The blob lookup sits *before* the moxcms fallback, so every
+        // covered combo comes back as a `Cow::Borrowed` (the blob's zero-copy
+        // slice, or one of the 4 `&'static` consts) — never a `Cow::Owned`, which
+        // is what moxcms would produce. Asserting `Borrowed` proves the no-CMS
+        // path serves these regardless of whether `cms-moxcms` is compiled in
+        // (it's forced on for this crate's tests by a dev-dependency).
         const ASSIGNED_PRIMARIES: &[u8] = &[1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 22];
         const ASSIGNED_TRANSFERS: &[u8] = &[1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
         let mut profiles = 0usize;
@@ -656,6 +661,11 @@ mod tests {
                 let got = synthesize_icc_for_cicp(Cicp::new(p, t, 0, true));
                 match got {
                     SynthesizedIcc::Profile(bytes) => {
+                        assert!(
+                            matches!(bytes, Cow::Borrowed(_)),
+                            "({p}, {t}) was served by the CMS (Cow::Owned) — must come \
+                             from the blob/const (Cow::Borrowed) so coverage holds without a CMS"
+                        );
                         assert_eq!(
                             &bytes[36..40],
                             b"acsp",

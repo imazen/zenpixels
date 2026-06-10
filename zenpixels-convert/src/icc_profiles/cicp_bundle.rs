@@ -142,4 +142,72 @@ mod tests {
         assert!(bundled_profile_for_cicp(1, 13).is_none());
         assert!(bundled_profile_for_cicp(1, 1).is_none());
     }
+
+    /// Golden pin of the committed blob's sha256. If this fails, the blob was
+    /// regenerated (or corrupted) — review the diff and, if intended, update
+    /// this constant alongside the new blob. Catches an *accidental* regen
+    /// landing in a commit.
+    #[test]
+    fn golden_blob_sha256_is_pinned() {
+        use sha2::{Digest, Sha256};
+        const EXPECTED: &str =
+            "c3d6d080d40137a3fb9128dd3d0e765b6e013d53b4980ce7bac591fad5096325";
+        let digest = Sha256::digest(CICP_BUNDLE_LZ4);
+        let hex: alloc::string::String =
+            digest.iter().map(|b| alloc::format!("{b:02x}")).collect();
+        assert_eq!(
+            hex, EXPECTED,
+            "committed cicp_bundle.lz4 sha256 changed — was the blob regenerated? \
+             (len = {})",
+            CICP_BUNDLE_LZ4.len()
+        );
+    }
+
+    /// ZERO-TOLERANCE roundtrip: every profile decoded from the blob must be
+    /// **byte-identical** to what moxcms generates for the same CICP, modulo the
+    /// non-colorimetric creation-timestamp field (bytes 24..36) that moxcms
+    /// stamps with the current wall-clock time. The generator zeroes that field
+    /// for a reproducible blob; here we zero it on the fresh moxcms bytes too so
+    /// the comparison measures only colour-defining content. Everything else —
+    /// colorants, TRC/LUT, chad, CICP tag — must match exactly: no silent drift,
+    /// no precision loss. Also catches a moxcms version bump that would shift the
+    /// canonical bytes (the committed blob would then no longer match).
+    #[cfg(feature = "cms-moxcms")]
+    #[test]
+    fn blob_decodes_byte_identical_to_moxcms() {
+        use crate::Cicp;
+        // The header creation date/time (bytes 24..36) is wall-clock and not
+        // part of the colour description — masked on both sides.
+        fn mask_timestamp(bytes: &[u8]) -> alloc::vec::Vec<u8> {
+            let mut v = bytes.to_vec();
+            if v.len() >= 36 {
+                v[24..36].fill(0);
+            }
+            v
+        }
+
+        let mut checked = 0usize;
+        for p in &BUNDLE_PROFILES {
+            let from_blob = bundled_profile_for_cicp(p.primaries, p.transfer)
+                .expect("indexed profile must resolve");
+            let from_moxcms =
+                crate::cms_moxcms::icc_bytes_for_cicp(&Cicp::new(p.primaries, p.transfer, 0, true))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "moxcms could not regenerate ({}, {}) — index/grid desync",
+                            p.primaries, p.transfer
+                        )
+                    });
+            assert_eq!(
+                from_blob.as_ref(),
+                mask_timestamp(&from_moxcms).as_slice(),
+                "blob bytes for ({}, {}) diverge from a fresh moxcms generation \
+                 (moxcms version bump or generator drift)",
+                p.primaries,
+                p.transfer
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 174, "expected to roundtrip all 174 bundled profiles");
+    }
 }

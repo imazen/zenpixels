@@ -78,6 +78,9 @@ zenbench = { version = "0.1.2"}
 # the perceptual-loss test suite, which uses half's f64 conversion paths.
 half = "2.7.1"
 palette = { version = "0.7", default-features = false, features = ["std", "approx"] }
+# Dev-only: pin the committed CICP bundle blob's sha256 (golden test) so an
+# accidental regen is caught. Not part of the shipped crate.
+sha2 = "0.11.0"
 
 [[bench]]
 name = "bench_cms"

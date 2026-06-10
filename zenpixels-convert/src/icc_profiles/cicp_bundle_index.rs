@@ -43,22 +43,22 @@ pub(crate) const NUM_GROUPS: usize = 16;
 
 /// Group table, indexed by group index (also the order in the blob).
 pub(crate) static BUNDLE_GROUPS: [BundleGroup; NUM_GROUPS] = [
-    BundleGroup { transfer: 1, blob_offset: 0, compressed_len: 616, decompressed_len: 4400 }, // 10 profile(s)
-    BundleGroup { transfer: 4, blob_offset: 616, compressed_len: 639, decompressed_len: 4246 }, // 11 profile(s)
-    BundleGroup { transfer: 5, blob_offset: 1255, compressed_len: 639, decompressed_len: 4246 }, // 11 profile(s)
-    BundleGroup { transfer: 6, blob_offset: 1894, compressed_len: 659, decompressed_len: 4840 }, // 11 profile(s)
-    BundleGroup { transfer: 7, blob_offset: 2553, compressed_len: 2950, decompressed_len: 71764 }, // 11 profile(s)
-    BundleGroup { transfer: 8, blob_offset: 5503, compressed_len: 639, decompressed_len: 4246 }, // 11 profile(s)
-    BundleGroup { transfer: 9, blob_offset: 6142, compressed_len: 2951, decompressed_len: 71764 }, // 11 profile(s)
-    BundleGroup { transfer: 10, blob_offset: 9093, compressed_len: 2951, decompressed_len: 71764 }, // 11 profile(s)
-    BundleGroup { transfer: 11, blob_offset: 12044, compressed_len: 2950, decompressed_len: 71764 }, // 11 profile(s)
-    BundleGroup { transfer: 12, blob_offset: 14994, compressed_len: 2948, decompressed_len: 71764 }, // 11 profile(s)
-    BundleGroup { transfer: 13, blob_offset: 17942, compressed_len: 617, decompressed_len: 4400 }, // 10 profile(s)
-    BundleGroup { transfer: 14, blob_offset: 18559, compressed_len: 659, decompressed_len: 4840 }, // 11 profile(s)
-    BundleGroup { transfer: 15, blob_offset: 19218, compressed_len: 659, decompressed_len: 4840 }, // 11 profile(s)
-    BundleGroup { transfer: 16, blob_offset: 19877, compressed_len: 2577, decompressed_len: 71764 }, // 11 profile(s)
-    BundleGroup { transfer: 17, blob_offset: 22454, compressed_len: 2856, decompressed_len: 71764 }, // 11 profile(s)
-    BundleGroup { transfer: 18, blob_offset: 25310, compressed_len: 2899, decompressed_len: 71764 }, // 11 profile(s)
+    BundleGroup { transfer: 1, blob_offset: 0, compressed_len: 603, decompressed_len: 4400 }, // 10 profile(s)
+    BundleGroup { transfer: 4, blob_offset: 603, compressed_len: 626, decompressed_len: 4246 }, // 11 profile(s)
+    BundleGroup { transfer: 5, blob_offset: 1229, compressed_len: 626, decompressed_len: 4246 }, // 11 profile(s)
+    BundleGroup { transfer: 6, blob_offset: 1855, compressed_len: 646, decompressed_len: 4840 }, // 11 profile(s)
+    BundleGroup { transfer: 7, blob_offset: 2501, compressed_len: 2937, decompressed_len: 71764 }, // 11 profile(s)
+    BundleGroup { transfer: 8, blob_offset: 5438, compressed_len: 626, decompressed_len: 4246 }, // 11 profile(s)
+    BundleGroup { transfer: 9, blob_offset: 6064, compressed_len: 2938, decompressed_len: 71764 }, // 11 profile(s)
+    BundleGroup { transfer: 10, blob_offset: 9002, compressed_len: 2938, decompressed_len: 71764 }, // 11 profile(s)
+    BundleGroup { transfer: 11, blob_offset: 11940, compressed_len: 2937, decompressed_len: 71764 }, // 11 profile(s)
+    BundleGroup { transfer: 12, blob_offset: 14877, compressed_len: 2935, decompressed_len: 71764 }, // 11 profile(s)
+    BundleGroup { transfer: 13, blob_offset: 17812, compressed_len: 604, decompressed_len: 4400 }, // 10 profile(s)
+    BundleGroup { transfer: 14, blob_offset: 18416, compressed_len: 646, decompressed_len: 4840 }, // 11 profile(s)
+    BundleGroup { transfer: 15, blob_offset: 19062, compressed_len: 646, decompressed_len: 4840 }, // 11 profile(s)
+    BundleGroup { transfer: 16, blob_offset: 19708, compressed_len: 2564, decompressed_len: 71764 }, // 11 profile(s)
+    BundleGroup { transfer: 17, blob_offset: 22272, compressed_len: 2843, decompressed_len: 71764 }, // 11 profile(s)
+    BundleGroup { transfer: 18, blob_offset: 25115, compressed_len: 2886, decompressed_len: 71764 }, // 11 profile(s)
 ];
 
 /// Profile locator table, sorted by `(primaries, transfer)` for binary search.

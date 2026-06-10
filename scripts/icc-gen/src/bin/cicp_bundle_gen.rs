@@ -76,7 +76,25 @@ fn synth_icc(primaries: u8, transfer: u8) -> Option<Vec<u8>> {
     // A populated red_trc is moxcms's signal that synthesis was faithful (same
     // gate as the runtime path). No TRC ⇒ can't represent this CICP.
     profile.red_trc.as_ref()?;
-    profile.encode().ok()
+    let mut bytes = profile.encode().ok()?;
+    normalize_creation_timestamp(&mut bytes);
+    Some(bytes)
+}
+
+/// Zero the ICC header's creation date/time field (bytes 24..36).
+///
+/// moxcms's `encode()` stamps `ColorDateTime::now()` — the current wall-clock
+/// time — into every generated profile (moxcms `writer.rs`). That makes the
+/// bytes non-deterministic across regenerations and would make the committed
+/// blob (and its golden sha256) unstable. The field is purely informational and
+/// carries no colorimetry; zenpixels' own normalized ICC hash already treats
+/// bytes 24..36 as metadata-to-ignore. Zeroing it yields a reproducible,
+/// deterministic profile. The runtime roundtrip test masks the same field when
+/// comparing against a fresh moxcms run.
+fn normalize_creation_timestamp(icc: &mut [u8]) {
+    if icc.len() >= 36 {
+        icc[24..36].fill(0);
+    }
 }
 
 /// The sRGB / BT.709 default combinations that `synthesize_icc_for_cicp` short
@@ -418,4 +436,49 @@ fn main() {
     eprintln!("\nwrote:");
     eprintln!("  {} ({} bytes)", blob_path.display(), bundle.blob.len());
     eprintln!("  {}", index_path.display());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The committed blob (`zenpixels-convert/src/profiles/cicp_bundle.lz4`)
+    /// must be byte-identical to a fresh in-memory regeneration. This is the
+    /// `cms-moxcms`-side guard the runtime crate can't do (it has no LZ4-HC
+    /// encoder): if a moxcms version bump silently shifts the synthesized bytes,
+    /// the recompressed blob diverges from the committed asset and this fails,
+    /// forcing a deliberate regen + golden-hash update.
+    #[test]
+    fn regenerated_blob_matches_committed() {
+        let committed = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../zenpixels-convert/src/profiles/cicp_bundle.lz4");
+        let on_disk = std::fs::read(&committed).unwrap_or_else(|e| {
+            panic!("cannot read committed blob {}: {e}", committed.display())
+        });
+        let fresh = build_bundle();
+        assert_eq!(
+            fresh.blob.len(),
+            on_disk.len(),
+            "regenerated blob length ({}) != committed ({}) — regenerate and update the golden sha256",
+            fresh.blob.len(),
+            on_disk.len()
+        );
+        assert!(
+            fresh.blob == on_disk,
+            "regenerated blob bytes differ from the committed asset — \
+             moxcms drift or generator change; regenerate and update the golden sha256"
+        );
+    }
+
+    /// The grid enumeration must stay at the measured 176 combos / 174
+    /// profile-yielding / 16 groups. A change here means the H.273 assigned set
+    /// or the sRGB-default exclusion shifted — review before accepting.
+    #[test]
+    fn grid_shape_is_stable() {
+        let b = build_bundle();
+        assert_eq!(b.total_combos, 176, "expected 11×16 assigned grid");
+        assert_eq!(b.profile_combos, 174, "expected 174 profile-yielding combos");
+        assert_eq!(b.unique_profiles, 174);
+        assert_eq!(b.groups.len(), 16, "expected 16 transfer groups");
+    }
 }
