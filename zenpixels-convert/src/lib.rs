@@ -445,7 +445,6 @@ pub mod __bench_u16_hybrids {
     }
 }
 pub mod gamut;
-pub mod gamut_clip;
 pub mod hdr;
 pub mod icc_profiles;
 pub mod oklab;
@@ -478,10 +477,6 @@ pub use gamut::{
     GamutMatrix, apply_matrix_f32, apply_matrix_row_f32, apply_matrix_row_rgba_f32,
     conversion_matrix,
 };
-
-// Re-export gamut-mapping strategies (detail-preserving narrowing).
-// `GamutClip` itself comes from `zenpixels` via the glob re-export above.
-pub use gamut_clip::{GamutMapper, OklabSnap, PerChannelClip, mapper_for};
 
 // Re-export HDR types and tone mapping.
 #[cfg(feature = "std")]

@@ -10,13 +10,11 @@
 
 - (none currently queued)
 
-### zenpixels — added
+### zenpixels — fixed
 
-- **`GamutClip` enum + `ConvertOptions::gamut_clip` field** (with `with_gamut_clip` builder). Controls how out-of-gamut colors are mapped when narrowing to a smaller destination gamut (e.g. Display P3 → sRGB). Defaults to `GamutClip::PerChannel` (the long-standing per-channel clamp), so behavior is unchanged unless a caller opts in. Non-breaking: new variant-defaulted field on a `#[non_exhaustive]` struct. (e579fd1e, 97b31e9e)
+- 32-bit overflow safety in `PixelBuffer` constructors and `crop_copy` — checked arithmetic guards `width × height × bytes_per_pixel` from wrapping on 32-bit targets. (#31, 4ebad3e)
 
 ### zenpixels-convert — added
-
-- **`GamutMapper` trait + Oklab snap-to-boundary gamut mapping** (`OklabSnap`, `PerChannelClip`, `mapper_for`). Detail-preserving alternative to the per-channel hard clip: in-gamut pixels pass through untouched, while out-of-gamut pixels keep their Oklab lightness and hue with only chroma snapped to the destination boundary. Wired through `ConvertOptions::gamut_clip = GamutClip::Preserve`; the clip step acts on extended-range linear destination RGB right after the gamut matrix (un-fusing the fused u8 matrix steps to expose the seam), so two distinct bright P3 reds that the per-channel clip collapses to the same flat sRGB red stay distinct — the washed-out-poppy fix. (e579fd1e, 97b31e9e)
 
 - **`icc_profiles::synthesize_icc_for_cicp(Cicp) -> SynthesizedIcc`** — transfer-aware ICC synthesis for a full CICP, with a typed `SynthesizedIcc` outcome (`#[non_exhaustive]`: `Profile(Cow)` / `NotNeeded` / `NeedsCms` / `CmsUnsupported`) that distinguishes "got bytes" from "needs a CMS", "CMS couldn't", and "sRGB default, none needed". The verb name reflects that it *creates* a profile (bundled fast-path, else generated via the `cms-moxcms` feature). Unlike `icc_profile_for_primaries` (primaries-only, which would hand a BT.2020-**PQ** source the SDR-TRC Rec.2020 profile) it matches the TRC and never mis-tags: the `cms-moxcms` path gates on a populated `red_trc` so a `Reserved`/`Unspecified` code yields `CmsUnsupported` rather than a degenerate profile. (#37)
 
@@ -24,9 +22,19 @@
 
 - **`icc_profiles::icc_profile_for_primaries`** — transfer-blind (returns a gamut's bundled SDR profile regardless of the actual TRC, so it can mis-tag an HDR source). Use `synthesize_icc_for_cicp` for transfer-aware synthesis, or embed a bundled const (`DISPLAY_P3_V4` / `REC2020_V4` / `ADOBE_RGB`) directly. (#37)
 
+### zenpixels-convert — performance
+
+- **garb chunk SIMD for `invert_8px` deinterleave** — the 8-pixel kernel of the inverse-XYB → sRGB u8 pipeline now uses `garb::deinterleave::rgb24_chunk8_to_planes_tokenless_v3` (`_mm_shuffle_epi8`-based) for the u8 stride-3 deinterleave that LLVM autovec wouldn't emit a precomputed-mask shuffle for. (#32, aa570b5)
+- **Hardware f16 conversion via magetypes `F16Convert`** — f16↔f32 slice converters use native F16C (x86-64-v3) and NEON-fp16 (aarch64), replacing the prior x86-only F16C dispatch that fell back to scalar on aarch64. (1d45ba4)
+- **Optional `avx512` feature** (off by default) — bumps archmage/magetypes to 0.9.26; when enabled and AVX-512F is proven at runtime, f16 conversion runs 16-wide `_mm512_cvt{ph_ps,ps_ph}` (8-wide F16C otherwise). (a128c29)
+
 ### zenpixels-convert — changed
 
 - Exclude `tests/` from the published package (540 KB of integration tests); benches remain (required by declared `[[bench]]` targets). (b60bf694)
+
+### zenpixels-convert — docs
+
+- Refresh README for the current zenpixels API. (c1d9787)
 
 ## [0.2.11] - 2026-04-25
 
