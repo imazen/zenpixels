@@ -31,30 +31,6 @@ use zenpixels::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, PixelFor
 
 use crate::scan::{self, FusedRequest};
 
-/// Sub-byte grayscale bit depths a codec encoder may pack to. Only
-/// meaningful when the buffer has been narrowed to grayscale at U8.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GrayBitDepth {
-    /// 1 bit per sample (every value ∈ {0, 255}).
-    One,
-    /// 2 bits per sample (every value is a multiple of 85).
-    Two,
-    /// 4 bits per sample (every value is a multiple of 17).
-    Four,
-}
-
-impl GrayBitDepth {
-    /// Bit count.
-    #[inline]
-    pub const fn bits(self) -> u8 {
-        match self {
-            Self::One => 1,
-            Self::Two => 2,
-            Self::Four => 4,
-        }
-    }
-}
-
 /// What a buffer's content actually exercises about its declared
 /// descriptor. Each field is `Option<T>` so it self-reports whether
 /// the predicate was actually measured against this buffer:
@@ -92,28 +68,6 @@ pub struct LoadBearingReport {
     /// buffer is already at U8). `None` → predicate didn't run (F32,
     /// F16, etc.).
     pub uses_low_bits: Option<bool>,
-
-    /// `Some(true)` → every alpha sample is exactly 0 or channel-max.
-    /// Enables single-transparent-slot encodings: GIF's transparent
-    /// index, and PNG color-key `tRNS` on *truecolor/gray* (given a
-    /// key color no opaque pixel uses). Indexed-PNG `tRNS` is NOT
-    /// gated on this — it carries full 8-bit alpha per palette entry;
-    /// there the value of binary alpha is palette budget (every
-    /// transparent pixel can share one entry). Also a sane default
-    /// hint to encode alpha planes losslessly (AVIF/JXL/WebP): a
-    /// two-level plane is already near its rate floor, so quantizing
-    /// it buys little and fringes hard matte edges — while soft alpha
-    /// (`Some(false)`) remains a legitimate quantization target.
-    /// `Some(false)` → alpha varies through intermediate values; full
-    /// alpha channel needed. `None` → either no alpha channel, or
-    /// predicate didn't run.
-    pub alpha_is_binary: Option<bool>,
-
-    /// `Some(One/Two/Four)` → grayscale buffer can be sub-byte-packed
-    /// at this depth without loss. `None` → no sub-byte reduction
-    /// (either not grayscale, not U8, or doesn't fit any sub-byte
-    /// depth, or predicate didn't run).
-    pub uses_gray_bit_depth: Option<GrayBitDepth>,
 }
 
 impl LoadBearingReport {
@@ -125,11 +79,7 @@ impl LoadBearingReport {
     /// carries no information.
     #[inline]
     pub const fn any_analyzed(&self) -> bool {
-        self.uses_alpha.is_some()
-            || self.uses_chroma.is_some()
-            || self.uses_low_bits.is_some()
-            || self.alpha_is_binary.is_some()
-            || self.uses_gray_bit_depth.is_some()
+        self.uses_alpha.is_some() || self.uses_chroma.is_some() || self.uses_low_bits.is_some()
     }
 
     /// Produce the narrowest descriptor justified by this report.
@@ -141,11 +91,6 @@ impl LoadBearingReport {
     ///      alpha)
     ///   3. Chroma drop (when `uses_chroma` is false and the layout
     ///      has chroma)
-    ///
-    /// Sub-byte gray (`uses_gray_bit_depth`) is **not** applied here --
-    /// `zenpixels` doesn't model sub-byte channel types. Codec encoders
-    /// that support sub-byte (e.g. PNG indexed/grayscale) read the
-    /// field directly off the report and apply their own bit-packing.
     ///
     /// Color signaling (primaries, transfer, signal range) carries over
     /// from `src` untouched -- a load-bearing reduction never re-tags
@@ -244,23 +189,22 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
         let channel_type = descriptor.channel_type();
 
         // ── Descriptor-level alpha answers ───────────────────────
-        // Two `AlphaMode`s answer the alpha questions without touching
+        // Two `AlphaMode`s answer the alpha question without touching
         // a single pixel:
         //   * `Undefined` (RGBX/BGRX padding): the lane bytes are
         //     meaningless -- scanning them would derive answers from
-        //     garbage. Structurally droppable, binary-alpha N/A.
+        //     garbage. Structurally droppable.
         //   * `Opaque`: the descriptor *contracts* every sample is
-        //     channel-max. Trust it -- same answers a scan of a
+        //     channel-max. Trust it -- same answer a scan of a
         //     genuinely all-opaque buffer produces.
         // `Straight` and `Premultiplied` scan normally. (All
         // reductions here stay valid under premultiplication: alpha
         // only drops when uniformly max, where premultiplied ==
         // straight; `R==G==B` and bit-replication are value-exact
         // tests unaffected by what the values encode.)
-        let alpha_structural: Option<(Option<bool>, Option<bool>)> = if layout.has_alpha() {
+        let alpha_structural: Option<Option<bool>> = if layout.has_alpha() {
             match descriptor.alpha {
-                Some(AlphaMode::Undefined) => Some((Some(false), None)),
-                Some(AlphaMode::Opaque) => Some((Some(false), Some(true))),
+                Some(AlphaMode::Undefined) | Some(AlphaMode::Opaque) => Some(Some(false)),
                 _ => None,
             }
         } else {
@@ -275,84 +219,70 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
         // `None` when the predicate isn't wired for this channel
         // type. Codecs treat `Some(false)` as the actionable
         // "drop this" signal.
-        let (mut uses_alpha, uses_chroma, mut alpha_is_binary) = match (layout, channel_type) {
+        let (mut uses_alpha, uses_chroma) = match (layout, channel_type) {
             (ChannelLayout::Rgba | ChannelLayout::Bgra, ChannelType::U8) => {
                 let fused = fused_rgba8_over_rows(
                     self,
                     FusedRequest {
                         check_opaque: scan_alpha,
                         check_grayscale: true,
-                        check_binary_alpha: scan_alpha,
                     },
                 );
-                (
-                    Some(!fused.is_opaque),
-                    Some(!fused.is_grayscale),
-                    Some(fused.is_binary_alpha),
-                )
+                (Some(!fused.is_opaque), Some(!fused.is_grayscale))
             }
             (ChannelLayout::Rgba, ChannelType::U16) => (
                 Some(scan_alpha && !rows_all(self, cast_u16, scan::is_opaque_rgba16)),
                 Some(!rows_all(self, cast_u16, scan::is_grayscale_rgba16)),
-                Some(scan_alpha && rows_all(self, cast_u16, scan::alpha_is_binary_rgba16)),
             ),
             (ChannelLayout::Rgb, ChannelType::U8) => (
                 Some(false), // no alpha channel -- structurally not load-bearing
                 Some(!rows_all(self, cast_u8, scan::is_grayscale_rgb8)),
-                None, // no alpha channel -- alpha-binary doesn't apply
             ),
             (ChannelLayout::Rgb, ChannelType::U16) => (
                 Some(false),
                 Some(!rows_all(self, cast_u16, scan::is_grayscale_rgb16)),
-                None,
             ),
             (ChannelLayout::GrayAlpha, ChannelType::U8) => (
                 Some(scan_alpha && !rows_all(self, cast_u8, scan::is_opaque_ga8)),
                 Some(false), // already grayscale -- no chroma to be load-bearing
-                Some(scan_alpha && rows_all(self, cast_u8, scan::alpha_is_binary_ga8)),
             ),
             (ChannelLayout::GrayAlpha, ChannelType::U16) => (
                 Some(scan_alpha && !rows_all(self, cast_u16, scan::is_opaque_ga16)),
                 Some(false),
-                Some(scan_alpha && rows_all(self, cast_u16, scan::alpha_is_binary_ga16)),
             ),
 
             // Gray-anything: structurally no alpha and no chroma to
             // test. Both fields are `Some(false)` regardless of the
             // channel-type-specific predicate availability.
-            (ChannelLayout::Gray, _) => (Some(false), Some(false), None),
+            (ChannelLayout::Gray, _) => (Some(false), Some(false)),
 
             // F32 RGB(A) / GrayAlpha -- predicates wired.
             (ChannelLayout::Rgba, ChannelType::F32) => (
                 Some(scan_alpha && !rows_all(self, cast_f32, scan::is_opaque_rgba_f32)),
                 Some(!rows_all(self, cast_f32, scan::is_grayscale_rgba_f32)),
-                Some(scan_alpha && rows_all(self, cast_f32, scan::alpha_is_binary_rgba_f32)),
             ),
             (ChannelLayout::Rgb, ChannelType::F32) => (
                 Some(false),
                 Some(!rows_all(self, cast_f32, scan::is_grayscale_rgb_f32)),
-                None,
             ),
             (ChannelLayout::GrayAlpha, ChannelType::F32) => (
                 Some(scan_alpha && !rows_all(self, cast_f32, scan::is_opaque_ga_f32)),
                 Some(false),
-                Some(scan_alpha && rows_all(self, cast_f32, scan::alpha_is_binary_ga_f32)),
             ),
 
             // F16 / Oklab / CMYK with non-Gray layout -- predicates
             // not yet wired. All fields stay `None`.
-            _ => (None, None, None),
+            _ => (None, None),
         };
 
-        // Overlay the structural alpha answers (the scan, when one ran
-        // at all, was told not to compute these). `uses_alpha.is_some()`
+        // Overlay the structural alpha answer (the scan, when one ran
+        // at all, was told not to compute it). `uses_alpha.is_some()`
         // limits the overlay to layout × channel-type combos whose
         // predicates are wired -- unanalyzed combos stay all-`None`.
-        if let Some((structural_uses, structural_binary)) = alpha_structural
+        if let Some(structural_uses) = alpha_structural
             && uses_alpha.is_some()
         {
             uses_alpha = structural_uses;
-            alpha_is_binary = structural_binary;
         }
 
         // ── Low bits (U16 → U8) ──────────────────────────────────
@@ -370,22 +300,10 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
             _ => None,
         };
 
-        // ── Sub-byte gray ───────────────────────────────────────
-        // Only meaningful when the buffer is (or becomes) grayscale
-        // at U8 channel-type and the analysis ran for chroma.
-        let uses_gray_bit_depth =
-            if matches!(uses_chroma, Some(false)) && channel_type == ChannelType::U8 {
-                sub_byte_gray_over_rows(self, layout)
-            } else {
-                None
-            };
-
         LoadBearingReport {
             uses_alpha,
             uses_chroma,
             uses_low_bits,
-            alpha_is_binary,
-            uses_gray_bit_depth,
         }
     }
 
@@ -446,10 +364,9 @@ fn fused_rgba8_over_rows<P>(slice: &PixelSlice<'_, P>, request: FusedRequest) ->
     let mut total = scan::FusedResult {
         is_opaque: req.check_opaque,
         is_grayscale: req.check_grayscale,
-        is_binary_alpha: req.check_binary_alpha,
     };
     for y in 0..slice.rows() {
-        if !req.check_opaque && !req.check_grayscale && !req.check_binary_alpha {
+        if !req.check_opaque && !req.check_grayscale {
             break;
         }
         let row = slice.row(y);
@@ -462,66 +379,8 @@ fn fused_rgba8_over_rows<P>(slice: &PixelSlice<'_, P>, request: FusedRequest) ->
             total.is_grayscale = false;
             req.check_grayscale = false;
         }
-        if req.check_binary_alpha && !r.is_binary_alpha {
-            total.is_binary_alpha = false;
-            req.check_binary_alpha = false;
-        }
     }
     total
-}
-
-/// Row-aware sub-byte gray detection.
-fn sub_byte_gray_over_rows<P>(
-    slice: &PixelSlice<'_, P>,
-    layout: ChannelLayout,
-) -> Option<GrayBitDepth> {
-    let stride = match layout {
-        ChannelLayout::Gray => 1,
-        ChannelLayout::GrayAlpha => 2,
-        ChannelLayout::Rgb => 3,
-        ChannelLayout::Rgba | ChannelLayout::Bgra => 4,
-        _ => 1,
-    };
-    let mut can_1 = true;
-    let mut can_2 = true;
-    let mut can_4 = true;
-    let process_row =
-        |bytes: &[u8], can_1: &mut bool, can_2: &mut bool, can_4: &mut bool| -> bool {
-            for i in (0..bytes.len()).step_by(stride) {
-                let v = bytes[i];
-                if *can_4 && !v.is_multiple_of(17) {
-                    return false; // signals bail
-                }
-                if *can_2 && !v.is_multiple_of(85) {
-                    *can_2 = false;
-                    *can_1 = false;
-                }
-                if *can_1 && v != 0 && v != 255 {
-                    *can_1 = false;
-                }
-            }
-            true
-        };
-    if let Some(bytes) = slice.as_contiguous_bytes() {
-        if !process_row(bytes, &mut can_1, &mut can_2, &mut can_4) {
-            return None;
-        }
-    } else {
-        for y in 0..slice.rows() {
-            if !process_row(slice.row(y), &mut can_1, &mut can_2, &mut can_4) {
-                return None;
-            }
-        }
-    }
-    if can_1 {
-        Some(GrayBitDepth::One)
-    } else if can_2 {
-        Some(GrayBitDepth::Two)
-    } else if can_4 {
-        Some(GrayBitDepth::Four)
-    } else {
-        None
-    }
 }
 
 /// Row-aware transform: produce a tightly-packed output buffer from a
@@ -704,11 +563,6 @@ mod tests {
         // analyzed bool removed
         assert_eq!(r.uses_alpha, Some(false));
         assert_eq!(r.uses_chroma, Some(false));
-        assert_eq!(
-            r.alpha_is_binary,
-            Some(true),
-            "all-opaque qualifies as binary"
-        );
 
         let target = r.apply_to(&slice.descriptor());
         assert_eq!(target.format, PixelFormat::Gray8);
@@ -747,34 +601,7 @@ mod tests {
         let slice = make_slice(&bytes, 4, 1, PixelFormat::Rgba8);
         let r = slice.determine_load_bearing();
         assert_eq!(r.uses_alpha, Some(true), "alpha varies → load-bearing");
-        assert_eq!(
-            r.alpha_is_binary,
-            Some(true),
-            "but the variation is 0/255 only"
-        );
         assert_eq!(r.uses_chroma, Some(false));
-    }
-
-    #[test]
-    fn rgba8_alpha_with_intermediate_reports_not_binary() {
-        let bytes = [10u8, 10, 10, 128, 20, 20, 20, 64];
-        let slice = make_slice(&bytes, 2, 1, PixelFormat::Rgba8);
-        let r = slice.determine_load_bearing();
-        assert_eq!(r.uses_alpha, Some(true));
-        assert_eq!(
-            r.alpha_is_binary,
-            Some(false),
-            "128 and 64 are intermediate"
-        );
-    }
-
-    #[test]
-    fn rgb8_no_alpha_reports_alpha_is_binary_none() {
-        let bytes = [10u8, 20, 30, 40, 50, 60];
-        let slice = make_slice(&bytes, 2, 1, PixelFormat::Rgb8);
-        let r = slice.determine_load_bearing();
-        assert_eq!(r.alpha_is_binary, None, "no alpha channel → None");
-        assert_eq!(r.uses_alpha, Some(false));
     }
 
     #[test]
@@ -793,7 +620,6 @@ mod tests {
         // analyzed bool removed
         assert_eq!(r.uses_low_bits, Some(false));
         assert_eq!(r.uses_alpha, Some(false));
-        assert_eq!(r.alpha_is_binary, Some(true));
         let target = r.apply_to(&slice.descriptor());
         assert_eq!(target.format, PixelFormat::Rgb8);
     }
@@ -813,38 +639,6 @@ mod tests {
     }
 
     // ── Sub-byte gray detection ──────────────────────────────────
-
-    #[test]
-    fn pure_white_grayscale_detects_1bit_depth() {
-        let bytes = [0u8, 255, 0, 255];
-        let slice = make_slice(&bytes, 4, 1, PixelFormat::Gray8);
-        let r = slice.determine_load_bearing();
-        assert_eq!(r.uses_gray_bit_depth, Some(GrayBitDepth::One));
-    }
-
-    #[test]
-    fn quarter_levels_grayscale_detects_2bit_depth() {
-        let bytes = [0u8, 85, 170, 255];
-        let slice = make_slice(&bytes, 4, 1, PixelFormat::Gray8);
-        let r = slice.determine_load_bearing();
-        assert_eq!(r.uses_gray_bit_depth, Some(GrayBitDepth::Two));
-    }
-
-    #[test]
-    fn sixteen_levels_grayscale_detects_4bit_depth() {
-        let bytes: Vec<u8> = (0..16).map(|i| i * 17).collect();
-        let slice = make_slice(&bytes, 16, 1, PixelFormat::Gray8);
-        let r = slice.determine_load_bearing();
-        assert_eq!(r.uses_gray_bit_depth, Some(GrayBitDepth::Four));
-    }
-
-    #[test]
-    fn arbitrary_grayscale_keeps_8bit_depth() {
-        let bytes = [0u8, 1, 2, 3, 4, 5];
-        let slice = make_slice(&bytes, 6, 1, PixelFormat::Gray8);
-        let r = slice.determine_load_bearing();
-        assert_eq!(r.uses_gray_bit_depth, None, "no sub-byte reduction");
-    }
 
     // ── try_reduce ─────────────────────────────────────────────
 
@@ -878,8 +672,6 @@ mod tests {
         assert_eq!(r.uses_alpha, None);
         assert_eq!(r.uses_chroma, None);
         assert_eq!(r.uses_low_bits, None);
-        assert_eq!(r.alpha_is_binary, None);
-        assert_eq!(r.uses_gray_bit_depth, None);
         assert!(!r.any_analyzed());
     }
 
@@ -890,8 +682,8 @@ mod tests {
         r.uses_alpha = Some(true);
         assert!(r.any_analyzed(), "any_analyzed fires for any Some");
         r.uses_alpha = None;
-        r.uses_gray_bit_depth = Some(GrayBitDepth::Two);
-        assert!(r.any_analyzed(), "any_analyzed fires on gray depth too");
+        r.uses_low_bits = Some(false);
+        assert!(r.any_analyzed(), "any_analyzed fires on low-bits too");
     }
 
     // ── Color signaling is never re-tagged ───────────────────────
@@ -918,7 +710,6 @@ mod tests {
         let r_srgb = srgb.determine_load_bearing();
         assert_eq!(r_p3.uses_alpha, r_srgb.uses_alpha);
         assert_eq!(r_p3.uses_chroma, r_srgb.uses_chroma);
-        assert_eq!(r_p3.alpha_is_binary, r_srgb.alpha_is_binary);
 
         let (target, out) = p3
             .try_reduce_to_load_bearing_format()
@@ -980,7 +771,6 @@ mod tests {
             Some(false),
             "padding lane is never load-bearing"
         );
-        assert_eq!(r.alpha_is_binary, None, "no real alpha channel to classify");
         assert_eq!(r.uses_chroma, Some(true), "chroma still measured");
         // try_reduce drops the padding lane.
         let (target, out) = slice
@@ -1003,11 +793,6 @@ mod tests {
         let slice = PixelSlice::new(&bytes, 2, 1, 8, descriptor).unwrap();
         let r = slice.determine_load_bearing();
         assert_eq!(r.uses_alpha, Some(false));
-        assert_eq!(
-            r.alpha_is_binary,
-            Some(true),
-            "all-max is binary-compatible"
-        );
         assert_eq!(r.uses_chroma, Some(false), "chroma still measured");
     }
 
@@ -1027,7 +812,6 @@ mod tests {
             Some(true),
             "varying premul alpha is load-bearing"
         );
-        assert_eq!(r.alpha_is_binary, Some(false));
     }
 
     // ── Strided-row tests ──────────────────────────────────────
@@ -1092,7 +876,6 @@ mod tests {
         // analyzed bool removed
         assert_eq!(r.uses_alpha, Some(false));
         assert_eq!(r.uses_chroma, Some(false));
-        assert_eq!(r.alpha_is_binary, Some(true));
         let target = r.apply_to(&slice.descriptor());
         assert_eq!(target.format, PixelFormat::Gray8);
     }
@@ -1185,8 +968,6 @@ mod tests {
         assert_eq!(r_contig.uses_alpha, r_strided.uses_alpha);
         assert_eq!(r_contig.uses_chroma, r_strided.uses_chroma);
         assert_eq!(r_contig.uses_low_bits, r_strided.uses_low_bits);
-        assert_eq!(r_contig.alpha_is_binary, r_strided.alpha_is_binary);
-        assert_eq!(r_contig.uses_gray_bit_depth, r_strided.uses_gray_bit_depth);
     }
 
     // ── F32 load_bearing tests ────────────────────────────────
@@ -1218,7 +999,6 @@ mod tests {
         // analyzed bool removed
         assert_eq!(r.uses_alpha, Some(false));
         assert_eq!(r.uses_chroma, Some(false));
-        assert_eq!(r.alpha_is_binary, Some(true));
 
         let target = r.apply_to(&slice.descriptor());
         assert_eq!(target.format, PixelFormat::GrayF32);
@@ -1246,7 +1026,6 @@ mod tests {
         let slice = make_f32_slice(bytes, 3, 1, PixelFormat::RgbaF32, TransferFunction::Linear);
         let r = slice.determine_load_bearing();
         assert_eq!(r.uses_alpha, Some(true));
-        assert_eq!(r.alpha_is_binary, Some(false));
         assert_eq!(r.uses_chroma, Some(false));
 
         let target = r.apply_to(&slice.descriptor());
@@ -1308,31 +1087,6 @@ mod tests {
         let bytes: &[u8] = bytemuck::cast_slice(&pixels);
         let slice = make_f32_slice(bytes, 3, 1, PixelFormat::RgbF32, TransferFunction::Linear);
         assert_eq!(reduced(&slice).format, PixelFormat::GrayF32);
-    }
-
-    #[test]
-    fn strided_gray8_sub_byte_detection_works() {
-        // Gray8 strided buffer where every value is in {0, 255}.
-        // Sub-byte gray detection must iterate rows correctly.
-        let width = 8u32;
-        let height = 4u32;
-        let stride = width as usize + 12; // 12 bytes padding per row
-        let mut buf = vec![0xAAu8; stride * height as usize];
-        for y in 0..height {
-            for x in 0..width {
-                let v = if (x + y) & 1 == 0 { 0u8 } else { 255 };
-                buf[y as usize * stride + x as usize] = v;
-            }
-        }
-        let descriptor = PixelDescriptor::from_pixel_format(PixelFormat::Gray8)
-            .with_transfer(TransferFunction::Srgb);
-        let slice = PixelSlice::new(&buf, width, height, stride, descriptor).unwrap();
-        let r = slice.determine_load_bearing();
-        assert_eq!(
-            r.uses_gray_bit_depth,
-            Some(GrayBitDepth::One),
-            "strided buffer with 0/255 only must detect 1-bit depth"
-        );
     }
 
     // ── Edge cases: idempotency ───────────────────────────────
@@ -1529,10 +1283,6 @@ mod tests {
             // every field stays None.
             assert_eq!(r.uses_alpha, None, "{fmt:?} alpha should be None");
             assert_eq!(r.uses_chroma, None, "{fmt:?} chroma should be None");
-            assert_eq!(
-                r.alpha_is_binary, None,
-                "{fmt:?} alpha-binary should be None"
-            );
         }
     }
 
@@ -1619,11 +1369,6 @@ mod tests {
             // analyzed bool removed
             assert_eq!(r.uses_alpha, Some(false));
             assert_eq!(r.uses_chroma, Some(false));
-            assert_eq!(
-                r.alpha_is_binary,
-                Some(true),
-                "vacuous: every alpha is in {{0,255}}"
-            );
         }
         // Some validators reject 0-dimensional descriptors. If so,
         // we don't lose semantics -- codecs won't see this case in

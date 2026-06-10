@@ -83,3 +83,15 @@ within noise (75.8 vs 78.3 GiB/s), 64×64 possibly ~10% slower
 (226–251 ns vs 203 ns, heavily noise-flagged; ambient variance moved
 the *unchanged* scalar baseline ±35% between the same runs). Accepted:
 ≤40 ns/call at 16 KB for one code shape fewer.
+
+---
+
+# Post-ablation (2-check kernel, same day)
+
+After the per-encoder consumer audit, `alpha_is_binary` and
+`uses_gray_bit_depth` were removed (no concrete consumers; see PR #30).
+The fused kernel drops to 2 checks (opaque + grayscale). Throughput is
+unchanged within noise — the blocked kernel was load-bound, not
+check-bound: 71–74 GiB/s cache-resident, ~22 GiB/s at 16 MP DRAM;
+`determine_load_bearing` 55 µs at 1 MP, ~2.5 ms at 16 MP. The ablation
+is a pure code-size/API win (−~700 lines, 3-field report).

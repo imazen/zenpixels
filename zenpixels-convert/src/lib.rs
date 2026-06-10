@@ -493,9 +493,9 @@ pub use gamut::{
     conversion_matrix,
 };
 
-// Re-export the load-bearing analysis surface: one trait, one report,
-// one enum. The scan-level predicates stay crate-internal.
-pub use load_bearing::{GrayBitDepth, LoadBearingReport, PixelSliceLoadBearingExt};
+// Re-export the load-bearing analysis surface: one trait, one report.
+// The scan-level predicates stay crate-internal.
+pub use load_bearing::{LoadBearingReport, PixelSliceLoadBearingExt};
 
 // Re-export HDR types and tone mapping.
 #[cfg(feature = "std")]

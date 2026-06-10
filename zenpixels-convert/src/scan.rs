@@ -32,7 +32,7 @@
 //! bit depth, AVIF monochrome planes, etc.).
 //!
 //! [`fused_predicates_rgba8_cg`] is the production RGBA8/BGRA8 entry —
-//! it runs all three RGBA8 checks in one streaming pass at the
+//! it runs both RGBA8 checks in one streaming pass at the
 //! bandwidth cost of one, deferring the mask reduction to once per
 //! 512-byte block. Measured (Zen 4 / 7950X, AVX2 tier,
 //! `benchmarks/load_bearing_bench_2026-06-10.md`): 60–78 GiB/s
@@ -158,43 +158,6 @@ fn is_grayscale_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
     }
     for px in rgba[i..].chunks_exact(4) {
         if px[0] != px[1] || px[1] != px[2] {
-            return false;
-        }
-    }
-    true
-}
-
-// ── alpha_is_binary_rgba8 ──────────────────────────────────────────────
-
-/// Returns true iff every alpha byte is exactly 0 or 255. Useful for
-/// choosing tRNS encoding over a full alpha channel. Early-exit.
-#[cfg(test)]
-pub fn alpha_is_binary_rgba8(rgba: &[u8]) -> bool {
-    incant!(
-        alpha_is_binary_rgba8_impl(rgba),
-        [v4x, v4, v3, neon, wasm128, scalar]
-    )
-}
-
-#[cfg(test)]
-#[magetypes(define(u8x64), v4x, v4, v3, neon, wasm128, scalar)]
-fn alpha_is_binary_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
-    let alpha_mask = u8x64::from_array(token, ALPHA_MASK_RGBA8);
-    let zero = u8x64::splat(token, 0);
-    let opaque = u8x64::splat(token, 0xFF);
-    let (chunks, tail) = u8x64::partition_slice(token, rgba);
-    for chunk in chunks {
-        let v = u8x64::load(token, chunk);
-        // Bad if (alpha != 0) AND (alpha != 255). Both compares produce
-        // 0xFF/0 masks; AND them together, mask to alpha lanes only.
-        let bad = v.simd_ne(zero) & v.simd_ne(opaque) & alpha_mask;
-        if bad.any_true() {
-            return false;
-        }
-    }
-    for px in tail.chunks_exact(4) {
-        let a = px[3];
-        if a != 0 && a != 255 {
             return false;
         }
     }
@@ -441,37 +404,6 @@ fn is_grayscale_rgb16_impl(token: Token, rgb: &[u16]) -> bool {
     true
 }
 
-/// Returns true iff every RGBA16 alpha sample is exactly 0 or 65535.
-/// Early-exit.
-pub fn alpha_is_binary_rgba16(rgba: &[u16]) -> bool {
-    incant!(
-        alpha_is_binary_rgba16_impl(rgba),
-        [v4x, v4, v3, neon, wasm128, scalar]
-    )
-}
-
-#[magetypes(define(u16x32), v4x, v4, v3, neon, wasm128, scalar)]
-fn alpha_is_binary_rgba16_impl(token: Token, rgba: &[u16]) -> bool {
-    let alpha_mask = u16x32::from_array(token, ALPHA_MASK_RGBA16);
-    let zero = u16x32::splat(token, 0);
-    let opaque = u16x32::splat(token, 0xFFFF);
-    let (chunks, tail) = u16x32::partition_slice(token, rgba);
-    for chunk in chunks {
-        let v = u16x32::load(token, chunk);
-        let bad = v.simd_ne(zero) & v.simd_ne(opaque) & alpha_mask;
-        if bad.any_true() {
-            return false;
-        }
-    }
-    for px in tail.chunks_exact(4) {
-        let a = px[3];
-        if a != 0 && a != 0xFFFF {
-            return false;
-        }
-    }
-    true
-}
-
 // ── GrayAlpha (U8) predicates ──────────────────────────────────────────
 
 /// `[0, 0xFF, 0, 0xFF, …]` — alpha lane in u8 GrayAlpha layout
@@ -511,36 +443,6 @@ fn is_opaque_ga8_impl(token: Token, ga: &[u8]) -> bool {
     true
 }
 
-/// Returns true iff every GrayAlpha8 alpha byte is exactly 0 or 255.
-pub fn alpha_is_binary_ga8(ga: &[u8]) -> bool {
-    incant!(
-        alpha_is_binary_ga8_impl(ga),
-        [v4x, v4, v3, neon, wasm128, scalar]
-    )
-}
-
-#[magetypes(define(u8x64), v4x, v4, v3, neon, wasm128, scalar)]
-fn alpha_is_binary_ga8_impl(token: Token, ga: &[u8]) -> bool {
-    let alpha_mask = u8x64::from_array(token, ALPHA_MASK_GA8);
-    let zero = u8x64::splat(token, 0);
-    let opaque = u8x64::splat(token, 0xFF);
-    let (chunks, tail) = u8x64::partition_slice(token, ga);
-    for chunk in chunks {
-        let v = u8x64::load(token, chunk);
-        let bad = v.simd_ne(zero) & v.simd_ne(opaque) & alpha_mask;
-        if bad.any_true() {
-            return false;
-        }
-    }
-    for px in tail.chunks_exact(2) {
-        let a = px[1];
-        if a != 0 && a != 255 {
-            return false;
-        }
-    }
-    true
-}
-
 // ── GrayAlpha (U16) predicates ─────────────────────────────────────────
 
 /// Returns true iff every GrayAlpha16 alpha sample equals 65535.
@@ -565,36 +467,6 @@ fn is_opaque_ga16_impl(token: Token, ga: &[u16]) -> bool {
     }
     for px in tail.chunks_exact(2) {
         if px[1] != 0xFFFF {
-            return false;
-        }
-    }
-    true
-}
-
-/// Returns true iff every GrayAlpha16 alpha sample is exactly 0 or 65535.
-pub fn alpha_is_binary_ga16(ga: &[u16]) -> bool {
-    incant!(
-        alpha_is_binary_ga16_impl(ga),
-        [v4x, v4, v3, neon, wasm128, scalar]
-    )
-}
-
-#[magetypes(define(u16x32), v4x, v4, v3, neon, wasm128, scalar)]
-fn alpha_is_binary_ga16_impl(token: Token, ga: &[u16]) -> bool {
-    let alpha_mask = u16x32::from_array(token, ALPHA_MASK_GA16);
-    let zero = u16x32::splat(token, 0);
-    let opaque = u16x32::splat(token, 0xFFFF);
-    let (chunks, tail) = u16x32::partition_slice(token, ga);
-    for chunk in chunks {
-        let v = u16x32::load(token, chunk);
-        let bad = v.simd_ne(zero) & v.simd_ne(opaque) & alpha_mask;
-        if bad.any_true() {
-            return false;
-        }
-    }
-    for px in tail.chunks_exact(2) {
-        let a = px[1];
-        if a != 0 && a != 0xFFFF {
             return false;
         }
     }
@@ -759,36 +631,6 @@ fn is_grayscale_rgb_f32_impl(token: Token, rgb: &[f32]) -> bool {
     true
 }
 
-/// Returns true iff every alpha sample is exactly 0.0 or 1.0.
-pub fn alpha_is_binary_rgba_f32(rgba: &[f32]) -> bool {
-    incant!(
-        alpha_is_binary_rgba_f32_impl(rgba),
-        [v4x, v4, v3, neon, wasm128, scalar]
-    )
-}
-
-#[magetypes(define(f32x16, i32x16), v4x, v4, v3, neon, wasm128, scalar)]
-fn alpha_is_binary_rgba_f32_impl(token: Token, rgba: &[f32]) -> bool {
-    let alpha_mask = i32x16::from_array(token, ALPHA_MASK_RGBA_I32);
-    let zero = f32x16::splat(token, 0.0);
-    let one = f32x16::splat(token, 1.0);
-    let (chunks, tail) = f32x16::partition_slice(token, rgba);
-    for chunk in chunks {
-        let v = f32x16::load(token, chunk);
-        let bad = (v.simd_ne(zero).bitcast_to_i32() & v.simd_ne(one).bitcast_to_i32()) & alpha_mask;
-        if bad.any_true() {
-            return false;
-        }
-    }
-    for px in tail.chunks_exact(4) {
-        let a = px[3];
-        if a != 0.0 && a != 1.0 {
-            return false;
-        }
-    }
-    true
-}
-
 /// Returns true iff every f32 GrayAlpha alpha sample equals 1.0.
 pub fn is_opaque_ga_f32(ga: &[f32]) -> bool {
     incant!(
@@ -817,40 +659,10 @@ fn is_opaque_ga_f32_impl(token: Token, ga: &[f32]) -> bool {
     true
 }
 
-/// Returns true iff every f32 GrayAlpha alpha sample is 0.0 or 1.0.
-pub fn alpha_is_binary_ga_f32(ga: &[f32]) -> bool {
-    incant!(
-        alpha_is_binary_ga_f32_impl(ga),
-        [v4x, v4, v3, neon, wasm128, scalar]
-    )
-}
-
-#[magetypes(define(f32x16, i32x16), v4x, v4, v3, neon, wasm128, scalar)]
-fn alpha_is_binary_ga_f32_impl(token: Token, ga: &[f32]) -> bool {
-    let alpha_mask = i32x16::from_array(token, ALPHA_MASK_GA_I32);
-    let zero = f32x16::splat(token, 0.0);
-    let one = f32x16::splat(token, 1.0);
-    let (chunks, tail) = f32x16::partition_slice(token, ga);
-    for chunk in chunks {
-        let v = f32x16::load(token, chunk);
-        let bad = (v.simd_ne(zero).bitcast_to_i32() & v.simd_ne(one).bitcast_to_i32()) & alpha_mask;
-        if bad.any_true() {
-            return false;
-        }
-    }
-    for px in tail.chunks_exact(2) {
-        let a = px[1];
-        if a != 0.0 && a != 1.0 {
-            return false;
-        }
-    }
-    true
-}
-
 // ── Fused single-pass RGBA8 predicates ─────────────────────────────────
 //
-// Runs `is_opaque`, `is_grayscale`, and `alpha_is_binary` against the
-// same buffer in **one** streaming pass — three checks at the bandwidth
+// Runs `is_opaque` and `is_grayscale` against the
+// same buffer in **one** streaming pass — both checks at the bandwidth
 // cost of one. Every check is lane-parallel against the same 64-byte
 // SIMD register, so the per-iteration cost is roughly:
 //   1 load + 0–1 shifted load + 3 simd_ne + 3 mask + 3 any_true.
@@ -874,18 +686,16 @@ fn alpha_is_binary_ga_f32_impl(token: Token, ga: &[f32]) -> bool {
 pub struct FusedRequest {
     pub check_opaque: bool,
     pub check_grayscale: bool,
-    pub check_binary_alpha: bool,
 }
 
 impl FusedRequest {
-    /// Request all three checks. (Production callers build the struct
-    /// with exactly the checks their descriptor still needs.)
+    /// Request both checks. (Production callers build the struct with
+    /// exactly the checks their descriptor still needs.)
     #[cfg(test)]
     pub const fn all() -> Self {
         Self {
             check_opaque: true,
             check_grayscale: true,
-            check_binary_alpha: true,
         }
     }
 }
@@ -897,7 +707,6 @@ impl FusedRequest {
 pub struct FusedResult {
     pub is_opaque: bool,
     pub is_grayscale: bool,
-    pub is_binary_alpha: bool,
 }
 
 // ── Runtime-branch fused predicate (test oracle) ───────────────────────
@@ -915,19 +724,17 @@ pub fn fused_predicates_rgba8(rgba: &[u8], req: FusedRequest) -> FusedResult {
 fn fused_predicates_rgba8_impl(token: Token, rgba: &[u8], req: FusedRequest) -> FusedResult {
     let alpha_mask = u8x64::from_array(token, ALPHA_MASK_RGBA8);
     let rgb_delta_mask = u8x64::from_array(token, RGB_DELTA_MASK_RGBA8);
-    let zero = u8x64::splat(token, 0);
     let opaque = u8x64::splat(token, 0xFF);
 
     let mut still_o = req.check_opaque;
     let mut still_g = req.check_grayscale;
-    let mut still_b = req.check_binary_alpha;
 
     let mut i = 0;
     let len = rgba.len();
     // While at least one check is alive AND we have room for the shifted
     // grayscale load. If grayscale isn't requested (or has flipped off)
     // the trailing 64-byte chunk gets handled by the second loop below.
-    while still_o | still_g | still_b {
+    while still_o | still_g {
         if !still_g && i + 64 > len {
             break;
         }
@@ -941,12 +748,6 @@ fn fused_predicates_rgba8_impl(token: Token, rgba: &[u8], req: FusedRequest) -> 
             let bad = v0.simd_ne(opaque) & alpha_mask;
             if bad.any_true() {
                 still_o = false;
-            }
-        }
-        if still_b {
-            let bad = v0.simd_ne(zero) & v0.simd_ne(opaque) & alpha_mask;
-            if bad.any_true() {
-                still_b = false;
             }
         }
         if still_g {
@@ -964,7 +765,7 @@ fn fused_predicates_rgba8_impl(token: Token, rgba: &[u8], req: FusedRequest) -> 
     // Scalar tail (handles whatever's left, including the last 64-byte
     // chunk we couldn't enter when grayscale was alive due to the +1
     // shifted-load constraint).
-    while i + 4 <= len && (still_o | still_g | still_b) {
+    while i + 4 <= len && (still_o | still_g) {
         let r = rgba[i];
         let g = rgba[i + 1];
         let b = rgba[i + 2];
@@ -975,16 +776,12 @@ fn fused_predicates_rgba8_impl(token: Token, rgba: &[u8], req: FusedRequest) -> 
         if still_g && (r != g || g != b) {
             still_g = false;
         }
-        if still_b && a != 0 && a != 255 {
-            still_b = false;
-        }
         i += 4;
     }
 
     FusedResult {
         is_opaque: still_o,
         is_grayscale: still_g,
-        is_binary_alpha: still_b,
     }
 }
 
@@ -996,26 +793,18 @@ fn fused_predicates_rgba8_impl(token: Token, rgba: &[u8], req: FusedRequest) -> 
 // in the dead specialization, leaving a tighter hot loop.
 
 pub fn fused_predicates_rgba8_cg(rgba: &[u8], req: FusedRequest) -> FusedResult {
-    match (
-        req.check_opaque,
-        req.check_grayscale,
-        req.check_binary_alpha,
-    ) {
-        (true, true, true) => fused_cg::<true, true, true>(rgba),
-        (true, true, false) => fused_cg::<true, true, false>(rgba),
-        (true, false, true) => fused_cg::<true, false, true>(rgba),
-        (true, false, false) => fused_cg::<true, false, false>(rgba),
-        (false, true, true) => fused_cg::<false, true, true>(rgba),
-        (false, true, false) => fused_cg::<false, true, false>(rgba),
-        (false, false, true) => fused_cg::<false, false, true>(rgba),
-        (false, false, false) => FusedResult::default(),
+    match (req.check_opaque, req.check_grayscale) {
+        (true, true) => fused_cg::<true, true>(rgba),
+        (true, false) => fused_cg::<true, false>(rgba),
+        (false, true) => fused_cg::<false, true>(rgba),
+        (false, false) => FusedResult::default(),
     }
 }
 
 #[inline]
-fn fused_cg<const A: bool, const B: bool, const C: bool>(rgba: &[u8]) -> FusedResult {
+fn fused_cg<const A: bool, const B: bool>(rgba: &[u8]) -> FusedResult {
     incant!(
-        fused_cg_impl::<A, B, C>(rgba),
+        fused_cg_impl::<A, B>(rgba),
         [v4x, v4, v3, neon, wasm128, scalar]
     )
 }
@@ -1023,69 +812,32 @@ fn fused_cg<const A: bool, const B: bool, const C: bool>(rgba: &[u8]) -> FusedRe
 /// Resume scanning `rest` in the specialization matching the surviving
 /// checks, then merge: a check that just flipped reports `false`; a
 /// still-alive check takes the resumed scan's verdict. Factored out of
-/// the kernel so the 8-arm match monomorphizes once, not once per
-/// dispatch tier.
-fn fused_cg_resume(rest: &[u8], next_a: bool, next_b: bool, next_c: bool) -> FusedResult {
-    match (next_a, next_b, next_c) {
-        (true, true, true) => unreachable!("resume only runs after a flip"),
-        (true, true, false) => {
-            let s = fused_cg::<true, true, false>(rest);
-            FusedResult {
-                is_opaque: s.is_opaque,
-                is_grayscale: s.is_grayscale,
-                is_binary_alpha: false,
-            }
-        }
-        (true, false, true) => {
-            let s = fused_cg::<true, false, true>(rest);
+/// the kernel so the match monomorphizes once, not once per dispatch
+/// tier.
+fn fused_cg_resume(rest: &[u8], next_a: bool, next_b: bool) -> FusedResult {
+    match (next_a, next_b) {
+        (true, true) => unreachable!("resume only runs after a flip"),
+        (true, false) => {
+            let s = fused_cg::<true, false>(rest);
             FusedResult {
                 is_opaque: s.is_opaque,
                 is_grayscale: false,
-                is_binary_alpha: s.is_binary_alpha,
             }
         }
-        (false, true, true) => {
-            let s = fused_cg::<false, true, true>(rest);
+        (false, true) => {
+            let s = fused_cg::<false, true>(rest);
             FusedResult {
                 is_opaque: false,
                 is_grayscale: s.is_grayscale,
-                is_binary_alpha: s.is_binary_alpha,
             }
         }
-        (true, false, false) => {
-            let s = fused_cg::<true, false, false>(rest);
-            FusedResult {
-                is_opaque: s.is_opaque,
-                is_grayscale: false,
-                is_binary_alpha: false,
-            }
-        }
-        (false, true, false) => {
-            let s = fused_cg::<false, true, false>(rest);
-            FusedResult {
-                is_opaque: false,
-                is_grayscale: s.is_grayscale,
-                is_binary_alpha: false,
-            }
-        }
-        (false, false, true) => {
-            let s = fused_cg::<false, false, true>(rest);
-            FusedResult {
-                is_opaque: false,
-                is_grayscale: false,
-                is_binary_alpha: s.is_binary_alpha,
-            }
-        }
-        (false, false, false) => FusedResult::default(),
+        (false, false) => FusedResult::default(),
     }
 }
 
 #[magetypes(define(u8x64), v4x, v4, v3, neon, wasm128, scalar)]
-fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
-    token: Token,
-    rgba: &[u8],
-) -> FusedResult {
-    if !(A || B || C) {
+fn fused_cg_impl<const A: bool, const B: bool>(token: Token, rgba: &[u8]) -> FusedResult {
+    if !(A || B) {
         // Base case: no live checks, nothing to do. The caller already
         // recorded `false` for everything that flipped on the way down.
         return FusedResult::default();
@@ -1093,7 +845,6 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
 
     let alpha_mask = u8x64::from_array(token, ALPHA_MASK_RGBA8);
     let rgb_delta_mask = u8x64::from_array(token, RGB_DELTA_MASK_RGBA8);
-    let zero = u8x64::splat(token, 0);
     let opaque = u8x64::splat(token, 0xFF);
 
     let len = rgba.len();
@@ -1102,7 +853,7 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
     // ── Blocked loop: one mask reduction per block ───────────────────
     //
     // A per-chunk `any_true` is a vector→scalar reduction plus a
-    // branch; with three checks alive that serialized chain is the
+    // branch; with both checks alive that serialized chain is the
     // compute ceiling (measured ~33 GiB/s cache-resident on Zen 4
     // AVX2 — below single-core DRAM bandwidth). Here every alive
     // check's violation lanes OR into ONE accumulator and the
@@ -1128,16 +879,8 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
         while j < block_end {
             let chunk0: &[u8; 64] = (&rgba[j..j + 64]).try_into().unwrap();
             let v0 = u8x64::load(token, chunk0);
-            if A || C {
-                // (alpha ≠ 255) on alpha lanes — feeds both checks:
-                // binary-bad is (≠ 255 AND ≠ 0), so it reuses this.
-                let ne_opaque = v0.simd_ne(opaque) & alpha_mask;
-                if A {
-                    acc |= ne_opaque;
-                }
-                if C {
-                    acc |= ne_opaque & v0.simd_ne(zero);
-                }
+            if A {
+                acc |= v0.simd_ne(opaque) & alpha_mask;
             }
             if B {
                 let chunk1: &[u8; 64] = (&rgba[j + 1..j + 65]).try_into().unwrap();
@@ -1154,7 +897,6 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
             // narrowed specialization.
             let mut next_a = A;
             let mut next_b = B;
-            let mut next_c = C;
             for px in rgba[i..block_end].chunks_exact(4) {
                 if A && px[3] != 255 {
                     next_a = false;
@@ -1162,15 +904,12 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
                 if B && (px[0] != px[1] || px[1] != px[2]) {
                     next_b = false;
                 }
-                if C && px[3] != 0 && px[3] != 255 {
-                    next_c = false;
-                }
             }
             debug_assert!(
-                (next_a, next_b, next_c) != (A, B, C),
+                (next_a, next_b) != (A, B),
                 "accumulator fired but the re-scan found no flip"
             );
-            return fused_cg_resume(&rgba[block_end..], next_a, next_b, next_c);
+            return fused_cg_resume(&rgba[block_end..], next_a, next_b);
         }
         i = block_end;
     }
@@ -1178,8 +917,7 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
     // Scalar tail. The const params collapse the per-pixel branches.
     let mut o = A;
     let mut g = B;
-    let mut c = C;
-    while i + 4 <= len && (o | g | c) {
+    while i + 4 <= len && (o | g) {
         let r = rgba[i];
         let gg = rgba[i + 1];
         let bb = rgba[i + 2];
@@ -1190,16 +928,12 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
         if B && g && (r != gg || gg != bb) {
             g = false;
         }
-        if C && c && a != 0 && a != 255 {
-            c = false;
-        }
         i += 4;
     }
 
     FusedResult {
         is_opaque: o,
         is_grayscale: g,
-        is_binary_alpha: c,
     }
 }
 
@@ -1214,9 +948,6 @@ mod tests {
     }
     fn scalar_is_grayscale_rgba8(rgba: &[u8]) -> bool {
         rgba.chunks_exact(4).all(|p| p[0] == p[1] && p[1] == p[2])
-    }
-    fn scalar_alpha_binary(rgba: &[u8]) -> bool {
-        rgba.chunks_exact(4).all(|p| p[3] == 0 || p[3] == 255)
     }
     fn scalar_is_grayscale_rgb8(rgb: &[u8]) -> bool {
         rgb.chunks_exact(3).all(|p| p[0] == p[1] && p[1] == p[2])
@@ -1358,60 +1089,6 @@ mod tests {
             }
             v[7 * 4 + 1] = v[7 * 4].wrapping_add(1); // G off by 1
             assert!(!super::is_grayscale_rgba8(&v));
-        });
-    }
-
-    // alpha_is_binary_rgba8 ──────────────────────────────────────────
-
-    #[test]
-    fn alpha_binary_true_all_255() {
-        run_at_all_tiers("ab_true_all_255", || {
-            assert!(super::alpha_is_binary_rgba8(&[
-                10, 20, 30, 255, //
-                40, 50, 60, 255,
-            ]));
-        });
-    }
-
-    #[test]
-    fn alpha_binary_true_mix_0_and_255() {
-        run_at_all_tiers("ab_true_mix", || {
-            assert!(super::alpha_is_binary_rgba8(&[
-                10, 20, 30, 0, //
-                40, 50, 60, 255, //
-                70, 80, 90, 0,
-            ]));
-        });
-    }
-
-    #[test]
-    fn alpha_binary_false_alpha_1() {
-        run_at_all_tiers("ab_false_alpha_1", || {
-            // alpha = 1 is the smallest non-zero non-255 — easy to miss
-            // if the predicate uses a sloppy mask.
-            assert!(!super::alpha_is_binary_rgba8(&[10, 20, 30, 1]));
-        });
-    }
-
-    #[test]
-    fn alpha_binary_false_alpha_254() {
-        run_at_all_tiers("ab_false_alpha_254", || {
-            // alpha = 254 — boundary case (1 below 255).
-            assert!(!super::alpha_is_binary_rgba8(&[10, 20, 30, 254]));
-        });
-    }
-
-    #[test]
-    fn alpha_binary_false_alpha_128_mid_simd() {
-        run_at_all_tiers("ab_false_128_mid", || {
-            // 32 pixels (128 bytes) — alpha 128 at pixel 9 inside 2nd SIMD chunk.
-            let mut v = [0u8; 128];
-            for i in 0..32 {
-                v[i * 4] = (i * 5) as u8;
-                v[i * 4 + 3] = if i & 1 == 0 { 0 } else { 255 };
-            }
-            v[9 * 4 + 3] = 128;
-            assert!(!super::alpha_is_binary_rgba8(&v));
         });
     }
 
@@ -1558,25 +1235,6 @@ mod tests {
     }
 
     #[test]
-    fn rgba16_alpha_binary_true() {
-        run_at_all_tiers("rgba16_ab_true", || {
-            assert!(super::alpha_is_binary_rgba16(&[
-                0x1234, 0x5678, 0x9ABC, 0x0000, // alpha = 0
-                0x4321, 0x8765, 0xCBA9, 0xFFFF, // alpha = 65535
-            ]));
-        });
-    }
-
-    #[test]
-    fn rgba16_alpha_binary_false_mid_alpha() {
-        run_at_all_tiers("rgba16_ab_false", || {
-            assert!(!super::alpha_is_binary_rgba16(&[
-                0x1234, 0x5678, 0x9ABC, 0x8000, // alpha = 32768 (not extreme)
-            ]));
-        });
-    }
-
-    #[test]
     fn rgb16_grayscale_true() {
         run_at_all_tiers("rgb16_gray_true", || {
             assert!(super::is_grayscale_rgb16(&[
@@ -1634,22 +1292,6 @@ mod tests {
     }
 
     #[test]
-    fn ga8_alpha_binary_true_mix() {
-        run_at_all_tiers("ga8_ab_true", || {
-            assert!(super::alpha_is_binary_ga8(&[
-                100, 0, 50, 255, 200, 0, 75, 255,
-            ]));
-        });
-    }
-
-    #[test]
-    fn ga8_alpha_binary_false() {
-        run_at_all_tiers("ga8_ab_false", || {
-            assert!(!super::alpha_is_binary_ga8(&[100, 128]));
-        });
-    }
-
-    #[test]
     fn ga16_opaque_true() {
         run_at_all_tiers("ga16_opaque_true", || {
             assert!(super::is_opaque_ga16(&[0x1234, 0xFFFF, 0x5678, 0xFFFF]));
@@ -1660,22 +1302,6 @@ mod tests {
     fn ga16_opaque_false() {
         run_at_all_tiers("ga16_opaque_false", || {
             assert!(!super::is_opaque_ga16(&[0x1234, 0xFFFE]));
-        });
-    }
-
-    #[test]
-    fn ga16_alpha_binary_true_mix() {
-        run_at_all_tiers("ga16_ab_true", || {
-            assert!(super::alpha_is_binary_ga16(&[
-                0x1234, 0x0000, 0x5678, 0xFFFF, 0x9ABC, 0x0000,
-            ]));
-        });
-    }
-
-    #[test]
-    fn ga16_alpha_binary_false_mid() {
-        run_at_all_tiers("ga16_ab_false", || {
-            assert!(!super::alpha_is_binary_ga16(&[0x1234, 0x8000]));
         });
     }
 
@@ -1749,26 +1375,6 @@ mod tests {
     }
 
     #[test]
-    fn rgba_f32_alpha_binary_true_mix() {
-        run_at_all_tiers("rgba_f32_ab_true", || {
-            assert!(super::alpha_is_binary_rgba_f32(&[
-                0.1, 0.2, 0.3, 0.0, //
-                0.4, 0.5, 0.6, 1.0, //
-                0.7, 0.8, 0.9, 0.0,
-            ]));
-        });
-    }
-
-    #[test]
-    fn rgba_f32_alpha_binary_false_mid() {
-        run_at_all_tiers("rgba_f32_ab_false", || {
-            assert!(!super::alpha_is_binary_rgba_f32(&[
-                0.1, 0.2, 0.3, 0.5, // alpha 0.5 — neither 0 nor 1
-            ]));
-        });
-    }
-
-    #[test]
     fn rgb_f32_grayscale_true() {
         run_at_all_tiers("rgb_f32_gray_true", || {
             assert!(super::is_grayscale_rgb_f32(&[
@@ -1816,28 +1422,12 @@ mod tests {
         });
     }
 
-    #[test]
-    fn ga_f32_alpha_binary_true_mix() {
-        run_at_all_tiers("ga_f32_ab_true", || {
-            assert!(super::alpha_is_binary_ga_f32(&[
-                0.5, 0.0, 0.7, 1.0, 0.2, 0.0,
-            ]));
-        });
-    }
-
-    #[test]
-    fn ga_f32_alpha_binary_false() {
-        run_at_all_tiers("ga_f32_ab_false", || {
-            assert!(!super::alpha_is_binary_ga_f32(&[0.5, 0.5]));
-        });
-    }
-
     // ── Fused predicate tests ────────────────────────────────────────
 
+    /// Scalar oracle mirroring the fused kernel's per-pixel conditions.
     fn scalar_fused(rgba: &[u8], req: super::FusedRequest) -> super::FusedResult {
         let mut o = req.check_opaque;
         let mut g = req.check_grayscale;
-        let mut b = req.check_binary_alpha;
         for chunk in rgba.chunks_exact(4) {
             if o && chunk[3] != 255 {
                 o = false;
@@ -1845,14 +1435,10 @@ mod tests {
             if g && (chunk[0] != chunk[1] || chunk[1] != chunk[2]) {
                 g = false;
             }
-            if b && chunk[3] != 0 && chunk[3] != 255 {
-                b = false;
-            }
         }
         super::FusedResult {
             is_opaque: o,
             is_grayscale: g,
-            is_binary_alpha: b,
         }
     }
 
@@ -1886,14 +1472,14 @@ mod tests {
     }
 
     #[test]
-    fn fused_colorful_with_binary_alpha() {
-        // Not grayscale (R != G), alpha is binary (mix of 0 and 255).
+    fn fused_colorful_with_mixed_alpha() {
+        // Not grayscale (R != G), alpha varies (mix of 0 and 255).
         let v = [
             10, 20, 30, 0, //
             40, 50, 60, 255, //
             70, 80, 90, 0,
         ];
-        run_fused_match_test("color_binary", &v, super::FusedRequest::all());
+        run_fused_match_test("color_mixed_alpha", &v, super::FusedRequest::all());
     }
 
     #[test]
@@ -1915,7 +1501,6 @@ mod tests {
         let req = super::FusedRequest {
             check_opaque: true,
             check_grayscale: false,
-            check_binary_alpha: false,
         };
         run_fused_match_test("subset_opaque_only", &v, req);
     }
@@ -1934,7 +1519,6 @@ mod tests {
         let req = super::FusedRequest {
             check_opaque: false,
             check_grayscale: true,
-            check_binary_alpha: false,
         };
         run_fused_match_test("subset_gray_only_64px", &v, req);
     }
@@ -2190,39 +1774,6 @@ mod tests {
     }
 
     #[test]
-    fn alpha_binary_matches_scalar_all_tiers() {
-        let report = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| {
-            for &n in &[0usize, 1, 4, 16, 64, 200, 4099] {
-                let v = rgba_pattern(n, |i, p| p[3] = if i & 1 == 0 { 0 } else { 255 });
-                assert_eq!(
-                    super::alpha_is_binary_rgba8(&v),
-                    scalar_alpha_binary(&v),
-                    "n={n} alternating 0/255"
-                );
-                if n > 5 {
-                    let mut v = rgba_pattern(n, |i, p| p[3] = if i & 1 == 0 { 0 } else { 255 });
-                    v[5 * 4 + 3] = 128;
-                    assert_eq!(
-                        super::alpha_is_binary_rgba8(&v),
-                        scalar_alpha_binary(&v),
-                        "n={n} alpha 128 at 5"
-                    );
-                }
-                if n > 5 {
-                    let mut v = rgba_pattern(n, |_, _| {});
-                    v[5 * 4 + 3] = 1; // very small but nonzero
-                    assert_eq!(
-                        super::alpha_is_binary_rgba8(&v),
-                        scalar_alpha_binary(&v),
-                        "n={n} alpha 1 at 5"
-                    );
-                }
-            }
-        });
-        eprintln!("alpha_is_binary_rgba8: {report}");
-    }
-
-    #[test]
     fn grayscale_rgb8_matches_scalar_all_tiers() {
         let report = for_each_token_permutation(CompileTimePolicy::Warn, |_perm| {
             for &n in &[0usize, 1, 3, 16, 64, 200, 4099] {
@@ -2288,30 +1839,24 @@ mod tests {
         assert!(super::is_opaque_rgba8(&[]));
         assert!(super::is_grayscale_rgba8(&[]));
         assert!(super::is_grayscale_rgb8(&[]));
-        assert!(super::alpha_is_binary_rgba8(&[]));
         assert!(super::is_opaque_ga8(&[]));
-        assert!(super::alpha_is_binary_ga8(&[]));
         // u16 layouts
         assert!(super::is_opaque_rgba16(&[]));
         assert!(super::is_grayscale_rgba16(&[]));
         assert!(super::is_grayscale_rgb16(&[]));
-        assert!(super::alpha_is_binary_rgba16(&[]));
         assert!(super::is_opaque_ga16(&[]));
-        assert!(super::alpha_is_binary_ga16(&[]));
         // bit-replication
         assert!(super::bit_replication_lossless_u16(&[]));
         // f32 layouts
         assert!(super::is_opaque_rgba_f32(&[]));
         assert!(super::is_grayscale_rgba_f32(&[]));
         assert!(super::is_grayscale_rgb_f32(&[]));
-        assert!(super::alpha_is_binary_rgba_f32(&[]));
         assert!(super::is_opaque_ga_f32(&[]));
-        assert!(super::alpha_is_binary_ga_f32(&[]));
         // fused
         let r = super::fused_predicates_rgba8(&[], super::FusedRequest::all());
-        assert!(r.is_opaque && r.is_grayscale && r.is_binary_alpha);
+        assert!(r.is_opaque && r.is_grayscale);
         let r = super::fused_predicates_rgba8_cg(&[], super::FusedRequest::all());
-        assert!(r.is_opaque && r.is_grayscale && r.is_binary_alpha);
+        assert!(r.is_opaque && r.is_grayscale);
     }
 
     // ── Edge cases: SIMD boundary sizes ─────────────────────────
@@ -2458,9 +2003,6 @@ mod tests {
         assert!(!super::is_opaque_rgba8(&[10, 20, 30, 254]));
         assert!(super::is_grayscale_rgba8(&[42, 42, 42, 255]));
         assert!(!super::is_grayscale_rgba8(&[42, 43, 42, 255]));
-        assert!(super::alpha_is_binary_rgba8(&[10, 20, 30, 0]));
-        assert!(super::alpha_is_binary_rgba8(&[10, 20, 30, 255]));
-        assert!(!super::alpha_is_binary_rgba8(&[10, 20, 30, 1]));
 
         // RGB8: 1 pixel = 3 bytes
         assert!(super::is_grayscale_rgb8(&[42, 42, 42]));
@@ -2482,17 +2024,14 @@ mod tests {
         // All alpha = 0 — opaque is false, binary is true.
         let v = [10u8, 0, 50, 0, 100, 0, 200, 0];
         assert!(!super::is_opaque_ga8(&v));
-        assert!(super::alpha_is_binary_ga8(&v));
 
         // All alpha = 255 — opaque is true, binary is true.
         let v = [10u8, 255, 50, 255, 100, 255, 200, 255];
         assert!(super::is_opaque_ga8(&v));
-        assert!(super::alpha_is_binary_ga8(&v));
 
         // Mid alpha — binary fails, opaque fails.
         let v = [10u8, 128, 50, 128];
         assert!(!super::is_opaque_ga8(&v));
-        assert!(!super::alpha_is_binary_ga8(&v));
     }
 
     // ── Edge cases: bit-replication extremes ────────────────────
@@ -2524,14 +2063,7 @@ mod tests {
         // Pixel where R is NaN — R==G fails, so is_grayscale false.
         assert!(!super::is_grayscale_rgba_f32(&[f32::NAN, 0.5, 0.5, 1.0]));
         // alpha = +inf — not binary.
-        assert!(!super::alpha_is_binary_rgba_f32(&[
-            0.0,
-            0.0,
-            0.0,
-            f32::INFINITY
-        ]));
         // alpha = -0.0 vs 0.0 — IEEE compare: -0.0 == 0.0 (yes).
-        assert!(super::alpha_is_binary_rgba_f32(&[0.0, 0.0, 0.0, -0.0]));
     }
 
     // ── Edge cases: F32 boundary sizes ──────────────────────────

@@ -1,4 +1,4 @@
-//! Load-bearing analysis benches: fused single-pass vs three separate
+//! Load-bearing analysis benches: fused single-pass vs two separate
 //! passes vs scalar, and the public trait entry end-to-end.
 //!
 //! Content is worst-case for the predicates (gray + opaque everywhere):
@@ -21,7 +21,7 @@ const SIZES: &[(&str, usize)] = &[
     ("4096×4096", 4096),
 ];
 
-/// Worst-case content: every pixel gray + opaque, so all three checks
+/// Worst-case content: every pixel gray + opaque, so both checks
 /// stay true and the scan can never early-exit.
 fn gray_opaque_rgba(dim: usize) -> Vec<u8> {
     let mut v = Vec::with_capacity(dim * dim * 4);
@@ -34,8 +34,8 @@ fn gray_opaque_rgba(dim: usize) -> Vec<u8> {
 
 /// Scalar reference with the same early-exit shape as the SIMD kernels'
 /// tail loop (the exit branch keeps LLVM from auto-vectorizing it).
-fn scalar_fused_ref(rgba: &[u8]) -> (bool, bool, bool) {
-    let (mut o, mut g, mut bin) = (true, true, true);
+fn scalar_fused_ref(rgba: &[u8]) -> (bool, bool) {
+    let (mut o, mut g) = (true, true);
     for px in rgba.chunks_exact(4) {
         if o && px[3] != 255 {
             o = false;
@@ -43,21 +43,17 @@ fn scalar_fused_ref(rgba: &[u8]) -> (bool, bool, bool) {
         if g && (px[0] != px[1] || px[1] != px[2]) {
             g = false;
         }
-        if bin && px[3] != 0 && px[3] != 255 {
-            bin = false;
-        }
-        if !(o | g | bin) {
+        if !(o | g) {
             break;
         }
     }
-    (o, g, bin)
+    (o, g)
 }
 
-const fn one_check(opaque: bool, gray: bool, binary: bool) -> FusedRequest {
+const fn one_check(opaque: bool, gray: bool) -> FusedRequest {
     FusedRequest {
         check_opaque: opaque,
         check_grayscale: gray,
-        check_binary_alpha: binary,
     }
 }
 
@@ -70,22 +66,21 @@ fn bench_fused_shapes(suite: &mut Suite) {
             g.throughput(Throughput::Bytes(bytes));
 
             let d = data.clone();
-            g.bench("fused 3-check 1-pass (SIMD)", move |b| {
-                b.iter(|| black_box(fused_predicates_rgba8_cg(&d, one_check(true, true, true))))
+            g.bench("fused 2-check 1-pass (SIMD)", move |b| {
+                b.iter(|| black_box(fused_predicates_rgba8_cg(&d, one_check(true, true))))
             });
 
             let d = data.clone();
-            g.bench("three 1-check passes (SIMD)", move |b| {
+            g.bench("two 1-check passes (SIMD)", move |b| {
                 b.iter(|| {
-                    let o = fused_predicates_rgba8_cg(&d, one_check(true, false, false));
-                    let gr = fused_predicates_rgba8_cg(&d, one_check(false, true, false));
-                    let ba = fused_predicates_rgba8_cg(&d, one_check(false, false, true));
-                    black_box((o.is_opaque, gr.is_grayscale, ba.is_binary_alpha))
+                    let o = fused_predicates_rgba8_cg(&d, one_check(true, false));
+                    let gr = fused_predicates_rgba8_cg(&d, one_check(false, true));
+                    black_box((o.is_opaque, gr.is_grayscale))
                 })
             });
 
             let d = data.clone();
-            g.bench("scalar 3-check 1-pass", move |b| {
+            g.bench("scalar 2-check 1-pass", move |b| {
                 b.iter(|| black_box(scalar_fused_ref(&d)))
             });
         });
@@ -100,7 +95,7 @@ fn bench_trait_entry(suite: &mut Suite) {
         suite.group(format!("determine_load_bearing {label}"), move |g| {
             g.throughput(Throughput::Bytes(bytes));
 
-            // Straight alpha: full 3-check fused scan.
+            // Straight alpha: full 2-check fused scan.
             let d = data.clone();
             g.bench("Rgba8 straight (scan all)", move |b| {
                 let desc = PixelDescriptor::from_pixel_format(PixelFormat::Rgba8)
