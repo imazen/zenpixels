@@ -215,6 +215,32 @@ fn is_grayscale_rgb8_impl(token: Token, rgb: &[u8]) -> bool {
 /// Applies to any U16 channel layout (RGB16, RGBA16, Gray16, GrayA16):
 /// every channel must satisfy the predicate independently. Take a
 /// per-channel slice if you only want to test one channel.
+///
+/// ## Why `lo == hi` is the right (and only) lossless test
+///
+/// `65535 = 255 * 257`, so the *correct* full-scale 8→16 widening
+/// (`round(v * 65535 / 255)`) is exactly `v * 257` — byte replication.
+/// Surveyed producers (2026-06-10, `benchmarks/u16_widening_survey_…`):
+/// libpng `png_set_expand_16` (verified in `pngrtran.c`: byte
+/// replication in place), ImageMagick `-depth 16` and the Rust `image`
+/// crate (both measured: exact `v * 257`) all produce replicated
+/// samples, so well-formed widened content is caught by this predicate.
+///
+/// Other "secretly 8-bit" patterns exist in the wild and are
+/// **deliberately rejected**, because extracting the high byte from
+/// them *changes* the stored values' meaning (a 16-bit code `s` means
+/// `s / 65535`, so `v << 8` content sits at scale `256/257` of the
+/// replicated value — reducing it would brighten by ~0.4%):
+///   * `v << 8` (low byte zero) — naive shift widening; also the
+///     BT-spec convention for 8→10/12-bit video upshifts.
+///   * ffmpeg CLI default rgb24→rgb48 — approximately `v << 8` with
+///     ±3 of YUV-roundtrip noise (measured; white lands at 65283),
+///     undetectable by any exact test.
+///   * raw 8-bit values in a 16-bit container (high byte zero) —
+///     careless `astype(u16)`-style conversions.
+/// Reducing those is a value-rewriting *conversion* (like gamut
+/// narrowing) and belongs to an explicit opt-in API, never to a
+/// bit-exact load-bearing reduction.
 pub fn bit_replication_lossless_u16(samples: &[u16]) -> bool {
     incant!(
         bit_replication_lossless_u16_impl(samples),
@@ -1149,6 +1175,29 @@ mod tests {
             // 0x12 in either byte position passes; 0x12_00 does not.
             assert!(!super::bit_replication_lossless_u16(&[0x1200]));
             assert!(!super::bit_replication_lossless_u16(&[0x0012]));
+        });
+    }
+
+    #[test]
+    fn bit_repl_u16_rejects_real_world_inexact_widenings() {
+        // Pins the survey-informed contract (2026-06-10,
+        // benchmarks/u16_widening_survey_2026-06-10.md): only v*257
+        // replication is bit-exact reducible. The two other
+        // secretly-8-bit patterns found in real producers sit at a
+        // different scale and MUST be rejected:
+        run_at_all_tiers("repl_u16_rejects_inexact", || {
+            // v << 8 (naive shift / video-style upshift): 200 << 8.
+            let shifted: alloc::vec::Vec<u16> = (0..64u16).map(|v| (v * 4) << 8).collect();
+            assert!(!super::bit_replication_lossless_u16(&shifted));
+            // Raw 8-bit values in a 16-bit container (hi byte zero),
+            // as produced by astype-style conversions.
+            let unscaled: alloc::vec::Vec<u16> = (1..65u16).map(|v| v * 3 % 256).collect();
+            assert!(!super::bit_replication_lossless_u16(&unscaled));
+            // ffmpeg-style near-shift (shift ± small YUV roundtrip
+            // error) is inexact too.
+            assert!(!super::bit_replication_lossless_u16(&[
+                0xC8FF, 0x7FFF, 0xFF03,
+            ]));
         });
     }
 
