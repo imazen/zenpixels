@@ -126,3 +126,32 @@ icc-dry-run: icc-build-gen
     @tail -3 /tmp/zenpixels-icc-dry-run/icc_table_rgb.inc
     @echo "--- Gray ---"
     @cat /tmp/zenpixels-icc-dry-run/icc_table_gray.inc
+
+# ── CICP→ICC bundle (full-coverage compressed blob) ───────────────────
+#
+# Regenerates the bundled, transfer-grouped LZ4-HC ICC blob that gives
+# `synthesize_icc_for_cicp` full H.273-grid coverage with no CMS at runtime.
+# moxcms is used here (build-time) only; nothing in the normal build runs this.
+# Run after a moxcms version bump (the golden sha256 test flags drift), then
+# update the pinned hash in zenpixels-convert/src/icc_profiles/cicp_bundle.rs.
+
+# Build the CICP bundle generator (unpublished workspace bin)
+cicp-bundle-build:
+    cargo build -p icc-gen --release --bin cicp_bundle_gen
+
+# Regenerate src/profiles/cicp_bundle.lz4 + the generated index module
+cicp-bundle-gen: cicp-bundle-build
+    ./target/release/cicp_bundle_gen
+    @echo "Regenerated. If the bytes changed, update the golden sha256 in"
+    @echo "  zenpixels-convert/src/icc_profiles/cicp_bundle.rs"
+    @echo "  (sha256sum zenpixels-convert/src/profiles/cicp_bundle.lz4)"
+
+# Show what the generator would produce without writing any files (dry run)
+cicp-bundle-dry-run: cicp-bundle-build
+    ./target/release/cicp_bundle_gen --no-write
+
+# Regenerate the bundle and confirm it round-trips byte-for-byte against moxcms
+cicp-bundle-update: cicp-bundle-gen
+    cargo test -p zenpixels-convert --features cms-moxcms cicp_bundle
+    cargo test -p icc-gen --release --bin cicp_bundle_gen
+    @echo "CICP bundle regenerated and verified (golden sha256 + moxcms byte-equality)."
