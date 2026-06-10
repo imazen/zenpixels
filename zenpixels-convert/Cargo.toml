@@ -43,6 +43,10 @@ __bench_u16_hybrids = []
 # `__` prefix follows the same internal-API convention as
 # `__bench_u16_hybrids`. Not part of the stable public surface.
 __trace_ops = ["std"]
+# Bench-only: exposes `orient::__bench_apply_orientation_scalar` so `bench_orient`
+# can A/B the SIMD transpose against the scalar oracle on the same input. `__`
+# prefix keeps it out of the public-API snapshot.
+__bench_orient = []
 
 [dependencies]
 zenpixels = { workspace = true, default-features = false, features = ["icc"] }
@@ -136,6 +140,12 @@ name = "bench_u16_hybrids"
 path = "benches/bench_u16_hybrids.rs"
 harness = false
 required-features = ["__bench_u16_hybrids"]
+
+[[bench]]
+name = "bench_orient"
+path = "benches/bench_orient.rs"
+harness = false
+required-features = ["__bench_orient"]
 
 # TODO: restore when ZenCmsLite is public
 # [[bench]]

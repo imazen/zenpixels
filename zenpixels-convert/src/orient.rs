@@ -126,6 +126,32 @@ pub fn apply_orientation(src: PixelSlice<'_>, orientation: Orientation) -> Pixel
     out
 }
 
+/// Bench-only A/B handle: bake `orientation` via the cache-blocked **scalar**
+/// transpose, bypassing the SIMD kernel, so `bench_orient` can compare the two
+/// paths on identical input. Only meaningful for the transposing orientations.
+#[cfg(feature = "__bench_orient")]
+#[doc(hidden)]
+#[must_use]
+pub fn __bench_apply_orientation_scalar(
+    src: PixelSlice<'_>,
+    orientation: Orientation,
+) -> PixelBuffer {
+    let w = src.width();
+    let h = src.rows();
+    let desc = src.descriptor();
+    let bpp = desc.bytes_per_pixel();
+    let (ow, oh) = orientation.output_dimensions(w, h);
+    let mut out = PixelBuffer::new(ow, oh, desc);
+    if w == 0 || h == 0 || bpp == 0 {
+        return out;
+    }
+    {
+        let mut dst = out.as_slice_mut();
+        transpose_blocked(&src, &mut dst, orientation, w, h, bpp);
+    }
+    out
+}
+
 /// Copy one row, reversing the order of `bpp`-sized pixels (`FlipH` per row).
 #[inline]
 fn reverse_row(s: &[u8], d: &mut [u8], width: usize, bpp: usize) {
