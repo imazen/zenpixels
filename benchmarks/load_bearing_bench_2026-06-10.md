@@ -71,3 +71,15 @@ free) or caller-side threading, not more kernel work.
 The `AlphaMode::Opaque` elision now matters only at tiny sizes (177 vs
 222 ns at 64×64); past L2 both variants saturate the same load
 bandwidth.
+
+## Unified partial block (follow-up simplification)
+
+The trailing-chunks loop (per-chunk reductions, separate verdict code)
+was replaced by letting the blocked loop's final block run short
+(`block_end = min(i + 512, chunkable)`): one verdict shape, and narrow
+strided rows now get one reduction per row instead of one per chunk.
+Re-measured back-to-back: 1 MP identical (57.2 vs 57.9 µs), 256×256
+within noise (75.8 vs 78.3 GiB/s), 64×64 possibly ~10% slower
+(226–251 ns vs 203 ns, heavily noise-flagged; ambient variance moved
+the *unchanged* scalar baseline ±35% between the same runs). Accepted:
+≤40 ns/call at 16 KB for one code shape fewer.

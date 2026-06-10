@@ -35,9 +35,10 @@
 //! it runs all three RGBA8 checks in one streaming pass at the
 //! bandwidth cost of one, deferring the mask reduction to once per
 //! 512-byte block. Measured (Zen 4 / 7950X, AVX2 tier,
-//! `benchmarks/load_bearing_bench_2026-06-10.md`): 67–78 GiB/s
-//! cache-resident (~25× scalar; 2.1–2.4× the per-chunk-reduction
-//! version), single-core DRAM-bound past L3 (~23 GiB/s at 64 MB).
+//! `benchmarks/load_bearing_bench_2026-06-10.md`): 60–78 GiB/s
+//! cache-resident across runs (~2× the per-chunk-reduction version,
+//! 15–27× scalar), single-core DRAM-bound past L3 (~21–23 GiB/s at
+//! 64 MB).
 
 use archmage::prelude::*;
 
@@ -1098,30 +1099,33 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
     let len = rgba.len();
     let mut i = 0;
 
-    // ── Blocked hot loop: one mask reduction per 512 B ──────────────
+    // ── Blocked loop: one mask reduction per block ───────────────────
     //
     // A per-chunk `any_true` is a vector→scalar reduction plus a
     // branch; with three checks alive that serialized chain is the
     // compute ceiling (measured ~33 GiB/s cache-resident on Zen 4
     // AVX2 — below single-core DRAM bandwidth). Here every alive
     // check's violation lanes OR into ONE accumulator and the
-    // reduction runs once per BLOCK_CHUNKS chunks. The accumulator
-    // firing is a content transition — rare by definition — and a
-    // ≤512 B scalar re-scan of the block localizes which checks
-    // flipped before resuming in the narrower specialization.
+    // reduction runs once per block: 512 B for full blocks, with the
+    // final partial block (1–7 chunks) taking the same shape at a
+    // shorter trip. The accumulator firing is a content transition —
+    // rare by definition — and a ≤512 B scalar re-scan of the block
+    // localizes which checks flipped before resuming in the narrower
+    // specialization.
     //
-    // The +1 shifted load for grayscale needs one byte past the last
-    // chunk, hence the const-propagated `+ 1` bound. Lanes k with
-    // k % 4 ∈ {2, 3} are masked out of the delta compare, so the
-    // overhang byte never influences a verdict — the bound exists for
-    // the load, not the math.
-    const BLOCK_CHUNKS: usize = 8;
-    const BLOCK_BYTES: usize = BLOCK_CHUNKS * 64;
-    let block_bound = if B { BLOCK_BYTES + 1 } else { BLOCK_BYTES };
-    while i + block_bound <= len {
+    // `chunkable` is the byte length the chunked loop may cover: with
+    // B alive the shifted grayscale load needs one byte past each
+    // chunk, so the final 64 B that can't provide it fall to the
+    // scalar tail. Lanes k with k % 4 ∈ {2, 3} are masked out of the
+    // delta compare, so the overhang byte never influences a verdict —
+    // the reservation exists for the load, not the math.
+    const BLOCK_BYTES: usize = 8 * 64;
+    let chunkable = (if B { len.saturating_sub(1) } else { len }) / 64 * 64;
+    while i < chunkable {
+        let block_end = (i + BLOCK_BYTES).min(chunkable);
         let mut acc = u8x64::splat(token, 0);
         let mut j = i;
-        while j < i + BLOCK_BYTES {
+        while j < block_end {
             let chunk0: &[u8; 64] = (&rgba[j..j + 64]).try_into().unwrap();
             let v0 = u8x64::load(token, chunk0);
             if A || C {
@@ -1151,7 +1155,7 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
             let mut next_a = A;
             let mut next_b = B;
             let mut next_c = C;
-            for px in rgba[i..i + BLOCK_BYTES].chunks_exact(4) {
+            for px in rgba[i..block_end].chunks_exact(4) {
                 if A && px[3] != 255 {
                     next_a = false;
                 }
@@ -1166,48 +1170,9 @@ fn fused_cg_impl<const A: bool, const B: bool, const C: bool>(
                 (next_a, next_b, next_c) != (A, B, C),
                 "accumulator fired but the re-scan found no flip"
             );
-            return fused_cg_resume(&rgba[i + BLOCK_BYTES..], next_a, next_b, next_c);
+            return fused_cg_resume(&rgba[block_end..], next_a, next_b, next_c);
         }
-        i += BLOCK_BYTES;
-    }
-
-    // ── Remaining full chunks (< BLOCK_CHUNKS of them) ───────────────
-    // Same checks at single-chunk granularity, reduction per chunk.
-    let bound = if B { 65 } else { 64 };
-    while i + bound <= len {
-        let chunk0: &[u8; 64] = (&rgba[i..i + 64]).try_into().unwrap();
-        let v0 = u8x64::load(token, chunk0);
-
-        // Collect all flips for THIS chunk before recursing. Otherwise a
-        // single chunk that breaks two checks would only register one.
-        let mut next_a = A;
-        let mut next_b = B;
-        let mut next_c = C;
-
-        if A || C {
-            let ne_opaque = v0.simd_ne(opaque) & alpha_mask;
-            if A && ne_opaque.any_true() {
-                next_a = false;
-            }
-            if C && (ne_opaque & v0.simd_ne(zero)).any_true() {
-                next_c = false;
-            }
-        }
-        if B {
-            let chunk1: &[u8; 64] = (&rgba[i + 1..i + 65]).try_into().unwrap();
-            let v1 = u8x64::load(token, chunk1);
-            let bad = v0.simd_ne(v1) & rgb_delta_mask;
-            if bad.any_true() {
-                next_b = false;
-            }
-        }
-
-        // If nothing flipped this iteration, advance.
-        if next_a == A && next_b == B && next_c == C {
-            i += 64;
-            continue;
-        }
-        return fused_cg_resume(&rgba[i + 64..], next_a, next_b, next_c);
+        i = block_end;
     }
 
     // Scalar tail. The const params collapse the per-pixel branches.
