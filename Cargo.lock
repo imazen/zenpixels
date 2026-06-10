@@ -303,6 +303,7 @@ dependencies = [
  "bytemuck",
  "lcms2",
  "moxcms",
+ "zenpixels-convert",
 ]
 
 [[package]]
