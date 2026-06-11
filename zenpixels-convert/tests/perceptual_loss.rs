@@ -2124,6 +2124,11 @@ fn srgb_saturation_boost(srgb: [f64; 3], boost: f64) -> [f64; 3] {
 }
 
 /// Simple Reinhard tonemapping: v / (1 + v).
+///
+/// Deliberate f64 *oracle* — independent of the public f32
+/// `zenpixels_convert::hdr::reinhard_tonemap` so this test's expected
+/// values carry no f32 rounding. The public fn is cross-checked against
+/// the same f64 formula in `src/hdr.rs::tests::reinhard_matches_f64_oracle`.
 fn reinhard_tonemap(v: f64) -> f64 {
     v / (1.0 + v)
 }

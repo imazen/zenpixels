@@ -10,6 +10,26 @@
 
 - (none currently queued)
 
+### zenpixels-convert — changed
+
+- **Tone-map helpers gained explicit out-of-domain contracts** (zenpixels#39
+  Rung 1): `reinhard_tonemap` and `reinhard_inverse` clamp negative and NaN
+  inputs to 0.0, and `reinhard_tonemap(+∞)` returns 1.0 (the limit).
+  Previously `reinhard_tonemap(-1.0)` → `-inf` and `(-2.0)` → `+2.0` —
+  silently outside the documented range, and reachable because linear HDR
+  buffers can carry small negatives from gamut-mapping ringing.
+  `exposure_tonemap` now maps NaN to 0.0 for consistency. Only
+  out-of-contract inputs change; in-domain values are bit-identical.
+
+### zenpixels-convert — added
+
+- Property/oracle tests for the tone-map helpers (output range,
+  monotonicity, f64-oracle agreement, round-trip relative-error bound) and
+  a pipeline pin in `tests/output_finalize.rs` that a PQ source finalized
+  `SameAsOrigin` passes origin CICP through while `OutputMetadata::hdr`
+  stays `None` — the documented not-yet-wired contract
+  (`output.rs` `TODO(0.3.0)`; wiring it must consciously update the pin).
+
 ## [0.2.13] - 2026-06-11
 
 Both crates release as 0.2.13 (zenpixels skips 0.2.12 to keep the pair in lockstep).
