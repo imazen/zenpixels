@@ -5,7 +5,7 @@
 # all-features section.
 # DO NOT EDIT BY HAND — commit regenerated changes together with the code.
 
-## default features (744 items)
+## default features (747 items)
 
 pub mod zenpixels_convert
 pub use zenpixels_convert::<<zenpixels::*>>
@@ -234,6 +234,9 @@ impl core::marker::Unpin for zenpixels_convert::hdr::HdrMetadata
 impl core::marker::UnsafeUnpin for zenpixels_convert::hdr::HdrMetadata
 impl core::panic::unwind_safe::RefUnwindSafe for zenpixels_convert::hdr::HdrMetadata
 impl core::panic::unwind_safe::UnwindSafe for zenpixels_convert::hdr::HdrMetadata
+pub const zenpixels_convert::hdr::REFERENCE_DIFFUSE_WHITE_NITS: f32
+pub fn zenpixels_convert::hdr::compute_content_light_level(zenpixels::buffer::PixelSlice<'_>, f32) -> core::result::Result<zenpixels::hdr::ContentLightLevel, whereat::at::At<zenpixels_convert::error::ConvertError>>
+pub fn zenpixels_convert::hdr::encode_pq16(zenpixels::buffer::PixelSlice<'_>, f32) -> core::result::Result<(zenpixels::buffer::PixelBuffer, zenpixels::hdr::ContentLightLevel), whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub fn zenpixels_convert::hdr::exposure_tonemap(f32, f32) -> f32
 pub fn zenpixels_convert::hdr::reinhard_inverse(f32) -> f32
 pub fn zenpixels_convert::hdr::reinhard_tonemap(f32) -> f32
@@ -752,7 +755,7 @@ pub fn zenpixels_convert::reinhard_tonemap(f32) -> f32
 pub fn zenpixels_convert::try_adapt_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub type zenpixels_convert::GamutMatrix = [[f32; 3]; 3]
 
-## all features except _* (1447 items)
+## all features except _* (1450 items)
 
 pub mod zenpixels_convert
 pub use zenpixels_convert::<<zenpixels::*>>
@@ -1034,6 +1037,9 @@ impl core::marker::Unpin for zenpixels_convert::hdr::HdrMetadata
 impl core::marker::UnsafeUnpin for zenpixels_convert::hdr::HdrMetadata
 impl core::panic::unwind_safe::RefUnwindSafe for zenpixels_convert::hdr::HdrMetadata
 impl core::panic::unwind_safe::UnwindSafe for zenpixels_convert::hdr::HdrMetadata
+pub const zenpixels_convert::hdr::REFERENCE_DIFFUSE_WHITE_NITS: f32
+pub fn zenpixels_convert::hdr::compute_content_light_level(zenpixels::buffer::PixelSlice<'_>, f32) -> core::result::Result<zenpixels::hdr::ContentLightLevel, whereat::at::At<zenpixels_convert::error::ConvertError>>
+pub fn zenpixels_convert::hdr::encode_pq16(zenpixels::buffer::PixelSlice<'_>, f32) -> core::result::Result<(zenpixels::buffer::PixelBuffer, zenpixels::hdr::ContentLightLevel), whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub fn zenpixels_convert::hdr::exposure_tonemap(f32, f32) -> f32
 pub fn zenpixels_convert::hdr::reinhard_inverse(f32) -> f32
 pub fn zenpixels_convert::hdr::reinhard_tonemap(f32) -> f32

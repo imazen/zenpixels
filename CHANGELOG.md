@@ -23,12 +23,30 @@
 
 ### zenpixels-convert — added
 
+- **`hdr::compute_content_light_level(PixelSlice, diffuse_white_nits)` and
+  `hdr::encode_pq16(PixelSlice, diffuse_white_nits)`** (zenpixels#39
+  Rung 2) — MaxCLL/MaxFALL measurement per CTA-861.3-A with the PNG 3rd ed
+  §11.3.2.8 stills reading (one still = one frame), and single-pass
+  linear→PQ 16-bit quantization (SMPTE ST 2084 via linear-srgb's rational
+  approximation) outputting `PixelDescriptor::RGB16_BT2100_PQ` with the
+  CLL measured in the same pass. `hdr::REFERENCE_DIFFUSE_WHITE_NITS`
+  (203.0, BT.2408) anchors "linear 1.0". Relative-linear RGB(A) f32 input
+  only; strided rows handled; NaN/negative samples clamp to 0; alpha
+  ignored/dropped. Docs carry the signaling guidance: PQ16 output should
+  signal CICP-natively where the container allows; the synthesized PQ ICC
+  is a compatibility fallback (≈8 % soft at ~1 nit). Replaces the
+  hand-rolled `render_pq16` in hdr-corpus-convert (its one real consumer —
+  scoped per the 2026-06-11 audit).
 - Property/oracle tests for the tone-map helpers (output range,
   monotonicity, f64-oracle agreement, round-trip relative-error bound) and
   a pipeline pin in `tests/output_finalize.rs` that a PQ source finalized
   `SameAsOrigin` passes origin CICP through while `OutputMetadata::hdr`
   stays `None` — the documented not-yet-wired contract
   (`output.rs` `TODO(0.3.0)`; wiring it must consciously update the pin).
+- Oracle tests for the new helpers: f64 ST 2084 reference (exact
+  constants) within ±1 code, 203-nit golden, 10 000-nit clip, CTA stills
+  CLL semantics, NaN/negative clamps, alpha-lane exclusion,
+  strided==tight parity, encode/measure agreement.
 
 ## [0.2.13] - 2026-06-11
 
