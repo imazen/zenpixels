@@ -161,6 +161,207 @@ pub fn apply_orientation_into(
     Ok(())
 }
 
+/// Largest bytes-per-pixel the in-place path's per-element temp supports — covers
+/// every current format up to RGBA f32 (16 bytes).
+const MAX_INPLACE_BPP: usize = 16;
+
+/// Bake `orientation` into `dst` **in place**, reusing its allocation — no second
+/// pixel buffer (the transposing orientations would otherwise need a 2× transient).
+///
+/// Consumes the mutable view, permutes the bytes within the backing allocation,
+/// and returns a re-described **tight-stride** `PixelSliceMut` over the same
+/// memory — dimensions swapped for the four transposing orientations. Like the
+/// no-alloc reduction APIs, the returned view carries the new geometry; the
+/// source `PixelBuffer`'s own `width()`/`height()` go stale, so use the returned
+/// view. Square images transpose via an in-place diagonal swap; non-square via
+/// cycle-following (an `n`-element visited scratch — not a 2× pixel buffer).
+///
+/// Returns [`ConvertError::BufferSize`] if `bpp` exceeds 16 (the per-element temp
+/// limit) or if re-describing the output fails.
+pub fn apply_orientation_in_place(
+    dst: PixelSliceMut<'_>,
+    orientation: Orientation,
+) -> Result<PixelSliceMut<'_>, ConvertError> {
+    let w = dst.width();
+    let h = dst.rows();
+    let desc = dst.descriptor();
+    let bpp = desc.bytes_per_pixel();
+    let (ow, oh) = orientation.output_dimensions(w, h);
+    let in_stride = dst.stride();
+    let tight = w as usize * bpp;
+    let out_stride = ow as usize * bpp;
+    let out_len = out_stride * oh as usize;
+
+    if bpp == 0 || bpp > MAX_INPLACE_BPP {
+        return Err(ConvertError::BufferSize {
+            expected: MAX_INPLACE_BPP,
+            actual: bpp,
+        });
+    }
+
+    let bytes = dst.into_strided_bytes();
+    let backing_len = bytes.len();
+    if w == 0 || h == 0 {
+        return PixelSliceMut::new(&mut bytes[..out_len], ow, oh, out_stride, desc).map_err(|_| {
+            ConvertError::BufferSize {
+                expected: out_len,
+                actual: backing_len,
+            }
+        });
+    }
+
+    // 1. Compact to tight (drop any row padding) so the transpose is a clean
+    //    permutation of a contiguous element array.
+    if in_stride != tight {
+        for y in 1..h as usize {
+            bytes.copy_within(y * in_stride..y * in_stride + tight, y * tight);
+        }
+    }
+    let content = &mut bytes[..tight * h as usize];
+
+    // 2/3. Permute in place. Transposing orientations transpose the tight w×h
+    //      grid (→ h×w = ow×oh) then add the orientation's reflection.
+    match orientation {
+        Orientation::Identity => {}
+        Orientation::FlipH => inplace_flip_h(content, w, h, bpp),
+        Orientation::FlipV => inplace_flip_v(content, w, h, bpp),
+        Orientation::Rotate180 => inplace_reverse_elements(content, bpp),
+        Orientation::Transpose => inplace_transpose(content, w, h, bpp),
+        Orientation::Rotate90 => {
+            inplace_transpose(content, w, h, bpp);
+            inplace_flip_h(content, ow, oh, bpp); // transpose ∘ FlipH
+        }
+        Orientation::Rotate270 => {
+            inplace_transpose(content, w, h, bpp);
+            inplace_flip_v(content, ow, oh, bpp); // transpose ∘ FlipV
+        }
+        Orientation::Transverse => {
+            inplace_transpose(content, w, h, bpp);
+            inplace_reverse_elements(content, bpp); // transpose ∘ Rotate180
+        }
+        // A future `#[non_exhaustive]` variant has no in-place mapping; the
+        // caller should fall back to the allocating `apply_orientation`.
+        _ => {
+            return Err(ConvertError::BufferSize {
+                expected: out_len,
+                actual: 0,
+            });
+        }
+    }
+
+    PixelSliceMut::new(&mut bytes[..out_len], ow, oh, out_stride, desc).map_err(|_| {
+        ConvertError::BufferSize {
+            expected: out_len,
+            actual: backing_len,
+        }
+    })
+}
+
+/// Reverse the `bpp`-sized elements within each row, in place (`FlipH`).
+fn inplace_flip_h(a: &mut [u8], w: u32, h: u32, bpp: usize) {
+    let w = w as usize;
+    let row_len = w * bpp;
+    for y in 0..h as usize {
+        let row = &mut a[y * row_len..y * row_len + row_len];
+        let (mut lo, mut hi) = (0usize, w - 1);
+        while lo < hi {
+            let (al, ah) = (lo * bpp, hi * bpp);
+            for k in 0..bpp {
+                row.swap(al + k, ah + k);
+            }
+            lo += 1;
+            hi -= 1;
+        }
+    }
+}
+
+/// Swap row `y` with row `h-1-y`, in place (`FlipV`). No temp row — the two rows
+/// are disjoint, so `split_at_mut` + `swap_with_slice` exchanges them directly.
+fn inplace_flip_v(a: &mut [u8], w: u32, h: u32, bpp: usize) {
+    let row_len = w as usize * bpp;
+    let h = h as usize;
+    let (mut top, mut bot) = (0usize, h - 1);
+    while top < bot {
+        let split = bot * row_len;
+        let (head, tail) = a.split_at_mut(split);
+        head[top * row_len..top * row_len + row_len].swap_with_slice(&mut tail[..row_len]);
+        top += 1;
+        bot -= 1;
+    }
+}
+
+/// Reverse the order of all `bpp`-sized elements in the buffer (`Rotate180` =
+/// `FlipH ∘ FlipV`).
+fn inplace_reverse_elements(a: &mut [u8], bpp: usize) {
+    let n = a.len() / bpp;
+    if n < 2 {
+        return;
+    }
+    let (mut lo, mut hi) = (0usize, n - 1);
+    while lo < hi {
+        let (al, ah) = (lo * bpp, hi * bpp);
+        for k in 0..bpp {
+            a.swap(al + k, ah + k);
+        }
+        lo += 1;
+        hi -= 1;
+    }
+}
+
+/// In-place transpose of a tight `w`×`h` (row-major) grid of `bpp`-byte elements
+/// into `h`×`w`, within the same buffer.
+///
+/// Square is the diagonal swap. Non-square follows the transpose permutation's
+/// cycles (`Wikipedia: in-place matrix transposition`): element index `k = r*w+c`
+/// maps to `c*h+r ≡ (k*h) mod (n-1)`; to fill position `cur` we gather from
+/// `(cur*w) mod (n-1)` (the inverse, since `w*h ≡ 1`), walking each cycle once
+/// with a one-element temp and an `n`-bit visited set. `0` and `n-1` are fixed.
+fn inplace_transpose(a: &mut [u8], w: u32, h: u32, bpp: usize) {
+    if w == h {
+        let n = w as usize;
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let (p, q) = ((i * n + j) * bpp, (j * n + i) * bpp);
+                for k in 0..bpp {
+                    a.swap(p + k, q + k);
+                }
+            }
+        }
+        return;
+    }
+
+    let (w, h) = (w as usize, h as usize);
+    let n = w * h;
+    if n <= 1 {
+        return;
+    }
+    let mn1 = n - 1;
+    let mut moved = alloc::vec![false; n];
+    moved[0] = true;
+    moved[mn1] = true;
+    let mut tmp = [0u8; MAX_INPLACE_BPP];
+    let mut start = 1;
+    while start < mn1 {
+        if moved[start] {
+            start += 1;
+            continue;
+        }
+        tmp[..bpp].copy_from_slice(&a[start * bpp..start * bpp + bpp]);
+        let mut cur = start;
+        loop {
+            moved[cur] = true;
+            let prev = (cur * w) % mn1; // element that belongs at `cur`
+            if prev == start {
+                break;
+            }
+            a.copy_within(prev * bpp..prev * bpp + bpp, cur * bpp);
+            cur = prev;
+        }
+        a[cur * bpp..cur * bpp + bpp].copy_from_slice(&tmp[..bpp]);
+        start += 1;
+    }
+}
+
 /// Bench-only A/B handle: bake `orientation` via the cache-blocked **scalar**
 /// transpose, bypassing the SIMD kernel, so `bench_orient` can compare the two
 /// paths on identical input. Only meaningful for the transposing orientations.
@@ -664,5 +865,70 @@ mod tests {
             matches!(result, Err(ConvertError::BufferSize { .. })),
             "expected BufferSize, got {result:?}"
         );
+    }
+
+    /// In-place must produce byte-identical output to the proven out-of-place
+    /// `apply_orientation`, across square + non-square, tight + (via
+    /// `PixelBuffer::new`'s aligned stride) padded buffers, every orientation
+    /// and a spread of element sizes. This is the correctness gate for the
+    /// diagonal-swap (square), cycle-following (non-square), and in-place flips.
+    #[test]
+    fn in_place_matches_out_of_place() {
+        let descs = [
+            PixelDescriptor::GRAY8,
+            PixelDescriptor::GRAYA8,
+            PixelDescriptor::RGB8,
+            PixelDescriptor::RGBA8,
+            PixelDescriptor::RGBAF32,
+        ];
+        let dims = [
+            (1u32, 1u32),
+            (2, 2),
+            (4, 4),
+            (8, 8),
+            (32, 32),
+            (3, 5),
+            (5, 3),
+            (17, 13),
+            (13, 17),
+            (16, 9),
+            (9, 16),
+            (7, 1),
+            (1, 7),
+        ];
+        for &desc in &descs {
+            let bpp = desc.bytes_per_pixel();
+            for &(w, h) in &dims {
+                let data = fill(w as usize * h as usize * bpp);
+                for &o in &Orientation::ALL {
+                    let want = apply_orientation(slice(&data, w, h, desc), o);
+                    // Load `data` into a fresh buffer (its stride may be padded),
+                    // then bake in place.
+                    let mut buf = PixelBuffer::new(w, h, desc);
+                    {
+                        let mut s = buf.as_slice_mut();
+                        for y in 0..h {
+                            s.row_mut(y).copy_from_slice(
+                                &data[y as usize * w as usize * bpp..][..w as usize * bpp],
+                            );
+                        }
+                    }
+                    let got = apply_orientation_in_place(buf.as_slice_mut(), o)
+                        .expect("in_place should accept bpp ≤ 16");
+                    assert_eq!(
+                        (got.width(), got.rows()),
+                        (want.width(), want.height()),
+                        "{o:?} {desc:?} {w}x{h} dims"
+                    );
+                    for y in 0..got.rows() {
+                        assert_eq!(
+                            got.row(y),
+                            want.as_slice().row(y),
+                            "{o:?} {desc:?} {w}x{h} row {y}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }
