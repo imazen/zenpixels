@@ -5,7 +5,7 @@
 # all-features section.
 # DO NOT EDIT BY HAND — commit regenerated changes together with the code.
 
-## default features (2256 items)
+## default features (2262 items)
 
 pub mod zenpixels
 pub use zenpixels::At
@@ -755,6 +755,8 @@ pub const zenpixels::descriptor::PixelDescriptor::GRAYF32_LINEAR: Self
 pub const zenpixels::descriptor::PixelDescriptor::OKLABAF32: Self
 pub const zenpixels::descriptor::PixelDescriptor::OKLABF32: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB16: Self
+pub const zenpixels::descriptor::PixelDescriptor::RGB16_BT2100_HLG: Self
+pub const zenpixels::descriptor::PixelDescriptor::RGB16_BT2100_PQ: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB16_SRGB: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB8: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB8_SRGB: Self
@@ -771,6 +773,7 @@ pub const zenpixels::descriptor::PixelDescriptor::RGBX8_SRGB: Self
 pub const fn zenpixels::descriptor::PixelDescriptor::aligned_stride(self, u32) -> usize
 pub const fn zenpixels::descriptor::PixelDescriptor::alpha(&self) -> core::option::Option<zenpixels::descriptor::AlphaMode>
 pub const fn zenpixels::descriptor::PixelDescriptor::byte_order(&self) -> zenpixels::descriptor::ByteOrder
+pub const fn zenpixels::descriptor::PixelDescriptor::bytes_per_channel(self) -> usize
 pub const fn zenpixels::descriptor::PixelDescriptor::bytes_per_pixel(self) -> usize
 pub const fn zenpixels::descriptor::PixelDescriptor::channel_type(&self) -> zenpixels::descriptor::ChannelType
 pub const fn zenpixels::descriptor::PixelDescriptor::channels(self) -> usize
@@ -2081,6 +2084,8 @@ pub const zenpixels::descriptor::PixelDescriptor::GRAYF32_LINEAR: Self
 pub const zenpixels::descriptor::PixelDescriptor::OKLABAF32: Self
 pub const zenpixels::descriptor::PixelDescriptor::OKLABF32: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB16: Self
+pub const zenpixels::descriptor::PixelDescriptor::RGB16_BT2100_HLG: Self
+pub const zenpixels::descriptor::PixelDescriptor::RGB16_BT2100_PQ: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB16_SRGB: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB8: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB8_SRGB: Self
@@ -2097,6 +2102,7 @@ pub const zenpixels::descriptor::PixelDescriptor::RGBX8_SRGB: Self
 pub const fn zenpixels::descriptor::PixelDescriptor::aligned_stride(self, u32) -> usize
 pub const fn zenpixels::descriptor::PixelDescriptor::alpha(&self) -> core::option::Option<zenpixels::descriptor::AlphaMode>
 pub const fn zenpixels::descriptor::PixelDescriptor::byte_order(&self) -> zenpixels::descriptor::ByteOrder
+pub const fn zenpixels::descriptor::PixelDescriptor::bytes_per_channel(self) -> usize
 pub const fn zenpixels::descriptor::PixelDescriptor::bytes_per_pixel(self) -> usize
 pub const fn zenpixels::descriptor::PixelDescriptor::channel_type(&self) -> zenpixels::descriptor::ChannelType
 pub const fn zenpixels::descriptor::PixelDescriptor::channels(self) -> usize
@@ -2264,7 +2270,7 @@ pub const zenpixels::buffer::Bgrx::DESCRIPTOR: zenpixels::descriptor::PixelDescr
 impl zenpixels::buffer::Pixel for zenpixels::buffer::Rgbx
 pub const zenpixels::buffer::Rgbx::DESCRIPTOR: zenpixels::descriptor::PixelDescriptor
 
-## all features except _* (3081 items)
+## all features except _* (3087 items)
 
 pub mod zenpixels
 pub use zenpixels::At
@@ -3142,6 +3148,8 @@ pub const zenpixels::descriptor::PixelDescriptor::GRAYF32_LINEAR: Self
 pub const zenpixels::descriptor::PixelDescriptor::OKLABAF32: Self
 pub const zenpixels::descriptor::PixelDescriptor::OKLABF32: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB16: Self
+pub const zenpixels::descriptor::PixelDescriptor::RGB16_BT2100_HLG: Self
+pub const zenpixels::descriptor::PixelDescriptor::RGB16_BT2100_PQ: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB16_SRGB: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB8: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB8_SRGB: Self
@@ -3158,6 +3166,7 @@ pub const zenpixels::descriptor::PixelDescriptor::RGBX8_SRGB: Self
 pub const fn zenpixels::descriptor::PixelDescriptor::aligned_stride(self, u32) -> usize
 pub const fn zenpixels::descriptor::PixelDescriptor::alpha(&self) -> core::option::Option<zenpixels::descriptor::AlphaMode>
 pub const fn zenpixels::descriptor::PixelDescriptor::byte_order(&self) -> zenpixels::descriptor::ByteOrder
+pub const fn zenpixels::descriptor::PixelDescriptor::bytes_per_channel(self) -> usize
 pub const fn zenpixels::descriptor::PixelDescriptor::bytes_per_pixel(self) -> usize
 pub const fn zenpixels::descriptor::PixelDescriptor::channel_type(&self) -> zenpixels::descriptor::ChannelType
 pub const fn zenpixels::descriptor::PixelDescriptor::channels(self) -> usize
@@ -5006,6 +5015,8 @@ pub const zenpixels::descriptor::PixelDescriptor::GRAYF32_LINEAR: Self
 pub const zenpixels::descriptor::PixelDescriptor::OKLABAF32: Self
 pub const zenpixels::descriptor::PixelDescriptor::OKLABF32: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB16: Self
+pub const zenpixels::descriptor::PixelDescriptor::RGB16_BT2100_HLG: Self
+pub const zenpixels::descriptor::PixelDescriptor::RGB16_BT2100_PQ: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB16_SRGB: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB8: Self
 pub const zenpixels::descriptor::PixelDescriptor::RGB8_SRGB: Self
@@ -5022,6 +5033,7 @@ pub const zenpixels::descriptor::PixelDescriptor::RGBX8_SRGB: Self
 pub const fn zenpixels::descriptor::PixelDescriptor::aligned_stride(self, u32) -> usize
 pub const fn zenpixels::descriptor::PixelDescriptor::alpha(&self) -> core::option::Option<zenpixels::descriptor::AlphaMode>
 pub const fn zenpixels::descriptor::PixelDescriptor::byte_order(&self) -> zenpixels::descriptor::ByteOrder
+pub const fn zenpixels::descriptor::PixelDescriptor::bytes_per_channel(self) -> usize
 pub const fn zenpixels::descriptor::PixelDescriptor::bytes_per_pixel(self) -> usize
 pub const fn zenpixels::descriptor::PixelDescriptor::channel_type(&self) -> zenpixels::descriptor::ChannelType
 pub const fn zenpixels::descriptor::PixelDescriptor::channels(self) -> usize

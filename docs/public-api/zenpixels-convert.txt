@@ -5,7 +5,7 @@
 # all-features section.
 # DO NOT EDIT BY HAND — commit regenerated changes together with the code.
 
-## default features (742 items)
+## default features (744 items)
 
 pub mod zenpixels_convert
 pub use zenpixels_convert::<<zenpixels::*>>
@@ -32,6 +32,7 @@ pub fn zenpixels_convert::adapt::adapt_for_encode<'a>(&'a [u8], zenpixels::descr
 pub fn zenpixels_convert::adapt::adapt_for_encode_explicit<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels_convert::adapt::Adapted<'a>, whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub fn zenpixels_convert::adapt::adapt_for_encode_with_intent<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], zenpixels_convert::ConvertIntent) -> core::result::Result<zenpixels_convert::adapt::Adapted<'a>, whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub fn zenpixels_convert::adapt::convert_buffer(&[u8], u32, u32, zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<zenpixels_convert::error::ConvertError>>
+pub fn zenpixels_convert::adapt::try_adapt_in_place<'a>(zenpixels::buffer::PixelSliceMut<'a>, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, zenpixels::buffer::PixelSliceMut<'a>>
 pub mod zenpixels_convert::cms
 pub enum zenpixels_convert::cms::ColorPriority
 pub zenpixels_convert::cms::ColorPriority::PreferCicp
@@ -748,9 +749,10 @@ pub fn zenpixels_convert::ideal_format(zenpixels::descriptor::PixelDescriptor, z
 pub fn zenpixels_convert::negotiate(zenpixels::descriptor::PixelDescriptor, zenpixels_convert::Provenance, impl core::iter::traits::iterator::Iterator<Item = zenpixels_convert::FormatOption>, zenpixels_convert::ConvertIntent) -> core::option::Option<zenpixels::descriptor::PixelDescriptor>
 pub fn zenpixels_convert::reinhard_inverse(f32) -> f32
 pub fn zenpixels_convert::reinhard_tonemap(f32) -> f32
+pub fn zenpixels_convert::try_adapt_in_place<'a>(zenpixels::buffer::PixelSliceMut<'a>, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, zenpixels::buffer::PixelSliceMut<'a>>
 pub type zenpixels_convert::GamutMatrix = [[f32; 3]; 3]
 
-## all features except _* (1445 items)
+## all features except _* (1447 items)
 
 pub mod zenpixels_convert
 pub use zenpixels_convert::<<zenpixels::*>>
@@ -777,6 +779,7 @@ pub fn zenpixels_convert::adapt::adapt_for_encode<'a>(&'a [u8], zenpixels::descr
 pub fn zenpixels_convert::adapt::adapt_for_encode_explicit<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels_convert::adapt::Adapted<'a>, whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub fn zenpixels_convert::adapt::adapt_for_encode_with_intent<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], zenpixels_convert::ConvertIntent) -> core::result::Result<zenpixels_convert::adapt::Adapted<'a>, whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub fn zenpixels_convert::adapt::convert_buffer(&[u8], u32, u32, zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<zenpixels_convert::error::ConvertError>>
+pub fn zenpixels_convert::adapt::try_adapt_in_place<'a>(zenpixels::buffer::PixelSliceMut<'a>, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, zenpixels::buffer::PixelSliceMut<'a>>
 pub mod zenpixels_convert::cms
 pub enum zenpixels_convert::cms::ColorPriority
 pub zenpixels_convert::cms::ColorPriority::PreferCicp
@@ -2196,4 +2199,5 @@ pub fn zenpixels_convert::negotiate(zenpixels::descriptor::PixelDescriptor, zenp
 pub fn zenpixels_convert::optimal_path(zenpixels::descriptor::PixelDescriptor, zenpixels_convert::Provenance, zenpixels_convert::pipeline::op_format::OpCategory, zenpixels::descriptor::PixelDescriptor, zenpixels_convert::pipeline::path::QualityThreshold) -> core::option::Option<zenpixels_convert::pipeline::path::ConversionPath>
 pub fn zenpixels_convert::reinhard_inverse(f32) -> f32
 pub fn zenpixels_convert::reinhard_tonemap(f32) -> f32
+pub fn zenpixels_convert::try_adapt_in_place<'a>(zenpixels::buffer::PixelSliceMut<'a>, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, zenpixels::buffer::PixelSliceMut<'a>>
 pub type zenpixels_convert::GamutMatrix = [[f32; 3]; 3]

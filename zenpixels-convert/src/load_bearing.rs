@@ -1,7 +1,7 @@
 //! Descriptor-aware load-bearing analysis: "what parts of this buffer's
 //! declared descriptor are actually carrying information?"
 //!
-//! Each predicate in [`crate::scan`] answers a single byte-level question
+//! Each predicate in `crate::scan` answers a single byte-level question
 //! ("is this alpha lane all 0xFF?"); this module assembles those answers
 //! into a [`LoadBearingReport`] keyed off the buffer's [`PixelDescriptor`]
 //! and provides a one-call extension method on [`PixelSlice`] that runs

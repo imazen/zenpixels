@@ -671,6 +671,15 @@ impl PixelDescriptor {
 
     /// Create a descriptor with default primaries (BT.709) and full range.
     ///
+    /// # See also
+    ///
+    /// * [`new_full`](Self::new_full) — same constructor with an explicit
+    ///   [`ColorPrimaries`] argument, for anything that isn't BT.709/sRGB
+    ///   gamut (BT.2020 HDR, Display P3, …).
+    /// * The HDR presets [`RGB16_BT2100_PQ`](Self::RGB16_BT2100_PQ) /
+    ///   [`RGB16_BT2100_HLG`](Self::RGB16_BT2100_HLG) — common BT.2100
+    ///   combinations without spelling out the enums.
+    ///
     /// # Panics
     ///
     /// Panics if the `(channel_type, layout, alpha)` combination has no
@@ -696,6 +705,14 @@ impl PixelDescriptor {
     }
 
     /// Create a descriptor with explicit primaries.
+    ///
+    /// # See also
+    ///
+    /// * [`new`](Self::new) — the four-argument form when BT.709/sRGB
+    ///   primaries (the default) are what you want.
+    /// * [`RGB16_BT2100_PQ`](Self::RGB16_BT2100_PQ) /
+    ///   [`RGB16_BT2100_HLG`](Self::RGB16_BT2100_HLG) — ready-made BT.2100
+    ///   HDR presets built on this constructor.
     ///
     /// # Panics
     ///
@@ -841,6 +858,34 @@ impl PixelDescriptor {
         ChannelLayout::Bgra,
         Some(AlphaMode::Undefined),
         TransferFunction::Srgb,
+    );
+
+    // -- HDR (BT.2100) constants ------------------------------------------------
+
+    /// 16-bit BT.2100 PQ RGB (BT.2020 primaries, PQ transfer, full range) —
+    /// CICP `(9, 16, 0, full)`. The common interchange form for HDR10-style
+    /// stills decoded to u16.
+    ///
+    /// Use [`new_full`](Self::new_full) for other channel types or layouts in
+    /// this color space.
+    pub const RGB16_BT2100_PQ: Self = Self::new_full(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Pq,
+        ColorPrimaries::Bt2020,
+    );
+    /// 16-bit BT.2100 HLG RGB (BT.2020 primaries, HLG transfer, full range) —
+    /// CICP `(9, 18, 0, full)`.
+    ///
+    /// Use [`new_full`](Self::new_full) for other channel types or layouts in
+    /// this color space.
+    pub const RGB16_BT2100_HLG: Self = Self::new_full(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Hlg,
+        ColorPrimaries::Bt2020,
     );
 
     // -- Transfer-agnostic constants ------------------------------------------
@@ -1017,6 +1062,17 @@ impl PixelDescriptor {
     #[inline]
     pub const fn bytes_per_pixel(self) -> usize {
         self.format.bytes_per_pixel()
+    }
+
+    /// Bytes per channel (1 for U8, 2 for U16/F16, 4 for F32).
+    ///
+    /// Shorthand for `self.channel_type().byte_size()` — the per-sample
+    /// width, as opposed to [`bytes_per_pixel`](Self::bytes_per_pixel)
+    /// (all channels of one pixel). The usual "do I need a
+    /// high-bit-depth path?" check is `bytes_per_channel() > 1`.
+    #[inline]
+    pub const fn bytes_per_channel(self) -> usize {
+        self.channel_type().byte_size()
     }
 
     /// Whether this descriptor has meaningful alpha data.
@@ -1621,6 +1677,46 @@ mod tests {
         assert_eq!(PixelDescriptor::GRAY8.bytes_per_pixel(), 1);
         assert_eq!(PixelDescriptor::RGBAF32.bytes_per_pixel(), 16);
         assert_eq!(PixelDescriptor::GRAYA8.bytes_per_pixel(), 2);
+    }
+
+    #[test]
+    fn descriptor_bytes_per_channel() {
+        assert_eq!(PixelDescriptor::RGB8.bytes_per_channel(), 1);
+        assert_eq!(PixelDescriptor::RGB16_SRGB.bytes_per_channel(), 2);
+        assert_eq!(PixelDescriptor::RGBAF32.bytes_per_channel(), 4);
+        // The distinction this accessor exists for: per-sample width vs
+        // all channels of a pixel.
+        assert_ne!(
+            PixelDescriptor::RGBA8.bytes_per_channel(),
+            PixelDescriptor::RGBA8.bytes_per_pixel()
+        );
+    }
+
+    #[test]
+    fn bt2100_presets_carry_hdr_signaling() {
+        let pq = PixelDescriptor::RGB16_BT2100_PQ;
+        assert_eq!(pq.format, PixelFormat::Rgb16);
+        assert_eq!(pq.transfer, TransferFunction::Pq);
+        assert_eq!(pq.primaries, ColorPrimaries::Bt2020);
+        assert_eq!(pq.signal_range, SignalRange::Full);
+
+        let hlg = PixelDescriptor::RGB16_BT2100_HLG;
+        assert_eq!(hlg.format, PixelFormat::Rgb16);
+        assert_eq!(hlg.transfer, TransferFunction::Hlg);
+        assert_eq!(hlg.primaries, ColorPrimaries::Bt2020);
+        assert_eq!(hlg.signal_range, SignalRange::Full);
+
+        // The presets must agree with spelling it out via new_full.
+        assert_eq!(
+            pq,
+            PixelDescriptor::new_full(
+                ChannelType::U16,
+                ChannelLayout::Rgb,
+                None,
+                TransferFunction::Pq,
+                ColorPrimaries::Bt2020,
+            )
+        );
     }
 
     #[test]

@@ -66,7 +66,7 @@ use crate::convert::ConvertPlan;
 use crate::converter::RowConverter;
 use crate::negotiate::{ConvertIntent, best_match};
 use crate::policy::{AlphaPolicy, ConvertOptions};
-use crate::{ColorModel, ConvertError, PixelDescriptor};
+use crate::{ChannelLayout, ChannelType, ColorModel, ConvertError, PixelDescriptor, PixelSliceMut};
 use whereat::{At, ResultAtExt};
 
 /// Assert that a descriptor is not CMYK.
@@ -253,6 +253,91 @@ pub fn convert_buffer(
     Ok(output)
 }
 
+/// Attempt to adapt a buffer to `target` **in place** — no allocation, no
+/// copy. Succeeds when the transition keeps every pixel's byte size:
+///
+/// * **identical byte layout** (same [`PixelFormat`](zenpixels::PixelFormat)):
+///   descriptor re-tag only (transfer / primaries / signal range / alpha
+///   mode) — zero data movement;
+/// * **`Rgba8`-family ↔ `Bgra8`-family** (the X-padding forms included):
+///   garb's SIMD B↔R swap, per row — strided buffers handled, padding
+///   bytes untouched.
+///
+/// On success the returned slice views the **same memory** under the
+/// target descriptor. `Err` hands the slice back **unchanged** so the
+/// caller can fall through to the allocating [`adapt_for_encode`] path:
+///
+/// ```rust,ignore
+/// let slice = match try_adapt_in_place(slice, target) {
+///     Ok(adapted) => adapted,
+///     Err(unchanged) => {
+///         // shape-changing conversion — allocate via adapt_for_encode
+///         fall_back(unchanged.as_pixel_slice())?
+///     }
+/// };
+/// ```
+///
+/// Everything that changes the buffer's shape — channel-count changes
+/// (RGBA→RGB, RGB→Gray), bit-depth changes (U16→U8, F32→U8) — returns
+/// `Err`; those need [`adapt_for_encode`] /
+/// [`convert_buffer`]. For content-driven narrowing (drop an opaque
+/// alpha lane, collapse gray pixels) see
+/// [`reduce_to_load_bearing_format_in_place`](crate::PixelSliceMutLoadBearingExt::reduce_to_load_bearing_format_in_place).
+///
+/// Like the other in-place APIs, the returned slice is the only valid
+/// view of the rewritten bytes — a `PixelSliceMut` borrowed from a
+/// descriptor-carrying owner leaves the owner's descriptor stale.
+pub fn try_adapt_in_place<'a>(
+    slice: PixelSliceMut<'a>,
+    target: PixelDescriptor,
+) -> Result<PixelSliceMut<'a>, PixelSliceMut<'a>> {
+    let src = slice.descriptor();
+
+    // Same byte layout: metadata-only re-tag, no pixel work.
+    if src.format == target.format {
+        return Ok(slice.with_descriptor(target));
+    }
+    if src.bytes_per_pixel() != target.bytes_per_pixel() {
+        return Err(slice);
+    }
+
+    // The one same-size physical reorder the format set has: the 4-byte
+    // B<->R swap between the Rgba and Bgra channel orders (U8 only — no
+    // 16-bit Bgra format exists).
+    let swappable = src.channel_type() == ChannelType::U8
+        && target.channel_type() == ChannelType::U8
+        && matches!(
+            (src.layout(), target.layout()),
+            (ChannelLayout::Rgba, ChannelLayout::Bgra) | (ChannelLayout::Bgra, ChannelLayout::Rgba)
+        );
+    if !swappable {
+        return Err(slice);
+    }
+
+    let width = slice.width() as usize;
+    let height = slice.rows() as usize;
+    let stride = slice.stride();
+    let mut slice = slice;
+    // Geometry was validated when the slice was constructed, so the swap
+    // can't actually fail; stay total and give the slice back (untouched —
+    // garb validates before writing) rather than panic.
+    if garb::bytes::rgba_to_bgra_inplace_strided(
+        slice.as_strided_bytes_mut(),
+        width,
+        height,
+        stride,
+    )
+    .is_err()
+    {
+        return Err(slice);
+    }
+    // Same-bpp layout change: reinterpret cannot fail (bpp equality was
+    // checked above, and that is reinterpret's only gate).
+    Ok(slice
+        .reinterpret(target)
+        .expect("same-bpp reinterpret cannot fail"))
+}
+
 /// Negotiate format and convert with explicit policies.
 ///
 /// Like [`adapt_for_encode`], but enforces [`ConvertOptions`] policies
@@ -429,6 +514,77 @@ mod tests {
     /// 2×1 RGB8 pixel data (6 bytes).
     fn test_rgb8_data() -> Vec<u8> {
         vec![255, 0, 0, 0, 255, 0]
+    }
+
+    // ── try_adapt_in_place ─────────────────────────────────────────
+
+    #[test]
+    fn in_place_bgra_to_rgba_swaps_bytes_without_alloc() {
+        // Bgra8 stores B,G,R,A. Two pixels.
+        let mut bytes = [10u8, 20, 30, 255, 40, 50, 60, 128];
+        let slice = PixelSliceMut::new(&mut bytes, 2, 1, 8, PixelDescriptor::BGRA8_SRGB).unwrap();
+        let out = try_adapt_in_place(slice, PixelDescriptor::RGBA8_SRGB)
+            .expect("4bpp B<->R swap is in-place");
+        assert_eq!(out.descriptor(), PixelDescriptor::RGBA8_SRGB);
+        assert_eq!(out.row(0), &[30u8, 20, 10, 255, 60, 50, 40, 128]);
+    }
+
+    #[test]
+    fn in_place_rgba_to_bgra_roundtrips() {
+        let original = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        let mut bytes = original;
+        let slice = PixelSliceMut::new(&mut bytes, 2, 1, 8, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let bgra = try_adapt_in_place(slice, PixelDescriptor::BGRA8_SRGB).expect("to bgra");
+        assert_eq!(bgra.row(0), &[3u8, 2, 1, 4, 7, 6, 5, 8]);
+        let rgba = try_adapt_in_place(bgra, PixelDescriptor::RGBA8_SRGB).expect("back to rgba");
+        assert_eq!(rgba.row(0), &original[..]);
+    }
+
+    #[test]
+    fn in_place_swap_respects_stride_padding() {
+        // 1 pixel per row, stride 8: 4 padding bytes per row must be
+        // untouched.
+        let mut bytes = [10u8, 20, 30, 255, 0xAA, 0xAB, 0xAC, 0xAD, 40, 50, 60, 128];
+        let slice = PixelSliceMut::new(&mut bytes, 1, 2, 8, PixelDescriptor::BGRA8_SRGB).unwrap();
+        let out = try_adapt_in_place(slice, PixelDescriptor::RGBA8_SRGB).expect("strided swap");
+        assert_eq!(out.row(0), &[30u8, 20, 10, 255]);
+        assert_eq!(out.row(1), &[60u8, 50, 40, 128]);
+        drop(out);
+        assert_eq!(
+            &bytes[4..8],
+            &[0xAA, 0xAB, 0xAC, 0xAD],
+            "padding bytes must be untouched"
+        );
+    }
+
+    #[test]
+    fn in_place_metadata_retag_moves_no_bytes() {
+        let original = [1u8, 2, 3, 4, 5, 6];
+        let mut bytes = original;
+        let slice = PixelSliceMut::new(&mut bytes, 2, 1, 6, PixelDescriptor::RGB8).unwrap();
+        let target = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+        let out = try_adapt_in_place(slice, target).expect("same-format retag");
+        assert_eq!(out.descriptor(), target);
+        assert_eq!(out.row(0), &original[..]);
+    }
+
+    #[test]
+    fn in_place_rejects_shape_changes_unchanged() {
+        // RGBA -> RGB shrinks the pixel; must hand the slice back untouched.
+        let original = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        let mut bytes = original;
+        let slice = PixelSliceMut::new(&mut bytes, 2, 1, 8, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let back = try_adapt_in_place(slice, PixelDescriptor::RGB8_SRGB)
+            .expect_err("channel-count change cannot be in-place");
+        assert_eq!(back.descriptor(), PixelDescriptor::RGBA8_SRGB);
+        assert_eq!(back.row(0), &original[..]);
+
+        // Bit-depth change likewise.
+        let mut bytes = original;
+        let slice = PixelSliceMut::new(&mut bytes, 2, 1, 8, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let back = try_adapt_in_place(slice, PixelDescriptor::RGBA16_SRGB)
+            .expect_err("depth change cannot be in-place");
+        assert_eq!(back.row(0), &original[..]);
     }
 
     #[test]
