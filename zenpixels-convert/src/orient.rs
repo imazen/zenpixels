@@ -32,17 +32,19 @@
 //!   `forward_map`, so the whole thing is a single pass with no intermediate
 //!   buffer.
 //!
-//! For **4-byte pixels on x86_64** the per-tile transpose is SIMD: full 4×4
-//! tiles go through magetypes' `f32x4::transpose_4x4` (the classic
-//! `_MM_TRANSPOSE4_PS` `unpacklo/hi` + `movelh/hl` cascade), dispatched by
-//! `incant!` with a scalar fallback when AVX2 is absent. Each pixel rides as one
-//! f32 lane — the kernel only shuffles whole 32-bit lanes (no float math), so
-//! reinterpreting the bytes as f32 is bit-exact for any 4-byte format, NaN bit
-//! patterns included. The non-multiple-of-4 edge strips, every other element
-//! width, and non-x86 targets use the cache-blocked scalar path, which is also
-//! the parity oracle (`simd_transpose_matches_scalar_reference_rgba8`).
-//! (1- and 2-byte SIMD transpose — the 16×16 `punpck` cascade — is a possible
-//! follow-up; gray / 16-bit currently go scalar.)
+//! For **4-byte pixels** the per-tile transpose is SIMD on every supported
+//! arch: full 4×4 tiles go through magetypes' `f32x4::transpose_4x4` (the
+//! classic `_MM_TRANSPOSE4_PS`-shaped shuffle cascade — SSE on x86, NEON on
+//! aarch64, SIMD128 on wasm), generated once via `#[magetypes(v3, neon,
+//! wasm128, scalar)]` and dispatched by `incant!` at runtime (scalar tier when
+//! no SIMD is available). Each pixel rides as one f32 lane — the kernel only
+//! shuffles whole 32-bit lanes (no float math), so reinterpreting the bytes as
+//! f32 is bit-exact for any 4-byte format, NaN bit patterns included. The
+//! non-multiple-of-4 edge strips and every other element width use the
+//! cache-blocked scalar path, which is also the parity oracle
+//! (`simd_transpose_matches_scalar_reference_rgba8`). (1- and 2-byte SIMD
+//! transpose — the 16×16 `punpck` cascade — is a possible follow-up; gray /
+//! 16-bit currently go scalar.)
 
 use core::cmp::min;
 
@@ -50,12 +52,13 @@ use zenpixels::{Orientation, PixelBuffer, PixelSlice, PixelSliceMut};
 
 use crate::error::ConvertError;
 
-// SIMD path imports (x86_64): `incant!`, `X64V3Token`, `ScalarToken`,
-// `#[arcane]` from the archmage prelude; the generic `f32x4` from magetypes.
-#[cfg(target_arch = "x86_64")]
+// Cross-arch SIMD: the `#[magetypes(...)]` codegen attribute + `incant!`
+// runtime dispatch from the archmage prelude, and the token-parameterized
+// generic `f32x4` from magetypes — whose `transpose_4x4` lowers to SSE
+// `_MM_TRANSPOSE4_PS` on x86, the NEON `zip`/`trn` cascade on aarch64, and the
+// `i32x4.shuffle` cascade on wasm128.
 use archmage::prelude::*;
-#[cfg(target_arch = "x86_64")]
-use magetypes::simd::f32x4;
+use magetypes::simd::generic::f32x4 as GenericF32x4;
 
 /// Side length of the cache-blocking tile for transposing orientations, in
 /// pixels. At `bpp = 4` a 32×32 tile touches 4 KiB of source and 4 KiB of
@@ -213,9 +216,10 @@ fn scatter_pixel(
     dst.row_mut(dy)[di..di + bpp].copy_from_slice(&s[si..si + bpp]);
 }
 
-/// Dispatch the axis-swapping orientations: an x86_64 SIMD 4×4 register
-/// transpose for 4-byte pixels (the common decoder output), the cache-blocked
-/// scalar path otherwise.
+/// Dispatch the axis-swapping orientations: the SIMD 4×4 register transpose for
+/// 4-byte pixels (the common decoder output), the cache-blocked scalar path
+/// otherwise. `incant!` picks the best tier per target (AVX2 / NEON / WASM
+/// SIMD128 / scalar); the scalar tier is the same algorithm as `transpose_blocked`.
 fn do_transpose(
     src: &PixelSlice<'_>,
     dst: &mut PixelSliceMut<'_>,
@@ -224,22 +228,19 @@ fn do_transpose(
     h: u32,
     bpp: usize,
 ) {
-    #[cfg(target_arch = "x86_64")]
+    // Only the four known transposing orientations have a `tile_dest` mapping;
+    // a future `#[non_exhaustive]` variant falls through to the scalar scatter.
+    if bpp == 4
+        && matches!(
+            orientation,
+            Orientation::Transpose
+                | Orientation::Rotate90
+                | Orientation::Rotate270
+                | Orientation::Transverse
+        )
     {
-        // Only the four known transposing orientations have a `tile_dest`
-        // mapping; a future `#[non_exhaustive]` variant falls through to scalar.
-        if bpp == 4
-            && matches!(
-                orientation,
-                Orientation::Transpose
-                    | Orientation::Rotate90
-                    | Orientation::Rotate270
-                    | Orientation::Transverse
-            )
-        {
-            incant!(transpose4(src, dst, orientation, w, h), [-v4]);
-            return;
-        }
+        incant!(transpose4_simd(src, dst, orientation, w, h));
+        return;
     }
     transpose_blocked(src, dst, orientation, w, h, bpp);
 }
@@ -303,7 +304,7 @@ fn transpose_edges(
     }
 }
 
-// ── SIMD 4×4 register transpose (x86_64, 4-byte pixels) ──────────────────────
+// ── SIMD 4×4 register transpose (cross-arch, 4-byte pixels) ──────────────────
 
 /// Destination of transposed-tile row `r` (transposed row index 0..4) for a
 /// source 4×4 tile at `(bx, by)`, as `(dst_row, dst_col_start, reverse_lanes)`.
@@ -311,7 +312,6 @@ fn transpose_edges(
 /// `dst[bx+r][by..]`; the rotations/anti-diagonal add a row/col reflection.
 /// `by`/`bx` are multiples of 4 with `by+4 ≤ h`, `bx+4 ≤ w`, so the subtractions
 /// never underflow.
-#[cfg(target_arch = "x86_64")]
 #[inline]
 fn tile_dest(
     orientation: Orientation,
@@ -330,23 +330,26 @@ fn tile_dest(
     }
 }
 
-/// SIMD path: transpose full 4×4 RGBA8 tiles via `f32x4::transpose_4x4`
-/// (the classic `_MM_TRANSPOSE4_PS` shuffle cascade), scalar for the edges.
+/// SIMD path: transpose full 4×4 tiles via `f32x4::transpose_4x4` (the classic
+/// `_MM_TRANSPOSE4_PS`-shaped shuffle cascade), scalar for the edges. The
+/// `#[magetypes]` attribute generates one variant per SIMD tier from this single
+/// body; `incant!` in [`do_transpose`] picks the best at runtime.
 ///
 /// Each 4-byte pixel rides as one f32 lane. The transpose only *shuffles whole
-/// 32-bit lanes* (`unpacklo/hi`, `movelh/hl` — no float arithmetic), so the
-/// reinterpret is bit-exact for any 4-byte pixel format, including bit patterns
-/// that happen to be NaN.
-#[cfg(target_arch = "x86_64")]
-#[arcane]
-fn transpose4_v3(
-    token: X64V3Token,
+/// 32-bit lanes* (no float arithmetic), so the reinterpret is bit-exact for any
+/// 4-byte pixel format, including bit patterns that happen to be NaN.
+#[magetypes(v3, neon, wasm128, scalar)]
+fn transpose4_simd(
+    token: Token,
     src: &PixelSlice<'_>,
     dst: &mut PixelSliceMut<'_>,
     orientation: Orientation,
     w: u32,
     h: u32,
 ) {
+    #[allow(non_camel_case_types)]
+    type f32x4 = GenericF32x4<Token>;
+
     let full_w = w & !3; // largest multiple of 4 ≤ w
     let full_h = h & !3;
 
@@ -388,19 +391,6 @@ fn transpose4_v3(
     }
 
     transpose_edges(src, dst, orientation, w, h, 4, full_w, full_h);
-}
-
-/// Scalar fallback selected by `incant!` when AVX2 is unavailable.
-#[cfg(target_arch = "x86_64")]
-fn transpose4_scalar(
-    _token: ScalarToken,
-    src: &PixelSlice<'_>,
-    dst: &mut PixelSliceMut<'_>,
-    orientation: Orientation,
-    w: u32,
-    h: u32,
-) {
-    transpose_blocked(src, dst, orientation, w, h, 4);
 }
 
 #[cfg(test)]
