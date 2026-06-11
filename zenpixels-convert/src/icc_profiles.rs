@@ -381,6 +381,73 @@ pub fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
     SynthesizedIcc::CmsUnsupported
 }
 
+/// Resolve a **GRAY-class** ICC profile for a [`Cicp`] color description —
+/// the profile to embed alongside single-channel (Gray / GrayAlpha) output
+/// whose color is described by CICP code points.
+///
+/// An ICC profile's header declares a device color space class (`'RGB '`,
+/// `'GRAY'`, …), and consumers enforce it: libpng rejects a gray PNG paired
+/// with an RGB-class profile. So a gray image can't reuse
+/// [`synthesize_icc_for_cicp`]'s output — it needs this single-channel
+/// variant: `kTRC` = the CICP transfer's tone curve (byte-identical to the
+/// curve the RGB synthesis uses for the same transfer, including the PQ/HLG
+/// `curv`-LUT encodings), media white point = the primaries' H.273 white
+/// (D65 / C / E / DCI — the only thing primaries contribute to single-channel
+/// data), and a per-white Bradford white→D50 `chad`. CICP matrix
+/// coefficients are ignored (no chroma to de-correlate).
+///
+/// Coverage mirrors the RGB variant: the full assigned H.273 grid is served
+/// from the same bundled, LZ4-compressed asset as the RGB profiles (64
+/// unique gray profiles after white-point dedup, packed gray-first into the
+/// shared per-transfer groups so the duplicated TRC payload compresses away
+/// — the gray side adds ~7.6 KB to the committed blob; no CMS required,
+/// `no_std`-safe); the sRGB / BT.709 default returns
+/// [`NotNeeded`](SynthesizedIcc::NotNeeded) (viewers assume sRGB-gamma gray —
+/// PNG can carry `gAMA`/`sRGB` instead); off-grid code points return
+/// [`CmsUnsupported`](SynthesizedIcc::CmsUnsupported) in every build.
+///
+/// The RGB variant's HDR caveat applies equally here: the PQ / P3-PQ `curv`
+/// LUT encodings are faithful above ~10 nits but soften in the deep toe —
+/// prefer CICP-native PQ/HLG signalling where the container carries it.
+///
+/// # Examples
+/// ```
+/// use zenpixels_convert::icc_profiles::{synthesize_gray_icc_for_cicp, SynthesizedIcc};
+/// use zenpixels_convert::Cicp;
+///
+/// // Display-P3-described gray content → a D65-white sRGB-TRC gray profile.
+/// assert!(matches!(
+///     synthesize_gray_icc_for_cicp(Cicp::DISPLAY_P3),
+///     SynthesizedIcc::Profile(_)
+/// ));
+/// // sRGB gray → no profile needed.
+/// assert_eq!(
+///     synthesize_gray_icc_for_cicp(Cicp::SRGB),
+///     SynthesizedIcc::NotNeeded
+/// );
+/// ```
+pub fn synthesize_gray_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
+    // Same raw-code-point default gate as the RGB variant (see its comment
+    // for why the enum mapping must not be used here).
+    if matches!(cicp.color_primaries, 1 | 2) && matches!(cicp.transfer_characteristics, 1 | 2 | 13)
+    {
+        return SynthesizedIcc::NotNeeded;
+    }
+
+    // The bundle's gray table covers the full assigned grid; there are no
+    // curated `&'static` gray consts (nothing in the wild to byte-match).
+    if let Some(bytes) = cicp_bundle::bundled_gray_profile_for_cicp(
+        cicp.color_primaries,
+        cicp.transfer_characteristics,
+    ) {
+        return SynthesizedIcc::Profile(bytes);
+    }
+
+    // Outside the assigned grid — same feature-independent terminal state
+    // as the RGB variant.
+    SynthesizedIcc::CmsUnsupported
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,7 +5,7 @@
 # all-features section.
 # DO NOT EDIT BY HAND — commit regenerated changes together with the code.
 
-## default features (741 items)
+## default features (742 items)
 
 pub mod zenpixels_convert
 pub use zenpixels_convert::<<zenpixels::*>>
@@ -265,6 +265,7 @@ pub const zenpixels_convert::icc_profiles::PROPHOTO_V4: &[u8]
 pub const zenpixels_convert::icc_profiles::REC2020_V4: &[u8]
 pub const fn zenpixels_convert::icc_profiles::display_p3_icc(bool) -> &'static [u8]
 pub const fn zenpixels_convert::icc_profiles::icc_profile_for_primaries(zenpixels::descriptor::ColorPrimaries) -> core::option::Option<&'static [u8]>
+pub fn zenpixels_convert::icc_profiles::synthesize_gray_icc_for_cicp(zenpixels::cicp::Cicp) -> zenpixels_convert::icc_profiles::SynthesizedIcc
 pub fn zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(zenpixels::cicp::Cicp) -> zenpixels_convert::icc_profiles::SynthesizedIcc
 pub mod zenpixels_convert::load_bearing
 #[non_exhaustive] pub struct zenpixels_convert::load_bearing::LoadBearingReport
@@ -749,7 +750,7 @@ pub fn zenpixels_convert::reinhard_inverse(f32) -> f32
 pub fn zenpixels_convert::reinhard_tonemap(f32) -> f32
 pub type zenpixels_convert::GamutMatrix = [[f32; 3]; 3]
 
-## all features except _* (1444 items)
+## all features except _* (1445 items)
 
 pub mod zenpixels_convert
 pub use zenpixels_convert::<<zenpixels::*>>
@@ -1062,6 +1063,7 @@ pub const zenpixels_convert::icc_profiles::PROPHOTO_V4: &[u8]
 pub const zenpixels_convert::icc_profiles::REC2020_V4: &[u8]
 pub const fn zenpixels_convert::icc_profiles::display_p3_icc(bool) -> &'static [u8]
 pub const fn zenpixels_convert::icc_profiles::icc_profile_for_primaries(zenpixels::descriptor::ColorPrimaries) -> core::option::Option<&'static [u8]>
+pub fn zenpixels_convert::icc_profiles::synthesize_gray_icc_for_cicp(zenpixels::cicp::Cicp) -> zenpixels_convert::icc_profiles::SynthesizedIcc
 pub fn zenpixels_convert::icc_profiles::synthesize_icc_for_cicp(zenpixels::cicp::Cicp) -> zenpixels_convert::icc_profiles::SynthesizedIcc
 pub mod zenpixels_convert::load_bearing
 #[non_exhaustive] pub struct zenpixels_convert::load_bearing::LoadBearingReport

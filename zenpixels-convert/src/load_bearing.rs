@@ -327,12 +327,14 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
     fn try_reduce_to_load_bearing_format(&self) -> Option<PixelBuffer> {
         let src = self.descriptor();
         let mut report = self.determine_load_bearing();
-        // Color-signaling gate: collapsing RGB(A) to gray would pair an
-        // attached ICC profile (RGB device-class) with a Gray layout --
-        // invalid signaling that consumers like libpng reject. Mask the
-        // chroma signal for the *rewrite* instead of dropping the
-        // profile; see [`chroma_collapse_signal_safe`].
-        if !chroma_collapse_signal_safe(self.color_context()) {
+        // Color-signaling plan: collapsing RGB(A) to gray would pair an
+        // attached RGB-class ICC profile with a Gray layout -- invalid
+        // signaling. Either a GRAY-class variant stands in (Swap), the
+        // context is already gray-valid (Carry), or the chroma signal is
+        // masked for the *rewrite* (Suppress); see
+        // [`plan_chroma_collapse_signaling`].
+        let plan = plan_chroma_collapse_signaling(self.color_context());
+        if matches!(plan, GraySignalPlan::Suppress) {
             report.uses_chroma = None;
         }
         let target = report.apply_to(&src);
@@ -344,39 +346,109 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
         // no per-pixel Vec growth anywhere in the rewrite.
         let mut out = PixelBuffer::try_new(self.width(), self.rows(), target).ok()?;
         transform_into(self, &src, &target, &mut out)?;
-        // Every reduction is value-exact and (with the gate above)
-        // color-class-preserving, so the source's ICC/CICP metadata
-        // stays valid for the reduced buffer and must travel with it.
-        Some(match self.color_context() {
-            Some(ctx) => out.with_color_context(ctx.clone()),
+        // Every reduction is value-exact, so color metadata travels with
+        // the reduced buffer: swapped to the GRAY-class context when the
+        // rewrite collapsed chroma under a Swap plan, carried verbatim
+        // otherwise (class-preserving reductions keep it valid).
+        let ctx = match (chroma_collapsed(src.layout(), target.layout()), plan) {
+            (true, GraySignalPlan::Swap(swapped)) => swapped,
+            _ => self.color_context().cloned(),
+        };
+        Some(match ctx {
+            Some(ctx) => out.with_color_context(ctx),
             None => out,
         })
     }
 }
 
-/// Whether the chroma-collapse rewrite (RGB(A)/BGRA -> Gray/GrayAlpha)
-/// is allowed under this buffer's color signaling.
+/// How the chroma-collapse rewrite (RGB(A)/BGRA -> Gray/GrayAlpha) must
+/// treat the buffer's color signaling. Produced by
+/// [`plan_chroma_collapse_signaling`]; consumed by both reduce variants.
+enum GraySignalPlan {
+    /// Collapse allowed; the existing context (or none) stays valid for
+    /// gray and carries over as-is.
+    Carry,
+    /// Collapse allowed, but only with this replacement context: a
+    /// GRAY-class ICC swapped in for the RGB-class one (or the ICC
+    /// dropped in favor of CICP/descriptor signaling when the color is
+    /// the assumed sRGB default). Applied only if the rewrite actually
+    /// collapses chroma.
+    Swap(Option<Arc<ColorContext>>),
+    /// No valid gray signaling can be derived -- the rewrite keeps the
+    /// RGB form (alpha-drop and U16 -> U8 stay available).
+    Suppress,
+}
+
+/// Decide whether the chroma collapse may rewrite this buffer, and what
+/// the reduced buffer's [`ColorContext`] must become.
 ///
 /// An ICC profile's header declares a device color space class
 /// (`'RGB '`, `'GRAY'`, ...); pairing a Gray-layout image with an
 /// RGB-class profile is invalid signaling (libpng, among others,
-/// rejects it). Until a gray-variant synthesis exists (extract the
-/// profile's neutral-axis TRC + white point into a `GRAY` profile --
-/// moxcms can author these via `gray_trc`), the rewrite keeps the RGB
-/// form whenever ICC bytes are attached. Alpha-drop and U16 -> U8
-/// narrowing are class-preserving and stay available.
+/// rejects it). So when ICC bytes are attached, the collapse is allowed
+/// only if a **GRAY-class variant** can stand in: derive the CICP
+/// description of the attached profile -- the context's explicit `cicp`
+/// field, then an embedded `cICP` tag
+/// ([`zenpixels::icc::extract_cicp`]), then the normalized-hash
+/// identification of well-known profiles
+/// ([`zenpixels::icc::identify_common`]; worst accepted TRC deviation
+/// ±56/65535, sub-step at 8-bit) -- and feed it to
+/// [`crate::icc_profiles::synthesize_gray_icc_for_cicp`]. The swapped
+/// context keeps the source's `cicp` field alongside the new gray ICC.
+/// Unidentifiable profiles (and profiles whose color has no CICP code
+/// points, e.g. Adobe RGB) suppress the collapse.
 ///
-/// CICP has no class to violate: H.273 primaries (the white point) and
-/// transfer characteristics remain meaningful for single-channel data,
-/// and matrix coefficients describe a YCbCr<->RGB mapping that gray
-/// consumers ignore -- so a CICP-only context carries over unchanged.
+/// CICP-only contexts have no class to violate: H.273 primaries (the
+/// white point) and transfer characteristics remain meaningful for
+/// single-channel data, and matrix coefficients describe a YCbCr<->RGB
+/// mapping that gray consumers ignore -- they carry over unchanged.
 ///
 /// Note this gates only the buffer-rewriting APIs. The
 /// [`LoadBearingReport`] still reports measured chroma truth; encoders
 /// with their own color-emit pipelines can act on it and synthesize /
 /// re-resolve signaling themselves.
-fn chroma_collapse_signal_safe(ctx: Option<&Arc<ColorContext>>) -> bool {
-    ctx.is_none_or(|c| c.icc.is_none())
+fn plan_chroma_collapse_signaling(ctx: Option<&Arc<ColorContext>>) -> GraySignalPlan {
+    use crate::icc_profiles::{SynthesizedIcc, synthesize_gray_icc_for_cicp};
+
+    let Some(ctx) = ctx else {
+        return GraySignalPlan::Carry;
+    };
+    let Some(icc) = ctx.icc.as_deref() else {
+        return GraySignalPlan::Carry;
+    };
+
+    let cicp = ctx
+        .cicp
+        .or_else(|| zenpixels::icc::extract_cicp(icc))
+        .or_else(|| zenpixels::icc::identify_common(icc).and_then(|id| id.to_cicp()));
+    let Some(cicp) = cicp else {
+        return GraySignalPlan::Suppress;
+    };
+
+    match synthesize_gray_icc_for_cicp(cicp) {
+        SynthesizedIcc::Profile(bytes) => {
+            let mut swapped = ColorContext::from_icc(bytes.into_owned());
+            swapped.cicp = ctx.cicp;
+            GraySignalPlan::Swap(Some(Arc::new(swapped)))
+        }
+        // Assumed sRGB default: gray output needs no ICC (descriptor /
+        // container-level signaling suffices); keep the CICP if the
+        // source context carried one.
+        SynthesizedIcc::NotNeeded => {
+            GraySignalPlan::Swap(ctx.cicp.map(|c| Arc::new(ColorContext::from_cicp(c))))
+        }
+        // Off-grid code points / future variants: nothing derivable.
+        _ => GraySignalPlan::Suppress,
+    }
+}
+
+/// Whether the layout transition `src -> dst` collapses chroma (the
+/// transition [`plan_chroma_collapse_signaling`] gates).
+fn chroma_collapsed(src: ChannelLayout, dst: ChannelLayout) -> bool {
+    matches!(
+        src,
+        ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
+    ) && matches!(dst, ChannelLayout::Gray | ChannelLayout::GrayAlpha)
 }
 
 // ── In-place reduction on PixelSliceMut ────────────────────────────────
@@ -415,10 +487,13 @@ pub trait PixelSliceMutLoadBearingExt<'a>: sealed::Sealed {
     ///   the packed narrow form (TIFF/JXL-style writers).
     ///
     /// Color metadata ([`ColorContext`]) follows the same rules as the
-    /// allocating variant: it travels with the returned slice, and gray
-    /// collapse is suppressed while ICC bytes are attached (an RGB-class
-    /// profile cannot describe a Gray layout); CICP-only contexts stay
-    /// valid for gray and carry over unchanged.
+    /// allocating variant: it travels with the returned slice. When the
+    /// rewrite collapses chroma and ICC bytes are attached (an RGB-class
+    /// profile cannot describe a Gray layout), a GRAY-class variant is
+    /// swapped in if the profile's CICP description is derivable (explicit
+    /// `cicp` field, embedded `cICP` tag, or well-known-profile
+    /// identification); otherwise the collapse is suppressed. CICP-only
+    /// contexts stay valid for gray and carry over unchanged.
     ///
     /// The returned slice is the **only** valid view of the rewritten
     /// bytes. If this `PixelSliceMut` borrowed from a descriptor-carrying
@@ -445,10 +520,11 @@ impl<'a, P> PixelSliceMutLoadBearingExt<'a> for PixelSliceMut<'a, P> {
         }
 
         let mut report = self.as_pixel_slice().determine_load_bearing();
-        let ctx = self.color_context().cloned();
+        let original_ctx = self.color_context().cloned();
 
-        // Same color-signaling gate as the allocating variant.
-        if !chroma_collapse_signal_safe(ctx.as_ref()) {
+        // Same color-signaling plan as the allocating variant.
+        let plan = plan_chroma_collapse_signaling(original_ctx.as_ref());
+        if matches!(plan, GraySignalPlan::Suppress) {
             report.uses_chroma = None;
         }
 
@@ -498,6 +574,14 @@ impl<'a, P> PixelSliceMutLoadBearingExt<'a> for PixelSliceMut<'a, P> {
             src.channel_type() == ChannelType::U16 && target.channel_type() == ChannelType::U8;
         let Some(map) = selection_map(src.layout(), target.layout()) else {
             return self.erase();
+        };
+
+        // Same context rule as the allocating variant: swap to the
+        // GRAY-class context when this rewrite collapses chroma under a
+        // Swap plan, carry the original otherwise.
+        let ctx = match (chroma_collapsed(src.layout(), target.layout()), plan) {
+            (true, GraySignalPlan::Swap(swapped)) => swapped,
+            _ => original_ctx,
         };
 
         let in_stride = self.stride();
@@ -1990,11 +2074,10 @@ mod tests {
 
     #[test]
     fn icc_context_suppresses_gray_collapse_but_not_other_reductions() {
-        // Gray + opaque RGBA with ICC bytes attached: collapsing to a
-        // Gray layout would pair an RGB-class profile with gray pixels
-        // (invalid signaling), so the rewrite stops at the
-        // class-preserving alpha drop. The report itself still measures
-        // chroma truthfully.
+        // Gray + opaque RGBA with *unidentifiable* ICC bytes attached:
+        // no CICP description is derivable, so no GRAY-class variant can
+        // stand in, and the rewrite stops at the class-preserving alpha
+        // drop. The report itself still measures chroma truthfully.
         let ctx = Arc::new(ColorContext::from_icc(alloc::vec![0u8; 8]));
         let bytes: Vec<u8> = (0..4).flat_map(|i| [i * 30, i * 30, i * 30, 255]).collect();
         let slice = make_slice(&bytes, 4, 1, PixelFormat::Rgba8).with_color_context(ctx.clone());
@@ -2050,6 +2133,153 @@ mod tests {
             .reduce_to_load_bearing_format_in_place(true);
         assert_eq!(out.descriptor().format, PixelFormat::Gray8);
         assert!(out.color_context().is_some_and(|c| Arc::ptr_eq(c, &ctx)));
+    }
+
+    // ── Gray-class ICC swap on collapse ────────────────────────────
+
+    /// Assert the context carries a GRAY-class ICC (header bytes 16..20).
+    fn assert_gray_class_icc(ctx: Option<&Arc<ColorContext>>) -> Arc<[u8]> {
+        let icc = ctx
+            .expect("reduced buffer must carry a context")
+            .icc
+            .clone()
+            .expect("swapped context must hold ICC bytes");
+        assert_eq!(&icc[16..20], b"GRAY", "swapped profile must be GRAY-class");
+        assert_eq!(&icc[36..40], b"acsp", "swapped profile must be a valid ICC");
+        icc
+    }
+
+    #[test]
+    fn icc_with_cicp_swaps_to_gray_class_profile_on_collapse() {
+        // Both fields populated: the cicp field describes the attached
+        // RGB profile, so the collapse swaps in the GRAY-class synthesis
+        // for that CICP and keeps the cicp alongside.
+        let mut both = ColorContext::from_icc(alloc::vec![0u8; 8]);
+        both.cicp = Some(Cicp::DISPLAY_P3);
+        let ctx = Arc::new(both);
+        let bytes: Vec<u8> = (0..4).flat_map(|i| [i * 30, i * 30, i * 30, 255]).collect();
+
+        let slice = make_slice(&bytes, 4, 1, PixelFormat::Rgba8).with_color_context(ctx.clone());
+        let out = slice
+            .try_reduce_to_load_bearing_format()
+            .expect("gray collapse available via gray-ICC swap");
+        assert_eq!(out.descriptor().format, PixelFormat::Gray8);
+        let swapped = assert_gray_class_icc(out.as_slice().color_context());
+        assert_eq!(
+            out.as_slice().color_context().unwrap().cicp,
+            Some(Cicp::DISPLAY_P3),
+            "source cicp must ride along"
+        );
+
+        // In-place variant produces the same signaling.
+        let mut mut_bytes = bytes.clone();
+        let out = make_slice_mut(&mut mut_bytes, 4, 1, PixelFormat::Rgba8)
+            .with_color_context(ctx.clone())
+            .reduce_to_load_bearing_format_in_place(true);
+        assert_eq!(out.descriptor().format, PixelFormat::Gray8);
+        let swapped_in_place = assert_gray_class_icc(out.color_context());
+        assert_eq!(swapped_in_place.as_ref(), swapped.as_ref());
+    }
+
+    #[test]
+    fn recognized_rgb_profile_swaps_to_gray_class_on_collapse() {
+        // ICC-only context holding the bundled Display-P3 profile: the
+        // normalized-hash identification recognizes it as (P3-D65, sRGB)
+        // and the collapse swaps in the matching GRAY-class profile.
+        let ctx = Arc::new(ColorContext::from_icc(
+            crate::icc_profiles::DISPLAY_P3_V4.to_vec(),
+        ));
+        let bytes: Vec<u8> = (0..4).flat_map(|i| [i * 30, i * 30, i * 30, 255]).collect();
+        let slice = make_slice(&bytes, 4, 1, PixelFormat::Rgba8).with_color_context(ctx.clone());
+        let out = slice
+            .try_reduce_to_load_bearing_format()
+            .expect("gray collapse available via identification");
+        assert_eq!(out.descriptor().format, PixelFormat::Gray8);
+        assert_gray_class_icc(out.as_slice().color_context());
+        assert_eq!(
+            out.as_slice().color_context().unwrap().cicp,
+            None,
+            "no cicp on the source context, none invented"
+        );
+    }
+
+    #[test]
+    fn srgb_described_icc_drops_to_cicp_only_on_collapse() {
+        // ICC + cicp where the description is the assumed sRGB default:
+        // gray output needs no ICC at all -- the swap drops to a
+        // CICP-only context.
+        let mut both = ColorContext::from_icc(alloc::vec![0u8; 8]);
+        both.cicp = Some(Cicp::SRGB);
+        let ctx = Arc::new(both);
+        let bytes: Vec<u8> = (0..4).flat_map(|i| [i * 30, i * 30, i * 30, 255]).collect();
+        let slice = make_slice(&bytes, 4, 1, PixelFormat::Rgba8).with_color_context(ctx.clone());
+        let out = slice
+            .try_reduce_to_load_bearing_format()
+            .expect("gray collapse available");
+        assert_eq!(out.descriptor().format, PixelFormat::Gray8);
+        let new_ctx = out
+            .as_slice()
+            .color_context()
+            .cloned()
+            .expect("cicp-only context expected");
+        assert!(new_ctx.icc.is_none(), "sRGB-default gray needs no ICC");
+        assert_eq!(new_ctx.cicp, Some(Cicp::SRGB));
+    }
+
+    #[test]
+    fn non_cicp_recognized_profile_still_suppresses_collapse() {
+        // Adobe RGB has no CICP code points: even if the profile is
+        // recognized, no gray variant is derivable from the CICP grid --
+        // the collapse stays suppressed and the original context carries.
+        let ctx = Arc::new(ColorContext::from_icc(
+            crate::icc_profiles::ADOBE_RGB.to_vec(),
+        ));
+        let bytes: Vec<u8> = (0..4).flat_map(|i| [i * 30, i * 30, i * 30, 255]).collect();
+        let slice = make_slice(&bytes, 4, 1, PixelFormat::Rgba8).with_color_context(ctx.clone());
+        let out = slice
+            .try_reduce_to_load_bearing_format()
+            .expect("alpha drop still available");
+        assert_eq!(
+            out.descriptor().format,
+            PixelFormat::Rgb8,
+            "collapse suppressed without a CICP-expressible color"
+        );
+        assert!(
+            out.as_slice()
+                .color_context()
+                .is_some_and(|c| Arc::ptr_eq(c, &ctx))
+        );
+    }
+
+    #[test]
+    fn colorful_content_keeps_original_context_despite_swap_plan() {
+        // A swappable context on a buffer whose chroma IS load-bearing:
+        // no collapse happens, so no swap applies -- the original
+        // context carries through the alpha drop untouched.
+        let mut both = ColorContext::from_icc(alloc::vec![0u8; 8]);
+        both.cicp = Some(Cicp::DISPLAY_P3);
+        let ctx = Arc::new(both);
+        let bytes: Vec<u8> = (0..4i32)
+            .flat_map(|i| {
+                [
+                    (i * 60 + 10) as u8,
+                    (i * 30 + 50) as u8,
+                    (i * 90 + 20) as u8,
+                    255,
+                ]
+            })
+            .collect();
+        let slice = make_slice(&bytes, 4, 1, PixelFormat::Rgba8).with_color_context(ctx.clone());
+        let out = slice
+            .try_reduce_to_load_bearing_format()
+            .expect("alpha drop available");
+        assert_eq!(out.descriptor().format, PixelFormat::Rgb8);
+        assert!(
+            out.as_slice()
+                .color_context()
+                .is_some_and(|c| Arc::ptr_eq(c, &ctx)),
+            "no collapse -> original context, not the swap"
+        );
     }
 
     #[test]

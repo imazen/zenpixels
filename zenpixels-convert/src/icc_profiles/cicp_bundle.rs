@@ -15,6 +15,17 @@
 //! `OnceBox`, so the sliced profile is returned as a zero-copy
 //! `Cow::Borrowed(&'static [u8])`.
 //!
+//! Each group's decoded bytes pack the **GRAY-class** profiles for the
+//! transfer first (64 unique across the bundle after white-point dedup —
+//! backing [`bundled_gray_profile_for_cicp`] and
+//! `synthesize_gray_icc_for_cicp`), then the RGB ones. Sharing groups is
+//! what makes gray coverage nearly free to ship: a gray profile's `kTRC`
+//! payload is byte-identical to the RGB profiles' TRC payload for the same
+//! transfer, so LZ4 collapses it (gray-first ordering keeps the match
+//! distance inside lz4_flex's effective search range; the whole gray side
+//! adds ~7.6 KB to the committed asset instead of a ~24 KB second blob).
+//! One decoded group serves both lookup tables from one cache slot.
+//!
 //! Decode uses `lz4_flex`'s `safe-decode` (pure-Rust, `no_std`), so the whole
 //! path stays within `#![forbid(unsafe_code)]`.
 
@@ -25,7 +36,9 @@ use alloc::vec::Vec;
 
 use once_cell::race::OnceBox;
 
-use super::cicp_bundle_index::{BUNDLE_GROUPS, BUNDLE_PROFILES, CICP_BUNDLE_LZ4, NUM_GROUPS};
+use super::cicp_bundle_index::{
+    BUNDLE_GROUPS, BUNDLE_PROFILES, CICP_BUNDLE_LZ4, GRAY_BUNDLE_PROFILES, NUM_GROUPS,
+};
 
 /// Per-group decode cache. Each slot lazily holds one group's decoded bytes;
 /// only groups that are actually requested are ever populated. A `static`
@@ -75,6 +88,30 @@ pub(crate) fn bundled_profile_for_cicp(primaries: u8, transfer: u8) -> Option<Co
     debug_assert_eq!(
         BUNDLE_GROUPS[p.group_index].transfer, p.transfer,
         "profile→group transfer mismatch in the generated index"
+    );
+    let group = decode_group(p.group_index);
+    let bytes = &group[p.offset_in_group..p.offset_in_group + p.len];
+    Some(Cow::Borrowed(bytes))
+}
+
+/// Look up a bundled **GRAY-class** ICC profile for a raw CICP
+/// `(primaries, transfer)` pair — the single-channel sibling of
+/// [`bundled_profile_for_cicp`], served from the same groups and cache.
+///
+/// Returns `None` for combinations not in the bundle (the sRGB / BT.709
+/// default pair handled upstream as `NotNeeded`, and any combo moxcms
+/// couldn't represent at generation time).
+pub(crate) fn bundled_gray_profile_for_cicp(
+    primaries: u8,
+    transfer: u8,
+) -> Option<Cow<'static, [u8]>> {
+    let idx = GRAY_BUNDLE_PROFILES
+        .binary_search_by(|p| (p.primaries, p.transfer).cmp(&(primaries, transfer)))
+        .ok()?;
+    let p = &GRAY_BUNDLE_PROFILES[idx];
+    debug_assert_eq!(
+        BUNDLE_GROUPS[p.group_index].transfer, p.transfer,
+        "gray profile→group transfer mismatch in the generated index"
     );
     let group = decode_group(p.group_index);
     let bytes = &group[p.offset_in_group..p.offset_in_group + p.len];
@@ -143,6 +180,113 @@ mod tests {
         assert!(bundled_profile_for_cicp(1, 1).is_none());
     }
 
+    #[test]
+    fn every_gray_profile_is_a_valid_gray_class_icc() {
+        for p in &GRAY_BUNDLE_PROFILES {
+            let got = bundled_gray_profile_for_cicp(p.primaries, p.transfer)
+                .expect("indexed gray profile must resolve");
+            assert_eq!(got.len(), p.len, "gray profile length mismatch");
+            assert!(got.len() >= 132, "gray profile too short to be an ICC");
+            assert_eq!(
+                &got[36..40],
+                b"acsp",
+                "gray ({}, {}) missing 'acsp' signature",
+                p.primaries,
+                p.transfer
+            );
+            // The whole point of the gray table: data colour space must be
+            // GRAY (header offset 16..20), the field libpng checks against
+            // the image's colour type.
+            assert_eq!(
+                &got[16..20],
+                b"GRAY",
+                "({}, {}) is not a GRAY-class profile",
+                p.primaries,
+                p.transfer
+            );
+            assert_eq!(
+                &got[12..16],
+                b"mntr",
+                "gray ({}, {}) expected 'mntr' profile class",
+                p.primaries,
+                p.transfer
+            );
+        }
+    }
+
+    #[test]
+    fn gray_primaries_sharing_a_white_point_share_bytes() {
+        // BT.709 (1) and P3-D65 (12) are both D65-white: their gray profiles
+        // for the same transfer must be the *same* bytes (dedup worked and
+        // the profile carries no gamut). BT.470M (4, Illuminant C) must NOT
+        // share them.
+        let bt709 = bundled_gray_profile_for_cicp(1, 4).expect("(1, 4) in bundle");
+        let p3d65 = bundled_gray_profile_for_cicp(12, 4).expect("(12, 4) in bundle");
+        let ill_c = bundled_gray_profile_for_cicp(4, 4).expect("(4, 4) in bundle");
+        assert_eq!(
+            bt709.as_ref(),
+            p3d65.as_ref(),
+            "D65-white primaries must dedup to identical gray bytes"
+        );
+        assert_ne!(
+            bt709.as_ref(),
+            ill_c.as_ref(),
+            "Illuminant-C white must differ from D65"
+        );
+    }
+
+    #[test]
+    fn gray_miss_returns_none() {
+        assert!(bundled_gray_profile_for_cicp(2, 13).is_none());
+        assert!(bundled_gray_profile_for_cicp(1, 13).is_none());
+        assert!(bundled_gray_profile_for_cicp(1, 1).is_none());
+    }
+
+    /// ZERO-TOLERANCE roundtrip for the gray side: every GRAY profile
+    /// decoded from the blob must be byte-identical to a fresh
+    /// moxcms-based synthesis for the same CICP, modulo the masked
+    /// creation-timestamp field. Pins the generator and runtime gray
+    /// recipes together.
+    #[cfg(feature = "cms-moxcms")]
+    #[test]
+    fn gray_blob_decodes_byte_identical_to_moxcms() {
+        use crate::Cicp;
+        fn mask_timestamp(bytes: &[u8]) -> alloc::vec::Vec<u8> {
+            let mut v = bytes.to_vec();
+            if v.len() >= 36 {
+                v[24..36].fill(0);
+            }
+            v
+        }
+
+        let mut checked = 0usize;
+        for p in &GRAY_BUNDLE_PROFILES {
+            let from_blob = bundled_gray_profile_for_cicp(p.primaries, p.transfer)
+                .expect("indexed gray profile must resolve");
+            let from_moxcms = crate::cms_moxcms::gray_icc_bytes_for_cicp(&Cicp::new(
+                p.primaries,
+                p.transfer,
+                0,
+                true,
+            ))
+            .unwrap_or_else(|| {
+                panic!(
+                    "moxcms could not regenerate gray ({}, {}) — index/grid desync",
+                    p.primaries, p.transfer
+                )
+            });
+            assert_eq!(
+                from_blob.as_ref(),
+                mask_timestamp(&from_moxcms).as_slice(),
+                "gray blob bytes for ({}, {}) diverge from a fresh moxcms generation",
+                p.primaries,
+                p.transfer
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 174, "expected to roundtrip all 174 gray combos");
+    }
+
     /// Golden pin of the committed blob's sha256. If this fails, the blob was
     /// regenerated (or corrupted) — review the diff and, if intended, update
     /// this constant alongside the new blob. Catches an *accidental* regen
@@ -150,7 +294,7 @@ mod tests {
     #[test]
     fn golden_blob_sha256_is_pinned() {
         use sha2::{Digest, Sha256};
-        const EXPECTED: &str = "ab822fbd9f2804276fb54f73a71d54741569b040118ef438d805579042dd8091";
+        const EXPECTED: &str = "b4a8f12c039f8b904844136e09cc37147f3b869f5b52bce56630872d4a9d3264";
         let digest = Sha256::digest(CICP_BUNDLE_LZ4);
         let hex: alloc::string::String = digest.iter().map(|b| alloc::format!("{b:02x}")).collect();
         assert_eq!(

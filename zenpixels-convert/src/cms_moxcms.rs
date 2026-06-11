@@ -380,6 +380,85 @@ pub(crate) fn icc_bytes_for_cicp(cicp: &Cicp) -> Option<alloc::vec::Vec<u8>> {
     profile.encode().ok()
 }
 
+/// Synthesize a **GRAY-class** ICC for a CICP, exactly as `icc-gen`'s
+/// `cicp_bundle_gen` generator does for the committed gray bundle: `kTRC` =
+/// the transfer's tone curve (taken from a throwaway RGB synthesis so the
+/// gray and RGB recipes can never disagree about a curve), media white point
+/// = the primaries' H.273 white, and a per-white Bradford white→D50 `chad`.
+/// The generator zeroes the creation timestamp for reproducibility; this
+/// fresh path leaves it — the roundtrip test masks bytes 24..36 on both
+/// sides.
+///
+/// Test-only, mirroring [`icc_bytes_for_cicp`]: the bundled gray blob is
+/// the runtime coverage source; this is the oracle the gray
+/// `blob_decodes_byte_identical_to_moxcms` guard compares the committed
+/// blob against.
+#[cfg(test)]
+pub(crate) fn gray_icc_bytes_for_cicp(cicp: &Cicp) -> Option<alloc::vec::Vec<u8>> {
+    let color_primaries = moxcms::CicpColorPrimaries::try_from(cicp.color_primaries).ok()?;
+    let transfer_characteristics =
+        moxcms::TransferCharacteristics::try_from(cicp.transfer_characteristics).ok()?;
+    let matrix_coefficients = moxcms::MatrixCoefficients::try_from(cicp.matrix_coefficients)
+        .unwrap_or(moxcms::MatrixCoefficients::Identity);
+
+    let rgb = ColorProfile::new_from_cicp(moxcms::CicpProfile {
+        color_primaries,
+        transfer_characteristics,
+        matrix_coefficients,
+        full_range: cicp.full_range,
+    });
+    // Same faithful-synthesis gate as the RGB path.
+    let trc = rgb.red_trc.as_ref()?.clone();
+
+    let (white_name, wx, wy) = h273_white_xy(cicp.color_primaries)?;
+    let white = moxcms::Xyzd {
+        x: wx / wy,
+        y: 1.0,
+        z: (1.0 - wx - wy) / wy,
+    };
+
+    let mut gray = ColorProfile::new_gray_with_gamma(2.2);
+    gray.gray_trc = Some(trc);
+    gray.media_white_point = Some(white);
+    gray.chromatic_adaptation = Some(moxcms::adaption_matrix_d(
+        white.to_xyz(),
+        moxcms::WHITE_POINT_D50.to_xyz(),
+    ));
+    gray.description = Some(moxcms::ProfileText::Localizable(alloc::vec![
+        moxcms::LocalizableString::new(
+            "en".into(),
+            "US".into(),
+            format!(
+                "Gray H.273 TC{} {white_name} white",
+                cicp.transfer_characteristics
+            ),
+        )
+    ]));
+
+    gray.encode().ok()
+}
+
+/// The white point of an H.273 colour-primaries code, as CIE xy
+/// (Rec. ITU-T H.273 Table 2). Mirror of the table in `icc-gen`'s
+/// `cicp_bundle_gen` — the gray-bundle roundtrip test pins the two copies
+/// together. The name keys the gray profile's description so primaries
+/// sharing a white dedup to identical bytes.
+#[cfg(test)]
+fn h273_white_xy(primaries: u8) -> Option<(&'static str, f64, f64)> {
+    Some(match primaries {
+        // D65: BT.709, BT.470BG, SMPTE 170M, SMPTE 240M, BT.2020,
+        // P3-D65 (SMPTE EG 432-1), EBU Tech 3213-E.
+        1 | 5 | 6 | 7 | 9 | 12 | 22 => ("D65", 0.3127, 0.3290),
+        // Illuminant C: BT.470M, generic film.
+        4 | 8 => ("C", 0.310, 0.316),
+        // Illuminant E: SMPTE ST 428-1 (CIE XYZ).
+        10 => ("E", 1.0 / 3.0, 1.0 / 3.0),
+        // DCI white: SMPTE RP 431-2 (P3-DCI theater white).
+        11 => ("DCI", 0.314, 0.351),
+        _ => return None,
+    })
+}
+
 /// Convert CICP to a moxcms ColorProfile.
 #[allow(dead_code)]
 fn cicp_to_moxcms_profile(cicp: &Cicp) -> ColorProfile {
