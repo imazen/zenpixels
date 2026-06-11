@@ -437,6 +437,16 @@ mod tests {
     /// encoder): if a moxcms version bump silently shifts the synthesized bytes,
     /// the recompressed blob diverges from the committed asset and this fails,
     /// forcing a deliberate regen + golden-hash update.
+    ///
+    /// x86_64-only: LZ4 compressed output is not arch-stable — `lz4_flex`'s
+    /// match-finder emits different (equally valid) encodings on 32-bit
+    /// targets (measured 2026-06-11: byte-identical 610,170-byte raw profile
+    /// content on i686 and x86_64, but a 28,327-byte blob on i686 vs the
+    /// committed x86_64 28,399). x86_64 is the canonical regen arch; every
+    /// arch still pins the *decoded content* via
+    /// [`bundled_profiles_match_fresh_synthesis`], which is the property the
+    /// runtime actually relies on.
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn regenerated_blob_matches_committed() {
         let committed = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -456,6 +466,80 @@ mod tests {
             "regenerated blob bytes differ from the committed asset — \
              moxcms drift or generator change; regenerate and update the golden sha256"
         );
+    }
+
+    /// Cross-arch content guard: the committed blob, decoded through the
+    /// committed index, must yield byte-identical group content (and
+    /// identical profile locators) to a fresh moxcms generation. Compressed
+    /// bytes may legitimately differ per arch (see
+    /// [`regenerated_blob_matches_committed`]); decoded content may not —
+    /// that is the invariant the runtime depends on, and it runs on every
+    /// target including 32-bit.
+    #[test]
+    fn committed_bundle_content_matches_fresh_synthesis() {
+        // The generated runtime index is self-contained (struct defs,
+        // group/profile tables, `include_bytes!` of the committed blob —
+        // nested `include_bytes!` resolves relative to the included file,
+        // so the committed asset loads exactly as shipped). Including it
+        // here decodes the committed bundle without going through the
+        // runtime crate's bundled-const priority ladder.
+        mod committed {
+            #![allow(dead_code)]
+            include!("../../../../zenpixels-convert/src/icc_profiles/cicp_bundle_index.rs");
+        }
+
+        let fresh = build_bundle();
+        assert_eq!(
+            committed::BUNDLE_GROUPS.len(),
+            fresh.groups.len(),
+            "group count drift"
+        );
+        assert_eq!(
+            committed::BUNDLE_PROFILES.len(),
+            fresh.profiles.len(),
+            "profile count drift"
+        );
+
+        for (gi, (cg, fg)) in committed::BUNDLE_GROUPS
+            .iter()
+            .zip(&fresh.groups)
+            .enumerate()
+        {
+            assert_eq!(cg.transfer, fg.transfer, "group {gi} transfer drift");
+            let c_block =
+                &committed::CICP_BUNDLE_LZ4[cg.blob_offset..cg.blob_offset + cg.compressed_len];
+            let f_block = &fresh.blob[fg.blob_offset..fg.blob_offset + fg.compressed_len];
+            let c_raw = lz4_flex::block::decompress(c_block, cg.decompressed_len)
+                .expect("committed group decompresses");
+            let f_raw = lz4_flex::block::decompress(f_block, fg.decompressed_len)
+                .expect("fresh group decompresses");
+            assert!(
+                c_raw == f_raw,
+                "group {gi} (transfer {}): committed decoded content != fresh synthesis — \
+                 moxcms drift or generator change; regenerate the bundle",
+                cg.transfer
+            );
+        }
+
+        for (cp, fp) in committed::BUNDLE_PROFILES.iter().zip(&fresh.profiles) {
+            assert_eq!(
+                (
+                    cp.primaries,
+                    cp.transfer,
+                    cp.group_index,
+                    cp.offset_in_group,
+                    cp.len
+                ),
+                (
+                    fp.primaries,
+                    fp.transfer,
+                    fp.group_index,
+                    fp.offset_in_group,
+                    fp.len
+                ),
+                "profile locator drift"
+            );
+        }
     }
 
     /// The grid enumeration must stay at the measured 176 combos / 174
