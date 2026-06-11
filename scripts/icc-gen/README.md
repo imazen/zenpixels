@@ -6,12 +6,13 @@ Internal, unpublished tools, isolated here so their build-time dependencies
 regenerate checked-in assets on demand, and the consuming crates just
 `include_*!` the committed output.
 
-Two binaries:
+Three binaries:
 
 | Binary | Regenerates | Recipe |
 |--------|-------------|--------|
 | `icc-gen` (default) | `zenpixels/src/icc/icc_table_{rgb,gray}.inc` — the ICC *identification* hash tables, from a corpus of ICC profiles | `just icc-gen` |
 | `cicp_bundle_gen` | `zenpixels-convert/src/profiles/cicp_bundle.lz4` + `src/icc_profiles/cicp_bundle_index.rs` — the bundled, full-coverage CICP→ICC blob | `just cicp-bundle-gen` |
+| `probe42` | nothing — diagnostic. Measures a profile's →sRGB identity error (moxcms RGB lattice, per rendering intent): the ground truth for "should `is_common_srgb` recognize this?" (zenpipe#42) | `cargo run -p icc-gen --release --bin probe42 -- <profile.icc>...` |
 
 ---
 
