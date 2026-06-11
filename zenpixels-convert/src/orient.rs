@@ -440,7 +440,15 @@ fn do_transpose(
                 | Orientation::Transverse
         )
     {
-        incant!(transpose4_simd(src, dst, orientation, w, h));
+        // Explicit tier list matching the `#[magetypes(v3, neon, wasm128,
+        // scalar)]` attribute on `transpose4_simd`: a bare `incant!` expands
+        // the full cascade and references a `_v4` variant that was never
+        // generated, breaking `--features avx512` builds (caught by the
+        // feature-powerset CI job). Same convention as the `scan` kernels.
+        incant!(
+            transpose4_simd(src, dst, orientation, w, h),
+            [v3, neon, wasm128, scalar]
+        );
         return;
     }
     transpose_blocked(src, dst, orientation, w, h, bpp);
