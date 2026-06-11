@@ -1561,6 +1561,142 @@ fn write_gray(rows: &BTreeMap<u64, GrayRow>, out_path: &Path) {
     std::fs::write(out_path, s).unwrap();
 }
 
+/// Classify one ICC profile (by bytes) into the RGB / gray table maps —
+/// the shared body behind both the on-disk corpus scan and the committed
+/// CICP-bundle ingestion.
+#[allow(clippy::too_many_arguments)]
+fn ingest_profile(
+    fname: &str,
+    data: &[u8],
+    rgb: &mut BTreeMap<u64, RgbRow>,
+    gray: &mut BTreeMap<u64, GrayRow>,
+    report_rows: &mut Vec<ReportRow>,
+    skipped: &mut u32,
+    report_mode: bool,
+) {
+    fn skipped_bump(skipped: &mut u32) {
+        *skipped += 1;
+    }
+    let fname = fname.to_string();
+    let cs = &data[16..20];
+    let norm_hash = fnv1a_64_normalized(data);
+
+    if cs == b"RGB " {
+        let Some(cp_name) = identify_primaries(data) else {
+            skipped_bump(skipped);
+            return;
+        };
+        let Some((tf_name, err)) = identify_trc(data, b"rTRC") else {
+            skipped_bump(skipped);
+            return;
+        };
+        if err > 56 {
+            skipped_bump(skipped);
+            return;
+        }
+
+        // Compatibility-normalization exclusions — see constants above
+        // for rationale. Skips categories of profile where matrix+TRC
+        // substitution would diverge from full-CMS rendering; those
+        // profiles still work, they just take the full-CMS path.
+        if is_excluded_primary(cp_name)
+            || (is_para3_excluded_primary(cp_name) && is_para_functype3(data, b"rTRC"))
+        {
+            skipped_bump(skipped);
+            return;
+        }
+
+        // Empirical intent-safety check only once per unique hash — this
+        // is where the cost is (moxcms builds + transforms two profiles
+        // over a 320-pixel ramp for each of 3 intents, ~1-5ms).
+        let (mask, provenance) = compute_rgb_intent_mask(data, cp_name, tf_name);
+
+        if report_mode {
+            report_rows.push(build_report_row(
+                &fname, cp_name, tf_name, data, mask, provenance,
+            ));
+        }
+
+        rgb.entry(norm_hash)
+            .and_modify(|row| {
+                row.max_err = row.max_err.max(err);
+                // AND masks when multiple profiles collapse to the
+                // same normalized hash: the result must be safe for
+                // every collapsed input.
+                row.intent_mask &= mask;
+            })
+            .or_insert(RgbRow {
+                hash: norm_hash,
+                cp: cp_name,
+                tf: tf_name,
+                max_err: err,
+                intent_mask: mask,
+                desc: fname.clone(),
+            });
+    } else if cs == b"GRAY" {
+        let trc = identify_trc(data, b"kTRC").or_else(|| identify_trc(data, b"gTRC"));
+        let Some((tf_name, err)) = trc else {
+            skipped_bump(skipped);
+            return;
+        };
+        if err > 56 {
+            skipped_bump(skipped);
+            return;
+        }
+
+        let mask = gray_intent_mask(data);
+        gray.entry(norm_hash)
+            .and_modify(|row| {
+                row.max_err = row.max_err.max(err);
+                row.intent_mask &= mask;
+            })
+            .or_insert(GrayRow {
+                hash: norm_hash,
+                tf: tf_name,
+                max_err: err,
+                intent_mask: mask,
+                desc: fname.clone(),
+            });
+    }
+}
+
+/// Decode every unique profile out of the committed CICP bundle
+/// (`zenpixels-convert/src/profiles/cicp_bundle.lz4`, both the RGB and
+/// GRAY locator tables) so the identification tables recognize the
+/// profiles this workspace itself embeds in encoded output.
+fn collect_bundle_profiles() -> Vec<(String, Vec<u8>)> {
+    mod committed {
+        #![allow(dead_code)]
+        include!("../../../zenpixels-convert/src/icc_profiles/cicp_bundle_index.rs");
+    }
+    let mut group_cache: Vec<Option<Vec<u8>>> = (0..committed::NUM_GROUPS).map(|_| None).collect();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for (kind, table) in [
+        ("rgb", &committed::BUNDLE_PROFILES[..]),
+        ("gray", &committed::GRAY_BUNDLE_PROFILES[..]),
+    ] {
+        for p in table {
+            if !seen.insert((p.group_index, p.offset_in_group, p.len)) {
+                continue;
+            }
+            let raw = group_cache[p.group_index].get_or_insert_with(|| {
+                let g = &committed::BUNDLE_GROUPS[p.group_index];
+                lz4_flex::block::decompress(
+                    &committed::CICP_BUNDLE_LZ4[g.blob_offset..g.blob_offset + g.compressed_len],
+                    g.decompressed_len,
+                )
+                .expect("committed bundle group decodes")
+            });
+            out.push((
+                format!("cicp_bundle:{kind}:cp{}-tc{}", p.primaries, p.transfer),
+                raw[p.offset_in_group..p.offset_in_group + p.len].to_vec(),
+            ));
+        }
+    }
+    out
+}
+
 fn main() {
     #[cfg(debug_assertions)]
     assert_exclusion_names_valid();
@@ -1614,86 +1750,36 @@ fn main() {
         }
 
         let fname = path.file_name().unwrap().to_string_lossy().to_string();
-        let cs = &data[16..20];
-        let norm_hash = fnv1a_64_normalized(&data);
+        ingest_profile(
+            &fname,
+            &data,
+            &mut rgb,
+            &mut gray,
+            &mut report_rows,
+            &mut skipped,
+            report_mode,
+        );
+    }
 
-        if cs == b"RGB " {
-            let Some(cp_name) = identify_primaries(&data) else {
-                skipped += 1;
-                continue;
-            };
-            let Some((tf_name, err)) = identify_trc(&data, b"rTRC") else {
-                skipped += 1;
-                continue;
-            };
-            if err > 56 {
-                skipped += 1;
-                continue;
-            }
-
-            // Compatibility-normalization exclusions — see constants above
-            // for rationale. Skips categories of profile where matrix+TRC
-            // substitution would diverge from full-CMS rendering; those
-            // profiles still work, they just take the full-CMS path.
-            if is_excluded_primary(cp_name)
-                || (is_para3_excluded_primary(cp_name) && is_para_functype3(&data, b"rTRC"))
-            {
-                skipped += 1;
-                continue;
-            }
-
-            // Empirical intent-safety check only once per unique hash — this
-            // is where the cost is (moxcms builds + transforms two profiles
-            // over a 320-pixel ramp for each of 3 intents, ~1-5ms).
-            let (mask, provenance) = compute_rgb_intent_mask(&data, cp_name, tf_name);
-
-            if report_mode {
-                report_rows.push(build_report_row(
-                    &fname, cp_name, tf_name, &data, mask, provenance,
-                ));
-            }
-
-            rgb.entry(norm_hash)
-                .and_modify(|row| {
-                    row.max_err = row.max_err.max(err);
-                    // AND masks when multiple profiles collapse to the
-                    // same normalized hash: the result must be safe for
-                    // every collapsed input.
-                    row.intent_mask &= mask;
-                })
-                .or_insert(RgbRow {
-                    hash: norm_hash,
-                    cp: cp_name,
-                    tf: tf_name,
-                    max_err: err,
-                    intent_mask: mask,
-                    desc: fname.clone(),
-                });
-        } else if cs == b"GRAY" {
-            let trc = identify_trc(&data, b"kTRC").or_else(|| identify_trc(&data, b"gTRC"));
-            let Some((tf_name, err)) = trc else {
-                skipped += 1;
-                continue;
-            };
-            if err > 56 {
-                skipped += 1;
-                continue;
-            }
-
-            let mask = gray_intent_mask(&data);
-            gray.entry(norm_hash)
-                .and_modify(|row| {
-                    row.max_err = row.max_err.max(err);
-                    row.intent_mask &= mask;
-                })
-                .or_insert(GrayRow {
-                    hash: norm_hash,
-                    tf: tf_name,
-                    max_err: err,
-                    intent_mask: mask,
-                    desc: fname.clone(),
-                });
-        }
+    // The workspace's own committed CICP-bundle profiles (RGB + GRAY) —
+    // these are what zenpixels-convert embeds into encoded output, so the
+    // identification tables must know them.
+    let bundle = collect_bundle_profiles();
+    eprintln!(
+        "Ingesting {} unique committed cicp-bundle profiles...",
+        bundle.len()
+    );
+    for (fname, data) in &bundle {
+        scanned += 1;
+        ingest_profile(
+            fname,
+            data,
+            &mut rgb,
+            &mut gray,
+            &mut report_rows,
+            &mut skipped,
+            report_mode,
+        );
     }
 
     // ── Write tables ──────────────────────────────────────────────────
