@@ -10,10 +10,10 @@ Two crates: **zenpixels** (types, buffers, metadata) and **zenpixels-convert** (
 
 ```toml
 # Types only — for codec crates
-zenpixels = "0.2.11"
+zenpixels = "0.2.13"
 
 # Types + conversion — for processing pipelines
-zenpixels-convert = "0.2.11"
+zenpixels-convert = "0.2.13"
 ```
 
 ## Quick start
@@ -152,6 +152,7 @@ Every buffer carries one. Every codec declares which ones it produces and consum
 PixelDescriptor::RGB8_SRGB        // u8 RGB, sRGB transfer, BT.709 primaries
 PixelDescriptor::RGBAF32_LINEAR   // f32 RGBA, linear light
 PixelDescriptor::BGRA8_SRGB       // u8 BGRA (Windows/DirectX order)
+PixelDescriptor::RGB16_BT2100_PQ  // u16 RGB, BT.2020 + PQ — HDR10-style stills
 PixelDescriptor::OKLABF32         // f32 Oklab L,a,b
 ```
 
@@ -162,6 +163,8 @@ PixelDescriptor::OKLABF32         // f32 Oklab L,a,b
 `ColorContext` bundles ICC profile bytes and/or CICP codes. Travels with pixel data via `Arc` — cheap to clone, cheap to share across pipeline stages.
 
 `ColorOrigin` is the immutable provenance record: *how the source file described its color*, not what the pixels currently are. Used at encode time to decide whether to re-embed the original profile.
+
+**CICP → ICC synthesis** (zenpixels-convert): `synthesize_icc_for_cicp(Cicp)` resolves an embeddable ICC profile for any assigned H.273 combination — bundled compressed database (`icc-db` feature, on by default; ~36 KB asset, lazily decoded per transfer group, no CMS required), with PQ/HLG HDR included. `synthesize_gray_icc_for_cicp` is the GRAY-class sibling for single-channel output (libpng rejects gray images paired with RGB-class profiles). The sRGB default answers `NotNeeded`; everything the database serves round-trips back through `extract_cicp` / `identify_common`.
 
 ### Orientation
 
@@ -181,6 +184,11 @@ assert_eq!(undone, Orientation::Identity);
 let (w, h) = Orientation::Rotate90.output_dimensions(1920, 1080);
 assert_eq!((w, h), (1080, 1920));
 ```
+
+The buffer-baking half lives in zenpixels-convert: `apply_orientation`
+(fresh buffer, SIMD-tiled transpose for 4-byte pixels), `apply_orientation_into`
+(caller-provided target, no allocation), and `apply_orientation_in_place`
+(reuses the buffer's own allocation; see below).
 
 ## Pixel buffers
 
@@ -210,6 +218,27 @@ Views: `sub_rows(y, count)` and `crop_view(x, y, w, h)` are zero-copy. `crop_cop
 ### Allocation
 
 `try_new()` for tight stride, `try_new_simd_aligned()` for SIMD-aligned rows, `from_vec()` to wrap an existing allocation. All constructors validate dimensions, stride, and alignment. `into_vec()` recovers the allocation for pool reuse.
+
+### In-place layout transforms
+
+Layout-changing in-place work goes through one atomic primitive:
+`PixelBuffer::transform_in_place` runs a transform over the buffer's own
+bytes and adopts the resulting geometry/descriptor/color context in the
+same call — the buffer and its bytes can never disagree (there is
+deliberately no slice-level equivalent). zenpixels-convert builds three
+operations on it, all allocation-free:
+
+- `buf.reduce_to_load_bearing_format_in_place(force)` — bit-exact narrowing
+  (drop an all-opaque alpha lane, collapse `R==G==B` to gray, narrow
+  bit-replicated U16 to U8) driven by a SIMD content scan;
+- `try_adapt_in_place(&mut buf, target)` — metadata re-tags, `Rgba8`↔`Bgra8`
+  SIMD B↔R swap, and contract-exact alpha-lane drops (RGBX→RGB and friends);
+- `apply_orientation_in_place(&mut buf, orientation)` — orientation baking
+  without a second pixel buffer.
+
+The analysis half is allocation-free too: `slice.determine_load_bearing()`
+reports `uses_alpha` / `uses_chroma` / `uses_low_bits` (~75 GiB/s fused
+scan) so encoders can route formats without rewriting anything.
 
 ### Interop
 
@@ -266,7 +295,7 @@ Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `C
 
 **CMS** — `PluggableCms` trait (dyn-compatible, accepts `ColorProfileSource` directly — CICP, named profiles, or raw ICC bytes) plugs an external backend into `RowConverter`. `RowTransformMut` is the `&mut self` row-level transform returned by plugins. The `cms-moxcms` feature provides a concrete backend using [moxcms](https://crates.io/crates/moxcms), supporting u8/u16/f32 transforms with automatic profile identification. The older `ColorManagement` / `RowTransform` traits (ICC-bytes-only, `&self`) are retained for backward compatibility.
 
-**ICC identification** — `zenpixels::icc::identify_common(icc_bytes)` recognizes 183 well-known RGB + 21 grayscale profiles via normalized FNV-1a hash lookup (~100ns). Returns primaries, transfer function, and `IdentificationUse` (whether matrix+TRC substitution is safe vs CMS-only). Covers sRGB, Display P3, BT.2020, Adobe RGB variants across ICC v2–v5.
+**ICC identification** — `zenpixels::icc::identify_common(icc_bytes)` recognizes 298 well-known RGB + 69 grayscale profiles via normalized FNV-1a hash lookup (~100ns), including every profile the CICP database itself embeds in encoded output. Returns primaries, transfer function, and `IdentificationUse` (whether matrix+TRC substitution is safe vs CMS-only). Covers sRGB, Display P3, BT.2020, Adobe RGB variants across ICC v2–v5; `extract_cicp` reads embedded `cICP` tags directly.
 
 ### Pipeline planner
 
@@ -294,6 +323,8 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | Feature | Default | What it enables |
 |---|---|---|
 | `std` | yes | Standard library |
+| `icc-db` | yes | Bundled CICP→ICC profile database (~36 KB asset) behind `synthesize_icc_for_cicp` / `synthesize_gray_icc_for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
+| `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed convenience methods (`to_rgb8()`, `to_rgba8()`, etc.) |
 | `imgref` | | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
 | `planar` | | Multi-plane image types |
