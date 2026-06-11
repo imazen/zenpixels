@@ -12,6 +12,21 @@
 
 ### zenpixels-convert — changed
 
+- **Signal-range crossings now refuse at plan time instead of mislabeling.**
+  `ConvertPlan::new` (and everything above it: `new_explicit`,
+  `RowConverter`, `convert_buffer`, `adapt_for_encode*`) returns
+  `ConvertError::NoPath` when source and target
+  `SignalRange` differ. No Narrow↔Full expand/contract kernels exist, and
+  the previous behavior planned the *other* descriptor differences and
+  emitted the source's range-coded values under the target's range label —
+  mislabeled pixels (lifted blacks narrow→full, crush on the way back),
+  not a conversion. Same-range plans, including Narrow→Narrow
+  value-preserving steps, are unaffected; narrow data still zero-copies to
+  same-range targets. The `NoPath` display names the range crossing so the
+  refusal isn't two identical-looking descriptors. (Real expand/contract
+  kernels remain future work, tracked as zencodec's cross-repo
+  Known-Issue 3.)
+
 - **Tone-map helpers gained explicit out-of-domain contracts** (zenpixels#39
   Rung 1): `reinhard_tonemap` and `reinhard_inverse` clamp negative and NaN
   inputs to 0.0, and `reinhard_tonemap(+∞)` returns 1.0 (the limit).
@@ -65,6 +80,16 @@ Both crates release as 0.2.13 (zenpixels skips 0.2.12 to keep the pair in lockst
 
 ### zenpixels — changed
 
+- **`SignalRange` semantics fully specified in docs** — the enum now pins the
+  ITU "limited/studio swing" definition: anchors scale by `×2^(N−8)` (8-bit
+  16–235 / 16–240, 10-bit 64–940 / 64–960, 12-bit 256–3760 / 256–3840), the
+  luma span applies to every RGB/gray channel, excursions (sub-blacks,
+  super-whites, xvYCC) are legal and an eventual expand kernel must choose
+  clamp-vs-preserve, the 1:1 mapping to CICP `video_full_range_flag` / AV1
+  `color_range`, and the no-relabeling rule (`with_signal_range` describes,
+  never rescales). Also documents the cross-depth caveat: full-scale depth
+  rescaling preserves ITU anchors only approximately (8-bit 235 → 60 395 vs
+  the ITU 16-bit anchor 60 160). Docs only; no behavior change in zenpixels.
 - **ICC identification tables regenerated to include the workspace's own committed CICP-bundle profiles** (855d8e48) — `icc-gen` now decodes `zenpixels-convert`'s `cicp_bundle.lz4` (both the RGB and GRAY locator tables) and feeds every unique profile through the same classification pipeline as the on-disk corpus. +28 live RGB rows and +40 live gray rows (every white point of gray transfers 1/4/6/8/11/12/13/14/15/16); 40 enum-unrepresentable RGB gamuts emitted as `[primaries deferred]` comments; pure additions, no existing corpus entries changed. Profiles this workspace embeds in encoded output are now hash-recognizable on the way back in.
 
 ### zenpixels — fixed

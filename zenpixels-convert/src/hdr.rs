@@ -121,9 +121,10 @@ pub fn reinhard_inverse(v: f32) -> f32 {
 #[cfg(feature = "std")]
 #[inline]
 #[must_use]
+// Not clamp(): max(NaN, 0.0) == 0.0 makes the NaN result deterministic
+// (the documented contract above), where clamp would propagate NaN.
+#[allow(clippy::manual_clamp)]
 pub fn exposure_tonemap(v: f32, exposure: f32) -> f32 {
-    // .max then .min instead of .clamp: max(NaN, 0.0) == 0.0 makes the
-    // NaN result deterministic, where clamp would propagate it.
     (v * 2.0f32.powf(exposure)).max(0.0).min(1.0)
 }
 
@@ -163,7 +164,12 @@ fn nits_to_u16(nits: f64) -> u16 {
 /// contract); no alignment assumption on the backing bytes.
 #[inline]
 fn sample_f32(bytes: &[u8], k: usize) -> f32 {
-    f32::from_ne_bytes([bytes[4 * k], bytes[4 * k + 1], bytes[4 * k + 2], bytes[4 * k + 3]])
+    f32::from_ne_bytes([
+        bytes[4 * k],
+        bytes[4 * k + 1],
+        bytes[4 * k + 2],
+        bytes[4 * k + 3],
+    ])
 }
 
 /// Measure MaxCLL / MaxFALL (CTA-861.3-A) from relative-linear RGB(A) f32
@@ -217,7 +223,10 @@ pub fn compute_content_light_level(
         }
     }
     let fall = sum_max_nits / (w as f64 * h as f64);
-    Ok(ContentLightLevel::new(nits_to_u16(max_nits), nits_to_u16(fall)))
+    Ok(ContentLightLevel::new(
+        nits_to_u16(max_nits),
+        nits_to_u16(fall),
+    ))
 }
 
 /// Quantize relative-linear RGB(A) f32 pixels to PQ-encoded 16-bit RGB
@@ -285,13 +294,9 @@ pub fn encode_pq16(
         }
     }
 
-    let buffer = PixelBuffer::from_vec(
-        out,
-        px.width(),
-        px.rows(),
-        PixelDescriptor::RGB16_BT2100_PQ,
-    )
-    .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
+    let buffer =
+        PixelBuffer::from_vec(out, px.width(), px.rows(), PixelDescriptor::RGB16_BT2100_PQ)
+            .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
     let fall = sum_max_nits / (w as f64 * h as f64);
     Ok((
         buffer,
@@ -414,7 +419,19 @@ mod tests {
     #[test]
     fn reinhard_output_range_and_monotonicity() {
         let grid: [f32; 13] = [
-            0.0, 1e-6, 1e-3, 0.05, 0.1, 0.5, 1.0, 2.0, 10.0, 1e3, 1e6, 1e9, f32::MAX,
+            0.0,
+            1e-6,
+            1e-3,
+            0.05,
+            0.1,
+            0.5,
+            1.0,
+            2.0,
+            10.0,
+            1e3,
+            1e6,
+            1e9,
+            f32::MAX,
         ];
         let mut prev = -1.0f32;
         for &v in &grid {
@@ -535,7 +552,12 @@ mod tests {
 
     #[test]
     fn cll_strided_matches_tight() {
-        let pixels = [[0.25f32, 0.5, 1.0], [2.0, 0.1, 0.3], [0.0, 0.0, 4.0], [1.5; 3]];
+        let pixels = [
+            [0.25f32, 0.5, 1.0],
+            [2.0, 0.1, 0.3],
+            [0.0, 0.0, 4.0],
+            [1.5; 3],
+        ];
         let tight = rgbf32_buffer(&pixels, 2, 2);
         let want =
             compute_content_light_level(tight.as_slice(), REFERENCE_DIFFUSE_WHITE_NITS).unwrap();
@@ -553,8 +575,8 @@ mod tests {
             }
         }
         let bytes: &[u8] = bytemuck::cast_slice(&padded);
-        let slice = PixelSlice::new(bytes, 2, 2, stride_f32 * 4, PixelDescriptor::RGBF32_LINEAR)
-            .unwrap();
+        let slice =
+            PixelSlice::new(bytes, 2, 2, stride_f32 * 4, PixelDescriptor::RGBF32_LINEAR).unwrap();
         let got = compute_content_light_level(slice, REFERENCE_DIFFUSE_WHITE_NITS).unwrap();
         assert_eq!(got, want);
     }
@@ -624,5 +646,4 @@ mod tests {
         let (_, inline) = encode_pq16(buf.as_slice(), REFERENCE_DIFFUSE_WHITE_NITS).unwrap();
         assert_eq!(direct, inline);
     }
-
 }

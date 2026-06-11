@@ -231,6 +231,16 @@
 //!   (b) Composed multi-step plans for less common pairs.
 //!   (c) Hub path through linear sRGB f32 as a universal fallback.
 //!
+//! - **Signal range never converts — it refuses.** There are no
+//!   Narrow↔Full (limited↔full / studio↔full swing) conversion kernels, so
+//!   any plan whose endpoints differ in [`SignalRange`] fails with
+//!   [`ConvertError::NoPath`] instead of relabeling unscaled values
+//!   (which would lift or crush blacks). Narrow data passes through only
+//!   verbatim — same range on both sides (value-preserving steps like
+//!   swizzles are fine). If you hit the refusal, either present a
+//!   same-range target or expand the data upstream where the semantics
+//!   are known.
+//!
 //! ### Step 4: Encode
 //!
 //! The encoder receives pixel data in a format it natively supports and

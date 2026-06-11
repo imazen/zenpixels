@@ -8,9 +8,10 @@
 //! `Vec<&'static str>`. Tests use this to assert that conversions execute
 //! the expected sequence of kernels without redundant work or silent skips.
 //!
-//! When the feature is off (the default), [`record_step`] is an
-//! `#[inline(always)]` empty function — the call site lowers to no
-//! instructions and the recording infrastructure compiles out entirely.
+//! When the feature is off (the default), `record_step` (crate-internal,
+//! so not linkable here) is an `#[inline(always)]` empty function — the
+//! call site lowers to no instructions and the recording infrastructure
+//! compiles out entirely.
 //! Production builds pay literally nothing.
 //!
 //! Step *parameters* (luma coefficients, matte color, etc.) are not

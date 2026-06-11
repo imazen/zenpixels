@@ -565,16 +565,51 @@ impl fmt::Display for ColorPrimaries {
 // Signal range
 // ---------------------------------------------------------------------------
 
-/// Signal range for pixel values.
+/// Signal (quantization) range of the encoded channel values.
+///
+/// `Narrow` is the single ITU convention variously called *limited*, *video*,
+/// *studio swing*, *MPEG*, or *TV* range (BT.601 / BT.709 / BT.2100 — the
+/// aliases do not differ in meaning). Its anchor values scale with bit depth
+/// as `anchor × 2^(N−8)` — a bit shift, **not** a full-scale stretch:
+///
+/// | depth  | luma / R'G'B'  | chroma (Cb/Cr) |
+/// |--------|----------------|----------------|
+/// | 8-bit  | 16–235         | 16–240         |
+/// | 10-bit | 64–940         | 64–960         |
+/// | 12-bit | 256–3760       | 256–3840       |
+///
+/// For the RGB and gray layouts this crate describes, narrow means
+/// studio-swing R'G'B' / Y′: the **luma** span applies to every channel. The
+/// wider chroma span would matter only for YCbCr layouts (none exist here).
+///
+/// Values outside the anchors are *legal* in a narrow signal — sub-blacks
+/// (1–15·2^(N−8)), super-whites (236–254·2^(N−8)), and xvYCC's deliberate
+/// gamut excursions. Any future expand-to-full conversion must choose
+/// clamp-vs-preserve for them explicitly.
+///
+/// Maps 1:1 to CICP's `video_full_range_flag` and AV1's `color_range`
+/// ([`Full`](Self::Full) = full-range flag set, [`Narrow`](Self::Narrow) =
+/// limited).
+///
+/// **There are no Narrow↔Full conversion kernels yet.** `zenpixels-convert`
+/// refuses range-crossing conversions rather than relabeling (relabeling
+/// without rescaling lifts or crushes blacks); narrow data must be preserved
+/// verbatim end-to-end. Caveat while that holds: cross-*depth* conversion of
+/// narrow data uses full-scale rescaling (×(2^M−1)/(2^N−1)), which maps ITU
+/// anchors only approximately (8-bit 235 widens to 60 395 where the ITU
+/// 16-bit anchor is 235·256 = 60 160, ≈0.36 % of full scale); exact anchor
+/// remapping is the future range kernels' job.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum SignalRange {
-    /// Full range: 0-2^N-1 (e.g. 0-255 for 8-bit).
+    /// Full range: 0 – 2^N−1 (0–255 for 8-bit, 0–65535 for 16-bit).
     #[default]
     Full = 0,
-    /// Narrow (limited/studio) range: 16-235 luma, 16-240 chroma (for 8-bit).
+    /// Narrow (limited/studio) range: 16–235 luma applied to all RGB/gray
+    /// channels, scaled by 2^(N−8) at higher depths — see the type-level
+    /// docs for the full table, excursion semantics, and conversion rules.
     Narrow = 1,
 }
 
@@ -609,7 +644,9 @@ pub struct PixelDescriptor {
     pub alpha: Option<AlphaMode>,
     /// Color primaries (gamut). Defaults to BT.709/sRGB.
     pub primaries: ColorPrimaries,
-    /// Signal range (full vs narrow/limited).
+    /// Signal range (full vs narrow/limited). See [`SignalRange`] for the
+    /// exact ITU anchor definition, bit-depth scaling, and the
+    /// no-relabeling conversion rule.
     pub signal_range: SignalRange,
 }
 
@@ -1164,6 +1201,12 @@ impl PixelDescriptor {
     }
 
     /// Return a copy with a different signal range.
+    ///
+    /// This **relabels** the descriptor — it does not rescale any pixel
+    /// values. Only use it to describe what the data already is (e.g.
+    /// tagging broadcast HDR that is genuinely studio-swing as
+    /// [`SignalRange::Narrow`]). Mislabeling lifts or crushes blacks; see
+    /// [`SignalRange`] for the anchor definition and conversion rules.
     #[inline]
     #[must_use]
     pub const fn with_signal_range(self, signal_range: SignalRange) -> Self {

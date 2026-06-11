@@ -62,7 +62,18 @@ impl fmt::Display for ConvertError {
                     from.layout(),
                     to.channel_type(),
                     to.layout()
-                )
+                )?;
+                // A range crossing can otherwise print two identical-looking
+                // descriptors; name the actual blocker.
+                if from.signal_range != to.signal_range {
+                    write!(
+                        f,
+                        " (signal range {} -> {}: no narrow<->full conversion kernels exist; \
+                         relabeling without rescaling would corrupt pixel values)",
+                        from.signal_range, to.signal_range
+                    )?;
+                }
+                Ok(())
             }
             Self::BufferSize { expected, actual } => {
                 write!(

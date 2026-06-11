@@ -14,9 +14,9 @@
 //!   * [`PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format`]
 //!     -- analysis + buffer rewrite into a fresh allocation, `None` when
 //!     no narrowing is possible
-//!   * [`PixelSliceMutLoadBearingExt::reduce_to_load_bearing_format_in_place`]
+//!   * [`PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place`]
 //!     -- analysis + buffer rewrite into the buffer's own bytes (no
-//!     allocation), returning a re-described [`PixelSliceMut`]
+//!     allocation), re-describing the buffer in the same call
 //!
 //! Every reduction this module reports is **bit-exact invertible**: drop
 //! an all-max alpha lane and a decoder resynthesizes it; collapse

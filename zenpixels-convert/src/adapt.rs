@@ -104,6 +104,12 @@ pub struct Adapted<'a> {
 /// If the input already matches one of the `supported` formats, returns
 /// `Cow::Borrowed` (zero-copy). Otherwise, converts to the best match.
 ///
+/// A [`SignalRange`](zenpixels::SignalRange) mismatch with every supported
+/// format fails with [`ConvertError::NoPath`]: no Narrow↔Full kernels
+/// exist, and neither the zero-copy paths nor the planner will relabel a
+/// range without rescaling. Offer a same-range target to accept narrow
+/// input verbatim.
+///
 /// # Arguments
 ///
 /// * `data` - Raw pixel bytes, `rows * stride` bytes minimum.
@@ -818,19 +824,44 @@ mod tests {
         );
     }
 
+    /// A signal-range mismatch refuses loudly. No Narrow↔Full kernels
+    /// exist, so neither zero-copy relabeling nor an allocating
+    /// "conversion" is acceptable — the latter would emit narrow-coded
+    /// values under a full-range label (this test's predecessor codified
+    /// exactly that bug by asserting only that an allocation happened).
     #[test]
-    fn transfer_agnostic_match_requires_same_signal_range() {
+    fn signal_range_mismatch_refuses_not_relabels() {
         let data = test_rgb8_data();
         let source = PixelDescriptor::RGB8.with_signal_range(SignalRange::Narrow);
         let target = PixelDescriptor::RGB8_SRGB; // Full range
 
-        let result = adapt_for_encode(&data, source, 2, 1, 6, &[target]).unwrap();
-
-        // Must not zero-copy relabel — signal ranges differ.
+        let err = adapt_for_encode(&data, source, 2, 1, 6, &[target]).unwrap_err();
         assert!(
-            matches!(result.data, Cow::Owned(_)),
-            "different signal range must trigger conversion, not zero-copy relabel"
+            matches!(*err.error(), ConvertError::NoPath { .. }),
+            "range crossing must refuse (no kernels), got: {}",
+            err.error()
         );
+    }
+
+    /// Narrow data is accepted verbatim when a same-range target is offered:
+    /// the transfer-agnostic zero-copy arm applies as usual once the signal
+    /// ranges agree.
+    #[test]
+    fn signal_range_match_zero_copies_narrow_verbatim() {
+        let data = test_rgb8_data();
+        let source = PixelDescriptor::RGB8
+            .with_primaries(ColorPrimaries::Bt709)
+            .with_signal_range(SignalRange::Narrow);
+        let full_target = PixelDescriptor::RGB8_SRGB;
+        let narrow_target = PixelDescriptor::RGB8_SRGB.with_signal_range(SignalRange::Narrow);
+
+        let result =
+            adapt_for_encode(&data, source, 2, 1, 6, &[full_target, narrow_target]).unwrap();
+        assert!(
+            matches!(result.data, Cow::Borrowed(_)),
+            "same-range target must zero-copy"
+        );
+        assert_eq!(result.descriptor.signal_range, SignalRange::Narrow);
     }
 
     #[test]

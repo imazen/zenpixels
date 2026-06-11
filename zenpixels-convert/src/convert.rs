@@ -270,7 +270,11 @@ fn assert_not_cmyk(desc: &PixelDescriptor) {
 impl ConvertPlan {
     /// Create a conversion plan from `from` to `to`.
     ///
-    /// Returns `Err` if no conversion path exists.
+    /// Returns `Err` if no conversion path exists. A
+    /// [`SignalRange`](zenpixels::SignalRange) mismatch always refuses
+    /// ([`ConvertError::NoPath`]): there are no Narrow↔Full conversion
+    /// kernels, and relabeling without rescaling would corrupt pixels — see
+    /// the signal-range notes on the [crate docs](crate#step-3-convert).
     ///
     /// # Panics
     ///
@@ -286,6 +290,18 @@ impl ConvertPlan {
                 to,
                 steps: vec![ConvertStep::Identity],
             });
+        }
+
+        // Refuse signal-range crossings: no Narrow↔Full steps exist (no
+        // expand/contract kernels), and a plan built from the *other*
+        // descriptor differences would emit the source's range-coded values
+        // under the target's range label — mislabeled pixels (lifted blacks
+        // when narrow data is labeled full, crushed when full data is later
+        // expanded as narrow), not a conversion. Until range kernels land,
+        // range is preserved verbatim or the conversion fails loudly.
+        // Same-range plans (including Narrow→Narrow) are unaffected.
+        if from.signal_range != to.signal_range {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
 
         let mut steps = Vec::with_capacity(3);

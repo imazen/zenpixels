@@ -1086,6 +1086,35 @@ mod tests {
         assert_eq!(*err.error(), ConvertError::AlphaRemovalForbidden);
     }
 
+    /// Signal-range crossings refuse at plan construction in both
+    /// directions: there are no Narrow↔Full kernels, and planning the other
+    /// descriptor differences would relabel range-coded values without
+    /// rescaling (lifted or crushed blacks). Same-range narrow plans —
+    /// value-preserving steps — stay legal.
+    #[test]
+    fn signal_range_crossing_refuses_at_plan_time() {
+        use zenpixels::SignalRange;
+        let full = PixelDescriptor::RGB8_SRGB;
+        let narrow = PixelDescriptor::RGB8_SRGB.with_signal_range(SignalRange::Narrow);
+
+        let err = ConvertPlan::new(narrow, full).unwrap_err();
+        assert!(matches!(*err.error(), ConvertError::NoPath { .. }));
+        // The message must name the real blocker, not just print two
+        // identical channel-type/layout pairs.
+        assert!(
+            err.error().to_string().contains("signal range"),
+            "NoPath display should name the range crossing: {}",
+            err.error()
+        );
+
+        let err = ConvertPlan::new(full, narrow).unwrap_err();
+        assert!(matches!(*err.error(), ConvertError::NoPath { .. }));
+
+        // Same-range narrow→narrow (layout-only change) still plans.
+        let narrow_rgba = PixelDescriptor::RGBA8_SRGB.with_signal_range(SignalRange::Narrow);
+        ConvertPlan::new(narrow, narrow_rgba).expect("same-range narrow plan must succeed");
+    }
+
     #[test]
     fn new_explicit_depth_forbid() {
         let from = PixelDescriptor::new(
