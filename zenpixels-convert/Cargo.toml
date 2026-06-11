@@ -47,6 +47,9 @@ __trace_ops = ["std"]
 # can A/B the SIMD transpose against the scalar oracle on the same input. `__`
 # prefix keeps it out of the public-API snapshot.
 __bench_orient = []
+# Bench-only: exposes `pub mod __bench_scan` shims for
+# `bench_load_bearing`. Same convention as `__bench_u16_hybrids`.
+__bench_scan = []
 
 [dependencies]
 zenpixels = { workspace = true, default-features = false, features = ["icc"] }
@@ -59,6 +62,9 @@ archmage = { version = "0.9.26", default-features = false }
 # native F16C (x86-64-v3) AND NEON-fp16 (aarch64, rustversion-gated, MSRV-safe)
 # backends + a branchless software fallback — replacing this crate's bespoke
 # x86-only F16C dispatch (which fell back to scalar on aarch64).
+# Deliberately no `w512`: the `scan` predicates use 256-bit types (native
+# on AVX2, 2×128 polyfill below), and the 512-bit type set isn't worth its
+# compile-time cost without a stronger AVX-512 use case in this crate.
 magetypes = { version = "0.9.26", default-features = false }
 paste = "1.0.15"
 once_cell = { version = "1.21.4", default-features = false, features = ["race", "alloc"] }
@@ -127,6 +133,12 @@ harness = false
 name = "bench_t7_gamut"
 path = "benches/bench_t7_gamut.rs"
 harness = false
+
+[[bench]]
+name = "bench_load_bearing"
+path = "benches/bench_load_bearing.rs"
+harness = false
+required-features = ["__bench_scan"]
 
 [[bench]]
 name = "bench_matlut_vs_poly"

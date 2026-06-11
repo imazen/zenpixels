@@ -5,7 +5,7 @@
 # all-features section.
 # DO NOT EDIT BY HAND — commit regenerated changes together with the code.
 
-## default features (2254 items)
+## default features (2256 items)
 
 pub mod zenpixels
 pub use zenpixels::At
@@ -167,6 +167,7 @@ pub fn zenpixels::buffer::PixelSliceMut<'a, P>::as_strided_bytes_mut(&mut self) 
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<zenpixels::color::ColorContext>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::erase(self) -> zenpixels::buffer::PixelSliceMut<'a>
+pub fn zenpixels::buffer::PixelSliceMut<'a, P>::into_strided_bytes(self) -> &'a mut [u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::reinterpret(self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row(&self, u32) -> &[u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row_mut(&mut self, u32) -> &mut [u8]
@@ -2193,6 +2194,7 @@ pub fn zenpixels::buffer::PixelSliceMut<'a, P>::as_strided_bytes_mut(&mut self) 
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<zenpixels::color::ColorContext>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::erase(self) -> zenpixels::buffer::PixelSliceMut<'a>
+pub fn zenpixels::buffer::PixelSliceMut<'a, P>::into_strided_bytes(self) -> &'a mut [u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::reinterpret(self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row(&self, u32) -> &[u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row_mut(&mut self, u32) -> &mut [u8]
@@ -2262,7 +2264,7 @@ pub const zenpixels::buffer::Bgrx::DESCRIPTOR: zenpixels::descriptor::PixelDescr
 impl zenpixels::buffer::Pixel for zenpixels::buffer::Rgbx
 pub const zenpixels::buffer::Rgbx::DESCRIPTOR: zenpixels::descriptor::PixelDescriptor
 
-## all features except _* (3079 items)
+## all features except _* (3081 items)
 
 pub mod zenpixels
 pub use zenpixels::At
@@ -2458,6 +2460,7 @@ pub fn zenpixels::buffer::PixelSliceMut<'a, P>::as_strided_bytes_mut(&mut self) 
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<zenpixels::color::ColorContext>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::erase(self) -> zenpixels::buffer::PixelSliceMut<'a>
+pub fn zenpixels::buffer::PixelSliceMut<'a, P>::into_strided_bytes(self) -> &'a mut [u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::reinterpret(self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row(&self, u32) -> &[u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row_mut(&mut self, u32) -> &mut [u8]
@@ -5140,6 +5143,7 @@ pub fn zenpixels::buffer::PixelSliceMut<'a, P>::as_strided_bytes_mut(&mut self) 
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<zenpixels::color::ColorContext>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::erase(self) -> zenpixels::buffer::PixelSliceMut<'a>
+pub fn zenpixels::buffer::PixelSliceMut<'a, P>::into_strided_bytes(self) -> &'a mut [u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::reinterpret(self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row(&self, u32) -> &[u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row_mut(&mut self, u32) -> &mut [u8]

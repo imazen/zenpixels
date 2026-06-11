@@ -444,14 +444,29 @@ pub mod __bench_u16_hybrids {
         crate::fast_gamut::__bench_u16_poly_decode_poly_encode(m, src, dst)
     }
 }
+
+/// Bench-only shims exposing the crate-private `scan` fused kernel to
+/// `benches/bench_load_bearing.rs` for pass-structure comparison.
+/// Gated behind `__bench_scan`; not public API in any sense beyond the
+/// bench file.
+#[cfg(feature = "__bench_scan")]
+#[doc(hidden)]
+pub mod __bench_scan {
+    pub use crate::scan::{FusedRequest, FusedResult, fused_predicates_rgba8_cg};
+}
 pub mod gamut;
 pub mod hdr;
 pub mod icc_profiles;
+pub mod load_bearing;
 pub mod oklab;
 pub mod orient;
 pub mod output;
 #[cfg(feature = "pipeline")]
 pub mod pipeline;
+// Crate-internal SIMD predicates backing `load_bearing` -- the module
+// stays private so the per-(layout × channel-type) kernel set never
+// becomes public API surface. Consume via `PixelSliceLoadBearingExt`.
+mod scan;
 
 // Re-export key conversion types at crate root.
 pub use adapt::adapt_for_encode_explicit;
@@ -478,6 +493,10 @@ pub use gamut::{
     GamutMatrix, apply_matrix_f32, apply_matrix_row_f32, apply_matrix_row_rgba_f32,
     conversion_matrix,
 };
+
+// Re-export the load-bearing analysis surface: one trait, one report.
+// The scan-level predicates stay crate-internal.
+pub use load_bearing::{LoadBearingReport, PixelSliceLoadBearingExt, PixelSliceMutLoadBearingExt};
 
 // Re-export HDR types and tone mapping.
 #[cfg(feature = "std")]
