@@ -15,7 +15,15 @@ include = [
 ]
 
 [features]
-default = ["std"]
+default = ["std", "icc-db"]
+# The committed CICP->ICC profile database: the LZ4-compressed bundle
+# (~36 KB asset) + its lazy decode machinery, giving synthesize_icc_for_cicp /
+# synthesize_gray_icc_for_cicp full assigned-H.273-grid coverage with no CMS.
+# Disable (default-features = false) for size-sensitive / wasm builds: the
+# synthesize fns then answer NeedsCms outside the sRGB default and the four
+# bundled consts, and the load-bearing gray-ICC swap degrades to suppressing
+# the collapse for ICC-bearing sources.
+icc-db = ["dep:lz4_flex"]
 std = ["zenpixels/std", "linear-srgb/std", "garb/std"]
 # Unlocks the f16 16-wide AVX-512F summon-up inside the V3 `F16Convert` slice
 # entry (magetypes' `avx512` kernels are cfg-gated on this; it transitively
@@ -72,7 +80,7 @@ once_cell = { version = "1.21.4", default-features = false, features = ["race", 
 # (block format only); decodes the standard LZ4 blocks emitted by the icc-gen
 # `cicp_bundle_gen` build tool. The `safe-decode` feature keeps us inside
 # `#![forbid(unsafe_code)]`.
-lz4_flex = { version = "0.13.1", default-features = false, features = ["safe-decode"] }
+lz4_flex = { version = "0.13.1", default-features = false, features = ["safe-decode"], optional = true }
 whereat = { version = "0.1.5", default-features = false }
 moxcms = { version = "0.8.1", optional = true, features = ["options"] }
 

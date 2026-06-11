@@ -5,7 +5,7 @@
 # all-features section.
 # DO NOT EDIT BY HAND — commit regenerated changes together with the code.
 
-## default features (2262 items)
+## default features (2292 items)
 
 pub mod zenpixels
 pub use zenpixels::At
@@ -69,6 +69,20 @@ impl core::marker::Unpin for zenpixels::buffer::Bgrx
 impl core::marker::UnsafeUnpin for zenpixels::buffer::Bgrx
 impl core::panic::unwind_safe::RefUnwindSafe for zenpixels::buffer::Bgrx
 impl core::panic::unwind_safe::UnwindSafe for zenpixels::buffer::Bgrx
+pub struct zenpixels::buffer::InPlacePixels<'a>
+pub zenpixels::buffer::InPlacePixels::bytes: &'a mut [u8]
+pub zenpixels::buffer::InPlacePixels::color: core::option::Option<alloc::sync::Arc<zenpixels::color::ColorContext>>
+pub zenpixels::buffer::InPlacePixels::descriptor: zenpixels::descriptor::PixelDescriptor
+pub zenpixels::buffer::InPlacePixels::rows: u32
+pub zenpixels::buffer::InPlacePixels::stride: usize
+pub zenpixels::buffer::InPlacePixels::width: u32
+impl<'a> core::marker::Freeze for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::Send for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::Sync for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::Unpin for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::UnsafeUnpin for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> !core::panic::unwind_safe::UnwindSafe for zenpixels::buffer::InPlacePixels<'a>
 #[non_exhaustive] pub struct zenpixels::buffer::PixelBuffer<P>
 impl zenpixels::buffer::PixelBuffer
 pub fn zenpixels::buffer::PixelBuffer::from_vec(alloc::vec::Vec<u8>, u32, u32, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
@@ -76,6 +90,8 @@ pub fn zenpixels::buffer::PixelBuffer::new(u32, u32, zenpixels::descriptor::Pixe
 pub fn zenpixels::buffer::PixelBuffer::new_simd_aligned(u32, u32, zenpixels::descriptor::PixelDescriptor, usize) -> Self
 pub fn zenpixels::buffer::PixelBuffer::try_new(u32, u32, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
 pub fn zenpixels::buffer::PixelBuffer::try_new_simd_aligned(u32, u32, zenpixels::descriptor::PixelDescriptor, usize) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
+impl zenpixels::buffer::PixelBuffer
+pub fn zenpixels::buffer::PixelBuffer::transform_in_place<F>(&mut self, F) where F: for<'a> core::ops::function::FnOnce(zenpixels::buffer::InPlacePixels<'a>) -> zenpixels::buffer::PixelSliceMut<'a>
 impl<P: zenpixels::buffer::Pixel> zenpixels::buffer::PixelBuffer<P>
 pub fn zenpixels::buffer::PixelBuffer<P>::new_typed(u32, u32) -> Self
 pub fn zenpixels::buffer::PixelBuffer<P>::try_new_typed(u32, u32) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
@@ -167,7 +183,6 @@ pub fn zenpixels::buffer::PixelSliceMut<'a, P>::as_strided_bytes_mut(&mut self) 
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<zenpixels::color::ColorContext>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::erase(self) -> zenpixels::buffer::PixelSliceMut<'a>
-pub fn zenpixels::buffer::PixelSliceMut<'a, P>::into_strided_bytes(self) -> &'a mut [u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::reinterpret(self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row(&self, u32) -> &[u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row_mut(&mut self, u32) -> &mut [u8]
@@ -1984,6 +1999,20 @@ impl core::marker::Unpin for zenpixels::pixel_types::GrayAlphaF32
 impl core::marker::UnsafeUnpin for zenpixels::pixel_types::GrayAlphaF32
 impl core::panic::unwind_safe::RefUnwindSafe for zenpixels::pixel_types::GrayAlphaF32
 impl core::panic::unwind_safe::UnwindSafe for zenpixels::pixel_types::GrayAlphaF32
+pub struct zenpixels::InPlacePixels<'a>
+pub zenpixels::InPlacePixels::bytes: &'a mut [u8]
+pub zenpixels::InPlacePixels::color: core::option::Option<alloc::sync::Arc<zenpixels::color::ColorContext>>
+pub zenpixels::InPlacePixels::descriptor: zenpixels::descriptor::PixelDescriptor
+pub zenpixels::InPlacePixels::rows: u32
+pub zenpixels::InPlacePixels::stride: usize
+pub zenpixels::InPlacePixels::width: u32
+impl<'a> core::marker::Freeze for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::Send for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::Sync for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::Unpin for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::UnsafeUnpin for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> !core::panic::unwind_safe::UnwindSafe for zenpixels::buffer::InPlacePixels<'a>
 pub struct zenpixels::MasteringDisplay
 pub zenpixels::MasteringDisplay::max_luminance: f32
 pub zenpixels::MasteringDisplay::min_luminance: f32
@@ -2017,6 +2046,8 @@ pub fn zenpixels::buffer::PixelBuffer::new(u32, u32, zenpixels::descriptor::Pixe
 pub fn zenpixels::buffer::PixelBuffer::new_simd_aligned(u32, u32, zenpixels::descriptor::PixelDescriptor, usize) -> Self
 pub fn zenpixels::buffer::PixelBuffer::try_new(u32, u32, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
 pub fn zenpixels::buffer::PixelBuffer::try_new_simd_aligned(u32, u32, zenpixels::descriptor::PixelDescriptor, usize) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
+impl zenpixels::buffer::PixelBuffer
+pub fn zenpixels::buffer::PixelBuffer::transform_in_place<F>(&mut self, F) where F: for<'a> core::ops::function::FnOnce(zenpixels::buffer::InPlacePixels<'a>) -> zenpixels::buffer::PixelSliceMut<'a>
 impl<P: zenpixels::buffer::Pixel> zenpixels::buffer::PixelBuffer<P>
 pub fn zenpixels::buffer::PixelBuffer<P>::new_typed(u32, u32) -> Self
 pub fn zenpixels::buffer::PixelBuffer<P>::try_new_typed(u32, u32) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
@@ -2200,7 +2231,6 @@ pub fn zenpixels::buffer::PixelSliceMut<'a, P>::as_strided_bytes_mut(&mut self) 
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<zenpixels::color::ColorContext>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::erase(self) -> zenpixels::buffer::PixelSliceMut<'a>
-pub fn zenpixels::buffer::PixelSliceMut<'a, P>::into_strided_bytes(self) -> &'a mut [u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::reinterpret(self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row(&self, u32) -> &[u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row_mut(&mut self, u32) -> &mut [u8]
@@ -2270,7 +2300,7 @@ pub const zenpixels::buffer::Bgrx::DESCRIPTOR: zenpixels::descriptor::PixelDescr
 impl zenpixels::buffer::Pixel for zenpixels::buffer::Rgbx
 pub const zenpixels::buffer::Rgbx::DESCRIPTOR: zenpixels::descriptor::PixelDescriptor
 
-## all features except _* (3087 items)
+## all features except _* (3117 items)
 
 pub mod zenpixels
 pub use zenpixels::At
@@ -2334,6 +2364,20 @@ impl core::marker::Unpin for zenpixels::buffer::Bgrx
 impl core::marker::UnsafeUnpin for zenpixels::buffer::Bgrx
 impl core::panic::unwind_safe::RefUnwindSafe for zenpixels::buffer::Bgrx
 impl core::panic::unwind_safe::UnwindSafe for zenpixels::buffer::Bgrx
+pub struct zenpixels::buffer::InPlacePixels<'a>
+pub zenpixels::buffer::InPlacePixels::bytes: &'a mut [u8]
+pub zenpixels::buffer::InPlacePixels::color: core::option::Option<alloc::sync::Arc<zenpixels::color::ColorContext>>
+pub zenpixels::buffer::InPlacePixels::descriptor: zenpixels::descriptor::PixelDescriptor
+pub zenpixels::buffer::InPlacePixels::rows: u32
+pub zenpixels::buffer::InPlacePixels::stride: usize
+pub zenpixels::buffer::InPlacePixels::width: u32
+impl<'a> core::marker::Freeze for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::Send for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::Sync for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::Unpin for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::UnsafeUnpin for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> !core::panic::unwind_safe::UnwindSafe for zenpixels::buffer::InPlacePixels<'a>
 #[non_exhaustive] pub struct zenpixels::buffer::PixelBuffer<P>
 impl zenpixels::buffer::PixelBuffer
 pub fn zenpixels::buffer::PixelBuffer::as_contiguous_pixels<P: zenpixels::buffer::Pixel>(&self) -> core::option::Option<&[P]>
@@ -2345,6 +2389,8 @@ pub fn zenpixels::buffer::PixelBuffer::new(u32, u32, zenpixels::descriptor::Pixe
 pub fn zenpixels::buffer::PixelBuffer::new_simd_aligned(u32, u32, zenpixels::descriptor::PixelDescriptor, usize) -> Self
 pub fn zenpixels::buffer::PixelBuffer::try_new(u32, u32, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
 pub fn zenpixels::buffer::PixelBuffer::try_new_simd_aligned(u32, u32, zenpixels::descriptor::PixelDescriptor, usize) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
+impl zenpixels::buffer::PixelBuffer
+pub fn zenpixels::buffer::PixelBuffer::transform_in_place<F>(&mut self, F) where F: for<'a> core::ops::function::FnOnce(zenpixels::buffer::InPlacePixels<'a>) -> zenpixels::buffer::PixelSliceMut<'a>
 impl zenpixels::buffer::PixelBuffer
 pub fn zenpixels::buffer::PixelBuffer::try_as_imgref<P: zenpixels::buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
 pub fn zenpixels::buffer::PixelBuffer::try_as_imgref_mut<P: zenpixels::buffer::Pixel>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
@@ -2466,7 +2512,6 @@ pub fn zenpixels::buffer::PixelSliceMut<'a, P>::as_strided_bytes_mut(&mut self) 
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<zenpixels::color::ColorContext>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::erase(self) -> zenpixels::buffer::PixelSliceMut<'a>
-pub fn zenpixels::buffer::PixelSliceMut<'a, P>::into_strided_bytes(self) -> &'a mut [u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::reinterpret(self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row(&self, u32) -> &[u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row_mut(&mut self, u32) -> &mut [u8]
@@ -4879,6 +4924,20 @@ impl core::marker::Unpin for zenpixels::pixel_types::GrayAlphaF32
 impl core::marker::UnsafeUnpin for zenpixels::pixel_types::GrayAlphaF32
 impl core::panic::unwind_safe::RefUnwindSafe for zenpixels::pixel_types::GrayAlphaF32
 impl core::panic::unwind_safe::UnwindSafe for zenpixels::pixel_types::GrayAlphaF32
+pub struct zenpixels::InPlacePixels<'a>
+pub zenpixels::InPlacePixels::bytes: &'a mut [u8]
+pub zenpixels::InPlacePixels::color: core::option::Option<alloc::sync::Arc<zenpixels::color::ColorContext>>
+pub zenpixels::InPlacePixels::descriptor: zenpixels::descriptor::PixelDescriptor
+pub zenpixels::InPlacePixels::rows: u32
+pub zenpixels::InPlacePixels::stride: usize
+pub zenpixels::InPlacePixels::width: u32
+impl<'a> core::marker::Freeze for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::Send for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::Sync for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::Unpin for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::marker::UnsafeUnpin for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for zenpixels::buffer::InPlacePixels<'a>
+impl<'a> !core::panic::unwind_safe::UnwindSafe for zenpixels::buffer::InPlacePixels<'a>
 pub struct zenpixels::MasteringDisplay
 pub zenpixels::MasteringDisplay::max_luminance: f32
 pub zenpixels::MasteringDisplay::min_luminance: f32
@@ -4938,6 +4997,8 @@ pub fn zenpixels::buffer::PixelBuffer::new(u32, u32, zenpixels::descriptor::Pixe
 pub fn zenpixels::buffer::PixelBuffer::new_simd_aligned(u32, u32, zenpixels::descriptor::PixelDescriptor, usize) -> Self
 pub fn zenpixels::buffer::PixelBuffer::try_new(u32, u32, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
 pub fn zenpixels::buffer::PixelBuffer::try_new_simd_aligned(u32, u32, zenpixels::descriptor::PixelDescriptor, usize) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
+impl zenpixels::buffer::PixelBuffer
+pub fn zenpixels::buffer::PixelBuffer::transform_in_place<F>(&mut self, F) where F: for<'a> core::ops::function::FnOnce(zenpixels::buffer::InPlacePixels<'a>) -> zenpixels::buffer::PixelSliceMut<'a>
 impl zenpixels::buffer::PixelBuffer
 pub fn zenpixels::buffer::PixelBuffer::try_as_imgref<P: zenpixels::buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
 pub fn zenpixels::buffer::PixelBuffer::try_as_imgref_mut<P: zenpixels::buffer::Pixel>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
@@ -5155,7 +5216,6 @@ pub fn zenpixels::buffer::PixelSliceMut<'a, P>::as_strided_bytes_mut(&mut self) 
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<zenpixels::color::ColorContext>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::erase(self) -> zenpixels::buffer::PixelSliceMut<'a>
-pub fn zenpixels::buffer::PixelSliceMut<'a, P>::into_strided_bytes(self) -> &'a mut [u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::reinterpret(self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<zenpixels::buffer::BufferError>>
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row(&self, u32) -> &[u8]
 pub fn zenpixels::buffer::PixelSliceMut<'a, P>::row_mut(&mut self, u32) -> &mut [u8]

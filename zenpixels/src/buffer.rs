@@ -1008,25 +1008,6 @@ impl<'a, P> PixelSliceMut<'a, P> {
         self.data
     }
 
-    /// Consume the slice, returning the full backing bytes (including any
-    /// stride padding) with the original `'a` lifetime.
-    ///
-    /// This is the escape hatch for in-place transforms that change
-    /// bytes-per-pixel and therefore cannot keep the current descriptor:
-    /// take the bytes, rewrite the rows, then re-wrap with
-    /// [`PixelSliceMut::new`] under the new descriptor.
-    /// `zenpixels-convert`'s in-place load-bearing reduction is the
-    /// canonical consumer.
-    ///
-    /// (The immutable counterpart is [`PixelSlice::as_strided_bytes`],
-    /// which can hand out `&'a [u8]` without consuming; a mutable
-    /// reborrow can't, hence `self` here.)
-    #[inline]
-    #[must_use]
-    pub fn into_strided_bytes(self) -> &'a mut [u8] {
-        self.data
-    }
-
     /// Pixel bytes for row `y` (immutable, no padding).
     ///
     /// # Panics
@@ -1932,6 +1913,88 @@ impl PixelBuffer {
     }
 }
 
+/// Everything a layout-changing in-place transform receives from
+/// [`PixelBuffer::transform_in_place`]: the buffer's backing bytes (from
+/// the aligned base, including stride padding) plus its current
+/// description. Plain data — constructible directly (e.g. by transform
+/// unit tests exercising arbitrary strides); the staleness protection
+/// lives in `transform_in_place`'s atomic adoption, not here.
+pub struct InPlacePixels<'a> {
+    /// Full backing bytes from the aligned base.
+    pub bytes: &'a mut [u8],
+    /// Current width in pixels.
+    pub width: u32,
+    /// Current row count.
+    pub rows: u32,
+    /// Current byte stride between row starts.
+    pub stride: usize,
+    /// Current pixel format descriptor.
+    pub descriptor: PixelDescriptor,
+    /// Current color context, if any.
+    pub color: Option<Arc<ColorContext>>,
+}
+
+impl PixelBuffer {
+    /// Run a layout-changing in-place transform over this buffer and
+    /// **atomically adopt** the transform's output geometry, descriptor,
+    /// and color context.
+    ///
+    /// This is the only supported way to rewrite a buffer into a
+    /// different byte layout in place (lane drops, channel reorders,
+    /// orientation bakes, load-bearing reductions — the
+    /// `zenpixels-convert` in-place family is built on it). The closure
+    /// receives the buffer's backing bytes (from the aligned base,
+    /// including stride padding) plus the current description, rewrites
+    /// the pixels, and returns a [`PixelSliceMut`] re-describing the
+    /// **same memory** (built with [`PixelSliceMut::new`], so the new
+    /// geometry is validated). On return, this buffer's own width /
+    /// height / stride / descriptor / color context are updated in the
+    /// same call — the buffer and its bytes can never disagree, which is
+    /// the staleness hazard this method exists to prevent.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the returned view does not start at this buffer's
+    /// aligned base or does not fit inside the original allocation —
+    /// both indicate a bug in the transform, not a recoverable
+    /// condition (the bytes may already be partially rewritten).
+    pub fn transform_in_place<F>(&mut self, f: F)
+    where
+        F: for<'a> FnOnce(InPlacePixels<'a>) -> PixelSliceMut<'a>,
+    {
+        let total = self.stride * self.height as usize;
+        let offset = self.offset;
+        let avail = self.data.len() - offset;
+        let base = self.data[offset..].as_ptr() as usize;
+
+        let out = f(InPlacePixels {
+            bytes: &mut self.data[offset..offset + total],
+            width: self.width,
+            rows: self.height,
+            stride: self.stride,
+            descriptor: self.descriptor,
+            color: self.color.clone(),
+        });
+
+        let out_bytes = out.as_strided_bytes();
+        assert_eq!(
+            out_bytes.as_ptr() as usize,
+            base,
+            "transform_in_place: returned view must start at the buffer's aligned base"
+        );
+        assert!(
+            out_bytes.len() <= avail,
+            "transform_in_place: returned view exceeds the original allocation"
+        );
+
+        self.width = out.width();
+        self.height = out.rows();
+        self.stride = out.stride();
+        self.descriptor = out.descriptor();
+        self.color = out.color_context().cloned();
+    }
+}
+
 impl<P> PixelBuffer<P> {
     /// Erase the pixel type, returning a type-erased buffer.
     pub fn erase(self) -> PixelBuffer {
@@ -2142,6 +2205,12 @@ impl<P> PixelBuffer<P> {
     }
 
     /// Borrow the full buffer as a mutable [`PixelSliceMut`].
+    ///
+    /// Note: this is a *view*; transforms that change the buffer's layout
+    /// cannot be expressed through it (a re-described view would leave
+    /// this buffer's own descriptor stale). For layout-changing in-place
+    /// transforms, use [`PixelBuffer::transform_in_place`], which adopts
+    /// the new description atomically.
     pub fn as_slice_mut(&mut self) -> PixelSliceMut<'_, P> {
         let total = self.stride * self.height as usize;
         let offset = self.offset;

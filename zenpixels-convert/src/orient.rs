@@ -48,7 +48,7 @@
 
 use core::cmp::min;
 
-use zenpixels::{Orientation, PixelBuffer, PixelSlice, PixelSliceMut};
+use zenpixels::{InPlacePixels, Orientation, PixelBuffer, PixelSlice, PixelSliceMut};
 
 use crate::error::ConvertError;
 
@@ -179,35 +179,76 @@ const MAX_INPLACE_BPP: usize = 16;
 /// Returns [`ConvertError::BufferSize`] if `bpp` exceeds 16 (the per-element temp
 /// limit) or if re-describing the output fails.
 pub fn apply_orientation_in_place(
-    dst: PixelSliceMut<'_>,
+    dst: &mut PixelBuffer,
     orientation: Orientation,
-) -> Result<PixelSliceMut<'_>, ConvertError> {
-    let w = dst.width();
-    let h = dst.rows();
-    let desc = dst.descriptor();
-    let bpp = desc.bytes_per_pixel();
-    let (ow, oh) = orientation.output_dimensions(w, h);
-    let in_stride = dst.stride();
-    let tight = w as usize * bpp;
-    let out_stride = ow as usize * bpp;
-    let out_len = out_stride * oh as usize;
-
+) -> Result<(), ConvertError> {
+    let bpp = dst.descriptor().bytes_per_pixel();
     if bpp == 0 || bpp > MAX_INPLACE_BPP {
         return Err(ConvertError::BufferSize {
             expected: MAX_INPLACE_BPP,
             actual: bpp,
         });
     }
-
-    let bytes = dst.into_strided_bytes();
-    let backing_len = bytes.len();
-    if w == 0 || h == 0 {
-        return PixelSliceMut::new(&mut bytes[..out_len], ow, oh, out_stride, desc).map_err(|_| {
-            ConvertError::BufferSize {
-                expected: out_len,
-                actual: backing_len,
-            }
+    // The eight known orientations all have an in-place mapping; a future
+    // `#[non_exhaustive]` variant falls back to the allocating
+    // `apply_orientation` at the caller.
+    if !matches!(
+        orientation,
+        Orientation::Identity
+            | Orientation::FlipH
+            | Orientation::FlipV
+            | Orientation::Rotate180
+            | Orientation::Transpose
+            | Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Transverse
+    ) {
+        return Err(ConvertError::BufferSize {
+            expected: MAX_INPLACE_BPP,
+            actual: 0,
         });
+    }
+    dst.transform_in_place(|px| orient_in_place_impl(px, orientation));
+    Ok(())
+}
+
+/// The transform body behind [`apply_orientation_in_place`]: permute the
+/// bytes and return the re-described tight-stride view for
+/// [`PixelBuffer::transform_in_place`] to adopt.
+fn orient_in_place_impl(px: InPlacePixels<'_>, orientation: Orientation) -> PixelSliceMut<'_> {
+    let InPlacePixels {
+        bytes,
+        width: w,
+        rows: h,
+        stride: in_stride,
+        descriptor: desc,
+        color,
+        ..
+    } = px;
+    let bpp = desc.bytes_per_pixel();
+    let (ow, oh) = orientation.output_dimensions(w, h);
+    let tight = w as usize * bpp;
+    let out_stride = ow as usize * bpp;
+    let out_len = out_stride * oh as usize;
+
+    fn rewrap<'b>(
+        bytes: &'b mut [u8],
+        ow: u32,
+        oh: u32,
+        out_stride: usize,
+        desc: zenpixels::PixelDescriptor,
+        color: Option<alloc::sync::Arc<zenpixels::ColorContext>>,
+    ) -> PixelSliceMut<'b> {
+        let out = PixelSliceMut::new(bytes, ow, oh, out_stride, desc)
+            .expect("oriented in-place geometry is always valid");
+        match color {
+            Some(c) => out.with_color_context(c),
+            None => out,
+        }
+    }
+
+    if w == 0 || h == 0 {
+        return rewrap(&mut bytes[..out_len], ow, oh, out_stride, desc, color);
     }
 
     // 1. Compact to tight (drop any row padding) so the transpose is a clean
@@ -239,22 +280,11 @@ pub fn apply_orientation_in_place(
             inplace_transpose(content, w, h, bpp);
             inplace_reverse_elements(content, bpp); // transpose ∘ Rotate180
         }
-        // A future `#[non_exhaustive]` variant has no in-place mapping; the
-        // caller should fall back to the allocating `apply_orientation`.
-        _ => {
-            return Err(ConvertError::BufferSize {
-                expected: out_len,
-                actual: 0,
-            });
-        }
+        // Pre-checked in `apply_orientation_in_place`; unreachable here.
+        _ => {}
     }
 
-    PixelSliceMut::new(&mut bytes[..out_len], ow, oh, out_stride, desc).map_err(|_| {
-        ConvertError::BufferSize {
-            expected: out_len,
-            actual: backing_len,
-        }
-    })
+    rewrap(&mut bytes[..out_len], ow, oh, out_stride, desc, color)
 }
 
 /// Reverse the `bpp`-sized elements within each row, in place (`FlipH`).
@@ -921,16 +951,16 @@ mod tests {
                             );
                         }
                     }
-                    let got = apply_orientation_in_place(buf.as_slice_mut(), o)
+                    apply_orientation_in_place(&mut buf, o)
                         .expect("in_place should accept bpp ≤ 16");
                     assert_eq!(
-                        (got.width(), got.rows()),
+                        (buf.width(), buf.height()),
                         (want.width(), want.height()),
                         "{o:?} {desc:?} {w}x{h} dims"
                     );
-                    for y in 0..got.rows() {
+                    for y in 0..buf.height() {
                         assert_eq!(
-                            got.row(y),
+                            buf.as_slice().row(y),
                             want.as_slice().row(y),
                             "{o:?} {desc:?} {w}x{h} row {y}"
                         );

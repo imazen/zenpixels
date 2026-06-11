@@ -74,7 +74,9 @@ use crate::{Cicp, ColorPrimaries, TransferFunction};
 // transfer group at runtime (`cicp_bundle`). This gives `synthesize_icc_for_cicp`
 // full H.273-grid coverage with no CMS dependency — moxcms becomes a build-time
 // generator only. Both submodules are internal implementation detail.
+#[cfg(feature = "icc-db")]
 mod cicp_bundle;
+#[cfg(feature = "icc-db")]
 #[rustfmt::skip]
 mod cicp_bundle_index;
 
@@ -362,23 +364,35 @@ pub fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
     }
 
     // 2. The bundled, LZ4-compressed blob covering the *full* H.273 grid
-    //    (174 combos). Keyed on the raw code points — moxcms-equivalent bytes,
-    //    decoded once per transfer group and cached. This is what lets a
-    //    default (no-CMS) build give full coverage without moxcms.
-    if let Some(bytes) =
-        cicp_bundle::bundled_profile_for_cicp(cicp.color_primaries, cicp.transfer_characteristics)
+    //    (174 combos) — `icc-db` feature. Keyed on the raw code points —
+    //    moxcms-equivalent bytes, decoded once per transfer group and cached.
+    //    This is what lets a default (no-CMS) build give full coverage.
+    #[cfg(feature = "icc-db")]
     {
-        return SynthesizedIcc::Profile(bytes);
-    }
+        if let Some(bytes) = cicp_bundle::bundled_profile_for_cicp(
+            cicp.color_primaries,
+            cicp.transfer_characteristics,
+        ) {
+            return SynthesizedIcc::Profile(bytes);
+        }
 
-    // 3. Not a const and not in the blob. The blob is generated from moxcms over
-    //    the full assigned H.273 grid, so it already holds every profile moxcms
-    //    could synthesize — reaching here means the CICP is outside that grid
-    //    (e.g. a reserved / unspecified code point), genuinely unrepresentable as
-    //    an ICC. Feature-independent: a CMS cannot add what the blob lacks, so
-    //    there is no moxcms fallback here (the `cms-moxcms` feature drives the
-    //    `MoxCms` transform engine, not synthesis).
-    SynthesizedIcc::CmsUnsupported
+        // 3. Not a const and not in the blob. The blob is generated from
+        //    moxcms over the full assigned H.273 grid, so it already holds
+        //    every profile moxcms could synthesize — reaching here means the
+        //    CICP is outside that grid (e.g. a reserved / unspecified code
+        //    point), genuinely unrepresentable as an ICC. A CMS cannot add
+        //    what the blob lacks, so there is no moxcms fallback (the
+        //    `cms-moxcms` feature drives the `MoxCms` transform engine, not
+        //    synthesis).
+        SynthesizedIcc::CmsUnsupported
+    }
+    // Without the database, anything past the bundled consts needs the
+    // blob — surface it as NeedsCms ("enable `icc-db`"), the variant's
+    // documented build-dependent meaning.
+    #[cfg(not(feature = "icc-db"))]
+    {
+        SynthesizedIcc::NeedsCms
+    }
 }
 
 /// Resolve a **GRAY-class** ICC profile for a [`Cicp`] color description —
@@ -434,18 +448,26 @@ pub fn synthesize_gray_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
         return SynthesizedIcc::NotNeeded;
     }
 
-    // The bundle's gray table covers the full assigned grid; there are no
-    // curated `&'static` gray consts (nothing in the wild to byte-match).
-    if let Some(bytes) = cicp_bundle::bundled_gray_profile_for_cicp(
-        cicp.color_primaries,
-        cicp.transfer_characteristics,
-    ) {
-        return SynthesizedIcc::Profile(bytes);
-    }
+    // The bundle's gray table covers the full assigned grid (`icc-db`);
+    // there are no curated `&'static` gray consts (nothing in the wild to
+    // byte-match).
+    #[cfg(feature = "icc-db")]
+    {
+        if let Some(bytes) = cicp_bundle::bundled_gray_profile_for_cicp(
+            cicp.color_primaries,
+            cicp.transfer_characteristics,
+        ) {
+            return SynthesizedIcc::Profile(bytes);
+        }
 
-    // Outside the assigned grid — same feature-independent terminal state
-    // as the RGB variant.
-    SynthesizedIcc::CmsUnsupported
+        // Outside the assigned grid — same terminal state as the RGB
+        // variant.
+        SynthesizedIcc::CmsUnsupported
+    }
+    #[cfg(not(feature = "icc-db"))]
+    {
+        SynthesizedIcc::NeedsCms
+    }
 }
 
 #[cfg(test)]

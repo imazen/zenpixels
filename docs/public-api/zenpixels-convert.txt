@@ -32,7 +32,7 @@ pub fn zenpixels_convert::adapt::adapt_for_encode<'a>(&'a [u8], zenpixels::descr
 pub fn zenpixels_convert::adapt::adapt_for_encode_explicit<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels_convert::adapt::Adapted<'a>, whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub fn zenpixels_convert::adapt::adapt_for_encode_with_intent<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], zenpixels_convert::ConvertIntent) -> core::result::Result<zenpixels_convert::adapt::Adapted<'a>, whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub fn zenpixels_convert::adapt::convert_buffer(&[u8], u32, u32, zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<zenpixels_convert::error::ConvertError>>
-pub fn zenpixels_convert::adapt::try_adapt_in_place<'a>(zenpixels::buffer::PixelSliceMut<'a>, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, zenpixels::buffer::PixelSliceMut<'a>>
+pub fn zenpixels_convert::adapt::try_adapt_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub mod zenpixels_convert::cms
 pub enum zenpixels_convert::cms::ColorPriority
 pub zenpixels_convert::cms::ColorPriority::PreferCicp
@@ -290,16 +290,16 @@ impl core::marker::Unpin for zenpixels_convert::load_bearing::LoadBearingReport
 impl core::marker::UnsafeUnpin for zenpixels_convert::load_bearing::LoadBearingReport
 impl core::panic::unwind_safe::RefUnwindSafe for zenpixels_convert::load_bearing::LoadBearingReport
 impl core::panic::unwind_safe::UnwindSafe for zenpixels_convert::load_bearing::LoadBearingReport
+pub trait zenpixels_convert::load_bearing::PixelBufferLoadBearingExt: zenpixels_convert::load_bearing::sealed::Sealed
+pub fn zenpixels_convert::load_bearing::PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place(&mut self, bool)
+impl zenpixels_convert::load_bearing::PixelBufferLoadBearingExt for zenpixels::buffer::PixelBuffer
+pub fn zenpixels::buffer::PixelBuffer::reduce_to_load_bearing_format_in_place(&mut self, bool)
 pub trait zenpixels_convert::load_bearing::PixelSliceLoadBearingExt: zenpixels_convert::load_bearing::sealed::Sealed
 pub fn zenpixels_convert::load_bearing::PixelSliceLoadBearingExt::determine_load_bearing(&self) -> zenpixels_convert::load_bearing::LoadBearingReport
 pub fn zenpixels_convert::load_bearing::PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuffer>
 impl<P> zenpixels_convert::load_bearing::PixelSliceLoadBearingExt for zenpixels::buffer::PixelSlice<'_, P>
 pub fn zenpixels::buffer::PixelSlice<'_, P>::determine_load_bearing(&self) -> zenpixels_convert::load_bearing::LoadBearingReport
 pub fn zenpixels::buffer::PixelSlice<'_, P>::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuffer>
-pub trait zenpixels_convert::load_bearing::PixelSliceMutLoadBearingExt<'a>: zenpixels_convert::load_bearing::sealed::Sealed
-pub fn zenpixels_convert::load_bearing::PixelSliceMutLoadBearingExt::reduce_to_load_bearing_format_in_place(self, bool) -> zenpixels::buffer::PixelSliceMut<'a>
-impl<'a, P> zenpixels_convert::load_bearing::PixelSliceMutLoadBearingExt<'a> for zenpixels::buffer::PixelSliceMut<'a, P>
-pub fn zenpixels::buffer::PixelSliceMut<'a, P>::reduce_to_load_bearing_format_in_place(self, bool) -> zenpixels::buffer::PixelSliceMut<'a>
 pub mod zenpixels_convert::oklab
 pub const zenpixels_convert::oklab::LMS_CBRT_FROM_OKLAB: zenpixels_convert::gamut::GamutMatrix
 pub const zenpixels_convert::oklab::LMS_FROM_XYZ: zenpixels_convert::gamut::GamutMatrix
@@ -312,7 +312,7 @@ pub fn zenpixels_convert::oklab::rgb_to_lms_matrix(zenpixels::descriptor::ColorP
 pub fn zenpixels_convert::oklab::rgb_to_oklab(f32, f32, f32, &zenpixels_convert::gamut::GamutMatrix) -> [f32; 3]
 pub mod zenpixels_convert::orient
 pub fn zenpixels_convert::orient::apply_orientation(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation) -> zenpixels::buffer::PixelBuffer
-pub fn zenpixels_convert::orient::apply_orientation_in_place(zenpixels::buffer::PixelSliceMut<'_>, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'_>, zenpixels_convert::error::ConvertError>
+pub fn zenpixels_convert::orient::apply_orientation_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::orientation::Orientation) -> core::result::Result<(), zenpixels_convert::error::ConvertError>
 pub fn zenpixels_convert::orient::apply_orientation_into(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), zenpixels_convert::error::ConvertError>
 pub mod zenpixels_convert::output
 #[non_exhaustive] pub enum zenpixels_convert::output::OutputProfile
@@ -709,16 +709,16 @@ pub fn zenpixels::buffer::PixelBuffer::linearize(&self) -> core::result::Result<
 pub fn zenpixels::buffer::PixelBuffer::try_add_alpha(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub fn zenpixels::buffer::PixelBuffer::try_narrow_to_u8(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub fn zenpixels::buffer::PixelBuffer::try_widen_to_u16(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<zenpixels_convert::error::ConvertError>>
+pub trait zenpixels_convert::PixelBufferLoadBearingExt: zenpixels_convert::load_bearing::sealed::Sealed
+pub fn zenpixels_convert::PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place(&mut self, bool)
+impl zenpixels_convert::load_bearing::PixelBufferLoadBearingExt for zenpixels::buffer::PixelBuffer
+pub fn zenpixels::buffer::PixelBuffer::reduce_to_load_bearing_format_in_place(&mut self, bool)
 pub trait zenpixels_convert::PixelSliceLoadBearingExt: zenpixels_convert::load_bearing::sealed::Sealed
 pub fn zenpixels_convert::PixelSliceLoadBearingExt::determine_load_bearing(&self) -> zenpixels_convert::load_bearing::LoadBearingReport
 pub fn zenpixels_convert::PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuffer>
 impl<P> zenpixels_convert::load_bearing::PixelSliceLoadBearingExt for zenpixels::buffer::PixelSlice<'_, P>
 pub fn zenpixels::buffer::PixelSlice<'_, P>::determine_load_bearing(&self) -> zenpixels_convert::load_bearing::LoadBearingReport
 pub fn zenpixels::buffer::PixelSlice<'_, P>::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuffer>
-pub trait zenpixels_convert::PixelSliceMutLoadBearingExt<'a>: zenpixels_convert::load_bearing::sealed::Sealed
-pub fn zenpixels_convert::PixelSliceMutLoadBearingExt::reduce_to_load_bearing_format_in_place(self, bool) -> zenpixels::buffer::PixelSliceMut<'a>
-impl<'a, P> zenpixels_convert::load_bearing::PixelSliceMutLoadBearingExt<'a> for zenpixels::buffer::PixelSliceMut<'a, P>
-pub fn zenpixels::buffer::PixelSliceMut<'a, P>::reduce_to_load_bearing_format_in_place(self, bool) -> zenpixels::buffer::PixelSliceMut<'a>
 pub trait zenpixels_convert::PluggableCms: core::marker::Send + core::marker::Sync
 pub fn zenpixels_convert::PluggableCms::build_shared_source_transform(&self, zenpixels::color::ColorProfileSource<'_>, zenpixels::color::ColorProfileSource<'_>, zenpixels::descriptor::PixelFormat, zenpixels::descriptor::PixelFormat, &zenpixels::policy::ConvertOptions) -> core::option::Option<core::result::Result<alloc::sync::Arc<dyn zenpixels_convert::cms::RowTransform>, whereat::at::At<zenpixels_convert::cms::CmsPluginError>>>
 pub fn zenpixels_convert::PluggableCms::build_source_transform(&self, zenpixels::color::ColorProfileSource<'_>, zenpixels::color::ColorProfileSource<'_>, zenpixels::descriptor::PixelFormat, zenpixels::descriptor::PixelFormat, &zenpixels::policy::ConvertOptions) -> core::option::Option<core::result::Result<alloc::boxed::Box<dyn zenpixels_convert::cms::RowTransformMut>, whereat::at::At<zenpixels_convert::cms::CmsPluginError>>>
@@ -749,7 +749,7 @@ pub fn zenpixels_convert::ideal_format(zenpixels::descriptor::PixelDescriptor, z
 pub fn zenpixels_convert::negotiate(zenpixels::descriptor::PixelDescriptor, zenpixels_convert::Provenance, impl core::iter::traits::iterator::Iterator<Item = zenpixels_convert::FormatOption>, zenpixels_convert::ConvertIntent) -> core::option::Option<zenpixels::descriptor::PixelDescriptor>
 pub fn zenpixels_convert::reinhard_inverse(f32) -> f32
 pub fn zenpixels_convert::reinhard_tonemap(f32) -> f32
-pub fn zenpixels_convert::try_adapt_in_place<'a>(zenpixels::buffer::PixelSliceMut<'a>, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, zenpixels::buffer::PixelSliceMut<'a>>
+pub fn zenpixels_convert::try_adapt_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub type zenpixels_convert::GamutMatrix = [[f32; 3]; 3]
 
 ## all features except _* (1447 items)
@@ -779,7 +779,7 @@ pub fn zenpixels_convert::adapt::adapt_for_encode<'a>(&'a [u8], zenpixels::descr
 pub fn zenpixels_convert::adapt::adapt_for_encode_explicit<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels_convert::adapt::Adapted<'a>, whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub fn zenpixels_convert::adapt::adapt_for_encode_with_intent<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], zenpixels_convert::ConvertIntent) -> core::result::Result<zenpixels_convert::adapt::Adapted<'a>, whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub fn zenpixels_convert::adapt::convert_buffer(&[u8], u32, u32, zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<zenpixels_convert::error::ConvertError>>
-pub fn zenpixels_convert::adapt::try_adapt_in_place<'a>(zenpixels::buffer::PixelSliceMut<'a>, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, zenpixels::buffer::PixelSliceMut<'a>>
+pub fn zenpixels_convert::adapt::try_adapt_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub mod zenpixels_convert::cms
 pub enum zenpixels_convert::cms::ColorPriority
 pub zenpixels_convert::cms::ColorPriority::PreferCicp
@@ -1090,16 +1090,16 @@ impl core::marker::Unpin for zenpixels_convert::load_bearing::LoadBearingReport
 impl core::marker::UnsafeUnpin for zenpixels_convert::load_bearing::LoadBearingReport
 impl core::panic::unwind_safe::RefUnwindSafe for zenpixels_convert::load_bearing::LoadBearingReport
 impl core::panic::unwind_safe::UnwindSafe for zenpixels_convert::load_bearing::LoadBearingReport
+pub trait zenpixels_convert::load_bearing::PixelBufferLoadBearingExt: zenpixels_convert::load_bearing::sealed::Sealed
+pub fn zenpixels_convert::load_bearing::PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place(&mut self, bool)
+impl zenpixels_convert::load_bearing::PixelBufferLoadBearingExt for zenpixels::buffer::PixelBuffer
+pub fn zenpixels::buffer::PixelBuffer::reduce_to_load_bearing_format_in_place(&mut self, bool)
 pub trait zenpixels_convert::load_bearing::PixelSliceLoadBearingExt: zenpixels_convert::load_bearing::sealed::Sealed
 pub fn zenpixels_convert::load_bearing::PixelSliceLoadBearingExt::determine_load_bearing(&self) -> zenpixels_convert::load_bearing::LoadBearingReport
 pub fn zenpixels_convert::load_bearing::PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuffer>
 impl<P> zenpixels_convert::load_bearing::PixelSliceLoadBearingExt for zenpixels::buffer::PixelSlice<'_, P>
 pub fn zenpixels::buffer::PixelSlice<'_, P>::determine_load_bearing(&self) -> zenpixels_convert::load_bearing::LoadBearingReport
 pub fn zenpixels::buffer::PixelSlice<'_, P>::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuffer>
-pub trait zenpixels_convert::load_bearing::PixelSliceMutLoadBearingExt<'a>: zenpixels_convert::load_bearing::sealed::Sealed
-pub fn zenpixels_convert::load_bearing::PixelSliceMutLoadBearingExt::reduce_to_load_bearing_format_in_place(self, bool) -> zenpixels::buffer::PixelSliceMut<'a>
-impl<'a, P> zenpixels_convert::load_bearing::PixelSliceMutLoadBearingExt<'a> for zenpixels::buffer::PixelSliceMut<'a, P>
-pub fn zenpixels::buffer::PixelSliceMut<'a, P>::reduce_to_load_bearing_format_in_place(self, bool) -> zenpixels::buffer::PixelSliceMut<'a>
 pub mod zenpixels_convert::oklab
 pub const zenpixels_convert::oklab::LMS_CBRT_FROM_OKLAB: zenpixels_convert::gamut::GamutMatrix
 pub const zenpixels_convert::oklab::LMS_FROM_XYZ: zenpixels_convert::gamut::GamutMatrix
@@ -1112,7 +1112,7 @@ pub fn zenpixels_convert::oklab::rgb_to_lms_matrix(zenpixels::descriptor::ColorP
 pub fn zenpixels_convert::oklab::rgb_to_oklab(f32, f32, f32, &zenpixels_convert::gamut::GamutMatrix) -> [f32; 3]
 pub mod zenpixels_convert::orient
 pub fn zenpixels_convert::orient::apply_orientation(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation) -> zenpixels::buffer::PixelBuffer
-pub fn zenpixels_convert::orient::apply_orientation_in_place(zenpixels::buffer::PixelSliceMut<'_>, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'_>, zenpixels_convert::error::ConvertError>
+pub fn zenpixels_convert::orient::apply_orientation_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::orientation::Orientation) -> core::result::Result<(), zenpixels_convert::error::ConvertError>
 pub fn zenpixels_convert::orient::apply_orientation_into(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), zenpixels_convert::error::ConvertError>
 pub mod zenpixels_convert::output
 #[non_exhaustive] pub enum zenpixels_convert::output::OutputProfile
@@ -2156,16 +2156,16 @@ pub fn zenpixels::buffer::PixelBuffer::to_bgra8(&self) -> zenpixels::buffer::Pix
 pub fn zenpixels::buffer::PixelBuffer::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
 pub fn zenpixels::buffer::PixelBuffer::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
 pub fn zenpixels::buffer::PixelBuffer::to_rgba8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>
+pub trait zenpixels_convert::PixelBufferLoadBearingExt: zenpixels_convert::load_bearing::sealed::Sealed
+pub fn zenpixels_convert::PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place(&mut self, bool)
+impl zenpixels_convert::load_bearing::PixelBufferLoadBearingExt for zenpixels::buffer::PixelBuffer
+pub fn zenpixels::buffer::PixelBuffer::reduce_to_load_bearing_format_in_place(&mut self, bool)
 pub trait zenpixels_convert::PixelSliceLoadBearingExt: zenpixels_convert::load_bearing::sealed::Sealed
 pub fn zenpixels_convert::PixelSliceLoadBearingExt::determine_load_bearing(&self) -> zenpixels_convert::load_bearing::LoadBearingReport
 pub fn zenpixels_convert::PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuffer>
 impl<P> zenpixels_convert::load_bearing::PixelSliceLoadBearingExt for zenpixels::buffer::PixelSlice<'_, P>
 pub fn zenpixels::buffer::PixelSlice<'_, P>::determine_load_bearing(&self) -> zenpixels_convert::load_bearing::LoadBearingReport
 pub fn zenpixels::buffer::PixelSlice<'_, P>::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuffer>
-pub trait zenpixels_convert::PixelSliceMutLoadBearingExt<'a>: zenpixels_convert::load_bearing::sealed::Sealed
-pub fn zenpixels_convert::PixelSliceMutLoadBearingExt::reduce_to_load_bearing_format_in_place(self, bool) -> zenpixels::buffer::PixelSliceMut<'a>
-impl<'a, P> zenpixels_convert::load_bearing::PixelSliceMutLoadBearingExt<'a> for zenpixels::buffer::PixelSliceMut<'a, P>
-pub fn zenpixels::buffer::PixelSliceMut<'a, P>::reduce_to_load_bearing_format_in_place(self, bool) -> zenpixels::buffer::PixelSliceMut<'a>
 pub trait zenpixels_convert::PluggableCms: core::marker::Send + core::marker::Sync
 pub fn zenpixels_convert::PluggableCms::build_shared_source_transform(&self, zenpixels::color::ColorProfileSource<'_>, zenpixels::color::ColorProfileSource<'_>, zenpixels::descriptor::PixelFormat, zenpixels::descriptor::PixelFormat, &zenpixels::policy::ConvertOptions) -> core::option::Option<core::result::Result<alloc::sync::Arc<dyn zenpixels_convert::cms::RowTransform>, whereat::at::At<zenpixels_convert::cms::CmsPluginError>>>
 pub fn zenpixels_convert::PluggableCms::build_source_transform(&self, zenpixels::color::ColorProfileSource<'_>, zenpixels::color::ColorProfileSource<'_>, zenpixels::descriptor::PixelFormat, zenpixels::descriptor::PixelFormat, &zenpixels::policy::ConvertOptions) -> core::option::Option<core::result::Result<alloc::boxed::Box<dyn zenpixels_convert::cms::RowTransformMut>, whereat::at::At<zenpixels_convert::cms::CmsPluginError>>>
@@ -2199,5 +2199,5 @@ pub fn zenpixels_convert::negotiate(zenpixels::descriptor::PixelDescriptor, zenp
 pub fn zenpixels_convert::optimal_path(zenpixels::descriptor::PixelDescriptor, zenpixels_convert::Provenance, zenpixels_convert::pipeline::op_format::OpCategory, zenpixels::descriptor::PixelDescriptor, zenpixels_convert::pipeline::path::QualityThreshold) -> core::option::Option<zenpixels_convert::pipeline::path::ConversionPath>
 pub fn zenpixels_convert::reinhard_inverse(f32) -> f32
 pub fn zenpixels_convert::reinhard_tonemap(f32) -> f32
-pub fn zenpixels_convert::try_adapt_in_place<'a>(zenpixels::buffer::PixelSliceMut<'a>, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, zenpixels::buffer::PixelSliceMut<'a>>
+pub fn zenpixels_convert::try_adapt_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<zenpixels_convert::error::ConvertError>>
 pub type zenpixels_convert::GamutMatrix = [[f32; 3]; 3]
