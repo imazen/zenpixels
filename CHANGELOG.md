@@ -10,6 +10,14 @@
 
 - (none currently queued)
 
+### Workspace — build
+
+- Public-API snapshots migrated to the `zenutils-apidoc` 0.1.0 runner package
+  at `apidoc/` (workspace-excluded, CI-free): three snapshot files per crate
+  under `docs/public-api/`, regenerated via `just api-doc`. Replaces the
+  in-crate `zenpixels/tests/public_api_doc.rs` copy, its `serde_json` dev-dep,
+  and every `ZEN_API_DOC` / cargo-public-api trace in CI.
+
 ### zenpixels-convert — changed
 
 - **Signal-range crossings now refuse at plan time instead of mislabeling.**

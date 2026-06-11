@@ -1,0 +1,105 @@
+# zenpixels public API — doc(hidden) items and excluded-feature surface
+# excluded features: (none)
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   inherent methods                           38
+#   trait roster entries (type × trait)        36
+#
+# per-module pub lines:
+#   buffer                            3
+#   cicp                              1
+#   color                             6
+#   descriptor                       10
+#   hdr                               1
+#   icc                               2
+#   orientation                       1
+#   pixel_types                       2
+#   planar                            7
+#   policy                            5
+
+## items (38 lines)
+
+pub fn buffer::Bgrx::assert_fields_are_eq(&self)
+pub fn buffer::BufferError::assert_fields_are_eq(&self)
+pub fn buffer::Rgbx::assert_fields_are_eq(&self)
+pub fn cicp::Cicp::assert_fields_are_eq(&self)
+pub fn color::ColorAuthority::assert_fields_are_eq(&self)
+pub fn color::ColorContext::assert_fields_are_eq(&self)
+pub fn color::ColorOrigin::assert_fields_are_eq(&self)
+pub fn color::ColorProfileSource<'a>::assert_fields_are_eq(&self)
+pub fn color::ColorProvenance::assert_fields_are_eq(&self)
+pub fn color::NamedProfile::assert_fields_are_eq(&self)
+pub fn descriptor::AlphaMode::assert_fields_are_eq(&self)
+pub fn descriptor::ByteOrder::assert_fields_are_eq(&self)
+pub fn descriptor::ChannelLayout::assert_fields_are_eq(&self)
+pub fn descriptor::ChannelType::assert_fields_are_eq(&self)
+pub fn descriptor::ColorModel::assert_fields_are_eq(&self)
+pub fn descriptor::ColorPrimaries::assert_fields_are_eq(&self)
+pub fn descriptor::PixelDescriptor::assert_fields_are_eq(&self)
+pub fn descriptor::PixelFormat::assert_fields_are_eq(&self)
+pub fn descriptor::SignalRange::assert_fields_are_eq(&self)
+pub fn descriptor::TransferFunction::assert_fields_are_eq(&self)
+pub fn hdr::ContentLightLevel::assert_fields_are_eq(&self)
+pub fn icc::IccIdentification::assert_fields_are_eq(&self)
+pub fn icc::IdentificationUse::assert_fields_are_eq(&self)
+pub fn orientation::Orientation::assert_fields_are_eq(&self)
+pub fn pixel_types::GrayAlpha16::assert_fields_are_eq(&self)
+pub fn pixel_types::GrayAlpha8::assert_fields_are_eq(&self)
+pub fn planar::PlaneDescriptor::assert_fields_are_eq(&self)
+pub fn planar::PlaneLayout::assert_fields_are_eq(&self)
+pub fn planar::PlaneMask::assert_fields_are_eq(&self)
+pub fn planar::PlaneRelationship::assert_fields_are_eq(&self)
+pub fn planar::PlaneSemantic::assert_fields_are_eq(&self)
+pub fn planar::Subsampling::assert_fields_are_eq(&self)
+pub fn planar::YuvMatrix::assert_fields_are_eq(&self)
+pub fn policy::AlphaPolicy::assert_fields_are_eq(&self)
+pub fn policy::ConvertOptions::assert_fields_are_eq(&self)
+pub fn policy::DepthPolicy::assert_fields_are_eq(&self)
+pub fn policy::GrayExpand::assert_fields_are_eq(&self)
+pub fn policy::LumaCoefficients::assert_fields_are_eq(&self)
+
+## trait impls (36 types)
+
+buffer::Bgrx: TrivialClone
+buffer::BufferError: TrivialClone
+buffer::Rgbx: TrivialClone
+cicp::Cicp: TrivialClone
+color::ColorAuthority: TrivialClone
+color::ColorProvenance: TrivialClone
+color::NamedProfile: TrivialClone
+descriptor::AlphaMode: TrivialClone
+descriptor::ByteOrder: TrivialClone
+descriptor::ChannelLayout: TrivialClone
+descriptor::ChannelType: TrivialClone
+descriptor::ColorModel: TrivialClone
+descriptor::ColorPrimaries: TrivialClone
+descriptor::PixelDescriptor: TrivialClone
+descriptor::PixelFormat: TrivialClone
+descriptor::SignalRange: TrivialClone
+descriptor::TransferFunction: TrivialClone
+hdr::ContentLightLevel: TrivialClone
+hdr::MasteringDisplay: TrivialClone
+icc::IccIdentification: TrivialClone
+icc::IdentificationUse: TrivialClone
+orientation::Orientation: TrivialClone
+pixel_types::GrayAlpha16: TrivialClone
+pixel_types::GrayAlpha8: TrivialClone
+pixel_types::GrayAlphaF32: TrivialClone
+planar::PlaneDescriptor: TrivialClone
+planar::PlaneMask: TrivialClone
+planar::PlaneRelationship: TrivialClone
+planar::PlaneSemantic: TrivialClone
+planar::Subsampling: TrivialClone
+planar::YuvMatrix: TrivialClone
+policy::AlphaPolicy: TrivialClone
+policy::ConvertOptions: TrivialClone
+policy::DepthPolicy: TrivialClone
+policy::GrayExpand: TrivialClone
+policy::LumaCoefficients: TrivialClone

@@ -1,5 +1,9 @@
 [workspace]
 members = ["zenpixels", "zenpixels-convert", "scripts/icc-gen"]
+# `apidoc/` is the CI-free public-API snapshot runner: excluded so plain
+# `cargo test` and CI never compile its zenutils-apidoc dependency tree.
+# Regenerate snapshots via `just api-doc`.
+exclude = ["apidoc"]
 resolver = "2"
 
 [workspace.dependencies]

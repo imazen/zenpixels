@@ -937,7 +937,6 @@ dependencies = [
  "imgref",
  "rgb",
  "serde",
- "serde_json",
  "whereat",
 ]
 

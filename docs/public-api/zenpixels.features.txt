@@ -1,0 +1,301 @@
+# zenpixels public API — additions from non-default features
+# features: icc,imgref,planar,rgb,serde,std
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   pub modules                                 1
+#   pub types (struct/enum/trait/alias)        18
+#   pub consts/statics                         56
+#   inherent methods                           98
+#   struct fields                              20
+#   enum variants                              54
+#   trait roster entries (type × trait)       105
+#   auto-trait-complete types                   9
+#
+# per-module pub lines:
+#   (root)                           93
+#   buffer                           34
+#   planar                          120
+
+## items (215 lines)
+
+pub fn buffer::PixelBuffer::as_contiguous_pixels<P: buffer::Pixel>(&self) -> core::option::Option<&[P]>
+pub fn buffer::PixelBuffer::from_pixels_erased<P: buffer::Pixel>(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::into_contiguous_pixels<P: buffer::Pixel>(self) -> core::option::Option<alloc::vec::Vec<P>>
+pub fn buffer::PixelBuffer::try_as_imgref<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
+pub fn buffer::PixelBuffer::try_as_imgref_mut<P: buffer::Pixel>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
+pub fn buffer::PixelBuffer<P>::as_imgref(&self) -> imgref::ImgRef<'_, P>
+pub fn buffer::PixelBuffer<P>::as_imgref_mut(&mut self) -> imgref::ImgRefMut<'_, P>
+pub fn buffer::PixelBuffer<P>::from_imgvec(imgref::ImgVec<P>) -> Self
+pub fn buffer::PixelBuffer<P>::from_pixels(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::matte_to_bgrx(self, rgb::formats::rgb::Rgb<u8>) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::strip_alpha_to_bgrx(self) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::swap_to_rgba(self) -> buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::matte_to_rgbx(self, rgb::formats::rgb::Rgb<u8>) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::strip_alpha_to_rgbx(self) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::swap_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
+pub fn buffer::PixelSliceMut<'a, buffer::Bgrx>::upgrade_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
+pub fn buffer::PixelSliceMut<'a, buffer::Rgbx>::upgrade_to_rgba(self) -> buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>
+pub mod planar
+pub planar::PlaneLayout::Interleaved
+pub planar::PlaneLayout::Interleaved::channels: u8
+pub planar::PlaneLayout::Planar
+pub planar::PlaneLayout::Planar::planes: alloc::vec::Vec<planar::PlaneDescriptor>
+pub planar::PlaneLayout::Planar::relationship: planar::PlaneRelationship
+pub fn planar::PlaneLayout::alpha_mask(&self) -> planar::PlaneMask
+pub fn planar::PlaneLayout::chroma_mask(&self) -> planar::PlaneMask
+pub fn planar::PlaneLayout::gray(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::has_subsampling(&self) -> bool
+pub fn planar::PlaneLayout::is_oklab(&self) -> bool
+pub fn planar::PlaneLayout::is_planar(&self) -> bool
+pub fn planar::PlaneLayout::is_ycbcr(&self) -> bool
+pub fn planar::PlaneLayout::luma_mask(&self) -> planar::PlaneMask
+pub fn planar::PlaneLayout::luma_plane_index(&self) -> core::option::Option<usize>
+pub fn planar::PlaneLayout::mask_where(&self, impl core::ops::function::Fn(planar::PlaneSemantic) -> bool) -> planar::PlaneMask
+pub fn planar::PlaneLayout::max_h_subsample(&self) -> u8
+pub fn planar::PlaneLayout::max_v_subsample(&self) -> u8
+pub fn planar::PlaneLayout::oklab(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::oklab_alpha(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::plane_count(&self) -> usize
+pub fn planar::PlaneLayout::planes(&self) -> &[planar::PlaneDescriptor]
+pub fn planar::PlaneLayout::relationship(&self) -> core::option::Option<planar::PlaneRelationship>
+pub fn planar::PlaneLayout::rgb(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::rgba(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::ycbcr_420(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::ycbcr_422(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::ycbcr_444(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::ycbcr_444_matrix(descriptor::ChannelType, planar::YuvMatrix) -> Self
+pub planar::PlaneRelationship::GainMap
+pub planar::PlaneRelationship::Independent
+pub planar::PlaneRelationship::Oklab
+pub planar::PlaneRelationship::YCbCr
+pub planar::PlaneRelationship::YCbCr::matrix: planar::YuvMatrix
+pub planar::PlaneSemantic::Alpha = 6
+pub planar::PlaneSemantic::Blue = 5
+pub planar::PlaneSemantic::ChromaCb = 1
+pub planar::PlaneSemantic::ChromaCr = 2
+pub planar::PlaneSemantic::Depth = 7
+pub planar::PlaneSemantic::GainMap = 8
+pub planar::PlaneSemantic::Gray = 9
+pub planar::PlaneSemantic::Green = 4
+pub planar::PlaneSemantic::Luma = 0
+pub planar::PlaneSemantic::OklabA = 11
+pub planar::PlaneSemantic::OklabB = 12
+pub planar::PlaneSemantic::OklabL = 10
+pub planar::PlaneSemantic::Red = 3
+pub const fn planar::PlaneSemantic::is_alpha(self) -> bool [also: (root)]
+pub const fn planar::PlaneSemantic::is_chroma(self) -> bool [also: (root)]
+pub const fn planar::PlaneSemantic::is_luminance(self) -> bool [also: (root)]
+pub const fn planar::PlaneSemantic::is_rgb(self) -> bool [also: (root)]
+pub planar::Subsampling::S411 = 3
+pub planar::Subsampling::S420 = 2
+pub planar::Subsampling::S422 = 1
+pub planar::Subsampling::S444 = 0
+pub const fn planar::Subsampling::from_factors(u8, u8) -> core::option::Option<Self> [also: (root)]
+pub const fn planar::Subsampling::h_factor(self) -> u8 [also: (root)]
+pub const fn planar::Subsampling::v_factor(self) -> u8 [also: (root)]
+pub planar::YuvMatrix::Bt2020 = 3
+pub planar::YuvMatrix::Bt601 = 1
+pub planar::YuvMatrix::Bt709 = 2
+pub planar::YuvMatrix::Identity = 0
+pub const fn planar::YuvMatrix::from_cicp(u8) -> core::option::Option<Self> [also: (root)]
+pub const fn planar::YuvMatrix::rgb_to_y_coeffs(self) -> [f64; 3] [also: (root)]
+pub fn planar::MultiPlaneImage::buffer(&self, usize) -> core::option::Option<&buffer::PixelBuffer>
+pub fn planar::MultiPlaneImage::buffer_mut(&mut self, usize) -> core::option::Option<&mut buffer::PixelBuffer>
+pub fn planar::MultiPlaneImage::buffers(&self) -> &[buffer::PixelBuffer]
+pub fn planar::MultiPlaneImage::buffers_mut(&mut self) -> &mut [buffer::PixelBuffer]
+pub fn planar::MultiPlaneImage::layout(&self) -> &planar::PlaneLayout
+pub fn planar::MultiPlaneImage::new(planar::PlaneLayout, alloc::vec::Vec<buffer::PixelBuffer>) -> Self
+pub fn planar::MultiPlaneImage::origin(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
+pub fn planar::MultiPlaneImage::plane_count(&self) -> usize
+pub fn planar::MultiPlaneImage::with_origin(self, alloc::sync::Arc<color::ColorContext>) -> Self
+pub planar::Plane::buffer: buffer::PixelBuffer
+pub planar::Plane::semantic: planar::PlaneSemantic
+pub planar::PlaneDescriptor::channel_type: descriptor::ChannelType
+pub planar::PlaneDescriptor::h_subsample: u8
+pub planar::PlaneDescriptor::semantic: planar::PlaneSemantic
+pub planar::PlaneDescriptor::v_subsample: u8
+pub const fn planar::PlaneDescriptor::bytes_per_sample(&self) -> usize [also: (root)]
+pub const fn planar::PlaneDescriptor::is_subsampled(&self) -> bool [also: (root)]
+pub const fn planar::PlaneDescriptor::new(planar::PlaneSemantic, descriptor::ChannelType) -> Self [also: (root)]
+pub const fn planar::PlaneDescriptor::plane_height(&self, u32) -> u32 [also: (root)]
+pub const fn planar::PlaneDescriptor::plane_width(&self, u32) -> u32 [also: (root)]
+pub const fn planar::PlaneDescriptor::with_subsampling(self, u8, u8) -> Self [also: (root)]
+pub const planar::PlaneMask::ALL: Self
+pub const planar::PlaneMask::ALPHA: Self
+pub const planar::PlaneMask::CHROMA: Self
+pub const planar::PlaneMask::LUMA: Self
+pub const planar::PlaneMask::NONE: Self
+pub const fn planar::PlaneMask::bits(&self) -> u8 [also: (root)]
+pub const fn planar::PlaneMask::count(&self) -> u32 [also: (root)]
+pub const fn planar::PlaneMask::from_bits(u8) -> Self [also: (root)]
+pub const fn planar::PlaneMask::includes(&self, usize) -> bool [also: (root)]
+pub const fn planar::PlaneMask::intersection(self, Self) -> Self [also: (root)]
+pub const fn planar::PlaneMask::is_empty(&self) -> bool [also: (root)]
+pub const fn planar::PlaneMask::single(usize) -> Self [also: (root)]
+pub const fn planar::PlaneMask::union(self, Self) -> Self [also: (root)]
+pub enum PlaneLayout [also: planar]
+pub PlaneLayout::Interleaved
+pub PlaneLayout::Interleaved::channels: u8
+pub PlaneLayout::Planar
+pub PlaneLayout::Planar::planes: alloc::vec::Vec<planar::PlaneDescriptor>
+pub PlaneLayout::Planar::relationship: planar::PlaneRelationship
+pub fn planar::PlaneLayout::alpha_mask(&self) -> planar::PlaneMask
+pub fn planar::PlaneLayout::chroma_mask(&self) -> planar::PlaneMask
+pub fn planar::PlaneLayout::gray(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::has_subsampling(&self) -> bool
+pub fn planar::PlaneLayout::is_oklab(&self) -> bool
+pub fn planar::PlaneLayout::is_planar(&self) -> bool
+pub fn planar::PlaneLayout::is_ycbcr(&self) -> bool
+pub fn planar::PlaneLayout::luma_mask(&self) -> planar::PlaneMask
+pub fn planar::PlaneLayout::luma_plane_index(&self) -> core::option::Option<usize>
+pub fn planar::PlaneLayout::mask_where(&self, impl core::ops::function::Fn(planar::PlaneSemantic) -> bool) -> planar::PlaneMask
+pub fn planar::PlaneLayout::max_h_subsample(&self) -> u8
+pub fn planar::PlaneLayout::max_v_subsample(&self) -> u8
+pub fn planar::PlaneLayout::oklab(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::oklab_alpha(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::plane_count(&self) -> usize
+pub fn planar::PlaneLayout::planes(&self) -> &[planar::PlaneDescriptor]
+pub fn planar::PlaneLayout::relationship(&self) -> core::option::Option<planar::PlaneRelationship>
+pub fn planar::PlaneLayout::rgb(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::rgba(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::ycbcr_420(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::ycbcr_422(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::ycbcr_444(descriptor::ChannelType) -> Self
+pub fn planar::PlaneLayout::ycbcr_444_matrix(descriptor::ChannelType, planar::YuvMatrix) -> Self
+#[non_exhaustive] pub enum PlaneRelationship [also: planar]
+pub PlaneRelationship::GainMap
+pub PlaneRelationship::Independent
+pub PlaneRelationship::Oklab
+pub PlaneRelationship::YCbCr
+pub PlaneRelationship::YCbCr::matrix: planar::YuvMatrix
+#[non_exhaustive] #[repr(u8)] pub enum PlaneSemantic [also: planar]
+pub PlaneSemantic::Alpha = 6
+pub PlaneSemantic::Blue = 5
+pub PlaneSemantic::ChromaCb = 1
+pub PlaneSemantic::ChromaCr = 2
+pub PlaneSemantic::Depth = 7
+pub PlaneSemantic::GainMap = 8
+pub PlaneSemantic::Gray = 9
+pub PlaneSemantic::Green = 4
+pub PlaneSemantic::Luma = 0
+pub PlaneSemantic::OklabA = 11
+pub PlaneSemantic::OklabB = 12
+pub PlaneSemantic::OklabL = 10
+pub PlaneSemantic::Red = 3
+#[non_exhaustive] #[repr(u8)] pub enum Subsampling [also: planar]
+pub Subsampling::S411 = 3
+pub Subsampling::S420 = 2
+pub Subsampling::S422 = 1
+pub Subsampling::S444 = 0
+#[non_exhaustive] #[repr(u8)] pub enum YuvMatrix [also: planar]
+pub YuvMatrix::Bt2020 = 3
+pub YuvMatrix::Bt601 = 1
+pub YuvMatrix::Bt709 = 2
+pub YuvMatrix::Identity = 0
+pub struct MultiPlaneImage [also: planar]
+pub fn planar::MultiPlaneImage::buffer(&self, usize) -> core::option::Option<&buffer::PixelBuffer>
+pub fn planar::MultiPlaneImage::buffer_mut(&mut self, usize) -> core::option::Option<&mut buffer::PixelBuffer>
+pub fn planar::MultiPlaneImage::buffers(&self) -> &[buffer::PixelBuffer]
+pub fn planar::MultiPlaneImage::buffers_mut(&mut self) -> &mut [buffer::PixelBuffer]
+pub fn planar::MultiPlaneImage::layout(&self) -> &planar::PlaneLayout
+pub fn planar::MultiPlaneImage::new(planar::PlaneLayout, alloc::vec::Vec<buffer::PixelBuffer>) -> Self
+pub fn planar::MultiPlaneImage::origin(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
+pub fn planar::MultiPlaneImage::plane_count(&self) -> usize
+pub fn planar::MultiPlaneImage::with_origin(self, alloc::sync::Arc<color::ColorContext>) -> Self
+pub fn buffer::PixelBuffer::as_contiguous_pixels<P: buffer::Pixel>(&self) -> core::option::Option<&[P]>
+pub fn buffer::PixelBuffer::from_pixels_erased<P: buffer::Pixel>(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::into_contiguous_pixels<P: buffer::Pixel>(self) -> core::option::Option<alloc::vec::Vec<P>>
+pub fn buffer::PixelBuffer::try_as_imgref<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
+pub fn buffer::PixelBuffer::try_as_imgref_mut<P: buffer::Pixel>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
+pub fn buffer::PixelBuffer<P>::as_imgref(&self) -> imgref::ImgRef<'_, P>
+pub fn buffer::PixelBuffer<P>::as_imgref_mut(&mut self) -> imgref::ImgRefMut<'_, P>
+pub fn buffer::PixelBuffer<P>::from_imgvec(imgref::ImgVec<P>) -> Self
+pub fn buffer::PixelBuffer<P>::from_pixels(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::matte_to_bgrx(self, rgb::formats::rgb::Rgb<u8>) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::strip_alpha_to_bgrx(self) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::swap_to_rgba(self) -> buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::matte_to_rgbx(self, rgb::formats::rgb::Rgb<u8>) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::strip_alpha_to_rgbx(self) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::swap_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
+pub fn buffer::PixelSliceMut<'a, buffer::Bgrx>::upgrade_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
+pub fn buffer::PixelSliceMut<'a, buffer::Rgbx>::upgrade_to_rgba(self) -> buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>
+pub struct Plane [also: planar]
+pub Plane::buffer: buffer::PixelBuffer
+pub Plane::semantic: planar::PlaneSemantic
+pub struct PlaneDescriptor [also: planar]
+pub PlaneDescriptor::channel_type: descriptor::ChannelType
+pub PlaneDescriptor::h_subsample: u8
+pub PlaneDescriptor::semantic: planar::PlaneSemantic
+pub PlaneDescriptor::v_subsample: u8
+pub struct PlaneMask [also: planar]
+pub const planar::PlaneMask::ALL: Self
+pub const planar::PlaneMask::ALPHA: Self
+pub const planar::PlaneMask::CHROMA: Self
+pub const planar::PlaneMask::LUMA: Self
+pub const planar::PlaneMask::NONE: Self
+
+## trait impls (52 types)
+
+buffer::PixelSlice<'a, rgb::formats::bgra::Bgra<u8>>: From<imgref::Img<&'a [rgb::formats::bgra::Bgra<u8>]>>
+buffer::PixelSlice<'a, rgb::formats::gray::Gray_v08<f32>>: From<imgref::Img<&'a [rgb::formats::gray::Gray_v08<f32>]>>
+buffer::PixelSlice<'a, rgb::formats::gray::Gray_v08<u16>>: From<imgref::Img<&'a [rgb::formats::gray::Gray_v08<u16>]>>
+buffer::PixelSlice<'a, rgb::formats::gray::Gray_v08<u8>>: From<imgref::Img<&'a [rgb::formats::gray::Gray_v08<u8>]>>
+buffer::PixelSlice<'a, rgb::formats::rgb::Rgb<f32>>: From<imgref::Img<&'a [rgb::formats::rgb::Rgb<f32>]>>
+buffer::PixelSlice<'a, rgb::formats::rgb::Rgb<u16>>: From<imgref::Img<&'a [rgb::formats::rgb::Rgb<u16>]>>
+buffer::PixelSlice<'a, rgb::formats::rgb::Rgb<u8>>: From<imgref::Img<&'a [rgb::formats::rgb::Rgb<u8>]>>
+buffer::PixelSlice<'a, rgb::formats::rgba::Rgba<f32>>: From<imgref::Img<&'a [rgb::formats::rgba::Rgba<f32>]>>
+buffer::PixelSlice<'a, rgb::formats::rgba::Rgba<u16>>: From<imgref::Img<&'a [rgb::formats::rgba::Rgba<u16>]>>
+buffer::PixelSlice<'a, rgb::formats::rgba::Rgba<u8>>: From<imgref::Img<&'a [rgb::formats::rgba::Rgba<u8>]>>
+buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>: From<imgref::Img<&'a mut [rgb::formats::bgra::Bgra<u8>]>>
+buffer::PixelSliceMut<'a, rgb::formats::gray::Gray_v08<f32>>: From<imgref::Img<&'a mut [rgb::formats::gray::Gray_v08<f32>]>>
+buffer::PixelSliceMut<'a, rgb::formats::gray::Gray_v08<u16>>: From<imgref::Img<&'a mut [rgb::formats::gray::Gray_v08<u16>]>>
+buffer::PixelSliceMut<'a, rgb::formats::gray::Gray_v08<u8>>: From<imgref::Img<&'a mut [rgb::formats::gray::Gray_v08<u8>]>>
+buffer::PixelSliceMut<'a, rgb::formats::rgb::Rgb<f32>>: From<imgref::Img<&'a mut [rgb::formats::rgb::Rgb<f32>]>>
+buffer::PixelSliceMut<'a, rgb::formats::rgb::Rgb<u16>>: From<imgref::Img<&'a mut [rgb::formats::rgb::Rgb<u16>]>>
+buffer::PixelSliceMut<'a, rgb::formats::rgb::Rgb<u8>>: From<imgref::Img<&'a mut [rgb::formats::rgb::Rgb<u8>]>>
+buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<f32>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<f32>]>>
+buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u16>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<u16>]>>
+buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<u8>]>>
+cicp::Cicp: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
+descriptor::AlphaMode: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
+descriptor::ChannelLayout: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
+descriptor::ChannelType: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
+descriptor::ColorModel: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
+descriptor::ColorPrimaries: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
+descriptor::PixelDescriptor: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
+descriptor::PixelFormat: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
+descriptor::SignalRange: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
+descriptor::TransferFunction: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
+hdr::ContentLightLevel: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
+hdr::MasteringDisplay: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
+pixel_types::GrayAlpha16: buffer::Pixel
+pixel_types::GrayAlpha8: buffer::Pixel
+pixel_types::GrayAlphaF32: buffer::Pixel
+planar::PlaneDescriptor: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
+planar::PlaneLayout: Clone, Debug, Display, Eq, PartialEq
+planar::PlaneMask: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
+planar::PlaneRelationship: Clone, Copy, Debug, Eq, Hash, PartialEq
+planar::PlaneSemantic: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
+planar::Subsampling: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
+planar::YuvMatrix: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
+rgb::formats::bgra::Bgra<u8>: buffer::Pixel
+rgb::formats::gray::Gray_v08<f32>: buffer::Pixel
+rgb::formats::gray::Gray_v08<u16>: buffer::Pixel
+rgb::formats::gray::Gray_v08<u8>: buffer::Pixel
+rgb::formats::rgb::Rgb<f32>: buffer::Pixel
+rgb::formats::rgb::Rgb<u16>: buffer::Pixel
+rgb::formats::rgb::Rgb<u8>: buffer::Pixel
+rgb::formats::rgba::Rgba<f32>: buffer::Pixel
+rgb::formats::rgba::Rgba<u16>: buffer::Pixel
+rgb::formats::rgba::Rgba<u8>: buffer::Pixel
+
+## auto traits
+
+9 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe

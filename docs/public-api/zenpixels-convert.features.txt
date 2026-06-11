@@ -1,0 +1,279 @@
+# zenpixels-convert public API — additions from non-default features
+# features: avx512,cms-moxcms,icc-db,imgref,pipeline,planar,rgb,serde,std
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   pub modules                                 5
+#   pub types (struct/enum/trait/alias)        32
+#   pub consts/statics                         11
+#   free functions                             12
+#   inherent methods                           26
+#   struct fields                             105
+#   enum variants                              66
+#   trait roster entries (type × trait)        41
+#   auto-trait-complete types                  11
+#
+# per-module pub lines:
+#   (root)                           77
+#   cms_moxcms                        5
+#   ext                               5
+#   pipeline                        170
+
+## items (231 lines)
+
+pub mod cms_moxcms
+pub struct cms_moxcms::MoxCmsError(pub alloc::string::String)
+pub fn cms_moxcms::cicp_transform_opts() -> moxcms::transform::TransformOptions
+pub fn cms_moxcms::lut_transform_opts() -> moxcms::transform::TransformOptions
+pub fn cms_moxcms::transform_opts(cms::ColorPriority, cms::RenderingIntent) -> moxcms::transform::TransformOptions
+pub fn ext::PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>
+pub fn ext::PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
+pub fn ext::PixelBufferConvertTypedExt::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
+pub fn ext::PixelBufferConvertTypedExt::to_rgba8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>
+pub mod pipeline
+pub mod pipeline::op_format
+pub pipeline::op_format::OpCategory::Arithmetic
+pub pipeline::op_format::OpCategory::Blur
+pub pipeline::op_format::OpCategory::ColorMatrix
+pub pipeline::op_format::OpCategory::Composite
+pub pipeline::op_format::OpCategory::IccTransform
+pub pipeline::op_format::OpCategory::OklabAdjust
+pub pipeline::op_format::OpCategory::OklabSharpen
+pub pipeline::op_format::OpCategory::Passthrough
+pub pipeline::op_format::OpCategory::Quantize
+pub pipeline::op_format::OpCategory::ResizeGentle
+pub pipeline::op_format::OpCategory::ResizeSharp
+pub pipeline::op_format::OpCategory::Sharpen
+pub pipeline::op_format::OpCategory::Tonemap
+pub fn pipeline::op_format::OpCategory::candidate_working_formats(self, zenpixels::descriptor::PixelDescriptor) -> alloc::vec::Vec<zenpixels::descriptor::PixelDescriptor>
+pub fn pipeline::op_format::OpCategory::requirement(self) -> pipeline::op_format::OpRequirement
+pub fn pipeline::op_format::OpCategory::to_intent(self) -> ConvertIntent
+pub pipeline::op_format::OpRequirement::alpha: core::option::Option<zenpixels::descriptor::AlphaMode>
+pub pipeline::op_format::OpRequirement::category: pipeline::op_format::OpCategory
+pub pipeline::op_format::OpRequirement::min_depth: core::option::Option<zenpixels::descriptor::ChannelType>
+pub pipeline::op_format::OpRequirement::requires_float: bool
+pub pipeline::op_format::OpRequirement::transfer: core::option::Option<zenpixels::descriptor::TransferFunction>
+pub mod pipeline::path
+pub pipeline::path::LossBucket::High
+pub pipeline::path::LossBucket::Lossless
+pub pipeline::path::LossBucket::LowLoss
+pub pipeline::path::LossBucket::Moderate
+pub pipeline::path::LossBucket::NearLossless
+pub fn pipeline::path::LossBucket::from_model_loss(u16) -> Self
+pub fn pipeline::path::LossBucket::max_loss(self) -> u16
+pub pipeline::path::QualityThreshold::Lossless
+pub pipeline::path::QualityThreshold::MaxBucket(pipeline::path::LossBucket)
+pub pipeline::path::QualityThreshold::NearLossless
+pub pipeline::path::QualityThreshold::SubPerceptual
+pub pipeline::path::ConversionPath::output_format: zenpixels::descriptor::PixelDescriptor
+pub pipeline::path::ConversionPath::proven_lossless: bool
+pub pipeline::path::ConversionPath::source_format: zenpixels::descriptor::PixelDescriptor
+pub pipeline::path::ConversionPath::source_to_working: ConversionCost
+pub pipeline::path::ConversionPath::total_loss: u16
+pub pipeline::path::ConversionPath::total_score: u32
+pub pipeline::path::ConversionPath::working_format: zenpixels::descriptor::PixelDescriptor
+pub pipeline::path::ConversionPath::working_suitability: u16
+pub pipeline::path::ConversionPath::working_to_output: ConversionCost
+pub fn pipeline::path::ConversionPath::loss_bucket(&self) -> pipeline::path::LossBucket
+pub pipeline::path::MatrixStats::by_bucket: [usize; 5]
+pub pipeline::path::MatrixStats::distinct_working_formats: usize
+pub pipeline::path::MatrixStats::no_path: usize
+pub pipeline::path::MatrixStats::paths_found: usize
+pub pipeline::path::MatrixStats::total_triples: usize
+pub pipeline::path::PathEntry::operation: pipeline::op_format::OpCategory
+pub pipeline::path::PathEntry::output_codec: &'static str
+pub pipeline::path::PathEntry::output_format: zenpixels::descriptor::PixelDescriptor
+pub pipeline::path::PathEntry::path: core::option::Option<pipeline::path::ConversionPath>
+pub pipeline::path::PathEntry::source_codec: &'static str
+pub pipeline::path::PathEntry::source_effective_bits: u8
+pub pipeline::path::PathEntry::source_format: zenpixels::descriptor::PixelDescriptor
+pub mod pipeline::registry
+pub pipeline::registry::CodecFormats::cicp: bool
+pub pipeline::registry::CodecFormats::decode_outputs: &'static [pipeline::registry::FormatEntry]
+pub pipeline::registry::CodecFormats::encode_inputs: &'static [pipeline::registry::FormatEntry]
+pub pipeline::registry::CodecFormats::icc_decode: bool
+pub pipeline::registry::CodecFormats::icc_encode: bool
+pub pipeline::registry::CodecFormats::name: &'static str
+pub pipeline::registry::FormatEntry::can_overshoot: bool
+pub pipeline::registry::FormatEntry::descriptor: zenpixels::descriptor::PixelDescriptor
+pub pipeline::registry::FormatEntry::effective_bits: u8
+pub static pipeline::registry::ALL_CODECS: &[&pipeline::registry::CodecFormats]
+pub static pipeline::registry::AVIF: pipeline::registry::CodecFormats
+pub static pipeline::registry::BMP: pipeline::registry::CodecFormats
+pub static pipeline::registry::FARBFELD: pipeline::registry::CodecFormats
+pub static pipeline::registry::GIF: pipeline::registry::CodecFormats
+pub static pipeline::registry::JPEG: pipeline::registry::CodecFormats
+pub static pipeline::registry::JPEG_DECODE_EXTENDED: &[pipeline::registry::FormatEntry]
+pub static pipeline::registry::JXL: pipeline::registry::CodecFormats
+pub static pipeline::registry::PNG: pipeline::registry::CodecFormats
+pub static pipeline::registry::PNM: pipeline::registry::CodecFormats
+pub static pipeline::registry::WEBP: pipeline::registry::CodecFormats
+pub pipeline::LossBucket::High
+pub pipeline::LossBucket::Lossless
+pub pipeline::LossBucket::LowLoss
+pub pipeline::LossBucket::Moderate
+pub pipeline::LossBucket::NearLossless
+pub fn pipeline::path::LossBucket::from_model_loss(u16) -> Self
+pub fn pipeline::path::LossBucket::max_loss(self) -> u16
+pub pipeline::OpCategory::Arithmetic
+pub pipeline::OpCategory::Blur
+pub pipeline::OpCategory::ColorMatrix
+pub pipeline::OpCategory::Composite
+pub pipeline::OpCategory::IccTransform
+pub pipeline::OpCategory::OklabAdjust
+pub pipeline::OpCategory::OklabSharpen
+pub pipeline::OpCategory::Passthrough
+pub pipeline::OpCategory::Quantize
+pub pipeline::OpCategory::ResizeGentle
+pub pipeline::OpCategory::ResizeSharp
+pub pipeline::OpCategory::Sharpen
+pub pipeline::OpCategory::Tonemap
+pub fn pipeline::op_format::OpCategory::candidate_working_formats(self, zenpixels::descriptor::PixelDescriptor) -> alloc::vec::Vec<zenpixels::descriptor::PixelDescriptor>
+pub fn pipeline::op_format::OpCategory::requirement(self) -> pipeline::op_format::OpRequirement
+pub fn pipeline::op_format::OpCategory::to_intent(self) -> ConvertIntent
+pub pipeline::QualityThreshold::Lossless
+pub pipeline::QualityThreshold::MaxBucket(pipeline::path::LossBucket)
+pub pipeline::QualityThreshold::NearLossless
+pub pipeline::QualityThreshold::SubPerceptual
+pub pipeline::CodecFormats::cicp: bool
+pub pipeline::CodecFormats::decode_outputs: &'static [pipeline::registry::FormatEntry]
+pub pipeline::CodecFormats::encode_inputs: &'static [pipeline::registry::FormatEntry]
+pub pipeline::CodecFormats::icc_decode: bool
+pub pipeline::CodecFormats::icc_encode: bool
+pub pipeline::CodecFormats::name: &'static str
+pub pipeline::ConversionPath::output_format: zenpixels::descriptor::PixelDescriptor
+pub pipeline::ConversionPath::proven_lossless: bool
+pub pipeline::ConversionPath::source_format: zenpixels::descriptor::PixelDescriptor
+pub pipeline::ConversionPath::source_to_working: ConversionCost
+pub pipeline::ConversionPath::total_loss: u16
+pub pipeline::ConversionPath::total_score: u32
+pub pipeline::ConversionPath::working_format: zenpixels::descriptor::PixelDescriptor
+pub pipeline::ConversionPath::working_suitability: u16
+pub pipeline::ConversionPath::working_to_output: ConversionCost
+pub fn pipeline::path::ConversionPath::loss_bucket(&self) -> pipeline::path::LossBucket
+pub pipeline::FormatEntry::can_overshoot: bool
+pub pipeline::FormatEntry::descriptor: zenpixels::descriptor::PixelDescriptor
+pub pipeline::FormatEntry::effective_bits: u8
+pub pipeline::MatrixStats::by_bucket: [usize; 5]
+pub pipeline::MatrixStats::distinct_working_formats: usize
+pub pipeline::MatrixStats::no_path: usize
+pub pipeline::MatrixStats::paths_found: usize
+pub pipeline::MatrixStats::total_triples: usize
+pub pipeline::OpRequirement::alpha: core::option::Option<zenpixels::descriptor::AlphaMode>
+pub pipeline::OpRequirement::category: pipeline::op_format::OpCategory
+pub pipeline::OpRequirement::min_depth: core::option::Option<zenpixels::descriptor::ChannelType>
+pub pipeline::OpRequirement::requires_float: bool
+pub pipeline::OpRequirement::transfer: core::option::Option<zenpixels::descriptor::TransferFunction>
+pub pipeline::PathEntry::operation: pipeline::op_format::OpCategory
+pub pipeline::PathEntry::output_codec: &'static str
+pub pipeline::PathEntry::output_format: zenpixels::descriptor::PixelDescriptor
+pub pipeline::PathEntry::path: core::option::Option<pipeline::path::ConversionPath>
+pub pipeline::PathEntry::source_codec: &'static str
+pub pipeline::PathEntry::source_effective_bits: u8
+pub pipeline::PathEntry::source_format: zenpixels::descriptor::PixelDescriptor
+pub enum LossBucket [also: pipeline, pipeline::path]
+pub LossBucket::High
+pub LossBucket::Lossless
+pub LossBucket::LowLoss
+pub LossBucket::Moderate
+pub LossBucket::NearLossless
+pub fn pipeline::path::LossBucket::from_model_loss(u16) -> Self
+pub fn pipeline::path::LossBucket::max_loss(self) -> u16
+pub enum OpCategory [also: pipeline, pipeline::op_format]
+pub OpCategory::Arithmetic
+pub OpCategory::Blur
+pub OpCategory::ColorMatrix
+pub OpCategory::Composite
+pub OpCategory::IccTransform
+pub OpCategory::OklabAdjust
+pub OpCategory::OklabSharpen
+pub OpCategory::Passthrough
+pub OpCategory::Quantize
+pub OpCategory::ResizeGentle
+pub OpCategory::ResizeSharp
+pub OpCategory::Sharpen
+pub OpCategory::Tonemap
+pub fn pipeline::op_format::OpCategory::candidate_working_formats(self, zenpixels::descriptor::PixelDescriptor) -> alloc::vec::Vec<zenpixels::descriptor::PixelDescriptor>
+pub fn pipeline::op_format::OpCategory::requirement(self) -> pipeline::op_format::OpRequirement
+pub fn pipeline::op_format::OpCategory::to_intent(self) -> ConvertIntent
+pub enum QualityThreshold [also: pipeline, pipeline::path]
+pub QualityThreshold::Lossless
+pub QualityThreshold::MaxBucket(pipeline::path::LossBucket)
+pub QualityThreshold::NearLossless
+pub QualityThreshold::SubPerceptual
+pub struct CodecFormats [also: pipeline, pipeline::registry]
+pub CodecFormats::cicp: bool
+pub CodecFormats::decode_outputs: &'static [pipeline::registry::FormatEntry]
+pub CodecFormats::encode_inputs: &'static [pipeline::registry::FormatEntry]
+pub CodecFormats::icc_decode: bool
+pub CodecFormats::icc_encode: bool
+pub CodecFormats::name: &'static str
+pub struct ConversionPath [also: pipeline, pipeline::path]
+pub ConversionPath::output_format: zenpixels::descriptor::PixelDescriptor
+pub ConversionPath::proven_lossless: bool
+pub ConversionPath::source_format: zenpixels::descriptor::PixelDescriptor
+pub ConversionPath::source_to_working: ConversionCost
+pub ConversionPath::total_loss: u16
+pub ConversionPath::total_score: u32
+pub ConversionPath::working_format: zenpixels::descriptor::PixelDescriptor
+pub ConversionPath::working_suitability: u16
+pub ConversionPath::working_to_output: ConversionCost
+pub fn pipeline::path::ConversionPath::loss_bucket(&self) -> pipeline::path::LossBucket
+pub struct FormatEntry [also: pipeline, pipeline::registry]
+pub FormatEntry::can_overshoot: bool
+pub FormatEntry::descriptor: zenpixels::descriptor::PixelDescriptor
+pub FormatEntry::effective_bits: u8
+pub struct MatrixStats [also: pipeline, pipeline::path]
+pub MatrixStats::by_bucket: [usize; 5]
+pub MatrixStats::distinct_working_formats: usize
+pub MatrixStats::no_path: usize
+pub MatrixStats::paths_found: usize
+pub MatrixStats::total_triples: usize
+pub struct MoxCms [also: cms_moxcms]
+pub struct OpRequirement [also: pipeline, pipeline::op_format]
+pub OpRequirement::alpha: core::option::Option<zenpixels::descriptor::AlphaMode>
+pub OpRequirement::category: pipeline::op_format::OpCategory
+pub OpRequirement::min_depth: core::option::Option<zenpixels::descriptor::ChannelType>
+pub OpRequirement::requires_float: bool
+pub OpRequirement::transfer: core::option::Option<zenpixels::descriptor::TransferFunction>
+pub struct PathEntry [also: pipeline, pipeline::path]
+pub PathEntry::operation: pipeline::op_format::OpCategory
+pub PathEntry::output_codec: &'static str
+pub PathEntry::output_format: zenpixels::descriptor::PixelDescriptor
+pub PathEntry::path: core::option::Option<pipeline::path::ConversionPath>
+pub PathEntry::source_codec: &'static str
+pub PathEntry::source_effective_bits: u8
+pub PathEntry::source_format: zenpixels::descriptor::PixelDescriptor
+pub trait PixelBufferConvertTypedExt: ext::PixelBufferConvertExt [also: ext]
+pub fn PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>
+pub fn PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
+pub fn PixelBufferConvertTypedExt::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
+pub fn PixelBufferConvertTypedExt::to_rgba8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>
+pub fn generate_path_matrix(&[&pipeline::registry::CodecFormats], &[pipeline::op_format::OpCategory], &[&pipeline::registry::CodecFormats], pipeline::path::QualityThreshold) -> alloc::vec::Vec<pipeline::path::PathEntry> [also: pipeline, pipeline::path]
+pub fn matrix_stats(&[pipeline::path::PathEntry]) -> pipeline::path::MatrixStats [also: pipeline, pipeline::path]
+pub fn optimal_path(zenpixels::descriptor::PixelDescriptor, Provenance, pipeline::op_format::OpCategory, zenpixels::descriptor::PixelDescriptor, pipeline::path::QualityThreshold) -> core::option::Option<pipeline::path::ConversionPath> [also: pipeline, pipeline::path]
+
+## trait impls (12 types)
+
+cms_moxcms::MoxCms: Clone, Copy, Debug, Default, cms::ColorManagement
+cms_moxcms::MoxCmsError: Clone, Debug, Display
+pipeline::op_format::OpCategory: Clone, Copy, Debug, Eq, Hash, PartialEq
+pipeline::op_format::OpRequirement: Clone, Copy, Debug
+pipeline::path::ConversionPath: Clone, Debug
+pipeline::path::LossBucket: Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd
+pipeline::path::MatrixStats: Clone, Debug, Default
+pipeline::path::PathEntry: Clone, Debug
+pipeline::path::QualityThreshold: Clone, Copy, Debug
+pipeline::registry::CodecFormats: Clone, Debug
+pipeline::registry::FormatEntry: Clone, Copy, Debug
+zenpixels::buffer::PixelBuffer: ext::PixelBufferConvertTypedExt
+
+## auto traits
+
+11 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
