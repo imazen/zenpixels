@@ -2765,34 +2765,30 @@ mod pxn_neon {
                     let (r2a, r2b) = ld2!(2);
                     let (r3a, r3b) = ld2!(3);
                     // col c run = [px(r0,c), px(r1,c), px(r2,c), px(r3,c)].
-                    let runs = [
-                        (vtrn1q_u64(r0a, r1a), vtrn1q_u64(r2a, r3a)), // c0
-                        (vtrn2q_u64(r0a, r1a), vtrn2q_u64(r2a, r3a)), // c1
-                        (vtrn1q_u64(r0b, r1b), vtrn1q_u64(r2b, r3b)), // c2
-                        (vtrn2q_u64(r0b, r1b), vtrn2q_u64(r2b, r3b)), // c3
-                    ];
-                    for (c, &(lo, hi)) in runs.iter().enumerate() {
-                        let (lo, hi) = if flip_sy {
-                            // Reverse 4 px: swap regs + swap halves of each.
-                            (vextq_u64::<1>(hi, hi), vextq_u64::<1>(lo, lo))
-                        } else {
-                            (lo, hi)
-                        };
-                        let dy = if flip_sx {
-                            w - 1 - (sx + c as u32)
-                        } else {
-                            sx + c as u32
-                        };
-                        let doff = dy as usize * dstride + dx * 8;
-                        let out: &mut [u8; 32] = (&mut dbytes[doff..doff + 32]).try_into().unwrap();
-                        vst1q_u8_x2(
-                            bytemuck::cast_mut::<[u8; 32], [[u8; 16]; 2]>(out),
-                            core::arch::aarch64::uint8x16x2_t(
-                                vreinterpretq_u8_u64(lo),
-                                vreinterpretq_u8_u64(hi),
-                            ),
-                        );
+                    macro_rules! emit {
+                        ($c:literal, $lo:expr, $hi:expr) => {{
+                            let (lo, hi) = if flip_sy {
+                                (vextq_u64::<1>($hi, $hi), vextq_u64::<1>($lo, $lo))
+                            } else {
+                                ($lo, $hi)
+                            };
+                            let dy = if flip_sx { w - 1 - (sx + $c) } else { sx + $c };
+                            let doff = dy as usize * dstride + dx * 8;
+                            let out: &mut [u8; 32] =
+                                (&mut dbytes[doff..doff + 32]).try_into().unwrap();
+                            vst1q_u8_x2(
+                                bytemuck::cast_mut::<[u8; 32], [[u8; 16]; 2]>(out),
+                                core::arch::aarch64::uint8x16x2_t(
+                                    vreinterpretq_u8_u64(lo),
+                                    vreinterpretq_u8_u64(hi),
+                                ),
+                            );
+                        }};
                     }
+                    emit!(0u32, vtrn1q_u64(r0a, r1a), vtrn1q_u64(r2a, r3a));
+                    emit!(1u32, vtrn2q_u64(r0a, r1a), vtrn2q_u64(r2a, r3a));
+                    emit!(2u32, vtrn1q_u64(r0b, r1b), vtrn1q_u64(r2b, r3b));
+                    emit!(3u32, vtrn2q_u64(r0b, r1b), vtrn2q_u64(r2b, r3b));
                 }
             }
         }
@@ -2858,49 +2854,50 @@ mod pxn_neon {
                 // one x4 tuple store per destination run. Remainder columns
                 // (≤3 per stripe) take the single-pixel path; iteration
                 // order of the remainder is cache-irrelevant.
-                let nquads = ncols / 4;
-                for qi in 0..nquads {
-                    let q = if flip_sx { nquads - 1 - qi } else { qi };
-                    let sx = bx + q * 4;
-                    let sbase = sy as usize * sstride + sx as usize * 16;
-                    macro_rules! ld4 {
-                        ($i:literal) => {{
-                            let a: &[u8; 64] = sbytes
-                                [sbase + $i * sstride..sbase + $i * sstride + 64]
-                                .try_into()
-                                .unwrap();
-                            vld1q_u8_x4(bytemuck::cast_ref::<[u8; 64], [[u8; 16]; 4]>(a))
-                        }};
-                    }
-                    let rows = [ld4!(0), ld4!(1), ld4!(2), ld4!(3)];
-                    for c in 0..4u32 {
-                        let dy = if flip_sx { w - 1 - (sx + c) } else { sx + c };
+                // Four zipped chunks_exact(16) iterators stream the band's
+                // source rows with their bounds checks hoisted to slice
+                // construction; one 64-byte destination-run check per step.
+                // Plain q-register loads/stores only — ld1/st1 x2/x4
+                // structure ops are microcoded multi-cycle on Neoverse-N1
+                // and measured slower than singles here.
+                {
+                    let row_off = sy as usize * sstride + bx as usize * 16;
+                    let seg = ncols as usize * 16;
+                    let (s0, rest) = sbytes[row_off..].split_at(seg);
+                    let s1 = &rest[sstride - seg..sstride];
+                    let s2 = &sbytes[row_off + 2 * sstride..row_off + 2 * sstride + seg];
+                    let s3 = &sbytes[row_off + 3 * sstride..row_off + 3 * sstride + seg];
+                    let it = s0
+                        .chunks_exact(16)
+                        .zip(s1.chunks_exact(16))
+                        .zip(s2.chunks_exact(16).zip(s3.chunks_exact(16)));
+                    for (ci, ((c0, c1), (c2, c3))) in it.enumerate() {
+                        let sx = bx + ci as u32;
+                        let p0 = vld1q_u8(c0.try_into().unwrap());
+                        let p1 = vld1q_u8(c1.try_into().unwrap());
+                        let p2 = vld1q_u8(c2.try_into().unwrap());
+                        let p3 = vld1q_u8(c3.try_into().unwrap());
+                        let (p0, p1, p2, p3) = if flip_sy {
+                            (p3, p2, p1, p0)
+                        } else {
+                            (p0, p1, p2, p3)
+                        };
+                        let dy = if flip_sx { w - 1 - sx } else { sx };
                         let dbase = dy as usize * dstride + dx * 16;
-                        macro_rules! pick {
-                            ($k:literal) => {{
-                                let t = &rows[if flip_sy { 3 - $k } else { $k }];
-                                match c {
-                                    0 => t.0,
-                                    1 => t.1,
-                                    2 => t.2,
-                                    _ => t.3,
-                                }
-                            }};
-                        }
                         let out: &mut [u8; 64] =
                             (&mut dbytes[dbase..dbase + 64]).try_into().unwrap();
-                        vst1q_u8_x4(
-                            bytemuck::cast_mut::<[u8; 64], [[u8; 16]; 4]>(out),
-                            core::arch::aarch64::uint8x16x4_t(
-                                pick!(0),
-                                pick!(1),
-                                pick!(2),
-                                pick!(3),
-                            ),
-                        );
+                        let (o01, o23) = out.split_at_mut(32);
+                        let (o0, o1) = o01.split_at_mut(16);
+                        let (o2, o3) = o23.split_at_mut(16);
+                        vst1q_u8(o0.try_into().unwrap(), p0);
+                        vst1q_u8(o1.try_into().unwrap(), p1);
+                        vst1q_u8(o2.try_into().unwrap(), p2);
+                        vst1q_u8(o3.try_into().unwrap(), p3);
                     }
                 }
-                for ci in (nquads * 4)..ncols {
+                let nquads = 0u32;
+                let _ = nquads;
+                for ci in ncols..ncols {
                     let sx = bx + ci;
                     let dy = if flip_sx { w - 1 - sx } else { sx };
                     let dbase = dy as usize * dstride + dx * 16;
