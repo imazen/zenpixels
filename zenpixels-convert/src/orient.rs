@@ -581,10 +581,8 @@ fn do_transpose(
                 }
             }
             16 => {
-                if let Some(token) = NeonToken::summon() {
-                    pxn_neon::transpose16_neon(token, src, dst, orientation, w, h);
-                    return;
-                }
+                transpose16_deep(src, dst, orientation, w, h);
+                return;
             }
             _ => {}
         }
@@ -1210,6 +1208,80 @@ mod rgb3_x86 {
 // the classic punpck cascades (AP-528 → libyuv lineage); the shootout showed
 // our previous paths losing 3-5× to exactly these kernel shapes in zune /
 // fast_transpose / the C++ Simd library.
+/// 16-byte pixels, all architectures: deep scalar tiles. A transpose at
+/// this width is pure 16-byte block movement, and fixed-size 16-byte copies
+/// autovectorize to full-width register moves on every supported target
+/// (NEON is the aarch64 baseline, SSE2 the x86-64 baseline) — measured on
+/// Neoverse-N1, this shape beats the hand-written NEON kernel (run depth
+/// amortizes per-row bookkeeping 4×; N1 microcodes ld1/st1 multi-register
+/// structure ops, so wide hand-SIMD has no edge to offer here).
+#[cfg_attr(not(target_arch = "aarch64"), allow(dead_code))]
+fn transpose16_deep(
+    src: &PixelSlice<'_>,
+    dst: &mut PixelSliceMut<'_>,
+    orientation: Orientation,
+    w: u32,
+    h: u32,
+) {
+    let Some((flip_sx, flip_sy)) = inverse_flips(orientation) else {
+        return transpose_blocked(src, dst, orientation, w, h, 16);
+    };
+    let sbytes = src.as_strided_bytes();
+    let sstride = src.stride();
+    let dstride = dst.stride();
+    let dbytes = dst.as_strided_bytes_mut();
+
+    const T: usize = 16;
+    let full_w = w & !15;
+    let full_h = h & !15;
+    let ntx = (full_w / 16) as usize;
+    let nty = (full_h / 16) as usize;
+    for tyi in 0..nty {
+        let ty = if flip_sy { nty - 1 - tyi } else { tyi } * T;
+        let dx = if flip_sy { h as usize - T - ty } else { ty };
+        for txi in 0..ntx {
+            let tx = (if flip_sx { ntx - 1 - txi } else { txi }) * T;
+            // One bounds check per source row segment and per destination
+            // row run; the inner fixed-size copies need none.
+            let mut srows: [&[u8]; T] = [&[]; T];
+            for (r, sr) in srows.iter_mut().enumerate() {
+                let off = (ty + r) * sstride + tx * 16;
+                *sr = &sbytes[off..off + T * 16];
+            }
+            for c in 0..T {
+                let dy = if flip_sx {
+                    w as usize - 1 - (tx + c)
+                } else {
+                    tx + c
+                };
+                let drow = &mut dbytes[dy * dstride + dx * 16..dy * dstride + (dx + T) * 16];
+                for (k, chunk) in drow.chunks_exact_mut(16).enumerate() {
+                    let r = if flip_sy { T - 1 - k } else { k };
+                    chunk.copy_from_slice(&srows[r][c * 16..c * 16 + 16]);
+                }
+            }
+        }
+    }
+    // Edges (right columns, bottom rows).
+    let (sb, db) = (sbytes, dbytes);
+    for y in 0..full_h {
+        for x in full_w..w {
+            let (dxx, dyy) = orientation.forward_map(x, y, w, h);
+            let so = y as usize * sstride + x as usize * 16;
+            let dofs = dyy as usize * dstride + dxx as usize * 16;
+            db[dofs..dofs + 16].copy_from_slice(&sb[so..so + 16]);
+        }
+    }
+    for y in full_h..h {
+        for x in 0..w {
+            let (dxx, dyy) = orientation.forward_map(x, y, w, h);
+            let so = y as usize * sstride + x as usize * 16;
+            let dofs = dyy as usize * dstride + dxx as usize * 16;
+            db[dofs..dofs + 16].copy_from_slice(&sb[so..so + 16]);
+        }
+    }
+}
+
 #[cfg(target_arch = "x86_64")]
 mod pxn_x86 {
     use super::{Orientation, PixelSlice, PixelSliceMut, inverse_flips};
@@ -1864,6 +1936,964 @@ mod pxn_x86 {
 
     /// Expand mask for 6-byte pixels: per lane, two RGB16 pixels → two
     /// 8-byte (RGBX16) pixels.
+    const EXPAND6: [u8; 16] = [0, 1, 2, 3, 4, 5, 128, 128, 6, 7, 8, 9, 10, 11, 128, 128];
+    /// Compress: two 8-byte lanes → 12 valid bytes (per lane).
+    const COMPRESS6_FWD: [u8; 16] = [0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 128, 128, 128, 128];
+    /// Compress with the two pixels of the lane swapped (flip_sy).
+    const COMPRESS6_REV: [u8; 16] = [8, 9, 10, 11, 12, 13, 0, 1, 2, 3, 4, 5, 128, 128, 128, 128];
+
+    /// 4×4 6-byte pixels (RGB16): expand 6→8 per lane, qword 4×4 transpose,
+    /// compress 8→6, contiguous 24-byte store as 16+8. Same construction as
+    /// the RGB8 kernel one level up. Second per-row load sits at +12 with
+    /// 4 bytes of slop — guarded on the band touching the image's last row.
+    #[arcane(import_intrinsics)]
+    pub(super) fn transpose6_v3(
+        _token: X64V3Token,
+        src: &PixelSlice<'_>,
+        dst: &mut PixelSliceMut<'_>,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+    ) {
+        let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
+        let sbytes = src.as_strided_bytes();
+        let sstride = src.stride();
+        let dstride = dst.stride();
+        let dbytes = dst.as_strided_bytes_mut();
+
+        let expand = _mm256_broadcastsi128_si256(_mm_loadu_si128(&EXPAND6));
+        let compress = _mm256_broadcastsi128_si256(_mm_loadu_si128(if flip_sy {
+            &COMPRESS6_REV
+        } else {
+            &COMPRESS6_FWD
+        }));
+        let merge = if flip_sy {
+            _mm256_setr_epi32(4, 5, 6, 0, 1, 2, 6, 7)
+        } else {
+            _mm256_setr_epi32(0, 1, 2, 4, 5, 6, 6, 7)
+        };
+
+        let full_w = w & !3;
+        let full_h = h & !3;
+        // Last-band guard: per-row loads cover [sx*6, sx*6+28); need
+        // (sx+4)*6 + 4 ≤ w*6 on the final image row, i.e. sx + 4 ≤ w − 1.
+        let guard_w = if full_h == h {
+            if w >= 1 { (w - 1) & !3 } else { 0 }
+        } else {
+            full_w
+        }
+        .min(full_w);
+
+        const MACRO: u32 = 64;
+        let nblocks = full_w.div_ceil(MACRO);
+        for bi in 0..nblocks {
+            let bx = if flip_sx { nblocks - 1 - bi } else { bi } * MACRO;
+            let bx_end = (bx + MACRO).min(full_w);
+            let ntiles = (bx_end - bx) / 4;
+            let nbands = full_h / 4;
+            for bandi in 0..nbands {
+                let sy = bandi * 4;
+                let limit = if sy + 4 >= h { guard_w } else { full_w };
+                let dx = (if flip_sy { h - 4 - sy } else { sy }) as usize;
+                for ti in 0..ntiles {
+                    let sx = if flip_sx {
+                        bx + (ntiles - 1 - ti) * 4
+                    } else {
+                        bx + ti * 4
+                    };
+                    if sx + 4 > limit {
+                        continue;
+                    }
+                    let base = sy as usize * sstride + sx as usize * 6;
+                    macro_rules! ld {
+                        ($i:literal) => {{
+                            let lo: &[u8; 16] = sbytes
+                                [base + $i * sstride..base + $i * sstride + 16]
+                                .try_into()
+                                .unwrap();
+                            let hi: &[u8; 16] = sbytes
+                                [base + $i * sstride + 12..base + $i * sstride + 28]
+                                .try_into()
+                                .unwrap();
+                            _mm256_shuffle_epi8(
+                                _mm256_set_m128i(_mm_loadu_si128(hi), _mm_loadu_si128(lo)),
+                                expand,
+                            )
+                        }};
+                    }
+                    let (a0, a1, a2, a3) = (ld!(0), ld!(1), ld!(2), ld!(3));
+                    let b0 = _mm256_unpacklo_epi64(a0, a1);
+                    let b1 = _mm256_unpackhi_epi64(a0, a1);
+                    let b2 = _mm256_unpacklo_epi64(a2, a3);
+                    let b3 = _mm256_unpackhi_epi64(a2, a3);
+                    let cols = [
+                        _mm256_permute2x128_si256::<0x20>(b0, b2),
+                        _mm256_permute2x128_si256::<0x20>(b1, b3),
+                        _mm256_permute2x128_si256::<0x31>(b0, b2),
+                        _mm256_permute2x128_si256::<0x31>(b1, b3),
+                    ];
+                    for (c, &col) in cols.iter().enumerate() {
+                        let packed =
+                            _mm256_permutevar8x32_epi32(_mm256_shuffle_epi8(col, compress), merge);
+                        let dy = if flip_sx {
+                            w - 1 - (sx + c as u32)
+                        } else {
+                            sx + c as u32
+                        };
+                        let doff = dy as usize * dstride + dx * 6;
+                        let (head, tail) = dbytes[doff..doff + 24].split_at_mut(16);
+                        let head: &mut [u8; 16] = head.try_into().unwrap();
+                        let tail: &mut [u8; 8] = tail.try_into().unwrap();
+                        _mm_storeu_si128(head, _mm256_castsi256_si128(packed));
+                        _mm_storeu_si64(tail, _mm256_extracti128_si256::<1>(packed));
+                    }
+                }
+            }
+        }
+        if guard_w < full_w && full_h == h && h >= 4 {
+            scalar_rect(
+                sbytes,
+                sstride,
+                dbytes,
+                dstride,
+                orientation,
+                w,
+                h,
+                6,
+                guard_w,
+                full_w,
+                h - 4,
+                h,
+            );
+        }
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            6,
+            full_w,
+            w,
+            0,
+            full_h,
+        );
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            6,
+            0,
+            w,
+            full_h,
+            h,
+        );
+    }
+
+    /// 2×4 12-byte pixels (RGBF32): each pixel rides one 128-bit lane
+    /// (12 valid bytes); lane permutes transpose, a dword permute compacts
+    /// each output pair to 24 contiguous bytes (pixels are dword-aligned,
+    /// so no byte shuffle is needed). Second per-row load sits at +12 with
+    /// 4 bytes of slop — guarded on the band touching the image's last row.
+    #[arcane(import_intrinsics)]
+    pub(super) fn transpose12_v3(
+        _token: X64V3Token,
+        src: &PixelSlice<'_>,
+        dst: &mut PixelSliceMut<'_>,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+    ) {
+        let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
+        let sbytes = src.as_strided_bytes();
+        let sstride = src.stride();
+        let dstride = dst.stride();
+        let dbytes = dst.as_strided_bytes_mut();
+
+        let merge = if flip_sy {
+            _mm256_setr_epi32(4, 5, 6, 0, 1, 2, 6, 7)
+        } else {
+            _mm256_setr_epi32(0, 1, 2, 4, 5, 6, 6, 7)
+        };
+
+        let full_w = w & !1;
+        let full_h = h & !3;
+        // Last-band guard: loads cover [sx*12, sx*12+28); need
+        // (sx+2)*12 + 4 ≤ w*12 on the final image row → sx + 2 ≤ w − 1.
+        let guard_w = if full_h == h {
+            if w >= 1 { (w - 1) & !1 } else { 0 }
+        } else {
+            full_w
+        }
+        .min(full_w);
+
+        const MACRO: u32 = 64;
+        let nblocks = full_w.div_ceil(MACRO);
+        for bi in 0..nblocks {
+            let bx = if flip_sx { nblocks - 1 - bi } else { bi } * MACRO;
+            let bx_end = (bx + MACRO).min(full_w);
+            let ntiles = (bx_end - bx) / 2;
+            let nbands = full_h / 4;
+            for bandi in 0..nbands {
+                let sy = bandi * 4;
+                let limit = if sy + 4 >= h { guard_w } else { full_w };
+                let dx = (if flip_sy { h - 4 - sy } else { sy }) as usize;
+                for ti in 0..ntiles {
+                    let sx = if flip_sx {
+                        bx + (ntiles - 1 - ti) * 2
+                    } else {
+                        bx + ti * 2
+                    };
+                    if sx + 2 > limit {
+                        continue;
+                    }
+                    let base = sy as usize * sstride + sx as usize * 12;
+                    macro_rules! ld {
+                        ($i:literal) => {{
+                            let lo: &[u8; 16] = sbytes
+                                [base + $i * sstride..base + $i * sstride + 16]
+                                .try_into()
+                                .unwrap();
+                            let hi: &[u8; 16] = sbytes
+                                [base + $i * sstride + 12..base + $i * sstride + 28]
+                                .try_into()
+                                .unwrap();
+                            _mm256_set_m128i(_mm_loadu_si128(hi), _mm_loadu_si128(lo))
+                        }};
+                    }
+                    let (a0, a1, a2, a3) = (ld!(0), ld!(1), ld!(2), ld!(3));
+                    // dst row (sx+c): pixel pairs from rows (0,1) and (2,3).
+                    for c in 0..2u32 {
+                        let (y01, y23) = if c == 0 {
+                            (
+                                _mm256_permute2x128_si256::<0x20>(a0, a1),
+                                _mm256_permute2x128_si256::<0x20>(a2, a3),
+                            )
+                        } else {
+                            (
+                                _mm256_permute2x128_si256::<0x31>(a0, a1),
+                                _mm256_permute2x128_si256::<0x31>(a2, a3),
+                            )
+                        };
+                        // flip_sy: emit rows 3..0 instead of 0..3.
+                        let (first, second) = if flip_sy { (y23, y01) } else { (y01, y23) };
+                        let dy = if flip_sx { w - 1 - (sx + c) } else { sx + c };
+                        let doff = dy as usize * dstride + dx * 12;
+                        // First 24 B go out as one full 32-byte store whose
+                        // 8-byte slop lands INSIDE this run (bytes 24..32),
+                        // immediately overwritten by the second half — three
+                        // stores per 48-byte run instead of four, and the
+                        // slop never crosses the run boundary.
+                        let p0 = _mm256_permutevar8x32_epi32(first, merge);
+                        let out0: &mut [u8; 32] =
+                            (&mut dbytes[doff..doff + 32]).try_into().unwrap();
+                        _mm256_storeu_si256(out0, p0);
+                        let p1 = _mm256_permutevar8x32_epi32(second, merge);
+                        let (head, tail) = dbytes[doff + 24..doff + 48].split_at_mut(16);
+                        let head: &mut [u8; 16] = head.try_into().unwrap();
+                        let tail: &mut [u8; 8] = tail.try_into().unwrap();
+                        _mm_storeu_si128(head, _mm256_castsi256_si128(p1));
+                        _mm_storeu_si64(tail, _mm256_extracti128_si256::<1>(p1));
+                    }
+                }
+            }
+        }
+        if guard_w < full_w && full_h == h && h >= 4 {
+            scalar_rect(
+                sbytes,
+                sstride,
+                dbytes,
+                dstride,
+                orientation,
+                w,
+                h,
+                12,
+                guard_w,
+                full_w,
+                h - 4,
+                h,
+            );
+        }
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            12,
+            full_w,
+            w,
+            0,
+            full_h,
+        );
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            12,
+            0,
+            w,
+            full_h,
+            h,
+        );
+    }
+}
+
+// ── NEON transposes (aarch64): vzip cascades + tbl expand/compress ──────────
+//
+// Same construction discipline as `pxn_x86`: value intrinsics inside
+// `#[arcane]`, safe reference-taking loads/stores, flat strided bytes,
+// scalar `forward_map` edges, slop-free stores (the 3/6/12-byte kernels'
+// reads carry small guarded slop like their x86 siblings). Kernel networks
+// for 1/2/4 bpp follow ermig1979/Simd's NEON tier (vzipq cascades); the
+// 24-bit kernel reuses our expand→zip→compress shape instead of their
+// vtbl variant, whose 16-byte stores overhang the 12-byte destination run.
+#[cfg(target_arch = "aarch64")]
+mod pxn_neon {
+    use super::{Orientation, PixelSlice, PixelSliceMut, inverse_flips};
+    use archmage::prelude::*;
+
+    #[allow(clippy::too_many_arguments)]
+    fn scalar_rect(
+        sbytes: &[u8],
+        sstride: usize,
+        dbytes: &mut [u8],
+        dstride: usize,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+        bpp: usize,
+        x0: u32,
+        x1: u32,
+        y0: u32,
+        y1: u32,
+    ) {
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let (dx, dy) = orientation.forward_map(x, y, w, h);
+                let s = y as usize * sstride + x as usize * bpp;
+                let d = dy as usize * dstride + dx as usize * bpp;
+                dbytes[d..d + bpp].copy_from_slice(&sbytes[s..s + bpp]);
+            }
+        }
+    }
+
+    /// 8×16 gray8 tiles (Simd `1x8x16`): 8 q-loads, three vzipq_u8 rounds,
+    /// sixteen 8-byte half-stores. flip_sy reverses each 8-byte run
+    /// (`vrev64_u8`); flip_sx reverses tile/store order.
+    #[arcane(import_intrinsics)]
+    pub(super) fn transpose1_neon(
+        _token: NeonToken,
+        src: &PixelSlice<'_>,
+        dst: &mut PixelSliceMut<'_>,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+    ) {
+        let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
+        let sbytes = src.as_strided_bytes();
+        let sstride = src.stride();
+        let dstride = dst.stride();
+        let dbytes = dst.as_strided_bytes_mut();
+
+        let full_w = w & !15;
+        let full_h = h & !15;
+        let ntiles = full_w / 16;
+        let nbands = full_h / 16;
+        for bandi in 0..nbands {
+            let sy = if flip_sy {
+                (nbands - 1 - bandi) * 16
+            } else {
+                bandi * 16
+            };
+            let dx = (if flip_sy { h - 16 - sy } else { sy }) as usize;
+            for ti in 0..ntiles {
+                let sx = if flip_sx {
+                    (ntiles - 1 - ti) * 16
+                } else {
+                    ti * 16
+                };
+                let base = sy as usize * sstride + sx as usize;
+                macro_rules! ld {
+                    ($i:expr) => {{
+                        let a: &[u8; 16] = sbytes[base + $i * sstride..base + $i * sstride + 16]
+                            .try_into()
+                            .unwrap();
+                        vld1q_u8(a)
+                    }};
+                }
+                // Two 8-row vzip cascades (Simd 1x8x16 network), merged per
+                // column into one 16-byte destination store.
+                macro_rules! cascade {
+                    ($o:expr) => {{
+                        let b0 = vzipq_u8(ld!($o), ld!($o + 4));
+                        let b1 = vzipq_u8(ld!($o + 1), ld!($o + 5));
+                        let b2 = vzipq_u8(ld!($o + 2), ld!($o + 6));
+                        let b3 = vzipq_u8(ld!($o + 3), ld!($o + 7));
+                        let a0 = vzipq_u8(b0.0, b2.0);
+                        let a1 = vzipq_u8(b0.1, b2.1);
+                        let a2 = vzipq_u8(b1.0, b3.0);
+                        let a3 = vzipq_u8(b1.1, b3.1);
+                        let c0 = vzipq_u8(a0.0, a2.0);
+                        let c1 = vzipq_u8(a0.1, a2.1);
+                        let c2 = vzipq_u8(a1.0, a3.0);
+                        let c3 = vzipq_u8(a1.1, a3.1);
+                        [c0.0, c0.1, c1.0, c1.1, c2.0, c2.1, c3.0, c3.1]
+                    }};
+                }
+                let lo = cascade!(0usize);
+                let hi = cascade!(8usize);
+                for k in 0..8usize {
+                    for half in 0..2u32 {
+                        let c = 2 * k as u32 + half;
+                        let dlo = if half == 0 {
+                            vget_low_u8(lo[k])
+                        } else {
+                            vget_high_u8(lo[k])
+                        };
+                        let dhi = if half == 0 {
+                            vget_low_u8(hi[k])
+                        } else {
+                            vget_high_u8(hi[k])
+                        };
+                        let mut q = vcombine_u8(dlo, dhi);
+                        if flip_sy {
+                            let r = vrev64q_u8(q);
+                            q = vextq_u8::<8>(r, r);
+                        }
+                        let dy = if flip_sx { w - 1 - (sx + c) } else { sx + c };
+                        let doff = dy as usize * dstride + dx;
+                        let out: &mut [u8; 16] = (&mut dbytes[doff..doff + 16]).try_into().unwrap();
+                        vst1q_u8(out, q);
+                    }
+                }
+            }
+        }
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            1,
+            full_w,
+            w,
+            0,
+            full_h,
+        );
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            1,
+            0,
+            w,
+            full_h,
+            h,
+        );
+    }
+
+    /// 8×8 2-byte tiles (Simd `2x8x8`): vzipq_u16 cascade, 16-byte stores.
+    #[arcane(import_intrinsics)]
+    pub(super) fn transpose2_neon(
+        _token: NeonToken,
+        src: &PixelSlice<'_>,
+        dst: &mut PixelSliceMut<'_>,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+    ) {
+        let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
+        let sbytes = src.as_strided_bytes();
+        let sstride = src.stride();
+        let dstride = dst.stride();
+        let dbytes = dst.as_strided_bytes_mut();
+
+        let full_w = w & !7;
+        let full_h = h & !7;
+        const MACRO: u32 = 64;
+        let nblocks = full_w.div_ceil(MACRO);
+        for bi in 0..nblocks {
+            let bx = if flip_sx { nblocks - 1 - bi } else { bi } * MACRO;
+            let bx_end = (bx + MACRO).min(full_w);
+            let ntiles = (bx_end - bx) / 8;
+            let nbands = full_h / 8;
+            for bandi in 0..nbands {
+                let sy = if flip_sy {
+                    (nbands - 1 - bandi) * 8
+                } else {
+                    bandi * 8
+                };
+                let dx = (if flip_sy { h - 8 - sy } else { sy }) as usize;
+                for ti in 0..ntiles {
+                    let sx = if flip_sx {
+                        bx + (ntiles - 1 - ti) * 8
+                    } else {
+                        bx + ti * 8
+                    };
+                    let base = sy as usize * sstride + sx as usize * 2;
+                    macro_rules! ld {
+                        ($i:literal) => {{
+                            let a: &[u8; 16] = sbytes
+                                [base + $i * sstride..base + $i * sstride + 16]
+                                .try_into()
+                                .unwrap();
+                            vreinterpretq_u16_u8(vld1q_u8(a))
+                        }};
+                    }
+                    let (r0, r1, r2, r3) = (ld!(0), ld!(1), ld!(2), ld!(3));
+                    let (r4, r5, r6, r7) = (ld!(4), ld!(5), ld!(6), ld!(7));
+                    let b0 = vzipq_u16(r0, r4);
+                    let b1 = vzipq_u16(r1, r5);
+                    let b2 = vzipq_u16(r2, r6);
+                    let b3 = vzipq_u16(r3, r7);
+                    let a0 = vzipq_u16(b0.0, b2.0);
+                    let a1 = vzipq_u16(b0.1, b2.1);
+                    let a2 = vzipq_u16(b1.0, b3.0);
+                    let a3 = vzipq_u16(b1.1, b3.1);
+                    let c0 = vzipq_u16(a0.0, a2.0);
+                    let c1 = vzipq_u16(a0.1, a2.1);
+                    let c2 = vzipq_u16(a1.0, a3.0);
+                    let c3 = vzipq_u16(a1.1, a3.1);
+                    let cols = [c0.0, c0.1, c1.0, c1.1, c2.0, c2.1, c3.0, c3.1];
+                    for (c, &col) in cols.iter().enumerate() {
+                        let v = vreinterpretq_u8_u16(col);
+                        // Reverse 8 u16: per-64-bit u16 reversal + half swap.
+                        let v = if flip_sy {
+                            let r = vreinterpretq_u8_u16(vrev64q_u16(vreinterpretq_u16_u8(v)));
+                            vextq_u8::<8>(r, r)
+                        } else {
+                            v
+                        };
+                        let dy = if flip_sx {
+                            w - 1 - (sx + c as u32)
+                        } else {
+                            sx + c as u32
+                        };
+                        let doff = dy as usize * dstride + dx * 2;
+                        let out: &mut [u8; 16] = (&mut dbytes[doff..doff + 16]).try_into().unwrap();
+                        vst1q_u8(out, v);
+                    }
+                }
+            }
+        }
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            2,
+            full_w,
+            w,
+            0,
+            full_h,
+        );
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            2,
+            0,
+            w,
+            full_h,
+            h,
+        );
+    }
+
+    /// Store the low 12 bytes of a q register with no slop: 8-byte half
+    /// store + 4-byte scalar tail. Macro so it expands inside the
+    /// `#[arcane]` target-feature regions (a plain fn would need its own
+    /// `#[target_feature]` to call the NEON value intrinsics).
+    macro_rules! store12 {
+        ($dbytes:ident, $doff:expr, $v:expr) => {{
+            let v = $v;
+            let off = $doff;
+            let head: &mut [u8; 8] = (&mut $dbytes[off..off + 8]).try_into().unwrap();
+            vst1_u8(head, vget_low_u8(v));
+            let tail = vgetq_lane_u32::<2>(vreinterpretq_u32_u8(v));
+            $dbytes[off + 8..off + 12].copy_from_slice(&tail.to_le_bytes());
+        }};
+    }
+
+    /// Expand mask: 12 RGB bytes → 4 RGBX u32 lanes (255 ⇒ zero lane).
+    const EXPAND3: [u8; 16] = [0, 1, 2, 255, 3, 4, 5, 255, 6, 7, 8, 255, 9, 10, 11, 255];
+    const COMPRESS3_FWD: [u8; 16] = [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 255, 255, 255, 255];
+    const COMPRESS3_REV: [u8; 16] = [12, 13, 14, 8, 9, 10, 4, 5, 6, 0, 1, 2, 255, 255, 255, 255];
+
+    /// 4×4 RGB8 tiles: tbl-expand 3→4, vzipq_u32 4×4 transpose, tbl-compress
+    /// 4→3, slop-free 8+4 stores. Loads carry 4 bytes of slop, guarded on
+    /// the band touching the image's final row (same contract as x86).
+    #[arcane(import_intrinsics)]
+    pub(super) fn transpose3_neon(
+        _token: NeonToken,
+        src: &PixelSlice<'_>,
+        dst: &mut PixelSliceMut<'_>,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+    ) {
+        let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
+        let sbytes = src.as_strided_bytes();
+        let sstride = src.stride();
+        let dstride = dst.stride();
+        let dbytes = dst.as_strided_bytes_mut();
+
+        let expand = vld1q_u8(&EXPAND3);
+        let compress = vld1q_u8(if flip_sy {
+            &COMPRESS3_REV
+        } else {
+            &COMPRESS3_FWD
+        });
+
+        let full_w = w & !3;
+        let full_h = h & !3;
+        let guard_w = if full_h == h {
+            if w >= 6 { (w - 2) & !3 } else { 0 }
+        } else {
+            full_w
+        }
+        .min(full_w);
+
+        const MACRO: u32 = 64;
+        let nblocks = full_w.div_ceil(MACRO);
+        for bi in 0..nblocks {
+            let bx = if flip_sx { nblocks - 1 - bi } else { bi } * MACRO;
+            let bx_end = (bx + MACRO).min(full_w);
+            let ntiles = (bx_end - bx) / 4;
+            let nbands = full_h / 4;
+            for bandi in 0..nbands {
+                let sy = bandi * 4;
+                let limit = if sy + 4 >= h { guard_w } else { full_w };
+                let dx = (if flip_sy { h - 4 - sy } else { sy }) as usize;
+                for ti in 0..ntiles {
+                    let sx = if flip_sx {
+                        bx + (ntiles - 1 - ti) * 4
+                    } else {
+                        bx + ti * 4
+                    };
+                    if sx + 4 > limit {
+                        continue;
+                    }
+                    let base = sy as usize * sstride + sx as usize * 3;
+                    macro_rules! ld {
+                        ($i:literal) => {{
+                            let a: &[u8; 16] = sbytes
+                                [base + $i * sstride..base + $i * sstride + 16]
+                                .try_into()
+                                .unwrap();
+                            vreinterpretq_u32_u8(vqtbl1q_u8(vld1q_u8(a), expand))
+                        }};
+                    }
+                    let (p0, p1, p2, p3) = (ld!(0), ld!(1), ld!(2), ld!(3));
+                    let b0 = vzipq_u32(p0, p2);
+                    let b1 = vzipq_u32(p1, p3);
+                    let a0 = vzipq_u32(b0.0, b1.0);
+                    let a1 = vzipq_u32(b0.1, b1.1);
+                    let cols = [a0.0, a0.1, a1.0, a1.1];
+                    for (c, &col) in cols.iter().enumerate() {
+                        let packed = vqtbl1q_u8(vreinterpretq_u8_u32(col), compress);
+                        let dy = if flip_sx {
+                            w - 1 - (sx + c as u32)
+                        } else {
+                            sx + c as u32
+                        };
+                        let doff = dy as usize * dstride + dx * 3;
+                        store12!(dbytes, doff, packed);
+                    }
+                }
+            }
+        }
+        if guard_w < full_w && full_h == h && h >= 4 {
+            scalar_rect(
+                sbytes,
+                sstride,
+                dbytes,
+                dstride,
+                orientation,
+                w,
+                h,
+                3,
+                guard_w,
+                full_w,
+                h - 4,
+                h,
+            );
+        }
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            3,
+            full_w,
+            w,
+            0,
+            full_h,
+        );
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            3,
+            0,
+            w,
+            full_h,
+            h,
+        );
+    }
+
+    /// 4×4 4-byte tiles (Simd `4x4x4`): two vzipq_u32 rounds, 16-byte stores.
+    #[arcane(import_intrinsics)]
+    pub(super) fn transpose4_neon(
+        _token: NeonToken,
+        src: &PixelSlice<'_>,
+        dst: &mut PixelSliceMut<'_>,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+    ) {
+        let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
+        let sbytes = src.as_strided_bytes();
+        let sstride = src.stride();
+        let dstride = dst.stride();
+        let dbytes = dst.as_strided_bytes_mut();
+
+        let full_w = w & !3;
+        let full_h = h & !7;
+        const MACRO: u32 = 64;
+        let nblocks = full_w.div_ceil(MACRO);
+        for bi in 0..nblocks {
+            let bx = if flip_sx { nblocks - 1 - bi } else { bi } * MACRO;
+            let bx_end = (bx + MACRO).min(full_w);
+            let ntiles = (bx_end - bx) / 4;
+            let nbands = full_h / 8;
+            for bandi in 0..nbands {
+                let sy = bandi * 8;
+                let dx = (if flip_sy { h - 8 - sy } else { sy }) as usize;
+                for ti in 0..ntiles {
+                    let sx = if flip_sx {
+                        bx + (ntiles - 1 - ti) * 4
+                    } else {
+                        bx + ti * 4
+                    };
+                    let base = sy as usize * sstride + sx as usize * 4;
+                    macro_rules! ld {
+                        ($i:expr) => {{
+                            let a: &[u8; 16] = sbytes
+                                [base + $i * sstride..base + $i * sstride + 16]
+                                .try_into()
+                                .unwrap();
+                            vreinterpretq_u32_u8(vld1q_u8(a))
+                        }};
+                    }
+                    macro_rules! net4 {
+                        ($o:expr) => {{
+                            let b0 = vzipq_u32(ld!($o), ld!($o + 2));
+                            let b1 = vzipq_u32(ld!($o + 1), ld!($o + 3));
+                            let a0 = vzipq_u32(b0.0, b1.0);
+                            let a1 = vzipq_u32(b0.1, b1.1);
+                            [a0.0, a0.1, a1.0, a1.1]
+                        }};
+                    }
+                    // Rows 0-3 and 4-7 transposed separately; each dst run
+                    // is 8 px = 32 B, stored as one x2 tuple.
+                    let lo = net4!(0usize);
+                    let hi = net4!(4usize);
+                    for (c, (&l, &h2)) in lo.iter().zip(hi.iter()).enumerate() {
+                        let (mut a, mut b) = (vreinterpretq_u8_u32(l), vreinterpretq_u8_u32(h2));
+                        if flip_sy {
+                            // Reverse 8 px: swap regs + reverse u32s in each.
+                            let ra = vreinterpretq_u8_u32(vrev64q_u32(vreinterpretq_u32_u8(b)));
+                            let rb = vreinterpretq_u8_u32(vrev64q_u32(vreinterpretq_u32_u8(a)));
+                            a = vextq_u8::<8>(ra, ra);
+                            b = vextq_u8::<8>(rb, rb);
+                        }
+                        let dy = if flip_sx {
+                            w - 1 - (sx + c as u32)
+                        } else {
+                            sx + c as u32
+                        };
+                        let doff = dy as usize * dstride + dx * 4;
+                        let out: &mut [u8; 32] = (&mut dbytes[doff..doff + 32]).try_into().unwrap();
+                        vst1q_u8_x2(
+                            bytemuck::cast_mut::<[u8; 32], [[u8; 16]; 2]>(out),
+                            core::arch::aarch64::uint8x16x2_t(a, b),
+                        );
+                    }
+                }
+            }
+        }
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            4,
+            full_w,
+            w,
+            0,
+            full_h,
+        );
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            4,
+            0,
+            w,
+            full_h,
+            h,
+        );
+    }
+
+    /// 2×2 8-byte tiles: vtrn1q/vtrn2q_u64.
+    #[arcane(import_intrinsics)]
+    pub(super) fn transpose8_neon(
+        _token: NeonToken,
+        src: &PixelSlice<'_>,
+        dst: &mut PixelSliceMut<'_>,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+    ) {
+        let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
+        let sbytes = src.as_strided_bytes();
+        let sstride = src.stride();
+        let dstride = dst.stride();
+        let dbytes = dst.as_strided_bytes_mut();
+
+        let full_w = w & !3;
+        let full_h = h & !3;
+        const MACRO: u32 = 64;
+        let nblocks = full_w.div_ceil(MACRO);
+        for bi in 0..nblocks {
+            let bx = if flip_sx { nblocks - 1 - bi } else { bi } * MACRO;
+            let bx_end = (bx + MACRO).min(full_w);
+            let ntiles = (bx_end - bx) / 4;
+            let nbands = full_h / 4;
+            for bandi in 0..nbands {
+                let sy = bandi * 4;
+                let dx = (if flip_sy { h - 4 - sy } else { sy }) as usize;
+                for ti in 0..ntiles {
+                    let sx = if flip_sx {
+                        bx + (ntiles - 1 - ti) * 4
+                    } else {
+                        bx + ti * 4
+                    };
+                    let base = sy as usize * sstride + sx as usize * 8;
+                    // 4 rows × 4 px via x2 tuple loads (32 B each); u64 trn
+                    // pairs rows; x2 tuple stores write whole 32-byte runs.
+                    macro_rules! ld2 {
+                        ($i:literal) => {{
+                            let a: &[u8; 32] = sbytes
+                                [base + $i * sstride..base + $i * sstride + 32]
+                                .try_into()
+                                .unwrap();
+                            let t = vld1q_u8_x2(bytemuck::cast_ref::<[u8; 32], [[u8; 16]; 2]>(a));
+                            (vreinterpretq_u64_u8(t.0), vreinterpretq_u64_u8(t.1))
+                        }};
+                    }
+                    let (r0a, r0b) = ld2!(0);
+                    let (r1a, r1b) = ld2!(1);
+                    let (r2a, r2b) = ld2!(2);
+                    let (r3a, r3b) = ld2!(3);
+                    // col c run = [px(r0,c), px(r1,c), px(r2,c), px(r3,c)].
+                    macro_rules! emit {
+                        ($c:literal, $lo:expr, $hi:expr) => {{
+                            let (lo, hi) = if flip_sy {
+                                (vextq_u64::<1>($hi, $hi), vextq_u64::<1>($lo, $lo))
+                            } else {
+                                ($lo, $hi)
+                            };
+                            let dy = if flip_sx { w - 1 - (sx + $c) } else { sx + $c };
+                            let doff = dy as usize * dstride + dx * 8;
+                            let out: &mut [u8; 32] =
+                                (&mut dbytes[doff..doff + 32]).try_into().unwrap();
+                            vst1q_u8_x2(
+                                bytemuck::cast_mut::<[u8; 32], [[u8; 16]; 2]>(out),
+                                core::arch::aarch64::uint8x16x2_t(
+                                    vreinterpretq_u8_u64(lo),
+                                    vreinterpretq_u8_u64(hi),
+                                ),
+                            );
+                        }};
+                    }
+                    emit!(0u32, vtrn1q_u64(r0a, r1a), vtrn1q_u64(r2a, r3a));
+                    emit!(1u32, vtrn2q_u64(r0a, r1a), vtrn2q_u64(r2a, r3a));
+                    emit!(2u32, vtrn1q_u64(r0b, r1b), vtrn1q_u64(r2b, r3b));
+                    emit!(3u32, vtrn2q_u64(r0b, r1b), vtrn2q_u64(r2b, r3b));
+                }
+            }
+        }
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            8,
+            full_w,
+            w,
+            0,
+            full_h,
+        );
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            8,
+            0,
+            w,
+            full_h,
+            h,
+        );
+    }
+
     const EXPAND6: [u8; 16] = [0, 1, 2, 3, 4, 5, 128, 128, 6, 7, 8, 9, 10, 11, 128, 128];
     /// Compress: two 8-byte lanes → 12 valid bytes (per lane).
     const COMPRESS6_FWD: [u8; 16] = [0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 128, 128, 128, 128];
