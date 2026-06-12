@@ -269,3 +269,26 @@ Records: `benchmarks/transpose_shootout_{x86_final,arm_r1,arm_final}_
 2026-06-12.*`. ARM box: `ssh arm-big`, repo mirror at
 `~/git/zenpixels.git`, checkout `~/work/zen/zenpixels` (consumes the
 mirror; all edits happen on the primary and push through it).
+
+**Arm64V2 token experiment (2026-06-12, OPEN)**: archmage's Arm64V2Token
+(NEON+CRC+RDM+DotProd+FP16+AES+SHA2) is summonable on the N1 box; V3
+(SHA3/I8MM/BF16) is not. The mechanism by which V2 could matter for
+transposes is LLVM inferring a newer core profile from the feature set
+(scheduling/unroll changes for identical instructions). Three full-grid
+reps with all kernels on V2 were INCONCLUSIVE on the shared-vCPU box:
+ft/simd++ swung ±40% between reps with box state; zpc 2ch looked
+possibly regressed (12-14ms vs 9.6-11.9 NeonToken-era) but the
+confound is unresolved. Shipped state: NeonToken (the configuration
+all committed records characterize). The decisive experiment is
+designed and queued: expose BOTH token variants of 2-3 kernels behind
+`__bench_orient` and run them as interleaved zenbench contestants in
+the same group — paired same-run A/B removes the box-weather confound
+entirely. Raw V2 rep data: /tmp/av2-rep{1,2,3}.log on arm-big (copy
+into benchmarks/ if pursued).
+
+**16-byte outcome note**: ARM ships the cross-arch deep-tile scalar
+(`transpose16_deep`, best measured on N1: 47.9-50.1ms vs 55-64 for all
+hand-NEON variants — `transpose16_neon` deleted); x86 keeps the AVX2
+kernel (deep scalar measured −20% vs ft where AVX2 is −7%).
+LOC/compile-time ledger for the whole effort: orient.rs 972 → ~4.7k
+lines; crate-only release rebuild +0.05s (noise), debug +1.2s.
