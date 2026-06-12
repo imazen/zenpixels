@@ -3,7 +3,9 @@ members = ["zenpixels", "zenpixels-convert", "scripts/icc-gen"]
 # `apidoc/` is the CI-free public-API snapshot runner: excluded so plain
 # `cargo test` and CI never compile its zenutils-apidoc dependency tree.
 # Regenerate snapshots via `just api-doc`.
-exclude = ["apidoc"]
+# `transpose-shootout/` is dev-box-only measurement equipment (external
+# transpose crates + optional C++ Simd FFI) — never built by CI or tests.
+exclude = ["apidoc", "transpose-shootout"]
 resolver = "2"
 
 [workspace.dependencies]

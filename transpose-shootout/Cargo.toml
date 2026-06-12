@@ -1,0 +1,31 @@
+[package]
+name = "transpose-shootout"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+publish = false
+description = "Dev-box-only shootout: 1/2/3/4-channel image transpose across Rust crates + the C++ Simd library. Never built by CI."
+
+# Detach from the zenpixels workspace (also listed in its `exclude`).
+[workspace]
+
+[dependencies]
+zenpixels = { path = "../zenpixels" }
+zenpixels-convert = { path = "../zenpixels-convert", features = ["__bench_orient"] }
+zenbench = "0.1.8"
+fast_transpose = "0.2.7" # default features: unsafe + sse + avx + neon (their SIMD on)
+transpose = "0.2.3"
+zune-imageprocs = "0.5.1"
+bytemuck = "1.25.0"
+
+[features]
+default = []
+# Builds ermig1979/Simd from third_party/Simd (run ./fetch_simd.sh first)
+# and benches its SimdTransformImage as the C++ reference contestant.
+cpp-simd = []
+
+[build-dependencies]
+cmake = "0.1.58"
+
+[profile.release]
+debug = true
