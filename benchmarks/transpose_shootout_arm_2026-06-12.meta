@@ -1,0 +1,25 @@
+# transpose_shootout ARM records 2026-06-12
+
+Host: Hetzner arm-big (CAX41-class, 8-core Ampere Altra Neoverse-N1,
+16 GB), aarch64, single-thread, cargo 1.96. Harness: transpose-shootout
+(same oracle/probe discipline as x86; C++ Simd @ 1317e378, cmake Release,
+NEON tier verified active via probe lines).
+
+arm_r1: NEON kernels v1 (4x4/2x2 tiles) — Rust field only.
+arm_final: deepened kernels (1ch 16x16 two-cascade, 4ch 8-deep x2 stores,
+8bpp x2-tuple 4x4, 12bpp 4-row intra-slop runs, 16bpp x4-tuple quads)
++ C++ Simd NEON tier. Commit 62391544. Single-round cells: +/-20% swing,
+<15% = tie.
+
+vs C++ Simd NEON at 12MP: zpc BEATS or TIES every supported width:
+  T   1/2/3/4ch: +15% / -5% / +27% / +37%
+  R90 1/2/3/4ch: +14% / -4% / +25% / +43%
+vs fast_transpose NEON (their unsafe-feature kernels): win 3ch (+14/+21),
+tie 2ch (-8/-5), behind 1ch (-21/-12), 4ch (-17/-13), 6ch (-19),
+8ch (-21), 12ch (-18), 16ch (-35). ejm (autovectorized scalar) also
+leads zpc at 6/12/16 bpp on this core — the wide-format gather kernels
+underperform aarch64 LLVM autovectorized copies; redesign queued.
+
+vs session start on ARM (scalar tiled fallback): r1 zpc numbers are
+already 2-5x faster than the pre-NEON scalar (not separately recorded;
+scalar path ~= ejm column).

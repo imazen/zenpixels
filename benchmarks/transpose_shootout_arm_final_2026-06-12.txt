@@ -1,0 +1,178 @@
+ft 1ch Transpose: (NoFlip, Flop)
+ft 1ch Rotate90: (Flip, Flop)
+ft 2ch Transpose: (NoFlip, Flop)
+ft 2ch Rotate90: (Flip, Flop)
+ft 3ch Transpose: (NoFlip, Flop)
+ft 3ch Rotate90: (Flip, Flop)
+ft 4ch Transpose: (NoFlip, Flop)
+ft 4ch Rotate90: (Flip, Flop)
+ft 6ch Transpose: (NoFlip, Flop)
+ft 6ch Rotate90: (Flip, Flop)
+ft 8ch Transpose: (NoFlip, Flop)
+ft 8ch Rotate90: (Flip, Flop)
+ft 12ch Transpose: (NoFlip, Flop)
+ft 12ch Rotate90: (Flip, Flop)
+ft 16ch Transpose: (NoFlip, Flop)
+ft 16ch Rotate90: (Flip, Flop)
+simd++ 1ch Transpose: SimdTransformType = 4
+simd++ 1ch Rotate90: SimdTransformType = 3
+simd++ 2ch Transpose: SimdTransformType = 4
+simd++ 2ch Rotate90: SimdTransformType = 3
+simd++ 3ch Transpose: SimdTransformType = 4
+simd++ 3ch Rotate90: SimdTransformType = 3
+simd++ 4ch Transpose: SimdTransformType = 4
+simd++ 4ch Rotate90: SimdTransformType = 3
+all verifications passed; benching
+[zenbench] calibration: int=0.67ns/iter mem_bw=27.0GiB/s mem_lat=102.2ns
+[zenbench] timer resolution: 40ns, loop overhead: 0.67ns/iter, TSC: 0.025 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1781274835-f850f.txt
+[zenbench] waiting on exclusive bench lock — <unknown project>/R90 4ch 12MP (pid 1016403, binary transpose-shootout, running 6m18s, ETA in 2m05s)
+[zenbench] waiting on exclusive bench lock — <unknown project>/R90 6ch 12MP (pid 1016403, binary transpose-shootout, running 6m33s, ETA in 1m50s)
+[zenbench] waiting on exclusive bench lock — <unknown project>/R90 6ch 12MP (pid 1016403, binary transpose-shootout, running 6m48s, ETA in 1m35s)
+[zenbench] waiting on exclusive bench lock — <unknown project>/R90 8ch 12MP (pid 1016403, binary transpose-shootout, running 7m03s, ETA in 1m20s)
+[zenbench] waiting on exclusive bench lock — <unknown project>/R90 8ch 12MP (pid 1016403, binary transpose-shootout, running 7m18s, ETA in 1m05s)
+[zenbench] waiting on exclusive bench lock — <unknown project>/R90 12ch 12MP (pid 1016403, binary transpose-shootout, running 7m33s, ETA in 50s)
+[zenbench] waiting on exclusive bench lock — <unknown project>/R90 12ch 12MP (pid 1016403, binary transpose-shootout, running 7m48s, ETA in 35s)
+[zenbench] waiting on exclusive bench lock — <unknown project>/R90 16ch 12MP (pid 1016403, binary transpose-shootout, running 8m03s, ETA in 21s)
+[zenbench] waiting on exclusive bench lock — <unknown project>/R90 16ch 12MP (pid 1016403, binary transpose-shootout, running 8m18s, ETA in 6s)
+[zenbench] lock acquired after waiting; running /12MP
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1781274835-f850f
+  git: 70ec1b66eabf92b24489ebef4fa63f39148a04c4
+═══════════════════════════════════════════════════════════════
+
+  T 1ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       5.2 ±0.0ms                       2.16G
+  ├─ zpc-st   12.0 ±0.0ms  [+132.1%–+132.1%]     951M
+  ├─ ft        4.1 ±0.0ms  [-20.5%–-20.5%]      2.71G
+  ├─ ejm      16.3 ±0.0ms  [+214.5%–+214.5%]     702M
+  ├─ zune     20.0 ±0.0ms  [+286.5%–+286.5%]     571M
+  ╰─ simd++    6.0 ±0.0ms  [+14.8%–+14.8%]      1.88G
+
+
+  T 2ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc      11.9 ±0.0ms                       1.89G
+  ├─ zpc-st   16.6 ±0.0ms  [+39.6%–+39.6%]      1.35G
+  ├─ ft       10.9 ±0.0ms  [-7.7%–-7.7%]        2.04G
+  ├─ ejm      20.6 ±0.0ms  [+73.8%–+73.8%]      1.08G
+  ├─ zune     27.7 ±0.0ms  [+133.3%–+133.3%]     827M
+  ╰─ simd++   11.3 ±0.0ms  [-5.0%–-5.0%]        1.99G
+
+
+  T 3ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc      16.3 ±0.0ms                       2.06G
+  ├─ zpc-st   35.3 ±0.0ms  [+116.7%–+116.7%]     972M
+  ├─ ft       18.6 ±0.0ms  [+14.3%–+14.3%]      1.80G
+  ├─ ejm      20.5 ±0.0ms  [+25.6%–+25.6%]      1.64G
+  ╰─ simd++   20.7 ±0.0ms  [+26.9%–+26.9%]      1.62G
+
+
+  T 4ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc      18.1 ±0.0ms                       2.48G
+  ├─ zpc-st   45.3 ±0.0ms  [+150.6%–+150.6%]    1011M
+  ├─ ft       15.1 ±0.0ms  [-16.6%–-16.6%]      2.97G
+  ├─ ejm      32.7 ±0.0ms  [+81.3%–+81.3%]      1.37G
+  ├─ zune     29.6 ±0.0ms  [+63.7%–+63.7%]      1.51G
+  ╰─ simd++   24.8 ±0.0ms  [+37.1%–+37.1%]      1.81G
+
+
+  T 6ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       49.2 ±0.0ms                       1.36G
+  ├─ zpc-st   144.1 ±0.0ms  [+192.6%–+192.6%]     477M
+  ├─ ft        39.7 ±0.0ms  [-19.4%–-19.4%]      1.69G
+  ╰─ ejm       40.2 ±0.0ms  [-18.4%–-18.4%]      1.67G
+
+
+  T 8ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       39.1 ±0.0ms                       2.29G
+  ├─ zpc-st   163.6 ±0.0ms  [+318.4%–+318.4%]     560M
+  ├─ ft        31.0 ±0.0ms  [-20.8%–-20.8%]      2.89G
+  ╰─ ejm       51.4 ±0.0ms  [+31.4%–+31.4%]      1.74G
+
+
+  T 12ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       84.5 ±0.0ms                       1.59G
+  ├─ zpc-st   178.4 ±0.0ms  [+111.1%–+111.1%]     770M
+  ├─ ft        69.2 ±0.0ms  [-18.1%–-18.1%]      1.94G
+  ╰─ ejm       72.7 ±0.0ms  [-14.0%–-14.0%]      1.85G
+
+
+  T 16ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       62.8 ±0.0ms                       2.85G
+  ├─ zpc-st   167.2 ±0.0ms  [+166.3%–+166.3%]    1.07G
+  ├─ ft        40.7 ±0.0ms  [-35.1%–-35.1%]      4.39G
+  ╰─ ejm       49.0 ±0.0ms  [-21.9%–-21.9%]      3.65G
+
+
+  R90 1ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       5.4 ±0.0ms                       2.08G
+  ├─ zpc-st   12.3 ±0.0ms  [+128.1%–+128.1%]     932M
+  ├─ ft        4.7 ±0.0ms  [-12.1%–-12.1%]      2.36G
+  ╰─ simd++    6.1 ±0.0ms  [+13.8%–+13.8%]      1.82G
+
+
+  R90 2ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base      iB/s
+  ├─ zpc      11.2 ±0.0ms                     2.00G
+  ├─ zpc-st   15.9 ±0.0ms  [+41.9%–+41.9%]    1.41G
+  ├─ ft       10.7 ±0.0ms  [-4.8%–-4.8%]      2.10G
+  ╰─ simd++   10.7 ±0.0ms  [-4.1%–-4.1%]      2.08G
+
+
+  R90 3ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base      iB/s
+  ├─ zpc      20.5 ±0.0ms                     1.64G
+  ├─ zpc-st   39.7 ±0.0ms  [+93.6%–+93.6%]     865M
+  ├─ ft       24.9 ±0.0ms  [+21.3%–+21.3%]    1.35G
+  ╰─ simd++   25.6 ±0.0ms  [+24.8%–+24.8%]    1.31G
+
+
+  R90 4ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc      16.2 ±0.0ms                       2.76G
+  ├─ zpc-st   46.6 ±0.0ms  [+187.7%–+187.7%]     982M
+  ├─ ft       14.2 ±0.0ms  [-12.5%–-12.5%]      3.16G
+  ╰─ simd++   23.2 ±0.0ms  [+43.3%–+43.3%]      1.93G
+
+
+  R90 6ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       45.7 ±0.0ms                       1.47G
+  ├─ zpc-st   138.8 ±0.0ms  [+203.8%–+203.8%]     495M
+  ╰─ ft        34.4 ±0.0ms  [-24.8%–-24.8%]      1.95G
+
+
+  R90 8ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       32.8 ±0.0ms                       2.73G
+  ├─ zpc-st   148.4 ±0.0ms  [+352.8%–+352.8%]     617M
+  ╰─ ft        30.5 ±0.0ms  [-7.1%–-7.1%]        2.94G
+
+
+  R90 12ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       78.3 ±0.0ms                       1.71G
+  ├─ zpc-st   161.9 ±0.0ms  [+106.9%–+106.9%]     848M
+  ╰─ ft        64.5 ±0.0ms  [-17.6%–-17.6%]      2.08G
+
+
+  R90 16ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       58.8 ±0.0ms                       3.04G
+  ├─ zpc-st   169.9 ±0.0ms  [+189.0%–+189.0%]    1.05G
+  ╰─ ft        38.2 ±0.0ms  [-35.0%–-35.0%]      4.68G
+
+
+  total: 632.3s  (480 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json

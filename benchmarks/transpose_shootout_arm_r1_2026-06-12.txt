@@ -1,0 +1,152 @@
+ft 1ch Transpose: (NoFlip, Flop)
+ft 1ch Rotate90: (Flip, Flop)
+ft 2ch Transpose: (NoFlip, Flop)
+ft 2ch Rotate90: (Flip, Flop)
+ft 3ch Transpose: (NoFlip, Flop)
+ft 3ch Rotate90: (Flip, Flop)
+ft 4ch Transpose: (NoFlip, Flop)
+ft 4ch Rotate90: (Flip, Flop)
+ft 6ch Transpose: (NoFlip, Flop)
+ft 6ch Rotate90: (Flip, Flop)
+ft 8ch Transpose: (NoFlip, Flop)
+ft 8ch Rotate90: (Flip, Flop)
+ft 12ch Transpose: (NoFlip, Flop)
+ft 12ch Rotate90: (Flip, Flop)
+ft 16ch Transpose: (NoFlip, Flop)
+ft 16ch Rotate90: (Flip, Flop)
+all verifications passed; benching
+[zenbench] calibration: int=0.66ns/iter mem_bw=31.7GiB/s mem_lat=91.2ns
+[zenbench] timer resolution: 40ns, loop overhead: 0.34ns/iter, TSC: 0.025 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1781273437-f77d5.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1781273437-f77d5
+  git: 6af751e10204372a7ca100b36c3b07117fffe97f
+═══════════════════════════════════════════════════════════════
+
+  T 1ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       4.9 ±0.0ms                       2.28G
+  ├─ zpc-st    9.1 ±0.0ms  [+86.3%–+86.3%]      1.22G
+  ├─ ft        3.7 ±0.0ms  [-24.8%–-24.8%]      3.03G
+  ├─ ejm      16.6 ±0.0ms  [+239.3%–+239.3%]     687M
+  ╰─ zune     19.8 ±0.0ms  [+304.1%–+304.1%]     577M
+
+
+  T 2ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc      10.2 ±0.0ms                       2.19G
+  ├─ zpc-st   16.7 ±0.0ms  [+63.9%–+63.9%]      1.34G
+  ├─ ft       11.1 ±0.0ms  [+8.6%–+8.6%]        2.02G
+  ├─ ejm      18.8 ±0.0ms  [+84.4%–+84.4%]      1.19G
+  ╰─ zune     27.0 ±0.0ms  [+164.9%–+164.9%]     848M
+
+
+  T 3ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base      iB/s
+  ├─ zpc      22.1 ±0.0ms                     1.52G
+  ├─ zpc-st   38.1 ±0.0ms  [+72.3%–+72.3%]     900M
+  ├─ ft       24.3 ±0.0ms  [+10.0%–+10.0%]    1.38G
+  ╰─ ejm      25.4 ±0.0ms  [+14.9%–+14.9%]    1.32G
+
+
+  T 4ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc      18.4 ±0.0ms                       2.43G
+  ├─ zpc-st   39.2 ±0.0ms  [+113.4%–+113.4%]    1.14G
+  ├─ ft       13.7 ±0.0ms  [-25.5%–-25.5%]      3.26G
+  ├─ ejm      27.7 ±0.0ms  [+50.4%–+50.4%]      1.62G
+  ╰─ zune     29.8 ±0.0ms  [+62.2%–+62.2%]      1.50G
+
+
+  T 6ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       51.4 ±0.0ms                       1.30G
+  ├─ zpc-st   139.6 ±0.0ms  [+171.6%–+171.6%]     492M
+  ├─ ft        38.5 ±0.0ms  [-25.0%–-25.0%]      1.74G
+  ╰─ ejm       40.7 ±0.0ms  [-20.8%–-20.8%]      1.65G
+
+
+  T 8ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       48.0 ±0.0ms                       1.86G
+  ├─ zpc-st   152.0 ±0.0ms  [+216.6%–+216.6%]     602M
+  ├─ ft        29.7 ±0.0ms  [-38.0%–-38.0%]      3.01G
+  ╰─ ejm       51.0 ±0.0ms  [+6.2%–+6.2%]        1.75G
+
+
+  T 12ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base      iB/s
+  ├─ zpc       89.8 ±0.0ms                     1.49G
+  ├─ zpc-st   165.8 ±0.0ms  [+84.7%–+84.7%]     828M
+  ├─ ft        66.9 ±0.0ms  [-25.5%–-25.5%]    2.00G
+  ╰─ ejm       66.8 ±0.0ms  [-25.7%–-25.7%]    2.01G
+
+
+  T 16ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       62.8 ±0.0ms                       2.85G
+  ├─ zpc-st   172.0 ±0.0ms  [+174.0%–+174.0%]    1.04G
+  ├─ ft        35.7 ±0.0ms  [-43.1%–-43.1%]      5.00G
+  ╰─ ejm       41.7 ±0.0ms  [-33.6%–-33.6%]      4.29G
+
+
+  R90 1ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base      iB/s
+  ├─ zpc      5.6 ±0.0ms                     1.99G
+  ├─ zpc-st   9.6 ±0.0ms  [+70.8%–+70.8%]    1.17G
+  ╰─ ft       4.0 ±0.0ms  [-28.3%–-28.3%]    2.78G
+
+
+  R90 2ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base      iB/s
+  ├─ zpc       9.6 ±0.0ms                     2.32G
+  ├─ zpc-st   15.1 ±0.0ms  [+56.6%–+56.6%]    1.48G
+  ╰─ ft       10.4 ±0.0ms  [+7.6%–+7.6%]      2.15G
+
+
+  R90 3ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base      iB/s
+  ├─ zpc      19.5 ±0.0ms                     1.72G
+  ├─ zpc-st   36.2 ±0.0ms  [+85.3%–+85.3%]     949M
+  ╰─ ft       21.8 ±0.0ms  [+11.5%–+11.5%]    1.54G
+
+
+  R90 4ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc      20.2 ±0.0ms                       2.21G
+  ├─ zpc-st   41.0 ±0.0ms  [+102.8%–+102.8%]    1.09G
+  ╰─ ft       14.9 ±0.0ms  [-26.5%–-26.5%]      3.01G
+
+
+  R90 6ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       41.0 ±0.0ms                       1.63G
+  ├─ zpc-st   140.9 ±0.0ms  [+243.4%–+243.4%]     487M
+  ╰─ ft        34.1 ±0.0ms  [-16.8%–-16.8%]      1.96G
+
+
+  R90 8ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       46.5 ±0.0ms                       1.92G
+  ├─ zpc-st   159.8 ±0.0ms  [+243.4%–+243.4%]     573M
+  ╰─ ft        31.3 ±0.0ms  [-32.8%–-32.8%]      2.86G
+
+
+  R90 12ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base      iB/s
+  ├─ zpc       83.0 ±0.0ms                     1.62G
+  ├─ zpc-st   157.7 ±0.0ms  [+90.0%–+90.0%]     871M
+  ╰─ ft        67.0 ±0.0ms  [-19.3%–-19.3%]    2.00G
+
+
+  R90 16ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+              mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       70.9 ±0.0ms                       2.52G
+  ├─ zpc-st   176.4 ±0.0ms  [+148.8%–+148.8%]    1.01G
+  ╰─ ft        42.0 ±0.0ms  [-40.8%–-40.8%]      4.26G
+
+
+  total: 503.2s  (480 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
