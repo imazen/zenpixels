@@ -18,6 +18,23 @@
   in-crate `zenpixels/tests/public_api_doc.rs` copy, its `serde_json` dev-dep,
   and every `ZEN_API_DOC` / cargo-public-api trace in CI.
 
+### zenpixels-convert — performance
+
+- **Transposing orientations (`apply_orientation*`) are ~1.8–7× faster for
+  every non-4-byte pixel size** (zenjpeg#150 part a): 1/2/3/6/8/12/16-byte
+  pixels now route through a monomorphised cache-blocked gather
+  (`transpose_tiled::<BPP>`) that precomputes the orientation's separable
+  inverse map per destination row — sequential destination writes, ±stride
+  source stepping, one fixed-size copy per pixel — replacing the per-element
+  `forward_map` + `row_mut` + variable-length copy. RGB8 Rotate90 12MP:
+  87.2 → 48.1 ms (now also ~1.5× faster than zenjpeg's internal naive
+  gather, unblocking full delegation); RGB8 Transpose 1024²: 4.36 → 0.85 ms
+  (Ryzen 9 7950X, `benchmarks/orient_tiled_gather_2026-06-11.txt`). 4-byte
+  pixels keep the SIMD register transpose; the `forward_map` scatter remains
+  the parity oracle (new gate:
+  `tiled_transpose_matches_blocked_reference_across_bpp`) and the fallback
+  for future `#[non_exhaustive]` orientation variants.
+
 ### zenpixels-convert — changed
 
 - **Signal-range crossings now refuse at plan time instead of mislabeling.**

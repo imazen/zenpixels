@@ -1,10 +1,15 @@
-//! Orientation baking: the SIMD 4×4 register transpose vs the cache-blocked
-//! scalar path, on identical RGBA8 input. The two variants share a `group`, so
-//! zenbench interleaves them and reports a paired A/B (killing thermal/turbo
-//! bias between the two measurements).
+//! Orientation baking: the production transposing paths (SIMD 4×4 register
+//! transpose for 4-byte pixels, monomorphised tiled gather for 3-byte) vs the
+//! generic cache-blocked `forward_map` scatter, on identical input. Each
+//! format/size pair shares a `group`, so zenbench interleaves the variants and
+//! reports a paired A/B (killing thermal/turbo bias between the measurements).
+//!
+//! RGB8 12MP Rotate90 is the zenjpeg#150 case: its naive output-sequential
+//! gather ran 73.3 ms there while our forward_map-scatter path ran 84.2 ms;
+//! the tiled gather is the fix and must land well under both.
 //!
 //! Run: `cargo bench --bench bench_orient --features __bench_orient`
-//! Filter: `... -- --group="Rotate90 RGBA8 12MP"`
+//! Filter: `... -- --group="Rotate90 RGB8 12MP"`
 
 use zenbench::prelude::*;
 use zenpixels::{Orientation, PixelDescriptor, PixelSlice};
@@ -18,8 +23,14 @@ const SIZES: &[(&str, u32, u32)] = &[
     ("12MP  ", 4000, 3000), // typical phone photo; EXIF=6 (Rotate90) is the common case
 ];
 
-fn rgba(w: u32, h: u32) -> Vec<u8> {
-    (0..(w as usize * h as usize * 4))
+// (format label, descriptor, production-path label)
+const FORMATS: &[(&str, PixelDescriptor, &str)] = &[
+    ("RGBA8", PixelDescriptor::RGBA8, "simd  "), // 4 bpp → f32x4 register transpose
+    ("RGB8 ", PixelDescriptor::RGB8, "tiled "),  // 3 bpp → monomorphised tiled gather
+];
+
+fn pixels(w: u32, h: u32, bpp: usize) -> Vec<u8> {
+    (0..(w as usize * h as usize * bpp))
         .map(|i| (i * 31 % 251) as u8)
         .collect()
 }
@@ -28,26 +39,30 @@ fn bench_transpose(suite: &mut Suite) {
     // Rotate90 is the dominant real-world case (portrait phone photos); Transpose
     // is the pure-transpose baseline.
     for &orientation in &[Orientation::Rotate90, Orientation::Transpose] {
-        for &(label, w, h) in SIZES {
-            let bytes = u64::from(w) * u64::from(h) * 4;
-            let data_simd = rgba(w, h);
-            let data_scalar = data_simd.clone();
-            let desc = PixelDescriptor::RGBA8;
-            suite.group(format!("{orientation:?} RGBA8 {label}"), move |g| {
-                g.throughput(Throughput::Bytes(bytes));
-                g.bench("simd  ", move |b| {
-                    b.iter(|| {
-                        let s = PixelSlice::new(&data_simd, w, h, w as usize * 4, desc).unwrap();
-                        black_box(apply_orientation(s, orientation));
-                    })
+        for &(fmt, desc, prod_label) in FORMATS {
+            for &(label, w, h) in SIZES {
+                let bpp = desc.bytes_per_pixel();
+                let bytes = u64::from(w) * u64::from(h) * bpp as u64;
+                let data_prod = pixels(w, h, bpp);
+                let data_oracle = data_prod.clone();
+                suite.group(format!("{orientation:?} {fmt} {label}"), move |g| {
+                    g.throughput(Throughput::Bytes(bytes));
+                    g.bench(prod_label, move |b| {
+                        b.iter(|| {
+                            let s =
+                                PixelSlice::new(&data_prod, w, h, w as usize * bpp, desc).unwrap();
+                            black_box(apply_orientation(s, orientation));
+                        })
+                    });
+                    g.bench("fwdmap", move |b| {
+                        b.iter(|| {
+                            let s = PixelSlice::new(&data_oracle, w, h, w as usize * bpp, desc)
+                                .unwrap();
+                            black_box(__bench_apply_orientation_scalar(s, orientation));
+                        })
+                    });
                 });
-                g.bench("scalar", move |b| {
-                    b.iter(|| {
-                        let s = PixelSlice::new(&data_scalar, w, h, w as usize * 4, desc).unwrap();
-                        black_box(__bench_apply_orientation_scalar(s, orientation));
-                    })
-                });
-            });
+            }
         }
     }
 }

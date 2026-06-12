@@ -39,12 +39,24 @@
 //! wasm128, scalar)]` and dispatched by `incant!` at runtime (scalar tier when
 //! no SIMD is available). Each pixel rides as one f32 lane — the kernel only
 //! shuffles whole 32-bit lanes (no float math), so reinterpreting the bytes as
-//! f32 is bit-exact for any 4-byte format, NaN bit patterns included. The
-//! non-multiple-of-4 edge strips and every other element width use the
-//! cache-blocked scalar path, which is also the parity oracle
-//! (`simd_transpose_matches_scalar_reference_rgba8`). (1- and 2-byte SIMD
-//! transpose — the 16×16 `punpck` cascade — is a possible follow-up; gray /
-//! 16-bit currently go scalar.)
+//! f32 is bit-exact for any 4-byte format, NaN bit patterns included.
+//!
+//! Every **other pixel size** (1/2/3/6/8/12/16 bytes — gray, gray+alpha, RGB8,
+//! and the 16-bit / f32 widths) goes through [`transpose_tiled`], a
+//! monomorphised cache-blocked gather: the four transposing orientations all
+//! have *separable* inverse maps, so along one destination row the source
+//! column is fixed and the source byte offset steps by ±stride. That replaces
+//! the per-element `forward_map` + `row_mut` + variable-length copy of the
+//! generic path with one predictable bounds check and a fixed-size `BPP`-byte
+//! copy per pixel, writing the destination sequentially (zenjpeg#150 measured
+//! the generic path losing to a naive linear-write gather at 3 bpp; this path
+//! beats both). The generic `forward_map` scatter ([`transpose_blocked`])
+//! remains as the parity oracle for both fast paths
+//! (`simd_transpose_matches_scalar_reference_rgba8`,
+//! `tiled_transpose_matches_blocked_reference_across_bpp`) and as the
+//! correct fallback for any future `#[non_exhaustive]` orientation variant.
+//! (1- and 2-byte SIMD transpose — the 16×16 `punpck` cascade — remains a
+//! possible follow-up.)
 
 use core::cmp::min;
 
@@ -448,9 +460,10 @@ fn scatter_pixel(
 }
 
 /// Dispatch the axis-swapping orientations: the SIMD 4×4 register transpose for
-/// 4-byte pixels (the common decoder output), the cache-blocked scalar path
-/// otherwise. `incant!` picks the best tier per target (AVX2 / NEON / WASM
-/// SIMD128 / scalar); the scalar tier is the same algorithm as `transpose_blocked`.
+/// 4-byte pixels (the common decoder output), the monomorphised tiled gather
+/// for every other shipping pixel size, the generic `forward_map` scatter for
+/// anything else. `incant!` picks the best tier per target (AVX2 / NEON / WASM
+/// SIMD128 / scalar).
 fn do_transpose(
     src: &PixelSlice<'_>,
     dst: &mut PixelSliceMut<'_>,
@@ -459,29 +472,116 @@ fn do_transpose(
     h: u32,
     bpp: usize,
 ) {
-    // Only the four known transposing orientations have a `tile_dest` mapping;
-    // a future `#[non_exhaustive]` variant falls through to the scalar scatter.
-    if bpp == 4
-        && matches!(
-            orientation,
-            Orientation::Transpose
-                | Orientation::Rotate90
-                | Orientation::Rotate270
-                | Orientation::Transverse
-        )
-    {
-        // Explicit tier list matching the `#[magetypes(v3, neon, wasm128,
-        // scalar)]` attribute on `transpose4_simd`: a bare `incant!` expands
-        // the full cascade and references a `_v4` variant that was never
-        // generated, breaking `--features avx512` builds (caught by the
-        // feature-powerset CI job). Same convention as the `scan` kernels.
-        incant!(
-            transpose4_simd(src, dst, orientation, w, h),
-            [v3, neon, wasm128, scalar]
-        );
-        return;
+    // Only the four known transposing orientations have a `tile_dest` /
+    // separable-inverse mapping; a future `#[non_exhaustive]` variant falls
+    // through to the scalar scatter, whose `forward_map` is defined for every
+    // variant.
+    if let Some(flips) = inverse_flips(orientation) {
+        if bpp == 4 {
+            // Explicit tier list matching the `#[magetypes(v3, neon, wasm128,
+            // scalar)]` attribute on `transpose4_simd`: a bare `incant!` expands
+            // the full cascade and references a `_v4` variant that was never
+            // generated, breaking `--features avx512` builds (caught by the
+            // feature-powerset CI job). Same convention as the `scan` kernels.
+            incant!(
+                transpose4_simd(src, dst, orientation, w, h),
+                [v3, neon, wasm128, scalar]
+            );
+            return;
+        }
+        // Monomorphised per pixel size so the inner copy is a fixed-size
+        // load/store pair. The set covers every shipping descriptor width;
+        // an unlisted width (none today) takes the generic fallback below.
+        match bpp {
+            1 => return transpose_tiled::<1>(src, dst, flips, w, h),
+            2 => return transpose_tiled::<2>(src, dst, flips, w, h),
+            3 => return transpose_tiled::<3>(src, dst, flips, w, h),
+            6 => return transpose_tiled::<6>(src, dst, flips, w, h),
+            8 => return transpose_tiled::<8>(src, dst, flips, w, h),
+            12 => return transpose_tiled::<12>(src, dst, flips, w, h),
+            16 => return transpose_tiled::<16>(src, dst, flips, w, h),
+            _ => {}
+        }
     }
     transpose_blocked(src, dst, orientation, w, h, bpp);
+}
+
+/// The inverse-map structure shared by the four transposing orientations, as
+/// `(flip_sx, flip_sy)`: destination pixel `(dx, dy)` reads source pixel
+///
+/// ```text
+/// sx = if flip_sx { w-1-dy } else { dy }   // constant along a dst row
+/// sy = if flip_sy { h-1-dx } else { dx }   // steps ±1 along a dst row
+/// ```
+///
+/// Derived by inverting [`Orientation::forward_map`] — e.g. `Rotate90` maps
+/// `(sx, sy) → (h-1-sy, sx)`, so `sx = dy`, `sy = h-1-dx`. `None` for the
+/// non-transposing orientations and any future variant.
+#[inline]
+fn inverse_flips(orientation: Orientation) -> Option<(bool, bool)> {
+    match orientation {
+        Orientation::Transpose => Some((false, false)),
+        Orientation::Rotate90 => Some((false, true)),
+        Orientation::Rotate270 => Some((true, false)),
+        Orientation::Transverse => Some((true, true)),
+        _ => None,
+    }
+}
+
+/// Cache-blocked transpose for the four axis-swapping orientations,
+/// monomorphised per bytes-per-pixel (`BPP`).
+///
+/// Same loop-tiling idea as [`transpose_blocked`], but iterating *destination*
+/// tiles with the orientation's separable inverse map (see [`inverse_flips`])
+/// precomputed per row instead of calling `forward_map` per element: along one
+/// destination row the source column is fixed and the source byte offset steps
+/// by ±stride, so the inner loop is a strided gather (one bounds check) plus a
+/// fixed-size `BPP`-byte copy, with destination writes sequential — the
+/// store-friendly direction. This is what makes 3 bpp (and the other non-SIMD
+/// widths) competitive; zenjpeg#150 measured the `forward_map`-per-element
+/// path losing to a naive linear-write gather.
+fn transpose_tiled<const BPP: usize>(
+    src: &PixelSlice<'_>,
+    dst: &mut PixelSliceMut<'_>,
+    (flip_sx, flip_sy): (bool, bool),
+    w: u32,
+    h: u32,
+) {
+    debug_assert_eq!(src.descriptor().bytes_per_pixel(), BPP);
+    let sbytes = src.as_strided_bytes();
+    let sstride = src.stride();
+    let sstep: isize = if flip_sy {
+        -(sstride as isize)
+    } else {
+        sstride as isize
+    };
+    // Destination geometry (validated by `apply_orientation_into`).
+    let (ow, oh) = (h, w);
+
+    let mut ty = 0;
+    while ty < oh {
+        let ty_end = min(ty + TILE, oh);
+        let mut tx = 0;
+        while tx < ow {
+            let tx_end = min(tx + TILE, ow);
+            // Source row for the tile's first dst column (dx = tx); the
+            // offset then steps by `sstep` per dst pixel.
+            let sy0 = (if flip_sy { h - 1 - tx } else { tx }) as usize;
+            for dy in ty..ty_end {
+                let sx = (if flip_sx { w - 1 - dy } else { dy }) as usize;
+                let mut soff = (sy0 * sstride + sx * BPP) as isize;
+                let drow = &mut dst.row_mut(dy)[tx as usize * BPP..tx_end as usize * BPP];
+                for dpx in drow.chunks_exact_mut(BPP) {
+                    let s = soff as usize;
+                    let px: [u8; BPP] = sbytes[s..s + BPP].try_into().unwrap();
+                    dpx.copy_from_slice(&px);
+                    soff += sstep;
+                }
+            }
+            tx += TILE;
+        }
+        ty += TILE;
+    }
 }
 
 /// Cache-blocked scalar transpose for the four axis-swapping orientations. The
@@ -784,25 +884,38 @@ mod tests {
     #[test]
     fn handles_strided_source() {
         // A source whose stride exceeds width*bpp must produce the same result
-        // as a tight one (padding bytes must be ignored).
-        let desc = PixelDescriptor::RGBA8;
-        let (w, h) = (5u32, 4u32);
-        let tight_stride = w as usize * 4;
-        let padded_stride = tight_stride + 12;
-        let tight = fill(tight_stride * h as usize);
-        let mut padded = vec![0xABu8; padded_stride * h as usize];
-        for y in 0..h as usize {
-            padded[y * padded_stride..y * padded_stride + tight_stride]
-                .copy_from_slice(&tight[y * tight_stride..][..tight_stride]);
-        }
-        for &o in &Orientation::ALL {
-            // PixelSlice is a non-Copy view; build a fresh one per iteration.
-            let tight_slice = PixelSlice::new(&tight, w, h, tight_stride, desc).unwrap();
-            let padded_slice = PixelSlice::new(&padded, w, h, padded_stride, desc).unwrap();
-            let a = apply_orientation(tight_slice, o);
-            let b = apply_orientation(padded_slice, o);
-            for y in 0..a.height() {
-                assert_eq!(a.as_slice().row(y), b.as_slice().row(y), "{o:?} row {y}");
+        // as a tight one (padding bytes must be ignored). RGBA8 exercises the
+        // SIMD path, RGB8/GRAY8 the tiled gather (whose strided-offset math is
+        // exactly what this guards), and the dims span full + partial tiles.
+        for &desc in &[
+            PixelDescriptor::RGBA8,
+            PixelDescriptor::RGB8,
+            PixelDescriptor::GRAY8,
+        ] {
+            let bpp = desc.bytes_per_pixel();
+            for &(w, h) in &[(5u32, 4u32), (37, 35)] {
+                let tight_stride = w as usize * bpp;
+                let padded_stride = tight_stride + 12;
+                let tight = fill(tight_stride * h as usize);
+                let mut padded = vec![0xABu8; padded_stride * h as usize];
+                for y in 0..h as usize {
+                    padded[y * padded_stride..y * padded_stride + tight_stride]
+                        .copy_from_slice(&tight[y * tight_stride..][..tight_stride]);
+                }
+                for &o in &Orientation::ALL {
+                    // PixelSlice is a non-Copy view; build a fresh one per iteration.
+                    let tight_slice = PixelSlice::new(&tight, w, h, tight_stride, desc).unwrap();
+                    let padded_slice = PixelSlice::new(&padded, w, h, padded_stride, desc).unwrap();
+                    let a = apply_orientation(tight_slice, o);
+                    let b = apply_orientation(padded_slice, o);
+                    for y in 0..a.height() {
+                        assert_eq!(
+                            a.as_slice().row(y),
+                            b.as_slice().row(y),
+                            "{o:?} {desc:?} {w}x{h} row {y}"
+                        );
+                    }
+                }
             }
         }
     }
@@ -852,6 +965,67 @@ mod tests {
                         reference.as_slice().row(y),
                         "{o:?} {w}x{h} row {y}"
                     );
+                }
+            }
+        }
+    }
+
+    /// Parity gate for the monomorphised tiled gather: `apply_orientation`
+    /// (which routes non-4-byte widths through `transpose_tiled`) must match
+    /// the generic `forward_map` scatter oracle for every shipping pixel size
+    /// the dispatch covers, across the four transposing orientations and a
+    /// dimension spread that exercises full tiles, partial tiles, and the
+    /// degenerate strips (TILE is 32, so 33/40/67 cross tile boundaries).
+    #[test]
+    fn tiled_transpose_matches_blocked_reference_across_bpp() {
+        let descs = [
+            PixelDescriptor::GRAY8,   // 1
+            PixelDescriptor::GRAYA8,  // 2
+            PixelDescriptor::RGB8,    // 3
+            PixelDescriptor::RGB16,   // 6
+            PixelDescriptor::RGBA16,  // 8
+            PixelDescriptor::RGBF32,  // 12
+            PixelDescriptor::RGBAF32, // 16
+        ];
+        let dims = [
+            (8u32, 8u32),
+            (32, 32),
+            (64, 48),
+            (17, 13),
+            (33, 31),
+            (40, 33),
+            (67, 43),
+            (64, 1),
+            (1, 64),
+            (1, 1),
+        ];
+        for &desc in &descs {
+            let bpp = desc.bytes_per_pixel();
+            for &(w, h) in &dims {
+                let data = fill(w as usize * h as usize * bpp);
+                for &o in &[
+                    Orientation::Transpose,
+                    Orientation::Rotate90,
+                    Orientation::Rotate270,
+                    Orientation::Transverse,
+                ] {
+                    // Path under test (transpose_tiled for these widths).
+                    let got = apply_orientation(slice(&data, w, h, desc), o);
+                    // Generic forward_map scatter as the independent oracle.
+                    let (ow, oh) = o.output_dimensions(w, h);
+                    let mut reference = PixelBuffer::new(ow, oh, desc);
+                    {
+                        let src = slice(&data, w, h, desc);
+                        let mut d = reference.as_slice_mut();
+                        transpose_blocked(&src, &mut d, o, w, h, bpp);
+                    }
+                    for y in 0..oh {
+                        assert_eq!(
+                            got.as_slice().row(y),
+                            reference.as_slice().row(y),
+                            "{o:?} {desc:?} {w}x{h} row {y}"
+                        );
+                    }
                 }
             }
         }
