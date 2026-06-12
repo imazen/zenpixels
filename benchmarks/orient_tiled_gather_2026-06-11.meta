@@ -1,0 +1,32 @@
+# orient_tiled_gather_2026-06-11
+
+Measured-on commit: 0361f32440e0 (feat(convert): tiled-gather transpose for
+non-4-byte pixels, zenjpeg#150 part a) — the bench ran on this commit's tree
+before it was finalized; code identical.
+
+Command:
+  nice -n 19 ionice -c 3 cargo bench -p zenpixels-convert --bench bench_orient --features __bench_orient
+
+Host: lilith workstation, AMD Ryzen 9 7950X (water-cooled, WSL2), 128 GB RAM.
+Build: release, default features + __bench_orient, NO -C target-cpu=native
+(runtime SIMD dispatch, what users get).
+
+Grid: {Rotate90, Transpose} x {RGBA8 (4bpp), RGB8 (3bpp)} x {256^2, 1024^2,
+2048^2, 12MP=4000x3000}, paired A/B per group:
+  - RGBA8: "simd" (production f32x4 register transpose) vs "fwdmap"
+    (generic cache-blocked forward_map scatter, the old path / oracle)
+  - RGB8: "tiled" (new monomorphised tiled gather, this commit) vs "fwdmap"
+
+Headline (12MP, mean +/- MAD):
+  RGB8  Rotate90 : tiled 48.1 +/-2.7 ms  vs fwdmap 87.2 +/-7.1 ms
+  RGB8  Transpose: tiled 39.6 +/-1.2 ms  vs fwdmap 72.7 +/-1.6 ms
+  RGBA8 Rotate90 : simd  39.1 +/-4.4 ms  vs fwdmap 78.8 +/-2.4 ms
+
+Cross-reference: zenjpeg#150's table (same machine, zenjpeg harness) had
+zpc 3bpp Rotate90 12MP at 84.2 ms (consistent with fwdmap 87.2 here) and
+zenjpeg's internal naive permute at 73.3 ms; RGBA8 simd 39.8 ms there vs
+39.1 here validates comparability. New tiled 3bpp (48.1) beats both.
+
+Caveat: zenbench flagged many noisy rounds (4 kept rounds/group, CV up to
+34% on small sizes); deltas (+72%..+813%) dwarf the noise, absolute numbers
+carry the CIs printed in the .txt.
