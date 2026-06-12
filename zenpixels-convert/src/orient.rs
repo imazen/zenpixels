@@ -477,27 +477,52 @@ fn do_transpose(
     // through to the scalar scatter, whose `forward_map` is defined for every
     // variant.
     if let Some(flips) = inverse_flips(orientation) {
+        // Hand-tuned x86 tiers for the four 1-byte-channel pixel sizes
+        // (transpose-shootout 2026-06-12: these kernel shapes are what zune /
+        // fast_transpose / the C++ Simd library win with; our generic paths
+        // lost 2-5×). Pre-SSSE3 x86 and every other arch fall through to the
+        // magetypes 4-byte kernel / tiled gather below.
+        #[cfg(target_arch = "x86_64")]
+        match bpp {
+            1 => {
+                if let Some(token) = X64V3Token::summon() {
+                    pxn_x86::transpose1_v3(token, src, dst, orientation, w, h);
+                    return;
+                }
+            }
+            2 => {
+                if let Some(token) = X64V3Token::summon() {
+                    pxn_x86::transpose2_v3(token, src, dst, orientation, w, h);
+                    return;
+                }
+            }
+            3 => {
+                if let Some(token) = X64V3Token::summon() {
+                    rgb3_x86::transpose3_v3(token, src, dst, orientation, w, h);
+                    return;
+                }
+            }
+            4 => {
+                // X64V3 = x86-64-v3 = AVX2 baseline; pre-v3 x86 falls to the
+                // magetypes scalar tier below, as before.
+                if let Some(token) = X64V3Token::summon() {
+                    pxn_x86::transpose4_v3(token, src, dst, orientation, w, h);
+                    return;
+                }
+            }
+            _ => {}
+        }
         if bpp == 4 {
-            // Explicit tier list matching the `#[magetypes(v3, neon, wasm128,
-            // scalar)]` attribute on `transpose4_simd`: a bare `incant!` expands
-            // the full cascade and references a `_v4` variant that was never
-            // generated, breaking `--features avx512` builds (caught by the
-            // feature-powerset CI job). Same convention as the `scan` kernels.
+            // Non-x86 tiers (NEON / WASM SIMD128 / scalar) via the magetypes
+            // 4×4 register transpose. Explicit tier list matching its
+            // `#[magetypes(v3, neon, wasm128, scalar)]` attribute: a bare
+            // `incant!` expands the full cascade and references a `_v4`
+            // variant that was never generated, breaking `--features avx512`
+            // builds (caught by the feature-powerset CI job).
             incant!(
                 transpose4_simd(src, dst, orientation, w, h),
                 [v3, neon, wasm128, scalar]
             );
-            return;
-        }
-        // 3-byte pixels: hand-tuned SSSE3 expand→transpose→compress tier
-        // (zenjpeg#150 / transpose-shootout: the scalar tiled gather loses
-        // ~5× to this kernel shape). Non-x86 and pre-SSSE3 fall through to
-        // the monomorphised tiled gather below.
-        #[cfg(target_arch = "x86_64")]
-        if bpp == 3
-            && let Some(token) = X64V3Token::summon()
-        {
-            rgb3_x86::transpose3_v3(token, src, dst, orientation, w, h);
             return;
         }
         // Monomorphised per pixel size so the inner copy is a fixed-size
@@ -957,90 +982,556 @@ mod rgb3_x86 {
         let full_h = h & !3;
         let full_w = w & !3;
 
-        let mut sy = 0u32;
-        while sy < full_h {
-            // Tiles in the band containing the image's final row must keep
-            // their 16-byte loads inside the buffer: need (sx+4)*3 + 4 ≤ w*3,
-            // i.e. sx + 4 ≤ w - 2. Other bands' slop lands in the next row,
-            // which `as_strided_bytes` always covers.
-            let band_w = if sy + 4 >= h {
-                if w >= 6 { (w - 2) & !3 } else { 0 }
-            } else {
-                full_w
-            }
-            .min(full_w);
+        // Tiles in the band containing the image's final row must keep their
+        // 16-byte loads inside the buffer: need (sx+4)*3 + 4 ≤ w*3, i.e.
+        // sx + 4 ≤ w - 2. Other bands' slop lands in the next row, which
+        // `as_strided_bytes` always covers. Guard-trimmed columns fall to the
+        // trailing scalar pass.
+        let guard_w = if full_h == h {
+            if w >= 6 { (w - 2) & !3 } else { 0 }
+        } else {
+            full_w
+        }
+        .min(full_w);
 
-            let mut sx = 0u32;
-            while sx < band_w {
-                // Load 4 source rows × 16 B and expand to u32 lanes.
-                let base = sy as usize * sstride + sx as usize * 3;
-                let r0: &[u8; 16] = sbytes[base..base + 16].try_into().unwrap();
-                let r1: &[u8; 16] = sbytes[base + sstride..base + sstride + 16]
-                    .try_into()
-                    .unwrap();
-                let r2: &[u8; 16] = sbytes[base + 2 * sstride..base + 2 * sstride + 16]
-                    .try_into()
-                    .unwrap();
-                let r3: &[u8; 16] = sbytes[base + 3 * sstride..base + 3 * sstride + 16]
-                    .try_into()
-                    .unwrap();
-                let p0 = _mm_shuffle_epi8(_mm_loadu_si128(r0), expand);
-                let p1 = _mm_shuffle_epi8(_mm_loadu_si128(r1), expand);
-                let p2 = _mm_shuffle_epi8(_mm_loadu_si128(r2), expand);
-                let p3 = _mm_shuffle_epi8(_mm_loadu_si128(r3), expand);
-                // 4×4 u32 transpose (unpack cascade).
-                let t0 = _mm_unpacklo_epi32(p0, p1);
-                let t1 = _mm_unpacklo_epi32(p2, p3);
-                let t2 = _mm_unpackhi_epi32(p0, p1);
-                let t3 = _mm_unpackhi_epi32(p2, p3);
-                let cols = [
-                    _mm_unpacklo_epi64(t0, t1),
-                    _mm_unpackhi_epi64(t0, t1),
-                    _mm_unpacklo_epi64(t2, t3),
-                    _mm_unpackhi_epi64(t2, t3),
-                ];
-                // cols[c] = source column sx+c as 4 pixels (source rows
-                // sy..sy+4) → one 12-byte run in dst row dy at column dx.
-                let dx = if flip_sy { h - 4 - sy } else { sy };
-                for (c, &col) in cols.iter().enumerate() {
-                    let packed = _mm_shuffle_epi8(col, compress);
-                    let dy = if flip_sx {
-                        w - 1 - (sx + c as u32)
+        // Column-stripe blocking; see transpose1_v3.
+        const MACRO: u32 = 64;
+        let nblocks = full_w.div_ceil(MACRO);
+        for bi in 0..nblocks {
+            let bx = if flip_sx { nblocks - 1 - bi } else { bi } * MACRO;
+            let bx_end = (bx + MACRO).min(full_w);
+            let ntiles = (bx_end - bx) / 4;
+            let mut sy = 0u32;
+            while sy < full_h {
+                let limit = if sy + 4 >= h { guard_w } else { full_w };
+                for ti in 0..ntiles {
+                    let sx = if flip_sx {
+                        bx + (ntiles - 1 - ti) * 4
                     } else {
-                        sx + c as u32
+                        bx + ti * 4
                     };
-                    let doff = dy as usize * dstride + dx as usize * 3;
-                    // Slop-free 12-byte store as 8+4 (`_mm_storeu_si64` takes
-                    // &mut [u8; 8] — unlike `_mm_storel_epi64`, whose safe
-                    // wrapper demands a full 128-bit location).
-                    let (head, tail) = dbytes[doff..doff + 12].split_at_mut(8);
-                    let head: &mut [u8; 8] = head.try_into().unwrap();
-                    let tail: &mut [u8; 4] = tail.try_into().unwrap();
-                    _mm_storeu_si64(head, packed);
-                    _mm_storeu_si32(tail, _mm_srli_si128::<8>(packed));
+                    if sx + 4 > limit {
+                        continue;
+                    }
+                    // Load 4 source rows × 16 B and expand to u32 lanes.
+                    let base = sy as usize * sstride + sx as usize * 3;
+                    let r0: &[u8; 16] = sbytes[base..base + 16].try_into().unwrap();
+                    let r1: &[u8; 16] = sbytes[base + sstride..base + sstride + 16]
+                        .try_into()
+                        .unwrap();
+                    let r2: &[u8; 16] = sbytes[base + 2 * sstride..base + 2 * sstride + 16]
+                        .try_into()
+                        .unwrap();
+                    let r3: &[u8; 16] = sbytes[base + 3 * sstride..base + 3 * sstride + 16]
+                        .try_into()
+                        .unwrap();
+                    let p0 = _mm_shuffle_epi8(_mm_loadu_si128(r0), expand);
+                    let p1 = _mm_shuffle_epi8(_mm_loadu_si128(r1), expand);
+                    let p2 = _mm_shuffle_epi8(_mm_loadu_si128(r2), expand);
+                    let p3 = _mm_shuffle_epi8(_mm_loadu_si128(r3), expand);
+                    // 4×4 u32 transpose (unpack cascade).
+                    let t0 = _mm_unpacklo_epi32(p0, p1);
+                    let t1 = _mm_unpacklo_epi32(p2, p3);
+                    let t2 = _mm_unpackhi_epi32(p0, p1);
+                    let t3 = _mm_unpackhi_epi32(p2, p3);
+                    let cols = [
+                        _mm_unpacklo_epi64(t0, t1),
+                        _mm_unpackhi_epi64(t0, t1),
+                        _mm_unpacklo_epi64(t2, t3),
+                        _mm_unpackhi_epi64(t2, t3),
+                    ];
+                    // cols[c] = source column sx+c as 4 pixels (source rows
+                    // sy..sy+4) → one 12-byte run in dst row dy at column dx.
+                    let dx = if flip_sy { h - 4 - sy } else { sy };
+                    for (c, &col) in cols.iter().enumerate() {
+                        let packed = _mm_shuffle_epi8(col, compress);
+                        let dy = if flip_sx {
+                            w - 1 - (sx + c as u32)
+                        } else {
+                            sx + c as u32
+                        };
+                        let doff = dy as usize * dstride + dx as usize * 3;
+                        // Slop-free 12-byte store as 8+4 (`_mm_storeu_si64` takes
+                        // &mut [u8; 8] — unlike `_mm_storel_epi64`, whose safe
+                        // wrapper demands a full 128-bit location).
+                        let (head, tail) = dbytes[doff..doff + 12].split_at_mut(8);
+                        let head: &mut [u8; 8] = head.try_into().unwrap();
+                        let tail: &mut [u8; 4] = tail.try_into().unwrap();
+                        _mm_storeu_si64(head, packed);
+                        _mm_storeu_si32(tail, _mm_srli_si128::<8>(packed));
+                    }
                 }
-                sx += 4;
+                sy += 4;
             }
-            // Scalar remainder of this band (sx ≥ band_w).
-            for y in sy..sy + 4 {
-                for x in band_w..w {
-                    let (dx, dy) = orientation.forward_map(x, y, w, h);
-                    let s = y as usize * sstride + x as usize * 3;
-                    let d = dy as usize * dstride + dx as usize * 3;
-                    dbytes[d..d + 3].copy_from_slice(&sbytes[s..s + 3]);
-                }
-            }
-            sy += 4;
         }
-        // Bottom rows (sy ≥ full_h).
-        for y in full_h..h {
-            for x in 0..w {
+        // Guard-trimmed columns of the last band (only when that band touches
+        // the image's final row), then right-edge columns, then bottom rows.
+        if guard_w < full_w && full_h == h && h >= 4 {
+            super::pxn_x86::scalar_rect(
+                sbytes,
+                sstride,
+                dbytes,
+                dstride,
+                orientation,
+                w,
+                h,
+                3,
+                guard_w,
+                full_w,
+                h - 4,
+                h,
+            );
+        }
+        super::pxn_x86::scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            3,
+            full_w,
+            w,
+            0,
+            full_h,
+        );
+        super::pxn_x86::scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            3,
+            0,
+            w,
+            full_h,
+            h,
+        );
+    }
+}
+
+// ── SIMD 1/2/4-byte transposes: exact-width register cascades ────────────────
+//
+// Same construction as `rgb3_x86` (value intrinsics inside `#[arcane]`, safe
+// reference-taking memory wrappers, flat src/dst byte addressing, scalar
+// `forward_map` edges) but with NO load/store slop anywhere: tile rows are
+// exactly one register wide (8 px × 1 B = 8 B, 8 px × 2 B = 16 B, 4 px × 4 B =
+// 16 B, 8 px × 4 B = 32 B), so there is no last-row guard at all. Shapes are
+// the classic punpck cascades (AP-528 → libyuv lineage); the shootout showed
+// our previous paths losing 3-5× to exactly these kernel shapes in zune /
+// fast_transpose / the C++ Simd library.
+#[cfg(target_arch = "x86_64")]
+mod pxn_x86 {
+    use super::{Orientation, PixelSlice, PixelSliceMut, inverse_flips};
+    use archmage::prelude::*;
+
+    /// Scalar `forward_map` scatter for an arbitrary pixel rectangle, against
+    /// flat strided bytes. Shared edge handler for every x86 kernel here.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn scalar_rect(
+        sbytes: &[u8],
+        sstride: usize,
+        dbytes: &mut [u8],
+        dstride: usize,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+        bpp: usize,
+        x0: u32,
+        x1: u32,
+        y0: u32,
+        y1: u32,
+    ) {
+        for y in y0..y1 {
+            for x in x0..x1 {
                 let (dx, dy) = orientation.forward_map(x, y, w, h);
-                let s = y as usize * sstride + x as usize * 3;
-                let d = dy as usize * dstride + dx as usize * 3;
-                dbytes[d..d + 3].copy_from_slice(&sbytes[s..s + 3]);
+                let s = y as usize * sstride + x as usize * bpp;
+                let d = dy as usize * dstride + dx as usize * bpp;
+                dbytes[d..d + bpp].copy_from_slice(&sbytes[s..s + bpp]);
             }
         }
+    }
+
+    /// 8×8 gray8 tiles: 8-byte row loads, 3-stage byte/word/dword unpack
+    /// cascade producing column *pairs* (two 8-byte columns per register),
+    /// 8-byte stores. `flip_sy` reverses bytes within each packed column
+    /// (pshufb) — dst columns descend with source rows; `flip_sx` reverses
+    /// which dst row each source column lands on.
+    #[arcane(import_intrinsics)]
+    pub(super) fn transpose1_v3(
+        _token: X64V3Token,
+        src: &PixelSlice<'_>,
+        dst: &mut PixelSliceMut<'_>,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+    ) {
+        let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
+        let sbytes = src.as_strided_bytes();
+        let sstride = src.stride();
+        let dstride = dst.stride();
+        let dbytes = dst.as_strided_bytes_mut();
+
+        // Reverse the 8 bytes inside each 64-bit half (per packed column).
+        const REV8X2: [u8; 16] = [7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8];
+        let rev = _mm_loadu_si128(&REV8X2);
+
+        let full_w = w & !7;
+        let full_h = h & !7;
+        // Column stripes of MACRO source columns = MACRO destination rows:
+        // each stripe's dst rows are written start-to-finish (sequential
+        // stores, src streamed once), instead of touching every dst row per
+        // source band — the cache-blocking the shootout showed we lost at
+        // 12MP. Stripes and tiles iterate in dst-row-ascending order under
+        // flip_sx so stores always walk forward.
+        const MACRO: u32 = 64;
+        let nblocks = full_w.div_ceil(MACRO);
+        for bi in 0..nblocks {
+            let bx = if flip_sx { nblocks - 1 - bi } else { bi } * MACRO;
+            let bx_end = (bx + MACRO).min(full_w);
+            let ntiles = (bx_end - bx) / 8;
+            let mut sy = 0u32;
+            while sy < full_h {
+                let dx = (if flip_sy { h - 8 - sy } else { sy }) as usize;
+                for ti in 0..ntiles {
+                    let sx = if flip_sx {
+                        bx + (ntiles - 1 - ti) * 8
+                    } else {
+                        bx + ti * 8
+                    };
+                    let base = sy as usize * sstride + sx as usize;
+                    // r_i low 8 bytes = source row sy+i, cols sx..sx+8.
+                    macro_rules! ld {
+                        ($i:literal) => {{
+                            let a: &[u8; 8] = sbytes[base + $i * sstride..base + $i * sstride + 8]
+                                .try_into()
+                                .unwrap();
+                            _mm_loadu_si64(a)
+                        }};
+                    }
+                    let (r0, r1, r2, r3) = (ld!(0), ld!(1), ld!(2), ld!(3));
+                    let (r4, r5, r6, r7) = (ld!(4), ld!(5), ld!(6), ld!(7));
+                    let s0 = _mm_unpacklo_epi8(r0, r1);
+                    let s1 = _mm_unpacklo_epi8(r2, r3);
+                    let s2 = _mm_unpacklo_epi8(r4, r5);
+                    let s3 = _mm_unpacklo_epi8(r6, r7);
+                    let t0 = _mm_unpacklo_epi16(s0, s1);
+                    let t1 = _mm_unpackhi_epi16(s0, s1);
+                    let t2 = _mm_unpacklo_epi16(s2, s3);
+                    let t3 = _mm_unpackhi_epi16(s2, s3);
+                    // u_k = columns (2k, 2k+1) packed as low/high 8 bytes.
+                    let u = [
+                        _mm_unpacklo_epi32(t0, t2),
+                        _mm_unpackhi_epi32(t0, t2),
+                        _mm_unpacklo_epi32(t1, t3),
+                        _mm_unpackhi_epi32(t1, t3),
+                    ];
+                    for (k, &pair) in u.iter().enumerate() {
+                        let pair = if flip_sy {
+                            _mm_shuffle_epi8(pair, rev)
+                        } else {
+                            pair
+                        };
+                        for half in 0..2u32 {
+                            let c = 2 * k as u32 + half;
+                            let dy = if flip_sx { w - 1 - (sx + c) } else { sx + c };
+                            let doff = dy as usize * dstride + dx;
+                            let out: &mut [u8; 8] =
+                                (&mut dbytes[doff..doff + 8]).try_into().unwrap();
+                            let v = if half == 0 {
+                                pair
+                            } else {
+                                _mm_srli_si128::<8>(pair)
+                            };
+                            _mm_storeu_si64(out, v);
+                        }
+                    }
+                }
+                sy += 8;
+            }
+        }
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            1,
+            full_w,
+            w,
+            0,
+            full_h,
+        );
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            1,
+            0,
+            w,
+            full_h,
+            h,
+        );
+    }
+
+    /// 8×8 2-byte tiles (gray+alpha / gray16): 16-byte row loads, 3-stage
+    /// word/dword/qword unpack cascade, 16-byte stores.
+    #[arcane(import_intrinsics)]
+    pub(super) fn transpose2_v3(
+        _token: X64V3Token,
+        src: &PixelSlice<'_>,
+        dst: &mut PixelSliceMut<'_>,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+    ) {
+        let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
+        let sbytes = src.as_strided_bytes();
+        let sstride = src.stride();
+        let dstride = dst.stride();
+        let dbytes = dst.as_strided_bytes_mut();
+
+        // Reverse 8 u16 lanes.
+        const REV16: [u8; 16] = [14, 15, 12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1];
+        let rev = _mm_loadu_si128(&REV16);
+
+        let full_w = w & !7;
+        let full_h = h & !7;
+        // Column-stripe blocking; see transpose1_v3.
+        const MACRO: u32 = 64;
+        let nblocks = full_w.div_ceil(MACRO);
+        for bi in 0..nblocks {
+            let bx = if flip_sx { nblocks - 1 - bi } else { bi } * MACRO;
+            let bx_end = (bx + MACRO).min(full_w);
+            let ntiles = (bx_end - bx) / 8;
+            let mut sy = 0u32;
+            while sy < full_h {
+                let dx = (if flip_sy { h - 8 - sy } else { sy }) as usize;
+                for ti in 0..ntiles {
+                    let sx = if flip_sx {
+                        bx + (ntiles - 1 - ti) * 8
+                    } else {
+                        bx + ti * 8
+                    };
+                    let base = sy as usize * sstride + sx as usize * 2;
+                    macro_rules! ld {
+                        ($i:literal) => {{
+                            let a: &[u8; 16] = sbytes
+                                [base + $i * sstride..base + $i * sstride + 16]
+                                .try_into()
+                                .unwrap();
+                            _mm_loadu_si128(a)
+                        }};
+                    }
+                    let (r0, r1, r2, r3) = (ld!(0), ld!(1), ld!(2), ld!(3));
+                    let (r4, r5, r6, r7) = (ld!(4), ld!(5), ld!(6), ld!(7));
+                    let s0 = _mm_unpacklo_epi16(r0, r1);
+                    let s1 = _mm_unpackhi_epi16(r0, r1);
+                    let s2 = _mm_unpacklo_epi16(r2, r3);
+                    let s3 = _mm_unpackhi_epi16(r2, r3);
+                    let s4 = _mm_unpacklo_epi16(r4, r5);
+                    let s5 = _mm_unpackhi_epi16(r4, r5);
+                    let s6 = _mm_unpacklo_epi16(r6, r7);
+                    let s7 = _mm_unpackhi_epi16(r6, r7);
+                    let t0 = _mm_unpacklo_epi32(s0, s2);
+                    let t1 = _mm_unpackhi_epi32(s0, s2);
+                    let t2 = _mm_unpacklo_epi32(s1, s3);
+                    let t3 = _mm_unpackhi_epi32(s1, s3);
+                    let t4 = _mm_unpacklo_epi32(s4, s6);
+                    let t5 = _mm_unpackhi_epi32(s4, s6);
+                    let t6 = _mm_unpacklo_epi32(s5, s7);
+                    let t7 = _mm_unpackhi_epi32(s5, s7);
+                    let cols = [
+                        _mm_unpacklo_epi64(t0, t4),
+                        _mm_unpackhi_epi64(t0, t4),
+                        _mm_unpacklo_epi64(t1, t5),
+                        _mm_unpackhi_epi64(t1, t5),
+                        _mm_unpacklo_epi64(t2, t6),
+                        _mm_unpackhi_epi64(t2, t6),
+                        _mm_unpacklo_epi64(t3, t7),
+                        _mm_unpackhi_epi64(t3, t7),
+                    ];
+                    for (c, &col) in cols.iter().enumerate() {
+                        let col = if flip_sy {
+                            _mm_shuffle_epi8(col, rev)
+                        } else {
+                            col
+                        };
+                        let dy = if flip_sx {
+                            w - 1 - (sx + c as u32)
+                        } else {
+                            sx + c as u32
+                        };
+                        let doff = dy as usize * dstride + dx * 2;
+                        let out: &mut [u8; 16] = (&mut dbytes[doff..doff + 16]).try_into().unwrap();
+                        _mm_storeu_si128(out, col);
+                    }
+                }
+                sy += 8;
+            }
+        }
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            2,
+            full_w,
+            w,
+            0,
+            full_h,
+        );
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            2,
+            0,
+            w,
+            full_h,
+            h,
+        );
+    }
+
+    /// 8×8 4-byte tiles, AVX2 (guaranteed at x86-64-v3): 32-byte rows,
+    /// dword/qword unpacks + cross-lane permute — the kernel class
+    /// fast_transpose/Simd lead with at 4 bpp.
+    #[arcane(import_intrinsics)]
+    pub(super) fn transpose4_v3(
+        _token: X64V3Token,
+        src: &PixelSlice<'_>,
+        dst: &mut PixelSliceMut<'_>,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+    ) {
+        let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
+        let sbytes = src.as_strided_bytes();
+        let sstride = src.stride();
+        let dstride = dst.stride();
+        let dbytes = dst.as_strided_bytes_mut();
+
+        let rev = _mm256_setr_epi32(7, 6, 5, 4, 3, 2, 1, 0);
+
+        let full_w = w & !7;
+        let full_h = h & !7;
+        // Column-stripe blocking; see transpose1_v3.
+        const MACRO: u32 = 64;
+        let nblocks = full_w.div_ceil(MACRO);
+        for bi in 0..nblocks {
+            let bx = if flip_sx { nblocks - 1 - bi } else { bi } * MACRO;
+            let bx_end = (bx + MACRO).min(full_w);
+            let ntiles = (bx_end - bx) / 8;
+            let mut sy = 0u32;
+            while sy < full_h {
+                let dx = (if flip_sy { h - 8 - sy } else { sy }) as usize;
+                for ti in 0..ntiles {
+                    let sx = if flip_sx {
+                        bx + (ntiles - 1 - ti) * 8
+                    } else {
+                        bx + ti * 8
+                    };
+                    let base = sy as usize * sstride + sx as usize * 4;
+                    macro_rules! ld {
+                        ($i:literal) => {{
+                            let a: &[u8; 32] = sbytes
+                                [base + $i * sstride..base + $i * sstride + 32]
+                                .try_into()
+                                .unwrap();
+                            _mm256_loadu_si256(a)
+                        }};
+                    }
+                    let (r0, r1, r2, r3) = (ld!(0), ld!(1), ld!(2), ld!(3));
+                    let (r4, r5, r6, r7) = (ld!(4), ld!(5), ld!(6), ld!(7));
+                    let t0 = _mm256_unpacklo_epi32(r0, r1);
+                    let t1 = _mm256_unpackhi_epi32(r0, r1);
+                    let t2 = _mm256_unpacklo_epi32(r2, r3);
+                    let t3 = _mm256_unpackhi_epi32(r2, r3);
+                    let t4 = _mm256_unpacklo_epi32(r4, r5);
+                    let t5 = _mm256_unpackhi_epi32(r4, r5);
+                    let t6 = _mm256_unpacklo_epi32(r6, r7);
+                    let t7 = _mm256_unpackhi_epi32(r6, r7);
+                    let u0 = _mm256_unpacklo_epi64(t0, t2);
+                    let u1 = _mm256_unpackhi_epi64(t0, t2);
+                    let u2 = _mm256_unpacklo_epi64(t1, t3);
+                    let u3 = _mm256_unpackhi_epi64(t1, t3);
+                    let u4 = _mm256_unpacklo_epi64(t4, t6);
+                    let u5 = _mm256_unpackhi_epi64(t4, t6);
+                    let u6 = _mm256_unpacklo_epi64(t5, t7);
+                    let u7 = _mm256_unpackhi_epi64(t5, t7);
+                    let cols = [
+                        _mm256_permute2x128_si256::<0x20>(u0, u4),
+                        _mm256_permute2x128_si256::<0x20>(u1, u5),
+                        _mm256_permute2x128_si256::<0x20>(u2, u6),
+                        _mm256_permute2x128_si256::<0x20>(u3, u7),
+                        _mm256_permute2x128_si256::<0x31>(u0, u4),
+                        _mm256_permute2x128_si256::<0x31>(u1, u5),
+                        _mm256_permute2x128_si256::<0x31>(u2, u6),
+                        _mm256_permute2x128_si256::<0x31>(u3, u7),
+                    ];
+                    for (c, &col) in cols.iter().enumerate() {
+                        let col = if flip_sy {
+                            _mm256_permutevar8x32_epi32(col, rev)
+                        } else {
+                            col
+                        };
+                        let dy = if flip_sx {
+                            w - 1 - (sx + c as u32)
+                        } else {
+                            sx + c as u32
+                        };
+                        let doff = dy as usize * dstride + dx * 4;
+                        let out: &mut [u8; 32] = (&mut dbytes[doff..doff + 32]).try_into().unwrap();
+                        _mm256_storeu_si256(out, col);
+                    }
+                }
+                sy += 8;
+            }
+        }
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            4,
+            full_w,
+            w,
+            0,
+            full_h,
+        );
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            4,
+            0,
+            w,
+            full_h,
+            h,
+        );
     }
 }
 
