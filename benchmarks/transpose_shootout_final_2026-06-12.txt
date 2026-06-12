@@ -1,0 +1,317 @@
+ft 1ch Transpose: (NoFlip, Flop)
+ft 1ch Rotate90: (Flip, Flop)
+ft 2ch Transpose: (NoFlip, Flop)
+ft 2ch Rotate90: (Flip, Flop)
+ft 3ch Transpose: (NoFlip, Flop)
+ft 3ch Rotate90: (Flip, Flop)
+ft 4ch Transpose: (NoFlip, Flop)
+ft 4ch Rotate90: (Flip, Flop)
+simd++ 1ch Transpose: SimdTransformType = 4
+simd++ 1ch Rotate90: SimdTransformType = 3
+simd++ 2ch Transpose: SimdTransformType = 4
+simd++ 2ch Rotate90: SimdTransformType = 3
+simd++ 3ch Transpose: SimdTransformType = 4
+simd++ 3ch Rotate90: SimdTransformType = 3
+simd++ 4ch Transpose: SimdTransformType = 4
+simd++ 4ch Rotate90: SimdTransformType = 3
+all verifications passed; benching
+[zenbench] calibration: int=0.25ns/iter mem_bw=93.4GiB/s mem_lat=10.5ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.19ns/iter, TSC: 4.491 ticks/ns (invariant)
+[zenbench] results → /tmp/zenbench/zenbench-1781260145-c909a.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1781260145-c909a
+  git: f0fbe98d376ab878d1ab20b1830bf7513b9fd63c
+  ci:  github-actions
+═══════════════════════════════════════════════════════════════
+
+  T 1ch  256sq  1 rounds × 67 calls ⚠ only 1 rounds
+              mean ±mad µs  95% CI vs base        iB/s
+  ├─ zpc       7.4 ±0.0µs                       8.22G
+  ├─ zpc-st   22.8 ±0.0µs  [+207.0%–+207.0%]    2.68G
+  ├─ ft       23.7 ±0.0µs  [+219.7%–+219.7%]    2.57G
+  ├─ ejm      16.8 ±0.0µs  [+125.7%–+125.7%]    3.64G
+  ├─ zune      6.1 ±0.0µs  [-18.0%–-18.0%]      10.0G
+  ╰─ simd++    2.4 ±0.0µs  [-67.2%–-67.2%]      25.1G
+
+
+  T 1ch 1024sq  1 rounds × 6 calls ⚠ only 1 rounds
+               mean ±mad µs  95% CI vs base        iB/s
+  ├─ zpc      138.4 ±0.0µs                       7.06G
+  ├─ zpc-st   383.4 ±0.0µs  [+177.0%–+177.0%]    2.55G
+  ├─ ft       572.6 ±0.0µs  [+313.8%–+313.8%]    1.71G
+  ├─ ejm      301.2 ±0.0µs  [+117.6%–+117.6%]    3.24G
+  ├─ zune     252.7 ±0.0µs  [+82.6%–+82.6%]      3.87G
+  ╰─ simd++    98.2 ±0.0µs  [-29.0%–-29.0%]      9.94G
+
+
+  T 1ch 2048sq  1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc      1.2 ±0.0ms                       3.39G
+  ├─ zpc-st   2.0 ±0.0ms  [+70.1%–+70.1%]      1.99G
+  ├─ ft       2.6 ±0.0ms  [+127.4%–+127.4%]    1.49G
+  ├─ ejm      2.2 ±0.0ms  [+86.5%–+86.5%]      1.82G
+  ├─ zune     1.7 ±0.0ms  [+45.1%–+45.1%]      2.33G
+  ╰─ simd++   1.0 ±0.0ms  [-10.8%–-10.8%]      3.80G
+
+
+  T 1ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       4.4 ±0.0ms                       2.53G
+  ├─ zpc-st    8.2 ±0.0ms  [+86.2%–+86.2%]      1.36G
+  ├─ ft        9.8 ±0.0ms  [+122.2%–+122.2%]    1.14G
+  ├─ ejm      10.6 ±0.0ms  [+139.0%–+139.0%]    1.06G
+  ├─ zune      4.5 ±0.0ms  [+2.3%–+2.3%]        2.47G
+  ╰─ simd++    2.2 ±0.0ms  [-49.8%–-49.8%]      5.03G
+
+
+  T 2ch  256sq  1 rounds × 127 calls ⚠ only 1 rounds
+              mean ±mad µs  95% CI vs base        iB/s
+  ├─ zpc       7.3 ±0.0µs                       16.8G
+  ├─ zpc-st   14.5 ±0.0µs  [+100.3%–+100.3%]    8.40G
+  ├─ ft        5.9 ±0.0µs  [-18.6%–-18.6%]      20.7G
+  ├─ ejm      10.2 ±0.0µs  [+40.0%–+40.0%]      12.0G
+  ├─ zune      6.3 ±0.0µs  [-13.5%–-13.5%]      19.5G
+  ╰─ simd++    3.4 ±0.0µs  [-53.6%–-53.6%]      36.2G
+
+
+  T 2ch 1024sq  1 rounds × 16 calls ⚠ only 1 rounds
+               mean ±mad µs  95% CI vs base      iB/s
+  ├─ zpc      260.3 ±0.0µs                     7.50G
+  ├─ zpc-st   283.0 ±0.0µs  [+8.7%–+8.7%]      6.90G
+  ├─ ft       322.4 ±0.0µs  [+23.9%–+23.9%]    6.06G
+  ├─ ejm      306.3 ±0.0µs  [+17.7%–+17.7%]    6.38G
+  ├─ zune     277.4 ±0.0µs  [+6.6%–+6.6%]      7.04G
+  ╰─ simd++   142.0 ±0.0µs  [-45.4%–-45.4%]    13.8G
+
+
+  T 2ch 2048sq  1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base      iB/s
+  ├─ zpc      2.9 ±0.0ms                     2.67G
+  ├─ zpc-st   3.3 ±0.0ms  [+13.4%–+13.4%]    2.35G
+  ├─ ft       3.5 ±0.0ms  [+19.8%–+19.8%]    2.23G
+  ├─ ejm      2.7 ±0.0ms  [-6.4%–-6.4%]      2.85G
+  ├─ zune     3.4 ±0.0ms  [+14.5%–+14.5%]    2.33G
+  ╰─ simd++   2.6 ±0.0ms  [-11.5%–-11.5%]    3.02G
+
+
+  T 2ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       5.0 ±0.0ms                       4.48G
+  ├─ zpc-st   11.3 ±0.0ms  [+127.1%–+127.1%]    1.97G
+  ├─ ft        6.6 ±0.0ms  [+32.3%–+32.3%]      3.39G
+  ├─ ejm      11.1 ±0.0ms  [+122.2%–+122.2%]    2.02G
+  ├─ zune      5.8 ±0.0ms  [+16.1%–+16.1%]      3.86G
+  ╰─ simd++    4.8 ±0.0ms  [-4.3%–-4.3%]        4.69G
+
+
+  T 3ch  256sq  1 rounds × 51 calls ⚠ only 1 rounds
+              mean ±mad µs  95% CI vs base        iB/s
+  ├─ zpc      11.5 ±0.0µs                       16.0G
+  ├─ zpc-st   41.0 ±0.0µs  [+257.3%–+257.3%]    4.47G
+  ├─ ft       22.6 ±0.0µs  [+97.5%–+97.5%]      8.09G
+  ├─ ejm      18.8 ±0.0µs  [+64.1%–+64.1%]      9.73G
+  ╰─ simd++    5.5 ±0.0µs  [-51.9%–-51.9%]      33.2G
+
+
+  T 3ch 1024sq  1 rounds × 13 calls ⚠ only 1 rounds
+               mean ±mad µs  95% CI vs base        iB/s
+  ├─ zpc      241.3 ±0.0µs                       12.1G
+  ├─ zpc-st   534.9 ±0.0µs  [+121.6%–+121.6%]    5.48G
+  ├─ ft       443.0 ±0.0µs  [+83.6%–+83.6%]      6.61G
+  ├─ ejm      355.3 ±0.0µs  [+47.2%–+47.2%]      8.25G
+  ╰─ simd++   164.9 ±0.0µs  [-31.7%–-31.7%]      17.8G
+
+
+  T 3ch 2048sq  1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc      2.0 ±0.0ms                       5.97G
+  ├─ zpc-st   4.4 ±0.0ms  [+123.1%–+123.1%]    2.68G
+  ├─ ft       2.9 ±0.0ms  [+49.1%–+49.1%]      4.01G
+  ├─ ejm      3.1 ±0.0ms  [+56.5%–+56.5%]      3.82G
+  ╰─ simd++   2.3 ±0.0ms  [+19.4%–+19.4%]      5.01G
+
+
+  T 3ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       7.7 ±0.0ms                       4.38G
+  ├─ zpc-st   17.0 ±0.0ms  [+122.3%–+122.3%]    1.97G
+  ├─ ft       17.2 ±0.0ms  [+124.6%–+124.6%]    1.95G
+  ├─ ejm      16.7 ±0.0ms  [+118.4%–+118.4%]    2.00G
+  ╰─ simd++    7.4 ±0.0ms  [-2.8%–-2.8%]        4.51G
+
+
+  T 4ch  256sq  1 rounds × 94 calls ⚠ only 1 rounds
+              mean ±mad µs  95% CI vs base        iB/s
+  ├─ zpc       8.4 ±0.0µs                       28.9G
+  ├─ zpc-st   17.0 ±0.0µs  [+101.7%–+101.7%]    14.3G
+  ├─ ft       11.2 ±0.0µs  [+32.7%–+32.7%]      21.8G
+  ├─ ejm      10.3 ±0.0µs  [+21.9%–+21.9%]      23.7G
+  ├─ zune     18.2 ±0.0µs  [+115.5%–+115.5%]    13.4G
+  ╰─ simd++    6.5 ±0.0µs  [-22.8%–-22.8%]      37.5G
+
+
+  T 4ch 1024sq  1 rounds × 9 calls ⚠ only 1 rounds
+                mean ±mad µs  95% CI vs base        iB/s
+  ├─ zpc       874.6 ±0.0µs                       4.47G
+  ├─ zpc-st   2615.2 ±0.0µs  [+199.0%–+199.0%]    1.49G
+  ├─ ft       1109.4 ±0.0µs  [+26.9%–+26.9%]      3.52G
+  ├─ ejm      2768.0 ±0.0µs  [+216.5%–+216.5%]    1.41G
+  ├─ zune     2444.9 ±0.0µs  [+179.6%–+179.6%]    1.60G
+  ╰─ simd++   1162.5 ±0.0µs  [+32.9%–+32.9%]      3.36G
+
+
+  T 4ch 2048sq  1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc      2.8 ±0.0ms                       5.66G
+  ├─ zpc-st   5.9 ±0.0ms  [+114.7%–+114.7%]    2.64G
+  ├─ ft       6.8 ±0.0ms  [+148.0%–+148.0%]    2.28G
+  ├─ ejm      3.2 ±0.0ms  [+14.5%–+14.5%]      4.94G
+  ├─ zune     7.3 ±0.0ms  [+162.8%–+162.8%]    2.15G
+  ╰─ simd++   4.2 ±0.0ms  [+51.2%–+51.2%]      3.74G
+
+
+  T 4ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base      iB/s
+  ├─ zpc      14.8 ±0.0ms                     3.02G
+  ├─ zpc-st   26.1 ±0.0ms  [+76.6%–+76.6%]    1.71G
+  ├─ ft       13.2 ±0.0ms  [-10.9%–-10.9%]    3.39G
+  ├─ ejm      21.3 ±0.0ms  [+44.2%–+44.2%]    2.10G
+  ├─ zune     16.8 ±0.0ms  [+13.9%–+13.9%]    2.65G
+  ╰─ simd++   12.9 ±0.0ms  [-12.4%–-12.4%]    3.45G
+
+
+  R90 1ch  256sq  1 rounds × 48 calls ⚠ only 1 rounds
+              mean ±mad µs  95% CI vs base        iB/s
+  ├─ zpc       3.9 ±0.0µs                       15.5G
+  ├─ zpc-st   14.9 ±0.0µs  [+277.4%–+277.4%]    4.10G
+  ├─ ft       21.6 ±0.0µs  [+447.7%–+447.7%]    2.82G
+  ╰─ simd++    1.5 ±0.0µs  [-61.5%–-61.5%]      40.1G
+
+
+  R90 1ch 1024sq  1 rounds × 21 calls ⚠ only 1 rounds
+               mean ±mad µs  95% CI vs base        iB/s
+  ├─ zpc       77.6 ±0.0µs                       12.6G
+  ├─ zpc-st   269.6 ±0.0µs  [+247.3%–+247.3%]    3.62G
+  ├─ ft       396.7 ±0.0µs  [+411.1%–+411.1%]    2.46G
+  ╰─ simd++    78.3 ±0.0µs  [+0.8%–+0.8%]        12.5G [1]
+
+  [1] CI crosses zero
+
+  R90 1ch 2048sq  1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc      2.2 ±0.0ms                       1.79G
+  ├─ zpc-st   4.8 ±0.0ms  [+121.5%–+121.5%]     829M
+  ├─ ft       9.0 ±0.0ms  [+312.3%–+312.3%]     446M
+  ╰─ simd++   2.4 ±0.0ms  [+8.4%–+8.4%]        1.65G
+
+
+  R90 1ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       4.5 ±0.0ms                       2.50G
+  ├─ zpc-st    9.6 ±0.0ms  [+114.7%–+114.7%]    1.16G
+  ├─ ft       12.1 ±0.0ms  [+170.3%–+170.3%]     947M
+  ╰─ simd++    2.8 ±0.0ms  [-36.6%–-36.6%]      3.95G
+
+
+  R90 2ch  256sq  1 rounds × 68 calls ⚠ only 1 rounds
+              mean ±mad µs  95% CI vs base      iB/s
+  ├─ zpc      15.1 ±0.0µs                     8.11G
+  ├─ zpc-st   21.4 ±0.0µs  [+42.0%–+42.0%]    5.71G
+  ├─ ft        6.9 ±0.0µs  [-54.1%–-54.1%]    17.7G
+  ╰─ simd++    4.3 ±0.0µs  [-71.3%–-71.3%]    28.3G
+
+
+  R90 2ch 1024sq  1 rounds × 8 calls ⚠ only 1 rounds
+               mean ±mad µs  95% CI vs base      iB/s
+  ├─ zpc      314.4 ±0.0µs                     6.21G
+  ├─ zpc-st   293.0 ±0.0µs  [-6.8%–-6.8%]      6.67G
+  ├─ ft       352.2 ±0.0µs  [+12.0%–+12.0%]    5.55G
+  ╰─ simd++   177.1 ±0.0µs  [-43.7%–-43.7%]    11.0G
+
+
+  R90 2ch 2048sq  1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base      iB/s
+  ├─ zpc      2.3 ±0.0ms                     3.40G
+  ├─ zpc-st   4.0 ±0.0ms  [+73.1%–+73.1%]    1.97G
+  ├─ ft       3.4 ±0.0ms  [+46.1%–+46.1%]    2.33G
+  ╰─ simd++   2.3 ±0.0ms  [+0.5%–+0.5%]      3.39G [1]
+
+  [1] CI crosses zero
+
+  R90 2ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc       5.8 ±0.0ms                       3.82G
+  ├─ zpc-st   12.9 ±0.0ms  [+119.9%–+119.9%]    1.74G
+  ├─ ft        7.8 ±0.0ms  [+33.6%–+33.6%]      2.86G
+  ╰─ simd++    5.0 ±0.0ms  [-14.1%–-14.1%]      4.45G
+
+
+  R90 3ch  256sq  1 rounds × 51 calls ⚠ only 1 rounds
+              mean ±mad µs  95% CI vs base        iB/s
+  ├─ zpc      13.2 ±0.0µs                       13.9G
+  ├─ zpc-st   32.1 ±0.0µs  [+143.7%–+143.7%]    5.71G
+  ├─ ft       20.6 ±0.0µs  [+56.4%–+56.4%]      8.89G
+  ╰─ simd++    5.3 ±0.0µs  [-59.6%–-59.6%]      34.5G
+
+
+  R90 3ch 1024sq  1 rounds × 11 calls ⚠ only 1 rounds
+               mean ±mad µs  95% CI vs base        iB/s
+  ├─ zpc      251.6 ±0.0µs                       11.6G
+  ├─ zpc-st   518.3 ±0.0µs  [+106.0%–+106.0%]    5.65G
+  ├─ ft       369.8 ±0.0µs  [+47.0%–+47.0%]      7.92G
+  ╰─ simd++   146.1 ±0.0µs  [-42.0%–-42.0%]      20.1G
+
+
+  R90 3ch 2048sq  1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base      iB/s
+  ├─ zpc      2.8 ±0.0ms                     4.12G
+  ├─ zpc-st   5.3 ±0.0ms  [+85.9%–+85.9%]    2.22G
+  ├─ ft       3.7 ±0.0ms  [+29.6%–+29.6%]    3.18G
+  ╰─ simd++   2.2 ±0.0ms  [-22.9%–-22.9%]    5.35G
+
+
+  R90 3ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base      iB/s
+  ├─ zpc       9.2 ±0.0ms                     3.63G
+  ├─ zpc-st   17.9 ±0.0ms  [+93.5%–+93.5%]    1.87G
+  ├─ ft       17.7 ±0.0ms  [+91.8%–+91.8%]    1.89G
+  ╰─ simd++    7.9 ±0.0ms  [-14.5%–-14.5%]    4.24G
+
+
+  R90 4ch  256sq  1 rounds × 94 calls ⚠ only 1 rounds
+              mean ±mad µs  95% CI vs base      iB/s
+  ├─ zpc      12.0 ±0.0µs                     20.3G
+  ├─ zpc-st   16.0 ±0.0µs  [+33.1%–+33.1%]    15.3G
+  ├─ ft       12.1 ±0.0µs  [+0.9%–+0.9%]      20.2G [1]
+  ╰─ simd++    6.3 ±0.0µs  [-47.6%–-47.6%]    38.8G
+
+  [1] CI crosses zero
+
+  R90 4ch 1024sq  1 rounds × 11 calls ⚠ only 1 rounds
+               mean ±mad µs  95% CI vs base      iB/s
+  ├─ zpc      429.4 ±0.0µs                     9.10G
+  ├─ zpc-st   642.7 ±0.0µs  [+49.7%–+49.7%]    6.08G
+  ├─ ft       468.1 ±0.0µs  [+9.0%–+9.0%]      8.34G
+  ╰─ simd++   575.0 ±0.0µs  [+33.9%–+33.9%]    6.79G
+
+
+  R90 4ch 2048sq  1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ zpc      3.1 ±0.0ms                       4.99G
+  ├─ zpc-st   6.6 ±0.0ms  [+109.5%–+109.5%]    2.38G
+  ├─ ft       5.4 ±0.0ms  [+73.6%–+73.6%]      2.87G
+  ╰─ simd++   4.2 ±0.0ms  [+32.7%–+32.7%]      3.76G
+
+
+  R90 4ch 12MP    1 rounds × 1 calls ⚠ only 1 rounds
+             mean ±mad ms  95% CI vs base      iB/s
+  ├─ zpc      12.6 ±0.0ms                     3.54G
+  ├─ zpc-st   18.3 ±0.0ms  [+45.0%–+45.0%]    2.44G
+  ├─ ft       13.2 ±0.0ms  [+4.9%–+4.9%]      3.37G
+  ╰─ simd++   12.2 ±0.0ms  [-3.5%–-3.5%]      3.67G
+
+
+  total: 994.6s  (929 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json

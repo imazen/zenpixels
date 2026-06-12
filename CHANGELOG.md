@@ -20,6 +20,26 @@
 
 ### zenpixels-convert — performance
 
+- **x86-64 SIMD transpose kernels for 1/2/3/4-byte pixels — up to 9.5×
+  over the tiled gather, matching the C++ Simd library at 12MP in most
+  cells** (zenjpeg#150 follow-through; all `#![forbid(unsafe_code)]` via
+  archmage value-mode intrinsics + safe_unaligned_simd reference wrappers,
+  x86-64-v3/AVX2 baseline with scalar/NEON-magetypes fallbacks unchanged):
+  gray8 16×16 SSSE3 cascade with full-width row-band sweep; 2-byte 8×8
+  cascade; RGB8 AVX2 8-row expand 3→4 / dword-transpose / compress with
+  contiguous 24-byte stores (the only SIMD RGB24 transpose in the Rust
+  ecosystem); 4-byte AVX2 8×8; column-stripe macro-blocking (64 dst rows
+  written to completion) on the 2/3/4-byte kernels; per-kernel measured
+  band/stripe iteration order under reflections. 12MP Rotate90 RGB8:
+  87.2 → 9.2 ms across the two sessions; Transpose gray8 9.2 → 4.4 ms
+  (ties zune-imageprocs, the prior fastest Rust impl). Full cross-library
+  shootout records in `benchmarks/transpose_shootout_*_2026-06-12.*`;
+  measurement harness in `transpose-shootout/` (workspace-excluded).
+  Remaining known gaps vs the C++ reference, with designs noted in
+  `docs/transpose-research-2026-06-11.md`: gray8 ~2× (their AVX2 16×16),
+  Rotate90 1/2/3ch −14…−37%, and ~2× at L2-resident sizes (per-tile
+  overhead); non-temporal stores blocked on a safe archmage wrapper.
+
 - **Transposing orientations (`apply_orientation*`) are ~1.8–7× faster for
   every non-4-byte pixel size** (zenjpeg#150 part a): 1/2/3/6/8/12/16-byte
   pixels now route through a monomorphised cache-blocked gather

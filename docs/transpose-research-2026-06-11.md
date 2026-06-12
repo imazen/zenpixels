@@ -200,3 +200,37 @@ explicit safety contract (stdarch#1534), shipped in Rust 1.82:
 Plan impact: step 3 (NT stores) stays viable and the archmage addition has
 a known-sound design; our entry points must fence before returning (and
 the NT tier is skipped under Miri). Steps 0–2 unaffected.
+
+---
+
+# Outcome 2026-06-12: kernels shipped, shootout-validated
+
+Implemented (all forbid-unsafe, x86-64-v3 tier, scalar/NEON fallbacks
+unchanged): gray8 16×16 SSSE3 cascade (row-band sweep — stripes measured
+*worse* at 1 bpp); 2-byte 8×8 cascade (stripe-blocked, reversed band order
+under flip_sy); RGB8 AVX2 8-row expand/transpose/compress with 24-byte
+contiguous stores (first SIMD RGB24 transpose in Rust); 4-byte AVX2 8×8
+(stripe-blocked). Cross-library shootout (`transpose-shootout/`, includes
+the C++ Simd library via FFI with probe-derived operation mapping):
+
+- **vs Rust ecosystem (12MP)**: zpc wins every cell — 2-2.7× over
+  fast_transpose/transpose at 1/3ch; ties zune (the prior best) at 1ch.
+- **vs C++ Simd (12MP)**: ties (within run noise) at T 2/3/4ch and
+  R90 4ch; behind at T 1ch (~2×), R90 1ch (−37%), R90 2/3ch (−14%).
+- **vs C++ Simd (256², L2-resident)**: ~2× behind everywhere — their
+  per-tile overhead is lower; ours pays PixelSlice plumbing + per-tile
+  dy/doff math per 4-8 px.
+- **vs this work's own start**: 12MP R90 RGB8 87.2 → 9.2 ms (9.5×).
+
+Lessons that contradicted the priors: explicit hand-SIMD beat the
+auto-vectorizing staged-tile shape at 1/3 bpp (LLVM can't synthesize the
+byte shuffles) but the staged shape beat our own old 4-byte f32x4 kernel
+2×; blocking optima are bpp-dependent (stripes win at 2-4 bpp, row-band
+wins at 1 bpp) and reflection iteration order is per-kernel empirical;
+zenbench's resource gate counts ambient session activity as heavy
+processes — wall-cap groups and stay hands-off during runs.
+
+Remaining designed-but-unbuilt: AVX2 32-wide gray8 (close the 2×);
+lower fixed overhead for small images; software prefetch of next tile;
+NT stores pending the safe archmage scope API; NEON tiers (LD3/ST3 for
+RGB is nearly free); rayon banding as caller-side policy.

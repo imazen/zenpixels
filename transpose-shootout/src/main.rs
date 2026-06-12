@@ -352,7 +352,7 @@ fn main() {
                             .max_time(Duration::from_millis(1500))
                             .max_rounds(8)
                             .target_precision(0.10)
-                            .max_wall_time(Duration::from_secs(10));
+                            .max_wall_time(Duration::from_secs(30));
                         // Each bench owns a src copy + pre-touched dst (zenbench
                         // closures are 'static; copies keep per-bench memory
                         // layout identical instead of sharing via Arc).
