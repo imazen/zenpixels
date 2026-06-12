@@ -510,6 +510,30 @@ fn do_transpose(
                     return;
                 }
             }
+            6 => {
+                if let Some(token) = X64V3Token::summon() {
+                    pxn_x86::transpose6_v3(token, src, dst, orientation, w, h);
+                    return;
+                }
+            }
+            8 => {
+                if let Some(token) = X64V3Token::summon() {
+                    pxn_x86::transpose8_v3(token, src, dst, orientation, w, h);
+                    return;
+                }
+            }
+            12 => {
+                if let Some(token) = X64V3Token::summon() {
+                    pxn_x86::transpose12_v3(token, src, dst, orientation, w, h);
+                    return;
+                }
+            }
+            16 => {
+                if let Some(token) = X64V3Token::summon() {
+                    pxn_x86::transpose16_v3(token, src, dst, orientation, w, h);
+                    return;
+                }
+            }
             _ => {}
         }
         if bpp == 4 {
@@ -1166,13 +1190,14 @@ mod pxn_x86 {
         }
     }
 
-    /// 16×16 gray8 tiles: 16-byte row loads, two 8-row byte/word/dword
-    /// unpack cascades merged with a qword unpack → one full 16-byte store
-    /// per destination row (the 8×8 shape's 8-byte stores measured ~2.5×
-    /// behind the C++ 16×16 kernel). Full-width row-band sweep: at 1 bpp the
-    /// destination-line working set is L2-resident and column stripes only
-    /// add source-line straddle (measured: stripes 9.2 ms vs row-band
-    /// 4.7 ms, 12MP gray8 Transpose).
+    /// 16×16 gray8 tiles, AVX2 (ermig1979/Simd `1x16x16` network): 8 ymm
+    /// registers pair rows r and r+8 in their lanes; three rounds of
+    /// stride-4 byte unpacks transpose both halves at once; a qword permute
+    /// makes each register two consecutive destination rows. Half the op
+    /// count of the two-cascade xmm shape this replaces (which measured 2×
+    /// behind the C++ original). Full-width row-band sweep — at 1 bpp the
+    /// dst-line working set is L2-resident and column stripes only add
+    /// source-line straddle (measured).
     #[arcane(import_intrinsics)]
     pub(super) fn transpose1_v3(
         _token: X64V3Token,
@@ -1189,13 +1214,21 @@ mod pxn_x86 {
         let dbytes = dst.as_strided_bytes_mut();
 
         const REV16B: [u8; 16] = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
-        let rev = _mm_loadu_si128(&REV16B);
+        let rev = _mm256_broadcastsi128_si256(_mm_loadu_si128(&REV16B));
 
         let full_w = w & !15;
         let full_h = h & !15;
         let ntiles = full_w / 16;
-        let mut sy = 0u32;
-        while sy < full_h {
+        // Bands descend under flip_sy so dst columns ascend — the same
+        // forward-walking store order the C++ original gets via negative
+        // destination strides.
+        let nbands = full_h / 16;
+        for bandi in 0..nbands {
+            let sy = if flip_sy {
+                (nbands - 1 - bandi) * 16
+            } else {
+                bandi * 16
+            };
             let dx = (if flip_sy { h - 16 - sy } else { sy }) as usize;
             for ti in 0..ntiles {
                 let sx = if flip_sx {
@@ -1204,85 +1237,69 @@ mod pxn_x86 {
                     ti * 16
                 };
                 let base = sy as usize * sstride + sx as usize;
+                // a_i = [row sy+i | row sy+i+8], 16 B per lane.
                 macro_rules! ld {
                     ($i:literal) => {{
-                        let a: &[u8; 16] = sbytes[base + $i * sstride..base + $i * sstride + 16]
+                        let lo: &[u8; 16] = sbytes[base + $i * sstride..base + $i * sstride + 16]
                             .try_into()
                             .unwrap();
-                        _mm_loadu_si128(a)
+                        let hi: &[u8; 16] = sbytes
+                            [base + ($i + 8) * sstride..base + ($i + 8) * sstride + 16]
+                            .try_into()
+                            .unwrap();
+                        _mm256_set_m128i(_mm_loadu_si128(hi), _mm_loadu_si128(lo))
                     }};
                 }
-                // 8-row cascade: returns 8 registers, k-th = columns (2k,2k+1)
-                // for those 8 rows, packed as low/high qwords.
-                macro_rules! cascade {
-                    ($r0:expr, $r1:expr, $r2:expr, $r3:expr,
-                     $r4:expr, $r5:expr, $r6:expr, $r7:expr) => {{
-                        let l0 = _mm_unpacklo_epi8($r0, $r1);
-                        let h0 = _mm_unpackhi_epi8($r0, $r1);
-                        let l1 = _mm_unpacklo_epi8($r2, $r3);
-                        let h1 = _mm_unpackhi_epi8($r2, $r3);
-                        let l2 = _mm_unpacklo_epi8($r4, $r5);
-                        let h2 = _mm_unpackhi_epi8($r4, $r5);
-                        let l3 = _mm_unpacklo_epi8($r6, $r7);
-                        let h3 = _mm_unpackhi_epi8($r6, $r7);
-                        let a0 = _mm_unpacklo_epi16(l0, l1);
-                        let a1 = _mm_unpackhi_epi16(l0, l1);
-                        let a2 = _mm_unpacklo_epi16(l2, l3);
-                        let a3 = _mm_unpackhi_epi16(l2, l3);
-                        let b0 = _mm_unpacklo_epi16(h0, h1);
-                        let b1 = _mm_unpackhi_epi16(h0, h1);
-                        let b2 = _mm_unpacklo_epi16(h2, h3);
-                        let b3 = _mm_unpackhi_epi16(h2, h3);
-                        [
-                            _mm_unpacklo_epi32(a0, a2),
-                            _mm_unpackhi_epi32(a0, a2),
-                            _mm_unpacklo_epi32(a1, a3),
-                            _mm_unpackhi_epi32(a1, a3),
-                            _mm_unpacklo_epi32(b0, b2),
-                            _mm_unpackhi_epi32(b0, b2),
-                            _mm_unpacklo_epi32(b1, b3),
-                            _mm_unpackhi_epi32(b1, b3),
-                        ]
-                    }};
-                }
-                let lo = cascade!(
-                    ld!(0),
-                    ld!(1),
-                    ld!(2),
-                    ld!(3),
-                    ld!(4),
-                    ld!(5),
-                    ld!(6),
-                    ld!(7)
-                );
-                let hi = cascade!(
-                    ld!(8),
-                    ld!(9),
-                    ld!(10),
-                    ld!(11),
-                    ld!(12),
-                    ld!(13),
-                    ld!(14),
-                    ld!(15)
-                );
-                for k in 0..8 {
-                    let even = _mm_unpacklo_epi64(lo[k], hi[k]);
-                    let odd = _mm_unpackhi_epi64(lo[k], hi[k]);
-                    for (j, col) in [(0u32, even), (1u32, odd)] {
-                        let c = 2 * k as u32 + j;
-                        let col = if flip_sy {
-                            _mm_shuffle_epi8(col, rev)
-                        } else {
-                            col
-                        };
+                let (a0, a1, a2, a3) = (ld!(0), ld!(1), ld!(2), ld!(3));
+                let (a4, a5, a6, a7) = (ld!(4), ld!(5), ld!(6), ld!(7));
+                let b0 = _mm256_unpacklo_epi8(a0, a4);
+                let b1 = _mm256_unpackhi_epi8(a0, a4);
+                let b2 = _mm256_unpacklo_epi8(a1, a5);
+                let b3 = _mm256_unpackhi_epi8(a1, a5);
+                let b4 = _mm256_unpacklo_epi8(a2, a6);
+                let b5 = _mm256_unpackhi_epi8(a2, a6);
+                let b6 = _mm256_unpacklo_epi8(a3, a7);
+                let b7 = _mm256_unpackhi_epi8(a3, a7);
+                let a0 = _mm256_unpacklo_epi8(b0, b4);
+                let a1 = _mm256_unpackhi_epi8(b0, b4);
+                let a2 = _mm256_unpacklo_epi8(b1, b5);
+                let a3 = _mm256_unpackhi_epi8(b1, b5);
+                let a4 = _mm256_unpacklo_epi8(b2, b6);
+                let a5 = _mm256_unpackhi_epi8(b2, b6);
+                let a6 = _mm256_unpacklo_epi8(b3, b7);
+                let a7 = _mm256_unpackhi_epi8(b3, b7);
+                let outs = [
+                    _mm256_unpacklo_epi8(a0, a4),
+                    _mm256_unpackhi_epi8(a0, a4),
+                    _mm256_unpacklo_epi8(a1, a5),
+                    _mm256_unpackhi_epi8(a1, a5),
+                    _mm256_unpacklo_epi8(a2, a6),
+                    _mm256_unpackhi_epi8(a2, a6),
+                    _mm256_unpacklo_epi8(a3, a7),
+                    _mm256_unpackhi_epi8(a3, a7),
+                ];
+                for (k, &v) in outs.iter().enumerate() {
+                    // After 0xD8: lane0 = dst row 2k, lane1 = dst row 2k+1.
+                    let v = _mm256_permute4x64_epi64::<0xD8>(v);
+                    let v = if flip_sy {
+                        _mm256_shuffle_epi8(v, rev)
+                    } else {
+                        v
+                    };
+                    for half in 0..2u32 {
+                        let c = 2 * k as u32 + half;
                         let dy = if flip_sx { w - 1 - (sx + c) } else { sx + c };
                         let doff = dy as usize * dstride + dx;
                         let out: &mut [u8; 16] = (&mut dbytes[doff..doff + 16]).try_into().unwrap();
-                        _mm_storeu_si128(out, col);
+                        let x = if half == 0 {
+                            _mm256_castsi256_si128(v)
+                        } else {
+                            _mm256_extracti128_si256::<1>(v)
+                        };
+                        _mm_storeu_si128(out, x);
                     }
                 }
             }
-            sy += 16;
         }
         scalar_rect(
             sbytes,
@@ -1314,8 +1331,11 @@ mod pxn_x86 {
         );
     }
 
-    /// 8×8 2-byte tiles (gray+alpha / gray16): 16-byte row loads, 3-stage
-    /// word/dword/qword unpack cascade, 16-byte stores.
+    /// 16×8 2-byte tiles, AVX2 (ermig1979/Simd `2x16x8` network): 8 ymm
+    /// pair rows r and r+8 per lane (8 pixels each); three rounds of
+    /// stride-4 word unpacks; each result is one full 32-byte destination
+    /// row — single store, no final permute. Column-stripe blocked (wins at
+    /// 2 bpp); band order descends under flip_sy (measured).
     #[arcane(import_intrinsics)]
     pub(super) fn transpose2_v3(
         _token: X64V3Token,
@@ -1331,31 +1351,27 @@ mod pxn_x86 {
         let dstride = dst.stride();
         let dbytes = dst.as_strided_bytes_mut();
 
-        // Reverse 8 u16 lanes.
-        const REV16: [u8; 16] = [14, 15, 12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1];
-        let rev = _mm_loadu_si128(&REV16);
+        // Reverse 16 u16 across 32 B: per-lane u16 reversal + half swap.
+        const REVU16: [u8; 16] = [14, 15, 12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1];
+        let rev = _mm256_broadcastsi128_si256(_mm_loadu_si128(&REVU16));
 
         let full_w = w & !7;
-        let full_h = h & !7;
-        // Column-stripe blocking; see transpose1_v3.
+        let full_h = h & !15;
+
         const MACRO: u32 = 64;
         let nblocks = full_w.div_ceil(MACRO);
         for bi in 0..nblocks {
             let bx = if flip_sx { nblocks - 1 - bi } else { bi } * MACRO;
             let bx_end = (bx + MACRO).min(full_w);
             let ntiles = (bx_end - bx) / 8;
-            // Band order measured per kernel (shootout r5): at 2 bpp,
-            // ascending dst columns under flip_sy (descending source bands)
-            // wins; at 1/3/4 bpp ascending source order wins — single-round
-            // cells, so this stays per-kernel empirical.
-            let nbands = full_h / 8;
+            let nbands = full_h / 16;
             for bandi in 0..nbands {
                 let sy = if flip_sy {
-                    (nbands - 1 - bandi) * 8
+                    (nbands - 1 - bandi) * 16
                 } else {
-                    bandi * 8
+                    bandi * 16
                 };
-                let dx = (if flip_sy { h - 8 - sy } else { sy }) as usize;
+                let dx = (if flip_sy { h - 16 - sy } else { sy }) as usize;
                 for ti in 0..ntiles {
                     let sx = if flip_sx {
                         bx + (ntiles - 1 - ti) * 8
@@ -1365,46 +1381,50 @@ mod pxn_x86 {
                     let base = sy as usize * sstride + sx as usize * 2;
                     macro_rules! ld {
                         ($i:literal) => {{
-                            let a: &[u8; 16] = sbytes
+                            let lo: &[u8; 16] = sbytes
                                 [base + $i * sstride..base + $i * sstride + 16]
                                 .try_into()
                                 .unwrap();
-                            _mm_loadu_si128(a)
+                            let hi: &[u8; 16] = sbytes
+                                [base + ($i + 8) * sstride..base + ($i + 8) * sstride + 16]
+                                .try_into()
+                                .unwrap();
+                            _mm256_set_m128i(_mm_loadu_si128(hi), _mm_loadu_si128(lo))
                         }};
                     }
-                    let (r0, r1, r2, r3) = (ld!(0), ld!(1), ld!(2), ld!(3));
-                    let (r4, r5, r6, r7) = (ld!(4), ld!(5), ld!(6), ld!(7));
-                    let s0 = _mm_unpacklo_epi16(r0, r1);
-                    let s1 = _mm_unpackhi_epi16(r0, r1);
-                    let s2 = _mm_unpacklo_epi16(r2, r3);
-                    let s3 = _mm_unpackhi_epi16(r2, r3);
-                    let s4 = _mm_unpacklo_epi16(r4, r5);
-                    let s5 = _mm_unpackhi_epi16(r4, r5);
-                    let s6 = _mm_unpacklo_epi16(r6, r7);
-                    let s7 = _mm_unpackhi_epi16(r6, r7);
-                    let t0 = _mm_unpacklo_epi32(s0, s2);
-                    let t1 = _mm_unpackhi_epi32(s0, s2);
-                    let t2 = _mm_unpacklo_epi32(s1, s3);
-                    let t3 = _mm_unpackhi_epi32(s1, s3);
-                    let t4 = _mm_unpacklo_epi32(s4, s6);
-                    let t5 = _mm_unpackhi_epi32(s4, s6);
-                    let t6 = _mm_unpacklo_epi32(s5, s7);
-                    let t7 = _mm_unpackhi_epi32(s5, s7);
-                    let cols = [
-                        _mm_unpacklo_epi64(t0, t4),
-                        _mm_unpackhi_epi64(t0, t4),
-                        _mm_unpacklo_epi64(t1, t5),
-                        _mm_unpackhi_epi64(t1, t5),
-                        _mm_unpacklo_epi64(t2, t6),
-                        _mm_unpackhi_epi64(t2, t6),
-                        _mm_unpacklo_epi64(t3, t7),
-                        _mm_unpackhi_epi64(t3, t7),
+                    let (a0, a1, a2, a3) = (ld!(0), ld!(1), ld!(2), ld!(3));
+                    let (a4, a5, a6, a7) = (ld!(4), ld!(5), ld!(6), ld!(7));
+                    let b0 = _mm256_unpacklo_epi16(a0, a4);
+                    let b1 = _mm256_unpackhi_epi16(a0, a4);
+                    let b2 = _mm256_unpacklo_epi16(a1, a5);
+                    let b3 = _mm256_unpackhi_epi16(a1, a5);
+                    let b4 = _mm256_unpacklo_epi16(a2, a6);
+                    let b5 = _mm256_unpackhi_epi16(a2, a6);
+                    let b6 = _mm256_unpacklo_epi16(a3, a7);
+                    let b7 = _mm256_unpackhi_epi16(a3, a7);
+                    let a0 = _mm256_unpacklo_epi16(b0, b4);
+                    let a1 = _mm256_unpackhi_epi16(b0, b4);
+                    let a2 = _mm256_unpacklo_epi16(b1, b5);
+                    let a3 = _mm256_unpackhi_epi16(b1, b5);
+                    let a4 = _mm256_unpacklo_epi16(b2, b6);
+                    let a5 = _mm256_unpackhi_epi16(b2, b6);
+                    let a6 = _mm256_unpacklo_epi16(b3, b7);
+                    let a7 = _mm256_unpackhi_epi16(b3, b7);
+                    let outs = [
+                        _mm256_unpacklo_epi16(a0, a4),
+                        _mm256_unpackhi_epi16(a0, a4),
+                        _mm256_unpacklo_epi16(a1, a5),
+                        _mm256_unpackhi_epi16(a1, a5),
+                        _mm256_unpacklo_epi16(a2, a6),
+                        _mm256_unpackhi_epi16(a2, a6),
+                        _mm256_unpacklo_epi16(a3, a7),
+                        _mm256_unpackhi_epi16(a3, a7),
                     ];
-                    for (c, &col) in cols.iter().enumerate() {
-                        let col = if flip_sy {
-                            _mm_shuffle_epi8(col, rev)
+                    for (c, &v) in outs.iter().enumerate() {
+                        let v = if flip_sy {
+                            _mm256_permute4x64_epi64::<0x4E>(_mm256_shuffle_epi8(v, rev))
                         } else {
-                            col
+                            v
                         };
                         let dy = if flip_sx {
                             w - 1 - (sx + c as u32)
@@ -1412,8 +1432,8 @@ mod pxn_x86 {
                             sx + c as u32
                         };
                         let doff = dy as usize * dstride + dx * 2;
-                        let out: &mut [u8; 16] = (&mut dbytes[doff..doff + 16]).try_into().unwrap();
-                        _mm_storeu_si128(out, col);
+                        let out: &mut [u8; 32] = (&mut dbytes[doff..doff + 32]).try_into().unwrap();
+                        _mm256_storeu_si256(out, v);
                     }
                 }
             }
@@ -1566,6 +1586,519 @@ mod pxn_x86 {
             w,
             h,
             4,
+            0,
+            w,
+            full_h,
+            h,
+        );
+    }
+    /// 4×4 8-byte pixels (RGBA16 / GRAYAF32), AVX2: rows are 32 B, qword
+    /// unpacks + cross-lane permute; exact 32-byte loads/stores.
+    #[arcane(import_intrinsics)]
+    pub(super) fn transpose8_v3(
+        _token: X64V3Token,
+        src: &PixelSlice<'_>,
+        dst: &mut PixelSliceMut<'_>,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+    ) {
+        let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
+        let sbytes = src.as_strided_bytes();
+        let sstride = src.stride();
+        let dstride = dst.stride();
+        let dbytes = dst.as_strided_bytes_mut();
+
+        let full_w = w & !3;
+        let full_h = h & !3;
+        const MACRO: u32 = 64;
+        let nblocks = full_w.div_ceil(MACRO);
+        for bi in 0..nblocks {
+            let bx = if flip_sx { nblocks - 1 - bi } else { bi } * MACRO;
+            let bx_end = (bx + MACRO).min(full_w);
+            let ntiles = (bx_end - bx) / 4;
+            let nbands = full_h / 4;
+            for bandi in 0..nbands {
+                let sy = bandi * 4;
+                let dx = (if flip_sy { h - 4 - sy } else { sy }) as usize;
+                for ti in 0..ntiles {
+                    let sx = if flip_sx {
+                        bx + (ntiles - 1 - ti) * 4
+                    } else {
+                        bx + ti * 4
+                    };
+                    let base = sy as usize * sstride + sx as usize * 8;
+                    macro_rules! ld {
+                        ($i:literal) => {{
+                            let a: &[u8; 32] = sbytes
+                                [base + $i * sstride..base + $i * sstride + 32]
+                                .try_into()
+                                .unwrap();
+                            _mm256_loadu_si256(a)
+                        }};
+                    }
+                    let (a0, a1, a2, a3) = (ld!(0), ld!(1), ld!(2), ld!(3));
+                    let b0 = _mm256_unpacklo_epi64(a0, a1);
+                    let b1 = _mm256_unpackhi_epi64(a0, a1);
+                    let b2 = _mm256_unpacklo_epi64(a2, a3);
+                    let b3 = _mm256_unpackhi_epi64(a2, a3);
+                    let cols = [
+                        _mm256_permute2x128_si256::<0x20>(b0, b2),
+                        _mm256_permute2x128_si256::<0x20>(b1, b3),
+                        _mm256_permute2x128_si256::<0x31>(b0, b2),
+                        _mm256_permute2x128_si256::<0x31>(b1, b3),
+                    ];
+                    for (c, &col) in cols.iter().enumerate() {
+                        let col = if flip_sy {
+                            _mm256_permute4x64_epi64::<0x1B>(col)
+                        } else {
+                            col
+                        };
+                        let dy = if flip_sx {
+                            w - 1 - (sx + c as u32)
+                        } else {
+                            sx + c as u32
+                        };
+                        let doff = dy as usize * dstride + dx * 8;
+                        let out: &mut [u8; 32] = (&mut dbytes[doff..doff + 32]).try_into().unwrap();
+                        _mm256_storeu_si256(out, col);
+                    }
+                }
+            }
+        }
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            8,
+            full_w,
+            w,
+            0,
+            full_h,
+        );
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            8,
+            0,
+            w,
+            full_h,
+            h,
+        );
+    }
+
+    /// 16-byte pixels (RGBAF32 / OKLABAF32): a transpose is pure 16-byte
+    /// block movement — gather 8 source rows per destination run, store
+    /// sequentially. Exact loads/stores, no shuffles.
+    #[arcane(import_intrinsics)]
+    pub(super) fn transpose16_v3(
+        _token: X64V3Token,
+        src: &PixelSlice<'_>,
+        dst: &mut PixelSliceMut<'_>,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+    ) {
+        let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
+        let sbytes = src.as_strided_bytes();
+        let sstride = src.stride();
+        let dstride = dst.stride();
+        let dbytes = dst.as_strided_bytes_mut();
+
+        let full_h = h & !7;
+        const MACRO: u32 = 64;
+        let nblocks = w.div_ceil(MACRO);
+        for bi in 0..nblocks {
+            let bx = if flip_sx { nblocks - 1 - bi } else { bi } * MACRO;
+            let bx_end = (bx + MACRO).min(w);
+            let ncols = bx_end - bx;
+            let nbands = full_h / 8;
+            for bandi in 0..nbands {
+                let sy = bandi * 8;
+                let dx = (if flip_sy { h - 8 - sy } else { sy }) as usize;
+                // Column pairs: one 32-byte load covers two adjacent
+                // pixels (= two destination rows), halving load count.
+                let npairs = ncols / 2;
+                for pi in 0..npairs {
+                    let p = if flip_sx { npairs - 1 - pi } else { pi };
+                    let sx = bx + p * 2;
+                    let dy0 = if flip_sx { w - 2 - sx } else { sx };
+                    let dbase0 = dy0 as usize * dstride + dx * 16;
+                    let dbase1 = dbase0 + dstride;
+                    let sbase = sy as usize * sstride + sx as usize * 16;
+                    for k in 0..8usize {
+                        let r = if flip_sy { 7 - k } else { k };
+                        let a: &[u8; 32] = sbytes[sbase + r * sstride..sbase + r * sstride + 32]
+                            .try_into()
+                            .unwrap();
+                        let v = _mm256_loadu_si256(a);
+                        // lane0 = pixel sx → dst row dy(sx); under flip_sx
+                        // dy(sx) is the HIGHER of the pair's two dst rows.
+                        let (lo_base, hi_base) = if flip_sx {
+                            (dbase1, dbase0)
+                        } else {
+                            (dbase0, dbase1)
+                        };
+                        let out_lo: &mut [u8; 16] = (&mut dbytes
+                            [lo_base + k * 16..lo_base + k * 16 + 16])
+                            .try_into()
+                            .unwrap();
+                        _mm_storeu_si128(out_lo, _mm256_castsi256_si128(v));
+                        let out_hi: &mut [u8; 16] = (&mut dbytes
+                            [hi_base + k * 16..hi_base + k * 16 + 16])
+                            .try_into()
+                            .unwrap();
+                        _mm_storeu_si128(out_hi, _mm256_extracti128_si256::<1>(v));
+                    }
+                }
+                // Odd trailing column of the stripe.
+                for ci in (npairs * 2)..ncols {
+                    let sx = bx + ci;
+                    let dy = if flip_sx { w - 1 - sx } else { sx };
+                    let dbase = dy as usize * dstride + dx * 16;
+                    let sbase = sy as usize * sstride + sx as usize * 16;
+                    for k in 0..8usize {
+                        let r = if flip_sy { 7 - k } else { k };
+                        let a: &[u8; 16] = sbytes[sbase + r * sstride..sbase + r * sstride + 16]
+                            .try_into()
+                            .unwrap();
+                        let v = _mm_loadu_si128(a);
+                        let out: &mut [u8; 16] = (&mut dbytes[dbase + k * 16..dbase + k * 16 + 16])
+                            .try_into()
+                            .unwrap();
+                        _mm_storeu_si128(out, v);
+                    }
+                }
+            }
+        }
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            16,
+            0,
+            w,
+            full_h,
+            h,
+        );
+    }
+
+    /// Expand mask for 6-byte pixels: per lane, two RGB16 pixels → two
+    /// 8-byte (RGBX16) pixels.
+    const EXPAND6: [u8; 16] = [0, 1, 2, 3, 4, 5, 128, 128, 6, 7, 8, 9, 10, 11, 128, 128];
+    /// Compress: two 8-byte lanes → 12 valid bytes (per lane).
+    const COMPRESS6_FWD: [u8; 16] = [0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 128, 128, 128, 128];
+    /// Compress with the two pixels of the lane swapped (flip_sy).
+    const COMPRESS6_REV: [u8; 16] = [8, 9, 10, 11, 12, 13, 0, 1, 2, 3, 4, 5, 128, 128, 128, 128];
+
+    /// 4×4 6-byte pixels (RGB16): expand 6→8 per lane, qword 4×4 transpose,
+    /// compress 8→6, contiguous 24-byte store as 16+8. Same construction as
+    /// the RGB8 kernel one level up. Second per-row load sits at +12 with
+    /// 4 bytes of slop — guarded on the band touching the image's last row.
+    #[arcane(import_intrinsics)]
+    pub(super) fn transpose6_v3(
+        _token: X64V3Token,
+        src: &PixelSlice<'_>,
+        dst: &mut PixelSliceMut<'_>,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+    ) {
+        let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
+        let sbytes = src.as_strided_bytes();
+        let sstride = src.stride();
+        let dstride = dst.stride();
+        let dbytes = dst.as_strided_bytes_mut();
+
+        let expand = _mm256_broadcastsi128_si256(_mm_loadu_si128(&EXPAND6));
+        let compress = _mm256_broadcastsi128_si256(_mm_loadu_si128(if flip_sy {
+            &COMPRESS6_REV
+        } else {
+            &COMPRESS6_FWD
+        }));
+        let merge = if flip_sy {
+            _mm256_setr_epi32(4, 5, 6, 0, 1, 2, 6, 7)
+        } else {
+            _mm256_setr_epi32(0, 1, 2, 4, 5, 6, 6, 7)
+        };
+
+        let full_w = w & !3;
+        let full_h = h & !3;
+        // Last-band guard: per-row loads cover [sx*6, sx*6+28); need
+        // (sx+4)*6 + 4 ≤ w*6 on the final image row, i.e. sx + 4 ≤ w − 1.
+        let guard_w = if full_h == h {
+            if w >= 1 { (w - 1) & !3 } else { 0 }
+        } else {
+            full_w
+        }
+        .min(full_w);
+
+        const MACRO: u32 = 64;
+        let nblocks = full_w.div_ceil(MACRO);
+        for bi in 0..nblocks {
+            let bx = if flip_sx { nblocks - 1 - bi } else { bi } * MACRO;
+            let bx_end = (bx + MACRO).min(full_w);
+            let ntiles = (bx_end - bx) / 4;
+            let nbands = full_h / 4;
+            for bandi in 0..nbands {
+                let sy = bandi * 4;
+                let limit = if sy + 4 >= h { guard_w } else { full_w };
+                let dx = (if flip_sy { h - 4 - sy } else { sy }) as usize;
+                for ti in 0..ntiles {
+                    let sx = if flip_sx {
+                        bx + (ntiles - 1 - ti) * 4
+                    } else {
+                        bx + ti * 4
+                    };
+                    if sx + 4 > limit {
+                        continue;
+                    }
+                    let base = sy as usize * sstride + sx as usize * 6;
+                    macro_rules! ld {
+                        ($i:literal) => {{
+                            let lo: &[u8; 16] = sbytes
+                                [base + $i * sstride..base + $i * sstride + 16]
+                                .try_into()
+                                .unwrap();
+                            let hi: &[u8; 16] = sbytes
+                                [base + $i * sstride + 12..base + $i * sstride + 28]
+                                .try_into()
+                                .unwrap();
+                            _mm256_shuffle_epi8(
+                                _mm256_set_m128i(_mm_loadu_si128(hi), _mm_loadu_si128(lo)),
+                                expand,
+                            )
+                        }};
+                    }
+                    let (a0, a1, a2, a3) = (ld!(0), ld!(1), ld!(2), ld!(3));
+                    let b0 = _mm256_unpacklo_epi64(a0, a1);
+                    let b1 = _mm256_unpackhi_epi64(a0, a1);
+                    let b2 = _mm256_unpacklo_epi64(a2, a3);
+                    let b3 = _mm256_unpackhi_epi64(a2, a3);
+                    let cols = [
+                        _mm256_permute2x128_si256::<0x20>(b0, b2),
+                        _mm256_permute2x128_si256::<0x20>(b1, b3),
+                        _mm256_permute2x128_si256::<0x31>(b0, b2),
+                        _mm256_permute2x128_si256::<0x31>(b1, b3),
+                    ];
+                    for (c, &col) in cols.iter().enumerate() {
+                        let packed =
+                            _mm256_permutevar8x32_epi32(_mm256_shuffle_epi8(col, compress), merge);
+                        let dy = if flip_sx {
+                            w - 1 - (sx + c as u32)
+                        } else {
+                            sx + c as u32
+                        };
+                        let doff = dy as usize * dstride + dx * 6;
+                        let (head, tail) = dbytes[doff..doff + 24].split_at_mut(16);
+                        let head: &mut [u8; 16] = head.try_into().unwrap();
+                        let tail: &mut [u8; 8] = tail.try_into().unwrap();
+                        _mm_storeu_si128(head, _mm256_castsi256_si128(packed));
+                        _mm_storeu_si64(tail, _mm256_extracti128_si256::<1>(packed));
+                    }
+                }
+            }
+        }
+        if guard_w < full_w && full_h == h && h >= 4 {
+            scalar_rect(
+                sbytes,
+                sstride,
+                dbytes,
+                dstride,
+                orientation,
+                w,
+                h,
+                6,
+                guard_w,
+                full_w,
+                h - 4,
+                h,
+            );
+        }
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            6,
+            full_w,
+            w,
+            0,
+            full_h,
+        );
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            6,
+            0,
+            w,
+            full_h,
+            h,
+        );
+    }
+
+    /// 2×4 12-byte pixels (RGBF32): each pixel rides one 128-bit lane
+    /// (12 valid bytes); lane permutes transpose, a dword permute compacts
+    /// each output pair to 24 contiguous bytes (pixels are dword-aligned,
+    /// so no byte shuffle is needed). Second per-row load sits at +12 with
+    /// 4 bytes of slop — guarded on the band touching the image's last row.
+    #[arcane(import_intrinsics)]
+    pub(super) fn transpose12_v3(
+        _token: X64V3Token,
+        src: &PixelSlice<'_>,
+        dst: &mut PixelSliceMut<'_>,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+    ) {
+        let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
+        let sbytes = src.as_strided_bytes();
+        let sstride = src.stride();
+        let dstride = dst.stride();
+        let dbytes = dst.as_strided_bytes_mut();
+
+        let merge = if flip_sy {
+            _mm256_setr_epi32(4, 5, 6, 0, 1, 2, 6, 7)
+        } else {
+            _mm256_setr_epi32(0, 1, 2, 4, 5, 6, 6, 7)
+        };
+
+        let full_w = w & !1;
+        let full_h = h & !3;
+        // Last-band guard: loads cover [sx*12, sx*12+28); need
+        // (sx+2)*12 + 4 ≤ w*12 on the final image row → sx + 2 ≤ w − 1.
+        let guard_w = if full_h == h {
+            if w >= 1 { (w - 1) & !1 } else { 0 }
+        } else {
+            full_w
+        }
+        .min(full_w);
+
+        const MACRO: u32 = 64;
+        let nblocks = full_w.div_ceil(MACRO);
+        for bi in 0..nblocks {
+            let bx = if flip_sx { nblocks - 1 - bi } else { bi } * MACRO;
+            let bx_end = (bx + MACRO).min(full_w);
+            let ntiles = (bx_end - bx) / 2;
+            let nbands = full_h / 4;
+            for bandi in 0..nbands {
+                let sy = bandi * 4;
+                let limit = if sy + 4 >= h { guard_w } else { full_w };
+                let dx = (if flip_sy { h - 4 - sy } else { sy }) as usize;
+                for ti in 0..ntiles {
+                    let sx = if flip_sx {
+                        bx + (ntiles - 1 - ti) * 2
+                    } else {
+                        bx + ti * 2
+                    };
+                    if sx + 2 > limit {
+                        continue;
+                    }
+                    let base = sy as usize * sstride + sx as usize * 12;
+                    macro_rules! ld {
+                        ($i:literal) => {{
+                            let lo: &[u8; 16] = sbytes
+                                [base + $i * sstride..base + $i * sstride + 16]
+                                .try_into()
+                                .unwrap();
+                            let hi: &[u8; 16] = sbytes
+                                [base + $i * sstride + 12..base + $i * sstride + 28]
+                                .try_into()
+                                .unwrap();
+                            _mm256_set_m128i(_mm_loadu_si128(hi), _mm_loadu_si128(lo))
+                        }};
+                    }
+                    let (a0, a1, a2, a3) = (ld!(0), ld!(1), ld!(2), ld!(3));
+                    // dst row (sx+c): pixel pairs from rows (0,1) and (2,3).
+                    for c in 0..2u32 {
+                        let (y01, y23) = if c == 0 {
+                            (
+                                _mm256_permute2x128_si256::<0x20>(a0, a1),
+                                _mm256_permute2x128_si256::<0x20>(a2, a3),
+                            )
+                        } else {
+                            (
+                                _mm256_permute2x128_si256::<0x31>(a0, a1),
+                                _mm256_permute2x128_si256::<0x31>(a2, a3),
+                            )
+                        };
+                        // flip_sy: emit rows 3..0 instead of 0..3.
+                        let (first, second) = if flip_sy { (y23, y01) } else { (y01, y23) };
+                        let dy = if flip_sx { w - 1 - (sx + c) } else { sx + c };
+                        let doff = dy as usize * dstride + dx * 12;
+                        for (slot, v) in [(0usize, first), (1usize, second)] {
+                            let packed = _mm256_permutevar8x32_epi32(v, merge);
+                            let off = doff + slot * 24;
+                            let (head, tail) = dbytes[off..off + 24].split_at_mut(16);
+                            let head: &mut [u8; 16] = head.try_into().unwrap();
+                            let tail: &mut [u8; 8] = tail.try_into().unwrap();
+                            _mm_storeu_si128(head, _mm256_castsi256_si128(packed));
+                            _mm_storeu_si64(tail, _mm256_extracti128_si256::<1>(packed));
+                        }
+                    }
+                }
+            }
+        }
+        if guard_w < full_w && full_h == h && h >= 4 {
+            scalar_rect(
+                sbytes,
+                sstride,
+                dbytes,
+                dstride,
+                orientation,
+                w,
+                h,
+                12,
+                guard_w,
+                full_w,
+                h - 4,
+                h,
+            );
+        }
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            12,
+            full_w,
+            w,
+            0,
+            full_h,
+        );
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            12,
             0,
             w,
             full_h,

@@ -108,6 +108,10 @@ fn descriptor(ch: usize) -> PixelDescriptor {
         2 => PixelDescriptor::GRAYA8,
         3 => PixelDescriptor::RGB8,
         4 => PixelDescriptor::RGBA8,
+        6 => PixelDescriptor::RGB16,
+        8 => PixelDescriptor::RGBA16,
+        12 => PixelDescriptor::RGBF32,
+        16 => PixelDescriptor::RGBAF32,
         _ => unreachable!(),
     }
 }
@@ -150,6 +154,30 @@ fn run_ejm(src: &[u8], dst: &mut [u8], w: usize, h: usize, ch: usize) {
             w,
             h,
         ),
+        6 => transpose::transpose::<[u8; 6]>(
+            bytemuck::cast_slice(src),
+            bytemuck::cast_slice_mut(dst),
+            w,
+            h,
+        ),
+        8 => transpose::transpose::<[u8; 8]>(
+            bytemuck::cast_slice(src),
+            bytemuck::cast_slice_mut(dst),
+            w,
+            h,
+        ),
+        12 => transpose::transpose::<[u8; 12]>(
+            bytemuck::cast_slice(src),
+            bytemuck::cast_slice_mut(dst),
+            w,
+            h,
+        ),
+        16 => transpose::transpose::<[u8; 16]>(
+            bytemuck::cast_slice(src),
+            bytemuck::cast_slice_mut(dst),
+            w,
+            h,
+        ),
         _ => unreachable!(),
     }
 }
@@ -187,6 +215,46 @@ fn run_ft(
         2 => fast_transpose::transpose_plane_with_alpha(src, w * 2, dst, h * 2, w, h, flip, flop),
         3 => fast_transpose::transpose_rgb(src, w * 3, dst, h * 3, w, h, flip, flop),
         4 => fast_transpose::transpose_rgba(src, w * 4, dst, h * 4, w, h, flip, flop),
+        6 => fast_transpose::transpose_rgb16(
+            bytemuck::cast_slice(src),
+            w * 3,
+            bytemuck::cast_slice_mut(dst),
+            h * 3,
+            w,
+            h,
+            flip,
+            flop,
+        ),
+        8 => fast_transpose::transpose_rgba16(
+            bytemuck::cast_slice(src),
+            w * 4,
+            bytemuck::cast_slice_mut(dst),
+            h * 4,
+            w,
+            h,
+            flip,
+            flop,
+        ),
+        12 => fast_transpose::transpose_rgb_f32(
+            bytemuck::cast_slice(src),
+            w * 3,
+            bytemuck::cast_slice_mut(dst),
+            h * 3,
+            w,
+            h,
+            flip,
+            flop,
+        ),
+        16 => fast_transpose::transpose_rgba_f32(
+            bytemuck::cast_slice(src),
+            w * 4,
+            bytemuck::cast_slice_mut(dst),
+            h * 4,
+            w,
+            h,
+            flip,
+            flop,
+        ),
         _ => unreachable!(),
     };
     r.unwrap();
@@ -291,7 +359,7 @@ const SIZES: &[(&str, usize, usize)] = &[
 fn main() {
     // Derive + verify everything before any timing. Panics abort the run.
     let mut ft_modes = std::collections::HashMap::new();
-    for ch in [1usize, 2, 3, 4] {
+    for ch in [1usize, 2, 3, 4, 6, 8, 12, 16] {
         for op in [Op::Transpose, Op::Rotate90] {
             verify("zpc", ch, op, |s, d, w, h| run_zpc(s, d, w, h, ch, op));
             verify("zpc-st", ch, op, |s, d, w, h| run_zpc_staged(s, d, w, h, ch, op));
@@ -304,7 +372,7 @@ fn main() {
             }
             if op == Op::Transpose {
                 verify("ejm", ch, op, |s, d, w, h| run_ejm(s, d, w, h, ch));
-                if ch != 3 {
+                if matches!(ch, 1 | 2 | 4) {
                     verify("zune", ch, op, |s, d, w, h| run_zune(s, d, w, h, ch));
                 }
             }
@@ -336,7 +404,7 @@ fn main() {
             suite.set_group_filter(f);
         }
         for op in [Op::Transpose, Op::Rotate90] {
-            for ch in [1usize, 2, 3, 4] {
+            for ch in [1usize, 2, 3, 4, 6, 8, 12, 16] {
                 for &(label, w, h) in SIZES {
                     let bytes = w * h * ch;
                     let src_data = pattern(bytes);
@@ -395,7 +463,7 @@ fn main() {
                                     black_box(dst.bytes(1));
                                 })
                             });
-                            if ch != 3 {
+                            if matches!(ch, 1 | 2 | 4) {
                                 let src = src_data.clone();
                                 g.bench("zune  ", move |b| {
                                     let mut dst = Buf::new(bytes);
