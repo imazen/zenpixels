@@ -131,3 +131,72 @@ cheap on AMD, marginal on Intel (3 uops, port-5-bound).
 
 Full agent reports with complete URL lists live in the session transcript
 (2026-06-11); this file is the durable distillation.
+
+---
+
+# Addendum 2026-06-12: Rust-ecosystem survey + NT-store soundness
+
+## Fastest existing Rust transposes (source-inspected via `cargo read` + web sweep)
+
+- **`fast_transpose` 0.2.7** (awxkee; the only dedicated SIMD image-transpose
+  crate; used by yuv/yuvutils-rs, NOT by image-rs): SIMD kernels for planar
+  u8/u16/f32 and 2/4-channel — SSE 4×4/8×8, **AVX2 8×8 u32**, nightly AVX-512
+  16×16, NEON (incl. u8 16×16). **`transpose_rgb` is scalar**: 16×16-tile
+  grouped gather, per-element `x*N + y*stride` multiplies, `get_unchecked`
+  under a default-on `unsafe` feature (all-safe scalar otherwise). Same
+  algorithm class as our `transpose_tiled::<3>` (ours uses incremental
+  offsets instead of per-element multiplies). Zero published benchmarks.
+- **`transpose` 0.2.3** (ejmahler/rustfft, 20M downloads): scalar only,
+  16×16 blocks, 4-way segmenting, recursive bisection above 1M elements,
+  `get_unchecked`. Same class, no channel grouping, no SIMD.
+- **`zune-imageprocs`**: SSE4.1/NEON 8×8 planar u8/u16 + `_MM_TRANSPOSE4_PS`
+  f32, rayon-banded over destination rows — but zune is planar-only; no
+  interleaved RGB/RGBA path. Its rotate90 is a separate scalar 8×8-tiled
+  remap.
+- **`image`/`imageproc` rotate90**: naive per-pixel `get_pixel`/`put_pixel`.
+  `faer`/`ndarray`: stride-swap views, no tuned materializing kernel.
+- **Conclusions**: (a) no SIMD RGB24 transpose exists anywhere in the Rust
+  ecosystem — the gap found in C/C++ OSS (only ermig1979/Simd has one) is
+  ecosystem-wide; for RGB8 nothing matches, let alone beats, our tiled
+  gather. (b) For RGBA8 the only plausibly-faster artifact is
+  fast_transpose's AVX2 8×8 u32 kernel — our `transpose4_simd` generates
+  only a `v3` (128-bit) tier; adding a `v4` tier via the existing
+  `magetypes f32x8::transpose_8x8` closes that. (c) No Rust transpose
+  shootout with numbers exists; nobody publishes GB/s.
+
+## NT-store soundness in Rust (resolved upstream, Rust 1.82, Aug 2024)
+
+The hazard is real and now precisely specified — rust-lang/rust#114582
+("non-temporal stores break our memory model", I-unsound, RalfJung) was
+fixed by reimplementing `_mm_stream_*` as inline asm (stdarch#1541) plus an
+explicit safety contract (stdarch#1534), shipped in Rust 1.82:
+
+- **Contract** (std docs, verbatim intent): after an NT store, **the same
+  thread must execute `_mm_sfence` before ANY other access to that memory**
+  — "functions that call this intrinsic should generally call `_mm_sfence`
+  before they return."
+- **Model**: the NT store happens on a phantom background thread; until the
+  fence, even *same-thread* reads of that memory are a **data race = UB**
+  (deliberately stricter than bare x86, which allows same-thread mixing).
+  Not "stale reads" — compiler optimizations can turn violations into
+  arbitrary miscompilation (Ralf's `DATA != DATA` example).
+- **`nontemporal_store` rustc intrinsic**: now a pure hint; on x86 it emits
+  a **plain store** (LLVM `!nontemporal` allowlist = ARM/RISC-V only).
+  Using it gains nothing on x86 — only `_mm_stream_*` emit MOVNT.
+- **Miri cannot execute either entry point** (inline asm unsupported) — any
+  NT code path must be cfg-gated out under Miri; parity tests cover it on
+  real hardware only.
+- **No crate exposes NT stores safely** (safe_arch explicitly excludes
+  them). The published sound-API sketch (jcranmer, portable-simd#45) is the
+  scope pattern; a bare Drop-guard is insufficient under leak-is-safe
+  (`mem::forget` skips the fence). The sound shape for an archmage API:
+  closure-scoped writer — `nt_store_scope(token, &mut [u8], |w| …)` — where
+  the *wrapper's frame* owns the fence (executed on normal exit AND unwind,
+  like `thread::scope`), and the writer exposes no reads. One sfence per
+  `apply_orientation_into` call, not per tile: negligible cost.
+- **Trap**: `_mm_maskmoveu_si128` (MASKMOVDQU) is also a weakly-ordered NT
+  store but *lacks* the upstream safety-docs sweep — avoid it.
+
+Plan impact: step 3 (NT stores) stays viable and the archmage addition has
+a known-sound design; our entry points must fence before returning (and
+the NT tier is skipped under Miri). Steps 0–2 unaffected.
