@@ -489,6 +489,17 @@ fn do_transpose(
             );
             return;
         }
+        // 3-byte pixels: hand-tuned SSSE3 expand→transpose→compress tier
+        // (zenjpeg#150 / transpose-shootout: the scalar tiled gather loses
+        // ~5× to this kernel shape). Non-x86 and pre-SSSE3 fall through to
+        // the monomorphised tiled gather below.
+        #[cfg(target_arch = "x86_64")]
+        if bpp == 3
+            && let Some(token) = X64V3Token::summon()
+        {
+            rgb3_x86::transpose3_v3(token, src, dst, orientation, w, h);
+            return;
+        }
         // Monomorphised per pixel size so the inner copy is a fixed-size
         // load/store pair. The set covers every shipping descriptor width;
         // an unlisted width (none today) takes the generic fallback below.
@@ -615,6 +626,162 @@ fn transpose_blocked(
     }
 }
 
+// ── EXPERIMENTAL: staged fixed-micro-tile transpose (bench-gated) ────────────
+//
+// Hypothesis from the transpose-shootout (2026-06-12): a *fixed-size* staged
+// micro-tile written in plain safe Rust auto-vectorizes into shuffle networks
+// (the ejmahler `transpose` crate's 16×16 scalar block hit 22.5 GiB/s at 256²
+// RGBA, ~3× our explicit 4×4 SSE kernel, with only baseline SSE2 codegen).
+// Stage TH source rows of a tile into a fixed 2-D array (one bounds check per
+// row), then emit TW destination rows whose elements come from fixed array
+// indices — no per-element bounds checks, no `forward_map`, and a shape LLVM
+// can SLP-vectorize. The orientation's reflection folds into (a) reversed
+// fixed gather order inside the micro-tile (const-bool monomorphized) and
+// (b) the tile's destination base coordinates.
+//
+// Bench-only entry (`__bench_apply_orientation_staged`) until the shootout
+// proves which widths it wins; production dispatch is unchanged.
+
+/// One staged micro-tile: gather `T=16` source rows × `T=16` pixels into a
+/// fixed array, then write `T` destination rows from its columns.
+///
+/// Derived from the separable inverse maps (`inverse_flips`): destination row
+/// `dy0+c` reads the tile's source column `cc = c` (or `T-1-c` when `FLIP_C`,
+/// i.e. `flip_sx`), and its pixel `k` reads stage row `r = k` (or `T-1-k`
+/// when `FLIP_R`, i.e. `flip_sy`). Both indices are compile-time-shaped, so
+/// the inner loops are bounds-check-free and SLP-vectorizable.
+macro_rules! staged_micro {
+    ($name:ident, $bpp:literal) => {
+        #[cfg(feature = "__bench_orient")]
+        #[inline]
+        fn $name<const FLIP_R: bool, const FLIP_C: bool>(
+            sbytes: &[u8],
+            sstride: usize,
+            sx0: usize, // tile's first source column (pixels)
+            sy0: usize, // tile's first source row
+            dst: &mut PixelSliceMut<'_>,
+            dx0: usize, // tile's first dest column (pixels)
+            dy0: usize, // tile's first dest row
+        ) {
+            const T: usize = 16;
+            let mut stage = [[0u8; T * $bpp]; T];
+            for (r, row) in stage.iter_mut().enumerate() {
+                let off = (sy0 + r) * sstride + sx0 * $bpp;
+                row.copy_from_slice(&sbytes[off..off + T * $bpp]);
+            }
+            for c in 0..T {
+                let cc = if FLIP_C { T - 1 - c } else { c };
+                let drow = &mut dst.row_mut((dy0 + c) as u32)[dx0 * $bpp..(dx0 + T) * $bpp];
+                for (k, dpx) in drow.chunks_exact_mut($bpp).enumerate() {
+                    let r = if FLIP_R { T - 1 - k } else { k };
+                    dpx.copy_from_slice(&stage[r][cc * $bpp..cc * $bpp + $bpp]);
+                }
+            }
+        }
+    };
+}
+
+staged_micro!(staged_micro_1, 1);
+staged_micro!(staged_micro_2, 2);
+staged_micro!(staged_micro_3, 3);
+staged_micro!(staged_micro_4, 4);
+
+/// Staged-tile transpose for the four axis-swapping orientations, bpp ∈ 1..=4.
+/// Full 16×16 micro-tiles go through the staged kernel; edge remainders take
+/// the per-pixel `forward_map` scatter (identical to `transpose_edges`).
+#[cfg(feature = "__bench_orient")]
+fn transpose_staged(
+    src: &PixelSlice<'_>,
+    dst: &mut PixelSliceMut<'_>,
+    orientation: Orientation,
+    w: u32,
+    h: u32,
+    bpp: usize,
+) {
+    const T: u32 = 16;
+    let Some((flip_sx, flip_sy)) = inverse_flips(orientation) else {
+        return transpose_blocked(src, dst, orientation, w, h, bpp);
+    };
+    let sbytes = src.as_strided_bytes();
+    let sstride = src.stride();
+    let full_w = w & !(T - 1);
+    let full_h = h & !(T - 1);
+
+    let mut sy = 0;
+    while sy < full_h {
+        let mut sx = 0;
+        while sx < full_w {
+            // Destination tile base from the orientation's affine map:
+            // dst col base ← source rows [sy, sy+T), dst row base ← source
+            // cols [sx, sx+T); reflections pick the tile's far corner.
+            let dx0 = if flip_sy { h - T - sy } else { sy } as usize;
+            let dy0 = if flip_sx { w - T - sx } else { sx } as usize;
+            let (sx_eff, sy_eff) = (sx as usize, sy as usize);
+            // FLIP_R = flip_sy (reverses the stage-row gather inside a dst
+            // row), FLIP_C = flip_sx (flips which source column feeds dst
+            // row dy0+c). Monomorphised so the micro-tile stays branch-free.
+            macro_rules! call {
+                ($f:ident) => {
+                    match (flip_sy, flip_sx) {
+                        (false, false) => {
+                            $f::<false, false>(sbytes, sstride, sx_eff, sy_eff, dst, dx0, dy0)
+                        }
+                        (true, false) => {
+                            $f::<true, false>(sbytes, sstride, sx_eff, sy_eff, dst, dx0, dy0)
+                        }
+                        (false, true) => {
+                            $f::<false, true>(sbytes, sstride, sx_eff, sy_eff, dst, dx0, dy0)
+                        }
+                        (true, true) => {
+                            $f::<true, true>(sbytes, sstride, sx_eff, sy_eff, dst, dx0, dy0)
+                        }
+                    }
+                };
+            }
+            match bpp {
+                1 => call!(staged_micro_1),
+                2 => call!(staged_micro_2),
+                3 => call!(staged_micro_3),
+                4 => call!(staged_micro_4),
+                _ => unreachable!("staged path is dispatched for bpp 1..=4 only"),
+            }
+            sx += T;
+        }
+        sy += T;
+    }
+    transpose_edges(src, dst, orientation, w, h, bpp, full_w, full_h);
+}
+
+/// Bench-only handle for the staged experimental path (transposing
+/// orientations, bpp 1..=4; falls back to the blocked scatter otherwise).
+#[cfg(feature = "__bench_orient")]
+#[doc(hidden)]
+pub fn __bench_apply_orientation_staged(
+    src: PixelSlice<'_>,
+    orientation: Orientation,
+    mut dst: PixelSliceMut<'_>,
+) -> Result<(), ConvertError> {
+    let w = src.width();
+    let h = src.rows();
+    let bpp = src.descriptor().bytes_per_pixel();
+    let (ow, oh) = orientation.output_dimensions(w, h);
+    if dst.width() != ow || dst.rows() != oh || dst.descriptor().bytes_per_pixel() != bpp {
+        return Err(ConvertError::BufferSize {
+            expected: ow as usize * oh as usize * bpp,
+            actual: dst.width() as usize * dst.rows() as usize * dst.descriptor().bytes_per_pixel(),
+        });
+    }
+    if w == 0 || h == 0 || bpp == 0 {
+        return Ok(());
+    }
+    if (1..=4).contains(&bpp) {
+        transpose_staged(&src, &mut dst, orientation, w, h, bpp);
+    } else {
+        transpose_blocked(&src, &mut dst, orientation, w, h, bpp);
+    }
+    Ok(())
+}
+
 /// Scalar scatter for the edge strips a 4×4-tiled SIMD pass leaves uncovered:
 /// the right strip (`cols [full_w, w)`) and the bottom strip (`rows [full_h,
 /// h)`, which also covers the bottom-right corner). No overlap between strips.
@@ -730,6 +897,151 @@ fn transpose4_simd(
     }
 
     transpose_edges(src, dst, orientation, w, h, 4, full_w, full_h);
+}
+
+// ── SIMD 3-byte (RGB8) transpose: expand 3→4, transpose u32 lanes, compress ──
+//
+// The only production-proven SIMD shape for 24-bit transposes (ermig1979/Simd;
+// no Rust crate has one): load four rows of four RGB pixels (16 B each, 12
+// payload + 4 slop), `pshufb`-expand 3→4 so each pixel rides one u32 lane,
+// transpose the 4×4 u32 block with the unpack cascade, `pshufb`-compress 4→3,
+// and store each 12-byte group as 8+4 bytes (no store slop → no clobber
+// hazard at row ends, and both store intrinsics have safe reference-taking
+// wrappers). The 16-byte *loads* are the only slop: safe for every tile band
+// except one ending on the image's final row, where the band's tile range is
+// narrowed so `offset+16` stays in bounds (the scalar edge pass covers the
+// rest). Value intrinsics are safe inside `#[arcane]` (Rust 1.87+); memory
+// ops come from `import_intrinsics`' safe wrappers — the crate keeps
+// `#![forbid(unsafe_code)]`.
+#[cfg(target_arch = "x86_64")]
+mod rgb3_x86 {
+    use super::{Orientation, PixelSlice, PixelSliceMut, inverse_flips};
+    use archmage::prelude::*;
+
+    /// Expand mask: 12 RGB bytes → 4 RGBX u32 lanes (X = 0).
+    const EXPAND: [u8; 16] = [0, 1, 2, 128, 3, 4, 5, 128, 6, 7, 8, 128, 9, 10, 11, 128];
+    /// Compress mask: 4 RGBX lanes → 12 RGB bytes (+ 4 zero bytes).
+    const COMPRESS_FWD: [u8; 16] = [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 128, 128, 128, 128];
+    /// Compress with lane order reversed (Rotate90/Transverse: `flip_sy`
+    /// reverses the within-dst-row pixel order contributed by source rows).
+    const COMPRESS_REV: [u8; 16] = [12, 13, 14, 8, 9, 10, 4, 5, 6, 0, 1, 2, 128, 128, 128, 128];
+
+    /// Whole-image RGB8 transposing bake for the four axis-swapping
+    /// orientations. Full 4×4-pixel tiles go SIMD (16-byte loads with 4-byte
+    /// slop, guarded on the band touching the image's last row); stores are
+    /// slop-free 8+4 bytes; every remainder pixel takes the scalar
+    /// `forward_map` path against flat destination bytes.
+    #[arcane(import_intrinsics)]
+    pub(super) fn transpose3_v3(
+        _token: X64V3Token,
+        src: &PixelSlice<'_>,
+        dst: &mut PixelSliceMut<'_>,
+        orientation: Orientation,
+        w: u32,
+        h: u32,
+    ) {
+        let (flip_sx, flip_sy) =
+            inverse_flips(orientation).expect("transpose3_v3 called for transposing orientation");
+        let sbytes = src.as_strided_bytes();
+        let sstride = src.stride();
+        let dstride = dst.stride();
+        let dbytes = dst.as_strided_bytes_mut();
+
+        let expand = _mm_loadu_si128(&EXPAND);
+        let compress = _mm_loadu_si128(if flip_sy {
+            &COMPRESS_REV
+        } else {
+            &COMPRESS_FWD
+        });
+
+        let full_h = h & !3;
+        let full_w = w & !3;
+
+        let mut sy = 0u32;
+        while sy < full_h {
+            // Tiles in the band containing the image's final row must keep
+            // their 16-byte loads inside the buffer: need (sx+4)*3 + 4 ≤ w*3,
+            // i.e. sx + 4 ≤ w - 2. Other bands' slop lands in the next row,
+            // which `as_strided_bytes` always covers.
+            let band_w = if sy + 4 >= h {
+                if w >= 6 { (w - 2) & !3 } else { 0 }
+            } else {
+                full_w
+            }
+            .min(full_w);
+
+            let mut sx = 0u32;
+            while sx < band_w {
+                // Load 4 source rows × 16 B and expand to u32 lanes.
+                let base = sy as usize * sstride + sx as usize * 3;
+                let r0: &[u8; 16] = sbytes[base..base + 16].try_into().unwrap();
+                let r1: &[u8; 16] = sbytes[base + sstride..base + sstride + 16]
+                    .try_into()
+                    .unwrap();
+                let r2: &[u8; 16] = sbytes[base + 2 * sstride..base + 2 * sstride + 16]
+                    .try_into()
+                    .unwrap();
+                let r3: &[u8; 16] = sbytes[base + 3 * sstride..base + 3 * sstride + 16]
+                    .try_into()
+                    .unwrap();
+                let p0 = _mm_shuffle_epi8(_mm_loadu_si128(r0), expand);
+                let p1 = _mm_shuffle_epi8(_mm_loadu_si128(r1), expand);
+                let p2 = _mm_shuffle_epi8(_mm_loadu_si128(r2), expand);
+                let p3 = _mm_shuffle_epi8(_mm_loadu_si128(r3), expand);
+                // 4×4 u32 transpose (unpack cascade).
+                let t0 = _mm_unpacklo_epi32(p0, p1);
+                let t1 = _mm_unpacklo_epi32(p2, p3);
+                let t2 = _mm_unpackhi_epi32(p0, p1);
+                let t3 = _mm_unpackhi_epi32(p2, p3);
+                let cols = [
+                    _mm_unpacklo_epi64(t0, t1),
+                    _mm_unpackhi_epi64(t0, t1),
+                    _mm_unpacklo_epi64(t2, t3),
+                    _mm_unpackhi_epi64(t2, t3),
+                ];
+                // cols[c] = source column sx+c as 4 pixels (source rows
+                // sy..sy+4) → one 12-byte run in dst row dy at column dx.
+                let dx = if flip_sy { h - 4 - sy } else { sy };
+                for (c, &col) in cols.iter().enumerate() {
+                    let packed = _mm_shuffle_epi8(col, compress);
+                    let dy = if flip_sx {
+                        w - 1 - (sx + c as u32)
+                    } else {
+                        sx + c as u32
+                    };
+                    let doff = dy as usize * dstride + dx as usize * 3;
+                    // Slop-free 12-byte store as 8+4 (`_mm_storeu_si64` takes
+                    // &mut [u8; 8] — unlike `_mm_storel_epi64`, whose safe
+                    // wrapper demands a full 128-bit location).
+                    let (head, tail) = dbytes[doff..doff + 12].split_at_mut(8);
+                    let head: &mut [u8; 8] = head.try_into().unwrap();
+                    let tail: &mut [u8; 4] = tail.try_into().unwrap();
+                    _mm_storeu_si64(head, packed);
+                    _mm_storeu_si32(tail, _mm_srli_si128::<8>(packed));
+                }
+                sx += 4;
+            }
+            // Scalar remainder of this band (sx ≥ band_w).
+            for y in sy..sy + 4 {
+                for x in band_w..w {
+                    let (dx, dy) = orientation.forward_map(x, y, w, h);
+                    let s = y as usize * sstride + x as usize * 3;
+                    let d = dy as usize * dstride + dx as usize * 3;
+                    dbytes[d..d + 3].copy_from_slice(&sbytes[s..s + 3]);
+                }
+            }
+            sy += 4;
+        }
+        // Bottom rows (sy ≥ full_h).
+        for y in full_h..h {
+            for x in 0..w {
+                let (dx, dy) = orientation.forward_map(x, y, w, h);
+                let s = y as usize * sstride + x as usize * 3;
+                let d = dy as usize * dstride + dx as usize * 3;
+                dbytes[d..d + 3].copy_from_slice(&sbytes[s..s + 3]);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1024,6 +1336,102 @@ mod tests {
                             got.as_slice().row(y),
                             reference.as_slice().row(y),
                             "{o:?} {desc:?} {w}x{h} row {y}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The 3-byte SIMD tier displaced `transpose_tiled::<3>` from the
+    /// `apply_orientation` route on x86_64, so gate the fallback directly:
+    /// it must still match the blocked oracle (it remains the non-x86 path).
+    #[test]
+    fn tiled3_fallback_matches_blocked_reference() {
+        let desc = PixelDescriptor::RGB8;
+        for &(w, h) in &[(8u32, 8u32), (17, 13), (33, 31), (67, 43), (1, 1), (5, 64)] {
+            let data = fill(w as usize * h as usize * 3);
+            for &o in &[
+                Orientation::Transpose,
+                Orientation::Rotate90,
+                Orientation::Rotate270,
+                Orientation::Transverse,
+            ] {
+                let flips = inverse_flips(o).unwrap();
+                let (ow, oh) = o.output_dimensions(w, h);
+                let mut got = PixelBuffer::new(ow, oh, desc);
+                let mut want = PixelBuffer::new(ow, oh, desc);
+                {
+                    let src = slice(&data, w, h, desc);
+                    let mut d = got.as_slice_mut();
+                    transpose_tiled::<3>(&src, &mut d, flips, w, h);
+                }
+                {
+                    let src = slice(&data, w, h, desc);
+                    let mut d = want.as_slice_mut();
+                    transpose_blocked(&src, &mut d, o, w, h, 3);
+                }
+                for y in 0..oh {
+                    assert_eq!(
+                        got.as_slice().row(y),
+                        want.as_slice().row(y),
+                        "tiled3 {o:?} {w}x{h} row {y}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Parity gate for the experimental staged micro-tile path: must match
+    /// the production `apply_orientation` byte-for-byte across bpp 1..=4,
+    /// the four transposing orientations, and dims covering full 16×16
+    /// micro-tiles, edge strips, and degenerate sizes.
+    #[cfg(feature = "__bench_orient")]
+    #[test]
+    fn staged_matches_production_across_bpp_and_orientations() {
+        let descs = [
+            PixelDescriptor::GRAY8,
+            PixelDescriptor::GRAYA8,
+            PixelDescriptor::RGB8,
+            PixelDescriptor::RGBA8,
+        ];
+        let dims = [
+            (16u32, 16u32),
+            (32, 32),
+            (64, 48),
+            (17, 13),
+            (33, 31),
+            (40, 33),
+            (67, 43),
+            (16, 1),
+            (1, 16),
+            (1, 1),
+            (15, 15), // edge-only (no full micro-tile)
+        ];
+        for &desc in &descs {
+            let bpp = desc.bytes_per_pixel();
+            for &(w, h) in &dims {
+                let data = fill(w as usize * h as usize * bpp);
+                for &o in &[
+                    Orientation::Transpose,
+                    Orientation::Rotate90,
+                    Orientation::Rotate270,
+                    Orientation::Transverse,
+                ] {
+                    let want = apply_orientation(slice(&data, w, h, desc), o);
+                    let (ow, oh) = o.output_dimensions(w, h);
+                    let mut got = PixelBuffer::new(ow, oh, desc);
+                    super::__bench_apply_orientation_staged(
+                        slice(&data, w, h, desc),
+                        o,
+                        got.as_slice_mut(),
+                    )
+                    .expect("staged accepts matching dst");
+                    for y in 0..oh {
+                        assert_eq!(
+                            got.as_slice().row(y),
+                            want.as_slice().row(y),
+                            "staged {o:?} {desc:?} {w}x{h} row {y}"
                         );
                     }
                 }
