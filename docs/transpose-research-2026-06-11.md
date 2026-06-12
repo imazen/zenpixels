@@ -234,3 +234,38 @@ Remaining designed-but-unbuilt: AVX2 32-wide gray8 (close the 2×);
 lower fixed overhead for small images; software prefetch of next tile;
 NT stores pending the safe archmage scope API; NEON tiers (LD3/ST3 for
 RGB is nearly free); rayon banding as caller-side policy.
+
+---
+
+# Outcome 2026-06-12 (later): all 8 widths, both architectures
+
+Coverage now: x86-64-v3 (AVX2) AND aarch64 (NEON, developed/measured on
+the arm-big Hetzner CAX 8-core Neoverse-N1) kernels for every shipping
+pixel width (1/2/3/4/6/8/12/16 B), all `forbid(unsafe_code)`, all gated
+by the same cross-orientation parity oracles, validated on both ISAs.
+
+**x86 12MP standings** (vs best competitor; <15% = tie at single-round
+precision): win or tie everything except gray8 vs the C++ AVX-512BW
+tier (~1.5-2×, ISA-tier gap — our AVX2 vs their AVX-512; `_v4x` rung
+documented) and 16 bpp vs fast_transpose (−7%, raw-pointer loops vs
+bounds-checked safe code; MACRO=256 measured best). 12 bpp leads ft by
++34% after the 3-store intra-run-slop rewrite.
+
+**ARM 12MP standings**: zpc **beats or ties the C++ Simd NEON tier at
+every width it supports** — T 1/2/3/4ch: +15/−5/+27/+37%; R90:
++14/−4/+25/+43%. vs fast_transpose NEON: win 3ch, tie 2ch, behind 1ch
+(−12..−21%), 4ch (−13..−17%), 6/8/12 (−18..−21%), 16 (−29..−33%).
+ejm's autovectorized scalar also leads our 6/12/16 bpp gathers on N1.
+
+**N1-specific lessons**: ld1/st1 x2/x4 structure ops are microcoded —
+plain q-register singles win; bounds-check hoisting via zipped
+chunks_exact iterators measured neutral; the residual wide-format gap
+is run-depth (4-row dst runs amortize per-row bookkeeping 4× less than
+16-element tiles — ejm's shape). Next designs, in order: 16-deep dst
+runs for 8/12/16 bpp on ARM; ld4-interleaved gray8; deeper 4ch bands;
+x86 `_v4x` AVX-512 tier behind the avx512 feature; NT stores.
+
+Records: `benchmarks/transpose_shootout_{x86_final,arm_r1,arm_final}_
+2026-06-12.*`. ARM box: `ssh arm-big`, repo mirror at
+`~/git/zenpixels.git`, checkout `~/work/zen/zenpixels` (consumes the
+mirror; all edits happen on the primary and push through it).

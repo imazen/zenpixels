@@ -20,6 +20,20 @@
 
 ### zenpixels-convert — performance
 
+- **NEON transpose kernels for all eight pixel widths + 12/16-byte
+  maximization on both architectures** (zenjpeg#150, continued): aarch64
+  tiers (vzip cascades, tbl expand/compress, tuple/block-move kernels —
+  all `forbid(unsafe_code)`) developed and hardware-validated on a
+  Neoverse-N1 Hetzner box; they **beat or tie the C++ Simd library's NEON
+  tier at every width it supports** at 12MP (Rotate90 4ch +43%, 3ch +25%,
+  1ch +14%). x86 RGBF32 gains a 3-store intra-run-slop path (+34% over
+  fast_transpose, was +17%); RGBAF32 goes all-32-byte loads/stores
+  (−7% vs fast_transpose's raw-pointer loops — the documented residual).
+  Remaining ARM gaps vs fast_transpose's unsafe NEON kernels (1/4/6-16
+  bpp, 8–35%) are recorded with next designs in
+  `docs/transpose-research-2026-06-11.md`; records in
+  `benchmarks/transpose_shootout_{x86_final,arm_r1,arm_final}_2026-06-12.*`.
+
 - **x86-64 SIMD transpose kernels for 1/2/3/4-byte pixels — up to 9.5×
   over the tiled gather, matching the C++ Simd library at 12MP in most
   cells** (zenjpeg#150 follow-through; all `#![forbid(unsafe_code)]` via
