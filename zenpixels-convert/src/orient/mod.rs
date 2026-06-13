@@ -7,6 +7,8 @@
 //! resolve orientation (`OrientationHint::bakes()` is true) call this; the
 //! cheap coordinate math (`Orientation::forward_map` / `output_dimensions`)
 //! lives in `zenpixels`, and this is the buffer operation that consumes it.
+//! [`apply_orientation_into`] writes a caller-owned buffer (no allocation), and
+//! [`apply_orientation_in_place`] permutes the backing allocation itself.
 //!
 //! # Algorithm
 //!
@@ -32,31 +34,45 @@
 //!   `forward_map`, so the whole thing is a single pass with no intermediate
 //!   buffer.
 //!
-//! For **4-byte pixels** the per-tile transpose is SIMD on every supported
-//! arch: full 4×4 tiles go through magetypes' `f32x4::transpose_4x4` (the
-//! classic `_MM_TRANSPOSE4_PS`-shaped shuffle cascade — SSE on x86, NEON on
-//! aarch64, SIMD128 on wasm), generated once via `#[magetypes(v3, neon,
-//! wasm128, scalar)]` and dispatched by `incant!` at runtime (scalar tier when
-//! no SIMD is available). Each pixel rides as one f32 lane — the kernel only
-//! shuffles whole 32-bit lanes (no float math), so reinterpreting the bytes as
-//! f32 is bit-exact for any 4-byte format, NaN bit patterns included.
+//! The transpose runs in one of two tiers — selected at compile time by the
+//! `fast-transpose` feature and at runtime by CPU capability. Both share the
+//! cache-blocking structure above and fold the reflection into the destination
+//! address; they differ only in how each tile is moved. [`do_transpose`] picks.
 //!
-//! Every **other pixel size** (1/2/3/6/8/12/16 bytes — gray, gray+alpha, RGB8,
-//! and the 16-bit / f32 widths) goes through [`transpose_tiled`], a
-//! monomorphised cache-blocked gather: the four transposing orientations all
-//! have *separable* inverse maps, so along one destination row the source
-//! column is fixed and the source byte offset steps by ±stride. That replaces
-//! the per-element `forward_map` + `row_mut` + variable-length copy of the
-//! generic path with one predictable bounds check and a fixed-size `BPP`-byte
-//! copy per pixel, writing the destination sequentially (zenjpeg#150 measured
-//! the generic path losing to a naive linear-write gather at 3 bpp; this path
-//! beats both). The generic `forward_map` scatter ([`transpose_blocked`])
-//! remains as the parity oracle for both fast paths
+//! * **Portable scalar** — the default, and the path on pre-AVX2 x86 and any
+//!   arch without a SIMD kernel. [`transpose_tiled`] is a per-width
+//!   monomorphised gather: the four transposing maps are *separable*, so along
+//!   one destination row the source column is fixed and the source offset steps
+//!   by ±stride. That replaces the generic per-element `forward_map` + `row_mut`
+//!   + variable-length copy with one bounds check and a fixed-size `BPP`-byte
+//!   copy per pixel, writing the destination sequentially (zenjpeg#150 measured
+//!   the generic path losing to a naive linear-write gather at 3 bpp; this
+//!   beats both). 16-byte pixels use [`transpose16_deep`] — a transpose there
+//!   is pure block movement that autovectorises — and the generic
+//!   [`transpose_blocked`] scatter covers any other width.
+//!
+//! * **SIMD register transpose** (`fast-transpose`) — per-pixel-width kernels
+//!   that transpose a register-sized tile with an unpack/zip shuffle cascade,
+//!   the shape production transpose libraries (ermig1979/Simd, fast_transpose,
+//!   libyuv) win with. x86-64-v3 (AVX2) kernels cover 1/2/3/4/6/8/12 bpp in
+//!   `pxn_x86` (24-bit RGB8 in `rgb3_x86`, which expands 3→4 bytes, transposes
+//!   u32 lanes, then compresses); aarch64 NEON kernels cover the same widths in
+//!   `pxn_neon`; 16-byte pixels fall to [`transpose16_deep`]. On other
+//!   `fast-transpose` arches (wasm, …) only 4-byte pixels are SIMD — via
+//!   magetypes' `f32x4::transpose_4x4` (the classic `_MM_TRANSPOSE4_PS` shuffle,
+//!   generated for SSE/NEON/SIMD128/scalar from one `#[magetypes]` body and
+//!   dispatched by `incant!`) — and other widths take the scalar tier.
+//!
+//! A 4-byte pixel rides a transpose as one 32-bit lane; the kernels shuffle
+//! whole lanes only (no arithmetic), so the byte reinterpret is bit-exact for
+//! any 4-byte format, NaN patterns included. Every SIMD kernel transposes the
+//! full tiles and leaves the right/bottom edge strips to a scalar `forward_map`
+//! scatter (`scalar_rect` / `scalar_edges`). [`transpose_blocked`] (the generic
+//! `forward_map` scatter) is the parity oracle every fast path is tested against
 //! (`simd_transpose_matches_scalar_reference_rgba8`,
-//! `tiled_transpose_matches_blocked_reference_across_bpp`) and as the
-//! correct fallback for any future `#[non_exhaustive]` orientation variant.
-//! (1- and 2-byte SIMD transpose — the 16×16 `punpck` cascade — remains a
-//! possible follow-up.)
+//! `tiled_transpose_matches_blocked_reference_across_bpp`,
+//! `exhaustive_dense_dims_all_orientations_vs_oracle`) and the correct fallback
+//! for any orientation added to the `#[non_exhaustive]` enum later.
 
 use core::cmp::min;
 
@@ -461,11 +477,14 @@ fn scatter_pixel(
     dst.row_mut(dy)[di..di + bpp].copy_from_slice(&s[si..si + bpp]);
 }
 
-/// Dispatch the axis-swapping orientations: the SIMD 4×4 register transpose for
-/// 4-byte pixels (the common decoder output), the monomorphised tiled gather
-/// for every other shipping pixel size, the generic `forward_map` scatter for
-/// anything else. `incant!` picks the best tier per target (AVX2 / NEON / WASM
-/// SIMD128 / scalar).
+/// Dispatch the four axis-swapping orientations to the best available
+/// transpose. With `fast-transpose` on x86-64 / aarch64, a dedicated AVX2 / NEON
+/// kernel per pixel width (`pxn_x86` / `rgb3_x86` / `pxn_neon`); on other
+/// `fast-transpose` arches, magetypes' 4×4 register transpose for 4-byte pixels
+/// (`incant!`-dispatched across WASM SIMD128 / scalar) with the tiled gather for
+/// the rest. Without the feature, the portable scalar tiers
+/// ([`transpose_tiled`] / [`transpose16_deep`]). Any future `#[non_exhaustive]`
+/// variant has no separable inverse map and falls to [`transpose_blocked`].
 fn do_transpose(
     src: &PixelSlice<'_>,
     dst: &mut PixelSliceMut<'_>,
@@ -479,114 +498,61 @@ fn do_transpose(
     // through to the scalar scatter, whose `forward_map` is defined for every
     // variant.
     if let Some(flips) = inverse_flips(orientation) {
-        // Hand-tuned x86 tiers for the four 1-byte-channel pixel sizes
-        // (transpose-shootout 2026-06-12: these kernel shapes are what zune /
-        // fast_transpose / the C++ Simd library win with; our generic paths
-        // lost 2-5×). Pre-SSSE3 x86 and every other arch fall through to the
-        // magetypes 4-byte kernel / tiled gather below.
+        // AVX2 (x86-64-v3) register-transpose kernels, one per pixel width —
+        // the kernel shapes zune / fast_transpose / the C++ Simd library win
+        // with (transpose-shootout 2026-06-12, where our generic paths lost
+        // 2-5×). The token summon fails only on pre-AVX2 x86, which then falls
+        // through to the magetypes 4-byte kernel / scalar tiled gather below.
         #[cfg(all(feature = "fast-transpose", target_arch = "x86_64"))]
-        match bpp {
-            1 => {
-                if let Some(token) = X64V3Token::summon() {
-                    pxn_x86::transpose1_v3(token, src, dst, orientation, w, h);
-                    return;
-                }
+        {
+            macro_rules! v3_kernel {
+                ($kernel:path) => {
+                    if let Some(token) = X64V3Token::summon() {
+                        $kernel(token, src, dst, orientation, w, h);
+                        return;
+                    }
+                };
             }
-            2 => {
-                if let Some(token) = X64V3Token::summon() {
-                    pxn_x86::transpose2_v3(token, src, dst, orientation, w, h);
-                    return;
-                }
+            match bpp {
+                1 => v3_kernel!(pxn_x86::transpose1_v3),
+                2 => v3_kernel!(pxn_x86::transpose2_v3),
+                3 => v3_kernel!(rgb3_x86::transpose3_v3),
+                4 => v3_kernel!(pxn_x86::transpose4_v3),
+                6 => v3_kernel!(pxn_x86::transpose6_v3),
+                8 => v3_kernel!(pxn_x86::transpose8_v3),
+                12 => v3_kernel!(pxn_x86::transpose12_v3),
+                16 => v3_kernel!(pxn_x86::transpose16_v3),
+                _ => {}
             }
-            3 => {
-                if let Some(token) = X64V3Token::summon() {
-                    rgb3_x86::transpose3_v3(token, src, dst, orientation, w, h);
-                    return;
-                }
-            }
-            4 => {
-                // X64V3 = x86-64-v3 = AVX2 baseline; pre-v3 x86 falls to the
-                // magetypes scalar tier below, as before.
-                if let Some(token) = X64V3Token::summon() {
-                    pxn_x86::transpose4_v3(token, src, dst, orientation, w, h);
-                    return;
-                }
-            }
-            6 => {
-                if let Some(token) = X64V3Token::summon() {
-                    pxn_x86::transpose6_v3(token, src, dst, orientation, w, h);
-                    return;
-                }
-            }
-            8 => {
-                if let Some(token) = X64V3Token::summon() {
-                    pxn_x86::transpose8_v3(token, src, dst, orientation, w, h);
-                    return;
-                }
-            }
-            12 => {
-                if let Some(token) = X64V3Token::summon() {
-                    pxn_x86::transpose12_v3(token, src, dst, orientation, w, h);
-                    return;
-                }
-            }
-            16 => {
-                if let Some(token) = X64V3Token::summon() {
-                    pxn_x86::transpose16_v3(token, src, dst, orientation, w, h);
-                    return;
-                }
-            }
-            _ => {}
         }
+        // NEON kernels per pixel width. NEON is the aarch64 baseline, so the
+        // token always summons; 16-byte pixels use the deep-scalar block move,
+        // which beats hand-written NEON here (measured on Neoverse-N1 — see
+        // `transpose16_deep`).
         #[cfg(all(feature = "fast-transpose", target_arch = "aarch64"))]
-        match bpp {
-            1 => {
-                if let Some(token) = NeonToken::summon() {
-                    pxn_neon::transpose1_neon(token, src, dst, orientation, w, h);
+        {
+            macro_rules! neon_kernel {
+                ($kernel:path) => {
+                    if let Some(token) = NeonToken::summon() {
+                        $kernel(token, src, dst, orientation, w, h);
+                        return;
+                    }
+                };
+            }
+            match bpp {
+                1 => neon_kernel!(pxn_neon::transpose1_neon),
+                2 => neon_kernel!(pxn_neon::transpose2_neon),
+                3 => neon_kernel!(pxn_neon::transpose3_neon),
+                4 => neon_kernel!(pxn_neon::transpose4_neon),
+                6 => neon_kernel!(pxn_neon::transpose6_neon),
+                8 => neon_kernel!(pxn_neon::transpose8_neon),
+                12 => neon_kernel!(pxn_neon::transpose12_neon),
+                16 => {
+                    transpose16_deep(src, dst, orientation, w, h);
                     return;
                 }
+                _ => {}
             }
-            2 => {
-                if let Some(token) = NeonToken::summon() {
-                    pxn_neon::transpose2_neon(token, src, dst, orientation, w, h);
-                    return;
-                }
-            }
-            3 => {
-                if let Some(token) = NeonToken::summon() {
-                    pxn_neon::transpose3_neon(token, src, dst, orientation, w, h);
-                    return;
-                }
-            }
-            4 => {
-                if let Some(token) = NeonToken::summon() {
-                    pxn_neon::transpose4_neon(token, src, dst, orientation, w, h);
-                    return;
-                }
-            }
-            6 => {
-                if let Some(token) = NeonToken::summon() {
-                    pxn_neon::transpose6_neon(token, src, dst, orientation, w, h);
-                    return;
-                }
-            }
-            8 => {
-                if let Some(token) = NeonToken::summon() {
-                    pxn_neon::transpose8_neon(token, src, dst, orientation, w, h);
-                    return;
-                }
-            }
-            12 => {
-                if let Some(token) = NeonToken::summon() {
-                    pxn_neon::transpose12_neon(token, src, dst, orientation, w, h);
-                    return;
-                }
-            }
-            16 => {
-                transpose16_deep(src, dst, orientation, w, h);
-                return;
-            }
-            _ => {}
         }
         #[cfg(feature = "fast-transpose")]
         if bpp == 4 {
