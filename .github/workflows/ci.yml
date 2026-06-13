@@ -44,6 +44,13 @@ jobs:
       - name: Test (workspace)
         run: cargo test --workspace
 
+      # Default `cargo test` exercises only the portable scalar transpose tiers.
+      # Run the orient suite again with the SIMD kernels enabled so the per-width
+      # AVX2 (x64) / NEON (arm64 runners) register transposes are executed and
+      # checked against the scalar `forward_map` oracle on their native arch.
+      - name: Test (zenpixels-convert SIMD transpose kernels, fast-transpose)
+        run: cargo test -p zenpixels-convert --features fast-transpose
+
       - name: Test (zenpixels-convert plan validation, with __trace_ops)
         run: cargo test -p zenpixels-convert --features __trace_ops --test plan_validation
 
@@ -77,6 +84,12 @@ jobs:
 
       - name: Test (i686/QEMU)
         run: cross test --workspace --target i686-unknown-linux-gnu
+
+      # i686 is neither x86_64 nor aarch64, so fast-transpose here exercises the
+      # `incant!` 4-byte magetypes path + the scalar tiled gather — the SIMD
+      # dispatch's non-native fallback branch, distinct from the x64/arm64 runs.
+      - name: Test (zenpixels-convert SIMD fallback i686, fast-transpose)
+        run: cross test -p zenpixels-convert --features fast-transpose --target i686-unknown-linux-gnu
 
   # ==========================================================================
   # WASM check

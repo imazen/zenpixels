@@ -897,7 +897,11 @@ fn in_place_preserves_color_context() {
         assert!(buf.color_context().is_some(), "{o:?} dropped color context");
         let want = apply_orientation(slice(&data, w, h, desc), o);
         for y in 0..buf.height() {
-            assert_eq!(buf.as_slice().row(y), want.as_slice().row(y), "{o:?} row {y}");
+            assert_eq!(
+                buf.as_slice().row(y),
+                want.as_slice().row(y),
+                "{o:?} row {y}"
+            );
         }
     }
 }
