@@ -3550,6 +3550,240 @@ mod tests {
         }
     }
 
+    /// Fully independent oracle: place every source pixel at its
+    /// `Orientation::forward_map` destination with a naive per-pixel scatter.
+    /// Shares NO code with the production path (no tiling, no `scatter_pixel`,
+    /// no `transpose_blocked`) — only `forward_map`, which is the orientation
+    /// spec and is itself bijection-tested in zenpixels. Returns
+    /// `(out_w, out_h, tight_bytes)`.
+    fn naive_oracle(
+        data: &[u8],
+        w: u32,
+        h: u32,
+        desc: PixelDescriptor,
+        o: Orientation,
+    ) -> (u32, u32, Vec<u8>) {
+        let bpp = desc.bytes_per_pixel();
+        let (ow, oh) = o.output_dimensions(w, h);
+        let mut out = alloc::vec![0u8; ow as usize * oh as usize * bpp];
+        for sy in 0..h {
+            for sx in 0..w {
+                let (dx, dy) = o.forward_map(sx, sy, w, h);
+                let s = (sy as usize * w as usize + sx as usize) * bpp;
+                let d = (dy as usize * ow as usize + dx as usize) * bpp;
+                out[d..d + bpp].copy_from_slice(&data[s..s + bpp]);
+            }
+        }
+        (ow, oh, out)
+    }
+
+    /// Assert the production dispatch matches the independent oracle for one
+    /// (desc, dims, orientation), row by row (output stride may be padded).
+    fn assert_matches_oracle(desc: PixelDescriptor, w: u32, h: u32, o: Orientation) {
+        let bpp = desc.bytes_per_pixel();
+        let data = fill(w as usize * h as usize * bpp);
+        let (ow, oh, want) = naive_oracle(&data, w, h, desc, o);
+        let got = apply_orientation(slice(&data, w, h, desc), o);
+        assert_eq!(
+            (got.width(), got.height()),
+            (ow, oh),
+            "dims {o:?} {desc:?} {w}x{h}"
+        );
+        let gs = got.as_slice();
+        for y in 0..oh {
+            let exp = &want[y as usize * ow as usize * bpp..][..ow as usize * bpp];
+            assert_eq!(gs.row(y), exp, "{o:?} {desc:?} {w}x{h} row {y}");
+        }
+    }
+
+    /// Every shipping descriptor (1/2/3/4/6/8/12/16 bpp → a distinct kernel),
+    /// every dimension 1..=33 in both axes, every orientation, vs the
+    /// independent oracle. 33 spans: sub-tile (all-scalar), the exact tile
+    /// size for every kernel (2/4/8/16-wide and -deep), tile+1/+2/+3 edge
+    /// strips, two full tiles (32), two-tiles+1 (33), and — because the
+    /// range includes w==1 and h==1 — every 1×N and N×1 degenerate strip.
+    /// This is the corruption gate: it provably exercises full blocks, sub
+    /// blocks, partial-tile tails, and the per-bpp last-row slop guards
+    /// (every height that is an exact multiple of a kernel's tile depth is in
+    /// range, paired with every width across each kernel's `guard_w` edge).
+    #[test]
+    fn exhaustive_dense_dims_all_orientations_vs_oracle() {
+        let descs = [
+            PixelDescriptor::GRAY8,
+            PixelDescriptor::GRAYA8,
+            PixelDescriptor::RGB8,
+            PixelDescriptor::RGBA8,
+            PixelDescriptor::RGB16,
+            PixelDescriptor::RGBA16,
+            PixelDescriptor::RGBF32,
+            PixelDescriptor::RGBAF32,
+        ];
+        for &desc in &descs {
+            for w in 1u32..=33 {
+                for h in 1u32..=33 {
+                    for &o in &Orientation::ALL {
+                        assert_matches_oracle(desc, w, h, o);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Multi-stripe and stripe-remainder coverage: widths/heights that cross
+    /// the `MACRO = 64` column-stripe boundary (two full stripes at 128, a
+    /// stripe + small remainder at 65..72, etc.), so the per-stripe blocking
+    /// and the seam between stripes are exercised — the dense grid above
+    /// tops out below one stripe. All eight orientations; the giant 16-byte
+    /// cells are skipped to keep the gate fast (16 bpp is a plain block move,
+    /// fully covered by the dense grid's tail logic).
+    #[test]
+    fn multistripe_boundaries_vs_oracle() {
+        let descs = [
+            PixelDescriptor::GRAY8,
+            PixelDescriptor::GRAYA8,
+            PixelDescriptor::RGB8,
+            PixelDescriptor::RGBA8,
+            PixelDescriptor::RGB16,
+            PixelDescriptor::RGBA16,
+            PixelDescriptor::RGBF32,
+        ];
+        let span = [48u32, 63, 64, 65, 66, 68, 72, 96, 127, 128, 129, 130];
+        let other = [1u32, 4, 7, 8, 15, 16, 17, 33, 64, 65, 128];
+        for &desc in &descs {
+            for &a in &span {
+                for &b in &other {
+                    for &o in &Orientation::ALL {
+                        assert_matches_oracle(desc, a, b, o);
+                        assert_matches_oracle(desc, b, a, o);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The portable scalar fallbacks (`transpose_blocked`, used as the
+    /// allocating path's oracle on no-SIMD targets, and the monomorphised
+    /// `transpose_tiled::<BPP>` reached on non-x86/non-aarch64 builds) must
+    /// also match the independent oracle across the dense small grid — those
+    /// paths run on wasm and other arches where the SIMD tiers don't, so they
+    /// can't ride on the x86/ARM gate above.
+    #[test]
+    fn exhaustive_scalar_fallbacks_vs_oracle() {
+        let descs = [
+            (PixelDescriptor::GRAY8, 1usize),
+            (PixelDescriptor::GRAYA8, 2),
+            (PixelDescriptor::RGB8, 3),
+            (PixelDescriptor::RGBA8, 4),
+            (PixelDescriptor::RGB16, 6),
+            (PixelDescriptor::RGBA16, 8),
+            (PixelDescriptor::RGBF32, 12),
+            (PixelDescriptor::RGBAF32, 16),
+        ];
+        let trans = [
+            Orientation::Transpose,
+            Orientation::Rotate90,
+            Orientation::Rotate270,
+            Orientation::Transverse,
+        ];
+        for &(desc, bpp) in &descs {
+            for w in 1u32..=33 {
+                for h in 1u32..=33 {
+                    let data = fill(w as usize * h as usize * bpp);
+                    for &o in &trans {
+                        let (ow, oh, want) = naive_oracle(&data, w, h, desc, o);
+                        // transpose_blocked (generic forward_map scatter).
+                        let mut b = PixelBuffer::new(ow, oh, desc);
+                        {
+                            let src = slice(&data, w, h, desc);
+                            transpose_blocked(&src, &mut b.as_slice_mut(), o, w, h, bpp);
+                        }
+                        // transpose_tiled::<BPP> (the monomorphised gather).
+                        let flips = inverse_flips(o).unwrap();
+                        let mut t = PixelBuffer::new(ow, oh, desc);
+                        macro_rules! tiled {
+                            ($n:literal) => {{
+                                let src = slice(&data, w, h, desc);
+                                transpose_tiled::<$n>(&src, &mut t.as_slice_mut(), flips, w, h);
+                            }};
+                        }
+                        match bpp {
+                            1 => tiled!(1),
+                            2 => tiled!(2),
+                            3 => tiled!(3),
+                            4 => tiled!(4),
+                            6 => tiled!(6),
+                            8 => tiled!(8),
+                            12 => tiled!(12),
+                            16 => tiled!(16),
+                            _ => unreachable!(),
+                        }
+                        for y in 0..oh {
+                            let exp = &want[y as usize * ow as usize * bpp..][..ow as usize * bpp];
+                            assert_eq!(
+                                b.as_slice().row(y),
+                                exp,
+                                "blocked {o:?} {desc:?} {w}x{h} row {y}"
+                            );
+                            assert_eq!(
+                                t.as_slice().row(y),
+                                exp,
+                                "tiled {o:?} {desc:?} {w}x{h} row {y}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Strided sources across the boundary-rich small grid: a padded input
+    /// stride must produce byte-identical output to a tight one for every
+    /// orientation and descriptor (padding bytes must never leak into the
+    /// transposed result, and the SIMD loads must honour the real stride).
+    #[test]
+    fn exhaustive_strided_sources_vs_tight() {
+        let descs = [
+            PixelDescriptor::GRAY8,
+            PixelDescriptor::GRAYA8,
+            PixelDescriptor::RGB8,
+            PixelDescriptor::RGBA8,
+            PixelDescriptor::RGB16,
+            PixelDescriptor::RGBA16,
+            PixelDescriptor::RGBF32,
+            PixelDescriptor::RGBAF32,
+        ];
+        // Boundary-dense but bounded (strided builds cost a copy per case).
+        let vals = [1u32, 2, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 65, 128];
+        for &desc in &descs {
+            let bpp = desc.bytes_per_pixel();
+            for &w in &vals {
+                for &h in &vals {
+                    let tight_stride = w as usize * bpp;
+                    let pad = tight_stride + 13 * bpp; // pixel-aligned, non-tile-aligned padding
+                    let tight = fill(tight_stride * h as usize);
+                    let mut padded = alloc::vec![0xA5u8; pad * h as usize];
+                    for y in 0..h as usize {
+                        padded[y * pad..y * pad + tight_stride]
+                            .copy_from_slice(&tight[y * tight_stride..][..tight_stride]);
+                    }
+                    for &o in &Orientation::ALL {
+                        let ts = PixelSlice::new(&tight, w, h, tight_stride, desc).unwrap();
+                        let ps = PixelSlice::new(&padded, w, h, pad, desc).unwrap();
+                        let a = apply_orientation(ts, o);
+                        let b = apply_orientation(ps, o);
+                        for y in 0..a.height() {
+                            assert_eq!(
+                                a.as_slice().row(y),
+                                b.as_slice().row(y),
+                                "{o:?} {desc:?} {w}x{h} strided row {y}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn into_writes_caller_buffer_and_is_reusable() {
         // One target buffer, reused across four transposing orientations (all
@@ -3612,21 +3846,27 @@ mod tests {
             PixelDescriptor::RGBA8,
             PixelDescriptor::RGBAF32,
         ];
-        let dims = [
-            (1u32, 1u32),
-            (2, 2),
-            (4, 4),
-            (8, 8),
-            (32, 32),
-            (3, 5),
-            (5, 3),
-            (17, 13),
-            (13, 17),
-            (16, 9),
-            (9, 16),
-            (7, 1),
-            (1, 7),
-        ];
+        // Dense grid: the in-place permutation (diagonal swap for square,
+        // cycle-following for non-square) is correctness-critical and its
+        // behaviour depends on the gcd structure of w×h, so sweep every
+        // small (w, h) rather than a hand-picked spread. Plus a few larger
+        // and 1×N / N×1 shapes.
+        let mut dims: alloc::vec::Vec<(u32, u32)> = alloc::vec::Vec::new();
+        for w in 1u32..=20 {
+            for h in 1u32..=20 {
+                dims.push((w, h));
+            }
+        }
+        for &d in &[
+            (32u32, 32u32),
+            (33, 31),
+            (1, 64),
+            (64, 1),
+            (40, 24),
+            (24, 40),
+        ] {
+            dims.push(d);
+        }
         for &desc in &descs {
             let bpp = desc.bytes_per_pixel();
             for &(w, h) in &dims {
