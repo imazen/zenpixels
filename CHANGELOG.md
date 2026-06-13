@@ -20,6 +20,18 @@
 
 ### zenpixels-convert — performance
 
+- **The SIMD transpose kernels are now behind an opt-in `fast-transpose`
+  Cargo feature** (default-off). Without it, `apply_orientation*` use the
+  portable scalar tiled/blocked paths (correct, slower); enabling
+  `fast-transpose` pulls in the x86-64 AVX2 and aarch64 NEON kernels. The
+  ~3k lines of kernels were split out of `orient.rs` into
+  `orient/{pxn_x86,pxn_neon,rgb3_x86}.rs` (feature- and arch-gated);
+  `orient/mod.rs` keeps the public API, dispatch, and always-on scalar
+  core. The corruption gate (`orient/tests.rs`) now validates both the
+  scalar default path and the SIMD path. The `transpose-shootout`
+  measurement crate moved to `benchmarks/transpose-shootout/`
+  (workspace-excluded, dev-box only).
+
 - **NEON transpose kernels for all eight pixel widths + 12/16-byte
   maximization on both architectures** (zenjpeg#150, continued): aarch64
   tiers (vzip cascades, tbl expand/compress, tuple/block-move kernels —

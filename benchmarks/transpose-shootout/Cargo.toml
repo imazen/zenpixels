@@ -10,8 +10,8 @@ description = "Dev-box-only shootout: 1/2/3/4-channel image transpose across Rus
 [workspace]
 
 [dependencies]
-zenpixels = { path = "../zenpixels" }
-zenpixels-convert = { path = "../zenpixels-convert", features = ["__bench_orient"] }
+zenpixels = { path = "../../zenpixels" }
+zenpixels-convert = { path = "../../zenpixels-convert", features = ["__bench_orient"] }
 zenbench = "0.1.8"
 fast_transpose = "0.2.7" # default features: unsafe + sse + avx + neon (their SIMD on)
 transpose = "0.2.3"
