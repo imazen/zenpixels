@@ -1,12 +1,13 @@
-//! Orientation baking: the production transposing paths (SIMD 4×4 register
-//! transpose for 4-byte pixels, monomorphised tiled gather for 3-byte) vs the
-//! generic cache-blocked `forward_map` scatter, on identical input. Each
-//! format/size pair shares a `group`, so zenbench interleaves the variants and
-//! reports a paired A/B (killing thermal/turbo bias between the measurements).
+//! Orientation baking: the production transposing path (per-pixel-width AVX2 /
+//! NEON register-transpose kernels with `fast-transpose`; scalar tiled gather
+//! otherwise) vs the generic cache-blocked `forward_map` scatter, on identical
+//! input. Each format/size pair shares a `group`, so zenbench interleaves the
+//! variants and reports a paired A/B (killing thermal/turbo bias between the
+//! measurements).
 //!
 //! RGB8 12MP Rotate90 is the zenjpeg#150 case: its naive output-sequential
 //! gather ran 73.3 ms there while our forward_map-scatter path ran 84.2 ms;
-//! the tiled gather is the fix and must land well under both.
+//! the production kernel must land well under both.
 //!
 //! Run: `cargo bench --bench bench_orient --features __bench_orient`
 //! Filter: `... -- --group="Rotate90 RGB8 12MP"`
@@ -24,9 +25,13 @@ const SIZES: &[(&str, u32, u32)] = &[
 ];
 
 // (format label, descriptor, production-path label)
+// With __bench_orient (⇒ fast-transpose) on x86_64/aarch64 both formats use a
+// SIMD register transpose: 4 bpp → transpose4 (AVX2 8×8 / NEON), 3 bpp → the
+// rgb3 expand→transpose→compress kernel. (Other arches: 4 bpp → magetypes 4×4,
+// 3 bpp → the scalar tiled gather.)
 const FORMATS: &[(&str, PixelDescriptor, &str)] = &[
-    ("RGBA8", PixelDescriptor::RGBA8, "simd  "), // 4 bpp → f32x4 register transpose
-    ("RGB8 ", PixelDescriptor::RGB8, "tiled "),  // 3 bpp → monomorphised tiled gather
+    ("RGBA8", PixelDescriptor::RGBA8, "simd  "),
+    ("RGB8 ", PixelDescriptor::RGB8, "simd  "),
 ];
 
 fn pixels(w: u32, h: u32, bpp: usize) -> Vec<u8> {
