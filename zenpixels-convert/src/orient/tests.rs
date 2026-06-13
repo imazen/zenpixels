@@ -842,3 +842,129 @@ fn in_place_matches_out_of_place() {
         }
     }
 }
+
+/// Degenerate zero-area inputs (`w == 0` or `h == 0`) must be accepted and yield
+/// the correctly-dimensioned empty result without panicking, on every API and
+/// orientation — exercising the `w == 0 || h == 0` guards in
+/// `apply_orientation_into` and `orient_in_place_impl`. A fully-cropped strip or
+/// an empty codec frame is a real input, not a contrived one.
+#[test]
+fn zero_area_inputs_are_handled() {
+    let desc = PixelDescriptor::RGBA8;
+    for &(w, h) in &[(0u32, 5u32), (5, 0), (0, 0)] {
+        for &o in &Orientation::ALL {
+            let (ow, oh) = o.output_dimensions(w, h);
+
+            // Allocating path: builds the output and takes the zero-area
+            // early-return in `apply_orientation_into`.
+            let src = PixelBuffer::new(w, h, desc);
+            let out = apply_orientation(src.as_slice(), o);
+            assert_eq!((out.width(), out.height()), (ow, oh), "{o:?} {w}x{h} dims");
+
+            // In-place path: the zero-area early-return in `orient_in_place_impl`,
+            // which must still re-describe to the swapped geometry.
+            let mut ip = PixelBuffer::new(w, h, desc);
+            apply_orientation_in_place(&mut ip, o).expect("zero-area in-place ok");
+            assert_eq!(
+                (ip.width(), ip.height()),
+                (ow, oh),
+                "{o:?} {w}x{h} in-place dims"
+            );
+        }
+    }
+}
+
+/// In-place baking must carry the source's `ColorContext` through to the
+/// re-described view (the `Some(color)` arm of the rewrap) and leave the pixels
+/// identical to the out-of-place bake. Colour signalling is not pixels, but
+/// silently dropping it would mis-tag the output.
+#[test]
+fn in_place_preserves_color_context() {
+    let desc = PixelDescriptor::RGBA8;
+    let (w, h) = (6u32, 4u32);
+    let data = fill(w as usize * h as usize * 4);
+    let ctx = alloc::sync::Arc::new(zenpixels::ColorContext::from_cicp(zenpixels::Cicp::SRGB));
+    for &o in &Orientation::ALL {
+        let mut buf = PixelBuffer::new(w, h, desc).with_color_context(ctx.clone());
+        {
+            let mut s = buf.as_slice_mut();
+            for y in 0..h {
+                s.row_mut(y)
+                    .copy_from_slice(&data[y as usize * w as usize * 4..][..w as usize * 4]);
+            }
+        }
+        apply_orientation_in_place(&mut buf, o).expect("in-place ok");
+        assert!(buf.color_context().is_some(), "{o:?} dropped color context");
+        let want = apply_orientation(slice(&data, w, h, desc), o);
+        for y in 0..buf.height() {
+            assert_eq!(buf.as_slice().row(y), want.as_slice().row(y), "{o:?} row {y}");
+        }
+    }
+}
+
+/// In-place baking of a SIMD-aligned (padded-stride) buffer must compact the
+/// padded rows to tight before permuting (the `in_stride != tight` path) and
+/// still match the out-of-place bake. Decoders routinely hand us row-padded
+/// buffers, so this is a common in-place input.
+#[test]
+fn in_place_padded_stride_matches_out_of_place() {
+    for &desc in &[
+        PixelDescriptor::RGBA8,
+        PixelDescriptor::RGB8,
+        PixelDescriptor::GRAY8,
+    ] {
+        let bpp = desc.bytes_per_pixel();
+        for &(w, h) in &[(5u32, 7u32), (13, 9), (17, 3)] {
+            let data = fill(w as usize * h as usize * bpp);
+            for &o in &Orientation::ALL {
+                // simd_align 32 pads the row whenever w*bpp isn't a multiple of
+                // lcm(bpp, 32) — true for every (desc, w) here.
+                let mut buf = PixelBuffer::new_simd_aligned(w, h, desc, 32);
+                assert!(
+                    buf.as_slice().stride() > w as usize * bpp,
+                    "{desc:?} {w}x{h}: expected a padded stride"
+                );
+                {
+                    let mut s = buf.as_slice_mut();
+                    for y in 0..h {
+                        s.row_mut(y).copy_from_slice(
+                            &data[y as usize * w as usize * bpp..][..w as usize * bpp],
+                        );
+                    }
+                }
+                let want = apply_orientation(slice(&data, w, h, desc), o);
+                apply_orientation_in_place(&mut buf, o).expect("padded in-place ok");
+                assert_eq!(
+                    (buf.width(), buf.height()),
+                    (want.width(), want.height()),
+                    "{o:?} {desc:?} {w}x{h} dims"
+                );
+                for y in 0..buf.height() {
+                    assert_eq!(
+                        buf.as_slice().row(y),
+                        want.as_slice().row(y),
+                        "{o:?} {desc:?} {w}x{h} row {y}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// `inverse_flips` is `Some` exactly for the four transposing orientations and
+/// `None` for the rest — the contract `do_transpose`'s `if let Some(flips)` and
+/// `transpose16_deep`'s `else` fallback rely on to route non-transposing (and
+/// any future `#[non_exhaustive]`) variants to the generic scatter.
+#[test]
+fn inverse_flips_some_iff_transposing() {
+    for &o in &Orientation::ALL {
+        let expect_some = matches!(
+            o,
+            Orientation::Transpose
+                | Orientation::Rotate90
+                | Orientation::Rotate270
+                | Orientation::Transverse
+        );
+        assert_eq!(inverse_flips(o).is_some(), expect_some, "{o:?}");
+    }
+}
