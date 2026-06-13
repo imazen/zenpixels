@@ -43,11 +43,11 @@
 //!   arch without a SIMD kernel. [`transpose_tiled`] is a per-width
 //!   monomorphised gather: the four transposing maps are *separable*, so along
 //!   one destination row the source column is fixed and the source offset steps
-//!   by ±stride. That replaces the generic per-element `forward_map` + `row_mut`
-//!   + variable-length copy with one bounds check and a fixed-size `BPP`-byte
-//!   copy per pixel, writing the destination sequentially (zenjpeg#150 measured
-//!   the generic path losing to a naive linear-write gather at 3 bpp; this
-//!   beats both). 16-byte pixels use [`transpose16_deep`] — a transpose there
+//!   by ±stride. That replaces the generic path's per-element `forward_map`,
+//!   `row_mut`, and variable-length copy with one bounds check and a fixed-size
+//!   `BPP`-byte copy per pixel, writing the destination sequentially (zenjpeg#150
+//!   measured the generic path losing to a naive linear-write gather at 3 bpp;
+//!   this beats both). 16-byte pixels use [`transpose16_deep`] — a transpose there
 //!   is pure block movement that autovectorises — and the generic
 //!   [`transpose_blocked`] scatter covers any other width.
 //!

@@ -26,6 +26,94 @@ fn scalar_rect(
     }
 }
 
+/// Scalar `forward_map` cleanup for the two edge strips a tiled SIMD pass
+/// leaves uncovered: the right columns (`[full_w, w) × [0, full_h)`) and the
+/// bottom rows (`[0, w) × [full_h, h)`, which also covers the bottom-right
+/// corner). The strips are disjoint. Every full-width kernel here ends with it.
+#[allow(clippy::too_many_arguments)]
+fn scalar_edges(
+    sbytes: &[u8],
+    sstride: usize,
+    dbytes: &mut [u8],
+    dstride: usize,
+    orientation: Orientation,
+    w: u32,
+    h: u32,
+    bpp: usize,
+    full_w: u32,
+    full_h: u32,
+) {
+    // Right columns, then bottom rows (+ bottom-right corner).
+    scalar_rect(
+        sbytes,
+        sstride,
+        dbytes,
+        dstride,
+        orientation,
+        w,
+        h,
+        bpp,
+        full_w,
+        w,
+        0,
+        full_h,
+    );
+    scalar_rect(
+        sbytes,
+        sstride,
+        dbytes,
+        dstride,
+        orientation,
+        w,
+        h,
+        bpp,
+        0,
+        w,
+        full_h,
+        h,
+    );
+}
+
+/// Scalar cleanup for the guard-trimmed columns of the final-row band: the
+/// columns the slop-carrying kernels (3/6/12 bpp) skip via their `guard_w`
+/// limit because a register load there would overrun the buffer. Only the band
+/// that reaches the image's last row (`full_h == h`) is ever trimmed, so this
+/// is a no-op for every other shape; `band_h` is that band's row height. Call
+/// it *before* [`scalar_edges`] — the regions are disjoint (this one's columns
+/// are left of `full_w`, and `full_h == h` makes the bottom strip empty).
+#[allow(clippy::too_many_arguments)]
+fn scalar_last_band_guard(
+    sbytes: &[u8],
+    sstride: usize,
+    dbytes: &mut [u8],
+    dstride: usize,
+    orientation: Orientation,
+    w: u32,
+    h: u32,
+    bpp: usize,
+    full_w: u32,
+    full_h: u32,
+    guard_w: u32,
+    band_h: u32,
+) {
+    if guard_w < full_w && full_h == h && h >= band_h {
+        scalar_rect(
+            sbytes,
+            sstride,
+            dbytes,
+            dstride,
+            orientation,
+            w,
+            h,
+            bpp,
+            guard_w,
+            full_w,
+            h - band_h,
+            h,
+        );
+    }
+}
+
 /// 8×16 gray8 tiles (Simd `1x8x16`): 8 q-loads, three vzipq_u8 rounds,
 /// sixteen 8-byte half-stores. flip_sy reverses each 8-byte run
 /// (`vrev64_u8`); flip_sx reverses tile/store order.
@@ -117,7 +205,7 @@ pub(super) fn transpose1_neon(
             }
         }
     }
-    scalar_rect(
+    scalar_edges(
         sbytes,
         sstride,
         dbytes,
@@ -127,23 +215,7 @@ pub(super) fn transpose1_neon(
         h,
         1,
         full_w,
-        w,
-        0,
         full_h,
-    );
-    scalar_rect(
-        sbytes,
-        sstride,
-        dbytes,
-        dstride,
-        orientation,
-        w,
-        h,
-        1,
-        0,
-        w,
-        full_h,
-        h,
     );
 }
 
@@ -230,7 +302,7 @@ pub(super) fn transpose2_neon(
             }
         }
     }
-    scalar_rect(
+    scalar_edges(
         sbytes,
         sstride,
         dbytes,
@@ -240,23 +312,7 @@ pub(super) fn transpose2_neon(
         h,
         2,
         full_w,
-        w,
-        0,
         full_h,
-    );
-    scalar_rect(
-        sbytes,
-        sstride,
-        dbytes,
-        dstride,
-        orientation,
-        w,
-        h,
-        2,
-        0,
-        w,
-        full_h,
-        h,
     );
 }
 
@@ -362,23 +418,7 @@ pub(super) fn transpose3_neon(
             }
         }
     }
-    if guard_w < full_w && full_h == h && h >= 4 {
-        scalar_rect(
-            sbytes,
-            sstride,
-            dbytes,
-            dstride,
-            orientation,
-            w,
-            h,
-            3,
-            guard_w,
-            full_w,
-            h - 4,
-            h,
-        );
-    }
-    scalar_rect(
+    scalar_last_band_guard(
         sbytes,
         sstride,
         dbytes,
@@ -388,11 +428,11 @@ pub(super) fn transpose3_neon(
         h,
         3,
         full_w,
-        w,
-        0,
         full_h,
+        guard_w,
+        4,
     );
-    scalar_rect(
+    scalar_edges(
         sbytes,
         sstride,
         dbytes,
@@ -401,10 +441,8 @@ pub(super) fn transpose3_neon(
         w,
         h,
         3,
-        0,
-        w,
+        full_w,
         full_h,
-        h,
     );
 }
 
@@ -488,7 +526,7 @@ pub(super) fn transpose4_neon(
             }
         }
     }
-    scalar_rect(
+    scalar_edges(
         sbytes,
         sstride,
         dbytes,
@@ -498,23 +536,7 @@ pub(super) fn transpose4_neon(
         h,
         4,
         full_w,
-        w,
-        0,
         full_h,
-    );
-    scalar_rect(
-        sbytes,
-        sstride,
-        dbytes,
-        dstride,
-        orientation,
-        w,
-        h,
-        4,
-        0,
-        w,
-        full_h,
-        h,
     );
 }
 
@@ -595,7 +617,7 @@ pub(super) fn transpose8_neon(
             }
         }
     }
-    scalar_rect(
+    scalar_edges(
         sbytes,
         sstride,
         dbytes,
@@ -605,23 +627,7 @@ pub(super) fn transpose8_neon(
         h,
         8,
         full_w,
-        w,
-        0,
         full_h,
-    );
-    scalar_rect(
-        sbytes,
-        sstride,
-        dbytes,
-        dstride,
-        orientation,
-        w,
-        h,
-        8,
-        0,
-        w,
-        full_h,
-        h,
     );
 }
 
@@ -704,23 +710,7 @@ pub(super) fn transpose6_neon(
             }
         }
     }
-    if guard_w < full_w && full_h == h && h >= 2 {
-        scalar_rect(
-            sbytes,
-            sstride,
-            dbytes,
-            dstride,
-            orientation,
-            w,
-            h,
-            6,
-            guard_w,
-            full_w,
-            h - 2,
-            h,
-        );
-    }
-    scalar_rect(
+    scalar_last_band_guard(
         sbytes,
         sstride,
         dbytes,
@@ -730,11 +720,11 @@ pub(super) fn transpose6_neon(
         h,
         6,
         full_w,
-        w,
-        0,
         full_h,
+        guard_w,
+        2,
     );
-    scalar_rect(
+    scalar_edges(
         sbytes,
         sstride,
         dbytes,
@@ -743,10 +733,8 @@ pub(super) fn transpose6_neon(
         w,
         h,
         6,
-        0,
-        w,
+        full_w,
         full_h,
-        h,
     );
 }
 
@@ -838,23 +826,7 @@ pub(super) fn transpose12_neon(
             }
         }
     }
-    if guard_w < full_w && full_h == h && h >= 4 {
-        scalar_rect(
-            sbytes,
-            sstride,
-            dbytes,
-            dstride,
-            orientation,
-            w,
-            h,
-            12,
-            guard_w,
-            full_w,
-            h - 4,
-            h,
-        );
-    }
-    scalar_rect(
+    scalar_last_band_guard(
         sbytes,
         sstride,
         dbytes,
@@ -864,11 +836,11 @@ pub(super) fn transpose12_neon(
         h,
         12,
         full_w,
-        w,
-        0,
         full_h,
+        guard_w,
+        4,
     );
-    scalar_rect(
+    scalar_edges(
         sbytes,
         sstride,
         dbytes,
@@ -877,9 +849,7 @@ pub(super) fn transpose12_neon(
         w,
         h,
         12,
-        0,
-        w,
+        full_w,
         full_h,
-        h,
     );
 }

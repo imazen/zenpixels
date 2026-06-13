@@ -132,25 +132,9 @@ pub(super) fn transpose3_v3(
             }
         }
     }
-    // Guard-trimmed columns of the last band (only when that band touches
-    // the image's final row), then right-edge columns, then bottom rows.
-    if guard_w < full_w && full_h == h && h >= 8 {
-        super::pxn_x86::scalar_rect(
-            sbytes,
-            sstride,
-            dbytes,
-            dstride,
-            orientation,
-            w,
-            h,
-            3,
-            guard_w,
-            full_w,
-            h - 8,
-            h,
-        );
-    }
-    super::pxn_x86::scalar_rect(
+    // Guard-trimmed columns of the last band (only when it touches the
+    // image's final row), then the right + bottom edge strips.
+    super::pxn_x86::scalar_last_band_guard(
         sbytes,
         sstride,
         dbytes,
@@ -160,11 +144,11 @@ pub(super) fn transpose3_v3(
         h,
         3,
         full_w,
-        w,
-        0,
         full_h,
+        guard_w,
+        8,
     );
-    super::pxn_x86::scalar_rect(
+    super::pxn_x86::scalar_edges(
         sbytes,
         sstride,
         dbytes,
@@ -173,9 +157,7 @@ pub(super) fn transpose3_v3(
         w,
         h,
         3,
-        0,
-        w,
+        full_w,
         full_h,
-        h,
     );
 }
