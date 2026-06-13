@@ -74,6 +74,14 @@ const ICC_HEADER_NORMALIZE_END: usize = 100;
 ///
 /// This is a lightweight operation (~100ns) that reads only the 128-byte header
 /// and tag table entries — no full profile parse required.
+///
+/// Read leniency: the tag is recovered regardless of the profile's data colour
+/// space. ICC.1 restricts `cicpTag` to RGB/YCbCr/XYZ, so a GRAY/CMYK profile
+/// carrying one is non-conformant — but a third-party encoder may still emit it,
+/// and we honor it on input rather than drop recoverable colour signaling
+/// (Postel's law). zenpixels itself never *emits* a cicp tag on a gray profile
+/// (see the GRAY-class synthesis in `zenpixels-convert`); this leniency only
+/// affects what we accept, never what we produce.
 pub fn extract_cicp(data: &[u8]) -> Option<Cicp> {
     if data.len() < ICC_MIN_SIZE {
         return None;

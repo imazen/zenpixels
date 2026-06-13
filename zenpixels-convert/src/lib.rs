@@ -511,6 +511,9 @@ pub use load_bearing::{LoadBearingReport, PixelBufferLoadBearingExt, PixelSliceL
 // Re-export HDR types and tone mapping.
 #[cfg(feature = "std")]
 pub use hdr::exposure_tonemap;
+// `HdrMetadata` is re-exported but deprecated (see the `hdr` module); the
+// re-export itself names it, hence the allow.
+#[allow(deprecated)]
 pub use hdr::{
     ContentLightLevel, HdrMetadata, MasteringDisplay, reinhard_inverse, reinhard_tonemap,
 };

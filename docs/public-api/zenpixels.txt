@@ -6,35 +6,35 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpixels.txt 799 lines (supported surface) | zenpixels.features.txt 268 added (features: icc,imgref,planar,rgb,serde,std) | zenpixels.internal.txt 74 lines (74 hidden + 0 excluded-feature)
+# files: zenpixels.txt 806 lines (supported surface) | zenpixels.features.txt 269 added (features: icc,imgref,planar,rgb,serde,std) | zenpixels.internal.txt 75 lines (75 hidden + 0 excluded-feature)
 
 ## summary
 #
 #   pub modules                                10
-#   pub types (struct/enum/trait/alias)        74
-#   pub consts/statics                        270
+#   pub types (struct/enum/trait/alias)        75
+#   pub consts/statics                        273
 #   free functions                              4
-#   inherent methods                          206
+#   inherent methods                          208
 #   struct fields                             105
 #   enum variants                             208
 #   re-exports                                  4
-#   trait roster entries (type × trait)       232
-#   auto-trait-complete types                  33
+#   trait roster entries (type × trait)       237
+#   auto-trait-complete types                  34
 #   auto-trait exceptions                       4
 #
 # per-module pub lines:
-#   (root)                          387
+#   (root)                          389
 #   buffer                          192
 #   cicp                             27
 #   color                            57
 #   descriptor                      148
-#   hdr                              12
+#   hdr                              16
 #   icc                              13
 #   orientation                      11
 #   pixel_types                       9
 #   policy                           25
 
-## items (754 lines)
+## items (760 lines)
 
 pub mod zenpixels
 pub use At
@@ -373,7 +373,12 @@ pub const fn descriptor::PixelDescriptor::with_transfer(self, descriptor::Transf
 pub mod hdr
 pub hdr::ContentLightLevel::max_content_light_level: u16
 pub hdr::ContentLightLevel::max_frame_average_light_level: u16
+pub fn hdr::ContentLightLevel::measure(buffer::PixelSlice<'_>, hdr::DiffuseWhite) -> core::option::Option<Self>
 pub const fn hdr::ContentLightLevel::new(u16, u16) -> Self [also: (root)]
+pub struct hdr::DiffuseWhite(_)
+pub const hdr::DiffuseWhite::BT2408: Self
+pub const fn hdr::DiffuseWhite::new(f32) -> Self
+pub const fn hdr::DiffuseWhite::nits(self) -> f32
 pub hdr::MasteringDisplay::max_luminance: f32
 pub hdr::MasteringDisplay::min_luminance: f32
 pub hdr::MasteringDisplay::primaries_xy: [[f32; 2]; 3]
@@ -629,6 +634,7 @@ pub fn color::ColorOrigin::with_color_authority(self, color::ColorAuthority) -> 
 pub struct ContentLightLevel [also: hdr]
 pub ContentLightLevel::max_content_light_level: u16
 pub ContentLightLevel::max_frame_average_light_level: u16
+pub fn hdr::ContentLightLevel::measure(buffer::PixelSlice<'_>, hdr::DiffuseWhite) -> core::option::Option<Self>
 #[non_exhaustive] pub struct ConvertOptions [also: policy]
 pub ConvertOptions::alpha_policy: policy::AlphaPolicy
 pub ConvertOptions::clip_out_of_gamut: bool
@@ -791,7 +797,7 @@ pub Rgbx::x: u8
 pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 
-## trait impls (40 types)
+## trait impls (41 types)
 
 buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
@@ -821,6 +827,7 @@ descriptor::PixelFormat: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::SignalRange: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
 descriptor::TransferFunction: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 hdr::ContentLightLevel: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+hdr::DiffuseWhite: Clone, Copy, Debug, Default, PartialEq
 hdr::MasteringDisplay: Clone, Copy, Debug, Default, PartialEq
 icc::IccIdentification: Clone, Copy, Debug, Eq, Hash, PartialEq
 icc::IdentificationUse: Clone, Copy, Debug, Eq, Hash, PartialEq
@@ -836,7 +843,7 @@ policy::LumaCoefficients: Clone, Copy, Debug, Eq, Hash, PartialEq
 
 ## auto traits
 
-33 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+34 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 buffer::InPlacePixels<'a>: !UnwindSafe
 buffer::PixelBuffer<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::PixelSlice<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe

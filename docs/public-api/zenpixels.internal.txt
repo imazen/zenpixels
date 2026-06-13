@@ -10,7 +10,7 @@
 ## summary
 #
 #   inherent methods                           38
-#   trait roster entries (type × trait)        36
+#   trait roster entries (type × trait)        37
 #
 # per-module pub lines:
 #   buffer                            3
@@ -65,7 +65,7 @@ pub fn policy::DepthPolicy::assert_fields_are_eq(&self)
 pub fn policy::GrayExpand::assert_fields_are_eq(&self)
 pub fn policy::LumaCoefficients::assert_fields_are_eq(&self)
 
-## trait impls (36 types)
+## trait impls (37 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
@@ -85,6 +85,7 @@ descriptor::PixelFormat: TrivialClone
 descriptor::SignalRange: TrivialClone
 descriptor::TransferFunction: TrivialClone
 hdr::ContentLightLevel: TrivialClone
+hdr::DiffuseWhite: TrivialClone
 hdr::MasteringDisplay: TrivialClone
 icc::IccIdentification: TrivialClone
 icc::IdentificationUse: TrivialClone

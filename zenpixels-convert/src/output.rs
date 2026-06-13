@@ -85,6 +85,7 @@ use alloc::sync::Arc;
 #[allow(deprecated)]
 use crate::cms::ColorManagement;
 use crate::error::ConvertError;
+#[allow(deprecated)]
 use crate::hdr::HdrMetadata;
 use crate::{
     Cicp, ColorAuthority, ColorOrigin, ColorPrimaries, PixelBuffer, PixelDescriptor, PixelFormat,
@@ -114,12 +115,28 @@ pub enum OutputProfile {
 /// the metadata matches the pixel values.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
+// The `hdr` field references the deprecated `HdrMetadata`; suppress the
+// definition-site lint here (external uses still see the field/type
+// deprecation). The field is never wired (see TODO(0.3.0) below).
+#[allow(deprecated)]
 pub struct OutputMetadata {
     /// ICC profile bytes to embed, if any.
     pub icc: Option<Arc<[u8]>>,
     /// CICP code points to embed, if any.
     pub cicp: Option<Cicp>,
     /// HDR metadata to embed (content light level, mastering display), if any.
+    ///
+    /// **Deprecated** (never wired — see the `TODO(0.3.0)` notes in this
+    /// module): the bundled [`HdrMetadata`](crate::hdr::HdrMetadata) carrier is
+    /// being removed. At 0.3.0 this becomes sibling
+    /// `content_light_level: Option<ContentLightLevel>` /
+    /// `mastering_display: Option<MasteringDisplay>` fields (transfer already
+    /// rides on the output descriptor). See `CHANGELOG.md`
+    /// "QUEUED BREAKING CHANGES".
+    #[deprecated(
+        since = "0.2.14",
+        note = "unwired bundled HDR carrier; becomes sibling content_light_level / mastering_display fields in 0.3.0."
+    )]
     pub hdr: Option<HdrMetadata>,
 }
 
@@ -362,6 +379,7 @@ fn build_cms_transform<C: ColorManagement>(
 /// allocation fails, or a policy gate (alpha/depth/luma) forbids a
 /// required operation.
 #[track_caller]
+#[allow(deprecated)] // sets the unwired, deprecated OutputMetadata::hdr to None
 pub fn finalize_for_output_with(
     buffer: &PixelBuffer,
     origin: &ColorOrigin,

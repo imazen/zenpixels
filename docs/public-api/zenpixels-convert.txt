@@ -6,14 +6,14 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpixels-convert.txt 308 lines (supported surface) | zenpixels-convert.features.txt 244 added (features: avx512,cms-moxcms,fast-transpose,icc-db,imgref,pipeline,planar,rgb,serde,std) | zenpixels-convert.internal.txt 53 lines (80 hidden + 0 excluded-feature)
+# files: zenpixels-convert.txt 305 lines (supported surface) | zenpixels-convert.features.txt 244 added (features: avx512,cms-moxcms,fast-transpose,icc-db,imgref,pipeline,planar,rgb,serde,std) | zenpixels-convert.internal.txt 53 lines (80 hidden + 0 excluded-feature)
 
 ## summary
 #
 #   pub modules                                13
 #   pub types (struct/enum/trait/alias)        49
-#   pub consts/statics                         20
-#   free functions                             45
+#   pub consts/statics                         19
+#   free functions                             43
 #   inherent methods                           93
 #   struct fields                              42
 #   enum variants                              50
@@ -30,14 +30,14 @@
 #   error                            20
 #   ext                              13
 #   gamut                             6
-#   hdr                              20
+#   hdr                              17
 #   icc_profiles                     13
 #   load_bearing                     11
 #   oklab                             9
 #   orient                            3
 #   output                           17
 
-## items (285 lines)
+## items (282 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -125,9 +125,6 @@ pub fn hdr::HdrMetadata::hdr10(zenpixels::hdr::ContentLightLevel) -> Self
 pub fn hdr::HdrMetadata::hlg() -> Self
 pub fn hdr::HdrMetadata::is_hdr(&self) -> bool
 pub fn hdr::HdrMetadata::is_sdr(&self) -> bool
-pub const hdr::REFERENCE_DIFFUSE_WHITE_NITS: f32
-pub fn hdr::compute_content_light_level(zenpixels::buffer::PixelSlice<'_>, f32) -> core::result::Result<zenpixels::hdr::ContentLightLevel, whereat::at::At<error::ConvertError>>
-pub fn hdr::encode_pq16(zenpixels::buffer::PixelSlice<'_>, f32) -> core::result::Result<(zenpixels::buffer::PixelBuffer, zenpixels::hdr::ContentLightLevel), whereat::at::At<error::ConvertError>>
 pub mod icc_profiles
 #[non_exhaustive] pub enum icc_profiles::SynthesizedIcc
 pub icc_profiles::SynthesizedIcc::CmsUnsupported

@@ -8,9 +8,35 @@
      0.x) release. Add items here as you discover them. Do NOT ship these
      piecemeal — batch them. -->
 
-- (none currently queued)
+- **Remove `zenpixels-convert::hdr::HdrMetadata`** (struct + methods) and its
+  re-export — deprecated in 0.2.14; superseded by carrying `ContentLightLevel`
+  / `MasteringDisplay` directly (or `zencodec::Metadata` at the codec layer).
+- **Retype `OutputMetadata::hdr`** — drop the `Option<HdrMetadata>` field;
+  carry HDR as sibling `content_light_level: Option<ContentLightLevel>` /
+  `mastering_display: Option<MasteringDisplay>` (transfer already rides on the
+  output descriptor), matching the universal prior-art split. Wire it at the
+  same time (currently unwired, `output.rs` `TODO(0.3.0)`).
+- **Deduplicate `ContentLightLevel` / `MasteringDisplay`** — defined twice
+  (`zenpixels::hdr` and `zencodec::info`, sibling crates). Make `zenpixels`
+  the single canonical home and have `zencodec` re-export, so codecs stop
+  converting between two identical types.
 
 ## [0.2.14] - 2026-06-13
+
+### zenpixels — added
+
+- **`hdr::DiffuseWhite`** — a typed absolute-luminance anchor: the cd/m²
+  (nits) that relative-linear `1.0` represents (OpenEXR `whiteLuminance` /
+  JPEG XL `intensity_target` / libheif `ndwt` / libplacebo SDR-white). Newtype
+  on purpose — HDR mixes nits, PQ-encoded `[0,1]`, log2 gain, and headroom
+  ratios. `DiffuseWhite::BT2408` (203, the cross-vendor default) is the
+  `Default`.
+- **`ContentLightLevel::measure(PixelSlice, DiffuseWhite) -> Option<Self>`** —
+  MaxCLL/MaxFALL (CTA-861.3-A stills) from relative-linear RGB(A) f32, a
+  constructor on the type it returns (replacing the withdrawn
+  `zenpixels-convert::hdr::compute_content_light_level` free function).
+  Negative/NaN clamp to 0, alpha ignored, strided rows handled; `None` for
+  non-`RgbF32`/`RgbaF32` or non-`Linear` input.
 
 ### Workspace — build
 
@@ -111,30 +137,42 @@
 
 ### zenpixels-convert — added
 
-- **`hdr::compute_content_light_level(PixelSlice, diffuse_white_nits)` and
-  `hdr::encode_pq16(PixelSlice, diffuse_white_nits)`** (zenpixels#39
-  Rung 2) — MaxCLL/MaxFALL measurement per CTA-861.3-A with the PNG 3rd ed
-  §11.3.2.8 stills reading (one still = one frame), and single-pass
-  linear→PQ 16-bit quantization (SMPTE ST 2084 via linear-srgb's rational
-  approximation) outputting `PixelDescriptor::RGB16_BT2100_PQ` with the
-  CLL measured in the same pass. `hdr::REFERENCE_DIFFUSE_WHITE_NITS`
-  (203.0, BT.2408) anchors "linear 1.0". Relative-linear RGB(A) f32 input
-  only; strided rows handled; NaN/negative samples clamp to 0; alpha
-  ignored/dropped. Docs carry the signaling guidance: PQ16 output should
-  signal CICP-natively where the container allows; the synthesized PQ ICC
-  is a compatibility fallback (≈8 % soft at ~1 nit). Replaces the
-  hand-rolled `render_pq16` in hdr-corpus-convert (its one real consumer —
-  scoped per the 2026-06-11 audit).
 - Property/oracle tests for the tone-map helpers (output range,
   monotonicity, f64-oracle agreement, round-trip relative-error bound) and
   a pipeline pin in `tests/output_finalize.rs` that a PQ source finalized
   `SameAsOrigin` passes origin CICP through while `OutputMetadata::hdr`
   stays `None` — the documented not-yet-wired contract
   (`output.rs` `TODO(0.3.0)`; wiring it must consciously update the pin).
-- Oracle tests for the new helpers: f64 ST 2084 reference (exact
-  constants) within ±1 code, 203-nit golden, 10 000-nit clip, CTA stills
-  CLL semantics, NaN/negative clamps, alpha-lane exclusion,
-  strided==tight parity, encode/measure agreement.
+
+### zenpixels-convert — deprecated
+
+- **`hdr::HdrMetadata`** (struct + `is_hdr`/`is_sdr`/`hdr10`/`hlg`) and the
+  **`OutputMetadata::hdr` field** are deprecated. `HdrMetadata` is a
+  redundant, weaker, frozen-shape duplicate of the codec-layer carrier
+  `zencodec::Metadata` (which the codecs actually populate): it bundles
+  `transfer` with CLL/mastering — which all surveyed prior art (libavif,
+  libheif, libjxl, FFmpeg, libplacebo, ICC, CSS, Chrome, …) keeps separate —
+  and its public, non-`#[non_exhaustive]` fields can't grow the
+  absolute-luminance anchor or gain-map data HDR needs. `hdr10()` also
+  synthesizes a placeholder ST 2086 mastering volume that was never measured.
+  Carry [`ContentLightLevel`] / [`MasteringDisplay`] directly. Removal +
+  the `OutputMetadata::hdr` retype to sibling optional fields are queued for
+  0.3.0 (see QUEUED BREAKING CHANGES). Design rationale:
+  `docs/hdr-design-survey-2026-06-13.md`.
+
+  (The in-development `hdr::compute_content_light_level` / `encode_pq16` /
+  `REFERENCE_DIFFUSE_WHITE_NITS` — never released — were withdrawn. The
+  bare-`f32` anchor the prior art uniformly rejects is replaced by the typed
+  public `DiffuseWhite` + the `ContentLightLevel::measure` constructor (both
+  added above). The encode side is **not** re-exposed: an audit of the whole
+  `~/work/zen/` tree found **no consumer that encodes linear→PQ16** — every
+  PQ16 buffer originates from an already-PQ source — so per the crate's YAGNI
+  policy a public PQ encoder is not shipped. The verified linear→PQ16 path
+  (f64-ST-2084 parity, ±1) is retained `pub(crate)` as `hdr::quantize_to`, a
+  tested oracle for the day a real consumer arrives — at which point the
+  longer-term move (a luminance anchor on `zencodec::Metadata`, so the encode
+  collapses into a plain `convert_buffer`) supersedes it; that is 0.3.0 design
+  work, see `docs/hdr-design-survey-2026-06-13.md`.)
 
 ## [0.2.13] - 2026-06-11
 
@@ -187,7 +225,7 @@ Both crates release as 0.2.13 (zenpixels skips 0.2.12 to keep the pair in lockst
 
 ### zenpixels-convert — tests
 
-- **Recognition round-trip guards on the embedded profiles** (855d8e48) — `every_bundled_profile_roundtrips_through_extract_cicp` pins: every RGB bundle profile's `cICP` tag recovers its exact code points; every GRAY profile has **no** cicp tag (ICC.1 restricts the tag to RGB/YCbCr/XYZ data colour spaces — attempting one also trips a moxcms tag-count/emission mismatch that corrupts the tag table) and is hash-identified exactly per pinned transfer sets (recognized: 1/4/6/8/11/12/13/14/15/16; gaps: 5/7/9/10/17/18 — HLG's curv-LUT exceeds the ±56/65535 identification tolerance). Both directions pinned, so any profile regeneration that gains or loses recognition fails loudly. `bundled_consts_are_hash_identified` guards the four curated `&'static` profiles the same way.
+- **Recognition round-trip guards on the embedded profiles** (855d8e48) — `every_bundled_profile_roundtrips_through_extract_cicp` pins: every RGB bundle profile's `cICP` tag recovers its exact code points; every GRAY profile has **no** cicp tag (ICC.1 restricts the tag to RGB/YCbCr/XYZ data colour spaces — the timeless reason; attempting one additionally tripped a moxcms 0.8.1 tag-count/emission mismatch that corrupted the tag table, since fixed upstream in [moxcms#182](https://github.com/awxkee/moxcms/issues/182), which now strips cicp from gray on encode) and is hash-identified exactly per pinned transfer sets (recognized: 1/4/6/8/11/12/13/14/15/16; gaps: 5/7/9/10/17/18 — HLG's curv-LUT exceeds the ±56/65535 identification tolerance). Both directions pinned, so any profile regeneration that gains or loses recognition fails loudly. `bundled_consts_are_hash_identified` guards the four curated `&'static` profiles the same way.
 
 ### zenpixels-convert — changed (features)
 

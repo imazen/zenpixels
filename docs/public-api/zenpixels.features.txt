@@ -15,7 +15,7 @@
 #   inherent methods                           98
 #   struct fields                              20
 #   enum variants                              54
-#   trait roster entries (type × trait)       105
+#   trait roster entries (type × trait)       107
 #   auto-trait-complete types                   9
 #
 # per-module pub lines:
@@ -241,7 +241,7 @@ pub const planar::PlaneMask::CHROMA: Self
 pub const planar::PlaneMask::LUMA: Self
 pub const planar::PlaneMask::NONE: Self
 
-## trait impls (52 types)
+## trait impls (53 types)
 
 buffer::PixelSlice<'a, rgb::formats::bgra::Bgra<u8>>: From<imgref::Img<&'a [rgb::formats::bgra::Bgra<u8>]>>
 buffer::PixelSlice<'a, rgb::formats::gray::Gray_v08<f32>>: From<imgref::Img<&'a [rgb::formats::gray::Gray_v08<f32>]>>
@@ -274,6 +274,7 @@ descriptor::PixelFormat: serde_core::de::Deserialize<'de>, serde_core::ser::Seri
 descriptor::SignalRange: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
 descriptor::TransferFunction: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
 hdr::ContentLightLevel: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
+hdr::DiffuseWhite: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
 hdr::MasteringDisplay: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
 pixel_types::GrayAlpha16: buffer::Pixel
 pixel_types::GrayAlpha8: buffer::Pixel
