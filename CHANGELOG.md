@@ -37,6 +37,25 @@
   `zenpixels-convert::hdr::compute_content_light_level` free function).
   Negative/NaN clamp to 0, alpha ignored, strided rows handled; `None` for
   non-`RgbF32`/`RgbaF32` or non-`Linear` input.
+- **`ColorContext::diffuse_white` field + `with_diffuse_white` builder, and
+  `DiffuseWhite` re-exported at the crate root** — the absolute-luminance
+  anchor now travels on the existing `PixelBuffer.color: Arc<ColorContext>`
+  sidecar (propagated by every clone / `with_descriptor` at no per-strip cost),
+  so the HDR converter can map relative-linear light to absolute luminance for
+  PQ/HLG encode and tone-mapping. `None` = unsignaled (consumers default to
+  `DiffuseWhite::BT2408`, 203). First slice of the M×N HDR pipeline (#45).
+
+#### Changed (BREAKING, tolerated in 0.2.x)
+
+- **`ColorContext` is now `#[non_exhaustive]` and no longer derives `Eq`**
+  (`PartialEq` retained). `#[non_exhaustive]` lets the next HDR carrier fields
+  (mastering display, content light level) extend it without another break;
+  `Eq` is dropped because the new `diffuse_white` anchor wraps `f32`. Tolerated
+  per the 0.2.x policy: the only external struct-literal constructor is
+  `zencodec` (builds against published 0.2.10 — unaffected until it adopts
+  0.2.14; migration tracked as #45 S1b), and no in-tree `Eq`/`Hash` use depends
+  on `ColorContext` (verified). `cargo semver-checks` flags both as major; both
+  are tolerated-bucket items.
 
 ### Workspace — build
 

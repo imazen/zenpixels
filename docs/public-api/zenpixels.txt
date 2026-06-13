@@ -6,16 +6,16 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpixels.txt 806 lines (supported surface) | zenpixels.features.txt 269 added (features: icc,imgref,planar,rgb,serde,std) | zenpixels.internal.txt 75 lines (75 hidden + 0 excluded-feature)
+# files: zenpixels.txt 811 lines (supported surface) | zenpixels.features.txt 269 added (features: icc,imgref,planar,rgb,serde,std) | zenpixels.internal.txt 74 lines (74 hidden + 0 excluded-feature)
 
 ## summary
 #
 #   pub modules                                10
-#   pub types (struct/enum/trait/alias)        75
-#   pub consts/statics                        273
+#   pub types (struct/enum/trait/alias)        76
+#   pub consts/statics                        276
 #   free functions                              4
-#   inherent methods                          208
-#   struct fields                             105
+#   inherent methods                          210
+#   struct fields                             107
 #   enum variants                             208
 #   re-exports                                  4
 #   trait roster entries (type × trait)       237
@@ -23,18 +23,18 @@
 #   auto-trait exceptions                       4
 #
 # per-module pub lines:
-#   (root)                          389
+#   (root)                          393
 #   buffer                          192
 #   cicp                             27
-#   color                            57
+#   color                            60
 #   descriptor                      148
-#   hdr                              16
+#   hdr                              17
 #   icc                              13
 #   orientation                      11
 #   pixel_types                       9
 #   policy                           25
 
-## items (760 lines)
+## items (765 lines)
 
 pub mod zenpixels
 pub use At
@@ -190,6 +190,7 @@ pub const fn color::NamedProfile::from_primaries_transfer(descriptor::ColorPrima
 pub const fn color::NamedProfile::to_cicp(self) -> core::option::Option<cicp::Cicp> [also: (root)]
 pub const fn color::NamedProfile::to_primaries_transfer(self) -> (descriptor::ColorPrimaries, descriptor::TransferFunction) [also: (root)]
 pub color::ColorContext::cicp: core::option::Option<cicp::Cicp>
+pub color::ColorContext::diffuse_white: core::option::Option<hdr::DiffuseWhite>
 pub color::ColorContext::icc: core::option::Option<alloc::sync::Arc<[u8]>>
 pub fn color::ColorContext::as_profile_source(&self) -> core::option::Option<color::ColorProfileSource<'_>>
 pub fn color::ColorContext::from_cicp(cicp::Cicp) -> Self
@@ -197,6 +198,7 @@ pub fn color::ColorContext::from_icc(impl core::convert::Into<alloc::sync::Arc<[
 pub fn color::ColorContext::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
 pub fn color::ColorContext::is_srgb(&self) -> bool
 pub fn color::ColorContext::transfer_function(&self) -> descriptor::TransferFunction
+pub fn color::ColorContext::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
 pub color::ColorOrigin::cicp: core::option::Option<cicp::Cicp>
 pub color::ColorOrigin::color_authority: color::ColorAuthority
 pub color::ColorOrigin::icc: core::option::Option<alloc::sync::Arc<[u8]>>
@@ -375,10 +377,9 @@ pub hdr::ContentLightLevel::max_content_light_level: u16
 pub hdr::ContentLightLevel::max_frame_average_light_level: u16
 pub fn hdr::ContentLightLevel::measure(buffer::PixelSlice<'_>, hdr::DiffuseWhite) -> core::option::Option<Self>
 pub const fn hdr::ContentLightLevel::new(u16, u16) -> Self [also: (root)]
-pub struct hdr::DiffuseWhite(_)
 pub const hdr::DiffuseWhite::BT2408: Self
-pub const fn hdr::DiffuseWhite::new(f32) -> Self
-pub const fn hdr::DiffuseWhite::nits(self) -> f32
+pub const fn hdr::DiffuseWhite::new(f32) -> Self [also: (root)]
+pub const fn hdr::DiffuseWhite::nits(self) -> f32 [also: (root)]
 pub hdr::MasteringDisplay::max_luminance: f32
 pub hdr::MasteringDisplay::min_luminance: f32
 pub hdr::MasteringDisplay::primaries_xy: [[f32; 2]; 3]
@@ -611,8 +612,9 @@ pub fn cicp::Cicp::matrix_coefficients_name(u8) -> &'static str
 pub fn cicp::Cicp::to_descriptor(&self, descriptor::PixelFormat) -> descriptor::PixelDescriptor
 pub fn cicp::Cicp::transfer_characteristics_name(u8) -> &'static str
 pub fn cicp::Cicp::transfer_function_enum(&self) -> descriptor::TransferFunction
-pub struct ColorContext [also: color]
+#[non_exhaustive] pub struct ColorContext [also: color]
 pub ColorContext::cicp: core::option::Option<cicp::Cicp>
+pub ColorContext::diffuse_white: core::option::Option<hdr::DiffuseWhite>
 pub ColorContext::icc: core::option::Option<alloc::sync::Arc<[u8]>>
 pub fn color::ColorContext::as_profile_source(&self) -> core::option::Option<color::ColorProfileSource<'_>>
 pub fn color::ColorContext::from_cicp(cicp::Cicp) -> Self
@@ -620,6 +622,7 @@ pub fn color::ColorContext::from_icc(impl core::convert::Into<alloc::sync::Arc<[
 pub fn color::ColorContext::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
 pub fn color::ColorContext::is_srgb(&self) -> bool
 pub fn color::ColorContext::transfer_function(&self) -> descriptor::TransferFunction
+pub fn color::ColorContext::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
 #[non_exhaustive] pub struct ColorOrigin [also: color]
 pub ColorOrigin::cicp: core::option::Option<cicp::Cicp>
 pub ColorOrigin::color_authority: color::ColorAuthority
@@ -641,6 +644,8 @@ pub ConvertOptions::clip_out_of_gamut: bool
 pub ConvertOptions::depth_policy: policy::DepthPolicy
 pub ConvertOptions::gray_expand: policy::GrayExpand
 pub ConvertOptions::luma: core::option::Option<policy::LumaCoefficients>
+pub struct DiffuseWhite(_) [also: hdr]
+pub const hdr::DiffuseWhite::BT2408: Self
 #[repr(C)] pub struct GrayAlpha16 [also: pixel_types]
 pub GrayAlpha16::a: u16
 pub GrayAlpha16::v: u16
@@ -811,7 +816,7 @@ buffer::PixelSliceMut<'a>: From<buffer::PixelSliceMut<'a, P>>
 buffer::Rgbx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 cicp::Cicp: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 color::ColorAuthority: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
-color::ColorContext: Clone, Debug, Eq, PartialEq
+color::ColorContext: Clone, Debug, Default, PartialEq
 color::ColorOrigin: Clone, Debug, Eq, PartialEq
 color::ColorProfileSource<'a>: Clone, Debug, Eq, PartialEq
 color::ColorProvenance: Clone, Copy, Debug, Eq, Hash, PartialEq

@@ -108,7 +108,7 @@ pub use color::{
 };
 
 // Re-export HDR metadata types at crate root.
-pub use hdr::{ContentLightLevel, MasteringDisplay};
+pub use hdr::{ContentLightLevel, DiffuseWhite, MasteringDisplay};
 
 // Re-export GrayAlpha pixel types at crate root.
 pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};

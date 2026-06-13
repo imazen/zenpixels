@@ -9,6 +9,7 @@
 //! pixel descriptor itself, not as a separate enum.
 
 use crate::cicp::Cicp;
+use crate::hdr::DiffuseWhite;
 use crate::{ColorPrimaries, TransferFunction};
 use alloc::sync::Arc;
 
@@ -304,12 +305,25 @@ pub enum ColorAuthority {
 /// shareable context. Carried via `Arc` on pixel slices and pipeline
 /// sources so color metadata travels with pixel data without per-strip
 /// cloning overhead.
-#[derive(Clone, Debug, PartialEq, Eq)]
+// `Eq` dropped because `DiffuseWhite` wraps `f32` (no `Eq`); `PartialEq`
+// is retained. `#[non_exhaustive]` added so future HDR carrier fields
+// (mastering display, content light level) extend this without another break.
+// `Default` (all fields `None`) is the empty "no color signaling" context —
+// the only way to construct one now that the struct literal is sealed.
+#[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct ColorContext {
     /// Raw ICC profile bytes.
     pub icc: Option<Arc<[u8]>>,
     /// CICP parameters (ITU-T H.273).
     pub cicp: Option<Cicp>,
+    /// Absolute-luminance anchor: the cd/m² (nits) that a relative-linear
+    /// sample value of `1.0` represents. `None` means unsignaled — consumers
+    /// default to [`DiffuseWhite::BT2408`] (203 nits, the cross-vendor
+    /// convention). Travels with the pixels so the HDR converter can map
+    /// relative-linear light to absolute luminance for PQ/HLG encode and
+    /// tone-mapping.
+    pub diffuse_white: Option<DiffuseWhite>,
 }
 
 impl ColorContext {
@@ -318,6 +332,7 @@ impl ColorContext {
         Self {
             icc: Some(icc.into()),
             cicp: None,
+            diffuse_white: None,
         }
     }
 
@@ -326,7 +341,21 @@ impl ColorContext {
         Self {
             icc: None,
             cicp: Some(cicp),
+            diffuse_white: None,
         }
+    }
+
+    /// Attach an absolute-luminance anchor — the nits that relative-linear
+    /// `1.0` represents — returning the updated context.
+    ///
+    /// Set this on an HDR working buffer (e.g. after gain-map reconstruction,
+    /// where the anchor is [`DiffuseWhite::BT2408`] = 203) so downstream
+    /// conversion can map relative-linear light to absolute cd/m² for PQ/HLG
+    /// encode and tone-mapping.
+    #[must_use]
+    pub fn with_diffuse_white(mut self, white: DiffuseWhite) -> Self {
+        self.diffuse_white = Some(white);
+        self
     }
 
     /// Create from both ICC and CICP.
@@ -342,6 +371,7 @@ impl ColorContext {
         Self {
             icc: Some(icc.into()),
             cicp: Some(cicp),
+            diffuse_white: None,
         }
     }
 
@@ -602,6 +632,7 @@ mod tests {
         let ctx = ColorContext {
             icc: None,
             cicp: None,
+            diffuse_white: None,
         };
         assert!(ctx.as_profile_source().is_none());
     }
@@ -612,6 +643,23 @@ mod tests {
             ColorContext::from_cicp(Cicp::BT2100_PQ).transfer_function(),
             TransferFunction::Pq
         );
+    }
+
+    #[test]
+    fn color_context_diffuse_white_defaults_none_and_round_trips() {
+        // Unsignaled by default — consumers fall back to BT.2408 (203).
+        assert_eq!(ColorContext::from_cicp(Cicp::BT2100_PQ).diffuse_white, None);
+        assert_eq!(ColorContext::from_icc([0u8; 4]).diffuse_white, None);
+
+        // The anchor round-trips through the builder, and is preserved by Clone.
+        let ctx = ColorContext::from_cicp(Cicp::BT2100_PQ).with_diffuse_white(DiffuseWhite::BT2408);
+        assert_eq!(ctx.diffuse_white, Some(DiffuseWhite::BT2408));
+        assert_eq!(ctx.clone().diffuse_white, Some(DiffuseWhite::BT2408));
+
+        // A custom anchor (e.g. a 100-nit SDR reference) carries through too.
+        let custom =
+            ColorContext::from_cicp(Cicp::BT2100_PQ).with_diffuse_white(DiffuseWhite::new(100.0));
+        assert_eq!(custom.diffuse_white.map(DiffuseWhite::nits), Some(100.0));
     }
 
     #[test]
