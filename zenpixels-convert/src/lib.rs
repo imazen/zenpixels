@@ -511,6 +511,9 @@ pub use load_bearing::{LoadBearingReport, PixelBufferLoadBearingExt, PixelSliceL
 // Re-export HDR types and tone mapping.
 #[cfg(feature = "std")]
 pub use hdr::exposure_tonemap;
+// Anchor-aware HDR PQ quantizer — reads `DiffuseWhite` from the source's
+// `ColorContext` (default BT.2408 = 203); the canonical linear→PQ16 encoder.
+pub use hdr::quantize_to;
 // `HdrMetadata` is re-exported but deprecated (see the `hdr` module); the
 // re-export itself names it, hence the allow.
 #[allow(deprecated)]

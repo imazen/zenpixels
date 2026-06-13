@@ -6,14 +6,14 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpixels-convert.txt 305 lines (supported surface) | zenpixels-convert.features.txt 244 added (features: avx512,cms-moxcms,fast-transpose,icc-db,imgref,pipeline,planar,rgb,serde,std) | zenpixels-convert.internal.txt 53 lines (80 hidden + 0 excluded-feature)
+# files: zenpixels-convert.txt 306 lines (supported surface) | zenpixels-convert.features.txt 244 added (features: avx512,cms-moxcms,fast-transpose,icc-db,imgref,pipeline,planar,rgb,serde,std) | zenpixels-convert.internal.txt 53 lines (80 hidden + 0 excluded-feature)
 
 ## summary
 #
 #   pub modules                                13
 #   pub types (struct/enum/trait/alias)        49
 #   pub consts/statics                         19
-#   free functions                             43
+#   free functions                             45
 #   inherent methods                           93
 #   struct fields                              42
 #   enum variants                              50
@@ -23,21 +23,21 @@
 #   auto-trait exceptions                       2
 #
 # per-module pub lines:
-#   (root)                          145
+#   (root)                          146
 #   adapt                            10
 #   cms                              27
 #   converter                        23
 #   error                            20
 #   ext                              13
 #   gamut                             6
-#   hdr                              17
+#   hdr                              18
 #   icc_profiles                     13
 #   load_bearing                     11
 #   oklab                             9
 #   orient                            3
 #   output                           17
 
-## items (282 lines)
+## items (283 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -317,6 +317,7 @@ pub fn finalize_for_output<C: cms::ColorManagement>(&zenpixels::buffer::PixelBuf
 pub fn finalize_for_output_with(&zenpixels::buffer::PixelBuffer, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelFormat, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<output::EncodeReady, whereat::at::At<error::ConvertError>> [also: output]
 pub fn ideal_format(zenpixels::descriptor::PixelDescriptor, ConvertIntent) -> zenpixels::descriptor::PixelDescriptor
 pub fn negotiate(zenpixels::descriptor::PixelDescriptor, Provenance, impl core::iter::traits::iterator::Iterator<Item = FormatOption>, ConvertIntent) -> core::option::Option<zenpixels::descriptor::PixelDescriptor>
+pub fn quantize_to(zenpixels::buffer::PixelSlice<'_>, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>> [also: hdr]
 pub fn reinhard_inverse(f32) -> f32 [also: hdr]
 pub fn reinhard_tonemap(f32) -> f32 [also: hdr]
 pub fn try_adapt_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: adapt]

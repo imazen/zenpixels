@@ -15,9 +15,9 @@ use whereat::At;
 
 // Re-export metadata types from the core crate.
 pub use zenpixels::hdr::{ContentLightLevel, MasteringDisplay};
-// `DiffuseWhite` is only used by the `pub(crate)` `quantize_to` + its tests;
-// the canonical public home is `zenpixels::hdr::DiffuseWhite`. Not re-exported
-// publicly here (no public convert-crate API takes it).
+// `quantize_to` reads the anchor from the source's `ColorContext`; the
+// canonical public home for the type is `zenpixels::hdr::DiffuseWhite`
+// (reachable through the core crate — not re-exported here).
 use zenpixels::hdr::DiffuseWhite;
 
 /// Describes the HDR characteristics of pixel data.
@@ -156,9 +156,6 @@ pub fn exposure_tonemap(v: f32, exposure: f32) -> f32 {
 // ---------------------------------------------------------------------------
 
 /// Read one native-endian f32 sample from a pixel's bytes.
-// Only reached by the `pub(crate)` `quantize_to` oracle + its tests today;
-// retained alongside it (see `quantize_to` for the rationale).
-#[allow(dead_code)]
 #[inline]
 fn sample_f32(bytes: &[u8], k: usize) -> f32 {
     f32::from_ne_bytes([
@@ -170,36 +167,28 @@ fn sample_f32(bytes: &[u8], k: usize) -> f32 {
 }
 
 /// Quantize relative-linear RGB(A) f32 pixels to a **PQ** HDR target
-/// descriptor (e.g. [`PixelDescriptor::RGB16_BT2100_PQ`]), with `white`
-/// anchoring the relative scale — sample `1.0` = `white` nits
-/// ([`DiffuseWhite::BT2408`] — 203 — is the convention).
+/// descriptor (e.g. [`PixelDescriptor::RGB16_BT2100_PQ`]).
 ///
-/// The transfer (linear → PQ) and depth (f32 → u16) quantization runs through
-/// the conversion pipeline ([`convert_buffer`](crate::adapt::convert_buffer));
-/// this function only supplies the absolute-luminance anchor that the
-/// pipeline's fixed `1.0 = 10000 cd/m²` PQ domain cannot yet express: it
-/// pre-scales by `white / 10000`, clamps to the PQ peak, and drops any alpha
-/// lane.
+/// The absolute-luminance anchor — the nits that sample `1.0` represents — is
+/// read from the source `ColorContext`'s `diffuse_white`, defaulting to
+/// [`DiffuseWhite::BT2408`] (203, the cross-vendor relative-linear convention)
+/// when unsignaled. Attach a custom anchor with
+/// `ColorContext::with_diffuse_white` (e.g. a buffer reconstructed at a
+/// different reference white). The anchor is the one thing the pipeline's fixed
+/// `1.0 = 10000 cd/m²` PQ domain can't yet express; the transfer (linear → PQ)
+/// and depth (f32 → u16) quantization reuse
+/// [`convert_buffer`](crate::adapt::convert_buffer). The anchor scales the
+/// linear samples by `anchor / 10000`, clamps to the PQ peak, and drops any
+/// alpha lane. PQ codes match the f64 ST 2084 oracle within ±1.
 ///
 /// **Primaries are not converted** — the source gamut is signaled as the
-/// target's (feed BT.2020-relative-linear for `RGB16_BT2100_PQ`). This is the
-/// value-only behavior an HDR-corpus encoder wants. Measure CLL separately
-/// with [`ContentLightLevel::measure`].
+/// target's (feed BT.2020-relative-linear for `RGB16_BT2100_PQ`). Measure CLL
+/// separately with [`ContentLightLevel::measure`].
 ///
-/// This is the descriptor-driven successor to the withdrawn `encode_pq16`:
-/// one function for every PQ target, a typed anchor, and CLL decoupled from
-/// the encode. It collapses into a plain `convert_buffer` once an
-/// absolute-luminance field lands on the metadata carrier (rationale:
-/// `docs/hdr-design-survey-2026-06-13.md`).
-///
-/// Kept `pub(crate)` deliberately: no in-tree or sibling consumer encodes
-/// linear→PQ16 today (every PQ16 buffer in the workspace originates from an
-/// already-PQ source), so per the crate's YAGNI policy this is not public
-/// surface. The implementation and its f64-ST-2084 parity tests are retained
-/// as a verified oracle for the day a real consumer (corpus generation /
-/// imageflow HDR encode) arrives — at which point it should be promoted *as*
-/// `convert_buffer` against a carrier that holds the luminance anchor, not as
-/// this standalone function.
+/// The successor to the withdrawn `encode_pq16` (rationale:
+/// `docs/hdr-design-survey-2026-06-13.md`). It collapses fully into
+/// `convert_buffer` once the anchor threads into the PQ/HLG `ConvertStep`s
+/// themselves — tracked as a refinement in the M×N HDR epic (#45).
 ///
 /// # Errors
 ///
@@ -209,15 +198,16 @@ fn sample_f32(bytes: &[u8], k: usize) -> f32 {
 ///   scene-referred anchor differs and is not handled here).
 /// - [`ConvertError::InvalidWidth`] for zero-area input, or any error the
 ///   inner [`convert_buffer`](crate::adapt::convert_buffer) raises.
-// Retained as a tested oracle, not called by non-test code yet (see the doc
-// comment above) — so it reads as dead code in a plain build until a real
-// consumer lands.
-#[allow(dead_code)]
-pub(crate) fn quantize_to(
+pub fn quantize_to(
     px: PixelSlice<'_>,
     target: PixelDescriptor,
-    white: DiffuseWhite,
 ) -> Result<PixelBuffer, At<ConvertError>> {
+    // The anchor travels with the pixels (S1a): read it from the source's
+    // ColorContext, default to the BT.2408 relative-linear convention (203).
+    let white = px
+        .color_context()
+        .and_then(|c| c.diffuse_white)
+        .unwrap_or(DiffuseWhite::BT2408);
     let desc = px.descriptor();
     let channels = match desc.pixel_format() {
         PixelFormat::RgbF32 => 3,
@@ -488,12 +478,7 @@ mod tests {
         // 1.0 @ 203 nits → PQ(203/10000); 10000/203 → PQ(1.0) = code 65535.
         let peak = 10_000.0 / 203.0;
         let buf = rgbf32(&[[1.0; 3], [peak; 3]], 2, 1);
-        let out = quantize_to(
-            buf.as_slice(),
-            PixelDescriptor::RGB16_BT2100_PQ,
-            DiffuseWhite::BT2408,
-        )
-        .unwrap();
+        let out = quantize_to(buf.as_slice(), PixelDescriptor::RGB16_BT2100_PQ).unwrap();
         assert_eq!(out.descriptor(), PixelDescriptor::RGB16_BT2100_PQ);
         let bytes = out.as_slice().as_strided_bytes();
         let code = |i: usize| u16::from_ne_bytes([bytes[2 * i], bytes[2 * i + 1]]);
@@ -508,12 +493,7 @@ mod tests {
         let values = [0.001f32, 0.01, 0.1, 0.5, 1.0, 2.0, 8.0, 20.0, 49.0];
         let pixels: Vec<[f32; 3]> = values.iter().map(|&v| [v; 3]).collect();
         let buf = rgbf32(&pixels, values.len() as u32, 1);
-        let out = quantize_to(
-            buf.as_slice(),
-            PixelDescriptor::RGB16_BT2100_PQ,
-            DiffuseWhite::BT2408,
-        )
-        .unwrap();
+        let out = quantize_to(buf.as_slice(), PixelDescriptor::RGB16_BT2100_PQ).unwrap();
         let bytes = out.as_slice().as_strided_bytes();
         for (i, &v) in values.iter().enumerate() {
             let got = i64::from(u16::from_ne_bytes([bytes[6 * i], bytes[6 * i + 1]]));
@@ -530,12 +510,7 @@ mod tests {
     fn quantize_to_rejects_non_pq_target_and_non_linear_src() {
         let buf = rgbf32(&[[0.5; 3]], 1, 1);
         // HLG target → NoPath (anchor semantics differ).
-        let err = quantize_to(
-            buf.as_slice(),
-            PixelDescriptor::RGB16_BT2100_HLG,
-            DiffuseWhite::BT2408,
-        )
-        .unwrap_err();
+        let err = quantize_to(buf.as_slice(), PixelDescriptor::RGB16_BT2100_HLG).unwrap_err();
         assert!(matches!(*err.error(), ConvertError::NoPath { .. }));
         // Non-linear source → UnsupportedTransfer.
         let srgb = PixelDescriptor::RGBF32_LINEAR.with_transfer(TransferFunction::Srgb);
@@ -544,13 +519,28 @@ mod tests {
             d.extend_from_slice(&c.to_ne_bytes());
         }
         let nb = PixelBuffer::from_vec(d, 1, 1, srgb).unwrap();
+        assert!(quantize_to(nb.as_slice(), PixelDescriptor::RGB16_BT2100_PQ).is_err());
+    }
+
+    #[test]
+    fn quantize_to_reads_anchor_from_color_context() {
+        use alloc::sync::Arc;
+        use zenpixels::{Cicp, ColorContext};
+        // A 100-nit anchor on the ColorContext (not the 203 default) must
+        // change the PQ scale — proving the anchor travels with the pixels.
+        let buf = rgbf32(&[[1.0; 3]], 1, 1).with_color_context(Arc::new(
+            ColorContext::from_cicp(Cicp::BT2100_PQ).with_diffuse_white(DiffuseWhite::new(100.0)),
+        ));
+        let out = quantize_to(buf.as_slice(), PixelDescriptor::RGB16_BT2100_PQ).unwrap();
+        let bytes = out.as_slice().as_strided_bytes();
+        let got = i64::from(u16::from_ne_bytes([bytes[0], bytes[1]]));
+        let want = (pq_oracle(100.0 / 10_000.0) * 65535.0).round() as i64;
         assert!(
-            quantize_to(
-                nb.as_slice(),
-                PixelDescriptor::RGB16_BT2100_PQ,
-                DiffuseWhite::BT2408
-            )
-            .is_err()
+            (got - want).abs() <= 1,
+            "100-nit anchor: got {got}, want {want}"
         );
+        // The 100-nit result differs from the 203-nit default for the same input.
+        let want_203 = (pq_oracle(203.0 / 10_000.0) * 65535.0).round() as i64;
+        assert_ne!(want, want_203);
     }
 }

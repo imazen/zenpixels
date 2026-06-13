@@ -156,6 +156,14 @@
 
 ### zenpixels-convert — added
 
+- **`hdr::quantize_to(PixelSlice, target: PixelDescriptor) -> Result<PixelBuffer>`**
+  — anchor-aware linear→PQ16 quantizer, the canonical successor to the
+  withdrawn `encode_pq16`. Reads the absolute-luminance anchor from the
+  source's `ColorContext::diffuse_white` (S1a; default `DiffuseWhite::BT2408`
+  = 203), pre-scales by `anchor / 10000`, then reuses `convert_buffer` for the
+  linear→PQ + f32→u16 quantization. PQ codes match the f64 ST 2084 oracle
+  within ±1; CLL is decoupled (`ContentLightLevel::measure`). Real consumer:
+  `~/work/hdr-corpus-convert` (M×N HDR epic #45, slice S2).
 - Property/oracle tests for the tone-map helpers (output range,
   monotonicity, f64-oracle agreement, round-trip relative-error bound) and
   a pipeline pin in `tests/output_finalize.rs` that a PQ source finalized
@@ -180,18 +188,17 @@
   `docs/hdr-design-survey-2026-06-13.md`.
 
   (The in-development `hdr::compute_content_light_level` / `encode_pq16` /
-  `REFERENCE_DIFFUSE_WHITE_NITS` — never released — were withdrawn. The
-  bare-`f32` anchor the prior art uniformly rejects is replaced by the typed
-  public `DiffuseWhite` + the `ContentLightLevel::measure` constructor (both
-  added above). The encode side is **not** re-exposed: an audit of the whole
-  `~/work/zen/` tree found **no consumer that encodes linear→PQ16** — every
-  PQ16 buffer originates from an already-PQ source — so per the crate's YAGNI
-  policy a public PQ encoder is not shipped. The verified linear→PQ16 path
-  (f64-ST-2084 parity, ±1) is retained `pub(crate)` as `hdr::quantize_to`, a
-  tested oracle for the day a real consumer arrives — at which point the
-  longer-term move (a luminance anchor on `zencodec::Metadata`, so the encode
-  collapses into a plain `convert_buffer`) supersedes it; that is 0.3.0 design
-  work, see `docs/hdr-design-survey-2026-06-13.md`.)
+  `REFERENCE_DIFFUSE_WHITE_NITS` — never released — were withdrawn and
+  replaced: the bare-`f32` anchor the prior art uniformly rejects became the
+  typed public `DiffuseWhite` + the `ContentLightLevel::measure` constructor,
+  and the encode is the anchor-aware `hdr::quantize_to` above, which reads its
+  anchor from `ColorContext` (S1a) rather than a hand-passed arg. The real
+  consumer — missed in the first `~/work/zen/`-only audit — is
+  `~/work/hdr-corpus-convert` (its own repo one level up), which encodes
+  gain-map sources to 16-bit PQ PNG. The longer-term move (thread the anchor
+  into the PQ/HLG `ConvertStep`s so the encode collapses fully into
+  `convert_buffer`) is tracked in epic #45; see
+  `docs/hdr-design-survey-2026-06-13.md`.)
 
 ## [0.2.13] - 2026-06-11
 
