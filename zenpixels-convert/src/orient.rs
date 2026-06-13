@@ -3784,6 +3784,107 @@ mod tests {
         }
     }
 
+    /// Pathological misalignment: force the source pixel bytes to begin at a
+    /// chosen address mod 64 (1, 3, 7, 13, 31, 63 — every "bad" offset for
+    /// 16/32/64-byte SIMD loads) over odd, non-power-of-two byte strides that
+    /// rotate the per-row misalignment, and assert byte-identical output to
+    /// the independent oracle. Every load/store in the kernels is an unaligned
+    /// variant (`loadu` / `storeu` / `vld1` / `vst1`), so this must hold; the
+    /// test proves it and gates against any future aligned-load regression
+    /// (an aligned load at one of these addresses would fault on x86, not
+    /// merely corrupt). The misalignment is constructed from the actual
+    /// allocation address, so it is independent of how the allocator aligns
+    /// `Vec<u8>`.
+    #[test]
+    fn pathological_misaligned_sources_vs_oracle() {
+        let descs = [
+            PixelDescriptor::GRAY8,
+            PixelDescriptor::GRAYA8,
+            PixelDescriptor::RGB8,
+            PixelDescriptor::RGBA8,
+            PixelDescriptor::RGB16,
+            PixelDescriptor::RGBA16,
+            PixelDescriptor::RGBF32,
+            PixelDescriptor::RGBAF32,
+        ];
+        // Targets are SIMD-misaligned (never a multiple of 16/32/64) but
+        // respect each format's channel alignment (`min_alignment` = channel
+        // byte size: 1 for u8, 2 for u16, 4 for f32) — which `PixelSlice::new`
+        // enforces, so feeding a sub-channel-aligned pointer is an API misuse,
+        // not a kernel concern. Picked per descriptor below.
+        let dims = [
+            (1u32, 1u32),
+            (7, 7),
+            (8, 8),
+            (16, 16),
+            (17, 17),
+            (33, 31),
+            (31, 33),
+            (64, 17),
+            (17, 64),
+            (65, 9),
+        ];
+        let pad_px = [1usize, 3]; // byte stride = (w + pad) * bpp → non-power-of-two
+        for &desc in &descs {
+            let bpp = desc.bytes_per_pixel();
+            let targets: &[usize] = match desc.min_alignment() {
+                1 => &[1, 3, 7, 13, 31, 63],
+                2 => &[2, 6, 14, 30, 62],
+                4 => &[4, 12, 28, 60],
+                _ => unreachable!("channel alignment is 1/2/4"),
+            };
+            for &(w, h) in &dims {
+                let tight_stride = w as usize * bpp;
+                let tight = fill(tight_stride * h as usize);
+                for &pp in &pad_px {
+                    let stride = (w as usize + pp) * bpp;
+                    let need = stride * h as usize;
+                    for &target in targets {
+                        // Place the pixel data so its first byte lands at an
+                        // address ≡ target (mod 64), whatever the base align.
+                        let mut raw = alloc::vec![0xC3u8; need + 64];
+                        let base = raw.as_ptr() as usize;
+                        let startoff = ((64 - (base % 64)) + target) % 64;
+                        for y in 0..h as usize {
+                            let d = startoff + y * stride;
+                            raw[d..d + tight_stride]
+                                .copy_from_slice(&tight[y * tight_stride..][..tight_stride]);
+                        }
+                        let addr = raw.as_ptr() as usize + startoff;
+                        assert_eq!(addr % 64, target, "misalignment construction");
+                        assert_eq!(
+                            addr % desc.min_alignment(),
+                            0,
+                            "channel alignment must hold (API precondition)"
+                        );
+                        assert_ne!(addr % 16, 0, "must be SIMD-misaligned to be pathological");
+                        for &o in &Orientation::ALL {
+                            let (ow, oh, want) = naive_oracle(&tight, w, h, desc, o);
+                            let view = &raw[startoff..startoff + need];
+                            let s = PixelSlice::new(view, w, h, stride, desc).unwrap();
+                            let got = apply_orientation(s, o);
+                            assert_eq!(
+                                (got.width(), got.height()),
+                                (ow, oh),
+                                "dims target={target} pad={pp} {o:?} {desc:?} {w}x{h}"
+                            );
+                            let gs = got.as_slice();
+                            for y in 0..oh {
+                                let exp =
+                                    &want[y as usize * ow as usize * bpp..][..ow as usize * bpp];
+                                assert_eq!(
+                                    gs.row(y),
+                                    exp,
+                                    "misaligned target={target} pad={pp} {o:?} {desc:?} {w}x{h} row {y}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn into_writes_caller_buffer_and_is_reusable() {
         // One target buffer, reused across four transposing orientations (all
