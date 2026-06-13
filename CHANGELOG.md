@@ -10,6 +10,8 @@
 
 - (none currently queued)
 
+## [0.2.14] - 2026-06-13
+
 ### Workspace — build
 
 - Public-API snapshots migrated to the `zenutils-apidoc` 0.1.0 runner package

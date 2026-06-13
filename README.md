@@ -10,10 +10,10 @@ Two crates: **zenpixels** (types, buffers, metadata) and **zenpixels-convert** (
 
 ```toml
 # Types only — for codec crates
-zenpixels = "0.2.13"
+zenpixels = "0.2.14"
 
 # Types + conversion — for processing pipelines
-zenpixels-convert = "0.2.13"
+zenpixels-convert = "0.2.14"
 ```
 
 ## Quick start

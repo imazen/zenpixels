@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpixels-convert.txt 308 lines (supported surface) | zenpixels-convert.features.txt 244 added (features: avx512,cms-moxcms,icc-db,imgref,pipeline,planar,rgb,serde,std) | zenpixels-convert.internal.txt 52 lines (79 hidden + 0 excluded-feature)
+# files: zenpixels-convert.txt 308 lines (supported surface) | zenpixels-convert.features.txt 244 added (features: avx512,cms-moxcms,fast-transpose,icc-db,imgref,pipeline,planar,rgb,serde,std) | zenpixels-convert.internal.txt 53 lines (80 hidden + 0 excluded-feature)
 
 ## summary
 #

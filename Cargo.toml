@@ -9,7 +9,7 @@ exclude = ["apidoc", "benchmarks/transpose-shootout"]
 resolver = "2"
 
 [workspace.dependencies]
-zenpixels = { path = "zenpixels", version = "0.2.13", default-features = false }
+zenpixels = { path = "zenpixels", version = "0.2.14", default-features = false }
 
 [workspace.package]
 version = "0.2.11"

@@ -11,7 +11,7 @@
 #
 #   pub modules                                 3
 #   pub types (struct/enum/trait/alias)         2
-#   free functions                              8
+#   free functions                              9
 #   inherent methods                           18
 #   struct fields                               4
 #   trait roster entries (type × trait)        28
@@ -24,10 +24,10 @@
 #   __trace_ops                       2
 #   cms                               2
 #   icc_profiles                      1
-#   orient                            1
+#   orient                            2
 #   pipeline                          2
 
-## items (35 lines)
+## items (36 lines)
 
 pub fn ConversionCost::assert_fields_are_eq(&self)
 pub fn ConvertIntent::assert_fields_are_eq(&self)
@@ -53,6 +53,7 @@ pub fn cms::ColorPriority::assert_fields_are_eq(&self)
 pub fn cms::RenderingIntent::assert_fields_are_eq(&self)
 pub fn icc_profiles::SynthesizedIcc::assert_fields_are_eq(&self)
 pub fn orient::__bench_apply_orientation_scalar(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation) -> zenpixels::buffer::PixelBuffer
+pub fn orient::__bench_apply_orientation_staged(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), error::ConvertError>
 pub fn pipeline::op_format::OpCategory::assert_fields_are_eq(&self)
 pub fn pipeline::path::LossBucket::assert_fields_are_eq(&self)
 pub mod __bench_scan

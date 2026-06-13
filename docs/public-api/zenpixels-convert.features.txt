@@ -1,5 +1,5 @@
 # zenpixels-convert public API — additions from non-default features
-# features: avx512,cms-moxcms,icc-db,imgref,pipeline,planar,rgb,serde,std
+# features: avx512,cms-moxcms,fast-transpose,icc-db,imgref,pipeline,planar,rgb,serde,std
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
