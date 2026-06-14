@@ -64,16 +64,27 @@ fn nits_to_u16(nits: f64) -> u16 {
     (nits + 0.5) as u16
 }
 
-/// Read one native-endian f32 sample from a pixel's bytes (no alignment
-/// assumption, per the `PixelSlice` endianness contract).
+/// Reduce one row of `N`-channel f32 pixels to
+/// `(max, sum)` of the per-pixel `max(R, G, B)`.
+///
+/// `N` is the channel count (3 = `Rgb`, 4 = `Rgba`); only the first three
+/// lanes are read, so any alpha is ignored. Each channel is folded from `0.0`,
+/// so `f32::max`'s non-NaN-propagating semantics drop NaN and negative samples.
+/// `chunk` is reborrowed as a fixed-size `&[f32; N]` so the bounds checks fall
+/// away and LLVM can vectorize the reduction. The sum accumulates in `f64`:
+/// a 4K frame is ~8M pixels, beyond f32's precision for a running total.
 #[inline]
-fn sample_f32(bytes: &[u8], k: usize) -> f32 {
-    f32::from_ne_bytes([
-        bytes[4 * k],
-        bytes[4 * k + 1],
-        bytes[4 * k + 2],
-        bytes[4 * k + 3],
-    ])
+fn row_max_sum<const N: usize>(row: &[f32]) -> (f32, f64) {
+    let mut row_max = 0.0f32;
+    let mut row_sum = 0.0f64;
+    for chunk in row.chunks_exact(N) {
+        // `chunks_exact(N)` yields exactly-`N` slices — the conversion is infallible.
+        let px: &[f32; N] = chunk.try_into().unwrap();
+        let m = 0.0f32.max(px[0]).max(px[1]).max(px[2]);
+        row_max = row_max.max(m);
+        row_sum += f64::from(m);
+    }
+    (row_max, row_sum)
 }
 
 /// HDR content light level metadata (CEA-861.3 / CTA-861-H).
@@ -111,8 +122,17 @@ impl ContentLightLevel {
     /// ignored; strided rows are handled.
     ///
     /// Returns `None` if the descriptor is not relative-linear
-    /// `RgbF32`/`RgbaF32` (the caller, having produced the linear buffer,
-    /// knows its format). Zero-area input yields `Some(0, 0)`.
+    /// `RgbF32`/`RgbaF32`. This is deliberate, not a missing case: cd/m² is
+    /// only defined in **linear light**, so a transfer function would have to
+    /// be inverted first — and inverting one (PQ/HLG/sRGB → linear) is the
+    /// conversion pipeline's job, which the foundational `zenpixels` crate has
+    /// no dependency on. To measure an integer or non-linear HDR buffer,
+    /// linearize it to `RgbaF32` first (`zenpixels_convert::convert_buffer`),
+    /// then call this. Zero-area input yields `Some(0, 0)`.
+    ///
+    /// `RgbF32` and `RgbaF32` share one reduction (generic over the channel
+    /// count); the inner loop reads whole f32s from the channel-aligned buffer
+    /// so it vectorizes rather than decoding sample-by-sample.
     #[must_use]
     pub fn measure(px: PixelSlice<'_>, white: DiffuseWhite) -> Option<Self> {
         let desc = px.descriptor();
@@ -132,24 +152,29 @@ impl ContentLightLevel {
         let stride = px.stride();
         let bytes = px.as_strided_bytes();
         let row_len = w * channels * 4;
-        let wn = f64::from(white.nits());
 
-        let mut max_nits = 0.0f64;
-        let mut sum_max_nits = 0.0f64;
+        // Reduce in relative-linear units, then scale by the anchor once at the
+        // end — ∑(mᵢ·w) = (∑mᵢ)·w, fewer multiplies for the same f64 result.
+        let mut max_lin = 0.0f32;
+        let mut sum_lin = 0.0f64;
         for row in 0..h {
             let row_bytes = &bytes[row * stride..row * stride + row_len];
-            for pxl in row_bytes.chunks_exact(channels * 4) {
-                // Fold from 0.0 so NaN and negative samples drop out.
-                let m = 0.0f32
-                    .max(sample_f32(pxl, 0))
-                    .max(sample_f32(pxl, 1))
-                    .max(sample_f32(pxl, 2));
-                let nits = f64::from(m) * wn;
-                max_nits = max_nits.max(nits);
-                sum_max_nits += nits;
-            }
+            // f32 buffers are channel-aligned (the `PixelBuffer` alignment
+            // invariant), and `row_len` is a multiple of 4, so this cast never
+            // straddles a sample — and reading whole f32s lets the reduction
+            // vectorize, unlike per-byte `from_ne_bytes`.
+            let floats: &[f32] = bytemuck::cast_slice(row_bytes);
+            let (row_max, row_sum) = if channels == 3 {
+                row_max_sum::<3>(floats)
+            } else {
+                row_max_sum::<4>(floats)
+            };
+            max_lin = max_lin.max(row_max);
+            sum_lin += row_sum;
         }
-        let fall = sum_max_nits / (w as f64 * h as f64);
+        let wn = f64::from(white.nits());
+        let max_nits = f64::from(max_lin) * wn;
+        let fall = sum_lin / (w as f64 * h as f64) * wn;
         Some(Self::new(nits_to_u16(max_nits), nits_to_u16(fall)))
     }
 }
@@ -235,6 +260,30 @@ mod tests {
         let cll = ContentLightLevel::measure(buf.as_slice(), DiffuseWhite::BT2408).unwrap();
         assert_eq!(cll.max_content_light_level, 406);
         assert_eq!(cll.max_frame_average_light_level, 305);
+    }
+
+    #[test]
+    fn measure_handles_stride_and_ignores_padding() {
+        use crate::PixelSlice;
+        // 2×2 RGB f32: 6 real f32/row, padded to 9 f32/row (36-byte stride, a
+        // multiple of the 12-byte pixel). The padding holds a 1e9 sentinel — if
+        // a row cast ever ran past `width*bpp`, MaxCLL would explode to ~2e11.
+        let (w, h, row_floats) = (2u32, 2u32, 9usize);
+        let mut data = alloc::vec![1.0e9f32; row_floats * h as usize];
+        let pixels = [[0.5f32; 3], [1.0; 3], [2.0; 3], [0.25; 3]];
+        for (i, p) in pixels.iter().enumerate() {
+            let base = (i / w as usize) * row_floats + (i % w as usize) * 3;
+            data[base..base + 3].copy_from_slice(p);
+        }
+        // `Vec<f32>` is f32-aligned, so the byte view satisfies the slice's
+        // alignment contract; stride 40 is a multiple of the f32 size.
+        let bytes: &[u8] = bytemuck::cast_slice(&data);
+        let px =
+            PixelSlice::new(bytes, w, h, row_floats * 4, PixelDescriptor::RGBF32_LINEAR).unwrap();
+        let cll = ContentLightLevel::measure(px, DiffuseWhite::BT2408).unwrap();
+        // Peak max(R,G,B) = 2.0 → 406; FALL = avg(0.5,1,2,0.25)·203 = 190.3 → 190.
+        assert_eq!(cll.max_content_light_level, 406);
+        assert_eq!(cll.max_frame_average_light_level, 190);
     }
 
     #[test]
