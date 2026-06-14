@@ -11,11 +11,15 @@
 - **Remove `zenpixels-convert::hdr::HdrMetadata`** (struct + methods) and its
   re-export — deprecated in 0.2.14; superseded by carrying `ContentLightLevel`
   / `MasteringDisplay` directly (or `zencodec::Metadata` at the codec layer).
-- **Retype `OutputMetadata::hdr`** — drop the `Option<HdrMetadata>` field;
-  carry HDR as sibling `content_light_level: Option<ContentLightLevel>` /
-  `mastering_display: Option<MasteringDisplay>` (transfer already rides on the
-  output descriptor), matching the universal prior-art split. Wire it at the
-  same time (currently unwired, `output.rs` `TODO(0.3.0)`).
+- **Drop `OutputMetadata::hdr`** — remove the unwired `Option<HdrMetadata>`
+  field; **nothing replaces it.** `OutputMetadata { icc, cicp }` is correct by
+  design: it is the lowering target of a codec's *color* plan
+  (`zencodec::ColorEmitPlan` is itself `{ cicp, icc }`) and mirrors that shape.
+  The HDR content descriptors — content light level, mastering display, and the
+  `diffuse_white` anchor — are not color-profile data; they ride the
+  codec-boundary carrier `zencodec::Metadata`, which already carries all three
+  as sibling fields. (`HdrMetadata`'s zero consumers across `~/work`, and
+  zencodec routing around it from the start, confirm it was never on that path.)
 - **Deduplicate `ContentLightLevel` / `MasteringDisplay`** — defined twice
   (`zenpixels::hdr` and `zencodec::info`, sibling crates). Make `zenpixels`
   the single canonical home and have `zencodec` re-export, so codecs stop

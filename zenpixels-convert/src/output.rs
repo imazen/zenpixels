@@ -45,9 +45,6 @@
 //! if let Some(cicp) = &ready.metadata().cicp {
 //!     encoder.write_cicp(cicp)?;
 //! }
-//! if let Some(hdr) = &ready.metadata().hdr {
-//!     encoder.write_hdr_metadata(hdr)?;
-//! }
 //! ```
 //!
 //! # Output profiles
@@ -113,6 +110,31 @@ pub enum OutputProfile {
 ///
 /// Generated atomically by [`finalize_for_output`] to guarantee that
 /// the metadata matches the pixel values.
+///
+/// # Not the same as `ColorContext` / `ColorOrigin`
+///
+/// Three carriers touch color and overlap on `icc` / `cicp`, but each answers
+/// a different question and lives at a different point in the pipeline:
+///
+/// - [`ColorOrigin`] — *how the source file described its color* (provenance +
+///   which field is authoritative). Immutable, set once at decode, consulted
+///   for re-encode decisions.
+/// - [`ColorContext`](zenpixels::ColorContext) — *what the working pixels are
+///   right now* (the profile needed to interpret their values: `icc` / `cicp`
+///   / `diffuse_white`). Rides on the `PixelSlice` via `Arc` and is rewritten
+///   as conversions change the pixels. It deliberately carries **no** content
+///   light level / mastering display — those don't change how a value is
+///   interpreted, only how a display should present it.
+/// - `OutputMetadata` (this type) — *the color blocks the encoder writes into
+///   the container* (`icc` / `cicp`). It is the lowering target of a codec's
+///   color plan (`zencodec::ColorEmitPlan` is itself just `{ cicp, icc }`) and
+///   mirrors that shape. Its reason to exist as a distinct type is the
+///   [`EncodeReady`] atomicity guarantee: the converted bytes and the embedded
+///   color are produced together and cannot drift apart — which a re-used
+///   `ColorContext` would not give. HDR content descriptors (content light
+///   level, mastering display, `diffuse_white`) are deliberately **not** here:
+///   they are not color-profile data and ride the codec-boundary metadata
+///   carrier (`zencodec::Metadata`, which already holds all three) instead.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 // The `hdr` field references the deprecated `HdrMetadata`; suppress the
@@ -126,16 +148,27 @@ pub struct OutputMetadata {
     pub cicp: Option<Cicp>,
     /// HDR metadata to embed (content light level, mastering display), if any.
     ///
-    /// **Deprecated** (never wired — see the `TODO(0.3.0)` notes in this
-    /// module): the bundled [`HdrMetadata`](crate::hdr::HdrMetadata) carrier is
-    /// being removed. At 0.3.0 this becomes sibling
-    /// `content_light_level: Option<ContentLightLevel>` /
-    /// `mastering_display: Option<MasteringDisplay>` fields (transfer already
-    /// rides on the output descriptor). See `CHANGELOG.md`
+    /// **Deprecated and never wired** — `finalize_for_output` always sets it to
+    /// `None`. The bundled [`HdrMetadata`](crate::hdr::HdrMetadata) carrier is
+    /// being removed at 0.3.0 (it has frozen public fields and bundles
+    /// `transfer`, which the prior art keeps on the descriptor).
+    ///
+    /// **What replaces it: nothing — and that is correct by design, not a
+    /// stub.** Removing this leaves `OutputMetadata { icc, cicp }`, which
+    /// mirrors the *color* plan a codec lowers here (`zencodec::ColorEmitPlan`
+    /// is itself just `{ cicp, icc }`). The HDR content descriptors — content
+    /// light level, mastering display, and the `diffuse_white` /
+    /// `intensity_target` anchor — are **not** color-profile data: they ride
+    /// the codec-boundary metadata carrier instead. `zencodec::Metadata`
+    /// already carries all three as sibling fields (the un-bundled shape this
+    /// `HdrMetadata` bundle should have been), threaded by its metadata policy,
+    /// and the codec embeds them from there. Nothing ever read them off this
+    /// field — `HdrMetadata` had zero consumers across `~/work`, and zencodec
+    /// routed around it from the start. See `CHANGELOG.md`
     /// "QUEUED BREAKING CHANGES".
     #[deprecated(
         since = "0.2.14",
-        note = "unwired bundled HDR carrier; becomes sibling content_light_level / mastering_display fields in 0.3.0."
+        note = "unwired bundled HDR carrier; replaced by sibling content_light_level / mastering_display fields when the encoder path that populates them lands (0.3.0)."
     )]
     pub hdr: Option<HdrMetadata>,
 }
