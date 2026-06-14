@@ -53,10 +53,15 @@ impl Default for DiffuseWhite {
     }
 }
 
-/// Round nits to a CTA-861.3 `u16` code (saturating).
+/// Round non-negative nits to a CTA-861.3 `u16` code (saturating).
+///
+/// `nits` is a luminance — always `≥ 0` at the call sites. Round-half-up is
+/// then `(nits + 0.5)` truncated, and the float→int `as` cast saturates to
+/// `[0, u16::MAX]` (mapping negatives and NaN to 0). Done by hand because
+/// `f64::round` lives in `std` (libm) and this crate builds `no_std`.
 #[inline]
 fn nits_to_u16(nits: f64) -> u16 {
-    nits.round().clamp(0.0, 65535.0) as u16
+    (nits + 0.5) as u16
 }
 
 /// Read one native-endian f32 sample from a pixel's bytes (no alignment

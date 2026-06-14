@@ -45,6 +45,14 @@
   PQ/HLG encode and tone-mapping. `None` = unsignaled (consumers default to
   `DiffuseWhite::BT2408`, 203). First slice of the M×N HDR pipeline (#45).
 
+### zenpixels — fixed
+
+- **`no_std` build of `ContentLightLevel::measure`** — `nits_to_u16` called
+  `f64::round`, which lives in `std` (libm); the crate is `no_std`, so
+  `--no-default-features` failed to compile (`E0599`). Replaced with a
+  saturating round-half-up on the non-negative nits domain — byte-identical
+  output, no libm. Caught by the feature-powerset CI job before release.
+
 #### Changed (BREAKING, tolerated in 0.2.x)
 
 - **`ColorContext` is now `#[non_exhaustive]` and no longer derives `Eq`**
