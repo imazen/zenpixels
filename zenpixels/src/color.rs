@@ -305,12 +305,14 @@ pub enum ColorAuthority {
 /// shareable context. Carried via `Arc` on pixel slices and pipeline
 /// sources so color metadata travels with pixel data without per-strip
 /// cloning overhead.
-// `Eq` dropped because `DiffuseWhite` wraps `f32` (no `Eq`); `PartialEq`
-// is retained. `#[non_exhaustive]` added so future HDR carrier fields
-// (mastering display, content light level) extend this without another break.
-// `Default` (all fields `None`) is the empty "no color signaling" context —
-// the only way to construct one now that the struct literal is sealed.
-#[derive(Clone, Debug, Default, PartialEq)]
+// `Eq` retained: `DiffuseWhite` wraps `f32` but implements a bit-exact `Eq` (a
+// luminance anchor is never NaN/-0.0), so adding the anchor field did not cost
+// `ColorContext` its `Eq` — avoiding a removed-trait break vs 0.2.13.
+// `#[non_exhaustive]` added so future HDR carrier fields (mastering display,
+// content light level) extend this without another break. `Default` (all fields
+// `None`) is the empty "no color signaling" context — the only way to construct
+// one now that the struct literal is sealed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ColorContext {
     /// Raw ICC profile bytes.

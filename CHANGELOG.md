@@ -59,15 +59,19 @@
 
 #### Changed (BREAKING, tolerated in 0.2.x)
 
-- **`ColorContext` is now `#[non_exhaustive]` and no longer derives `Eq`**
-  (`PartialEq` retained). `#[non_exhaustive]` lets the next HDR carrier fields
-  (mastering display, content light level) extend it without another break;
-  `Eq` is dropped because the new `diffuse_white` anchor wraps `f32`. Tolerated
-  per the 0.2.x policy: the only external struct-literal constructor is
-  `zencodec` (builds against published 0.2.10 — unaffected until it adopts
-  0.2.14; migration tracked as #45 S1b), and no in-tree `Eq`/`Hash` use depends
-  on `ColorContext` (verified). `cargo semver-checks` flags both as major; both
-  are tolerated-bucket items.
+- **`ColorContext` is now `#[non_exhaustive]`** (`PartialEq` **and `Eq` both
+  retained**). `#[non_exhaustive]` lets the next HDR carrier fields (mastering
+  display, content light level) extend it without another break. **`Eq` is
+  preserved**: `DiffuseWhite` wraps `f32` but implements a bit-exact `Eq` (a
+  luminance anchor is never `NaN`/`-0.0`, so a bitwise compare is reflexive and
+  consistent), so adding the `diffuse_white` field did not cost `ColorContext`
+  its `Eq` — avoiding a removed-trait break vs 0.2.13. Tolerated per the 0.2.x
+  policy: the only external struct-literal constructor is `zencodec`, which
+  builds via `ColorContext::from_cicp`/`from_icc` (not a literal), so sealing it
+  is harmless, and no in-tree `Eq`/`Hash` use depends on `ColorContext`
+  (verified). `cargo semver-checks` now reports a single remaining major item
+  (`struct_marked_non_exhaustive`) — a tolerated-bucket item; the `Eq`-removal
+  failure is gone.
 
 ### Workspace — build
 

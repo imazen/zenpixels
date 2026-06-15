@@ -22,9 +22,21 @@ use crate::{PixelFormat, PixelSlice, TransferFunction};
 /// It is a *typed* anchor on purpose: HDR code mixes nits, PQ-encoded `[0,1]`,
 /// log2 gain, and headroom ratios — passing a bare `f32` invites unit
 /// confusion. Use [`DiffuseWhite::new`] / [`DiffuseWhite::nits`].
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DiffuseWhite(f32);
+
+// Bit-exact equality so `DiffuseWhite` — and therefore `ColorContext` — keeps
+// `Eq` despite wrapping `f32`. A luminance anchor is always a sane, finite,
+// positive cd/m² value (203, 100, 10000, …), so a bitwise compare is reflexive
+// and consistent; the -0.0 / NaN cases a value compare would treat differently
+// never occur for an anchor.
+impl PartialEq for DiffuseWhite {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_bits() == other.0.to_bits()
+    }
+}
+impl Eq for DiffuseWhite {}
 
 impl DiffuseWhite {
     /// ITU-R BT.2408 HDR reference white: **203 cd/m²**. The cross-industry
