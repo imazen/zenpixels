@@ -67,18 +67,28 @@ assert_eq!(buf.descriptor().format, PixelFormat::Rgb8);
 ## Format conversion (zenpixels-convert)
 
 ```rust
+use zenpixels::PixelBuffer;
 use zenpixels_convert::{RowConverter, best_match, ConvertIntent};
 
-// Pick the cheapest target format the encoder supports
+// `src: PixelBuffer` — pick the cheapest target format the encoder supports
+let source_desc = src.descriptor();
 let target = best_match(source_desc, &encoder_formats, ConvertIntent::Fastest)
     .ok_or("no compatible format")?;
 
-// Pre-compute the plan, then convert row by row — no per-row allocation
+// Allocate the destination, then convert row by row — no per-row allocation
+let (w, h) = (src.width(), src.height());
+let mut dst = PixelBuffer::new(w, h, target);
+let src_view = src.as_slice();
+let mut dst_view = dst.as_slice_mut();
 let mut converter = RowConverter::new(source_desc, target)?;
-for y in 0..height {
-    converter.convert_row(src_row, dst_row, width);
+for y in 0..h {
+    converter.convert_row(src_view.row(y), dst_view.row_mut(y), w);
 }
 ```
+
+> Most callers want the high-level `to_rgba8()` / `to_rgb8()` extension (shown in
+> the codec READMEs); reach for `RowConverter` only when you need a specific
+> target format or zero per-row allocation.
 
 ### Color profile conversion
 
