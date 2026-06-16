@@ -64,6 +64,68 @@ let buf = PixelBuffer::new(64, 48, desc);      // panics on OOM; try_new for fal
 assert_eq!(buf.descriptor().format, PixelFormat::Rgb8);
 ```
 
+### Wrapping a decoder's `Vec<u8>` (no copy)
+
+`PixelBuffer::new` *allocates*. A codec that already decoded into its own
+`Vec<u8>` wants the opposite: take ownership of that allocation and stamp a
+descriptor on it, without a copy. That is [`PixelBuffer::from_vec`] — the
+constructor every zen codec reaches for at the end of decode.
+
+```rust
+use zenpixels::{PixelBuffer, PixelDescriptor};
+
+let (width, height) = (64u32, 48u32);
+// A decoder produced these — tightly packed RGBA8, 4 bytes/pixel.
+let decoded: Vec<u8> = vec![0u8; width as usize * height as usize * 4];
+
+// Consumes `decoded` (no copy); the descriptor's tight stride
+// (width * bytes_per_pixel) is assumed — `from_vec` does NOT pad rows.
+let buf = PixelBuffer::from_vec(decoded, width, height, PixelDescriptor::RGBA8_SRGB)?;
+assert_eq!(buf.stride(), 64 * 4);              // bytes, not pixels — see below
+# Ok::<(), zenpixels::At<zenpixels::BufferError>>(())
+```
+
+`from_vec` returns [`BufferError::InsufficientData`] (wrapped as
+`At<BufferError>`) if the `Vec` is shorter than `aligned_stride(width) * height`
+plus the leading bytes skipped for channel alignment. It does **not** accept an
+explicit stride: rows are assumed tightly packed at
+`width * bytes_per_pixel`. For padded/strided bytes you don't own — a decoder's
+scratch row buffer, a crop of a parent image, a GPU-readback strip — borrow a
+view with an explicit stride instead (next section).
+
+> **Stride is always measured in BYTES**, never pixels or elements
+> (`stride()` returns `usize`; `aligned_stride(width) = width * bytes_per_pixel`).
+> So for 64-pixel-wide RGBA8 the tight stride is `64 * 4 = 256`, and for
+> 16-bit RGB it is `64 * 6 = 384`. Passing a pixel count where a byte stride is
+> expected is the single most common silent-corruption bug at the codec
+> boundary.
+
+### Borrowing strided bytes (explicit stride)
+
+When the bytes have row padding (SIMD alignment, a sub-region of a larger
+image) or you only want to borrow rather than own them, wrap a
+[`PixelSlice`] with an explicit byte stride:
+
+```rust
+use zenpixels::{PixelSlice, PixelDescriptor};
+
+let (width, rows) = (64u32, 48u32);
+let stride_bytes = 256usize;                   // e.g. SIMD-padded; >= width*bpp
+let backing: Vec<u8> = vec![0u8; stride_bytes * rows as usize];
+
+// Borrows `backing` (lifetime-bound, zero-copy). `stride_bytes` is BYTES
+// between row starts, and must be a multiple of bytes_per_pixel.
+let view = PixelSlice::new(&backing, width, rows, stride_bytes, PixelDescriptor::RGBA8_SRGB)?;
+assert_eq!(view.width(), 64);
+# Ok::<(), zenpixels::At<zenpixels::BufferError>>(())
+```
+
+Multi-byte samples (U16/F16/F32) are read in **native byte order** — a decoder
+holding big-endian container data (e.g. 16-bit PNG) must byte-swap before
+wrapping. `PixelSlice::new` validates length, stride, and channel alignment,
+returning `At<BufferError>` (`InsufficientData` / `StrideTooSmall` /
+`StrideNotPixelAligned` / `AlignmentViolation`) on a mismatch.
+
 ## Format conversion (zenpixels-convert)
 
 ```rust
@@ -150,21 +212,48 @@ stable ships native `f16`.
 pub struct PixelDescriptor {
     pub format: PixelFormat,
     pub transfer: TransferFunction,    // Linear, Srgb, Bt709, Pq, Gamma22, Hlg, Unknown
-    pub alpha: Option<AlphaMode>,      // Straight, Premultiplied, Opaque, Undefined
+    pub alpha: Option<AlphaMode>,      // Undefined, Straight, Premultiplied, Opaque
     pub primaries: ColorPrimaries,     // Bt709, DisplayP3, Bt2020, AdobeRgb, Unknown
     pub signal_range: SignalRange,     // Full or Narrow
 }
 ```
 
-Every buffer carries one. Every codec declares which ones it produces and consumes. Predefined constants for the common cases:
+Every field's type is re-exported at the crate root — there is no submodule to
+reach into. The canonical import for hand-building a descriptor:
 
 ```rust
-PixelDescriptor::RGB8_SRGB        // u8 RGB, sRGB transfer, BT.709 primaries
-PixelDescriptor::RGBAF32_LINEAR   // f32 RGBA, linear light
-PixelDescriptor::BGRA8_SRGB       // u8 BGRA (Windows/DirectX order)
-PixelDescriptor::RGB16_BT2100_PQ  // u16 RGB, BT.2020 + PQ — HDR10-style stills
-PixelDescriptor::OKLABF32         // f32 Oklab L,a,b
+use zenpixels::{
+    PixelDescriptor,        // the struct itself
+    PixelFormat,            // the byte-layout enum
+    TransferFunction,       // Linear, Srgb, Bt709, Pq, Gamma22, Hlg, Unknown
+    AlphaMode,              // Undefined, Straight, Premultiplied, Opaque
+    ColorPrimaries,         // Bt709, DisplayP3, Bt2020, AdobeRgb, Unknown
+    SignalRange,            // Full, Narrow
+};
 ```
+
+Every buffer carries one. Every codec declares which ones it produces and consumes. Predefined constants cover the common cases — each expands to a complete descriptor, so check the **alpha** column before handing bytes to a codec: a codec that trusts the wrong alpha mode silently corrupts pixels (treating straight alpha as premultiplied, or reading the padding byte of an `X` format as coverage).
+
+| Constant | format | transfer | alpha | primaries | range |
+|---|---|---|---|---|---|
+| `RGB8_SRGB` | `Rgb8` | `Srgb` | `None` (no alpha channel) | `Bt709` | `Full` |
+| `RGBA8_SRGB` | `Rgba8` | `Srgb` | `Some(Straight)` | `Bt709` | `Full` |
+| `RGB16_SRGB` | `Rgb16` | `Srgb` | `None` | `Bt709` | `Full` |
+| `RGBA16_SRGB` | `Rgba16` | `Srgb` | `Some(Straight)` | `Bt709` | `Full` |
+| `RGBF32_LINEAR` | `RgbF32` | `Linear` | `None` | `Bt709` | `Full` |
+| `RGBAF32_LINEAR` | `RgbaF32` | `Linear` | `Some(Straight)` | `Bt709` | `Full` |
+| `GRAY8_SRGB` | `Gray8` | `Srgb` | `None` | `Bt709` | `Full` |
+| `GRAYA8_SRGB` | `GrayA8` | `Srgb` | `Some(Straight)` | `Bt709` | `Full` |
+| `BGRA8_SRGB` | `Bgra8` | `Srgb` | `Some(Straight)` | `Bt709` | `Full` |
+| `RGBX8_SRGB` | `Rgbx8` | `Srgb` | `Some(Undefined)` (padding byte, **not** coverage) | `Bt709` | `Full` |
+| `BGRX8_SRGB` | `Bgrx8` | `Srgb` | `Some(Undefined)` (padding byte) | `Bt709` | `Full` |
+| `RGB16_BT2100_PQ` | `Rgb16` | `Pq` | `None` | `Bt2020` | `Full` |
+| `RGB16_BT2100_HLG` | `Rgb16` | `Hlg` | `None` | `Bt2020` | `Full` |
+| `OKLABF32` | `OklabF32` | `Unknown` | `None` | `Bt709` | `Full` |
+| `OKLABAF32` | `OklabaF32` | `Unknown` | `Some(Straight)` | `Bt709` | `Full` |
+| `CMYK8` | `Cmyk8` | `Unknown` | `None` | `Bt709` | `Full` |
+
+`None` means the format has no alpha channel at all; `Some(Undefined)` (the `X` formats) means the lane is present but its bytes are padding, not coverage. Every constant that does carry alpha defaults to **straight** (unassociated) — never premultiplied. Transfer-agnostic siblings (`RGB8`, `RGBA8`, `RGB16`, … without the `_SRGB`/`_LINEAR` suffix) are identical except `transfer = Unknown`; reach for those when you don't yet know the encoding and want to stamp it later with `with_transfer(...)`.
 
 ### CICP and ICC
 
@@ -225,9 +314,34 @@ Bulk: `as_strided_bytes()` returns the full backing `&[u8]` including stride pad
 
 Views: `sub_rows(y, count)` and `crop_view(x, y, w, h)` are zero-copy. `crop_copy()` allocates.
 
+### Dimensions and descriptor
+
+Read a buffer's geometry and color semantics directly — these accessors exist
+on `PixelBuffer`, `PixelSlice`, and `PixelSliceMut` alike:
+
+```rust
+let w: u32          = buf.width();        // pixels
+let h: u32          = buf.height();       // pixels
+let s: usize        = buf.stride();       // BYTES between row starts
+let d: PixelDescriptor = buf.descriptor();   // returned BY VALUE (it is Copy)
+```
+
+`descriptor()` returns `PixelDescriptor` **by value**, not `&PixelDescriptor` —
+the descriptor is a small `Copy` struct, so read its fields freely
+(`buf.descriptor().format`, `.transfer`, `.alpha`, …).
+
 ### Allocation
 
-`try_new()` for tight stride, `try_new_simd_aligned()` for SIMD-aligned rows, `from_vec()` to wrap an existing allocation. All constructors validate dimensions, stride, and alignment. `into_vec()` recovers the allocation for pool reuse.
+`PixelBuffer::new(w, h, desc)` / `try_new()` allocate a zero-filled buffer with
+tight stride; `new_simd_aligned()` / `try_new_simd_aligned()` pad rows for SIMD;
+[`from_vec(data, w, h, desc)`](#wrapping-a-decoders-vecu8-no-copy) wraps an
+existing `Vec<u8>` (tight stride, no copy). The `try_*` variants return
+`Result<_, At<BufferError>>` (a [`whereat`](https://crates.io/crates/whereat)
+location wrapper around [`BufferError`] — `AllocationFailed`, `InvalidDimensions`,
+`InsufficientData`, `StrideTooSmall`, …); the un-prefixed forms panic on failure
+(see [allocation policy](https://docs.rs/zenpixels/latest/zenpixels/#allocation-policy)).
+All constructors validate dimensions, stride, and alignment. `into_vec()`
+recovers the allocation for pool reuse.
 
 ### In-place layout transforms
 

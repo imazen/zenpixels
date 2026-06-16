@@ -25,6 +25,21 @@
   the single canonical home and have `zencodec` re-export, so codecs stop
   converting between two identical types.
 
+### zenpixels — docs
+
+- **`docs(readme)`: document the `from_vec` raw-bytes+stride codec-interop
+  path.** An insulated external-developer usability test (README only) found
+  the #1 codec constructor — `PixelBuffer::from_vec` wrapping a decoded
+  `Vec<u8>` without copying — was named in prose but never shown, and the
+  stride **unit** (bytes, not pixels/elements) was unstated anywhere. Added a
+  worked `from_vec` example (tight stride) plus the explicit-stride
+  `PixelSlice::new` borrow path, tabulated every predefined constant's full
+  descriptor (notably the **alpha mode** column — `None` vs straight vs the
+  `X`-format `Undefined` padding lane), added the canonical crate-root `use`
+  block for the `PixelDescriptor` field types, and documented the `width()` /
+  `height()` / `stride()` accessors and the `descriptor()` by-value return /
+  `At<BufferError>` error type.
+
 ### zenpixels-convert — added
 
 - **`docs(readme)`: add a crate-local `README.md`.** The crate previously set
