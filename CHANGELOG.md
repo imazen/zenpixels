@@ -25,6 +25,15 @@
   the single canonical home and have `zencodec` re-export, so codecs stop
   converting between two identical types.
 
+### zenpixels-convert — added
+
+- **`docs(readme)`: add a crate-local `README.md`.** The crate previously set
+  `readme = "../README.md"` (the combined workspace README), but that file
+  lives outside the package root and so was never packaged — crates.io showed
+  no README for `zenpixels-convert`. Added a focused conversion-API README,
+  pointed `readme = "README.md"`, and added `/README.md` to `include` so it
+  ships with the crate.
+
 ## [0.2.14] - 2026-06-13
 
 ### zenpixels — added
