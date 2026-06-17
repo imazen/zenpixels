@@ -275,9 +275,14 @@ impl crate::cms::PluggableCms for ZenCmsLite {
                 let inner = crate::converter::RowConverter::from_plan(plan);
                 Some(Ok(Box::new(LiteTransformMut { inner })))
             }
-            Err(e) => Some(Err(whereat::at!(crate::cms::CmsPluginError::msg(
-                alloc::format!("ZenCmsLite plan construction failed: {e:?}")
-            )))),
+            // Render the inner At<ConvertError> (which carries its own trace
+            // frames) into the message, then `map_error` so those frames carry
+            // through to At<CmsPluginError> instead of being dropped by a fresh
+            // `at!` frame.
+            Err(e) => {
+                let msg = alloc::format!("ZenCmsLite plan construction failed: {e:?}");
+                Some(Err(e.map_error(|_| crate::cms::CmsPluginError::msg(msg))))
+            }
         }
     }
 }
