@@ -148,9 +148,13 @@ impl RowConverter {
 
             // Convert a plugin failure into ConvertError::CmsError. The
             // `At<CmsPluginError>` Display impl already renders the full
-            // frame trace + crate info (plugin + crate boundary).
+            // frame trace + crate info (plugin + crate boundary). Render that
+            // into the message first, then `map_error` so the accumulated
+            // At<_> trace frames carry through to At<ConvertError> instead of
+            // being dropped by a fresh `at!` frame.
             let plugin_err = |e: whereat::At<crate::cms::CmsPluginError>| {
-                whereat::at!(ConvertError::CmsError(alloc::format!("{e}")))
+                let msg = alloc::format!("{e}");
+                e.map_error(|_| ConvertError::CmsError(msg))
             };
 
             let mut external: Option<ExternalTransform> = None;

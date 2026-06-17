@@ -11,7 +11,7 @@ use crate::adapt::convert_buffer;
 use crate::error::ConvertError;
 use crate::{PixelBuffer, PixelDescriptor, PixelFormat, PixelSlice, TransferFunction};
 use alloc::vec::Vec;
-use whereat::At;
+use whereat::{At, ResultAtExt};
 
 // Re-export metadata types from the core crate.
 pub use zenpixels::hdr::{ContentLightLevel, MasteringDisplay};
@@ -254,8 +254,11 @@ pub fn quantize_to(
     // target's primaries so no gamut step is inserted (value-only quantize).
     let src = PixelDescriptor::RGBF32_LINEAR.with_primaries(target.primaries);
     let out = convert_buffer(&scaled, w, h, src, target)?;
-    PixelBuffer::from_vec(out, w, h, target)
-        .map_err(|_| whereat::at!(ConvertError::AllocationFailed))
+    // FIXME: mislabels non-alloc BufferError (StrideTooSmall /
+    // InvalidDimensions) as AllocationFailed; a structured
+    // ConvertError::Buffer(BufferError) variant needs a non_exhaustive /
+    // breaking (0.3.0) change. map_err_at preserves the At<BufferError> trace.
+    PixelBuffer::from_vec(out, w, h, target).map_err_at(|_| ConvertError::AllocationFailed)
 }
 
 #[cfg(test)]
