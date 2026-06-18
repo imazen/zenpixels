@@ -4,7 +4,36 @@ use crate::{PixelDescriptor, TransferFunction};
 use core::fmt;
 
 /// Errors that can occur during pixel format negotiation or conversion.
-// TODO(0.3.0): add #[non_exhaustive] — removed to avoid semver break vs 0.2.3.
+//
+// ── ConvertError 0.3.0 note (authoritative) ─────────────────────────────────
+// This enum is currently EXHAUSTIVE: `#[non_exhaustive]` was removed to avoid a
+// semver break vs 0.2.3, so adding any variant is itself a break. Two related
+// changes are batched for the next 0.3.0 release (see CHANGELOG "QUEUED
+// BREAKING CHANGES"):
+//
+//   (a) Add `#[non_exhaustive]` to `ConvertError`.
+//   (b) Add a new variant `Buffer(zenpixels::BufferError)` that carries the
+//       real underlying buffer error instead of collapsing it.
+//   (c) Add `impl From<zenpixels::BufferError> for ConvertError` (wrapping into
+//       the new `Buffer` variant) so the `?`/`map_err_at` ergonomics are clean.
+//   (d) Switch the 8 `PixelBuffer::{try_new,from_vec}` / `PixelSlice::new`
+//       construction sites — 2 in `ext.rs`, 1 in `hdr.rs`, 5 in `output.rs`,
+//       each tagged with a per-site `FIXME` — from the catch-all
+//       `.map_err_at(|_| ConvertError::AllocationFailed)?` to
+//       `.map_err_at(ConvertError::from)?`.
+//
+// Why: `zenpixels::PixelBuffer`/`PixelSlice` construction returns
+// `At<zenpixels::BufferError>`, a 7-variant enum (`AlignmentViolation`,
+// `InsufficientData`, `StrideTooSmall`, `StrideNotPixelAligned`,
+// `InvalidDimensions`, `IncompatibleDescriptor`, `AllocationFailed`). Today all
+// 7 are mislabeled as `ConvertError::AllocationFailed` — i.e. a `StrideTooSmall`
+// or `InvalidDimensions` *layout* error is reported as an out-of-memory failure.
+// The #52 fix already preserves the `At<BufferError>` *trace* across the convert
+// boundary (via `map_err_at`); the remaining 0.3.0 work fixes the
+// *classification* so the true reason survives. Adding the variant and
+// `#[non_exhaustive]` are both semver breaks, which is why this is deferred to
+// 0.3.0 rather than shipped in a 0.2.N patch.
+// ────────────────────────────────────────────────────────────────────────────
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConvertError {
     /// No supported format could be found for the source descriptor.

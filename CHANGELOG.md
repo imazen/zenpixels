@@ -24,6 +24,21 @@
   (`zenpixels::hdr` and `zencodec::info`, sibling crates). Make `zenpixels`
   the single canonical home and have `zencodec` re-export, so codecs stop
   converting between two identical types.
+- **`ConvertError`: add `#[non_exhaustive]` and a new
+  `Buffer(zenpixels::BufferError)` variant (+ `From<BufferError>`).** The 8
+  `PixelBuffer::{try_new,from_vec}` / `PixelSlice::new` construction sites
+  (in `ext.rs`, `hdr.rs`, `output.rs`) switch from the catch-all
+  `.map_err_at(|_| ConvertError::AllocationFailed)?` to
+  `.map_err_at(ConvertError::from)?`, so the real cause — `StrideTooSmall` /
+  `InvalidDimensions` / `AlignmentViolation` / `StrideNotPixelAligned` /
+  `InsufficientData` / `IncompatibleDescriptor` vs a genuine `AllocationFailed`
+  — is preserved instead of every buffer error being mislabeled as an
+  allocation (OOM) failure. The trace-preservation half (keeping the
+  `At<BufferError>` chain across the convert boundary) landed in #52; this is
+  the *classification* half — it needs the new variant and `#[non_exhaustive]`
+  on `ConvertError`, both of which are semver breaks, hence 0.3.0. (See the
+  per-site `FIXME`s and the authoritative note at the `ConvertError`
+  definition in `src/error.rs`.)
 
 ### zenpixels — docs
 
