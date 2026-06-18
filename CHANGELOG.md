@@ -11,6 +11,15 @@
 - **Remove `zenpixels-convert::hdr::HdrMetadata`** (struct + methods) and its
   re-export — deprecated in 0.2.14; superseded by carrying `ContentLightLevel`
   / `MasteringDisplay` directly (or `zencodec::Metadata` at the codec layer).
+- **Remove `zenpixels-convert::hdr::{reinhard_tonemap, reinhard_inverse,
+  exposure_tonemap}`** and their re-exports — naive global Reinhard + a bare
+  `v · 2^stops` clamp, neither display-adaptive (no diffuse-white anchor, no
+  peak luminance, no chroma correction); same outlier-driven failure mode that
+  got `ContentLightLevel::measure` deprecated in 0.2.15. `#[deprecated]` +
+  `#[doc(hidden)]` in this release; production HDR→SDR mapping lives in the
+  `zentone` crate (`zentone::Bt2446A` for ITU-R BT.2446 Method A,
+  `Bt2408Tonemapper`, ACES, AgX, filmic-spline, gain-map, plus SIMD strip
+  processing).
 - **Remove the deprecated `ContentLightLevel::measure`** — the literal-maximum
   MaxCLL shipped in 0.2.14 is outlier-sensitive (a single specular/noise pixel
   inflates it, making displays over-tone-map); `#[deprecated]` + `#[doc(hidden)]`
@@ -65,6 +74,18 @@
   [#54](https://github.com/imazen/zenpixels/issues/54); the literal-max method is
   queued for removal in 0.3.0. MaxFALL (the mean) was never affected, and there
   were no consumers — nothing breaks.
+
+### zenpixels-convert — deprecated
+
+- **`hdr::{reinhard_tonemap, reinhard_inverse, exposure_tonemap}` are deprecated
+  and `#[doc(hidden)]`.** Naive global Reinhard `v / (1 + v)` and a bare
+  `v · 2^stops` clamp; neither uses a diffuse-white anchor, peak-luminance
+  metadata, or chroma correction. On a 1000-nit HDR pixel Reinhard returns
+  ~1.0, which writes out as full-scale SDR — same outlier-driven failure mode
+  that got `ContentLightLevel::measure` deprecated. Use the `zentone` crate
+  (`zentone::Bt2446A` for the ITU-R BT.2446 Method A display mapping;
+  `Bt2408Tonemapper`, ACES, AgX, filmic-spline, gain-map curves, plus SIMD
+  strip processing) for production HDR→SDR work. Removal queued for 0.3.0.
 
 ### zenpixels-convert — internal
 

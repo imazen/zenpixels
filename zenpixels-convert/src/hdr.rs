@@ -92,8 +92,18 @@ impl HdrMetadata {
 }
 
 // ---------------------------------------------------------------------------
-// Naive HDR ↔ SDR tone mapping (built-in, no deps)
+// Naive HDR ↔ SDR tone mapping (deprecated — see `zentone` for the real one)
 // ---------------------------------------------------------------------------
+//
+// These three functions ship a Reinhard global operator and a plain
+// exposure-stop multiplier. Both are *toys*: no display adaptation, no
+// diffuse-white anchor, no chroma correction, no peak-luminance awareness.
+// On a real 1000-nit HDR pixel `v / (1+v)` returns ~1.0, which gets written
+// out as full-scale SDR — the same outlier-driven footgun pattern that got
+// `ContentLightLevel::measure` deprecated in 0.2.15. Same treatment, same
+// removal schedule. The canonical home for production HDR→SDR tone mapping
+// is the `zentone` crate (BT.2446 A/B/C, BT.2408, ACES, AgX, filmic-spline,
+// gain-map, SIMD strip processing); reach for it instead.
 
 /// Simple Reinhard-style tone mapping: HDR linear → SDR linear.
 ///
@@ -106,9 +116,23 @@ impl HdrMetadata {
 /// mathematical limit). The output never leaves `[0, 1]`; it reaches 1.0
 /// only at the float saturation edge.
 ///
-/// Preserves relative brightness ordering. Does not use any display
-/// metadata — for proper tone mapping, use a dedicated HDR tone mapping
-/// library.
+/// Preserves relative brightness ordering. **Does not use any display
+/// metadata** — no diffuse-white anchor, no peak luminance, no chroma
+/// correction; the curve is calibrated to nothing in particular. On a
+/// 1000-nit HDR pixel it returns ~1.0, which then writes out as full-scale
+/// SDR.
+///
+/// # Deprecated
+///
+/// Same outlier-driven failure mode that got [`ContentLightLevel::measure`]
+/// deprecated in 0.2.15. Use the `zentone` crate (`zentone::Bt2446A`,
+/// `Bt2408Tonemapper`, etc.) for standardised HDR→SDR display mapping.
+/// Scheduled for removal in 0.3.0.
+#[deprecated(
+    since = "0.2.15",
+    note = "naive global Reinhard, no display adaptation or chroma correction; produces visibly wrong colour on real HDR content. Use the `zentone` crate (zentone::Bt2446A) for production HDR→SDR mapping. Removal queued for 0.3.0."
+)]
+#[doc(hidden)]
 #[inline]
 #[must_use]
 pub fn reinhard_tonemap(v: f32) -> f32 {
@@ -125,6 +149,16 @@ pub fn reinhard_tonemap(v: f32) -> f32 {
 /// Maps `[0, 1)` → `[0, ∞)` using `v / (1 - v)`. Inputs ≥ 1.0 saturate to
 /// `f32::MAX` (1.0 has no finite preimage); **negative values and NaN map
 /// to 0.0**, mirroring [`reinhard_tonemap`]'s domain clamp.
+///
+/// # Deprecated
+///
+/// Symmetric round-trip for the now-deprecated [`reinhard_tonemap`]; no
+/// independent justification. Removal queued for 0.3.0.
+#[deprecated(
+    since = "0.2.15",
+    note = "round-trip partner for the deprecated reinhard_tonemap; no independent use. Removal queued for 0.3.0."
+)]
+#[doc(hidden)]
 #[inline]
 #[must_use]
 pub fn reinhard_inverse(v: f32) -> f32 {
@@ -142,6 +176,17 @@ pub fn reinhard_inverse(v: f32) -> f32 {
 /// 0.0** (consistent with [`reinhard_tonemap`]'s domain clamp).
 ///
 /// Requires `std` because `f32::powf` is not available in `no_std`.
+///
+/// # Deprecated
+///
+/// A bare `v * 2^exposure` clamp — even weaker than [`reinhard_tonemap`].
+/// Removal queued for 0.3.0; use the `zentone` crate (`zentone::Bt2446A`)
+/// for production HDR→SDR mapping.
+#[deprecated(
+    since = "0.2.15",
+    note = "bare v * 2^exposure clamp; no display-aware mapping. Use the `zentone` crate (zentone::Bt2446A) for production HDR→SDR mapping. Removal queued for 0.3.0."
+)]
+#[doc(hidden)]
 #[cfg(feature = "std")]
 #[inline]
 #[must_use]

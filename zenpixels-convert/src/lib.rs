@@ -509,6 +509,11 @@ pub use gamut::{
 pub use load_bearing::{LoadBearingReport, PixelBufferLoadBearingExt, PixelSliceLoadBearingExt};
 
 // Re-export HDR types and tone mapping.
+// `exposure_tonemap`, `reinhard_inverse`, `reinhard_tonemap`, and `HdrMetadata`
+// are deprecated (see the `hdr` module). The re-exports themselves name them,
+// hence the per-statement `#[allow(deprecated)]`. For production HDR→SDR tone
+// mapping use the `zentone` crate (`zentone::Bt2446A`, `Bt2408Tonemapper`, …).
+#[allow(deprecated)]
 #[cfg(feature = "std")]
 pub use hdr::exposure_tonemap;
 // Anchor-aware HDR PQ quantizer — reads `DiffuseWhite` from the source's
@@ -516,8 +521,6 @@ pub use hdr::exposure_tonemap;
 // (The no-allocation `quantize_into` sibling stays `pub(crate)` until a concrete
 // consumer or the §3.2 PixelBuffer-level surface lands — see hdr.rs.)
 pub use hdr::quantize_to;
-// `HdrMetadata` is re-exported but deprecated (see the `hdr` module); the
-// re-export itself names it, hence the allow.
 #[allow(deprecated)]
 pub use hdr::{
     ContentLightLevel, HdrMetadata, MasteringDisplay, reinhard_inverse, reinhard_tonemap,
