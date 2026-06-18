@@ -202,6 +202,63 @@
 
 ### zenpixels-convert — changed
 
+- **The absolute-luminance anchor now threads through the PQ `ConvertStep`s
+  themselves (#45 S2).** The PQ kernels (u16 + f32, encode + decode) take a
+  `diffuse_white / 10000` scale carried on the plan and apply it to the **RGB
+  lanes only**: encode multiplies relative-linear into PQ-absolute before the
+  OETF, decode divides after the EOTF, so a relative-linear buffer maps to PQ at
+  the right brightness with no caller pre-scale. The unsignaled default is `1.0`
+  — "linear is already PQ-absolute (1.0 = 10000 cd/m²)", the exact prior
+  behavior. HLG is intentionally excluded (scene-referred anchoring differs).
+
+- **The PQ kernels (u16 + f32, encode + decode) now use a vendored *precise*
+  SIMD exact-ST 2084 transfer**, alpha-preserving. `pq_eotf_slice` /
+  `pq_oetf_slice` evaluate the exact SMPTE ST 2084 formula in SIMD via magetypes'
+  `pow_midp_precise`. This replaces **both** the prior scalar u16 path **and** the
+  `linear_srgb::default` rational-poly slice: that fit is only valid above
+  v≈0.02 and, applied as a slice (no exact-below-threshold branch), extrapolated
+  to black and drifted the tight u16 → f32 → u16 round-trip up to **256 codes**.
+  The vendored kernel is precise across the full range (round-trip **≤1**, ST
+  2084 oracle **±1**) and stays SIMD. u16↔f32 depth scaling uses the SIMD
+  `garb::bytes` primitives; the EOTF/OETF run over every lane and the alpha lane
+  is then restored linearly (never transferred or anchored). The RGB-only anchor
+  multiply is `multiply_color_channels`, a generic `#[magetypes]` `f32x16` method
+  (with-alpha `[f,f,f,1]` pattern / without-alpha uniform).
+
+- **The no-allocation convert path honors a strided destination.**
+  `convert_into_with_anchor` (and `quantize_into`) take a `dst_stride`, writing
+  each row at the caller's stride instead of assuming packed output — so the
+  result can land in a sub-region of a larger buffer, and the `BufferSize` check
+  validates `dst_stride ≥ row` + `(rows-1)·dst_stride + row` bytes.
+
+- **`quantize_to` no longer repacks; it honors strides and preserves alpha.**
+  It hands the (possibly strided, possibly RGBA) source straight to the anchored
+  pipeline — no caller-side pre-scale or contiguous repack. Alpha follows the
+  **target**: an RGB PQ target drops it (as before), an RGBA PQ target
+  (`RGBA16.with_transfer(Pq)…`) preserves it linearly. Codes still match the f64
+  ST 2084 oracle within ±1. Internally `convert_buffer_with_anchor` is now
+  strided and split over a `convert_into_with_anchor` primitive; a `pub(crate)`
+  `quantize_into` (no-allocation — writes into a caller buffer) is staged behind
+  it, ready to promote when a concrete consumer or the §3.2 public HDR-convert
+  surface lands.
+
+- **`quantize_to` now carries the diffuse-white anchor onto its output.** The
+  result `PixelBuffer` gets a `ColorContext` with the applied `diffuse_white`
+  (the `ndwt` a downstream encoder signals) plus the target's CICP, instead of a
+  context-less buffer — the anchor is a *reference* that survives the encode, so
+  the output self-describes it rather than silently dropping it. (`quantize_into`
+  writes raw bytes, so its caller owns the envelope.)
+
+- **HLG↔PQ now refuses at plan time (`ConvertError::NoPath`)** instead of
+  emitting wrong pixels. The HLG kernels carry only the scene-referred OETF (no
+  OOTF, no `Lw`), while PQ is absolute display light — routing one to the other
+  through the shared linear intermediate conflates the two luminance domains
+  (deterministic but photometrically wrong brightness). `ConvertPlan::new` (and
+  everything above it) refuses the cross, the same posture as the signal-range
+  refusal; HLG↔SDR/linear and PQ↔SDR/linear are unaffected. Correct HLG↔PQ needs
+  the OOTF + `(diffuse_white, Lw)` threading (#45 S2). Uses the existing `NoPath`
+  variant — no new public API, no semver break.
+
 - **Signal-range crossings now refuse at plan time instead of mislabeling.**
   `ConvertPlan::new` (and everything above it: `new_explicit`,
   `RowConverter`, `convert_buffer`, `adapt_for_encode*`) returns
