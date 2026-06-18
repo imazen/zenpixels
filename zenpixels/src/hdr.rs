@@ -105,7 +105,6 @@ fn row_max_sum<const N: usize>(row: &[f32]) -> (f32, f64) {
 /// Used by AVIF, JXL, PNG (cLLi chunk), and video containers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[non_exhaustive]
 pub struct ContentLightLevel {
     /// Maximum Content Light Level (MaxCLL) in cd/m² (nits).
     /// Peak luminance of any single pixel in the content.
@@ -198,7 +197,6 @@ impl ContentLightLevel {
 /// downstream displays to reproduce the creator's intent.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[non_exhaustive]
 pub struct MasteringDisplay {
     /// RGB primaries of the mastering display in CIE 1931 xy coordinates.
     /// `[[rx, ry], [gx, gy], [bx, by]]`.

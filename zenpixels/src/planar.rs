@@ -248,7 +248,6 @@ impl fmt::Display for PlaneSemantic {
 /// assert_eq!(chroma.plane_height(1080), 540);
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub struct PlaneDescriptor {
     /// What this plane represents.
     pub semantic: PlaneSemantic,
@@ -353,7 +352,6 @@ impl fmt::Display for PlaneDescriptor {
 /// assert_eq!(mask.count(), 2);
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub struct PlaneMask {
     bits: u8,
 }
@@ -463,7 +461,7 @@ impl fmt::Display for PlaneMask {
 ///
 /// **Prefer [`PlaneLayout`] + separate buffers** for new code. This type
 /// is retained for backward compatibility.
-#[non_exhaustive]
+#[doc(hidden)] // 0.3.0 remove: superseded by PlaneLayout + buffers, no consumers
 pub struct Plane {
     /// The pixel data for this plane.
     pub buffer: crate::buffer::PixelBuffer,

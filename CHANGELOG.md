@@ -11,6 +11,14 @@
 - **Remove `zenpixels-convert::hdr::HdrMetadata`** (struct + methods) and its
   re-export — deprecated in 0.2.14; superseded by carrying `ContentLightLevel`
   / `MasteringDisplay` directly (or `zencodec::Metadata` at the codec layer).
+- **Remove the dead registry surface** — `zenpixels::registry::KnownColorSpace`,
+  `REGISTRY`, and `find_by_cicp` / `find_by_primaries_transfer` /
+  `find_by_named` are speculative `#[allow(dead_code)]` public API with zero
+  consumers (no in-tree non-test caller, no downstream). `#[doc(hidden)]`'d in
+  0.2.14; demote to `pub(crate)` or delete here.
+- **Remove the legacy `zenpixels::planar::Plane`** — superseded by `PlaneLayout`
+  + separate `PixelBuffer`s (what `MultiPlaneImage` actually holds); zero
+  consumers anywhere. `#[doc(hidden)]`'d in 0.2.14; delete here.
 - **Drop `OutputMetadata::hdr`** — remove the unwired `Option<HdrMetadata>`
   field; **nothing replaces it.** `OutputMetadata { icc, cicp }` is correct by
   design: it is the lowering target of a codec's *color* plan
@@ -104,18 +112,23 @@
   (verified). `cargo semver-checks` now reports a single remaining major item
   (`struct_marked_non_exhaustive`) — a tolerated-bucket item; the `Eq`-removal
   failure is gone.
-- **Eight more public data types are now `#[non_exhaustive]`** —
-  `hdr::{ContentLightLevel, MasteringDisplay}`, `registry::KnownColorSpace`,
-  `planar::{MultiPlaneImage, PlaneDescriptor, PlaneMask, Plane, PlaneLayout}`,
-  and `buffer::InPlacePixels` (which gains `InPlacePixels::new`) — future-proofing
-  the HDR/planar metadata surface so later fields/variants stay additive. Each
-  keeps its valid `Eq`/`Hash`; construction stays via the existing
-  `::new`/builders. **cargo-copter (all 21 published zenpixels reverse-deps): 0
-  new victims** for the HDR/planar/registry seals (nobody downstream
-  struct-literals them); `InPlacePixels` is transform-internal with no published
-  constructor, so its seal is likewise victim-free. POD pixel types
-  `Bgrx`/`Rgbx`/`GrayAlpha*` are deliberately left **open** — struct-literal is
-  their interface — and `ColorAuthority` is deferred to 0.3.0 (see QUEUED).
+- **Three more types are now `#[non_exhaustive]`: `planar::MultiPlaneImage`,
+  `planar::PlaneLayout`, and `buffer::InPlacePixels`** (the last gains
+  `InPlacePixels::new`) — only the genuinely-extensible ones (planar geometry /
+  YUV layouts grow; the transform bundle accretes fields). Each keeps its valid
+  `Eq`/`Hash`; construction via `::new`/builders. **cargo-copter (all 21
+  published reverse-deps): 0 victims** — nobody downstream struct-literals or
+  exhaustively-matches them; `InPlacePixels` is transform-internal (no published
+  constructor).
+- **The fixed-spec data bags stay open** — `hdr::ContentLightLevel`
+  (CTA-861.3), `hdr::MasteringDisplay` (SMPTE ST 2086), `planar::PlaneDescriptor`,
+  `planar::PlaneMask`, and the POD pixel types `Bgrx`/`Rgbx`/`GrayAlpha*`.
+  Struct-literal is their natural interface and the field sets are standardized
+  /won't grow, so sealing would be breakage risk for ~zero future-proofing (the
+  `Rect`/`Size` carve-out). `registry::KnownColorSpace` (+ `REGISTRY`,
+  `find_by_*`) and the legacy `planar::Plane` are now `#[doc(hidden)]` — dead /
+  positioned-for-future public API with no consumers, pending 0.3.0 removal (see
+  QUEUED). `ColorAuthority` is likewise deferred to 0.3.0.
 - **`zenpixels-convert::ConvertError` is now `#[non_exhaustive]`, with a new
   `Buffer(zenpixels::BufferError)` variant + `From<BufferError>`** — promoted
   from the 0.3.0 queue on cargo-copter evidence: sealing it produced **0
