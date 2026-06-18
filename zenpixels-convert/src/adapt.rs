@@ -262,6 +262,110 @@ pub fn convert_buffer(
     Ok(output)
 }
 
+/// Like [`convert_buffer`] but anchors the **PQ** transfer steps to an
+/// absolute-luminance white point — the cd/m² that relative-linear `1.0`
+/// represents (e.g. [`DiffuseWhite::BT2408`](zenpixels::hdr::DiffuseWhite) =
+/// 203). The PQ kernels then scale by `anchor / 10000` across the
+/// relative-linear ↔ PQ-absolute boundary, so a relative-linear buffer encodes
+/// to PQ at the right brightness with no caller-side pre-scale. Conversions
+/// without a PQ step are identical to [`convert_buffer`].
+///
+/// Runs on the built-in plan path (so the anchored PQ steps are never bypassed
+/// by a CMS matlut fast path). Honors a **strided** source — `src_stride` is the
+/// bytes between row starts (`width * from.bytes_per_pixel()` for packed) — and
+/// converts row-by-row with no pre-pack. Returns a freshly-allocated
+/// [`PixelBuffer`] (its row stride is the buffer's own — no hand-rolled `Vec`).
+/// The plan drives any channel change (e.g. `DropAlpha` for an RGB target, or
+/// alpha-preserving passthrough for an RGBA one), so the caller hands the source
+/// straight in. Alpha, if kept, is never PQ-encoded or anchor-scaled.
+#[track_caller]
+pub(crate) fn convert_buffer_with_anchor(
+    src: &[u8],
+    width: u32,
+    rows: u32,
+    src_stride: usize,
+    from: PixelDescriptor,
+    to: PixelDescriptor,
+    anchor: zenpixels::hdr::DiffuseWhite,
+) -> Result<PixelBuffer, At<ConvertError>> {
+    // Allocate through the existing PixelBuffer machinery (start-aligned,
+    // fallible) rather than a hand-rolled `vec![0u8; …]`, and convert into its
+    // backing at the buffer's own row stride.
+    let mut buf = PixelBuffer::try_new(width, rows, to)
+        .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
+    let dst_stride = buf.stride();
+    {
+        let mut slice = buf.as_slice_mut();
+        convert_into_with_anchor(
+            src,
+            width,
+            rows,
+            src_stride,
+            from,
+            to,
+            anchor,
+            slice.as_strided_bytes_mut(),
+            dst_stride,
+        )?;
+    }
+    Ok(buf)
+}
+
+/// Like [`convert_buffer_with_anchor`] but writes into a caller-provided `dst` —
+/// no output allocation. Honors a **strided destination**: `dst_stride` is the
+/// bytes between output row starts (pass `width * to.bytes_per_pixel()` for
+/// packed). `dst` must hold `(rows - 1) * dst_stride + width * to.bpp` bytes and
+/// `dst_stride` must be ≥ the packed row width; otherwise
+/// [`ConvertError::BufferSize`]. The same strided-source / alpha rules apply.
+#[track_caller]
+#[allow(clippy::too_many_arguments)] // mirrors convert_buffer_with_anchor + strided dst
+pub(crate) fn convert_into_with_anchor(
+    src: &[u8],
+    width: u32,
+    rows: u32,
+    src_stride: usize,
+    from: PixelDescriptor,
+    to: PixelDescriptor,
+    anchor: zenpixels::hdr::DiffuseWhite,
+    dst: &mut [u8],
+    dst_stride: usize,
+) -> Result<(), At<ConvertError>> {
+    assert_not_cmyk(&from);
+    assert_not_cmyk(&to);
+
+    let dst_row = (width as usize) * to.bytes_per_pixel();
+    if rows > 0 {
+        // A strided dst must hold each row's content without rows overlapping:
+        // `dst_stride >= dst_row`, and the last row ends at
+        // `(rows-1) * dst_stride + dst_row`.
+        let needed = (rows as usize - 1) * dst_stride + dst_row;
+        if dst_stride < dst_row || dst.len() < needed {
+            return Err(whereat::at!(ConvertError::BufferSize {
+                expected: needed.max(dst_row),
+                actual: dst.len().min(dst_stride),
+            }));
+        }
+    }
+
+    // `from == to` yields an Identity plan, whose row step copies src → dst — so
+    // the strided loop handles it too (no packed-only special case needed).
+    let plan = ConvertPlan::new(from, to).at()?.with_pq_anchor(anchor);
+    let mut converter = RowConverter::from_plan(plan);
+    let src_row = (width as usize) * from.bytes_per_pixel();
+
+    for y in 0..rows as usize {
+        let src_start = y * src_stride;
+        let dst_start = y * dst_stride;
+        converter.convert_row(
+            &src[src_start..src_start + src_row],
+            &mut dst[dst_start..dst_start + dst_row],
+            width,
+        );
+    }
+
+    Ok(())
+}
+
 /// Attempt to adapt a [`PixelBuffer`] to `target` **in place** — no
 /// allocation, no copy of the frame, and the buffer's descriptor /
 /// geometry / color context are updated **atomically** via
@@ -597,6 +701,285 @@ fn contiguous_from_strided<'a>(
             packed.extend_from_slice(&data[start..start + row_bytes]);
         }
         Cow::Owned(packed)
+    }
+}
+
+#[cfg(test)]
+mod anchor_tests {
+    //! `convert_buffer_with_anchor` — proof the absolute-luminance anchor
+    //! threads through the PQ `ConvertStep`s (not via any caller pre-scale),
+    //! that it honors a strided source, and that it preserves alpha.
+    use super::convert_buffer_with_anchor;
+    use crate::{PixelDescriptor, TransferFunction};
+    use alloc::vec;
+    use alloc::vec::Vec;
+    use zenpixels::hdr::DiffuseWhite;
+
+    /// f64 SMPTE ST 2084 inverse-EOTF (linear-light fraction → PQ code [0,1]).
+    fn pq_oetf(x: f64) -> f64 {
+        if x <= 0.0 {
+            return 0.0;
+        }
+        let m1 = 2610.0 / 16384.0;
+        let m2 = 2523.0 / 4096.0 * 128.0;
+        let c1 = 3424.0 / 4096.0;
+        let c2 = 2413.0 / 4096.0 * 32.0;
+        let c3 = 2392.0 / 4096.0 * 32.0;
+        let xp = x.powf(m1);
+        ((c1 + c2 * xp) / (1.0 + c3 * xp)).powf(m2)
+    }
+
+    /// Tight RGB f32 bytes from per-pixel gray values.
+    fn gray_rgb_f32(values: &[f32]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(values.len() * 12);
+        for &g in values {
+            for _ in 0..3 {
+                v.extend_from_slice(&g.to_ne_bytes());
+            }
+        }
+        v
+    }
+
+    /// Tight RGBA f32 bytes: per-pixel gray RGB plus its alpha.
+    fn gray_rgba_f32(pixels: &[(f32, f32)]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(pixels.len() * 16);
+        for &(g, a) in pixels {
+            for _ in 0..3 {
+                v.extend_from_slice(&g.to_ne_bytes());
+            }
+            v.extend_from_slice(&a.to_ne_bytes());
+        }
+        v
+    }
+
+    /// Packed bytes-per-row for `desc` at `width` pixels.
+    fn packed_stride(width: usize, desc: PixelDescriptor) -> usize {
+        width * desc.bytes_per_pixel()
+    }
+
+    fn pq16_target() -> (PixelDescriptor, PixelDescriptor) {
+        let target = PixelDescriptor::RGB16_BT2100_PQ;
+        // Tag the source gamut as the target's so no gamut step is inserted.
+        let lin = PixelDescriptor::RGBF32_LINEAR.with_primaries(target.primaries);
+        (lin, target)
+    }
+
+    #[test]
+    fn anchor_pq16_encode_matches_st2084_oracle() {
+        let values = [0.001f32, 0.1, 1.0, 2.0, 49.0];
+        let (lin, target) = pq16_target();
+        let out = convert_buffer_with_anchor(
+            &gray_rgb_f32(&values),
+            values.len() as u32,
+            1,
+            packed_stride(values.len(), lin),
+            lin,
+            target,
+            DiffuseWhite::BT2408,
+        )
+        .unwrap();
+        let codes: &[u16] = bytemuck::cast_slice(out.as_slice().as_strided_bytes());
+        for (i, &v) in values.iter().enumerate() {
+            let got = i64::from(codes[i * 3]);
+            // 1.0 of relative-linear sits at 203 / 10000 of the PQ-absolute range.
+            let want = (pq_oetf(f64::from(v) * 203.0 / 10_000.0) * 65535.0).round() as i64;
+            assert!(
+                (got - want).abs() <= 1,
+                "@203 at {v}: got {got} want {want}"
+            );
+        }
+    }
+
+    #[test]
+    fn anchor_changes_pq_output_in_kernel() {
+        let (lin, target) = pq16_target();
+        let src = gray_rgb_f32(&[1.0]);
+        let enc = |w: DiffuseWhite| {
+            let o = convert_buffer_with_anchor(&src, 1, 1, packed_stride(1, lin), lin, target, w)
+                .unwrap();
+            let ob = o.as_slice().as_strided_bytes();
+            i64::from(u16::from_ne_bytes([ob[0], ob[1]]))
+        };
+        let c100 = enc(DiffuseWhite::new(100.0));
+        let c203 = enc(DiffuseWhite::BT2408);
+        // The same relative-linear 1.0 lands at a different PQ code per anchor —
+        // i.e. the scale is applied inside the kernel, not by a caller.
+        assert_ne!(c100, c203);
+        let want100 = (pq_oetf(100.0 / 10_000.0) * 65535.0).round() as i64;
+        assert!(
+            (c100 - want100).abs() <= 1,
+            "@100: got {c100} want {want100}"
+        );
+    }
+
+    #[test]
+    fn anchor_pq16_decode_divides_and_roundtrips() {
+        // linear @ 203 → PQ16 → linear @ 203 recovers the input: the decode
+        // kernel's ÷scale is the exact inverse of the encode's ×scale.
+        let values = [0.05f32, 0.2, 1.0, 5.0];
+        let (lin, target) = pq16_target();
+        let pq = convert_buffer_with_anchor(
+            &gray_rgb_f32(&values),
+            values.len() as u32,
+            1,
+            packed_stride(values.len(), lin),
+            lin,
+            target,
+            DiffuseWhite::BT2408,
+        )
+        .unwrap();
+        let back = convert_buffer_with_anchor(
+            pq.as_slice().as_strided_bytes(),
+            values.len() as u32,
+            1,
+            pq.stride(),
+            target,
+            lin,
+            DiffuseWhite::BT2408,
+        )
+        .unwrap();
+        let backf: &[f32] = bytemuck::cast_slice(back.as_slice().as_strided_bytes());
+        for (i, &v) in values.iter().enumerate() {
+            let got = backf[i * 3];
+            let rel = ((f64::from(got) - f64::from(v)) / f64::from(v)).abs();
+            assert!(rel < 0.02, "roundtrip @203 at {v}: got {got} (rel {rel})");
+        }
+    }
+
+    #[test]
+    fn anchor_threads_through_f32_pq_slice_kernel() {
+        // RGBF32 linear → RGBF32 PQ exercises the SIMD slice kernel
+        // (LinearF32ToPqF32), a different code path than the u16 kernel.
+        let values = [0.1f32, 1.0, 4.0];
+        let target = PixelDescriptor::RGB16_BT2100_PQ;
+        let lin = PixelDescriptor::RGBF32_LINEAR.with_primaries(target.primaries);
+        let pqf32 = lin.with_transfer(TransferFunction::Pq);
+        let out = convert_buffer_with_anchor(
+            &gray_rgb_f32(&values),
+            values.len() as u32,
+            1,
+            packed_stride(values.len(), lin),
+            lin,
+            pqf32,
+            DiffuseWhite::BT2408,
+        )
+        .unwrap();
+        let encoded: &[f32] = bytemuck::cast_slice(out.as_slice().as_strided_bytes());
+        for (i, &v) in values.iter().enumerate() {
+            let got = f64::from(encoded[i * 3]);
+            let want = pq_oetf(f64::from(v) * 203.0 / 10_000.0);
+            assert!(
+                (got - want).abs() < 1e-3,
+                "f32 PQ @203 at {v}: got {got} want {want}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_anchor_default_is_unscaled() {
+        // DiffuseWhite at 10000 nits ⇒ scale 1.0 ⇒ the kernel treats linear as
+        // already PQ-absolute (the prior behavior). 1.0 linear → PQ code 65535.
+        let (lin, target) = pq16_target();
+        let out = convert_buffer_with_anchor(
+            &gray_rgb_f32(&[1.0]),
+            1,
+            1,
+            packed_stride(1, lin),
+            lin,
+            target,
+            DiffuseWhite::new(10_000.0),
+        )
+        .unwrap();
+        let ob = out.as_slice().as_strided_bytes();
+        assert_eq!(u16::from_ne_bytes([ob[0], ob[1]]), 65535);
+    }
+
+    #[test]
+    fn anchor_preserves_alpha_through_rgba_pq16() {
+        // RGBA f32 linear → RGBA16 PQ: the RGB lanes take the PQ OETF + anchor;
+        // alpha rides through linearly (never PQ-encoded, never anchor-scaled) —
+        // the alpha-preserving `_rgba_slice` kernel path.
+        let rgb_pq = PixelDescriptor::RGB16_BT2100_PQ;
+        let src = PixelDescriptor::RGBAF32_LINEAR.with_primaries(rgb_pq.primaries);
+        let target = PixelDescriptor::RGBA16
+            .with_transfer(TransferFunction::Pq)
+            .with_primaries(rgb_pq.primaries);
+        let pixels = [(1.0f32, 0.5f32), (2.0, 0.25)];
+        let out = convert_buffer_with_anchor(
+            &gray_rgba_f32(&pixels),
+            pixels.len() as u32,
+            1,
+            packed_stride(pixels.len(), src),
+            src,
+            target,
+            DiffuseWhite::BT2408,
+        )
+        .unwrap();
+        let codes: &[u16] = bytemuck::cast_slice(out.as_slice().as_strided_bytes());
+        for (i, &(g, a)) in pixels.iter().enumerate() {
+            let r = i64::from(codes[i * 4]);
+            let want_rgb = (pq_oetf(f64::from(g) * 203.0 / 10_000.0) * 65535.0).round() as i64;
+            assert!(
+                (r - want_rgb).abs() <= 1,
+                "rgb @203 at {g}: got {r} want {want_rgb}"
+            );
+            // Alpha is linear → u16; PQ-encoding it would give a wildly wrong code.
+            let alpha = codes[i * 4 + 3];
+            let want_a = (f64::from(a) * 65535.0).round() as u16;
+            assert_eq!(
+                alpha, want_a,
+                "alpha must pass through linearly: got {alpha} want {want_a}"
+            );
+        }
+    }
+
+    #[test]
+    fn anchor_honors_source_stride() {
+        // A padded source stride with sentinel padding (999.0, which would clip
+        // to 65535 if it leaked) must convert identically to the packed source.
+        let (lin, target) = pq16_target();
+        let row_vals = [0.1f32, 1.0, 3.0];
+        let width = row_vals.len() as u32;
+        let rows = 2u32;
+        let row = packed_stride(row_vals.len(), lin);
+        let stride = row + 2 * 12; // two sentinel pixels of padding per row
+
+        let mut packed = gray_rgb_f32(&row_vals);
+        packed.extend_from_slice(&gray_rgb_f32(&row_vals));
+        let want = convert_buffer_with_anchor(
+            &packed,
+            width,
+            rows,
+            row,
+            lin,
+            target,
+            DiffuseWhite::BT2408,
+        )
+        .unwrap();
+
+        let mut strided = vec![0u8; stride * rows as usize];
+        for y in 0..rows as usize {
+            let s = y * stride;
+            strided[s..s + row].copy_from_slice(&gray_rgb_f32(&row_vals));
+            for b in strided[s + row..s + stride].chunks_exact_mut(4) {
+                b.copy_from_slice(&999.0f32.to_ne_bytes());
+            }
+        }
+        let got = convert_buffer_with_anchor(
+            &strided,
+            width,
+            rows,
+            stride,
+            lin,
+            target,
+            DiffuseWhite::BT2408,
+        )
+        .unwrap();
+        assert_eq!(
+            got.as_slice().as_strided_bytes(),
+            want.as_slice().as_strided_bytes(),
+            "strided source must convert identically to packed"
+        );
     }
 }
 

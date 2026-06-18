@@ -513,6 +513,8 @@ pub use load_bearing::{LoadBearingReport, PixelBufferLoadBearingExt, PixelSliceL
 pub use hdr::exposure_tonemap;
 // Anchor-aware HDR PQ quantizer — reads `DiffuseWhite` from the source's
 // `ColorContext` (default BT.2408 = 203); the canonical linear→PQ16 encoder.
+// (The no-allocation `quantize_into` sibling stays `pub(crate)` until a concrete
+// consumer or the §3.2 PixelBuffer-level surface lands — see hdr.rs.)
 pub use hdr::quantize_to;
 // `HdrMetadata` is re-exported but deprecated (see the `hdr` module); the
 // re-export itself names it, hence the allow.
