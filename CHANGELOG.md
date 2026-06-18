@@ -24,21 +24,14 @@
   (`zenpixels::hdr` and `zencodec::info`, sibling crates). Make `zenpixels`
   the single canonical home and have `zencodec` re-export, so codecs stop
   converting between two identical types.
-- **`ConvertError`: add `#[non_exhaustive]` and a new
-  `Buffer(zenpixels::BufferError)` variant (+ `From<BufferError>`).** The 8
-  `PixelBuffer::{try_new,from_vec}` / `PixelSlice::new` construction sites
-  (in `ext.rs`, `hdr.rs`, `output.rs`) switch from the catch-all
-  `.map_err_at(|_| ConvertError::AllocationFailed)?` to
-  `.map_err_at(ConvertError::from)?`, so the real cause — `StrideTooSmall` /
-  `InvalidDimensions` / `AlignmentViolation` / `StrideNotPixelAligned` /
-  `InsufficientData` / `IncompatibleDescriptor` vs a genuine `AllocationFailed`
-  — is preserved instead of every buffer error being mislabeled as an
-  allocation (OOM) failure. The trace-preservation half (keeping the
-  `At<BufferError>` chain across the convert boundary) landed in #52; this is
-  the *classification* half — it needs the new variant and `#[non_exhaustive]`
-  on `ConvertError`, both of which are semver breaks, hence 0.3.0. (See the
-  per-site `FIXME`s and the authoritative note at the `ConvertError`
-  definition in `src/error.rs`.)
+- **`zenpixels::ColorAuthority`: add `#[non_exhaustive]`.** The `Cicp`/`Icc`
+  authority set can plausibly grow (gain-map / embedded-HDR / merged authority),
+  so it shouldn't be a hard exhaustive match. Unlike the struct seals and
+  `ConvertError` (both cargo-copter-verified 0-victim and shipped in 0.2.14),
+  sealing `ColorAuthority` has **2** measured exhaustive-match victims —
+  `zenanalyze` (its own `match`) and `zenfilters` (via
+  `zenpixels-convert::output`'s match) — so it batches here, and the `_ =>`
+  migrations (`zenanalyze`, `zenpixels-convert::output`) land together at 0.3.0.
 
 ### zenpixels — docs
 
@@ -111,6 +104,30 @@
   (verified). `cargo semver-checks` now reports a single remaining major item
   (`struct_marked_non_exhaustive`) — a tolerated-bucket item; the `Eq`-removal
   failure is gone.
+- **Eight more public data types are now `#[non_exhaustive]`** —
+  `hdr::{ContentLightLevel, MasteringDisplay}`, `registry::KnownColorSpace`,
+  `planar::{MultiPlaneImage, PlaneDescriptor, PlaneMask, Plane, PlaneLayout}`,
+  and `buffer::InPlacePixels` (which gains `InPlacePixels::new`) — future-proofing
+  the HDR/planar metadata surface so later fields/variants stay additive. Each
+  keeps its valid `Eq`/`Hash`; construction stays via the existing
+  `::new`/builders. **cargo-copter (all 21 published zenpixels reverse-deps): 0
+  new victims** for the HDR/planar/registry seals (nobody downstream
+  struct-literals them); `InPlacePixels` is transform-internal with no published
+  constructor, so its seal is likewise victim-free. POD pixel types
+  `Bgrx`/`Rgbx`/`GrayAlpha*` are deliberately left **open** — struct-literal is
+  their interface — and `ColorAuthority` is deferred to 0.3.0 (see QUEUED).
+- **`zenpixels-convert::ConvertError` is now `#[non_exhaustive]`, with a new
+  `Buffer(zenpixels::BufferError)` variant + `From<BufferError>`** — promoted
+  from the 0.3.0 queue on cargo-copter evidence: sealing it produced **0
+  `E0004` regressions** across zpc's published reverse-deps (a `non_exhaustive`
+  enum only breaks exhaustive `match`es lacking a `_` arm, and nobody matches
+  `ConvertError` that way). The seal being free, the `Buffer` variant rides
+  along (adding a variant to an already-sealed enum is not a break). The 8
+  `PixelBuffer::{try_new,from_vec}` construction sites now
+  `map_err_at(ConvertError::from)`, so a `StrideTooSmall` / `InvalidDimensions`
+  layout error keeps its real cause instead of being mislabeled
+  `AllocationFailed` (OOM) — the *classification* half of #52 (the
+  trace-preservation half landed earlier).
 
 ### Workspace — build
 
