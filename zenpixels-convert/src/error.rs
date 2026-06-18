@@ -5,36 +5,18 @@ use core::fmt;
 
 /// Errors that can occur during pixel format negotiation or conversion.
 //
-// ── ConvertError 0.3.0 note (authoritative) ─────────────────────────────────
-// This enum is currently EXHAUSTIVE: `#[non_exhaustive]` was removed to avoid a
-// semver break vs 0.2.3, so adding any variant is itself a break. Two related
-// changes are batched for the next 0.3.0 release (see CHANGELOG "QUEUED
-// BREAKING CHANGES"):
-//
-//   (a) Add `#[non_exhaustive]` to `ConvertError`.
-//   (b) Add a new variant `Buffer(zenpixels::BufferError)` that carries the
-//       real underlying buffer error instead of collapsing it.
-//   (c) Add `impl From<zenpixels::BufferError> for ConvertError` (wrapping into
-//       the new `Buffer` variant) so the `?`/`map_err_at` ergonomics are clean.
-//   (d) Switch the 8 `PixelBuffer::{try_new,from_vec}` / `PixelSlice::new`
-//       construction sites — 2 in `ext.rs`, 1 in `hdr.rs`, 5 in `output.rs`,
-//       each tagged with a per-site `FIXME` — from the catch-all
-//       `.map_err_at(|_| ConvertError::AllocationFailed)?` to
-//       `.map_err_at(ConvertError::from)?`.
-//
-// Why: `zenpixels::PixelBuffer`/`PixelSlice` construction returns
-// `At<zenpixels::BufferError>`, a 7-variant enum (`AlignmentViolation`,
-// `InsufficientData`, `StrideTooSmall`, `StrideNotPixelAligned`,
-// `InvalidDimensions`, `IncompatibleDescriptor`, `AllocationFailed`). Today all
-// 7 are mislabeled as `ConvertError::AllocationFailed` — i.e. a `StrideTooSmall`
-// or `InvalidDimensions` *layout* error is reported as an out-of-memory failure.
-// The #52 fix already preserves the `At<BufferError>` *trace* across the convert
-// boundary (via `map_err_at`); the remaining 0.3.0 work fixes the
-// *classification* so the true reason survives. Adding the variant and
-// `#[non_exhaustive]` are both semver breaks, which is why this is deferred to
-// 0.3.0 rather than shipped in a 0.2.N patch.
-// ────────────────────────────────────────────────────────────────────────────
+// `#[non_exhaustive]` (added 0.2.14): cargo-copter confirmed sealing it broke
+// zero of zpc's published reverse-dependents — nobody matches `ConvertError`
+// exhaustively — so it shipped as a tolerated 0.2.x break instead of waiting for
+// 0.3.0. That in turn let the `Buffer(BufferError)` variant land in the same
+// patch (adding a variant to an already-`#[non_exhaustive]` enum is not a
+// break). `Buffer` preserves the real `zenpixels::BufferError` cause
+// (`StrideTooSmall` / `InvalidDimensions` / …) instead of collapsing every
+// buffer-construction failure into `AllocationFailed` (an out-of-memory label);
+// the construction sites map via `map_err_at(ConvertError::from)`, which keeps
+// both the cause and the `At` location trace.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ConvertError {
     /// No supported format could be found for the source descriptor.
     NoMatch { source: PixelDescriptor },
@@ -64,12 +46,15 @@ pub enum ConvertError {
     RgbToGray,
     /// Buffer allocation failed.
     AllocationFailed,
+    /// A pixel buffer or slice could not be constructed: carries the real
+    /// [`zenpixels::BufferError`] cause (`StrideTooSmall`, `InvalidDimensions`,
+    /// …) instead of collapsing it into [`AllocationFailed`](Self::AllocationFailed).
+    Buffer(zenpixels::BufferError),
     /// CMS transform could not be built (invalid ICC profile, unsupported color space, etc.).
     CmsError(alloc::string::String),
-    // TODO(0.3.0): add HdrTransferRequiresToneMapping variant here once
-    // ConvertError is #[non_exhaustive]. Adding a variant to an exhaustive
-    // enum is a semver break. See also HdrPolicy in output.rs and
-    // imazen/zenpixels#10 for the full HDR provenance plan.
+    // Future variants (e.g. an HDR tone-mapping-required case; see HdrPolicy in
+    // output.rs and imazen/zenpixels#10) can now be added without a break, since
+    // `ConvertError` is `#[non_exhaustive]`.
 }
 
 impl fmt::Display for ConvertError {
@@ -122,8 +107,18 @@ impl fmt::Display for ConvertError {
                 write!(f, "RGB-to-grayscale requires explicit luma coefficients")
             }
             Self::AllocationFailed => write!(f, "buffer allocation failed"),
+            Self::Buffer(e) => write!(f, "buffer construction failed: {e}"),
             Self::CmsError(msg) => write!(f, "CMS transform failed: {msg}"),
         }
+    }
+}
+
+impl From<zenpixels::BufferError> for ConvertError {
+    /// Wrap a buffer-construction failure's real cause into
+    /// [`ConvertError::Buffer`]. Pair with `map_err_at` at the call sites so the
+    /// `At` location trace is preserved alongside the classified cause.
+    fn from(err: zenpixels::BufferError) -> Self {
+        Self::Buffer(err)
     }
 }
 

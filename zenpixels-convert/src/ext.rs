@@ -195,13 +195,8 @@ impl PixelBufferConvertExt for PixelBuffer {
                 let dst_start = y as usize * dst_stride;
                 out[dst_start..dst_start + src_row.len()].copy_from_slice(src_row);
             }
-            // FIXME: mislabels non-alloc BufferError (StrideTooSmall /
-            // InvalidDimensions) as AllocationFailed; a structured
-            // ConvertError::Buffer(BufferError) variant needs a
-            // non_exhaustive / breaking (0.3.0) change. map_err_at preserves
-            // the At<BufferError> trace.
             let mut buf = PixelBuffer::from_vec(out, self.width(), self.height(), target)
-                .map_err_at(|_| crate::ConvertError::AllocationFailed)?;
+                .map_err_at(crate::ConvertError::from)?;
             if let Some(ctx) = self.color_context() {
                 buf = buf.with_color_context(Arc::clone(ctx));
             }
@@ -224,12 +219,8 @@ impl PixelBufferConvertExt for PixelBuffer {
             converter.convert_row(src_row, &mut out[dst_start..dst_end], self.width());
         }
 
-        // FIXME: mislabels non-alloc BufferError (StrideTooSmall /
-        // InvalidDimensions) as AllocationFailed; a structured
-        // ConvertError::Buffer(BufferError) variant needs a non_exhaustive /
-        // breaking (0.3.0) change. map_err_at preserves the At<BufferError> trace.
         let mut buf = PixelBuffer::from_vec(out, self.width(), self.height(), target)
-            .map_err_at(|_| crate::ConvertError::AllocationFailed)?;
+            .map_err_at(crate::ConvertError::from)?;
         if let Some(ctx) = self.color_context() {
             buf = buf.with_color_context(Arc::clone(ctx));
         }

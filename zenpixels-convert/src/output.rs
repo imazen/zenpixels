@@ -281,12 +281,8 @@ pub fn finalize_for_output<C: ColorManagement>(
             build_cms_transform(origin, &metadata, &source_desc, pixel_format, cms)?
     {
         let src_slice = buffer.as_slice();
-        // FIXME: mislabels non-alloc BufferError (StrideTooSmall /
-        // InvalidDimensions) as AllocationFailed; a structured
-        // ConvertError::Buffer(BufferError) variant needs a non_exhaustive /
-        // breaking (0.3.0) change. map_err_at preserves the At<BufferError> trace.
         let mut out = PixelBuffer::try_new(buffer.width(), buffer.height(), target_desc)
-            .map_err_at(|_| ConvertError::AllocationFailed)?;
+            .map_err_at(ConvertError::from)?;
 
         {
             let mut dst_slice = out.as_slice_mut();
@@ -314,16 +310,13 @@ pub fn finalize_for_output<C: ColorManagement>(
         // No conversion needed — copy the buffer.
         let src_slice = buffer.as_slice();
         let bytes = src_slice.contiguous_bytes();
-        // FIXME: mislabels non-alloc BufferError as AllocationFailed (needs
-        // structured ConvertError::Buffer variant = 0.3.0 break). map_err_at
-        // preserves the At<BufferError> trace.
         let out = PixelBuffer::from_vec(
             bytes.into_owned(),
             buffer.width(),
             buffer.height(),
             target_desc_full,
         )
-        .map_err_at(|_| ConvertError::AllocationFailed)?;
+        .map_err_at(ConvertError::from)?;
         return Ok(EncodeReady {
             pixels: out,
             metadata,
@@ -333,11 +326,8 @@ pub fn finalize_for_output<C: ColorManagement>(
     // Use RowConverter for format conversion.
     let mut converter = crate::RowConverter::new(source_desc, target_desc_full).at()?;
     let src_slice = buffer.as_slice();
-    // FIXME: mislabels non-alloc BufferError as AllocationFailed (needs
-    // structured ConvertError::Buffer variant = 0.3.0 break). map_err_at
-    // preserves the At<BufferError> trace.
     let mut out = PixelBuffer::try_new(buffer.width(), buffer.height(), target_desc_full)
-        .map_err_at(|_| ConvertError::AllocationFailed)?;
+        .map_err_at(ConvertError::from)?;
 
     {
         let mut dst_slice = out.as_slice_mut();
@@ -466,16 +456,13 @@ pub fn finalize_for_output_with(
     {
         let src_slice = buffer.as_slice();
         let bytes = src_slice.contiguous_bytes();
-        // FIXME: mislabels non-alloc BufferError as AllocationFailed (needs
-        // structured ConvertError::Buffer variant = 0.3.0 break). map_err_at
-        // preserves the At<BufferError> trace.
         let out = PixelBuffer::from_vec(
             bytes.into_owned(),
             buffer.width(),
             buffer.height(),
             target_desc_full,
         )
-        .map_err_at(|_| ConvertError::AllocationFailed)?;
+        .map_err_at(ConvertError::from)?;
         return Ok(EncodeReady {
             pixels: out,
             metadata,
@@ -490,11 +477,8 @@ pub fn finalize_for_output_with(
         cms,
     )?;
     let src_slice = buffer.as_slice();
-    // FIXME: mislabels non-alloc BufferError as AllocationFailed (needs
-    // structured ConvertError::Buffer variant = 0.3.0 break). map_err_at
-    // preserves the At<BufferError> trace.
     let mut out = PixelBuffer::try_new(buffer.width(), buffer.height(), target_desc_full)
-        .map_err_at(|_| ConvertError::AllocationFailed)?;
+        .map_err_at(ConvertError::from)?;
 
     {
         let mut dst_slice = out.as_slice_mut();

@@ -254,11 +254,7 @@ pub fn quantize_to(
     // target's primaries so no gamut step is inserted (value-only quantize).
     let src = PixelDescriptor::RGBF32_LINEAR.with_primaries(target.primaries);
     let out = convert_buffer(&scaled, w, h, src, target)?;
-    // FIXME: mislabels non-alloc BufferError (StrideTooSmall /
-    // InvalidDimensions) as AllocationFailed; a structured
-    // ConvertError::Buffer(BufferError) variant needs a non_exhaustive /
-    // breaking (0.3.0) change. map_err_at preserves the At<BufferError> trace.
-    PixelBuffer::from_vec(out, w, h, target).map_err_at(|_| ConvertError::AllocationFailed)
+    PixelBuffer::from_vec(out, w, h, target).map_err_at(ConvertError::from)
 }
 
 #[cfg(test)]
