@@ -47,7 +47,11 @@ fn bench_transpose(suite: &mut Suite) {
     for &orientation in &[Orientation::Rotate90, Orientation::Transpose] {
         for &(fmt, desc) in FORMATS {
             // Label reflects which path `apply_orientation` actually takes.
-            let prod_label = if cfg!(feature = "fast-transpose") { "simd  " } else { "scalar" };
+            let prod_label = if cfg!(feature = "fast-transpose") {
+                "simd  "
+            } else {
+                "scalar"
+            };
             for &(label, w, h) in SIZES {
                 let bpp = desc.bytes_per_pixel();
                 let bytes = u64::from(w) * u64::from(h) * bpp as u64;
