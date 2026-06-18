@@ -25,6 +25,14 @@ pub struct ConvertPlan {
     pub(crate) from: PixelDescriptor,
     pub(crate) to: PixelDescriptor,
     pub(crate) steps: Vec<ConvertStep>,
+    /// Relative-linear → PQ-absolute scale = `diffuse_white_nits / 10000`,
+    /// applied by the PQ kernels (encode multiplies pre-OETF, decode divides
+    /// post-EOTF). `1.0` is the unsignaled default and means "treat linear as
+    /// already PQ-absolute (1.0 = 10000 cd/m²)" — i.e. exactly the prior
+    /// behavior, so plans built without an anchor are byte-for-byte unchanged.
+    /// Set via [`with_pq_anchor`](Self::with_pq_anchor). HLG steps ignore it
+    /// (scene-referred — different anchoring, out of scope here).
+    pub(crate) pq_anchor_scale: f32,
 }
 
 /// A single conversion step.
@@ -268,6 +276,39 @@ fn assert_not_cmyk(desc: &PixelDescriptor) {
 }
 
 impl ConvertPlan {
+    /// Assemble a plan with the default (no-anchor) PQ scale. The single place
+    /// `pq_anchor_scale` is defaulted, so every construction path starts at the
+    /// behavior-preserving `1.0`.
+    fn build(from: PixelDescriptor, to: PixelDescriptor, steps: Vec<ConvertStep>) -> Self {
+        Self {
+            from,
+            to,
+            steps,
+            pq_anchor_scale: 1.0,
+        }
+    }
+
+    /// Anchor this plan's **PQ** steps to an absolute-luminance white point —
+    /// the cd/m² that relative-linear `1.0` represents (e.g.
+    /// [`DiffuseWhite::BT2408`](zenpixels::hdr::DiffuseWhite::BT2408) = 203).
+    ///
+    /// The PQ kernels then scale by `nits / 10000` across the relative-linear ↔
+    /// PQ-absolute boundary (encode multiplies before the OETF, decode divides
+    /// after the EOTF), so a relative-linear buffer maps to PQ at the right
+    /// brightness without the caller pre-scaling. A decode+encode pair in one
+    /// plan shares the scale and round-trips exactly. The BT.2408 default (203)
+    /// reproduces the byte-parity-verified pre-scale that `quantize_to` used to
+    /// do by hand. HLG steps are unaffected (scene-referred anchoring differs).
+    #[must_use]
+    pub(crate) fn with_pq_anchor(mut self, anchor: zenpixels::hdr::DiffuseWhite) -> Self {
+        // `diffuse_white_nits` / `PQ_PEAK_NITS` makes the unit explicit: the scale
+        // is the fraction of PQ's 10000 cd/m² peak that relative-linear 1.0 sits at.
+        let diffuse_white_nits = f64::from(anchor.nits());
+        const PQ_PEAK_NITS: f64 = 10_000.0;
+        self.pq_anchor_scale = (diffuse_white_nits / PQ_PEAK_NITS) as f32;
+        self
+    }
+
     /// Create a conversion plan from `from` to `to`.
     ///
     /// Returns `Err` if no conversion path exists. A
@@ -285,11 +326,7 @@ impl ConvertPlan {
         assert_not_cmyk(&from);
         assert_not_cmyk(&to);
         if from == to {
-            return Ok(Self {
-                from,
-                to,
-                steps: vec![ConvertStep::Identity],
-            });
+            return Ok(Self::build(from, to, vec![ConvertStep::Identity]));
         }
 
         // Refuse signal-range crossings: no Narrow↔Full steps exist (no
@@ -301,6 +338,24 @@ impl ConvertPlan {
         // range is preserved verbatim or the conversion fails loudly.
         // Same-range plans (including Narrow→Narrow) are unaffected.
         if from.signal_range != to.signal_range {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+
+        // Refuse HLG↔PQ. HLG is scene-referred — these kernels apply only its
+        // OETF, with no OOTF and no `Lw`/peak — while PQ is absolute display
+        // light (cd/m²). Routing one to the other through the shared "linear"
+        // intermediate conflates the two luminance domains by orders of
+        // magnitude (scene-normalized [0,1] vs absolute [0,10000 cd/m²]): a
+        // deterministic but grossly **wrong** result. Until the OOTF +
+        // `(diffuse_white, Lw)` threading lands (#45 S2), fail loudly rather than
+        // emit wrong pixels — the same posture as the signal-range refusal.
+        // HLG↔SDR/linear are *not* refused here: those stay within a normalized
+        // domain (endpoint-correct), missing only the mid-tone OOTF gamma.
+        if matches!(
+            (from.transfer(), to.transfer()),
+            (TransferFunction::Hlg, TransferFunction::Pq)
+                | (TransferFunction::Pq, TransferFunction::Hlg)
+        ) {
             return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
 
@@ -509,7 +564,7 @@ impl ConvertPlan {
                         steps.push(ConvertStep::Identity);
                     }
                     fuse_matlut_patterns(&mut steps);
-                    return Ok(Self { from, to, steps });
+                    return Ok(Self::build(from, to, steps));
                 }
                 if desc.channel_type() == ChannelType::U8
                     && matches!(desc.transfer(), TransferFunction::Srgb)
@@ -525,7 +580,7 @@ impl ConvertPlan {
                         steps.push(ConvertStep::Identity);
                     }
                     fuse_matlut_patterns(&mut steps);
-                    return Ok(Self { from, to, steps });
+                    return Ok(Self::build(from, to, steps));
                 }
                 if desc.channel_type() == ChannelType::F32
                     && desc.transfer() == TransferFunction::Linear
@@ -541,7 +596,7 @@ impl ConvertPlan {
                         steps.push(ConvertStep::Identity);
                     }
                     fuse_matlut_patterns(&mut steps);
-                    return Ok(Self { from, to, steps });
+                    return Ok(Self::build(from, to, steps));
                 }
                 if desc.channel_type() != ChannelType::F32 {
                     // Use the fused sRGB u8→linear f32 if applicable.
@@ -605,7 +660,7 @@ impl ConvertPlan {
         // kernels that avoid scratch-buffer round-trips.
         fuse_matlut_patterns(&mut steps);
 
-        Ok(Self { from, to, steps })
+        Ok(Self::build(from, to, steps))
     }
 
     /// Create a conversion plan with explicit policy enforcement.
@@ -731,11 +786,7 @@ impl ConvertPlan {
     /// plan exists only for `from()`/`to()` metadata; the actual row
     /// work is driven by the external transform stored on `RowConverter`.
     pub(crate) fn identity(from: PixelDescriptor, to: PixelDescriptor) -> Self {
-        Self {
-            from,
-            to,
-            steps: vec![ConvertStep::Identity],
-        }
+        Self::build(from, to, vec![ConvertStep::Identity])
     }
 
     /// Compose two plans into one: apply `self` then `other`.
@@ -791,11 +842,10 @@ impl ConvertPlan {
             }
         }
 
-        Some(Self {
-            from: self.from,
-            to: other.to,
-            steps,
-        })
+        // Composition runs at plan-build time, before any anchor is attached
+        // (`with_pq_anchor` is applied to the finished plan), so both inputs
+        // carry the default scale; the merged plan does too.
+        Some(Self::build(self.from, other.to, steps))
     }
 
     /// True if conversion is a no-op.
@@ -1339,7 +1389,15 @@ pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
     }
 
     if plan.steps.len() == 1 {
-        apply_step_u8(&plan.steps[0], src, dst, width, plan.from, plan.to);
+        apply_step_u8(
+            &plan.steps[0],
+            src,
+            dst,
+            width,
+            plan.from,
+            plan.to,
+            plan.pq_anchor_scale,
+        );
         return;
     }
 
@@ -1366,7 +1424,15 @@ pub(crate) fn convert_row_buffered(
     }
 
     if plan.steps.len() == 1 {
-        apply_step_u8(&plan.steps[0], src, dst, width, plan.from, plan.to);
+        apply_step_u8(
+            &plan.steps[0],
+            src,
+            dst,
+            width,
+            plan.from,
+            plan.to,
+            plan.pq_anchor_scale,
+        );
         return;
     }
 
@@ -1396,7 +1462,15 @@ pub(crate) fn convert_row_buffered(
         if i % 2 == 0 {
             let input = if i == 0 { src } else { &buf_b[..curr_len] };
             if is_last {
-                apply_step_u8(step, input, dst, width, current_desc, next_desc);
+                apply_step_u8(
+                    step,
+                    input,
+                    dst,
+                    width,
+                    current_desc,
+                    next_desc,
+                    plan.pq_anchor_scale,
+                );
             } else {
                 apply_step_u8(
                     step,
@@ -1405,12 +1479,21 @@ pub(crate) fn convert_row_buffered(
                     width,
                     current_desc,
                     next_desc,
+                    plan.pq_anchor_scale,
                 );
             }
         } else {
             let input = &buf_a[..curr_len];
             if is_last {
-                apply_step_u8(step, input, dst, width, current_desc, next_desc);
+                apply_step_u8(
+                    step,
+                    input,
+                    dst,
+                    width,
+                    current_desc,
+                    next_desc,
+                    plan.pq_anchor_scale,
+                );
             } else {
                 apply_step_u8(
                     step,
@@ -1419,6 +1502,7 @@ pub(crate) fn convert_row_buffered(
                     width,
                     current_desc,
                     next_desc,
+                    plan.pq_anchor_scale,
                 );
             }
         }

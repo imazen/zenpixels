@@ -580,44 +580,22 @@ fn hlg_f32_roundtrip_via_linear() {
 
 #[test]
 fn pq_to_hlg_f32_via_linear() {
+    // PQ↔HLG is now **refused** (absolute PQ vs scene-referred HLG, no OOTF —
+    // #45 S2) rather than silently converting through the conflated linear
+    // intermediate and emitting wrong brightness.
     let pq_d = rgb(ChannelType::F32, TransferFunction::Pq);
     let hlg_d = rgb(ChannelType::F32, TransferFunction::Hlg);
-    let mut c = RowConverter::new(pq_d, hlg_d).unwrap();
-    let src = [0.5f32; 3];
-    let mut dst = [0f32; 3];
-    c.convert_row(
-        bytemuck::cast_slice(&src),
-        bytemuck::cast_slice_mut(&mut dst),
-        1,
-    );
-    let expected = hlg_oetf(pq_eotf(0.5));
-    for ch in dst {
-        assert!(
-            (ch - expected).abs() < F32_TOL_LOOSE,
-            "PQ→HLG F32 @ 0.5: got {ch}, expected {expected}"
-        );
-    }
+    assert!(RowConverter::new(pq_d, hlg_d).is_err());
 }
 
 #[test]
 fn hlg_to_pq_f32_via_linear() {
+    // HLG↔PQ is now **refused** (scene-referred HLG vs absolute PQ, no OOTF —
+    // #45 S2) rather than silently converting through the conflated linear
+    // intermediate and emitting wrong brightness.
     let hlg_d = rgb(ChannelType::F32, TransferFunction::Hlg);
     let pq_d = rgb(ChannelType::F32, TransferFunction::Pq);
-    let mut c = RowConverter::new(hlg_d, pq_d).unwrap();
-    let src = [0.5f32; 3];
-    let mut dst = [0f32; 3];
-    c.convert_row(
-        bytemuck::cast_slice(&src),
-        bytemuck::cast_slice_mut(&mut dst),
-        1,
-    );
-    let expected = pq_oetf(hlg_eotf(0.5));
-    for ch in dst {
-        assert!(
-            (ch - expected).abs() < F32_TOL_LOOSE,
-            "HLG→PQ F32 @ 0.5: got {ch}, expected {expected}"
-        );
-    }
+    assert!(RowConverter::new(hlg_d, pq_d).is_err());
 }
 
 // =========================================================================

@@ -830,27 +830,52 @@ mod tests {
     }
 
     #[test]
-    fn pq_to_hlg_via_linear_f32() {
-        let pq = PixelDescriptor::new(
-            ChannelType::F32,
-            ChannelLayout::Rgb,
-            None,
-            TransferFunction::Pq,
-        );
-        let hlg = PixelDescriptor::new(
+    fn hlg_pq_conversion_refuses() {
+        // HLG↔PQ conflates scene-normalized HLG with absolute-nits PQ (no OOTF/
+        // `Lw`) — a gross brightness error — so the planner refuses with `NoPath`,
+        // the signal-range-refusal posture. HLG↔SDR and HLG↔Linear stay allowed
+        // (endpoint-correct; only the OOTF mid-tone gamma is missing). Correct
+        // HLG↔PQ is #45 S2's OOTF threading.
+        let hlg_f32 = PixelDescriptor::new(
             ChannelType::F32,
             ChannelLayout::Rgb,
             None,
             TransferFunction::Hlg,
         );
-        let src_f: [f32; 3] = [0.0, 0.5, 1.0];
-        let src: &[u8] = bytemuck::cast_slice(&src_f);
-        let dst = convert_pixel(pq, hlg, src);
-        let f: &[f32] = bytemuck::cast_slice(&dst);
-        // PQ 0 → HLG 0.
-        assert_eq!(f[0], 0.0);
-        // PQ 0.5 → some HLG value.
-        assert!(f[1] > 0.0 && f[1] <= 1.0);
+        let pq_f32 = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Pq,
+        );
+        match RowConverter::new(hlg_f32, pq_f32) {
+            Err(e) => assert!(matches!(*e.error(), ConvertError::NoPath { .. })),
+            Ok(_) => panic!("HLG→PQ must refuse, not emit wrong pixels"),
+        }
+        // Both directions and the u16 form refuse.
+        assert!(RowConverter::new(pq_f32, hlg_f32).is_err());
+        assert!(
+            RowConverter::new(
+                PixelDescriptor::RGB16_BT2100_HLG,
+                PixelDescriptor::RGB16_BT2100_PQ
+            )
+            .is_err()
+        );
+        // HLG↔SDR and HLG↔Linear are NOT refused (only HLG↔PQ is).
+        assert!(
+            RowConverter::new(
+                PixelDescriptor::RGB16_BT2100_HLG,
+                PixelDescriptor::RGB8_SRGB
+            )
+            .is_ok()
+        );
+        let lin = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Linear,
+        );
+        assert!(RowConverter::new(hlg_f32, lin).is_ok());
     }
 
     #[test]
@@ -871,6 +896,8 @@ mod tests {
 
     #[test]
     fn hdr_u16_to_sdr_u8_hlg() {
+        // HLG→SDR stays allowed (endpoint-correct; the OOTF mid-tone gamma is the
+        // only gap). Only HLG↔PQ is refused — see `hlg_pq_conversion_refuses`.
         let hlg_u16 = PixelDescriptor::new(
             ChannelType::U16,
             ChannelLayout::Rgb,

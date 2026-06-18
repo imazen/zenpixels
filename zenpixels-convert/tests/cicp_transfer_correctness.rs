@@ -501,6 +501,14 @@ fn all_f32_tf_pairs_create_converters() {
             if from_tf == to_tf {
                 continue;
             }
+            // HLG↔PQ is refused (scene-vs-absolute, no OOTF — #45 S2); skip it.
+            if matches!(
+                (from_tf, to_tf),
+                (TransferFunction::Hlg, TransferFunction::Pq)
+                    | (TransferFunction::Pq, TransferFunction::Hlg)
+            ) {
+                continue;
+            }
             let from = PixelDescriptor::new(ChannelType::F32, ChannelLayout::Rgb, None, from_tf);
             let to = PixelDescriptor::new(ChannelType::F32, ChannelLayout::Rgb, None, to_tf);
             assert!(
@@ -533,6 +541,14 @@ fn all_f32_tf_pairs_roundtrip() {
     for &from_tf in &tfs {
         for &to_tf in &tfs {
             if from_tf == to_tf {
+                continue;
+            }
+            // HLG↔PQ is refused (scene-vs-absolute, no OOTF — #45 S2); skip it.
+            if matches!(
+                (from_tf, to_tf),
+                (TransferFunction::Hlg, TransferFunction::Pq)
+                    | (TransferFunction::Pq, TransferFunction::Hlg)
+            ) {
                 continue;
             }
             let mut fwd = f32_converter(from_tf, to_tf);
@@ -578,6 +594,15 @@ fn cross_tf_via_linear_matches_direct() {
     for &src_tf in sdrs.iter().chain(hdrs.iter()) {
         for &dst_tf in sdrs.iter().chain(hdrs.iter()) {
             if src_tf == dst_tf {
+                continue;
+            }
+            // HLG↔PQ refuses directly (scene-vs-absolute, no OOTF — #45 S2), so
+            // there's no "direct" to compare against; skip the cross.
+            if matches!(
+                (src_tf, dst_tf),
+                (TransferFunction::Hlg, TransferFunction::Pq)
+                    | (TransferFunction::Pq, TransferFunction::Hlg)
+            ) {
                 continue;
             }
             let mut direct = f32_converter(src_tf, dst_tf);
@@ -627,6 +652,14 @@ fn black_preserved_all_tf_pairs() {
             if from_tf == to_tf {
                 continue;
             }
+            // HLG↔PQ is refused (scene-vs-absolute, no OOTF — #45 S2); skip it.
+            if matches!(
+                (from_tf, to_tf),
+                (TransferFunction::Hlg, TransferFunction::Pq)
+                    | (TransferFunction::Pq, TransferFunction::Hlg)
+            ) {
+                continue;
+            }
             let mut conv = f32_converter(from_tf, to_tf);
             let result = convert_f32_pixel(&mut conv, 0.0, 0.0, 0.0);
             for (ch, &v) in result.iter().enumerate() {
@@ -649,6 +682,14 @@ fn white_preserved_all_tf_pairs() {
     for &from_tf in &tfs {
         for &to_tf in &tfs {
             if from_tf == to_tf {
+                continue;
+            }
+            // HLG↔PQ is refused (scene-vs-absolute, no OOTF — #45 S2); skip it.
+            if matches!(
+                (from_tf, to_tf),
+                (TransferFunction::Hlg, TransferFunction::Pq)
+                    | (TransferFunction::Pq, TransferFunction::Hlg)
+            ) {
                 continue;
             }
             let mut conv = f32_converter(from_tf, to_tf);

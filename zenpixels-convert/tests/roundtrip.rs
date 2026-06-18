@@ -451,12 +451,11 @@ fn pq_u16_to_srgb_u8() {
     assert!(dst[9] < dst[6], "low PQ should be less than mid PQ");
 }
 
-/// PQ ↔ HLG cross-TF conversion via F32 linear intermediary.
+/// PQ ↔ HLG cross-TF conversion is **refused** (scene-referred HLG vs absolute
+/// PQ, no OOTF — #45 S2) rather than silently converting through the conflated
+/// linear intermediary and emitting wrong brightness.
 #[test]
-fn pq_hlg_cross_conversion() {
-    let width = 32u32;
-    let src = make_rgb_f32_row(width as usize);
-
+fn pq_hlg_cross_conversion_refuses() {
     let pq_f32 = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
@@ -469,26 +468,8 @@ fn pq_hlg_cross_conversion() {
         None,
         TransferFunction::Hlg,
     );
-
-    let mut pq_to_hlg = RowConverter::new(pq_f32, hlg_f32).unwrap();
-    let mut hlg_to_pq = RowConverter::new(hlg_f32, pq_f32).unwrap();
-
-    let mut hlg_buf = vec![0u8; width as usize * 3 * 4];
-    let mut back = vec![0u8; width as usize * 3 * 4];
-
-    pq_to_hlg.convert_row(&src, &mut hlg_buf, width);
-    hlg_to_pq.convert_row(&hlg_buf, &mut back, width);
-
-    for i in 0..width as usize * 3 {
-        let base = i * 4;
-        let orig = f32::from_ne_bytes([src[base], src[base + 1], src[base + 2], src[base + 3]]);
-        let result =
-            f32::from_ne_bytes([back[base], back[base + 1], back[base + 2], back[base + 3]]);
-        assert!(
-            (orig - result).abs() < 1e-3,
-            "PQ→HLG→PQ roundtrip error at sample {i}: {orig:.6} vs {result:.6}",
-        );
-    }
+    assert!(RowConverter::new(pq_f32, hlg_f32).is_err());
+    assert!(RowConverter::new(hlg_f32, pq_f32).is_err());
 }
 
 /// Verify that different primaries with same depth triggers gamut conversion.
