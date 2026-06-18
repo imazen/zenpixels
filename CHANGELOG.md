@@ -11,6 +11,11 @@
 - **Remove `zenpixels-convert::hdr::HdrMetadata`** (struct + methods) and its
   re-export — deprecated in 0.2.14; superseded by carrying `ContentLightLevel`
   / `MasteringDisplay` directly (or `zencodec::Metadata` at the codec layer).
+- **Remove the deprecated `ContentLightLevel::measure`** — the literal-maximum
+  MaxCLL shipped in 0.2.14 is outlier-sensitive (a single specular/noise pixel
+  inflates it, making displays over-tone-map); `#[deprecated]` + `#[doc(hidden)]`
+  in 0.2.15, to be replaced by a percentile-aware measure (#54). Delete the
+  literal-max method here.
 - **Demote the unadopted registry *lookup* surface to `pub(crate)`** —
   `zenpixels::registry::{KnownColorSpace, REGISTRY, find_by_cicp,
   find_by_primaries_transfer, find_by_named}` are `#[allow(dead_code)]`
@@ -65,6 +70,20 @@
   no README for `zenpixels-convert`. Added a focused conversion-API README,
   pointed `readme = "README.md"`, and added `/README.md` to `include` so it
   ships with the crate.
+
+## [0.2.15] - 2026-06-18
+
+### zenpixels — deprecated
+
+- **`ContentLightLevel::measure` is deprecated and `#[doc(hidden)]`.** It computes
+  the *literal* CTA-861.3 MaxCLL — the absolute maximum over all pixels of
+  `max(R, G, B)` — which is outlier-sensitive: a single specular highlight or
+  noise/stuck pixel inflates MaxCLL, and displays then over-tone-map (dimming the
+  image). Production HDR-metadata generators use a high percentile (~99.99th)
+  instead. A percentile-aware replacement is tracked in
+  [#54](https://github.com/imazen/zenpixels/issues/54); the literal-max method is
+  queued for removal in 0.3.0. MaxFALL (the mean) was never affected, and there
+  were no consumers — nothing breaks.
 
 ## [0.2.14] - 2026-06-18
 

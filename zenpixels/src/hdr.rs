@@ -123,6 +123,13 @@ impl ContentLightLevel {
         }
     }
 
+    /// **Deprecated (0.2.15), hidden.** Computes the *literal* MaxCLL — the
+    /// absolute max over pixels of `max(R, G, B)` — which is outlier-sensitive
+    /// (one specular/noise pixel inflates it, making displays over-tone-map).
+    /// Production HDR metadata uses a percentile (~99.99th); a percentile-aware
+    /// replacement is tracked in <https://github.com/imazen/zenpixels/issues/54>
+    /// and this method is queued for 0.3.0 removal. MaxFALL (the mean) is fine.
+    ///
     /// Measure MaxCLL / MaxFALL (CTA-861.3-A) from relative-linear RGB(A) f32
     /// pixels, with `white` anchoring the scale (sample `1.0` = `white` nits;
     /// [`DiffuseWhite::BT2408`] — 203 — is the convention).
@@ -146,6 +153,15 @@ impl ContentLightLevel {
     /// count); the inner loop reads whole f32s from the channel-aligned buffer
     /// so it vectorizes rather than decoding sample-by-sample.
     #[must_use]
+    #[doc(hidden)]
+    #[deprecated(
+        since = "0.2.15",
+        note = "literal-maximum MaxCLL is outlier-sensitive (one specular/noise \
+                pixel inflates it, making displays over-tone-map); production HDR \
+                metadata uses a percentile (~99.99th). Percentile-aware \
+                replacement planned: https://github.com/imazen/zenpixels/issues/54. \
+                MaxFALL is unaffected."
+    )]
     pub fn measure(px: PixelSlice<'_>, white: DiffuseWhite) -> Option<Self> {
         let desc = px.descriptor();
         let channels = match desc.pixel_format() {
@@ -243,6 +259,7 @@ impl MasteringDisplay {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // still exercises ContentLightLevel::measure until its 0.3.0 removal
 mod tests {
     use super::*;
     use crate::{PixelBuffer, PixelDescriptor};
