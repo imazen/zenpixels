@@ -37,19 +37,19 @@
 //! The transpose runs in one of two tiers — selected at compile time by the
 //! `fast-transpose` feature and at runtime by CPU capability. Both share the
 //! cache-blocking structure above and fold the reflection into the destination
-//! address; they differ only in how each tile is moved. [`do_transpose`] picks.
+//! address; they differ only in how each tile is moved. `do_transpose` picks.
 //!
 //! * **Portable scalar** — the default, and the path on pre-AVX2 x86 and any
-//!   arch without a SIMD kernel. [`transpose_tiled`] is a per-width
+//!   arch without a SIMD kernel. `transpose_tiled` is a per-width
 //!   monomorphised gather: the four transposing maps are *separable*, so along
 //!   one destination row the source column is fixed and the source offset steps
 //!   by ±stride. That replaces the generic path's per-element `forward_map`,
 //!   `row_mut`, and variable-length copy with one bounds check and a fixed-size
 //!   `BPP`-byte copy per pixel, writing the destination sequentially (zenjpeg#150
 //!   measured the generic path losing to a naive linear-write gather at 3 bpp;
-//!   this beats both). 16-byte pixels use [`transpose16_deep`] — a transpose there
+//!   this beats both). 16-byte pixels use `transpose16_deep` — a transpose there
 //!   is pure block movement that autovectorises — and the generic
-//!   [`transpose_blocked`] scatter covers any other width.
+//!   `transpose_blocked` scatter covers any other width.
 //!
 //! * **SIMD register transpose** (`fast-transpose`) — per-pixel-width kernels
 //!   that transpose a register-sized tile with an unpack/zip shuffle cascade,
@@ -57,7 +57,7 @@
 //!   libyuv) win with. x86-64-v3 (AVX2) kernels cover 1/2/3/4/6/8/12 bpp in
 //!   `pxn_x86` (24-bit RGB8 in `rgb3_x86`, which expands 3→4 bytes, transposes
 //!   u32 lanes, then compresses); aarch64 NEON kernels cover the same widths in
-//!   `pxn_neon`; 16-byte pixels fall to [`transpose16_deep`]. On other
+//!   `pxn_neon`; 16-byte pixels fall to `transpose16_deep`. On other
 //!   `fast-transpose` arches (wasm, …) only 4-byte pixels are SIMD — via
 //!   magetypes' `f32x4::transpose_4x4` (the classic `_MM_TRANSPOSE4_PS` shuffle,
 //!   generated for SSE/NEON/SIMD128/scalar from one `#[magetypes]` body and
@@ -67,7 +67,7 @@
 //! whole lanes only (no arithmetic), so the byte reinterpret is bit-exact for
 //! any 4-byte format, NaN patterns included. Every SIMD kernel transposes the
 //! full tiles and leaves the right/bottom edge strips to a scalar `forward_map`
-//! scatter (`scalar_rect` / `scalar_edges`). [`transpose_blocked`] (the generic
+//! scatter (`scalar_rect` / `scalar_edges`). `transpose_blocked` (the generic
 //! `forward_map` scatter) is the parity oracle every fast path is tested against
 //! (`simd_transpose_matches_scalar_reference_rgba8`,
 //! `tiled_transpose_matches_blocked_reference_across_bpp`,
@@ -721,7 +721,7 @@ fn transpose_blocked(
 /// the inner loops are bounds-check-free and SLP-vectorizable.
 macro_rules! staged_micro {
     ($name:ident, $bpp:literal) => {
-        #[cfg(feature = "__bench_orient")]
+        #[cfg(all(feature = "__bench_orient", feature = "fast-transpose"))]
         #[inline]
         fn $name<const FLIP_R: bool, const FLIP_C: bool>(
             sbytes: &[u8],
@@ -758,7 +758,7 @@ staged_micro!(staged_micro_4, 4);
 /// Staged-tile transpose for the four axis-swapping orientations, bpp ∈ 1..=4.
 /// Full 16×16 micro-tiles go through the staged kernel; edge remainders take
 /// the per-pixel `forward_map` scatter (identical to `transpose_edges`).
-#[cfg(feature = "__bench_orient")]
+#[cfg(all(feature = "__bench_orient", feature = "fast-transpose"))]
 fn transpose_staged(
     src: &PixelSlice<'_>,
     dst: &mut PixelSliceMut<'_>,
@@ -823,7 +823,7 @@ fn transpose_staged(
 
 /// Bench-only handle for the staged experimental path (transposing
 /// orientations, bpp 1..=4; falls back to the blocked scatter otherwise).
-#[cfg(feature = "__bench_orient")]
+#[cfg(all(feature = "__bench_orient", feature = "fast-transpose"))]
 #[doc(hidden)]
 pub fn __bench_apply_orientation_staged(
     src: PixelSlice<'_>,

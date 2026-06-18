@@ -338,7 +338,7 @@ fn tiled3_fallback_matches_blocked_reference() {
 /// the production `apply_orientation` byte-for-byte across bpp 1..=4,
 /// the four transposing orientations, and dims covering full 16×16
 /// micro-tiles, edge strips, and degenerate sizes.
-#[cfg(feature = "__bench_orient")]
+#[cfg(all(feature = "__bench_orient", feature = "fast-transpose"))]
 #[test]
 fn staged_matches_production_across_bpp_and_orientations() {
     let descs = [

@@ -9,7 +9,8 @@
 //! gather ran 73.3 ms there while our forward_map-scatter path ran 84.2 ms;
 //! the production kernel must land well under both.
 //!
-//! Run: `cargo bench --bench bench_orient --features __bench_orient`
+//! Run scalar (no ft): `cargo bench --bench bench_orient --features __bench_orient`
+//! Run SIMD (ft):       `cargo bench --bench bench_orient --features __bench_orient,fast-transpose`
 //! Filter: `... -- --group="Rotate90 RGB8 12MP"`
 
 use zenbench::prelude::*;
@@ -24,14 +25,14 @@ const SIZES: &[(&str, u32, u32)] = &[
     ("12MP  ", 4000, 3000), // typical phone photo; EXIF=6 (Rotate90) is the common case
 ];
 
-// (format label, descriptor, production-path label)
-// With __bench_orient (⇒ fast-transpose) on x86_64/aarch64 both formats use a
-// SIMD register transpose: 4 bpp → transpose4 (AVX2 8×8 / NEON), 3 bpp → the
-// rgb3 expand→transpose→compress kernel. (Other arches: 4 bpp → magetypes 4×4,
-// 3 bpp → the scalar tiled gather.)
-const FORMATS: &[(&str, PixelDescriptor, &str)] = &[
-    ("RGBA8", PixelDescriptor::RGBA8, "simd  "),
-    ("RGB8 ", PixelDescriptor::RGB8, "simd  "),
+// (format label, descriptor). The production-path label is chosen at cfg time
+// (below) by whether `fast-transpose` is on: with it, x86_64/aarch64 use a SIMD
+// register transpose (4 bpp → transpose4 AVX2 8×8 / NEON, 3 bpp → the rgb3
+// expand→transpose→compress kernel; other arches: 4 bpp → magetypes 4×4, 3 bpp →
+// scalar); without it, the portable scalar tiled gather.
+const FORMATS: &[(&str, PixelDescriptor)] = &[
+    ("RGBA8", PixelDescriptor::RGBA8),
+    ("RGB8 ", PixelDescriptor::RGB8),
 ];
 
 fn pixels(w: u32, h: u32, bpp: usize) -> Vec<u8> {
@@ -44,7 +45,9 @@ fn bench_transpose(suite: &mut Suite) {
     // Rotate90 is the dominant real-world case (portrait phone photos); Transpose
     // is the pure-transpose baseline.
     for &orientation in &[Orientation::Rotate90, Orientation::Transpose] {
-        for &(fmt, desc, prod_label) in FORMATS {
+        for &(fmt, desc) in FORMATS {
+            // Label reflects which path `apply_orientation` actually takes.
+            let prod_label = if cfg!(feature = "fast-transpose") { "simd  " } else { "scalar" };
             for &(label, w, h) in SIZES {
                 let bpp = desc.bytes_per_pixel();
                 let bytes = u64::from(w) * u64::from(h) * bpp as u64;

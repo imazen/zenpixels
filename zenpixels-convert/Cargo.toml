@@ -28,7 +28,11 @@ icc-db = ["dep:lz4_flex"]
 std = ["zenpixels/std", "linear-srgb/std", "garb/std"]
 # SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON) behind apply_orientation*.
 # Opt-in: without it, apply_orientation* use the portable scalar tiled/blocked
-# paths (correct, slower). Pulls archmage/magetypes. See orient/{pxn_x86,pxn_neon,rgb3_x86}.rs.
+# paths (correct, slower). archmage/magetypes are ALREADY unconditional deps (the
+# gamut/f16 SIMD paths pull them), so enabling this adds ~0 compile time and only
+# ~36 KB of .text — for 1.1-4.7× faster transposes (biggest at thumbnail→mid sizes;
+# memory-bound by 12MP). Output is bit-identical. Default-on is queued for 0.3.0;
+# see benchmarks/orient_fast_transpose_2026-06-18.md + orient/{pxn_x86,pxn_neon,rgb3_x86}.rs.
 fast-transpose = []
 # Unlocks the f16 16-wide AVX-512F summon-up inside the V3 `F16Convert` slice
 # entry (magetypes' `avx512` kernels are cfg-gated on this; it transitively
@@ -56,10 +60,13 @@ __bench_u16_hybrids = []
 # `__` prefix follows the same internal-API convention as
 # `__bench_u16_hybrids`. Not part of the stable public surface.
 __trace_ops = ["std"]
-# Bench-only: exposes `orient::__bench_apply_orientation_scalar` so `bench_orient`
-# can A/B the SIMD transpose against the scalar oracle on the same input. `__`
-# prefix keeps it out of the public-API snapshot.
-__bench_orient = ["fast-transpose"]
+# Bench-only: exposes the `orient::__bench_apply_orientation_*` shims so
+# `bench_orient` can A/B `apply_orientation` against the scalar `forward_map`
+# oracle. Decoupled from `fast-transpose` so the bench measures BOTH paths:
+# `--features __bench_orient` → scalar tiled gather; add `,fast-transpose` → SIMD
+# kernels. The staged shim + its parity test require both features. `__` prefix
+# keeps it out of the public-API snapshot.
+__bench_orient = []
 # Bench-only: exposes `pub mod __bench_scan` shims for
 # `bench_load_bearing`. Same convention as `__bench_u16_hybrids`.
 __bench_scan = []

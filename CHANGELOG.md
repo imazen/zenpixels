@@ -46,6 +46,39 @@
   `zenanalyze` (its own `match`) and `zenfilters` (via
   `zenpixels-convert::output`'s match) — so it batches here, and the `_ =>`
   migrations (`zenanalyze`, `zenpixels-convert::output`) land together at 0.3.0.
+- **`zenpixels-convert`: make `fast-transpose` default-on.** It costs ~0 compile
+  time (archmage/magetypes are already unconditional deps) + ~36 KB code for a
+  1.1–4.7× faster transpose, output bit-identical
+  (`benchmarks/orient_fast_transpose_2026-06-18.md`). Flipping a default feature
+  batches here; size-sensitive builds opt out via `default-features = false`.
+
+## [0.2.15] - 2026-06-18
+
+### zenpixels — deprecated
+
+- **`ContentLightLevel::measure` is deprecated and `#[doc(hidden)]`.** It computes
+  the *literal* CTA-861.3 MaxCLL — the absolute maximum over all pixels of
+  `max(R, G, B)` — which is outlier-sensitive: a single specular highlight or
+  noise/stuck pixel inflates MaxCLL, and displays then over-tone-map (dimming the
+  image). Production HDR-metadata generators use a high percentile (~99.99th)
+  instead. A percentile-aware replacement is tracked in
+  [#54](https://github.com/imazen/zenpixels/issues/54); the literal-max method is
+  queued for removal in 0.3.0. MaxFALL (the mean) was never affected, and there
+  were no consumers — nothing breaks.
+
+### zenpixels-convert — internal
+
+- **`orient`: fixed public-doc links + corrected the `fast-transpose` comment.**
+  The module-level docs linked private `transpose_*` fns (dead links on docs.rs)
+  → converted to code spans. The `fast-transpose` comment falsely claimed it
+  "pulls archmage/magetypes" — those are unconditional deps, so the feature is
+  ~free to compile (+36 KB code) for a 1.1–4.7× faster transpose; see
+  `benchmarks/orient_fast_transpose_2026-06-18.md`.
+- **`bench_orient`: decoupled `__bench_orient` from `fast-transpose`** so it A/Bs
+  the scalar tiled gather vs the SIMD kernels (`--features __bench_orient` vs
+  `,fast-transpose`); the staged shim + its parity test now require both features.
+
+## [0.2.14] - 2026-06-18
 
 ### zenpixels — docs
 
@@ -62,7 +95,7 @@
   `height()` / `stride()` accessors and the `descriptor()` by-value return /
   `At<BufferError>` error type.
 
-### zenpixels-convert — added
+### zenpixels-convert — docs
 
 - **`docs(readme)`: add a crate-local `README.md`.** The crate previously set
   `readme = "../README.md"` (the combined workspace README), but that file
@@ -70,22 +103,6 @@
   no README for `zenpixels-convert`. Added a focused conversion-API README,
   pointed `readme = "README.md"`, and added `/README.md` to `include` so it
   ships with the crate.
-
-## [0.2.15] - 2026-06-18
-
-### zenpixels — deprecated
-
-- **`ContentLightLevel::measure` is deprecated and `#[doc(hidden)]`.** It computes
-  the *literal* CTA-861.3 MaxCLL — the absolute maximum over all pixels of
-  `max(R, G, B)` — which is outlier-sensitive: a single specular highlight or
-  noise/stuck pixel inflates MaxCLL, and displays then over-tone-map (dimming the
-  image). Production HDR-metadata generators use a high percentile (~99.99th)
-  instead. A percentile-aware replacement is tracked in
-  [#54](https://github.com/imazen/zenpixels/issues/54); the literal-max method is
-  queued for removal in 0.3.0. MaxFALL (the mean) was never affected, and there
-  were no consumers — nothing breaks.
-
-## [0.2.14] - 2026-06-18
 
 ### zenpixels — added
 
