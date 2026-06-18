@@ -87,7 +87,7 @@ once_cell = { version = "1.21.4", default-features = false, features = ["race", 
 # `#![forbid(unsafe_code)]`.
 lz4_flex = { version = "0.13.1", default-features = false, features = ["safe-decode"], optional = true }
 whereat = { version = "0.1.5", default-features = false }
-moxcms = { version = "0.8.1", optional = true, features = ["options"] }
+moxcms = { version = ">=0.8.1, <0.10", optional = true, features = ["options"] }
 
 [dev-dependencies]
 zenpixels = { workspace = true, features = ["planar", "imgref"] }
