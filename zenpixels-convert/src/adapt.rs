@@ -732,14 +732,8 @@ mod tests {
             1u8, 2, 3, 0xEE, 4, 5, 6, 0xEE, 0xAA, 0xAA, 0xAA, 0xAA, // row 0 + pad
             7, 8, 9, 0xEE, 10, 11, 12, 0xEE, 0xBB, 0xBB, 0xBB, 0xBB, // row 1 + pad
         ];
-        let px = zenpixels::InPlacePixels {
-            bytes: &mut bytes,
-            width: 2,
-            rows: 2,
-            stride: 12,
-            descriptor: PixelDescriptor::RGBX8_SRGB,
-            color: None,
-        };
+        let px =
+            zenpixels::InPlacePixels::new(&mut bytes, 2, 2, 12, PixelDescriptor::RGBX8_SRGB, None);
         let out = drop_lane_impl(px, PixelDescriptor::RGB8_SRGB, &[0, 1, 2], 4, 3, 1);
         assert_eq!(out.stride(), 12, "divisible stride preserved verbatim");
         assert_eq!(out.row(0), &[1u8, 2, 3, 4, 5, 6]);

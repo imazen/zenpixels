@@ -21,6 +21,7 @@ use crate::{ColorPrimaries, TransferFunction};
 /// A known color space entry in the registry.
 #[allow(dead_code)] // used in tests; will back from_cicp/to_cicp derivation
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct KnownColorSpace {
     /// Color primaries (gamut + white point).
     pub primaries: ColorPrimaries,

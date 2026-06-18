@@ -1950,14 +1950,7 @@ mod tests {
 
         let mut mut_buf = buf.clone();
         let out = reduce_in_place_impl(
-            InPlacePixels {
-                bytes: &mut mut_buf,
-                width: 5,
-                rows: 4,
-                stride,
-                descriptor,
-                color: None,
-            },
+            InPlacePixels::new(&mut mut_buf, 5, 4, stride, descriptor, None),
             true,
         );
         assert_eq!(out.descriptor(), reference.descriptor());

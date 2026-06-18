@@ -248,6 +248,7 @@ impl fmt::Display for PlaneSemantic {
 /// assert_eq!(chroma.plane_height(1080), 540);
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct PlaneDescriptor {
     /// What this plane represents.
     pub semantic: PlaneSemantic,
@@ -352,6 +353,7 @@ impl fmt::Display for PlaneDescriptor {
 /// assert_eq!(mask.count(), 2);
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct PlaneMask {
     bits: u8,
 }
@@ -461,6 +463,7 @@ impl fmt::Display for PlaneMask {
 ///
 /// **Prefer [`PlaneLayout`] + separate buffers** for new code. This type
 /// is retained for backward compatibility.
+#[non_exhaustive]
 pub struct Plane {
     /// The pixel data for this plane.
     pub buffer: crate::buffer::PixelBuffer,
@@ -515,6 +518,7 @@ pub enum PlaneRelationship {
 /// assert!(planes[1].is_subsampled());
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PlaneLayout {
     /// Interleaved pixel data (channels packed per-pixel).
     Interleaved {
@@ -812,6 +816,7 @@ impl fmt::Display for PlaneLayout {
 /// assert_eq!(img.plane_count(), 3);
 /// assert!(img.layout().is_ycbcr());
 /// ```
+#[non_exhaustive]
 pub struct MultiPlaneImage {
     layout: PlaneLayout,
     buffers: alloc::vec::Vec<crate::buffer::PixelBuffer>,

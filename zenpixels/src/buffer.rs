@@ -1919,6 +1919,11 @@ impl PixelBuffer {
 /// description. Plain data — constructible directly (e.g. by transform
 /// unit tests exercising arbitrary strides); the staleness protection
 /// lives in `transform_in_place`'s atomic adoption, not here.
+///
+/// `#[non_exhaustive]`: construct it with [`InPlacePixels::new`] (inside
+/// `transform_in_place` the buffer does this for you). Sealing lets future
+/// fields — a cancellation token, a separate anchor — be added without a break.
+#[non_exhaustive]
 pub struct InPlacePixels<'a> {
     /// Full backing bytes from the aligned base.
     pub bytes: &'a mut [u8],
@@ -1932,6 +1937,31 @@ pub struct InPlacePixels<'a> {
     pub descriptor: PixelDescriptor,
     /// Current color context, if any.
     pub color: Option<Arc<ColorContext>>,
+}
+
+impl<'a> InPlacePixels<'a> {
+    /// Construct directly — the escape hatch for a layout transform invoked
+    /// outside [`PixelBuffer::transform_in_place`] (e.g. a unit test exercising
+    /// an arbitrary stride). Inside `transform_in_place` the buffer builds this
+    /// for you from its own backing bytes and description.
+    #[must_use]
+    pub fn new(
+        bytes: &'a mut [u8],
+        width: u32,
+        rows: u32,
+        stride: usize,
+        descriptor: PixelDescriptor,
+        color: Option<Arc<ColorContext>>,
+    ) -> Self {
+        Self {
+            bytes,
+            width,
+            rows,
+            stride,
+            descriptor,
+            color,
+        }
+    }
 }
 
 impl PixelBuffer {
