@@ -360,6 +360,20 @@ impl ColorContext {
         self
     }
 
+    /// Set the [`Cicp`] colour signalling, returning the updated context.
+    #[must_use]
+    pub fn with_cicp(mut self, cicp: Cicp) -> Self {
+        self.cicp = Some(cicp);
+        self
+    }
+
+    /// Set the raw ICC profile, returning the updated context.
+    #[must_use]
+    pub fn with_icc(mut self, icc: impl Into<Arc<[u8]>>) -> Self {
+        self.icc = Some(icc.into());
+        self
+    }
+
     /// Create from both ICC and CICP.
     ///
     /// **Deprecated:** Codecs should populate only the authoritative field —

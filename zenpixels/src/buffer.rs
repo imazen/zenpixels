@@ -33,10 +33,12 @@ use rgb::alt::BGRA;
 #[cfg(feature = "rgb")]
 use rgb::{Gray, Rgb, Rgba};
 
+use crate::cicp::Cicp;
 use crate::color::ColorContext;
 use crate::descriptor::{
     AlphaMode, ColorPrimaries, PixelDescriptor, SignalRange, TransferFunction,
 };
+use crate::hdr::DiffuseWhite;
 #[cfg(feature = "rgb")]
 use crate::pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
 
@@ -534,6 +536,46 @@ impl<'a, P> PixelSlice<'a, P> {
         self
     }
 
+    /// Relabel the source diffuse-white anchor — the cd/m² that relative-linear
+    /// `1.0` represents. **Reinterpretation only:** pixels are untouched (use a
+    /// converter to change pixel values). Clones any existing [`ColorContext`],
+    /// overrides its `diffuse_white`, and re-attaches it.
+    #[must_use]
+    pub fn with_diffuse_white(self, white: DiffuseWhite) -> Self {
+        let ctx = self
+            .color_context()
+            .map(|c| (**c).clone())
+            .unwrap_or_default()
+            .with_diffuse_white(white);
+        self.with_color_context(Arc::new(ctx))
+    }
+
+    /// Relabel the source [`Cicp`] colour signalling. **Reinterpretation only**
+    /// — pixels are untouched. Clones any existing [`ColorContext`], sets
+    /// `cicp`, and re-attaches it.
+    #[must_use]
+    pub fn with_cicp(self, cicp: Cicp) -> Self {
+        let ctx = self
+            .color_context()
+            .map(|c| (**c).clone())
+            .unwrap_or_default()
+            .with_cicp(cicp);
+        self.with_color_context(Arc::new(ctx))
+    }
+
+    /// Relabel the source ICC profile. **Reinterpretation only** — pixels are
+    /// untouched. Clones any existing [`ColorContext`], sets `icc`, and
+    /// re-attaches it.
+    #[must_use]
+    pub fn with_icc(self, icc: impl Into<Arc<[u8]>>) -> Self {
+        let ctx = self
+            .color_context()
+            .map(|c| (**c).clone())
+            .unwrap_or_default()
+            .with_icc(icc);
+        self.with_color_context(Arc::new(ctx))
+    }
+
     /// Whether rows are tightly packed (no stride padding).
     ///
     /// When true, the entire pixel data is contiguous in memory and
@@ -971,6 +1013,46 @@ impl<'a, P> PixelSliceMut<'a, P> {
     pub fn with_color_context(mut self, ctx: Arc<ColorContext>) -> Self {
         self.color = Some(ctx);
         self
+    }
+
+    /// Relabel the source diffuse-white anchor — the cd/m² that relative-linear
+    /// `1.0` represents. **Reinterpretation only:** pixels are untouched (use a
+    /// converter to change pixel values). Clones any existing [`ColorContext`],
+    /// overrides its `diffuse_white`, and re-attaches it.
+    #[must_use]
+    pub fn with_diffuse_white(self, white: DiffuseWhite) -> Self {
+        let ctx = self
+            .color_context()
+            .map(|c| (**c).clone())
+            .unwrap_or_default()
+            .with_diffuse_white(white);
+        self.with_color_context(Arc::new(ctx))
+    }
+
+    /// Relabel the source [`Cicp`] colour signalling. **Reinterpretation only**
+    /// — pixels are untouched. Clones any existing [`ColorContext`], sets
+    /// `cicp`, and re-attaches it.
+    #[must_use]
+    pub fn with_cicp(self, cicp: Cicp) -> Self {
+        let ctx = self
+            .color_context()
+            .map(|c| (**c).clone())
+            .unwrap_or_default()
+            .with_cicp(cicp);
+        self.with_color_context(Arc::new(ctx))
+    }
+
+    /// Relabel the source ICC profile. **Reinterpretation only** — pixels are
+    /// untouched. Clones any existing [`ColorContext`], sets `icc`, and
+    /// re-attaches it.
+    #[must_use]
+    pub fn with_icc(self, icc: impl Into<Arc<[u8]>>) -> Self {
+        let ctx = self
+            .color_context()
+            .map(|c| (**c).clone())
+            .unwrap_or_default()
+            .with_icc(icc);
+        self.with_color_context(Arc::new(ctx))
     }
 
     /// Reborrow as an immutable [`PixelSlice`] (zero-copy).
@@ -2219,6 +2301,46 @@ impl<P> PixelBuffer<P> {
         self
     }
 
+    /// Relabel the source diffuse-white anchor — the cd/m² that relative-linear
+    /// `1.0` represents. **Reinterpretation only:** pixels are untouched (use a
+    /// converter to change pixel values). Clones any existing [`ColorContext`],
+    /// overrides its `diffuse_white`, and re-attaches it.
+    #[must_use]
+    pub fn with_diffuse_white(self, white: DiffuseWhite) -> Self {
+        let ctx = self
+            .color_context()
+            .map(|c| (**c).clone())
+            .unwrap_or_default()
+            .with_diffuse_white(white);
+        self.with_color_context(Arc::new(ctx))
+    }
+
+    /// Relabel the source [`Cicp`] colour signalling. **Reinterpretation only**
+    /// — pixels are untouched. Clones any existing [`ColorContext`], sets
+    /// `cicp`, and re-attaches it.
+    #[must_use]
+    pub fn with_cicp(self, cicp: Cicp) -> Self {
+        let ctx = self
+            .color_context()
+            .map(|c| (**c).clone())
+            .unwrap_or_default()
+            .with_cicp(cicp);
+        self.with_color_context(Arc::new(ctx))
+    }
+
+    /// Relabel the source ICC profile. **Reinterpretation only** — pixels are
+    /// untouched. Clones any existing [`ColorContext`], sets `icc`, and
+    /// re-attaches it.
+    #[must_use]
+    pub fn with_icc(self, icc: impl Into<Arc<[u8]>>) -> Self {
+        let ctx = self
+            .color_context()
+            .map(|c| (**c).clone())
+            .unwrap_or_default()
+            .with_icc(icc);
+        self.with_color_context(Arc::new(ctx))
+    }
+
     /// Borrow the full buffer as an immutable [`PixelSlice`].
     pub fn as_slice(&self) -> PixelSlice<'_, P> {
         let total = self.stride * self.height as usize;
@@ -2587,6 +2709,31 @@ mod tests {
     use super::*;
     use crate::descriptor::{ChannelLayout, ChannelType};
     use alloc::format;
+
+    /// The buffer-level relabel builders set their field and **preserve** the
+    /// rest of the `ColorContext` (clone-override-reattach), and chain.
+    #[test]
+    fn relabel_builders_set_and_preserve_color_context() {
+        let data = alloc::vec![0u8; 4 * 4 * 3];
+        let slice = PixelSlice::new(&data, 4, 4, 12, PixelDescriptor::RGB8_SRGB)
+            .unwrap()
+            .with_cicp(Cicp::BT2100_PQ)
+            .with_diffuse_white(DiffuseWhite::new(120.0));
+        let ctx = slice.color_context().expect("context attached");
+        assert_eq!(ctx.diffuse_white, Some(DiffuseWhite::new(120.0)));
+        assert_eq!(
+            ctx.cicp,
+            Some(Cicp::BT2100_PQ),
+            "cicp preserved across the second relabel"
+        );
+
+        // A third relabel (icc) preserves the two already set.
+        let slice = slice.with_icc(alloc::vec![1u8, 2, 3]);
+        let ctx = slice.color_context().unwrap();
+        assert!(ctx.icc.is_some());
+        assert_eq!(ctx.cicp, Some(Cicp::BT2100_PQ));
+        assert_eq!(ctx.diffuse_white, Some(DiffuseWhite::new(120.0)));
+    }
     use alloc::vec;
 
     // --- PixelBuffer allocation and row access ---

@@ -63,6 +63,16 @@
 
 ## [0.2.15] - 2026-06-18
 
+### zenpixels — added
+
+- **Buffer-level colour-relabel builders** on `PixelSlice` / `PixelSliceMut` /
+  `PixelBuffer`: `with_diffuse_white(DiffuseWhite)`, `with_cicp(Cicp)`,
+  `with_icc(impl Into<Arc<[u8]>>)`. **Reinterpretation only** — pixels untouched;
+  each clones any existing `ColorContext`, overrides the one field, and
+  re-attaches, matching the existing `with_transfer` / `with_primaries` pattern
+  so the anchor (and CICP/ICC) is reframed as ergonomically as the transfer.
+  Plus `ColorContext::with_cicp` / `with_icc` to match `with_diffuse_white`.
+
 ### zenpixels — deprecated
 
 - **`ContentLightLevel::measure` is deprecated and `#[doc(hidden)]`.** It computes
