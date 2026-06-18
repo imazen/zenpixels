@@ -11,11 +11,16 @@
 - **Remove `zenpixels-convert::hdr::HdrMetadata`** (struct + methods) and its
   re-export — deprecated in 0.2.14; superseded by carrying `ContentLightLevel`
   / `MasteringDisplay` directly (or `zencodec::Metadata` at the codec layer).
-- **Remove the dead registry surface** — `zenpixels::registry::KnownColorSpace`,
-  `REGISTRY`, and `find_by_cicp` / `find_by_primaries_transfer` /
-  `find_by_named` are speculative `#[allow(dead_code)]` public API with zero
-  consumers (no in-tree non-test caller, no downstream). `#[doc(hidden)]`'d in
-  0.2.14; demote to `pub(crate)` or delete here.
+- **Demote the unadopted registry *lookup* surface to `pub(crate)`** —
+  `zenpixels::registry::{KnownColorSpace, REGISTRY, find_by_cicp,
+  find_by_primaries_transfer, find_by_named}` are `#[allow(dead_code)]`
+  groundwork (added 0.2.7, #8) for a `from_cicp`/`to_cicp` derivation that never
+  landed — those mappings are still hardcoded `match`es in `color.rs`, and the
+  lookup surface has zero consumers. `#[doc(hidden)]`'d in 0.2.14. **Disposition:
+  demote to `pub(crate)`** (keep the groundwork for the eventual derivation
+  refactor), *not* delete — it is unadopted, not replaced. NB the
+  matrix-computation half of the same module (`gamut_matrix`, `rgb_to_xyz`,
+  Bradford) **is** adopted (`descriptor.rs`) and stays `pub`.
 - **Remove the legacy `zenpixels::planar::Plane`** — superseded by `PlaneLayout`
   + separate `PixelBuffer`s (what `MultiPlaneImage` actually holds); zero
   consumers anywhere. `#[doc(hidden)]`'d in 0.2.14; delete here.
@@ -28,10 +33,6 @@
   codec-boundary carrier `zencodec::Metadata`, which already carries all three
   as sibling fields. (`HdrMetadata`'s zero consumers across `~/work`, and
   zencodec routing around it from the start, confirm it was never on that path.)
-- **Deduplicate `ContentLightLevel` / `MasteringDisplay`** — defined twice
-  (`zenpixels::hdr` and `zencodec::info`, sibling crates). Make `zenpixels`
-  the single canonical home and have `zencodec` re-export, so codecs stop
-  converting between two identical types.
 - **`zenpixels::ColorAuthority`: add `#[non_exhaustive]`.** The `Cicp`/`Icc`
   authority set can plausibly grow (gain-map / embedded-HDR / merged authority),
   so it shouldn't be a hard exhaustive match. Unlike the struct seals and
@@ -65,7 +66,7 @@
   pointed `readme = "README.md"`, and added `/README.md` to `include` so it
   ships with the crate.
 
-## [0.2.14] - 2026-06-13
+## [0.2.14] - 2026-06-18
 
 ### zenpixels — added
 
