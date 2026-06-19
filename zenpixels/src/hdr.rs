@@ -99,6 +99,226 @@ fn row_max_sum<const N: usize>(row: &[f32]) -> (f32, f64) {
     (row_max, row_sum)
 }
 
+/// Per-pixel reduction method for content-light-level measurement.
+///
+/// CTA-861-G Annex P pins MaxCLL as "the largest light level of any
+/// pixel" without normatively fixing the per-pixel reduction. Two
+/// readings are in production use:
+///
+/// - **`MaxRgb`** — `max(R, G, B)` in cd/m². The dominant industry
+///   convention (x265, DaVinci Resolve, Psychtoolbox, Dolby Vision L1,
+///   libultrahdr). Bounds what a panel must drive on its worst channel
+///   and is conservative on saturated colours.
+/// - **`LuminanceBt2020`** — BT.2020 NCL luma
+///   (`0.2627·R + 0.6780·G + 0.0593·B`). Used by some Netflix / Apple
+///   TV+ pipelines. Matches photometric luminance, so a saturated red
+///   reads at `0.2627 ×` peak instead of the full peak — closer to
+///   perceived brightness, further from panel-drive worst case.
+///
+/// Default is [`MaxRgb`](Self::MaxRgb) matching the dominant reading.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum LightLevelMethod {
+    /// `max(R, G, B)` per pixel — the CTA-861.3 industry default.
+    #[default]
+    MaxRgb,
+    /// `0.2627·R + 0.6780·G + 0.0593·B` per BT.2020 NCL luma weights.
+    LuminanceBt2020,
+}
+
+/// Log-scale histogram of per-pixel light levels in cd/m².
+///
+/// Built by [`ContentLightLevel::measure_histogram`]. Exposes the
+/// spec-literal max, arithmetic mean (the MaxFALL component), and
+/// arbitrary percentile via a CDF walk over the binned distribution.
+/// Bins are log2-spaced over `[BIN_MIN_NITS, BIN_MAX_NITS]` so the
+/// high-DR range is well-resolved at ~0.02 stops per bin.
+///
+/// **Why the histogram is the primitive.** Defect-driven outliers
+/// (stuck pixels, sensor noise spikes, specular blowouts) want a
+/// percentile readout; naturally-sparse-bright content
+/// (astrophotography, fireworks, candle in a dark room) wants the
+/// literal max. A fixed-percentile API silently miscalibrates one
+/// or the other; surfacing the histogram lets the caller commit to
+/// a content policy explicitly. See
+/// <https://github.com/imazen/zenpixels/issues/54> for the design.
+///
+/// The histogram is also the cheapest way to compute multiple
+/// readouts — the per-pixel scan is the expensive step, and CDF
+/// lookups are O(bins) after.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct LightLevelHistogram {
+    bins: alloc::boxed::Box<[u32]>,
+    total: u64,
+    sum_nits: f64,
+    literal_max_nits: f32,
+    method: LightLevelMethod,
+}
+
+impl LightLevelHistogram {
+    /// Lower edge of bin 0, in cd/m². Anything ≤ this (incl. 0 and
+    /// negatives that survived clamping) lands in bin 0.
+    pub const BIN_MIN_NITS: f32 = 0.005;
+    /// Upper edge of the last bin, in cd/m². Anything ≥ this saturates
+    /// into the last bin. The PQ container peak is 10 000 cd/m².
+    pub const BIN_MAX_NITS: f32 = 10_000.0;
+    /// Number of bins. 1024 covers `[0.005, 10000]` at ~0.0204 stops
+    /// per bin (well below the cone JND), fits in L1 at 4 KiB.
+    pub const NUM_BINS: usize = 1024;
+
+    // log2 of the range endpoints (constants, not from libm at runtime).
+    // log2(0.005) = -log2(200) = -(log2(128) + log2(1.5625)) ≈ -7.6438561
+    // log2(10000) = log2(2^13 · 1.220703125) ≈ 13.287712
+    // (computed in f64 at design time; pinned here so no_std builds need
+    // no libm dep at runtime to know the bin geometry.)
+    const LOG2_MIN: f32 = -7.643_856;
+    const LOG2_MAX: f32 = 13.287_712;
+    #[inline(always)]
+    const fn log2_step() -> f32 {
+        (Self::LOG2_MAX - Self::LOG2_MIN) / (Self::NUM_BINS as f32)
+    }
+    #[inline(always)]
+    const fn inv_log2_step() -> f32 {
+        1.0 / Self::log2_step()
+    }
+
+    /// Spec-literal MaxCLL — the largest per-pixel light level observed
+    /// (CTA-861.3 strict reading). Exact, not bin-quantised.
+    pub fn max(&self) -> f32 {
+        self.literal_max_nits
+    }
+
+    /// Arithmetic mean of per-pixel light levels — the MaxFALL component
+    /// for a single frame. `0.0` for an empty histogram.
+    pub fn mean(&self) -> f32 {
+        if self.total == 0 {
+            return 0.0;
+        }
+        (self.sum_nits / self.total as f64) as f32
+    }
+
+    /// Percentile of the light-level distribution, in cd/m².
+    /// `percentile` is in `[0.0, 1.0]`; out-of-range inputs clamp, NaN
+    /// maps to 0. `1.0` returns [`max`](Self::max) exactly (no bin
+    /// quantisation at the spec-literal value).
+    ///
+    /// Intermediate percentiles walk the binned CDF and return the
+    /// **lower edge** of the bin where the cumulative count first
+    /// crosses `percentile · total` — bin-quantised at ~0.02 stops,
+    /// well below the cone JND.
+    pub fn percentile(&self, percentile: f32) -> f32 {
+        if self.total == 0 {
+            return 0.0;
+        }
+        // NaN check first — `clamp` panics on NaN bounds and propagates NaN
+        // through the input; we've already documented NaN → 0 above.
+        let p = if percentile.is_nan() {
+            0.0
+        } else {
+            percentile.clamp(0.0, 1.0)
+        };
+        if p >= 1.0 {
+            return self.literal_max_nits;
+        }
+        if p <= 0.0 {
+            // The 0-th percentile is the floor of the distribution. We
+            // don't track a literal-min, and reporting "the lower edge
+            // of bin 0" (`BIN_MIN_NITS` ≈ 0.005) would surprise callers
+            // who reasonably expect `p=0` → `0.0`. Pin to 0.
+            return 0.0;
+        }
+        let threshold = (p as f64 * self.total as f64) as u64;
+        let mut cum: u64 = 0;
+        for (i, &count) in self.bins.iter().enumerate() {
+            cum += count as u64;
+            if cum >= threshold {
+                let log2_edge = Self::LOG2_MIN + (i as f32) / Self::inv_log2_step();
+                return fast_exp2(log2_edge).max(0.0);
+            }
+        }
+        self.literal_max_nits
+    }
+
+    /// The per-pixel reduction used when this histogram was built.
+    pub fn method(&self) -> LightLevelMethod {
+        self.method
+    }
+
+    /// Total pixels accumulated (equals `width × height` for the
+    /// contiguous-RGB(A) measure path).
+    pub fn total_pixels(&self) -> u64 {
+        self.total
+    }
+
+    /// Raw bin counts; index `i` covers
+    /// `[BIN_MIN_NITS · 2^(i·log2_step), BIN_MIN_NITS · 2^((i+1)·log2_step))`.
+    /// Useful for plotting or composing custom readouts (multi-percentile,
+    /// mode, etc.).
+    pub fn bins(&self) -> &[u32] {
+        &self.bins
+    }
+}
+
+/// `no_std` `log2` for a positive `f32` — degree-2 minimax polynomial
+/// on the mantissa. Max error ~0.01 stops over the input domain, well
+/// below the 0.02-stop bin width of [`LightLevelHistogram`]. Inputs ≤ 0
+/// return `f32::NEG_INFINITY` so the caller clamps into bin 0.
+#[inline]
+fn fast_log2(x: f32) -> f32 {
+    use core::f32::consts::LOG2_E;
+    // !(x > 0.0) catches NaN and ≤ 0 in one branch; the partial_cmp
+    // rewrite clippy suggests doesn't read more clearly here.
+    if let Some(core::cmp::Ordering::Greater) = x.partial_cmp(&0.0) {
+        let bits = x.to_bits();
+        let exponent = ((bits >> 23) & 0xFF) as i32 - 127;
+        // Mantissa reconstructed as a float in `[1.0, 2.0)`.
+        let mantissa = f32::from_bits((bits & 0x7F_FFFF) | (127 << 23));
+        let f = mantissa - 1.0;
+        // log2(1+f) ≈ f · (log2(e) − (log2(e) − 1)·f), Horner-form
+        // minimax (log2(e) ≈ 1.4426950, the leading constant).
+        let log2_mantissa = f * (LOG2_E - (LOG2_E - 1.0) * f);
+        (exponent as f32) + log2_mantissa
+    } else {
+        f32::NEG_INFINITY
+    }
+}
+
+/// `no_std` `exp2` — degree-3 minimax polynomial on the fractional part
+/// plus a bit-fiddle for the integer power-of-2 component. Accuracy
+/// ample for the bin-edge → cd/m² conversion in
+/// [`LightLevelHistogram::percentile`] (a percentile result is
+/// quantised to a bin edge anyway). Inputs outside the f32 exponent
+/// range saturate to 0 or `INFINITY` instead of wrapping.
+#[inline]
+fn fast_exp2(x: f32) -> f32 {
+    if !x.is_finite() {
+        return if x > 0.0 { f32::INFINITY } else { 0.0 };
+    }
+    // `as i32` truncates toward 0; floor differs for negative x.
+    let mut i = x as i32;
+    if (i as f32) > x {
+        i -= 1;
+    }
+    let f = x - (i as f32);
+    // 2^f ≈ 1 + ln(2)·f + 0.2402264·f² + 0.0554976·f³ (deg-3 minimax on [0,1]).
+    // The leading coefficient is ln(2) by Taylor identity; the higher-order
+    // terms are minimax-fit constants that don't match a named `consts`.
+    let pf = 1.0 + f * (core::f32::consts::LN_2 + f * (0.240_226_4 + f * 0.055_497_6));
+    // 2^i via f32 exponent bits (bias 127, shift 23). Saturate outside
+    // the normal range; subnormals and overflow handled by the clamp.
+    let biased = i + 127;
+    if biased <= 0 {
+        return 0.0;
+    }
+    if biased >= 255 {
+        return f32::INFINITY;
+    }
+    let two_i = f32::from_bits((biased as u32) << 23);
+    two_i * pf
+}
+
 /// HDR content light level metadata (CEA-861.3 / CTA-861-H).
 ///
 /// Describes the peak brightness characteristics of HDR content.
@@ -204,6 +424,246 @@ impl ContentLightLevel {
         let max_nits = f64::from(max_lin) * wn;
         let fall = sum_lin / (w as f64 * h as f64) * wn;
         Some(Self::new(nits_to_u16(max_nits), nits_to_u16(fall)))
+    }
+
+    // ── Histogram-based measurements (replacing the deprecated `measure`) ──
+
+    /// Build a log-scale [`LightLevelHistogram`] of per-pixel light levels
+    /// from relative-linear `RgbF32` / `RgbaF32` pixels.
+    ///
+    /// `white` anchors the relative scale to absolute cd/m² (sample `1.0`
+    /// = `white` nits; [`DiffuseWhite::BT2408`] = 203 is the convention).
+    /// `method` picks the per-pixel reduction (see [`LightLevelMethod`]).
+    ///
+    /// The histogram is the *primitive* — call [`LightLevelHistogram::max`],
+    /// [`LightLevelHistogram::mean`], [`LightLevelHistogram::percentile`]
+    /// (or [`percentiles`](LightLevelHistogram::bins) for custom CDF
+    /// walks) to derive whatever readouts your content policy requires.
+    /// See the issue #54 design rationale for why we don't bake a fixed
+    /// percentile into a single-call API.
+    ///
+    /// Returns `None` for non-relative-linear `RgbF32`/`RgbaF32` input;
+    /// `Some(empty)` for zero-area input (`total_pixels() == 0`,
+    /// readouts return `0.0`). Strided rows handled; alpha ignored.
+    #[must_use]
+    pub fn measure_histogram(
+        px: PixelSlice<'_>,
+        white: DiffuseWhite,
+        method: LightLevelMethod,
+    ) -> Option<LightLevelHistogram> {
+        let desc = px.descriptor();
+        let channels = match desc.pixel_format() {
+            PixelFormat::RgbF32 => 3,
+            PixelFormat::RgbaF32 => 4,
+            _ => return None,
+        };
+        if desc.transfer != TransferFunction::Linear {
+            return None;
+        }
+        let w = px.width() as usize;
+        let h = px.rows() as usize;
+
+        let mut bins = alloc::vec![0u32; LightLevelHistogram::NUM_BINS].into_boxed_slice();
+        let mut sum_nits = 0.0_f64;
+        let mut literal_max_nits = 0.0_f32;
+
+        if w == 0 || h == 0 {
+            return Some(LightLevelHistogram {
+                bins,
+                total: 0,
+                sum_nits,
+                literal_max_nits,
+                method,
+            });
+        }
+
+        let stride = px.stride();
+        let bytes = px.as_strided_bytes();
+        let row_len = w * channels * 4;
+        let white_nits = white.nits();
+
+        // Dispatch on method ONCE at the top; the inner loop sees a
+        // monomorphised reducer so LLVM can vectorise the per-pixel work.
+        match method {
+            LightLevelMethod::MaxRgb => {
+                for row in 0..h {
+                    let row_bytes = &bytes[row * stride..row * stride + row_len];
+                    let floats: &[f32] = bytemuck::cast_slice(row_bytes);
+                    if channels == 3 {
+                        accumulate_row_max_rgb::<3>(
+                            floats,
+                            white_nits,
+                            &mut bins,
+                            &mut sum_nits,
+                            &mut literal_max_nits,
+                        );
+                    } else {
+                        accumulate_row_max_rgb::<4>(
+                            floats,
+                            white_nits,
+                            &mut bins,
+                            &mut sum_nits,
+                            &mut literal_max_nits,
+                        );
+                    }
+                }
+            }
+            LightLevelMethod::LuminanceBt2020 => {
+                for row in 0..h {
+                    let row_bytes = &bytes[row * stride..row * stride + row_len];
+                    let floats: &[f32] = bytemuck::cast_slice(row_bytes);
+                    if channels == 3 {
+                        accumulate_row_luma_bt2020::<3>(
+                            floats,
+                            white_nits,
+                            &mut bins,
+                            &mut sum_nits,
+                            &mut literal_max_nits,
+                        );
+                    } else {
+                        accumulate_row_luma_bt2020::<4>(
+                            floats,
+                            white_nits,
+                            &mut bins,
+                            &mut sum_nits,
+                            &mut literal_max_nits,
+                        );
+                    }
+                }
+            }
+        }
+
+        Some(LightLevelHistogram {
+            bins,
+            total: (w as u64) * (h as u64),
+            sum_nits,
+            literal_max_nits,
+            method,
+        })
+    }
+
+    /// Spec-conformant CTA-861.3 MaxCLL + MaxFALL — literal max + mean.
+    ///
+    /// This is the **strict spec reading**: MaxCLL = the largest single
+    /// per-pixel light level in the image, MaxFALL = the arithmetic
+    /// mean. Use this when the delivery target mandates spec-literal
+    /// metadata (Netflix, broadcast). For content with defect-driven
+    /// hot pixels (sensor noise, stuck pixels, specular blowouts) prefer
+    /// [`measure_percentile`](Self::measure_percentile) with a percentile
+    /// you've committed to.
+    ///
+    /// `method` picks the per-pixel reduction. Same input contract as
+    /// [`measure_histogram`](Self::measure_histogram).
+    #[must_use]
+    pub fn measure_max(
+        px: PixelSlice<'_>,
+        white: DiffuseWhite,
+        method: LightLevelMethod,
+    ) -> Option<Self> {
+        let h = Self::measure_histogram(px, white, method)?;
+        Some(Self::new(
+            nits_to_u16(f64::from(h.max())),
+            nits_to_u16(f64::from(h.mean())),
+        ))
+    }
+
+    /// Percentile-aware MaxCLL + mean MaxFALL.
+    ///
+    /// `percentile` is in `[0.0, 1.0]` and **has no default** — the
+    /// caller commits to a percentile value explicitly per content
+    /// policy. `1.0` is the spec-literal max (use
+    /// [`measure_max`](Self::measure_max) directly if that's the goal).
+    /// `0.9999` is the typical defect-rejection choice;
+    /// astrophotography / fireworks / candle-in-dark-room content
+    /// usually wants `1.0` (literal max) instead. See the issue #54
+    /// docstring for the trade-off rationale.
+    ///
+    /// Same input contract as [`measure_histogram`](Self::measure_histogram).
+    /// MaxFALL is always the arithmetic mean (CTA-861.3 / spec-literal),
+    /// independent of `percentile`.
+    #[must_use]
+    pub fn measure_percentile(
+        px: PixelSlice<'_>,
+        white: DiffuseWhite,
+        percentile: f32,
+        method: LightLevelMethod,
+    ) -> Option<Self> {
+        let h = Self::measure_histogram(px, white, method)?;
+        Some(Self::new(
+            nits_to_u16(f64::from(h.percentile(percentile))),
+            nits_to_u16(f64::from(h.mean())),
+        ))
+    }
+}
+
+/// Compute the bin index for a cd/m² value via the log2 mapping
+/// pinned in [`LightLevelHistogram`]. Values ≤ `BIN_MIN_NITS` go to
+/// bin 0; values ≥ `BIN_MAX_NITS` saturate to the last bin.
+#[inline(always)]
+fn bin_for_nits(value_nits: f32) -> usize {
+    if value_nits <= LightLevelHistogram::BIN_MIN_NITS {
+        return 0;
+    }
+    if value_nits >= LightLevelHistogram::BIN_MAX_NITS {
+        return LightLevelHistogram::NUM_BINS - 1;
+    }
+    let log2 = fast_log2(value_nits);
+    let bin =
+        ((log2 - LightLevelHistogram::LOG2_MIN) * LightLevelHistogram::inv_log2_step()) as usize;
+    if bin >= LightLevelHistogram::NUM_BINS {
+        LightLevelHistogram::NUM_BINS - 1
+    } else {
+        bin
+    }
+}
+
+/// Per-row accumulator for the `MaxRgb` method: `max(R, G, B)` per
+/// pixel, in cd/m². Negatives/NaN fold to 0 via the `0.0.max(…)` chain.
+#[inline]
+fn accumulate_row_max_rgb<const N: usize>(
+    row: &[f32],
+    white_nits: f32,
+    bins: &mut [u32],
+    sum_nits: &mut f64,
+    literal_max_nits: &mut f32,
+) {
+    for chunk in row.chunks_exact(N) {
+        let px: &[f32; N] = chunk.try_into().unwrap();
+        let m_rel = 0.0_f32.max(px[0]).max(px[1]).max(px[2]);
+        let m_nits = m_rel * white_nits;
+        if m_nits > *literal_max_nits {
+            *literal_max_nits = m_nits;
+        }
+        *sum_nits += f64::from(m_nits);
+        bins[bin_for_nits(m_nits)] += 1;
+    }
+}
+
+/// Per-row accumulator for the `LuminanceBt2020` method: BT.2020 NCL
+/// luma in cd/m², `Y = 0.2627·R + 0.6780·G + 0.0593·B`. Channels are
+/// clamped to non-negative first; NaN channels fold to 0 by the
+/// `0.0.max(…)` pattern (`f32::max` is non-NaN-propagating, returning
+/// the non-NaN operand when one side is NaN).
+#[inline]
+fn accumulate_row_luma_bt2020<const N: usize>(
+    row: &[f32],
+    white_nits: f32,
+    bins: &mut [u32],
+    sum_nits: &mut f64,
+    literal_max_nits: &mut f32,
+) {
+    for chunk in row.chunks_exact(N) {
+        let px: &[f32; N] = chunk.try_into().unwrap();
+        let r = 0.0_f32.max(px[0]);
+        let g = 0.0_f32.max(px[1]);
+        let b = 0.0_f32.max(px[2]);
+        let y_rel = 0.2627 * r + 0.6780 * g + 0.0593 * b;
+        let y_nits = y_rel * white_nits;
+        if y_nits > *literal_max_nits {
+            *literal_max_nits = y_nits;
+        }
+        *sum_nits += f64::from(y_nits);
+        bins[bin_for_nits(y_nits)] += 1;
     }
 }
 
@@ -401,5 +861,283 @@ mod tests {
         let mut h2 = std::hash::DefaultHasher::new();
         b.hash(&mut h2);
         assert_eq!(h1.finish(), h2.finish());
+    }
+
+    // ── Histogram primitive sanity ──────────────────────────────────────
+
+    #[test]
+    fn fast_log2_round_trips_through_fast_exp2_at_bin_edges() {
+        // The percentile readout uses `fast_exp2(LOG2_MIN + i / inv_step)`
+        // to recover the bin's lower-edge cd/m². Pin the round-trip
+        // accuracy: at any bin edge the result should land within one
+        // bin-width's relative tolerance of the canonical value.
+        let inv_step = LightLevelHistogram::inv_log2_step();
+        for &i in &[0_usize, 1, 100, 500, 1023] {
+            let log2_edge = LightLevelHistogram::LOG2_MIN + (i as f32) / inv_step;
+            let recovered = fast_exp2(log2_edge);
+            // Verify against the f64 reference via the bit-trick identity.
+            let want = libm_pow2_oracle(f64::from(log2_edge));
+            let rel = (f64::from(recovered) - want).abs() / want;
+            assert!(
+                rel < 0.005,
+                "bin {i}: fast_exp2 mismatch: got {recovered} want {want}"
+            );
+        }
+    }
+
+    /// Independent f64 oracle for `2^x` — we don't have libm in the
+    /// crate but we do have `f64::powi` / std `f64::exp2`.
+    #[cfg(feature = "std")]
+    fn libm_pow2_oracle(x: f64) -> f64 {
+        x.exp2()
+    }
+    /// no_std fallback oracle: split into integer/fraction, multiply.
+    /// Less accurate than std's `exp2` but plenty for the bin-width
+    /// tolerance the test demands.
+    #[cfg(not(feature = "std"))]
+    fn libm_pow2_oracle(x: f64) -> f64 {
+        let i = x.floor() as i32;
+        let f = x - (i as f64);
+        let pf = 1.0
+            + f * (0.693_147_180_559_945_3
+                + f * (0.240_226_506_959_100_7 + f * 0.055_504_108_664_821_58));
+        let two_i = (1u64 << (i + 1023)) as f64 / (1u64 << 1023) as f64;
+        two_i * pf
+    }
+
+    #[test]
+    fn measure_histogram_empty_input_returns_zero_readouts() {
+        // Zero-area input is well-defined: total=0, all readouts are 0.
+        // `PixelSlice` requires the byte view to satisfy the f32 alignment
+        // even for zero rows, so route the empty case through an aligned
+        // `&[f32]` (`Vec<f32>` is f32-aligned) cast to bytes.
+        use crate::PixelSlice;
+        let owned: Vec<f32> = Vec::new();
+        let bytes: &[u8] = bytemuck::cast_slice(&owned);
+        let px = PixelSlice::new(bytes, 1, 0, 12, PixelDescriptor::RGBF32_LINEAR).unwrap();
+        let h = ContentLightLevel::measure_histogram(
+            px,
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        assert_eq!(h.total_pixels(), 0);
+        assert_eq!(h.max(), 0.0);
+        assert_eq!(h.mean(), 0.0);
+        assert_eq!(h.percentile(0.5), 0.0);
+    }
+
+    #[test]
+    fn measure_max_matches_cta_literal_spec() {
+        // CTA-861.3 strict: MaxCLL = largest per-pixel max(R,G,B) ·
+        // white_nits, MaxFALL = mean of same. Pin against the same
+        // values the legacy deprecated `measure` returns.
+        let buf = rgbf32(&[[1.0; 3], [2.0; 3]], 2, 1);
+        let cll = ContentLightLevel::measure_max(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        assert_eq!(cll.max_content_light_level, 406);
+        assert_eq!(cll.max_frame_average_light_level, 305);
+    }
+
+    #[test]
+    fn measure_max_luminance_bt2020_method_uses_luma_weights() {
+        // Pure red @ 1.0 with BT.2020 luma: Y = 0.2627 · 1.0 = 0.2627
+        // → 0.2627 · 203 = 53.3279 → rounds to 53.
+        let buf = rgbf32(&[[1.0, 0.0, 0.0]], 1, 1);
+        let cll = ContentLightLevel::measure_max(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::LuminanceBt2020,
+        )
+        .unwrap();
+        assert_eq!(cll.max_content_light_level, 53);
+        assert_eq!(cll.max_frame_average_light_level, 53);
+        // MaxRgb on the same input picks 1.0 → 203.
+        let cll_max_rgb = ContentLightLevel::measure_max(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        assert_eq!(cll_max_rgb.max_content_light_level, 203);
+    }
+
+    #[test]
+    fn defect_spike_percentile_drops_lone_outlier() {
+        // Synthetic defect: 10×10 = 100 pixels at 0.5 (= 101.5 nits) plus
+        // ONE stuck/specular pixel at 50.0 (= 10 150 nits, then saturated
+        // to BIN_MAX_NITS = 10 000). Spec-literal MaxCLL pins to 10 000
+        // (saturating-bin clipped from 10 150). p99.99 (drop the top
+        // 0.01% = 0.01 pixels rounded down → drops the spike since the
+        // threshold lands strictly below 100) returns the background
+        // ~101.5. This is the defect-rejection use case.
+        let mut pixels = alloc::vec![[0.5_f32; 3]; 100];
+        pixels[0] = [50.0; 3]; // the outlier
+        let buf = rgbf32(&pixels, 10, 10);
+
+        let lit = ContentLightLevel::measure_max(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        // Spec-literal preserves the spike (saturated to the bin range).
+        assert!(
+            lit.max_content_light_level >= 9000,
+            "defect spike: spec literal MaxCLL = {} (expected near 10000)",
+            lit.max_content_light_level
+        );
+
+        // p99 drops the top 1% (~1 pixel) — the spike goes; background ≈ 101.
+        let pct = ContentLightLevel::measure_percentile(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            0.99,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        assert!(
+            pct.max_content_light_level < 200,
+            "p99 should drop the lone defect: got {}",
+            pct.max_content_light_level
+        );
+    }
+
+    #[test]
+    fn night_stars_literal_max_preserves_sparse_bright_content() {
+        // Astrophotography case (issue #54 motivating example): 1100
+        // pixels total — 1000 dark-sky at 0.005 and 100 "stars" at 5.0.
+        // Spec-literal MaxCLL keeps the stars visible; a fixed-percentile
+        // API at p < 91% would silently clip them, exactly the failure
+        // mode the issue calls out.
+        let mut pixels: Vec<[f32; 3]> = alloc::vec![[0.005_f32; 3]; 1100];
+        for star in pixels.iter_mut().take(100) {
+            *star = [5.0; 3];
+        }
+        let buf = rgbf32(&pixels, 100, 11); // 100 × 11 = 1100 pixels total
+
+        // Spec-literal preserves the stars at ~1015 nits.
+        let lit = ContentLightLevel::measure_max(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        assert!(
+            lit.max_content_light_level > 900 && lit.max_content_light_level < 1100,
+            "night stars: spec literal MaxCLL = {} (expected near 1015)",
+            lit.max_content_light_level
+        );
+
+        // p99.99 also keeps them (only 0.01% = 0.11 pixels → 0 pixels
+        // dropped, full literal max preserved through the percentile).
+        let pct_high = ContentLightLevel::measure_percentile(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            0.9999,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        assert!(
+            pct_high.max_content_light_level > 900,
+            "p99.99 must keep the stars (none are defects): got {}",
+            pct_high.max_content_light_level
+        );
+
+        // A naive caller picking p90 would drop the stars (the threshold
+        // is at the 990th pixel, which is in the dark-sky region). This
+        // is the failure mode a fixed-percentile API would silently
+        // create — we let the caller choose so they make the call
+        // explicitly.
+        let pct_low = ContentLightLevel::measure_percentile(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            0.90,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        assert!(
+            pct_low.max_content_light_level < 100,
+            "p90 demonstrably loses sparse-bright content: got {}",
+            pct_low.max_content_light_level
+        );
+    }
+
+    #[test]
+    fn percentile_zero_and_one_are_well_defined() {
+        let buf = rgbf32(&[[0.0; 3], [0.5; 3], [1.0; 3]], 3, 1);
+        let h = ContentLightLevel::measure_histogram(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        // p=1.0 → spec-literal max, exact.
+        assert!((h.percentile(1.0) - 203.0).abs() < 0.01);
+        // p=0.0 → 0 (matches the documented contract).
+        assert_eq!(h.percentile(0.0), 0.0);
+    }
+
+    #[test]
+    fn percentile_clamps_nan_and_out_of_range_inputs() {
+        let buf = rgbf32(&[[0.5; 3]], 1, 1);
+        let h = ContentLightLevel::measure_histogram(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        assert_eq!(h.percentile(f32::NAN), 0.0); // NaN → 0 per doc
+        assert!(h.percentile(2.0) > 0.0); // > 1.0 clamps to literal max
+        assert_eq!(h.percentile(-0.5), 0.0); // < 0 clamps to 0
+    }
+
+    #[test]
+    fn measure_histogram_rejects_non_linear_or_non_rgb_f32() {
+        // Non-Linear transfer: rejected.
+        let desc = PixelDescriptor::RGBF32_LINEAR.with_transfer(TransferFunction::Srgb);
+        let mut data = Vec::new();
+        for c in [0.5_f32; 3] {
+            data.extend_from_slice(&c.to_ne_bytes());
+        }
+        let buf = PixelBuffer::from_vec(data, 1, 1, desc).unwrap();
+        assert!(
+            ContentLightLevel::measure_histogram(
+                buf.as_slice(),
+                DiffuseWhite::BT2408,
+                LightLevelMethod::MaxRgb,
+            )
+            .is_none()
+        );
+        // Non-f32 format: rejected.
+        let desc = PixelDescriptor::RGB8_SRGB;
+        let buf = PixelBuffer::from_vec(alloc::vec![0u8; 3], 1, 1, desc).unwrap();
+        assert!(
+            ContentLightLevel::measure_histogram(
+                buf.as_slice(),
+                DiffuseWhite::BT2408,
+                LightLevelMethod::MaxRgb,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn histogram_bins_exposed_and_sum_to_total() {
+        let buf = rgbf32(&[[0.1; 3], [0.5; 3], [1.0; 3], [2.0; 3], [10.0; 3]], 5, 1);
+        let h = ContentLightLevel::measure_histogram(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        let bin_total: u64 = h.bins().iter().map(|&c| c as u64).sum();
+        assert_eq!(bin_total, h.total_pixels());
+        assert_eq!(h.total_pixels(), 5);
+        assert_eq!(h.method(), LightLevelMethod::MaxRgb);
     }
 }
