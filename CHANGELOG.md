@@ -63,6 +63,34 @@
 
 ### zenpixels — added
 
+- **SOTA-throughput `ContentLightLevel::measure_max`** — the spec-conformant
+  (CTA-861.3 strict) `MaxCLL` + `MaxFALL` reader is now ~5-10× faster than
+  the histogram path it previously routed through. The histogram is
+  unnecessary for the spec-literal reading (which only needs per-pixel
+  `max(R, G, B)` + arithmetic mean), so `measure_max` now scans directly:
+  SIMD per-pixel `max + sum` only, scaled by the diffuse-white anchor at
+  end-of-image. No log2, no bin index, no scatter.
+  - **Throughput** on a Ryzen 9 7950X with `-C target-cpu=native`:
+    - **Scalar**: **1.7 Gpix/s** steady-state across 256² through 8K —
+      LLVM auto-vectorises the simple max+sum given the fixed-array
+      pattern, so even the foundational no-`simd` build hits gigapixel.
+    - **SIMD** (`--features simd`): **2.5-3.4 Gpix/s** — 3.4 at small
+      sizes, settling to 2.5-2.7 at 4K / 8K where DDR5 memory bandwidth
+      becomes the limit (3 Gpix/s × 12 B/pixel ≈ 36 GB/s).
+    - **Above libplacebo** (~1-2 Gpix/s documented for the analogous path).
+  - **Industry-standard accuracy** — three new tests pin
+    `ContentLightLevel::measure_max` against an independent f64
+    Psychtoolbox-3 / x265 / libplacebo / Dolby Vision L1 / libultrahdr-style
+    oracle: hand-picked small-image coverage (saturated colours, dark
+    shadow, mid-grey, HDR specular peak), the same oracle on a 4 MP
+    image with a hot specular outlier (validates the f64 mean precision
+    holds across millions of pixels), and a bit-exact cross-check
+    between `measure_max` and the histogram-derived value. All pin
+    within 1 u16 code of the f64 oracle (matches the CTA-861.3 u16
+    nits encoding granularity).
+  - Reproducer + full table in
+    [`benchmarks/measure_max_throughput_2026-06-19.md`](benchmarks/measure_max_throughput_2026-06-19.md).
+
 - **SIMD path for `ContentLightLevel::measure_histogram`** (and the
   `measure_max` / `measure_percentile` convenience methods that route
   through it), gated behind the new `simd` feature
