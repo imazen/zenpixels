@@ -1259,21 +1259,36 @@ impl PixelDescriptor {
         self.format.channel_type().byte_size()
     }
 
-    /// Tightly-packed byte stride for a given width.
+    /// Tightly-packed byte stride for a given width, in bytes.
+    ///
+    /// **Overflow-safe.** `width * bytes_per_pixel` is computed with
+    /// [`usize::saturating_mul`] so the result never wraps — on 32-bit
+    /// targets (i686, wasm32) a width that would overflow `usize` returns
+    /// `usize::MAX` instead of a silently-truncated small stride.
+    /// Downstream `checked_mul(height)` then surfaces the overflow as
+    /// [`BufferError::InvalidDimensions`](crate::BufferError::InvalidDimensions)
+    /// rather than silently under-allocating; before this guard, a 32-bit
+    /// wrap could pass the height multiply and produce a small buffer
+    /// paired with the full-size `width` field — silent corruption.
     #[inline]
     pub const fn aligned_stride(self, width: u32) -> usize {
-        width as usize * self.bytes_per_pixel()
+        (width as usize).saturating_mul(self.bytes_per_pixel())
     }
 
-    /// SIMD-friendly byte stride for a given width.
+    /// SIMD-friendly byte stride for a given width, in bytes.
     ///
     /// The stride is a multiple of `lcm(bytes_per_pixel, simd_align)`,
     /// ensuring every row start is both pixel-aligned and SIMD-aligned.
     /// `simd_align` must be a power of 2.
+    ///
+    /// **Overflow-safe** (see [`aligned_stride`](Self::aligned_stride)):
+    /// the `width * bpp` multiply saturates, and the align-up step is
+    /// also saturating, so the result stays bounded at `usize::MAX` on
+    /// overflow and downstream allocation surfaces a typed error.
     #[inline]
     pub const fn simd_aligned_stride(self, width: u32, simd_align: usize) -> usize {
         let bpp = self.bytes_per_pixel();
-        let raw = width as usize * bpp;
+        let raw = (width as usize).saturating_mul(bpp);
         let align = lcm(bpp, simd_align);
         align_up_general(raw, align)
     }
@@ -1308,12 +1323,26 @@ const fn lcm(a: usize, b: usize) -> usize {
     }
 }
 
+/// Round `value` up to the next multiple of `align`, saturating at
+/// `usize::MAX` on overflow.
+///
+/// Saturation matters when `value` is itself the saturating-mul result of
+/// [`PixelDescriptor::aligned_stride`] / [`PixelDescriptor::simd_aligned_stride`]:
+/// without it, `value + (align - rem)` could wrap from `usize::MAX` back
+/// down to a small number, defeating the saturating-mul guard one layer up.
 const fn align_up_general(value: usize, align: usize) -> usize {
     if align == 0 {
         return value;
     }
     let rem = value % align;
-    if rem == 0 { value } else { value + align - rem }
+    if rem == 0 {
+        value
+    } else {
+        match value.checked_add(align - rem) {
+            Some(v) => v,
+            None => usize::MAX,
+        }
+    }
 }
 
 impl fmt::Display for PixelDescriptor {
@@ -2127,6 +2156,44 @@ mod tests {
         assert_eq!(PixelDescriptor::RGB8_SRGB.aligned_stride(100), 300);
         assert_eq!(PixelDescriptor::RGBA8_SRGB.aligned_stride(100), 400);
         assert_eq!(PixelDescriptor::RGBF32_LINEAR.aligned_stride(10), 120);
+    }
+
+    #[test]
+    fn aligned_stride_saturates_at_usize_overflow() {
+        // On 32-bit usize, width × bpp can wrap. Saturating-mul keeps the
+        // stride at usize::MAX so downstream `checked_mul(height)` raises
+        // a typed error rather than silently under-allocating. Verified
+        // here on 64-bit too (u32::MAX × bpp doesn't overflow 64-bit usize
+        // but still exercises the wide multiply path).
+        let huge = u32::MAX; // 4 294 967 295
+        // RGBA8 = 4 bytes/pixel.
+        let stride = PixelDescriptor::RGBA8_SRGB.aligned_stride(huge);
+        // On 32-bit (usize == u32): u32::MAX × 4 wraps → saturating returns usize::MAX.
+        // On 64-bit (usize == u64): no wrap (~17 GB), saturating no-op.
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(stride, usize::MAX);
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(stride, huge as usize * 4);
+
+        // RGBF32 = 12 bytes/pixel — overflows usize at 357 913 942 px on 32-bit.
+        let stride = PixelDescriptor::RGBF32_LINEAR.aligned_stride(huge);
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(stride, usize::MAX);
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(stride, huge as usize * 12);
+    }
+
+    #[test]
+    fn simd_aligned_stride_saturates_and_does_not_wrap_via_align_up() {
+        // Even when raw width*bpp saturates to usize::MAX, the align-up
+        // step is now also saturating — without that fix, `value + (align
+        // - rem)` could wrap from MAX back to a small number, defeating
+        // the upstream guard. Verify the saturating path stays at MAX.
+        let stride = PixelDescriptor::RGBA8_SRGB.simd_aligned_stride(u32::MAX, 64);
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(stride, usize::MAX);
+        #[cfg(target_pointer_width = "64")]
+        assert!(stride >= u32::MAX as usize * 4);
     }
 
     #[test]

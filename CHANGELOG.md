@@ -61,6 +61,33 @@
   (`benchmarks/orient_fast_transpose_2026-06-18.md`). Flipping a default feature
   batches here; size-sensitive builds opt out via `default-features = false`.
 
+### zenpixels — fixed
+
+- **`PlaneDescriptor::plane_width` / `plane_height` no longer panic with
+  divide-by-zero on `h_subsample == 0` / `v_subsample == 0`** (`planar.rs`,
+  [#43](https://github.com/imazen/zenpixels/issues/43) item 1). The
+  subsample fields are public, so any code path that struct-literals a
+  `PlaneDescriptor` or maps an out-of-range codec subsampling code to
+  factor 0 could set them to 0 — the next `plane_width` call then
+  panicked in release. Now `0` is treated as `1` (full resolution) at the
+  use-site, so production servers never see the abort. The
+  [`with_subsampling`](https://docs.rs/zenpixels/0.2/zenpixels/struct.PlaneDescriptor.html#method.with_subsampling)
+  builder's `debug_assert!` still catches the misuse in dev / test.
+  Non-breaking; signature unchanged.
+- **`PixelDescriptor::aligned_stride` / `simd_aligned_stride` overflow-safe
+  on 32-bit targets (i686, wasm32)** (`descriptor.rs`,
+  [#43](https://github.com/imazen/zenpixels/issues/43) item 2). The plain
+  `width as usize * bpp` multiply could wrap silently on 32-bit `usize` —
+  producing a small stride that passed the subsequent `checked_mul(height)`
+  guard and yielded an under-sized allocation paired with the full-size
+  `width` field (silent buffer corruption / deferred OOB, instead of the
+  documented `InvalidDimensions` typed error). Both methods now use
+  `saturating_mul`, and the `align_up_general` helper saturates too so
+  the upstream guard isn't undone by a wrap in `value + (align − rem)`.
+  Strides saturate to `usize::MAX`, which downstream `checked_mul` then
+  surfaces as `InvalidDimensions`. Matches the `PixelBuffer::from_pixels`
+  guard that already had this treatment. Non-breaking.
+
 ## [0.2.15] - 2026-06-18
 
 ### zenpixels — added
