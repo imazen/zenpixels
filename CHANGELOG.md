@@ -63,6 +63,38 @@
 
 ### zenpixels — added
 
+- **SIMD path for `ContentLightLevel::measure_histogram`** (and the
+  `measure_max` / `measure_percentile` convenience methods that route
+  through it), gated behind the new `simd` feature
+  ([#54](https://github.com/imazen/zenpixels/issues/54) follow-up). The
+  scalar path remains the runtime fallback and the no-`simd`-feature
+  build path. The SIMD path uses a tiered `#[archmage::magetypes]`
+  kernel (V3 / NEON / WASM128 / scalar) with magetypes' `f32x8::log2_midp`
+  for the per-pixel log2, eight per-lane sub-histograms (32 KiB total
+  L1-resident) to side-step the cross-lane scatter conflict on the
+  histogram increment, and SIMD `reduce_max` / `reduce_add` for the
+  running max + f64 sum at end-of-row. Adds an optional `archmage` +
+  `magetypes` dep (only when the `simd` feature is on) plus an `avx512`
+  feature that flows through to `archmage/avx512` + `magetypes/avx512`
+  for the AVX-512 tier when it pays off.
+  - **Throughput** on a Ryzen 9 7950X (AMD Zen 4) with
+    `-C target-cpu=native`: scalar = ~287 Mpix/s steady-state; SIMD =
+    ~490 Mpix/s steady-state across 256² through 8K image sizes — a
+    **~1.7× speedup** uniform across the sweep. Without
+    `target-cpu=native` (V3 path stays compile-time-out), SIMD still
+    delivers ~340 Mpix/s vs scalar ~285. AVX-512 didn't move the needle
+    on this kernel — the bottleneck is the per-iteration histogram
+    scatter, not SIMD math width. Full table + reproducer in
+    [`benchmarks/measure_histogram_throughput_2026-06-19.md`](benchmarks/measure_histogram_throughput_2026-06-19.md).
+  - **Why not gigapixel yet.** The SIMD path is bottlenecked by the 8
+    scalar stores per chunk (one per sub-histogram lane). Breaking the
+    load-add-store dependency chain on hot bins needs a structural
+    change (block-level histograms, sort-based binning, or VPCONFLICTD
+    on AVX-512) — sketched in the benchmark file but out of scope for
+    this PR. The current path lands the ~1.7× win cleanly and keeps
+    the scalar contract identical bit-for-bit so the existing test
+    suite covers both.
+
 - **Histogram-based `ContentLightLevel` measurement** replacing the
   deprecated literal-max `measure`
   ([#54](https://github.com/imazen/zenpixels/issues/54)). New surface:

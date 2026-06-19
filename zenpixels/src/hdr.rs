@@ -463,16 +463,12 @@ impl ContentLightLevel {
         let w = px.width() as usize;
         let h = px.rows() as usize;
 
-        let mut bins = alloc::vec![0u32; LightLevelHistogram::NUM_BINS].into_boxed_slice();
-        let mut sum_nits = 0.0_f64;
-        let mut literal_max_nits = 0.0_f32;
-
         if w == 0 || h == 0 {
             return Some(LightLevelHistogram {
-                bins,
+                bins: alloc::vec![0u32; LightLevelHistogram::NUM_BINS].into_boxed_slice(),
                 total: 0,
-                sum_nits,
-                literal_max_nits,
+                sum_nits: 0.0,
+                literal_max_nits: 0.0,
                 method,
             });
         }
@@ -482,64 +478,81 @@ impl ContentLightLevel {
         let row_len = w * channels * 4;
         let white_nits = white.nits();
 
-        // Dispatch on method ONCE at the top; the inner loop sees a
-        // monomorphised reducer so LLVM can vectorise the per-pixel work.
-        match method {
-            LightLevelMethod::MaxRgb => {
-                for row in 0..h {
-                    let row_bytes = &bytes[row * stride..row * stride + row_len];
-                    let floats: &[f32] = bytemuck::cast_slice(row_bytes);
-                    if channels == 3 {
-                        accumulate_row_max_rgb::<3>(
-                            floats,
-                            white_nits,
-                            &mut bins,
-                            &mut sum_nits,
-                            &mut literal_max_nits,
-                        );
-                    } else {
-                        accumulate_row_max_rgb::<4>(
-                            floats,
-                            white_nits,
-                            &mut bins,
-                            &mut sum_nits,
-                            &mut literal_max_nits,
-                        );
-                    }
-                }
-            }
-            LightLevelMethod::LuminanceBt2020 => {
-                for row in 0..h {
-                    let row_bytes = &bytes[row * stride..row * stride + row_len];
-                    let floats: &[f32] = bytemuck::cast_slice(row_bytes);
-                    if channels == 3 {
-                        accumulate_row_luma_bt2020::<3>(
-                            floats,
-                            white_nits,
-                            &mut bins,
-                            &mut sum_nits,
-                            &mut literal_max_nits,
-                        );
-                    } else {
-                        accumulate_row_luma_bt2020::<4>(
-                            floats,
-                            white_nits,
-                            &mut bins,
-                            &mut sum_nits,
-                            &mut literal_max_nits,
-                        );
-                    }
-                }
-            }
+        // SIMD path: 8 sub-histograms (one per SIMD lane on V3 / emulated
+        // on NEON & WASM128) avoid the cross-lane scatter conflict on the
+        // hot histogram increment. Reduces at the end.
+        #[cfg(feature = "simd")]
+        {
+            Some(simd_kernel::measure_histogram_simd(
+                bytes, w, h, stride, channels, row_len, white_nits, method,
+            ))
         }
 
-        Some(LightLevelHistogram {
-            bins,
-            total: (w as u64) * (h as u64),
-            sum_nits,
-            literal_max_nits,
-            method,
-        })
+        // Scalar path is always available as the runtime fallback and the
+        // no-`simd`-feature build path. Dispatch on method ONCE at the top;
+        // the inner loop sees a monomorphised reducer so LLVM can
+        // vectorise the per-pixel work.
+        #[cfg(not(feature = "simd"))]
+        {
+            let mut bins = alloc::vec![0u32; LightLevelHistogram::NUM_BINS].into_boxed_slice();
+            let mut sum_nits = 0.0_f64;
+            let mut literal_max_nits = 0.0_f32;
+            match method {
+                LightLevelMethod::MaxRgb => {
+                    for row in 0..h {
+                        let row_bytes = &bytes[row * stride..row * stride + row_len];
+                        let floats: &[f32] = bytemuck::cast_slice(row_bytes);
+                        if channels == 3 {
+                            accumulate_row_max_rgb::<3>(
+                                floats,
+                                white_nits,
+                                &mut bins,
+                                &mut sum_nits,
+                                &mut literal_max_nits,
+                            );
+                        } else {
+                            accumulate_row_max_rgb::<4>(
+                                floats,
+                                white_nits,
+                                &mut bins,
+                                &mut sum_nits,
+                                &mut literal_max_nits,
+                            );
+                        }
+                    }
+                }
+                LightLevelMethod::LuminanceBt2020 => {
+                    for row in 0..h {
+                        let row_bytes = &bytes[row * stride..row * stride + row_len];
+                        let floats: &[f32] = bytemuck::cast_slice(row_bytes);
+                        if channels == 3 {
+                            accumulate_row_luma_bt2020::<3>(
+                                floats,
+                                white_nits,
+                                &mut bins,
+                                &mut sum_nits,
+                                &mut literal_max_nits,
+                            );
+                        } else {
+                            accumulate_row_luma_bt2020::<4>(
+                                floats,
+                                white_nits,
+                                &mut bins,
+                                &mut sum_nits,
+                                &mut literal_max_nits,
+                            );
+                        }
+                    }
+                }
+            }
+            Some(LightLevelHistogram {
+                bins,
+                total: (w as u64) * (h as u64),
+                sum_nits,
+                literal_max_nits,
+                method,
+            })
+        }
     }
 
     /// Spec-conformant CTA-861.3 MaxCLL + MaxFALL — literal max + mean.
@@ -619,6 +632,7 @@ fn bin_for_nits(value_nits: f32) -> usize {
 
 /// Per-row accumulator for the `MaxRgb` method: `max(R, G, B)` per
 /// pixel, in cd/m². Negatives/NaN fold to 0 via the `0.0.max(…)` chain.
+#[cfg(not(feature = "simd"))]
 #[inline]
 fn accumulate_row_max_rgb<const N: usize>(
     row: &[f32],
@@ -644,6 +658,7 @@ fn accumulate_row_max_rgb<const N: usize>(
 /// clamped to non-negative first; NaN channels fold to 0 by the
 /// `0.0.max(…)` pattern (`f32::max` is non-NaN-propagating, returning
 /// the non-NaN operand when one side is NaN).
+#[cfg(not(feature = "simd"))]
 #[inline]
 fn accumulate_row_luma_bt2020<const N: usize>(
     row: &[f32],
@@ -716,6 +731,348 @@ impl MasteringDisplay {
         max_luminance: 1000.0,
         min_luminance: 0.0001,
     };
+}
+
+// ============================================================================
+// SIMD measure_histogram path (feature = "simd")
+// ============================================================================
+
+#[cfg(feature = "simd")]
+mod simd_kernel {
+    use super::{LightLevelHistogram, LightLevelMethod, bin_for_nits};
+
+    /// One SIMD-lane-worth of sub-histogram. We allocate `LANES` of these
+    /// so each lane writes to its own histogram and no cross-lane scatter
+    /// conflict happens. Lane width is fixed at 8 across all tiers — V3
+    /// (AVX2) is natively 8, NEON / WASM128 are 4 lanes wide so magetypes
+    /// emulates 8-wide via two registers, and the scalar tier loops one
+    /// pixel at a time. 8 × 1024 × 4 bytes = 32 KiB, which fits in a
+    /// modern L1d (32–48 KiB) so the histogram pages stay hot through
+    /// the scan.
+    const LANES: usize = 8;
+
+    /// BT.2020 NCL luma coefficients pinned at compile time so the SIMD
+    /// path's splat constants match the scalar `accumulate_row_luma_bt2020`
+    /// reduction.
+    const KR: f32 = 0.2627;
+    const KG: f32 = 0.6780;
+    const KB: f32 = 0.0593;
+
+    /// Per-lane sub-histograms flattened into a single heap allocation
+    /// of `LANES × NUM_BINS` u32s. We address sub-histogram `i` as
+    /// `&mut sub_hists[i*NUM_BINS .. (i+1)*NUM_BINS]`. Flat storage
+    /// keeps `#![forbid(unsafe_code)]` honoured (no array-shape
+    /// transmute) while still giving each SIMD lane its own
+    /// conflict-free histogram.
+    type SubHists = alloc::boxed::Box<[u32]>;
+
+    fn zero_subhists() -> SubHists {
+        alloc::vec![0u32; LANES * LightLevelHistogram::NUM_BINS].into_boxed_slice()
+    }
+
+    /// Reduce the per-lane sub-histograms into the final flat histogram.
+    fn merge_subhists(sub: &SubHists, out: &mut [u32]) {
+        debug_assert_eq!(out.len(), LightLevelHistogram::NUM_BINS);
+        for bin in 0..LightLevelHistogram::NUM_BINS {
+            let mut total: u32 = 0;
+            for lane in 0..LANES {
+                total = total.wrapping_add(sub[lane * LightLevelHistogram::NUM_BINS + bin]);
+            }
+            out[bin] = total;
+        }
+    }
+
+    /// Main entry. Builds the histogram via the tiered SIMD kernel
+    /// (dispatched via `archmage::incant!`) and returns the populated
+    /// `LightLevelHistogram`. Mirrors the scalar `measure_histogram`
+    /// path's contract: same inputs, same output.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn measure_histogram_simd(
+        bytes: &[u8],
+        w: usize,
+        h: usize,
+        stride: usize,
+        channels: usize,
+        row_len: usize,
+        white_nits: f32,
+        method: LightLevelMethod,
+    ) -> LightLevelHistogram {
+        let mut sub = zero_subhists();
+        let mut sum_nits = 0.0_f64;
+        let mut literal_max_nits = 0.0_f32;
+
+        for row in 0..h {
+            let row_bytes = &bytes[row * stride..row * stride + row_len];
+            let floats: &[f32] = bytemuck::cast_slice(row_bytes);
+            match method {
+                LightLevelMethod::MaxRgb => {
+                    if channels == 3 {
+                        archmage::incant!(
+                            accumulate_strip_max_rgb_tier::<3>(
+                                floats,
+                                white_nits,
+                                &mut sub,
+                                &mut sum_nits,
+                                &mut literal_max_nits,
+                            ),
+                            [v3, neon, wasm128, scalar]
+                        );
+                    } else {
+                        archmage::incant!(
+                            accumulate_strip_max_rgb_tier::<4>(
+                                floats,
+                                white_nits,
+                                &mut sub,
+                                &mut sum_nits,
+                                &mut literal_max_nits,
+                            ),
+                            [v3, neon, wasm128, scalar]
+                        );
+                    }
+                }
+                LightLevelMethod::LuminanceBt2020 => {
+                    if channels == 3 {
+                        archmage::incant!(
+                            accumulate_strip_luma_bt2020_tier::<3>(
+                                floats,
+                                white_nits,
+                                &mut sub,
+                                &mut sum_nits,
+                                &mut literal_max_nits,
+                            ),
+                            [v3, neon, wasm128, scalar]
+                        );
+                    } else {
+                        archmage::incant!(
+                            accumulate_strip_luma_bt2020_tier::<4>(
+                                floats,
+                                white_nits,
+                                &mut sub,
+                                &mut sum_nits,
+                                &mut literal_max_nits,
+                            ),
+                            [v3, neon, wasm128, scalar]
+                        );
+                    }
+                }
+            }
+        }
+
+        let mut bins = alloc::vec![0u32; LightLevelHistogram::NUM_BINS].into_boxed_slice();
+        merge_subhists(&sub, &mut bins);
+
+        LightLevelHistogram {
+            bins,
+            total: (w as u64) * (h as u64),
+            sum_nits,
+            literal_max_nits,
+            method,
+        }
+    }
+
+    /// Tiered SIMD kernel for the `MaxRgb` reduction. Processes one
+    /// row of `N`-channel f32 pixels into the per-lane sub-histograms,
+    /// the running max, and the running f64 sum. The `N` channel-count
+    /// generic is the same shape as the scalar `accumulate_row_max_rgb`
+    /// so the alpha lane (when `N == 4`) is ignored uniformly.
+    #[archmage::magetypes(define(f32x8), v3, neon, wasm128, scalar)]
+    pub(crate) fn accumulate_strip_max_rgb_tier<const N: usize>(
+        token: Token,
+        row: &[f32],
+        white_nits: f32,
+        sub_hists: &mut [u32],
+        sum_nits: &mut f64,
+        literal_max_nits: &mut f32,
+    ) {
+        let zero = f32x8::zero(token);
+        let wn = f32x8::splat(token, white_nits);
+        let log2_min = f32x8::splat(token, LightLevelHistogram::LOG2_MIN);
+        let inv_step = f32x8::splat(token, LightLevelHistogram::inv_log2_step());
+        let bin_min_nits = f32x8::splat(token, LightLevelHistogram::BIN_MIN_NITS);
+        let num_bins_minus_1 = f32x8::splat(token, (LightLevelHistogram::NUM_BINS - 1) as f32);
+
+        let mut local_max = zero;
+        // Accumulate in f32 lanes inside the loop and convert to f64 once
+        // per row to bound rounding error — a 4K row is at most 3840 pixels
+        // and f32 sums of cd/m² values stay precise across that span.
+        let mut local_sum = zero;
+
+        let mut iter = row.chunks_exact(LANES * N);
+        for chunk in &mut iter {
+            let mut ra = [0.0_f32; LANES];
+            let mut ga = [0.0_f32; LANES];
+            let mut ba = [0.0_f32; LANES];
+            for i in 0..LANES {
+                let base = i * N;
+                ra[i] = chunk[base];
+                ga[i] = chunk[base + 1];
+                ba[i] = chunk[base + 2];
+                // Alpha (chunk[base + 3] when N==4) is ignored.
+            }
+            let r = f32x8::load(token, &ra);
+            let g = f32x8::load(token, &ga);
+            let b = f32x8::load(token, &ba);
+
+            // Folded `0.0.max(R).max(G).max(B)`: non-NaN-propagating max
+            // means negative inputs and NaN both fold to 0 (matches the
+            // scalar contract).
+            let m_rel = zero.max(r).max(g).max(b);
+            let m_nits = m_rel * wn;
+
+            local_max = local_max.max(m_nits);
+            local_sum += m_nits;
+
+            // SIMD log2 → bin index. Use `safe = max(m_nits, BIN_MIN_NITS)`
+            // so log2(0) doesn't underflow into NaN/-inf.
+            let safe = m_nits.max(bin_min_nits);
+            let log2 = safe.log2_midp();
+            // bin_f = ((log2 − log2_min) · inv_step), clamped to
+            // `[0, NUM_BINS − 1]` in SIMD before the scalar bin write.
+            let bin_f = ((log2 - log2_min) * inv_step)
+                .max(zero)
+                .min(num_bins_minus_1);
+
+            let nits_arr = m_nits.to_array();
+            let bin_arr = bin_f.to_array();
+            // 8 independent scatter writes — one per lane / sub-histogram.
+            // Lane `i` writes to `sub_hists[i]`, so no cross-lane
+            // conflict is possible.  Same-bin runs WITHIN one sub-
+            // histogram (smooth-tone content) still pay the load-add-
+            // store latency, which is the dominant remaining cost and
+            // the limit on throughput beyond what plain SIMD math gives.
+            for i in 0..LANES {
+                let bin = saturating_bin_scalar(nits_arr[i], bin_arr[i]);
+                sub_hists[i * LightLevelHistogram::NUM_BINS + bin] += 1;
+            }
+        }
+
+        // Reduce SIMD accumulators into the scalar running totals.
+        let row_max = local_max.reduce_max();
+        if row_max > *literal_max_nits {
+            *literal_max_nits = row_max;
+        }
+        *sum_nits += f64::from(local_sum.reduce_add());
+
+        // Scalar tail: pixels left over from the strip not divisible by
+        // `LANES * N`. Reuses the `bin_for_nits` helper from the scalar
+        // path to stay in lock-step with the scalar histogram's bin
+        // boundaries.
+        let remainder = iter.remainder();
+        for chunk in remainder.chunks_exact(N) {
+            let r = chunk[0].max(0.0);
+            let g = chunk[1].max(0.0);
+            let b = chunk[2].max(0.0);
+            let m_rel = r.max(g).max(b);
+            let m_nits = m_rel * white_nits;
+            if m_nits > *literal_max_nits {
+                *literal_max_nits = m_nits;
+            }
+            *sum_nits += f64::from(m_nits);
+            // Tail pixels land in sub_hists[0]; merging at the end sums
+            // all lanes so this is correct regardless of which lane the
+            // tail "lives" in.
+            sub_hists[bin_for_nits(m_nits)] += 1;
+        }
+    }
+
+    /// Tiered SIMD kernel for the `LuminanceBt2020` reduction —
+    /// `Y = 0.2627·R + 0.6780·G + 0.0593·B` (clamped non-negative).
+    #[archmage::magetypes(define(f32x8), v3, neon, wasm128, scalar)]
+    pub(crate) fn accumulate_strip_luma_bt2020_tier<const N: usize>(
+        token: Token,
+        row: &[f32],
+        white_nits: f32,
+        sub_hists: &mut [u32],
+        sum_nits: &mut f64,
+        literal_max_nits: &mut f32,
+    ) {
+        let zero = f32x8::zero(token);
+        let wn = f32x8::splat(token, white_nits);
+        let kr = f32x8::splat(token, KR);
+        let kg = f32x8::splat(token, KG);
+        let kb = f32x8::splat(token, KB);
+        let log2_min = f32x8::splat(token, LightLevelHistogram::LOG2_MIN);
+        let inv_step = f32x8::splat(token, LightLevelHistogram::inv_log2_step());
+        let bin_min_nits = f32x8::splat(token, LightLevelHistogram::BIN_MIN_NITS);
+        let num_bins_minus_1 = f32x8::splat(token, (LightLevelHistogram::NUM_BINS - 1) as f32);
+
+        let mut local_max = zero;
+        let mut local_sum = zero;
+
+        let mut iter = row.chunks_exact(LANES * N);
+        for chunk in &mut iter {
+            let mut ra = [0.0_f32; LANES];
+            let mut ga = [0.0_f32; LANES];
+            let mut ba = [0.0_f32; LANES];
+            for i in 0..LANES {
+                let base = i * N;
+                ra[i] = chunk[base];
+                ga[i] = chunk[base + 1];
+                ba[i] = chunk[base + 2];
+            }
+            let r = f32x8::load(token, &ra).max(zero);
+            let g = f32x8::load(token, &ga).max(zero);
+            let b = f32x8::load(token, &ba).max(zero);
+
+            let y_rel = kr * r + kg * g + kb * b;
+            let y_nits = y_rel * wn;
+
+            local_max = local_max.max(y_nits);
+            local_sum += y_nits;
+
+            let safe = y_nits.max(bin_min_nits);
+            let log2 = safe.log2_midp();
+            let bin_f = ((log2 - log2_min) * inv_step)
+                .max(zero)
+                .min(num_bins_minus_1);
+
+            let nits_arr = y_nits.to_array();
+            let bin_arr = bin_f.to_array();
+            for i in 0..LANES {
+                let bin = saturating_bin_scalar(nits_arr[i], bin_arr[i]);
+                sub_hists[i * LightLevelHistogram::NUM_BINS + bin] += 1;
+            }
+        }
+
+        let row_max = local_max.reduce_max();
+        if row_max > *literal_max_nits {
+            *literal_max_nits = row_max;
+        }
+        *sum_nits += f64::from(local_sum.reduce_add());
+
+        let remainder = iter.remainder();
+        for chunk in remainder.chunks_exact(N) {
+            let r = chunk[0].max(0.0);
+            let g = chunk[1].max(0.0);
+            let b = chunk[2].max(0.0);
+            let y_rel = KR * r + KG * g + KB * b;
+            let y_nits = y_rel * white_nits;
+            if y_nits > *literal_max_nits {
+                *literal_max_nits = y_nits;
+            }
+            *sum_nits += f64::from(y_nits);
+            sub_hists[bin_for_nits(y_nits)] += 1;
+        }
+    }
+
+    /// Saturating scalar bin index — same semantics as `bin_for_nits` in
+    /// the parent module, but inlined here so the SIMD hot loop doesn't
+    /// pay a function-call overhead.
+    #[inline(always)]
+    fn saturating_bin_scalar(nits: f32, bin_f: f32) -> usize {
+        if nits <= LightLevelHistogram::BIN_MIN_NITS {
+            return 0;
+        }
+        if nits >= LightLevelHistogram::BIN_MAX_NITS {
+            return LightLevelHistogram::NUM_BINS - 1;
+        }
+        let b = bin_f as usize;
+        if b >= LightLevelHistogram::NUM_BINS {
+            LightLevelHistogram::NUM_BINS - 1
+        } else {
+            b
+        }
+    }
 }
 
 #[cfg(test)]
