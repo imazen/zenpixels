@@ -34,7 +34,31 @@ fn build_buffer(w: u32, h: u32) -> PixelBuffer {
 
 fn bench(label: &str, w: u32, h: u32, iters: usize) {
     let buf = build_buffer(w, h);
-    // Warmup so JIT/cache is hot.
+    let pixels = (w as u64) * (h as u64);
+
+    // ── measure_max (no-histogram fast path) ────────────────────────────
+    for _ in 0..3 {
+        let _ = black_box(ContentLightLevel::measure_max(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        ));
+    }
+    let start = Instant::now();
+    for _ in 0..iters {
+        let cll = ContentLightLevel::measure_max(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        black_box(cll.max_content_light_level);
+    }
+    let elapsed = start.elapsed();
+    let total_pixels = pixels * (iters as u64);
+    let max_mpix = (total_pixels as f64) / (elapsed.as_secs_f64() * 1_000_000.0);
+
+    // ── measure_histogram (full histogram path) ─────────────────────────
     for _ in 0..3 {
         let _ = black_box(ContentLightLevel::measure_histogram(
             buf.as_slice(),
@@ -42,8 +66,6 @@ fn bench(label: &str, w: u32, h: u32, iters: usize) {
             LightLevelMethod::MaxRgb,
         ));
     }
-
-    let pixels = (w as u64) * (h as u64);
     let start = Instant::now();
     for _ in 0..iters {
         let h = ContentLightLevel::measure_histogram(
@@ -55,12 +77,11 @@ fn bench(label: &str, w: u32, h: u32, iters: usize) {
         black_box(h.max());
     }
     let elapsed = start.elapsed();
-    let total_pixels = pixels * (iters as u64);
-    let mpix_per_sec = (total_pixels as f64) / (elapsed.as_secs_f64() * 1_000_000.0);
+    let hist_mpix = (total_pixels as f64) / (elapsed.as_secs_f64() * 1_000_000.0);
+
     println!(
-        "{label:<24} {w:>5}x{h:<5} iters={iters:<4} elapsed={:>7.2}ms throughput={:>7.0} Mpix/s",
-        elapsed.as_secs_f64() * 1000.0,
-        mpix_per_sec,
+        "{label:<14} {w:>5}x{h:<5} iters={iters:<4}  measure_max={max_mpix:>7.0} Mpix/s  measure_histogram={hist_mpix:>7.0} Mpix/s  ratio={:>4.2}×",
+        max_mpix / hist_mpix,
     );
 }
 
