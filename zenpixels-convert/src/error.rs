@@ -1,6 +1,6 @@
 //! Error types for pixel format conversion.
 
-use crate::{PixelDescriptor, TransferFunction};
+use crate::{ColorModel, PixelDescriptor, TransferFunction};
 use core::fmt;
 
 /// Errors that can occur during pixel format negotiation or conversion.
@@ -52,8 +52,16 @@ pub enum ConvertError {
     Buffer(zenpixels::BufferError),
     /// CMS transform could not be built (invalid ICC profile, unsupported color space, etc.).
     CmsError(alloc::string::String),
+    // CMYK rejection is folded into `NoPath { from, to }` rather than a dedicated
+    // variant. Reasoning: zero workspace consumers match anything but
+    // `AllocationFailed` today, and a CMYK-specific arm would be future-facing
+    // surface that no caller earns. Callers that need to route to a CMS can
+    // inspect `from.color_model() == ColorModel::Cmyk` on the existing variant —
+    // information-equivalent. The Display impl below tacks on the "use moxcms"
+    // hint when either side is CMYK so the error message stays actionable.
+    // (See imazen/zenpixels#44 + the audit of in-tree ConvertError consumers.)
     // Future variants (e.g. an HDR tone-mapping-required case; see HdrPolicy in
-    // output.rs and imazen/zenpixels#10) can now be added without a break, since
+    // output.rs and imazen/zenpixels#10) can be added without a break, since
     // `ConvertError` is `#[non_exhaustive]`.
 }
 
@@ -77,8 +85,22 @@ impl fmt::Display for ConvertError {
                     to.channel_type(),
                     to.layout()
                 )?;
-                // A range crossing can otherwise print two identical-looking
-                // descriptors; name the actual blocker.
+                // CMYK or signal-range crossings would otherwise print two
+                // identical-looking descriptors with no hint why the conversion
+                // failed. Name the actual blocker so the caller can route
+                // intelligently (CMYK → moxcms/CMS pipeline; range crossing →
+                // explicit rescale stage).
+                let cmyk_blocked =
+                    from.color_model() == ColorModel::Cmyk || to.color_model() == ColorModel::Cmyk;
+                if cmyk_blocked {
+                    write!(
+                        f,
+                        " (CMYK is device-dependent and requires an ICC profile; \
+                         zenpixels-convert reinterpreting C/M/Y/K as R/G/B/A would \
+                         silently corrupt both colour and transparency. Use a CMS \
+                         such as moxcms for CMYK↔RGB)"
+                    )?;
+                }
                 if from.signal_range != to.signal_range {
                     write!(
                         f,
@@ -109,6 +131,9 @@ impl fmt::Display for ConvertError {
             Self::AllocationFailed => write!(f, "buffer allocation failed"),
             Self::Buffer(e) => write!(f, "buffer construction failed: {e}"),
             Self::CmsError(msg) => write!(f, "CMS transform failed: {msg}"),
+            // CMYK rejection prints via the NoPath branch above with the
+            // CMYK hint appended — no dedicated variant; see the note at
+            // the enum definition.
         }
     }
 }
