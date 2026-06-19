@@ -61,6 +61,48 @@
   (`benchmarks/orient_fast_transpose_2026-06-18.md`). Flipping a default feature
   batches here; size-sensitive builds opt out via `default-features = false`.
 
+### zenpixels — added
+
+- **Histogram-based `ContentLightLevel` measurement** replacing the
+  deprecated literal-max `measure`
+  ([#54](https://github.com/imazen/zenpixels/issues/54)). New surface:
+  - **`LightLevelHistogram`** (re-exported at crate root) — log-scale
+    histogram of per-pixel light levels over `[0.005, 10000]` cd/m²
+    across 1024 bins (~0.02 stops/bin, well below the cone JND;
+    4 KiB cache-resident state). Exposes `max()` (spec-literal
+    CTA-861.3 MaxCLL — exact, not bin-quantised), `mean()` (the
+    MaxFALL component), `percentile(p)` (CDF walk; `p=1.0` returns
+    the exact literal max; `p=0.0` → 0; NaN / out-of-range clamps),
+    plus `method()`, `total_pixels()`, `bins()` for custom readouts.
+  - **`LightLevelMethod`** enum (`MaxRgb` default, `LuminanceBt2020`)
+    — explicit per-pixel reduction choice. CTA-861-G Annex P leaves
+    this normatively open; `MaxRgb` matches x265 / DaVinci / Dolby
+    Vision L1 / Psychtoolbox, `LuminanceBt2020` matches some
+    Netflix / Apple TV+ pipelines. `#[non_exhaustive]`.
+  - **`ContentLightLevel::measure_histogram(px, white, method)`** —
+    builds the histogram in a single SIMD-friendly pass; LLVM
+    auto-vectorises the per-pixel inner loop. `no_std`-friendly
+    `fast_log2` (degree-2 mantissa polynomial) puts the per-pixel
+    bin lookup at ~3 cycles.
+  - **`ContentLightLevel::measure_max(px, white, method)`** —
+    spec-conformant convenience: literal MaxCLL + arithmetic mean.
+    Use this when the delivery target mandates the strict CTA-861.3
+    reading (Netflix, broadcast).
+  - **`ContentLightLevel::measure_percentile(px, white, percentile,
+    method)`** — explicit-percentile convenience. **No default
+    percentile**: the caller commits to the value per content policy
+    (defect-driven rejection vs astrophotography vs fireworks vs
+    candle-in-dark-room have opposite needs). Issue #54's docstring
+    spells out the trade-off.
+  - Tests cover: defect-spike (lone outlier → p99 drops it,
+    spec-literal keeps the saturated max); astrophotography
+    night-stars (1100 px with 100 stars → spec-literal & p99.99
+    keep them, demonstrating the failure mode of fixed-percentile
+    APIs at `p < 0.91`); BT.2020 vs MaxRgb method divergence on
+    saturated red; percentile boundary handling (0, 1, NaN,
+    out-of-range); histogram bins exposed and summing to total;
+    `fast_exp2` ↔ `fast_log2` round-trip at bin edges within 0.5%.
+
 ### zenpixels — fixed
 
 - **`PlaneDescriptor::plane_width` / `plane_height` no longer panic with
