@@ -79,9 +79,30 @@ fn bench(label: &str, w: u32, h: u32, iters: usize) {
     let elapsed = start.elapsed();
     let hist_mpix = (total_pixels as f64) / (elapsed.as_secs_f64() * 1_000_000.0);
 
+    // ── measure_max_smoothed (3×1 horizontal box filter) ────────────────
+    for _ in 0..3 {
+        let _ = black_box(ContentLightLevel::measure_max_smoothed(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        ));
+    }
+    let start = Instant::now();
+    for _ in 0..iters {
+        let cll = ContentLightLevel::measure_max_smoothed(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        black_box(cll.max_content_light_level);
+    }
+    let elapsed = start.elapsed();
+    let smooth_mpix = (total_pixels as f64) / (elapsed.as_secs_f64() * 1_000_000.0);
+
     println!(
-        "{label:<14} {w:>5}x{h:<5} iters={iters:<4}  measure_max={max_mpix:>7.0} Mpix/s  measure_histogram={hist_mpix:>7.0} Mpix/s  ratio={:>4.2}×",
-        max_mpix / hist_mpix,
+        "{label:<14} {w:>5}x{h:<5} iters={iters:<4}  max={max_mpix:>7.0} Mpix/s  smoothed={smooth_mpix:>7.0} Mpix/s  hist={hist_mpix:>7.0} Mpix/s  smoothed/max={:>4.2}×",
+        smooth_mpix / max_mpix,
     );
 }
 

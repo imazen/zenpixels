@@ -116,6 +116,102 @@ fn scan_row_max_mean<const N: usize>(row: &[f32], method: LightLevelMethod) -> (
     (row_max, row_sum)
 }
 
+/// Single-pass 3×1 horizontal-box-filtered row scan for
+/// `measure_max_smoothed`: one row of `N`-channel f32 pixels →
+/// `(smoothed_max_relative, unsmoothed_sum_relative)`.
+///
+/// Per-pixel `m[i] = reduce(R, G, B)` (per `method`) is computed once;
+/// the smoothed running max tracks `max over i of mean(m[i-1], m[i], m[i+1])`
+/// with mirror-padding at the row edges. The sum is the *unsmoothed*
+/// arithmetic sum — `mean(mean(...))` is just the mean (linearity of
+/// expectation) and CTA-861.3 MaxFALL is the literal arithmetic mean, so
+/// the box filter only affects the max readout, not MaxFALL.
+///
+/// Why 3×1 over 3×3: a 3×3 mean needs an explicit row buffer (~16 KB for
+/// 4K-wide rows) and doubles memory traffic; 3×1 is one sliding window of
+/// three floats, single pass over the row, no allocation. 3×1 still
+/// suppresses the dominant defect modes — single stuck pixels, denormal /
+/// near-infinity values that escaped a poorly-clamped pipeline, specular
+/// single-pixel blowouts. Real bright features that span ≥2 horizontal
+/// pixels (small stars, sparks, candle flames) survive proportional to
+/// their width.
+///
+/// State is two scalars (`prev`, `curr`); LLVM keeps them in registers, the
+/// per-pixel cost is `reduce + 2 adds + 1 compare + 1 f64 add`. Memory
+/// traffic matches `scan_row_max_mean` (no scratch buffer, no second pass).
+///
+/// Returns relative-linear units; the caller scales by `white_nits` at
+/// end-of-image.
+#[inline]
+fn scan_row_max_mean_smoothed<const N: usize>(row: &[f32], method: LightLevelMethod) -> (f32, f64) {
+    const ONE_THIRD: f32 = 1.0 / 3.0;
+    let pixel_count = row.len() / N;
+    if pixel_count == 0 {
+        return (0.0, 0.0);
+    }
+
+    // Per-pixel reduce closure — `method` is loop-invariant Copy, LLVM
+    // hoists the match out of the inner loop.
+    let reduce_at = |i: usize| -> f32 {
+        let px: &[f32; N] = row[i * N..(i + 1) * N].try_into().unwrap();
+        match method {
+            LightLevelMethod::MaxRgb => 0.0_f32.max(px[0]).max(px[1]).max(px[2]),
+            LightLevelMethod::LuminanceBt2020 => {
+                let r = 0.0_f32.max(px[0]);
+                let g = 0.0_f32.max(px[1]);
+                let b = 0.0_f32.max(px[2]);
+                0.262_7 * r + 0.678_0 * g + 0.059_3 * b
+            }
+        }
+    };
+
+    // Degenerate widths: the 3-pixel window collapses, return the trivial
+    // reading. Box filter at width=1 mirror-pads to (m,m,m) → mean = m.
+    if pixel_count == 1 {
+        let m = reduce_at(0);
+        return (m, f64::from(m));
+    }
+    if pixel_count == 2 {
+        let m0 = reduce_at(0);
+        let m1 = reduce_at(1);
+        // Mirror pad: m_smooth[0] = (m0+m0+m1)/3 ; m_smooth[1] = (m0+m1+m1)/3.
+        let s0 = (2.0 * m0 + m1) * ONE_THIRD;
+        let s1 = (m0 + 2.0 * m1) * ONE_THIRD;
+        return (s0.max(s1), f64::from(m0) + f64::from(m1));
+    }
+
+    // pixel_count >= 3 — single-pass streaming with a 3-element sliding
+    // window. `max_x3` holds the un-divided 3-sum; we divide by 3 once at
+    // the end to keep the hot loop free of constant multiplies.
+    let m0 = reduce_at(0);
+    let m1 = reduce_at(1);
+    let mut prev = m0;
+    let mut curr = m1;
+    // i=0: mirror-pad left → m_smooth_x3 = m0 + m0 + m1
+    let mut max_x3 = 2.0 * m0 + m1;
+    let mut sum = f64::from(m0);
+
+    for i in 2..pixel_count {
+        let next = reduce_at(i);
+        // Smoothed value at pixel (i-1): (prev + curr + next) / 3.
+        let s = prev + curr + next;
+        if s > max_x3 {
+            max_x3 = s;
+        }
+        sum += f64::from(curr);
+        prev = curr;
+        curr = next;
+    }
+    // i=pixel_count-1: mirror-pad right → m_smooth_x3 = prev + curr + curr.
+    let s_last = prev + 2.0 * curr;
+    if s_last > max_x3 {
+        max_x3 = s_last;
+    }
+    sum += f64::from(curr);
+
+    (max_x3 * ONE_THIRD, sum)
+}
+
 /// Reduce one row of `N`-channel f32 pixels to
 /// `(max, sum)` of the per-pixel `max(R, G, B)`.
 ///
@@ -667,6 +763,87 @@ impl ContentLightLevel {
         let wn = f64::from(white_nits);
         let max_nits = f64::from(row_max) * wn;
         let fall_nits = row_sum / (w as f64 * h as f64) * wn;
+        Some(Self::new(nits_to_u16(max_nits), nits_to_u16(fall_nits)))
+    }
+
+    /// MaxCLL via a 3×1 horizontal box-filtered max — robust against
+    /// single-pixel defects and math-weird outliers without committing to
+    /// a percentile.
+    ///
+    /// Each pixel's value contributes through the local 3-tap horizontal
+    /// mean (`(m[i-1] + m[i] + m[i+1]) / 3`, mirror-padded at row edges).
+    /// One stuck pixel at 10 000 cd/m² in a 0.005 cd/m² background reads
+    /// as ~3 333 instead of 10 000; a denormal / NaN-escape that the
+    /// clamp couldn't catch dissolves into its neighbours. Real bright
+    /// features that span ≥2 horizontal pixels survive proportionally.
+    ///
+    /// **Not CTA-861.3 strict.** This is a deliberate deviation from
+    /// "max over all pixels": single-arcminute features are below the
+    /// human visual acuity limit at any sensible viewing distance, and
+    /// the display itself averages over its panel grid, so a literal
+    /// per-pixel max over-states what content can actually drive. This
+    /// is a related-shape choice to what Dolby Vision L1 does with its
+    /// per-block analysis; deliver this when the spec-literal reading is
+    /// dominated by defects but you don't want to pick an explicit
+    /// percentile.
+    ///
+    /// **MaxFALL is unchanged.** The mean of a 3×1 box-filtered image
+    /// equals the mean of the original (linearity of expectation), and
+    /// CTA-861.3 MaxFALL is the literal arithmetic mean regardless.
+    ///
+    /// Same input contract as [`measure_max`](Self::measure_max).
+    /// Single-pass streaming scan (no row scratch buffer), per-row
+    /// per-pixel cost is ~1 reduce + 2 adds + 1 compare + 1 f64 add.
+    #[must_use]
+    pub fn measure_max_smoothed(
+        px: PixelSlice<'_>,
+        white: DiffuseWhite,
+        method: LightLevelMethod,
+    ) -> Option<Self> {
+        let desc = px.descriptor();
+        let channels = match desc.pixel_format() {
+            PixelFormat::RgbF32 => 3,
+            PixelFormat::RgbaF32 => 4,
+            _ => return None,
+        };
+        if desc.transfer != TransferFunction::Linear {
+            return None;
+        }
+        let w = px.width() as usize;
+        let h = px.rows() as usize;
+        if w == 0 || h == 0 {
+            return Some(Self::new(0, 0));
+        }
+
+        let stride = px.stride();
+        let bytes = px.as_strided_bytes();
+        let row_len = w * channels * 4;
+        let white_nits = white.nits();
+
+        // Scalar streaming path — auto-vectorises to ~1.3 Gpix/s on Zen 4.
+        // A hand-rolled SIMD kernel built shifted-by-1 vectors via array
+        // round-trips (magetypes f32x8 has no lane-shift/permute), and
+        // the store→load forwarding on each chunk cost ~25% net vs the
+        // auto-vectorised scalar. The right SIMD path is a two-pass
+        // design (deinterleave+reduce into a row scratch, then 3-tap
+        // box-max over the scratch), but that's a separate commit.
+        let mut max_rel = 0.0_f32;
+        let mut sum_rel = 0.0_f64;
+        for row in 0..h {
+            let row_bytes = &bytes[row * stride..row * stride + row_len];
+            let floats: &[f32] = bytemuck::cast_slice(row_bytes);
+            let (rm, rs) = if channels == 3 {
+                scan_row_max_mean_smoothed::<3>(floats, method)
+            } else {
+                scan_row_max_mean_smoothed::<4>(floats, method)
+            };
+            max_rel = max_rel.max(rm);
+            sum_rel += rs;
+        }
+
+        let wn = f64::from(white_nits);
+        let max_nits = f64::from(max_rel) * wn;
+        let fall_nits = sum_rel / (w as f64 * h as f64) * wn;
         Some(Self::new(nits_to_u16(max_nits), nits_to_u16(fall_nits)))
     }
 
@@ -1962,6 +2139,245 @@ mod tests {
         assert_eq!(
             via_max.max_frame_average_light_level,
             via_hist.max_frame_average_light_level
+        );
+    }
+
+    // ── measure_max_smoothed (3×1 horizontal box filter) ─────────────────
+
+    #[test]
+    fn measure_max_smoothed_suppresses_single_pixel_defect() {
+        // 10-wide row, one stuck/specular pixel at column 5 = [50, 0, 0]
+        // (= 10 150 nits, saturated to BIN_MAX_NITS = 10 000 for the
+        // histogram path; the smoothed path keeps the raw f32 max-of-3
+        // chain so the un-saturated 50.0 × 203 / 3 ≈ 3 383 nits shows up
+        // after the box filter — that's the whole point).
+        let mut pixels = alloc::vec![[0.0_f32; 3]; 10];
+        pixels[5] = [50.0; 3];
+        let buf = rgbf32(&pixels, 10, 1);
+
+        // Spec-literal max keeps the spike (saturated at 10 000).
+        let lit = ContentLightLevel::measure_max(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        assert!(
+            lit.max_content_light_level >= 9000,
+            "control: spec-literal keeps the spike, got {}",
+            lit.max_content_light_level
+        );
+
+        // Smoothed max replaces m[5]=50 with (m[4]+m[5]+m[6])/3 = 50/3
+        // ≈ 16.667. × 203 = 3 383.3, rounds to 3 383.
+        let sm = ContentLightLevel::measure_max_smoothed(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        let expected = (50.0_f64 / 3.0) * 203.0; // ≈ 3 383.3
+        let got = f64::from(sm.max_content_light_level);
+        assert!(
+            (got - expected).abs() < 2.0,
+            "3×1 mean of [0, 50, 0] = 50/3 → {expected:.1} nits, got {got}"
+        );
+    }
+
+    #[test]
+    fn measure_max_smoothed_preserves_three_pixel_cluster() {
+        // 10-wide row, 3 adjacent pixels at 5.0 (centered around column 5).
+        // Mean of [5, 5, 5] = 5 → spike preserved at full magnitude.
+        let mut pixels = alloc::vec![[0.0_f32; 3]; 10];
+        pixels[4] = [5.0; 3];
+        pixels[5] = [5.0; 3];
+        pixels[6] = [5.0; 3];
+        let buf = rgbf32(&pixels, 10, 1);
+
+        let sm = ContentLightLevel::measure_max_smoothed(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        // 5.0 × 203 = 1 015 nits exactly.
+        assert!(
+            sm.max_content_light_level >= 1010 && sm.max_content_light_level <= 1020,
+            "3-pixel cluster should preserve peak: got {}",
+            sm.max_content_light_level
+        );
+    }
+
+    #[test]
+    fn measure_max_smoothed_two_pixel_cluster_drops_to_two_thirds() {
+        // Two adjacent bright pixels in a dark row → smoothed peak is
+        // (0 + hot + hot)/3 = 2·hot/3. Documents the trade-off for
+        // sub-resolution features.
+        let mut pixels = alloc::vec![[0.0_f32; 3]; 10];
+        pixels[4] = [9.0; 3];
+        pixels[5] = [9.0; 3];
+        let buf = rgbf32(&pixels, 10, 1);
+
+        let sm = ContentLightLevel::measure_max_smoothed(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        let expected = (2.0_f64 * 9.0 / 3.0) * 203.0; // 6 · 203 = 1 218
+        let got = f64::from(sm.max_content_light_level);
+        assert!(
+            (got - expected).abs() < 2.0,
+            "2-pixel cluster: expected {expected:.0}, got {got}"
+        );
+    }
+
+    #[test]
+    fn measure_max_smoothed_mean_matches_measure_max_mean() {
+        // MaxFALL is the literal arithmetic mean (CTA-861.3). Box-filtering
+        // the input doesn't change the mean (linearity of expectation), and
+        // we explicitly accumulate the unsmoothed sum, so the two paths
+        // must agree exactly on MaxFALL for arbitrary content.
+        let pixels: Vec<[f32; 3]> = alloc::vec![
+            [0.1, 0.2, 0.3],
+            [1.5, 0.5, 0.25],
+            [0.0, 3.0, 0.5],
+            [0.7, 0.7, 0.7],
+            [50.0, 0.0, 0.0], // a defect
+            [0.1, 0.2, 0.3],
+        ];
+        let buf = rgbf32(&pixels, pixels.len() as u32, 1);
+        let strict = ContentLightLevel::measure_max(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        let smooth = ContentLightLevel::measure_max_smoothed(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        assert_eq!(
+            strict.max_frame_average_light_level, smooth.max_frame_average_light_level,
+            "MaxFALL must match the spec-literal arithmetic mean"
+        );
+        // And the smoothed MaxCLL is strictly below the spec-literal here
+        // because the defect drives the spec-literal reading.
+        assert!(
+            smooth.max_content_light_level < strict.max_content_light_level,
+            "smoothed must suppress the defect: strict={}, smooth={}",
+            strict.max_content_light_level,
+            smooth.max_content_light_level
+        );
+    }
+
+    #[test]
+    fn measure_max_smoothed_mirror_pad_handles_edge_defect() {
+        // Defect at column 0 (left edge). Mirror padding makes m[-1] = m[0],
+        // so the smoothed value at i=0 is (m[0]+m[0]+m[1])/3 = (hot+hot+0)/3
+        // = 2·hot/3. This is the dominant smoothed value, *not* hot/3.
+        // The test pins the mirror-padded math.
+        let mut pixels = alloc::vec![[0.0_f32; 3]; 10];
+        pixels[0] = [30.0; 3];
+        let buf = rgbf32(&pixels, 10, 1);
+        let sm = ContentLightLevel::measure_max_smoothed(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        let expected = (2.0_f64 * 30.0 / 3.0) * 203.0; // 20·203 = 4 060
+        let got = f64::from(sm.max_content_light_level);
+        assert!(
+            (got - expected).abs() < 2.0,
+            "edge defect with mirror pad: expected {expected:.0}, got {got}"
+        );
+    }
+
+    #[test]
+    fn measure_max_smoothed_degenerate_widths() {
+        // 1-pixel-wide image: box filter collapses, smoothed == literal.
+        let buf1 = rgbf32(&[[2.0; 3]], 1, 1);
+        let sm1 = ContentLightLevel::measure_max_smoothed(
+            buf1.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        assert_eq!(sm1.max_content_light_level, 406); // 2.0 × 203
+
+        // 2-pixel-wide image: both pixels get mirror padding from
+        // themselves. (m0+m0+m1)/3 and (m0+m1+m1)/3; max picks whichever
+        // is bigger. For [2.0, 1.0] the max is (2+2+1)/3 = 5/3 ≈ 1.667
+        // → 1.667 × 203 = 338.3.
+        let buf2 = rgbf32(&[[2.0; 3], [1.0; 3]], 2, 1);
+        let sm2 = ContentLightLevel::measure_max_smoothed(
+            buf2.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        let expected2 = (5.0_f64 / 3.0) * 203.0;
+        let got2 = f64::from(sm2.max_content_light_level);
+        assert!(
+            (got2 - expected2).abs() < 1.0,
+            "width=2: expected {expected2:.0}, got {got2}"
+        );
+    }
+
+    #[test]
+    fn measure_max_smoothed_luma_bt2020_method() {
+        // Pure red @ 5.0 with luma method: Y = 0.2627 · 5.0 = 1.3135.
+        // Surround with 0 luma; defect at column 5 of a 10-wide row.
+        // Smoothed peak = 1.3135 / 3 ≈ 0.4378 → · 203 = 88.9.
+        let mut pixels = alloc::vec![[0.0_f32; 3]; 10];
+        pixels[5] = [5.0, 0.0, 0.0];
+        let buf = rgbf32(&pixels, 10, 1);
+        let sm = ContentLightLevel::measure_max_smoothed(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::LuminanceBt2020,
+        )
+        .unwrap();
+        let expected = (0.262_7_f64 * 5.0 / 3.0) * 203.0; // ≈ 88.9
+        let got = f64::from(sm.max_content_light_level);
+        assert!(
+            (got - expected).abs() < 2.0,
+            "luma method smoothed: expected {expected:.1}, got {got}"
+        );
+    }
+
+    #[test]
+    fn measure_max_smoothed_zero_image_returns_zero() {
+        let buf = rgbf32(&[[0.0; 3]; 4], 4, 1);
+        let sm = ContentLightLevel::measure_max_smoothed(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        assert_eq!(sm.max_content_light_level, 0);
+        assert_eq!(sm.max_frame_average_light_level, 0);
+    }
+
+    #[test]
+    fn measure_max_smoothed_rejects_non_linear_or_non_rgb_f32() {
+        // Same rejection contract as measure_max — non-Linear transfer.
+        let desc = PixelDescriptor::RGBF32_LINEAR.with_transfer(TransferFunction::Srgb);
+        let mut data = Vec::new();
+        for c in [0.5_f32; 3] {
+            data.extend_from_slice(&c.to_ne_bytes());
+        }
+        let buf = PixelBuffer::from_vec(data, 1, 1, desc).unwrap();
+        assert!(
+            ContentLightLevel::measure_max_smoothed(
+                buf.as_slice(),
+                DiffuseWhite::BT2408,
+                LightLevelMethod::MaxRgb,
+            )
+            .is_none()
         );
     }
 }

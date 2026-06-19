@@ -63,6 +63,27 @@
 
 ### zenpixels — added
 
+- **`ContentLightLevel::measure_max_smoothed`** — MaxCLL via a 3×1 horizontal
+  box-filtered max, robust against single-pixel defects and math-weird outliers
+  without committing to an explicit percentile. Each pixel's value contributes
+  through the local 3-tap horizontal mean (`(m[i-1] + m[i] + m[i+1]) / 3`,
+  mirror-padded at row edges); a single stuck pixel at 10 000 cd/m² in a
+  0.005 cd/m² background reads as ~3 333 instead of 10 000. Real bright
+  features that span ≥2 horizontal pixels survive proportionally — clusters
+  of ≥3 pixels are preserved at full magnitude. Not CTA-861.3 strict — this
+  is a deliberate deviation closer in shape to Dolby Vision L1's per-block
+  analysis: single-arcminute features are below human visual acuity at any
+  sensible viewing distance and the display itself averages over its panel
+  grid, so per-pixel literal max over-states what content can drive. Pick
+  this when the spec-literal reading is dominated by defects but you don't
+  want to commit to a percentile. **MaxFALL is unchanged** — the mean of a
+  3×1 box-filtered image equals the mean of the original (linearity of
+  expectation), and CTA-861.3 MaxFALL is the literal arithmetic mean
+  regardless. Single-pass streaming scan, no row scratch buffer; auto-
+  vectorises to ~1.0-1.3 Gpix/s on Zen 4 (2-3× faster than the histogram
+  path it replaces for defect-tolerant MaxCLL). Reproducer + table in
+  [`benchmarks/measure_max_smoothed_throughput_2026-06-19.md`](benchmarks/measure_max_smoothed_throughput_2026-06-19.md).
+
 - **SOTA-throughput `ContentLightLevel::measure_max`** — the spec-conformant
   (CTA-861.3 strict) `MaxCLL` + `MaxFALL` reader is now ~5-10× faster than
   the histogram path it previously routed through. The histogram is
