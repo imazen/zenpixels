@@ -295,17 +295,38 @@ impl PlaneDescriptor {
     /// Compute the width of this plane given a reference (luma) width.
     ///
     /// Uses ceiling division so subsampled planes always cover the full image.
+    ///
+    /// **Robustness**: `h_subsample` is a public field, so a struct-literal
+    /// write or a codec mapping an out-of-range subsampling code to factor 0
+    /// can leave the divisor at 0 — which would panic the `div_ceil` in
+    /// release. We saturate the divisor at 1 here so production servers
+    /// never see a divide-by-zero abort; the [`with_subsampling`] builder's
+    /// `debug_assert!` still catches the misuse in dev/test.
     #[inline]
     pub const fn plane_width(&self, ref_width: u32) -> u32 {
-        ref_width.div_ceil(self.h_subsample as u32)
+        // `max` is not const-stable on `u32` for older MSRVs, so unroll.
+        let f = if self.h_subsample == 0 {
+            1
+        } else {
+            self.h_subsample as u32
+        };
+        ref_width.div_ceil(f)
     }
 
     /// Compute the height of this plane given a reference (luma) height.
     ///
     /// Uses ceiling division so subsampled planes always cover the full image.
+    ///
+    /// **Robustness**: see [`plane_width`](Self::plane_width) — same div-by-zero
+    /// guard for `v_subsample`.
     #[inline]
     pub const fn plane_height(&self, ref_height: u32) -> u32 {
-        ref_height.div_ceil(self.v_subsample as u32)
+        let f = if self.v_subsample == 0 {
+            1
+        } else {
+            self.v_subsample as u32
+        };
+        ref_height.div_ceil(f)
     }
 
     /// Whether this plane is subsampled (either axis).
@@ -1326,5 +1347,45 @@ mod tests {
         assert!(layout.luma_mask().is_empty());
         assert!(layout.chroma_mask().is_empty());
         assert!(layout.alpha_mask().is_empty());
+    }
+
+    #[test]
+    fn plane_width_height_do_not_panic_when_subsample_is_zero() {
+        // `h_subsample` / `v_subsample` are public fields — any code path
+        // that constructs a PlaneDescriptor with a literal or sets the
+        // field directly can leave the factor at 0. Pre-fix, the next
+        // `plane_width` / `plane_height` call panicked in release with
+        // divide-by-zero. We now treat 0 as 1 (full resolution) so a
+        // production server never sees the abort.
+        let plane = PlaneDescriptor {
+            semantic: PlaneSemantic::Luma,
+            channel_type: ChannelType::U8,
+            h_subsample: 0,
+            v_subsample: 0,
+        };
+        // No panic; result is the full reference size.
+        assert_eq!(plane.plane_width(1920), 1920);
+        assert_eq!(plane.plane_height(1080), 1080);
+
+        // Mixed: h zero, v sane.
+        let plane = PlaneDescriptor {
+            semantic: PlaneSemantic::ChromaCb,
+            channel_type: ChannelType::U8,
+            h_subsample: 0,
+            v_subsample: 2,
+        };
+        assert_eq!(plane.plane_width(1920), 1920);
+        assert_eq!(plane.plane_height(1080), 540);
+    }
+
+    #[test]
+    fn plane_width_height_still_work_normally() {
+        // Sanity: non-zero subsampling still divides correctly.
+        let plane =
+            PlaneDescriptor::new(PlaneSemantic::Luma, ChannelType::U8).with_subsampling(2, 2);
+        assert_eq!(plane.plane_width(1920), 960);
+        assert_eq!(plane.plane_height(1080), 540);
+        // Odd input + ceiling division.
+        assert_eq!(plane.plane_width(1921), 961);
     }
 }
