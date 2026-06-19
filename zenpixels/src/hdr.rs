@@ -479,6 +479,37 @@ impl ContentLightLevel {
         }
     }
 
+    /// Industry-default percentile for defect-tolerant MaxCLL.
+    ///
+    /// `0.9999` — the 99.99th percentile, dropping the top 0.01 % of
+    /// pixels as the outlier budget. What libplacebo (`pl_color_space_infer`'s
+    /// HDR analysis), DaVinci Resolve, x265's `--master-display` helpers,
+    /// and most HDR10+ mastering tools pick when they want defect-rejection
+    /// without a manual per-content choice. Drops single stuck pixels,
+    /// sensor-noise spikes, and specular blowouts; preserves normal bright
+    /// content (skies, snow, highlights).
+    ///
+    /// **Sparse-bright cliff.** Content that occupies < 0.01 % of pixels
+    /// is silently dropped at any image size. For 100k pixels that's
+    /// anything below ~10 pixels; for 1M pixels, below ~100 pixels;
+    /// for typical small images (< 10 000 pixels) the fraction rounds
+    /// to "any single bright pixel". Astrophotography, fireworks, candle-
+    /// in-dark-room content where every bright pixel is legitimate should
+    /// use [`measure_max`](Self::measure_max) instead.
+    ///
+    /// **Bin quantisation.** The percentile readout reports the
+    /// lower edge of the log2 histogram bin that contains the
+    /// percentile-threshold pixel — up to ~2 % (one bin = ~0.02 stops)
+    /// below the literal max even when all content lives in one bin.
+    /// Acceptable for HDR metadata at the u16-nits granularity CTA-861.3
+    /// encodes, but documented so callers comparing against `measure_max`
+    /// know to expect this.
+    ///
+    /// Used by [`measure_robust`](Self::measure_robust). Explicit callers
+    /// who want a non-default percentile pass their own value to
+    /// [`measure_percentile`](Self::measure_percentile).
+    pub const DEFAULT_PERCENTILE: f32 = 0.9999;
+
     /// **Deprecated (0.2.15), hidden.** Computes the *literal* MaxCLL — the
     /// absolute max over pixels of `max(R, G, B)` — which is outlier-sensitive
     /// (one specular/noise pixel inflates it, making displays over-tone-map).
@@ -696,10 +727,14 @@ impl ContentLightLevel {
     /// This is the **strict spec reading**: MaxCLL = the largest single
     /// per-pixel light level in the image, MaxFALL = the arithmetic
     /// mean. Use this when the delivery target mandates spec-literal
-    /// metadata (Netflix, broadcast). For content with defect-driven
-    /// hot pixels (sensor noise, stuck pixels, specular blowouts) prefer
-    /// [`measure_percentile`](Self::measure_percentile) with a percentile
-    /// you've committed to.
+    /// metadata (Netflix, broadcast QC) or when *every* bright pixel is
+    /// legitimate content (astrophotography, fireworks, a candle in a
+    /// dark room — where a percentile cliff would silently drop real
+    /// peaks). For general-purpose HDR analysis prefer
+    /// [`measure_robust`](Self::measure_robust) — defect-tolerant via
+    /// the industry-default 99.99th percentile, the production correct
+    /// answer for content with possible defect-driven hot pixels
+    /// (sensor noise, stuck pixels, specular blowouts).
     ///
     /// `method` picks the per-pixel reduction. Same input contract as
     /// [`measure_histogram`](Self::measure_histogram).
@@ -891,6 +926,53 @@ impl ContentLightLevel {
             nits_to_u16(f64::from(h.percentile(percentile))),
             nits_to_u16(f64::from(h.mean())),
         ))
+    }
+
+    /// **The recommended default** for HDR MaxCLL / MaxFALL measurement.
+    ///
+    /// Defect-tolerant MaxCLL via the industry-default percentile
+    /// ([`DEFAULT_PERCENTILE`](Self::DEFAULT_PERCENTILE) = 0.9999, the
+    /// 99.99th percentile). Equivalent to
+    /// `measure_percentile(px, white, Self::DEFAULT_PERCENTILE, method)`
+    /// — provided so the obvious-looking entry point gives the
+    /// production-correct answer.
+    ///
+    /// **Why this is the default.** A spec-literal max
+    /// ([`measure_max`](Self::measure_max)) is sensitive to a single hot
+    /// pixel — one stuck sensor pixel, one specular blowout, one denormal
+    /// that escaped clamping — and downstream displays over-tone-map the
+    /// whole frame as a result. Dropping the top 0.01 % of pixels (one
+    /// in 10 000) gives back legitimate bright content while rejecting
+    /// the dominant defect modes. This matches what libplacebo, DaVinci
+    /// Resolve, x265's `--master-display` helpers, and most production
+    /// HDR10 / HDR10+ tools actually do; the spec-literal reading is the
+    /// special case (delivery-mandate, broadcast QC).
+    ///
+    /// **When to pick something else.**
+    /// - Sparse-bright legitimate content where every bright pixel
+    ///   matters (astrophotography, fireworks, a single candle in a dark
+    ///   room) → use [`measure_max`](Self::measure_max). The 0.01 %
+    ///   outlier budget silently drops any content that occupies less
+    ///   than that fraction of the image, at any image size — see
+    ///   [`DEFAULT_PERCENTILE`](Self::DEFAULT_PERCENTILE) for the sparse-
+    ///   bright cliff details.
+    /// - Strict CTA-861.3 spec delivery (Netflix, broadcast QC) → use
+    ///   [`measure_max`](Self::measure_max).
+    /// - Spatial defect tolerance without picking a percentile —
+    ///   single-pixel defects suppressed by averaging with neighbours,
+    ///   multi-pixel content preserved → use
+    ///   [`measure_max_smoothed`](Self::measure_max_smoothed).
+    ///
+    /// Same input contract as [`measure_max`](Self::measure_max). MaxFALL
+    /// is always the arithmetic mean (CTA-861.3 spec, independent of
+    /// percentile).
+    #[must_use]
+    pub fn measure_robust(
+        px: PixelSlice<'_>,
+        white: DiffuseWhite,
+        method: LightLevelMethod,
+    ) -> Option<Self> {
+        Self::measure_percentile(px, white, Self::DEFAULT_PERCENTILE, method)
     }
 }
 
@@ -2379,5 +2461,185 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    // ── measure_robust (DEFAULT_PERCENTILE = 0.9999 convenience) ──────────
+
+    #[test]
+    fn default_percentile_constant_is_industry_default() {
+        // Pin the constant so changing it requires a deliberate update —
+        // every downstream caller depending on `measure_robust` is reading
+        // this number. 0.9999 = libplacebo / DaVinci Resolve / x265
+        // master-display / HDR10+ tooling default.
+        assert_eq!(ContentLightLevel::DEFAULT_PERCENTILE, 0.9999);
+    }
+
+    #[test]
+    fn measure_robust_equals_measure_percentile_at_default() {
+        // Bit-exact alias contract: measure_robust must be the
+        // measure_percentile(p=DEFAULT_PERCENTILE) reading for arbitrary
+        // content. If they ever disagree, callers reading the alias get a
+        // different answer from the explicit call.
+        let pixels: Vec<[f32; 3]> = alloc::vec![
+            [0.1, 0.2, 0.3],
+            [1.5, 0.5, 0.25],
+            [0.0, 3.0, 0.5],
+            [0.7, 0.7, 0.7],
+            [50.0, 0.0, 0.0],
+            [0.1, 0.2, 0.3],
+        ];
+        let buf = rgbf32(&pixels, pixels.len() as u32, 1);
+
+        for method in [LightLevelMethod::MaxRgb, LightLevelMethod::LuminanceBt2020] {
+            let robust =
+                ContentLightLevel::measure_robust(buf.as_slice(), DiffuseWhite::BT2408, method)
+                    .unwrap();
+            let pct = ContentLightLevel::measure_percentile(
+                buf.as_slice(),
+                DiffuseWhite::BT2408,
+                ContentLightLevel::DEFAULT_PERCENTILE,
+                method,
+            )
+            .unwrap();
+            assert_eq!(robust.max_content_light_level, pct.max_content_light_level);
+            assert_eq!(
+                robust.max_frame_average_light_level,
+                pct.max_frame_average_light_level
+            );
+        }
+    }
+
+    #[test]
+    fn measure_robust_drops_dominant_defect_vs_measure_max() {
+        // The motivating use case: dense content with one defect-driven
+        // hot pixel. measure_max returns the spike (CTA-861.3 literal);
+        // measure_robust returns the background.
+        let mut pixels = alloc::vec![[0.5_f32; 3]; 100_000];
+        pixels[0] = [50.0; 3]; // single defect pixel
+        let buf = rgbf32(&pixels, 1000, 100);
+
+        let strict = ContentLightLevel::measure_max(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        let robust = ContentLightLevel::measure_robust(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+
+        // Spec-literal preserves the spike (saturated near BIN_MAX_NITS).
+        assert!(strict.max_content_light_level >= 9000);
+        // Robust drops it — background = 0.5 × 203 ≈ 101.5 nits.
+        // p=0.9999 over 100 000 pixels means threshold = 100 000 × 0.9999
+        // = 99 990 pixels worth of CDF; the 99 990th pixel is in the
+        // background bin (the defect is just 1 pixel). So robust should
+        // land at background ≈ 101.5 nits.
+        assert!(
+            robust.max_content_light_level < 200,
+            "measure_robust must drop the single defect: got {}",
+            robust.max_content_light_level
+        );
+        // MaxFALL (literal mean) is unchanged by the percentile choice.
+        assert_eq!(
+            strict.max_frame_average_light_level,
+            robust.max_frame_average_light_level
+        );
+    }
+
+    #[test]
+    fn measure_robust_preserves_dense_bright_content() {
+        // 1100-pixel image, 100 stars at 5.0 (= 1015 nits) + 1000 dark.
+        // Stars are 9 % of pixels — well above the 0.01 % outlier budget,
+        // so they survive the percentile threshold. Readout lands at the
+        // bin-edge of the bright bin (one log2 bin ≈ 2 % below the
+        // literal max — DEFAULT_PERCENTILE docstring covers the
+        // quantisation).
+        let mut pixels: Vec<[f32; 3]> = alloc::vec![[0.005_f32; 3]; 1100];
+        for star in pixels.iter_mut().take(100) {
+            *star = [5.0; 3];
+        }
+        let buf = rgbf32(&pixels, 100, 11);
+        let robust = ContentLightLevel::measure_robust(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        // Literal max is 1015; one log2 bin below is ≈ 1002. Allow the
+        // bin-quantisation range.
+        assert!(
+            robust.max_content_light_level >= 990 && robust.max_content_light_level <= 1020,
+            "dense bright content: robust must preserve the peak: got {}",
+            robust.max_content_light_level
+        );
+    }
+
+    #[test]
+    fn measure_robust_sparse_bright_cliff() {
+        // Image with one bright pixel and 99 dark. p=0.9999 over 100
+        // pixels → threshold = 99; the dark bin cum hits 99 before the
+        // bright bin → the bright pixel is dropped. Documents the
+        // sparse-bright cliff: at small image sizes, single bright
+        // pixels disappear. Astrophotography wants `measure_max` here.
+        let mut pixels = alloc::vec![[0.005_f32; 3]; 100];
+        pixels[0] = [5.0; 3]; // one bright "star"
+        let buf = rgbf32(&pixels, 10, 10);
+        let robust = ContentLightLevel::measure_robust(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        // 0.005 × 203 = 1.015 — robust reports the dark-bin floor, not
+        // the star.
+        assert!(
+            robust.max_content_light_level < 50,
+            "sparse-bright cliff: 1-in-100 bright pixel must be dropped: got {}",
+            robust.max_content_light_level
+        );
+        // And measure_max keeps the star.
+        let strict = ContentLightLevel::measure_max(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        assert!(strict.max_content_light_level > 900);
+    }
+
+    #[test]
+    fn measure_robust_rejects_non_linear_or_non_rgb_f32() {
+        // Same rejection contract as the rest of the measure family.
+        let desc = PixelDescriptor::RGBF32_LINEAR.with_transfer(TransferFunction::Srgb);
+        let mut data = Vec::new();
+        for c in [0.5_f32; 3] {
+            data.extend_from_slice(&c.to_ne_bytes());
+        }
+        let buf = PixelBuffer::from_vec(data, 1, 1, desc).unwrap();
+        assert!(
+            ContentLightLevel::measure_robust(
+                buf.as_slice(),
+                DiffuseWhite::BT2408,
+                LightLevelMethod::MaxRgb,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn measure_robust_zero_image_returns_zero() {
+        let buf = rgbf32(&[[0.0; 3]; 4], 4, 1);
+        let robust = ContentLightLevel::measure_robust(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        assert_eq!(robust.max_content_light_level, 0);
+        assert_eq!(robust.max_frame_average_light_level, 0);
     }
 }

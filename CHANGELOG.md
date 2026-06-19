@@ -25,6 +25,15 @@
   inflates it, making displays over-tone-map); `#[deprecated]` + `#[doc(hidden)]`
   in 0.2.15, to be replaced by a percentile-aware measure (#54). Delete the
   literal-max method here.
+- **Rename `ContentLightLevel::measure_robust(px, white, method)` →
+  `measure(px, white, method)`** at the same release that deletes the
+  deprecated 2-arg `measure`. The 0.2.x `measure_robust` slot is
+  defect-tolerant via [`ContentLightLevel::DEFAULT_PERCENTILE`] (0.9999) —
+  the industry-default reading every production HDR tool already uses.
+  Promoting it to the obvious `measure` name in 0.3.0 makes the
+  "I don't know which to pick" entry point give the production-correct
+  answer. Keep `measure_robust` as a `#[deprecated]` alias for one
+  release to ease migration.
 - **Demote the unadopted registry *lookup* surface to `pub(crate)`** —
   `zenpixels::registry::{KnownColorSpace, REGISTRY, find_by_cicp,
   find_by_primaries_transfer, find_by_named}` are `#[allow(dead_code)]`
@@ -62,6 +71,30 @@
   batches here; size-sensitive builds opt out via `default-features = false`.
 
 ### zenpixels — added
+
+- **`ContentLightLevel::measure_robust`** — the recommended-default MaxCLL
+  reader, equivalent to `measure_percentile(px, white,
+  ContentLightLevel::DEFAULT_PERCENTILE, method)` with
+  [`DEFAULT_PERCENTILE`] = 0.9999. Drops the top 0.01 % of pixels as the
+  outlier budget — the production-correct answer for content with possible
+  defect-driven hot pixels (sensor noise, stuck pixels, specular blowouts).
+  Matches what libplacebo (`pl_color_space_infer`), DaVinci Resolve, x265's
+  `--master-display` helpers, and most HDR10+ mastering tools do. The
+  obvious-named entry point (`measure_max`) stays spec-strict CTA-861.3 for
+  delivery-mandate metadata + sparse-bright legitimate content
+  (astrophotography, fireworks); `measure_robust` is what you want
+  everywhere else. **Queued for rename to `measure` at 0.3.0** alongside
+  the deprecated `measure(px, white)` removal — see QUEUED BREAKING
+  CHANGES. Tests pin the alias contract (bit-exact equivalence to the
+  explicit `measure_percentile` call across both reduction methods), the
+  defect-rejection path on a 100k-pixel image with one stuck pixel, the
+  sparse-bright cliff (1-in-100 bright pixel dropped — astrophotography
+  should pick `measure_max`), and the input-rejection contract.
+
+- **`ContentLightLevel::DEFAULT_PERCENTILE = 0.9999`** — public constant for
+  the industry-default percentile used by `measure_robust`. Surfaced so
+  callers reading `measure_percentile` can pin against the same value the
+  default-entry path uses (or refer to it in their own metadata pipeline).
 
 - **`ContentLightLevel::measure_max_smoothed`** — MaxCLL via a 3×1 horizontal
   box-filtered max, robust against single-pixel defects and math-weird outliers
