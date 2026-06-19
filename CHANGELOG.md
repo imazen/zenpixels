@@ -88,6 +88,7 @@
   surfaces as `InvalidDimensions`. Matches the `PixelBuffer::from_pixels`
   guard that already had this treatment. Non-breaking.
 
+### zenpixels-convert — fixed
 ## [0.2.15] - 2026-06-18
 
 ### zenpixels — added

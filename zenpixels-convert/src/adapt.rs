@@ -72,16 +72,70 @@ use crate::{
 };
 use whereat::{At, ResultAtExt};
 
-/// Assert that a descriptor is not CMYK.
+/// Reject CMYK on either side of a `from`/`to` pair at the public-API
+/// boundary, surfacing it as a [`ConvertError::NoPath`] (which carries
+/// both descriptors and gets a CMYK-aware hint from its `Display` impl).
 ///
-/// CMYK is device-dependent and cannot be adapted by zenpixels-convert.
-/// Use a CMS (e.g., moxcms) with an ICC profile for CMYK↔RGB conversion.
-fn assert_not_cmyk(desc: &PixelDescriptor) {
-    assert!(
-        desc.color_model() != ColorModel::Cmyk,
-        "CMYK pixel data cannot be processed by zenpixels-convert. \
-         Use a CMS (e.g., moxcms) with an ICC profile for CMYK↔RGB conversion."
-    );
+/// **CMYK contract.** CMYK is a device-dependent subtractive colour
+/// model: faithful CMYK↔RGB conversion requires an ICC profile and a
+/// CMS, neither of which lives in this crate. Silently reinterpreting
+/// C/M/Y/K as R/G/B/A would produce visibly wrong colours AND wrong
+/// transparency — much worse than a clean rejection. Use moxcms (or
+/// another CMS) for CMYK conversion.
+///
+/// Replaces the pre-#44 `assert_not_cmyk` that panicked the process.
+/// We fold the CMYK case into the existing `NoPath { from, to }` variant
+/// rather than introducing a `CmykUnsupported` arm: zero workspace
+/// consumers match anything but `AllocationFailed` today, and a
+/// dedicated variant would be future-facing surface no caller earns
+/// (see imazen/zenpixels#44 discussion). Callers wanting to route to
+/// a CMS can inspect `from.color_model() == ColorModel::Cmyk` on the
+/// returned `NoPath` — information-equivalent.
+fn reject_cmyk(from: PixelDescriptor, to: PixelDescriptor) -> Result<(), At<ConvertError>> {
+    if from.color_model() == ColorModel::Cmyk || to.color_model() == ColorModel::Cmyk {
+        return Err(whereat::at!(ConvertError::NoPath { from, to }));
+    }
+    Ok(())
+}
+
+/// Validate that a raw input buffer is long enough to hold the declared
+/// geometry: `rows × stride` bytes minimum (the contract documented on
+/// every raw-bytes entry point on this module).
+///
+/// The multiplication is `checked_mul` so a 32-bit `usize` wrap on i686 /
+/// wasm32 surfaces as [`ConvertError::AllocationFailed`] (the same class
+/// `PixelBuffer::from_pixels` uses) instead of silently passing through
+/// with a small number that then OOBs in the slice loop. Pre-#44 the raw
+/// entry points slice into `data` with no length check at all and panic
+/// with index-OOB on a truncated buffer.
+fn ensure_src_buffer_fits(
+    data_len: usize,
+    rows: u32,
+    stride: usize,
+) -> Result<(), At<ConvertError>> {
+    if rows == 0 {
+        return Ok(());
+    }
+    let needed = (rows as usize)
+        .checked_mul(stride)
+        .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))?;
+    if data_len < needed {
+        return Err(whereat::at!(ConvertError::BufferSize {
+            expected: needed,
+            actual: data_len,
+        }));
+    }
+    Ok(())
+}
+
+/// Compute `rows × stride` as a `usize` byte count for an output
+/// allocation, surfacing 32-bit overflow as
+/// [`ConvertError::AllocationFailed`] instead of a silent wrap (which
+/// would `vec![0u8; small]` and then OOB inside the conversion loop).
+fn checked_byte_alloc(rows: u32, stride: usize) -> Result<usize, At<ConvertError>> {
+    (rows as usize)
+        .checked_mul(stride)
+        .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))
 }
 
 /// Result of format adaptation: the converted data and its descriptor.
@@ -151,10 +205,13 @@ pub fn adapt_for_encode_with_intent<'a>(
     supported: &[PixelDescriptor],
     intent: ConvertIntent,
 ) -> Result<Adapted<'a>, At<ConvertError>> {
-    assert_not_cmyk(&descriptor);
+    ensure_src_buffer_fits(data.len(), rows, stride)?;
     if supported.is_empty() {
         return Err(whereat::at!(ConvertError::EmptyFormatList));
     }
+    // CMYK check after EmptyFormatList so we always have a concrete target
+    // descriptor to pair into `NoPath { from, to }`.
+    reject_cmyk(descriptor, supported[0])?;
 
     // Check for exact match (zero-copy path).
     if supported.contains(&descriptor) {
@@ -201,7 +258,7 @@ pub fn adapt_for_encode_with_intent<'a>(
     let src_bpp = descriptor.bytes_per_pixel();
     let dst_bpp = target.bytes_per_pixel();
     let dst_stride = (width as usize) * dst_bpp;
-    let mut output = vec![0u8; dst_stride * rows as usize];
+    let mut output = vec![0u8; checked_byte_alloc(rows, dst_stride)?];
 
     for y in 0..rows {
         let src_start = y as usize * stride;
@@ -234,18 +291,18 @@ pub fn convert_buffer(
     from: PixelDescriptor,
     to: PixelDescriptor,
 ) -> Result<Vec<u8>, At<ConvertError>> {
-    assert_not_cmyk(&from);
-    assert_not_cmyk(&to);
+    reject_cmyk(from, to)?;
+    let src_bpp = from.bytes_per_pixel();
+    let src_stride = (width as usize) * src_bpp;
+    ensure_src_buffer_fits(src.len(), rows, src_stride)?;
     if from == to {
         return Ok(src.to_vec());
     }
 
     let mut converter = RowConverter::new(from, to).at()?;
-    let src_bpp = from.bytes_per_pixel();
     let dst_bpp = to.bytes_per_pixel();
-    let src_stride = (width as usize) * src_bpp;
     let dst_stride = (width as usize) * dst_bpp;
-    let mut output = vec![0u8; dst_stride * rows as usize];
+    let mut output = vec![0u8; checked_byte_alloc(rows, dst_stride)?];
 
     for y in 0..rows {
         let src_start = y as usize * src_stride;
@@ -288,6 +345,11 @@ pub(crate) fn convert_buffer_with_anchor(
     to: PixelDescriptor,
     anchor: zenpixels::hdr::DiffuseWhite,
 ) -> Result<PixelBuffer, At<ConvertError>> {
+    // Reject CMYK and validate the src buffer *before* allocating the dst —
+    // failing fast saves the alloc on a broken request, and points the
+    // error at the outer entry point instead of the inner helper.
+    reject_cmyk(from, to)?;
+    ensure_src_buffer_fits(src.len(), rows, src_stride)?;
     // Allocate through the existing PixelBuffer machinery (start-aligned,
     // fallible) rather than a hand-rolled `vec![0u8; …]`, and convert into its
     // backing at the buffer's own row stride.
@@ -330,8 +392,8 @@ pub(crate) fn convert_into_with_anchor(
     dst: &mut [u8],
     dst_stride: usize,
 ) -> Result<(), At<ConvertError>> {
-    assert_not_cmyk(&from);
-    assert_not_cmyk(&to);
+    reject_cmyk(from, to)?;
+    ensure_src_buffer_fits(src.len(), rows, src_stride)?;
 
     let dst_row = (width as usize) * to.bytes_per_pixel();
     if rows > 0 {
@@ -552,10 +614,11 @@ pub fn adapt_for_encode_explicit<'a>(
     supported: &[PixelDescriptor],
     options: &ConvertOptions,
 ) -> Result<Adapted<'a>, At<ConvertError>> {
-    assert_not_cmyk(&descriptor);
+    ensure_src_buffer_fits(data.len(), rows, stride)?;
     if supported.is_empty() {
         return Err(whereat::at!(ConvertError::EmptyFormatList));
     }
+    reject_cmyk(descriptor, supported[0])?;
 
     // Check for exact match (zero-copy path).
     if supported.contains(&descriptor) {
@@ -610,7 +673,7 @@ pub fn adapt_for_encode_explicit<'a>(
     let src_bpp = descriptor.bytes_per_pixel();
     let dst_bpp = target.bytes_per_pixel();
     let dst_stride = (width as usize) * dst_bpp;
-    let mut output = vec![0u8; dst_stride * rows as usize];
+    let mut output = vec![0u8; checked_byte_alloc(rows, dst_stride)?];
 
     for y in 0..rows {
         let src_start = y as usize * stride;
@@ -1270,44 +1333,62 @@ mod tests {
         assert_eq!(result.descriptor, desc);
     }
 
+    // Pre-#44 these were `#[should_panic]` tests that pinned the
+    // `assert_not_cmyk` ABORT behaviour. After the typed-error fix they
+    // assert the same rejection — `ConvertError::NoPath { from, to }` with
+    // one side being CMYK — without killing the process. The newer
+    // `cmyk_input_returns_typed_error_*` tests cover the same surface plus
+    // the inverse direction.
     #[test]
-    #[should_panic(expected = "CMYK pixel data cannot be processed")]
     fn cmyk_rejected_by_adapt_for_encode() {
         let cmyk_data = vec![0u8; 4 * 4]; // 4 pixels
-        let _ = adapt_for_encode(
+        let err = adapt_for_encode(
             &cmyk_data,
             PixelDescriptor::CMYK8,
             2,
             2,
             8,
             &[PixelDescriptor::RGB8_SRGB],
-        );
+        )
+        .unwrap_err();
+        assert!(matches!(
+            *err.error(),
+            ConvertError::NoPath { from, .. } if from.color_model() == ColorModel::Cmyk
+        ));
     }
 
     #[test]
-    #[should_panic(expected = "CMYK pixel data cannot be processed")]
     fn cmyk_rejected_by_convert_buffer() {
         let cmyk_data = vec![0u8; 4 * 4];
-        let _ = convert_buffer(
+        let err = convert_buffer(
             &cmyk_data,
             2,
             2,
             PixelDescriptor::CMYK8,
             PixelDescriptor::RGB8_SRGB,
-        );
+        )
+        .unwrap_err();
+        assert!(matches!(
+            *err.error(),
+            ConvertError::NoPath { from, .. } if from.color_model() == ColorModel::Cmyk
+        ));
     }
 
     #[test]
-    #[should_panic(expected = "CMYK pixel data cannot be processed")]
     fn cmyk_rejected_by_convert_buffer_as_target() {
         let rgb_data = vec![0u8; 3 * 4];
-        let _ = convert_buffer(
+        let err = convert_buffer(
             &rgb_data,
             2,
             2,
             PixelDescriptor::RGB8_SRGB,
             PixelDescriptor::CMYK8,
-        );
+        )
+        .unwrap_err();
+        assert!(matches!(
+            *err.error(),
+            ConvertError::NoPath { to, .. } if to.color_model() == ColorModel::Cmyk
+        ));
     }
 
     #[test]
@@ -1325,6 +1406,154 @@ mod tests {
         assert!(
             matches!(result.data, Cow::Owned(_)),
             "explicit variant: different primaries must trigger conversion"
+        );
+    }
+
+    // ── #44.1 — CMYK rejection produces typed errors, not panics ──────────
+
+    #[test]
+    fn cmyk_input_returns_typed_error_from_adapt_for_encode() {
+        // 2×1 CMYK8 = 8 bytes; the value pattern is arbitrary, it never
+        // reaches the conversion loop because CMYK is rejected up front.
+        let data = [0u8; 8];
+        let cmyk = PixelDescriptor::CMYK8;
+        let target = PixelDescriptor::RGB8_SRGB;
+        let err = adapt_for_encode(&data, cmyk, 2, 1, 8, &[target]).unwrap_err();
+        assert!(
+            matches!(
+                *err.error(),
+                ConvertError::NoPath { from, .. } if from.color_model() == ColorModel::Cmyk
+            ),
+            "got: {:?}",
+            err.error()
+        );
+        // Display message must carry the moxcms hint so server-side error
+        // logs are actionable without pattern-matching the variant.
+        let msg = format!("{}", err.error());
+        assert!(
+            msg.contains("CMYK") && msg.contains("moxcms"),
+            "Display message lost CMYK hint: {msg}"
+        );
+    }
+
+    #[test]
+    fn cmyk_input_returns_typed_error_from_convert_buffer() {
+        let data = [0u8; 8];
+        let err = convert_buffer(
+            &data,
+            2,
+            1,
+            PixelDescriptor::CMYK8,
+            PixelDescriptor::RGB8_SRGB,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            *err.error(),
+            ConvertError::NoPath { from, .. } if from.color_model() == ColorModel::Cmyk
+        ));
+    }
+
+    #[test]
+    fn cmyk_target_returns_typed_error_from_convert_buffer() {
+        // RGB→CMYK should also be rejected (no inverse direction either).
+        let data = [0u8; 6];
+        let err = convert_buffer(
+            &data,
+            2,
+            1,
+            PixelDescriptor::RGB8_SRGB,
+            PixelDescriptor::CMYK8,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            *err.error(),
+            ConvertError::NoPath { to, .. } if to.color_model() == ColorModel::Cmyk
+        ));
+    }
+
+    // ── #44.2 — truncated src buffer returns typed BufferSize ────────────
+
+    #[test]
+    fn truncated_src_returns_buffer_size_error_from_adapt_for_encode() {
+        // Declared 2×2 RGB8 = 12 bytes needed, only provide 6 (one row).
+        let data = [255u8, 0, 0, 0, 255, 0];
+        let err = adapt_for_encode(
+            &data,
+            PixelDescriptor::RGB8_SRGB,
+            2,
+            2,
+            6, // packed stride; 2 rows × 6 = 12 needed
+            &[PixelDescriptor::RGB8_SRGB],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                *err.error(),
+                ConvertError::BufferSize {
+                    expected: 12,
+                    actual: 6
+                }
+            ),
+            "got: {:?}",
+            err.error()
+        );
+    }
+
+    #[test]
+    fn truncated_src_returns_buffer_size_error_from_convert_buffer() {
+        // Declared 4×1 RGBA8 = 16 bytes, provide 8.
+        let data = [0u8; 8];
+        let err = convert_buffer(
+            &data,
+            4,
+            1,
+            PixelDescriptor::RGBA8_SRGB,
+            PixelDescriptor::RGB8_SRGB,
+        )
+        .unwrap_err();
+        assert!(matches!(*err.error(), ConvertError::BufferSize { .. }));
+    }
+
+    // ── #44.3 — 32-bit allocation overflow surfaces typed error ─────────
+
+    #[test]
+    fn zero_rows_does_not_trigger_size_check() {
+        // Empty inputs are well-defined: rows=0 means no data needed.
+        let data: &[u8] = &[];
+        let result = adapt_for_encode(
+            data,
+            PixelDescriptor::RGB8_SRGB,
+            0,
+            0,
+            0,
+            &[PixelDescriptor::RGB8_SRGB],
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn extreme_rows_stride_returns_allocation_failed_not_panic() {
+        // u32::MAX rows × non-trivial stride will overflow usize on 32-bit.
+        // On 64-bit, `data.len()` is then the gating check (we don't actually
+        // have a u32::MAX-row buffer to feed it). The discriminator is that
+        // the function returns a typed error in *both* cases rather than
+        // panicking with index-OOB or producing a wrap-and-corrupt allocation.
+        let data = [0u8; 1];
+        let err = convert_buffer(
+            &data,
+            1,
+            u32::MAX,
+            PixelDescriptor::RGB8_SRGB,
+            PixelDescriptor::RGB8_SRGB, // identity (early-return), but src check still runs
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                *err.error(),
+                ConvertError::AllocationFailed | ConvertError::BufferSize { .. }
+            ),
+            "got: {:?}",
+            err.error()
         );
     }
 }
