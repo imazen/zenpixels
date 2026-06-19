@@ -96,6 +96,22 @@
   callers reading `measure_percentile` can pin against the same value the
   default-entry path uses (or refer to it in their own metadata pipeline).
 
+### zenpixels — changed
+
+- **`LightLevelHistogram::percentile` interpolates within the bin** — the
+  walker previously returned the lower edge of the bin where the cumulative
+  CDF first crossed the threshold (up to ~0.02 stops / ~2 % below the true
+  percentile at HDR brightness — ~13 nits at 1015 cd/m²). Now does linear
+  interpolation in log2 space within that bin: fraction = (threshold −
+  count_before) / count_in_bin, value = `2^(log2_lower + fraction ·
+  log2_step)`. Capped at `literal_max_nits` so f32 rounding in the
+  interp can never overshoot the spec-literal max by one u16-nits code.
+  On dense bright content (1 MP image of a single bright value) the
+  `measure_percentile` readout now lands within ~1 nit of the literal max
+  instead of ~13 nits below. Backwards-compatible — the floor reading was
+  documented as bin-quantised; new values are uniformly closer to (and
+  bounded by) the true percentile. Doc updated.
+
 - **`ContentLightLevel::measure_max_smoothed`** — MaxCLL via a 3×1 horizontal
   box-filtered max, robust against single-pixel defects and math-weird outliers
   without committing to an explicit percentile. Each pixel's value contributes

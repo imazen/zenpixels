@@ -340,10 +340,16 @@ impl LightLevelHistogram {
     /// maps to 0. `1.0` returns [`max`](Self::max) exactly (no bin
     /// quantisation at the spec-literal value).
     ///
-    /// Intermediate percentiles walk the binned CDF and return the
-    /// **lower edge** of the bin where the cumulative count first
-    /// crosses `percentile · total` — bin-quantised at ~0.02 stops,
-    /// well below the cone JND.
+    /// Intermediate percentiles walk the binned CDF, identify the bin
+    /// where the cumulative count first crosses `percentile · total`,
+    /// and **linearly interpolate within that bin** (in log2 space, to
+    /// match the log2-uniform bin spacing). Returned values land
+    /// strictly between the bin edges and the literal max is preserved
+    /// when the threshold falls in the bin holding the maximum sample.
+    /// Resolution is ~0.0006 stops at typical pixel counts (≥ 4 MP) and
+    /// degrades smoothly as content fills fewer pixels per bin —
+    /// always finer than the bin floor (~0.02 stops) returned by a
+    /// naïve walk.
     pub fn percentile(&self, percentile: f32) -> f32 {
         if self.total == 0 {
             return 0.0;
@@ -367,11 +373,30 @@ impl LightLevelHistogram {
         }
         let threshold = (p as f64 * self.total as f64) as u64;
         let mut cum: u64 = 0;
+        let inv_step = Self::inv_log2_step();
         for (i, &count) in self.bins.iter().enumerate() {
-            cum += count as u64;
+            let count_u64 = count as u64;
+            cum += count_u64;
             if cum >= threshold {
-                let log2_edge = Self::LOG2_MIN + (i as f32) / Self::inv_log2_step();
-                return fast_exp2(log2_edge).max(0.0);
+                // Fraction of `count` pixels that fall ≤ threshold
+                // within this bin. `count_before = cum - count_u64`
+                // is the running total before this bin. Compute in f64
+                // to keep precision when `count` reaches into the
+                // millions on large frames (f32 mantissa is 23 bits).
+                let count_before = cum - count_u64;
+                let fraction = if count_u64 > 0 {
+                    let inside = threshold.saturating_sub(count_before) as f64;
+                    let f = (inside / count_u64 as f64).clamp(0.0, 1.0);
+                    f as f32
+                } else {
+                    0.0
+                };
+                let log2_interp = Self::LOG2_MIN + (i as f32 + fraction) / inv_step;
+                let interp = fast_exp2(log2_interp).max(0.0);
+                // The bin holding the literal max must NEVER report a
+                // value above it — `fast_exp2` rounding could otherwise
+                // overshoot by a u16-nit code on the last reachable bin.
+                return interp.min(self.literal_max_nits);
             }
         }
         self.literal_max_nits
@@ -1977,6 +2002,76 @@ mod tests {
     }
 
     #[test]
+    fn percentile_interpolates_within_bin_when_threshold_lands_high() {
+        // 10 000 pixels all at 5.0 (= 1015 nits exactly). The literal max
+        // is 1015 — with linear interpolation the percentile readout at
+        // p=0.9999 should land near the literal max (one bin ≈ 0.02 stops
+        // wide; the threshold lands 99.99 % of the way through the bin,
+        // putting the interpolated value within ~0.01 stops of the max).
+        // Naïve floor-of-bin would read ≈ 1002 (one bin below).
+        let buf = rgbf32(&[[5.0_f32; 3]; 10_000], 100, 100);
+        let h = ContentLightLevel::measure_histogram(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        let p = h.percentile(0.9999);
+        // Allow [1010, 1015]: interpolation never overshoots the literal
+        // max (cap inside `percentile`) and lands within one nit at this
+        // density.
+        assert!(
+            (1010.0..=1015.0).contains(&p),
+            "p99.99 interpolated within bin: expected ≈1015, got {p}"
+        );
+    }
+
+    #[test]
+    fn percentile_interpolation_never_exceeds_literal_max() {
+        // Single bin gets the threshold-1 pixel inside it; with
+        // interpolation the readout could round above `literal_max_nits`
+        // if not capped. Pin the cap.
+        let buf = rgbf32(&[[5.0; 3]; 1000], 100, 10);
+        let h = ContentLightLevel::measure_histogram(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        for &p in &[0.5_f32, 0.9, 0.95, 0.99, 0.999, 0.9999, 0.99999] {
+            let v = h.percentile(p);
+            assert!(
+                v <= h.max() + 1e-3,
+                "p={p}: percentile {v} must not exceed literal max {}",
+                h.max()
+            );
+        }
+    }
+
+    #[test]
+    fn percentile_interpolation_beats_floor_precision_on_dense_content() {
+        // 1 MP image of pure 5.0 (= 1015 nits). Floor-of-bin would
+        // undershoot the literal by ~13 nits (~2 % = one log2 bin width
+        // at this brightness). Interpolation should report within ~1 nit
+        // of literal.
+        let pixels: Vec<[f32; 3]> = alloc::vec![[5.0_f32; 3]; 1024 * 1024];
+        let buf = rgbf32(&pixels, 1024, 1024);
+        let h = ContentLightLevel::measure_histogram(
+            buf.as_slice(),
+            DiffuseWhite::BT2408,
+            LightLevelMethod::MaxRgb,
+        )
+        .unwrap();
+        let p = h.percentile(0.9999);
+        assert!(
+            (p - h.max()).abs() < 2.0,
+            "1 MP solid: interpolated p99.99 = {p}, literal max = {} \
+             (expected within ~1 nit; floor-of-bin would be ~1002)",
+            h.max()
+        );
+    }
+
+    #[test]
     fn percentile_clamps_nan_and_out_of_range_inputs() {
         let buf = rgbf32(&[[0.5; 3]], 1, 1);
         let h = ContentLightLevel::measure_histogram(
@@ -2569,10 +2664,12 @@ mod tests {
             LightLevelMethod::MaxRgb,
         )
         .unwrap();
-        // Literal max is 1015; one log2 bin below is ≈ 1002. Allow the
-        // bin-quantisation range.
+        // Linear interpolation within the bin: with the threshold landing
+        // near the top of the bright bin, the readout is within ~1 nit of
+        // the literal max (1015). A naïve floor-of-bin readout would
+        // undershoot to ≈ 1002.
         assert!(
-            robust.max_content_light_level >= 990 && robust.max_content_light_level <= 1020,
+            robust.max_content_light_level >= 1010 && robust.max_content_light_level <= 1020,
             "dense bright content: robust must preserve the peak: got {}",
             robust.max_content_light_level
         );
