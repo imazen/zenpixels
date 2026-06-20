@@ -25,15 +25,15 @@
   inflates it, making displays over-tone-map); `#[deprecated]` + `#[doc(hidden)]`
   in 0.2.15, to be replaced by a percentile-aware measure (#54). Delete the
   literal-max method here.
-- **Rename `ContentLightLevel::measure_robust(px, white, method)` →
-  `measure(px, white, method)`** at the same release that deletes the
-  deprecated 2-arg `measure`. The 0.2.x `measure_robust` slot is
-  defect-tolerant via [`ContentLightLevel::DEFAULT_PERCENTILE`] (0.9999) —
-  the industry-default reading every production HDR tool already uses.
-  Promoting it to the obvious `measure` name in 0.3.0 makes the
-  "I don't know which to pick" entry point give the production-correct
-  answer. Keep `measure_robust` as a `#[deprecated]` alias for one
-  release to ease migration.
+- **Rename `CllMeasure::measure_robust(px, white, method)` →
+  `CllMeasure::measure(px, white, method)`** in `zenpixels-convert` at the
+  same release that deletes the deprecated 2-arg `zenpixels::ContentLightLevel::measure`.
+  The 0.2.x `measure_robust` slot is defect-tolerant via
+  [`ContentLightLevel::DEFAULT_PERCENTILE`] (0.9999) — the industry-default
+  reading every production HDR tool already uses. Promoting it to the
+  obvious `measure` name in 0.3.0 makes the "I don't know which to pick"
+  entry point give the production-correct answer. Keep `measure_robust`
+  as a `#[deprecated]` alias for one release to ease migration.
 - **Demote the unadopted registry *lookup* surface to `pub(crate)`** —
   `zenpixels::registry::{KnownColorSpace, REGISTRY, find_by_cicp,
   find_by_primaries_transfer, find_by_named}` are `#[allow(dead_code)]`
@@ -72,166 +72,134 @@
 
 ### zenpixels — added
 
-- **`ContentLightLevel::measure_robust`** — the recommended-default MaxCLL
-  reader, equivalent to `measure_percentile(px, white,
-  ContentLightLevel::DEFAULT_PERCENTILE, method)` with
-  [`DEFAULT_PERCENTILE`] = 0.9999. Drops the top 0.01 % of pixels as the
-  outlier budget — the production-correct answer for content with possible
-  defect-driven hot pixels (sensor noise, stuck pixels, specular blowouts).
-  Matches what libplacebo (`pl_color_space_infer`), DaVinci Resolve, x265's
-  `--master-display` helpers, and most HDR10+ mastering tools do. The
-  obvious-named entry point (`measure_max`) stays spec-strict CTA-861.3 for
-  delivery-mandate metadata + sparse-bright legitimate content
-  (astrophotography, fireworks); `measure_robust` is what you want
-  everywhere else. **Queued for rename to `measure` at 0.3.0** alongside
-  the deprecated `measure(px, white)` removal — see QUEUED BREAKING
-  CHANGES. Tests pin the alias contract (bit-exact equivalence to the
-  explicit `measure_percentile` call across both reduction methods), the
-  defect-rejection path on a 100k-pixel image with one stuck pixel, the
-  sparse-bright cliff (1-in-100 bright pixel dropped — astrophotography
-  should pick `measure_max`), and the input-rejection contract.
-
 - **`ContentLightLevel::DEFAULT_PERCENTILE = 0.9999`** — public constant for
-  the industry-default percentile used by `measure_robust`. Surfaced so
-  callers reading `measure_percentile` can pin against the same value the
-  default-entry path uses (or refer to it in their own metadata pipeline).
+  the industry-default percentile used by `CllMeasure::measure_robust` in
+  `zenpixels-convert`. Surfaced on the type itself (not the trait) so any
+  caller — including ones that don't pull `zenpixels-convert` — can refer
+  to the same anchor.
 
 ### zenpixels — changed
 
-- **`LightLevelHistogram::percentile` interpolates within the bin** — the
-  walker previously returned the lower edge of the bin where the cumulative
-  CDF first crossed the threshold (up to ~0.02 stops / ~2 % below the true
-  percentile at HDR brightness — ~13 nits at 1015 cd/m²). Now does linear
-  interpolation in log2 space within that bin: fraction = (threshold −
-  count_before) / count_in_bin, value = `2^(log2_lower + fraction ·
-  log2_step)`. Capped at `literal_max_nits` so f32 rounding in the
-  interp can never overshoot the spec-literal max by one u16-nits code.
-  On dense bright content (1 MP image of a single bright value) the
-  `measure_percentile` readout now lands within ~1 nit of the literal max
-  instead of ~13 nits below. Backwards-compatible — the floor reading was
-  documented as bin-quantised; new values are uniformly closer to (and
-  bounded by) the true percentile. Doc updated.
+- **HDR measurement (the `measure_*` API surface, `LightLevelHistogram`,
+  `LightLevelMethod`, and the SIMD scan kernel) moves to `zenpixels-convert`**
+  as the new `measure` module + [`CllMeasure`] extension trait. `zenpixels`
+  is now structural-only HDR: `DiffuseWhite`, `ContentLightLevel` (struct +
+  `new` + `DEFAULT_PERCENTILE` + the deprecated 2-arg `measure(px, white)`),
+  `MasteringDisplay`. Knock-on effects:
+  - **`simd` and `avx512` Cargo features removed** from `zenpixels`. The
+    `archmage` and `magetypes` optional deps are gone. `cargo tree -p
+    zenpixels` shows zero SIMD-runtime dependencies in any configuration.
+  - **Migration**: callers using `ContentLightLevel::measure_max(...)` /
+    `measure_robust(...)` / `measure_max_smoothed(...)` / `measure_percentile(...)`
+    / `measure_histogram(...)` now `use zenpixels_convert::CllMeasure;` and
+    keep the same call syntax (the extension trait preserves
+    `ContentLightLevel::measure_*(...)` ergonomics). `LightLevelHistogram`
+    and `LightLevelMethod` re-export from `zenpixels_convert`.
+  - **Rationale**: the SIMD kernels (V3 / NEON / WASM128 / scalar tiers via
+    `archmage::magetypes`) and the histogram + percentile logic are pixel-
+    iteration code; that lives in `zenpixels-convert` alongside the gamut /
+    f16 / orientation kernels that already use the same SIMD machinery.
+    `zenpixels` remains a structural interchange crate, which keeps every
+    codec consumer (zenjpeg / zenpng / zenavif / zenjxl / zenwebp /
+    zentiff / zengif / zencodec) free of optional-feature surfaces and
+    SIMD deps for the metadata-pass-through path.
 
-- **`ContentLightLevel::measure_max_smoothed`** — MaxCLL via a 3×1 horizontal
-  box-filtered max, robust against single-pixel defects and math-weird outliers
-  without committing to an explicit percentile. Each pixel's value contributes
-  through the local 3-tap horizontal mean (`(m[i-1] + m[i] + m[i+1]) / 3`,
-  mirror-padded at row edges); a single stuck pixel at 10 000 cd/m² in a
-  0.005 cd/m² background reads as ~3 333 instead of 10 000. Real bright
-  features that span ≥2 horizontal pixels survive proportionally — clusters
-  of ≥3 pixels are preserved at full magnitude. Not CTA-861.3 strict — this
-  is a deliberate deviation closer in shape to Dolby Vision L1's per-block
-  analysis: single-arcminute features are below human visual acuity at any
-  sensible viewing distance and the display itself averages over its panel
-  grid, so per-pixel literal max over-states what content can drive. Pick
-  this when the spec-literal reading is dominated by defects but you don't
-  want to commit to a percentile. **MaxFALL is unchanged** — the mean of a
-  3×1 box-filtered image equals the mean of the original (linearity of
-  expectation), and CTA-861.3 MaxFALL is the literal arithmetic mean
-  regardless. Single-pass streaming scan, no row scratch buffer; auto-
-  vectorises to ~1.0-1.3 Gpix/s on Zen 4 (2-3× faster than the histogram
-  path it replaces for defect-tolerant MaxCLL). Reproducer + table in
-  [`benchmarks/measure_max_smoothed_throughput_2026-06-19.md`](benchmarks/measure_max_smoothed_throughput_2026-06-19.md).
+- **`LightLevelHistogram::percentile` interpolates within the bin** (now in
+  `zenpixels-convert::measure`) — previously returned the lower edge of the
+  bin where the cumulative CDF first crossed the threshold (~0.02 stops /
+  ~2 % below the true percentile, ~13 nits at 1015 cd/m²). Now does linear
+  interpolation in log2 space within that bin: `fraction = (threshold −
+  count_before) / count_in_bin`, `value = 2^(log2_lower + fraction ·
+  log2_step)`. Capped at `literal_max_nits` so f32 rounding in the interp
+  can never overshoot the spec-literal max by one u16-nits code. On dense
+  bright content (1 MP solid) the `measure_percentile` readout now lands
+  within ~1 nit of the literal max instead of ~13 nits below.
 
-- **SOTA-throughput `ContentLightLevel::measure_max`** — the spec-conformant
-  (CTA-861.3 strict) `MaxCLL` + `MaxFALL` reader is now ~5-10× faster than
-  the histogram path it previously routed through. The histogram is
-  unnecessary for the spec-literal reading (which only needs per-pixel
-  `max(R, G, B)` + arithmetic mean), so `measure_max` now scans directly:
-  SIMD per-pixel `max + sum` only, scaled by the diffuse-white anchor at
-  end-of-image. No log2, no bin index, no scatter.
-  - **Throughput** on a Ryzen 9 7950X with `-C target-cpu=native`:
-    - **Scalar**: **1.7 Gpix/s** steady-state across 256² through 8K —
-      LLVM auto-vectorises the simple max+sum given the fixed-array
-      pattern, so even the foundational no-`simd` build hits gigapixel.
-    - **SIMD** (`--features simd`): **2.5-3.4 Gpix/s** — 3.4 at small
-      sizes, settling to 2.5-2.7 at 4K / 8K where DDR5 memory bandwidth
-      becomes the limit (3 Gpix/s × 12 B/pixel ≈ 36 GB/s).
-    - **Above libplacebo** (~1-2 Gpix/s documented for the analogous path).
-  - **Industry-standard accuracy** — three new tests pin
-    `ContentLightLevel::measure_max` against an independent f64
-    Psychtoolbox-3 / x265 / libplacebo / Dolby Vision L1 / libultrahdr-style
-    oracle: hand-picked small-image coverage (saturated colours, dark
-    shadow, mid-grey, HDR specular peak), the same oracle on a 4 MP
-    image with a hot specular outlier (validates the f64 mean precision
-    holds across millions of pixels), and a bit-exact cross-check
-    between `measure_max` and the histogram-derived value. All pin
-    within 1 u16 code of the f64 oracle (matches the CTA-861.3 u16
-    nits encoding granularity).
-  - Reproducer + full table in
+### zenpixels-convert — added
+
+- **`zenpixels_convert::measure`** module + **[`CllMeasure`]** extension
+  trait — the new home for HDR content-light-level measurement, with the
+  `LightLevelHistogram` and `LightLevelMethod` types alongside. Implementing
+  `CllMeasure` for `zenpixels::ContentLightLevel` means callers write
+  `use zenpixels_convert::CllMeasure; ContentLightLevel::measure_robust(...)`
+  — the same call signature the methods had on `ContentLightLevel` directly
+  in pre-publication 0.2.15 main. Full surface
+  ([#54](https://github.com/imazen/zenpixels/issues/54)):
+
+  - **`CllMeasure::measure_max(px, white, method)`** — CTA-861.3 spec-strict
+    (literal MaxCLL + arithmetic mean). The hot path for delivery-mandate
+    HDR metadata; runs at **2.5-3.4 Gpix/s** with the V3 / AVX2 tier of the
+    `archmage::magetypes` SIMD kernel on a Ryzen 9 7950X, **above libplacebo**.
+    Three accuracy tests pin against an independent f64
+    Psychtoolbox-3 / x265 / libplacebo / Dolby Vision L1 / libultrahdr
+    oracle. Reproducer + full table in
     [`benchmarks/measure_max_throughput_2026-06-19.md`](benchmarks/measure_max_throughput_2026-06-19.md).
 
-- **SIMD path for `ContentLightLevel::measure_histogram`** (and the
-  `measure_max` / `measure_percentile` convenience methods that route
-  through it), gated behind the new `simd` feature
-  ([#54](https://github.com/imazen/zenpixels/issues/54) follow-up). The
-  scalar path remains the runtime fallback and the no-`simd`-feature
-  build path. The SIMD path uses a tiered `#[archmage::magetypes]`
-  kernel (V3 / NEON / WASM128 / scalar) with magetypes' `f32x8::log2_midp`
-  for the per-pixel log2, eight per-lane sub-histograms (32 KiB total
-  L1-resident) to side-step the cross-lane scatter conflict on the
-  histogram increment, and SIMD `reduce_max` / `reduce_add` for the
-  running max + f64 sum at end-of-row. Adds an optional `archmage` +
-  `magetypes` dep (only when the `simd` feature is on) plus an `avx512`
-  feature that flows through to `archmage/avx512` + `magetypes/avx512`
-  for the AVX-512 tier when it pays off.
-  - **Throughput** on a Ryzen 9 7950X (AMD Zen 4) with
-    `-C target-cpu=native`: scalar = ~287 Mpix/s steady-state; SIMD =
-    ~490 Mpix/s steady-state across 256² through 8K image sizes — a
-    **~1.7× speedup** uniform across the sweep. Without
-    `target-cpu=native` (V3 path stays compile-time-out), SIMD still
-    delivers ~340 Mpix/s vs scalar ~285. AVX-512 didn't move the needle
-    on this kernel — the bottleneck is the per-iteration histogram
-    scatter, not SIMD math width. Full table + reproducer in
-    [`benchmarks/measure_histogram_throughput_2026-06-19.md`](benchmarks/measure_histogram_throughput_2026-06-19.md).
-  - **Why not gigapixel yet.** The SIMD path is bottlenecked by the 8
-    scalar stores per chunk (one per sub-histogram lane). Breaking the
-    load-add-store dependency chain on hot bins needs a structural
-    change (block-level histograms, sort-based binning, or VPCONFLICTD
-    on AVX-512) — sketched in the benchmark file but out of scope for
-    this PR. The current path lands the ~1.7× win cleanly and keeps
-    the scalar contract identical bit-for-bit so the existing test
-    suite covers both.
+  - **`CllMeasure::measure_robust(px, white, method)`** — the recommended-
+    default reader, equivalent to `measure_percentile(_, _,
+    ContentLightLevel::DEFAULT_PERCENTILE, _)` with `DEFAULT_PERCENTILE` =
+    0.9999. Drops the top 0.01 % of pixels as the outlier budget — the
+    production-correct answer for content with possible defect-driven hot
+    pixels (sensor noise, stuck pixels, specular blowouts). Matches what
+    libplacebo (`pl_color_space_infer`), DaVinci Resolve, x265's
+    `--master-display` helpers, and most HDR10+ mastering tools do.
+    Tests cover the alias contract (bit-exact vs explicit
+    `measure_percentile`), the defect-rejection path on 100k pixels with
+    one stuck pixel, and the sparse-bright cliff (1-in-100 bright pixel
+    dropped at small sizes — astrophotography should pick `measure_max`).
 
-- **Histogram-based `ContentLightLevel` measurement** replacing the
-  deprecated literal-max `measure`
-  ([#54](https://github.com/imazen/zenpixels/issues/54)). New surface:
-  - **`LightLevelHistogram`** (re-exported at crate root) — log-scale
-    histogram of per-pixel light levels over `[0.005, 10000]` cd/m²
-    across 1024 bins (~0.02 stops/bin, well below the cone JND;
-    4 KiB cache-resident state). Exposes `max()` (spec-literal
-    CTA-861.3 MaxCLL — exact, not bin-quantised), `mean()` (the
-    MaxFALL component), `percentile(p)` (CDF walk; `p=1.0` returns
-    the exact literal max; `p=0.0` → 0; NaN / out-of-range clamps),
-    plus `method()`, `total_pixels()`, `bins()` for custom readouts.
-  - **`LightLevelMethod`** enum (`MaxRgb` default, `LuminanceBt2020`)
-    — explicit per-pixel reduction choice. CTA-861-G Annex P leaves
-    this normatively open; `MaxRgb` matches x265 / DaVinci / Dolby
-    Vision L1 / Psychtoolbox, `LuminanceBt2020` matches some
-    Netflix / Apple TV+ pipelines. `#[non_exhaustive]`.
-  - **`ContentLightLevel::measure_histogram(px, white, method)`** —
-    builds the histogram in a single SIMD-friendly pass; LLVM
-    auto-vectorises the per-pixel inner loop. `no_std`-friendly
-    `fast_log2` (degree-2 mantissa polynomial) puts the per-pixel
-    bin lookup at ~3 cycles.
-  - **`ContentLightLevel::measure_max(px, white, method)`** —
-    spec-conformant convenience: literal MaxCLL + arithmetic mean.
-    Use this when the delivery target mandates the strict CTA-861.3
-    reading (Netflix, broadcast).
-  - **`ContentLightLevel::measure_percentile(px, white, percentile,
-    method)`** — explicit-percentile convenience. **No default
-    percentile**: the caller commits to the value per content policy
-    (defect-driven rejection vs astrophotography vs fireworks vs
-    candle-in-dark-room have opposite needs). Issue #54's docstring
-    spells out the trade-off.
-  - Tests cover: defect-spike (lone outlier → p99 drops it,
-    spec-literal keeps the saturated max); astrophotography
-    night-stars (1100 px with 100 stars → spec-literal & p99.99
-    keep them, demonstrating the failure mode of fixed-percentile
-    APIs at `p < 0.91`); BT.2020 vs MaxRgb method divergence on
-    saturated red; percentile boundary handling (0, 1, NaN,
-    out-of-range); histogram bins exposed and summing to total;
-    `fast_exp2` ↔ `fast_log2` round-trip at bin edges within 0.5%.
+  - **`CllMeasure::measure_max_smoothed(px, white, method)`** — MaxCLL via
+    a 3×1 horizontal box-filtered max. Robust against single-pixel defects
+    and math-weird outliers without committing to an explicit percentile;
+    closer in shape to Dolby Vision L1's per-block analysis. A single
+    stuck pixel at 10 000 cd/m² in a 0.005 cd/m² background reads as ~3 333
+    after the box filter; clusters of ≥3 pixels preserve at full magnitude.
+    MaxFALL stays the literal arithmetic mean (linearity of expectation;
+    CTA-861.3 unchanged). Single-pass streaming scan auto-vectorises to
+    ~1.0-1.3 Gpix/s on Zen 4 (2-3× faster than the histogram path).
+    Reproducer + table in
+    [`benchmarks/measure_max_smoothed_throughput_2026-06-19.md`](benchmarks/measure_max_smoothed_throughput_2026-06-19.md).
+
+  - **`CllMeasure::measure_percentile(px, white, percentile, method)`** —
+    explicit-percentile convenience. No default — caller commits per
+    content policy (sparse-bright legitimate content like astrophotography
+    / fireworks / candle-in-dark-room has opposite needs from defect
+    rejection). Issue #54's docstring spells out the trade-off.
+
+  - **`CllMeasure::measure_histogram(px, white, method)`** — builds a
+    [`LightLevelHistogram`] in a single SIMD-friendly pass via a tiered
+    `#[archmage::magetypes]` kernel (V3 / NEON / WASM128 / scalar) with
+    `f32x8::log2_midp` for the per-pixel log2, eight per-lane sub-histograms
+    (32 KiB total L1-resident) to side-step the cross-lane scatter
+    conflict, and SIMD `reduce_max` / `reduce_add` for the running max +
+    f64 sum at end-of-row. ~470-490 Mpix/s on Zen 4. The histogram is the
+    primitive — callers can derive `max()`, `mean()`, `percentile(p)`, and
+    arbitrary CDF readouts after one scan. Reproducer +
+    perf-bottleneck notes in
+    [`benchmarks/measure_histogram_throughput_2026-06-19.md`](benchmarks/measure_histogram_throughput_2026-06-19.md).
+
+  - **[`LightLevelHistogram`]** — log-scale histogram of per-pixel light
+    levels over `[0.005, 10000]` cd/m² across 1024 bins (~0.02 stops/bin,
+    well below the cone JND; 4 KiB cache-resident state). Exposes `max()`,
+    `mean()`, `percentile(p)` (with linear interpolation in log2 space —
+    see the `zenpixels — changed` note above), `method()`, `total_pixels()`,
+    `bins()` for custom CDF walks.
+
+  - **[`LightLevelMethod`]** enum (`MaxRgb` default, `LuminanceBt2020`) —
+    explicit per-pixel reduction choice. CTA-861-G Annex P leaves this
+    normatively open; `MaxRgb` matches x265 / DaVinci / Dolby Vision L1 /
+    Psychtoolbox, `LuminanceBt2020` matches some Netflix / Apple TV+
+    pipelines. `#[non_exhaustive]`.
+
+  Tests cover: defect-spike (lone outlier → p99 drops it, spec-literal
+  keeps it); astrophotography night-stars (1100 px with 100 stars →
+  spec-literal & p99.99 keep them); BT.2020 vs MaxRgb method divergence on
+  saturated red; percentile boundary handling (0, 1, NaN, out-of-range);
+  bin interpolation precision (1 MP solid → within ~1 nit of literal max);
+  bin interpolation cap (no overshoot of literal max under f32 rounding);
+  3×1 box-filter suppression / cluster preservation / mirror-pad edge /
+  degenerate widths; `DEFAULT_PERCENTILE` constant pin; input rejection
+  contract.
 
 ### zenpixels — fixed
 

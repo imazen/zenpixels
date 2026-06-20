@@ -3,7 +3,7 @@
 **Date:** 2026-06-19
 **CPU:** AMD Ryzen 9 7950X (16 cores / 32 threads, AVX-512)
 **Build:** `cargo run --example measure_histogram_throughput --release` with the cited features
-**Source:** `zenpixels/examples/measure_histogram_throughput.rs`
+**Source:** `zenpixels-convert/examples/measure_histogram_throughput.rs`
 
 Pixel source is a deterministic per-pixel ramp + sparkle so the histogram path exercises a realistic bin distribution. Warmup x3 before each timed run.
 

@@ -2,8 +2,8 @@
 
 **Date:** 2026-06-19
 **CPU:** AMD Ryzen 9 7950X (16 cores / 32 threads, AVX-512)
-**Build:** `RUSTFLAGS="-C target-cpu=native" cargo run --example measure_histogram_throughput --release --features simd`
-**Source:** `zenpixels/examples/measure_histogram_throughput.rs`
+**Build:** `RUSTFLAGS="-C target-cpu=native" cargo run -p zenpixels-convert --example measure_histogram_throughput --release`
+**Source:** `zenpixels-convert/examples/measure_histogram_throughput.rs`
 
 `measure_max_smoothed` applies a 3×1 horizontal box filter to the per-pixel
 `max(R, G, B)` (or BT.2020 luma) reduction before tracking the running max.

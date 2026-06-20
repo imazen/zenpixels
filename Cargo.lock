@@ -933,10 +933,8 @@ dependencies = [
 name = "zenpixels"
 version = "0.2.15"
 dependencies = [
- "archmage",
  "bytemuck",
  "imgref",
- "magetypes",
  "rgb",
  "serde",
  "whereat",

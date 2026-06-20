@@ -15,25 +15,12 @@ include = [
 
 [features]
 default = ["std", "icc"]
-std = ["archmage?/std", "magetypes?/std"]
+std = []
 planar = []
 icc = []
 rgb = ["dep:rgb"]
 imgref = ["dep:imgref", "rgb"]
 serde = ["dep:serde"]
-# SIMD-accelerated `ContentLightLevel::measure_histogram` (and the
-# `measure_max` / `measure_percentile` convenience methods that route
-# through it). Enables the `archmage` + `magetypes` deps and the
-# tier-dispatched `accumulate_strip_*_simd` kernels. Scalar path stays
-# the runtime fallback and the no-`simd` build path. Worth turning on
-# for any pipeline that processes ≥ 1 MP per measurement; the per-pixel
-# work is small enough that scalar throughput maxes around 150 Mpix/s
-# while SIMD targets the gigapixel-per-second range.
-simd = ["dep:archmage", "dep:magetypes"]
-# AVX-512 (x86-64-v4) tier on top of `simd`. Threaded through the
-# matching archmage / magetypes feature so the V4 magetypes lanes
-# generate AVX-512 (not just AVX2) intrinsics on capable hardware.
-avx512 = ["simd", "archmage/avx512", "magetypes/avx512"]
 
 [dependencies]
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
@@ -41,8 +28,6 @@ serde = { version = "1", optional = true, default-features = false, features = [
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 imgref = { version = "1.12", optional = true }
 whereat = { version = "0.1.5", default-features = false }
-archmage = { version = "0.9.26", default-features = false, optional = true }
-magetypes = { version = "0.9.26", default-features = false, optional = true }
 
 [dev-dependencies]
 imgref = "1.12"

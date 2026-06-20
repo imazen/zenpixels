@@ -2,8 +2,8 @@
 //!
 //! Run with:
 //! ```
-//! cargo run --example measure_histogram_throughput --release --features simd
-//! cargo run --example measure_histogram_throughput --release
+//! cargo run -p zenpixels-convert --example measure_histogram_throughput --release
+//! cargo run -p zenpixels-convert --example measure_histogram_throughput --release --features avx512
 //! ```
 //!
 //! Prints Mpix/s for the MaxRgb reduction at four image sizes covering
@@ -12,7 +12,8 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use zenpixels::{ContentLightLevel, DiffuseWhite, LightLevelMethod, PixelBuffer, PixelDescriptor};
+use zenpixels::{ContentLightLevel, DiffuseWhite, PixelBuffer, PixelDescriptor};
+use zenpixels_convert::{CllMeasure, LightLevelMethod};
 
 fn build_buffer(w: u32, h: u32) -> PixelBuffer {
     // Deterministic per-pixel content: small ramp + occasional sparkles, so
@@ -107,10 +108,10 @@ fn bench(label: &str, w: u32, h: u32, iters: usize) {
 }
 
 fn main() {
-    let path = if cfg!(feature = "simd") {
-        "simd"
+    let path = if cfg!(feature = "avx512") {
+        "avx512"
     } else {
-        "scalar"
+        "v3+neon+wasm128"
     };
     println!("ContentLightLevel::measure_histogram throughput ({path} path)\n");
 

@@ -468,6 +468,7 @@ pub mod gamut;
 pub mod hdr;
 pub mod icc_profiles;
 pub mod load_bearing;
+pub mod measure;
 pub mod oklab;
 pub mod orient;
 pub mod output;
@@ -525,6 +526,12 @@ pub use hdr::quantize_to;
 pub use hdr::{
     ContentLightLevel, HdrMetadata, MasteringDisplay, reinhard_inverse, reinhard_tonemap,
 };
+
+// Re-export the CLL measurement surface — extension trait on
+// `ContentLightLevel` carrying the histogram-based and SOTA scalar/SIMD
+// MaxCLL/MaxFALL readouts. The deprecated 2-arg `measure(px, white)`
+// stays in `zenpixels::hdr` (frozen 0.2.14 surface).
+pub use measure::{CllMeasure, LightLevelHistogram, LightLevelMethod};
 
 // Re-export CMS traits, enums, and implementations.
 #[allow(deprecated)]
