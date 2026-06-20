@@ -47,6 +47,16 @@ rgb = ["zenpixels/rgb", "dep:rgb"]
 imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]
 pipeline = []
+# Experimental HDR analysis surface (gates `hdr::measure` — the `CllMeasure`
+# extension trait + `LightLevelHistogram` / `LightLevelMethod` + the SIMD
+# CLL scan kernel). The underlying scan + accuracy contracts are stable —
+# the gate covers expected pre-0.3.0 shape churn (the queued
+# `measure_robust` → `measure` rename when `zenpixels::ContentLightLevel`'s
+# deprecated 2-arg `measure` ships its 0.3.0 removal, plus potential trait-
+# vs-free-fn restructuring). Default-off; opt in with
+# `features = ["hdr-experimental"]` to access measurement until the API
+# locks at 0.3.0.
+hdr-experimental = []
 cms-moxcms = ["std", "dep:moxcms"]
 serde = ["zenpixels/serde"]
 # Bench-only: exposes `pub mod __bench_u16_hybrids` shims for
@@ -198,4 +208,9 @@ required-features = ["__bench_orient"]
 # path = "benches/bench_fast_p3.rs"
 # harness = false
 # required-features = ["cms-moxcms"]
+
+[[example]]
+name = "measure_histogram_throughput"
+path = "examples/measure_histogram_throughput.rs"
+required-features = ["hdr-experimental"]
 

@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-19
 **CPU:** AMD Ryzen 9 7950X (16 cores / 32 threads, AVX-512, DDR5)
-**Build:** `cargo run -p zenpixels-convert --example measure_histogram_throughput --release`
+**Build:** `cargo run -p zenpixels-convert --example measure_histogram_throughput --release --features hdr-experimental`
 **Source:** `zenpixels-convert/examples/measure_histogram_throughput.rs`
 
 `measure_max` is the **spec-conformant** CLL reading (CTA-861.3 strict — literal MaxCLL + arithmetic MaxFALL, no percentile). The dominant production case for HDR-aware encoders, and the one that runs on every frame of every encode. We re-routed it off the histogram path so it does only the work that CTA-861.3 requires: per-pixel `max(R, G, B)` (or BT.2020 luma) + running max + f64 sum, with no histogram store. Reaches **SOTA throughput** — above the documented ~1-2 Gpix/s of `libplacebo`'s analogous path.

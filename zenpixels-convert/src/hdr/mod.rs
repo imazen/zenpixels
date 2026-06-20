@@ -6,6 +6,33 @@
 //!
 //! The core PQ/HLG EOTF/OETF math is always available through the main
 //! conversion pipeline in [`ConvertPlan`](crate::ConvertPlan).
+//!
+//! # Experimental: [`measure`] — content-light-level measurement
+//!
+//! Behind the `hdr-experimental` Cargo feature, the [`measure`] submodule
+//! exposes the [`CllMeasure`](measure::CllMeasure) extension trait (with
+//! `measure_max` / `measure_robust` / `measure_max_smoothed` /
+//! `measure_percentile` / `measure_histogram` on
+//! [`ContentLightLevel`]), the [`LightLevelHistogram`](measure::LightLevelHistogram)
+//! primitive, and the [`LightLevelMethod`](measure::LightLevelMethod) enum.
+//! The trait + module shape may move or rename ahead of 0.3.0 (in particular
+//! `measure_robust` is queued to become the unqualified `measure` once the
+//! deprecated 2-arg `ContentLightLevel::measure` ships its 0.3.0 removal);
+//! the underlying scan kernels and accuracy contracts are stable.
+
+/// Content-light-level measurement (experimental).
+///
+/// Gated behind the `hdr-experimental` Cargo feature. See the parent
+/// module docs for stability notes.
+#[cfg(feature = "hdr-experimental")]
+pub mod measure;
+
+/// Re-exports of the experimental [`measure`] surface at the [`hdr`](self)
+/// boundary, so callers can write
+/// `use zenpixels_convert::hdr::CllMeasure;` instead of the full
+/// `zenpixels_convert::hdr::measure::CllMeasure` path. Same gating.
+#[cfg(feature = "hdr-experimental")]
+pub use measure::{CllMeasure, LightLevelHistogram, LightLevelMethod};
 
 use crate::adapt::{convert_buffer_with_anchor, convert_into_with_anchor};
 use crate::error::ConvertError;

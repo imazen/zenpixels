@@ -2,8 +2,10 @@
 //!
 //! Run with:
 //! ```
-//! cargo run -p zenpixels-convert --example measure_histogram_throughput --release
-//! cargo run -p zenpixels-convert --example measure_histogram_throughput --release --features avx512
+//! cargo run -p zenpixels-convert --example measure_histogram_throughput \
+//!     --release --features hdr-experimental
+//! cargo run -p zenpixels-convert --example measure_histogram_throughput \
+//!     --release --features "hdr-experimental avx512"
 //! ```
 //!
 //! Prints Mpix/s for the MaxRgb reduction at four image sizes covering
@@ -13,7 +15,7 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use zenpixels::{ContentLightLevel, DiffuseWhite, PixelBuffer, PixelDescriptor};
-use zenpixels_convert::{CllMeasure, LightLevelMethod};
+use zenpixels_convert::hdr::{CllMeasure, LightLevelMethod};
 
 fn build_buffer(w: u32, h: u32) -> PixelBuffer {
     // Deterministic per-pixel content: small ramp + occasional sparkles, so

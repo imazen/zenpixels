@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-19
 **CPU:** AMD Ryzen 9 7950X (16 cores / 32 threads, AVX-512)
-**Build:** `RUSTFLAGS="-C target-cpu=native" cargo run -p zenpixels-convert --example measure_histogram_throughput --release`
+**Build:** `RUSTFLAGS="-C target-cpu=native" cargo run -p zenpixels-convert --example measure_histogram_throughput --release --features hdr-experimental`
 **Source:** `zenpixels-convert/examples/measure_histogram_throughput.rs`
 
 `measure_max_smoothed` applies a 3×1 horizontal box filter to the per-pixel

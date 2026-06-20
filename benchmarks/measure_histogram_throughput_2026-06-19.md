@@ -47,17 +47,19 @@ All four are larger restructurings than this PR; the 1.7× win from the current 
 ## Reproduce
 
 ```bash
-# Scalar baseline
-cargo run --example measure_histogram_throughput --release
+# V3 / AVX2 + emulated NEON & WASM128 (default tier on zenpixels-convert)
+cargo run -p zenpixels-convert --example measure_histogram_throughput \
+    --release --features hdr-experimental
 
-# SIMD (V3 / AVX2 + emulated NEON & WASM128)
-cargo run --example measure_histogram_throughput --features simd --release
+# With -C target-cpu=native (compiles V3 path with AVX2 intrinsics)
+RUSTFLAGS="-C target-cpu=native" cargo run -p zenpixels-convert \
+    --example measure_histogram_throughput \
+    --release --features hdr-experimental
 
-# SIMD with -C target-cpu=native (compiles V3 path with AVX2 intrinsics)
-RUSTFLAGS="-C target-cpu=native" cargo run --example measure_histogram_throughput --features simd --release
-
-# SIMD + AVX-512 tier
-RUSTFLAGS="-C target-cpu=native" cargo run --example measure_histogram_throughput --features "simd avx512" --release
+# AVX-512 tier on top
+RUSTFLAGS="-C target-cpu=native" cargo run -p zenpixels-convert \
+    --example measure_histogram_throughput \
+    --release --features "hdr-experimental avx512"
 ```
 
 Output format: per-row label, dimensions, iteration count, elapsed ms, computed Mpix/s.

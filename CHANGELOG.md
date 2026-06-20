@@ -91,10 +91,11 @@
     zenpixels` shows zero SIMD-runtime dependencies in any configuration.
   - **Migration**: callers using `ContentLightLevel::measure_max(...)` /
     `measure_robust(...)` / `measure_max_smoothed(...)` / `measure_percentile(...)`
-    / `measure_histogram(...)` now `use zenpixels_convert::CllMeasure;` and
+    / `measure_histogram(...)` now `use zenpixels_convert::hdr::CllMeasure;` and
     keep the same call syntax (the extension trait preserves
     `ContentLightLevel::measure_*(...)` ergonomics). `LightLevelHistogram`
-    and `LightLevelMethod` re-export from `zenpixels_convert`.
+    and `LightLevelMethod` re-export from `zenpixels_convert::hdr` (also
+    gated on `hdr-experimental`).
   - **Rationale**: the SIMD kernels (V3 / NEON / WASM128 / scalar tiers via
     `archmage::magetypes`) and the histogram + percentile logic are pixel-
     iteration code; that lives in `zenpixels-convert` alongside the gamut /
@@ -117,14 +118,20 @@
 
 ### zenpixels-convert — added
 
-- **`zenpixels_convert::measure`** module + **[`CllMeasure`]** extension
-  trait — the new home for HDR content-light-level measurement, with the
+- **`zenpixels_convert::hdr::measure`** module + **[`CllMeasure`]** extension
+  trait, gated behind the new **`hdr-experimental`** Cargo feature (default-
+  off). The new home for HDR content-light-level measurement, with the
   `LightLevelHistogram` and `LightLevelMethod` types alongside. Implementing
   `CllMeasure` for `zenpixels::ContentLightLevel` means callers write
-  `use zenpixels_convert::CllMeasure; ContentLightLevel::measure_robust(...)`
+  `use zenpixels_convert::hdr::CllMeasure; ContentLightLevel::measure_robust(...)`
   — the same call signature the methods had on `ContentLightLevel` directly
-  in pre-publication 0.2.15 main. Full surface
-  ([#54](https://github.com/imazen/zenpixels/issues/54)):
+  in pre-publication 0.2.15 main. The feature flag covers expected pre-0.3.0
+  shape churn (the queued `measure_robust` → `measure` rename when the
+  deprecated 2-arg `measure(px, white)` ships its 0.3.0 removal, plus
+  potential trait-vs-free-fn restructuring); the scan kernels and accuracy
+  contracts underneath are stable.
+
+  Full surface ([#54](https://github.com/imazen/zenpixels/issues/54)):
 
   - **`CllMeasure::measure_max(px, white, method)`** — CTA-861.3 spec-strict
     (literal MaxCLL + arithmetic mean). The hot path for delivery-mandate
