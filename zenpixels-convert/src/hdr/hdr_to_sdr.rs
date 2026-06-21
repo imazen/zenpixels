@@ -1,8 +1,8 @@
 //! One-call HDR → SDR conversion. The pipeline is **`(source → BT.2020)
-//! → Bt2446A → (BT.2020 → BT.709) → SoftCompress (BT.709 OKLch)`**.
+//! → Bt2446A → (BT.2020 → target_primaries) → SoftCompress (target OKLch)`**.
 //!
-//! See [`HdrToSdr`] for the full pipeline, source-primary handling, and
-//! defaults.
+//! See [`HdrToSdr`] for the full pipeline, source/target primary handling,
+//! and defaults.
 
 extern crate alloc;
 
@@ -34,31 +34,49 @@ use zenpixels::ColorPrimaries;
 ///    specific. Feeding it BT.709 RGB produces a systematic hue shift on
 ///    saturated content, which is why it sits *before* the gamut matrix.
 ///    Output is BT.2020 RGB, target-normalized (`1.0 = target_peak_nits`).
-/// 3. **BT.2020 → BT.709 matrix.** Gamut-converts the tone-mapped SDR
-///    pixels into the BT.709 working space. Negatives can appear briefly
-///    on saturated BT.2020 primaries that fall outside the BT.709 hull and
-///    are absorbed by the gamut compression stage below.
-/// 4. **OKLch soft gamut compression.** Pulls residual out-of-gamut
-///    excursions back into the BT.709 unit cube using a hue-preserving
-///    rational knee curve. The knee defaults to `0.9` (compression kicks in
-///    at 90 % of the max in-gamut chroma).
+/// 3. **BT.2020 → target primaries matrix** *(skipped when the target is
+///    BT.2020 — wide-gamut output mode).* Gamut-converts the tone-mapped
+///    SDR pixels into the target working space. Negatives can appear
+///    briefly on saturated BT.2020 primaries that fall outside the target
+///    hull and are absorbed by the gamut compression stage below.
+/// 4. **OKLch soft gamut compression** *(skipped when the target is
+///    BT.2020).* Pulls residual out-of-gamut excursions back into the
+///    target unit cube using a hue-preserving rational knee curve. The
+///    knee defaults to `0.9` (compression kicks in at 90 % of the max
+///    in-gamut chroma).
 ///
 /// # Source primaries
 ///
 /// - [`new`](Self::new) assumes the source is **BT.2020** (the typical
 ///   HDR10 / HLG case). No source-gamut conversion step runs.
-/// - [`with_source_primaries`](Self::with_source_primaries) and
-///   [`with_params`](Self::with_params) accept arbitrary
-///   [`ColorPrimaries`]. The constructor caches an extra
-///   `source_to_bt2020` matrix that runs as step 1 above; the BT.2446 curve
-///   still operates in BT.2020 as it was designed. Display P3 HDR (e.g.
-///   Apple ProRAW) and other non-BT.2020 HDR sources are supported this
-///   way without distorting the curve.
+/// - [`with_source_primaries`](Self::with_source_primaries),
+///   [`with_io`](Self::with_io), and [`with_params`](Self::with_params)
+///   accept arbitrary [`ColorPrimaries`]. The constructor caches an extra
+///   `source_to_bt2020` matrix that runs as step 1 above; the BT.2446
+///   curve still operates in BT.2020 as it was designed. Display P3 HDR
+///   (e.g. Apple ProRAW) and other non-BT.2020 HDR sources are supported
+///   this way without distorting the curve.
+///
+/// # Target primaries
+///
+/// - [`new`](Self::new) and
+///   [`with_source_primaries`](Self::with_source_primaries) target
+///   **BT.709** (the default SDR output, sRGB primaries).
+/// - [`with_io`](Self::with_io) and [`with_params`](Self::with_params)
+///   accept an arbitrary target. When `target_primaries ==
+///   ColorPrimaries::Bt2020`, steps 3 and 4 are **no-ops** — output stays
+///   in BT.2020 linear-light at the target peak. This is the wide-gamut
+///   "as lossless as physics allows" output mode: the only inherently
+///   lossy stage is BT.2446-A's tone curve; no gamut narrowing or chroma
+///   compression occurs. Use this when the downstream container can
+///   carry BT.2020 primaries (BT.2020 PNG with cICP, HDR10 at SDR
+///   luminance, etc.).
 ///
 /// # Defaults
 ///
 /// - `target_peak_nits = 100.0` (SDR reference white).
 /// - `gamut_knee = 0.9`.
+/// - `target_primaries = ColorPrimaries::Bt709`.
 ///
 /// # Why this composition
 ///
@@ -70,7 +88,7 @@ use zenpixels::ColorPrimaries;
 /// the BT.2020 luma weights inside BT.2446-A's Y' / Cb' / Cr' arithmetic
 /// see the BT.2020 RGB they were derived against, and the soft chroma
 /// stage happens *last* so any matrix-induced or curve-induced excursions
-/// stay hue-preserved in the final BT.709 working space.
+/// stay hue-preserved in the final target working space.
 ///
 /// # RGB-only
 ///
@@ -84,7 +102,7 @@ use zenpixels::ColorPrimaries;
 /// # {
 /// use zenpixels_convert::hdr::HdrToSdr;
 ///
-/// // 1000-nit HDR source → 100-nit SDR target (default).
+/// // 1000-nit HDR source → 100-nit SDR target (default BT.709).
 /// // Input is source-normalized: 1.0 = source_peak_nits = 1000 nits.
 /// // BT.2020 source is assumed.
 /// let converter = HdrToSdr::new(1000.0);
@@ -100,6 +118,28 @@ use zenpixels::ColorPrimaries;
 /// }
 /// # }
 /// ```
+///
+/// ## Wide-gamut output mode
+///
+/// Pass `target_primaries == ColorPrimaries::Bt2020` to keep the output
+/// in BT.2020 — only the BT.2446-A tone curve runs; the gamut matrix and
+/// soft-compress stages are skipped, so no chroma is narrowed.
+///
+/// ```
+/// # #[cfg(feature = "hdr-experimental")]
+/// # {
+/// use zenpixels_convert::hdr::HdrToSdr;
+/// use zenpixels::ColorPrimaries;
+///
+/// // 1000-nit BT.2020 HDR → 100-nit BT.2020 SDR (wide-gamut, no chroma loss).
+/// let converter = HdrToSdr::with_io(
+///     1000.0,
+///     ColorPrimaries::Bt2020,
+///     ColorPrimaries::Bt2020,
+/// );
+/// assert_eq!(converter.target_primaries(), ColorPrimaries::Bt2020);
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 pub struct HdrToSdr {
     source_peak_nits: f32,
@@ -108,67 +148,129 @@ pub struct HdrToSdr {
     bt2446a: Bt2446A,
     /// `None` when the source is BT.2020 (no-op step 1).
     source_to_bt2020: Option<GamutMatrix>,
-    bt2020_to_bt709: GamutMatrix,
-    gamut_lut: Arc<GamutBoundaryLut>,
-    bt709_m1: GamutMatrix,
-    bt709_m1_inv: GamutMatrix,
+    /// `None` when the target is BT.2020 (wide-gamut output — no-op step 3).
+    bt2020_to_target: Option<GamutMatrix>,
+    /// Tracked for introspection and correctness pins. The presence of
+    /// `bt2020_to_target` / `gamut_lut` / `target_m1*` mirrors whether this
+    /// equals BT.2020.
+    target_primaries: ColorPrimaries,
+    /// `None` when the target is BT.2020 (no soft-compress step).
+    gamut_lut: Option<Arc<GamutBoundaryLut>>,
+    /// `None` when the target is BT.2020 (no soft-compress step).
+    target_m1: Option<GamutMatrix>,
+    /// `None` when the target is BT.2020 (no soft-compress step).
+    target_m1_inv: Option<GamutMatrix>,
 }
 
 impl HdrToSdr {
-    /// BT.2020 HDR source, `target_peak_nits = 100.0`, `gamut_knee = 0.9`.
+    /// BT.2020 HDR source → BT.709 SDR target. `target_peak_nits = 100.0`,
+    /// `gamut_knee = 0.9`.
     #[must_use]
     pub fn new(source_peak_nits: f32) -> Self {
-        Self::with_params(source_peak_nits, ColorPrimaries::Bt2020, 100.0, 0.9)
+        Self::with_params(
+            source_peak_nits,
+            ColorPrimaries::Bt2020,
+            ColorPrimaries::Bt709,
+            100.0,
+            0.9,
+        )
     }
 
-    /// Arbitrary source primaries; `target_peak_nits = 100.0`, `gamut_knee = 0.9`.
+    /// Arbitrary source primaries → BT.709 SDR target;
+    /// `target_peak_nits = 100.0`, `gamut_knee = 0.9`.
     ///
     /// When `source_primaries != ColorPrimaries::Bt2020` the pipeline
     /// inserts a `source → BT.2020` matrix step before the BT.2446 curve so
     /// the curve still operates on the BT.2020 RGB it was designed for.
     #[must_use]
     pub fn with_source_primaries(source_peak_nits: f32, source_primaries: ColorPrimaries) -> Self {
-        Self::with_params(source_peak_nits, source_primaries, 100.0, 0.9)
+        Self::with_params(
+            source_peak_nits,
+            source_primaries,
+            ColorPrimaries::Bt709,
+            100.0,
+            0.9,
+        )
     }
 
-    /// Full constructor with explicit source primaries, target peak, and
-    /// gamut knee.
+    /// Arbitrary source and target primaries; `target_peak_nits = 100.0`,
+    /// `gamut_knee = 0.9`.
+    ///
+    /// When `target_primaries == ColorPrimaries::Bt2020`, the gamut matrix
+    /// and soft-compress steps are skipped — the only lossy stage is the
+    /// BT.2446-A tone curve. Use this for wide-gamut SDR containers
+    /// (BT.2020 PNG with cICP tag, HDR10 at SDR luminance, etc.).
+    #[must_use]
+    pub fn with_io(
+        source_peak_nits: f32,
+        source_primaries: ColorPrimaries,
+        target_primaries: ColorPrimaries,
+    ) -> Self {
+        Self::with_params(
+            source_peak_nits,
+            source_primaries,
+            target_primaries,
+            100.0,
+            0.9,
+        )
+    }
+
+    /// Full constructor with explicit source primaries, target primaries,
+    /// target peak, and gamut knee.
     ///
     /// `source_primaries`: primaries of the input pixels (BT.2020 is the
     /// typical HDR10/HLG case; Display P3 covers Apple HDR).
+    /// `target_primaries`: primaries of the output. `BT.709` is the SDR
+    /// default; `BT.2020` is the wide-gamut "no chroma loss" mode (the
+    /// gamut matrix + soft-compress stages are skipped).
     /// `target_peak_nits`: SDR display peak luminance (typically 100).
     /// `gamut_knee`: fraction of max chroma at which the soft chroma
-    /// compression kicks in (`0.0`–`1.0`, typical `0.9`).
+    /// compression kicks in (`0.0`–`1.0`, typical `0.9`). Ignored when
+    /// the target is BT.2020.
     #[must_use]
     pub fn with_params(
         source_peak_nits: f32,
         source_primaries: ColorPrimaries,
+        target_primaries: ColorPrimaries,
         target_peak_nits: f32,
         gamut_knee: f32,
     ) -> Self {
         let bt2446a = Bt2446A::new(source_peak_nits, target_peak_nits);
+
         let source_to_bt2020 = if matches!(source_primaries, ColorPrimaries::Bt2020) {
             None
         } else {
             conversion_matrix(source_primaries, ColorPrimaries::Bt2020)
         };
-        let bt2020_to_bt709 = conversion_matrix(ColorPrimaries::Bt2020, ColorPrimaries::Bt709)
-            .expect("BT.2020 and BT.709 are both well-known primaries");
-        let bt709_m1 = oklab::rgb_to_lms_matrix(ColorPrimaries::Bt709)
-            .expect("BT.709 has a defined LMS matrix");
-        let bt709_m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709)
-            .expect("BT.709 has a defined inverse LMS matrix");
-        let gamut_lut = Arc::new(GamutBoundaryLut::new(&bt709_m1_inv));
+
+        let (bt2020_to_target, gamut_lut, target_m1, target_m1_inv) =
+            if matches!(target_primaries, ColorPrimaries::Bt2020) {
+                // Wide-gamut output: skip the gamut matrix and the OKLch
+                // soft-compress entirely. The BT.2446-A curve already
+                // operates in BT.2020 so its output IS the answer.
+                (None, None, None, None)
+            } else {
+                let m_gamut = conversion_matrix(ColorPrimaries::Bt2020, target_primaries)
+                    .expect("BT.2020 and target are both well-known primaries");
+                let m1 = oklab::rgb_to_lms_matrix(target_primaries)
+                    .expect("target primaries have a defined LMS matrix");
+                let m1_inv = oklab::lms_to_rgb_matrix(target_primaries)
+                    .expect("target primaries have a defined inverse LMS matrix");
+                let lut = Arc::new(GamutBoundaryLut::new(&m1_inv));
+                (Some(m_gamut), Some(lut), Some(m1), Some(m1_inv))
+            };
+
         Self {
             source_peak_nits,
             target_peak_nits,
             gamut_knee,
             bt2446a,
             source_to_bt2020,
-            bt2020_to_bt709,
+            bt2020_to_target,
+            target_primaries,
             gamut_lut,
-            bt709_m1,
-            bt709_m1_inv,
+            target_m1,
+            target_m1_inv,
         }
     }
 
@@ -186,19 +288,36 @@ impl HdrToSdr {
         self.target_peak_nits
     }
 
-    /// Gamut soft-compression knee (`0.0`–`1.0`).
+    /// Gamut soft-compression knee (`0.0`–`1.0`). Ignored when
+    /// `target_primaries() == ColorPrimaries::Bt2020`.
     #[inline]
     #[must_use]
     pub fn gamut_knee(&self) -> f32 {
         self.gamut_knee
     }
 
+    /// Configured target primaries — `BT.709` by default, `BT.2020` in
+    /// the wide-gamut output mode.
+    #[inline]
+    #[must_use]
+    pub fn target_primaries(&self) -> ColorPrimaries {
+        self.target_primaries
+    }
+
     /// Borrow a [`SoftCompress`] view of the configured gamut compressor
     /// (constructs the wrapper on demand). Useful for callers that want
     /// to reuse the same LUT for downstream work without rebuilding.
+    ///
+    /// Returns `None` when the target is BT.2020 (no soft-compress stage
+    /// in the wide-gamut output mode).
     #[must_use]
-    pub fn soft_compress(&self) -> SoftCompress {
-        SoftCompress::from_matrices(&self.bt709_m1, &self.bt709_m1_inv, self.gamut_knee)
+    pub fn soft_compress(&self) -> Option<SoftCompress> {
+        match (&self.target_m1, &self.target_m1_inv) {
+            (Some(m1), Some(m1_inv)) => {
+                Some(SoftCompress::from_matrices(m1, m1_inv, self.gamut_knee))
+            }
+            _ => None,
+        }
     }
 
     /// Apply the full HDR → SDR pipeline to a strip of linear `RGB f32`
@@ -206,11 +325,12 @@ impl HdrToSdr {
     ///
     /// Input: linear-light source RGB (per the `source_primaries` passed
     /// to the constructor), source-normalized (`1.0 = source_peak_nits`).
-    /// Output: linear-light BT.709 RGB, target-normalized
-    /// (`1.0 = target_peak_nits`), guaranteed finite and in `[0, 1]` per
-    /// channel — non-finite inputs (NaN / ±Inf) are scrubbed to `0` before
-    /// the pipeline runs, and the final clamp absorbs the f32 EOTF / OKLab
-    /// roundtrip noise that can push a saturated pixel ~1e-4 above 1.0.
+    /// Output: linear-light RGB in the configured target primaries,
+    /// target-normalized (`1.0 = target_peak_nits`), guaranteed finite
+    /// and in `[0, 1]` per channel — non-finite inputs (NaN / ±Inf) are
+    /// scrubbed to `0` before the pipeline runs, and the final clamp
+    /// absorbs the f32 EOTF / OKLab roundtrip noise that can push a
+    /// saturated pixel ~1e-4 above 1.0.
     pub fn apply_strip(&self, rgb: &mut [[f32; 3]]) {
         // Step 0 — scrub non-finite inputs so the f32 transcendental chain
         // doesn't propagate NaN / ±Inf through the pipeline. Negatives are
@@ -232,25 +352,29 @@ impl HdrToSdr {
         }
         // Step 2 — Bt2446A tone-map (BT.2020 HDR → BT.2020 SDR, SIMD).
         self.bt2446a.map_strip_simd(rgb);
-        // Step 3 — BT.2020 SDR → BT.709 SDR (gamut convert).
-        for px in rgb.iter_mut() {
-            apply_matrix_f32(px, &self.bt2020_to_bt709);
+        // Step 3 — BT.2020 SDR → target primaries (gamut convert).
+        // No-op when target IS BT.2020 — wide-gamut output mode.
+        if let Some(m) = &self.bt2020_to_target {
+            for px in rgb.iter_mut() {
+                apply_matrix_f32(px, m);
+            }
         }
-        // Step 4 — soft chroma compression in BT.709 OKLch.
-        // Use the cached LUT directly to avoid rebuilding the wrapper.
-        soft_compress_strip_with_lut(
-            rgb,
-            &self.gamut_lut,
-            &self.bt709_m1,
-            &self.bt709_m1_inv,
-            self.gamut_knee,
-        );
+        // Step 4 — soft chroma compression in target-gamut OKLch.
+        // No-op when target IS BT.2020 — output stays at BT.2446-A's
+        // result with no chroma narrowing.
+        if let (Some(lut), Some(m1), Some(m1_inv)) =
+            (&self.gamut_lut, &self.target_m1, &self.target_m1_inv)
+        {
+            soft_compress_strip_with_lut(rgb, lut, m1, m1_inv, self.gamut_knee);
+        }
         // Step 5 — hard clamp to `[0, 1]` to absorb f32 epsilon-level
         // overshoot at the saturated end (BT.2446-A's `f * (b_p - y_p)`
         // chain can push a near-peak pixel to ~1.0004 even though the
         // spec algorithm clamps internally; OKLab round-trip in the
         // compress stage adds a few more ULPs). Hard clamp here keeps
-        // the `apply_strip` postcondition crisp.
+        // the `apply_strip` postcondition crisp. In wide-gamut output
+        // mode (target == BT.2020) this also catches Bt2446A's
+        // near-peak overshoot.
         for px in rgb.iter_mut() {
             for c in px.iter_mut() {
                 if !c.is_finite() {
@@ -331,8 +455,14 @@ mod tests {
         assert_eq!(c.source_peak_nits(), 1000.0);
         assert_eq!(c.target_peak_nits(), 100.0);
         assert!((c.gamut_knee() - 0.9).abs() < 1e-7);
+        assert_eq!(c.target_primaries(), ColorPrimaries::Bt709);
         // BT.2020 source → no source-to-BT.2020 matrix cached.
         assert!(c.source_to_bt2020.is_none());
+        // BT.709 target → soft-compress stage active.
+        assert!(c.bt2020_to_target.is_some());
+        assert!(c.gamut_lut.is_some());
+        assert!(c.target_m1.is_some());
+        assert!(c.target_m1_inv.is_some());
     }
 
     #[test]
@@ -357,7 +487,13 @@ mod tests {
 
     #[test]
     fn apply_strip_matches_apply_rgb() {
-        let c = HdrToSdr::with_params(2000.0, ColorPrimaries::Bt2020, 100.0, 0.9);
+        let c = HdrToSdr::with_params(
+            2000.0,
+            ColorPrimaries::Bt2020,
+            ColorPrimaries::Bt709,
+            100.0,
+            0.9,
+        );
         let pixels = [
             [0.0_f32, 0.0, 0.0],
             [0.15, 0.25, 0.05],
@@ -384,7 +520,13 @@ mod tests {
 
     #[test]
     fn pipeline_finite_on_extreme_inputs() {
-        let c = HdrToSdr::with_params(10_000.0, ColorPrimaries::Bt2020, 100.0, 0.9);
+        let c = HdrToSdr::with_params(
+            10_000.0,
+            ColorPrimaries::Bt2020,
+            ColorPrimaries::Bt709,
+            100.0,
+            0.9,
+        );
         // Pathological inputs: NaN, Inf, large positives, negatives, zero,
         // peak, slightly above peak.
         let pixels = [
@@ -461,7 +603,13 @@ mod tests {
         // y_p boost in the low segment is intentional and applies
         // regardless of the rho ratio), but the output should stay
         // within ~25% of the input for mid-grey.
-        let c = HdrToSdr::with_params(100.0, ColorPrimaries::Bt2020, 100.0, 0.9);
+        let c = HdrToSdr::with_params(
+            100.0,
+            ColorPrimaries::Bt2020,
+            ColorPrimaries::Bt709,
+            100.0,
+            0.9,
+        );
         let rgb = [0.4_f32, 0.4, 0.4];
         let out = c.apply_rgb(rgb);
         finite_in_unit(out);
@@ -485,8 +633,14 @@ mod tests {
         // from the default (knee=0.9) on near-gamut-edge red.
         let rgb = [0.95_f32, 0.05, 0.05];
         let default = HdrToSdr::new(1000.0).apply_rgb(rgb);
-        let custom =
-            HdrToSdr::with_params(1000.0, ColorPrimaries::Bt2020, 100.0, 0.30).apply_rgb(rgb);
+        let custom = HdrToSdr::with_params(
+            1000.0,
+            ColorPrimaries::Bt2020,
+            ColorPrimaries::Bt709,
+            100.0,
+            0.30,
+        )
+        .apply_rgb(rgb);
         finite_in_unit(default);
         finite_in_unit(custom);
         let mut differs = false;
@@ -535,19 +689,23 @@ mod tests {
             }
         }
         // OLD: matrix first.
+        let m = c
+            .bt2020_to_target
+            .as_ref()
+            .expect("BT.709 target should cache a BT.2020 -> target matrix");
         for p in px.iter_mut() {
-            apply_matrix_f32(p, &c.bt2020_to_bt709);
+            apply_matrix_f32(p, m);
         }
         // OLD: then curve in (wrong-primaries) BT.709.
         c.bt2446a.map_strip_simd(&mut px);
         // OLD: soft compress in BT.709 OKLch.
-        soft_compress_strip_with_lut(
-            &mut px,
-            &c.gamut_lut,
-            &c.bt709_m1,
-            &c.bt709_m1_inv,
-            c.gamut_knee,
-        );
+        let lut = c.gamut_lut.as_ref().expect("BT.709 target caches a LUT");
+        let m1 = c.target_m1.as_ref().expect("BT.709 target caches m1");
+        let m1_inv = c
+            .target_m1_inv
+            .as_ref()
+            .expect("BT.709 target caches m1_inv");
+        soft_compress_strip_with_lut(&mut px, lut, m1, m1_inv, c.gamut_knee);
         for p in px.iter_mut() {
             for v in p.iter_mut() {
                 if !v.is_finite() {
@@ -728,6 +886,226 @@ mod tests {
         );
     }
 
+    // ----------------------------------------------------------------------
+    // Wide-gamut output mode (target == BT.2020).
+    // ----------------------------------------------------------------------
+
+    #[test]
+    fn bt2020_target_skips_gamut_steps() {
+        // When the target is BT.2020, the constructor must take the
+        // wide-gamut "no gamut narrowing" branch: source-to-BT.2020 is
+        // also None because source==BT.2020, AND none of the post-curve
+        // (gamut + soft-compress) state is allocated.
+        let c = HdrToSdr::with_io(1000.0, ColorPrimaries::Bt2020, ColorPrimaries::Bt2020);
+        assert_eq!(c.target_primaries(), ColorPrimaries::Bt2020);
+        assert!(c.source_to_bt2020.is_none(), "source IS BT.2020");
+        assert!(c.bt2020_to_target.is_none(), "wide-gamut → no gamut matrix");
+        assert!(c.gamut_lut.is_none(), "wide-gamut → no soft-compress LUT");
+        assert!(c.target_m1.is_none(), "wide-gamut → no target LMS matrix");
+        assert!(c.target_m1_inv.is_none(), "wide-gamut → no inverse LMS");
+        // soft_compress() returns None in this mode.
+        assert!(c.soft_compress().is_none());
+    }
+
+    #[test]
+    fn bt2020_target_output_equals_bt2446a_alone() {
+        // Pin: in wide-gamut output mode, the only lossy stage is
+        // BT.2446-A. The full pipeline output must be bit-identical to
+        // running just `Bt2446A::map_strip_simd` on the scrubbed input.
+        // (Steps 0 and 5 are the same scrub+clamp; steps 1, 3, 4 are no-ops.)
+        let pipe_a = HdrToSdr::with_io(1000.0, ColorPrimaries::Bt2020, ColorPrimaries::Bt2020);
+        // Deterministic xorshift32 — same seed as the SIMD parity test.
+        struct Xorshift(u32);
+        impl Xorshift {
+            fn next_f32(&mut self) -> f32 {
+                let mut x = self.0;
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                self.0 = x;
+                (x as f32 / u32::MAX as f32) * 2.0
+            }
+        }
+        let mut rng = Xorshift(0xCAFEBABE);
+        let n_pixels = 1000;
+        let mut a: alloc::vec::Vec<[f32; 3]> = alloc::vec::Vec::with_capacity(n_pixels);
+        for _ in 0..n_pixels {
+            a.push([rng.next_f32(), rng.next_f32(), rng.next_f32()]);
+        }
+        let mut b = a.clone();
+
+        // pipe_a: full HdrToSdr pipeline (scrub + Bt2446A + final clamp,
+        // with steps 1/3/4 all no-ops).
+        pipe_a.apply_strip(&mut a);
+
+        // pipe_b: manually scrub (matches step 0), then Bt2446A directly,
+        // then final clamp (matches step 5).
+        for px in b.iter_mut() {
+            for c in px.iter_mut() {
+                if !c.is_finite() || *c < 0.0 {
+                    *c = 0.0;
+                }
+            }
+        }
+        let bt2446a = Bt2446A::new(1000.0, 100.0);
+        bt2446a.map_strip_simd(&mut b);
+        for px in b.iter_mut() {
+            for c in px.iter_mut() {
+                if !c.is_finite() {
+                    *c = 0.0;
+                } else {
+                    *c = c.clamp(0.0, 1.0);
+                }
+            }
+        }
+
+        // Bit-identical.
+        for (i, (pa, pb)) in a.iter().zip(b.iter()).enumerate() {
+            for k in 0..3 {
+                assert!(
+                    pa[k].to_bits() == pb[k].to_bits(),
+                    "px {i} ch{k} diverges: pipeline={} bt2446a_alone={}",
+                    pa[k],
+                    pb[k]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bt2020_target_preserves_saturated_red() {
+        // Saturated BT.2020 red into a BT.2020-target pipeline must
+        // stay saturated: no gamut matrix runs, no soft-compress runs,
+        // so the only change is BT.2446-A's tone curve scaling the
+        // luminance down. Red dominates strongly, G/B near 0.
+        let c = HdrToSdr::with_io(1000.0, ColorPrimaries::Bt2020, ColorPrimaries::Bt2020);
+        let out = c.apply_rgb([1.0, 0.0, 0.0]);
+        finite_in_unit(out);
+        assert!(
+            out[0] >= 0.5,
+            "red should remain near peak, got r={}",
+            out[0]
+        );
+        assert!(
+            out[1] < 0.01,
+            "green should stay near 0 (no gamut narrowing), got g={}",
+            out[1]
+        );
+        assert!(
+            out[2] < 0.01,
+            "blue should stay near 0 (no gamut narrowing), got b={}",
+            out[2]
+        );
+    }
+
+    #[test]
+    fn displayp3_target_runs_full_pipeline() {
+        // P3 is narrower than BT.2020 on some hues, so the gamut matrix
+        // + soft-compress stages MUST be active.
+        let c = HdrToSdr::with_io(1000.0, ColorPrimaries::Bt2020, ColorPrimaries::DisplayP3);
+        assert_eq!(c.target_primaries(), ColorPrimaries::DisplayP3);
+        assert!(c.source_to_bt2020.is_none(), "source IS BT.2020");
+        assert!(
+            c.bt2020_to_target.is_some(),
+            "P3 target → gamut matrix cached"
+        );
+        assert!(
+            c.gamut_lut.is_some(),
+            "P3 target → soft-compress LUT cached"
+        );
+        assert!(c.target_m1.is_some(), "P3 target → LMS matrix cached");
+        assert!(c.target_m1_inv.is_some(), "P3 target → inverse LMS cached");
+        // Saturated BT.2020 red into P3: still red-dominant, all channels
+        // in [0, 1] because soft-compress kicks in.
+        let out = c.apply_rgb([1.0, 0.0, 0.0]);
+        finite_in_unit(out);
+        assert!(
+            out[0] > out[1] && out[0] > out[2],
+            "red should remain dominant in P3 target: {out:?}"
+        );
+    }
+
+    #[test]
+    fn bt709_target_unchanged_from_old_behavior() {
+        // Backward compat: HdrToSdr::new(p) === HdrToSdr::with_io(p,
+        // BT.2020, BT.709). Bit-identical on a randomized strip.
+        let pipe_default = HdrToSdr::new(1000.0);
+        let pipe_explicit =
+            HdrToSdr::with_io(1000.0, ColorPrimaries::Bt2020, ColorPrimaries::Bt709);
+        // Same field state.
+        assert_eq!(
+            pipe_default.target_primaries(),
+            pipe_explicit.target_primaries()
+        );
+        // Same outputs.
+        struct Xorshift(u32);
+        impl Xorshift {
+            fn next_f32(&mut self) -> f32 {
+                let mut x = self.0;
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                self.0 = x;
+                (x as f32 / u32::MAX as f32) * 2.0
+            }
+        }
+        let mut rng = Xorshift(0xDECAF999);
+        let n_pixels = 1000;
+        let mut a: alloc::vec::Vec<[f32; 3]> = alloc::vec::Vec::with_capacity(n_pixels);
+        for _ in 0..n_pixels {
+            a.push([rng.next_f32(), rng.next_f32(), rng.next_f32()]);
+        }
+        let mut b = a.clone();
+        pipe_default.apply_strip(&mut a);
+        pipe_explicit.apply_strip(&mut b);
+        for (i, (pa, pb)) in a.iter().zip(b.iter()).enumerate() {
+            for k in 0..3 {
+                assert!(
+                    pa[k].to_bits() == pb[k].to_bits(),
+                    "px {i} ch{k} diverges: new()={} with_io={}",
+                    pa[k],
+                    pb[k]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pipeline_finite_for_each_target_primaries() {
+        // Extreme-input pipeline finiteness must hold across all
+        // supported target primaries: BT.2020 (wide-gamut), BT.709
+        // (default), DisplayP3.
+        let pixels = [
+            [0.0_f32, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [1.5, 1.0, 0.0],
+            [-0.1, 0.5, 0.2],
+            [f32::INFINITY, 0.5, 0.5],
+            [0.5, f32::NAN, 0.5],
+            [0.5, 0.5, -f32::INFINITY],
+            [1e20, 1e20, 1e20],
+            [1e-30, 1e-30, 1e-30],
+        ];
+        for &target in &[
+            ColorPrimaries::Bt2020,
+            ColorPrimaries::Bt709,
+            ColorPrimaries::DisplayP3,
+        ] {
+            let c = HdrToSdr::with_io(10_000.0, ColorPrimaries::Bt2020, target);
+            let mut strip = pixels.to_vec();
+            c.apply_strip(&mut strip);
+            for (i, px) in strip.iter().enumerate() {
+                for (k, &v) in px.iter().enumerate() {
+                    assert!(
+                        v.is_finite() && (0.0..=1.0).contains(&v),
+                        "target {target:?} px {i} ch{k}={v} out of [0,1] (input {:?})",
+                        pixels[i]
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn property_simd_matches_scalar_under_arbitrary_source_primaries() {
         // For each supported source-primary tier (BT.2020, BT.709, P3),
@@ -778,6 +1156,62 @@ mod tests {
                         sp[k],
                         diff
                     );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn property_simd_matches_scalar_under_arbitrary_target_primaries() {
+        // Extension of the SIMD-parity property test: SIMD/scalar
+        // agreement must hold across every (source, target) primaries
+        // pair. Catches divergence introduced by the per-target
+        // conditional gamut/compress branches.
+        struct Xorshift(u32);
+        impl Xorshift {
+            fn next_f32(&mut self) -> f32 {
+                let mut x = self.0;
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                self.0 = x;
+                (x as f32 / u32::MAX as f32) * 2.0
+            }
+        }
+
+        let primaries = [
+            ColorPrimaries::Bt2020,
+            ColorPrimaries::Bt709,
+            ColorPrimaries::DisplayP3,
+        ];
+
+        for &source in &primaries {
+            for &target in &primaries {
+                let mut rng = Xorshift(0x1234_5678 ^ ((source as u32) << 8) ^ (target as u32));
+                let n_pixels = 12_000;
+                let mut strip = alloc::vec::Vec::with_capacity(n_pixels);
+                for _ in 0..n_pixels {
+                    strip.push([rng.next_f32(), rng.next_f32(), rng.next_f32()]);
+                }
+                let scalar: alloc::vec::Vec<[f32; 3]> = {
+                    let c = HdrToSdr::with_io(1000.0, source, target);
+                    strip.iter().map(|p| c.apply_rgb(*p)).collect()
+                };
+
+                let c = HdrToSdr::with_io(1000.0, source, target);
+                c.apply_strip(&mut strip);
+
+                for (i, (&sc, &sp)) in scalar.iter().zip(strip.iter()).enumerate() {
+                    for k in 0..3 {
+                        let diff = (sc[k] - sp[k]).abs();
+                        assert!(
+                            diff < 5e-4,
+                            "scalar/SIMD diverge under source={source:?} target={target:?} at px {i} ch{k}: scalar={} simd={} diff={}",
+                            sc[k],
+                            sp[k],
+                            diff
+                        );
+                    }
                 }
             }
         }
