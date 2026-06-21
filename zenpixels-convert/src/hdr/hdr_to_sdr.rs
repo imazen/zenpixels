@@ -12,7 +12,7 @@ use crate::gamut::{GamutMatrix, apply_matrix_f32, conversion_matrix};
 use crate::hdr::Bt2446A;
 use crate::hdr::gamut_compress::{GamutBoundaryLut, SoftCompress};
 use crate::oklab;
-use zenpixels::ColorPrimaries;
+use zenpixels::{ColorPrimaries, PixelDescriptor, TransferFunction};
 
 /// One-call HDR → SDR conversion.
 ///
@@ -45,38 +45,42 @@ use zenpixels::ColorPrimaries;
 ///    knee defaults to `0.9` (compression kicks in at 90 % of the max
 ///    in-gamut chroma).
 ///
+/// # Buffer contract
+///
+/// The source and target [`PixelDescriptor`]s document the buffers' color
+/// space metadata (primaries, alpha mode, signal range, format) — the
+/// descriptors are the single source of truth. [`apply_strip`](Self::apply_strip)
+/// treats input as linear-light `[f32; 3]` RGB in `source.primaries` and
+/// produces linear-light `[f32; 3]` RGB in `target.primaries`. Both
+/// descriptors **must** carry `transfer = TransferFunction::Linear`
+/// (validated at construction; a non-Linear transfer panics). Encoding the
+/// output to BT.1886 / sRGB / PQ / HLG is the caller's job. Future work
+/// will lift these constraints.
+///
 /// # Source primaries
 ///
-/// - [`new`](Self::new) assumes the source is **BT.2020** (the typical
-///   HDR10 / HLG case). No source-gamut conversion step runs.
-/// - [`with_source_primaries`](Self::with_source_primaries),
-///   [`with_io`](Self::with_io), and [`with_params`](Self::with_params)
-///   accept arbitrary [`ColorPrimaries`]. The constructor caches an extra
-///   `source_to_bt2020` matrix that runs as step 1 above; the BT.2446
-///   curve still operates in BT.2020 as it was designed. Display P3 HDR
-///   (e.g. Apple ProRAW) and other non-BT.2020 HDR sources are supported
-///   this way without distorting the curve.
+/// The constructors accept arbitrary [`ColorPrimaries`] on the source
+/// descriptor. When `source.primaries != ColorPrimaries::Bt2020` the
+/// constructor caches an extra `source_to_bt2020` matrix that runs as
+/// step 1 above; the BT.2446 curve still operates in BT.2020 as it was
+/// designed. Display P3 HDR (e.g. Apple ProRAW) and other non-BT.2020
+/// HDR sources are supported this way without distorting the curve.
 ///
 /// # Target primaries
 ///
-/// - [`new`](Self::new) and
-///   [`with_source_primaries`](Self::with_source_primaries) target
-///   **BT.709** (the default SDR output, sRGB primaries).
-/// - [`with_io`](Self::with_io) and [`with_params`](Self::with_params)
-///   accept an arbitrary target. When `target_primaries ==
-///   ColorPrimaries::Bt2020`, steps 3 and 4 are **no-ops** — output stays
-///   in BT.2020 linear-light at the target peak. This is the wide-gamut
-///   "as lossless as physics allows" output mode: the only inherently
-///   lossy stage is BT.2446-A's tone curve; no gamut narrowing or chroma
-///   compression occurs. Use this when the downstream container can
-///   carry BT.2020 primaries (BT.2020 PNG with cICP, HDR10 at SDR
-///   luminance, etc.).
+/// The constructors accept an arbitrary target. When `target.primaries ==
+/// ColorPrimaries::Bt2020`, steps 3 and 4 are **no-ops** — output stays
+/// in BT.2020 linear-light at the target peak. This is the wide-gamut
+/// "as lossless as physics allows" output mode: the only inherently
+/// lossy stage is BT.2446-A's tone curve; no gamut narrowing or chroma
+/// compression occurs. Use this when the downstream container can
+/// carry BT.2020 primaries (BT.2020 PNG with cICP, HDR10 at SDR
+/// luminance, etc.).
 ///
 /// # Defaults
 ///
 /// - `target_peak_nits = 100.0` (SDR reference white).
 /// - `gamut_knee = 0.9`.
-/// - `target_primaries = ColorPrimaries::Bt709`.
 ///
 /// # Why this composition
 ///
@@ -101,11 +105,14 @@ use zenpixels::ColorPrimaries;
 /// # #[cfg(feature = "hdr-experimental")]
 /// # {
 /// use zenpixels_convert::hdr::HdrToSdr;
+/// use zenpixels::{ColorPrimaries, PixelDescriptor};
 ///
 /// // 1000-nit HDR source → 100-nit SDR target (default BT.709).
 /// // Input is source-normalized: 1.0 = source_peak_nits = 1000 nits.
-/// // BT.2020 source is assumed.
-/// let converter = HdrToSdr::new(1000.0);
+/// // Both descriptors carry transfer = Linear (validated at construction).
+/// let source = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::Bt2020);
+/// let target = PixelDescriptor::RGBF32_LINEAR; // BT.709 + Linear
+/// let converter = HdrToSdr::new(source, target, 1000.0);
 /// let mut pixels = vec![
 ///     [1.0_f32, 0.6, 0.3],
 ///     [0.1, 0.1, 0.1],
@@ -121,27 +128,27 @@ use zenpixels::ColorPrimaries;
 ///
 /// ## Wide-gamut output mode
 ///
-/// Pass `target_primaries == ColorPrimaries::Bt2020` to keep the output
-/// in BT.2020 — only the BT.2446-A tone curve runs; the gamut matrix and
-/// soft-compress stages are skipped, so no chroma is narrowed.
+/// Pass a target descriptor with `primaries == ColorPrimaries::Bt2020`
+/// to keep the output in BT.2020 — only the BT.2446-A tone curve runs;
+/// the gamut matrix and soft-compress stages are skipped, so no chroma
+/// is narrowed.
 ///
 /// ```
 /// # #[cfg(feature = "hdr-experimental")]
 /// # {
 /// use zenpixels_convert::hdr::HdrToSdr;
-/// use zenpixels::ColorPrimaries;
+/// use zenpixels::{ColorPrimaries, PixelDescriptor};
 ///
 /// // 1000-nit BT.2020 HDR → 100-nit BT.2020 SDR (wide-gamut, no chroma loss).
-/// let converter = HdrToSdr::with_io(
-///     1000.0,
-///     ColorPrimaries::Bt2020,
-///     ColorPrimaries::Bt2020,
-/// );
-/// assert_eq!(converter.target_primaries(), ColorPrimaries::Bt2020);
+/// let bt2020 = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::Bt2020);
+/// let converter = HdrToSdr::new(bt2020, bt2020, 1000.0);
+/// assert_eq!(converter.target().primaries, ColorPrimaries::Bt2020);
 /// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct HdrToSdr {
+    source: PixelDescriptor,
+    target: PixelDescriptor,
     source_peak_nits: f32,
     target_peak_nits: f32,
     gamut_knee: f32,
@@ -150,10 +157,6 @@ pub struct HdrToSdr {
     source_to_bt2020: Option<GamutMatrix>,
     /// `None` when the target is BT.2020 (wide-gamut output — no-op step 3).
     bt2020_to_target: Option<GamutMatrix>,
-    /// Tracked for introspection and correctness pins. The presence of
-    /// `bt2020_to_target` / `gamut_lut` / `target_m1*` mirrors whether this
-    /// equals BT.2020.
-    target_primaries: ColorPrimaries,
     /// `None` when the target is BT.2020 (no soft-compress step).
     gamut_lut: Option<Arc<GamutBoundaryLut>>,
     /// `None` when the target is BT.2020 (no soft-compress step).
@@ -163,115 +166,116 @@ pub struct HdrToSdr {
 }
 
 impl HdrToSdr {
-    /// BT.2020 HDR source → BT.709 SDR target. `target_peak_nits = 100.0`,
-    /// `gamut_knee = 0.9`.
-    #[must_use]
-    pub fn new(source_peak_nits: f32) -> Self {
-        Self::with_params(
-            source_peak_nits,
-            ColorPrimaries::Bt2020,
-            ColorPrimaries::Bt709,
-            100.0,
-            0.9,
-        )
-    }
-
-    /// Arbitrary source primaries → BT.709 SDR target;
-    /// `target_peak_nits = 100.0`, `gamut_knee = 0.9`.
-    ///
-    /// When `source_primaries != ColorPrimaries::Bt2020` the pipeline
-    /// inserts a `source → BT.2020` matrix step before the BT.2446 curve so
-    /// the curve still operates on the BT.2020 RGB it was designed for.
-    #[must_use]
-    pub fn with_source_primaries(source_peak_nits: f32, source_primaries: ColorPrimaries) -> Self {
-        Self::with_params(
-            source_peak_nits,
-            source_primaries,
-            ColorPrimaries::Bt709,
-            100.0,
-            0.9,
-        )
-    }
-
-    /// Arbitrary source and target primaries; `target_peak_nits = 100.0`,
+    /// Construct with sensible defaults: `target_peak_nits = 100.0`,
     /// `gamut_knee = 0.9`.
     ///
-    /// When `target_primaries == ColorPrimaries::Bt2020`, the gamut matrix
-    /// and soft-compress steps are skipped — the only lossy stage is the
-    /// BT.2446-A tone curve. Use this for wide-gamut SDR containers
-    /// (BT.2020 PNG with cICP tag, HDR10 at SDR luminance, etc.).
+    /// # Buffer contract
+    ///
+    /// Both descriptors must carry `transfer = TransferFunction::Linear`
+    /// (validated). [`apply_strip`](Self::apply_strip) treats input as
+    /// linear-light `[f32; 3]` RGB in `source.primaries` and produces
+    /// linear-light `[f32; 3]` RGB in `target.primaries`. Encoding the
+    /// output to BT.1886 / sRGB / PQ / HLG is the caller's job.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `source.transfer != TransferFunction::Linear` or
+    /// `target.transfer != TransferFunction::Linear`.
     #[must_use]
-    pub fn with_io(
-        source_peak_nits: f32,
-        source_primaries: ColorPrimaries,
-        target_primaries: ColorPrimaries,
-    ) -> Self {
-        Self::with_params(
-            source_peak_nits,
-            source_primaries,
-            target_primaries,
-            100.0,
-            0.9,
-        )
+    pub fn new(source: PixelDescriptor, target: PixelDescriptor, source_peak_nits: f32) -> Self {
+        Self::with_params(source, target, source_peak_nits, 100.0, 0.9)
     }
 
-    /// Full constructor with explicit source primaries, target primaries,
-    /// target peak, and gamut knee.
+    /// Full constructor with explicit target peak and gamut knee.
     ///
-    /// `source_primaries`: primaries of the input pixels (BT.2020 is the
-    /// typical HDR10/HLG case; Display P3 covers Apple HDR).
-    /// `target_primaries`: primaries of the output. `BT.709` is the SDR
-    /// default; `BT.2020` is the wide-gamut "no chroma loss" mode (the
-    /// gamut matrix + soft-compress stages are skipped).
+    /// `source` / `target`: [`PixelDescriptor`]s for the input and output
+    /// buffers. Both must carry `transfer = TransferFunction::Linear`. The
+    /// `primaries` field of each drives the gamut pipeline (see the type
+    /// docs). When `target.primaries == ColorPrimaries::Bt2020`, the gamut
+    /// matrix and soft-compress steps are skipped — wide-gamut "no chroma
+    /// loss" mode.
+    /// `source_peak_nits`: HDR source peak luminance (typically 1000 for
+    /// HDR10 / Apple HDR).
     /// `target_peak_nits`: SDR display peak luminance (typically 100).
     /// `gamut_knee`: fraction of max chroma at which the soft chroma
     /// compression kicks in (`0.0`–`1.0`, typical `0.9`). Ignored when
     /// the target is BT.2020.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `source.transfer != TransferFunction::Linear` or
+    /// `target.transfer != TransferFunction::Linear`.
     #[must_use]
     pub fn with_params(
+        source: PixelDescriptor,
+        target: PixelDescriptor,
         source_peak_nits: f32,
-        source_primaries: ColorPrimaries,
-        target_primaries: ColorPrimaries,
         target_peak_nits: f32,
         gamut_knee: f32,
     ) -> Self {
+        assert!(
+            matches!(source.transfer, TransferFunction::Linear),
+            "HdrToSdr requires source.transfer = TransferFunction::Linear, got {:?}",
+            source.transfer
+        );
+        assert!(
+            matches!(target.transfer, TransferFunction::Linear),
+            "HdrToSdr requires target.transfer = TransferFunction::Linear, got {:?}",
+            target.transfer
+        );
+
         let bt2446a = Bt2446A::new(source_peak_nits, target_peak_nits);
 
-        let source_to_bt2020 = if matches!(source_primaries, ColorPrimaries::Bt2020) {
+        let source_to_bt2020 = if matches!(source.primaries, ColorPrimaries::Bt2020) {
             None
         } else {
-            conversion_matrix(source_primaries, ColorPrimaries::Bt2020)
+            conversion_matrix(source.primaries, ColorPrimaries::Bt2020)
         };
 
         let (bt2020_to_target, gamut_lut, target_m1, target_m1_inv) =
-            if matches!(target_primaries, ColorPrimaries::Bt2020) {
+            if matches!(target.primaries, ColorPrimaries::Bt2020) {
                 // Wide-gamut output: skip the gamut matrix and the OKLch
                 // soft-compress entirely. The BT.2446-A curve already
                 // operates in BT.2020 so its output IS the answer.
                 (None, None, None, None)
             } else {
-                let m_gamut = conversion_matrix(ColorPrimaries::Bt2020, target_primaries)
+                let m_gamut = conversion_matrix(ColorPrimaries::Bt2020, target.primaries)
                     .expect("BT.2020 and target are both well-known primaries");
-                let m1 = oklab::rgb_to_lms_matrix(target_primaries)
+                let m1 = oklab::rgb_to_lms_matrix(target.primaries)
                     .expect("target primaries have a defined LMS matrix");
-                let m1_inv = oklab::lms_to_rgb_matrix(target_primaries)
+                let m1_inv = oklab::lms_to_rgb_matrix(target.primaries)
                     .expect("target primaries have a defined inverse LMS matrix");
                 let lut = Arc::new(GamutBoundaryLut::new(&m1_inv));
                 (Some(m_gamut), Some(lut), Some(m1), Some(m1_inv))
             };
 
         Self {
+            source,
+            target,
             source_peak_nits,
             target_peak_nits,
             gamut_knee,
             bt2446a,
             source_to_bt2020,
             bt2020_to_target,
-            target_primaries,
             gamut_lut,
             target_m1,
             target_m1_inv,
         }
+    }
+
+    /// Source pixel descriptor.
+    #[inline]
+    #[must_use]
+    pub fn source(&self) -> &PixelDescriptor {
+        &self.source
+    }
+
+    /// Target pixel descriptor.
+    #[inline]
+    #[must_use]
+    pub fn target(&self) -> &PixelDescriptor {
+        &self.target
     }
 
     /// Source peak luminance (nits / cd/m²).
@@ -289,19 +293,11 @@ impl HdrToSdr {
     }
 
     /// Gamut soft-compression knee (`0.0`–`1.0`). Ignored when
-    /// `target_primaries() == ColorPrimaries::Bt2020`.
+    /// `target().primaries == ColorPrimaries::Bt2020`.
     #[inline]
     #[must_use]
     pub fn gamut_knee(&self) -> f32 {
         self.gamut_knee
-    }
-
-    /// Configured target primaries — `BT.709` by default, `BT.2020` in
-    /// the wide-gamut output mode.
-    #[inline]
-    #[must_use]
-    pub fn target_primaries(&self) -> ColorPrimaries {
-        self.target_primaries
     }
 
     /// Borrow a [`SoftCompress`] view of the configured gamut compressor
@@ -323,9 +319,9 @@ impl HdrToSdr {
     /// Apply the full HDR → SDR pipeline to a strip of linear `RGB f32`
     /// pixels in place.
     ///
-    /// Input: linear-light source RGB (per the `source_primaries` passed
-    /// to the constructor), source-normalized (`1.0 = source_peak_nits`).
-    /// Output: linear-light RGB in the configured target primaries,
+    /// Input: linear-light source RGB (per the source descriptor's
+    /// primaries), source-normalized (`1.0 = source_peak_nits`).
+    /// Output: linear-light RGB in the target descriptor's primaries,
     /// target-normalized (`1.0 = target_peak_nits`), guaranteed finite
     /// and in `[0, 1]` per channel — non-finite inputs (NaN / ±Inf) are
     /// scrubbed to `0` before the pipeline runs, and the final clamp
@@ -440,6 +436,11 @@ fn soft_compress_strip_with_lut(
 mod tests {
     use super::*;
 
+    /// Convenience: build a Linear RGB f32 descriptor with explicit primaries.
+    fn descr(primaries: ColorPrimaries) -> PixelDescriptor {
+        PixelDescriptor::RGBF32_LINEAR.with_primaries(primaries)
+    }
+
     fn finite_in_unit(out: [f32; 3]) {
         for (i, &v) in out.iter().enumerate() {
             assert!(
@@ -451,11 +452,15 @@ mod tests {
 
     #[test]
     fn defaults_match_spec() {
-        let c = HdrToSdr::new(1000.0);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
+        );
         assert_eq!(c.source_peak_nits(), 1000.0);
         assert_eq!(c.target_peak_nits(), 100.0);
         assert!((c.gamut_knee() - 0.9).abs() < 1e-7);
-        assert_eq!(c.target_primaries(), ColorPrimaries::Bt709);
+        assert_eq!(c.target().primaries, ColorPrimaries::Bt709);
         // BT.2020 source → no source-to-BT.2020 matrix cached.
         assert!(c.source_to_bt2020.is_none());
         // BT.709 target → soft-compress stage active.
@@ -467,7 +472,11 @@ mod tests {
 
     #[test]
     fn zero_input_is_zero_output() {
-        let c = HdrToSdr::new(1000.0);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
+        );
         let out = c.apply_rgb([0.0, 0.0, 0.0]);
         for v in out {
             assert!(
@@ -479,7 +488,11 @@ mod tests {
 
     #[test]
     fn empty_strip_is_noop() {
-        let c = HdrToSdr::new(1000.0);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
+        );
         let mut strip: alloc::vec::Vec<[f32; 3]> = alloc::vec::Vec::new();
         c.apply_strip(&mut strip);
         assert!(strip.is_empty());
@@ -488,9 +501,9 @@ mod tests {
     #[test]
     fn apply_strip_matches_apply_rgb() {
         let c = HdrToSdr::with_params(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
             2000.0,
-            ColorPrimaries::Bt2020,
-            ColorPrimaries::Bt709,
             100.0,
             0.9,
         );
@@ -521,9 +534,9 @@ mod tests {
     #[test]
     fn pipeline_finite_on_extreme_inputs() {
         let c = HdrToSdr::with_params(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
             10_000.0,
-            ColorPrimaries::Bt2020,
-            ColorPrimaries::Bt709,
             100.0,
             0.9,
         );
@@ -557,7 +570,11 @@ mod tests {
 
     #[test]
     fn saturated_red_hdr_stays_in_srgb_gamut() {
-        let c = HdrToSdr::new(1000.0);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
+        );
         // Pure BT.2020 saturated red — its BT.709 primary projection has
         // negative G/B by construction; the soft-compress stage must
         // pull every channel back into [0, 1] with red dominant.
@@ -575,7 +592,11 @@ mod tests {
         // source peak). After tone-map + soft compress, the output's
         // luminance should land in a sensible SDR mid-bright range —
         // not under- or over-exposed.
-        let c = HdrToSdr::new(1000.0);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
+        );
         let out = c.apply_rgb([1.0, 1.0, 1.0]);
         finite_in_unit(out);
         // Peak HDR maps near SDR peak (BT.2446-A spec behavior).
@@ -604,9 +625,9 @@ mod tests {
         // regardless of the rho ratio), but the output should stay
         // within ~25% of the input for mid-grey.
         let c = HdrToSdr::with_params(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
             100.0,
-            ColorPrimaries::Bt2020,
-            ColorPrimaries::Bt709,
             100.0,
             0.9,
         );
@@ -632,11 +653,16 @@ mod tests {
         // something: an aggressive (knee=0.3) HdrToSdr should diverge
         // from the default (knee=0.9) on near-gamut-edge red.
         let rgb = [0.95_f32, 0.05, 0.05];
-        let default = HdrToSdr::new(1000.0).apply_rgb(rgb);
-        let custom = HdrToSdr::with_params(
+        let default = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
             1000.0,
-            ColorPrimaries::Bt2020,
-            ColorPrimaries::Bt709,
+        )
+        .apply_rgb(rgb);
+        let custom = HdrToSdr::with_params(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
             100.0,
             0.30,
         )
@@ -658,7 +684,11 @@ mod tests {
 
     #[test]
     fn neutral_input_stays_finite_across_decades() {
-        let c = HdrToSdr::new(4000.0);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
+            4000.0,
+        );
         for shift in [0_i32, -1, -2, -3, -4, -5, -6, -7, -8, -9, -10] {
             // shift==0  -> 1.0 source-norm (4000 nits)
             // shift=-10 -> ~1e-3 source-norm (~4 nits)
@@ -726,7 +756,11 @@ mod tests {
         // *after the matrix* — but neutral grey stays neutral under both
         // BT.2020 and BT.709 RGB by construction, so any divergence here
         // is a pipeline-order bug.
-        let c = HdrToSdr::new(1000.0);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
+        );
         for &g in &[0.0_f32, 0.1, 0.3, 0.5, 1.0, 2.0] {
             let out = c.apply_rgb([g, g, g]);
             for v in out {
@@ -755,7 +789,11 @@ mod tests {
         // HDR pixel at full source peak (1000 nits) should land in a
         // sensible SDR range. The BT.2446-A curve at source=1000, target=100
         // maps the 1.0 source-norm input near 1.0 target-norm.
-        let c = HdrToSdr::new(1000.0);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
+        );
         let out = c.apply_rgb([1.0, 1.0, 1.0]);
         // Channels equal — diffuse white stays neutral (~1e-3 floor for
         // the BT.2446-A f32 Y'Cb'Cr' chain + BT.2020→BT.709 + OKLab).
@@ -774,7 +812,11 @@ mod tests {
 
     #[test]
     fn saturated_bt2020_red_lands_red_dominant_in_bt709() {
-        let c = HdrToSdr::new(1000.0);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
+        );
         let out = c.apply_rgb([1.0, 0.0, 0.0]);
         finite_in_unit(out);
         assert!(
@@ -789,7 +831,11 @@ mod tests {
 
     #[test]
     fn saturated_bt2020_green_lands_green_dominant_in_bt709() {
-        let c = HdrToSdr::new(1000.0);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
+        );
         let out = c.apply_rgb([0.0, 1.0, 0.0]);
         finite_in_unit(out);
         // BT.2020 green is just inside BT.709 green, so the projection
@@ -808,7 +854,11 @@ mod tests {
 
     #[test]
     fn saturated_bt2020_blue_lands_blue_dominant_in_bt709() {
-        let c = HdrToSdr::new(1000.0);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
+        );
         let out = c.apply_rgb([0.0, 0.0, 1.0]);
         finite_in_unit(out);
         assert!(
@@ -826,7 +876,11 @@ mod tests {
         // Display P3 source → grey in → grey out (no hue shift across
         // the source→BT.2020 conversion + BT.2446-A + BT.2020→BT.709 +
         // soft compress).
-        let c = HdrToSdr::with_source_primaries(1000.0, ColorPrimaries::DisplayP3);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::DisplayP3),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
+        );
         let out = c.apply_rgb([0.5, 0.5, 0.5]);
         for v in out {
             assert!(v.is_finite() && (0.0..=1.0).contains(&v), "{out:?}");
@@ -845,7 +899,11 @@ mod tests {
         // BT.709→BT.2020 transform within 1e-3:
         //   (0.6274, 0.0691, 0.0164)  (computed from standards-grade
         //   BT.709_TO_XYZ × XYZ_TO_BT2020 matrices in src/gamut.rs).
-        let c = HdrToSdr::with_source_primaries(1000.0, ColorPrimaries::Bt709);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt709),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
+        );
         let m = c
             .source_to_bt2020
             .as_ref()
@@ -869,7 +927,11 @@ mod tests {
         // output from the old (buggy) order for a saturated content pixel.
         // If the orders ever match within 0.02, either the code regressed
         // or the test's expected difference is too tight.
-        let c = HdrToSdr::new(1000.0);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
+        );
         let input = [1.0_f32, 0.0, 0.0];
         let new_out = c.apply_rgb(input);
         let old_out = apply_old_buggy_order(&c, input);
@@ -896,8 +958,12 @@ mod tests {
         // wide-gamut "no gamut narrowing" branch: source-to-BT.2020 is
         // also None because source==BT.2020, AND none of the post-curve
         // (gamut + soft-compress) state is allocated.
-        let c = HdrToSdr::with_io(1000.0, ColorPrimaries::Bt2020, ColorPrimaries::Bt2020);
-        assert_eq!(c.target_primaries(), ColorPrimaries::Bt2020);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt2020),
+            1000.0,
+        );
+        assert_eq!(c.target().primaries, ColorPrimaries::Bt2020);
         assert!(c.source_to_bt2020.is_none(), "source IS BT.2020");
         assert!(c.bt2020_to_target.is_none(), "wide-gamut → no gamut matrix");
         assert!(c.gamut_lut.is_none(), "wide-gamut → no soft-compress LUT");
@@ -913,7 +979,11 @@ mod tests {
         // BT.2446-A. The full pipeline output must be bit-identical to
         // running just `Bt2446A::map_strip_simd` on the scrubbed input.
         // (Steps 0 and 5 are the same scrub+clamp; steps 1, 3, 4 are no-ops.)
-        let pipe_a = HdrToSdr::with_io(1000.0, ColorPrimaries::Bt2020, ColorPrimaries::Bt2020);
+        let pipe_a = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt2020),
+            1000.0,
+        );
         // Deterministic xorshift32 — same seed as the SIMD parity test.
         struct Xorshift(u32);
         impl Xorshift {
@@ -978,7 +1048,11 @@ mod tests {
         // stay saturated: no gamut matrix runs, no soft-compress runs,
         // so the only change is BT.2446-A's tone curve scaling the
         // luminance down. Red dominates strongly, G/B near 0.
-        let c = HdrToSdr::with_io(1000.0, ColorPrimaries::Bt2020, ColorPrimaries::Bt2020);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt2020),
+            1000.0,
+        );
         let out = c.apply_rgb([1.0, 0.0, 0.0]);
         finite_in_unit(out);
         assert!(
@@ -1002,8 +1076,12 @@ mod tests {
     fn displayp3_target_runs_full_pipeline() {
         // P3 is narrower than BT.2020 on some hues, so the gamut matrix
         // + soft-compress stages MUST be active.
-        let c = HdrToSdr::with_io(1000.0, ColorPrimaries::Bt2020, ColorPrimaries::DisplayP3);
-        assert_eq!(c.target_primaries(), ColorPrimaries::DisplayP3);
+        let c = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::DisplayP3),
+            1000.0,
+        );
+        assert_eq!(c.target().primaries, ColorPrimaries::DisplayP3);
         assert!(c.source_to_bt2020.is_none(), "source IS BT.2020");
         assert!(
             c.bt2020_to_target.is_some(),
@@ -1027,16 +1105,23 @@ mod tests {
 
     #[test]
     fn bt709_target_unchanged_from_old_behavior() {
-        // Backward compat: HdrToSdr::new(p) === HdrToSdr::with_io(p,
-        // BT.2020, BT.709). Bit-identical on a randomized strip.
-        let pipe_default = HdrToSdr::new(1000.0);
-        let pipe_explicit =
-            HdrToSdr::with_io(1000.0, ColorPrimaries::Bt2020, ColorPrimaries::Bt709);
-        // Same field state.
-        assert_eq!(
-            pipe_default.target_primaries(),
-            pipe_explicit.target_primaries()
+        // Backward compat (within the new API): the BT.2020 → BT.709
+        // default-shape pipeline produces the same outputs regardless of
+        // which constructor builds it. Bit-identical on a randomized strip.
+        let pipe_a = HdrToSdr::new(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
         );
+        let pipe_b = HdrToSdr::with_params(
+            descr(ColorPrimaries::Bt2020),
+            descr(ColorPrimaries::Bt709),
+            1000.0,
+            100.0,
+            0.9,
+        );
+        // Same field state.
+        assert_eq!(pipe_a.target().primaries, pipe_b.target().primaries);
         // Same outputs.
         struct Xorshift(u32);
         impl Xorshift {
@@ -1056,13 +1141,13 @@ mod tests {
             a.push([rng.next_f32(), rng.next_f32(), rng.next_f32()]);
         }
         let mut b = a.clone();
-        pipe_default.apply_strip(&mut a);
-        pipe_explicit.apply_strip(&mut b);
+        pipe_a.apply_strip(&mut a);
+        pipe_b.apply_strip(&mut b);
         for (i, (pa, pb)) in a.iter().zip(b.iter()).enumerate() {
             for k in 0..3 {
                 assert!(
                     pa[k].to_bits() == pb[k].to_bits(),
-                    "px {i} ch{k} diverges: new()={} with_io={}",
+                    "px {i} ch{k} diverges: new()={} with_params()={}",
                     pa[k],
                     pb[k]
                 );
@@ -1091,7 +1176,7 @@ mod tests {
             ColorPrimaries::Bt709,
             ColorPrimaries::DisplayP3,
         ] {
-            let c = HdrToSdr::with_io(10_000.0, ColorPrimaries::Bt2020, target);
+            let c = HdrToSdr::new(descr(ColorPrimaries::Bt2020), descr(target), 10_000.0);
             let mut strip = pixels.to_vec();
             c.apply_strip(&mut strip);
             for (i, px) in strip.iter().enumerate() {
@@ -1139,11 +1224,11 @@ mod tests {
                 strip.push([rng.next_f32(), rng.next_f32(), rng.next_f32()]);
             }
             let scalar: alloc::vec::Vec<[f32; 3]> = {
-                let c = HdrToSdr::with_source_primaries(1000.0, prim);
+                let c = HdrToSdr::new(descr(prim), descr(ColorPrimaries::Bt709), 1000.0);
                 strip.iter().map(|p| c.apply_rgb(*p)).collect()
             };
 
-            let c = HdrToSdr::with_source_primaries(1000.0, prim);
+            let c = HdrToSdr::new(descr(prim), descr(ColorPrimaries::Bt709), 1000.0);
             c.apply_strip(&mut strip);
 
             for (i, (&sc, &sp)) in scalar.iter().zip(strip.iter()).enumerate() {
@@ -1194,11 +1279,11 @@ mod tests {
                     strip.push([rng.next_f32(), rng.next_f32(), rng.next_f32()]);
                 }
                 let scalar: alloc::vec::Vec<[f32; 3]> = {
-                    let c = HdrToSdr::with_io(1000.0, source, target);
+                    let c = HdrToSdr::new(descr(source), descr(target), 1000.0);
                     strip.iter().map(|p| c.apply_rgb(*p)).collect()
                 };
 
-                let c = HdrToSdr::with_io(1000.0, source, target);
+                let c = HdrToSdr::new(descr(source), descr(target), 1000.0);
                 c.apply_strip(&mut strip);
 
                 for (i, (&sc, &sp)) in scalar.iter().zip(strip.iter()).enumerate() {
@@ -1215,5 +1300,45 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ----------------------------------------------------------------------
+    // Descriptor-validation behavior (new in the descriptor refactor).
+    // ----------------------------------------------------------------------
+
+    #[test]
+    #[should_panic(expected = "Linear")]
+    fn panics_when_source_transfer_is_not_linear() {
+        let source = PixelDescriptor::RGBF32_LINEAR
+            .with_primaries(ColorPrimaries::Bt2020)
+            .with_transfer(TransferFunction::Pq);
+        let target = descr(ColorPrimaries::Bt709);
+        let _ = HdrToSdr::new(source, target, 1000.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Linear")]
+    fn panics_when_target_transfer_is_not_linear() {
+        let source = descr(ColorPrimaries::Bt2020);
+        let target = PixelDescriptor::RGBF32_LINEAR
+            .with_primaries(ColorPrimaries::Bt709)
+            .with_transfer(TransferFunction::Srgb);
+        let _ = HdrToSdr::new(source, target, 1000.0);
+    }
+
+    #[test]
+    fn descriptor_introspection_round_trips() {
+        let source = descr(ColorPrimaries::DisplayP3);
+        let target = descr(ColorPrimaries::Bt709);
+        let c = HdrToSdr::with_params(source, target, 2500.0, 120.0, 0.75);
+        assert_eq!(c.source(), &source);
+        assert_eq!(c.target(), &target);
+        assert_eq!(c.source().primaries, ColorPrimaries::DisplayP3);
+        assert_eq!(c.target().primaries, ColorPrimaries::Bt709);
+        assert_eq!(c.source().transfer, TransferFunction::Linear);
+        assert_eq!(c.target().transfer, TransferFunction::Linear);
+        assert_eq!(c.source_peak_nits(), 2500.0);
+        assert_eq!(c.target_peak_nits(), 120.0);
+        assert!((c.gamut_knee() - 0.75).abs() < 1e-7);
     }
 }

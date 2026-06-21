@@ -108,7 +108,12 @@ fn producer_sdr_match_on_a_real_imazen26_sample() {
     let mut scratch: Vec<f32> = hdr_rgb.px.iter().map(|&v| v * content_norm_scale).collect();
 
     // ---- Apply HdrToSdr with the HDR buffer's actual source primaries.
-    let converter = HdrToSdr::with_source_primaries(SOURCE_PEAK_NITS, hdr_src_primaries);
+    // Source descriptor uses the HDR buffer's primaries (typically BT.709
+    // for UltraHDR-derived linear-float output); target is BT.709 linear
+    // (the SDR ground-truth space), matching the comparison setup below.
+    let source_desc = PixelDescriptor::RGBF32_LINEAR.with_primaries(hdr_src_primaries);
+    let target_desc = PixelDescriptor::RGBF32_LINEAR;
+    let converter = HdrToSdr::new(source_desc, target_desc, SOURCE_PEAK_NITS);
     let strip: &mut [[f32; 3]] = bytemuck::cast_slice_mut(&mut scratch);
     converter.apply_strip(strip);
 

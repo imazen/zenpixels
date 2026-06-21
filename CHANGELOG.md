@@ -305,6 +305,21 @@
   `cargo test -p zenpixels-convert@0.2.15 --features __hdr-e2e-test
   --test hdr_producer_sdr_match -- --nocapture`.
 
+### zenpixels-convert — changed
+
+- **`hdr::HdrToSdr` now takes `PixelDescriptor` for source and target**
+  (replacing the previous `ColorPrimaries` parameters). `PixelDescriptor`
+  carries primaries, transfer function, format, alpha mode, and signal
+  range — the descriptors are the single source of truth for buffer color
+  metadata. Required transfer is `Linear` for both ends (validated at
+  construction); encoding the output to BT.1886/sRGB/PQ/HLG remains the
+  caller's job for now. This is a breaking change inside the
+  `hdr-experimental` gate. New surface:
+  ```
+  HdrToSdr::new(source, target, source_peak_nits)
+  HdrToSdr::with_params(source, target, source_peak_nits, target_peak_nits, gamut_knee)
+  ```
+
 ## [0.2.15] - 2026-06-18
 
 ### zenpixels — added
