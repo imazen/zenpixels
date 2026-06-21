@@ -948,6 +948,7 @@ dependencies = [
  "bytemuck",
  "garb",
  "half",
+ "libm",
  "linear-srgb",
  "lz4_flex",
  "magetypes",

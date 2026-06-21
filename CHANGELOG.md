@@ -118,7 +118,17 @@
 
 ### zenpixels-convert — added
 
-- **`zenpixels_convert::hdr::measure`** module + **[`CllMeasure`]** extension
+- **`zenpixels_convert::hdr::Bt2446A`**, **`HdrToSdr`**, **`SoftCompress`**,
+  and **`GamutBoundaryLut`** — gated behind the existing `hdr-experimental`
+  Cargo feature. Extracted into a single home so the canonical HDR → SDR
+  pipeline lives next to the CLL measurement primitives that feed it:
+  `HdrToSdr::new(source_peak_nits)` composes a BT.2020 → BT.709 matrix step,
+  the BT.2446 Method A tone curve, and an OKLch soft chroma-compression
+  knee into one strip API. `Bt2446A` and the SIMD strip kernel `bt2446a_tier`
+  (degree-7 monomial BT.1886 EOTF approximation, Estrin's-method evaluation)
+  moved from `zentone::Bt2446A`. `SoftCompress` and `GamutBoundaryLut` moved
+  from `zenfilters::gamut_lut::GamutBoundaryLut`. Both upstream copies are
+  removed; this crate is the single source of truth.
   trait, gated behind the new **`hdr-experimental`** Cargo feature (default-
   off). The new home for HDR content-light-level measurement, with the
   `LightLevelHistogram` and `LightLevelMethod` types alongside. Implementing

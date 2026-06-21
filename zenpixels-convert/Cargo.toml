@@ -88,6 +88,11 @@ bytemuck = { version = "1.21", default-features = false, features = ["extern_cra
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 garb = { version = "0.2.8", default-features = false, features = ["experimental"] }
 archmage = { version = "0.9.26", default-features = false }
+# Direct libm dep for the hdr-experimental Bt2446A / HdrToSdr scalar paths
+# (powf, logf, log2f, cosf, sinf). The crate is no_std and already pulled in
+# transitively by magetypes; we depend on it directly so the math calls don't
+# reach across an unstable boundary.
+libm = { version = "0.2", default-features = false }
 # 0.9.25 adds the F16Convert trait: hardware f16<->f32 slice converters with
 # native F16C (x86-64-v3) AND NEON-fp16 (aarch64, rustversion-gated, MSRV-safe)
 # backends + a branchless software fallback — replacing this crate's bespoke

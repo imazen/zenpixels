@@ -27,12 +27,38 @@
 #[cfg(feature = "hdr-experimental")]
 pub mod measure;
 
+/// BT.2446 Method A tone-mapper (experimental).
+///
+/// Linear-light HDR → linear-light SDR curve. Gated behind
+/// `hdr-experimental` while the cross-crate API surface settles.
+#[cfg(feature = "hdr-experimental")]
+mod bt2446a;
+#[cfg(feature = "hdr-experimental")]
+mod bt2446a_simd;
+
+/// Soft chroma compression in OKLch with a precomputed gamut boundary LUT.
+/// Gated behind `hdr-experimental`.
+#[cfg(feature = "hdr-experimental")]
+mod gamut_compress;
+
+/// One-call HDR → SDR pipeline (BT.2020 → BT.709 matrix → Bt2446A → soft
+/// gamut compression). Gated behind `hdr-experimental`.
+#[cfg(feature = "hdr-experimental")]
+mod hdr_to_sdr;
+
 /// Re-exports of the experimental [`measure`] surface at the [`hdr`](self)
 /// boundary, so callers can write
 /// `use zenpixels_convert::hdr::CllMeasure;` instead of the full
 /// `zenpixels_convert::hdr::measure::CllMeasure` path. Same gating.
 #[cfg(feature = "hdr-experimental")]
 pub use measure::{CllMeasure, LightLevelHistogram, LightLevelMethod};
+
+#[cfg(feature = "hdr-experimental")]
+pub use bt2446a::Bt2446A;
+#[cfg(feature = "hdr-experimental")]
+pub use gamut_compress::{GamutBoundaryLut, SoftCompress};
+#[cfg(feature = "hdr-experimental")]
+pub use hdr_to_sdr::HdrToSdr;
 
 use crate::adapt::{convert_buffer_with_anchor, convert_into_with_anchor};
 use crate::error::ConvertError;
