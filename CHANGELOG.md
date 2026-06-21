@@ -246,6 +246,54 @@
   guard that already had this treatment. Non-breaking.
 
 ### zenpixels-convert — fixed
+
+- **`hdr::HdrToSdr` pipeline order — corrected.** The shipped pipeline
+  applied the BT.2020 → BT.709 gamut matrix *before* the BT.2446 Method A
+  tone-map. That was wrong: ITU-R BT.2446-1 specifies the curve in
+  BT.2020 R'G'B' / Y'Cb'Cr', so its luma weights
+  (`0.2627 / 0.6780 / 0.0593`) and YCbCr↔RGB coefficients are BT.2020-
+  specific. Feeding the curve BT.709 RGB produced a systematic hue shift
+  on saturated content. The new order is **`(source → BT.2020 if needed)
+  → Bt2446A → BT.2020 → BT.709 matrix → SoftCompress (BT.709 OKLch)`**:
+  the curve sees the BT.2020 input it was derived against, then the
+  gamut step projects into the BT.709 working space, and soft chroma
+  compression keeps the final pixels hue-preserved in unit cube. Verified
+  on a 12 MP imazen-26 UltraHDR sample: mean ΔE2000 = **3.16** against
+  producer SDR — matches zentone's published BT.2446-A median of 3.17.
+- **`hdr::HdrToSdr` accepts arbitrary source primaries** via the new
+  `with_source_primaries(source_peak_nits, source_primaries)` and
+  `with_params(source_peak_nits, source_primaries, target_peak_nits,
+  gamut_knee)` constructors. When `source_primaries != ColorPrimaries::Bt2020`
+  the pipeline inserts a `source → BT.2020` matrix step (cached at
+  construction) before the BT.2446 curve so the curve still sees the
+  BT.2020 RGB it was designed for. `HdrToSdr::new(...)` keeps the
+  BT.2020-source default. Supports Display P3 HDR (e.g. Apple ProRAW)
+  and BT.709 HDR (UltraHDR JPEG / HEIC gain-map reconstruction outputs)
+  without distorting the curve.
+- **New color-space verification tests in
+  `src/hdr/hdr_to_sdr.rs::tests`** pin the math against the pipeline-
+  order regression: `neutral_grey_stays_neutral`,
+  `hdr_diffuse_white_maps_to_sdr_diffuse_white`,
+  `saturated_bt2020_{red,green,blue}_lands_*_dominant_in_bt709`,
+  `p3_source_pipeline_produces_neutral_grey_from_p3_grey`,
+  `bt709_source_is_identity_matrix_to_bt2020`,
+  `pipeline_order_regression_test` (compares OLD vs NEW order — they
+  must differ measurably), and the SIMD parity property test was
+  extended to run under each of BT.2020 / BT.709 / Display P3 source
+  primaries.
+- **New `__hdr-e2e-test` Cargo feature** gates an end-to-end producer-
+  SDR ΔE2000 regression test
+  (`tests/hdr_producer_sdr_match.rs`) that decodes a known imazen-26
+  UltraHDR sample, runs HDR through the pipeline, and pins mean ΔE2000
+  < 5.0 against the producer's SDR base. The feature pulls `zenjpeg` +
+  `anyhow` as test-only deps via the workspace's `[patch.crates-io]`
+  table (which routes `zencodec` to a local path and `ultrahdr-core` to
+  the imazen git main). The test silently skips when the imazen-26
+  corpus is absent (CI), and MUST be run on `lilith`'s machine before
+  merging any pipeline-touching change. Invocation:
+  `cargo test -p zenpixels-convert@0.2.15 --features __hdr-e2e-test
+  --test hdr_producer_sdr_match -- --nocapture`.
+
 ## [0.2.15] - 2026-06-18
 
 ### zenpixels — added

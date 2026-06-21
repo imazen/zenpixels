@@ -80,6 +80,16 @@ __bench_orient = []
 # Bench-only: exposes `pub mod __bench_scan` shims for
 # `bench_load_bearing`. Same convention as `__bench_u16_hybrids`.
 __bench_scan = []
+# Test-only: enables the producer-SDR end-to-end ΔE2000 regression test
+# for `hdr::HdrToSdr` (`tests/hdr_producer_sdr_match.rs`). Requires the
+# `imazen-26` gain-map corpus on disk at
+# `/home/lilith/work/codec-corpus/imazen-26/` (silently skipped at runtime
+# if the sample is absent, but the test must pass on `lilith`'s machine
+# where the corpus exists). Pulls `zencodecs` (with `jpeg-ultrahdr`) and
+# `anyhow` so the e2e decode path compiles only when this feature is on.
+# `__` prefix keeps it out of the public-API snapshot. **MUST be run on
+# `lilith`'s machine before merging any pipeline-touching change.**
+__hdr-e2e-test = ["hdr-experimental", "dep:zenjpeg", "dep:anyhow"]
 
 [dependencies]
 zenpixels = { workspace = true, default-features = false, features = ["icc"] }
@@ -110,6 +120,19 @@ once_cell = { version = "1.21.4", default-features = false, features = ["race", 
 lz4_flex = { version = "0.13.1", default-features = false, features = ["safe-decode"], optional = true }
 whereat = { version = "0.1.5", default-features = false }
 moxcms = { version = ">=0.8.1, <0.10", optional = true, features = ["options"] }
+# Test-only optional deps for `__hdr-e2e-test` (see the feature comment
+# above). Used exclusively by `tests/hdr_producer_sdr_match.rs`; not
+# linked into any runtime code path. We pull `zenjpeg` from the local
+# path (workspace sibling) so we get the latest `ultrahdr_core` re-exports
+# (one-call `decode_ultrahdr` / `decode_ultrahdr_hdr` + `apply_gainmap`
+# returning `PixelBuffer`). The transitive `zenanalyze → zenpixels-convert
+# ^0.2.11` requirement is satisfied from crates.io 0.2.14, so the local
+# `zenpixels-convert` 0.2.15 + registry 0.2.14 coexist without forming a
+# cycle (we deliberately do NOT add a `zenpixels-convert` entry in the
+# workspace `[patch.crates-io]` table — that's what would create the
+# `zenpixels-convert → zenjpeg → zenanalyze → zenpixels-convert` cycle).
+zenjpeg = { path = "../../zenjpeg/zenjpeg", optional = true, default-features = false, features = ["decoder", "ultrahdr"] }
+anyhow = { version = "1.0", optional = true }
 
 [dev-dependencies]
 zenpixels = { workspace = true, features = ["planar", "imgref"] }
@@ -218,4 +241,9 @@ required-features = ["__bench_orient"]
 name = "measure_histogram_throughput"
 path = "examples/measure_histogram_throughput.rs"
 required-features = ["hdr-experimental"]
+
+[[test]]
+name = "hdr_producer_sdr_match"
+path = "tests/hdr_producer_sdr_match.rs"
+required-features = ["__hdr-e2e-test"]
 

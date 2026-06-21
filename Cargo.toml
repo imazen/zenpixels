@@ -11,6 +11,33 @@ resolver = "2"
 [workspace.dependencies]
 zenpixels = { path = "zenpixels", version = "0.2.14", default-features = false }
 
+# Patches: only consulted when the corresponding crate is actually pulled
+# (e.g. when `zenpixels-convert`'s `__hdr-e2e-test` feature pulls
+# `zencodecs`, which transitively requires `zenjpeg >= 0.8.4 +recompress` —
+# the published 0.8.4 lacks `recompress`, but the local 0.8.7 has it). This
+# block is otherwise a no-op for default builds.
+# Patches: only consulted when the corresponding crate is actually pulled.
+# When `zenpixels-convert`'s `__hdr-e2e-test` feature pulls the local
+# `zenjpeg` it transitively requires unpublished mains of `ultrahdr-core`
+# (via `zenjpeg`'s `ultrahdr` feature) and a `zencodec` version
+# (`0.1.24`) ahead of the published 0.1.23. Both are patched in. The
+# patches are NO-OPS for default builds — cargo only consults them when
+# those crates appear in the dep graph. Deliberately omitting a
+# `zenpixels-convert` patch here so transitive `zenanalyze →
+# zenpixels-convert ^0.2.11` still resolves to the registry copy and
+# we don't form a self-cycle through the local crate.
+[patch.crates-io]
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr" }
+zencodec = { path = "../zencodec" }
+# Patch `zenpixels` to the local member so its `ColorPrimaries` enum is
+# the same type the test calls into. We deliberately do NOT patch
+# `zenpixels-convert` here — that would form a cycle through
+# `zenanalyze`. The two-version `zenpixels-convert` graph (local 0.2.15
+# for the workspace member + registry 0.2.14 for zenanalyze's transitive
+# need) is harmless because the test only ever uses the local copy
+# directly.
+zenpixels = { path = "zenpixels" }
+
 [workspace.package]
 version = "0.2.11"
 edition = "2024"
