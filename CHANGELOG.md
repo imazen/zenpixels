@@ -70,6 +70,16 @@
   (`benchmarks/orient_fast_transpose_2026-06-18.md`). Flipping a default feature
   batches here; size-sensitive builds opt out via `default-features = false`.
 
+### Workspace — deps
+
+- **Migrate to published `zencodec 0.1.24`; drop the git-rev/path patch.**
+  Removed the `[patch.crates-io] zencodec = { path = "../zencodec" }` entry now
+  that `zencodec 0.1.24` is on crates.io. The patch only affected the
+  `__hdr-e2e-test` transitive graph (no zencodec dep in default builds);
+  that graph now resolves zencodec from the registry. `ultrahdr-core` stays
+  patched to the imazen git main (still unpublished). No code changes — no
+  member implements or reads the `estimate` / `ResourceEstimate` API.
+
 ### zenpixels — added
 
 - **`ContentLightLevel::DEFAULT_PERCENTILE = 0.9999`** — public constant for
@@ -287,8 +297,9 @@
   UltraHDR sample, runs HDR through the pipeline, and pins mean ΔE2000
   < 5.0 against the producer's SDR base. The feature pulls `zenjpeg` +
   `anyhow` as test-only deps via the workspace's `[patch.crates-io]`
-  table (which routes `zencodec` to a local path and `ultrahdr-core` to
-  the imazen git main). The test silently skips when the imazen-26
+  table (which routes `ultrahdr-core` to the imazen git main; `zencodec`
+  resolves from crates.io now that 0.1.24 is published). The test
+  silently skips when the imazen-26
   corpus is absent (CI), and MUST be run on `lilith`'s machine before
   merging any pipeline-touching change. Invocation:
   `cargo test -p zenpixels-convert@0.2.15 --features __hdr-e2e-test
