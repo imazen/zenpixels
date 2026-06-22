@@ -128,6 +128,21 @@
 
 ### zenpixels-convert — added
 
+- **`HdrToSdr::convert_buffer` / `convert_into`** — buffer-level dispatch
+  wrappers around the existing linear-light `apply_strip` primitive. The
+  buffer methods auto-handle transfer (Linear / sRGB / BT.709 / PQ / HLG /
+  Gamma22), channel format (u8 / u16 / f16 / f32 × RGB | RGBA), alpha mode
+  (Straight / Premultiplied / None with α==0 short-circuited to RGB=0),
+  signal range (Full / Narrow, linear-space approximation), and source
+  diffuse-white anchor (buffer's `ColorContext::diffuse_white` wins over the
+  struct's stored value via the new `HdrToSdr::with_source_diffuse_white_nits`
+  setter). Wraps `RowConverter` for transfer + format + alpha + primaries;
+  signal-range handling is approximate in linear space (no Narrow↔Full
+  kernels exist in zenpixels-convert yet) and will tighten when those land.
+  The strip-level `apply_strip` math is unchanged — only the byte-format
+  dispatch around it is new. End-to-end producer-SDR match against a real
+  UltraHDR sample still lands at ΔE2000 = 3.16 (≤ 5.0 budget). Gated behind
+  the existing `hdr-experimental` feature.
 - **`zenpixels_convert::hdr::Bt2446A`**, **`HdrToSdr`**, **`SoftCompress`**,
   and **`GamutBoundaryLut`** — gated behind the existing `hdr-experimental`
   Cargo feature. Extracted into a single home so the canonical HDR → SDR

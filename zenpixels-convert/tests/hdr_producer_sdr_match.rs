@@ -105,22 +105,32 @@ fn producer_sdr_match_on_a_real_imazen26_sample() {
     let max_pixel_value = (SOURCE_PEAK_NITS / diffuse_white_nits).max(1.0);
     let content_norm_scale = 1.0_f32 / max_pixel_value;
 
-    let mut scratch: Vec<f32> = hdr_rgb.px.iter().map(|&v| v * content_norm_scale).collect();
+    let scratch: Vec<f32> = hdr_rgb.px.iter().map(|&v| v * content_norm_scale).collect();
 
-    // ---- Apply HdrToSdr with the HDR buffer's actual source primaries.
-    // Source descriptor uses the HDR buffer's primaries (typically BT.709
-    // for UltraHDR-derived linear-float output); target is BT.709 linear
-    // (the SDR ground-truth space), matching the comparison setup below.
-    let source_desc = PixelDescriptor::RGBF32_LINEAR.with_primaries(hdr_src_primaries);
+    // ---- Build a PixelBuffer wrapping the source-normalized HDR data,
+    // then drive the buffer-level dispatch (`convert_buffer`) for the
+    // full HDR→SDR path.
+    let source_desc = PixelDescriptor::new_full(
+        ChannelType::F32,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Linear,
+        hdr_src_primaries,
+    );
     let target_desc = PixelDescriptor::RGBF32_LINEAR;
-    let converter = HdrToSdr::new(source_desc, target_desc, SOURCE_PEAK_NITS);
-    let strip: &mut [[f32; 3]] = bytemuck::cast_slice_mut(&mut scratch);
-    converter.apply_strip(strip);
+    let scratch_bytes: Vec<u8> = bytemuck::cast_slice(&scratch).to_vec();
+    let src_buf = PixelBuffer::from_vec(scratch_bytes, hdr_rgb.width, hdr_rgb.height, source_desc)
+        .expect("from_vec src");
 
+    let converter = HdrToSdr::new(source_desc, target_desc, SOURCE_PEAK_NITS);
+    let out_buf = converter.convert_buffer(&src_buf).expect("convert_buffer");
+
+    // ---- Materialize the converted buffer back to a tight RGB f32 vec.
+    let candidate_rgb = pixel_buffer_to_linear_rgb(&out_buf).expect("linearize candidate");
     let candidate = LinearRgb {
-        width: hdr_rgb.width,
-        height: hdr_rgb.height,
-        px: scratch,
+        width: candidate_rgb.width,
+        height: candidate_rgb.height,
+        px: candidate_rgb.px,
     };
 
     // ---- Compute mean ΔE2000 against the producer SDR.

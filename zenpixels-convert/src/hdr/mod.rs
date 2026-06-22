@@ -46,6 +46,12 @@ mod gamut_compress;
 #[cfg(feature = "hdr-experimental")]
 mod hdr_to_sdr;
 
+/// Buffer-level dispatch for [`HdrToSdr`]: transfer / format / alpha /
+/// signal-range handling wrapped around the linear-light `apply_strip`
+/// primitive. Gated behind `hdr-experimental`.
+#[cfg(feature = "hdr-experimental")]
+mod buffer_dispatch;
+
 /// Re-exports of the experimental [`measure`] surface at the [`hdr`](self)
 /// boundary, so callers can write
 /// `use zenpixels_convert::hdr::CllMeasure;` instead of the full

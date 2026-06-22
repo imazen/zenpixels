@@ -49,13 +49,25 @@ use zenpixels::{ColorPrimaries, PixelDescriptor, TransferFunction};
 ///
 /// The source and target [`PixelDescriptor`]s document the buffers' color
 /// space metadata (primaries, alpha mode, signal range, format) — the
-/// descriptors are the single source of truth. [`apply_strip`](Self::apply_strip)
-/// treats input as linear-light `[f32; 3]` RGB in `source.primaries` and
-/// produces linear-light `[f32; 3]` RGB in `target.primaries`. Both
-/// descriptors **must** carry `transfer = TransferFunction::Linear`
-/// (validated at construction; a non-Linear transfer panics). Encoding the
-/// output to BT.1886 / sRGB / PQ / HLG is the caller's job. Future work
-/// will lift these constraints.
+/// descriptors are the single source of truth.
+///
+/// - [`apply_strip`](Self::apply_strip) is the **linear-light strip
+///   primitive**. It treats input as linear-light `[f32; 3]` RGB in
+///   `source.primaries` and produces linear-light `[f32; 3]` RGB in
+///   `target.primaries`. Encoding the output to BT.1886 / sRGB / PQ /
+///   HLG is the caller's job. Both descriptors **must** carry
+///   `transfer = TransferFunction::Linear` (validated at construction;
+///   a non-Linear transfer panics).
+///
+/// - [`convert_buffer`](Self::convert_buffer) /
+///   [`convert_into`](Self::convert_into) are the **buffer-level
+///   dispatchers**. They use the converter's `source.primaries` /
+///   `target.primaries` to wire up the HDR math, but read the source
+///   buffer's actual transfer / format / alpha / range from
+///   [`PixelBuffer::descriptor`] and encode the output to the
+///   destination buffer's actual descriptor. To build a converter for
+///   buffer-level use, pass `RGBF32_LINEAR` (or a typed Linear F32
+///   descriptor) carrying the relevant primaries.
 ///
 /// # Source primaries
 ///
@@ -152,6 +164,14 @@ pub struct HdrToSdr {
     source_peak_nits: f32,
     target_peak_nits: f32,
     gamut_knee: f32,
+    /// Default cd/m² that source relative-linear `1.0` represents. The
+    /// per-call effective value is read from the buffer's
+    /// `ColorContext::diffuse_white` when present, falling back to this
+    /// field. Defaults to `203.0` (BT.2408 cross-vendor convention).
+    /// Reserved for future curves that read it at conversion time — the
+    /// current `Bt2446A` math doesn't consume it (the curve's peak is
+    /// fixed at construction via `source_peak_nits`).
+    source_diffuse_white_nits: f32,
     bt2446a: Bt2446A,
     /// `None` when the source is BT.2020 (no-op step 1).
     source_to_bt2020: Option<GamutMatrix>,
@@ -255,6 +275,7 @@ impl HdrToSdr {
             source_peak_nits,
             target_peak_nits,
             gamut_knee,
+            source_diffuse_white_nits: 203.0,
             bt2446a,
             source_to_bt2020,
             bt2020_to_target,
@@ -262,6 +283,28 @@ impl HdrToSdr {
             target_m1,
             target_m1_inv,
         }
+    }
+
+    /// Replace the source diffuse-white anchor (cd/m² that
+    /// source relative-linear `1.0` represents). Defaults to `203.0` (BT.2408
+    /// cross-vendor convention). A per-call value carried on the source
+    /// buffer's
+    /// [`ColorContext::diffuse_white`](zenpixels::ColorContext::diffuse_white)
+    /// will **override** this when [`convert_buffer`](Self::convert_buffer) /
+    /// [`convert_into`](Self::convert_into) run; this field is the fallback.
+    #[must_use]
+    pub fn with_source_diffuse_white_nits(mut self, nits: f32) -> Self {
+        self.source_diffuse_white_nits = nits;
+        self
+    }
+
+    /// Source diffuse-white anchor in cd/m². See
+    /// [`with_source_diffuse_white_nits`](Self::with_source_diffuse_white_nits)
+    /// for precedence rules.
+    #[inline]
+    #[must_use]
+    pub fn source_diffuse_white_nits(&self) -> f32 {
+        self.source_diffuse_white_nits
     }
 
     /// Source pixel descriptor.
