@@ -40,8 +40,7 @@ use std::path::Path;
 
 use zenjpeg::ultrahdr::{HdrOutputFormat, decode_ultrahdr, decode_ultrahdr_hdr};
 use zenpixels::{ChannelLayout, ChannelType, PixelBuffer, PixelDescriptor, TransferFunction};
-use zenpixels_convert::PixelBufferConvertExt;
-use zenpixels_convert::hdr::HdrToSdr;
+use zenpixels_convert::{HdrConfig, PixelBufferConvertExt, PixelBufferHdrConvertExt};
 
 /// Smallest known gain-mapped sample in imazen-26 (~4000x3000 JPEG, single
 /// take, gain-map carries ~1000-nit HDR + sRGB BT.709 SDR base). Picked
@@ -100,16 +99,22 @@ fn producer_sdr_match_on_a_real_imazen26_sample() {
 
     // ---- Rescale HDR to source-peak-normalized (1.0 = SOURCE_PEAK_NITS).
     // The gain-map output uses 1.0 = SDR diffuse white = ~203 nits per
-    // ultrahdr-core; HdrToSdr's source convention is 1.0 = source peak.
+    // ultrahdr-core; the BT.2446-A curve in `ConvertPlan` expects source
+    // input where 1.0 = source peak. The tagged source descriptor has
+    // `transfer = Linear`, so no transfer-decode runs — the only work in
+    // the plan is the tone-map + soft-compress chain.
     let diffuse_white_nits = 203.0_f32;
     let max_pixel_value = (SOURCE_PEAK_NITS / diffuse_white_nits).max(1.0);
     let content_norm_scale = 1.0_f32 / max_pixel_value;
 
     let scratch: Vec<f32> = hdr_rgb.px.iter().map(|&v| v * content_norm_scale).collect();
 
-    // ---- Build a PixelBuffer wrapping the source-normalized HDR data,
-    // then drive the buffer-level dispatch (`convert_buffer`) for the
-    // full HDR→SDR path.
+    // ---- Source carries the SDR base's primaries (BT.709 on this sample).
+    // Target is RGB F32 Linear in BT.709 so the comparison axis is
+    // apples-to-apples in linear-light. The HDR-aware plan inserts a
+    // BT.709→BT.2020 matrix, the BT.2446-A curve in BT.2020, the
+    // BT.2020→BT.709 matrix, and OKLch soft compress in BT.709 — same
+    // composition as the pre-refactor `HdrToSdr::convert_buffer`.
     let source_desc = PixelDescriptor::new_full(
         ChannelType::F32,
         ChannelLayout::Rgb,
@@ -122,8 +127,14 @@ fn producer_sdr_match_on_a_real_imazen26_sample() {
     let src_buf = PixelBuffer::from_vec(scratch_bytes, hdr_rgb.width, hdr_rgb.height, source_desc)
         .expect("from_vec src");
 
-    let converter = HdrToSdr::new(source_desc, target_desc, SOURCE_PEAK_NITS);
-    let out_buf = converter.convert_buffer(&src_buf).expect("convert_buffer");
+    // The new entry point: ConvertPlan-driven, no parallel API surface.
+    let hdr_cfg = HdrConfig {
+        source_peak_nits: SOURCE_PEAK_NITS,
+        ..HdrConfig::default()
+    };
+    let out_buf = src_buf
+        .convert_to_with_hdr_config(target_desc, hdr_cfg)
+        .expect("convert_to_with_hdr_config");
 
     // ---- Materialize the converted buffer back to a tight RGB f32 vec.
     let candidate_rgb = pixel_buffer_to_linear_rgb(&out_buf).expect("linearize candidate");

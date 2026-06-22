@@ -391,8 +391,10 @@ mod tests {
     #[test]
     fn cross_trc_conversion() {
         let cms = ZenCmsLite;
-        // BT.2020 PQ → sRGB: different primaries AND different TRC
-        let src = ColorProfileSource::Named(NamedProfile::Bt2020Pq);
+        // BT.2020 BT.1886-gamma → sRGB: different primaries AND different TRC
+        // (was BT.2020 PQ → sRGB pre-0.2.16 — that now errors loudly via the
+        // HDR-requires-peak refusal, since cms_lite has no source-peak input).
+        let src = ColorProfileSource::Named(NamedProfile::Bt2020);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
         let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
         assert!(result.is_some());

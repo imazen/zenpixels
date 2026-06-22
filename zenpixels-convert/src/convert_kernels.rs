@@ -303,6 +303,169 @@ pub(super) fn apply_step_u8(
                 crate::fast_gamut::srgb_enc_lut_u8(),
             );
         }
+
+        #[cfg(feature = "hdr-experimental")]
+        ConvertStep::ToneMapBt2446A {
+            source_peak_nits,
+            target_peak_nits,
+        } => {
+            tone_map_bt2446a_kernel(src, dst, w, from, *source_peak_nits, *target_peak_nits);
+        }
+
+        #[cfg(feature = "hdr-experimental")]
+        ConvertStep::SoftCompressOklch { primaries, knee } => {
+            soft_compress_oklch_kernel(src, dst, w, from, *primaries, *knee);
+        }
+    }
+}
+
+/// Apply the BT.2446 Method A tone curve to a row of linear-light F32 RGB(A)
+/// pixels in BT.2020 primaries.
+///
+/// The carrier layout (RGB vs RGBA) is read from `from.layout()`. For RGBA,
+/// the alpha channel is copied through verbatim. Input is scrubbed for
+/// non-finite values and negatives; output is clamped to `[0, 1]` to absorb
+/// f32 epsilon-level overshoot at the saturated end.
+//
+// `needless_range_loop` would flatten the loops to iter_mut() + enumerate
+// over the strip — but each iter writes BOTH `rgb_strip[p]` and the parallel
+// `dst_f32[p * channels + 3]` (alpha passthrough), so the index-based form
+// is the readable shape. Same logic applies in the SoftCompress kernel
+// below; suppress for the whole function rather than per-loop.
+#[cfg(feature = "hdr-experimental")]
+#[allow(clippy::needless_range_loop)]
+fn tone_map_bt2446a_kernel(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    from: PixelDescriptor,
+    source_peak_nits: f32,
+    target_peak_nits: f32,
+) {
+    let curve = crate::hdr::Bt2446A::new(source_peak_nits, target_peak_nits);
+    let has_alpha = from.layout().has_alpha();
+    let channels = if has_alpha { 4 } else { 3 };
+    let src_f32: &[f32] = bytemuck::cast_slice(src);
+    let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
+
+    if has_alpha {
+        // RGBA: extract RGB triples into a scratch strip, run the SIMD
+        // curve, write back while passing alpha through verbatim. The
+        // scratch keeps the SIMD kernel's contiguous `[[f32; 3]]` shape.
+        use alloc::vec;
+        let mut rgb_strip: alloc::vec::Vec<[f32; 3]> = vec![[0.0; 3]; width];
+        for p in 0..width {
+            let base = p * channels;
+            let r = src_f32[base];
+            let g = src_f32[base + 1];
+            let b = src_f32[base + 2];
+            // Scrub non-finite / negatives — matches the prior HdrToSdr
+            // contract so consumers see clean linear-light values.
+            let r = if r.is_finite() && r >= 0.0 { r } else { 0.0 };
+            let g = if g.is_finite() && g >= 0.0 { g } else { 0.0 };
+            let b = if b.is_finite() && b >= 0.0 { b } else { 0.0 };
+            rgb_strip[p] = [r, g, b];
+        }
+        curve.map_strip_simd(&mut rgb_strip);
+        for p in 0..width {
+            let base = p * channels;
+            let [r, g, b] = rgb_strip[p];
+            // Final clamp absorbs BT.2446-A's near-peak ~1e-4 overshoot
+            // (matches the prior HdrToSdr final-clamp postcondition).
+            dst_f32[base] = if r.is_finite() {
+                r.clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            dst_f32[base + 1] = if g.is_finite() {
+                g.clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            dst_f32[base + 2] = if b.is_finite() {
+                b.clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            // Alpha passthrough.
+            dst_f32[base + 3] = src_f32[base + 3];
+        }
+    } else {
+        // RGB: cast straight to `[[f32; 3]]` and apply in-place after
+        // copying src → dst. The SIMD curve is in-place.
+        let n_floats = width * 3;
+        dst_f32[..n_floats].copy_from_slice(&src_f32[..n_floats]);
+        let strip: &mut [[f32; 3]] = bytemuck::cast_slice_mut(&mut dst_f32[..n_floats]);
+        for px in strip.iter_mut() {
+            for c in px.iter_mut() {
+                if !c.is_finite() || *c < 0.0 {
+                    *c = 0.0;
+                }
+            }
+        }
+        curve.map_strip_simd(strip);
+        for px in strip.iter_mut() {
+            for c in px.iter_mut() {
+                if !c.is_finite() {
+                    *c = 0.0;
+                } else {
+                    *c = c.clamp(0.0, 1.0);
+                }
+            }
+        }
+    }
+}
+
+/// OKLch soft chroma compression on a row of linear-light F32 RGB(A) pixels
+/// in `primaries`. Alpha (when present) is copied through verbatim.
+//
+// Same justification for `needless_range_loop` as in
+// `tone_map_bt2446a_kernel`.
+#[cfg(feature = "hdr-experimental")]
+#[allow(clippy::needless_range_loop)]
+fn soft_compress_oklch_kernel(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    from: PixelDescriptor,
+    primaries: ColorPrimaries,
+    knee: f32,
+) {
+    // Resolve target-primaries OKLab matrices once per row. Identical to
+    // SoftCompress::new but without rebuilding the LUT each call — the
+    // LUT is content-free and cheap to construct (a few KB lookup).
+    let m1 = crate::oklab::rgb_to_lms_matrix(primaries)
+        .expect("target primaries have a defined LMS matrix");
+    let m1_inv = crate::oklab::lms_to_rgb_matrix(primaries)
+        .expect("target primaries have a defined inverse LMS matrix");
+    let compressor = crate::hdr::SoftCompress::from_matrices(&m1, &m1_inv, knee);
+
+    let has_alpha = from.layout().has_alpha();
+    let channels = if has_alpha { 4 } else { 3 };
+    let src_f32: &[f32] = bytemuck::cast_slice(src);
+    let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
+
+    if has_alpha {
+        use alloc::vec;
+        let mut rgb_strip: alloc::vec::Vec<[f32; 3]> = vec![[0.0; 3]; width];
+        for p in 0..width {
+            let base = p * channels;
+            rgb_strip[p] = [src_f32[base], src_f32[base + 1], src_f32[base + 2]];
+        }
+        compressor.apply_strip(&mut rgb_strip);
+        for p in 0..width {
+            let base = p * channels;
+            let [r, g, b] = rgb_strip[p];
+            dst_f32[base] = r;
+            dst_f32[base + 1] = g;
+            dst_f32[base + 2] = b;
+            dst_f32[base + 3] = src_f32[base + 3];
+        }
+    } else {
+        let n_floats = width * 3;
+        dst_f32[..n_floats].copy_from_slice(&src_f32[..n_floats]);
+        let strip: &mut [[f32; 3]] = bytemuck::cast_slice_mut(&mut dst_f32[..n_floats]);
+        compressor.apply_strip(strip);
     }
 }
 

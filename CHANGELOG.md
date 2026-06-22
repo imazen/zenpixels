@@ -128,6 +128,47 @@
 
 ### zenpixels-convert — added
 
+- **`ConvertPlan::new_with_hdr_peak(from, to, source_peak_nits)` +
+  `ConvertPlan::new_with_hdr_config(from, to, HdrConfig)`** — HDR→SDR
+  conversions are now native steps in the standard `ConvertPlan`
+  infrastructure (new `ConvertStep::ToneMapBt2446A` and
+  `ConvertStep::SoftCompressOklch` variants), composed alongside the
+  existing transfer / depth / gamut steps. The plan still runs through the
+  same `RowConverter` / `convert_row` pipeline as every other conversion
+  in the crate — no parallel API surface. **`HdrConfig { source_peak_nits,
+  target_peak_nits: 100, gamut_knee: 0.9 }`** carries the BT.2446-A and
+  soft-compress knobs. Wide-gamut output mode (target primaries = BT.2020)
+  skips the post-curve gamut matrix and the OKLch compress step
+  automatically. The end-to-end producer-SDR ΔE2000 against the imazen-26
+  UltraHDR sample is **3.16** (matches the deleted `HdrToSdr` pipeline).
+  Gated behind the existing `hdr-experimental` feature.
+- **`PixelBufferHdrConvertExt`** — extension trait on `PixelBuffer` with
+  `convert_to_sdr(target)` (auto-measures source peak via
+  `CllMeasure::measure_robust`) and `convert_to_with_hdr_config(target,
+  HdrConfig)` (explicit knobs). Both route through the new
+  `ConvertPlan::new_with_hdr_config` path. Gated behind `hdr-experimental`.
+
+### zenpixels-convert — removed
+
+- **`zenpixels_convert::hdr::HdrToSdr`** and its `buffer_dispatch.rs` glue
+  — ~2,400 LOC of parallel API surface folded into the standard
+  `ConvertPlan` infrastructure (above). Net deletion: ~1,300 LOC. The
+  underlying math primitives (`Bt2446A`, `SoftCompress`,
+  `GamutBoundaryLut`) stay public for advanced callers who want to drive
+  the curves directly.
+
+### zenpixels-convert — changed (BREAKING, gated by `hdr-experimental`)
+
+- **`ConvertPlan::new` now refuses HDR-encoded → SDR-encoded conversions**
+  (`Pq` / `Hlg` source → `Srgb` / `Bt709` / `Gamma22` target) with a new
+  `ConvertError::HdrSourceRequiresPeak` variant, and points the caller at
+  `ConvertPlan::new_with_hdr_peak`. Pre-refactor the plain plan silently
+  routed those through a linear intermediate with no tone-mapping,
+  saturating every HDR sample above SDR diffuse-white to peak. HDR→Linear
+  paths (lossless transfer decode) stay allowed via the regular `new`
+  entry. Only fires under `hdr-experimental`; without the feature the
+  historic pass-through behavior is preserved.
+
 - **`HdrToSdr::convert_buffer` / `convert_into`** — buffer-level dispatch
   wrappers around the existing linear-light `apply_strip` primitive. The
   buffer methods auto-handle transfer (Linear / sRGB / BT.709 / PQ / HLG /

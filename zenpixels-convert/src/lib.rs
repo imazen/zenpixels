@@ -480,6 +480,8 @@ mod scan;
 
 // Re-export key conversion types at crate root.
 pub use adapt::{adapt_for_encode_explicit, try_adapt_in_place};
+#[cfg(feature = "hdr-experimental")]
+pub use convert::HdrConfig;
 pub use convert::{ConvertPlan, convert_row};
 pub use converter::RowConverter;
 pub use error::ConvertError;
@@ -496,6 +498,8 @@ pub use pipeline::{
 // Re-export extension traits.
 #[cfg(feature = "rgb")]
 pub use ext::PixelBufferConvertTypedExt;
+#[cfg(feature = "hdr-experimental")]
+pub use ext::PixelBufferHdrConvertExt;
 pub use ext::{ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
 
 // Re-export gamut conversion utilities.

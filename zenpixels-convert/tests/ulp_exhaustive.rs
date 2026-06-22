@@ -932,6 +932,7 @@ fn ulp_hlg_eotf_monotonic() {
 // ═══════════════════════════════════════════════════════════════════════
 
 #[test]
+#[cfg(feature = "hdr-experimental")]
 fn ulp_pq_to_srgb_basic() {
     use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
@@ -948,7 +949,10 @@ fn ulp_pq_to_srgb_basic() {
         TransferFunction::Srgb,
     );
 
-    let plan = ConvertPlan::new(pq_u16, srgb_u8).expect("PQ U16 → sRGB U8 plan");
+    // Plain `ConvertPlan::new` refuses HDR→SDR (no source peak); the
+    // HDR-aware constructor builds a tone-mapped plan instead.
+    let plan =
+        ConvertPlan::new_with_hdr_peak(pq_u16, srgb_u8, 1000.0).expect("PQ U16 → sRGB U8 HDR plan");
 
     // PQ code 0 → sRGB 0
     let input_0: [u8; 6] = [0; 6]; // 3 × u16(0)
@@ -961,12 +965,11 @@ fn ulp_pq_to_srgb_basic() {
     let input_mid: [u8; 6] = bytemuck::cast([mid_val, mid_val, mid_val]);
     let mut out_mid = [0u8; 3];
     convert_row(&plan, &input_mid, &mut out_mid, 1);
-    // The exact value depends on the PQ→linear→sRGB chain
     println!(
         "PQ({mid_val}) → sRGB: [{}, {}, {}]",
         out_mid[0], out_mid[1], out_mid[2]
     );
-    // Should be a reasonable SDR value, not 0 and not 255
+    // Should be a reasonable SDR value, not 0 and not 255.
     assert!(
         out_mid[0] > 10 && out_mid[0] < 255,
         "PQ(33280) → sRGB should be a moderate value, got {}",

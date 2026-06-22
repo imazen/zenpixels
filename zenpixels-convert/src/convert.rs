@@ -16,6 +16,67 @@ use crate::{
 };
 use whereat::{At, ResultAtExt};
 
+/// HDR→SDR tone-mapping configuration for
+/// [`ConvertPlan::new_with_hdr_config`].
+///
+/// Bundles the source-peak luminance (mandatory — the curve is
+/// parameterized by it), target-peak luminance (typically 100 cd/m² for
+/// SDR), and the OKLch soft chroma-compression knee (typically `0.9`).
+#[cfg(feature = "hdr-experimental")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HdrConfig {
+    /// HDR source peak luminance in cd/m². The BT.2446-A curve treats
+    /// `1.0` source-normalized as this peak. Typical values: 1000 (HDR10,
+    /// Apple HDR), 4000 (HDR10+ reference), 10000 (PQ peak).
+    pub source_peak_nits: f32,
+    /// SDR target peak luminance in cd/m². Typical value: 100 (BT.709 /
+    /// sRGB diffuse-white peak; BT.1886 reference).
+    pub target_peak_nits: f32,
+    /// Fraction of max chroma where OKLch soft compression kicks in
+    /// (`0.0`–`1.0`). `0.9` (the default) compresses only the outermost
+    /// 10 % of the gamut; lower values bring the compression in earlier.
+    /// Ignored when the target primaries are BT.2020 (wide-gamut output
+    /// mode emits no `SoftCompressOklch` step).
+    pub gamut_knee: f32,
+}
+
+#[cfg(feature = "hdr-experimental")]
+impl Default for HdrConfig {
+    /// Pipeline defaults: `target_peak_nits = 100.0` (SDR reference white)
+    /// and `gamut_knee = 0.9`. `source_peak_nits` has no default —
+    /// callers must set it explicitly. Returns `source_peak_nits = 0.0`;
+    /// override before passing to
+    /// [`ConvertPlan::new_with_hdr_config`].
+    fn default() -> Self {
+        Self {
+            source_peak_nits: 0.0,
+            target_peak_nits: 100.0,
+            gamut_knee: 0.9,
+        }
+    }
+}
+
+/// True when `(from.transfer, to.transfer)` describes an HDR→SDR
+/// transition that requires the BT.2446-A tone map step.
+///
+/// PQ / HLG source to an SDR-encoded target (`Srgb` / `Bt709` /
+/// `Gamma22`). The `Linear` target is **not** considered SDR here —
+/// decoding a PQ buffer to relative-linear F32 preserves the data
+/// losslessly (the value is just in a different transfer-function
+/// representation), and the caller may downstream apply their own
+/// tone mapping or carry the wide dynamic range through. HLG↔PQ is
+/// handled by the dedicated refusal upstream (different luminance
+/// domains, no straight tone-map path).
+#[cfg(feature = "hdr-experimental")]
+fn is_hdr_to_sdr(from: TransferFunction, to: TransferFunction) -> bool {
+    let src_is_hdr = matches!(from, TransferFunction::Pq | TransferFunction::Hlg);
+    let dst_is_sdr_encoded = matches!(
+        to,
+        TransferFunction::Srgb | TransferFunction::Bt709 | TransferFunction::Gamma22
+    );
+    src_is_hdr && dst_is_sdr_encoded
+}
+
 /// Pre-computed conversion plan.
 ///
 /// Stores the chain of steps needed to convert from one format to another.
@@ -182,6 +243,33 @@ pub(crate) enum ConvertStep {
     /// Fused linear-f32 → u8-sRGB RGB primaries conversion (cross-depth).
     /// Always clamps since u8 can't represent out-of-gamut values.
     FusedLinearF32ToSrgbU8Rgb([f32; 9]),
+    /// BT.2446 Method A HDR→SDR tone-map on linear-light f32 RGB in BT.2020
+    /// primaries. The plan builder ensures this step sees BT.2020 linear-light
+    /// input via preceding gamut-matrix steps; a following gamut-matrix step
+    /// (BT.2020 → target.primaries) handles the destination primaries.
+    /// Input is source-normalized (`1.0 = source_peak_nits`); output is
+    /// target-normalized (`1.0 = target_peak_nits`). RGB-only — alpha is
+    /// handled at descriptor-layout level (the planner pairs this with the
+    /// appropriate RGB/RGBA carrier).
+    ///
+    /// Gated behind `hdr-experimental` at the kernel side.
+    #[cfg(feature = "hdr-experimental")]
+    ToneMapBt2446A {
+        source_peak_nits: f32,
+        target_peak_nits: f32,
+    },
+    /// OKLch soft chroma compression on linear-light f32 RGB in
+    /// `primaries`. Pulls residual out-of-gamut excursions back into the
+    /// target unit cube using a hue-preserving rational knee curve.
+    /// Skipped (no step emitted) when the target is BT.2020 — the
+    /// wide-gamut output mode.
+    ///
+    /// Gated behind `hdr-experimental` at the kernel side.
+    #[cfg(feature = "hdr-experimental")]
+    SoftCompressOklch {
+        primaries: ColorPrimaries,
+        knee: f32,
+    },
 }
 
 impl core::fmt::Debug for ConvertStep {
@@ -259,6 +347,21 @@ impl core::fmt::Debug for ConvertStep {
             Self::FusedLinearF32ToSrgbU8Rgb(m) => {
                 f.debug_tuple("FusedLinearF32ToSrgbU8Rgb").field(m).finish()
             }
+            #[cfg(feature = "hdr-experimental")]
+            Self::ToneMapBt2446A {
+                source_peak_nits,
+                target_peak_nits,
+            } => f
+                .debug_struct("ToneMapBt2446A")
+                .field("source_peak_nits", source_peak_nits)
+                .field("target_peak_nits", target_peak_nits)
+                .finish(),
+            #[cfg(feature = "hdr-experimental")]
+            Self::SoftCompressOklch { primaries, knee } => f
+                .debug_struct("SoftCompressOklch")
+                .field("primaries", primaries)
+                .field("knee", knee)
+                .finish(),
         }
     }
 }
@@ -357,6 +460,25 @@ impl ConvertPlan {
                 | (TransferFunction::Pq, TransferFunction::Hlg)
         ) {
             return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+
+        // Refuse HDR → SDR through the plain entry point. The plain plan
+        // builder has no source-peak luminance to thread into the BT.2446-A
+        // curve, and silently routing through `Pq U16 → Linear F32 →
+        // Linear F32 (no tone map) → target` would produce semantically
+        // wrong pixels (any HDR sample above SDR diffuse-white saturates
+        // to 1.0). Force the caller to use the tone-mapped entry point.
+        // HLG↔PQ already refused above; this catches HDR→{Linear, Srgb,
+        // Bt709, Gamma22}. Under `hdr-experimental` only — without it
+        // the variant doesn't exist and the historic pass-through
+        // behavior is preserved as a deliberate semi-compatibility
+        // shim for legacy non-HDR builds.
+        #[cfg(feature = "hdr-experimental")]
+        if is_hdr_to_sdr(from.transfer(), to.transfer()) {
+            return Err(whereat::at!(ConvertError::HdrSourceRequiresPeak {
+                from,
+                to,
+            }));
         }
 
         let mut steps = Vec::with_capacity(3);
@@ -659,6 +781,253 @@ impl ConvertPlan {
         // Peephole fusion: collapse common 3-step patterns into single fused
         // kernels that avoid scratch-buffer round-trips.
         fuse_matlut_patterns(&mut steps);
+
+        Ok(Self::build(from, to, steps))
+    }
+
+    /// Create an HDR→SDR conversion plan with the given source-peak
+    /// luminance.
+    ///
+    /// Equivalent to [`ConvertPlan::new_with_hdr_config`] called with
+    /// `HdrConfig { source_peak_nits, target_peak_nits: 100.0, gamut_knee: 0.9 }`.
+    ///
+    /// The plan inserts a [`Bt2446A`](crate::hdr::Bt2446A) tone-map step
+    /// (and an OKLch soft-compress step for non-BT.2020 targets) into the
+    /// usual transfer / depth / gamut chain. Non-HDR conversions go through
+    /// the same path as [`ConvertPlan::new`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`ConvertPlan::new`] for non-HDR conversions. For HDR
+    /// sources the rejection list shrinks by one ([`HdrSourceRequiresPeak`]
+    /// is no longer raised — peak is supplied).
+    ///
+    /// [`HdrSourceRequiresPeak`]: ConvertError::HdrSourceRequiresPeak
+    ///
+    /// # Panics
+    ///
+    /// Same panics as [`ConvertPlan::new`] (CMYK descriptors).
+    #[cfg(feature = "hdr-experimental")]
+    #[track_caller]
+    pub fn new_with_hdr_peak(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        source_peak_nits: f32,
+    ) -> Result<Self, At<ConvertError>> {
+        Self::new_with_hdr_config(
+            from,
+            to,
+            HdrConfig {
+                source_peak_nits,
+                ..HdrConfig::default()
+            },
+        )
+    }
+
+    /// Create an HDR→SDR conversion plan with full knob control.
+    ///
+    /// On HDR→SDR conversions (`Pq` / `Hlg` source → SDR target, OR a
+    /// `Linear` source where the caller declares HDR semantics via this
+    /// constructor) inserts:
+    ///
+    /// 1. HDR transfer decode (PQ/HLG → linear) — same kernels as
+    ///    [`ConvertPlan::new`]. Skipped when the source is already
+    ///    `Linear`.
+    /// 2. Source primaries → BT.2020 matrix (skipped when source is BT.2020).
+    /// 3. [`ToneMapBt2446A`] step (the BT.2446 Method A curve operating in
+    ///    BT.2020 RGB).
+    /// 4. BT.2020 → target primaries matrix (skipped when target is BT.2020).
+    /// 5. [`SoftCompressOklch`] step (skipped when target is BT.2020 —
+    ///    wide-gamut output mode preserves chroma).
+    /// 6. Linear → target transfer encode + any depth conversion (sRGB u8,
+    ///    BT.1886 f32, etc.) — same kernels as [`ConvertPlan::new`].
+    ///
+    /// For sources that are obviously SDR (`Srgb` / `Bt709` / `Gamma22`)
+    /// the `hdr` argument is ignored and this returns the same plan
+    /// [`ConvertPlan::new`] would build — no tone-map gets injected into
+    /// a path that doesn't need one.
+    ///
+    /// [`ToneMapBt2446A`]: crate::convert::ConvertStep::ToneMapBt2446A
+    /// [`SoftCompressOklch`]: crate::convert::ConvertStep::SoftCompressOklch
+    ///
+    /// # Errors
+    ///
+    /// Same as [`ConvertPlan::new`] for non-HDR conversions. For HDR
+    /// sources the rejection list shrinks by one ([`HdrSourceRequiresPeak`]
+    /// is no longer raised — peak is supplied via `hdr.source_peak_nits`).
+    ///
+    /// [`HdrSourceRequiresPeak`]: ConvertError::HdrSourceRequiresPeak
+    ///
+    /// # Panics
+    ///
+    /// Same panics as [`ConvertPlan::new`] (CMYK descriptors).
+    #[cfg(feature = "hdr-experimental")]
+    #[track_caller]
+    pub fn new_with_hdr_config(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        hdr: HdrConfig,
+    ) -> Result<Self, At<ConvertError>> {
+        assert_not_cmyk(&from);
+        assert_not_cmyk(&to);
+        // SDR source paths take the regular plan path — calling the
+        // HDR-aware constructor on (e.g.) sRGB → sRGB shouldn't force a
+        // tone map. The HDR pipeline runs for PQ/HLG sources AND for
+        // `Linear` sources (the caller may have a Linear-tagged
+        // gain-map-reconstructed HDR buffer; the constructor's name is
+        // the opt-in signal).
+        let src_is_sdr_encoded = matches!(
+            from.transfer(),
+            TransferFunction::Srgb | TransferFunction::Bt709 | TransferFunction::Gamma22
+        );
+        if src_is_sdr_encoded {
+            return Self::new(from, to);
+        }
+        // Note: do NOT early-return on `from == to`. The HDR-aware
+        // constructor is the caller's opt-in signal that the source carries
+        // HDR semantics — even when the source and target descriptors are
+        // byte-identical (e.g. both `RGBF32_LINEAR`), the tone-map +
+        // gamut-compress chain still needs to run. Identity bytes-out
+        // would silently skip the HDR work the constructor was called to
+        // perform.
+
+        // Same signal-range posture as `new` — Narrow↔Full crossings refuse
+        // because no kernels exist yet.
+        if from.signal_range != to.signal_range {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+
+        // The pipeline: src → linear-F32-in-source-primaries → (source→BT.2020)
+        // → ToneMap → (BT.2020→target) → SoftCompress → target-encode.
+        // The intermediate descriptor between steps is linear-light F32 in
+        // some primaries, with the source's layout (RGB or RGBA) carried
+        // through (alpha passthrough at every step). We let the existing
+        // depth_steps build the decode side, then append our HDR steps,
+        // then let the existing encode chain finish.
+        let mut steps: Vec<ConvertStep> = Vec::with_capacity(8);
+
+        // ---- (a) Decode source transfer → F32 linear. Reuse `depth_steps`
+        // with intermediate target = (F32, source.layout(), source.alpha(),
+        // Linear) — this emits the right PQ/HLG/cross-depth kernels.
+        let after_decode = PixelDescriptor::new(
+            ChannelType::F32,
+            from.layout(),
+            from.alpha(),
+            TransferFunction::Linear,
+        );
+        steps.extend(
+            depth_steps(
+                from.channel_type(),
+                ChannelType::F32,
+                from.transfer(),
+                TransferFunction::Linear,
+            )
+            .map_err(|e| whereat::at!(e))?,
+        );
+
+        // ---- (b) Source primaries → BT.2020 (skip when source IS BT.2020).
+        if from.primaries != ColorPrimaries::Bt2020
+            && let Some(matrix) =
+                crate::gamut::conversion_matrix(from.primaries, ColorPrimaries::Bt2020)
+        {
+            let flat = [
+                matrix[0][0],
+                matrix[0][1],
+                matrix[0][2],
+                matrix[1][0],
+                matrix[1][1],
+                matrix[1][2],
+                matrix[2][0],
+                matrix[2][1],
+                matrix[2][2],
+            ];
+            let step = if after_decode.layout().has_alpha() {
+                ConvertStep::GamutMatrixRgbaF32(flat)
+            } else {
+                ConvertStep::GamutMatrixRgbF32(flat)
+            };
+            steps.push(step);
+        }
+
+        // ---- (c) BT.2446 Method A tone map (BT.2020 HDR → BT.2020 SDR).
+        steps.push(ConvertStep::ToneMapBt2446A {
+            source_peak_nits: hdr.source_peak_nits,
+            target_peak_nits: hdr.target_peak_nits,
+        });
+
+        // ---- (d) BT.2020 → target primaries (skip when target IS BT.2020).
+        if to.primaries != ColorPrimaries::Bt2020
+            && to.primaries != ColorPrimaries::Unknown
+            && let Some(matrix) =
+                crate::gamut::conversion_matrix(ColorPrimaries::Bt2020, to.primaries)
+        {
+            let flat = [
+                matrix[0][0],
+                matrix[0][1],
+                matrix[0][2],
+                matrix[1][0],
+                matrix[1][1],
+                matrix[1][2],
+                matrix[2][0],
+                matrix[2][1],
+                matrix[2][2],
+            ];
+            let step = if after_decode.layout().has_alpha() {
+                ConvertStep::GamutMatrixRgbaF32(flat)
+            } else {
+                ConvertStep::GamutMatrixRgbF32(flat)
+            };
+            steps.push(step);
+        }
+
+        // ---- (e) OKLch soft chroma compression (skip when target IS BT.2020;
+        // wide-gamut output mode preserves chroma).
+        if to.primaries != ColorPrimaries::Bt2020 && to.primaries != ColorPrimaries::Unknown {
+            steps.push(ConvertStep::SoftCompressOklch {
+                primaries: to.primaries,
+                knee: hdr.gamut_knee,
+            });
+        }
+
+        // ---- (f) Layout conversion (e.g., RGBA→RGB DropAlpha), if any.
+        // After the HDR steps we're still in (F32, from.layout(), from.alpha(),
+        // Linear) carrying target.primaries (last gamut matrix updated them).
+        if from.layout() != to.layout() {
+            steps.extend(layout_steps(from.layout(), to.layout()));
+        }
+
+        // ---- (g) Linear F32 → target transfer + depth. Re-use depth_steps
+        // for the F32 → target.channel_type leg with the encode TF.
+        let need_depth_or_tf_encode =
+            to.channel_type() != ChannelType::F32 || to.transfer() != TransferFunction::Linear;
+        if need_depth_or_tf_encode {
+            steps.extend(
+                depth_steps(
+                    ChannelType::F32,
+                    to.channel_type(),
+                    TransferFunction::Linear,
+                    to.transfer(),
+                )
+                .map_err(|e| whereat::at!(e))?,
+            );
+        }
+
+        // ---- (h) Alpha mode (Straight↔Premultiplied).
+        if from.alpha() != to.alpha() && from.alpha().is_some() && to.alpha().is_some() {
+            match (from.alpha(), to.alpha()) {
+                (Some(AlphaMode::Straight), Some(AlphaMode::Premultiplied)) => {
+                    steps.push(ConvertStep::StraightToPremul);
+                }
+                (Some(AlphaMode::Premultiplied), Some(AlphaMode::Straight)) => {
+                    steps.push(ConvertStep::PremulToStraight);
+                }
+                _ => {}
+            }
+        }
+
+        if steps.is_empty() {
+            steps.push(ConvertStep::Identity);
+        }
 
         Ok(Self::build(from, to, steps))
     }
@@ -1831,6 +2200,15 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.alpha(),
             current.transfer(),
         ),
+        // HDR steps. Both operate on linear-light F32 RGB and preserve the
+        // layout/alpha/transfer/depth of the carrier. ToneMapBt2446A operates
+        // in BT.2020 (planner-enforced); SoftCompressOklch operates in the
+        // step's stored `primaries`. Neither step changes the descriptor
+        // shape — they only update pixel values.
+        #[cfg(feature = "hdr-experimental")]
+        ConvertStep::ToneMapBt2446A { .. } => current,
+        #[cfg(feature = "hdr-experimental")]
+        ConvertStep::SoftCompressOklch { .. } => current,
     }
 }
 
@@ -1838,3 +2216,153 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
 mod convert_kernels;
 use convert_kernels::apply_step_u8;
 pub(crate) use convert_kernels::{hlg_eotf, hlg_oetf, pq_eotf, pq_oetf};
+
+#[cfg(all(test, feature = "hdr-experimental"))]
+mod hdr_plan_tests {
+    //! Unit tests pinning the HDR-aware `ConvertPlan` against the same math
+    //! the deleted `HdrToSdr::apply_strip` ran. Keeps the e2e ΔE2000 budget
+    //! grounded in per-pixel parity rather than only the imazen-26 sample.
+    use super::*;
+    use crate::gamut::{apply_matrix_f32, conversion_matrix};
+    use crate::hdr::{Bt2446A, SoftCompress};
+    use crate::oklab;
+
+    /// Reproduce the strip math of the deleted `HdrToSdr::apply_strip` for
+    /// a BT.709 (linear) → BT.709 (linear) pipeline at 1000 nit source peak.
+    fn reference_pipeline(input: [f32; 3]) -> [f32; 3] {
+        let mut px = [input];
+        // Scrub.
+        for c in px[0].iter_mut() {
+            if !c.is_finite() || *c < 0.0 {
+                *c = 0.0;
+            }
+        }
+        // Source primaries → BT.2020.
+        let m_src = conversion_matrix(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
+        for p in px.iter_mut() {
+            apply_matrix_f32(p, &m_src);
+        }
+        // BT.2446-A curve in BT.2020.
+        Bt2446A::new(1000.0, 100.0).map_strip_simd(&mut px);
+        // BT.2020 → target primaries.
+        let m_dst = conversion_matrix(ColorPrimaries::Bt2020, ColorPrimaries::Bt709).unwrap();
+        for p in px.iter_mut() {
+            apply_matrix_f32(p, &m_dst);
+        }
+        // OKLch soft compress in target primaries.
+        let m1 = oklab::rgb_to_lms_matrix(ColorPrimaries::Bt709).unwrap();
+        let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).unwrap();
+        let compressor = SoftCompress::from_matrices(&m1, &m1_inv, 0.9);
+        compressor.apply_strip(&mut px);
+        // Final clamp.
+        for c in px[0].iter_mut() {
+            if !c.is_finite() {
+                *c = 0.0;
+            } else {
+                *c = c.clamp(0.0, 1.0);
+            }
+        }
+        px[0]
+    }
+
+    /// Single-pixel sanity using the same entry the e2e test uses
+    /// (`PixelBufferHdrConvertExt::convert_to_with_hdr_config`) — pin
+    /// that the user-facing extension method routes through the same
+    /// kernels the manual reference uses.
+    #[test]
+    fn pixel_buffer_hdr_convert_matches_reference_pipeline() {
+        use crate::PixelBufferHdrConvertExt;
+        use zenpixels::PixelBuffer;
+        let src = PixelDescriptor::new_full(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Linear,
+            ColorPrimaries::Bt709,
+        );
+        let to = PixelDescriptor::new_full(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Linear,
+            ColorPrimaries::Bt709,
+        );
+        let hdr = HdrConfig {
+            source_peak_nits: 1000.0,
+            target_peak_nits: 100.0,
+            gamut_knee: 0.9,
+        };
+        let inputs = [
+            [0.0_f32, 0.0, 0.0],
+            [0.18, 0.18, 0.18],
+            [1.0, 1.0, 1.0],
+            [0.5, 0.3, 0.1],
+        ];
+        for inp in inputs {
+            let expected = reference_pipeline(inp);
+            let bytes: Vec<u8> = bytemuck::cast_slice(&inp).to_vec();
+            let buf = PixelBuffer::from_vec(bytes, 1, 1, src).unwrap();
+            let out = buf.convert_to_with_hdr_config(to, hdr).expect("convert");
+            let out_bytes = out.copy_to_contiguous_bytes();
+            let got: &[f32] = bytemuck::cast_slice(&out_bytes);
+            for k in 0..3 {
+                let diff = (expected[k] - got[k]).abs();
+                assert!(
+                    diff < 5e-4,
+                    "ext channel {k} for input {inp:?}: expected {} vs got {} (diff {})",
+                    expected[k],
+                    got[k],
+                    diff,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hdr_plan_matches_reference_pipeline_for_bt709_linear_targets() {
+        let src = PixelDescriptor::new_full(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Linear,
+            ColorPrimaries::Bt709,
+        );
+        let to = PixelDescriptor::new_full(
+            ChannelType::F32,
+            ChannelLayout::Rgb,
+            None,
+            TransferFunction::Linear,
+            ColorPrimaries::Bt709,
+        );
+        let hdr = HdrConfig {
+            source_peak_nits: 1000.0,
+            target_peak_nits: 100.0,
+            gamut_knee: 0.9,
+        };
+        let plan = ConvertPlan::new_with_hdr_config(src, to, hdr).expect("plan");
+        let inputs = [
+            [0.0_f32, 0.0, 0.0],
+            [0.18, 0.18, 0.18],
+            [1.0, 1.0, 1.0],
+            [0.5, 0.3, 0.1],
+            [0.9, 0.1, 0.05],
+        ];
+        for inp in inputs {
+            let expected = reference_pipeline(inp);
+            let bytes: Vec<u8> = bytemuck::cast_slice(&inp).to_vec();
+            let mut out = vec![0u8; 12];
+            convert_row(&plan, &bytes, &mut out, 1);
+            let got_f: &[f32] = bytemuck::cast_slice(&out);
+            for k in 0..3 {
+                let diff = (expected[k] - got_f[k]).abs();
+                assert!(
+                    diff < 5e-4,
+                    "channel {k} for input {inp:?}: expected {} vs got {} (diff {})",
+                    expected[k],
+                    got_f[k],
+                    diff,
+                );
+            }
+        }
+    }
+}

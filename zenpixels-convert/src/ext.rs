@@ -292,6 +292,150 @@ impl PixelBufferConvertExt for PixelBuffer {
     }
 }
 
+/// Adds HDR-aware conversion methods to [`PixelBuffer`].
+///
+/// HDR→SDR conversions need a source-peak luminance to parameterize the
+/// BT.2446-A tone-map curve. Plain
+/// [`convert_to`](PixelBufferConvertExt::convert_to) refuses such cases
+/// with [`ConvertError::HdrSourceRequiresPeak`](crate::ConvertError::HdrSourceRequiresPeak).
+/// These methods supply the peak — either explicitly
+/// ([`convert_to_with_hdr_config`](Self::convert_to_with_hdr_config)) or
+/// by measuring MaxCLL from the buffer itself
+/// ([`convert_to_sdr`](Self::convert_to_sdr)).
+///
+/// Gated behind `hdr-experimental`.
+#[cfg(feature = "hdr-experimental")]
+pub trait PixelBufferHdrConvertExt {
+    /// Convert this HDR buffer to `target` (typically an SDR descriptor —
+    /// sRGB / BT.709 / Gamma22), auto-measuring source peak via
+    /// [`CllMeasure::measure_robust`](crate::hdr::CllMeasure::measure_robust).
+    ///
+    /// For non-HDR sources this falls back to
+    /// [`convert_to`](PixelBufferConvertExt::convert_to) (so the call is
+    /// safe to use when the source's HDR-ness isn't known up front).
+    ///
+    /// **Allocates** a new [`PixelBuffer`].
+    fn convert_to_sdr(
+        &self,
+        target: PixelDescriptor,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>>;
+
+    /// Convert this HDR buffer to `target` with explicit HDR knobs.
+    ///
+    /// `hdr.source_peak_nits` is mandatory and parameterizes the BT.2446-A
+    /// curve. `target_peak_nits` defaults to `100.0` (SDR), `gamut_knee`
+    /// to `0.9` — pass via [`HdrConfig::default()`](crate::HdrConfig).
+    ///
+    /// For non-HDR sources the `hdr` argument is ignored and the call
+    /// behaves like [`convert_to`](PixelBufferConvertExt::convert_to).
+    ///
+    /// **Allocates** a new [`PixelBuffer`].
+    fn convert_to_with_hdr_config(
+        &self,
+        target: PixelDescriptor,
+        hdr: crate::HdrConfig,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>>;
+}
+
+#[cfg(feature = "hdr-experimental")]
+impl PixelBufferHdrConvertExt for PixelBuffer {
+    #[track_caller]
+    fn convert_to_sdr(
+        &self,
+        target: PixelDescriptor,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>> {
+        use crate::hdr::{CllMeasure, LightLevelMethod};
+        use zenpixels::hdr::{ContentLightLevel, DiffuseWhite};
+
+        let src_desc = self.descriptor();
+        assert_not_cmyk(&src_desc);
+        assert_not_cmyk(&target);
+
+        // Non-HDR source: short-circuit to the regular convert_to path
+        // (which now rejects HDR→SDR loudly, so this is purely the
+        // "doesn't matter, source isn't HDR" branch).
+        if !matches!(
+            src_desc.transfer(),
+            TransferFunction::Pq | TransferFunction::Hlg
+        ) {
+            return self.convert_to(target);
+        }
+
+        // Measure source peak. For PQ buffers we need linear-light F32
+        // first (CllMeasure operates on relative-linear RGB f32).
+        // For HLG, same thing.
+        let lin_desc = PixelDescriptor::new_full(
+            ChannelType::F32,
+            if src_desc.has_alpha() {
+                ChannelLayout::Rgba
+            } else {
+                ChannelLayout::Rgb
+            },
+            src_desc.alpha(),
+            TransferFunction::Linear,
+            src_desc.primaries,
+        );
+        let linear_src = self.convert_to(lin_desc)?;
+        let lin_slice = linear_src.as_slice();
+        let diffuse_white = self
+            .color_context()
+            .and_then(|c| c.diffuse_white)
+            .unwrap_or(DiffuseWhite::BT2408);
+        let cll =
+            ContentLightLevel::measure_robust(lin_slice, diffuse_white, LightLevelMethod::MaxRgb)
+                .unwrap_or(ContentLightLevel::new(1000, 0));
+        let source_peak_nits = f32::from(cll.max_content_light_level).max(100.0);
+        self.convert_to_with_hdr_config(
+            target,
+            crate::HdrConfig {
+                source_peak_nits,
+                ..crate::HdrConfig::default()
+            },
+        )
+    }
+
+    #[track_caller]
+    fn convert_to_with_hdr_config(
+        &self,
+        target: PixelDescriptor,
+        hdr: crate::HdrConfig,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>> {
+        let src_desc = self.descriptor();
+        assert_not_cmyk(&src_desc);
+        assert_not_cmyk(&target);
+        // Do NOT short-circuit on `src_desc == target` — the HDR-aware
+        // constructor still needs to run the tone-map + soft-compress
+        // chain when both descriptors are e.g. `RGBF32_LINEAR`. The plan
+        // itself decides whether HDR work is needed based on the source's
+        // transfer function (SDR-encoded sources fall through to plain
+        // `ConvertPlan::new`).
+
+        let plan = crate::ConvertPlan::new_with_hdr_config(src_desc, target, hdr).at()?;
+        let mut converter = crate::RowConverter::from_plan(plan);
+
+        let dst_stride = target.aligned_stride(self.width());
+        let total = dst_stride
+            .checked_mul(self.height() as usize)
+            .ok_or_else(|| whereat::at!(crate::ConvertError::AllocationFailed))?;
+        let mut out = alloc::vec![0u8; total];
+
+        let src_slice = self.as_slice();
+        for y in 0..self.height() {
+            let src_row = src_slice.row(y);
+            let dst_start = y as usize * dst_stride;
+            let dst_end = dst_start + dst_stride;
+            converter.convert_row(src_row, &mut out[dst_start..dst_end], self.width());
+        }
+
+        let mut buf = PixelBuffer::from_vec(out, self.width(), self.height(), target)
+            .map_err_at(crate::ConvertError::from)?;
+        if let Some(ctx) = self.color_context() {
+            buf = buf.with_color_context(Arc::clone(ctx));
+        }
+        Ok(buf)
+    }
+}
+
 #[cfg(feature = "rgb")]
 use zenpixels::buffer::Pixel;
 

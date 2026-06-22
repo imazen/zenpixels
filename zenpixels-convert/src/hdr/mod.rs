@@ -41,17 +41,6 @@ mod bt2446a_simd;
 #[cfg(feature = "hdr-experimental")]
 mod gamut_compress;
 
-/// One-call HDR → SDR pipeline (BT.2020 → BT.709 matrix → Bt2446A → soft
-/// gamut compression). Gated behind `hdr-experimental`.
-#[cfg(feature = "hdr-experimental")]
-mod hdr_to_sdr;
-
-/// Buffer-level dispatch for [`HdrToSdr`]: transfer / format / alpha /
-/// signal-range handling wrapped around the linear-light `apply_strip`
-/// primitive. Gated behind `hdr-experimental`.
-#[cfg(feature = "hdr-experimental")]
-mod buffer_dispatch;
-
 /// Re-exports of the experimental [`measure`] surface at the [`hdr`](self)
 /// boundary, so callers can write
 /// `use zenpixels_convert::hdr::CllMeasure;` instead of the full
@@ -59,12 +48,16 @@ mod buffer_dispatch;
 #[cfg(feature = "hdr-experimental")]
 pub use measure::{CllMeasure, LightLevelHistogram, LightLevelMethod};
 
+// HDR → SDR conversion now lives in the main `ConvertPlan` infrastructure:
+// build via [`crate::ConvertPlan::new_with_hdr_peak`] /
+// [`crate::ConvertPlan::new_with_hdr_config`] and run through the standard
+// [`crate::RowConverter`] / [`crate::convert_buffer`] entry points. The
+// underlying `Bt2446A` and `SoftCompress` primitives stay public for advanced
+// callers that want to drive the math directly.
 #[cfg(feature = "hdr-experimental")]
 pub use bt2446a::Bt2446A;
 #[cfg(feature = "hdr-experimental")]
 pub use gamut_compress::{GamutBoundaryLut, SoftCompress};
-#[cfg(feature = "hdr-experimental")]
-pub use hdr_to_sdr::HdrToSdr;
 
 use crate::adapt::{convert_buffer_with_anchor, convert_into_with_anchor};
 use crate::error::ConvertError;

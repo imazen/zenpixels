@@ -52,6 +52,25 @@ pub enum ConvertError {
     Buffer(zenpixels::BufferError),
     /// CMS transform could not be built (invalid ICC profile, unsupported color space, etc.).
     CmsError(alloc::string::String),
+    /// The conversion is HDR (`Pq` / `Hlg`) → SDR but no source-peak nits
+    /// were supplied. HDR→SDR requires a tone-map step parameterized by
+    /// source peak luminance; the plain
+    /// [`ConvertPlan::new`](crate::ConvertPlan::new) entry point doesn't
+    /// take one. Build the plan via
+    /// [`ConvertPlan::new_with_hdr_peak`](crate::ConvertPlan::new_with_hdr_peak)
+    /// instead (or
+    /// [`ConvertPlan::new_with_hdr_config`](crate::ConvertPlan::new_with_hdr_config)
+    /// for full knob control), and pass the source's MaxCLL — e.g. from
+    /// [`hdr::CllMeasure::measure_robust`](crate::hdr::CllMeasure::measure_robust).
+    ///
+    /// Pre-0.2.16 the plain `ConvertPlan::new` silently routed HDR→SDR
+    /// through the linear intermediate with no tone-mapping, producing
+    /// semantically wrong pixels. This variant replaces that with a
+    /// loud refusal.
+    HdrSourceRequiresPeak {
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+    },
     // CMYK rejection is folded into `NoPath { from, to }` rather than a dedicated
     // variant. Reasoning: zero workspace consumers match anything but
     // `AllocationFailed` today, and a CMYK-specific arm would be future-facing
@@ -131,6 +150,14 @@ impl fmt::Display for ConvertError {
             Self::AllocationFailed => write!(f, "buffer allocation failed"),
             Self::Buffer(e) => write!(f, "buffer construction failed: {e}"),
             Self::CmsError(msg) => write!(f, "CMS transform failed: {msg}"),
+            Self::HdrSourceRequiresPeak { from, to } => write!(
+                f,
+                "HDR→SDR conversion ({:?} → {:?}) requires a source-peak luminance; \
+                 build the plan via ConvertPlan::new_with_hdr_peak (or new_with_hdr_config) \
+                 and pass the source's MaxCLL (e.g. CllMeasure::measure_robust)",
+                from.transfer(),
+                to.transfer(),
+            ),
             // CMYK rejection prints via the NoPath branch above with the
             // CMYK hint appended — no dedicated variant; see the note at
             // the enum definition.

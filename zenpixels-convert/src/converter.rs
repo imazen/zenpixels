@@ -865,14 +865,29 @@ mod tests {
             )
             .is_err()
         );
-        // HLG↔SDR and HLG↔Linear are NOT refused (only HLG↔PQ is).
-        assert!(
-            RowConverter::new(
+        // HLG → SDR-encoded targets (sRGB / BT.709 / Gamma22) now require a
+        // source-peak luminance (the HDR-aware constructors) — silently
+        // routing without a tone map produced wrong pixels. HLG → Linear
+        // F32 stays allowed (the data is preserved; the caller can
+        // tone-map downstream). The cms_lite plugin wraps the
+        // `HdrSourceRequiresPeak` into `CmsError` when source/dst
+        // primaries also differ (the cms path runs before the built-in
+        // plan), so accept either variant.
+        #[cfg(feature = "hdr-experimental")]
+        {
+            let err = RowConverter::new(
                 PixelDescriptor::RGB16_BT2100_HLG,
-                PixelDescriptor::RGB8_SRGB
+                PixelDescriptor::RGB8_SRGB,
             )
-            .is_ok()
-        );
+            .err()
+            .expect("HLG → sRGB without peak must refuse");
+            assert!(
+                matches!(*err.error(), ConvertError::HdrSourceRequiresPeak { .. })
+                    || matches!(*err.error(), ConvertError::CmsError(_)),
+                "expected HdrSourceRequiresPeak or CmsError, got {:?}",
+                err.error()
+            );
+        }
         let lin = PixelDescriptor::new(
             ChannelType::F32,
             ChannelLayout::Rgb,
@@ -883,34 +898,62 @@ mod tests {
     }
 
     #[test]
-    fn hdr_u16_to_sdr_u8_pq() {
-        // PQ U16 → sRGB U8 (two-step: EOTF + OETF).
+    #[cfg(feature = "hdr-experimental")]
+    fn hdr_u16_to_sdr_u8_pq_requires_peak() {
+        // Pre-0.2.16: PQ U16 → sRGB U8 silently routed through linear with no
+        // tone-mapping (every HDR sample > SDR diffuse-white saturated to
+        // 255). Now refuses loudly and points the caller at the HDR
+        // constructors.
         let pq_u16 = PixelDescriptor::new(
             ChannelType::U16,
             ChannelLayout::Rgb,
             None,
             TransferFunction::Pq,
         );
+        let err = RowConverter::new(pq_u16, PixelDescriptor::RGB8_SRGB)
+            .err()
+            .expect("plain HDR→SDR must refuse")
+            .error()
+            .clone();
+        assert!(matches!(err, ConvertError::HdrSourceRequiresPeak { .. }));
+
+        // The HDR-aware constructor accepts a source peak and produces a
+        // valid sRGB pixel (BT.2446-A tone-map step inserted).
+        let plan = ConvertPlan::new_with_hdr_peak(pq_u16, PixelDescriptor::RGB8_SRGB, 1000.0)
+            .expect("HDR-aware plan should build");
+        let mut conv = RowConverter::from_plan(plan);
         let src16: [u16; 3] = [32768, 32768, 32768];
         let src: &[u8] = bytemuck::cast_slice(&src16);
-        let dst = convert_pixel(pq_u16, PixelDescriptor::RGB8_SRGB, src);
-        // Should produce some valid sRGB value.
+        let mut dst = [0u8; 3];
+        conv.convert_row(src, &mut dst, 1);
         assert!(dst[0] > 0 && dst[0] < 255);
     }
 
     #[test]
-    fn hdr_u16_to_sdr_u8_hlg() {
-        // HLG→SDR stays allowed (endpoint-correct; the OOTF mid-tone gamma is the
-        // only gap). Only HLG↔PQ is refused — see `hlg_pq_conversion_refuses`.
+    #[cfg(feature = "hdr-experimental")]
+    fn hdr_u16_to_sdr_u8_hlg_requires_peak() {
+        // Same as the PQ case — HLG → sRGB now refuses without a peak. The
+        // HDR-aware path accepts one and produces a valid SDR pixel.
         let hlg_u16 = PixelDescriptor::new(
             ChannelType::U16,
             ChannelLayout::Rgb,
             None,
             TransferFunction::Hlg,
         );
+        let err = RowConverter::new(hlg_u16, PixelDescriptor::RGB8_SRGB)
+            .err()
+            .expect("plain HDR→SDR must refuse")
+            .error()
+            .clone();
+        assert!(matches!(err, ConvertError::HdrSourceRequiresPeak { .. }));
+
+        let plan = ConvertPlan::new_with_hdr_peak(hlg_u16, PixelDescriptor::RGB8_SRGB, 1000.0)
+            .expect("HDR-aware plan should build");
+        let mut conv = RowConverter::from_plan(plan);
         let src16: [u16; 3] = [32768, 32768, 32768];
         let src: &[u8] = bytemuck::cast_slice(&src16);
-        let dst = convert_pixel(hlg_u16, PixelDescriptor::RGB8_SRGB, src);
+        let mut dst = [0u8; 3];
+        conv.convert_row(src, &mut dst, 1);
         assert!(dst[0] > 0 && dst[0] < 255);
     }
 

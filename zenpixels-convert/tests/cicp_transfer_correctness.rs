@@ -12,6 +12,22 @@ use zenpixels::{
 use zenpixels_convert::RowConverter;
 use zenpixels_convert::ext::{PixelBufferConvertExt, TransferFunctionExt};
 
+/// True when `(src, dst)` is an HDR-encoded source paired with an
+/// SDR-encoded destination. Such a transition now refuses through the
+/// plain plan path (`HdrSourceRequiresPeak`); the HDR-aware constructors
+/// (`ConvertPlan::new_with_hdr_peak` etc.) accept a source-peak luminance
+/// and emit a tone-mapped chain. The transfer-function correctness tests
+/// in this file only exercise straight TF math (no tone curve) — skip
+/// these pairs because the new semantics are intentionally lossy.
+fn skip_hdr_to_sdr_encoded(src: TransferFunction, dst: TransferFunction) -> bool {
+    let src_is_hdr = matches!(src, TransferFunction::Pq | TransferFunction::Hlg);
+    let dst_is_sdr_encoded = matches!(
+        dst,
+        TransferFunction::Srgb | TransferFunction::Bt709 | TransferFunction::Gamma22
+    );
+    src_is_hdr && dst_is_sdr_encoded
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Section 1: CICP Code Point Mapping Exhaustiveness
 // ═══════════════════════════════════════════════════════════════════════════
@@ -509,6 +525,12 @@ fn all_f32_tf_pairs_create_converters() {
             ) {
                 continue;
             }
+            // HDR→SDR-encoded refuses without a peak (use the HDR-aware
+            // constructors); skip — these are tone-mapping tests, not TF
+            // math tests.
+            if skip_hdr_to_sdr_encoded(from_tf, to_tf) {
+                continue;
+            }
             let from = PixelDescriptor::new(ChannelType::F32, ChannelLayout::Rgb, None, from_tf);
             let to = PixelDescriptor::new(ChannelType::F32, ChannelLayout::Rgb, None, to_tf);
             assert!(
@@ -549,6 +571,13 @@ fn all_f32_tf_pairs_roundtrip() {
                 (TransferFunction::Hlg, TransferFunction::Pq)
                     | (TransferFunction::Pq, TransferFunction::Hlg)
             ) {
+                continue;
+            }
+            // HDR→SDR-encoded refuses without a peak; the reverse SDR→HDR
+            // pair (which `f32_converter(to_tf, from_tf)` would build for
+            // the roundtrip) also gets skipped because the roundtrip needs
+            // both legs to succeed.
+            if skip_hdr_to_sdr_encoded(from_tf, to_tf) || skip_hdr_to_sdr_encoded(to_tf, from_tf) {
                 continue;
             }
             let mut fwd = f32_converter(from_tf, to_tf);
@@ -603,6 +632,13 @@ fn cross_tf_via_linear_matches_direct() {
                 (TransferFunction::Hlg, TransferFunction::Pq)
                     | (TransferFunction::Pq, TransferFunction::Hlg)
             ) {
+                continue;
+            }
+            // HDR→SDR-encoded refuses without a peak; the via-linear path
+            // also goes through `from_lin = Linear → dst_tf` which would
+            // be SDR→SDR (fine) or Linear→HDR (fine). Skip the HDR→SDR
+            // direct comparison entirely.
+            if skip_hdr_to_sdr_encoded(src_tf, dst_tf) {
                 continue;
             }
             let mut direct = f32_converter(src_tf, dst_tf);
@@ -660,6 +696,9 @@ fn black_preserved_all_tf_pairs() {
             ) {
                 continue;
             }
+            if skip_hdr_to_sdr_encoded(from_tf, to_tf) {
+                continue;
+            }
             let mut conv = f32_converter(from_tf, to_tf);
             let result = convert_f32_pixel(&mut conv, 0.0, 0.0, 0.0);
             for (ch, &v) in result.iter().enumerate() {
@@ -690,6 +729,9 @@ fn white_preserved_all_tf_pairs() {
                 (TransferFunction::Hlg, TransferFunction::Pq)
                     | (TransferFunction::Pq, TransferFunction::Hlg)
             ) {
+                continue;
+            }
+            if skip_hdr_to_sdr_encoded(from_tf, to_tf) {
                 continue;
             }
             let mut conv = f32_converter(from_tf, to_tf);
@@ -1130,8 +1172,17 @@ fn hlg_u16_f32_u16_roundtrip_wide_range() {
 }
 
 /// PQ U16 → sRGB U8: HDR to SDR path produces reasonable output.
+///
+/// Pre-0.2.16 the plain `ConvertPlan::new` silently routed PQ→sRGB
+/// through a linear intermediate with no tone-mapping (all near-peak
+/// samples saturated to 255). The new HDR-aware constructor
+/// (`ConvertPlan::new_with_hdr_peak`) inserts a BT.2446 Method A tone
+/// curve — black stays black, mid-grey rises with luminance, and peak
+/// HDR maps near SDR peak.
 #[test]
+#[cfg(feature = "hdr-experimental")]
 fn pq_u16_to_srgb_u8_correctness() {
+    use zenpixels_convert::ConvertPlan;
     let pq_u16 = PixelDescriptor::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
@@ -1139,7 +1190,8 @@ fn pq_u16_to_srgb_u8_correctness() {
         TransferFunction::Pq,
     );
     let srgb_u8 = PixelDescriptor::RGB8_SRGB;
-    let mut conv = RowConverter::new(pq_u16, srgb_u8).unwrap();
+    let plan = ConvertPlan::new_with_hdr_peak(pq_u16, srgb_u8, 1000.0).unwrap();
+    let mut conv = RowConverter::from_plan(plan);
 
     // Build test data: 5 pixels at different PQ levels.
     let width = 5u32;
@@ -1155,10 +1207,10 @@ fn pq_u16_to_srgb_u8_correctness() {
     let mut dst = vec![0u8; 5 * 3];
     conv.convert_row(&src, &mut dst, width);
 
-    // Black stays black
+    // Black stays black.
     assert_eq!(dst[0], 0);
 
-    // Values should be monotonically increasing
+    // Values should be monotonically increasing.
     for i in 1..5 {
         assert!(
             dst[i * 3] >= dst[(i - 1) * 3],
@@ -1169,13 +1221,20 @@ fn pq_u16_to_srgb_u8_correctness() {
         );
     }
 
-    // Full PQ → sRGB white
-    assert_eq!(dst[4 * 3], 255);
+    // Full PQ (10000 cd/m² code) tone-maps near SDR peak.
+    assert!(
+        dst[4 * 3] > 200,
+        "peak PQ should land near SDR peak, got {}",
+        dst[4 * 3]
+    );
 }
 
-/// HLG U16 → sRGB U8 path produces reasonable output.
+/// HLG U16 → sRGB U8 path produces reasonable output via the HDR-aware
+/// plan (BT.2446-A tone-map step).
 #[test]
+#[cfg(feature = "hdr-experimental")]
 fn hlg_u16_to_srgb_u8_correctness() {
+    use zenpixels_convert::ConvertPlan;
     let hlg_u16 = PixelDescriptor::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
@@ -1183,7 +1242,8 @@ fn hlg_u16_to_srgb_u8_correctness() {
         TransferFunction::Hlg,
     );
     let srgb_u8 = PixelDescriptor::RGB8_SRGB;
-    let mut conv = RowConverter::new(hlg_u16, srgb_u8).unwrap();
+    let plan = ConvertPlan::new_with_hdr_peak(hlg_u16, srgb_u8, 1000.0).unwrap();
+    let mut conv = RowConverter::from_plan(plan);
 
     let width = 3u32;
     let hlg_values: [u16; 3] = [0, 32768, 65535];
@@ -1198,13 +1258,17 @@ fn hlg_u16_to_srgb_u8_correctness() {
     let mut dst = vec![0u8; 3 * 3];
     conv.convert_row(&src, &mut dst, width);
 
-    // Black stays black
+    // Black stays black.
     assert_eq!(dst[0], 0);
-    // Monotonically increasing
+    // Monotonically increasing.
     assert!(dst[3] > dst[0]);
     assert!(dst[6] > dst[3]);
-    // Full HLG → sRGB white
-    assert_eq!(dst[6], 255);
+    // Peak HLG tone-maps near (but possibly under) SDR peak.
+    assert!(
+        dst[6] > 180,
+        "peak HLG should land near SDR peak, got {}",
+        dst[6]
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
