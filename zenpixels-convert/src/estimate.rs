@@ -7,10 +7,22 @@
 //! - Should we batch-throttle to avoid stalling the worker?
 //! - Will the planned conversion finish within an SLA?
 //!
-//! [`ConvertPlan::estimate`](crate::ConvertPlan::estimate) answers those
-//! questions cheaply — no allocation, no row work, just walks the planned
-//! steps and returns a [`ResourceEstimate`] with the projected peak memory
-//! and wall-clock numbers.
+//! [`ConvertPlan::estimate`](crate::ConvertPlan::estimate) and
+//! [`ConvertPlan::estimate_in`](crate::ConvertPlan::estimate_in) answer those
+//! questions cheaply — no allocation, no row work, just walk the planned
+//! steps and return a [`ResourceEstimate`] with the projected peak memory,
+//! wall-clock, and CPU-core scaling numbers.
+//!
+//! # Composable with codec-side estimates
+//!
+//! [`ResourceEstimate`], [`ComputeEnvironment`], [`ImageCharacteristics`], and
+//! [`ThreadingInformation`] are **re-exports of `zencodec::estimate`** so the
+//! same type flows through a `decode → convert → encode` pipeline: each stage
+//! returns the shared `ResourceEstimate`, and a scheduler can sum / pick-the-
+//! peak / compare-against-budget without bridging types. See
+//! `zencodec::estimate` docs for the full type contract — every field is
+//! `Option`, the structs are `#[non_exhaustive]`, and the builders are
+//! growable.
 //!
 //! # Accuracy contract
 //!
@@ -20,7 +32,10 @@
 //! - **CPU model and SIMD tier.** Calibration data is from the V3
 //!   (AVX2) path on Ryzen 9 7950X. AVX-512 hosts run faster on a
 //!   handful of kernels; older Zen / Intel / Apple Silicon hosts
-//!   vary kernel-by-kernel.
+//!   vary kernel-by-kernel. [`ComputeEnvironment::with_simd_tier`]
+//!   applies a coarse per-tier wall-time multiplier on top of the
+//!   AVX2 baseline (TODO: per-tier calibration tables — see the
+//!   `simd_tier_multiplier` body for the current values).
 //! - **Cache state.** Cold L1/L2 cache adds per-call overhead; the
 //!   benches measure steady-state at 4096-pixel rows, so very small
 //!   images carry proportionally more fixed overhead than the
@@ -57,9 +72,24 @@
 //!
 //! All steady-state at 4096-pixel rows (L2-resident) on the public
 //! AVX2 path (no `-C target-cpu=native`).
+//!
+//! # Threading model
+//!
+//! Most [`ConvertStep`]s are row-parallel (SIMD strip kernels) and report
+//! [`ThreadingInformation::parallel(_)`](ThreadingInformation::parallel)
+//! with a knee derived from `rows / 64` clamped to ≤ 16. The plan's overall
+//! threading is the bottleneck: if **any** step is `SERIAL`, the whole plan
+//! is. Otherwise the smallest reported knee wins (the slowest parallel step
+//! sets the cap). [`ResourceEstimate::at_cores`] is applied automatically
+//! inside [`estimate_plan`] so callers receive a `wall_ms` already scaled
+//! to `compute.cores()`.
 
-use crate::PixelDescriptor;
 use crate::convert::{ConvertPlan, ConvertStep, FusedKind};
+use crate::PixelDescriptor;
+
+pub use zencodec::estimate::{
+    ComputeEnvironment, ImageCharacteristics, ResourceEstimate, SimdTier, ThreadingInformation,
+};
 
 // ---------------------------------------------------------------------------
 // Calibration: per-step ns/MP costs at 4096-pixel rows, AVX2/V3, Ryzen 9 7950X.
@@ -76,6 +106,12 @@ use crate::convert::{ConvertPlan, ConvertStep, FusedKind};
 /// bpp B = (1_048_576 / (G * 2^30 / B)) * 1e9 ns.
 const ONE_MP: f64 = 1_048_576.0;
 const GIB: f64 = 1_073_741_824.0;
+
+/// Conservative ±-margin multiplier for the upper-bound peak memory: the ±30 %
+/// accuracy contract of the calibration is captured by reporting
+/// `peak_max = peak_est × 1.3` on [`ResourceEstimate::with_peak_max`].
+const PEAK_MAX_MARGIN: u64 = 13; // numerator
+const PEAK_MAX_DIVISOR: u64 = 10; // denominator → 1.3×
 
 /// Convert a steady-state throughput (GiB/s) at a given bytes-per-pixel
 /// into a per-megapixel cost in nanoseconds.
@@ -259,6 +295,108 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> f64 {
     }
 }
 
+/// Whether a step is parallelizable per-row.
+///
+/// Every step that operates on rows independently (every SIMD strip kernel in
+/// the crate) is parallelizable. The two exceptions are HDR steps with
+/// per-image state (BT.2446-A and OKLch soft-compress both read a max
+/// luminance / chroma scalar from the source); we conservatively mark those
+/// SERIAL even though the per-strip kernels themselves are SIMD-row-internal.
+/// All other steps return `true`.
+///
+/// If a step's parallelizability is ambiguous in the future, the bias is
+/// toward SERIAL: over-estimating wall time is safer than under-estimating.
+fn step_is_parallelizable(step: &ConvertStep) -> bool {
+    match step {
+        // The hot kernels are all row-stride SIMD — safe to parallelize.
+        ConvertStep::Identity
+        | ConvertStep::SwizzleBgraRgba
+        | ConvertStep::RgbToBgra
+        | ConvertStep::AddAlpha
+        | ConvertStep::DropAlpha
+        | ConvertStep::MatteComposite { .. }
+        | ConvertStep::GrayToRgb
+        | ConvertStep::GrayToRgba
+        | ConvertStep::RgbToGray { .. }
+        | ConvertStep::RgbaToGray { .. }
+        | ConvertStep::GrayAlphaToRgba
+        | ConvertStep::GrayAlphaToRgb
+        | ConvertStep::GrayAlphaToGray
+        | ConvertStep::GrayToGrayAlpha
+        | ConvertStep::U8ToU16
+        | ConvertStep::U16ToU8
+        | ConvertStep::NaiveU8ToF32
+        | ConvertStep::NaiveF32ToU8
+        | ConvertStep::U16ToF32
+        | ConvertStep::F32ToU16
+        | ConvertStep::F16ToF32
+        | ConvertStep::F32ToF16
+        | ConvertStep::SrgbU8ToLinearF32
+        | ConvertStep::LinearF32ToSrgbU8
+        | ConvertStep::PqU16ToLinearF32
+        | ConvertStep::LinearF32ToPqU16
+        | ConvertStep::HlgU16ToLinearF32
+        | ConvertStep::LinearF32ToHlgU16
+        | ConvertStep::PqF32ToLinearF32
+        | ConvertStep::LinearF32ToPqF32
+        | ConvertStep::HlgF32ToLinearF32
+        | ConvertStep::LinearF32ToHlgF32
+        | ConvertStep::SrgbF32ToLinearF32
+        | ConvertStep::SrgbF32ToLinearF32Extended
+        | ConvertStep::LinearF32ToSrgbF32
+        | ConvertStep::LinearF32ToSrgbF32Extended
+        | ConvertStep::Bt709F32ToLinearF32
+        | ConvertStep::LinearF32ToBt709F32
+        | ConvertStep::Gamma22F32ToLinearF32
+        | ConvertStep::LinearF32ToGamma22F32
+        | ConvertStep::StraightToPremul
+        | ConvertStep::PremulToStraight
+        | ConvertStep::LinearRgbToOklab
+        | ConvertStep::OklabToLinearRgb
+        | ConvertStep::LinearRgbaToOklaba
+        | ConvertStep::OklabaToLinearRgba
+        | ConvertStep::GamutMatrixRgbF32(_)
+        | ConvertStep::GamutMatrixRgbaF32(_)
+        | ConvertStep::Fused { .. } => true,
+        // HDR steps read per-image scalars (source peak, max chroma) and
+        // are currently scheduled serially. The per-strip SIMD kernel is
+        // still hot; only the across-strip orchestration is serial. Bias
+        // toward over-estimate (SERIAL).
+        #[cfg(feature = "hdr-experimental")]
+        ConvertStep::ToneMapBt2446A { .. } | ConvertStep::SoftCompressOklch { .. } => false,
+    }
+}
+
+/// Wall-time multiplier applied to the AVX2-baseline calibration when the
+/// caller passed a known SIMD tier. The baseline is `SimdTier::X86V3`
+/// (AVX2 + FMA) — the calibration host. Per-tier ratios are coarse "Δkernel"
+/// estimates pending a follow-up per-tier calibration sweep; see the
+/// **TODO** at the call site in [`estimate_plan`].
+fn simd_tier_multiplier(tier: SimdTier) -> f64 {
+    match tier {
+        // AVX-512: ~15 % wall-time reduction on lane-doubled SIMD kernels.
+        SimdTier::X86V4 => 0.85,
+        // AVX2 baseline.
+        SimdTier::X86V3 => 1.0,
+        // SSE4.2 / SSE2: roughly 1.4× the AVX2 wall time on byte-level
+        // kernels; the t-series benches haven't been re-measured here.
+        SimdTier::X86V2 | SimdTier::X86V1 => 1.4,
+        // NEON: similar throughput to AVX2 on the production kernels we
+        // care about — keep parity until a NEON sweep lands.
+        SimdTier::Neon => 1.0,
+        // WASM-128: roughly 1.3× wall time.
+        SimdTier::Wasm128 => 1.3,
+        // Scalar WASM: ~2× wall time.
+        SimdTier::Wasm => 2.0,
+        // Unknown / current-host: assume baseline (no adjustment). Same as
+        // having no hint — we do not penalize the unspecified path.
+        SimdTier::Unknown | SimdTier::CurrentHost => 1.0,
+        // `SimdTier` is `#[non_exhaustive]`; future variants fall back to
+        // the AVX2 baseline rather than penalize unknown paths.
+        _ => 1.0,
+    }
+}
+
 /// Body of the plan-level estimate. Walks the plan's steps once,
 /// summing time and tracking the peak intermediate buffer size.
 ///
@@ -269,24 +407,41 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> f64 {
 ///   max_intermediate_bpp` bytes.
 /// - The estimate is for a single per-call working set, NOT a
 ///   parallel-job-wide cap.
+/// - `peak_memory_bytes_max` is reported at `peak_est × 1.3` to capture the
+///   ±30 % accuracy contract.
+///
+/// Threading: the plan-level threading is the bottleneck across steps. A
+/// SERIAL step forces the whole plan SERIAL; otherwise the smallest reported
+/// knee (the most-restrictive parallel step) sets `max_efficient_threads`,
+/// which then drives [`ResourceEstimate::at_cores`] to scale wall time.
 pub(crate) fn estimate_plan(
     plan: &ConvertPlan,
-    width: u32,
-    height: u32,
+    image: &ImageCharacteristics,
+    compute: &ComputeEnvironment,
 ) -> ResourceEstimate {
-    // Quick identity short-circuit.
+    let width = image.width();
+    let height = image.height();
+    let frames = u64::from(image.frame_count());
+
+    // Apply the per-tier wall-time multiplier on top of the AVX2 baseline.
+    // TODO: per-tier calibration tables once the t-series bench sweep
+    // re-runs on AVX-512 / SSE / NEON / WASM hosts.
+    let tier_mul = compute
+        .simd_tier()
+        .map(simd_tier_multiplier)
+        .unwrap_or(1.0);
+
+    // Quick identity short-circuit. The destination is still allocated and
+    // memcpy'd into; the wall-time projection is the memcpy alone.
     if plan.is_identity() {
-        // Even identity allocates the destination buffer + a memcpy.
         let pixels = (width as u64) * (height as u64);
-        let dst_bytes = pixels * plan.to().bytes_per_pixel() as u64;
+        let dst_bytes = (pixels * plan.to().bytes_per_pixel() as u64).saturating_mul(frames);
         // memcpy at ~30 GB/s is a reasonable assumption — but on systems
         // with NUMA effects this can be 10-50 GB/s. Use a midpoint.
         let memcpy_gib_s = 30.0;
-        let memcpy_time_ms = (dst_bytes as f64) / (memcpy_gib_s * GIB) * 1_000.0;
-        return ResourceEstimate {
-            peak_memory_bytes: dst_bytes,
-            wall_time_ms: memcpy_time_ms,
-        };
+        let memcpy_time_ms = (dst_bytes as f64) / (memcpy_gib_s * GIB) * 1_000.0 * tier_mul;
+        let wall_ms = memcpy_time_ms as u64;
+        return finalize(dst_bytes, wall_ms, ThreadingInformation::SERIAL, compute);
     }
 
     let pixels = (width as u64) * (height as u64);
@@ -314,52 +469,63 @@ pub(crate) fn estimate_plan(
     // Two ping-pong halves (single allocation, but split in two).
     let scratch_bytes = scratch_per_half_bytes.saturating_mul(2);
 
-    // Sum per-step time contributions.
+    // Sum per-step time contributions and compute the bottleneck
+    // threading across steps.
     let mut total_time_ms = 0.0;
     let mut desc = plan.from();
+    let mut any_serial = false;
+    let mut min_knee: u32 = u32::MAX;
 
     for step in plan.steps() {
         let current_bpp = desc.bytes_per_pixel();
         let ns_per_mp = step_cost_ns_per_mp(step, current_bpp);
         let step_time_ms = ns_per_mp * pixels_mp / 1_000_000.0;
         total_time_ms += step_time_ms;
+        if !step_is_parallelizable(step) {
+            any_serial = true;
+        } else {
+            // Row-per-task heuristic: rows / 64 clamped to ≤ 16, ≥ 1.
+            let rows = u64::from(height);
+            let cap = ((rows / 64).max(1)).min(16) as u32;
+            min_knee = min_knee.min(cap);
+        }
         desc = intermediate_after(desc, step);
     }
+    // Multi-frame plans repeat the per-frame work.
+    let total_time_ms = total_time_ms * (frames as f64) * tier_mul;
 
-    // Peak working-set: destination buffer + scratch (for multi-step).
-    // The scratch is reused, not added per step.
-    let peak_memory_bytes = dst_bytes.saturating_add(scratch_bytes);
+    let threading = if any_serial || min_knee == u32::MAX {
+        ThreadingInformation::SERIAL
+    } else {
+        ThreadingInformation::parallel(min_knee)
+    };
 
-    ResourceEstimate {
-        peak_memory_bytes,
-        wall_time_ms: total_time_ms,
-    }
+    // Peak working-set: destination buffer + scratch (for multi-step) ×
+    // frame_count for animated sources.
+    let peak_memory_bytes = dst_bytes
+        .saturating_add(scratch_bytes)
+        .saturating_mul(frames);
+
+    let wall_ms = total_time_ms as u64;
+    finalize(peak_memory_bytes, wall_ms, threading, compute)
 }
 
-/// Cost projection for executing a [`ConvertPlan`] on a `width × height`
-/// image.
-///
-/// Returned by [`ConvertPlan::estimate`](crate::ConvertPlan::estimate).
-/// Cheap to construct (no allocation, no row work). The numbers are
-/// best-effort projections — see the module-level docs for the ±30 %
-/// accuracy contract.
-///
-/// `#[non_exhaustive]` so additional fields (e.g. concurrent-thread
-/// estimate, cache-residence projection) can land in a later release
-/// without breaking match-bind sites.
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[non_exhaustive]
-pub struct ResourceEstimate {
-    /// Peak working-set memory in bytes — input + intermediate + output
-    /// buffers, NOT including caller-persistent state. Sized to the
-    /// largest single point in the plan's life, not the sum across steps.
-    pub peak_memory_bytes: u64,
-
-    /// Wall-clock time in milliseconds — median projection on the
-    /// reference machine (Ryzen 9 7950X, AVX2, 16 rayon threads, no
-    /// contention). Real time varies with CPU model, contention, and
-    /// frequency scaling.
-    pub wall_time_ms: f64,
+/// Wrap the projected peak + wall-ms in the zencodec [`ResourceEstimate`]
+/// shape, populate `peak_memory_bytes_max` at the 1.3× margin, fill
+/// `cpu_ms` from the single-thread `wall_ms`, attach `threading`, and
+/// finally re-scale wall via [`ResourceEstimate::at_cores`].
+fn finalize(
+    peak_est: u64,
+    wall_ms_single_thread: u64,
+    threading: ThreadingInformation,
+    compute: &ComputeEnvironment,
+) -> ResourceEstimate {
+    let peak_max = peak_est.saturating_mul(PEAK_MAX_MARGIN) / PEAK_MAX_DIVISOR;
+    ResourceEstimate::new(peak_est, wall_ms_single_thread)
+        .with_peak_max(peak_max)
+        .with_cpu_ms(wall_ms_single_thread)
+        .with_threading(threading)
+        .at_cores(compute.cores())
 }
 
 /// Mirror of `intermediate_desc` in `convert.rs`, exposed via the

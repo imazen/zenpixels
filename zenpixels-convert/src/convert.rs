@@ -1289,7 +1289,9 @@ impl ConvertPlan {
 
     /// Crate-internal view of the planned step list — exposed for the
     /// estimate-API code under `crate::estimate`. NOT public:
-    /// `ConvertStep` itself is `pub(crate)`.
+    /// `ConvertStep` itself is `pub(crate)`. Gated on `std` because the
+    /// only caller is the `std`-gated estimate module.
+    #[cfg(feature = "std")]
     pub(crate) fn steps(&self) -> &[ConvertStep] {
         &self.steps
     }
@@ -1304,25 +1306,76 @@ impl ConvertPlan {
         self.to
     }
 
-    /// Estimated `(peak_memory_bytes, wall_time_ms)` on a `width × height`
-    /// image. Best-effort, ±30 % on a reference machine (Ryzen 9 7950X,
-    /// AVX2, 16 rayon threads). Real wall time varies with contention,
-    /// frequency scaling, and CPU model.
+    /// Estimate resources for executing this plan on `image` under the
+    /// given [`ComputeEnvironment`](crate::estimate::ComputeEnvironment).
+    /// Returns the shared [`ResourceEstimate`](crate::estimate::ResourceEstimate)
+    /// (re-exported from `zencodec::estimate`), so the projection composes
+    /// with codec-side encode/decode estimates in multi-stage pipelines.
     ///
     /// Calibrated from `benches/t1_layout`, `t2_depth`, `t3_tf_fused`,
     /// `t4_tf_f32`, `t5_alpha`, `t6_oklab`, `t7_gamut` steady-state
-    /// throughput. Returns `(0, 0.0)` for trivially-empty plans
-    /// (identity at 0×0).
+    /// throughput; best-effort, ±30 % on the reference machine
+    /// (Ryzen 9 7950X, AVX2). Real wall time varies with contention,
+    /// frequency scaling, and CPU model. Identity at 0×0 returns a
+    /// zero-cost estimate.
     ///
-    /// `peak_memory_bytes` is an upper bound on the working-set
-    /// allocations required to execute the plan (destination buffer +
-    /// row-sized ping-pong scratch for multi-step plans). It does NOT
-    /// include the caller's persistent state. `wall_time_ms` is a
-    /// median projection in milliseconds.
+    /// `peak_memory_bytes_est` is the destination buffer plus row-sized
+    /// ping-pong scratch (multi-step plans). It does NOT include the
+    /// caller's persistent state. `peak_memory_bytes_max` is reported at
+    /// `peak_est × 1.3` to capture the ±30 % accuracy contract.
+    /// `wall_ms` is divided down by `compute.cores()` through
+    /// [`ResourceEstimate::at_cores`] using the plan's bottleneck
+    /// [`ThreadingInformation`](crate::estimate::ThreadingInformation):
+    /// any SERIAL step forces the whole plan SERIAL; otherwise the
+    /// smallest reported knee across parallelizable steps wins.
+    ///
+    /// `compute.simd_tier()` applies a coarse per-tier wall-time
+    /// multiplier on top of the AVX2 baseline (see the `estimate`
+    /// module docs for the per-tier ratios; TODO per-tier calibration).
     ///
     /// Cheap to call — walks the plan's steps once and does no
     /// allocation. Safe to call repeatedly per-frame in throttled
     /// pipelines.
+    ///
+    /// For a quick estimate using [`ComputeEnvironment::new()`](crate::estimate::ComputeEnvironment::new)
+    /// defaults on a `width × height` image, see [`estimate`](Self::estimate).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use zenpixels::PixelDescriptor;
+    /// use zenpixels_convert::{ComputeEnvironment, ConvertPlan, ImageCharacteristics};
+    ///
+    /// let plan = ConvertPlan::new(
+    ///     PixelDescriptor::RGB8_SRGB,
+    ///     PixelDescriptor::RGBA8_SRGB,
+    /// ).unwrap();
+    /// let image = ImageCharacteristics::new(1920, 1080, PixelDescriptor::RGB8_SRGB);
+    /// let compute = ComputeEnvironment::new().with_cores(8);
+    /// let est = plan.estimate_in(&image, &compute);
+    /// assert!(est.peak_memory_bytes_est().unwrap_or(0) > 0);
+    /// // wall_ms is `Some(_)` once the plan has measurable work (it can
+    /// // round to 0 ms for trivial plans, but the field is populated).
+    /// assert!(est.wall_ms().is_some());
+    /// ```
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn estimate_in(
+        &self,
+        image: &crate::estimate::ImageCharacteristics,
+        compute: &crate::estimate::ComputeEnvironment,
+    ) -> crate::estimate::ResourceEstimate {
+        crate::estimate::estimate_plan(self, image, compute)
+    }
+
+    /// Shortcut: estimate with [`ComputeEnvironment::new()`](crate::estimate::ComputeEnvironment::new)
+    /// defaults (single core, unknown RAM, unspecified SIMD tier) on a
+    /// `width × height` image. Builds the
+    /// [`ImageCharacteristics`](crate::estimate::ImageCharacteristics) from
+    /// the plan's `from()` descriptor and calls [`estimate_in`](Self::estimate_in).
+    /// Use [`estimate_in`](Self::estimate_in) directly when the caller has
+    /// a populated compute environment (e.g.
+    /// `available_parallelism() + archmage tier`).
     ///
     /// # Example
     ///
@@ -1335,17 +1388,22 @@ impl ConvertPlan {
     ///     PixelDescriptor::RGBA8_SRGB,
     /// ).unwrap();
     /// let est = plan.estimate(1920, 1080);
-    /// assert!(est.peak_memory_bytes > 0);
-    /// assert!(est.wall_time_ms >= 0.0);
+    /// assert!(est.peak_memory_bytes_est().unwrap_or(0) > 0);
+    /// assert!(est.wall_ms().is_some());
     /// ```
+    #[cfg(feature = "std")]
     #[must_use]
     pub fn estimate(&self, width: u32, height: u32) -> crate::estimate::ResourceEstimate {
-        crate::estimate::estimate_plan(self, width, height)
+        let image = crate::estimate::ImageCharacteristics::new(width, height, self.from());
+        let compute = crate::estimate::ComputeEnvironment::new();
+        self.estimate_in(&image, &compute)
     }
 }
 
 /// Bridge for the [`crate::estimate`] module: mirror of
-/// [`intermediate_desc`] without making that function public.
+/// [`intermediate_desc`] without making that function public. Gated on
+/// `std` because the estimate module itself is.
+#[cfg(feature = "std")]
 pub(crate) fn intermediate_desc_for_estimate(
     current: PixelDescriptor,
     step: &ConvertStep,

@@ -398,10 +398,20 @@ pub use zenpixels::*;
 pub(crate) mod convert;
 pub mod error;
 /// Resource estimation — predict peak memory + wall-clock time for a
-/// `ConvertPlan` before running it. See [`ResourceEstimate`] and
-/// [`ConvertPlan::estimate`](crate::ConvertPlan::estimate).
+/// `ConvertPlan` before running it. See [`ResourceEstimate`],
+/// [`ComputeEnvironment`], [`ImageCharacteristics`],
+/// [`ConvertPlan::estimate`](crate::ConvertPlan::estimate), and
+/// [`ConvertPlan::estimate_in`](crate::ConvertPlan::estimate_in).
+///
+/// Gated on the `std` feature because the underlying types are re-exported
+/// from `zencodec::estimate`, and zencodec transitively pulls
+/// `zenpixels/std` (its manifest enables zenpixels's default features).
+#[cfg(feature = "std")]
 pub mod estimate;
-pub use estimate::ResourceEstimate;
+#[cfg(feature = "std")]
+pub use estimate::{
+    ComputeEnvironment, ImageCharacteristics, ResourceEstimate, SimdTier, ThreadingInformation,
+};
 pub(crate) mod f16_scalar;
 pub(crate) mod negotiate;
 

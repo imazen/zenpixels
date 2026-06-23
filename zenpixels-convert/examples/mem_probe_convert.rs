@@ -52,9 +52,11 @@ fn main() {
     )
     .expect("from_vec");
     let plan = ConvertPlan::new(from, to).expect("plan");
-    let __est = plan.estimate(w, h);
-    let est_bytes = __est.peak_memory_bytes;
-    let _est_ms = __est.wall_time_ms;
+    let est = plan.estimate(w, h);
+    // The zencodec ResourceEstimate accessors return Option; `unwrap_or(0)`
+    // keeps the mem-probe harness honest for `Unknown` cells.
+    let est_bytes = est.peak_memory_bytes_est().unwrap_or(0);
+    let _est_ms = est.wall_ms().unwrap_or(0);
     let est_kb = est_bytes / 1024;
 
     let pre = status_kb("VmRSS:");

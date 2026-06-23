@@ -13,6 +13,38 @@
   the 0.2.15 work branch but never shipped to crates.io). Internal
   calibration tables and the `estimate_plan` walker stay (now
   `pub(crate)`).
+- **Adopted `zencodec::estimate::{ComputeEnvironment, ImageCharacteristics,
+  ResourceEstimate, ThreadingInformation}` for resource projection.** The
+  brief local `ResourceEstimate { peak_memory_bytes, wall_time_ms }` (the
+  YAGNI-cleanup tuple-replacement that landed earlier in this 0.2.15 work
+  branch) is replaced by the zencodec type so estimates compose with
+  codec-side encode/decode estimates in multi-stage pipelines (every stage
+  of `decode → convert → encode` returns the same `ResourceEstimate`
+  shape). Added `ConvertPlan::estimate_in(&image, &compute) ->
+  ResourceEstimate` for caller-controlled estimation against an
+  `ImageCharacteristics` (now carries `frame_count`) + `ComputeEnvironment`
+  (carries `available_cores`, optional `available_ram_bytes`, optional
+  `SimdTier`). The simple `ConvertPlan::estimate(w, h) -> ResourceEstimate`
+  shortcut stays as a convenience for callers that don't care about the
+  compute environment — it delegates to `estimate_in` with a default-built
+  environment. Wall-time projection now respects:
+    - `compute.cores()` via `ResourceEstimate::at_cores` driven by a
+      bottleneck `ThreadingInformation` (any SERIAL step forces the whole
+      plan SERIAL; otherwise the smallest per-step knee — `rows / 64`
+      clamped to ≤ 16 — wins).
+    - `compute.simd_tier()` via a coarse per-tier multiplier (AVX-512
+      0.85×, AVX2 baseline, scalar 2×, NEON 1×, WASM-128 1.3×, scalar
+      WASM 2×; TODO per-tier calibration tables).
+    - `image.frame_count()` — the per-frame work + per-frame destination
+      buffer scale by the count.
+  `peak_memory_bytes_max` is reported at `1.3 × peak_memory_bytes_est` to
+  capture the ±30 % accuracy contract. The four zencodec types are
+  re-exported at the crate root so users don't need to add `zencodec` as
+  a direct dep. Pulled in along the **`std` feature** axis (zencodec's
+  crates.io manifest depends on `zenpixels = "0.2.14"` with default
+  features, transitively enabling `zenpixels/std`); the `no_std + alloc`
+  build path stays free of the new dependency, but also loses the estimate
+  surface until built with `std`.
 
 ### zenpixels — removed (0.3.0)
 
