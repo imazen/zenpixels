@@ -13,38 +13,32 @@
 #   pub types (struct/enum/trait/alias)        42
 #   pub consts/statics                         12
 #   free functions                             12
-#   inherent methods                           57
+#   inherent methods                           45
 #   struct fields                             108
 #   enum variants                              70
 #   trait roster entries (type × trait)        65
 #   auto-trait-complete types                  16
 #
 # per-module pub lines:
-#   (root)                           92
+#   (root)                           86
 #   cms_moxcms                        5
-#   ext                              14
+#   ext                               8
 #   hdr                              26
 #   pipeline                        170
 
-## items (278 lines)
+## items (266 lines)
 
 pub mod cms_moxcms
 pub struct cms_moxcms::MoxCmsError(pub alloc::string::String)
 pub fn cms_moxcms::cicp_transform_opts() -> moxcms::transform::TransformOptions
 pub fn cms_moxcms::lut_transform_opts() -> moxcms::transform::TransformOptions
 pub fn cms_moxcms::transform_opts(cms::ColorPriority, cms::RenderingIntent) -> moxcms::transform::TransformOptions
-pub fn ext::PixelBufferConvertTypedExt::estimate_to_bgra8(&self) -> estimate::ResourceEstimate
-pub fn ext::PixelBufferConvertTypedExt::estimate_to_gray8(&self) -> estimate::ResourceEstimate
-pub fn ext::PixelBufferConvertTypedExt::estimate_to_rgb8(&self) -> estimate::ResourceEstimate
-pub fn ext::PixelBufferConvertTypedExt::estimate_to_rgba8(&self) -> estimate::ResourceEstimate
 pub fn ext::PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_rgba8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>
 pub fn ext::PixelBufferHdrConvertExt::convert_to_sdr(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferHdrConvertExt::convert_to_with_hdr_config(&self, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn ext::PixelBufferHdrConvertExt::estimate_convert_to_sdr(&self, &zenpixels::descriptor::PixelDescriptor) -> estimate::ResourceEstimate
-pub fn ext::PixelBufferHdrConvertExt::estimate_convert_to_with_hdr_config(&self, &zenpixels::descriptor::PixelDescriptor, HdrConfig) -> estimate::ResourceEstimate
 pub mod hdr::measure
 pub hdr::measure::LightLevelMethod::LuminanceBt2020
 pub hdr::measure::LightLevelMethod::MaxRgb
@@ -290,10 +284,6 @@ pub PathEntry::source_codec: &'static str
 pub PathEntry::source_effective_bits: u8
 pub PathEntry::source_format: zenpixels::descriptor::PixelDescriptor
 pub trait PixelBufferConvertTypedExt: ext::PixelBufferConvertExt [also: ext]
-pub fn PixelBufferConvertTypedExt::estimate_to_bgra8(&self) -> estimate::ResourceEstimate
-pub fn PixelBufferConvertTypedExt::estimate_to_gray8(&self) -> estimate::ResourceEstimate
-pub fn PixelBufferConvertTypedExt::estimate_to_rgb8(&self) -> estimate::ResourceEstimate
-pub fn PixelBufferConvertTypedExt::estimate_to_rgba8(&self) -> estimate::ResourceEstimate
 pub fn PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>
 pub fn PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
 pub fn PixelBufferConvertTypedExt::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
@@ -301,8 +291,6 @@ pub fn PixelBufferConvertTypedExt::to_rgba8(&self) -> zenpixels::buffer::PixelBu
 pub trait PixelBufferHdrConvertExt [also: ext]
 pub fn PixelBufferHdrConvertExt::convert_to_sdr(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferHdrConvertExt::convert_to_with_hdr_config(&self, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn PixelBufferHdrConvertExt::estimate_convert_to_sdr(&self, &zenpixels::descriptor::PixelDescriptor) -> estimate::ResourceEstimate
-pub fn PixelBufferHdrConvertExt::estimate_convert_to_with_hdr_config(&self, &zenpixels::descriptor::PixelDescriptor, HdrConfig) -> estimate::ResourceEstimate
 pub fn generate_path_matrix(&[&pipeline::registry::CodecFormats], &[pipeline::op_format::OpCategory], &[&pipeline::registry::CodecFormats], pipeline::path::QualityThreshold) -> alloc::vec::Vec<pipeline::path::PathEntry> [also: pipeline, pipeline::path]
 pub fn matrix_stats(&[pipeline::path::PathEntry]) -> pipeline::path::MatrixStats [also: pipeline, pipeline::path]
 pub fn optimal_path(zenpixels::descriptor::PixelDescriptor, Provenance, pipeline::op_format::OpCategory, zenpixels::descriptor::PixelDescriptor, pipeline::path::QualityThreshold) -> core::option::Option<pipeline::path::ConversionPath> [also: pipeline, pipeline::path]

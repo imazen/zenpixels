@@ -11,7 +11,7 @@
 #
 #   pub types (struct/enum/trait/alias)         2
 #   pub consts/statics                          1
-#   inherent methods                           38
+#   inherent methods                           39
 #   struct fields                               4
 #   trait roster entries (type × trait)        37
 #
@@ -21,14 +21,14 @@
 #   cicp                              1
 #   color                             6
 #   descriptor                       10
-#   hdr                               2
+#   hdr                               3
 #   icc                               2
 #   orientation                       1
 #   pixel_types                       2
 #   planar                           10
 #   policy                            5
 
-## items (44 lines)
+## items (45 lines)
 
 pub const hdr::ContentLightLevel::DEFAULT_PERCENTILE: f32
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
@@ -52,6 +52,7 @@ pub fn descriptor::PixelFormat::assert_fields_are_eq(&self)
 pub fn descriptor::SignalRange::assert_fields_are_eq(&self)
 pub fn descriptor::TransferFunction::assert_fields_are_eq(&self)
 pub fn hdr::ContentLightLevel::assert_fields_are_eq(&self)
+pub fn hdr::ContentLightLevel::measure(buffer::PixelSlice<'_>, hdr::DiffuseWhite) -> core::option::Option<Self>
 pub fn icc::IccIdentification::assert_fields_are_eq(&self)
 pub fn icc::IdentificationUse::assert_fields_are_eq(&self)
 pub fn orientation::Orientation::assert_fields_are_eq(&self)

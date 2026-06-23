@@ -1,4 +1,4 @@
-//! Verify `ConvertPlan::estimate_resources` against the measured marginal peak
+//! Verify `ConvertPlan::estimate` against the measured marginal peak
 //! (VmHWM − pre-RSS), using the heaptrack/marginal-WS methodology.
 //!
 //!   cargo build -p zenpixels-convert --release --example mem_probe_convert
@@ -8,7 +8,7 @@
 //!
 //! `from`/`to` ∈ {rgb8, rgba8, gray8, graya8, bgra8}. `convert_to` allocates a
 //! fresh destination buffer, so the marginal WS (peak − pre, where pre holds the
-//! source the caller keeps) is exactly what `estimate_resources` models:
+//! source the caller keeps) is exactly what `estimate` models:
 //! dst_bytes + row-sized ping-pong scratch. Prints TSV:
 //! `W  H  from_bpp  to_bpp  est_peak_kb  measured_marginal_kb`.
 
@@ -52,7 +52,8 @@ fn main() {
     )
     .expect("from_vec");
     let plan = ConvertPlan::new(from, to).expect("plan");
-    let est_kb = plan.estimate_resources(w, h).peak_memory_bytes / 1024;
+    let (est_bytes, _est_ms) = plan.estimate(w, h);
+    let est_kb = est_bytes / 1024;
 
     let pre = status_kb("VmRSS:");
     let dst = src.convert_to(to).expect("convert");

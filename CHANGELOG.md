@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### zenpixels-convert — changed (pre-publish YAGNI cleanup)
+
+- **`ResourceEstimate` / `StepEstimate` / `EstimateConfidence` removed; the
+  `estimate_*` shadow methods on `PixelBufferConvertExt` /
+  `PixelBufferConvertTypedExt` / `PixelBufferHdrConvertExt` removed.**
+  Replaced by a single `ConvertPlan::estimate(w, h) -> (u64, f64)` method
+  returning `(peak_memory_bytes, wall_time_ms)`. Pre-publish YAGNI
+  cleanup — no public consumers existed (the surface was introduced in
+  the 0.2.15 work branch but never shipped to crates.io). Internal
+  calibration tables and the `estimate_plan` walker stay (now
+  `pub(crate)`).
+
 ### zenpixels — removed (0.3.0)
 
 - **Removed the deprecated `ContentLightLevel::measure(px, white)` inherent
@@ -68,12 +80,16 @@
   for the 5 `FusedKind` shapes, and asserts the U8 sRGB gamut path
   exercises the peephole (no decomposition into the unfused 3-step
   pair).
-- **`zenpixels-convert/tests/resource_estimate.rs`** (extended). 6 new
-  tests on top of the 23 existing: breakdown step-count growth with plan
-  complexity, breakdown-name-shape invariants, SoftCompress demoting
-  confidence to `Heuristic`, native-pair returning `Calibrated`, and
-  typed-estimator `estimate_to_rgb8` byte-for-byte parity with
-  `estimate_convert_to(&RGB8_SRGB)`.
+- **`zenpixels-convert/tests/resource_estimate.rs`** (extended then
+  trimmed). The 0.2.15 work originally added 6 tests on top of 23
+  existing for the elaborated `ResourceEstimate` surface; that surface
+  was YAGNI-trimmed pre-publish (see "changed" entry above) and the
+  test file collapsed to 7 tests covering the surviving
+  `ConvertPlan::estimate(w, h) -> (u64, f64)` shape: identity-memcpy
+  sizing, zero-pixel guard, bench-anchored sRGB-encode timing,
+  BT.2446-A HDR pipeline within 30 % of the tone-map cell, peak-memory
+  floor, no-panic sweep across reasonable (w, h), and monotonicity in
+  pixel count.
 
 ### zenpixels-convert — added (API)
 

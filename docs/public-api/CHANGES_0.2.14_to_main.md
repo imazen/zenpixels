@@ -58,16 +58,16 @@ Header-block line counts on `main` vs `v0.2.14`:
   predicate for schedulers to probe (source, target) pairs before
   attaching a CMS plugin to a batch. Returns true iff either side's
   `ColorModel` is outside the native `{Gray, Rgb, Oklab}` set.
-- **`pub mod estimate` + `struct ResourceEstimate { peak_memory_bytes,
-  wall_time_ms, breakdown, confidence }` + `struct StepEstimate` + `enum
-  EstimateConfidence {Calibrated, Heuristic, Unknown}`** — predicting
-  peak memory and wall-clock for any conversion plan. Wired through
-  `ConvertPlan::estimate_resources`,
-  `PixelBufferConvertExt::estimate_*` (`convert_to`, `linearize`,
-  `delinearize`, `try_add_alpha`, `try_widen_to_u16`,
-  `try_narrow_to_u8`), and the typed-Ext family
-  (`PixelBufferConvertTypedExt::estimate_to_{bgra8,rgba8,rgb8,gray8}`)
-  and `PixelBufferHdrConvertExt::estimate_convert_to_{sdr,with_hdr_config}`.
+- **`ConvertPlan::estimate(w, h) -> (u64, f64)`** — predicting
+  `(peak_memory_bytes, wall_time_ms)` for any conversion plan. The single
+  tuple-returning method that survives pre-publish YAGNI cleanup; an
+  earlier iteration in this work cycle elaborated `pub mod estimate` +
+  `struct ResourceEstimate { peak_memory_bytes, wall_time_ms, breakdown,
+  confidence }` + `struct StepEstimate` + `enum EstimateConfidence` and
+  11 `estimate_*` shadow methods across `PixelBufferConvertExt` /
+  `PixelBufferConvertTypedExt` / `PixelBufferHdrConvertExt` — all of that
+  was scratched in favor of the one method on `ConvertPlan` (CHANGELOG
+  "changed" entry for details).
 
 ### `zenpixels-convert` — feature additions (`zenpixels-convert.features.txt`, mostly behind `hdr-experimental`)
 

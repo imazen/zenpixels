@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpixels.txt 833 lines (supported surface) | zenpixels.features.txt 264 added (features: icc,imgref,planar,rgb,serde,std) | zenpixels.internal.txt 81 lines (82 hidden + 0 excluded-feature)
+# files: zenpixels.txt 833 lines (supported surface) | zenpixels.features.txt 264 added (features: icc,imgref,planar,rgb,serde,std) | zenpixels.internal.txt 82 lines (83 hidden + 0 excluded-feature)
 
 ## summary
 #

@@ -81,24 +81,20 @@ fn rgb_to_rgb_does_not_require_cms() {
 }
 
 #[test]
-fn cmyk_to_rgb_estimate_returns_unknown_confidence_when_no_cms() {
-    // The `estimate_*` family pre-dates this work and already returns
-    // `Unknown` for CMYK sources (it can't build a plan). This pins that
-    // it does NOT panic — same posture as the new `NeedsCms` error.
-    use zenpixels_convert::EstimateConfidence;
-    use zenpixels_convert::ext::PixelBufferConvertExt;
+fn cmyk_to_rgb_plan_construction_fails_without_cms() {
+    // Building a ConvertPlan for CMYK→RGB without a CMS backend must
+    // fail (no usable conversion path); previously the `estimate_*`
+    // family swallowed this and returned `Unknown` — same posture as
+    // the `NeedsCms` error, just via the plan constructor now.
+    use zenpixels_convert::ConvertPlan;
 
-    let cmyk_data = alloc::vec![0u8; 4 * 4]; // 2×2 CMYK pixels
-    let buf = PixelBuffer::from_vec(cmyk_data, 2, 2, PixelDescriptor::CMYK8)
+    let _cmyk_buf = PixelBuffer::from_vec(alloc::vec![0u8; 4 * 4], 2, 2, PixelDescriptor::CMYK8)
         .expect("CMYK PixelBuffer construction");
-    let est = buf.estimate_convert_to(&PixelDescriptor::RGB8_SRGB);
-    assert_eq!(
-        est.confidence,
-        EstimateConfidence::Unknown,
-        "CMYK→RGB without CMS should be Unknown, not panic or fake-Calibrated",
+    let res = ConvertPlan::new(PixelDescriptor::CMYK8, PixelDescriptor::RGB8_SRGB);
+    assert!(
+        res.is_err(),
+        "CMYK→RGB plan must fail without CMS attached, got {res:?}"
     );
-    assert_eq!(est.peak_memory_bytes, 0);
-    assert_eq!(est.wall_time_ms, 0.0);
 }
 
 // ---------------------------------------------------------------------------

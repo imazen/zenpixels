@@ -127,6 +127,7 @@ impl FusedKind {
     /// `__trace_ops` recorder + `tests/plan_validation.rs` (which still
     /// asserts on `s.contains("FusedSrgb")`).
     #[inline]
+    #[allow(dead_code)] // used only when `__trace_ops` feature is enabled
     pub(crate) const fn variant_name(self) -> &'static str {
         match self {
             Self::SrgbU8GamutRgb => "FusedSrgbU8GamutRgb",
@@ -305,13 +306,12 @@ pub(crate) enum ConvertStep {
 }
 
 impl ConvertStep {
-    /// The stable variant name used by the `__trace_ops` recorder and the
-    /// `StepEstimate::name` field. Kept as a `const fn` on `ConvertStep`
-    /// (no `strum`/proc-macro dep) so `estimate::step_name` and
-    /// `__trace_ops::step_name` can both call through to one source of
-    /// truth — historically these were three independent 60-arm matches
-    /// that drifted easily.
+    /// The stable variant name used by the `__trace_ops` recorder. Kept as
+    /// a `const fn` on `ConvertStep` (no `strum`/proc-macro dep) so the
+    /// recorder has one source of truth — historically there were several
+    /// independent 60-arm matches that drifted easily.
     #[inline]
+    #[allow(dead_code)] // used only when `__trace_ops` feature is enabled
     pub(crate) const fn variant_name(&self) -> &'static str {
         match self {
             Self::Identity => "Identity",
@@ -1304,35 +1304,25 @@ impl ConvertPlan {
         self.to
     }
 
-    /// Estimate peak memory + wall-clock for executing this plan on a
-    /// `width × height` image.
+    /// Estimated `(peak_memory_bytes, wall_time_ms)` on a `width × height`
+    /// image. Best-effort, ±30 % on a reference machine (Ryzen 9 7950X,
+    /// AVX2, 16 rayon threads). Real wall time varies with contention,
+    /// frequency scaling, and CPU model.
     ///
-    /// The returned [`ResourceEstimate`](crate::estimate::ResourceEstimate) reports an **upper bound** on
-    /// peak working-set memory (in bytes, includes the destination buffer
-    /// plus any scratch the multi-step ping-pong uses) and a **median
-    /// wall-clock projection** in milliseconds on the reference machine
-    /// (AMD Ryzen 9 7950X, AVX2/V3 tier, no contention). Memory excludes
-    /// the caller's persistent state.
+    /// Calibrated from `benches/t1_layout`, `t2_depth`, `t3_tf_fused`,
+    /// `t4_tf_f32`, `t5_alpha`, `t6_oklab`, `t7_gamut` steady-state
+    /// throughput. Returns `(0, 0.0)` for trivially-empty plans
+    /// (identity at 0×0).
     ///
-    /// `width × height` is the source image size; for cross-depth or
-    /// layout-changing plans the estimate accounts for both source and
-    /// target buffers where appropriate.
+    /// `peak_memory_bytes` is an upper bound on the working-set
+    /// allocations required to execute the plan (destination buffer +
+    /// row-sized ping-pong scratch for multi-step plans). It does NOT
+    /// include the caller's persistent state. `wall_time_ms` is a
+    /// median projection in milliseconds.
     ///
     /// Cheap to call — walks the plan's steps once and does no
     /// allocation. Safe to call repeatedly per-frame in throttled
     /// pipelines.
-    ///
-    /// # Accuracy
-    ///
-    /// Design tolerance is **±30 %** relative to the underlying bench
-    /// numbers. Real-world variance widens for:
-    ///
-    /// - Hosts on a different SIMD tier (calibration is AVX2/V3).
-    /// - Very small images where per-call overhead dominates.
-    /// - Concurrent / thermally-throttled environments.
-    ///
-    /// See [`crate::estimate`] for the full accuracy contract and
-    /// the calibration source list.
     ///
     /// # Example
     ///
@@ -1344,12 +1334,12 @@ impl ConvertPlan {
     ///     PixelDescriptor::RGB8_SRGB,
     ///     PixelDescriptor::RGBA8_SRGB,
     /// ).unwrap();
-    /// let est = plan.estimate_resources(1920, 1080);
-    /// assert!(est.peak_memory_bytes > 0);
-    /// assert!(est.wall_time_ms >= 0.0);
+    /// let (mem, ms) = plan.estimate(1920, 1080);
+    /// assert!(mem > 0);
+    /// assert!(ms >= 0.0);
     /// ```
     #[must_use]
-    pub fn estimate_resources(&self, width: u32, height: u32) -> crate::estimate::ResourceEstimate {
+    pub fn estimate(&self, width: u32, height: u32) -> (u64, f64) {
         crate::estimate::estimate_plan(self, width, height)
     }
 }

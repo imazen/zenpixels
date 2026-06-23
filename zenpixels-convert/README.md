@@ -139,19 +139,15 @@ The buffer-baking half of the zen orientation story lives here (the `Orientation
 
 ## Resource estimation
 
-For schedulers / throttlers / SLA-bound pipelines that need to know cost *before* running an op, every allocating entry point has an `estimate_*` companion that returns a [`ResourceEstimate`] (peak memory in bytes, wall-clock in ms, per-step breakdown, modeled-confidence flag). Cheap to call — walks the planned [`ConvertSteps`](ConvertPlan), no row work, no large allocation. Calibrated against the existing `bench_t1`–`bench_t7` series (Ryzen 9 7950X, AVX2/V3), documented ±30 % design tolerance.
+For schedulers / throttlers / SLA-bound pipelines that need to know cost *before* running an op, [`ConvertPlan::estimate`] returns `(peak_memory_bytes, wall_time_ms)` for a `width × height` image. Cheap to call — walks the planned steps, no row work, no allocation. Calibrated against the `bench_t1`–`bench_t7` series (Ryzen 9 7950X, AVX2/V3), ±30 % design tolerance.
 
 ```rust
-use zenpixels_convert::{PixelBufferConvertExt, PixelDescriptor};
+use zenpixels_convert::{ConvertPlan, PixelDescriptor};
 
-let est = buf.estimate_convert_to(&target);
-println!("peak {} MB, wall {:.1} ms ({:?})",
-    est.peak_memory_bytes / 1_048_576,
-    est.wall_time_ms,
-    est.confidence);
+let plan = ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
+let (mem, ms) = plan.estimate(1920, 1080);
+println!("peak {} MB, wall {ms:.1} ms", mem / 1_048_576);
 ```
-
-Available on [`ConvertPlan::estimate_resources`] and as `estimate_*` methods on [`PixelBufferConvertExt`] (`estimate_convert_to`, `estimate_try_widen_to_u16`, `estimate_linearize`, …), [`PixelBufferConvertTypedExt`] (`estimate_to_rgb8` …), and `PixelBufferHdrConvertExt` (`estimate_convert_to_sdr`, accounting for the `measure_max` scan as well as the tone-map plan).
 
 ## Pipeline planner (`pipeline` feature)
 
@@ -178,7 +174,7 @@ Available on [`ConvertPlan::estimate_resources`] and as `estimate_*` methods on 
 | [`Bt2446A`] / [`SoftCompress`] / [`CllMeasure`] | ITU-R BT.2446 Method A curve + OKLch knee + CTA-861.3 CLL measurement (`hdr-experimental` feature) |
 | [`quantize_to`] | Anchor-aware linear→PQ16 quantizer |
 | [`finalize_for_output`] / [`EncodeReady`] / [`OutputMetadata`] | Atomic pixels-plus-metadata output assembly |
-| [`ResourceEstimate`] / [`ConvertPlan::estimate_resources`] | Predict peak memory + wall-clock before running an op |
+| [`ConvertPlan::estimate`] | Predict `(peak_memory_bytes, wall_time_ms)` before running an op |
 | [`TransferFunctionExt`] / [`ColorPrimariesExt`] / [`PixelBufferConvertExt`] | Conversion methods bolted onto interchange types |
 | [`LoadBearingReport`] / [`PixelSliceLoadBearingExt`] | Channel-information analysis |
 | [`ConvertError`] | Conversion error type |
@@ -269,6 +265,5 @@ Apache-2.0 OR MIT.
 [`optimal_path`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/pipeline/fn.optimal_path.html
 [`generate_path_matrix`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/pipeline/fn.generate_path_matrix.html
 [`ConvertError`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/enum.ConvertError.html
-[`ResourceEstimate`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ResourceEstimate.html
-[`ConvertPlan::estimate_resources`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.estimate_resources
+[`ConvertPlan::estimate`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.estimate
 [`PixelBufferConvertTypedExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.PixelBufferConvertTypedExt.html

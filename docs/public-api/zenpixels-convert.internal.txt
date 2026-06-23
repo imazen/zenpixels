@@ -13,9 +13,9 @@
 #   pub types (struct/enum/trait/alias)         4
 #   pub consts/statics                          3
 #   free functions                             15
-#   inherent methods                           40
+#   inherent methods                           39
 #   struct fields                               4
-#   trait roster entries (type × trait)        34
+#   trait roster entries (type × trait)        33
 #   auto-trait-complete types                   2
 #
 # per-module pub lines:
@@ -24,14 +24,13 @@
 #   __bench_u16_hybrids               4
 #   __trace_ops                       2
 #   cms                               2
-#   estimate                          1
 #   hdr                              25
 #   icc_profiles                      1
 #   orient                            2
 #   pipeline                          2
 #   zenpixels                         4
 
-## items (65 lines)
+## items (64 lines)
 
 #[non_exhaustive] pub struct hdr::LightLevelHistogram [also: hdr::measure]
 pub const hdr::measure::LightLevelHistogram::BIN_MAX_NITS: f32
@@ -63,7 +62,6 @@ pub fn __trace_ops::start_recording()
 pub fn __trace_ops::stop_recording() -> alloc::vec::Vec<&'static str>
 pub fn cms::ColorPriority::assert_fields_are_eq(&self)
 pub fn cms::RenderingIntent::assert_fields_are_eq(&self)
-pub fn estimate::EstimateConfidence::assert_fields_are_eq(&self)
 pub fn exposure_tonemap(f32, f32) -> f32 [also: hdr]
 pub fn hdr::CllMeasure::measure_histogram(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
 pub fn hdr::CllMeasure::measure_max_smoothed(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
@@ -99,7 +97,7 @@ pub __bench_scan::FusedRequest::check_opaque: bool
 pub __bench_scan::FusedResult::is_grayscale: bool
 pub __bench_scan::FusedResult::is_opaque: bool
 
-## trait impls (21 types)
+## trait impls (20 types)
 
 ConversionCost: TrivialClone
 ConvertIntent: TrivialClone
@@ -111,7 +109,6 @@ __bench_scan::FusedResult: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialCl
 cms::ColorPriority: TrivialClone
 cms::RenderingIntent: TrivialClone
 cms_moxcms::MoxCms: TrivialClone
-estimate::EstimateConfidence: TrivialClone
 hdr::Bt2446A: TrivialClone
 hdr::HdrMetadata: TrivialClone
 hdr::measure::LightLevelHistogram: Clone, Debug

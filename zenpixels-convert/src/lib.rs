@@ -397,7 +397,7 @@ pub use zenpixels::*;
 // Conversion modules.
 pub(crate) mod convert;
 pub mod error;
-pub mod estimate;
+pub(crate) mod estimate;
 pub(crate) mod f16_scalar;
 pub(crate) mod negotiate;
 
@@ -486,10 +486,6 @@ pub use convert::HdrConfig;
 pub use convert::{ConvertPlan, convert_row, requires_cms};
 pub use converter::RowConverter;
 pub use error::ConvertError;
-// Resource-estimation API. `ResourceEstimate` is returned from
-// `ConvertPlan::estimate_resources` and the `estimate_convert_to`
-// shortcut on `PixelBufferConvertExt`.
-pub use estimate::{EstimateConfidence, ResourceEstimate, StepEstimate};
 pub use negotiate::{
     ConversionCost, ConvertIntent, FormatOption, Provenance, best_match, best_match_with,
     conversion_cost, conversion_cost_with_provenance, ideal_format, negotiate,

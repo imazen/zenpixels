@@ -487,8 +487,8 @@ fn hdr_pipeline_e2e_neutral_gray_lands_in_sdr_range() {
 fn new_with_hdr_peak_delegates_to_config_with_defaults() {
     // `ConvertPlan::new_with_hdr_peak(_, _, peak)` is documented as
     // `new_with_hdr_config(_, _, HdrConfig { peak, ..default() })`. Pin
-    // that contract by building both and comparing the input/output
-    // descriptors and step counts.
+    // that contract by building both and comparing the resource
+    // estimates — identical plans produce identical tuple estimates.
     let src = pq_u16_bt2020_rgb();
     let dst = PixelDescriptor::RGB8_SRGB;
     let plan_peak = ConvertPlan::new_with_hdr_peak(src, dst, 1000.0).expect("peak plan");
@@ -501,25 +501,13 @@ fn new_with_hdr_peak_delegates_to_config_with_defaults() {
         },
     )
     .expect("config plan");
-    // The two plans must operate over the same input/output descriptors.
-    let est_peak = plan_peak.estimate_resources(1024, 1024);
-    let est_config = plan_config.estimate_resources(1024, 1024);
+    // Same input/output descriptors → same estimated work + memory.
+    let est_peak = plan_peak.estimate(1024, 1024);
+    let est_config = plan_config.estimate(1024, 1024);
     assert_eq!(
-        est_peak.breakdown.len(),
-        est_config.breakdown.len(),
-        "step count mismatch: peak={} config={} ({:?} vs {:?})",
-        est_peak.breakdown.len(),
-        est_config.breakdown.len(),
-        est_peak.breakdown.iter().map(|s| s.name).collect::<Vec<_>>(),
-        est_config
-            .breakdown
-            .iter()
-            .map(|s| s.name)
-            .collect::<Vec<_>>(),
+        est_peak, est_config,
+        "peak-vs-config plan tuple estimates diverge: {est_peak:?} vs {est_config:?}",
     );
-    let names_peak: Vec<&str> = est_peak.breakdown.iter().map(|s| s.name).collect();
-    let names_config: Vec<&str> = est_config.breakdown.iter().map(|s| s.name).collect();
-    assert_eq!(names_peak, names_config);
 }
 
 // ════════════════════════════════════════════════════════════════════════

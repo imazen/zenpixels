@@ -6,30 +6,29 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpixels-convert.txt 360 lines (supported surface) | zenpixels-convert.features.txt 297 added (features: avx512,cms-moxcms,fast-transpose,hdr-experimental,icc-db,imgref,pipeline,planar,rgb,serde,std) | zenpixels-convert.internal.txt 87 lines (120 hidden + 0 excluded-feature)
+# files: zenpixels-convert.txt 319 lines (supported surface) | zenpixels-convert.features.txt 285 added (features: avx512,cms-moxcms,fast-transpose,hdr-experimental,icc-db,imgref,pipeline,planar,rgb,serde,std) | zenpixels-convert.internal.txt 85 lines (118 hidden + 0 excluded-feature)
 
 ## summary
 #
-#   pub modules                                14
-#   pub types (struct/enum/trait/alias)        55
+#   pub modules                                13
+#   pub types (struct/enum/trait/alias)        49
 #   pub consts/statics                         19
 #   free functions                             40
-#   inherent methods                          108
-#   struct fields                              64
-#   enum variants                              62
+#   inherent methods                           94
+#   struct fields                              50
+#   enum variants                              56
 #   re-exports                                  5
-#   trait roster entries (type × trait)        82
-#   auto-trait-complete types                  18
+#   trait roster entries (type × trait)        71
+#   auto-trait-complete types                  15
 #   auto-trait exceptions                       2
 #
 # per-module pub lines:
-#   (root)                          172
+#   (root)                          152
 #   adapt                            10
 #   cms                              27
 #   converter                        23
 #   error                            27
-#   estimate                         15
-#   ext                              19
+#   ext                              13
 #   gamut                             6
 #   hdr                              15
 #   icc_profiles                     13
@@ -38,7 +37,7 @@
 #   orient                            3
 #   output                           17
 
-## items (334 lines)
+## items (296 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -110,29 +109,11 @@ pub error::ConvertError::RgbToGray
 pub error::ConvertError::UnsupportedTransfer
 pub error::ConvertError::UnsupportedTransfer::from: zenpixels::descriptor::TransferFunction
 pub error::ConvertError::UnsupportedTransfer::to: zenpixels::descriptor::TransferFunction
-pub mod estimate
-pub estimate::EstimateConfidence::Calibrated
-pub estimate::EstimateConfidence::Heuristic
-pub estimate::EstimateConfidence::Unknown
-pub estimate::ResourceEstimate::breakdown: alloc::vec::Vec<estimate::StepEstimate>
-pub estimate::ResourceEstimate::confidence: estimate::EstimateConfidence
-pub estimate::ResourceEstimate::peak_memory_bytes: u64
-pub estimate::ResourceEstimate::wall_time_ms: f64
-pub fn estimate::ResourceEstimate::zero(estimate::EstimateConfidence) -> Self
-pub estimate::StepEstimate::memory_bytes: u64
-pub estimate::StepEstimate::name: &'static str
-pub estimate::StepEstimate::time_ms: f64
 pub mod ext
 pub fn ext::ColorPrimariesExt::from_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub fn ext::ColorPrimariesExt::to_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub fn ext::PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::delinearize(&self, zenpixels::descriptor::TransferFunction) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn ext::PixelBufferConvertExt::estimate_convert_to(&self, &zenpixels::descriptor::PixelDescriptor) -> estimate::ResourceEstimate
-pub fn ext::PixelBufferConvertExt::estimate_delinearize(&self, zenpixels::descriptor::TransferFunction) -> estimate::ResourceEstimate
-pub fn ext::PixelBufferConvertExt::estimate_linearize(&self) -> estimate::ResourceEstimate
-pub fn ext::PixelBufferConvertExt::estimate_try_add_alpha(&self) -> estimate::ResourceEstimate
-pub fn ext::PixelBufferConvertExt::estimate_try_narrow_to_u8(&self) -> estimate::ResourceEstimate
-pub fn ext::PixelBufferConvertExt::estimate_try_widen_to_u16(&self) -> estimate::ResourceEstimate
 pub fn ext::PixelBufferConvertExt::linearize(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::try_add_alpha(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::try_narrow_to_u8(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
@@ -235,10 +216,6 @@ pub ConvertIntent::Blend
 pub ConvertIntent::Fastest
 pub ConvertIntent::LinearLight
 pub ConvertIntent::Perceptual
-pub enum EstimateConfidence [also: estimate]
-pub EstimateConfidence::Calibrated
-pub EstimateConfidence::Heuristic
-pub EstimateConfidence::Unknown
 #[non_exhaustive] pub enum OutputProfile [also: output]
 pub OutputProfile::Icc(alloc::sync::Arc<[u8]>)
 pub OutputProfile::Named(zenpixels::cicp::Cicp)
@@ -259,7 +236,7 @@ pub const ConversionCost::ZERO: Self
 pub const fn ConversionCost::new(u16, u16) -> Self
 pub struct ConvertPlan
 pub fn ConvertPlan::compose(&self, &Self) -> core::option::Option<Self>
-pub fn ConvertPlan::estimate_resources(&self, u32, u32) -> estimate::ResourceEstimate
+pub fn ConvertPlan::estimate(&self, u32, u32) -> (u64, f64)
 pub fn ConvertPlan::from(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn ConvertPlan::is_identity(&self) -> bool
 pub fn ConvertPlan::new(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
@@ -298,12 +275,6 @@ pub fn Provenance::invalidate_primaries(&mut self, zenpixels::descriptor::ColorP
 pub const fn Provenance::with_origin(zenpixels::descriptor::ChannelType, zenpixels::descriptor::ColorPrimaries) -> Self
 pub const fn Provenance::with_origin_depth(zenpixels::descriptor::ChannelType) -> Self
 pub fn Provenance::with_origin_primaries(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::ColorPrimaries) -> Self
-pub struct ResourceEstimate [also: estimate]
-pub ResourceEstimate::breakdown: alloc::vec::Vec<estimate::StepEstimate>
-pub ResourceEstimate::confidence: estimate::EstimateConfidence
-pub ResourceEstimate::peak_memory_bytes: u64
-pub ResourceEstimate::wall_time_ms: f64
-pub fn estimate::ResourceEstimate::zero(estimate::EstimateConfidence) -> Self
 pub struct RowConverter [also: converter]
 pub fn converter::RowConverter::compose(&self, &Self) -> core::option::Option<Self>
 pub fn converter::RowConverter::convert_row(&mut self, &[u8], &mut [u8], u32)
@@ -316,10 +287,6 @@ pub fn converter::RowConverter::new_explicit(zenpixels::descriptor::PixelDescrip
 pub fn converter::RowConverter::new_explicit_with_cms(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::plan(&self) -> &ConvertPlan
 pub fn converter::RowConverter::to_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
-pub struct StepEstimate [also: estimate]
-pub StepEstimate::memory_bytes: u64
-pub StepEstimate::name: &'static str
-pub StepEstimate::time_ms: f64
 pub trait ColorManagement [also: cms]
 pub type ColorManagement::Error: core::fmt::Debug
 pub fn ColorManagement::build_transform(&self, &[u8], &[u8]) -> core::result::Result<alloc::boxed::Box<dyn cms::RowTransform>, Self::Error>
@@ -331,12 +298,6 @@ pub fn ColorPrimariesExt::to_xyz_matrix(&self) -> core::option::Option<&'static 
 pub trait PixelBufferConvertExt [also: ext]
 pub fn PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::delinearize(&self, zenpixels::descriptor::TransferFunction) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn PixelBufferConvertExt::estimate_convert_to(&self, &zenpixels::descriptor::PixelDescriptor) -> estimate::ResourceEstimate
-pub fn PixelBufferConvertExt::estimate_delinearize(&self, zenpixels::descriptor::TransferFunction) -> estimate::ResourceEstimate
-pub fn PixelBufferConvertExt::estimate_linearize(&self) -> estimate::ResourceEstimate
-pub fn PixelBufferConvertExt::estimate_try_add_alpha(&self) -> estimate::ResourceEstimate
-pub fn PixelBufferConvertExt::estimate_try_narrow_to_u8(&self) -> estimate::ResourceEstimate
-pub fn PixelBufferConvertExt::estimate_try_widen_to_u16(&self) -> estimate::ResourceEstimate
 pub fn PixelBufferConvertExt::linearize(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::try_add_alpha(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::try_narrow_to_u8(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
@@ -375,7 +336,7 @@ pub fn requires_cms(&zenpixels::descriptor::PixelDescriptor, &zenpixels::descrip
 pub fn try_adapt_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: adapt]
 pub type GamutMatrix = [[f32; 3]; 3] [also: gamut]
 
-## trait impls (23 types)
+## trait impls (20 types)
 
 ConversionCost: Add, Clone, Copy, Debug, Default, Eq, PartialEq
 ConvertIntent: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -388,9 +349,6 @@ cms::ColorPriority: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 cms::RenderingIntent: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 converter::RowConverter: Clone
 error::ConvertError: Clone, Debug, Display, Error, From<zenpixels::buffer::BufferError>, PartialEq
-estimate::EstimateConfidence: Clone, Copy, Debug, Eq, PartialEq
-estimate::ResourceEstimate: Clone, Debug, PartialEq
-estimate::StepEstimate: Clone, Debug, PartialEq
 hdr::HdrMetadata: Clone, Copy, Debug, PartialEq
 icc_profiles::SynthesizedIcc: Clone, Debug, Eq, PartialEq
 load_bearing::LoadBearingReport: Clone, Copy, Debug, Default
@@ -403,6 +361,6 @@ zenpixels::descriptor::TransferFunction: ext::TransferFunctionExt
 
 ## auto traits
 
-18 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+15 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 cms::CmsPluginError: !RefUnwindSafe !UnwindSafe
 converter::RowConverter: !RefUnwindSafe !UnwindSafe

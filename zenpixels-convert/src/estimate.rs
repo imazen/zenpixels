@@ -1,4 +1,4 @@
-//! Resource-estimation API for [`ConvertPlan`].
+//! Resource-estimation primitive for [`ConvertPlan`].
 //!
 //! Callers integrating zenpixels-convert into pipelines need to make
 //! scheduling and throttling decisions *before* an operation runs:
@@ -7,11 +7,9 @@
 //! - Should we batch-throttle to avoid stalling the worker?
 //! - Will the planned conversion finish within an SLA?
 //!
-//! [`ConvertPlan::estimate_resources`] answers those questions cheaply
-//! (no allocation, no row work — just walks the planned steps). The
-//! returned [`ResourceEstimate`] reports a **peak memory upper bound**
-//! and a **median wall-clock projection** on the reference machine
-//! (AMD Ryzen 9 7950X, AVX2/V3 tier).
+//! [`ConvertPlan::estimate`](crate::ConvertPlan::estimate) answers those
+//! questions cheaply — no allocation, no row work, just walks the planned
+//! steps and returns `(peak_memory_bytes, wall_time_ms)` as a plain tuple.
 //!
 //! # Accuracy contract
 //!
@@ -25,7 +23,7 @@
 //! - **Cache state.** Cold L1/L2 cache adds per-call overhead; the
 //!   benches measure steady-state at 4096-pixel rows, so very small
 //!   images carry proportionally more fixed overhead than the
-//!   estimate accounts for. See `EstimateConfidence::Heuristic`.
+//!   estimate accounts for.
 //! - **Frequency scaling / thermal throttling.** The reference
 //!   machine is water-cooled and runs ~4.5 GHz under sustained
 //!   load. Boxes that thermal-throttle will be slower.
@@ -51,122 +49,16 @@
 //! - `bt2446a_throughput_2026-06-20.md` (zentone) — the
 //!   HDR→SDR tone-map curve.
 //! - `measure_max_throughput_2026-06-19.md` — the SOTA
-//!   spec-conformant CLL reading
-//!   ([`CllMeasure::measure_max`](crate::hdr::CllMeasure::measure_max));
-//!   the default-build SIMD path on the 7950X (no `-C target-cpu=native`)
-//!   delivers **~2.7 Gpix/s** steady-state on RGB f32 linear-light. Used
-//!   by [`PixelBufferHdrConvertExt::estimate_convert_to_sdr`](crate::PixelBufferHdrConvertExt::estimate_convert_to_sdr)
-//!   to account for the source-peak scan leg.
+//!   spec-conformant CLL reading used by HDR-source scan legs;
+//!   the default-build SIMD path on the 7950X (no
+//!   `-C target-cpu=native`) delivers **~2.7 Gpix/s** steady-state on
+//!   RGB f32 linear-light.
 //!
 //! All steady-state at 4096-pixel rows (L2-resident) on the public
 //! AVX2 path (no `-C target-cpu=native`).
 
-use alloc::vec::Vec;
-
 use crate::PixelDescriptor;
 use crate::convert::{ConvertPlan, ConvertStep, FusedKind};
-
-/// Peak resource cost projection for executing a [`ConvertPlan`].
-///
-/// Returned by [`ConvertPlan::estimate_resources`] and
-/// [`PixelBufferConvertExt::estimate_convert_to`](crate::ext::PixelBufferConvertExt::estimate_convert_to).
-/// All values are
-/// best-effort projections — see the module-level
-/// [accuracy contract](crate::estimate#accuracy-contract).
-///
-/// # Memory
-///
-/// `peak_memory_bytes` is an **upper bound** on the working-set
-/// allocations required to execute the plan, NOT including the
-/// caller's persistent state. It covers:
-///
-/// 1. The **destination buffer** (always allocated — the plan
-///    writes into a fresh buffer rather than mutating input).
-/// 2. **Scratch buffers** for multi-step plans: the converter
-///    holds two row-sized intermediate buffers (ping-pong) sized
-///    to the widest intermediate format the plan passes through.
-///
-/// The number does *not* model rayon thread-local scratch or
-/// allocator overhead — it's the per-call working-set ceiling.
-///
-/// # Time
-///
-/// `wall_time_ms` is a **median projection** on the reference
-/// machine (AMD Ryzen 9 7950X, AVX2/V3 tier, no contention).
-/// Real-world variance can exceed ±30 % from the benches that
-/// fed the calibration — see the module docs.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ResourceEstimate {
-    /// Peak working-set memory in bytes. Upper bound; includes
-    /// input + intermediate + output buffers. Does **not** include
-    /// the caller's persistent state.
-    pub peak_memory_bytes: u64,
-
-    /// Wall-clock projection in milliseconds, median on the
-    /// reference machine.
-    pub wall_time_ms: f64,
-
-    /// Per-step breakdown for diagnostics. Empty for trivial
-    /// (identity) plans.
-    pub breakdown: Vec<StepEstimate>,
-
-    /// Calibration confidence — see [`EstimateConfidence`].
-    pub confidence: EstimateConfidence,
-}
-
-/// Per-step contribution to a [`ResourceEstimate`].
-///
-/// The breakdown lets callers see which step dominates so they
-/// can target optimization or routing changes ("this op is 90 %
-/// linear-f32-to-srgb-u8 — consider a different output format").
-#[derive(Debug, Clone, PartialEq)]
-pub struct StepEstimate {
-    /// Static step name — e.g. `"SrgbU8ToLinearF32"`,
-    /// `"ToneMapBt2446A"`, `"GamutMatrixRgbF32"`.
-    pub name: &'static str,
-
-    /// Memory contribution at this step in bytes. The plan
-    /// peaks at `max(running_total_after_each_step)`, NOT the
-    /// sum — see the module docs.
-    pub memory_bytes: u64,
-
-    /// Time contribution in milliseconds.
-    pub time_ms: f64,
-}
-
-/// How confident the estimate is in its calibration.
-///
-/// Used for sanity-checking and reporting. Always prefer the
-/// numeric estimate over the confidence value for sizing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EstimateConfidence {
-    /// Every step in the plan has calibrated per-pixel data from
-    /// the 2026-04-23 / 2026-06-20 bench suites.
-    Calibrated,
-    /// One or more steps fell back to a generic per-pixel cost
-    /// (no exact bench available). The total may be ±50 % off for
-    /// those steps.
-    Heuristic,
-    /// The estimate could not be computed (descriptor unknown or
-    /// plan rejected). All fields are zero.
-    Unknown,
-}
-
-impl ResourceEstimate {
-    /// Zero estimate. Used by the trait-side fallback when a plan
-    /// cannot be built (descriptor incompatibility, CMYK input, etc.).
-    ///
-    /// `confidence` is typically [`EstimateConfidence::Unknown`].
-    #[must_use]
-    pub fn zero(confidence: EstimateConfidence) -> Self {
-        Self {
-            peak_memory_bytes: 0,
-            wall_time_ms: 0.0,
-            breakdown: Vec::new(),
-            confidence,
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Calibration: per-step ns/MP costs at 4096-pixel rows, AVX2/V3, Ryzen 9 7950X.
@@ -196,14 +88,10 @@ const fn gib_to_ns_per_mp(throughput_gib_s: f64, bytes_per_pixel: f64) -> f64 {
 
 /// Per-megapixel cost (ns) for each [`ConvertStep`] kind.
 ///
-/// Returned by [`step_cost_ns_per_mp`]. The float result is multiplied
-/// by `(pixels / 1 MP)` to get the time contribution at runtime.
-///
-/// All values from the 2026-04-23 bench suite (or 2026-06-20 for the
-/// HDR tone-map). The function returns a (`ns_per_mp`, `calibrated`)
-/// pair — `calibrated == false` flips the plan's overall confidence to
-/// [`EstimateConfidence::Heuristic`].
-fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> (f64, bool) {
+/// The float result is multiplied by `(pixels / 1 MP)` to get the time
+/// contribution at runtime. All values from the 2026-04-23 bench suite (or
+/// 2026-06-20 for the HDR tone-map).
+fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> f64 {
     // The bench throughputs are bytes/s of the SOURCE row, so different
     // bpp inputs need to scale. We treat bpp == 3 (RGB) or bpp == 4 (RGBA)
     // as the canonical measured value. The function below converts that
@@ -215,7 +103,7 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> (f64, bool) {
 
     match step {
         // ----- Identity: zero cost (the row-copy fast path). -----
-        ConvertStep::Identity => (0.0, true),
+        ConvertStep::Identity => 0.0,
 
         // ----- Layout (t1_layout). All measured on 4096-row at the bpp shown. -----
         // Throughputs assume the source bpp. swizzle/add_alpha/drop_alpha
@@ -224,11 +112,11 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> (f64, bool) {
             // u8 4-byte: 116.42 GiB/s
             // f32 16-byte: ~75 GiB/s (extrapolated from u16 equivalents)
             let g = if bpp <= 4.0 { 116.42 } else { 75.0 };
-            (gib_to_ns_per_mp(g, bpp), bpp <= 4.0)
+            gib_to_ns_per_mp(g, bpp)
         }
         ConvertStep::RgbToBgra => {
             // u8: ~80 GiB/s (single fused SIMD pass).
-            (gib_to_ns_per_mp(80.0, bpp), bpp == 3.0)
+            gib_to_ns_per_mp(80.0, bpp)
         }
         ConvertStep::AddAlpha => {
             // u8 3-byte: 125.06 GiB/s, u16: 40.59, f32: 104.01, f16: 19.06.
@@ -238,7 +126,7 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> (f64, bool) {
                 12 => 104.01,
                 _ => 30.0, // fallback for f16 / other
             };
-            (gib_to_ns_per_mp(g, bpp), matches!(bpp as usize, 3 | 6 | 12))
+            gib_to_ns_per_mp(g, bpp)
         }
         ConvertStep::DropAlpha => {
             // u8 4-byte: 95.90 GiB/s, u16: 133.63, f32: 148.81, f16: 143.11.
@@ -248,30 +136,30 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> (f64, bool) {
                 16 => 148.81,
                 _ => 80.0,
             };
-            (gib_to_ns_per_mp(g, bpp), matches!(bpp as usize, 4 | 8 | 16))
+            gib_to_ns_per_mp(g, bpp)
         }
         ConvertStep::MatteComposite { .. } => {
             // Heuristic: ~ DropAlpha + per-TF linearize/encode. The matte
             // composite kernel does an EOTF-blend-OETF round trip per pixel.
             // Measured ranges from 3-8 GiB/s depending on TF. Use 5 GiB/s.
-            (gib_to_ns_per_mp(5.0, bpp), false)
+            gib_to_ns_per_mp(5.0, bpp)
         }
         ConvertStep::GrayToRgb => {
             // u8 1-byte: 12.85 GiB/s, u16: 108.85
             let g = if bpp <= 1.0 { 12.85 } else { 60.0 };
-            (gib_to_ns_per_mp(g, bpp), bpp <= 2.0)
+            gib_to_ns_per_mp(g, bpp)
         }
         ConvertStep::GrayToRgba => {
             // Roughly GrayToRgb + AddAlpha; bench at 8.6 GiB/s for u8.
-            (gib_to_ns_per_mp(8.6, bpp), bpp <= 1.0)
+            gib_to_ns_per_mp(8.6, bpp)
         }
         ConvertStep::RgbToGray { .. } => {
             // RGB→gray weighted sum; ~12 GiB/s for u8, faster for u16.
-            (gib_to_ns_per_mp(12.0, bpp), bpp == 3.0)
+            gib_to_ns_per_mp(12.0, bpp)
         }
         ConvertStep::RgbaToGray { .. } => {
             // Similar to RgbToGray plus alpha drop.
-            (gib_to_ns_per_mp(10.0, bpp), bpp == 4.0)
+            gib_to_ns_per_mp(10.0, bpp)
         }
         ConvertStep::GrayAlphaToRgba => {
             // u8 2-byte: 95.30 GiB/s, u16: 119.80, f32: 149.72.
@@ -281,74 +169,74 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> (f64, bool) {
                 8 => 149.72,
                 _ => 60.0,
             };
-            (gib_to_ns_per_mp(g, bpp), matches!(bpp as usize, 2 | 4 | 8))
+            gib_to_ns_per_mp(g, bpp)
         }
         ConvertStep::GrayAlphaToRgb | ConvertStep::GrayAlphaToGray => {
             // Cheap byte-level transforms; ~80 GiB/s for u8.
-            (gib_to_ns_per_mp(80.0, bpp), bpp <= 2.0)
+            gib_to_ns_per_mp(80.0, bpp)
         }
         ConvertStep::GrayToGrayAlpha => {
             // Add opaque alpha to gray; ~100 GiB/s for u8.
-            (gib_to_ns_per_mp(100.0, bpp), bpp <= 1.0)
+            gib_to_ns_per_mp(100.0, bpp)
         }
 
         // ----- Depth conversion (t2_depth). 4096-row, RGB. -----
-        ConvertStep::U8ToU16 => (gib_to_ns_per_mp(112.82, bpp), true),
-        ConvertStep::U16ToU8 => (gib_to_ns_per_mp(34.39, bpp), true),
-        ConvertStep::NaiveU8ToF32 => (gib_to_ns_per_mp(95.21, bpp), true),
-        ConvertStep::NaiveF32ToU8 => (gib_to_ns_per_mp(52.99, bpp), true),
-        ConvertStep::U16ToF32 => (gib_to_ns_per_mp(88.68, bpp), true),
-        ConvertStep::F32ToU16 => (gib_to_ns_per_mp(64.33, bpp), true),
-        ConvertStep::F16ToF32 => (gib_to_ns_per_mp(7.09, bpp), true),
-        ConvertStep::F32ToF16 => (gib_to_ns_per_mp(3.25, bpp), true),
+        ConvertStep::U8ToU16 => gib_to_ns_per_mp(112.82, bpp),
+        ConvertStep::U16ToU8 => gib_to_ns_per_mp(34.39, bpp),
+        ConvertStep::NaiveU8ToF32 => gib_to_ns_per_mp(95.21, bpp),
+        ConvertStep::NaiveF32ToU8 => gib_to_ns_per_mp(52.99, bpp),
+        ConvertStep::U16ToF32 => gib_to_ns_per_mp(88.68, bpp),
+        ConvertStep::F32ToU16 => gib_to_ns_per_mp(64.33, bpp),
+        ConvertStep::F16ToF32 => gib_to_ns_per_mp(7.09, bpp),
+        ConvertStep::F32ToF16 => gib_to_ns_per_mp(3.25, bpp),
 
         // ----- Transfer functions (t3 fused, t4 f32). 4096-row, RGB. -----
-        ConvertStep::SrgbU8ToLinearF32 => (gib_to_ns_per_mp(24.26, bpp), true),
-        ConvertStep::LinearF32ToSrgbU8 => (gib_to_ns_per_mp(4.56, bpp), true),
-        ConvertStep::PqU16ToLinearF32 => (gib_to_ns_per_mp(2.68, bpp), true),
-        ConvertStep::LinearF32ToPqU16 => (gib_to_ns_per_mp(1.39, bpp), true),
-        ConvertStep::HlgU16ToLinearF32 => (gib_to_ns_per_mp(6.16, bpp), true),
-        ConvertStep::LinearF32ToHlgU16 => (gib_to_ns_per_mp(4.44, bpp), true),
-        ConvertStep::PqF32ToLinearF32 => (gib_to_ns_per_mp(3.0, bpp), false),
-        ConvertStep::LinearF32ToPqF32 => (gib_to_ns_per_mp(2.72, bpp), true),
-        ConvertStep::HlgF32ToLinearF32 => (gib_to_ns_per_mp(6.0, bpp), false),
-        ConvertStep::LinearF32ToHlgF32 => (gib_to_ns_per_mp(4.0, bpp), false),
+        ConvertStep::SrgbU8ToLinearF32 => gib_to_ns_per_mp(24.26, bpp),
+        ConvertStep::LinearF32ToSrgbU8 => gib_to_ns_per_mp(4.56, bpp),
+        ConvertStep::PqU16ToLinearF32 => gib_to_ns_per_mp(2.68, bpp),
+        ConvertStep::LinearF32ToPqU16 => gib_to_ns_per_mp(1.39, bpp),
+        ConvertStep::HlgU16ToLinearF32 => gib_to_ns_per_mp(6.16, bpp),
+        ConvertStep::LinearF32ToHlgU16 => gib_to_ns_per_mp(4.44, bpp),
+        ConvertStep::PqF32ToLinearF32 => gib_to_ns_per_mp(3.0, bpp),
+        ConvertStep::LinearF32ToPqF32 => gib_to_ns_per_mp(2.72, bpp),
+        ConvertStep::HlgF32ToLinearF32 => gib_to_ns_per_mp(6.0, bpp),
+        ConvertStep::LinearF32ToHlgF32 => gib_to_ns_per_mp(4.0, bpp),
         ConvertStep::SrgbF32ToLinearF32 | ConvertStep::SrgbF32ToLinearF32Extended => {
-            (gib_to_ns_per_mp(24.95, bpp), true)
+            gib_to_ns_per_mp(24.95, bpp)
         }
         ConvertStep::LinearF32ToSrgbF32 | ConvertStep::LinearF32ToSrgbF32Extended => {
-            (gib_to_ns_per_mp(8.0, bpp), false)
+            gib_to_ns_per_mp(8.0, bpp)
         }
-        ConvertStep::Bt709F32ToLinearF32 => (gib_to_ns_per_mp(6.0, bpp), false),
-        ConvertStep::LinearF32ToBt709F32 => (gib_to_ns_per_mp(4.5, bpp), false),
-        ConvertStep::Gamma22F32ToLinearF32 => (gib_to_ns_per_mp(6.0, bpp), false),
-        ConvertStep::LinearF32ToGamma22F32 => (gib_to_ns_per_mp(4.5, bpp), false),
+        ConvertStep::Bt709F32ToLinearF32 => gib_to_ns_per_mp(6.0, bpp),
+        ConvertStep::LinearF32ToBt709F32 => gib_to_ns_per_mp(4.5, bpp),
+        ConvertStep::Gamma22F32ToLinearF32 => gib_to_ns_per_mp(6.0, bpp),
+        ConvertStep::LinearF32ToGamma22F32 => gib_to_ns_per_mp(4.5, bpp),
 
         // ----- Alpha mode (t5). Premul/straight conversions. -----
         ConvertStep::StraightToPremul => {
             // f32 4-channel: ~13.74 GiB/s
-            (gib_to_ns_per_mp(13.74, bpp), bpp == 16.0)
+            gib_to_ns_per_mp(13.74, bpp)
         }
         ConvertStep::PremulToStraight => {
             // f32 4-channel: ~7.51 GiB/s (divide is slow)
-            (gib_to_ns_per_mp(7.51, bpp), bpp == 16.0)
+            gib_to_ns_per_mp(7.51, bpp)
         }
 
         // ----- Oklab (t6). cbrt-dominated forward, cubed inverse. -----
-        ConvertStep::LinearRgbToOklab => (gib_to_ns_per_mp(1.61, bpp), bpp == 12.0),
-        ConvertStep::OklabToLinearRgb => (gib_to_ns_per_mp(53.25, bpp), bpp == 12.0),
-        ConvertStep::LinearRgbaToOklaba => (gib_to_ns_per_mp(2.14, bpp), bpp == 16.0),
-        ConvertStep::OklabaToLinearRgba => (gib_to_ns_per_mp(58.91, bpp), bpp == 16.0),
+        ConvertStep::LinearRgbToOklab => gib_to_ns_per_mp(1.61, bpp),
+        ConvertStep::OklabToLinearRgb => gib_to_ns_per_mp(53.25, bpp),
+        ConvertStep::LinearRgbaToOklaba => gib_to_ns_per_mp(2.14, bpp),
+        ConvertStep::OklabaToLinearRgba => gib_to_ns_per_mp(58.91, bpp),
 
         // ----- Gamut matrices (t7). 3×3 matrix-multiply on linear F32. -----
-        ConvertStep::GamutMatrixRgbF32(_) => (gib_to_ns_per_mp(21.84, bpp), true),
-        ConvertStep::GamutMatrixRgbaF32(_) => (gib_to_ns_per_mp(20.0, bpp), false),
+        ConvertStep::GamutMatrixRgbF32(_) => gib_to_ns_per_mp(21.84, bpp),
+        ConvertStep::GamutMatrixRgbaF32(_) => gib_to_ns_per_mp(20.0, bpp),
         ConvertStep::Fused { kind, .. } => match kind {
-            FusedKind::SrgbU8GamutRgb => (gib_to_ns_per_mp(3.79, bpp), true),
-            FusedKind::SrgbU8GamutRgba => (gib_to_ns_per_mp(3.5, bpp), false),
-            FusedKind::SrgbU16GamutRgb => (gib_to_ns_per_mp(5.84, bpp), true),
-            FusedKind::SrgbU8ToLinearF32Rgb => (gib_to_ns_per_mp(11.19, bpp), true),
-            FusedKind::LinearF32ToSrgbU8Rgb => (gib_to_ns_per_mp(3.11, bpp), true),
+            FusedKind::SrgbU8GamutRgb => gib_to_ns_per_mp(3.79, bpp),
+            FusedKind::SrgbU8GamutRgba => gib_to_ns_per_mp(3.5, bpp),
+            FusedKind::SrgbU16GamutRgb => gib_to_ns_per_mp(5.84, bpp),
+            FusedKind::SrgbU8ToLinearF32Rgb => gib_to_ns_per_mp(11.19, bpp),
+            FusedKind::LinearF32ToSrgbU8Rgb => gib_to_ns_per_mp(3.11, bpp),
         },
 
         // ----- HDR. BT.2446-A from zentone bench (2026-06-20). -----
@@ -358,25 +246,16 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> (f64, bool) {
         ConvertStep::ToneMapBt2446A { .. } => {
             // 1 MP / 250 Mpix/s = 4.0e6 / 1000 = 4000 ns/Mpix × 1024 = ~4.0 ms / MP.
             // Actually: 1_048_576 / 250_000_000 s = 4.194e-3 s = 4_194_304 ns/MP.
-            (4_194_304.0, true)
+            4_194_304.0
         }
         #[cfg(feature = "hdr-experimental")]
         ConvertStep::SoftCompressOklch { .. } => {
             // Hue-preserving rational knee curve in OKLch space. Per-pixel
             // is roughly Oklab forward + scalar curve + Oklab inverse —
             // dominated by the cbrt path. Use ~3 GiB/s as a coarse model.
-            (gib_to_ns_per_mp(3.0, bpp), false)
+            gib_to_ns_per_mp(3.0, bpp)
         }
     }
-}
-
-/// Step name for [`StepEstimate::name`]. Delegates to
-/// [`ConvertStep::variant_name`] — single source of truth shared with
-/// `__trace_ops::record_step`. (Previously a 60-arm match mirroring the
-/// enum verbatim; that mirror is the kind of thing that silently drifts.)
-#[inline]
-fn step_name(step: &ConvertStep) -> &'static str {
-    step.variant_name()
 }
 
 /// Body of the plan-level estimate. Walks the plan's steps once,
@@ -389,7 +268,7 @@ fn step_name(step: &ConvertStep) -> &'static str {
 ///   max_intermediate_bpp` bytes.
 /// - The estimate is for a single per-call working set, NOT a
 ///   parallel-job-wide cap.
-pub(crate) fn estimate_plan(plan: &ConvertPlan, width: u32, height: u32) -> ResourceEstimate {
+pub(crate) fn estimate_plan(plan: &ConvertPlan, width: u32, height: u32) -> (u64, f64) {
     // Quick identity short-circuit.
     if plan.is_identity() {
         // Even identity allocates the destination buffer + a memcpy.
@@ -399,12 +278,7 @@ pub(crate) fn estimate_plan(plan: &ConvertPlan, width: u32, height: u32) -> Reso
         // with NUMA effects this can be 10-50 GB/s. Use a midpoint.
         let memcpy_gib_s = 30.0;
         let memcpy_time_ms = (dst_bytes as f64) / (memcpy_gib_s * GIB) * 1_000.0;
-        return ResourceEstimate {
-            peak_memory_bytes: dst_bytes,
-            wall_time_ms: memcpy_time_ms,
-            breakdown: Vec::new(),
-            confidence: EstimateConfidence::Calibrated,
-        };
+        return (dst_bytes, memcpy_time_ms);
     }
 
     let pixels = (width as u64) * (height as u64);
@@ -432,56 +306,23 @@ pub(crate) fn estimate_plan(plan: &ConvertPlan, width: u32, height: u32) -> Reso
     // Two ping-pong halves (single allocation, but split in two).
     let scratch_bytes = scratch_per_half_bytes.saturating_mul(2);
 
-    // Per-step time + breakdown. Memory contribution per step
-    // models whether the step allocates a new buffer or operates
-    // in-place on the existing one — but since scratch is pre-sized
-    // and reused, the per-step memory_bytes is the *cumulative*
-    // working set after this step runs, not a delta.
-    let mut breakdown: Vec<StepEstimate> = Vec::with_capacity(plan.steps().len());
+    // Sum per-step time contributions.
     let mut total_time_ms = 0.0;
-    let mut all_calibrated = true;
     let mut desc = plan.from();
 
     for step in plan.steps() {
         let current_bpp = desc.bytes_per_pixel();
-        let (ns_per_mp, calibrated) = step_cost_ns_per_mp(step, current_bpp);
+        let ns_per_mp = step_cost_ns_per_mp(step, current_bpp);
         let step_time_ms = ns_per_mp * pixels_mp / 1_000_000.0;
-        if !calibrated {
-            all_calibrated = false;
-        }
         total_time_ms += step_time_ms;
-
-        // Working-set after this step ran. The output of this step
-        // sits in scratch (or the destination). Use the next-desc
-        // bpp times width for the per-step row delta.
-        let next = intermediate_after(desc, step);
-        let step_mem = (width as u64) * (next.bytes_per_pixel() as u64);
-
-        breakdown.push(StepEstimate {
-            name: step_name(step),
-            memory_bytes: step_mem,
-            time_ms: step_time_ms,
-        });
-
-        desc = next;
+        desc = intermediate_after(desc, step);
     }
 
     // Peak working-set: destination buffer + scratch (for multi-step).
     // The scratch is reused, not added per step.
     let peak_memory_bytes = dst_bytes.saturating_add(scratch_bytes);
 
-    let confidence = if all_calibrated {
-        EstimateConfidence::Calibrated
-    } else {
-        EstimateConfidence::Heuristic
-    };
-
-    ResourceEstimate {
-        peak_memory_bytes,
-        wall_time_ms: total_time_ms,
-        breakdown,
-        confidence,
-    }
+    (peak_memory_bytes, total_time_ms)
 }
 
 /// Mirror of `intermediate_desc` in `convert.rs`, exposed via the
@@ -489,32 +330,4 @@ pub(crate) fn estimate_plan(plan: &ConvertPlan, width: u32, height: u32) -> Reso
 /// thin re-call so the two don't drift.
 fn intermediate_after(current: PixelDescriptor, step: &ConvertStep) -> PixelDescriptor {
     crate::convert::intermediate_desc_for_estimate(current, step)
-}
-
-/// `measure_max` throughput on the reference machine (Ryzen 9 7950X,
-/// V3 / AVX2 tier, default build — no `-C target-cpu=native`).
-/// Source: `benchmarks/measure_max_throughput_2026-06-19.md` cell for
-/// 2048² (default-build SIMD column) — 2735 Mpix/s. Used by
-/// [`measure_max_step_estimate`] to model the source-peak scan leg
-/// inside
-/// [`PixelBufferHdrConvertExt::estimate_convert_to_sdr`](crate::PixelBufferHdrConvertExt::estimate_convert_to_sdr).
-#[cfg(feature = "hdr-experimental")]
-const MEASURE_MAX_PIXELS_PER_SEC: f64 = 2_735_000_000.0;
-
-/// Build a [`StepEstimate`] for a single
-/// [`CllMeasure::measure_max`](crate::hdr::CllMeasure::measure_max)
-/// scan over `pixels` linear RGB(A) F32 pixels.
-///
-/// Memory contribution is **zero** — `measure_max` is a read-only scan
-/// with no allocation. The time contribution comes from
-/// [`MEASURE_MAX_PIXELS_PER_SEC`].
-#[cfg(feature = "hdr-experimental")]
-#[must_use]
-pub(crate) fn measure_max_step_estimate(pixels: u64) -> StepEstimate {
-    let time_ms = (pixels as f64) / MEASURE_MAX_PIXELS_PER_SEC * 1000.0;
-    StepEstimate {
-        name: "MeasureMaxCll",
-        memory_bytes: 0,
-        time_ms,
-    }
 }
