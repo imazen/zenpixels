@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### zenpixels-convert — tuned
+
+- **`HdrConfig::default().gamut_knee`** bumped from `0.9` → `0.96` based on an
+  empirical sweep of 76 imazen-26 gain-mapped HDR samples against 13 knee
+  values (0.50–1.00) on 2026-06-23. `0.96` is the largest knee value (i.e.
+  the LEAST chroma compression / desaturation) where the corpus-p90 fraction
+  of pre-clamp pixels overshooting `[0, 1]` in linear BT.709 stays under 0.1 %.
+  Moving from `0.9` → `0.96` reduces the mean OKLch chroma compression by
+  ~26 % (0.22 % → 0.16 %) and the mean Lab D65 ΔE2000 vs. no-rolloff baseline
+  by ~28 % (0.028 → 0.020), while corpus-p90 clipping stays under the safety
+  threshold. The current `0.9` was a hand-picked guess that was never
+  empirically calibrated; `0.96` is data-driven (per-content-class
+  recommendations: nature 0.96, interiors 0.96, general 0.98, food 0.98 — the
+  corpus-wide `0.96` is the tightest constraint, set by saturated nature
+  content). Driver: `zentone/examples/softcompress_knee_sweep.rs`; findings:
+  `zentone/benchmarks/softcompress_knee_findings_2026-06-23.md`. Internal
+  test fixtures pinning `gamut_knee: 0.9` migrate to `0.96` so tests exercise
+  the new production default. Callers who explicitly set `HdrConfig.gamut_knee`
+  to `0.9` are unaffected; callers using `HdrConfig::default()` or
+  `ConvertPlan::new_with_hdr_peak()` pick up the new default automatically.
+
 ### QUEUED BREAKING CHANGES
 
 <!-- Breaking changes that will ship together in the next major (or minor for

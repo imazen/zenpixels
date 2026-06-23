@@ -98,8 +98,13 @@ impl GamutBoundaryLut {
     /// that preserves hue and lightness.
     ///
     /// `knee` is the fraction of max chroma where compression starts
-    /// (`0.0`–`1.0`). Typical value: `0.9` (start compressing at 90 % of
-    /// gamut boundary).
+    /// (`0.0`–`1.0`). Production default: `0.96` (start compressing at
+    /// 96 % of gamut boundary), empirically calibrated against the
+    /// imazen-26 gain-mapped HDR corpus on 2026-06-23 — the largest knee
+    /// where the corpus-p90 fraction of pre-clamp out-of-gamut pixels
+    /// stays under 0.1 %. Smaller values bring the rolloff in earlier
+    /// (more desaturation, lower clipping); larger values let more
+    /// clipping leak through.
     pub fn compress_planes(&self, l: &[f32], a: &mut [f32], b: &mut [f32], knee: f32) {
         let n = l.len();
         debug_assert!(a.len() == n && b.len() == n);
@@ -212,7 +217,7 @@ fn is_in_gamut(l: f32, a: f32, b: f32, m1_inv: &GamutMatrix) -> bool {
 /// use zenpixels::ColorPrimaries;
 ///
 /// let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).unwrap();
-/// let compress = SoftCompress::new(&m1_inv, 0.9);
+/// let compress = SoftCompress::new(&m1_inv, 0.96);
 ///
 /// let mut pixels = vec![[1.2_f32, 0.05, 0.05]]; // out-of-gamut red
 /// compress.apply_strip(&mut pixels);
@@ -235,7 +240,8 @@ impl SoftCompress {
     /// Construct a [`SoftCompress`] for the given primaries (via `m1_inv`,
     /// the LMS → RGB matrix from
     /// [`crate::oklab::lms_to_rgb_matrix`]) and
-    /// `knee` threshold (`0.0`–`1.0`; typical value `0.9`).
+    /// `knee` threshold (`0.0`–`1.0`; production default `0.96`,
+    /// corpus-validated 2026-06-23).
     ///
     /// The matching forward matrix is derived by inverting `m1_inv`. If you
     /// already have the forward matrix on hand (the `rgb_to_lms_matrix`

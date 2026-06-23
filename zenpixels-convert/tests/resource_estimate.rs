@@ -158,7 +158,7 @@ fn hdr_bt2446a_pipeline_at_24mp_matches_bench_within_30_pct() {
         HdrConfig {
             source_peak_nits: 1000.0,
             target_peak_nits: 100.0,
-            gamut_knee: 0.9,
+            gamut_knee: 0.96,
         },
     )
     .expect("plan");
@@ -534,7 +534,7 @@ fn estimate_convert_to_with_hdr_config_matches_plan() {
     let hdr = HdrConfig {
         source_peak_nits: 1000.0,
         target_peak_nits: 100.0,
-        gamut_knee: 0.9,
+        gamut_knee: 0.96,
     };
     let actual = buf.estimate_convert_to_with_hdr_config(&target, hdr);
     let plan = ConvertPlan::new_with_hdr_config(src, target, hdr).expect("plan");

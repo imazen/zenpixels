@@ -21,7 +21,7 @@ use whereat::{At, ResultAtExt};
 ///
 /// Bundles the source-peak luminance (mandatory — the curve is
 /// parameterized by it), target-peak luminance (typically 100 cd/m² for
-/// SDR), and the OKLch soft chroma-compression knee (typically `0.9`).
+/// SDR), and the OKLch soft chroma-compression knee (production default `0.96`).
 #[cfg(feature = "hdr-experimental")]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HdrConfig {
@@ -33,25 +33,32 @@ pub struct HdrConfig {
     /// sRGB diffuse-white peak; BT.1886 reference).
     pub target_peak_nits: f32,
     /// Fraction of max chroma where OKLch soft compression kicks in
-    /// (`0.0`–`1.0`). `0.9` (the default) compresses only the outermost
-    /// 10 % of the gamut; lower values bring the compression in earlier.
+    /// (`0.0`–`1.0`). `0.96` (the default) compresses only the outermost
+    /// 4 % of the gamut; lower values bring the compression in earlier.
     /// Ignored when the target primaries are BT.2020 (wide-gamut output
     /// mode emits no `SoftCompressOklch` step).
+    ///
+    /// The default was calibrated against the 76-sample imazen-26
+    /// gain-mapped corpus on 2026-06-23: `0.96` is the largest knee
+    /// (least desaturation) where the corpus-p90 fraction of pre-clamp
+    /// out-of-gamut pixels stays under 0.1 %. Findings:
+    /// [`zentone/benchmarks/softcompress_knee_findings_2026-06-23.md`](https://github.com/imazen/zentone).
     pub gamut_knee: f32,
 }
 
 #[cfg(feature = "hdr-experimental")]
 impl Default for HdrConfig {
     /// Pipeline defaults: `target_peak_nits = 100.0` (SDR reference white)
-    /// and `gamut_knee = 0.9`. `source_peak_nits` has no default —
-    /// callers must set it explicitly. Returns `source_peak_nits = 0.0`;
-    /// override before passing to
+    /// and `gamut_knee = 0.96` (empirically calibrated against the
+    /// imazen-26 gain-mapped HDR corpus, 2026-06-23). `source_peak_nits`
+    /// has no default — callers must set it explicitly. Returns
+    /// `source_peak_nits = 0.0`; override before passing to
     /// [`ConvertPlan::new_with_hdr_config`].
     fn default() -> Self {
         Self {
             source_peak_nits: 0.0,
             target_peak_nits: 100.0,
-            gamut_knee: 0.9,
+            gamut_knee: 0.96,
         }
     }
 }
@@ -787,7 +794,7 @@ impl ConvertPlan {
     /// luminance.
     ///
     /// Equivalent to [`ConvertPlan::new_with_hdr_config`] called with
-    /// `HdrConfig { source_peak_nits, target_peak_nits: 100.0, gamut_knee: 0.9 }`.
+    /// `HdrConfig { source_peak_nits, target_peak_nits: 100.0, gamut_knee: 0.96 }`.
     ///
     /// The plan inserts a [`Bt2446A`](crate::hdr::Bt2446A) tone-map step
     /// (and an OKLch soft-compress step for non-BT.2020 targets) into the
@@ -2316,7 +2323,7 @@ mod hdr_plan_tests {
         // OKLch soft compress in target primaries.
         let m1 = oklab::rgb_to_lms_matrix(ColorPrimaries::Bt709).unwrap();
         let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).unwrap();
-        let compressor = SoftCompress::from_matrices(&m1, &m1_inv, 0.9);
+        let compressor = SoftCompress::from_matrices(&m1, &m1_inv, 0.96);
         compressor.apply_strip(&mut px);
         // Final clamp.
         for c in px[0].iter_mut() {
@@ -2354,7 +2361,7 @@ mod hdr_plan_tests {
         let hdr = HdrConfig {
             source_peak_nits: 1000.0,
             target_peak_nits: 100.0,
-            gamut_knee: 0.9,
+            gamut_knee: 0.96,
         };
         let inputs = [
             [0.0_f32, 0.0, 0.0],
@@ -2401,7 +2408,7 @@ mod hdr_plan_tests {
         let hdr = HdrConfig {
             source_peak_nits: 1000.0,
             target_peak_nits: 100.0,
-            gamut_knee: 0.9,
+            gamut_knee: 0.96,
         };
         let plan = ConvertPlan::new_with_hdr_config(src, to, hdr).expect("plan");
         let inputs = [
