@@ -98,11 +98,9 @@ pub struct ConvertPlan {
 
 /// A single conversion step.
 ///
-/// Not `Copy` — some variants (e.g., [`ExternalTransform`]) carry an
+/// Not `Copy` — some variants (e.g., `ExternalTransform`) carry an
 /// `Arc`. Peephole rewrites must use `.clone()` or index assignment with
 /// pattern matching instead of `*step` dereferences.
-///
-/// [`ExternalTransform`]: ConvertStep::ExternalTransform
 #[derive(Clone)]
 pub(crate) enum ConvertStep {
     /// No-op (identity).
@@ -179,35 +177,35 @@ pub(crate) enum ConvertStep {
     PqU16ToLinearF32,
     /// Linear f32 → PQ u16 (inverse EOTF / OETF).
     LinearF32ToPqU16,
-    /// PQ f32 [0,1] → linear f32 (EOTF, no depth change).
+    /// PQ f32 `[0,1]` → linear f32 (EOTF, no depth change).
     PqF32ToLinearF32,
-    /// Linear f32 → PQ f32 [0,1] (OETF, no depth change).
+    /// Linear f32 → PQ f32 `[0,1]` (OETF, no depth change).
     LinearF32ToPqF32,
     /// HLG (ARIB STD-B67) u16 → linear f32 (EOTF).
     HlgU16ToLinearF32,
     /// Linear f32 → HLG u16 (OETF).
     LinearF32ToHlgU16,
-    /// HLG f32 [0,1] → linear f32 (EOTF, no depth change).
+    /// HLG f32 `[0,1]` → linear f32 (EOTF, no depth change).
     HlgF32ToLinearF32,
-    /// Linear f32 → HLG f32 [0,1] (OETF, no depth change).
+    /// Linear f32 → HLG f32 `[0,1]` (OETF, no depth change).
     LinearF32ToHlgF32,
-    /// sRGB f32 [0,1] → linear f32 (EOTF, no depth change). Clamps input.
+    /// sRGB f32 `[0,1]` → linear f32 (EOTF, no depth change). Clamps input.
     SrgbF32ToLinearF32,
-    /// Linear f32 → sRGB f32 [0,1] (OETF, no depth change). Clamps output.
+    /// Linear f32 → sRGB f32 `[0,1]` (OETF, no depth change). Clamps output.
     LinearF32ToSrgbF32,
     /// sRGB f32 → linear f32 (EOTF, sign-preserving extended range).
     /// Emitted when `ConvertOptions::clip_out_of_gamut == false`.
     SrgbF32ToLinearF32Extended,
     /// Linear f32 → sRGB f32 (OETF, sign-preserving extended range).
     LinearF32ToSrgbF32Extended,
-    /// BT.709 f32 [0,1] → linear f32 (EOTF, no depth change).
+    /// BT.709 f32 `[0,1]` → linear f32 (EOTF, no depth change).
     Bt709F32ToLinearF32,
-    /// Linear f32 → BT.709 f32 [0,1] (OETF, no depth change).
+    /// Linear f32 → BT.709 f32 `[0,1]` (OETF, no depth change).
     LinearF32ToBt709F32,
-    /// Gamma 2.2 (Adobe RGB 1998) f32 [0,1] → linear f32 (EOTF, no depth change).
+    /// Gamma 2.2 (Adobe RGB 1998) f32 `[0,1]` → linear f32 (EOTF, no depth change).
     /// Uses the Adobe RGB 1998 canonical exponent 563/256 ≈ 2.19921875.
     Gamma22F32ToLinearF32,
-    /// Linear f32 → Gamma 2.2 (Adobe RGB 1998) f32 [0,1] (OETF, no depth change).
+    /// Linear f32 → Gamma 2.2 (Adobe RGB 1998) f32 `[0,1]` (OETF, no depth change).
     LinearF32ToGamma22F32,
     /// Straight → Premultiplied alpha.
     StraightToPremul,
@@ -448,7 +446,7 @@ impl ConvertPlan {
         // OETF, with no OOTF and no `Lw`/peak — while PQ is absolute display
         // light (cd/m²). Routing one to the other through the shared "linear"
         // intermediate conflates the two luminance domains by orders of
-        // magnitude (scene-normalized [0,1] vs absolute [0,10000 cd/m²]): a
+        // magnitude (scene-normalized `[0,1]` vs absolute [0,10000 cd/m²]): a
         // deterministic but grossly **wrong** result. Until the OOTF +
         // `(diffuse_white, Lw)` threading lands (#45 S2), fail loudly rather than
         // emit wrong pixels — the same posture as the signal-range refusal.
@@ -834,10 +832,10 @@ impl ConvertPlan {
     ///    [`ConvertPlan::new`]. Skipped when the source is already
     ///    `Linear`.
     /// 2. Source primaries → BT.2020 matrix (skipped when source is BT.2020).
-    /// 3. [`ToneMapBt2446A`] step (the BT.2446 Method A curve operating in
+    /// 3. `ToneMapBt2446A` step (the BT.2446 Method A curve operating in
     ///    BT.2020 RGB).
     /// 4. BT.2020 → target primaries matrix (skipped when target is BT.2020).
-    /// 5. [`SoftCompressOklch`] step (skipped when target is BT.2020 —
+    /// 5. `SoftCompressOklch` step (skipped when target is BT.2020 —
     ///    wide-gamut output mode preserves chroma).
     /// 6. Linear → target transfer encode + any depth conversion (sRGB u8,
     ///    BT.1886 f32, etc.) — same kernels as [`ConvertPlan::new`].
@@ -847,8 +845,9 @@ impl ConvertPlan {
     /// [`ConvertPlan::new`] would build — no tone-map gets injected into
     /// a path that doesn't need one.
     ///
-    /// [`ToneMapBt2446A`]: crate::convert::ConvertStep::ToneMapBt2446A
-    /// [`SoftCompressOklch`]: crate::convert::ConvertStep::SoftCompressOklch
+    // ToneMapBt2446A / SoftCompressOklch are crate-internal `ConvertStep` variants
+    // — referenced by name in the prose above; explicit links would point at
+    // private items.
     ///
     /// # Errors
     ///
@@ -1256,7 +1255,7 @@ impl ConvertPlan {
     /// Estimate peak memory + wall-clock for executing this plan on a
     /// `width × height` image.
     ///
-    /// The returned [`ResourceEstimate`] reports an **upper bound** on
+    /// The returned [`ResourceEstimate`](crate::estimate::ResourceEstimate) reports an **upper bound** on
     /// peak working-set memory (in bytes, includes the destination buffer
     /// plus any scratch the multi-step ping-pong uses) and a **median
     /// wall-clock projection** in milliseconds on the reference machine
@@ -1510,7 +1509,7 @@ fn f32_encode_step(tf: TransferFunction) -> Option<ConvertStep> {
 /// Returns empty when `from == to`, or when either side is `Unknown` — when
 /// one side's TF is unknown we can't mechanically compute a correct
 /// conversion, so we preserve bytes as-is. Addressing the Unknown ambiguity
-/// via explicit opt-in API is tracked as issue #19 [C]/[D] (deprecate-and-add).
+/// via explicit opt-in API is tracked as issue #19 `[C]`/`[D]` (deprecate-and-add).
 fn f32_tf_pair_steps(from: TransferFunction, to: TransferFunction) -> Vec<ConvertStep> {
     if from == to || from == TransferFunction::Unknown || to == TransferFunction::Unknown {
         return Vec::new();

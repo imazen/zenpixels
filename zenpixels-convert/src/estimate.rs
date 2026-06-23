@@ -69,8 +69,8 @@ use crate::convert::{ConvertPlan, ConvertStep};
 /// Peak resource cost projection for executing a [`ConvertPlan`].
 ///
 /// Returned by [`ConvertPlan::estimate_resources`] and
-/// [`PixelBufferConvertExt::estimate_convert_to`]
-/// (see [`crate::ext::PixelBufferConvertExt`]). All values are
+/// [`PixelBufferConvertExt::estimate_convert_to`](crate::ext::PixelBufferConvertExt::estimate_convert_to).
+/// All values are
 /// best-effort projections — see the module-level
 /// [accuracy contract](crate::estimate#accuracy-contract).
 ///

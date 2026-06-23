@@ -1659,7 +1659,7 @@ fn naive_u8_to_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
         .expect("pre-validated row size");
 }
 
-/// Naive f32 → u8 (clamp [0,1], * 255 + 0.5).
+/// Naive f32 → u8 (clamp `[0,1]`, * 255 + 0.5).
 fn naive_f32_to_u8(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     garb::bytes::convert_f32_to_u8(&src[..count * 4], &mut dst[..count])
@@ -1687,7 +1687,7 @@ fn u16_to_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
         .expect("pre-validated row size");
 }
 
-/// f32 → u16: clamp [0,1], * 65535 + 0.5.
+/// f32 → u16: clamp `[0,1]`, * 65535 + 0.5.
 fn f32_to_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     garb::bytes::convert_f32_to_u16(&src[..count * 4], &mut dst[..count * 2])
@@ -1721,7 +1721,7 @@ fn f32_to_f16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
 // PQ (SMPTE ST 2084) transfer function — delegates to linear-srgb
 // ---------------------------------------------------------------------------
 
-/// PQ EOTF: encoded [0,1] → linear light [0,1] (where 1.0 = 10000 cd/m²).
+/// PQ EOTF: encoded `[0,1]` → linear light `[0,1]` (where 1.0 = 10000 cd/m²).
 ///
 /// Uses rational polynomial from `linear-srgb` (no `powf` calls).
 #[inline]
@@ -1729,7 +1729,7 @@ pub(crate) fn pq_eotf(v: f32) -> f32 {
     linear_srgb::tf::pq_to_linear(v)
 }
 
-/// PQ inverse EOTF (OETF): linear light [0,1] → encoded [0,1].
+/// PQ inverse EOTF (OETF): linear light `[0,1]` → encoded `[0,1]`.
 ///
 /// Uses rational polynomial from `linear-srgb` (no `powf` calls).
 #[inline]
@@ -1972,7 +1972,7 @@ fn linear_f32_to_pq_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usiz
 // ---------------------------------------------------------------------------
 //
 // PHOTOMETRY HAZARD: these kernels apply only the HLG OETF/inverse-OETF, which
-// produce **scene-referred, normalized** linear ([0,1], no absolute luminance,
+// produce **scene-referred, normalized** linear (`[0,1]`, no absolute luminance,
 // no OOTF). PQ's linear is **absolute display** light (cd/m²). So a planned
 // HLG↔PQ conversion (HLG-EOTF → "linear" → PQ-OETF) is mechanically defined but
 // **not photometrically correct** — it conflates the two domains, skipping the
@@ -1982,7 +1982,7 @@ fn linear_f32_to_pq_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usiz
 // the PQ-only scope here. `quantize_to` already refuses HLG targets for this
 // reason; the general `convert_*` path does not yet guard it.
 
-/// HLG OETF: scene-linear [0,1] → encoded [0,1].
+/// HLG OETF: scene-linear `[0,1]` → encoded `[0,1]`.
 ///
 /// Uses `fast_log2f` from `linear-srgb` (no `libm` ln calls).
 #[inline]
@@ -1990,7 +1990,7 @@ pub(crate) fn hlg_oetf(v: f32) -> f32 {
     linear_srgb::tf::linear_to_hlg(v)
 }
 
-/// HLG inverse OETF (EOTF): encoded [0,1] → scene-linear [0,1].
+/// HLG inverse OETF (EOTF): encoded `[0,1]` → scene-linear `[0,1]`.
 ///
 /// Uses `fast_pow2f` from `linear-srgb` (no `libm` exp calls).
 #[inline]

@@ -166,8 +166,7 @@ impl LoadBearingReport {
 // ── Extension trait on PixelSlice ──────────────────────────────────────
 
 mod sealed {
-    /// Seals [`super::PixelSliceLoadBearingExt`] /
-    /// [`super::PixelSliceMutLoadBearingExt`] to the two slice types --
+    /// Seals [`super::PixelSliceLoadBearingExt`] to the slice types —
     /// the analysis is keyed off their descriptor + row iteration
     /// contract, so external impls have nothing valid to implement.
     pub trait Sealed {}

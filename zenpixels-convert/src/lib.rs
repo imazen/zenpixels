@@ -141,7 +141,7 @@
 //!   internal conversion paths (e.g., a JPEG encoder with a fused f32→u8+DCT
 //!   kernel can advertise `RGBF32_LINEAR` with low consumer cost).
 //!
-//! - **[`negotiate`]**: Full control. Explicit [`Provenance`] (so the cost
+//! - **[`negotiate()`](fn@crate::negotiate)**: Full control. Explicit [`Provenance`] (so the cost
 //!   model knows the data's true origin) plus consumer costs. Use this in
 //!   processing pipelines where data has been widened from a lower-precision
 //!   source (e.g., JPEG u8 decoded to f32 for resize — provenance says "u8

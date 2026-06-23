@@ -70,6 +70,46 @@
   (`benchmarks/orient_fast_transpose_2026-06-18.md`). Flipping a default feature
   batches here; size-sensitive builds opt out via `default-features = false`.
 
+## [0.2.15] - 2026-06-23
+
+### zenpixels-convert — fixed (publish-prep audit)
+
+- **`serde` feature now compiles with `hdr-experimental`.** The
+  `serde` Cargo feature previously only forwarded to `zenpixels/serde`
+  while `hdr::measure::LightLevelMethod` used
+  `#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]`
+  — building with `--features serde,hdr-experimental` failed with
+  `E0433: cannot find module or crate \`serde\`` because zenpixels-convert
+  itself had no `serde` dep. Added `serde = { version = "1.0",
+  default-features = false, optional = true, features = ["derive"] }` and
+  changed the `serde` feature to `["dep:serde", "zenpixels/serde"]`. Caught
+  by `cargo semver-checks` during the 0.2.15 publish audit.
+- **`PixelBufferConvertExt::estimate_*` family ships with default impls.** The
+  six estimator methods added in 0.2.15 (`estimate_convert_to`,
+  `estimate_try_add_alpha`, `estimate_try_widen_to_u16`,
+  `estimate_try_narrow_to_u8`, `estimate_linearize`, `estimate_delinearize`)
+  were initially trait-required-with-no-default, which `cargo semver-checks`
+  caught as a major break (`trait_method_added`) — downstream impls of the
+  trait predating 0.2.15 would fail to compile. Each method now has a default
+  that returns `ResourceEstimate::zero(EstimateConfidence::Unknown)`; the
+  crate's own `PixelBuffer` impl overrides with the real plan-walking
+  estimator. Downstream code that already implements `PixelBufferConvertExt`
+  for a custom type keeps building unchanged.
+- **Workspace `zenpixels` dep bumped to `0.2.15`.** `zenpixels-convert`'s
+  `hdr-experimental` surface uses `ContentLightLevel::DEFAULT_PERCENTILE`
+  (new in `zenpixels` 0.2.15). The published `zenpixels-convert` 0.2.15
+  thus requires `zenpixels ^0.2.15` — publishing must wait until
+  `zenpixels` 0.2.15 is on crates.io.
+- **All 43 rustdoc warnings cleared.** Escaped `[0,1]` interval notation as
+  code spans (~20 sites), unlinked or redirected references to private items
+  (`ConvertStep::ExternalTransform`, `ToneMapBt2446A`, `SoftCompressOklch`),
+  qualified ambiguous links (`negotiate` was both a function and a module),
+  fixed redundant explicit link targets in `hdr/` and `output.rs`, removed
+  the stale `PixelSliceMutLoadBearingExt` reference in `load_bearing.rs`.
+  `cargo doc --no-deps --document-private-items
+  --features hdr-experimental,pipeline,cms-moxcms,rgb` now reports 0
+  warnings.
+
 ### Workspace — deps
 
 - **Migrate to published `zencodec 0.1.24`; drop the git-rev/path patch.**
@@ -430,9 +470,12 @@
   HdrToSdr::with_params(source, target, source_peak_nits, target_peak_nits, gamut_knee)
   ```
 
-## [0.2.15] - 2026-06-18
+### Earlier 0.2.15 prep (2026-06-18 commit batch)
 
-### zenpixels — added
+The items below were the initial cut of 0.2.15 prepared on 2026-06-18; they ship
+in the same 0.2.15 release as the larger blocks above.
+
+#### zenpixels — added
 
 - **Buffer-level colour-relabel builders** on `PixelSlice` / `PixelSliceMut` /
   `PixelBuffer`: `with_diffuse_white(DiffuseWhite)`, `with_cicp(Cicp)`,
@@ -442,7 +485,7 @@
   so the anchor (and CICP/ICC) is reframed as ergonomically as the transfer.
   Plus `ColorContext::with_cicp` / `with_icc` to match `with_diffuse_white`.
 
-### zenpixels — deprecated
+#### zenpixels — deprecated
 
 - **`ContentLightLevel::measure` is deprecated and `#[doc(hidden)]`.** It computes
   the *literal* CTA-861.3 MaxCLL — the absolute maximum over all pixels of
@@ -454,7 +497,7 @@
   queued for removal in 0.3.0. MaxFALL (the mean) was never affected, and there
   were no consumers — nothing breaks.
 
-### zenpixels-convert — deprecated
+#### zenpixels-convert — deprecated
 
 - **`hdr::{reinhard_tonemap, reinhard_inverse, exposure_tonemap}` are deprecated
   and `#[doc(hidden)]`.** Naive global Reinhard `v / (1 + v)` and a bare
@@ -466,7 +509,7 @@
   `Bt2408Tonemapper`, ACES, AgX, filmic-spline, gain-map curves, plus SIMD
   strip processing) for production HDR→SDR work. Removal queued for 0.3.0.
 
-### zenpixels-convert — internal
+#### zenpixels-convert — internal
 
 - **`orient`: fixed public-doc links + corrected the `fast-transpose` comment.**
   The module-level docs linked private `transpose_*` fns (dead links on docs.rs)

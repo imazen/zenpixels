@@ -307,7 +307,7 @@ impl ColorManagement for MoxCms {
     // is added. The plumbing (source_to_moxcms_profile) is already here.
 }
 
-/// Convert a [`ColorProfileSource`] to a moxcms [`ColorProfile`].
+/// Convert a [`ColorProfileSource`](crate::ColorProfileSource) to a moxcms [`ColorProfile`].
 ///
 /// Returns `Ok(None)` if the source can't be mapped to moxcms.
 // TODO(0.3.0): used by build_source_transform once trait is redesigned.

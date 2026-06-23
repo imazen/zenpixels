@@ -164,7 +164,19 @@ pub trait PixelBufferConvertExt {
     /// with zero memory and zero time. Callers can read
     /// [`ResourceEstimate::confidence`](crate::ResourceEstimate::confidence)
     /// to detect that case.
-    fn estimate_convert_to(&self, target: &PixelDescriptor) -> crate::ResourceEstimate;
+    ///
+    /// # Default implementation
+    ///
+    /// The default returns
+    /// [`ResourceEstimate::zero`](crate::ResourceEstimate::zero)`(`[`EstimateConfidence::Unknown`](crate::EstimateConfidence::Unknown)`)`
+    /// so downstream `impl`s of this trait that pre-date the
+    /// `estimate_*` family (added in 0.2.15) keep building. The
+    /// crate's own [`PixelBuffer`] impl overrides with the real
+    /// plan-walking estimator.
+    fn estimate_convert_to(&self, target: &PixelDescriptor) -> crate::ResourceEstimate {
+        let _ = target;
+        crate::ResourceEstimate::zero(crate::EstimateConfidence::Unknown)
+    }
 
     /// Estimate the cost of [`try_add_alpha`](Self::try_add_alpha) without
     /// running it.
@@ -177,7 +189,16 @@ pub trait PixelBufferConvertExt {
     /// [`crate::estimate`]); check
     /// [`ResourceEstimate::confidence`](crate::ResourceEstimate::confidence)
     /// for the calibration tier.
-    fn estimate_try_add_alpha(&self) -> crate::ResourceEstimate;
+    ///
+    /// # Default implementation
+    ///
+    /// The default returns
+    /// [`ResourceEstimate::zero`](crate::ResourceEstimate::zero)`(`[`EstimateConfidence::Unknown`](crate::EstimateConfidence::Unknown)`)`
+    /// (same rationale as
+    /// [`estimate_convert_to`](Self::estimate_convert_to)).
+    fn estimate_try_add_alpha(&self) -> crate::ResourceEstimate {
+        crate::ResourceEstimate::zero(crate::EstimateConfidence::Unknown)
+    }
 
     /// Estimate the cost of [`try_widen_to_u16`](Self::try_widen_to_u16)
     /// without running it.
@@ -189,7 +210,14 @@ pub trait PixelBufferConvertExt {
     /// the (memcpy-only) identity path. Inspect
     /// [`ResourceEstimate::confidence`](crate::ResourceEstimate::confidence)
     /// for the calibration tier.
-    fn estimate_try_widen_to_u16(&self) -> crate::ResourceEstimate;
+    ///
+    /// # Default implementation
+    ///
+    /// The default returns
+    /// [`ResourceEstimate::zero`](crate::ResourceEstimate::zero)`(`[`EstimateConfidence::Unknown`](crate::EstimateConfidence::Unknown)`)`.
+    fn estimate_try_widen_to_u16(&self) -> crate::ResourceEstimate {
+        crate::ResourceEstimate::zero(crate::EstimateConfidence::Unknown)
+    }
 
     /// Estimate the cost of [`try_narrow_to_u8`](Self::try_narrow_to_u8)
     /// without running it.
@@ -199,7 +227,14 @@ pub trait PixelBufferConvertExt {
     /// allocated buffer. **±30 % design tolerance** per
     /// [`crate::estimate`]; if the source is already U8 the estimate is
     /// the (memcpy-only) identity path.
-    fn estimate_try_narrow_to_u8(&self) -> crate::ResourceEstimate;
+    ///
+    /// # Default implementation
+    ///
+    /// The default returns
+    /// [`ResourceEstimate::zero`](crate::ResourceEstimate::zero)`(`[`EstimateConfidence::Unknown`](crate::EstimateConfidence::Unknown)`)`.
+    fn estimate_try_narrow_to_u8(&self) -> crate::ResourceEstimate {
+        crate::ResourceEstimate::zero(crate::EstimateConfidence::Unknown)
+    }
 
     /// Estimate the cost of [`linearize`](Self::linearize) without
     /// running it.
@@ -208,7 +243,14 @@ pub trait PixelBufferConvertExt {
     /// preserving layout / alpha / primaries) and delegates to
     /// [`estimate_convert_to`](Self::estimate_convert_to). **±30 %
     /// design tolerance** per [`crate::estimate`].
-    fn estimate_linearize(&self) -> crate::ResourceEstimate;
+    ///
+    /// # Default implementation
+    ///
+    /// The default returns
+    /// [`ResourceEstimate::zero`](crate::ResourceEstimate::zero)`(`[`EstimateConfidence::Unknown`](crate::EstimateConfidence::Unknown)`)`.
+    fn estimate_linearize(&self) -> crate::ResourceEstimate {
+        crate::ResourceEstimate::zero(crate::EstimateConfidence::Unknown)
+    }
 
     /// Estimate the cost of [`delinearize(transfer)`](Self::delinearize)
     /// without running it.
@@ -217,7 +259,15 @@ pub trait PixelBufferConvertExt {
     /// the new transfer function) and delegates to
     /// [`estimate_convert_to`](Self::estimate_convert_to). **±30 %
     /// design tolerance** per [`crate::estimate`].
-    fn estimate_delinearize(&self, transfer: TransferFunction) -> crate::ResourceEstimate;
+    ///
+    /// # Default implementation
+    ///
+    /// The default returns
+    /// [`ResourceEstimate::zero`](crate::ResourceEstimate::zero)`(`[`EstimateConfidence::Unknown`](crate::EstimateConfidence::Unknown)`)`.
+    fn estimate_delinearize(&self, transfer: TransferFunction) -> crate::ResourceEstimate {
+        let _ = transfer;
+        crate::ResourceEstimate::zero(crate::EstimateConfidence::Unknown)
+    }
 }
 
 /// Typed convenience conversions that return `PixelBuffer<P>`.

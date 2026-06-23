@@ -253,7 +253,7 @@ fn cvt_f16_to_f32(token: Token, src: &[u16], dst: &mut [f32]) {
 }
 
 /// Token-keyed forwarder to `F16Convert::f32_to_f16_slice`. No `_v4` — the V3
-/// entry summons-up to AVX-512F internally; see [`cvt_f16_to_f32`].
+/// entry summons-up to AVX-512F internally; see `cvt_f16_to_f32`.
 #[magetypes(v3, neon, wasm128)]
 fn cvt_f32_to_f16(token: Token, src: &[f32], dst: &mut [u16]) {
     token.f32_to_f16_slice(src, dst);

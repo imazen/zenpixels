@@ -8,7 +8,7 @@
 //!
 //! Every codec declares a [`CodecFormats`] constant that lists every pixel
 //! format the decoder can produce and the encoder can accept. The format
-//! negotiation system ([`crate::best_match`], [`crate::negotiate`]) uses
+//! negotiation system ([`crate::best_match`], [`negotiate()`](fn@crate::negotiate)) uses
 //! these tables to pick the cheapest conversion path.
 //!
 //! ```rust,ignore

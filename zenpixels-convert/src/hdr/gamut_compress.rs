@@ -47,7 +47,7 @@ impl GamutBoundaryLut {
     /// Build the gamut boundary LUT for a given primaries set.
     ///
     /// `m1_inv` is the combined LMS → linear RGB matrix for the target
-    /// primaries, from [`oklab::lms_to_rgb_matrix`](crate::oklab::lms_to_rgb_matrix).
+    /// primaries, from [`crate::oklab::lms_to_rgb_matrix`].
     pub fn new(m1_inv: &GamutMatrix) -> Self {
         let mut data = alloc::vec![0.0f32; L_STEPS * H_STEPS];
 
@@ -192,7 +192,7 @@ fn is_in_gamut(l: f32, a: f32, b: f32, m1_inv: &GamutMatrix) -> bool {
 /// # Pipeline
 ///
 /// For each pixel:
-/// 1. Convert linear RGB → OKLab (via [`oklab::rgb_to_oklab`](crate::oklab::rgb_to_oklab)).
+/// 1. Convert linear RGB → OKLab (via [`crate::oklab::rgb_to_oklab`]).
 /// 2. Compute chroma `c = √(a² + b²)` and hue `h = atan2(b, a)`.
 /// 3. Look up max in-gamut chroma `c_max` at `(L, h)`.
 /// 4. If `c > knee · c_max`, compress: `c' = knee·c_max + range · excess / (excess + range)`.
@@ -234,7 +234,7 @@ pub struct SoftCompress {
 impl SoftCompress {
     /// Construct a [`SoftCompress`] for the given primaries (via `m1_inv`,
     /// the LMS → RGB matrix from
-    /// [`oklab::lms_to_rgb_matrix`](crate::oklab::lms_to_rgb_matrix)) and
+    /// [`crate::oklab::lms_to_rgb_matrix`]) and
     /// `knee` threshold (`0.0`–`1.0`; typical value `0.9`).
     ///
     /// The matching forward matrix is derived by inverting `m1_inv`. If you
@@ -598,7 +598,7 @@ mod tests {
             for (k, &v) in px.iter().enumerate() {
                 assert!(
                     v.is_finite() && (-0.02..=1.02).contains(&v),
-                    "out-of-gamut pixel {i} ch{k} = {v} did not land in [0,1]"
+                    "out-of-gamut pixel {i} ch{k} = {v} did not land in `[0,1]`"
                 );
             }
         }

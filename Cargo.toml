@@ -9,7 +9,7 @@ exclude = ["apidoc", "benchmarks/transpose-shootout"]
 resolver = "2"
 
 [workspace.dependencies]
-zenpixels = { path = "zenpixels", version = "0.2.14", default-features = false }
+zenpixels = { path = "zenpixels", version = "0.2.15", default-features = false }
 
 # Patches: only consulted when the corresponding crate is actually pulled.
 # When `zenpixels-convert`'s `__hdr-e2e-test` feature pulls the local

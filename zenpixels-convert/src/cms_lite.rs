@@ -218,7 +218,7 @@ impl RowTransform for LiteTransform {
     }
 }
 
-/// Mutex-free `RowTransformMut` wrapper for the [`PluggableCms`] path.
+/// Mutex-free `RowTransformMut` wrapper for the [`PluggableCms`](crate::cms::PluggableCms) path.
 ///
 /// Owns a `RowConverter` directly — no interior mutability needed since
 /// `RowTransformMut::transform_row` takes `&mut self`.

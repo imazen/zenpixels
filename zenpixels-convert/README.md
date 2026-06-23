@@ -12,20 +12,23 @@ A JPEG decoder gives you `RGB8` in sRGB. An AVIF decoder gives you `RGBA16` in B
 
 ```toml
 [dependencies]
-zenpixels-convert = "0.2.14"
+zenpixels-convert = "0.2.15"
 ```
 
 Common feature combinations:
 
 ```toml
 # Plus the rgb crate's typed buffers and convenience methods
-zenpixels-convert = { version = "0.2.14", features = ["rgb"] }
+zenpixels-convert = { version = "0.2.15", features = ["rgb"] }
 
 # Plus a pluggable CMS backend (moxcms) for arbitrary ICC profiles
-zenpixels-convert = { version = "0.2.14", features = ["cms-moxcms"] }
+zenpixels-convert = { version = "0.2.15", features = ["cms-moxcms"] }
+
+# Plus the experimental HDR→SDR display-mapping surface
+zenpixels-convert = { version = "0.2.15", features = ["hdr-experimental"] }
 
 # Size-sensitive / wasm builds (drops the bundled CICP->ICC database)
-zenpixels-convert = { version = "0.2.14", default-features = false, features = ["std"] }
+zenpixels-convert = { version = "0.2.15", default-features = false, features = ["std"] }
 ```
 
 ## Quick start
@@ -114,7 +117,7 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 ## Gamut, HDR, Oklab
 
 - **Gamut matrices** — 3×3 row-major f32 between BT.709, Display P3, BT.2020 via [`conversion_matrix`] / [`GamutMatrix`] and `apply_matrix_*` row kernels. No CMS needed for named-profile conversions.
-- **HDR** — Reinhard ([`reinhard_tonemap`] / [`reinhard_inverse`]) and [`exposure_tonemap`] tone mapping; [`ContentLightLevel`] and [`MasteringDisplay`] metadata; [`quantize_to`] is the anchor-aware linear→PQ16 quantizer (reads `DiffuseWhite` from the source's `ColorContext`, BT.2408 default of 203).
+- **HDR (`hdr-experimental` feature)** — production HDR→SDR is a native step inside [`ConvertPlan`]: build via [`ConvertPlan::new_with_hdr_peak(from, to, source_peak_nits)`](https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.new_with_hdr_peak) or [`ConvertPlan::new_with_hdr_config(from, to, HdrConfig)`](https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.new_with_hdr_config), then run through the same [`RowConverter`]. The pipeline inserts the ITU-R BT.2446 Method A curve ([`Bt2446A`]) + an OKLch [`SoftCompress`] knee — confirmed best in the 2026-06-22 audited shootout (2-5× lower mean ΔE2000 than channel-independent curves). Source-peak measurement uses [`CllMeasure::measure_max`] (the spec-conformant CTA-861.3 reading, ~2.7 Gpix/s on RGB f32 on a Ryzen 9 7950X / AVX2 — the SOTA spec-conformant CLL reading in the workspace). Plain `ConvertPlan::new` now **refuses** HDR-encoded → SDR-encoded conversions with [`ConvertError::HdrSourceRequiresPeak`] — no more silent saturating routes. Other HDR primitives: [`quantize_to`] (anchor-aware linear→PQ16, reads `DiffuseWhite` from the source's `ColorContext`, BT.2408 default of 203), [`ContentLightLevel`] and [`MasteringDisplay`] metadata. The legacy global Reinhard helpers (`reinhard_tonemap` / `reinhard_inverse` / `exposure_tonemap`) are `#[deprecated]` + `#[doc(hidden)]` since 0.2.15 and queued for removal in 0.3.0.
 - **Oklab** — primaries-aware `rgb_to_lms_matrix()` / `lms_to_rgb_matrix()`, scalar `rgb_to_oklab()` / `oklab_to_rgb()`. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
 
 ## CICP / ICC
@@ -155,7 +158,9 @@ The buffer-baking half of the zen orientation story lives here (the `Orientation
 | [`adapt::adapt_for_encode`] / [`adapt_for_encode_explicit`] / [`try_adapt_in_place`] | One-call negotiate-and-convert helpers |
 | [`PluggableCms`] / [`RowTransformMut`] / [`MoxCms`] | Pluggable CMS backend interface + moxcms impl |
 | [`GamutMatrix`] / [`conversion_matrix`] / `apply_matrix_*` | Gamut matrix construction and application |
-| [`quantize_to`] / [`reinhard_tonemap`] / [`exposure_tonemap`] | HDR quantization and tone mapping |
+| [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`hdr-experimental` feature) |
+| [`Bt2446A`] / [`SoftCompress`] / [`CllMeasure`] | ITU-R BT.2446 Method A curve + OKLch knee + CTA-861.3 CLL measurement (`hdr-experimental` feature) |
+| [`quantize_to`] | Anchor-aware linear→PQ16 quantizer |
 | [`finalize_for_output`] / [`EncodeReady`] / [`OutputMetadata`] | Atomic pixels-plus-metadata output assembly |
 | [`TransferFunctionExt`] / [`ColorPrimariesExt`] / [`PixelBufferConvertExt`] | Conversion methods bolted onto interchange types |
 | [`LoadBearingReport`] / [`PixelSliceLoadBearingExt`] | Channel-information analysis |
@@ -173,15 +178,16 @@ The buffer-baking half of the zen orientation story lives here (the `Orientation
 | `imgref` | | `ImgRef` / `ImgVec` conversions (implies `rgb`) |
 | `planar` | | Multi-plane image types (YCbCr, Oklab planes, gain maps) |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
+| `hdr-experimental` | | HDR→SDR display mapping (ITU-R BT.2446 Method A curve + OKLch soft compress + CTA-861.3 CLL measurement). API shape may move ahead of 0.3.0 (in particular `measure_robust` → `measure` rename); scan kernels and accuracy contracts are stable. See [HDR section](#gamut-hdr-oklab) above. |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
-| `serde` | | Forwards to `zenpixels/serde` |
+| `serde` | | Forwards to `zenpixels/serde` (`hdr-experimental` types implement `Serialize`/`Deserialize` when both features are on) |
 
 ### `no_std`
 
 `zenpixels-convert` is `no_std + alloc` by default-construction (`std` is on by default but everything works without it). For `no_std`, set `default-features = false` and re-enable only what you need (note that `cms-moxcms` requires `std`):
 
 ```toml
-zenpixels-convert = { version = "0.2.14", default-features = false }
+zenpixels-convert = { version = "0.2.15", default-features = false }
 ```
 
 ## MSRV
@@ -220,9 +226,14 @@ Apache-2.0 OR MIT.
 [`GamutMatrix`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/gamut/type.GamutMatrix.html
 [`conversion_matrix`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/gamut/fn.conversion_matrix.html
 [`quantize_to`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/fn.quantize_to.html
-[`reinhard_tonemap`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/fn.reinhard_tonemap.html
-[`reinhard_inverse`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/fn.reinhard_inverse.html
-[`exposure_tonemap`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/fn.exposure_tonemap.html
+[`Bt2446A`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/struct.Bt2446A.html
+[`SoftCompress`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/struct.SoftCompress.html
+[`CllMeasure`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/trait.CllMeasure.html
+[`CllMeasure::measure_max`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/trait.CllMeasure.html#tymethod.measure_max
+[`ConvertPlan`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html
+[`ConvertPlan::new_with_hdr_peak`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.new_with_hdr_peak
+[`ConvertPlan::new_with_hdr_config`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.new_with_hdr_config
+[`ConvertError::HdrSourceRequiresPeak`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/enum.ConvertError.html#variant.HdrSourceRequiresPeak
 [`ContentLightLevel`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/struct.ContentLightLevel.html
 [`MasteringDisplay`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/struct.MasteringDisplay.html
 [`finalize_for_output`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.finalize_for_output.html

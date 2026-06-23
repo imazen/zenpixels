@@ -760,7 +760,7 @@ pub(crate) fn build_linearize_lut(linearize_fn: fn(f32) -> f32) -> alloc::boxed:
 
 /// Convert u8 RGB source to u8 RGB dest via gamut conversion.
 ///
-/// Source u8 values are normalized to [0,1], linearized, matrix-transformed,
+/// Source u8 values are normalized to `[0,1]`, linearized, matrix-transformed,
 /// then re-encoded and quantized to u8 output.
 pub(crate) fn convert_u8_rgb(
     m: &[[f32; 3]; 3],
@@ -863,7 +863,7 @@ fn convert_8px_u8_rgb_fused(
 }
 
 /// 2-pixel kernel using safe magetypes APIs. Mirrors moxcms rgb_xyz_opt:
-/// each 128-bit lane holds one pixel's [R,G,B,0] after FMA. Clamp+scale+
+/// each 128-bit lane holds one pixel's `[R,G,B,0]` after FMA. Clamp+scale+
 /// `to_i32_round` produces i32 indices; aligned store, scalar LUT gather.
 #[cfg(target_arch = "x86_64")]
 #[rite]
@@ -917,7 +917,7 @@ fn convert_8px_u8_rgb_matlut(
         // v = r*m0 + g*m1 + b*m2 — each 128-bit lane ends up as [R', G', B', 0].
         let v = r * m0 + g * m1 + b * m2;
 
-        // Clamp [0,1], scale, SIMD f32→i32 round, extract as array (in-register).
+        // Clamp `[0,1]`, scale, SIMD f32→i32 round, extract as array (in-register).
         let clamped = v.max(zero).min(one);
         let scaled = clamped * scale;
         let idx = scaled.to_i32_round().to_array();

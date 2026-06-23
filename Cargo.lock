@@ -1150,6 +1150,7 @@ dependencies = [
  "palette",
  "paste",
  "rgb",
+ "serde",
  "sha2",
  "whereat",
  "zenbench",

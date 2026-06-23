@@ -149,7 +149,7 @@ pub struct OutputMetadata {
     /// HDR metadata to embed (content light level, mastering display), if any.
     ///
     /// **Deprecated and never wired** — `finalize_for_output` always sets it to
-    /// `None`. The bundled [`HdrMetadata`](crate::hdr::HdrMetadata) carrier is
+    /// `None`. The bundled [`crate::hdr::HdrMetadata`] carrier is
     /// being removed at 0.3.0 (it has frozen public fields and bundles
     /// `transfer`, which the prior art keeps on the descriptor).
     ///

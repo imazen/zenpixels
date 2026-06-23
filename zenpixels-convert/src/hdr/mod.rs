@@ -10,11 +10,11 @@
 //! # Experimental: [`measure`] — content-light-level measurement
 //!
 //! Behind the `hdr-experimental` Cargo feature, the [`measure`] submodule
-//! exposes the [`CllMeasure`](measure::CllMeasure) extension trait (with
+//! exposes the [`measure::CllMeasure`] extension trait (with
 //! `measure_max` / `measure_robust` / `measure_max_smoothed` /
 //! `measure_percentile` / `measure_histogram` on
-//! [`ContentLightLevel`]), the [`LightLevelHistogram`](measure::LightLevelHistogram)
-//! primitive, and the [`LightLevelMethod`](measure::LightLevelMethod) enum.
+//! [`ContentLightLevel`]), the [`measure::LightLevelHistogram`]
+//! primitive, and the [`measure::LightLevelMethod`] enum.
 //! The trait + module shape may move or rename ahead of 0.3.0 (in particular
 //! `measure_robust` is queued to become the unqualified `measure` once the
 //! deprecated 2-arg `ContentLightLevel::measure` ships its 0.3.0 removal);
@@ -84,7 +84,7 @@ use zenpixels::hdr::DiffuseWhite;
 /// `zencodec::Metadata` (which the codecs actually populate, and which also
 /// carries CICP, ICC, EXIF/XMP, and orientation). It bundles `transfer` with
 /// CLL/mastering, which the prior art uniformly keeps separate (transfer
-/// belongs on the [`PixelDescriptor`](crate::PixelDescriptor); CLL and
+/// belongs on the [`crate::PixelDescriptor`]; CLL and
 /// mastering are independent optional metadata). It has frozen public fields
 /// (not `#[non_exhaustive]`), so the absolute-luminance anchor and gain-map
 /// fields HDR needs cannot be added without a break. Scheduled for removal in
