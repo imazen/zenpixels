@@ -140,9 +140,19 @@ impl RowConverter {
     ) -> Result<Self, At<ConvertError>> {
         use crate::policy::{AlphaPolicy, DepthPolicy};
 
-        // CMS dispatch chain (runs only when primaries differ — transfer-only
-        // changes stay on the built-in plan path so `compose` can peephole
-        // them and options like `clip_out_of_gamut` propagate through):
+        // CMS dispatch chain. Fires when:
+        //   - primaries differ (cross-gamut RGB↔RGB, where ZenCmsLite or
+        //     moxcms supplies a matlut / 3x3+TF transform), OR
+        //   - the (from, to) pair needs a CMS by `requires_cms`
+        //     (CMYK / Lab / XYZ / future non-native models). Without this
+        //     second arm the built-in plan path would error out with
+        //     `NeedsCms` before any plugin was consulted, even when one
+        //     was attached — the regression the 0.2.16 fix targets.
+        //
+        // Transfer-only changes inside the native RGB family stay on the
+        // built-in plan path so `compose` can peephole them and options
+        // like `clip_out_of_gamut` propagate through.
+        //
         //   1. user-supplied plugin (if Some)
         //   2. ZenCmsLite (default) — named-profile matlut fast path
         //
@@ -153,7 +163,8 @@ impl RowConverter {
         //     Falling through to another backend could silently produce
         //     different output — surface the failure instead.
         let primaries_differ = from.primaries != to.primaries;
-        if primaries_differ {
+        let needs_cms_dispatch = crate::convert::requires_cms(&from, &to);
+        if primaries_differ || needs_cms_dispatch {
             let src_src = from.color_profile_source();
             let dst_src = to.color_profile_source();
             let src_fmt = from.pixel_format();
@@ -1977,8 +1988,16 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    #[should_panic(expected = "CMYK pixel data cannot be processed")]
-    fn cmyk_rejected_by_row_converter() {
-        let _ = RowConverter::new(PixelDescriptor::CMYK8, PixelDescriptor::RGB8_SRGB);
+    fn cmyk_returns_needs_cms_error_when_no_cms_attached() {
+        let result = RowConverter::new(PixelDescriptor::CMYK8, PixelDescriptor::RGB8_SRGB);
+        let err = match result {
+            Ok(_) => panic!("CMYK→RGB without a CMS must error, not succeed"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(*err.error(), ConvertError::NeedsCms { .. }),
+            "expected NeedsCms variant, got: {:?}",
+            err.error(),
+        );
     }
 }

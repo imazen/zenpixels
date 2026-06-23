@@ -325,21 +325,35 @@ pub trait PixelBufferConvertTypedExt: PixelBufferConvertExt {
     }
 }
 
-/// Assert that a descriptor is not CMYK.
-fn assert_not_cmyk(desc: &PixelDescriptor) {
-    assert!(
-        desc.color_model() != crate::ColorModel::Cmyk,
-        "CMYK pixel data cannot be processed by zenpixels-convert. \
-         Use a CMS (e.g., moxcms) with an ICC profile for CMYK↔RGB conversion."
-    );
+/// Reject conversions that require a CMS plugin from these
+/// no-CMS-argument extension entry points.
+///
+/// The trait-level methods (`convert_to`, `try_widen_to_u16`, …) don't
+/// take a [`PluggableCms`](crate::cms::PluggableCms), so CMYK / Lab /
+/// XYZ / any other non-native color model surfaces as a typed
+/// [`ConvertError::NeedsCms`] here — pre-0.2.16 this was an
+/// `assert_not_cmyk` panic. Callers that need CMS dispatch should
+/// build a [`RowConverter`](crate::RowConverter) directly via
+/// [`new_explicit_with_cms`](crate::RowConverter::new_explicit_with_cms).
+#[inline]
+fn check_needs_cms(
+    from: &PixelDescriptor,
+    to: &PixelDescriptor,
+) -> Result<(), At<crate::ConvertError>> {
+    if crate::convert::requires_cms(from, to) {
+        return Err(whereat::at!(crate::ConvertError::NeedsCms {
+            from: *from,
+            to: *to,
+        }));
+    }
+    Ok(())
 }
 
 impl PixelBufferConvertExt for PixelBuffer {
     #[track_caller]
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>> {
         let src_desc = self.descriptor();
-        assert_not_cmyk(&src_desc);
-        assert_not_cmyk(&target);
+        check_needs_cms(&src_desc, &target)?;
         if src_desc == target {
             // Identity — just copy.
             let dst_stride = target.aligned_stride(self.width());
@@ -641,8 +655,7 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
         use zenpixels::hdr::{ContentLightLevel, DiffuseWhite};
 
         let src_desc = self.descriptor();
-        assert_not_cmyk(&src_desc);
-        assert_not_cmyk(&target);
+        check_needs_cms(&src_desc, &target)?;
 
         // Non-HDR source: short-circuit to the regular convert_to path
         // (which now rejects HDR→SDR loudly, so this is purely the
@@ -694,8 +707,7 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
         hdr: crate::HdrConfig,
     ) -> Result<PixelBuffer, At<crate::ConvertError>> {
         let src_desc = self.descriptor();
-        assert_not_cmyk(&src_desc);
-        assert_not_cmyk(&target);
+        check_needs_cms(&src_desc, &target)?;
         // Do NOT short-circuit on `src_desc == target` — the HDR-aware
         // constructor still needs to run the tone-map + soft-compress
         // chain when both descriptors are e.g. `RGBF32_LINEAR`. The plan
@@ -903,21 +915,41 @@ mod tests {
     use super::*;
 
     // --- CMYK guard tests ---
+    //
+    // These used to be `#[should_panic]` against `assert_not_cmyk` (the
+    // pre-#44 ABORT behaviour). Per the 0.2.16 NeedsCms migration the
+    // trait-level entry points return a typed `ConvertError::NeedsCms`
+    // instead — callers wanting CMS dispatch build a `RowConverter` with
+    // `new_explicit_with_cms(_, _, _, Some(&MoxCms))` and re-issue.
 
     #[test]
-    #[should_panic(expected = "CMYK pixel data cannot be processed")]
-    fn cmyk_rejected_by_convert_to() {
+    fn cmyk_source_returns_needs_cms_from_convert_to() {
         let cmyk_data = vec![0u8; 4 * 4]; // 4 pixels
         let buf = PixelBuffer::from_vec(cmyk_data, 2, 2, PixelDescriptor::CMYK8).unwrap();
-        let _ = buf.convert_to(PixelDescriptor::RGB8_SRGB);
+        let err = match buf.convert_to(PixelDescriptor::RGB8_SRGB) {
+            Ok(_) => panic!("CMYK→RGB on the no-CMS extension entry must error"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(*err.error(), crate::ConvertError::NeedsCms { .. }),
+            "expected NeedsCms, got {:?}",
+            err.error(),
+        );
     }
 
     #[test]
-    #[should_panic(expected = "CMYK pixel data cannot be processed")]
-    fn cmyk_rejected_as_convert_target() {
+    fn cmyk_target_returns_needs_cms_from_convert_to() {
         let rgb_data = vec![0u8; 3 * 4]; // 4 pixels
         let buf = PixelBuffer::from_vec(rgb_data, 2, 2, PixelDescriptor::RGB8_SRGB).unwrap();
-        let _ = buf.convert_to(PixelDescriptor::CMYK8);
+        let err = match buf.convert_to(PixelDescriptor::CMYK8) {
+            Ok(_) => panic!("RGB→CMYK on the no-CMS extension entry must error"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(*err.error(), crate::ConvertError::NeedsCms { .. }),
+            "expected NeedsCms, got {:?}",
+            err.error(),
+        );
     }
 
     // --- TransferFunction linearize/delinearize tests ---

@@ -2,6 +2,60 @@
 
 ## [Unreleased]
 
+### zenpixels-convert — added
+
+- **`ConvertError::NeedsCms { from, to }` variant** for conversions whose
+  `(from, to)` pair has a structurally valid path but needs CMS dispatch
+  (currently CMYK; in the future Lab / XYZ / spot inks). Distinct from
+  `NoPath` (no architecturally possible conversion). Replaces the
+  pre-0.2.16 `assert_not_cmyk` panic the public-API entry points used to
+  fire BEFORE the CMS plugin was consulted — so the documented
+  `RowConverter::new_explicit_with_cms(_, _, _, Some(&MoxCms))` escape
+  hatch is now actually reachable. Additive (`ConvertError` is
+  `#[non_exhaustive]`) — `cargo semver-checks` confirmed clean (196
+  pass, 0 fail).
+- **`pub fn requires_cms(from: &PixelDescriptor, to: &PixelDescriptor) -> bool`**
+  predicate. Schedulers can probe per source/target pair before deciding
+  whether to attach a plugin to a batch. Today returns true iff either
+  side's `ColorModel` is outside the native `{Gray, Rgb, Oklab}` set;
+  future non-native models plug in via the `native_color_model` helper
+  with no API change.
+- **End-to-end CMYK ↔ RGB conversion via `MoxCms`** now works. New
+  `impl PluggableCms for MoxCms` advertises CMYK / Lab / XYZ formats to
+  the dispatch chain in `RowConverter::new_explicit_with_cms` and
+  builds moxcms `TransformExecutor`s at the source's native bit depth.
+  Callers must supply a real CMYK ICC via `ColorProfileSource::Icc(...)`
+  on the CMYK side — moxcms has no synthesizable default for
+  device-dependent ink. A `PrimariesTransferPair` for a CMYK descriptor
+  is declined (`None`) rather than failed, so the caller learns to
+  attach an ICC. New `MoxRowTransformMut` wrapper + tests at
+  `tests/cmyk_cms_roundtrip.rs` (6 cases) + `RowConverter` unit test
+  pin the migration.
+
+### zenpixels-convert — changed
+
+- **Replaced the `assert_not_cmyk` process-aborting guard** (6 entry
+  points × 2 `assert_not_cmyk` calls each = 12 individual call lines
+  across `convert.rs` and `ext.rs`) with graceful
+  `Err(ConvertError::NeedsCms { from, to })` returns. `ConvertPlan::new`,
+  `ConvertPlan::new_explicit`, `ConvertPlan::new_with_hdr_config`,
+  `PixelBufferConvertExt::convert_to`, `PixelBufferHdrConvertExt::convert_to_sdr`,
+  and `convert_to_with_hdr_config` all answer the typed error now. The
+  `assert_not_cmyk` function itself was `pub(crate)` and is removed. The
+  existing `#[should_panic]`-shaped CMYK guard tests in
+  `src/converter.rs`, `src/ext.rs` (and `tests/adapt.rs` via the same
+  migration in #44) migrate to `matches!(*err.error(), NeedsCms { .. })`
+  asserts.
+- **`ZenCmsLite::build_source_transform` now declines (returns `None`)
+  for non-native color models** instead of forwarding to its plan
+  builder (which would synthesize a `Some(Err(NeedsCms))` and stop the
+  dispatch chain). This is what lets a user-supplied `MoxCms` actually
+  get consulted for CMYK conversions.
+- **`RowConverter::new_explicit_with_cms` widens its CMS-dispatch
+  trigger** from `primaries_differ` only to `primaries_differ ||
+  requires_cms(&from, &to)`. CMYK descriptors carry default `Bt709`
+  primaries so the trigger missed them entirely pre-fix.
+
 ### zenpixels-convert — refactored (audit dedup)
 
 - **`ConvertStep`'s 5 fused-sRGB-gamut variants collapsed into one

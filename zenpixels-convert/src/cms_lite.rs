@@ -250,6 +250,28 @@ impl crate::cms::PluggableCms for ZenCmsLite {
         let (src_p, src_t) = src.resolve()?;
         let (dst_p, dst_t) = dst.resolve()?;
 
+        // Build the descriptors first so we can run the native-model check
+        // against them. Pre-0.2.16 we built these AFTER the same-space
+        // shortcut and called straight into `ConvertPlan::new_explicit`,
+        // which now answers `NeedsCms` for CMYK / Lab / XYZ etc. instead of
+        // panicking. Surfacing that as `Some(Err(...))` would stop the
+        // dispatch chain — but ZenCmsLite recognizes only native RGB-family
+        // gamut/transfer work, so the right answer is `None` (decline) so
+        // the next plugin (e.g. MoxCms) gets a chance.
+        let from = PixelDescriptor::from_pixel_format(src_format)
+            .with_primaries(src_p)
+            .with_transfer(src_t);
+        let to = PixelDescriptor::from_pixel_format(dst_format)
+            .with_primaries(dst_p)
+            .with_transfer(dst_t);
+
+        // Decline non-native color models (CMYK today; Lab / XYZ / spot inks
+        // when they land). We have no kernels for them — let MoxCms or the
+        // user-supplied plugin handle it.
+        if crate::convert::requires_cms(&from, &to) {
+            return None;
+        }
+
         // Same color space and format — decline; let caller use the
         // built-in mechanical plan (byte copy / layout swizzle).
         if src_p as u8 == dst_p as u8
@@ -258,13 +280,6 @@ impl crate::cms::PluggableCms for ZenCmsLite {
         {
             return None;
         }
-
-        let from = PixelDescriptor::from_pixel_format(src_format)
-            .with_primaries(src_p)
-            .with_transfer(src_t);
-        let to = PixelDescriptor::from_pixel_format(dst_format)
-            .with_primaries(dst_p)
-            .with_transfer(dst_t);
 
         // Build directly from a plan to avoid recursing through the
         // RowConverter CMS chain. Plan construction failing here IS a

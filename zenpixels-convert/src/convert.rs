@@ -371,16 +371,44 @@ impl ConvertStep {
     }
 }
 
-/// Assert that a descriptor is not CMYK.
+/// Color models that zenpixels-convert's built-in kernels resolve natively.
 ///
-/// CMYK is device-dependent and cannot be converted by zenpixels-convert.
-/// Use a CMS (e.g., moxcms) with an ICC profile for CMYK↔RGB conversion.
-fn assert_not_cmyk(desc: &PixelDescriptor) {
-    assert!(
-        desc.color_model() != crate::ColorModel::Cmyk,
-        "CMYK pixel data cannot be processed by zenpixels-convert. \
-         Use a CMS (e.g., moxcms) with an ICC profile for CMYK↔RGB conversion."
-    );
+/// Anything outside this set is a device-dependent / CMS-only path —
+/// CMYK today, Lab / XYZ / spot inks if/when those land as
+/// [`crate::ColorModel`] variants. See [`requires_cms`].
+#[inline]
+fn native_color_model(m: crate::ColorModel) -> bool {
+    // `Gray`, `Rgb` and `Oklab` are the colorimetric spaces the built-in
+    // kernels handle end-to-end (gamut matrices, transfer LUTs, fused
+    // matluts, polyfit decoders, the OKLab gamut-compression path, …).
+    // `YCbCr` is also colorimetric-equivalent to RGB once the matrix has
+    // been applied, but no kernel here consumes raw `YCbCr` pixels: every
+    // entry point that touches YCbCr first lifts it into RGB via the
+    // decoder's own coefficient pair, so the planner never sees a
+    // `YCbCr` color model on either side. CMYK is the only non-native
+    // model that currently reaches the planner.
+    matches!(
+        m,
+        crate::ColorModel::Gray | crate::ColorModel::Rgb | crate::ColorModel::Oklab
+    )
+}
+
+/// True when the `(from, to)` pair cannot be handled by the built-in
+/// kernels and must dispatch through a color management plugin.
+///
+/// Today this fires when either side's [`color_model`](PixelDescriptor::color_model)
+/// is outside the native set (currently just CMYK; future variants —
+/// Lab / XYZ / spot inks — will plug in here). The companion
+/// [`ConvertError::NeedsCms`] is what entry points return when this is
+/// true and no `cms` was passed.
+///
+/// Useful to schedulers: a caller doing batch encode/decode can probe
+/// `requires_cms` once per source/target pair and decide whether to
+/// attach a CMS plugin (e.g. `&MoxCms`) for that batch.
+///
+/// [`color_model`]: zenpixels::PixelDescriptor::color_model
+pub fn requires_cms(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
+    !native_color_model(from.color_model()) || !native_color_model(to.color_model())
 }
 
 impl ConvertPlan {
@@ -425,14 +453,17 @@ impl ConvertPlan {
     /// kernels, and relabeling without rescaling would corrupt pixels — see
     /// the signal-range notes on the [crate docs](crate#step-3-convert).
     ///
-    /// # Panics
-    ///
-    /// Panics if either `from` or `to` uses [`ColorModel::Cmyk`](zenpixels::ColorModel::Cmyk).
-    /// CMYK requires a CMS with an ICC profile for conversion.
+    /// CMYK (and any other non-native color model) returns
+    /// [`ConvertError::NeedsCms`] so the caller can re-issue via
+    /// [`RowConverter::new_explicit_with_cms`](crate::RowConverter::new_explicit_with_cms)
+    /// with a [`PluggableCms`](crate::cms::PluggableCms) backend attached.
+    /// `ConvertPlan` itself never dispatches through CMS — wire the call
+    /// through `RowConverter` for that.
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
-        assert_not_cmyk(&from);
-        assert_not_cmyk(&to);
+        if requires_cms(&from, &to) {
+            return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
+        }
         if from == to {
             return Ok(Self::build(from, to, vec![ConvertStep::Identity]));
         }
@@ -873,9 +904,10 @@ impl ConvertPlan {
     ///
     /// [`HdrSourceRequiresPeak`]: ConvertError::HdrSourceRequiresPeak
     ///
-    /// # Panics
-    ///
-    /// Same panics as [`ConvertPlan::new`] (CMYK descriptors).
+    /// CMYK (and any other non-native color model) returns
+    /// [`ConvertError::NeedsCms`] — same posture as
+    /// [`ConvertPlan::new`]. HDR tone-mapping is RGB-only; a CMS is the
+    /// right tool for CMYK↔RGB even on the HDR construction path.
     #[cfg(feature = "hdr-experimental")]
     #[track_caller]
     pub fn new_with_hdr_config(
@@ -883,8 +915,9 @@ impl ConvertPlan {
         to: PixelDescriptor,
         hdr: HdrConfig,
     ) -> Result<Self, At<ConvertError>> {
-        assert_not_cmyk(&from);
-        assert_not_cmyk(&to);
+        if requires_cms(&from, &to) {
+            return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
+        }
         // SDR source paths take the regular plan path — calling the
         // HDR-aware constructor on (e.g.) sRGB → sRGB shouldn't force a
         // tone map. The HDR pipeline runs for PQ/HLG sources AND for
@@ -1053,18 +1086,21 @@ impl ConvertPlan {
     /// policies before creating the plan. Returns an error if a forbidden
     /// operation would be required.
     ///
-    /// # Panics
-    ///
-    /// Panics if either `from` or `to` uses [`ColorModel::Cmyk`](zenpixels::ColorModel::Cmyk).
-    /// CMYK requires a CMS with an ICC profile for conversion.
+    /// CMYK (and any other non-native color model) returns
+    /// [`ConvertError::NeedsCms`] — same posture as
+    /// [`ConvertPlan::new`]. To dispatch CMYK ↔ RGB through a CMS, build
+    /// the converter via
+    /// [`RowConverter::new_explicit_with_cms`](crate::RowConverter::new_explicit_with_cms)
+    /// with a [`PluggableCms`](crate::cms::PluggableCms) plugin attached.
     #[track_caller]
     pub fn new_explicit(
         from: PixelDescriptor,
         to: PixelDescriptor,
         options: &ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
-        assert_not_cmyk(&from);
-        assert_not_cmyk(&to);
+        if requires_cms(&from, &to) {
+            return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
+        }
         // Check alpha removal policy.
         let drops_alpha = from.alpha().is_some() && to.alpha().is_none();
         if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
@@ -1541,7 +1577,8 @@ fn f32_tf_pair_steps(from: TransferFunction, to: TransferFunction) -> Vec<Conver
 }
 
 /// Depth conversion step into F32 for any non-F32 channel type (U8, U16, F16).
-/// Panics for F32 (caller must check); CMYK is rejected upstream by `assert_not_cmyk`.
+/// Panics for F32 (caller must check); CMYK is rejected upstream by
+/// [`requires_cms`] before any plan steps are picked.
 fn to_f32_step(ct: ChannelType) -> ConvertStep {
     match ct {
         ChannelType::U8 => ConvertStep::NaiveU8ToF32,

@@ -71,17 +71,37 @@ pub enum ConvertError {
         from: PixelDescriptor,
         to: PixelDescriptor,
     },
-    // CMYK rejection is folded into `NoPath { from, to }` rather than a dedicated
-    // variant. Reasoning: zero workspace consumers match anything but
-    // `AllocationFailed` today, and a CMYK-specific arm would be future-facing
-    // surface that no caller earns. Callers that need to route to a CMS can
-    // inspect `from.color_model() == ColorModel::Cmyk` on the existing variant —
-    // information-equivalent. The Display impl below tacks on the "use moxcms"
-    // hint when either side is CMYK so the error message stays actionable.
-    // (See imazen/zenpixels#44 + the audit of in-tree ConvertError consumers.)
-    // Future variants (e.g. an HDR tone-mapping-required case; see HdrPolicy in
-    // output.rs and imazen/zenpixels#10) can be added without a break, since
-    // `ConvertError` is `#[non_exhaustive]`.
+    /// The conversion requires a color management plugin but none was provided.
+    ///
+    /// Returned when one (or both) sides use a non-native color model — CMYK,
+    /// Lab, XYZ, spot inks, or any future device-dependent space — that
+    /// `zenpixels-convert` cannot resolve with its built-in kernels. Attach
+    /// a plugin via
+    /// [`RowConverter::new_explicit_with_cms`](crate::RowConverter::new_explicit_with_cms)
+    /// (e.g. `Some(&MoxCms)` under the `cms-moxcms` feature) and the plan
+    /// will dispatch the full row work to it.
+    ///
+    /// Distinct from [`NoPath`](Self::NoPath): `NeedsCms` says "a path
+    /// exists, but requires CMS dispatch"; `NoPath` says "no architecturally
+    /// possible conversion." Callers that want to route to a CMS should
+    /// match on `NeedsCms` and re-issue the call with a plugin attached.
+    ///
+    /// **Pre-0.2.16:** the same descriptors caused a process-aborting
+    /// `assert_not_cmyk` panic — replaced by this typed variant so the
+    /// documented `Some(&MoxCms)` escape hatch is actually reachable.
+    NeedsCms {
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+    },
+    // CMYK rejection used to be folded into `NoPath { from, to }`. Pre-0.2.16
+    // the public-API entry points panicked via `assert_not_cmyk` BEFORE the CMS
+    // chain was consulted, so the documented escape hatch ("attach moxcms for
+    // CMYK↔RGB") was unreachable. 0.2.16 introduces `NeedsCms { from, to }`:
+    // the panic becomes a typed `Err`, callers can match the variant and
+    // re-issue with a plugin, and the moxcms backend dispatches CMYK→RGB
+    // end-to-end. `NoPath` is retained for genuinely impossible conversions
+    // (signal-range crossings without a kernel; HLG↔PQ until OOTF threading
+    // lands). `ConvertError` is `#[non_exhaustive]` so this is additive.
 }
 
 impl fmt::Display for ConvertError {
@@ -158,9 +178,15 @@ impl fmt::Display for ConvertError {
                 from.transfer(),
                 to.transfer(),
             ),
-            // CMYK rejection prints via the NoPath branch above with the
-            // CMYK hint appended — no dedicated variant; see the note at
-            // the enum definition.
+            Self::NeedsCms { from, to } => write!(
+                f,
+                "conversion from {} to {} requires a color management plugin: \
+                 call RowConverter::new_explicit_with_cms(_, _, _, Some(&MoxCms)) \
+                 (or another PluggableCms backend) to dispatch the row work \
+                 to a CMS",
+                from.color_model(),
+                to.color_model(),
+            ),
         }
     }
 }
@@ -268,6 +294,18 @@ mod tests {
         let s = format!("{e}");
         assert!(s.contains("CMS transform failed"));
         assert!(s.contains("profile mismatch"));
+    }
+
+    #[test]
+    fn display_needs_cms() {
+        let e = ConvertError::NeedsCms {
+            from: PixelDescriptor::CMYK8,
+            to: PixelDescriptor::RGB8_SRGB,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("color management plugin"), "{s}");
+        assert!(s.contains("CMYK"), "{s}");
+        assert!(s.contains("RGB"), "{s}");
     }
 
     #[test]

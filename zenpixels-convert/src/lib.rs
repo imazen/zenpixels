@@ -483,7 +483,7 @@ mod scan;
 pub use adapt::{adapt_for_encode_explicit, try_adapt_in_place};
 #[cfg(feature = "hdr-experimental")]
 pub use convert::HdrConfig;
-pub use convert::{ConvertPlan, convert_row};
+pub use convert::{ConvertPlan, convert_row, requires_cms};
 pub use converter::RowConverter;
 pub use error::ConvertError;
 // Resource-estimation API. `ResourceEstimate` is returned from
