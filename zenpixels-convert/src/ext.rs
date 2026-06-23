@@ -308,7 +308,11 @@ impl PixelBufferConvertExt for PixelBuffer {
 pub trait PixelBufferHdrConvertExt {
     /// Convert this HDR buffer to `target` (typically an SDR descriptor —
     /// sRGB / BT.709 / Gamma22), auto-measuring source peak via
-    /// [`CllMeasure::measure_robust`](crate::hdr::CllMeasure::measure_robust).
+    /// [`CllMeasure::measure_max`](crate::hdr::CllMeasure::measure_max)
+    /// (the production-default per the 2026-06-22 audited shootout —
+    /// wins 3 of 6 ranking criteria including the user-visible
+    /// `pct_above_de5`, see `DEFAULT_PERCENTILE` docs for the alternative
+    /// percentile path).
     ///
     /// For non-HDR sources this falls back to
     /// [`convert_to`](PixelBufferConvertExt::convert_to) (so the call is
@@ -382,7 +386,7 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
             .and_then(|c| c.diffuse_white)
             .unwrap_or(DiffuseWhite::BT2408);
         let cll =
-            ContentLightLevel::measure_robust(lin_slice, diffuse_white, LightLevelMethod::MaxRgb)
+            ContentLightLevel::measure_max(lin_slice, diffuse_white, LightLevelMethod::MaxRgb)
                 .unwrap_or(ContentLightLevel::new(1000, 0));
         let source_peak_nits = f32::from(cll.max_content_light_level).max(100.0);
         self.convert_to_with_hdr_config(
