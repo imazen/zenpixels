@@ -103,12 +103,47 @@ pub struct ConvertPlan {
     pub(crate) pq_anchor_scale: f32,
 }
 
+/// Selects which fused TF + matrix + TF kernel a [`ConvertStep::Fused`]
+/// dispatches to. Each variant is one (source-TF, source-depth, dest-depth,
+/// dest-TF, channel-shape) shape that the planner can peephole.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FusedKind {
+    /// `SrgbU8 → matrix → SrgbU8`, 3-channel RGB.
+    SrgbU8GamutRgb,
+    /// `SrgbU8 → matrix → SrgbU8`, 4-channel RGBA (alpha passthrough).
+    SrgbU8GamutRgba,
+    /// `SrgbU16 → matrix → SrgbU16`, 3-channel RGB via 65K-entry LUTs.
+    SrgbU16GamutRgb,
+    /// `SrgbU8 → matrix → LinearF32`, 3-channel RGB (cross-depth);
+    /// output preserves extended range (no clamp).
+    SrgbU8ToLinearF32Rgb,
+    /// `LinearF32 → matrix → SrgbU8`, 3-channel RGB (cross-depth);
+    /// always clamps since u8 can't represent out-of-gamut values.
+    LinearF32ToSrgbU8Rgb,
+}
+
+impl FusedKind {
+    /// The historical per-variant name kept stable for the
+    /// `__trace_ops` recorder + `tests/plan_validation.rs` (which still
+    /// asserts on `s.contains("FusedSrgb")`).
+    #[inline]
+    pub(crate) const fn variant_name(self) -> &'static str {
+        match self {
+            Self::SrgbU8GamutRgb => "FusedSrgbU8GamutRgb",
+            Self::SrgbU8GamutRgba => "FusedSrgbU8GamutRgba",
+            Self::SrgbU16GamutRgb => "FusedSrgbU16GamutRgb",
+            Self::SrgbU8ToLinearF32Rgb => "FusedSrgbU8ToLinearF32Rgb",
+            Self::LinearF32ToSrgbU8Rgb => "FusedLinearF32ToSrgbU8Rgb",
+        }
+    }
+}
+
 /// A single conversion step.
 ///
 /// Not `Copy` — some variants (e.g., `ExternalTransform`) carry an
 /// `Arc`. Peephole rewrites must use `.clone()` or index assignment with
 /// pattern matching instead of `*step` dereferences.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum ConvertStep {
     /// No-op (identity).
     Identity,
@@ -234,20 +269,15 @@ pub(crate) enum ConvertStep {
     GamutMatrixRgbF32([f32; 9]),
     /// Apply a 3×3 gamut matrix to linear RGBA f32 (4 channels, alpha passthrough).
     GamutMatrixRgbaF32([f32; 9]),
-    /// Fused u8-sRGB RGB primaries conversion: LUT linearize → SIMD matrix →
-    /// SIMD f32→i32 → LUT encode, in one pass. Replaces the 3-step sequence
-    /// `[SrgbU8ToLinearF32, GamutMatrixRgbF32(m), LinearF32ToSrgbU8]`.
-    FusedSrgbU8GamutRgb([f32; 9]),
-    /// Fused u8-sRGB RGBA primaries conversion (alpha passthrough).
-    FusedSrgbU8GamutRgba([f32; 9]),
-    /// Fused u16-sRGB RGB primaries conversion via 65K-entry LUTs.
-    FusedSrgbU16GamutRgb([f32; 9]),
-    /// Fused u8-sRGB → linear-f32 RGB primaries conversion (cross-depth).
-    /// Output preserves extended range (no clamp).
-    FusedSrgbU8ToLinearF32Rgb([f32; 9]),
-    /// Fused linear-f32 → u8-sRGB RGB primaries conversion (cross-depth).
-    /// Always clamps since u8 can't represent out-of-gamut values.
-    FusedLinearF32ToSrgbU8Rgb([f32; 9]),
+    /// Fused TF + 3×3 gamut + TF in one pass. Carries the matrix flattened
+    /// row-major to `[f32; 9]`, plus a [`FusedKind`] tag selecting which
+    /// linearize → matrix → encode shape to dispatch. Replaces the 3-step
+    /// sequence `[<lin>, GamutMatrix*F32, <enc>]` whenever the planner can
+    /// peephole it. See [`FusedKind`] for the supported shapes.
+    Fused {
+        kind: FusedKind,
+        matrix: [f32; 9],
+    },
     /// BT.2446 Method A HDR→SDR tone-map on linear-light f32 RGB in BT.2020
     /// primaries. The plan builder ensures this step sees BT.2020 linear-light
     /// input via preceding gamut-matrix steps; a following gamut-matrix step
@@ -277,96 +307,69 @@ pub(crate) enum ConvertStep {
     },
 }
 
-impl core::fmt::Debug for ConvertStep {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl ConvertStep {
+    /// The stable variant name used by the `__trace_ops` recorder and the
+    /// `StepEstimate::name` field. Kept as a `const fn` on `ConvertStep`
+    /// (no `strum`/proc-macro dep) so `estimate::step_name` and
+    /// `__trace_ops::step_name` can both call through to one source of
+    /// truth — historically these were three independent 60-arm matches
+    /// that drifted easily.
+    #[inline]
+    pub(crate) const fn variant_name(&self) -> &'static str {
         match self {
-            Self::Identity => f.write_str("Identity"),
-            Self::SwizzleBgraRgba => f.write_str("SwizzleBgraRgba"),
-            Self::RgbToBgra => f.write_str("RgbToBgra"),
-            Self::AddAlpha => f.write_str("AddAlpha"),
-            Self::DropAlpha => f.write_str("DropAlpha"),
-            Self::MatteComposite { r, g, b } => f
-                .debug_struct("MatteComposite")
-                .field("r", r)
-                .field("g", g)
-                .field("b", b)
-                .finish(),
-            Self::GrayToRgb => f.write_str("GrayToRgb"),
-            Self::GrayToRgba => f.write_str("GrayToRgba"),
-            Self::RgbToGray { coefficients } => f
-                .debug_struct("RgbToGray")
-                .field("coefficients", coefficients)
-                .finish(),
-            Self::RgbaToGray { coefficients } => f
-                .debug_struct("RgbaToGray")
-                .field("coefficients", coefficients)
-                .finish(),
-            Self::GrayAlphaToRgba => f.write_str("GrayAlphaToRgba"),
-            Self::GrayAlphaToRgb => f.write_str("GrayAlphaToRgb"),
-            Self::GrayToGrayAlpha => f.write_str("GrayToGrayAlpha"),
-            Self::GrayAlphaToGray => f.write_str("GrayAlphaToGray"),
-            Self::SrgbU8ToLinearF32 => f.write_str("SrgbU8ToLinearF32"),
-            Self::LinearF32ToSrgbU8 => f.write_str("LinearF32ToSrgbU8"),
-            Self::NaiveU8ToF32 => f.write_str("NaiveU8ToF32"),
-            Self::NaiveF32ToU8 => f.write_str("NaiveF32ToU8"),
-            Self::U16ToU8 => f.write_str("U16ToU8"),
-            Self::U8ToU16 => f.write_str("U8ToU16"),
-            Self::U16ToF32 => f.write_str("U16ToF32"),
-            Self::F32ToU16 => f.write_str("F32ToU16"),
-            Self::F16ToF32 => f.write_str("F16ToF32"),
-            Self::F32ToF16 => f.write_str("F32ToF16"),
-            Self::PqU16ToLinearF32 => f.write_str("PqU16ToLinearF32"),
-            Self::LinearF32ToPqU16 => f.write_str("LinearF32ToPqU16"),
-            Self::PqF32ToLinearF32 => f.write_str("PqF32ToLinearF32"),
-            Self::LinearF32ToPqF32 => f.write_str("LinearF32ToPqF32"),
-            Self::HlgU16ToLinearF32 => f.write_str("HlgU16ToLinearF32"),
-            Self::LinearF32ToHlgU16 => f.write_str("LinearF32ToHlgU16"),
-            Self::HlgF32ToLinearF32 => f.write_str("HlgF32ToLinearF32"),
-            Self::LinearF32ToHlgF32 => f.write_str("LinearF32ToHlgF32"),
-            Self::SrgbF32ToLinearF32 => f.write_str("SrgbF32ToLinearF32"),
-            Self::LinearF32ToSrgbF32 => f.write_str("LinearF32ToSrgbF32"),
-            Self::SrgbF32ToLinearF32Extended => f.write_str("SrgbF32ToLinearF32Extended"),
-            Self::LinearF32ToSrgbF32Extended => f.write_str("LinearF32ToSrgbF32Extended"),
-            Self::Bt709F32ToLinearF32 => f.write_str("Bt709F32ToLinearF32"),
-            Self::LinearF32ToBt709F32 => f.write_str("LinearF32ToBt709F32"),
-            Self::Gamma22F32ToLinearF32 => f.write_str("Gamma22F32ToLinearF32"),
-            Self::LinearF32ToGamma22F32 => f.write_str("LinearF32ToGamma22F32"),
-            Self::StraightToPremul => f.write_str("StraightToPremul"),
-            Self::PremulToStraight => f.write_str("PremulToStraight"),
-            Self::LinearRgbToOklab => f.write_str("LinearRgbToOklab"),
-            Self::OklabToLinearRgb => f.write_str("OklabToLinearRgb"),
-            Self::LinearRgbaToOklaba => f.write_str("LinearRgbaToOklaba"),
-            Self::OklabaToLinearRgba => f.write_str("OklabaToLinearRgba"),
-            Self::GamutMatrixRgbF32(m) => f.debug_tuple("GamutMatrixRgbF32").field(m).finish(),
-            Self::GamutMatrixRgbaF32(m) => f.debug_tuple("GamutMatrixRgbaF32").field(m).finish(),
-            Self::FusedSrgbU8GamutRgb(m) => f.debug_tuple("FusedSrgbU8GamutRgb").field(m).finish(),
-            Self::FusedSrgbU8GamutRgba(m) => {
-                f.debug_tuple("FusedSrgbU8GamutRgba").field(m).finish()
-            }
-            Self::FusedSrgbU16GamutRgb(m) => {
-                f.debug_tuple("FusedSrgbU16GamutRgb").field(m).finish()
-            }
-            Self::FusedSrgbU8ToLinearF32Rgb(m) => {
-                f.debug_tuple("FusedSrgbU8ToLinearF32Rgb").field(m).finish()
-            }
-            Self::FusedLinearF32ToSrgbU8Rgb(m) => {
-                f.debug_tuple("FusedLinearF32ToSrgbU8Rgb").field(m).finish()
-            }
+            Self::Identity => "Identity",
+            Self::SwizzleBgraRgba => "SwizzleBgraRgba",
+            Self::RgbToBgra => "RgbToBgra",
+            Self::AddAlpha => "AddAlpha",
+            Self::DropAlpha => "DropAlpha",
+            Self::MatteComposite { .. } => "MatteComposite",
+            Self::GrayToRgb => "GrayToRgb",
+            Self::GrayToRgba => "GrayToRgba",
+            Self::RgbToGray { .. } => "RgbToGray",
+            Self::RgbaToGray { .. } => "RgbaToGray",
+            Self::GrayAlphaToRgba => "GrayAlphaToRgba",
+            Self::GrayAlphaToRgb => "GrayAlphaToRgb",
+            Self::GrayToGrayAlpha => "GrayToGrayAlpha",
+            Self::GrayAlphaToGray => "GrayAlphaToGray",
+            Self::SrgbU8ToLinearF32 => "SrgbU8ToLinearF32",
+            Self::LinearF32ToSrgbU8 => "LinearF32ToSrgbU8",
+            Self::NaiveU8ToF32 => "NaiveU8ToF32",
+            Self::NaiveF32ToU8 => "NaiveF32ToU8",
+            Self::U16ToU8 => "U16ToU8",
+            Self::U8ToU16 => "U8ToU16",
+            Self::U16ToF32 => "U16ToF32",
+            Self::F32ToU16 => "F32ToU16",
+            Self::F16ToF32 => "F16ToF32",
+            Self::F32ToF16 => "F32ToF16",
+            Self::PqU16ToLinearF32 => "PqU16ToLinearF32",
+            Self::LinearF32ToPqU16 => "LinearF32ToPqU16",
+            Self::PqF32ToLinearF32 => "PqF32ToLinearF32",
+            Self::LinearF32ToPqF32 => "LinearF32ToPqF32",
+            Self::HlgU16ToLinearF32 => "HlgU16ToLinearF32",
+            Self::LinearF32ToHlgU16 => "LinearF32ToHlgU16",
+            Self::HlgF32ToLinearF32 => "HlgF32ToLinearF32",
+            Self::LinearF32ToHlgF32 => "LinearF32ToHlgF32",
+            Self::SrgbF32ToLinearF32 => "SrgbF32ToLinearF32",
+            Self::LinearF32ToSrgbF32 => "LinearF32ToSrgbF32",
+            Self::SrgbF32ToLinearF32Extended => "SrgbF32ToLinearF32Extended",
+            Self::LinearF32ToSrgbF32Extended => "LinearF32ToSrgbF32Extended",
+            Self::Bt709F32ToLinearF32 => "Bt709F32ToLinearF32",
+            Self::LinearF32ToBt709F32 => "LinearF32ToBt709F32",
+            Self::Gamma22F32ToLinearF32 => "Gamma22F32ToLinearF32",
+            Self::LinearF32ToGamma22F32 => "LinearF32ToGamma22F32",
+            Self::StraightToPremul => "StraightToPremul",
+            Self::PremulToStraight => "PremulToStraight",
+            Self::LinearRgbToOklab => "LinearRgbToOklab",
+            Self::OklabToLinearRgb => "OklabToLinearRgb",
+            Self::LinearRgbaToOklaba => "LinearRgbaToOklaba",
+            Self::OklabaToLinearRgba => "OklabaToLinearRgba",
+            Self::GamutMatrixRgbF32(_) => "GamutMatrixRgbF32",
+            Self::GamutMatrixRgbaF32(_) => "GamutMatrixRgbaF32",
+            Self::Fused { kind, .. } => kind.variant_name(),
             #[cfg(feature = "hdr-experimental")]
-            Self::ToneMapBt2446A {
-                source_peak_nits,
-                target_peak_nits,
-            } => f
-                .debug_struct("ToneMapBt2446A")
-                .field("source_peak_nits", source_peak_nits)
-                .field("target_peak_nits", target_peak_nits)
-                .finish(),
+            Self::ToneMapBt2446A { .. } => "ToneMapBt2446A",
             #[cfg(feature = "hdr-experimental")]
-            Self::SoftCompressOklch { primaries, knee } => f
-                .debug_struct("SoftCompressOklch")
-                .field("primaries", primaries)
-                .field("knee", knee)
-                .finish(),
+            Self::SoftCompressOklch { .. } => "SoftCompressOklch",
         }
     }
 }
@@ -685,7 +688,10 @@ impl ConvertPlan {
                     && !to.layout().has_alpha()
                 {
                     // u16 sRGB → u16 sRGB RGB: single-step matlut.
-                    gamut_steps.push(ConvertStep::FusedSrgbU16GamutRgb(flat));
+                    gamut_steps.push(ConvertStep::Fused {
+                        kind: FusedKind::SrgbU16GamutRgb,
+                        matrix: flat,
+                    });
                     steps.extend(gamut_steps);
                     if steps.is_empty() {
                         steps.push(ConvertStep::Identity);
@@ -701,7 +707,10 @@ impl ConvertPlan {
                     && !to.layout().has_alpha()
                 {
                     // u8 sRGB → linear f32 RGB: cross-depth matlut.
-                    gamut_steps.push(ConvertStep::FusedSrgbU8ToLinearF32Rgb(flat));
+                    gamut_steps.push(ConvertStep::Fused {
+                        kind: FusedKind::SrgbU8ToLinearF32Rgb,
+                        matrix: flat,
+                    });
                     steps.extend(gamut_steps);
                     if steps.is_empty() {
                         steps.push(ConvertStep::Identity);
@@ -717,7 +726,10 @@ impl ConvertPlan {
                     && !to.layout().has_alpha()
                 {
                     // linear f32 → u8 sRGB RGB: cross-depth matlut.
-                    gamut_steps.push(ConvertStep::FusedLinearF32ToSrgbU8Rgb(flat));
+                    gamut_steps.push(ConvertStep::Fused {
+                        kind: FusedKind::LinearF32ToSrgbU8Rgb,
+                        matrix: flat,
+                    });
                     steps.extend(gamut_steps);
                     if steps.is_empty() {
                         steps.push(ConvertStep::Identity);
@@ -1962,12 +1974,18 @@ fn fuse_matlut_patterns(steps: &mut Vec<ConvertStep>) {
                 ConvertStep::SrgbU8ToLinearF32,
                 ConvertStep::GamutMatrixRgbF32(m),
                 ConvertStep::LinearF32ToSrgbU8,
-            ) => Some(ConvertStep::FusedSrgbU8GamutRgb(*m)),
+            ) => Some(ConvertStep::Fused {
+                kind: FusedKind::SrgbU8GamutRgb,
+                matrix: *m,
+            }),
             (
                 ConvertStep::SrgbU8ToLinearF32,
                 ConvertStep::GamutMatrixRgbaF32(m),
                 ConvertStep::LinearF32ToSrgbU8,
-            ) => Some(ConvertStep::FusedSrgbU8GamutRgba(*m)),
+            ) => Some(ConvertStep::Fused {
+                kind: FusedKind::SrgbU8GamutRgba,
+                matrix: *m,
+            }),
             _ => None,
         };
         if let Some(fused) = rewrite {
@@ -2231,33 +2249,23 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.alpha(),
             TransferFunction::Linear,
         ),
-        // Fused steps: u8 sRGB in, u8 sRGB out (same layout, same alpha).
-        ConvertStep::FusedSrgbU8GamutRgb(_) | ConvertStep::FusedSrgbU8GamutRgba(_) => {
-            PixelDescriptor::new(
-                ChannelType::U8,
-                current.layout(),
-                current.alpha(),
-                TransferFunction::Srgb,
-            )
+        // Fused steps: shape depends on FusedKind.
+        ConvertStep::Fused { kind, .. } => {
+            let (ch_type, transfer) = match kind {
+                // u8 sRGB in, u8 sRGB out (same layout, same alpha).
+                FusedKind::SrgbU8GamutRgb | FusedKind::SrgbU8GamutRgba => {
+                    (ChannelType::U8, TransferFunction::Srgb)
+                }
+                FusedKind::SrgbU16GamutRgb => (ChannelType::U16, TransferFunction::Srgb),
+                FusedKind::SrgbU8ToLinearF32Rgb => {
+                    (ChannelType::F32, TransferFunction::Linear)
+                }
+                FusedKind::LinearF32ToSrgbU8Rgb => {
+                    (ChannelType::U8, TransferFunction::Srgb)
+                }
+            };
+            PixelDescriptor::new(ch_type, current.layout(), current.alpha(), transfer)
         }
-        ConvertStep::FusedSrgbU16GamutRgb(_) => PixelDescriptor::new(
-            ChannelType::U16,
-            current.layout(),
-            current.alpha(),
-            TransferFunction::Srgb,
-        ),
-        ConvertStep::FusedSrgbU8ToLinearF32Rgb(_) => PixelDescriptor::new(
-            ChannelType::F32,
-            current.layout(),
-            current.alpha(),
-            TransferFunction::Linear,
-        ),
-        ConvertStep::FusedLinearF32ToSrgbU8Rgb(_) => PixelDescriptor::new(
-            ChannelType::U8,
-            current.layout(),
-            current.alpha(),
-            TransferFunction::Srgb,
-        ),
         // F16↔F32 depth-only steps. No TF implication: same TF on both sides.
         ConvertStep::F16ToF32 => PixelDescriptor::new(
             ChannelType::F32,

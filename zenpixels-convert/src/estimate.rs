@@ -64,7 +64,7 @@
 use alloc::vec::Vec;
 
 use crate::PixelDescriptor;
-use crate::convert::{ConvertPlan, ConvertStep};
+use crate::convert::{ConvertPlan, ConvertStep, FusedKind};
 
 /// Peak resource cost projection for executing a [`ConvertPlan`].
 ///
@@ -343,11 +343,13 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> (f64, bool) {
         // ----- Gamut matrices (t7). 3×3 matrix-multiply on linear F32. -----
         ConvertStep::GamutMatrixRgbF32(_) => (gib_to_ns_per_mp(21.84, bpp), true),
         ConvertStep::GamutMatrixRgbaF32(_) => (gib_to_ns_per_mp(20.0, bpp), false),
-        ConvertStep::FusedSrgbU8GamutRgb(_) => (gib_to_ns_per_mp(3.79, bpp), true),
-        ConvertStep::FusedSrgbU8GamutRgba(_) => (gib_to_ns_per_mp(3.5, bpp), false),
-        ConvertStep::FusedSrgbU16GamutRgb(_) => (gib_to_ns_per_mp(5.84, bpp), true),
-        ConvertStep::FusedSrgbU8ToLinearF32Rgb(_) => (gib_to_ns_per_mp(11.19, bpp), true),
-        ConvertStep::FusedLinearF32ToSrgbU8Rgb(_) => (gib_to_ns_per_mp(3.11, bpp), true),
+        ConvertStep::Fused { kind, .. } => match kind {
+            FusedKind::SrgbU8GamutRgb => (gib_to_ns_per_mp(3.79, bpp), true),
+            FusedKind::SrgbU8GamutRgba => (gib_to_ns_per_mp(3.5, bpp), false),
+            FusedKind::SrgbU16GamutRgb => (gib_to_ns_per_mp(5.84, bpp), true),
+            FusedKind::SrgbU8ToLinearF32Rgb => (gib_to_ns_per_mp(11.19, bpp), true),
+            FusedKind::LinearF32ToSrgbU8Rgb => (gib_to_ns_per_mp(3.11, bpp), true),
+        },
 
         // ----- HDR. BT.2446-A from zentone bench (2026-06-20). -----
         // Bt2446A::map_strip_simd: ~250 Mpix/s on RGB f32 linear-light.
@@ -368,67 +370,13 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> (f64, bool) {
     }
 }
 
-/// Step name for [`StepEstimate::name`].
+/// Step name for [`StepEstimate::name`]. Delegates to
+/// [`ConvertStep::variant_name`] — single source of truth shared with
+/// `__trace_ops::record_step`. (Previously a 60-arm match mirroring the
+/// enum verbatim; that mirror is the kind of thing that silently drifts.)
+#[inline]
 fn step_name(step: &ConvertStep) -> &'static str {
-    match step {
-        ConvertStep::Identity => "Identity",
-        ConvertStep::SwizzleBgraRgba => "SwizzleBgraRgba",
-        ConvertStep::RgbToBgra => "RgbToBgra",
-        ConvertStep::AddAlpha => "AddAlpha",
-        ConvertStep::DropAlpha => "DropAlpha",
-        ConvertStep::MatteComposite { .. } => "MatteComposite",
-        ConvertStep::GrayToRgb => "GrayToRgb",
-        ConvertStep::GrayToRgba => "GrayToRgba",
-        ConvertStep::RgbToGray { .. } => "RgbToGray",
-        ConvertStep::RgbaToGray { .. } => "RgbaToGray",
-        ConvertStep::GrayAlphaToRgba => "GrayAlphaToRgba",
-        ConvertStep::GrayAlphaToRgb => "GrayAlphaToRgb",
-        ConvertStep::GrayToGrayAlpha => "GrayToGrayAlpha",
-        ConvertStep::GrayAlphaToGray => "GrayAlphaToGray",
-        ConvertStep::SrgbU8ToLinearF32 => "SrgbU8ToLinearF32",
-        ConvertStep::LinearF32ToSrgbU8 => "LinearF32ToSrgbU8",
-        ConvertStep::NaiveU8ToF32 => "NaiveU8ToF32",
-        ConvertStep::NaiveF32ToU8 => "NaiveF32ToU8",
-        ConvertStep::U16ToU8 => "U16ToU8",
-        ConvertStep::U8ToU16 => "U8ToU16",
-        ConvertStep::U16ToF32 => "U16ToF32",
-        ConvertStep::F32ToU16 => "F32ToU16",
-        ConvertStep::F16ToF32 => "F16ToF32",
-        ConvertStep::F32ToF16 => "F32ToF16",
-        ConvertStep::PqU16ToLinearF32 => "PqU16ToLinearF32",
-        ConvertStep::LinearF32ToPqU16 => "LinearF32ToPqU16",
-        ConvertStep::PqF32ToLinearF32 => "PqF32ToLinearF32",
-        ConvertStep::LinearF32ToPqF32 => "LinearF32ToPqF32",
-        ConvertStep::HlgU16ToLinearF32 => "HlgU16ToLinearF32",
-        ConvertStep::LinearF32ToHlgU16 => "LinearF32ToHlgU16",
-        ConvertStep::HlgF32ToLinearF32 => "HlgF32ToLinearF32",
-        ConvertStep::LinearF32ToHlgF32 => "LinearF32ToHlgF32",
-        ConvertStep::SrgbF32ToLinearF32 => "SrgbF32ToLinearF32",
-        ConvertStep::LinearF32ToSrgbF32 => "LinearF32ToSrgbF32",
-        ConvertStep::SrgbF32ToLinearF32Extended => "SrgbF32ToLinearF32Extended",
-        ConvertStep::LinearF32ToSrgbF32Extended => "LinearF32ToSrgbF32Extended",
-        ConvertStep::Bt709F32ToLinearF32 => "Bt709F32ToLinearF32",
-        ConvertStep::LinearF32ToBt709F32 => "LinearF32ToBt709F32",
-        ConvertStep::Gamma22F32ToLinearF32 => "Gamma22F32ToLinearF32",
-        ConvertStep::LinearF32ToGamma22F32 => "LinearF32ToGamma22F32",
-        ConvertStep::StraightToPremul => "StraightToPremul",
-        ConvertStep::PremulToStraight => "PremulToStraight",
-        ConvertStep::LinearRgbToOklab => "LinearRgbToOklab",
-        ConvertStep::OklabToLinearRgb => "OklabToLinearRgb",
-        ConvertStep::LinearRgbaToOklaba => "LinearRgbaToOklaba",
-        ConvertStep::OklabaToLinearRgba => "OklabaToLinearRgba",
-        ConvertStep::GamutMatrixRgbF32(_) => "GamutMatrixRgbF32",
-        ConvertStep::GamutMatrixRgbaF32(_) => "GamutMatrixRgbaF32",
-        ConvertStep::FusedSrgbU8GamutRgb(_) => "FusedSrgbU8GamutRgb",
-        ConvertStep::FusedSrgbU8GamutRgba(_) => "FusedSrgbU8GamutRgba",
-        ConvertStep::FusedSrgbU16GamutRgb(_) => "FusedSrgbU16GamutRgb",
-        ConvertStep::FusedSrgbU8ToLinearF32Rgb(_) => "FusedSrgbU8ToLinearF32Rgb",
-        ConvertStep::FusedLinearF32ToSrgbU8Rgb(_) => "FusedLinearF32ToSrgbU8Rgb",
-        #[cfg(feature = "hdr-experimental")]
-        ConvertStep::ToneMapBt2446A { .. } => "ToneMapBt2446A",
-        #[cfg(feature = "hdr-experimental")]
-        ConvertStep::SoftCompressOklch { .. } => "SoftCompressOklch",
-    }
+    step.variant_name()
 }
 
 /// Body of the plan-level estimate. Walks the plan's steps once,

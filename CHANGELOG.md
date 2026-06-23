@@ -2,6 +2,71 @@
 
 ## [Unreleased]
 
+### zenpixels-convert — refactored (audit dedup)
+
+- **`ConvertStep`'s 5 fused-sRGB-gamut variants collapsed into one
+  `Fused { kind: FusedKind, matrix: [f32; 9] }` variant.** Previously
+  `FusedSrgbU8GamutRgb`, `FusedSrgbU8GamutRgba`, `FusedSrgbU16GamutRgb`,
+  `FusedSrgbU8ToLinearF32Rgb`, and `FusedLinearF32ToSrgbU8Rgb` each
+  carried only `[f32; 9]` — same payload, five tags. The new
+  `FusedKind` enum carries the discriminant separately; dispatch in
+  `convert_kernels.rs` is a small inner match, and the per-variant cost
+  table in `estimate.rs` is a similarly tight inner match. Net: the
+  `intermediate_desc`, fuse-peephole, debug, trace, and cost code
+  paths each shrink by ~4 arms. `ConvertStep` stays `pub(crate)`, so
+  no semver surface motion. Variant `__trace_ops` names preserved
+  (`"FusedSrgbU8GamutRgb"` etc.) via `FusedKind::variant_name` so the
+  trace-format tests still match `s.contains("FusedSrgb")`.
+- **`ConvertStep`'s hand-rolled `Debug` impl replaced with
+  `#[derive(Debug)]`** — the ~93 LOC manual `match` was byte-identical
+  to the derive output for every variant *except* the freshly-merged
+  `Fused` shape (now `Fused { kind: …, matrix: […] }` rather than five
+  per-variant tuple structs). No existing tests assert on the Fused
+  Debug text — verified by grep against `tests/`; the `__trace_ops`
+  recorder uses `variant_name` (not `Debug`).
+- **`estimate::step_name` + `__trace_ops::step_name` now share one
+  source of truth via `ConvertStep::variant_name` (`const fn`).** The
+  three independent 60-arm matches mirroring the enum verbatim
+  (convert.rs Debug, estimate.rs, __trace_ops.rs) collapse to one
+  exhaustive-match definition on `ConvertStep`; the other two sites
+  delegate. ~120 LOC saved with zero new deps — `strum` was an option
+  but the explicit `const fn` is one source of truth without proc-macro
+  weight.
+- **`RowConverter::clone` now preserves `ExternalTransform::Owned`
+  (CMS RowTransformMut)** rather than silently dropping it. Pre-fix:
+  cloning a converter built around a `PluggableCms`'s `Owned`
+  transform fell through to the built-in plan; cloned bytes silently
+  differed from source-converter bytes. Carrier is now
+  `Arc<Mutex<dyn RowTransformMut>>` (std-only — no_std fallback keeps
+  the historical drop-on-clone, since `RowTransformMut::transform_row`
+  is `&mut self` and can't be shared behind a bare `Arc` without
+  interior mutability). New regression test
+  `pluggable_cms_owned_path_survives_clone` pins the share-on-clone
+  contract.
+
+### zenpixels-convert — optimized
+
+- **`GamutMatrixRgbF32` / `GamutMatrixRgbaF32` kernels now dispatch
+  through `archmage::magetypes` + `incant!`** (AVX-512 / AVX2 / NEON /
+  WASM-SIMD128 / Scalar) instead of the prior hand-written scalar
+  loop. The kernel deinterleaves 8 pixels' worth of R/G/B lanes per
+  chunk, applies the 3×3 matrix as three FMA-chained
+  `magetypes::f32x8` rows, and re-interleaves; alpha (RGBA) is copied
+  through unmodified. Tail pixels (1..LANES) go through scalar
+  `mul_add`. Same `magetypes(define(f32x8), v4(cfg(avx512)), v3, neon,
+  wasm128, scalar)` shape as every other SIMD kernel in
+  `convert_kernels.rs`. **Output is bit-identical to the scalar
+  version** (FMA-determined 3×3 matmul). The audit projected a 2–4×
+  AVX2 speedup; on Zen 4 the scalar pattern was already
+  LLVM-autovectorizing well, so the measured uplift at small sizes
+  (256-pixel rows, 15.55 GiB/s vs prior 15.6 GiB/s) is within noise.
+  The architectural value of the change stands: explicit, predictable
+  five-tier dispatch (no LLVM-autovec dependency), per-tier validation
+  via `incant!`, and identical-shape kernels to the rest of the file.
+  On aarch64 NEON and `wasm32-simd128` — where x86_64-specific
+  autovec heuristics don't help — the explicit `f32x8` path is the
+  difference between SIMD and scalar.
+
 ### zenpixels-convert — tuned
 
 - **`HdrConfig::default().gamut_knee`** bumped from `0.9` → `0.96` based on an

@@ -41,8 +41,53 @@ pub struct RowConverter {
 enum ExternalTransform {
     /// Stateless, shareable. Supports cheap clone and parallel use.
     Shared(alloc::sync::Arc<dyn crate::cms::RowTransform>),
-    /// Owned, stateful. Unique per `RowConverter`.
+    /// Owned, stateful. Shares the same backing `RowTransformMut` across
+    /// clones via `Arc<Mutex<_>>` (std-only — `RowTransformMut::transform_row`
+    /// is `&mut self`, so two `RowConverter`s holding the same impl serialize
+    /// transforms through the mutex).
+    ///
+    /// Pre-0.2.16 this was a `Box<dyn RowTransformMut>` and Clone silently
+    /// dropped the transform — see the audit `T4` note + the
+    /// `pluggable_cms_owned_path_survives_clone` test for the regression
+    /// gate that caught the drop.
+    #[cfg(feature = "std")]
+    Owned(alloc::sync::Arc<std::sync::Mutex<dyn crate::cms::RowTransformMut>>),
+    /// no_std fallback — keep the historical drop-on-clone semantics
+    /// since `std::sync::Mutex` isn't available without `std` and
+    /// `RowTransformMut::transform_row(&mut self)` can't be shared
+    /// behind a bare `Arc` (no interior mutability).
+    #[cfg(not(feature = "std"))]
     Owned(Box<dyn crate::cms::RowTransformMut>),
+}
+
+/// Wrap a freshly-built `Box<dyn RowTransformMut>` into the
+/// `ExternalTransform::Owned` carrier — `Arc<Mutex<_>>` when std is on
+/// (share-on-clone), bare `Box` when not (drop-on-clone).
+#[inline]
+fn owned_external(t: Box<dyn crate::cms::RowTransformMut>) -> ExternalTransform {
+    #[cfg(feature = "std")]
+    {
+        // We can't directly `Mutex::new(*t)` into a sized field because
+        // the inner type is `dyn`. Wrap the box in a sized newtype that
+        // also impls the trait; the unsize coercion at the `Arc<Mutex<_>>
+        // -> Arc<Mutex<dyn _>>` cast then carries the vtable.
+        struct BoxedMut(Box<dyn crate::cms::RowTransformMut>);
+        impl crate::cms::RowTransformMut for BoxedMut {
+            #[inline]
+            fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
+                self.0.transform_row(src, dst, width);
+            }
+        }
+        let sized: alloc::sync::Arc<std::sync::Mutex<BoxedMut>> =
+            alloc::sync::Arc::new(std::sync::Mutex::new(BoxedMut(t)));
+        // Explicit unsize-coercion to the dyn-typed Arc.
+        let unsized_arc: alloc::sync::Arc<std::sync::Mutex<dyn crate::cms::RowTransformMut>> = sized;
+        ExternalTransform::Owned(unsized_arc)
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        ExternalTransform::Owned(t)
+    }
 }
 
 impl RowConverter {
@@ -141,7 +186,7 @@ impl RowConverter {
                     dst_fmt,
                     options,
                 ) {
-                    return whereat::at_crate!(result).map(|t| Some(ExternalTransform::Owned(t)));
+                    return whereat::at_crate!(result).map(|t| Some(owned_external(t)));
                 }
                 Ok(None)
             };
@@ -232,6 +277,20 @@ impl RowConverter {
     pub fn convert_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
         match &mut self.external {
             Some(ExternalTransform::Shared(arc)) => arc.transform_row(src, dst, width),
+            #[cfg(feature = "std")]
+            Some(ExternalTransform::Owned(arc)) => {
+                // poisoned-lock recovery: a panic in `transform_row` is
+                // CMS-implementation territory — the transform is the lock's
+                // only user. We re-lock through the poison rather than panic
+                // here so the converter remains usable; the underlying state
+                // is whatever the plugin left it in, which is the plugin's
+                // contract to handle.
+                let mut guard = arc
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                guard.transform_row(src, dst, width);
+            }
+            #[cfg(not(feature = "std"))]
             Some(ExternalTransform::Owned(b)) => b.transform_row(src, dst, width),
             None => convert_row_buffered(&self.plan, src, dst, width, &mut self.scratch),
         }
@@ -313,14 +372,22 @@ impl RowConverter {
 
 impl Clone for RowConverter {
     fn clone(&self) -> Self {
-        // Shared external transforms clone cheaply via Arc; owned ones
-        // can't be cloned and are dropped (clone falls back to the
-        // built-in plan for that case).
+        // Both Shared and Owned external transforms now clone cheaply
+        // via `Arc::clone` — the Shared path shares a `&self`
+        // RowTransform, the Owned path shares an `Arc<Mutex<dyn
+        // RowTransformMut>>` so the same backing impl serializes its
+        // `&mut self` transforms across clones. No silent drop.
         let external = match &self.external {
             Some(ExternalTransform::Shared(arc)) => {
                 Some(ExternalTransform::Shared(alloc::sync::Arc::clone(arc)))
             }
-            Some(ExternalTransform::Owned(_)) | None => None,
+            #[cfg(feature = "std")]
+            Some(ExternalTransform::Owned(arc)) => {
+                Some(ExternalTransform::Owned(alloc::sync::Arc::clone(arc)))
+            }
+            #[cfg(not(feature = "std"))]
+            Some(ExternalTransform::Owned(_)) => None,
+            None => None,
         };
         Self {
             plan: self.plan.clone(),
@@ -1446,6 +1513,49 @@ mod tests {
             dst,
             [0, 0, 255],
             "cloned converter should inherit shared transform"
+        );
+    }
+
+    /// Audit `T4` regression gate: the `ExternalTransform::Owned` path
+    /// (when a `PluggableCms` returns a `RowTransformMut`) used to be
+    /// silently dropped on Clone, so a cloned converter would fall
+    /// through to the built-in plan and produce different bytes. The
+    /// `Arc<Mutex<dyn RowTransformMut>>` carrier now keeps the same
+    /// backing impl alive across clones; this test pins that shape.
+    #[cfg(feature = "std")]
+    #[test]
+    fn pluggable_cms_owned_path_survives_clone() {
+        // P3 → sRGB so the plugin is consulted; PaintRedCms only offers
+        // the `Owned` (RowTransformMut) path — no `build_shared_*`.
+        let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(zenpixels::ColorPrimaries::DisplayP3);
+        let srgb = PixelDescriptor::RGB8_SRGB;
+        let cms = PaintRedCms {
+            accepted: core::sync::atomic::AtomicUsize::new(0),
+        };
+        let opts = ConvertOptions::permissive();
+        let mut conv =
+            crate::RowConverter::new_explicit_with_cms(p3, srgb, &opts, Some(&cms)).unwrap();
+
+        // Sanity: pre-clone, the plugin's `paint everything red` runs.
+        let mut dst = [0u8; 6];
+        conv.convert_row(&[10, 20, 30, 40, 50, 60], &mut dst, 2);
+        assert_eq!(dst, [255, 0, 0, 255, 0, 0]);
+
+        // The clone MUST carry the same RowTransformMut behind an
+        // Arc<Mutex<_>>. Pre-fix this silently dropped, fell back to
+        // the built-in P3→sRGB plan, and produced non-red output —
+        // which is exactly the regression we're gating against.
+        let mut conv_cloned = conv.clone();
+        let mut dst2 = [0u8; 6];
+        conv_cloned.convert_row(&[10, 20, 30, 40, 50, 60], &mut dst2, 2);
+        assert_eq!(
+            dst, dst2,
+            "cloned RowConverter must run the same RowTransformMut as the source"
+        );
+        assert_eq!(
+            dst2,
+            [255, 0, 0, 255, 0, 0],
+            "cloned converter should still paint red, not fall through to built-in plan"
         );
     }
 

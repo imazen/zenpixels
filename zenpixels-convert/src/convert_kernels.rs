@@ -229,79 +229,61 @@ pub(super) fn apply_step_u8(
             gamut_matrix_rgba_f32(src, dst, w, flat);
         }
 
-        ConvertStep::FusedSrgbU8GamutRgb(flat) => {
+        // All fused TF + matrix + TF kernels share the same row-major
+        // 3×3 unflatten then dispatch on `kind`.
+        ConvertStep::Fused { kind, matrix: flat } => {
             let m = [
                 [flat[0], flat[1], flat[2]],
                 [flat[3], flat[4], flat[5]],
                 [flat[6], flat[7], flat[8]],
             ];
-            crate::fast_gamut::convert_u8_rgb_simd_matlut(
-                &m,
-                src,
-                dst,
-                crate::fast_gamut::srgb_lin_lut_u8(),
-                |v: f32| linear_srgb::default::linear_to_srgb_u8(v),
-            );
-        }
-
-        ConvertStep::FusedSrgbU8GamutRgba(flat) => {
-            let m = [
-                [flat[0], flat[1], flat[2]],
-                [flat[3], flat[4], flat[5]],
-                [flat[6], flat[7], flat[8]],
-            ];
-            crate::fast_gamut::convert_u8_rgba_simd_lut(
-                &m,
-                src,
-                dst,
-                crate::fast_gamut::srgb_lin_lut_u8(),
-                linear_srgb::default::linear_to_srgb_u8,
-            );
-        }
-
-        ConvertStep::FusedSrgbU16GamutRgb(flat) => {
-            let m = [
-                [flat[0], flat[1], flat[2]],
-                [flat[3], flat[4], flat[5]],
-                [flat[6], flat[7], flat[8]],
-            ];
-            let src_u16: &[u16] = bytemuck::cast_slice(src);
-            let dst_u16: &mut [u16] = bytemuck::cast_slice_mut(dst);
-            // LUT decode (256 KB lin_lut from linear-srgb) + SIMD matrix
-            // + SIMD polynomial encode. +17% at 1080p vs linear-LUT encode,
-            // 100% exact u16 roundtrip (was ~71% with the linearly-indexed
-            // 128 KB encode LUT — see benchmarks/u16_hybrid_matrix_2026-04-23.txt).
-            crate::fast_gamut::convert_u16_rgb_simd_lutdec_polyenc(&m, src_u16, dst_u16);
-        }
-
-        ConvertStep::FusedSrgbU8ToLinearF32Rgb(flat) => {
-            let m = [
-                [flat[0], flat[1], flat[2]],
-                [flat[3], flat[4], flat[5]],
-                [flat[6], flat[7], flat[8]],
-            ];
-            let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
-            crate::fast_gamut::convert_u8_to_f32_lin_simd(
-                &m,
-                src,
-                dst_f32,
-                crate::fast_gamut::srgb_lin_lut_u8(),
-            );
-        }
-
-        ConvertStep::FusedLinearF32ToSrgbU8Rgb(flat) => {
-            let m = [
-                [flat[0], flat[1], flat[2]],
-                [flat[3], flat[4], flat[5]],
-                [flat[6], flat[7], flat[8]],
-            ];
-            let src_f32: &[f32] = bytemuck::cast_slice(src);
-            crate::fast_gamut::convert_f32_lin_to_u8_simd(
-                &m,
-                src_f32,
-                dst,
-                crate::fast_gamut::srgb_enc_lut_u8(),
-            );
+            match kind {
+                crate::convert::FusedKind::SrgbU8GamutRgb => {
+                    crate::fast_gamut::convert_u8_rgb_simd_matlut(
+                        &m,
+                        src,
+                        dst,
+                        crate::fast_gamut::srgb_lin_lut_u8(),
+                        |v: f32| linear_srgb::default::linear_to_srgb_u8(v),
+                    );
+                }
+                crate::convert::FusedKind::SrgbU8GamutRgba => {
+                    crate::fast_gamut::convert_u8_rgba_simd_lut(
+                        &m,
+                        src,
+                        dst,
+                        crate::fast_gamut::srgb_lin_lut_u8(),
+                        linear_srgb::default::linear_to_srgb_u8,
+                    );
+                }
+                crate::convert::FusedKind::SrgbU16GamutRgb => {
+                    let src_u16: &[u16] = bytemuck::cast_slice(src);
+                    let dst_u16: &mut [u16] = bytemuck::cast_slice_mut(dst);
+                    // LUT decode (256 KB lin_lut from linear-srgb) + SIMD matrix
+                    // + SIMD polynomial encode. +17% at 1080p vs linear-LUT encode,
+                    // 100% exact u16 roundtrip (was ~71% with the linearly-indexed
+                    // 128 KB encode LUT — see benchmarks/u16_hybrid_matrix_2026-04-23.txt).
+                    crate::fast_gamut::convert_u16_rgb_simd_lutdec_polyenc(&m, src_u16, dst_u16);
+                }
+                crate::convert::FusedKind::SrgbU8ToLinearF32Rgb => {
+                    let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
+                    crate::fast_gamut::convert_u8_to_f32_lin_simd(
+                        &m,
+                        src,
+                        dst_f32,
+                        crate::fast_gamut::srgb_lin_lut_u8(),
+                    );
+                }
+                crate::convert::FusedKind::LinearF32ToSrgbU8Rgb => {
+                    let src_f32: &[f32] = bytemuck::cast_slice(src);
+                    crate::fast_gamut::convert_f32_lin_to_u8_simd(
+                        &m,
+                        src_f32,
+                        dst,
+                        crate::fast_gamut::srgb_enc_lut_u8(),
+                    );
+                }
+            }
         }
 
         #[cfg(feature = "hdr-experimental")]
@@ -2818,35 +2800,121 @@ fn oklab_to_rgb_4ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) 
 // Gamut matrix kernels
 // ---------------------------------------------------------------------------
 
-/// Apply a 3×3 gamut matrix to a row of linear RGB f32 pixels.
-fn gamut_matrix_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32; 9]) {
-    let s: &[f32] = bytemuck::cast_slice(src);
-    let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
+// --- SIMD 3×3 gamut matrix on linear-light f32 ------------------------------
+//
+// Same data shape as `multiply_color_channels_tier` (3 channels × N pixels
+// for RGB; 4 channels with alpha passthrough for RGBA), but with a full
+// 3×3 matrix rather than a per-channel scalar. Deinterleave 8 pixels at a
+// time into r/g/b SIMD lanes, FMA the matrix rows, re-interleave; alpha
+// (RGBA) is copied through unmodified. Tail pixels go through the scalar
+// `mat3x3` helper for bit-exact remainder handling.
+//
+// magetypes' `f32x8` covers `v4 (cfg(avx512))` / `v3` (AVX2) / `neon`
+// (aarch64) / `wasm128` / `scalar` — the same five-tier dispatch every
+// other SIMD kernel in this file already uses. `incant!` picks the best
+// available token at call time, and the `v4(cfg(avx512))` arm pulls in
+// 16-wide AVX-512 only when the crate is built with `--features avx512`
+// (8-wide AVX2 is the default on x86_64; AVX-512 widens the chunk to 16
+// pixels per iter automatically with the same source).
+
+/// Per-tier SIMD body for [`gamut_matrix_rgb_f32`] / [`gamut_matrix_rgba_f32`]
+/// — `CHANNELS == 3` is interleaved RGB (no alpha), `CHANNELS == 4` carries an
+/// alpha lane that's copied through unmodified.
+#[archmage::magetypes(define(f32x8), v4(cfg(avx512)), v3, neon, wasm128, scalar)]
+fn gamut_matrix_f32_tier<const CHANNELS: usize>(
+    token: Token,
+    src: &[f32],
+    dst: &mut [f32],
+    width: usize,
+    matrix: &[f32; 9],
+) {
+    const LANES: usize = 8;
     let m = matrix;
-    for p in 0..width {
-        let base = p * 3;
-        let r = s[base];
-        let g = s[base + 1];
-        let b = s[base + 2];
-        d[base] = m[0] * r + m[1] * g + m[2] * b;
-        d[base + 1] = m[3] * r + m[4] * g + m[5] * b;
-        d[base + 2] = m[6] * r + m[7] * g + m[8] * b;
+    let m00 = f32x8::splat(token, m[0]);
+    let m01 = f32x8::splat(token, m[1]);
+    let m02 = f32x8::splat(token, m[2]);
+    let m10 = f32x8::splat(token, m[3]);
+    let m11 = f32x8::splat(token, m[4]);
+    let m12 = f32x8::splat(token, m[5]);
+    let m20 = f32x8::splat(token, m[6]);
+    let m21 = f32x8::splat(token, m[7]);
+    let m22 = f32x8::splat(token, m[8]);
+
+    let whole = width / LANES;
+    let mut r = [0.0f32; LANES];
+    let mut g = [0.0f32; LANES];
+    let mut b = [0.0f32; LANES];
+
+    for c in 0..whole {
+        let base = c * LANES * CHANNELS;
+        // Deinterleave 8 RGB/RGBA pixels.
+        for i in 0..LANES {
+            let p = base + i * CHANNELS;
+            r[i] = src[p];
+            g[i] = src[p + 1];
+            b[i] = src[p + 2];
+        }
+        let rl = f32x8::from_array(token, r);
+        let gl = f32x8::from_array(token, g);
+        let bl = f32x8::from_array(token, b);
+
+        // 3×3 matmul as fused-multiply-adds — same shape as
+        // fast_gamut::mat3x3_x8 but typed against the generic
+        // magetypes `f32x8`.
+        let or = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
+        let og = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
+        let ob = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
+
+        let ro = or.to_array();
+        let go = og.to_array();
+        let bo = ob.to_array();
+
+        // Re-interleave; for RGBA, copy the alpha lane through.
+        for i in 0..LANES {
+            let p = base + i * CHANNELS;
+            dst[p] = ro[i];
+            dst[p + 1] = go[i];
+            dst[p + 2] = bo[i];
+            if CHANNELS == 4 {
+                dst[p + 3] = src[p + 3];
+            }
+        }
+    }
+
+    // Scalar tail (1..LANES pixels).
+    for p in (whole * LANES)..width {
+        let base = p * CHANNELS;
+        let rv = src[base];
+        let gv = src[base + 1];
+        let bv = src[base + 2];
+        dst[base] = m[0] * rv + m[1] * gv + m[2] * bv;
+        dst[base + 1] = m[3] * rv + m[4] * gv + m[5] * bv;
+        dst[base + 2] = m[6] * rv + m[7] * gv + m[8] * bv;
+        if CHANNELS == 4 {
+            dst[base + 3] = src[base + 3];
+        }
     }
 }
 
-/// Apply a 3×3 gamut matrix to a row of linear RGBA f32 pixels (alpha passthrough).
+/// Apply a 3×3 gamut matrix to a row of linear RGB f32 pixels. SIMD-dispatched
+/// (AVX-512 / AVX2 / NEON / WASM-SIMD128 / Scalar) via `archmage::incant!`.
+fn gamut_matrix_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32; 9]) {
+    let s: &[f32] = bytemuck::cast_slice(src);
+    let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
+    incant!(
+        gamut_matrix_f32_tier::<3>(s, d, width, matrix),
+        [v4, v3, neon, wasm128, scalar]
+    );
+}
+
+/// Apply a 3×3 gamut matrix to a row of linear RGBA f32 pixels (alpha
+/// passthrough). SIMD-dispatched via `archmage::incant!` — same kernel as
+/// the RGB variant, parameterised on `CHANNELS == 4`.
 fn gamut_matrix_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32; 9]) {
     let s: &[f32] = bytemuck::cast_slice(src);
     let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
-    let m = matrix;
-    for p in 0..width {
-        let base = p * 4;
-        let r = s[base];
-        let g = s[base + 1];
-        let b = s[base + 2];
-        d[base] = m[0] * r + m[1] * g + m[2] * b;
-        d[base + 1] = m[3] * r + m[4] * g + m[5] * b;
-        d[base + 2] = m[6] * r + m[7] * g + m[8] * b;
-        d[base + 3] = s[base + 3];
-    }
+    incant!(
+        gamut_matrix_f32_tier::<4>(s, d, width, matrix),
+        [v4, v3, neon, wasm128, scalar]
+    );
 }
