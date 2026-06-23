@@ -6,29 +6,29 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpixels-convert.txt 415 lines (supported surface) | zenpixels-convert.features.txt 285 added (features: avx512,cms-moxcms,fast-transpose,hdr-experimental,icc-db,imgref,pipeline,planar,rgb,serde,std) | zenpixels-convert.internal.txt 92 lines (125 hidden + 0 excluded-feature)
+# files: zenpixels-convert.txt 395 lines (supported surface) | zenpixels-convert.features.txt 285 added (features: avx512,cms-moxcms,fast-transpose,hdr-experimental,icc-db,imgref,pipeline,planar,rgb,serde,std) | zenpixels-convert.internal.txt 91 lines (124 hidden + 0 excluded-feature)
 
 ## summary
 #
 #   pub modules                                14
-#   pub types (struct/enum/trait/alias)        59
-#   pub consts/statics                         21
+#   pub types (struct/enum/trait/alias)        57
+#   pub consts/statics                         19
 #   free functions                             40
-#   inherent methods                          159
+#   inherent methods                          143
 #   struct fields                              50
 #   enum variants                              74
 #   re-exports                                  5
-#   trait roster entries (type × trait)        95
-#   auto-trait-complete types                  20
+#   trait roster entries (type × trait)        91
+#   auto-trait-complete types                  19
 #   auto-trait exceptions                       2
 #
 # per-module pub lines:
-#   (root)                          168
+#   (root)                          167
 #   adapt                            10
 #   cms                              27
 #   converter                        23
 #   error                            27
-#   estimate                         80
+#   estimate                         61
 #   ext                              13
 #   gamut                             6
 #   hdr                              15
@@ -38,7 +38,7 @@
 #   orient                            3
 #   output                           17
 
-## items (387 lines)
+## items (368 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -135,24 +135,15 @@ pub fn estimate::ImageCharacteristics::new(u32, u32, zenpixels::descriptor::Pixe
 pub fn estimate::ImageCharacteristics::pixels(&self) -> u64
 pub fn estimate::ImageCharacteristics::width(&self) -> u32
 pub fn estimate::ImageCharacteristics::with_frame_count(self, u32) -> Self
-pub fn estimate::ResourceEstimate::at_cores(&self, usize) -> Self
 pub fn estimate::ResourceEstimate::conservative(&estimate::ImageCharacteristics) -> Self
 pub fn estimate::ResourceEstimate::cpu_ms(&self) -> core::option::Option<u64>
 pub fn estimate::ResourceEstimate::new(u64, u64) -> Self
 pub fn estimate::ResourceEstimate::peak_memory_bytes_est(&self) -> core::option::Option<u64>
 pub fn estimate::ResourceEstimate::peak_memory_bytes_max(&self) -> core::option::Option<u64>
-pub fn estimate::ResourceEstimate::threading(&self) -> core::option::Option<estimate::ThreadingInformation>
 pub fn estimate::ResourceEstimate::unknown() -> Self
 pub fn estimate::ResourceEstimate::wall_ms(&self) -> core::option::Option<u64>
 pub fn estimate::ResourceEstimate::with_cpu_ms(self, u64) -> Self
 pub fn estimate::ResourceEstimate::with_peak_max(self, u64) -> Self
-pub fn estimate::ResourceEstimate::with_threading(self, estimate::ThreadingInformation) -> Self
-pub const estimate::ThreadingInformation::SERIAL: Self
-pub fn estimate::ThreadingInformation::effective_threads(&self, usize) -> u64
-pub fn estimate::ThreadingInformation::is_parallel(&self) -> bool
-pub fn estimate::ThreadingInformation::max_efficient_threads(&self) -> core::option::Option<u32>
-pub fn estimate::ThreadingInformation::parallel(u32) -> Self
-pub fn estimate::ThreadingInformation::parallel_unknown_knee() -> Self
 pub mod ext
 pub fn ext::ColorPrimariesExt::from_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub fn ext::ColorPrimariesExt::to_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
@@ -348,18 +339,15 @@ pub const fn Provenance::with_origin(zenpixels::descriptor::ChannelType, zenpixe
 pub const fn Provenance::with_origin_depth(zenpixels::descriptor::ChannelType) -> Self
 pub fn Provenance::with_origin_primaries(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::ColorPrimaries) -> Self
 #[non_exhaustive] pub struct ResourceEstimate [also: estimate]
-pub fn estimate::ResourceEstimate::at_cores(&self, usize) -> Self
 pub fn estimate::ResourceEstimate::conservative(&estimate::ImageCharacteristics) -> Self
 pub fn estimate::ResourceEstimate::cpu_ms(&self) -> core::option::Option<u64>
 pub fn estimate::ResourceEstimate::new(u64, u64) -> Self
 pub fn estimate::ResourceEstimate::peak_memory_bytes_est(&self) -> core::option::Option<u64>
 pub fn estimate::ResourceEstimate::peak_memory_bytes_max(&self) -> core::option::Option<u64>
-pub fn estimate::ResourceEstimate::threading(&self) -> core::option::Option<estimate::ThreadingInformation>
 pub fn estimate::ResourceEstimate::unknown() -> Self
 pub fn estimate::ResourceEstimate::wall_ms(&self) -> core::option::Option<u64>
 pub fn estimate::ResourceEstimate::with_cpu_ms(self, u64) -> Self
 pub fn estimate::ResourceEstimate::with_peak_max(self, u64) -> Self
-pub fn estimate::ResourceEstimate::with_threading(self, estimate::ThreadingInformation) -> Self
 pub struct RowConverter [also: converter]
 pub fn converter::RowConverter::compose(&self, &Self) -> core::option::Option<Self>
 pub fn converter::RowConverter::convert_row(&mut self, &[u8], &mut [u8], u32)
@@ -372,13 +360,6 @@ pub fn converter::RowConverter::new_explicit(zenpixels::descriptor::PixelDescrip
 pub fn converter::RowConverter::new_explicit_with_cms(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::plan(&self) -> &ConvertPlan
 pub fn converter::RowConverter::to_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
-#[non_exhaustive] pub struct ThreadingInformation [also: estimate]
-pub const estimate::ThreadingInformation::SERIAL: Self
-pub fn estimate::ThreadingInformation::effective_threads(&self, usize) -> u64
-pub fn estimate::ThreadingInformation::is_parallel(&self) -> bool
-pub fn estimate::ThreadingInformation::max_efficient_threads(&self) -> core::option::Option<u32>
-pub fn estimate::ThreadingInformation::parallel(u32) -> Self
-pub fn estimate::ThreadingInformation::parallel_unknown_knee() -> Self
 pub trait ColorManagement [also: cms]
 pub type ColorManagement::Error: core::fmt::Debug
 pub fn ColorManagement::build_transform(&self, &[u8], &[u8]) -> core::result::Result<alloc::boxed::Box<dyn cms::RowTransform>, Self::Error>
@@ -428,7 +409,7 @@ pub fn requires_cms(&zenpixels::descriptor::PixelDescriptor, &zenpixels::descrip
 pub fn try_adapt_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: adapt]
 pub type GamutMatrix = [[f32; 3]; 3] [also: gamut]
 
-## trait impls (25 types)
+## trait impls (24 types)
 
 ConversionCost: Add, Clone, Copy, Debug, Default, Eq, PartialEq
 ConvertIntent: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -445,7 +426,6 @@ estimate::ComputeEnvironment: Clone, Copy, Debug, Default, Eq, PartialEq
 estimate::ImageCharacteristics: Clone, Debug, Eq, PartialEq
 estimate::ResourceEstimate: Clone, Copy, Debug, PartialEq
 estimate::SimdTier: Clone, Copy, Debug, Eq, Hash, PartialEq
-estimate::ThreadingInformation: Clone, Copy, Debug, PartialEq
 hdr::HdrMetadata: Clone, Copy, Debug, PartialEq
 icc_profiles::SynthesizedIcc: Clone, Debug, Eq, PartialEq
 load_bearing::LoadBearingReport: Clone, Copy, Debug, Default
@@ -458,6 +438,6 @@ zenpixels::descriptor::TransferFunction: ext::TransferFunctionExt
 
 ## auto traits
 
-20 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+19 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 cms::CmsPluginError: !RefUnwindSafe !UnwindSafe
 converter::RowConverter: !RefUnwindSafe !UnwindSafe

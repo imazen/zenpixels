@@ -1322,11 +1322,13 @@ impl ConvertPlan {
     /// ping-pong scratch (multi-step plans). It does NOT include the
     /// caller's persistent state. `peak_memory_bytes_max` is reported at
     /// `peak_est × 1.3` to capture the ±30 % accuracy contract.
-    /// `wall_ms` is divided down by `compute.cores()` through
-    /// [`ResourceEstimate::at_cores`] using the plan's bottleneck
-    /// [`ThreadingInformation`](crate::estimate::ThreadingInformation):
-    /// any SERIAL step forces the whole plan SERIAL; otherwise the
-    /// smallest reported knee across parallelizable steps wins.
+    /// `wall_ms` is divided down by `compute.cores()` via the plan's
+    /// internal threading-bottleneck model (see the [`estimate`] module
+    /// docs): any SERIAL step forces the whole plan SERIAL; otherwise the
+    /// smallest per-step knee — `rows / 64` clamped to `[1, 16]` — caps
+    /// the useful thread count.
+    ///
+    /// [`estimate`]: crate::estimate
     ///
     /// `compute.simd_tier()` applies a coarse per-tier wall-time
     /// multiplier on top of the AVX2 baseline (see the `estimate`

@@ -1,5 +1,5 @@
 # zenpixels-convert public API — doc(hidden) items and excluded-feature surface
-# excluded features: __bench_orient,__bench_scan,__bench_u16_hybrids,__hdr-e2e-test,__trace_ops
+# excluded features: __bench_orient,__bench_scan,__bench_u16_hybrids,__trace_ops
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -15,7 +15,7 @@
 #   free functions                             15
 #   inherent methods                           42
 #   struct fields                               4
-#   trait roster entries (type × trait)        37
+#   trait roster entries (type × trait)        36
 #   auto-trait-complete types                   2
 #
 # per-module pub lines:
@@ -101,7 +101,7 @@ pub __bench_scan::FusedRequest::check_opaque: bool
 pub __bench_scan::FusedResult::is_grayscale: bool
 pub __bench_scan::FusedResult::is_opaque: bool
 
-## trait impls (24 types)
+## trait impls (23 types)
 
 ConversionCost: TrivialClone
 ConvertIntent: TrivialClone
@@ -116,7 +116,6 @@ cms_moxcms::MoxCms: TrivialClone
 estimate::ComputeEnvironment: TrivialClone
 estimate::ResourceEstimate: TrivialClone
 estimate::SimdTier: TrivialClone
-estimate::ThreadingInformation: TrivialClone
 hdr::Bt2446A: TrivialClone
 hdr::HdrMetadata: TrivialClone
 hdr::measure::LightLevelHistogram: Clone, Debug

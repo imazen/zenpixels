@@ -18,14 +18,14 @@
 //! `zenpixels-convert` is a **foundation crate** — it sits below codec
 //! abstractions in the workspace dep graph and does NOT depend on
 //! `zencodec`. To keep multi-stage `decode → convert → encode` pipelines
-//! ergonomic, the five types defined here ([`ResourceEstimate`],
-//! [`ComputeEnvironment`], [`ImageCharacteristics`], [`SimdTier`],
-//! [`ThreadingInformation`]) are **shape-compatible** with
-//! `zencodec::estimate::*` — same field names, same builder method names,
-//! same accessor signatures, same `#[non_exhaustive]` discipline — so a
-//! codec author whose stack already uses the zencodec contract can wire
-//! per-stage estimates through with a trivial `From` conversion (a
-//! follow-up will gate that conversion behind a feature flag).
+//! ergonomic, the four types defined here ([`ResourceEstimate`],
+//! [`ComputeEnvironment`], [`ImageCharacteristics`], [`SimdTier`]) are
+//! **shape-compatible** with the corresponding `zencodec::estimate::*`
+//! types — same field names, same builder method names, same accessor
+//! signatures, same `#[non_exhaustive]` discipline — so a codec author
+//! whose stack already uses the zencodec contract can wire per-stage
+//! estimates through with a trivial `From` conversion (a follow-up will
+//! gate that conversion behind a feature flag).
 //!
 //! Every field is `Option`, the structs are `#[non_exhaustive]`, and the
 //! builders are growable: future fields land additively without breaking
@@ -48,6 +48,13 @@
 //!   applies a coarse per-tier wall-time multiplier on top of the
 //!   AVX2 baseline (TODO: per-tier calibration tables — see the
 //!   `simd_tier_multiplier` body for the current values).
+//! - **Core count.** Wall time is scaled by the effective parallel
+//!   thread count: every plan whose every step is row-parallel divides
+//!   `wall_ms` by `min(compute.cores(), per_step_knee)` where the
+//!   per-step knee is `rows / 64` clamped to `[1, 16]`. Any SERIAL
+//!   step in the plan disables the scaling (single-thread wall is
+//!   reported). `cpu_ms` is unaffected — it carries the work-summed
+//!   single-thread time.
 //! - **Cache state.** Cold L1/L2 cache adds per-call overhead; the
 //!   benches measure steady-state at 4096-pixel rows, so very small
 //!   images carry proportionally more fixed overhead than the
@@ -87,14 +94,14 @@
 //!
 //! # Threading model
 //!
-//! Most [`ConvertStep`]s are row-parallel (SIMD strip kernels) and report
-//! [`ThreadingInformation::parallel(_)`](ThreadingInformation::parallel)
-//! with a knee derived from `rows / 64` clamped to ≤ 16. The plan's overall
-//! threading is the bottleneck: if **any** step is `SERIAL`, the whole plan
-//! is. Otherwise the smallest reported knee wins (the slowest parallel step
-//! sets the cap). [`ResourceEstimate::at_cores`] is applied automatically
-//! inside [`estimate_plan`] so callers receive a `wall_ms` already scaled
-//! to `compute.cores()`.
+//! Most [`ConvertStep`]s are row-parallel (SIMD strip kernels) and contribute
+//! a per-step parallel knee of `rows / 64` clamped to `[1, 16]`. The plan's
+//! overall threading is the bottleneck: if **any** step is SERIAL, the whole
+//! plan is. Otherwise the smallest knee across parallel steps caps the
+//! useful thread count, and `estimate_plan` divides `wall_ms` by
+//! `min(compute.cores(), bottleneck_knee)` directly when building the
+//! [`ResourceEstimate`]. The model is internal — the public surface only
+//! exposes the resulting scaled `wall_ms` (and the unscaled `cpu_ms`).
 
 use crate::convert::{ConvertPlan, ConvertStep, FusedKind};
 use crate::PixelDescriptor;
@@ -305,88 +312,14 @@ impl ImageCharacteristics {
     }
 }
 
-/// How an operation scales across CPU cores.
-///
-/// Wall time does **not** scale as `1/cores`: speedup saturates at
-/// [`max_efficient_threads`](ThreadingInformation::max_efficient_threads) — the
-/// knee of the scaling curve, set by the codec's tile / strategy / block count.
-/// Below the knee, treat speedup as ~linear; above it, flat. The knee is
-/// `Option`: `None` means "parallel, but the knee is unknown", and `at_cores`
-/// then assumes linear scaling to all available cores.
-///
-/// Sealed and growable: construct via [`ThreadingInformation::SERIAL`],
-/// [`ThreadingInformation::parallel`], or
-/// [`ThreadingInformation::parallel_unknown_knee`]; read with the accessors.
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[non_exhaustive]
-pub struct ThreadingInformation {
-    parallel: bool,
-    max_efficient_threads: Option<u32>,
-}
-
-impl ThreadingInformation {
-    /// A serial operation (no multi-core speedup).
-    pub const SERIAL: Self = Self {
-        parallel: false,
-        max_efficient_threads: Some(1),
-    };
-
-    /// A parallel operation whose speedup saturates at `max_efficient_threads`
-    /// (the knee of the scaling curve; clamped to ≥ 1).
-    #[must_use]
-    pub fn parallel(max_efficient_threads: u32) -> Self {
-        Self {
-            parallel: true,
-            max_efficient_threads: Some(max_efficient_threads.max(1)),
-        }
-    }
-
-    /// A parallel operation with **no known knee**: it scales, but the codec
-    /// does not declare where added cores stop helping, so `effective_threads`
-    /// (and thus [`at_cores`](ResourceEstimate::at_cores)) assumes linear
-    /// scaling to all available cores.
-    #[must_use]
-    pub fn parallel_unknown_knee() -> Self {
-        Self {
-            parallel: true,
-            max_efficient_threads: None,
-        }
-    }
-
-    /// Whether the operation uses more than one core at all.
-    #[must_use]
-    pub fn is_parallel(&self) -> bool {
-        self.parallel
-    }
-
-    /// The knee of the scaling curve: threads beyond which added cores stop
-    /// yielding worthwhile speedup (`Some(1)` = serial, `None` = parallel with
-    /// an unknown knee). This is the *efficient* cap, not a hard concurrency
-    /// limit.
-    #[must_use]
-    pub fn max_efficient_threads(&self) -> Option<u32> {
-        self.max_efficient_threads
-    }
-
-    /// Threads that actually do useful work given `cores` available: clamped to
-    /// `max_efficient_threads` when the knee is known, else all `cores`.
-    #[must_use]
-    pub fn effective_threads(&self, cores: usize) -> u64 {
-        let cores = cores.max(1) as u64;
-        match self.max_efficient_threads {
-            Some(knee) => cores.min(knee.max(1) as u64),
-            None => cores,
-        }
-    }
-}
-
 /// Predicted resources for an encode (or decode) operation.
 ///
 /// Every field is `Option` — fillers may model what they can and leave the
 /// rest `None` (the all-`None` constructor is [`ResourceEstimate::unknown`]).
-/// When a [`ThreadingInformation`] is carried, [`ResourceEstimate::at_cores`]
-/// re-scales `wall_ms` for a given core count (leaving `cpu_ms` and peak
-/// unchanged).
+/// `wall_ms` is already scaled to `compute.cores()` when the estimate comes
+/// from [`ConvertPlan::estimate_in`](crate::ConvertPlan::estimate_in); the
+/// internal threading-bottleneck model lives inside `estimate_plan` (see
+/// the module docs).
 ///
 /// Sealed and growable: build via [`new`](ResourceEstimate::new) /
 /// [`unknown`](ResourceEstimate::unknown) + the `with_*` setters, read with the
@@ -398,7 +331,6 @@ pub struct ResourceEstimate {
     peak_memory_bytes_max: Option<u64>,
     wall_ms: Option<u64>,
     cpu_ms: Option<u64>,
-    threading: Option<ThreadingInformation>,
 }
 
 impl ResourceEstimate {
@@ -412,15 +344,12 @@ impl ResourceEstimate {
             peak_memory_bytes_max: None,
             wall_ms: None,
             cpu_ms: None,
-            threading: None,
         }
     }
 
     /// An estimate from the two essentials: the typical (estimated) peak memory
-    /// and the wall time. Everything else — `peak_memory_bytes_max`, `cpu_ms`,
-    /// and `threading` — is left `None`; refine with the `with_*` setters. With
-    /// no `threading`, [`at_cores`](ResourceEstimate::at_cores) is a no-op until
-    /// you add one.
+    /// and the wall time. Everything else — `peak_memory_bytes_max` and
+    /// `cpu_ms` — is left `None`; refine with the `with_*` setters.
     #[must_use]
     pub fn new(peak_memory_bytes_est: u64, wall_ms: u64) -> Self {
         Self {
@@ -428,7 +357,6 @@ impl ResourceEstimate {
             peak_memory_bytes_max: None,
             wall_ms: Some(wall_ms),
             cpu_ms: None,
-            threading: None,
         }
     }
 
@@ -447,13 +375,6 @@ impl ResourceEstimate {
         self
     }
 
-    /// Attach the operation's core-scaling model.
-    #[must_use]
-    pub fn with_threading(mut self, threading: ThreadingInformation) -> Self {
-        self.threading = Some(threading);
-        self
-    }
-
     /// Typical (≈ p50) estimated peak memory for natural content, bytes.
     #[must_use]
     pub fn peak_memory_bytes_est(&self) -> Option<u64> {
@@ -466,46 +387,25 @@ impl ResourceEstimate {
         self.peak_memory_bytes_max
     }
 
-    /// Predicted **wall-clock** time in milliseconds (single-thread unless
-    /// produced by [`at_cores`](ResourceEstimate::at_cores)).
+    /// Predicted **wall-clock** time in milliseconds. Already scaled to the
+    /// caller's [`ComputeEnvironment::cores`] when produced by
+    /// [`ConvertPlan::estimate_in`](crate::ConvertPlan::estimate_in).
     #[must_use]
     pub fn wall_ms(&self) -> Option<u64> {
         self.wall_ms
     }
 
     /// Predicted total **CPU** time in milliseconds (work summed across all
-    /// threads). Unaffected by [`at_cores`](ResourceEstimate::at_cores).
+    /// threads). Independent of the core count — represents the single-thread
+    /// work the plan does.
     #[must_use]
     pub fn cpu_ms(&self) -> Option<u64> {
         self.cpu_ms
     }
 
-    /// How the operation scales across cores.
-    #[must_use]
-    pub fn threading(&self) -> Option<ThreadingInformation> {
-        self.threading
-    }
-
-    /// Re-scale the predicted **wall** time for `cores` available CPU cores
-    /// using the carried [`ThreadingInformation`]: `wall_ms` is divided by the
-    /// effective thread count — linear speedup up to
-    /// [`max_efficient_threads`](ThreadingInformation::max_efficient_threads),
-    /// the knee of the scaling curve. `self` must carry the single-thread time.
-    /// Peak memory and CPU time are unchanged. A `None` `wall_ms` or `None`
-    /// threading is returned unscaled.
-    #[must_use]
-    pub fn at_cores(&self, cores: usize) -> Self {
-        let mut out = *self;
-        if let (Some(wall), Some(threading)) = (self.wall_ms, self.threading) {
-            let n = threading.effective_threads(cores).max(1);
-            out.wall_ms = Some(wall / n);
-        }
-        out
-    }
-
     /// A conservative, content- and codec-blind fallback for operations
     /// without a calibrated model: peak ≈ input buffer + a generous working
-    /// multiple, serial.
+    /// multiple, serial (so `wall_ms == cpu_ms`).
     #[must_use]
     pub fn conservative(image: &ImageCharacteristics) -> Self {
         let input = image
@@ -518,7 +418,6 @@ impl ResourceEstimate {
         Self::new(typical, wall_ms)
             .with_peak_max(fixed.saturating_add(input.saturating_mul(8)))
             .with_cpu_ms(wall_ms)
-            .with_threading(ThreadingInformation::SERIAL)
     }
 }
 
@@ -842,9 +741,10 @@ fn simd_tier_multiplier(tier: SimdTier) -> f64 {
 ///   ±30 % accuracy contract.
 ///
 /// Threading: the plan-level threading is the bottleneck across steps. A
-/// SERIAL step forces the whole plan SERIAL; otherwise the smallest reported
-/// knee (the most-restrictive parallel step) sets `max_efficient_threads`,
-/// which then drives [`ResourceEstimate::at_cores`] to scale wall time.
+/// SERIAL step forces the whole plan SERIAL (wall == single-thread); otherwise
+/// the smallest per-step knee (`rows / 64` clamped to `[1, 16]`) caps the
+/// useful thread count, and `wall_ms` is divided by
+/// `min(compute.cores(), bottleneck_knee)`.
 pub(crate) fn estimate_plan(
     plan: &ConvertPlan,
     image: &ImageCharacteristics,
@@ -863,7 +763,8 @@ pub(crate) fn estimate_plan(
         .unwrap_or(1.0);
 
     // Quick identity short-circuit. The destination is still allocated and
-    // memcpy'd into; the wall-time projection is the memcpy alone.
+    // memcpy'd into; the wall-time projection is the memcpy alone (serial —
+    // there's only one operation, the memcpy can't usefully scale).
     if plan.is_identity() {
         let pixels = (width as u64) * (height as u64);
         let dst_bytes = (pixels * plan.to().bytes_per_pixel() as u64).saturating_mul(frames);
@@ -872,7 +773,8 @@ pub(crate) fn estimate_plan(
         let memcpy_gib_s = 30.0;
         let memcpy_time_ms = (dst_bytes as f64) / (memcpy_gib_s * GIB) * 1_000.0 * tier_mul;
         let wall_ms = memcpy_time_ms as u64;
-        return finalize(dst_bytes, wall_ms, ThreadingInformation::SERIAL, compute);
+        // Identity is SERIAL (single memcpy), so the bottleneck cap is 1.
+        return finalize(dst_bytes, wall_ms, 1, compute);
     }
 
     let pixels = (width as u64) * (height as u64);
@@ -901,7 +803,11 @@ pub(crate) fn estimate_plan(
     let scratch_bytes = scratch_per_half_bytes.saturating_mul(2);
 
     // Sum per-step time contributions and compute the bottleneck
-    // threading across steps.
+    // threading across steps. The model:
+    //   * SERIAL step → whole-plan bottleneck stays at 1 (no scaling).
+    //   * Parallel step → contributes a per-step knee of
+    //     `rows / 64` clamped to `[1, 16]`. The smallest knee across all
+    //     parallel steps caps the useful thread count.
     let mut total_time_ms = 0.0;
     let mut desc = plan.from();
     let mut any_serial = false;
@@ -925,10 +831,12 @@ pub(crate) fn estimate_plan(
     // Multi-frame plans repeat the per-frame work.
     let total_time_ms = total_time_ms * (frames as f64) * tier_mul;
 
-    let threading = if any_serial || min_knee == u32::MAX {
-        ThreadingInformation::SERIAL
+    // Whole-plan bottleneck: any SERIAL step → 1 thread; else the smallest
+    // per-step knee (or 1 if no parallel steps were observed).
+    let bottleneck_threads = if any_serial || min_knee == u32::MAX {
+        1
     } else {
-        ThreadingInformation::parallel(min_knee)
+        min_knee
     };
 
     // Peak working-set: destination buffer + scratch (for multi-step) ×
@@ -938,25 +846,27 @@ pub(crate) fn estimate_plan(
         .saturating_mul(frames);
 
     let wall_ms = total_time_ms as u64;
-    finalize(peak_memory_bytes, wall_ms, threading, compute)
+    finalize(peak_memory_bytes, wall_ms, bottleneck_threads, compute)
 }
 
-/// Wrap the projected peak + wall-ms in the [`ResourceEstimate`] shape,
-/// populate `peak_memory_bytes_max` at the 1.3× margin, fill `cpu_ms`
-/// from the single-thread `wall_ms`, attach `threading`, and finally
-/// re-scale wall via [`ResourceEstimate::at_cores`].
+/// Wrap the projected peak + single-thread wall-ms in the
+/// [`ResourceEstimate`] shape, populate `peak_memory_bytes_max` at the
+/// 1.3× margin, fill `cpu_ms` from the single-thread wall, and scale
+/// `wall_ms` by `min(compute.cores(), bottleneck_threads)` directly.
 fn finalize(
     peak_est: u64,
     wall_ms_single_thread: u64,
-    threading: ThreadingInformation,
+    bottleneck_threads: u32,
     compute: &ComputeEnvironment,
 ) -> ResourceEstimate {
     let peak_max = peak_est.saturating_mul(PEAK_MAX_MARGIN) / PEAK_MAX_DIVISOR;
-    ResourceEstimate::new(peak_est, wall_ms_single_thread)
+    let effective = (compute.cores() as u64)
+        .max(1)
+        .min(bottleneck_threads.max(1) as u64);
+    let wall_ms_scaled = wall_ms_single_thread / effective;
+    ResourceEstimate::new(peak_est, wall_ms_scaled)
         .with_peak_max(peak_max)
         .with_cpu_ms(wall_ms_single_thread)
-        .with_threading(threading)
-        .at_cores(compute.cores())
 }
 
 /// Mirror of `intermediate_desc` in `convert.rs`, exposed via the
@@ -1006,75 +916,30 @@ mod local_type_contract_tests {
     }
 
     #[test]
-    fn serial_threading_is_one_thread() {
-        let ti = ThreadingInformation::SERIAL;
-        assert_eq!(ti.effective_threads(28), 1);
-        assert_eq!(ti.max_efficient_threads(), Some(1));
-        assert!(!ti.is_parallel());
-    }
-
-    #[test]
-    fn parallel_effective_threads_saturate_at_the_knee() {
-        let ti = ThreadingInformation::parallel(8);
-        assert!(ti.is_parallel());
-        assert_eq!(ti.max_efficient_threads(), Some(8));
-        assert_eq!(ti.effective_threads(4), 4);
-        assert_eq!(ti.effective_threads(28), 8);
-        assert_eq!(
-            ThreadingInformation::parallel(0).max_efficient_threads(),
-            Some(1)
-        );
-    }
-
-    #[test]
-    fn parallel_unknown_knee_scales_to_all_cores() {
-        let ti = ThreadingInformation::parallel_unknown_knee();
-        assert!(ti.is_parallel());
-        assert_eq!(ti.max_efficient_threads(), None);
-        assert_eq!(ti.effective_threads(28), 28);
-        assert_eq!(ti.effective_threads(1), 1);
-    }
-
-    #[test]
-    fn at_cores_scales_wall_to_the_knee_and_leaves_peak_and_cpu() {
-        let base = ResourceEstimate::new(200, 1000)
-            .with_peak_max(400)
-            .with_cpu_ms(1000)
-            .with_threading(ThreadingInformation::parallel(8));
-        assert_eq!(base.at_cores(4).wall_ms(), Some(250));
-        assert_eq!(base.at_cores(28).wall_ms(), Some(125));
-        assert_eq!(base.at_cores(4).peak_memory_bytes_est(), Some(200));
-        assert_eq!(base.at_cores(4).peak_memory_bytes_max(), Some(400));
-        assert_eq!(base.at_cores(4).cpu_ms(), Some(1000));
-    }
-
-    #[test]
     fn new_sets_only_peak_est_and_wall() {
         let est = ResourceEstimate::new(200, 1000);
         assert_eq!(est.peak_memory_bytes_est(), Some(200));
         assert_eq!(est.wall_ms(), Some(1000));
         assert_eq!(est.peak_memory_bytes_max(), None);
         assert_eq!(est.cpu_ms(), None);
-        assert_eq!(est.threading(), None);
-        assert_eq!(est.at_cores(8).wall_ms(), Some(1000));
     }
 
     #[test]
-    fn unknown_is_all_none_and_at_cores_is_a_noop() {
+    fn unknown_is_all_none() {
         let est = ResourceEstimate::unknown();
         assert_eq!(est.peak_memory_bytes_est(), None);
         assert_eq!(est.peak_memory_bytes_max(), None);
         assert_eq!(est.wall_ms(), None);
         assert_eq!(est.cpu_ms(), None);
-        assert_eq!(est.threading(), None);
-        assert_eq!(est.at_cores(28), est);
     }
 
     #[test]
-    fn conservative_is_serial_and_input_scaled() {
+    fn conservative_is_input_scaled() {
         let est = ResourceEstimate::conservative(&ImageCharacteristics::new(1000, 1000, desc()));
-        assert_eq!(est.threading().map(|t| t.is_parallel()), Some(false));
         assert!(est.peak_memory_bytes_est().unwrap() >= 1000 * 1000 * 3);
-        assert_eq!(est.at_cores(28).wall_ms(), est.wall_ms());
+        // Conservative is serial — wall_ms == cpu_ms (no parallel scaling
+        // happens to it inside ResourceEstimate; estimate_plan does the
+        // scaling).
+        assert_eq!(est.wall_ms(), est.cpu_ms());
     }
 }

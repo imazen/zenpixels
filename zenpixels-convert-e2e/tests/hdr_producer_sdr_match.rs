@@ -14,27 +14,24 @@
 //!
 //! ## Decode path
 //!
-//! Uses the local `zenjpeg` (path dep at `../../zenjpeg/zenjpeg`) for the
-//! one-call `decode_ultrahdr` (SDR base) + `decode_ultrahdr_hdr` (HDR
+//! Uses the local `zenjpeg` (workspace sibling) for the one-call
+//! `decode_ultrahdr` (SDR base) + `decode_ultrahdr_hdr` (HDR
 //! reconstruction) helpers. The workspace's `[patch.crates-io]` deliberately
 //! omits a `zenpixels-convert` entry — that's what would create the
 //! `zenpixels-convert → zenjpeg → zenanalyze → zenpixels-convert` cycle.
 //! Instead the two-version graph (local 0.2.15 for the workspace member +
-//! registry 0.2.14 for `zenanalyze`'s transitive need) coexists harmlessly,
-//! and `cargo` requires `-p zenpixels-convert@0.2.15` to disambiguate the
-//! test build.
+//! registry 0.2.14 for `zenanalyze`'s transitive need) coexists harmlessly.
 //!
 //! ## Gating
 //!
-//! Compiled only under the `__hdr-e2e-test` feature, which pulls
-//! `zenjpeg` (with `decoder` + `ultrahdr`) and `anyhow` as test-only
-//! deps. Runs a runtime presence check on the sample at
+//! Lives in the dedicated `zenpixels-convert-e2e` crate (workspace member,
+//! `publish = false`) so the main `zenpixels-convert` Cargo.toml stays
+//! free of test-only optional deps (`zenjpeg` / `anyhow`). Runs a runtime
+//! presence check on the sample at
 //! `/home/lilith/work/codec-corpus/imazen-26/...` — if absent (CI
 //! runners, etc.) the test prints a `SKIP` line and exits without
 //! panicking. **MUST be run on `lilith`'s machine before merging any
 //! pipeline-touching change** (the corpus exists there).
-
-#![cfg(feature = "__hdr-e2e-test")]
 
 use std::path::Path;
 

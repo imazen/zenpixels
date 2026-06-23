@@ -141,7 +141,7 @@ The buffer-baking half of the zen orientation story lives here (the `Orientation
 
 For schedulers / throttlers / SLA-bound pipelines that need to know cost *before* running an op, [`ConvertPlan::estimate_in`] (and the [`ConvertPlan::estimate`] shortcut) returns a [`ResourceEstimate`] for a `width × height` image (or an [`ImageCharacteristics`] with frame count) under a given [`ComputeEnvironment`] (core count + optional SIMD tier + optional RAM budget). Cheap to call — walks the planned steps, no row work, no allocation. Calibrated against the `bench_t1`–`bench_t7` series (Ryzen 9 7950X, AVX2/V3), ±30 % design tolerance.
 
-The five estimate types — [`ResourceEstimate`], [`ComputeEnvironment`], [`ImageCharacteristics`], [`SimdTier`], [`ThreadingInformation`] — are defined locally and are **shape-compatible** with `zencodec::estimate::*` (same field names, same builders, same accessors, same `#[non_exhaustive]` discipline). `zenpixels-convert` is a **foundation crate** and does NOT depend on `zencodec` — keeping codec abstractions strictly above pixel math. Codec authors whose stack uses the zencodec contract can wire `decode → convert → encode` estimates through the boundary with a trivial `From` conversion. The full type contract: sealed, growable, every field `Option`.
+The four estimate types — [`ResourceEstimate`], [`ComputeEnvironment`], [`ImageCharacteristics`], [`SimdTier`] — are defined locally and are **shape-compatible** with the corresponding `zencodec::estimate::*` types (same field names, same builders, same accessors, same `#[non_exhaustive]` discipline). `zenpixels-convert` is a **foundation crate** and does NOT depend on `zencodec` — keeping codec abstractions strictly above pixel math. Codec authors whose stack uses the zencodec contract can wire `decode → convert → encode` estimates through the boundary with a trivial `From` conversion. The full type contract: sealed, growable, every field `Option`. Wall-time scaling across cores is handled internally by `ConvertPlan::estimate_in` — the resulting `wall_ms` is already divided by the effective parallel thread count.
 
 ```rust
 use zenpixels::PixelDescriptor;
@@ -286,7 +286,6 @@ Apache-2.0 OR MIT.
 [`ComputeEnvironment`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ComputeEnvironment.html
 [`ImageCharacteristics`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ImageCharacteristics.html
 [`SimdTier`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/enum.SimdTier.html
-[`ThreadingInformation`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ThreadingInformation.html
 [`ConvertPlan::estimate`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.estimate
 [`ConvertPlan::estimate_in`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.estimate_in
 [`PixelBufferConvertTypedExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.PixelBufferConvertTypedExt.html

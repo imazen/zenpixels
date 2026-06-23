@@ -1,15 +1,16 @@
 //! Tests for the `ResourceEstimate` returned by `ConvertPlan::estimate(_in)`.
 //! The estimate types live locally in `zenpixels_convert::estimate` and are
-//! shape-compatible with `zencodec::estimate::*` (same field names, same
-//! builders, same accessors) so callers wiring `decode → convert → encode`
-//! at the codec boundary can convert in one line.
+//! shape-compatible with the corresponding `zencodec::estimate::*` types
+//! (same field names, same builders, same accessors) so callers wiring
+//! `decode → convert → encode` at the codec boundary can convert in one
+//! line.
 //!
 //! Numbers come from the 2026-04-23 bench suite (and zentone 2026-06-20
 //! for the HDR tone-map). Tolerance is ±30 % — the public contract.
 //!
 //! Field access goes through the Option-returning accessors
 //! (`peak_memory_bytes_est()` / `peak_memory_bytes_max()` / `wall_ms()` /
-//! `cpu_ms()` / `threading()`) — the surface is sealed and growable.
+//! `cpu_ms()`) — the surface is sealed and growable.
 
 use zenpixels::AlphaMode;
 use zenpixels_convert::{
@@ -268,8 +269,8 @@ fn estimate_grows_monotonically_with_pixel_count() {
 
 // ---------------------------------------------------------------------------
 // (8) `ComputeEnvironment::with_cores`: higher core counts shrink wall_ms for
-// parallelizable plans (the `at_cores` scaling fires through the carried
-// `ThreadingInformation::parallel(_)`).
+// parallelizable plans (estimate_plan's internal per-step parallel knee fires
+// the wall-time scaling via finalize()).
 // ---------------------------------------------------------------------------
 
 #[test]
