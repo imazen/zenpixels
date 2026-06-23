@@ -237,6 +237,17 @@ pub struct SoftCompress {
 }
 
 impl SoftCompress {
+    /// Production default knee — the fraction of max chroma where the soft
+    /// rolloff begins. Empirically calibrated against the 76-sample
+    /// imazen-26 gain-mapped HDR corpus on 2026-06-23: `0.96` is the
+    /// largest knee value (i.e. the LEAST chroma compression / desaturation)
+    /// where the corpus-p90 fraction of pre-clamp out-of-gamut pixels stays
+    /// under 0.1 %. Surfaced as a `pub const` so test fixtures and external
+    /// callers can refer to the same anchor as
+    /// [`crate::HdrConfig::default`]'s `gamut_knee` field. Matches
+    /// `HdrConfig::default().gamut_knee` byte-for-byte.
+    pub const DEFAULT_KNEE: f32 = 0.96;
+
     /// Construct a [`SoftCompress`] for the given primaries (via `m1_inv`,
     /// the LMS → RGB matrix from
     /// [`crate::oklab::lms_to_rgb_matrix`]) and

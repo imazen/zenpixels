@@ -1067,7 +1067,7 @@ dependencies = [
  "almost-enough",
  "enough",
  "whereat",
- "zenpixels",
+ "zenpixels 0.2.14",
 ]
 
 [[package]]
@@ -1092,12 +1092,24 @@ dependencies = [
  "wide",
  "yuv",
  "zencodec",
- "zenpixels",
+ "zenpixels 0.2.14",
 ]
 
 [[package]]
 name = "zenpixels"
-version = "0.2.15"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "515b2d87c361de4a3c1e4131a1de03d9cceab59cf599ac48235d46e60ef1768d"
+dependencies = [
+ "bytemuck",
+ "imgref",
+ "rgb",
+ "whereat",
+]
+
+[[package]]
+name = "zenpixels"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -1125,11 +1137,12 @@ dependencies = [
  "paste",
  "rgb",
  "serde",
+ "serde_json",
  "sha2",
  "whereat",
  "zenbench",
  "zenjpeg",
- "zenpixels",
+ "zenpixels 0.3.0",
  "zenpixels-convert",
 ]
 

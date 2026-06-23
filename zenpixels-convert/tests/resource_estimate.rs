@@ -628,3 +628,192 @@ fn estimate_convert_to_sdr_hdr_includes_measure_max_scan() {
         delta_ratio * 100.0
     );
 }
+
+// ---------------------------------------------------------------------------
+// Breakdown consistency: the per-step `name` values must match the
+// `__trace_ops` dispatch trace exactly (modulo memcpy / Identity), so a
+// downstream consumer reading the breakdown for cost-attribution sees the
+// same step set the runtime actually executes.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn estimate_breakdown_step_count_grows_with_plan_complexity() {
+    // Identity (no steps) breakdown is empty; a depth+TF change should
+    // have ≥ 1 step; a depth + TF + gamut change should have at least
+    // as many. Pin the monotonic relationship — a regression that
+    // dropped breakdown entries would silently halve the estimated
+    // wall-time.
+    let identity = ConvertPlan::new(
+        PixelDescriptor::RGB8_SRGB,
+        PixelDescriptor::RGB8_SRGB,
+    )
+    .expect("identity plan");
+    let est_identity = identity.estimate_resources(1024, 1024);
+
+    let tf_only = ConvertPlan::new(
+        PixelDescriptor::RGB8_SRGB,
+        PixelDescriptor::new(
+            ChannelType::F32,
+            zenpixels::ChannelLayout::Rgb,
+            None,
+            TransferFunction::Linear,
+        ),
+    )
+    .expect("tf-only plan");
+    let est_tf = tf_only.estimate_resources(1024, 1024);
+
+    let tf_and_gamut = ConvertPlan::new(
+        PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
+        PixelDescriptor::new_full(
+            ChannelType::F32,
+            zenpixels::ChannelLayout::Rgb,
+            None,
+            TransferFunction::Linear,
+            ColorPrimaries::Bt709,
+        ),
+    )
+    .expect("tf-and-gamut plan");
+    let est_full = tf_and_gamut.estimate_resources(1024, 1024);
+
+    assert!(est_identity.breakdown.is_empty(), "identity must be 0 steps");
+    assert!(
+        est_tf.breakdown.len() >= 1,
+        "tf-only must be ≥ 1 step, got {} ({:?})",
+        est_tf.breakdown.len(),
+        est_tf.breakdown.iter().map(|s| s.name).collect::<Vec<_>>(),
+    );
+    assert!(
+        est_full.breakdown.len() >= est_tf.breakdown.len(),
+        "tf+gamut breakdown {} < tf-only {} — gamut step lost?",
+        est_full.breakdown.len(),
+        est_tf.breakdown.len(),
+    );
+}
+
+#[test]
+fn estimate_breakdown_step_names_are_non_empty_static_strs() {
+    // `StepEstimate::name` is `&'static str` — pin that every breakdown
+    // entry actually carries a meaningful name (no empties, no
+    // accidentally-recorded ConvertStep variants without a
+    // `variant_name`).
+    let plan = ConvertPlan::new(
+        PixelDescriptor::RGB8_SRGB,
+        PixelDescriptor::new(
+            ChannelType::F32,
+            zenpixels::ChannelLayout::Rgba,
+            Some(AlphaMode::Straight),
+            TransferFunction::Linear,
+        ),
+    )
+    .expect("plan");
+    let est = plan.estimate_resources(1024, 1024);
+    for s in &est.breakdown {
+        assert!(!s.name.is_empty(), "empty step name in breakdown: {est:?}");
+        // No trailing whitespace, no leading numbers — the names come
+        // from `ConvertStep::variant_name` which is hand-curated.
+        assert!(
+            !s.name.chars().any(char::is_whitespace),
+            "whitespace in step name: {:?}",
+            s.name
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Confidence: HDR + SoftCompress is Heuristic (SoftCompress kernel has not
+// been calibrated yet); HDR with a BT.2020 target (no SoftCompress) keeps
+// the ToneMapBt2446A Calibrated step but is still mixed.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "hdr-experimental")]
+#[test]
+fn estimate_softcompress_step_lowers_confidence_to_heuristic() {
+    use zenpixels_convert::HdrConfig;
+    // PQ U16 BT.2020 → sRGB U8 BT.709: SoftCompress fires (narrowing
+    // gamut). The SoftCompress step is uncalibrated → confidence
+    // demotes to Heuristic.
+    let src = PixelDescriptor::new_full(
+        ChannelType::U16,
+        zenpixels::ChannelLayout::Rgb,
+        None,
+        TransferFunction::Pq,
+        ColorPrimaries::Bt2020,
+    );
+    let dst = PixelDescriptor::RGB8_SRGB;
+    let plan = ConvertPlan::new_with_hdr_config(
+        src,
+        dst,
+        HdrConfig {
+            source_peak_nits: 1000.0,
+            ..HdrConfig::default()
+        },
+    )
+    .expect("plan");
+    let est = plan.estimate_resources(1024, 1024);
+    let names: Vec<&str> = est.breakdown.iter().map(|s| s.name).collect();
+    assert!(
+        names.contains(&"SoftCompressOklch"),
+        "SoftCompress expected in BT.2020 → BT.709 plan, got {names:?}"
+    );
+    assert_eq!(
+        est.confidence,
+        EstimateConfidence::Heuristic,
+        "SoftCompress kernel is uncalibrated; confidence must demote to Heuristic, got {:?}",
+        est.confidence
+    );
+}
+
+#[cfg(feature = "hdr-experimental")]
+#[test]
+fn estimate_native_pair_returns_calibrated_confidence() {
+    // The native sRGB-encode path (Linear F32 → sRGB U8) has a
+    // calibrated cost cell (see t3 bench). Confidence must surface
+    // Calibrated.
+    let from = PixelDescriptor::new(
+        ChannelType::F32,
+        zenpixels::ChannelLayout::Rgb,
+        None,
+        TransferFunction::Linear,
+    );
+    let to = PixelDescriptor::RGB8_SRGB;
+    let plan = ConvertPlan::new(from, to).expect("plan");
+    let est = plan.estimate_resources(1024, 1024);
+    assert_eq!(
+        est.confidence,
+        EstimateConfidence::Calibrated,
+        "F32 Linear → U8 sRGB cost cell is benched; expected Calibrated, got {:?}",
+        est.confidence
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Typed estimators: estimate_to_rgb8 etc. delegate to the same target as
+// the plain estimate_convert_to(&RGB8_SRGB). The delegations are already
+// covered by *_delegates tests above; add a positive equality check on a
+// well-known cost cell to pin the wall-time matches exactly.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "rgb")]
+#[test]
+fn estimate_to_rgb8_matches_estimate_convert_to_rgb8_srgb() {
+    use zenpixels_convert::PixelBufferConvertTypedExt;
+    // From a RGBA U8 sRGB source, estimate_to_rgb8 must match
+    // estimate_convert_to(&RGB8_SRGB) byte-for-byte. Tests memory,
+    // time, confidence, breakdown length all match — covers the
+    // public-API contract that typed estimators are thin wrappers.
+    let src = PixelDescriptor::RGBA8_SRGB;
+    let width = 1024u32;
+    let height = 1024u32;
+    let stride = src.aligned_stride(width);
+    let pixels = vec![128u8; stride * height as usize];
+    let buf = PixelBuffer::from_vec(pixels, width, height, src).unwrap();
+    let typed = buf.estimate_to_rgb8();
+    let raw = buf.estimate_convert_to(&PixelDescriptor::RGB8_SRGB);
+    assert_eq!(typed.peak_memory_bytes, raw.peak_memory_bytes);
+    assert!((typed.wall_time_ms - raw.wall_time_ms).abs() < 1e-9);
+    assert_eq!(typed.confidence, raw.confidence);
+    assert_eq!(typed.breakdown.len(), raw.breakdown.len());
+    let typed_names: Vec<&str> = typed.breakdown.iter().map(|s| s.name).collect();
+    let raw_names: Vec<&str> = raw.breakdown.iter().map(|s| s.name).collect();
+    assert_eq!(typed_names, raw_names);
+}

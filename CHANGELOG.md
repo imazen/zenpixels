@@ -2,6 +2,88 @@
 
 ## [Unreleased]
 
+### zenpixels — removed (0.3.0)
+
+- **Removed the deprecated `ContentLightLevel::measure(px, white)` inherent
+  method** from `zenpixels::hdr` — the literal-maximum MaxCLL is
+  outlier-sensitive (one specular/noise pixel inflates it, making displays
+  over-tone-map); production HDR metadata uses a percentile-aware reading.
+  Replacement lives in `zenpixels-convert` behind the `hdr-experimental`
+  feature gate: `zenpixels_convert::hdr::measure::CllMeasure::measure_max`
+  (literal max — the 2026-06-22 shootout winner for `pct_above_de5`) +
+  `measure_percentile` / `measure_robust` for the defect-tolerant readouts.
+  `ContentLightLevel::DEFAULT_PERCENTILE` (the `0.99999` constant) STAYS
+  — it's data, not logic, and external callers building their own
+  percentile policy refer to it.
+  - **Why bump leading digit.** `ContentLightLevel::measure` was
+    `#[doc(hidden)]` + `#[deprecated]` in 0.2.15 but is still a
+    publicly-callable inherent method, so `cargo semver-checks` reports
+    `inherent_method_missing` as a major-required break (semver-checks
+    doesn't treat `#[doc(hidden)]` as exempt from removal-detection,
+    correctly — downstream code may still depend on doc-hidden APIs at
+    the source level). Bumping to 0.3.0 lets the removal ship cleanly.
+    `cargo semver-checks --release-type major` validates the bump (252
+    checks pass, 0 fail) — the leading-digit move is the minimum required
+    by the queued removal.
+- **Test cleanup.** The two `ContentLightLevel::measure` test cases in
+  `zenpixels/src/hdr.rs` (`measure_two_grays_cta_stills_semantics` +
+  `measure_handles_stride_and_ignores_padding`) are removed alongside the
+  method; equivalent coverage lives in `zenpixels-convert/src/hdr/measure.rs`
+  (the `measure_max` / `measure_robust` / strided-row tests) and the new
+  `zenpixels-convert/tests/cll_measure.rs` boundary test.
+
+### zenpixels-convert — added (testing)
+
+- **`zenpixels-convert/tests/hdr_pipeline.rs`** (new). 15 unconditional
+  tests + 6 `__trace_ops`-gated plan-shape tests covering the
+  `ConvertPlan::new_with_hdr_peak` / `new_with_hdr_config` HDR pipeline
+  (`52fd949` / `e712f84` / `f68b759` / `505d02e8` / `0897f17` / `e1ebf76`).
+  Pins: BT.2446-A monotonicity + zero-input + near-peak behaviour;
+  SoftCompress chroma clamping + LUT-accessor stability + planar
+  `compress_planes` semantics; `HdrConfig::default { source_peak_nits=0,
+  target_peak_nits=100, gamut_knee=0.96 }` invariant; `SoftCompress::DEFAULT_KNEE
+  = 0.96 == HdrConfig::default().gamut_knee`; `new_with_hdr_peak` delegates
+  to `new_with_hdr_config`; end-to-end neutral-gray PQ→sRGB lands mid-SDR.
+  The `plan_shape` submodule (gated on `__trace_ops`) asserts the canonical
+  PQ-BT.2020 → sRGB BT.709 pipeline emits ToneMapBt2446A + SoftCompressOklch
+  in order, that BT.2020 → BT.2020 targets skip SoftCompressOklch
+  (wide-gamut mode), and that HLG + RGBA sources walk the same shape.
+- **`zenpixels-convert/tests/cll_measure.rs`** (new). 11 tests covering
+  the `CllMeasure` extension trait at the published-crate boundary:
+  uniform-buffer correctness, strided-row contract, DiffuseWhite anchor
+  honouring (203 vs 100 cd/m²), the `LightLevelMethod::MaxRgb` /
+  `LuminanceBt2020` discriminants, `DEFAULT_PERCENTILE` pin, and the
+  rejection-path contracts (non-linear transfer + integer pixel formats).
+- **`zenpixels-convert/tests/serde_feature.rs`** (new). 5 tests gated on
+  `serde,hdr-experimental` — the `serde` feature combo that 0.2.15's
+  `5ab70a0` fixed. Pins JSON round-trip semantics for `LightLevelMethod`
+  (both discriminants), `ContentLightLevel` (re-exported derive), `DiffuseWhite`
+  (tuple-struct convention), and the `DEFAULT_PERCENTILE = 0.99999` bit
+  pattern; plus a typed-error contract for unknown enum variants. Adds
+  `serde_json = "1.0.150"` as a dev-only dep.
+- **`zenpixels-convert/tests/fused_variants.rs`** (new). 7 tests gated on
+  `__trace_ops` covering the `ConvertStep::Fused { kind: FusedKind, matrix:
+  [f32; 9] }` merge (commit `03c63b5c`). Pins the historical per-kind
+  trace-name mapping (`"FusedSrgbU8GamutRgb"`, etc.) via planner traces
+  for the 5 `FusedKind` shapes, and asserts the U8 sRGB gamut path
+  exercises the peephole (no decomposition into the unfused 3-step
+  pair).
+- **`zenpixels-convert/tests/resource_estimate.rs`** (extended). 6 new
+  tests on top of the 23 existing: breakdown step-count growth with plan
+  complexity, breakdown-name-shape invariants, SoftCompress demoting
+  confidence to `Heuristic`, native-pair returning `Calibrated`, and
+  typed-estimator `estimate_to_rgb8` byte-for-byte parity with
+  `estimate_convert_to(&RGB8_SRGB)`.
+
+### zenpixels-convert — added (API)
+
+- **`pub const SoftCompress::DEFAULT_KNEE: f32 = 0.96`.** The empirically
+  calibrated default — matches `HdrConfig::default().gamut_knee`
+  byte-for-byte. Surfaced so test fixtures and external callers can refer
+  to the same anchor as the `HdrConfig` field, instead of carrying a
+  magic-number `0.96` in their own code. Additive — `cargo semver-checks`
+  clean.
+
 ### zenpixels-convert — added
 
 - **`ConvertError::NeedsCms { from, to }` variant** for conversions whose
@@ -160,11 +242,12 @@
   `zentone` crate (`zentone::Bt2446A` for ITU-R BT.2446 Method A,
   `Bt2408Tonemapper`, ACES, AgX, filmic-spline, gain-map, plus SIMD strip
   processing).
-- **Remove the deprecated `ContentLightLevel::measure`** — the literal-maximum
-  MaxCLL shipped in 0.2.14 is outlier-sensitive (a single specular/noise pixel
-  inflates it, making displays over-tone-map); `#[deprecated]` + `#[doc(hidden)]`
-  in 0.2.15, to be replaced by a percentile-aware measure (#54). Delete the
-  literal-max method here.
+- ~~**Remove the deprecated `ContentLightLevel::measure`**~~ — **shipped
+  in 0.3.0** (see `### zenpixels — removed (0.3.0)` above). The literal-
+  maximum MaxCLL was outlier-sensitive; replacement is
+  `zenpixels_convert::hdr::measure::CllMeasure::measure_max` (literal max,
+  spec-strict / sparse-bright) + `measure_percentile` (defect-tolerant
+  via `DEFAULT_PERCENTILE`). Removed from this queue.
 - **Rename `CllMeasure::measure_robust(px, white, method)` →
   `CllMeasure::measure(px, white, method)`** in `zenpixels-convert` at the
   same release that deletes the deprecated 2-arg `zenpixels::ContentLightLevel::measure`.

@@ -10,7 +10,14 @@
 //! based, percentile-aware, SIMD-accelerated), see the `measure` module
 //! and the `CllMeasure` extension trait in `zenpixels-convert`.
 
-use crate::{PixelFormat, PixelSlice, TransferFunction};
+// `PixelFormat` / `PixelSlice` / `TransferFunction` are intentionally NOT
+// imported here. The 0.2.15 release left them in for the deprecated
+// `ContentLightLevel::measure` inherent method; that method was removed in
+// 0.2.16 (per CHANGELOG QUEUED BREAKING CHANGES) — the canonical replacement
+// is `zenpixels_convert::hdr::measure::CllMeasure::measure_max` (and the
+// other histogram-based readouts on the trait). This module is now pure
+// metadata / anchor types: scalar `DiffuseWhite`, the `ContentLightLevel`
+// struct, and `MasteringDisplay`, with no pixel-data reduction.
 
 /// The absolute luminance, in cd/m² (nits), that a relative-linear sample
 /// value of `1.0` represents — the "diffuse white" (a.k.a. nominal diffuse
@@ -67,40 +74,6 @@ impl Default for DiffuseWhite {
     fn default() -> Self {
         Self::BT2408
     }
-}
-
-/// Round non-negative nits to a CTA-861.3 `u16` code (saturating).
-///
-/// `nits` is a luminance — always `≥ 0` at the call sites. Round-half-up is
-/// then `(nits + 0.5)` truncated, and the float→int `as` cast saturates to
-/// `[0, u16::MAX]` (mapping negatives and NaN to 0). Done by hand because
-/// `f64::round` lives in `std` (libm) and this crate builds `no_std`.
-#[inline]
-fn nits_to_u16(nits: f64) -> u16 {
-    (nits + 0.5) as u16
-}
-
-/// Reduce one row of `N`-channel f32 pixels to
-/// `(max, sum)` of the per-pixel `max(R, G, B)`.
-///
-/// `N` is the channel count (3 = `Rgb`, 4 = `Rgba`); only the first three
-/// lanes are read, so any alpha is ignored. Each channel is folded from `0.0`,
-/// so `f32::max`'s non-NaN-propagating semantics drop NaN and negative samples.
-/// `chunk` is reborrowed as a fixed-size `&[f32; N]` so the bounds checks fall
-/// away and LLVM can vectorize the reduction. The sum accumulates in `f64`:
-/// a 4K frame is ~8M pixels, beyond f32's precision for a running total.
-#[inline]
-fn row_max_sum<const N: usize>(row: &[f32]) -> (f32, f64) {
-    let mut row_max = 0.0f32;
-    let mut row_sum = 0.0f64;
-    for chunk in row.chunks_exact(N) {
-        // `chunks_exact(N)` yields exactly-`N` slices — the conversion is infallible.
-        let px: &[f32; N] = chunk.try_into().unwrap();
-        let m = 0.0f32.max(px[0]).max(px[1]).max(px[2]);
-        row_max = row_max.max(m);
-        row_sum += f64::from(m);
-    }
-    (row_max, row_sum)
 }
 
 /// HDR content light level metadata (CEA-861.3 / CTA-861-H).
@@ -169,89 +142,6 @@ impl ContentLightLevel {
     /// value to `CllMeasure::measure_percentile`.
     #[doc(hidden)]
     pub const DEFAULT_PERCENTILE: f32 = 0.99999;
-
-    /// **Deprecated (0.2.15), hidden.** Computes the *literal* MaxCLL — the
-    /// absolute max over pixels of `max(R, G, B)` — which is outlier-sensitive
-    /// (one specular/noise pixel inflates it, making displays over-tone-map).
-    /// Production HDR metadata uses a percentile (~99.99th); a percentile-aware
-    /// replacement is tracked in <https://github.com/imazen/zenpixels/issues/54>
-    /// and this method is queued for 0.3.0 removal. MaxFALL (the mean) is fine.
-    ///
-    /// Measure MaxCLL / MaxFALL (CTA-861.3-A) from relative-linear RGB(A) f32
-    /// pixels, with `white` anchoring the scale (sample `1.0` = `white` nits;
-    /// [`DiffuseWhite::BT2408`] — 203 — is the convention).
-    ///
-    /// Semantics per CTA-861.3-A as PNG 3rd ed §11.3.2.8 imports it for stills
-    /// (one still = one frame): **MaxCLL** is the brightest pixel's
-    /// `max(R, G, B)` in cd/m², **MaxFALL** is the image's average of per-pixel
-    /// `max(R, G, B)`. Negative/NaN samples clamp to 0; an alpha lane is
-    /// ignored; strided rows are handled.
-    ///
-    /// Returns `None` if the descriptor is not relative-linear
-    /// `RgbF32`/`RgbaF32`. This is deliberate, not a missing case: cd/m² is
-    /// only defined in **linear light**, so a transfer function would have to
-    /// be inverted first — and inverting one (PQ/HLG/sRGB → linear) is the
-    /// conversion pipeline's job, which the foundational `zenpixels` crate has
-    /// no dependency on. To measure an integer or non-linear HDR buffer,
-    /// linearize it to `RgbaF32` first (`zenpixels_convert::convert_buffer`),
-    /// then call this. Zero-area input yields `Some(0, 0)`.
-    ///
-    /// `RgbF32` and `RgbaF32` share one reduction (generic over the channel
-    /// count); the inner loop reads whole f32s from the channel-aligned buffer
-    /// so it vectorizes rather than decoding sample-by-sample.
-    #[must_use]
-    #[doc(hidden)]
-    #[deprecated(
-        since = "0.2.15",
-        note = "literal-maximum MaxCLL is outlier-sensitive (one specular/noise \
-                pixel inflates it, making displays over-tone-map); production HDR \
-                metadata uses a percentile (~99.99th). Percentile-aware \
-                replacement planned: https://github.com/imazen/zenpixels/issues/54. \
-                MaxFALL is unaffected."
-    )]
-    pub fn measure(px: PixelSlice<'_>, white: DiffuseWhite) -> Option<Self> {
-        let desc = px.descriptor();
-        let channels = match desc.pixel_format() {
-            PixelFormat::RgbF32 => 3,
-            PixelFormat::RgbaF32 => 4,
-            _ => return None,
-        };
-        if desc.transfer != TransferFunction::Linear {
-            return None;
-        }
-        let w = px.width() as usize;
-        let h = px.rows() as usize;
-        if w == 0 || h == 0 {
-            return Some(Self::new(0, 0));
-        }
-        let stride = px.stride();
-        let bytes = px.as_strided_bytes();
-        let row_len = w * channels * 4;
-
-        // Reduce in relative-linear units, then scale by the anchor once at the
-        // end — ∑(mᵢ·w) = (∑mᵢ)·w, fewer multiplies for the same f64 result.
-        let mut max_lin = 0.0f32;
-        let mut sum_lin = 0.0f64;
-        for row in 0..h {
-            let row_bytes = &bytes[row * stride..row * stride + row_len];
-            // f32 buffers are channel-aligned (the `PixelBuffer` alignment
-            // invariant), and `row_len` is a multiple of 4, so this cast never
-            // straddles a sample — and reading whole f32s lets the reduction
-            // vectorize, unlike per-byte `from_ne_bytes`.
-            let floats: &[f32] = bytemuck::cast_slice(row_bytes);
-            let (row_max, row_sum) = if channels == 3 {
-                row_max_sum::<3>(floats)
-            } else {
-                row_max_sum::<4>(floats)
-            };
-            max_lin = max_lin.max(row_max);
-            sum_lin += row_sum;
-        }
-        let wn = f64::from(white.nits());
-        let max_nits = f64::from(max_lin) * wn;
-        let fall = sum_lin / (w as f64 * h as f64) * wn;
-        Some(Self::new(nits_to_u16(max_nits), nits_to_u16(fall)))
-    }
 }
 
 /// Mastering display color volume metadata (SMPTE ST 2086).
@@ -306,21 +196,8 @@ impl MasteringDisplay {
 }
 
 #[cfg(test)]
-#[allow(deprecated)] // still exercises ContentLightLevel::measure until its 0.3.0 removal
 mod tests {
     use super::*;
-    use crate::{PixelBuffer, PixelDescriptor};
-    use alloc::vec::Vec;
-
-    fn rgbf32(pixels: &[[f32; 3]], w: u32, h: u32) -> PixelBuffer {
-        let mut data = Vec::with_capacity(pixels.len() * 12);
-        for p in pixels {
-            for c in p {
-                data.extend_from_slice(&c.to_ne_bytes());
-            }
-        }
-        PixelBuffer::from_vec(data, w, h, PixelDescriptor::RGBF32_LINEAR).unwrap()
-    }
 
     #[test]
     fn diffuse_white_defaults_to_bt2408() {
@@ -330,36 +207,23 @@ mod tests {
     }
 
     #[test]
-    fn measure_two_grays_cta_stills_semantics() {
-        // [1.0, 2.0] @ 203: MaxCLL = 2·203 = 406; MaxFALL = avg(203, 406) = 304.5 → 305.
-        let buf = rgbf32(&[[1.0; 3], [2.0; 3]], 2, 1);
-        let cll = ContentLightLevel::measure(buf.as_slice(), DiffuseWhite::BT2408).unwrap();
-        assert_eq!(cll.max_content_light_level, 406);
-        assert_eq!(cll.max_frame_average_light_level, 305);
+    fn diffuse_white_custom_anchor_round_trips() {
+        // Anchor metadata is byte-identical-preserved through the constructor:
+        // a custom 100 cd/m² (HDR home-tier mastering) and 10 000 cd/m² (PQ
+        // peak) both round-trip through `new` → `nits` losslessly.
+        assert_eq!(DiffuseWhite::new(100.0).nits(), 100.0);
+        assert_eq!(DiffuseWhite::new(10_000.0).nits(), 10_000.0);
+        // PartialEq honours bit equality (see the impl above) so two
+        // independently constructed anchors compare equal.
+        assert_eq!(DiffuseWhite::new(203.0), DiffuseWhite::BT2408);
     }
 
     #[test]
-    fn measure_handles_stride_and_ignores_padding() {
-        use crate::PixelSlice;
-        // 2×2 RGB f32: 6 real f32/row, padded to 9 f32/row (36-byte stride, a
-        // multiple of the 12-byte pixel). The padding holds a 1e9 sentinel — if
-        // a row cast ever ran past `width*bpp`, MaxCLL would explode to ~2e11.
-        let (w, h, row_floats) = (2u32, 2u32, 9usize);
-        let mut data = alloc::vec![1.0e9f32; row_floats * h as usize];
-        let pixels = [[0.5f32; 3], [1.0; 3], [2.0; 3], [0.25; 3]];
-        for (i, p) in pixels.iter().enumerate() {
-            let base = (i / w as usize) * row_floats + (i % w as usize) * 3;
-            data[base..base + 3].copy_from_slice(p);
-        }
-        // `Vec<f32>` is f32-aligned, so the byte view satisfies the slice's
-        // alignment contract; stride 40 is a multiple of the f32 size.
-        let bytes: &[u8] = bytemuck::cast_slice(&data);
-        let px =
-            PixelSlice::new(bytes, w, h, row_floats * 4, PixelDescriptor::RGBF32_LINEAR).unwrap();
-        let cll = ContentLightLevel::measure(px, DiffuseWhite::BT2408).unwrap();
-        // Peak max(R,G,B) = 2.0 → 406; FALL = avg(0.5,1,2,0.25)·203 = 190.3 → 190.
-        assert_eq!(cll.max_content_light_level, 406);
-        assert_eq!(cll.max_frame_average_light_level, 190);
+    fn default_percentile_constant_is_stable() {
+        // Pin the constant — `zenpixels-convert::CllMeasure::measure_percentile`
+        // reads this as its industry-tail default. Any change here breaks the
+        // documented production tail metric.
+        assert_eq!(ContentLightLevel::DEFAULT_PERCENTILE, 0.99999);
     }
 
     #[test]
