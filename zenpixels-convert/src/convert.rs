@@ -274,10 +274,7 @@ pub(crate) enum ConvertStep {
     /// linearize → matrix → encode shape to dispatch. Replaces the 3-step
     /// sequence `[<lin>, GamutMatrix*F32, <enc>]` whenever the planner can
     /// peephole it. See [`FusedKind`] for the supported shapes.
-    Fused {
-        kind: FusedKind,
-        matrix: [f32; 9],
-    },
+    Fused { kind: FusedKind, matrix: [f32; 9] },
     /// BT.2446 Method A HDR→SDR tone-map on linear-light f32 RGB in BT.2020
     /// primaries. The plan builder ensures this step sees BT.2020 linear-light
     /// input via preceding gamut-matrix steps; a following gamut-matrix step
@@ -2257,12 +2254,8 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
                     (ChannelType::U8, TransferFunction::Srgb)
                 }
                 FusedKind::SrgbU16GamutRgb => (ChannelType::U16, TransferFunction::Srgb),
-                FusedKind::SrgbU8ToLinearF32Rgb => {
-                    (ChannelType::F32, TransferFunction::Linear)
-                }
-                FusedKind::LinearF32ToSrgbU8Rgb => {
-                    (ChannelType::U8, TransferFunction::Srgb)
-                }
+                FusedKind::SrgbU8ToLinearF32Rgb => (ChannelType::F32, TransferFunction::Linear),
+                FusedKind::LinearF32ToSrgbU8Rgb => (ChannelType::U8, TransferFunction::Srgb),
             };
             PixelDescriptor::new(ch_type, current.layout(), current.alpha(), transfer)
         }

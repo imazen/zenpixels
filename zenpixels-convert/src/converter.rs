@@ -81,7 +81,8 @@ fn owned_external(t: Box<dyn crate::cms::RowTransformMut>) -> ExternalTransform 
         let sized: alloc::sync::Arc<std::sync::Mutex<BoxedMut>> =
             alloc::sync::Arc::new(std::sync::Mutex::new(BoxedMut(t)));
         // Explicit unsize-coercion to the dyn-typed Arc.
-        let unsized_arc: alloc::sync::Arc<std::sync::Mutex<dyn crate::cms::RowTransformMut>> = sized;
+        let unsized_arc: alloc::sync::Arc<std::sync::Mutex<dyn crate::cms::RowTransformMut>> =
+            sized;
         ExternalTransform::Owned(unsized_arc)
     }
     #[cfg(not(feature = "std"))]
@@ -285,9 +286,7 @@ impl RowConverter {
                 // here so the converter remains usable; the underlying state
                 // is whatever the plugin left it in, which is the plugin's
                 // contract to handle.
-                let mut guard = arc
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut guard = arc.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 guard.transform_row(src, dst, width);
             }
             #[cfg(not(feature = "std"))]

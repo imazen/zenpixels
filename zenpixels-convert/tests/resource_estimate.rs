@@ -328,7 +328,11 @@ fn peak_memory_at_least_destination_buffer() {
 // delegation is structurally correct.
 // ---------------------------------------------------------------------------
 
-fn assert_delegates(actual: &zenpixels_convert::ResourceEstimate, expected: &zenpixels_convert::ResourceEstimate, label: &str) {
+fn assert_delegates(
+    actual: &zenpixels_convert::ResourceEstimate,
+    expected: &zenpixels_convert::ResourceEstimate,
+    label: &str,
+) {
     assert_eq!(
         actual.peak_memory_bytes, expected.peak_memory_bytes,
         "{label}: peak_memory_bytes mismatch ({} vs {})",
@@ -383,7 +387,11 @@ fn estimate_try_add_alpha_delegates_for_gray() {
         TransferFunction::Srgb,
     );
     let expected = buf.estimate_convert_to(&target);
-    assert_delegates(&actual, &expected, "estimate_try_add_alpha (Gray → GrayAlpha)");
+    assert_delegates(
+        &actual,
+        &expected,
+        "estimate_try_add_alpha (Gray → GrayAlpha)",
+    );
 }
 
 #[test]
@@ -539,11 +547,7 @@ fn estimate_convert_to_with_hdr_config_matches_plan() {
     let actual = buf.estimate_convert_to_with_hdr_config(&target, hdr);
     let plan = ConvertPlan::new_with_hdr_config(src, target, hdr).expect("plan");
     let expected = plan.estimate_resources(1024, 1024);
-    assert_delegates(
-        &actual,
-        &expected,
-        "estimate_convert_to_with_hdr_config",
-    );
+    assert_delegates(&actual, &expected, "estimate_convert_to_with_hdr_config");
 }
 
 #[cfg(feature = "hdr-experimental")]
@@ -615,8 +619,7 @@ fn estimate_convert_to_sdr_hdr_includes_measure_max_scan() {
         .expect("measure step in breakdown");
     let pixels = 2048u64 * 2048u64;
     let expected_measure_ms = pixels as f64 / 2_735_000_000.0 * 1000.0;
-    let delta_ratio =
-        (measure_step.time_ms - expected_measure_ms).abs() / expected_measure_ms;
+    let delta_ratio = (measure_step.time_ms - expected_measure_ms).abs() / expected_measure_ms;
     assert!(
         delta_ratio < 0.01,
         "MeasureMaxCll time {:.3} ms != expected {:.3} ms (delta {:.3} %)",
