@@ -16,10 +16,9 @@
 
 use libm::powf;
 
-/// BT.2020 luma weights (used by BT.2446 Method A).
-const LR_2020: f32 = 0.2627;
-const LG_2020: f32 = 0.6780;
-const LB_2020: f32 = 0.0593;
+// BT.2020 luma weights (used by BT.2446 Method A) — shared with the scalar
+// `bt2446a` path via the parent module's `BT2020_L*` constants.
+use super::{BT2020_LB as LB_2020, BT2020_LG as LG_2020, BT2020_LR as LR_2020};
 
 /// Degree-7 monomial polynomial for `x^2.4` on `[0, 1]` (BT.1886 EOTF).
 ///

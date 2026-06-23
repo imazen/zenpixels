@@ -24,10 +24,9 @@
 
 use libm::powf;
 
-/// BT.2020 luma weights (BT.2446 uses BT.2020, not BT.709).
-const LR: f32 = 0.2627;
-const LG: f32 = 0.6780;
-const LB: f32 = 0.0593;
+// BT.2020 luma weights (BT.2446 uses BT.2020, not BT.709) — shared with
+// `bt2446a_simd` and `measure` via the parent module's `BT2020_L*` constants.
+use super::{BT2020_LB as LB, BT2020_LG as LG, BT2020_LR as LR};
 
 /// BT.2446 Method A tonemapper.
 ///

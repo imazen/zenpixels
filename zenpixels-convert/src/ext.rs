@@ -457,21 +457,11 @@ impl PixelBufferConvertExt for PixelBuffer {
         if src.color_model() == crate::ColorModel::Cmyk
             || target.color_model() == crate::ColorModel::Cmyk
         {
-            return crate::ResourceEstimate {
-                peak_memory_bytes: 0,
-                wall_time_ms: 0.0,
-                breakdown: alloc::vec::Vec::new(),
-                confidence: crate::EstimateConfidence::Unknown,
-            };
+            return crate::ResourceEstimate::zero(crate::EstimateConfidence::Unknown);
         }
         match crate::ConvertPlan::new(src, *target) {
             Ok(plan) => plan.estimate_resources(self.width(), self.height()),
-            Err(_) => crate::ResourceEstimate {
-                peak_memory_bytes: 0,
-                wall_time_ms: 0.0,
-                breakdown: alloc::vec::Vec::new(),
-                confidence: crate::EstimateConfidence::Unknown,
-            },
+            Err(_) => crate::ResourceEstimate::zero(crate::EstimateConfidence::Unknown),
         }
     }
 

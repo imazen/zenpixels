@@ -20,6 +20,19 @@
 //! deprecated 2-arg `ContentLightLevel::measure` ships its 0.3.0 removal);
 //! the underlying scan kernels and accuracy contracts are stable.
 
+/// BT.2020 NCL luma coefficients shared by the HDR submodules:
+/// `Y = 0.2627·R + 0.6780·G + 0.0593·B`. Used by [`measure`]'s
+/// `LuminanceBt2020` reduction and by both the scalar [`Bt2446A`] curve
+/// and the SIMD strip kernel. Pinned at the parent-module scope so the
+/// three call sites stay in lock-step (they previously had three copies
+/// under names `LR/LG/LB` + `LR_2020/LG_2020/LB_2020` + `KR/KG/KB`).
+#[cfg(feature = "hdr-experimental")]
+pub(super) const BT2020_LR: f32 = 0.2627;
+#[cfg(feature = "hdr-experimental")]
+pub(super) const BT2020_LG: f32 = 0.6780;
+#[cfg(feature = "hdr-experimental")]
+pub(super) const BT2020_LB: f32 = 0.0593;
+
 /// Content-light-level measurement (experimental).
 ///
 /// Gated behind the `hdr-experimental` Cargo feature. See the parent
