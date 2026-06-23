@@ -56,8 +56,8 @@
 
 use alloc::vec::Vec;
 
-use crate::convert::{ConvertPlan, ConvertStep};
 use crate::PixelDescriptor;
+use crate::convert::{ConvertPlan, ConvertStep};
 
 /// Peak resource cost projection for executing a [`ConvertPlan`].
 ///
@@ -231,10 +231,7 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> (f64, bool) {
                 12 => 104.01,
                 _ => 30.0, // fallback for f16 / other
             };
-            (
-                gib_to_ns_per_mp(g, bpp),
-                matches!(bpp as usize, 3 | 6 | 12),
-            )
+            (gib_to_ns_per_mp(g, bpp), matches!(bpp as usize, 3 | 6 | 12))
         }
         ConvertStep::DropAlpha => {
             // u8 4-byte: 95.90 GiB/s, u16: 133.63, f32: 148.81, f16: 143.11.
@@ -244,10 +241,7 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> (f64, bool) {
                 16 => 148.81,
                 _ => 80.0,
             };
-            (
-                gib_to_ns_per_mp(g, bpp),
-                matches!(bpp as usize, 4 | 8 | 16),
-            )
+            (gib_to_ns_per_mp(g, bpp), matches!(bpp as usize, 4 | 8 | 16))
         }
         ConvertStep::MatteComposite { .. } => {
             // Heuristic: ~ DropAlpha + per-TF linearize/encode. The matte
@@ -541,4 +535,3 @@ pub(crate) fn estimate_plan(plan: &ConvertPlan, width: u32, height: u32) -> Reso
 fn intermediate_after(current: PixelDescriptor, step: &ConvertStep) -> PixelDescriptor {
     crate::convert::intermediate_desc_for_estimate(current, step)
 }
-

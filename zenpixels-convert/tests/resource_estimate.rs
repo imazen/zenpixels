@@ -3,12 +3,12 @@
 //! Numbers come from the 2026-04-23 bench suite (and zentone 2026-06-20
 //! for the HDR tone-map). Tolerance is ±30 % — the public contract.
 
-use zenpixels_convert::{
-    ChannelType, ColorPrimaries, ConvertPlan, EstimateConfidence, PixelDescriptor,
-    PixelBufferConvertExt, TransferFunction,
-};
 use zenpixels::AlphaMode;
 use zenpixels::buffer::PixelBuffer;
+use zenpixels_convert::{
+    ChannelType, ColorPrimaries, ConvertPlan, EstimateConfidence, PixelBufferConvertExt,
+    PixelDescriptor, TransferFunction,
+};
 
 /// Convert a measured bench cost into ms at a given pixel count, then
 /// assert the estimate is within ±30 %.
@@ -36,7 +36,11 @@ fn identity_plan_is_essentially_free() {
     let expected_mem = pixels * 4;
     assert_eq!(est.peak_memory_bytes, expected_mem);
     // memcpy at ~30 GB/s on 64 MB: ~2 ms.
-    assert!(est.wall_time_ms < 5.0, "identity time too high: {}", est.wall_time_ms);
+    assert!(
+        est.wall_time_ms < 5.0,
+        "identity time too high: {}",
+        est.wall_time_ms
+    );
     assert!(est.wall_time_ms >= 0.0);
     // No per-step breakdown for identity.
     assert!(est.breakdown.is_empty());
@@ -50,16 +54,18 @@ fn identity_plan_is_essentially_free() {
 #[test]
 fn pure_srgb_u8_identity_at_4mp() {
     // 2048 × 2048 = 4 MP, RGB8 sRGB → RGB8 sRGB
-    let plan = ConvertPlan::new(
-        PixelDescriptor::RGB8_SRGB,
-        PixelDescriptor::RGB8_SRGB,
-    ).expect("plan");
+    let plan =
+        ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGB8_SRGB).expect("plan");
     let est = plan.estimate_resources(2048, 2048);
     // Memory: 4 MP × 3 bytes = 12 MB.
     let pixels = 2048u64 * 2048u64;
     assert_eq!(est.peak_memory_bytes, pixels * 3);
     // Time: identity memcpy at 30 GB/s = ~12 MB / 30 GB/s = ~0.4 ms.
-    assert!(est.wall_time_ms < 2.0, "pure identity time too high: {}", est.wall_time_ms);
+    assert!(
+        est.wall_time_ms < 2.0,
+        "pure identity time too high: {}",
+        est.wall_time_ms
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +94,11 @@ fn u8_rgb_to_u16_rgba_srgb_4mp_under_30_pct() {
     //  U8ToU16: 112 GiB/s → 4 MB / 112 GiB/s = ~33 µs
     // Total ~63 µs = 0.06 ms.
     assert!(est.wall_time_ms >= 0.0);
-    assert!(est.wall_time_ms < 2.0, "u8→u16 RGBA estimate too high: {}", est.wall_time_ms);
+    assert!(
+        est.wall_time_ms < 2.0,
+        "u8→u16 RGBA estimate too high: {}",
+        est.wall_time_ms
+    );
     assert!(!est.breakdown.is_empty());
 }
 
@@ -116,7 +126,11 @@ fn linear_f32_to_srgb_u8_4mp_matches_bench_within_30_pct() {
     let bench_throughput_gib_s = 4.56;
     let input_bytes_mb = 48.0;
     let expected_ms = input_bytes_mb / (bench_throughput_gib_s * 1.073_741_824) * 1.0;
-    assert_close(est.wall_time_ms, expected_ms, "Linear F32 → sRGB U8 at 4 MP");
+    assert_close(
+        est.wall_time_ms,
+        expected_ms,
+        "Linear F32 → sRGB U8 at 4 MP",
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +160,8 @@ fn hdr_bt2446a_pipeline_at_24mp_matches_bench_within_30_pct() {
             target_peak_nits: 100.0,
             gamut_knee: 0.9,
         },
-    ).expect("plan");
+    )
+    .expect("plan");
 
     // 6144 × 4096 ≈ 24 MP.
     let width = 6144u32;
