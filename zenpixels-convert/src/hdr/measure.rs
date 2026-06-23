@@ -90,6 +90,7 @@ pub enum LightLevelMethod {
 /// lookups are O(bins) after.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
+#[doc(hidden)]
 pub struct LightLevelHistogram {
     bins: Box<[u32]>,
     total: u64,
@@ -414,37 +415,26 @@ fn scan_row_max_mean_smoothed<const N: usize>(row: &[f32], method: LightLevelMet
 /// MaxFALL is always the arithmetic mean (CTA-861.3 spec-literal),
 /// independent of which entrypoint produces the MaxCLL reading.
 pub trait CllMeasure {
-    /// **The recommended default** for HDR MaxCLL / MaxFALL measurement.
+    /// MaxCLL + MaxFALL measurement for HDR content.
     ///
     /// Spec-conformant CTA-861.3 MaxCLL + MaxFALL — literal max + mean.
     /// MaxCLL = the largest single per-pixel light level in the image,
     /// MaxFALL = the arithmetic mean.
     ///
-    /// **Why this is the default.** The 2026-06-22 audited HDR→SDR
-    /// shootout (76 imazen-26 samples × 20 curves × 4 peak methods,
-    /// scored with mean + per-image-percentile ΔE2000 and OKLab
-    /// Euclidean ΔE) crowned `measure_max` on 3 of 6 ranking criteria
-    /// — `mean_de2000`, `pct_above_de5`, and `de_ok_mean` — and was
-    /// within 0.1-1.5 % of the percentile-based winner on the other 3
-    /// tail metrics. On the user-visible "clearly-different fraction"
-    /// (`pct_above_de5`), `measure_max` is 11 % better than the
-    /// percentile alternative. It is also the cheapest method
-    /// (skips the histogram entirely). See
+    /// `method` picks the per-pixel reduction; the same input contract
+    /// holds for all measurements: relative-linear `RgbF32` / `RgbaF32`
+    /// only, with `white` anchoring the relative scale to absolute
+    /// cd/m² (sample `1.0` = `white` nits; [`DiffuseWhite::BT2408`] =
+    /// 203 is the convention). Negative/NaN samples clamp to 0; an
+    /// alpha lane is ignored; strided rows are handled.
+    ///
+    /// Empirically the production-best peak-measurement method per
+    /// the 2026-06-22 audited HDR→SDR shootout (76 imazen-26 samples
+    /// × 20 curves × 4 peak methods, scored with mean + per-image-
+    /// percentile ΔE2000 and OKLab Euclidean ΔE). Won 3 of 6 ranking
+    /// criteria including the user-visible `pct_above_de5` by 11 %
+    /// over the closest alternative. See
     /// `zen/zentone/benchmarks/shootout_2026-06-22_findings_v2.md`.
-    ///
-    /// **When to pick something else.** Production HDR pipelines with a
-    /// defect-noisy capture path (sensor noise, stuck pixels, denormal
-    /// escapes) where a few single hot pixels would over-tone-map the
-    /// frame may want the percentile escape hatch — call
-    /// [`measure_percentile`](Self::measure_percentile) with
-    /// [`DEFAULT_PERCENTILE`](ContentLightLevel::DEFAULT_PERCENTILE)
-    /// (0.99999, empirically validated as the tail-tightest value in
-    /// the shootout). The percentile path wins ~1.5 % on the worst
-    /// 1-5 % of pixels at the cost of ~11 % more "clearly different"
-    /// pixels overall.
-    ///
-    /// `method` picks the per-pixel reduction. Same input contract as
-    /// [`measure_histogram`](Self::measure_histogram).
     ///
     /// **SOTA performance.** This is the hot path for spec-conformant
     /// CLL metadata — the kind of measurement that runs on every frame
@@ -533,6 +523,7 @@ pub trait CllMeasure {
     /// Same input contract as [`measure_histogram`](Self::measure_histogram).
     /// MaxFALL is always the arithmetic mean (CTA-861.3 / spec-literal),
     /// independent of `percentile`.
+    #[doc(hidden)]
     fn measure_percentile(
         px: PixelSlice<'_>,
         white: DiffuseWhite,
@@ -557,6 +548,7 @@ pub trait CllMeasure {
     /// Returns `None` for non-relative-linear `RgbF32`/`RgbaF32` input;
     /// `Some(empty)` for zero-area input (`total_pixels() == 0`,
     /// readouts return `0.0`). Strided rows handled; alpha ignored.
+    #[doc(hidden)]
     fn measure_histogram(
         px: PixelSlice<'_>,
         white: DiffuseWhite,

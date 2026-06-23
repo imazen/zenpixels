@@ -167,6 +167,7 @@ impl ContentLightLevel {
     /// Used by `CllMeasure::measure_robust` in `zenpixels-convert`.
     /// Explicit callers who want a non-default percentile pass their own
     /// value to `CllMeasure::measure_percentile`.
+    #[doc(hidden)]
     pub const DEFAULT_PERCENTILE: f32 = 0.99999;
 
     /// **Deprecated (0.2.15), hidden.** Computes the *literal* MaxCLL — the
