@@ -10,14 +10,13 @@
 //! based, percentile-aware, SIMD-accelerated), see the `measure` module
 //! and the `CllMeasure` extension trait in `zenpixels-convert`.
 
-// `PixelFormat` / `PixelSlice` / `TransferFunction` are intentionally NOT
-// imported here. The 0.2.15 release left them in for the deprecated
-// `ContentLightLevel::measure` inherent method; that method was removed in
-// 0.2.16 (per CHANGELOG QUEUED BREAKING CHANGES) — the canonical replacement
-// is `zenpixels_convert::hdr::measure::CllMeasure::measure_max` (and the
-// other histogram-based readouts on the trait). This module is now pure
-// metadata / anchor types: scalar `DiffuseWhite`, the `ContentLightLevel`
-// struct, and `MasteringDisplay`, with no pixel-data reduction.
+// `PixelSlice` is imported only for the deprecated `ContentLightLevel::measure`
+// inherent-method SHIM — body is `unimplemented!()`, kept in 0.2.16 so the
+// API surface stays semver-stable while the actual measurement logic lives
+// in `zenpixels_convert::hdr::measure::CllMeasure::measure_max` (the
+// audited production-best path). Removal of the shim itself stays queued
+// for the next breaking release.
+use crate::PixelSlice;
 
 /// The absolute luminance, in cd/m² (nits), that a relative-linear sample
 /// value of `1.0` represents — the "diffuse white" (a.k.a. nominal diffuse
@@ -142,6 +141,39 @@ impl ContentLightLevel {
     /// value to `CllMeasure::measure_percentile`.
     #[doc(hidden)]
     pub const DEFAULT_PERCENTILE: f32 = 0.99999;
+
+    /// **Removed in 0.2.16** — the literal-max measurement logic moved to
+    /// [`zenpixels_convert::hdr::measure::CllMeasure::measure_max`] in
+    /// the 0.2.16 cleanup pass (per the audited shootout's production-best
+    /// recommendation).
+    ///
+    /// This shim is kept on the type so the API signature stays
+    /// semver-stable through the 0.2.x line — but the body is
+    /// `unimplemented!()` so any actual caller that bypasses the
+    /// deprecation warning gets a clear runtime panic pointing at the
+    /// replacement. Removal of the shim is queued for the next breaking
+    /// release.
+    ///
+    /// **Use [`zenpixels_convert::hdr::measure::CllMeasure::measure_max`]
+    /// instead** — it's the SOTA spec-conformant CLL reading, won the
+    /// 2026-06-22 audited HDR→SDR shootout on 3 of 6 ranking criteria
+    /// including the user-visible `pct_above_de5`, and runs at ≥1 Gpix/s
+    /// on Zen 4 / AVX2.
+    #[must_use]
+    #[doc(hidden)]
+    #[deprecated(
+        since = "0.2.16",
+        note = "moved to zenpixels_convert::hdr::measure::CllMeasure::measure_max. This shim panics with unimplemented!() if invoked. Removal queued for the next breaking release."
+    )]
+    pub fn measure(_px: PixelSlice<'_>, _white: DiffuseWhite) -> Option<Self> {
+        unimplemented!(
+            "ContentLightLevel::measure moved to \
+             zenpixels_convert::hdr::measure::CllMeasure::measure_max in 0.2.16. \
+             Update your call sites — this shim is kept only for semver-stable \
+             signatures through the 0.2.x line and will be removed in the next \
+             breaking release."
+        );
+    }
 }
 
 /// Mastering display color volume metadata (SMPTE ST 2086).
