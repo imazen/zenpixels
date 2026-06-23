@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpixels.txt 833 lines (supported surface) | zenpixels.features.txt 264 added (features: icc,imgref,planar,rgb,serde,std) | zenpixels.internal.txt 81 lines (82 hidden + 0 excluded-feature)
+# files: zenpixels.txt 811 lines (supported surface) | zenpixels.features.txt 269 added (features: icc,imgref,planar,rgb,serde,std) | zenpixels.internal.txt 74 lines (74 hidden + 0 excluded-feature)
 
 ## summary
 #
@@ -14,27 +14,27 @@
 #   pub types (struct/enum/trait/alias)        76
 #   pub consts/statics                        276
 #   free functions                              4
-#   inherent methods                          232
+#   inherent methods                          210
 #   struct fields                             107
 #   enum variants                             208
 #   re-exports                                  4
-#   trait roster entries (type × trait)       239
+#   trait roster entries (type × trait)       237
 #   auto-trait-complete types                  34
 #   auto-trait exceptions                       4
 #
 # per-module pub lines:
 #   (root)                          393
-#   buffer                          212
+#   buffer                          192
 #   cicp                             27
-#   color                            64
+#   color                            60
 #   descriptor                      148
-#   hdr                              15
+#   hdr                              17
 #   icc                              13
 #   orientation                      11
 #   pixel_types                       9
 #   policy                           25
 
-## items (787 lines)
+## items (765 lines)
 
 pub mod zenpixels
 pub use At
@@ -59,7 +59,6 @@ pub buffer::InPlacePixels::descriptor: descriptor::PixelDescriptor
 pub buffer::InPlacePixels::rows: u32
 pub buffer::InPlacePixels::stride: usize
 pub buffer::InPlacePixels::width: u32
-pub fn buffer::InPlacePixels<'a>::new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<color::ColorContext>>) -> Self
 pub fn buffer::PixelBuffer::from_vec(alloc::vec::Vec<u8>, u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::new(u32, u32, descriptor::PixelDescriptor) -> Self
 pub fn buffer::PixelBuffer::new_simd_aligned(u32, u32, descriptor::PixelDescriptor, usize) -> Self
@@ -88,11 +87,8 @@ pub fn buffer::PixelBuffer<P>::stride(&self) -> usize
 pub fn buffer::PixelBuffer<P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelBuffer<Q>>
 pub fn buffer::PixelBuffer<P>::width(&self) -> u32
 pub fn buffer::PixelBuffer<P>::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self
-pub fn buffer::PixelBuffer<P>::with_cicp(self, cicp::Cicp) -> Self
 pub fn buffer::PixelBuffer<P>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
 pub fn buffer::PixelBuffer<P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
-pub fn buffer::PixelBuffer<P>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
-pub fn buffer::PixelBuffer<P>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
 pub fn buffer::PixelBuffer<P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
 pub fn buffer::PixelBuffer<P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelBuffer<P>::with_transfer(self, descriptor::TransferFunction) -> Self
@@ -114,11 +110,8 @@ pub fn buffer::PixelSlice<'a, P>::sub_rows(&self, u32, u32) -> buffer::PixelSlic
 pub fn buffer::PixelSlice<'a, P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelSlice<'a, Q>>
 pub fn buffer::PixelSlice<'a, P>::width(&self) -> u32
 pub fn buffer::PixelSlice<'a, P>::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self
-pub fn buffer::PixelSlice<'a, P>::with_cicp(self, cicp::Cicp) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
-pub fn buffer::PixelSlice<'a, P>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
-pub fn buffer::PixelSlice<'a, P>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
@@ -139,11 +132,8 @@ pub fn buffer::PixelSliceMut<'a, P>::sub_rows_mut(&mut self, u32, u32) -> buffer
 pub fn buffer::PixelSliceMut<'a, P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelSliceMut<'a, Q>>
 pub fn buffer::PixelSliceMut<'a, P>::width(&self) -> u32
 pub fn buffer::PixelSliceMut<'a, P>::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self
-pub fn buffer::PixelSliceMut<'a, P>::with_cicp(self, cicp::Cicp) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
-pub fn buffer::PixelSliceMut<'a, P>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
-pub fn buffer::PixelSliceMut<'a, P>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
@@ -208,9 +198,7 @@ pub fn color::ColorContext::from_icc(impl core::convert::Into<alloc::sync::Arc<[
 pub fn color::ColorContext::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
 pub fn color::ColorContext::is_srgb(&self) -> bool
 pub fn color::ColorContext::transfer_function(&self) -> descriptor::TransferFunction
-pub fn color::ColorContext::with_cicp(self, cicp::Cicp) -> Self
 pub fn color::ColorContext::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
-pub fn color::ColorContext::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
 pub color::ColorOrigin::cicp: core::option::Option<cicp::Cicp>
 pub color::ColorOrigin::color_authority: color::ColorAuthority
 pub color::ColorOrigin::icc: core::option::Option<alloc::sync::Arc<[u8]>>
@@ -387,6 +375,7 @@ pub const fn descriptor::PixelDescriptor::with_transfer(self, descriptor::Transf
 pub mod hdr
 pub hdr::ContentLightLevel::max_content_light_level: u16
 pub hdr::ContentLightLevel::max_frame_average_light_level: u16
+pub fn hdr::ContentLightLevel::measure(buffer::PixelSlice<'_>, hdr::DiffuseWhite) -> core::option::Option<Self>
 pub const fn hdr::ContentLightLevel::new(u16, u16) -> Self [also: (root)]
 pub const hdr::DiffuseWhite::BT2408: Self
 pub const fn hdr::DiffuseWhite::new(f32) -> Self [also: (root)]
@@ -633,9 +622,7 @@ pub fn color::ColorContext::from_icc(impl core::convert::Into<alloc::sync::Arc<[
 pub fn color::ColorContext::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
 pub fn color::ColorContext::is_srgb(&self) -> bool
 pub fn color::ColorContext::transfer_function(&self) -> descriptor::TransferFunction
-pub fn color::ColorContext::with_cicp(self, cicp::Cicp) -> Self
 pub fn color::ColorContext::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
-pub fn color::ColorContext::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
 #[non_exhaustive] pub struct ColorOrigin [also: color]
 pub ColorOrigin::cicp: core::option::Option<cicp::Cicp>
 pub ColorOrigin::color_authority: color::ColorAuthority
@@ -650,6 +637,7 @@ pub fn color::ColorOrigin::with_color_authority(self, color::ColorAuthority) -> 
 pub struct ContentLightLevel [also: hdr]
 pub ContentLightLevel::max_content_light_level: u16
 pub ContentLightLevel::max_frame_average_light_level: u16
+pub fn hdr::ContentLightLevel::measure(buffer::PixelSlice<'_>, hdr::DiffuseWhite) -> core::option::Option<Self>
 #[non_exhaustive] pub struct ConvertOptions [also: policy]
 pub ConvertOptions::alpha_policy: policy::AlphaPolicy
 pub ConvertOptions::clip_out_of_gamut: bool
@@ -667,14 +655,13 @@ pub GrayAlpha8::v: u8
 #[repr(C)] pub struct GrayAlphaF32 [also: pixel_types]
 pub GrayAlphaF32::a: f32
 pub GrayAlphaF32::v: f32
-#[non_exhaustive] pub struct InPlacePixels<'a> [also: buffer]
+pub struct InPlacePixels<'a> [also: buffer]
 pub InPlacePixels::bytes: &'a mut [u8]
 pub InPlacePixels::color: core::option::Option<alloc::sync::Arc<color::ColorContext>>
 pub InPlacePixels::descriptor: descriptor::PixelDescriptor
 pub InPlacePixels::rows: u32
 pub InPlacePixels::stride: usize
 pub InPlacePixels::width: u32
-pub fn buffer::InPlacePixels<'a>::new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<color::ColorContext>>) -> Self
 pub struct MasteringDisplay [also: hdr]
 pub MasteringDisplay::max_luminance: f32
 pub MasteringDisplay::min_luminance: f32
@@ -711,11 +698,8 @@ pub fn buffer::PixelBuffer<P>::stride(&self) -> usize
 pub fn buffer::PixelBuffer<P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelBuffer<Q>>
 pub fn buffer::PixelBuffer<P>::width(&self) -> u32
 pub fn buffer::PixelBuffer<P>::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self
-pub fn buffer::PixelBuffer<P>::with_cicp(self, cicp::Cicp) -> Self
 pub fn buffer::PixelBuffer<P>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
 pub fn buffer::PixelBuffer<P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
-pub fn buffer::PixelBuffer<P>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
-pub fn buffer::PixelBuffer<P>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
 pub fn buffer::PixelBuffer<P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
 pub fn buffer::PixelBuffer<P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelBuffer<P>::with_transfer(self, descriptor::TransferFunction) -> Self
@@ -779,11 +763,8 @@ pub fn buffer::PixelSlice<'a, P>::sub_rows(&self, u32, u32) -> buffer::PixelSlic
 pub fn buffer::PixelSlice<'a, P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelSlice<'a, Q>>
 pub fn buffer::PixelSlice<'a, P>::width(&self) -> u32
 pub fn buffer::PixelSlice<'a, P>::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self
-pub fn buffer::PixelSlice<'a, P>::with_cicp(self, cicp::Cicp) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
-pub fn buffer::PixelSlice<'a, P>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
-pub fn buffer::PixelSlice<'a, P>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
@@ -805,11 +786,8 @@ pub fn buffer::PixelSliceMut<'a, P>::sub_rows_mut(&mut self, u32, u32) -> buffer
 pub fn buffer::PixelSliceMut<'a, P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelSliceMut<'a, Q>>
 pub fn buffer::PixelSliceMut<'a, P>::width(&self) -> u32
 pub fn buffer::PixelSliceMut<'a, P>::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self
-pub fn buffer::PixelSliceMut<'a, P>::with_cicp(self, cicp::Cicp) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
-pub fn buffer::PixelSliceMut<'a, P>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
-pub fn buffer::PixelSliceMut<'a, P>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
@@ -838,7 +816,7 @@ buffer::PixelSliceMut<'a>: From<buffer::PixelSliceMut<'a, P>>
 buffer::Rgbx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 cicp::Cicp: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 color::ColorAuthority: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
-color::ColorContext: Clone, Debug, Default, Eq, PartialEq
+color::ColorContext: Clone, Debug, Default, PartialEq
 color::ColorOrigin: Clone, Debug, Eq, PartialEq
 color::ColorProfileSource<'a>: Clone, Debug, Eq, PartialEq
 color::ColorProvenance: Clone, Copy, Debug, Eq, Hash, PartialEq
@@ -854,7 +832,7 @@ descriptor::PixelFormat: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::SignalRange: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
 descriptor::TransferFunction: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 hdr::ContentLightLevel: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
-hdr::DiffuseWhite: Clone, Copy, Debug, Default, Eq, PartialEq
+hdr::DiffuseWhite: Clone, Copy, Debug, Default, PartialEq
 hdr::MasteringDisplay: Clone, Copy, Debug, Default, PartialEq
 icc::IccIdentification: Clone, Copy, Debug, Eq, Hash, PartialEq
 icc::IdentificationUse: Clone, Copy, Debug, Eq, Hash, PartialEq

@@ -10,20 +10,20 @@
 ## summary
 #
 #   pub modules                                 1
-#   pub types (struct/enum/trait/alias)        16
+#   pub types (struct/enum/trait/alias)        18
 #   pub consts/statics                         56
 #   inherent methods                           98
-#   struct fields                              16
+#   struct fields                              20
 #   enum variants                              54
 #   trait roster entries (type × trait)       107
-#   auto-trait-complete types                   8
+#   auto-trait-complete types                   9
 #
 # per-module pub lines:
-#   (root)                           90
+#   (root)                           93
 #   buffer                           34
-#   planar                          117
+#   planar                          120
 
-## items (210 lines)
+## items (215 lines)
 
 pub fn buffer::PixelBuffer::as_contiguous_pixels<P: buffer::Pixel>(&self) -> core::option::Option<&[P]>
 pub fn buffer::PixelBuffer::from_pixels_erased<P: buffer::Pixel>(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
@@ -115,6 +115,8 @@ pub fn planar::MultiPlaneImage::new(planar::PlaneLayout, alloc::vec::Vec<buffer:
 pub fn planar::MultiPlaneImage::origin(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
 pub fn planar::MultiPlaneImage::plane_count(&self) -> usize
 pub fn planar::MultiPlaneImage::with_origin(self, alloc::sync::Arc<color::ColorContext>) -> Self
+pub planar::Plane::buffer: buffer::PixelBuffer
+pub planar::Plane::semantic: planar::PlaneSemantic
 pub planar::PlaneDescriptor::channel_type: descriptor::ChannelType
 pub planar::PlaneDescriptor::h_subsample: u8
 pub planar::PlaneDescriptor::semantic: planar::PlaneSemantic
@@ -138,7 +140,7 @@ pub const fn planar::PlaneMask::intersection(self, Self) -> Self [also: (root)]
 pub const fn planar::PlaneMask::is_empty(&self) -> bool [also: (root)]
 pub const fn planar::PlaneMask::single(usize) -> Self [also: (root)]
 pub const fn planar::PlaneMask::union(self, Self) -> Self [also: (root)]
-#[non_exhaustive] pub enum PlaneLayout [also: planar]
+pub enum PlaneLayout [also: planar]
 pub PlaneLayout::Interleaved
 pub PlaneLayout::Interleaved::channels: u8
 pub PlaneLayout::Planar
@@ -197,7 +199,7 @@ pub YuvMatrix::Bt2020 = 3
 pub YuvMatrix::Bt601 = 1
 pub YuvMatrix::Bt709 = 2
 pub YuvMatrix::Identity = 0
-#[non_exhaustive] pub struct MultiPlaneImage [also: planar]
+pub struct MultiPlaneImage [also: planar]
 pub fn planar::MultiPlaneImage::buffer(&self, usize) -> core::option::Option<&buffer::PixelBuffer>
 pub fn planar::MultiPlaneImage::buffer_mut(&mut self, usize) -> core::option::Option<&mut buffer::PixelBuffer>
 pub fn planar::MultiPlaneImage::buffers(&self) -> &[buffer::PixelBuffer]
@@ -224,6 +226,9 @@ pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::strip_alpha_to_r
 pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::swap_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
 pub fn buffer::PixelSliceMut<'a, buffer::Bgrx>::upgrade_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
 pub fn buffer::PixelSliceMut<'a, buffer::Rgbx>::upgrade_to_rgba(self) -> buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>
+pub struct Plane [also: planar]
+pub Plane::buffer: buffer::PixelBuffer
+pub Plane::semantic: planar::PlaneSemantic
 pub struct PlaneDescriptor [also: planar]
 pub PlaneDescriptor::channel_type: descriptor::ChannelType
 pub PlaneDescriptor::h_subsample: u8
@@ -294,4 +299,4 @@ rgb::formats::rgba::Rgba<u8>: buffer::Pixel
 
 ## auto traits
 
-8 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+9 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe

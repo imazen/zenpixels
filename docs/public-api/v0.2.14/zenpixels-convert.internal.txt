@@ -1,0 +1,90 @@
+# zenpixels-convert public API — doc(hidden) items and excluded-feature surface
+# excluded features: __bench_orient,__bench_scan,__bench_u16_hybrids,__trace_ops
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   pub modules                                 3
+#   pub types (struct/enum/trait/alias)         2
+#   free functions                              9
+#   inherent methods                           18
+#   struct fields                               4
+#   trait roster entries (type × trait)        28
+#   auto-trait-complete types                   2
+#
+# per-module pub lines:
+#   (root)                            6
+#   __bench_scan                     17
+#   __bench_u16_hybrids               4
+#   __trace_ops                       2
+#   cms                               2
+#   icc_profiles                      1
+#   orient                            2
+#   pipeline                          2
+
+## items (36 lines)
+
+pub fn ConversionCost::assert_fields_are_eq(&self)
+pub fn ConvertIntent::assert_fields_are_eq(&self)
+pub fn Provenance::assert_fields_are_eq(&self)
+pub fn __bench_scan::FusedRequest::assert_fields_are_eq(&self)
+pub fn __bench_scan::FusedRequest::clone(&self) -> __bench_scan::FusedRequest
+pub fn __bench_scan::FusedRequest::default() -> __bench_scan::FusedRequest
+pub fn __bench_scan::FusedRequest::eq(&self, &__bench_scan::FusedRequest) -> bool
+pub fn __bench_scan::FusedRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn __bench_scan::FusedResult::assert_fields_are_eq(&self)
+pub fn __bench_scan::FusedResult::clone(&self) -> __bench_scan::FusedResult
+pub fn __bench_scan::FusedResult::default() -> __bench_scan::FusedResult
+pub fn __bench_scan::FusedResult::eq(&self, &__bench_scan::FusedResult) -> bool
+pub fn __bench_scan::FusedResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn __bench_scan::fused_predicates_rgba8_cg(&[u8], __bench_scan::FusedRequest) -> __bench_scan::FusedResult
+pub fn __bench_u16_hybrids::lut_lut(&[[f32; 3]; 3], &[u16], &mut [u16])
+pub fn __bench_u16_hybrids::lut_poly(&[[f32; 3]; 3], &[u16], &mut [u16])
+pub fn __bench_u16_hybrids::poly_lut(&[[f32; 3]; 3], &[u16], &mut [u16])
+pub fn __bench_u16_hybrids::poly_poly(&[[f32; 3]; 3], &[u16], &mut [u16])
+pub fn __trace_ops::start_recording()
+pub fn __trace_ops::stop_recording() -> alloc::vec::Vec<&'static str>
+pub fn cms::ColorPriority::assert_fields_are_eq(&self)
+pub fn cms::RenderingIntent::assert_fields_are_eq(&self)
+pub fn icc_profiles::SynthesizedIcc::assert_fields_are_eq(&self)
+pub fn orient::__bench_apply_orientation_scalar(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation) -> zenpixels::buffer::PixelBuffer
+pub fn orient::__bench_apply_orientation_staged(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), error::ConvertError>
+pub fn pipeline::op_format::OpCategory::assert_fields_are_eq(&self)
+pub fn pipeline::path::LossBucket::assert_fields_are_eq(&self)
+pub mod __bench_scan
+pub mod __bench_u16_hybrids
+pub mod __trace_ops
+pub struct __bench_scan::FusedRequest
+pub struct __bench_scan::FusedResult
+pub __bench_scan::FusedRequest::check_grayscale: bool
+pub __bench_scan::FusedRequest::check_opaque: bool
+pub __bench_scan::FusedResult::is_grayscale: bool
+pub __bench_scan::FusedResult::is_opaque: bool
+
+## trait impls (16 types)
+
+ConversionCost: TrivialClone
+ConvertIntent: TrivialClone
+FormatOption: TrivialClone
+Provenance: TrivialClone
+__bench_scan::FusedRequest: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
+__bench_scan::FusedResult: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
+cms::ColorPriority: TrivialClone
+cms::RenderingIntent: TrivialClone
+cms_moxcms::MoxCms: TrivialClone
+hdr::HdrMetadata: TrivialClone
+load_bearing::LoadBearingReport: TrivialClone
+pipeline::op_format::OpCategory: TrivialClone
+pipeline::op_format::OpRequirement: TrivialClone
+pipeline::path::LossBucket: TrivialClone
+pipeline::path::QualityThreshold: TrivialClone
+pipeline::registry::FormatEntry: TrivialClone
+
+## auto traits
+
+2 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe

@@ -1,5 +1,5 @@
 # zenpixels-convert public API — doc(hidden) items and excluded-feature surface
-# excluded features: __bench_orient,__bench_scan,__bench_u16_hybrids,__trace_ops
+# excluded features: __bench_orient,__bench_scan,__bench_u16_hybrids,__hdr-e2e-test,__trace_ops
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -10,25 +10,37 @@
 ## summary
 #
 #   pub modules                                 3
-#   pub types (struct/enum/trait/alias)         2
-#   free functions                              9
-#   inherent methods                           18
+#   pub types (struct/enum/trait/alias)         4
+#   pub consts/statics                          3
+#   free functions                             15
+#   inherent methods                           40
 #   struct fields                               4
-#   trait roster entries (type × trait)        28
+#   trait roster entries (type × trait)        34
 #   auto-trait-complete types                   2
 #
 # per-module pub lines:
-#   (root)                            6
+#   (root)                            9
 #   __bench_scan                     17
 #   __bench_u16_hybrids               4
 #   __trace_ops                       2
 #   cms                               2
+#   estimate                          1
+#   hdr                              25
 #   icc_profiles                      1
 #   orient                            2
 #   pipeline                          2
+#   zenpixels                         4
 
-## items (36 lines)
+## items (65 lines)
 
+#[non_exhaustive] pub struct hdr::LightLevelHistogram [also: hdr::measure]
+pub const hdr::measure::LightLevelHistogram::BIN_MAX_NITS: f32
+pub const hdr::measure::LightLevelHistogram::BIN_MIN_NITS: f32
+pub const hdr::measure::LightLevelHistogram::NUM_BINS: usize
+pub fn zenpixels::hdr::ContentLightLevel::measure_histogram(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
+pub fn zenpixels::hdr::ContentLightLevel::measure_max_smoothed(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
+pub fn zenpixels::hdr::ContentLightLevel::measure_percentile(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, f32, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
+pub fn zenpixels::hdr::ContentLightLevel::measure_robust(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
 pub fn ConversionCost::assert_fields_are_eq(&self)
 pub fn ConvertIntent::assert_fields_are_eq(&self)
 pub fn Provenance::assert_fields_are_eq(&self)
@@ -51,11 +63,32 @@ pub fn __trace_ops::start_recording()
 pub fn __trace_ops::stop_recording() -> alloc::vec::Vec<&'static str>
 pub fn cms::ColorPriority::assert_fields_are_eq(&self)
 pub fn cms::RenderingIntent::assert_fields_are_eq(&self)
+pub fn estimate::EstimateConfidence::assert_fields_are_eq(&self)
+pub fn exposure_tonemap(f32, f32) -> f32 [also: hdr]
+pub fn hdr::CllMeasure::measure_histogram(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
+pub fn hdr::CllMeasure::measure_max_smoothed(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
+pub fn hdr::CllMeasure::measure_percentile(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, f32, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
+pub fn hdr::CllMeasure::measure_robust(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
+pub fn hdr::measure::CllMeasure::measure_histogram(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
+pub fn hdr::measure::CllMeasure::measure_max_smoothed(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
+pub fn hdr::measure::CllMeasure::measure_percentile(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, f32, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
+pub fn hdr::measure::CllMeasure::measure_robust(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
+pub fn hdr::measure::LightLevelHistogram::bins(&self) -> &[u32]
+pub fn hdr::measure::LightLevelHistogram::clone(&self) -> hdr::measure::LightLevelHistogram
+pub fn hdr::measure::LightLevelHistogram::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn hdr::measure::LightLevelHistogram::max(&self) -> f32
+pub fn hdr::measure::LightLevelHistogram::mean(&self) -> f32
+pub fn hdr::measure::LightLevelHistogram::method(&self) -> hdr::measure::LightLevelMethod
+pub fn hdr::measure::LightLevelHistogram::percentile(&self, f32) -> f32
+pub fn hdr::measure::LightLevelHistogram::total_pixels(&self) -> u64
+pub fn hdr::measure::LightLevelMethod::assert_fields_are_eq(&self)
 pub fn icc_profiles::SynthesizedIcc::assert_fields_are_eq(&self)
 pub fn orient::__bench_apply_orientation_scalar(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation) -> zenpixels::buffer::PixelBuffer
 pub fn orient::__bench_apply_orientation_staged(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), error::ConvertError>
 pub fn pipeline::op_format::OpCategory::assert_fields_are_eq(&self)
 pub fn pipeline::path::LossBucket::assert_fields_are_eq(&self)
+pub fn reinhard_inverse(f32) -> f32 [also: hdr]
+pub fn reinhard_tonemap(f32) -> f32 [also: hdr]
 pub mod __bench_scan
 pub mod __bench_u16_hybrids
 pub mod __trace_ops
@@ -66,18 +99,23 @@ pub __bench_scan::FusedRequest::check_opaque: bool
 pub __bench_scan::FusedResult::is_grayscale: bool
 pub __bench_scan::FusedResult::is_opaque: bool
 
-## trait impls (16 types)
+## trait impls (21 types)
 
 ConversionCost: TrivialClone
 ConvertIntent: TrivialClone
 FormatOption: TrivialClone
+HdrConfig: TrivialClone
 Provenance: TrivialClone
 __bench_scan::FusedRequest: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
 __bench_scan::FusedResult: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
 cms::ColorPriority: TrivialClone
 cms::RenderingIntent: TrivialClone
 cms_moxcms::MoxCms: TrivialClone
+estimate::EstimateConfidence: TrivialClone
+hdr::Bt2446A: TrivialClone
 hdr::HdrMetadata: TrivialClone
+hdr::measure::LightLevelHistogram: Clone, Debug
+hdr::measure::LightLevelMethod: TrivialClone
 load_bearing::LoadBearingReport: TrivialClone
 pipeline::op_format::OpCategory: TrivialClone
 pipeline::op_format::OpRequirement: TrivialClone
