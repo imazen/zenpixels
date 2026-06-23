@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### zenpixels-convert — changed (drop ThreadingInformation; factor e2e crate)
+
+- **`ThreadingInformation` removed from the public API; cores-vs-wall scaling
+  is now inlined in `estimate_plan`.** The struct (private fields `parallel`
+  + `max_efficient_threads`), its three constructors
+  (`SERIAL` / `parallel(_)` / `parallel_unknown_knee()`), its three accessors
+  (`is_parallel`, `max_efficient_threads`, `effective_threads`), the
+  `ResourceEstimate::threading` field + `with_threading()` builder +
+  `threading()` accessor, and `ResourceEstimate::at_cores()` are all
+  removed. The wall-time-vs-cores model is unchanged in behavior: per-step
+  parallel knee = `rows / 64` clamped to `[1, 16]`; the smallest knee across
+  parallel steps caps the useful thread count; any SERIAL step disables the
+  scaling — the math just lives inside `estimate_plan`'s `finalize()` now
+  instead of being driven by a carried `ThreadingInformation`. Additive
+  reduction of the unreleased 0.2.15 estimate surface (`cargo semver-checks
+  --baseline-version 0.2.14` PASS 196/196 with `hdr-experimental` +
+  `pipeline` + `cms-moxcms` + `rgb` features) — the four remaining estimate
+  types (`ResourceEstimate`, `ComputeEnvironment`, `ImageCharacteristics`,
+  `SimdTier`) still match the `zencodec::estimate::*` shape for the
+  decode → convert → encode pipeline boundary. README + module docs +
+  `convert.rs` docstring updated.
+- **Test-only e2e deps factored into a new `zenpixels-convert-e2e`
+  workspace member.** The producer-SDR ΔE2000 regression test
+  (`tests/hdr_producer_sdr_match.rs`) and its `__hdr-e2e-test` Cargo
+  feature lived inside `zenpixels-convert/Cargo.toml`, dragging in
+  optional `zenjpeg` + `anyhow` deps plus a `[[test]]` block and an
+  18-line cycle-avoidance comment for one test file. Moved to a
+  dedicated `zenpixels-convert-e2e/` crate (`publish = false`,
+  `version = "0.0.0"`, empty `src/lib.rs` stub, dev-deps pointing at the
+  local `zenpixels-convert` + sibling `../../zenjpeg/zenjpeg`). The
+  workspace `[patch.crates-io]` block (which patches `ultrahdr-core` to
+  the unpublished GitHub main + patches `zenpixels` to the local member)
+  carries through unchanged — only consulted when the e2e crate is in
+  the dep graph. Run via `cargo test -p zenpixels-convert-e2e`; the test
+  still silently skips when the imazen-26 corpus is absent.
+- The main `zenpixels-convert/Cargo.toml` is now free of test-only
+  optional deps; the only remaining optional deps are the production
+  ones (`rgb`, `lz4_flex`, `moxcms`, `serde`).
+
 ### zenpixels-convert — changed (foundation-crate layering restored)
 
 - **`zencodec` dep dropped; the five estimate types are now defined LOCALLY
