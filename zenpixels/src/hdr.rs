@@ -127,23 +127,36 @@ impl ContentLightLevel {
         }
     }
 
-    /// Industry-default percentile for defect-tolerant MaxCLL.
+    /// Production-recommended percentile for defect-tolerant MaxCLL.
     ///
-    /// `0.9999` — the 99.99th percentile, dropping the top 0.01 % of
-    /// pixels as the outlier budget. What libplacebo (`pl_color_space_infer`'s
-    /// HDR analysis), DaVinci Resolve, x265's `--master-display` helpers,
-    /// and most HDR10+ mastering tools pick when they want defect-rejection
-    /// without a manual per-content choice. Drops single stuck pixels,
-    /// sensor-noise spikes, and specular blowouts; preserves normal bright
-    /// content (skies, snow, highlights).
+    /// `0.99999` — the 99.999th percentile, dropping the top 0.001 % of
+    /// pixels as the outlier budget. Chosen empirically over the prior
+    /// 0.9999 default after the 2026-06-22 audited HDR→SDR shootout
+    /// (76 imazen-26 gain-mapped samples × 20 curves × 4 peak methods,
+    /// scored as mean ΔE2000 against the producer SDR base, plus per-image
+    /// p95/p99 ΔE2000 and OKLab Euclidean ΔE for tail awareness). Under
+    /// every tail-aware metric (`de2000_p95`, `de2000_p99`, `de_ok_p95`)
+    /// `measure_percentile @ 0.99999` led the corpus; under `mean_de2000`
+    /// it was within 1 % of the literal-max winner. See
+    /// `zen/zentone/benchmarks/shootout_2026-06-22_findings_v2.md` for
+    /// the per-criterion top-5 and the recommended-combo derivation.
     ///
-    /// **Sparse-bright cliff.** Content that occupies < 0.01 % of pixels
-    /// is silently dropped at any image size. For 100k pixels that's
-    /// anything below ~10 pixels; for 1M pixels, below ~100 pixels;
-    /// for typical small images (< 10 000 pixels) the fraction rounds
-    /// to "any single bright pixel". Astrophotography, fireworks, candle-
-    /// in-dark-room content where every bright pixel is legitimate should
-    /// use the spec-literal max reading instead.
+    /// Drops single stuck pixels, sensor-noise spikes, specular blowouts,
+    /// and the ~0.01 % saturated-defect tail that the looser 0.9999
+    /// percentile mistook for content. Preserves normal bright content
+    /// (skies, snow, highlights, bokeh) including saturated specular
+    /// flowers, which the looser 0.9999 percentile under-weighted in
+    /// the production curve.
+    ///
+    /// **Sparse-bright cliff.** Content that occupies < 0.001 % of
+    /// pixels is silently dropped at any image size. For 24 MP that's
+    /// anything below ~240 pixels; for 1 MP, below ~10 pixels; for
+    /// small images (< 100 000 pixels) the fraction rounds to "any
+    /// single bright pixel". Astrophotography, fireworks, and
+    /// candle-in-dark-room content where every bright pixel is
+    /// legitimate should use the spec-literal max reading instead.
+    /// The 10× tighter cliff vs 0.9999 means measure_percentile is now
+    /// closer to literal max on sparse content — by design.
     ///
     /// **Bin quantisation.** The percentile readout reports the
     /// lower edge of the log2 histogram bin that contains the
@@ -156,7 +169,7 @@ impl ContentLightLevel {
     /// Used by `CllMeasure::measure_robust` in `zenpixels-convert`.
     /// Explicit callers who want a non-default percentile pass their own
     /// value to `CllMeasure::measure_percentile`.
-    pub const DEFAULT_PERCENTILE: f32 = 0.9999;
+    pub const DEFAULT_PERCENTILE: f32 = 0.99999;
 
     /// **Deprecated (0.2.15), hidden.** Computes the *literal* MaxCLL — the
     /// absolute max over pixels of `max(R, G, B)` — which is outlier-sensitive

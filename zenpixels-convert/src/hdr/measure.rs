@@ -445,45 +445,41 @@ pub trait CllMeasure {
         method: LightLevelMethod,
     ) -> Option<ContentLightLevel>;
 
-    /// MaxCLL via a 3×1 horizontal box-filtered max — robust against
-    /// single-pixel defects and math-weird outliers without committing to
-    /// a percentile.
+    /// **Internal / experimental.** 3×1 horizontal box-filtered max as
+    /// an alternative defect-rejection strategy to percentile-based
+    /// [`measure_robust`](Self::measure_robust).
+    ///
+    /// **Kept on the trait but doc-hidden** because the 2026-06-22
+    /// audited shootout did NOT crown this method under any of the 6
+    /// ranking criteria (`mean_de2000`, `de2000_p95`, `de2000_p99`,
+    /// `pct_above_de5`, `de_ok_mean`, `de_ok_p95`). On the 76-sample
+    /// imazen-26 corpus it was a near-tie with `measure_max` and
+    /// uniformly behind `measure_robust` on tail metrics. Production
+    /// callers should pick [`measure_max`](Self::measure_max) (spec
+    /// strict / sparse-bright) or [`measure_robust`](Self::measure_robust)
+    /// (defect-tolerant) instead. May be removed in 0.3.0 if no usage
+    /// case emerges.
     ///
     /// Each pixel's value contributes through the local 3-tap horizontal
     /// mean (`(m[i-1] + m[i] + m[i+1]) / 3`, mirror-padded at row edges).
     /// One stuck pixel at 10 000 cd/m² in a 0.005 cd/m² background reads
-    /// as ~3 333 instead of 10 000; a denormal / NaN-escape that the
-    /// clamp couldn't catch dissolves into its neighbours. Real bright
-    /// features that span ≥2 horizontal pixels survive proportionally.
-    ///
-    /// **Not CTA-861.3 strict.** This is a deliberate deviation from
-    /// "max over all pixels": single-arcminute features are below the
-    /// human visual acuity limit at any sensible viewing distance, and
-    /// the display itself averages over its panel grid, so a literal
-    /// per-pixel max over-states what content can actually drive. This
-    /// is a related-shape choice to what Dolby Vision L1 does with its
-    /// per-block analysis; deliver this when the spec-literal reading is
-    /// dominated by defects but you don't want to pick an explicit
-    /// percentile.
-    ///
-    /// **MaxFALL is unchanged.** The mean of a 3×1 box-filtered image
-    /// equals the mean of the original (linearity of expectation), and
-    /// CTA-861.3 MaxFALL is the literal arithmetic mean regardless.
-    ///
+    /// as ~3 333 instead of 10 000; real bright features spanning ≥2
+    /// horizontal pixels survive proportionally. MaxFALL is unchanged
+    /// (mean of a 3×1 box-filtered image equals mean of the original).
     /// Same input contract as [`measure_max`](Self::measure_max).
-    /// Single-pass streaming scan (no row scratch buffer), per-row
-    /// per-pixel cost is ~1 reduce + 2 adds + 1 compare + 1 f64 add.
+    #[doc(hidden)]
     fn measure_max_smoothed(
         px: PixelSlice<'_>,
         white: DiffuseWhite,
         method: LightLevelMethod,
     ) -> Option<ContentLightLevel>;
 
-    /// **The recommended default** for HDR MaxCLL / MaxFALL measurement.
+    /// **The recommended default** for HDR MaxCLL / MaxFALL measurement
+    /// in HDR→SDR tone-mapping pipelines.
     ///
-    /// Defect-tolerant MaxCLL via the industry-default percentile
+    /// Defect-tolerant MaxCLL via the production-recommended percentile
     /// ([`DEFAULT_PERCENTILE`](ContentLightLevel::DEFAULT_PERCENTILE) =
-    /// 0.9999, the 99.99th percentile). Equivalent to
+    /// 0.99999, the 99.999th percentile). Equivalent to
     /// `measure_percentile(px, white, ContentLightLevel::DEFAULT_PERCENTILE, method)`
     /// — provided so the obvious-looking entry point gives the
     /// production-correct answer.
@@ -491,28 +487,27 @@ pub trait CllMeasure {
     /// **Why this is the default.** A spec-literal max
     /// ([`measure_max`](Self::measure_max)) is sensitive to a single hot
     /// pixel — one stuck sensor pixel, one specular blowout, one denormal
-    /// that escaped clamping — and downstream displays over-tone-map the
-    /// whole frame as a result. Dropping the top 0.01 % of pixels (one
-    /// in 10 000) gives back legitimate bright content while rejecting
-    /// the dominant defect modes. This matches what libplacebo, DaVinci
-    /// Resolve, x265's `--master-display` helpers, and most production
-    /// HDR10 / HDR10+ tools actually do; the spec-literal reading is the
-    /// special case (delivery-mandate, broadcast QC).
+    /// that escaped clamping — and downstream tone-mappers over-compress
+    /// the whole frame as a result. Dropping the top 0.001 % of pixels
+    /// (one in 100 000) gives back legitimate bright content while
+    /// rejecting the dominant defect modes. Chosen empirically over the
+    /// looser 0.9999 default after the 2026-06-22 audited shootout:
+    /// `measure_percentile @ 0.99999` won every tail-aware metric
+    /// (`de2000_p95`, `de2000_p99`, `de_ok_p95`) on the 76-sample
+    /// imazen-26 corpus and was within 1 % of the literal-max winner
+    /// on `mean_de2000`. See
+    /// `zen/zentone/benchmarks/shootout_2026-06-22_findings_v2.md`.
     ///
     /// **When to pick something else.**
+    /// - Strict CTA-861.3 spec delivery (Netflix, broadcast QC) → use
+    ///   [`measure_max`](Self::measure_max) for the literal max.
     /// - Sparse-bright legitimate content where every bright pixel
     ///   matters (astrophotography, fireworks, a single candle in a dark
-    ///   room) → use [`measure_max`](Self::measure_max). The 0.01 %
-    ///   outlier budget silently drops any content that occupies less
-    ///   than that fraction of the image, at any image size — see
+    ///   room) → use [`measure_max`](Self::measure_max). The 0.001 %
+    ///   outlier budget silently drops content that occupies less than
+    ///   that fraction of the image, at any image size — see
     ///   [`DEFAULT_PERCENTILE`](ContentLightLevel::DEFAULT_PERCENTILE)
     ///   for the sparse-bright cliff details.
-    /// - Strict CTA-861.3 spec delivery (Netflix, broadcast QC) → use
-    ///   [`measure_max`](Self::measure_max).
-    /// - Spatial defect tolerance without picking a percentile —
-    ///   single-pixel defects suppressed by averaging with neighbours,
-    ///   multi-pixel content preserved → use
-    ///   [`measure_max_smoothed`](Self::measure_max_smoothed).
     ///
     /// Same input contract as [`measure_max`](Self::measure_max). MaxFALL
     /// is always the arithmetic mean (CTA-861.3 spec, independent of
@@ -529,10 +524,11 @@ pub trait CllMeasure {
     /// caller commits to a percentile value explicitly per content
     /// policy. `1.0` is the spec-literal max (use
     /// [`measure_max`](Self::measure_max) directly if that's the goal).
-    /// `0.9999` is the typical defect-rejection choice;
+    /// `0.99999` is the production-recommended defect-rejection choice
+    /// (see [`DEFAULT_PERCENTILE`](ContentLightLevel::DEFAULT_PERCENTILE)
+    /// for the empirical justification);
     /// astrophotography / fireworks / candle-in-dark-room content
-    /// usually wants `1.0` (literal max) instead. See the issue #54
-    /// docstring for the trade-off rationale.
+    /// usually wants `1.0` (literal max) instead.
     ///
     /// Same input contract as [`measure_histogram`](Self::measure_histogram).
     /// MaxFALL is always the arithmetic mean (CTA-861.3 / spec-literal),
@@ -2049,15 +2045,22 @@ mod tests {
         );
     }
 
-    // ── measure_robust (DEFAULT_PERCENTILE = 0.9999 convenience) ──────────
+    // ── measure_robust (DEFAULT_PERCENTILE = 0.99999 convenience) ─────────
 
     #[test]
-    fn default_percentile_constant_is_industry_default() {
+    fn default_percentile_constant_is_production_recommended() {
         // Pin the constant so changing it requires a deliberate update —
         // every downstream caller depending on `measure_robust` is reading
-        // this number. 0.9999 = libplacebo / DaVinci Resolve / x265
-        // master-display / HDR10+ tooling default.
-        assert_eq!(ContentLightLevel::DEFAULT_PERCENTILE, 0.9999);
+        // this number. 0.99999 = empirically-validated default from the
+        // 2026-06-22 audited HDR→SDR shootout (76 imazen-26 samples ×
+        // 20 curves × 4 peak methods, scored on tail-aware percentiles +
+        // OKLab Euclidean ΔE). Was 0.9999 (industry default — libplacebo,
+        // DaVinci Resolve, x265 master-display, HDR10+ tooling); flipped
+        // to 0.99999 because the looser 0.9999 percentile under-weighted
+        // saturated specular content (flowers, bokeh) in the production
+        // Bt2446A curve. See
+        // `zen/zentone/benchmarks/shootout_2026-06-22_findings_v2.md`.
+        assert_eq!(ContentLightLevel::DEFAULT_PERCENTILE, 0.99999);
     }
 
     #[test]
