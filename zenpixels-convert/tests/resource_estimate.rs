@@ -317,3 +317,311 @@ fn peak_memory_at_least_destination_buffer() {
         dst_bytes
     );
 }
+
+// ---------------------------------------------------------------------------
+// PixelBufferConvertExt: estimator/wrapper-pair delegation tests.
+//
+// Each test builds a tiny source buffer (256×256 — large enough that the
+// plan walks intermediates) and asserts the estimator method returns the
+// same peak_memory_bytes and a time within 1 % of the
+// equivalent estimate_convert_to(&equivalent_target) — proving the
+// delegation is structurally correct.
+// ---------------------------------------------------------------------------
+
+fn assert_delegates(actual: &zenpixels_convert::ResourceEstimate, expected: &zenpixels_convert::ResourceEstimate, label: &str) {
+    assert_eq!(
+        actual.peak_memory_bytes, expected.peak_memory_bytes,
+        "{label}: peak_memory_bytes mismatch ({} vs {})",
+        actual.peak_memory_bytes, expected.peak_memory_bytes
+    );
+    let delta_ratio = if expected.wall_time_ms > 0.0 {
+        (actual.wall_time_ms - expected.wall_time_ms).abs() / expected.wall_time_ms
+    } else {
+        (actual.wall_time_ms - expected.wall_time_ms).abs()
+    };
+    assert!(
+        delta_ratio < 0.01,
+        "{label}: wall_time_ms delta {:.6} ({} vs {}) exceeds 1 %",
+        delta_ratio,
+        actual.wall_time_ms,
+        expected.wall_time_ms
+    );
+}
+
+fn tiny_buffer(desc: PixelDescriptor, w: u32, h: u32) -> PixelBuffer {
+    let stride = desc.aligned_stride(w);
+    let total = stride * h as usize;
+    let pixels = vec![128u8; total];
+    PixelBuffer::from_vec(pixels, w, h, desc).expect("tiny buffer")
+}
+
+#[test]
+fn estimate_try_add_alpha_delegates_for_rgb() {
+    let src = PixelDescriptor::RGB8_SRGB;
+    let buf = tiny_buffer(src, 256, 256);
+    let actual = buf.estimate_try_add_alpha();
+    // try_add_alpha goes Rgb → Rgba.
+    let target = PixelDescriptor::new(
+        ChannelType::U8,
+        zenpixels::ChannelLayout::Rgba,
+        Some(AlphaMode::Straight),
+        TransferFunction::Srgb,
+    );
+    let expected = buf.estimate_convert_to(&target);
+    assert_delegates(&actual, &expected, "estimate_try_add_alpha (RGB → RGBA)");
+}
+
+#[test]
+fn estimate_try_add_alpha_delegates_for_gray() {
+    let src = PixelDescriptor::GRAY8_SRGB;
+    let buf = tiny_buffer(src, 256, 256);
+    let actual = buf.estimate_try_add_alpha();
+    let target = PixelDescriptor::new(
+        ChannelType::U8,
+        zenpixels::ChannelLayout::GrayAlpha,
+        Some(AlphaMode::Straight),
+        TransferFunction::Srgb,
+    );
+    let expected = buf.estimate_convert_to(&target);
+    assert_delegates(&actual, &expected, "estimate_try_add_alpha (Gray → GrayAlpha)");
+}
+
+#[test]
+fn estimate_try_widen_to_u16_delegates() {
+    let src = PixelDescriptor::RGB8_SRGB;
+    let buf = tiny_buffer(src, 256, 256);
+    let actual = buf.estimate_try_widen_to_u16();
+    let target = PixelDescriptor::new(
+        ChannelType::U16,
+        zenpixels::ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    );
+    let expected = buf.estimate_convert_to(&target);
+    assert_delegates(&actual, &expected, "estimate_try_widen_to_u16");
+}
+
+#[test]
+fn estimate_try_widen_to_u16_already_u16_is_identity() {
+    let src = PixelDescriptor::RGB16_SRGB;
+    let buf = tiny_buffer(src, 256, 256);
+    let est = buf.estimate_try_widen_to_u16();
+    // Same descriptor → identity memcpy.
+    let expected_dst = 256u64 * 256u64 * src.bytes_per_pixel() as u64;
+    assert_eq!(est.peak_memory_bytes, expected_dst);
+    assert!(est.breakdown.is_empty());
+    assert_eq!(est.confidence, EstimateConfidence::Calibrated);
+}
+
+#[test]
+fn estimate_try_narrow_to_u8_delegates() {
+    let src = PixelDescriptor::RGB16_SRGB;
+    let buf = tiny_buffer(src, 256, 256);
+    let actual = buf.estimate_try_narrow_to_u8();
+    let target = PixelDescriptor::new(
+        ChannelType::U8,
+        zenpixels::ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    );
+    let expected = buf.estimate_convert_to(&target);
+    assert_delegates(&actual, &expected, "estimate_try_narrow_to_u8");
+}
+
+#[test]
+fn estimate_try_narrow_to_u8_already_u8_is_identity() {
+    let src = PixelDescriptor::RGB8_SRGB;
+    let buf = tiny_buffer(src, 256, 256);
+    let est = buf.estimate_try_narrow_to_u8();
+    let expected_dst = 256u64 * 256u64 * src.bytes_per_pixel() as u64;
+    assert_eq!(est.peak_memory_bytes, expected_dst);
+}
+
+#[test]
+fn estimate_linearize_delegates() {
+    let src = PixelDescriptor::RGB8_SRGB;
+    let buf = tiny_buffer(src, 256, 256);
+    let actual = buf.estimate_linearize();
+    let target = PixelDescriptor::new_full(
+        ChannelType::F32,
+        zenpixels::ChannelLayout::Rgb,
+        None,
+        TransferFunction::Linear,
+        ColorPrimaries::Bt709,
+    );
+    let expected = buf.estimate_convert_to(&target);
+    assert_delegates(&actual, &expected, "estimate_linearize");
+}
+
+#[test]
+fn estimate_delinearize_delegates() {
+    // Start with a linear F32 buffer, delinearize to sRGB F32.
+    let src = PixelDescriptor::RGBF32_LINEAR;
+    let buf = tiny_buffer(src, 256, 256);
+    let actual = buf.estimate_delinearize(TransferFunction::Srgb);
+    let target = src.with_transfer(TransferFunction::Srgb);
+    let expected = buf.estimate_convert_to(&target);
+    assert_delegates(&actual, &expected, "estimate_delinearize");
+}
+
+// ---------------------------------------------------------------------------
+// PixelBufferConvertTypedExt: typed estimators delegate to the same target.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "rgb")]
+#[test]
+fn estimate_to_rgb8_delegates() {
+    use zenpixels_convert::PixelBufferConvertTypedExt;
+    let src = PixelDescriptor::RGBA8_SRGB;
+    let buf = tiny_buffer(src, 256, 256);
+    let actual = buf.estimate_to_rgb8();
+    let expected = buf.estimate_convert_to(&PixelDescriptor::RGB8_SRGB);
+    assert_delegates(&actual, &expected, "estimate_to_rgb8");
+}
+
+#[cfg(feature = "rgb")]
+#[test]
+fn estimate_to_rgba8_delegates() {
+    use zenpixels_convert::PixelBufferConvertTypedExt;
+    let src = PixelDescriptor::RGB8_SRGB;
+    let buf = tiny_buffer(src, 256, 256);
+    let actual = buf.estimate_to_rgba8();
+    let expected = buf.estimate_convert_to(&PixelDescriptor::RGBA8_SRGB);
+    assert_delegates(&actual, &expected, "estimate_to_rgba8");
+}
+
+#[cfg(feature = "rgb")]
+#[test]
+fn estimate_to_gray8_delegates() {
+    use zenpixels_convert::PixelBufferConvertTypedExt;
+    let src = PixelDescriptor::RGB8_SRGB;
+    let buf = tiny_buffer(src, 256, 256);
+    let actual = buf.estimate_to_gray8();
+    let expected = buf.estimate_convert_to(&PixelDescriptor::GRAY8_SRGB);
+    assert_delegates(&actual, &expected, "estimate_to_gray8");
+}
+
+#[cfg(feature = "rgb")]
+#[test]
+fn estimate_to_bgra8_delegates() {
+    use zenpixels_convert::PixelBufferConvertTypedExt;
+    let src = PixelDescriptor::RGB8_SRGB;
+    let buf = tiny_buffer(src, 256, 256);
+    let actual = buf.estimate_to_bgra8();
+    let expected = buf.estimate_convert_to(&PixelDescriptor::BGRA8_SRGB);
+    assert_delegates(&actual, &expected, "estimate_to_bgra8");
+}
+
+// ---------------------------------------------------------------------------
+// HDR estimators: convert_to_with_hdr_config delegates to ConvertPlan's
+// estimate_resources; convert_to_sdr adds a measure_max scan + linearize leg.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "hdr-experimental")]
+#[test]
+fn estimate_convert_to_with_hdr_config_matches_plan() {
+    use zenpixels_convert::{HdrConfig, PixelBufferHdrConvertExt};
+
+    let src = PixelDescriptor::new_full(
+        ChannelType::U16,
+        zenpixels::ChannelLayout::Rgba,
+        Some(AlphaMode::Straight),
+        TransferFunction::Pq,
+        ColorPrimaries::Bt2020,
+    );
+    let target = PixelDescriptor::RGB8_SRGB;
+    let buf = tiny_buffer(src, 1024, 1024);
+    let hdr = HdrConfig {
+        source_peak_nits: 1000.0,
+        target_peak_nits: 100.0,
+        gamut_knee: 0.9,
+    };
+    let actual = buf.estimate_convert_to_with_hdr_config(&target, hdr);
+    let plan = ConvertPlan::new_with_hdr_config(src, target, hdr).expect("plan");
+    let expected = plan.estimate_resources(1024, 1024);
+    assert_delegates(
+        &actual,
+        &expected,
+        "estimate_convert_to_with_hdr_config",
+    );
+}
+
+#[cfg(feature = "hdr-experimental")]
+#[test]
+fn estimate_convert_to_sdr_non_hdr_short_circuits() {
+    use zenpixels_convert::PixelBufferHdrConvertExt;
+    // Non-HDR source: should match estimate_convert_to verbatim.
+    let src = PixelDescriptor::RGB8_SRGB;
+    let target = PixelDescriptor::RGBA8_SRGB;
+    let buf = tiny_buffer(src, 256, 256);
+    let actual = buf.estimate_convert_to_sdr(&target);
+    let expected = buf.estimate_convert_to(&target);
+    assert_delegates(
+        &actual,
+        &expected,
+        "estimate_convert_to_sdr non-HDR short-circuit",
+    );
+}
+
+#[cfg(feature = "hdr-experimental")]
+#[test]
+fn estimate_convert_to_sdr_hdr_includes_measure_max_scan() {
+    use zenpixels_convert::{HdrConfig, PixelBufferHdrConvertExt};
+
+    let src = PixelDescriptor::new_full(
+        ChannelType::U16,
+        zenpixels::ChannelLayout::Rgba,
+        Some(AlphaMode::Straight),
+        TransferFunction::Pq,
+        ColorPrimaries::Bt2020,
+    );
+    let target = PixelDescriptor::RGB8_SRGB;
+    // 4 MP buffer — large enough that the measure_max scan time is
+    // meaningfully > 0 vs the HDR plan time.
+    let buf = tiny_buffer(src, 2048, 2048);
+
+    let sdr_est = buf.estimate_convert_to_sdr(&target);
+    let hdr_only = buf.estimate_convert_to_with_hdr_config(
+        &target,
+        HdrConfig {
+            source_peak_nits: 1000.0,
+            ..HdrConfig::default()
+        },
+    );
+
+    // The SDR estimate should be strictly greater than the HDR-only
+    // estimate — it adds linearize + measure_max scan legs.
+    assert!(
+        sdr_est.wall_time_ms > hdr_only.wall_time_ms,
+        "estimate_convert_to_sdr ({:.3} ms) should exceed estimate_convert_to_with_hdr_config alone ({:.3} ms) — measure_max scan + linearize not accounted for?",
+        sdr_est.wall_time_ms,
+        hdr_only.wall_time_ms
+    );
+
+    // The measure_max step should appear in the breakdown.
+    let names: Vec<&str> = sdr_est.breakdown.iter().map(|s| s.name).collect();
+    assert!(
+        names.contains(&"MeasureMaxCll"),
+        "MeasureMaxCll step missing from breakdown: {:?}",
+        names
+    );
+
+    // The measure_max step contribution should fall within the bench-
+    // derived ballpark: at 2735 Mpix/s, a 4 MP scan ≈ 1.53 ms.
+    let measure_step = sdr_est
+        .breakdown
+        .iter()
+        .find(|s| s.name == "MeasureMaxCll")
+        .expect("measure step in breakdown");
+    let pixels = 2048u64 * 2048u64;
+    let expected_measure_ms = pixels as f64 / 2_735_000_000.0 * 1000.0;
+    let delta_ratio =
+        (measure_step.time_ms - expected_measure_ms).abs() / expected_measure_ms;
+    assert!(
+        delta_ratio < 0.01,
+        "MeasureMaxCll time {:.3} ms != expected {:.3} ms (delta {:.3} %)",
+        measure_step.time_ms,
+        expected_measure_ms,
+        delta_ratio * 100.0
+    );
+}

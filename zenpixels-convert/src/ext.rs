@@ -165,6 +165,59 @@ pub trait PixelBufferConvertExt {
     /// [`ResourceEstimate::confidence`](crate::ResourceEstimate::confidence)
     /// to detect that case.
     fn estimate_convert_to(&self, target: &PixelDescriptor) -> crate::ResourceEstimate;
+
+    /// Estimate the cost of [`try_add_alpha`](Self::try_add_alpha) without
+    /// running it.
+    ///
+    /// Builds the same target descriptor `try_add_alpha` would (Gray →
+    /// GrayAlpha, Rgb → Rgba, otherwise identity) and delegates to
+    /// [`estimate_convert_to`](Self::estimate_convert_to). The returned
+    /// [`ResourceEstimate`](crate::ResourceEstimate) carries the
+    /// **±30 % design tolerance** of the underlying plan estimator (see
+    /// [`crate::estimate`]); check
+    /// [`ResourceEstimate::confidence`](crate::ResourceEstimate::confidence)
+    /// for the calibration tier.
+    fn estimate_try_add_alpha(&self) -> crate::ResourceEstimate;
+
+    /// Estimate the cost of [`try_widen_to_u16`](Self::try_widen_to_u16)
+    /// without running it.
+    ///
+    /// Same shape as `try_widen_to_u16` but produces a
+    /// [`ResourceEstimate`](crate::ResourceEstimate) instead of an
+    /// allocated buffer. **±30 % design tolerance** per
+    /// [`crate::estimate`]; if the source is already U16 the estimate is
+    /// the (memcpy-only) identity path. Inspect
+    /// [`ResourceEstimate::confidence`](crate::ResourceEstimate::confidence)
+    /// for the calibration tier.
+    fn estimate_try_widen_to_u16(&self) -> crate::ResourceEstimate;
+
+    /// Estimate the cost of [`try_narrow_to_u8`](Self::try_narrow_to_u8)
+    /// without running it.
+    ///
+    /// Same shape as `try_narrow_to_u8` but produces a
+    /// [`ResourceEstimate`](crate::ResourceEstimate) instead of an
+    /// allocated buffer. **±30 % design tolerance** per
+    /// [`crate::estimate`]; if the source is already U8 the estimate is
+    /// the (memcpy-only) identity path.
+    fn estimate_try_narrow_to_u8(&self) -> crate::ResourceEstimate;
+
+    /// Estimate the cost of [`linearize`](Self::linearize) without
+    /// running it.
+    ///
+    /// Same target descriptor as `linearize` (linear-light F32,
+    /// preserving layout / alpha / primaries) and delegates to
+    /// [`estimate_convert_to`](Self::estimate_convert_to). **±30 %
+    /// design tolerance** per [`crate::estimate`].
+    fn estimate_linearize(&self) -> crate::ResourceEstimate;
+
+    /// Estimate the cost of [`delinearize(transfer)`](Self::delinearize)
+    /// without running it.
+    ///
+    /// Same target descriptor as `delinearize` (source descriptor with
+    /// the new transfer function) and delegates to
+    /// [`estimate_convert_to`](Self::estimate_convert_to). **±30 %
+    /// design tolerance** per [`crate::estimate`].
+    fn estimate_delinearize(&self, transfer: TransferFunction) -> crate::ResourceEstimate;
 }
 
 /// Typed convenience conversions that return `PixelBuffer<P>`.
@@ -183,6 +236,43 @@ pub trait PixelBufferConvertTypedExt: PixelBufferConvertExt {
 
     /// Convert to BGRA8, allocating a new buffer.
     fn to_bgra8(&self) -> PixelBuffer<rgb::alt::BGRA<u8>>;
+
+    /// Estimate the cost of [`to_rgb8`](Self::to_rgb8) without running it.
+    ///
+    /// Delegates to
+    /// [`estimate_convert_to(&RGB8_SRGB)`](PixelBufferConvertExt::estimate_convert_to)
+    /// — the underlying allocation path is the same `convert_to_typed`
+    /// call. The typed buffer wrapper itself is a zero-cost cast, so the
+    /// returned [`ResourceEstimate`](crate::ResourceEstimate) is the
+    /// untyped estimate verbatim. **±30 % design tolerance** per
+    /// [`crate::estimate`].
+    fn estimate_to_rgb8(&self) -> crate::ResourceEstimate {
+        self.estimate_convert_to(&PixelDescriptor::RGB8_SRGB)
+    }
+
+    /// Estimate the cost of [`to_rgba8`](Self::to_rgba8) without running
+    /// it. Delegates to
+    /// [`estimate_convert_to(&RGBA8_SRGB)`](PixelBufferConvertExt::estimate_convert_to).
+    /// **±30 % design tolerance** per [`crate::estimate`].
+    fn estimate_to_rgba8(&self) -> crate::ResourceEstimate {
+        self.estimate_convert_to(&PixelDescriptor::RGBA8_SRGB)
+    }
+
+    /// Estimate the cost of [`to_gray8`](Self::to_gray8) without running
+    /// it. Delegates to
+    /// [`estimate_convert_to(&GRAY8_SRGB)`](PixelBufferConvertExt::estimate_convert_to).
+    /// **±30 % design tolerance** per [`crate::estimate`].
+    fn estimate_to_gray8(&self) -> crate::ResourceEstimate {
+        self.estimate_convert_to(&PixelDescriptor::GRAY8_SRGB)
+    }
+
+    /// Estimate the cost of [`to_bgra8`](Self::to_bgra8) without running
+    /// it. Delegates to
+    /// [`estimate_convert_to(&BGRA8_SRGB)`](PixelBufferConvertExt::estimate_convert_to).
+    /// **±30 % design tolerance** per [`crate::estimate`].
+    fn estimate_to_bgra8(&self) -> crate::ResourceEstimate {
+        self.estimate_convert_to(&PixelDescriptor::BGRA8_SRGB)
+    }
 }
 
 /// Assert that a descriptor is not CMYK.
@@ -334,6 +424,69 @@ impl PixelBufferConvertExt for PixelBuffer {
             },
         }
     }
+
+    fn estimate_try_add_alpha(&self) -> crate::ResourceEstimate {
+        let desc = self.descriptor();
+        let target_layout = match desc.layout() {
+            ChannelLayout::Gray => ChannelLayout::GrayAlpha,
+            ChannelLayout::Rgb => ChannelLayout::Rgba,
+            other => other,
+        };
+        let alpha = if target_layout.has_alpha() && desc.alpha().is_none() {
+            Some(AlphaMode::Straight)
+        } else {
+            desc.alpha()
+        };
+        let target =
+            PixelDescriptor::new(desc.channel_type(), target_layout, alpha, desc.transfer());
+        self.estimate_convert_to(&target)
+    }
+
+    fn estimate_try_widen_to_u16(&self) -> crate::ResourceEstimate {
+        let desc = self.descriptor();
+        if desc.channel_type() == ChannelType::U16 {
+            // No-op shortcut: same descriptor → identity memcpy path.
+            return self.estimate_convert_to(&desc);
+        }
+        let target = PixelDescriptor::new(
+            ChannelType::U16,
+            desc.layout(),
+            desc.alpha(),
+            desc.transfer(),
+        );
+        self.estimate_convert_to(&target)
+    }
+
+    fn estimate_try_narrow_to_u8(&self) -> crate::ResourceEstimate {
+        let desc = self.descriptor();
+        if desc.channel_type() == ChannelType::U8 {
+            return self.estimate_convert_to(&desc);
+        }
+        let target = PixelDescriptor::new(
+            ChannelType::U8,
+            desc.layout(),
+            desc.alpha(),
+            desc.transfer(),
+        );
+        self.estimate_convert_to(&target)
+    }
+
+    fn estimate_linearize(&self) -> crate::ResourceEstimate {
+        let desc = self.descriptor();
+        let target = PixelDescriptor::new_full(
+            ChannelType::F32,
+            desc.layout(),
+            desc.alpha(),
+            TransferFunction::Linear,
+            desc.primaries,
+        );
+        self.estimate_convert_to(&target)
+    }
+
+    fn estimate_delinearize(&self, transfer: TransferFunction) -> crate::ResourceEstimate {
+        let target = self.descriptor().with_transfer(transfer);
+        self.estimate_convert_to(&target)
+    }
 }
 
 /// Adds HDR-aware conversion methods to [`PixelBuffer`].
@@ -383,6 +536,58 @@ pub trait PixelBufferHdrConvertExt {
         target: PixelDescriptor,
         hdr: crate::HdrConfig,
     ) -> Result<PixelBuffer, At<crate::ConvertError>>;
+
+    /// Estimate the cost of [`convert_to_sdr(target)`](Self::convert_to_sdr)
+    /// without running it.
+    ///
+    /// For non-HDR sources this is equivalent to
+    /// [`estimate_convert_to(&target)`](PixelBufferConvertExt::estimate_convert_to).
+    ///
+    /// For HDR sources (PQ / HLG transfer) the estimate accounts for
+    /// the three legs of `convert_to_sdr` separately:
+    /// 1. The source linearization (a `convert_to` into linear-light
+    ///    F32 RGB/RGBA), needed before measuring CLL;
+    /// 2. The
+    ///    [`CllMeasure::measure_max`](crate::hdr::CllMeasure::measure_max)
+    ///    scan over the linear source. Calibration is from the
+    ///    2026-06-19 `measure_max_throughput` bench at
+    ///    `benchmarks/measure_max_throughput_2026-06-19.md`
+    ///    (~2.7 Gpix/s on the default-build SIMD path on Ryzen 9 7950X,
+    ///    no `-C target-cpu=native`);
+    /// 3. The downstream
+    ///    [`convert_to_with_hdr_config`](Self::convert_to_with_hdr_config)
+    ///    plan.
+    ///
+    /// The returned [`ResourceEstimate`](crate::ResourceEstimate)
+    /// reports the sum of those legs in `wall_time_ms`, the **maximum**
+    /// of their working sets in `peak_memory_bytes` (linear scratch is
+    /// freed before the HDR plan allocates its destination), and
+    /// concatenates their breakdowns into a single
+    /// [`StepEstimate`](crate::StepEstimate) list. Confidence is the
+    /// most-conservative tier across the legs (see
+    /// [`EstimateConfidence`](crate::EstimateConfidence)). **±30 %
+    /// design tolerance** per [`crate::estimate`].
+    fn estimate_convert_to_sdr(&self, target: &PixelDescriptor) -> crate::ResourceEstimate;
+
+    /// Estimate the cost of
+    /// [`convert_to_with_hdr_config(target, hdr)`](Self::convert_to_with_hdr_config)
+    /// without running it.
+    ///
+    /// Builds the same
+    /// [`ConvertPlan`](crate::ConvertPlan) the wrapper would
+    /// (via
+    /// [`ConvertPlan::new_with_hdr_config`](crate::ConvertPlan::new_with_hdr_config))
+    /// and walks its steps. **±30 % design tolerance** per
+    /// [`crate::estimate`]; check
+    /// [`ResourceEstimate::confidence`](crate::ResourceEstimate::confidence)
+    /// for the calibration tier (the BT.2446-A tone-map cell is
+    /// calibrated from `benchmarks/bt2446a_throughput_2026-06-20.md`;
+    /// the OKLch soft-compress cell is heuristic).
+    fn estimate_convert_to_with_hdr_config(
+        &self,
+        target: &PixelDescriptor,
+        hdr: crate::HdrConfig,
+    ) -> crate::ResourceEstimate;
 }
 
 #[cfg(feature = "hdr-experimental")]
@@ -482,6 +687,121 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
         }
         Ok(buf)
     }
+
+    fn estimate_convert_to_sdr(&self, target: &PixelDescriptor) -> crate::ResourceEstimate {
+        let src_desc = self.descriptor();
+        // CMYK is rejected by the underlying plan builder. Surface
+        // Unknown rather than panic so the estimator never aborts.
+        if src_desc.color_model() == crate::ColorModel::Cmyk
+            || target.color_model() == crate::ColorModel::Cmyk
+        {
+            return crate::ResourceEstimate::zero(crate::EstimateConfidence::Unknown);
+        }
+
+        // Non-HDR short-circuit: matches the runtime path.
+        if !matches!(
+            src_desc.transfer(),
+            TransferFunction::Pq | TransferFunction::Hlg
+        ) {
+            return self.estimate_convert_to(target);
+        }
+
+        // HDR source: model the three legs.
+        // (1) Linearize to F32 RGB/RGBA for the CLL scan.
+        let lin_desc = PixelDescriptor::new_full(
+            ChannelType::F32,
+            if src_desc.has_alpha() {
+                ChannelLayout::Rgba
+            } else {
+                ChannelLayout::Rgb
+            },
+            src_desc.alpha(),
+            TransferFunction::Linear,
+            src_desc.primaries,
+        );
+        let linearize_est = self.estimate_convert_to(&lin_desc);
+
+        // (2) measure_max scan over the linear source. Default-build
+        // SIMD throughput from benchmarks/measure_max_throughput_2026-06-19.md
+        // is ~2.7 Gpix/s on the 7950X AVX2 path (no -C target-cpu=native).
+        let pixels = u64::from(self.width()) * u64::from(self.height());
+        let measure_step = crate::estimate::measure_max_step_estimate(pixels);
+
+        // (3) Downstream HDR plan with a placeholder source peak
+        // (the estimator's wall-clock model doesn't depend on the
+        // exact peak — same step set, same pixel work either way).
+        let hdr_est = self.estimate_convert_to_with_hdr_config(
+            target,
+            crate::HdrConfig {
+                source_peak_nits: 1000.0,
+                ..crate::HdrConfig::default()
+            },
+        );
+
+        // Sum wall-clock across the three legs.
+        let wall_time_ms = linearize_est.wall_time_ms + measure_step.time_ms + hdr_est.wall_time_ms;
+        // Peak memory: the linear scratch is freed before the HDR plan
+        // allocates its destination, so peak = max(linear, hdr).
+        let peak_memory_bytes = linearize_est
+            .peak_memory_bytes
+            .max(hdr_est.peak_memory_bytes);
+
+        // Concatenate per-step breakdowns; insert the measure_max
+        // step between linearize and HDR plan steps so callers can
+        // see it.
+        let mut breakdown = alloc::vec::Vec::with_capacity(
+            linearize_est.breakdown.len() + 1 + hdr_est.breakdown.len(),
+        );
+        breakdown.extend(linearize_est.breakdown.iter().cloned());
+        breakdown.push(measure_step);
+        breakdown.extend(hdr_est.breakdown.iter().cloned());
+
+        // Confidence: most-conservative tier (Unknown > Heuristic >
+        // Calibrated). measure_max is calibrated from the bench above.
+        let confidence = worst_confidence(&[linearize_est.confidence, hdr_est.confidence]);
+
+        crate::ResourceEstimate {
+            peak_memory_bytes,
+            wall_time_ms,
+            breakdown,
+            confidence,
+        }
+    }
+
+    fn estimate_convert_to_with_hdr_config(
+        &self,
+        target: &PixelDescriptor,
+        hdr: crate::HdrConfig,
+    ) -> crate::ResourceEstimate {
+        let src = self.descriptor();
+        if src.color_model() == crate::ColorModel::Cmyk
+            || target.color_model() == crate::ColorModel::Cmyk
+        {
+            return crate::ResourceEstimate::zero(crate::EstimateConfidence::Unknown);
+        }
+        match crate::ConvertPlan::new_with_hdr_config(src, *target, hdr) {
+            Ok(plan) => plan.estimate_resources(self.width(), self.height()),
+            Err(_) => crate::ResourceEstimate::zero(crate::EstimateConfidence::Unknown),
+        }
+    }
+}
+
+/// Return the most-conservative confidence tier (worst case).
+/// Order: Unknown > Heuristic > Calibrated.
+#[cfg(feature = "hdr-experimental")]
+fn worst_confidence(tiers: &[crate::EstimateConfidence]) -> crate::EstimateConfidence {
+    let mut worst = crate::EstimateConfidence::Calibrated;
+    for &t in tiers {
+        worst = match (worst, t) {
+            (crate::EstimateConfidence::Unknown, _) | (_, crate::EstimateConfidence::Unknown) => {
+                crate::EstimateConfidence::Unknown
+            }
+            (crate::EstimateConfidence::Heuristic, _)
+            | (_, crate::EstimateConfidence::Heuristic) => crate::EstimateConfidence::Heuristic,
+            _ => crate::EstimateConfidence::Calibrated,
+        };
+    }
+    worst
 }
 
 #[cfg(feature = "rgb")]

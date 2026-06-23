@@ -50,6 +50,13 @@
 //! - `t7_gamut_2026-04-23_baseline.txt` — 3×3 gamut matrices.
 //! - `bt2446a_throughput_2026-06-20.md` (zentone) — the
 //!   HDR→SDR tone-map curve.
+//! - `measure_max_throughput_2026-06-19.md` — the SOTA
+//!   spec-conformant CLL reading
+//!   ([`CllMeasure::measure_max`](crate::hdr::CllMeasure::measure_max));
+//!   the default-build SIMD path on the 7950X (no `-C target-cpu=native`)
+//!   delivers **~2.7 Gpix/s** steady-state on RGB f32 linear-light. Used
+//!   by [`PixelBufferHdrConvertExt::estimate_convert_to_sdr`](crate::PixelBufferHdrConvertExt::estimate_convert_to_sdr)
+//!   to account for the source-peak scan leg.
 //!
 //! All steady-state at 4096-pixel rows (L2-resident) on the public
 //! AVX2 path (no `-C target-cpu=native`).
@@ -534,4 +541,32 @@ pub(crate) fn estimate_plan(plan: &ConvertPlan, width: u32, height: u32) -> Reso
 /// thin re-call so the two don't drift.
 fn intermediate_after(current: PixelDescriptor, step: &ConvertStep) -> PixelDescriptor {
     crate::convert::intermediate_desc_for_estimate(current, step)
+}
+
+/// `measure_max` throughput on the reference machine (Ryzen 9 7950X,
+/// V3 / AVX2 tier, default build — no `-C target-cpu=native`).
+/// Source: `benchmarks/measure_max_throughput_2026-06-19.md` cell for
+/// 2048² (default-build SIMD column) — 2735 Mpix/s. Used by
+/// [`measure_max_step_estimate`] to model the source-peak scan leg
+/// inside
+/// [`PixelBufferHdrConvertExt::estimate_convert_to_sdr`](crate::PixelBufferHdrConvertExt::estimate_convert_to_sdr).
+#[cfg(feature = "hdr-experimental")]
+const MEASURE_MAX_PIXELS_PER_SEC: f64 = 2_735_000_000.0;
+
+/// Build a [`StepEstimate`] for a single
+/// [`CllMeasure::measure_max`](crate::hdr::CllMeasure::measure_max)
+/// scan over `pixels` linear RGB(A) F32 pixels.
+///
+/// Memory contribution is **zero** — `measure_max` is a read-only scan
+/// with no allocation. The time contribution comes from
+/// [`MEASURE_MAX_PIXELS_PER_SEC`].
+#[cfg(feature = "hdr-experimental")]
+#[must_use]
+pub(crate) fn measure_max_step_estimate(pixels: u64) -> StepEstimate {
+    let time_ms = (pixels as f64) / MEASURE_MAX_PIXELS_PER_SEC * 1000.0;
+    StepEstimate {
+        name: "MeasureMaxCll",
+        memory_bytes: 0,
+        time_ms,
+    }
 }

@@ -173,6 +173,34 @@
   `CllMeasure::measure_robust`) and `convert_to_with_hdr_config(target,
   HdrConfig)` (explicit knobs). Both route through the new
   `ConvertPlan::new_with_hdr_config` path. Gated behind `hdr-experimental`.
+- **Eleven new `estimate_*` companions on the convert extension traits.**
+  Each of the previously-allocating public methods now has a non-allocating
+  estimator that returns a [`ResourceEstimate`] sharing the same ±30 %
+  design tolerance and confidence semantics as the
+  [`ConvertPlan::estimate_resources`] primitive shipped in commit
+  `183af66`. On `PixelBufferConvertExt`: `estimate_try_add_alpha`,
+  `estimate_try_widen_to_u16` (same-channel-type → identity-memcpy fast
+  path), `estimate_try_narrow_to_u8` (same fast path), `estimate_linearize`,
+  `estimate_delinearize(transfer)`. On `PixelBufferConvertTypedExt`
+  (`rgb` feature): `estimate_to_rgb8`, `estimate_to_rgba8`,
+  `estimate_to_gray8`, `estimate_to_bgra8` — each estimates the underlying
+  type-erased `convert_to(&PixelDescriptor::*)` call (the typed wrapper
+  itself is a zero-cost cast). On `PixelBufferHdrConvertExt`
+  (`hdr-experimental`): `estimate_convert_to_with_hdr_config` (delegates to
+  [`ConvertPlan::new_with_hdr_config`]) and `estimate_convert_to_sdr` —
+  the latter accounts for **all three legs** of `convert_to_sdr`: source
+  linearization, the
+  [`CllMeasure::measure_max`](crate::hdr::CllMeasure::measure_max) scan
+  (new calibration constant from `benchmarks/measure_max_throughput_2026-06-19.md`,
+  default-build SIMD column at 2048² = **2735 Mpix/s** on Ryzen 9 7950X
+  AVX2), and the downstream HDR plan. The estimator sums wall-clock
+  across legs, takes `max(peak_memory_bytes)` (linear scratch frees
+  before the HDR plan allocates), concatenates breakdowns with a new
+  `"MeasureMaxCll"` step, and reports the most-conservative confidence
+  tier across legs. Non-HDR sources short-circuit to plain
+  `estimate_convert_to(target)`, matching the runtime path. Tests cover
+  delegation equivalence (peak_memory exact, wall_time within 1 %) plus
+  the measure_max-scan accounting on a 4 MP buffer.
 
 ### zenpixels-convert — removed
 
