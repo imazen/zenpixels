@@ -1129,7 +1129,6 @@ dependencies = [
  "sha2",
  "whereat",
  "zenbench",
- "zencodec",
  "zenjpeg",
  "zenpixels",
  "zenpixels-convert",

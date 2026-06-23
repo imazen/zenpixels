@@ -25,15 +25,7 @@ default = ["std", "icc-db"]
 # bundled consts, and the load-bearing gray-ICC swap degrades to suppressing
 # the collapse for ICC-bearing sources.
 icc-db = ["dep:lz4_flex"]
-# `std` also gates the public resource-estimate surface — when enabled, the
-# crate re-exports zencodec's `ComputeEnvironment` / `ImageCharacteristics` /
-# `ResourceEstimate` / `ThreadingInformation` from `mod estimate`, so estimates
-# returned by `ConvertPlan::estimate(_in)` compose with codec-side estimates in
-# multi-stage pipelines. The zencodec dep transitively re-enables `zenpixels/std`
-# (zencodec depends on `zenpixels = "0.2.14"` with default features), so we
-# only pull it in along the `std` axis; the `no_std + alloc` build stays free
-# of this dependency.
-std = ["zenpixels/std", "linear-srgb/std", "garb/std", "dep:zencodec"]
+std = ["zenpixels/std", "linear-srgb/std", "garb/std"]
 # SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON) behind apply_orientation*.
 # Opt-in: without it, apply_orientation* use the portable scalar tiled/blocked
 # paths (correct, slower). archmage/magetypes are ALREADY unconditional deps (the
@@ -128,12 +120,6 @@ once_cell = { version = "1.21.4", default-features = false, features = ["race", 
 lz4_flex = { version = "0.13.1", default-features = false, features = ["safe-decode"], optional = true }
 whereat = { version = "0.1.5", default-features = false }
 moxcms = { version = ">=0.8.1, <0.10", optional = true, features = ["options"] }
-# Optional: zencodec supplies the shared `estimate::{ComputeEnvironment,
-# ImageCharacteristics, ResourceEstimate, ThreadingInformation}` types so a
-# `ConvertPlan` estimate composes with codec-side encode/decode estimates in
-# multi-stage pipelines. Pulled in only with the `std` feature (zencodec's
-# crates.io manifest enables `zenpixels/std` transitively).
-zencodec = { version = "0.1.25", optional = true }
 # Optional `serde` derive support for crate-local enums (currently
 # `hdr::measure::LightLevelMethod`). Pulled in when the `serde` feature
 # is enabled — without it the `derive(serde::Serialize, serde::Deserialize)`

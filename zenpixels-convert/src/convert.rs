@@ -1289,9 +1289,7 @@ impl ConvertPlan {
 
     /// Crate-internal view of the planned step list — exposed for the
     /// estimate-API code under `crate::estimate`. NOT public:
-    /// `ConvertStep` itself is `pub(crate)`. Gated on `std` because the
-    /// only caller is the `std`-gated estimate module.
-    #[cfg(feature = "std")]
+    /// `ConvertStep` itself is `pub(crate)`.
     pub(crate) fn steps(&self) -> &[ConvertStep] {
         &self.steps
     }
@@ -1308,9 +1306,10 @@ impl ConvertPlan {
 
     /// Estimate resources for executing this plan on `image` under the
     /// given [`ComputeEnvironment`](crate::estimate::ComputeEnvironment).
-    /// Returns the shared [`ResourceEstimate`](crate::estimate::ResourceEstimate)
-    /// (re-exported from `zencodec::estimate`), so the projection composes
-    /// with codec-side encode/decode estimates in multi-stage pipelines.
+    /// Returns a [`ResourceEstimate`](crate::estimate::ResourceEstimate)
+    /// whose type shape matches `zencodec::estimate::ResourceEstimate` so
+    /// codec-side encode/decode estimates can be wired through a multi-
+    /// stage pipeline at the codec boundary with a trivial conversion.
     ///
     /// Calibrated from `benches/t1_layout`, `t2_depth`, `t3_tf_fused`,
     /// `t4_tf_f32`, `t5_alpha`, `t6_oklab`, `t7_gamut` steady-state
@@ -1358,7 +1357,6 @@ impl ConvertPlan {
     /// // round to 0 ms for trivial plans, but the field is populated).
     /// assert!(est.wall_ms().is_some());
     /// ```
-    #[cfg(feature = "std")]
     #[must_use]
     pub fn estimate_in(
         &self,
@@ -1391,7 +1389,6 @@ impl ConvertPlan {
     /// assert!(est.peak_memory_bytes_est().unwrap_or(0) > 0);
     /// assert!(est.wall_ms().is_some());
     /// ```
-    #[cfg(feature = "std")]
     #[must_use]
     pub fn estimate(&self, width: u32, height: u32) -> crate::estimate::ResourceEstimate {
         let image = crate::estimate::ImageCharacteristics::new(width, height, self.from());
@@ -1401,9 +1398,7 @@ impl ConvertPlan {
 }
 
 /// Bridge for the [`crate::estimate`] module: mirror of
-/// [`intermediate_desc`] without making that function public. Gated on
-/// `std` because the estimate module itself is.
-#[cfg(feature = "std")]
+/// [`intermediate_desc`] without making that function public.
 pub(crate) fn intermediate_desc_for_estimate(
     current: PixelDescriptor,
     step: &ConvertStep,

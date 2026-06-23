@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### zenpixels-convert — changed (foundation-crate layering restored)
+
+- **`zencodec` dep dropped; the five estimate types are now defined LOCALLY
+  in `zenpixels-convert::estimate`.** `ResourceEstimate` /
+  `ComputeEnvironment` / `ImageCharacteristics` / `SimdTier` /
+  `ThreadingInformation` are no longer re-exports of `zencodec::estimate::*`
+  — they are local definitions whose shape matches `zencodec::estimate` by
+  design (same field names, same builder method names, same accessor
+  signatures, same `#[non_exhaustive]` discipline). Codec authors using the
+  zencodec contract can wire `decode → convert → encode` estimates through
+  the codec boundary with a trivial `From` conversion (a follow-up commit
+  will add `From<zencodec::estimate::ResourceEstimate>` and siblings behind
+  a feature flag). The architectural layering — `zenpixels` and
+  `zenpixels-convert` are foundation crates and DO NOT depend on codec
+  abstractions — is now restored, and the `no_std + alloc` build path
+  regains the resource-estimate surface (the prior commit had gated it
+  behind `std` because zencodec's manifest transitively pulled
+  `zenpixels/std`; with the dep removed, the estimate module compiles
+  cleanly under `--no-default-features`). The user-facing API on
+  `ConvertPlan::estimate` / `estimate_in` is unchanged (the local types
+  carry the same shape) so the public-API snapshot stays surface-stable
+  modulo the path the types resolve to.
+
 ### zenpixels-convert — changed (pre-publish YAGNI cleanup)
 
 - **`ResourceEstimate` / `StepEstimate` / `EstimateConfidence` removed; the

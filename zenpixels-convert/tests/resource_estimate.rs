@@ -1,5 +1,8 @@
-//! Tests for the zencodec-shaped `ResourceEstimate` returned by
-//! `ConvertPlan::estimate(_in)`.
+//! Tests for the `ResourceEstimate` returned by `ConvertPlan::estimate(_in)`.
+//! The estimate types live locally in `zenpixels_convert::estimate` and are
+//! shape-compatible with `zencodec::estimate::*` (same field names, same
+//! builders, same accessors) so callers wiring `decode → convert → encode`
+//! at the codec boundary can convert in one line.
 //!
 //! Numbers come from the 2026-04-23 bench suite (and zentone 2026-06-20
 //! for the HDR tone-map). Tolerance is ±30 % — the public contract.
@@ -294,7 +297,7 @@ fn higher_core_count_shrinks_wall_ms_for_parallel_plan() {
             ms <= prev_ms,
             "wall_ms non-monotonic across cores: {prev_ms} → {ms} at cores={cores}"
         );
-        // peak memory does NOT change with cores (per the zencodec contract).
+        // peak memory does NOT change with cores (per the resource-estimate contract).
         prev_ms = ms;
     }
 
