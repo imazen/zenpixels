@@ -147,6 +147,24 @@ pub trait PixelBufferConvertExt {
         &self,
         transfer: TransferFunction,
     ) -> Result<PixelBuffer, At<crate::ConvertError>>;
+
+    /// Estimate the cost of [`convert_to(target)`](Self::convert_to)
+    /// **without running it**.
+    ///
+    /// Cheap to call — builds a [`ConvertPlan`](crate::ConvertPlan)
+    /// internally and walks its steps. No row work, no large
+    /// allocations. The returned [`ResourceEstimate`](crate::ResourceEstimate)
+    /// reports peak working-set memory + median wall-clock time on the
+    /// reference machine, with a ±30 % design tolerance — see
+    /// [`crate::estimate`] for the accuracy contract.
+    ///
+    /// If no conversion path exists (the same `Err` that `convert_to`
+    /// would return), the estimate falls back to
+    /// [`EstimateConfidence::Unknown`](crate::EstimateConfidence::Unknown)
+    /// with zero memory and zero time. Callers can read
+    /// [`ResourceEstimate::confidence`](crate::ResourceEstimate::confidence)
+    /// to detect that case.
+    fn estimate_convert_to(&self, target: &PixelDescriptor) -> crate::ResourceEstimate;
 }
 
 /// Typed convenience conversions that return `PixelBuffer<P>`.
@@ -289,6 +307,32 @@ impl PixelBufferConvertExt for PixelBuffer {
     ) -> Result<PixelBuffer, At<crate::ConvertError>> {
         let target = self.descriptor().with_transfer(transfer);
         self.convert_to(target)
+    }
+
+    fn estimate_convert_to(&self, target: &PixelDescriptor) -> crate::ResourceEstimate {
+        let src = self.descriptor();
+        // CMYK is rejected by the plan builder too; we don't panic in the
+        // estimator — surface as Unknown so callers reading the field can
+        // detect "I can't tell" without a panic.
+        if src.color_model() == crate::ColorModel::Cmyk
+            || target.color_model() == crate::ColorModel::Cmyk
+        {
+            return crate::ResourceEstimate {
+                peak_memory_bytes: 0,
+                wall_time_ms: 0.0,
+                breakdown: alloc::vec::Vec::new(),
+                confidence: crate::EstimateConfidence::Unknown,
+            };
+        }
+        match crate::ConvertPlan::new(src, *target) {
+            Ok(plan) => plan.estimate_resources(self.width(), self.height()),
+            Err(_) => crate::ResourceEstimate {
+                peak_memory_bytes: 0,
+                wall_time_ms: 0.0,
+                breakdown: alloc::vec::Vec::new(),
+                confidence: crate::EstimateConfidence::Unknown,
+            },
+        }
     }
 }
 

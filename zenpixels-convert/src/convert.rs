@@ -1236,6 +1236,13 @@ impl ConvertPlan {
         max_bpp
     }
 
+    /// Crate-internal view of the planned step list — exposed for the
+    /// estimate-API code under `crate::estimate`. NOT public:
+    /// `ConvertStep` itself is `pub(crate)`.
+    pub(crate) fn steps(&self) -> &[ConvertStep] {
+        &self.steps
+    }
+
     /// Source descriptor.
     pub fn from(&self) -> PixelDescriptor {
         self.from
@@ -1245,6 +1252,64 @@ impl ConvertPlan {
     pub fn to(&self) -> PixelDescriptor {
         self.to
     }
+
+    /// Estimate peak memory + wall-clock for executing this plan on a
+    /// `width × height` image.
+    ///
+    /// The returned [`ResourceEstimate`] reports an **upper bound** on
+    /// peak working-set memory (in bytes, includes the destination buffer
+    /// plus any scratch the multi-step ping-pong uses) and a **median
+    /// wall-clock projection** in milliseconds on the reference machine
+    /// (AMD Ryzen 9 7950X, AVX2/V3 tier, no contention). Memory excludes
+    /// the caller's persistent state.
+    ///
+    /// `width × height` is the source image size; for cross-depth or
+    /// layout-changing plans the estimate accounts for both source and
+    /// target buffers where appropriate.
+    ///
+    /// Cheap to call — walks the plan's steps once and does no
+    /// allocation. Safe to call repeatedly per-frame in throttled
+    /// pipelines.
+    ///
+    /// # Accuracy
+    ///
+    /// Design tolerance is **±30 %** relative to the underlying bench
+    /// numbers. Real-world variance widens for:
+    ///
+    /// - Hosts on a different SIMD tier (calibration is AVX2/V3).
+    /// - Very small images where per-call overhead dominates.
+    /// - Concurrent / thermally-throttled environments.
+    ///
+    /// See [`crate::estimate`] for the full accuracy contract and
+    /// the calibration source list.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use zenpixels::PixelDescriptor;
+    /// use zenpixels_convert::ConvertPlan;
+    ///
+    /// let plan = ConvertPlan::new(
+    ///     PixelDescriptor::RGB8_SRGB,
+    ///     PixelDescriptor::RGBA8_SRGB,
+    /// ).unwrap();
+    /// let est = plan.estimate_resources(1920, 1080);
+    /// assert!(est.peak_memory_bytes > 0);
+    /// assert!(est.wall_time_ms >= 0.0);
+    /// ```
+    #[must_use]
+    pub fn estimate_resources(&self, width: u32, height: u32) -> crate::estimate::ResourceEstimate {
+        crate::estimate::estimate_plan(self, width, height)
+    }
+}
+
+/// Bridge for the [`crate::estimate`] module: mirror of
+/// [`intermediate_desc`] without making that function public.
+pub(crate) fn intermediate_desc_for_estimate(
+    current: PixelDescriptor,
+    step: &ConvertStep,
+) -> PixelDescriptor {
+    intermediate_desc(current, step)
 }
 
 /// Determine the layout conversion step(s).

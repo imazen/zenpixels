@@ -128,6 +128,32 @@
 
 ### zenpixels-convert — added
 
+- **`ConvertPlan::estimate_resources(width, height) -> ResourceEstimate`** —
+  predict peak working-set memory + median wall-clock time for a plan
+  before running it. Returns
+  `ResourceEstimate { peak_memory_bytes, wall_time_ms, breakdown, confidence }`
+  where `breakdown` is per-`ConvertStep` (`StepEstimate { name, memory_bytes,
+  time_ms }`) and `confidence` is `EstimateConfidence::{Calibrated,
+  Heuristic, Unknown}`. Cheap to call (no allocation, no row work — just
+  walks the planned steps). Calibration drives from the
+  `zenpixels/benchmarks/{t1_layout, t2_depth, t3_tf_fused, t4_tf_f32,
+  t5_alpha, t6_oklab, t7_gamut}_2026-04-23_baseline.txt` suite (steady-state
+  4096-pixel-row throughput on AMD Ryzen 9 7950X, AVX2/V3 tier) plus the
+  zentone `bt2446a_throughput_2026-06-20.md` cell for `ToneMapBt2446A`
+  (~250 Mpix/s). Memory model: destination buffer always counted; multi-step
+  plans add two row-sized scratch halves sized to the widest intermediate
+  bpp; identity plans count the memcpy. Documented tolerance is **±30 %**
+  vs the underlying bench numbers — wider on hosts with a different SIMD
+  tier, very small images (per-call overhead dominates), or thermal-
+  throttled environments. Companion shortcut: **`PixelBufferConvertExt::
+  estimate_convert_to(&target) -> ResourceEstimate`** on `PixelBuffer`.
+  Steps with no exact bench (BT.709 / Gamma22 F32 OETF/EOTF, premul on F16,
+  fused gamut variants without a calibration row) flip the plan's
+  `confidence` to `Heuristic` so callers can detect lower-precision cells.
+  New public surface (`estimate` module + `ResourceEstimate` /
+  `StepEstimate` / `EstimateConfidence` re-exported at crate root) gated
+  on neither `hdr-experimental` nor any other feature: ships with default
+  features.
 - **`ConvertPlan::new_with_hdr_peak(from, to, source_peak_nits)` +
   `ConvertPlan::new_with_hdr_config(from, to, HdrConfig)`** — HDR→SDR
   conversions are now native steps in the standard `ConvertPlan`
