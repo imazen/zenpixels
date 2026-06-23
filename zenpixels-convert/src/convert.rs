@@ -1334,12 +1334,12 @@ impl ConvertPlan {
     ///     PixelDescriptor::RGB8_SRGB,
     ///     PixelDescriptor::RGBA8_SRGB,
     /// ).unwrap();
-    /// let (mem, ms) = plan.estimate(1920, 1080);
-    /// assert!(mem > 0);
-    /// assert!(ms >= 0.0);
+    /// let est = plan.estimate(1920, 1080);
+    /// assert!(est.peak_memory_bytes > 0);
+    /// assert!(est.wall_time_ms >= 0.0);
     /// ```
     #[must_use]
-    pub fn estimate(&self, width: u32, height: u32) -> (u64, f64) {
+    pub fn estimate(&self, width: u32, height: u32) -> crate::estimate::ResourceEstimate {
         crate::estimate::estimate_plan(self, width, height)
     }
 }

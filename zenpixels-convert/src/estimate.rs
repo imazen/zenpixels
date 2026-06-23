@@ -9,7 +9,8 @@
 //!
 //! [`ConvertPlan::estimate`](crate::ConvertPlan::estimate) answers those
 //! questions cheaply — no allocation, no row work, just walks the planned
-//! steps and returns `(peak_memory_bytes, wall_time_ms)` as a plain tuple.
+//! steps and returns a [`ResourceEstimate`] with the projected peak memory
+//! and wall-clock numbers.
 //!
 //! # Accuracy contract
 //!
@@ -268,7 +269,11 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> f64 {
 ///   max_intermediate_bpp` bytes.
 /// - The estimate is for a single per-call working set, NOT a
 ///   parallel-job-wide cap.
-pub(crate) fn estimate_plan(plan: &ConvertPlan, width: u32, height: u32) -> (u64, f64) {
+pub(crate) fn estimate_plan(
+    plan: &ConvertPlan,
+    width: u32,
+    height: u32,
+) -> ResourceEstimate {
     // Quick identity short-circuit.
     if plan.is_identity() {
         // Even identity allocates the destination buffer + a memcpy.
@@ -278,7 +283,10 @@ pub(crate) fn estimate_plan(plan: &ConvertPlan, width: u32, height: u32) -> (u64
         // with NUMA effects this can be 10-50 GB/s. Use a midpoint.
         let memcpy_gib_s = 30.0;
         let memcpy_time_ms = (dst_bytes as f64) / (memcpy_gib_s * GIB) * 1_000.0;
-        return (dst_bytes, memcpy_time_ms);
+        return ResourceEstimate {
+            peak_memory_bytes: dst_bytes,
+            wall_time_ms: memcpy_time_ms,
+        };
     }
 
     let pixels = (width as u64) * (height as u64);
@@ -322,7 +330,36 @@ pub(crate) fn estimate_plan(plan: &ConvertPlan, width: u32, height: u32) -> (u64
     // The scratch is reused, not added per step.
     let peak_memory_bytes = dst_bytes.saturating_add(scratch_bytes);
 
-    (peak_memory_bytes, total_time_ms)
+    ResourceEstimate {
+        peak_memory_bytes,
+        wall_time_ms: total_time_ms,
+    }
+}
+
+/// Cost projection for executing a [`ConvertPlan`] on a `width × height`
+/// image.
+///
+/// Returned by [`ConvertPlan::estimate`](crate::ConvertPlan::estimate).
+/// Cheap to construct (no allocation, no row work). The numbers are
+/// best-effort projections — see the module-level docs for the ±30 %
+/// accuracy contract.
+///
+/// `#[non_exhaustive]` so additional fields (e.g. concurrent-thread
+/// estimate, cache-residence projection) can land in a later release
+/// without breaking match-bind sites.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct ResourceEstimate {
+    /// Peak working-set memory in bytes — input + intermediate + output
+    /// buffers, NOT including caller-persistent state. Sized to the
+    /// largest single point in the plan's life, not the sum across steps.
+    pub peak_memory_bytes: u64,
+
+    /// Wall-clock time in milliseconds — median projection on the
+    /// reference machine (Ryzen 9 7950X, AVX2, 16 rayon threads, no
+    /// contention). Real time varies with CPU model, contention, and
+    /// frequency scaling.
+    pub wall_time_ms: f64,
 }
 
 /// Mirror of `intermediate_desc` in `convert.rs`, exposed via the

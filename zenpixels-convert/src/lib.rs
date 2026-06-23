@@ -397,7 +397,11 @@ pub use zenpixels::*;
 // Conversion modules.
 pub(crate) mod convert;
 pub mod error;
-pub(crate) mod estimate;
+/// Resource estimation — predict peak memory + wall-clock time for a
+/// `ConvertPlan` before running it. See [`ResourceEstimate`] and
+/// [`ConvertPlan::estimate`](crate::ConvertPlan::estimate).
+pub mod estimate;
+pub use estimate::ResourceEstimate;
 pub(crate) mod f16_scalar;
 pub(crate) mod negotiate;
 

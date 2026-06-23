@@ -52,7 +52,9 @@ fn main() {
     )
     .expect("from_vec");
     let plan = ConvertPlan::new(from, to).expect("plan");
-    let (est_bytes, _est_ms) = plan.estimate(w, h);
+    let __est = plan.estimate(w, h);
+    let est_bytes = __est.peak_memory_bytes;
+    let _est_ms = __est.wall_time_ms;
     let est_kb = est_bytes / 1024;
 
     let pre = status_kb("VmRSS:");

@@ -15,7 +15,7 @@
 #   free functions                             15
 #   inherent methods                           39
 #   struct fields                               4
-#   trait roster entries (type × trait)        33
+#   trait roster entries (type × trait)        34
 #   auto-trait-complete types                   2
 #
 # per-module pub lines:
@@ -97,7 +97,7 @@ pub __bench_scan::FusedRequest::check_opaque: bool
 pub __bench_scan::FusedResult::is_grayscale: bool
 pub __bench_scan::FusedResult::is_opaque: bool
 
-## trait impls (20 types)
+## trait impls (21 types)
 
 ConversionCost: TrivialClone
 ConvertIntent: TrivialClone
@@ -109,6 +109,7 @@ __bench_scan::FusedResult: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialCl
 cms::ColorPriority: TrivialClone
 cms::RenderingIntent: TrivialClone
 cms_moxcms::MoxCms: TrivialClone
+estimate::ResourceEstimate: TrivialClone
 hdr::Bt2446A: TrivialClone
 hdr::HdrMetadata: TrivialClone
 hdr::measure::LightLevelHistogram: Clone, Debug

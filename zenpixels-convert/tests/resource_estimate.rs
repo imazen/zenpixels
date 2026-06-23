@@ -31,7 +31,9 @@ fn assert_close(actual_ms: f64, expected_ms: f64, label: &str) {
 fn identity_plan_is_essentially_memcpy() {
     let desc = PixelDescriptor::RGBA8_SRGB;
     let plan = ConvertPlan::new(desc, desc).expect("identity plan");
-    let (mem, ms) = plan.estimate(4096, 4096);
+    let __est = plan.estimate(4096, 4096);
+    let mem = __est.peak_memory_bytes;
+    let ms = __est.wall_time_ms;
     // Memory: 4096 × 4096 × 4 bytes = 67_108_864 bytes (output buffer
     // only; identity has no scratch).
     let pixels = 4096u64 * 4096u64;
@@ -51,7 +53,9 @@ fn zero_pixel_plan_returns_zero_tuple() {
     // 0×0 is the trivially-empty case called out in the doc contract.
     let plan = ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB)
         .expect("plan");
-    let (mem, ms) = plan.estimate(0, 0);
+    let __est = plan.estimate(0, 0);
+    let mem = __est.peak_memory_bytes;
+    let ms = __est.wall_time_ms;
     assert_eq!(mem, 0);
     assert_eq!(ms, 0.0);
 }
@@ -71,7 +75,9 @@ fn linear_f32_to_srgb_u8_4mp_matches_bench_within_30_pct() {
     );
     let to = PixelDescriptor::RGB8_SRGB;
     let plan = ConvertPlan::new(from, to).expect("plan");
-    let (mem, ms) = plan.estimate(2048, 2048);
+    let __est = plan.estimate(2048, 2048);
+    let mem = __est.peak_memory_bytes;
+    let ms = __est.wall_time_ms;
 
     // Bench: Linear F32 → sRGB U8 RGB = 4.56 GiB/s.
     // At 4 MP × 12 bytes (input, F32 RGB) = 48 MB.
@@ -124,7 +130,9 @@ fn hdr_bt2446a_pipeline_at_24mp_matches_bench_within_30_pct() {
     let width = 6144u32;
     let height = 4096u32;
     let pixels_mp = (width as f64 * height as f64) / 1_048_576.0;
-    let (mem, ms) = plan.estimate(width, height);
+    let __est = plan.estimate(width, height);
+    let mem = __est.peak_memory_bytes;
+    let ms = __est.wall_time_ms;
 
     // Bench: BT.2446-A at 250 Mpix/s.
     //   1 MP / 250 Mpix/s = 4.19 ms/MP.
@@ -163,7 +171,9 @@ fn peak_memory_at_least_destination_buffer() {
         TransferFunction::Linear,
     );
     let plan = ConvertPlan::new(from, to).expect("plan");
-    let (mem, _ms) = plan.estimate(640, 480);
+    let __est = plan.estimate(640, 480);
+    let mem = __est.peak_memory_bytes;
+    let _ms = __est.wall_time_ms;
     let dst_bytes = 640u64 * 480u64 * to.bytes_per_pixel() as u64;
     assert!(
         mem >= dst_bytes,
@@ -198,7 +208,9 @@ fn estimate_does_not_panic_across_reasonable_sizes() {
         (65535, 1),
     ];
     for (w, h) in sizes {
-        let (mem, ms) = plan.estimate(w, h);
+        let __est = plan.estimate(w, h);
+    let mem = __est.peak_memory_bytes;
+    let ms = __est.wall_time_ms;
         assert!(ms >= 0.0, "negative time at {w}x{h}: {ms}");
         // Memory must be at least the destination buffer (16 bpp × pixels).
         let dst = (w as u64) * (h as u64) * 16;
@@ -224,8 +236,12 @@ fn estimate_grows_monotonically_with_pixel_count() {
     );
     let to = PixelDescriptor::RGB8_SRGB;
     let plan = ConvertPlan::new(from, to).expect("plan");
-    let (mem_1mp, ms_1mp) = plan.estimate(1024, 1024);
-    let (mem_4mp, ms_4mp) = plan.estimate(2048, 2048);
+    let est_1mp = plan.estimate(1024, 1024);
+    let mem_1mp = est_1mp.peak_memory_bytes;
+    let ms_1mp = est_1mp.wall_time_ms;
+    let est_4mp = plan.estimate(2048, 2048);
+    let mem_4mp = est_4mp.peak_memory_bytes;
+    let ms_4mp = est_4mp.wall_time_ms;
     assert!(mem_4mp >= mem_1mp, "memory non-monotonic: {mem_4mp} < {mem_1mp}");
     assert!(ms_4mp >= ms_1mp, "time non-monotonic: {ms_4mp} < {ms_1mp}");
     // 4 MP should take roughly 4× the time of 1 MP (within ±50 %).
