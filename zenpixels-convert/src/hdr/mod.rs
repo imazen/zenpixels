@@ -176,13 +176,16 @@ impl HdrMetadata {
 ///
 /// # Deprecated
 ///
-/// Same outlier-driven failure mode that got [`ContentLightLevel::measure`]
-/// deprecated in 0.2.15. Use the `zentone` crate (`zentone::Bt2446A`,
-/// `Bt2408Tonemapper`, etc.) for standardised HDR→SDR display mapping.
-/// Scheduled for removal in 0.3.0.
+/// Naive global Reinhard with no display adaptation or chroma correction.
+/// Confirmed inferior to [`Bt2446A`](crate::hdr::Bt2446A) by the
+/// 2026-06-22 audited HDR→SDR shootout — Bt2446A wins mean ΔE2000 by
+/// 2-5× over every channel-independent curve tested. Use
+/// [`crate::hdr::Bt2446A`] (now lives in this crate after the
+/// `zentone` → `zenpixels-convert::hdr` extraction). Scheduled for
+/// removal in 0.3.0.
 #[deprecated(
     since = "0.2.15",
-    note = "naive global Reinhard, no display adaptation or chroma correction; produces visibly wrong colour on real HDR content. Use the `zentone` crate (zentone::Bt2446A) for production HDR→SDR mapping. Removal queued for 0.3.0."
+    note = "naive global Reinhard — confirmed inferior to Bt2446A by the 2026-06-22 audited shootout (~2-5x mean ΔE2000). Use `zenpixels_convert::hdr::Bt2446A` for production HDR→SDR mapping. Removal queued for 0.3.0."
 )]
 #[doc(hidden)]
 #[inline]
@@ -232,11 +235,12 @@ pub fn reinhard_inverse(v: f32) -> f32 {
 /// # Deprecated
 ///
 /// A bare `v * 2^exposure` clamp — even weaker than [`reinhard_tonemap`].
-/// Removal queued for 0.3.0; use the `zentone` crate (`zentone::Bt2446A`)
-/// for production HDR→SDR mapping.
+/// The 2026-06-22 audited shootout confirmed
+/// [`Bt2446A`](crate::hdr::Bt2446A) wins on every metric by a large
+/// margin. Removal queued for 0.3.0.
 #[deprecated(
     since = "0.2.15",
-    note = "bare v * 2^exposure clamp; no display-aware mapping. Use the `zentone` crate (zentone::Bt2446A) for production HDR→SDR mapping. Removal queued for 0.3.0."
+    note = "bare v * 2^exposure clamp; no display-aware mapping. Use `zenpixels_convert::hdr::Bt2446A` for production HDR→SDR mapping. Removal queued for 0.3.0."
 )]
 #[doc(hidden)]
 #[cfg(feature = "std")]
