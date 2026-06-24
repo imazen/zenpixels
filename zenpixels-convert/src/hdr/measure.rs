@@ -58,7 +58,6 @@ fn nits_to_u16(nits: f64) -> u16 {
 ///
 /// Default is [`MaxRgb`](Self::MaxRgb) matching the dominant reading.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum LightLevelMethod {
     /// `max(R, G, B)` per pixel — the CTA-861.3 industry default.

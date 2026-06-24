@@ -16,7 +16,7 @@
 #   inherent methods                           45
 #   struct fields                             108
 #   enum variants                              70
-#   trait roster entries (type × trait)        65
+#   trait roster entries (type × trait)        63
 #   auto-trait-complete types                  16
 #
 # per-module pub lines:
@@ -303,7 +303,7 @@ cms_moxcms::MoxCmsError: Clone, Debug, Display
 hdr::Bt2446A: Clone, Copy, Debug
 hdr::GamutBoundaryLut: Clone, Debug
 hdr::SoftCompress: Clone, Debug
-hdr::measure::LightLevelMethod: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
+hdr::measure::LightLevelMethod: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 pipeline::op_format::OpCategory: Clone, Copy, Debug, Eq, Hash, PartialEq
 pipeline::op_format::OpRequirement: Clone, Copy, Debug
 pipeline::path::ConversionPath: Clone, Debug

@@ -58,7 +58,14 @@ pipeline = []
 # locks at 0.3.0.
 hdr-experimental = []
 cms-moxcms = ["std", "dep:moxcms"]
-serde = ["dep:serde", "zenpixels/serde"]
+# Soft-removed in 0.2.15. The `serde` feature previously forwarded to
+# `zenpixels/serde` and added a `Serialize`/`Deserialize` derive on
+# `hdr::measure::LightLevelMethod` — a 2-variant enum whose serialization
+# is trivial to handle at the caller side without dragging in a serde
+# dep. Kept as an empty stub so consumers of 0.2.14 that wrote
+# `features = ["serde"]` still build; the feature does nothing and is
+# queued for removal in the next breaking release.
+serde = []
 # Bench-only: exposes `pub mod __bench_u16_hybrids` shims for
 # `bench_u16_hybrids`. Not intended for non-bench use; the production u16
 # RGB gamut path uses `convert_u16_rgb_simd_lutdec_polyenc` directly.
@@ -110,13 +117,6 @@ once_cell = { version = "1.21.4", default-features = false, features = ["race", 
 lz4_flex = { version = "0.13.1", default-features = false, features = ["safe-decode"], optional = true }
 whereat = { version = "0.1.5", default-features = false }
 moxcms = { version = ">=0.8.1, <0.10", optional = true, features = ["options"] }
-# Optional `serde` derive support for crate-local enums (currently
-# `hdr::measure::LightLevelMethod`). Pulled in when the `serde` feature
-# is enabled — without it the `derive(serde::Serialize, serde::Deserialize)`
-# in `LightLevelMethod` failed to resolve under `--features
-# serde,hdr-experimental` (the `serde` feature previously only forwarded
-# to `zenpixels/serde`). `no_std`-compatible via `default-features = false`.
-serde = { version = "1.0", default-features = false, optional = true, features = ["derive"] }
 
 [dev-dependencies]
 zenpixels = { workspace = true, features = ["planar", "imgref"] }
@@ -129,11 +129,6 @@ palette = { version = "0.7", default-features = false, features = ["std", "appro
 # Dev-only: pin the committed CICP bundle blob's sha256 (golden test) so an
 # accidental regen is caught. Not part of the shipped crate.
 sha2 = "0.11.0"
-# Dev-only: drive the serde round-trip tests in tests/serde_feature.rs
-# (verifying that the `serde` feature compiles with `hdr-experimental` so
-# `LightLevelMethod` and `ContentLightLevel` are serializable). Not pulled
-# in by the production build; only consumed by the test target.
-serde_json = "1.0.150"
 
 [[bench]]
 name = "bench_cms"
