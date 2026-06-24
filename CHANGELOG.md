@@ -69,20 +69,19 @@
   `SimdTier`) still match the `zencodec::estimate::*` shape for the
   decode → convert → encode pipeline boundary. README + module docs +
   `convert.rs` docstring updated.
-- **Test-only e2e deps factored into a new `zenpixels-convert-e2e`
-  workspace member.** The producer-SDR ΔE2000 regression test
-  (`tests/hdr_producer_sdr_match.rs`) and its `__hdr-e2e-test` Cargo
-  feature lived inside `zenpixels-convert/Cargo.toml`, dragging in
-  optional `zenjpeg` + `anyhow` deps plus a `[[test]]` block and an
-  18-line cycle-avoidance comment for one test file. Moved to a
-  dedicated `zenpixels-convert-e2e/` crate (`publish = false`,
-  `version = "0.0.0"`, empty `src/lib.rs` stub, dev-deps pointing at the
-  local `zenpixels-convert` + sibling `../../zenjpeg/zenjpeg`). The
-  workspace `[patch.crates-io]` block (which patches `ultrahdr-core` to
-  the unpublished GitHub main + patches `zenpixels` to the local member)
-  carries through unchanged — only consulted when the e2e crate is in
-  the dep graph. Run via `cargo test -p zenpixels-convert-e2e`; the test
-  still silently skips when the imazen-26 corpus is absent.
+- **`zenpixels-convert-e2e` crate dropped entirely.** The single-sample
+  producer-SDR ΔE2000 test (`hdr_producer_sdr_match`) was subsumed by
+  zentone's audited 76-sample shootout (`zentone/examples/
+  hdr_tone_map_shootout_audited.rs` + tracked CSV benchmarks). Plan-shape
+  correctness for the HDR pipeline is covered by `tests/hdr_pipeline.rs`
+  (15 tests) without needing a real decoder dep. Removed: the entire
+  `zenpixels-convert-e2e/` workspace member, the matching member entry
+  in the workspace `[workspace] members`, and the dep-graph-cycle
+  commentary on the workspace `[patch.crates-io]` block — patches still
+  apply when their crates appear in the graph but aren't needed by the
+  workspace's default members anymore. Net workspace shrinks by one
+  crate; the right layering reasserts itself (zenpixels-convert provides
+  primitives; zentone runs the empirical sweeps that gate regressions).
 - The main `zenpixels-convert/Cargo.toml` is now free of test-only
   optional deps; the only remaining optional deps are the production
   ones (`rgb`, `lz4_flex`, `moxcms`, `serde`).

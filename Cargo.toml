@@ -1,5 +1,5 @@
 [workspace]
-members = ["zenpixels", "zenpixels-convert", "zenpixels-convert-e2e", "scripts/icc-gen"]
+members = ["zenpixels", "zenpixels-convert", "scripts/icc-gen"]
 # `apidoc/` is the CI-free public-API snapshot runner: excluded so plain
 # `cargo test` and CI never compile its zenutils-apidoc dependency tree.
 # Regenerate snapshots via `just api-doc`.
@@ -10,29 +10,6 @@ resolver = "2"
 
 [workspace.dependencies]
 zenpixels = { path = "zenpixels", version = "0.2.16", default-features = false }
-
-# Patches: only consulted when the corresponding crate is actually pulled.
-# The dedicated `zenpixels-convert-e2e` workspace member pulls the local
-# `zenjpeg` for its end-to-end HDR test, which transitively requires the
-# unpublished main of `ultrahdr-core` (via `zenjpeg`'s `ultrahdr` feature) —
-# that's what `ultrahdr-core` is patched in for. `zencodec` is NOT patched:
-# 0.1.24 is on crates.io now, so the transitive graph resolves it from the
-# registry. The patches are NO-OPS for default builds — cargo only consults
-# them when those crates appear in the dep graph. Deliberately omitting a
-# `zenpixels-convert` patch here so transitive `zenanalyze →
-# zenpixels-convert ^0.2.11` still resolves to the registry copy and
-# we don't form a self-cycle through the local crate.
-[patch.crates-io]
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr" }
-# Patch `zenpixels` to the local member so its `ColorPrimaries` enum is
-# the same type the e2e test calls into. We deliberately do NOT patch
-# `zenpixels-convert` here — that would form a cycle through
-# `zenanalyze`. The two-version `zenpixels-convert` graph (local 0.2.15
-# for the workspace member + registry 0.2.14 for zenanalyze's transitive
-# need) is harmless because the e2e test only ever uses the local copy
-# directly (via the `zenpixels-convert = { path = "../zenpixels-convert" }`
-# dev-dep in `zenpixels-convert-e2e/Cargo.toml`).
-zenpixels = { path = "zenpixels" }
 
 [workspace.package]
 version = "0.2.11"
