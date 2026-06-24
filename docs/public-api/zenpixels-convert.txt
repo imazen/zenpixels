@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenpixels-convert.txt 395 lines (supported surface) | zenpixels-convert.features.txt 285 added (features: avx512,cms-moxcms,fast-transpose,hdr-experimental,icc-db,imgref,pipeline,planar,rgb,serde,std) | zenpixels-convert.internal.txt 91 lines (124 hidden + 0 excluded-feature)
+# files: zenpixels-convert.txt 381 lines (supported surface) | zenpixels-convert.features.txt 285 added (features: avx512,cms-moxcms,fast-transpose,hdr-experimental,icc-db,imgref,pipeline,planar,rgb,serde,std) | zenpixels-convert.internal.txt 91 lines (124 hidden + 0 excluded-feature)
 
 ## summary
 #
@@ -14,7 +14,7 @@
 #   pub types (struct/enum/trait/alias)        57
 #   pub consts/statics                         19
 #   free functions                             40
-#   inherent methods                          143
+#   inherent methods                          129
 #   struct fields                              50
 #   enum variants                              74
 #   re-exports                                  5
@@ -28,7 +28,7 @@
 #   cms                              27
 #   converter                        23
 #   error                            27
-#   estimate                         61
+#   estimate                         47
 #   ext                              13
 #   gamut                             6
 #   hdr                              15
@@ -38,7 +38,7 @@
 #   orient                            3
 #   output                           17
 
-## items (368 lines)
+## items (354 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -128,22 +128,15 @@ pub fn estimate::ComputeEnvironment::with_available_ram_bytes(self, u64) -> Self
 pub fn estimate::ComputeEnvironment::with_cores(self, usize) -> Self
 pub fn estimate::ComputeEnvironment::with_simd_tier(self, estimate::SimdTier) -> Self
 pub fn estimate::ImageCharacteristics::descriptor(&self) -> &zenpixels::descriptor::PixelDescriptor
-pub fn estimate::ImageCharacteristics::frame_count(&self) -> u32
 pub fn estimate::ImageCharacteristics::height(&self) -> u32
-pub fn estimate::ImageCharacteristics::input_bytes(&self) -> u64
 pub fn estimate::ImageCharacteristics::new(u32, u32, zenpixels::descriptor::PixelDescriptor) -> Self
-pub fn estimate::ImageCharacteristics::pixels(&self) -> u64
 pub fn estimate::ImageCharacteristics::width(&self) -> u32
-pub fn estimate::ImageCharacteristics::with_frame_count(self, u32) -> Self
-pub fn estimate::ResourceEstimate::conservative(&estimate::ImageCharacteristics) -> Self
-pub fn estimate::ResourceEstimate::cpu_ms(&self) -> core::option::Option<u64>
+pub fn estimate::ResourceEstimate::intermediate_buffer_count(&self) -> core::option::Option<u32>
 pub fn estimate::ResourceEstimate::new(u64, u64) -> Self
 pub fn estimate::ResourceEstimate::peak_memory_bytes_est(&self) -> core::option::Option<u64>
-pub fn estimate::ResourceEstimate::peak_memory_bytes_max(&self) -> core::option::Option<u64>
 pub fn estimate::ResourceEstimate::unknown() -> Self
 pub fn estimate::ResourceEstimate::wall_ms(&self) -> core::option::Option<u64>
-pub fn estimate::ResourceEstimate::with_cpu_ms(self, u64) -> Self
-pub fn estimate::ResourceEstimate::with_peak_max(self, u64) -> Self
+pub fn estimate::ResourceEstimate::with_intermediate_buffer_count(self, u32) -> Self
 pub mod ext
 pub fn ext::ColorPrimariesExt::from_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub fn ext::ColorPrimariesExt::to_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
@@ -314,13 +307,9 @@ pub fn hdr::HdrMetadata::is_hdr(&self) -> bool
 pub fn hdr::HdrMetadata::is_sdr(&self) -> bool
 #[non_exhaustive] pub struct ImageCharacteristics [also: estimate]
 pub fn estimate::ImageCharacteristics::descriptor(&self) -> &zenpixels::descriptor::PixelDescriptor
-pub fn estimate::ImageCharacteristics::frame_count(&self) -> u32
 pub fn estimate::ImageCharacteristics::height(&self) -> u32
-pub fn estimate::ImageCharacteristics::input_bytes(&self) -> u64
 pub fn estimate::ImageCharacteristics::new(u32, u32, zenpixels::descriptor::PixelDescriptor) -> Self
-pub fn estimate::ImageCharacteristics::pixels(&self) -> u64
 pub fn estimate::ImageCharacteristics::width(&self) -> u32
-pub fn estimate::ImageCharacteristics::with_frame_count(self, u32) -> Self
 #[non_exhaustive] pub struct LoadBearingReport [also: load_bearing]
 pub LoadBearingReport::uses_alpha: core::option::Option<bool>
 pub LoadBearingReport::uses_chroma: core::option::Option<bool>
@@ -339,15 +328,12 @@ pub const fn Provenance::with_origin(zenpixels::descriptor::ChannelType, zenpixe
 pub const fn Provenance::with_origin_depth(zenpixels::descriptor::ChannelType) -> Self
 pub fn Provenance::with_origin_primaries(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::ColorPrimaries) -> Self
 #[non_exhaustive] pub struct ResourceEstimate [also: estimate]
-pub fn estimate::ResourceEstimate::conservative(&estimate::ImageCharacteristics) -> Self
-pub fn estimate::ResourceEstimate::cpu_ms(&self) -> core::option::Option<u64>
+pub fn estimate::ResourceEstimate::intermediate_buffer_count(&self) -> core::option::Option<u32>
 pub fn estimate::ResourceEstimate::new(u64, u64) -> Self
 pub fn estimate::ResourceEstimate::peak_memory_bytes_est(&self) -> core::option::Option<u64>
-pub fn estimate::ResourceEstimate::peak_memory_bytes_max(&self) -> core::option::Option<u64>
 pub fn estimate::ResourceEstimate::unknown() -> Self
 pub fn estimate::ResourceEstimate::wall_ms(&self) -> core::option::Option<u64>
-pub fn estimate::ResourceEstimate::with_cpu_ms(self, u64) -> Self
-pub fn estimate::ResourceEstimate::with_peak_max(self, u64) -> Self
+pub fn estimate::ResourceEstimate::with_intermediate_buffer_count(self, u32) -> Self
 pub struct RowConverter [also: converter]
 pub fn converter::RowConverter::compose(&self, &Self) -> core::option::Option<Self>
 pub fn converter::RowConverter::convert_row(&mut self, &[u8], &mut [u8], u32)

@@ -139,7 +139,7 @@ The buffer-baking half of the zen orientation story lives here (the `Orientation
 
 ## Resource estimation
 
-For schedulers / throttlers / SLA-bound pipelines that need to know cost *before* running an op, [`ConvertPlan::estimate_in`] (and the [`ConvertPlan::estimate`] shortcut) returns a [`ResourceEstimate`] for a `width × height` image (or an [`ImageCharacteristics`] with frame count) under a given [`ComputeEnvironment`] (core count + optional SIMD tier + optional RAM budget). Cheap to call — walks the planned steps, no row work, no allocation. Calibrated against the `bench_t1`–`bench_t7` series (Ryzen 9 7950X, AVX2/V3), ±30 % design tolerance.
+For schedulers / throttlers / SLA-bound pipelines that need to know cost *before* running an op, [`ConvertPlan::estimate_in`] (and the [`ConvertPlan::estimate`] shortcut) returns a [`ResourceEstimate`] for a `width × height` image under a given [`ComputeEnvironment`] (core count + optional SIMD tier + optional RAM budget). The estimate reports `peak_memory_bytes_est`, `wall_ms` (already scaled to `cores()`), and `intermediate_buffer_count` (so schedulers can distinguish 1-giant-buffer plans from N-medium-buffer plans for paging-pressure decisions). Cheap to call — walks the planned steps, no row work, no allocation. Calibrated against the `bench_t1`–`bench_t7` series (Ryzen 9 7950X, AVX2/V3), ±30 % design tolerance.
 
 The four estimate types — [`ResourceEstimate`], [`ComputeEnvironment`], [`ImageCharacteristics`], [`SimdTier`] — are defined locally and are **shape-compatible** with the corresponding `zencodec::estimate::*` types (same field names, same builders, same accessors, same `#[non_exhaustive]` discipline). `zenpixels-convert` is a **foundation crate** and does NOT depend on `zencodec` — keeping codec abstractions strictly above pixel math. Codec authors whose stack uses the zencodec contract can wire `decode → convert → encode` estimates through the boundary with a trivial `From` conversion. The full type contract: sealed, growable, every field `Option`. Wall-time scaling across cores is handled internally by `ConvertPlan::estimate_in` — the resulting `wall_ms` is already divided by the effective parallel thread count.
 
@@ -159,10 +159,10 @@ let compute = ComputeEnvironment::new().with_cores(8);
 let est_8 = plan.estimate_in(&image, &compute);
 
 println!(
-    "peak ~{} MiB (max ~{} MiB), wall ~{} ms",
+    "peak ~{} MiB, wall ~{} ms, intermediates {}",
     est_8.peak_memory_bytes_est().unwrap_or(0) / (1 << 20),
-    est_8.peak_memory_bytes_max().unwrap_or(0) / (1 << 20),
     est_8.wall_ms().unwrap_or(0),
+    est_8.intermediate_buffer_count().map_or("?".to_string(), |n| n.to_string()),
 );
 ```
 

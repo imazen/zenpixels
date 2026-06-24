@@ -2,6 +2,52 @@
 
 ## [Unreleased]
 
+### zenpixels-convert — changed (Tier 1 ablation: drop codec-only fields; add intermediate_buffer_count)
+
+- **Trimmed the estimate-API surface to what `zenpixels-convert` actually
+  models per-frame.** Animation frame counts and codec-flavored variance/CPU-
+  vs-wall splits belong on `zencodec::estimate::*`, not on the per-conversion
+  input/output. Removed 10 public items:
+  - `ImageCharacteristics::frame_count` (field), `with_frame_count(u32) ->
+    Self`, `frame_count() -> u32` — `zenpixels-convert` is per-frame; callers
+    iterating animation invoke the plan once per frame.
+  - `ImageCharacteristics::pixels() -> u64` (trivial `width × height` helper),
+    `input_bytes() -> u64` (trivial `pixels × bytes_per_pixel` helper) —
+    callers can compose these from `width()` / `height()` /
+    `descriptor().bytes_per_pixel()` directly.
+  - `ResourceEstimate::peak_memory_bytes_max` (field), `with_peak_max(u64) ->
+    Self`, `peak_memory_bytes_max() -> Option<u64>` — the est/max split is
+    meaningful for codecs (content-dependent variance) but the conversion
+    plan's calibration is tight; the 1.3× margin was content-blind.
+  - `ResourceEstimate::cpu_ms` (field), `with_cpu_ms(u64) -> Self`,
+    `cpu_ms() -> Option<u64>` — CPU-vs-wall time matters for codec
+    parallelism but not the conversion pipeline (every plan returns the
+    same single-thread work measure as `wall_ms × cores`).
+  - `ResourceEstimate::conservative(&ImageCharacteristics) -> Self` — the
+    codec-blind fallback constructor is unused here; the convert planner
+    always has a calibrated model for every plan it builds.
+- **Added 3 public items on `ResourceEstimate` for paging-pressure-aware
+  scheduling:** `intermediate_buffer_count: Option<u32>` (field),
+  `with_intermediate_buffer_count(u32) -> Self`, `intermediate_buffer_count()
+  -> Option<u32>`. The planner already iterates steps to compute peak memory
+  — picking up the count is free. Reported as `Some(0)` for identity / single-
+  step plans (src → dst direct) and `Some(2)` for multi-step plans (the two
+  ping-pong scratch halves), so a scheduler can distinguish 1-giant-buffer
+  plans from N-medium-buffer plans for paging-pressure / TLB-pressure
+  decisions. `None` is reserved for plans whose buffer model isn't
+  statically known.
+- Net public-surface delta: **−7** items (10 removed, 3 added) on top of the
+  prior ThreadingInformation removal. `cargo semver-checks
+  --baseline-version 0.2.14` PASS 196/196 with `hdr-experimental` +
+  `pipeline` + `cms-moxcms` + `rgb` features — the removed items were
+  unreleased 0.2.15 additions; 0.2.14 never saw them.
+- Tests: `tests/resource_estimate.rs` 12 → 12 (replaced
+  `frame_count_scales_wall_and_peak_linearly` and
+  `peak_max_is_set_and_above_peak_est` with
+  `intermediate_buffer_count_zero_for_identity_plan` and
+  `intermediate_buffer_count_increases_for_multi_step_plan`). README +
+  `convert.rs` docstring + module body docs updated.
+
 ### zenpixels-convert — changed (drop ThreadingInformation; factor e2e crate)
 
 - **`ThreadingInformation` removed from the public API; cores-vs-wall scaling

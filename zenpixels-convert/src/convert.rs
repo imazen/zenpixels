@@ -1320,8 +1320,11 @@ impl ConvertPlan {
     ///
     /// `peak_memory_bytes_est` is the destination buffer plus row-sized
     /// ping-pong scratch (multi-step plans). It does NOT include the
-    /// caller's persistent state. `peak_memory_bytes_max` is reported at
-    /// `peak_est × 1.3` to capture the ±30 % accuracy contract.
+    /// caller's persistent state. `intermediate_buffer_count` reports the
+    /// number of full-image intermediate buffers held simultaneously
+    /// (0 for identity / single-step plans; 2 for multi-step plans using
+    /// ping-pong scratch) so schedulers can distinguish 1-giant-buffer plans
+    /// from N-medium-buffer plans for paging-pressure decisions.
     /// `wall_ms` is divided down by `compute.cores()` via the plan's
     /// internal threading-bottleneck model (see the [`estimate`] module
     /// docs): any SERIAL step forces the whole plan SERIAL; otherwise the

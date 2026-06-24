@@ -9,8 +9,8 @@
 //! for the HDR tone-map). Tolerance is ±30 % — the public contract.
 //!
 //! Field access goes through the Option-returning accessors
-//! (`peak_memory_bytes_est()` / `peak_memory_bytes_max()` / `wall_ms()` /
-//! `cpu_ms()`) — the surface is sealed and growable.
+//! (`peak_memory_bytes_est()` / `wall_ms()` /
+//! `intermediate_buffer_count()`) — the surface is sealed and growable.
 
 use zenpixels::AlphaMode;
 use zenpixels_convert::{
@@ -372,46 +372,7 @@ fn higher_simd_tier_shrinks_wall_ms() {
 }
 
 // ---------------------------------------------------------------------------
-// (10) `ImageCharacteristics::with_frame_count(N)` scales the wall + peak by
-// N (the animation case — repeated per-frame work over the same descriptor).
-// ---------------------------------------------------------------------------
-
-#[test]
-fn frame_count_scales_wall_and_peak_linearly() {
-    let from = PixelDescriptor::RGB8_SRGB;
-    let to = PixelDescriptor::RGBA8_SRGB;
-    let plan = ConvertPlan::new(from, to).expect("plan");
-    let env = ComputeEnvironment::new().with_cores(1);
-
-    let single = ImageCharacteristics::new(1024, 1024, from);
-    let multi = ImageCharacteristics::new(1024, 1024, from).with_frame_count(8);
-
-    let est_single = plan.estimate_in(&single, &env);
-    let est_multi = plan.estimate_in(&multi, &env);
-
-    let wall_single = est_single.wall_ms().unwrap_or(0);
-    let wall_multi = est_multi.wall_ms().unwrap_or(0);
-    let mem_single = mem_of(&est_single);
-    let mem_multi = mem_of(&est_multi);
-
-    // Multi-frame wall should be at least 4× the single-frame wall
-    // (allow slack for rounding to u64 ms — small plans round to 0).
-    if wall_single >= 4 {
-        assert!(
-            wall_multi >= wall_single * 4,
-            "8-frame wall {wall_multi} < 4× single-frame wall {wall_single}"
-        );
-    }
-    // Multi-frame peak memory grows with frames (the conservative model
-    // sums per-frame destination buffers).
-    assert!(
-        mem_multi >= mem_single * 4,
-        "8-frame peak {mem_multi} < 4× single-frame peak {mem_single}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// (11) Optional pin: the simple shortcut returns the same shape the
+// (10) Optional pin: the simple shortcut returns the same shape the
 // explicit `estimate_in(_, ComputeEnvironment::new())` call produces.
 // ---------------------------------------------------------------------------
 
@@ -433,29 +394,46 @@ fn shortcut_estimate_matches_explicit_default_environment() {
 }
 
 // ---------------------------------------------------------------------------
-// (12) `peak_memory_bytes_max` is reported and is at least the est value
-// (the 1.3× margin from the estimate body).
+// (11) `intermediate_buffer_count == Some(0)` for identity plans: the dst
+// memcpy from src holds no intermediate buffer at all.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn peak_max_is_set_and_above_peak_est() {
+fn intermediate_buffer_count_zero_for_identity_plan() {
+    let desc = PixelDescriptor::RGBA8_SRGB;
+    let plan = ConvertPlan::new(desc, desc).expect("identity plan");
+    let est = plan.estimate(1024, 1024);
+    assert_eq!(
+        est.intermediate_buffer_count(),
+        Some(0),
+        "identity plan must report 0 intermediate buffers (src → dst memcpy holds no scratch)",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// (12) `intermediate_buffer_count` ≥ 2 for multi-step plans: the ping-pong
+// scratch holds two halves, surfaced as two intermediates so a scheduler
+// can distinguish single-giant-buffer plans from N-medium-buffer plans.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn intermediate_buffer_count_increases_for_multi_step_plan() {
+    // RGB8 sRGB → RGBA F32 Linear forces depth + alpha + transfer steps
+    // — definitively a multi-step plan that round-trips through scratch.
     let from = PixelDescriptor::RGB8_SRGB;
-    let to = PixelDescriptor::RGBA8_SRGB;
+    let to = PixelDescriptor::new(
+        ChannelType::F32,
+        zenpixels::ChannelLayout::Rgba,
+        Some(AlphaMode::Straight),
+        TransferFunction::Linear,
+    );
     let plan = ConvertPlan::new(from, to).expect("plan");
     let est = plan.estimate(1024, 1024);
-    let peak_est = est.peak_memory_bytes_est().expect("peak_est present");
-    let peak_max = est.peak_memory_bytes_max().expect("peak_max present");
+    let count = est
+        .intermediate_buffer_count()
+        .expect("multi-step plan must populate intermediate_buffer_count");
     assert!(
-        peak_max >= peak_est,
-        "peak_max {peak_max} < peak_est {peak_est}",
+        count >= 2,
+        "multi-step plan must report ≥ 2 intermediate buffers (ping-pong scratch), got {count}",
     );
-    // The 1.3× margin places peak_max between 1.2× and 1.4× peak_est for
-    // any reasonable plan.
-    if peak_est > 0 {
-        let ratio = peak_max as f64 / peak_est as f64;
-        assert!(
-            (1.2..=1.4).contains(&ratio),
-            "peak_max/peak_est ratio {ratio} outside expected [1.2, 1.4]",
-        );
-    }
 }

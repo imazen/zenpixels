@@ -53,8 +53,7 @@
 //!   `wall_ms` by `min(compute.cores(), per_step_knee)` where the
 //!   per-step knee is `rows / 64` clamped to `[1, 16]`. Any SERIAL
 //!   step in the plan disables the scaling (single-thread wall is
-//!   reported). `cpu_ms` is unaffected — it carries the work-summed
-//!   single-thread time.
+//!   reported).
 //! - **Cache state.** Cold L1/L2 cache adds per-call overhead; the
 //!   benches measure steady-state at 4096-pixel rows, so very small
 //!   images carry proportionally more fixed overhead than the
@@ -101,7 +100,7 @@
 //! useful thread count, and `estimate_plan` divides `wall_ms` by
 //! `min(compute.cores(), bottleneck_knee)` directly when building the
 //! [`ResourceEstimate`]. The model is internal — the public surface only
-//! exposes the resulting scaled `wall_ms` (and the unscaled `cpu_ms`).
+//! exposes the resulting scaled `wall_ms`.
 
 use crate::convert::{ConvertPlan, ConvertStep, FusedKind};
 use crate::PixelDescriptor;
@@ -244,15 +243,19 @@ impl Default for ComputeEnvironment {
 /// Characteristics of the image being encoded/decoded.
 ///
 /// Sealed and growable. Carries the dimensions and pixel format today; future
-/// fields (content class, animation frame count overrides, HDR tier depth) are
-/// additive.
+/// fields (content class, HDR tier depth) are additive.
+///
+/// `zenpixels-convert` is per-frame: animation-related fields belong on
+/// codec types (e.g. on `zencodec::estimate::ImageCharacteristics`), not on
+/// the per-conversion estimate input. Callers iterating an animation invoke
+/// the per-frame plan once per frame; the scheduler sees per-frame resource
+/// use directly.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ImageCharacteristics {
     width: u32,
     height: u32,
     descriptor: PixelDescriptor,
-    frame_count: u32,
 }
 
 impl ImageCharacteristics {
@@ -263,15 +266,7 @@ impl ImageCharacteristics {
             width,
             height,
             descriptor,
-            frame_count: 1,
         }
-    }
-
-    /// Number of animation frames (clamped to ≥ 1).
-    #[must_use]
-    pub fn with_frame_count(mut self, frames: u32) -> Self {
-        self.frame_count = frames.max(1);
-        self
     }
 
     /// Image width in pixels.
@@ -291,28 +286,9 @@ impl ImageCharacteristics {
     pub fn descriptor(&self) -> &PixelDescriptor {
         &self.descriptor
     }
-
-    /// Animation frame count (1 for a still).
-    #[must_use]
-    pub fn frame_count(&self) -> u32 {
-        self.frame_count
-    }
-
-    /// Pixel count (`width * height`).
-    #[must_use]
-    pub fn pixels(&self) -> u64 {
-        self.width as u64 * self.height as u64
-    }
-
-    /// Size of one frame's tightly-packed pixel buffer in bytes
-    /// (`pixels * bytes_per_pixel`).
-    #[must_use]
-    pub fn input_bytes(&self) -> u64 {
-        self.pixels() * self.descriptor.bytes_per_pixel() as u64
-    }
 }
 
-/// Predicted resources for an encode (or decode) operation.
+/// Predicted resources for a conversion plan.
 ///
 /// Every field is `Option` — fillers may model what they can and leave the
 /// rest `None` (the all-`None` constructor is [`ResourceEstimate::unknown`]).
@@ -328,9 +304,8 @@ impl ImageCharacteristics {
 #[non_exhaustive]
 pub struct ResourceEstimate {
     peak_memory_bytes_est: Option<u64>,
-    peak_memory_bytes_max: Option<u64>,
     wall_ms: Option<u64>,
-    cpu_ms: Option<u64>,
+    intermediate_buffer_count: Option<u32>,
 }
 
 impl ResourceEstimate {
@@ -341,37 +316,30 @@ impl ResourceEstimate {
     pub fn unknown() -> Self {
         Self {
             peak_memory_bytes_est: None,
-            peak_memory_bytes_max: None,
             wall_ms: None,
-            cpu_ms: None,
+            intermediate_buffer_count: None,
         }
     }
 
     /// An estimate from the two essentials: the typical (estimated) peak memory
-    /// and the wall time. Everything else — `peak_memory_bytes_max` and
-    /// `cpu_ms` — is left `None`; refine with the `with_*` setters.
+    /// and the wall time. The buffer count is left `None`; refine with
+    /// [`with_intermediate_buffer_count`](Self::with_intermediate_buffer_count).
     #[must_use]
     pub fn new(peak_memory_bytes_est: u64, wall_ms: u64) -> Self {
         Self {
             peak_memory_bytes_est: Some(peak_memory_bytes_est),
-            peak_memory_bytes_max: None,
             wall_ms: Some(wall_ms),
-            cpu_ms: None,
+            intermediate_buffer_count: None,
         }
     }
 
-    /// Set the conservative upper-bound peak memory (bytes).
+    /// Set the number of full-image intermediate buffers held simultaneously
+    /// during execution, NOT counting the input or output buffer. Schedulers
+    /// can use this to distinguish 1-giant-buffer plans from N-medium-buffer
+    /// plans for paging-pressure decisions.
     #[must_use]
-    pub fn with_peak_max(mut self, max: u64) -> Self {
-        self.peak_memory_bytes_max = Some(max);
-        self
-    }
-
-    /// Set the total CPU-time estimate in milliseconds (work summed across all
-    /// threads). Unlike `wall_ms`, it is **not** divided down by core count.
-    #[must_use]
-    pub fn with_cpu_ms(mut self, cpu_ms: u64) -> Self {
-        self.cpu_ms = Some(cpu_ms);
+    pub fn with_intermediate_buffer_count(mut self, n: u32) -> Self {
+        self.intermediate_buffer_count = Some(n);
         self
     }
 
@@ -379,12 +347,6 @@ impl ResourceEstimate {
     #[must_use]
     pub fn peak_memory_bytes_est(&self) -> Option<u64> {
         self.peak_memory_bytes_est
-    }
-
-    /// Conservative upper-bound peak memory (worst content + margin), bytes.
-    #[must_use]
-    pub fn peak_memory_bytes_max(&self) -> Option<u64> {
-        self.peak_memory_bytes_max
     }
 
     /// Predicted **wall-clock** time in milliseconds. Already scaled to the
@@ -395,29 +357,16 @@ impl ResourceEstimate {
         self.wall_ms
     }
 
-    /// Predicted total **CPU** time in milliseconds (work summed across all
-    /// threads). Independent of the core count — represents the single-thread
-    /// work the plan does.
+    /// Estimated number of full-image intermediate buffers held simultaneously
+    /// during execution, NOT counting the input or output buffer. Schedulers
+    /// can use this to distinguish 1-giant-buffer plans from N-medium-buffer
+    /// plans for paging-pressure decisions.
+    ///
+    /// Returns `None` when the planner can't reliably determine the count
+    /// (e.g. plans whose buffer model isn't statically known).
     #[must_use]
-    pub fn cpu_ms(&self) -> Option<u64> {
-        self.cpu_ms
-    }
-
-    /// A conservative, content- and codec-blind fallback for operations
-    /// without a calibrated model: peak ≈ input buffer + a generous working
-    /// multiple, serial (so `wall_ms == cpu_ms`).
-    #[must_use]
-    pub fn conservative(image: &ImageCharacteristics) -> Self {
-        let input = image
-            .input_bytes()
-            .saturating_mul(image.frame_count() as u64);
-        let fixed: u64 = 16 << 20;
-        let typical = fixed.saturating_add(input.saturating_mul(3));
-        // ~50 Mpix/s placeholder throughput; codecs override with measured.
-        let wall_ms = image.pixels().saturating_mul(image.frame_count() as u64) / 50_000;
-        Self::new(typical, wall_ms)
-            .with_peak_max(fixed.saturating_add(input.saturating_mul(8)))
-            .with_cpu_ms(wall_ms)
+    pub fn intermediate_buffer_count(&self) -> Option<u32> {
+        self.intermediate_buffer_count
     }
 }
 
@@ -436,12 +385,6 @@ impl ResourceEstimate {
 /// bpp B = (1_048_576 / (G * 2^30 / B)) * 1e9 ns.
 const ONE_MP: f64 = 1_048_576.0;
 const GIB: f64 = 1_073_741_824.0;
-
-/// Conservative ±-margin multiplier for the upper-bound peak memory: the ±30 %
-/// accuracy contract of the calibration is captured by reporting
-/// `peak_max = peak_est × 1.3` on [`ResourceEstimate::with_peak_max`].
-const PEAK_MAX_MARGIN: u64 = 13; // numerator
-const PEAK_MAX_DIVISOR: u64 = 10; // denominator → 1.3×
 
 /// Convert a steady-state throughput (GiB/s) at a given bytes-per-pixel
 /// into a per-megapixel cost in nanoseconds.
@@ -728,17 +671,23 @@ fn simd_tier_multiplier(tier: SimdTier) -> f64 {
 }
 
 /// Body of the plan-level estimate. Walks the plan's steps once,
-/// summing time and tracking the peak intermediate buffer size.
+/// summing time and tracking the peak intermediate buffer size and the
+/// number of simultaneously-live intermediate buffers.
 ///
 /// Memory model:
 /// - The output buffer at `to.bytes_per_pixel() * pixels` is always allocated.
 /// - Multi-step plans hold two scratch row buffers ping-ponged between
 ///   intermediate descriptors. Worst-case scratch is `2 * width *
-///   max_intermediate_bpp` bytes.
+///   max_intermediate_bpp` bytes — counted as 2 intermediate buffers for
+///   paging-pressure reporting.
 /// - The estimate is for a single per-call working set, NOT a
 ///   parallel-job-wide cap.
-/// - `peak_memory_bytes_max` is reported at `peak_est × 1.3` to capture the
-///   ±30 % accuracy contract.
+///
+/// Intermediate-buffer-count model (reported via
+/// [`ResourceEstimate::intermediate_buffer_count`]):
+/// - Identity plan → 0 (just `dst` memcpy from `src`).
+/// - Single-step plan → 0 (kernel writes `src → dst` directly).
+/// - Multi-step plan → 2 (the two ping-pong scratch halves).
 ///
 /// Threading: the plan-level threading is the bottleneck across steps. A
 /// SERIAL step forces the whole plan SERIAL (wall == single-thread); otherwise
@@ -752,7 +701,6 @@ pub(crate) fn estimate_plan(
 ) -> ResourceEstimate {
     let width = image.width();
     let height = image.height();
-    let frames = u64::from(image.frame_count());
 
     // Apply the per-tier wall-time multiplier on top of the AVX2 baseline.
     // TODO: per-tier calibration tables once the t-series bench sweep
@@ -767,14 +715,15 @@ pub(crate) fn estimate_plan(
     // there's only one operation, the memcpy can't usefully scale).
     if plan.is_identity() {
         let pixels = (width as u64) * (height as u64);
-        let dst_bytes = (pixels * plan.to().bytes_per_pixel() as u64).saturating_mul(frames);
+        let dst_bytes = pixels * plan.to().bytes_per_pixel() as u64;
         // memcpy at ~30 GB/s is a reasonable assumption — but on systems
         // with NUMA effects this can be 10-50 GB/s. Use a midpoint.
         let memcpy_gib_s = 30.0;
         let memcpy_time_ms = (dst_bytes as f64) / (memcpy_gib_s * GIB) * 1_000.0 * tier_mul;
         let wall_ms = memcpy_time_ms as u64;
         // Identity is SERIAL (single memcpy), so the bottleneck cap is 1.
-        return finalize(dst_bytes, wall_ms, 1, compute);
+        // No intermediates — the memcpy goes src → dst directly.
+        return finalize(dst_bytes, wall_ms, 1, 0, compute);
     }
 
     let pixels = (width as u64) * (height as u64);
@@ -787,7 +736,8 @@ pub(crate) fn estimate_plan(
     // Scratch buffers for multi-step plans: two row-sized halves
     // sized to the widest intermediate. Single-step plans use
     // no scratch (the kernel writes directly into the dst row).
-    let scratch_per_half_bytes = if plan.steps().len() > 1 {
+    let is_multi_step = plan.steps().len() > 1;
+    let scratch_per_half_bytes = if is_multi_step {
         // Walk steps to find the widest intermediate bpp.
         let mut desc = plan.from();
         let mut max_bpp = desc.bytes_per_pixel();
@@ -801,6 +751,11 @@ pub(crate) fn estimate_plan(
     };
     // Two ping-pong halves (single allocation, but split in two).
     let scratch_bytes = scratch_per_half_bytes.saturating_mul(2);
+    // Buffer count: 0 for identity / single-step (no scratch), 2 for
+    // multi-step (the two ping-pong halves). Capturing this lets schedulers
+    // distinguish 1-giant-buffer plans from N-medium-buffer plans for
+    // paging-pressure decisions.
+    let intermediate_buffer_count: u32 = if is_multi_step { 2 } else { 0 };
 
     // Sum per-step time contributions and compute the bottleneck
     // threading across steps. The model:
@@ -828,8 +783,7 @@ pub(crate) fn estimate_plan(
         }
         desc = intermediate_after(desc, step);
     }
-    // Multi-frame plans repeat the per-frame work.
-    let total_time_ms = total_time_ms * (frames as f64) * tier_mul;
+    let total_time_ms = total_time_ms * tier_mul;
 
     // Whole-plan bottleneck: any SERIAL step → 1 thread; else the smallest
     // per-step knee (or 1 if no parallel steps were observed).
@@ -839,34 +793,36 @@ pub(crate) fn estimate_plan(
         min_knee
     };
 
-    // Peak working-set: destination buffer + scratch (for multi-step) ×
-    // frame_count for animated sources.
-    let peak_memory_bytes = dst_bytes
-        .saturating_add(scratch_bytes)
-        .saturating_mul(frames);
+    // Peak working-set: destination buffer + scratch (for multi-step).
+    let peak_memory_bytes = dst_bytes.saturating_add(scratch_bytes);
 
     let wall_ms = total_time_ms as u64;
-    finalize(peak_memory_bytes, wall_ms, bottleneck_threads, compute)
+    finalize(
+        peak_memory_bytes,
+        wall_ms,
+        bottleneck_threads,
+        intermediate_buffer_count,
+        compute,
+    )
 }
 
 /// Wrap the projected peak + single-thread wall-ms in the
-/// [`ResourceEstimate`] shape, populate `peak_memory_bytes_max` at the
-/// 1.3× margin, fill `cpu_ms` from the single-thread wall, and scale
-/// `wall_ms` by `min(compute.cores(), bottleneck_threads)` directly.
+/// [`ResourceEstimate`] shape: divide `wall_ms` by
+/// `min(compute.cores(), bottleneck_threads)` and attach the
+/// intermediate-buffer count.
 fn finalize(
     peak_est: u64,
     wall_ms_single_thread: u64,
     bottleneck_threads: u32,
+    intermediate_buffer_count: u32,
     compute: &ComputeEnvironment,
 ) -> ResourceEstimate {
-    let peak_max = peak_est.saturating_mul(PEAK_MAX_MARGIN) / PEAK_MAX_DIVISOR;
     let effective = (compute.cores() as u64)
         .max(1)
         .min(bottleneck_threads.max(1) as u64);
     let wall_ms_scaled = wall_ms_single_thread / effective;
     ResourceEstimate::new(peak_est, wall_ms_scaled)
-        .with_peak_max(peak_max)
-        .with_cpu_ms(wall_ms_single_thread)
+        .with_intermediate_buffer_count(intermediate_buffer_count)
 }
 
 /// Mirror of `intermediate_desc` in `convert.rs`, exposed via the
@@ -908,11 +864,11 @@ mod local_type_contract_tests {
     }
 
     #[test]
-    fn image_characteristics_sizes() {
+    fn image_characteristics_fields() {
         let im = ImageCharacteristics::new(1024, 768, desc());
-        assert_eq!(im.pixels(), 1024 * 768);
-        assert_eq!(im.input_bytes(), 1024 * 768 * 3);
-        assert_eq!(im.with_frame_count(0).frame_count(), 1);
+        assert_eq!(im.width(), 1024);
+        assert_eq!(im.height(), 768);
+        assert_eq!(*im.descriptor(), desc());
     }
 
     #[test]
@@ -920,26 +876,20 @@ mod local_type_contract_tests {
         let est = ResourceEstimate::new(200, 1000);
         assert_eq!(est.peak_memory_bytes_est(), Some(200));
         assert_eq!(est.wall_ms(), Some(1000));
-        assert_eq!(est.peak_memory_bytes_max(), None);
-        assert_eq!(est.cpu_ms(), None);
+        assert_eq!(est.intermediate_buffer_count(), None);
     }
 
     #[test]
     fn unknown_is_all_none() {
         let est = ResourceEstimate::unknown();
         assert_eq!(est.peak_memory_bytes_est(), None);
-        assert_eq!(est.peak_memory_bytes_max(), None);
         assert_eq!(est.wall_ms(), None);
-        assert_eq!(est.cpu_ms(), None);
+        assert_eq!(est.intermediate_buffer_count(), None);
     }
 
     #[test]
-    fn conservative_is_input_scaled() {
-        let est = ResourceEstimate::conservative(&ImageCharacteristics::new(1000, 1000, desc()));
-        assert!(est.peak_memory_bytes_est().unwrap() >= 1000 * 1000 * 3);
-        // Conservative is serial — wall_ms == cpu_ms (no parallel scaling
-        // happens to it inside ResourceEstimate; estimate_plan does the
-        // scaling).
-        assert_eq!(est.wall_ms(), est.cpu_ms());
+    fn with_intermediate_buffer_count_sets_field() {
+        let est = ResourceEstimate::new(200, 1000).with_intermediate_buffer_count(2);
+        assert_eq!(est.intermediate_buffer_count(), Some(2));
     }
 }
