@@ -5,8 +5,6 @@
 # type (method signatures live at the trait definition); blanket
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
-#
-# files: zenpixels-convert.txt 381 lines (supported surface) | zenpixels-convert.features.txt 285 added (features: avx512,cms-moxcms,fast-transpose,hdr-experimental,icc-db,imgref,pipeline,planar,rgb,serde,std) | zenpixels-convert.internal.txt 91 lines (124 hidden + 0 excluded-feature)
 
 ## summary
 #
@@ -424,6 +422,5 @@ zenpixels::descriptor::TransferFunction: ext::TransferFunctionExt
 
 ## auto traits
 
-19 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 cms::CmsPluginError: !RefUnwindSafe !UnwindSafe
 converter::RowConverter: !RefUnwindSafe !UnwindSafe

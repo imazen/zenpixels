@@ -291,7 +291,3 @@ rgb::formats::rgb::Rgb<u8>: buffer::Pixel
 rgb::formats::rgba::Rgba<f32>: buffer::Pixel
 rgb::formats::rgba::Rgba<u16>: buffer::Pixel
 rgb::formats::rgba::Rgba<u8>: buffer::Pixel
-
-## auto traits
-
-8 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe

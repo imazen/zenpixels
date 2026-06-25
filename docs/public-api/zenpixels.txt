@@ -5,8 +5,6 @@
 # type (method signatures live at the trait definition); blanket
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
-#
-# files: zenpixels.txt 833 lines (supported surface) | zenpixels.features.txt 264 added (features: icc,imgref,planar,rgb,serde,std) | zenpixels.internal.txt 82 lines (83 hidden + 0 excluded-feature)
 
 ## summary
 #
@@ -870,7 +868,6 @@ policy::LumaCoefficients: Clone, Copy, Debug, Eq, Hash, PartialEq
 
 ## auto traits
 
-34 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 buffer::InPlacePixels<'a>: !UnwindSafe
 buffer::PixelBuffer<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::PixelSlice<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe

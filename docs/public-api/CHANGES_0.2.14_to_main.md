@@ -9,6 +9,21 @@ runner, same encoding, same feature-axis bucketing.
 Run `just api-doc` to refresh the current-main snapshots; the
 `v0.2.14/` baseline is frozen.
 
+> **Snapshot format note (2026-06-25):** the current-main snapshots are
+> now generated with `zenutils-apidoc 0.1.2`'s `no_file_meta_header()` +
+> `no_autotraits_summary()` builders enabled, which strip two
+> perpetually-churning lines from each rendered file: the `# files: …`
+> line-count header at the top of `<crate>.txt`, and the `X types
+> implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin,
+> UnwindSafe` summary line at the top of each `## auto traits` block.
+> Both counters shifted on every regen as the API grew without
+> conveying any semver signal. The `v0.2.14/` baseline still carries
+> those lines (frozen format from the original `0.1.0` runner) — so the
+> first few lines of every `main`-side header block and the auto-traits
+> block will appear as net-removals in a raw `diff -u` against the
+> baseline. The per-`pub`-line counts in the tables below already
+> account for this; ignore the format-noise lines when reviewing.
+
 ## Summary
 
 Per file, counting unique `pub …` lines:
@@ -29,15 +44,16 @@ Per crate (sum over the three files):
 | `zenpixels` | 19 | 9 | 0.3.0 (was 0.2.14) |
 | `zenpixels-convert` | 127 | 4 | 0.2.15 (was 0.2.14) |
 
-Header-block line counts on `main` vs `v0.2.14`:
+Header-block line counts on `main` vs `v0.2.14` (after the 2026-06-25
+noise-reduction regen — see the format note above):
 
 | File | v0.2.14 | main |
 |---|---:|---:|
-| `zenpixels.txt` | 855 | 877 |
-| `zenpixels.features.txt` | 302 | 297 |
-| `zenpixels.internal.txt` | 105 | 116 |
-| `zenpixels-convert.txt` | 353 | 408 |
-| `zenpixels-convert.features.txt` | 279 | 333 |
+| `zenpixels.txt` | 855 | 874 |
+| `zenpixels.features.txt` | 302 | 293 |
+| `zenpixels.internal.txt` | 105 | 117 |
+| `zenpixels-convert.txt` | 353 | 426 |
+| `zenpixels-convert.features.txt` | 279 | 317 |
 | `zenpixels-convert.internal.txt` | 90 | 128 |
 
 ## Most notable additions

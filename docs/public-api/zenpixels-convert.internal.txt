@@ -126,7 +126,3 @@ pipeline::op_format::OpRequirement: TrivialClone
 pipeline::path::LossBucket: TrivialClone
 pipeline::path::QualityThreshold: TrivialClone
 pipeline::registry::FormatEntry: TrivialClone
-
-## auto traits
-
-2 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe

@@ -289,9 +289,7 @@ dependencies = [
 
 [[package]]
 name = "zenutils-apidoc"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65a6d52c06c93b0b41541a5eb40dd397134981df6cb44c38298b160281079925"
+version = "0.1.2"
 dependencies = [
  "public-api",
  "rustup-toolchain",

@@ -315,7 +315,3 @@ pipeline::registry::CodecFormats: Clone, Debug
 pipeline::registry::FormatEntry: Clone, Copy, Debug
 zenpixels::buffer::PixelBuffer: ext::PixelBufferConvertTypedExt, ext::PixelBufferHdrConvertExt
 zenpixels::hdr::ContentLightLevel: hdr::measure::CllMeasure
-
-## auto traits
-
-16 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
