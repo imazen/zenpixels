@@ -304,7 +304,6 @@ impl PixelBufferConvertExt for PixelBuffer {
         let target = self.descriptor().with_transfer(transfer);
         self.convert_to(target)
     }
-
 }
 
 /// Adds HDR-aware conversion methods to [`PixelBuffer`].
@@ -451,7 +450,6 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
         }
         Ok(buf)
     }
-
 }
 
 #[cfg(feature = "rgb")]

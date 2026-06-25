@@ -93,7 +93,7 @@ fn linear_f32_bt2020_rgb() -> PixelDescriptor {
 #[cfg(feature = "__trace_ops")]
 mod plan_shape {
     use super::*;
-    use zenpixels_convert::{RowConverter, __trace_ops as tracer};
+    use zenpixels_convert::{__trace_ops as tracer, RowConverter};
 
     /// Construct a `ConvertPlan` via the HDR config path, run one row
     /// through it, and return the dispatched-step trace.
@@ -275,10 +275,7 @@ fn softcompress_knee_in_zero_one_clamps_chroma_inside_gamut() {
     let mut pixels = vec![[1.2_f32, 0.05, 0.05]];
     compress.apply_strip(&mut pixels);
     for &c in &pixels[0] {
-        assert!(
-            c <= 1.0 + 1e-2,
-            "expected gamut-compressed output, got {c}"
-        );
+        assert!(c <= 1.0 + 1e-2, "expected gamut-compressed output, got {c}");
         assert!(c >= -1e-2, "compressed channel went very negative: {c}");
     }
 }
@@ -470,8 +467,7 @@ fn hdr_pipeline_e2e_neutral_gray_lands_in_sdr_range() {
     zenpixels_convert::convert_row(&plan, &src_bytes, &mut out, 1);
     // Neutral gray must stay neutral within ±2 codes (rounding).
     assert!(
-        (out[0] as i32 - out[1] as i32).abs() <= 2
-            && (out[1] as i32 - out[2] as i32).abs() <= 2,
+        (out[0] as i32 - out[1] as i32).abs() <= 2 && (out[1] as i32 - out[2] as i32).abs() <= 2,
         "neutral PQ U16 input must produce neutral SDR output, got {out:?}"
     );
     // Mid-bright HDR (the 40K PQ code is ~120 nits at the 10 000-nit
@@ -539,7 +535,9 @@ fn convert_to_with_hdr_config_runs_end_to_end_from_pixel_buffer() {
         source_peak_nits: 1000.0,
         ..HdrConfig::default()
     };
-    let out = buf.convert_to_with_hdr_config(dst, hdr).expect("hdr convert");
+    let out = buf
+        .convert_to_with_hdr_config(dst, hdr)
+        .expect("hdr convert");
     assert_eq!(out.width(), 2);
     assert_eq!(out.height(), 1);
     assert_eq!(out.descriptor(), dst);

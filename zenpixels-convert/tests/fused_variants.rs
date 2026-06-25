@@ -48,10 +48,20 @@ const RGBA_U8_PIXEL: [u8; 4] = [200, 100, 50, 255];
 #[test]
 fn fused_srgb_u8_gamut_rgb_emits_per_kind_trace_name() {
     // sRGB U8 RGB DisplayP3 → sRGB U8 RGB BT.709: peephole-fused.
-    let src = PixelDescriptor::new(ChannelType::U8, ChannelLayout::Rgb, None, TransferFunction::Srgb)
-        .with_primaries(ColorPrimaries::DisplayP3);
-    let dst = PixelDescriptor::new(ChannelType::U8, ChannelLayout::Rgb, None, TransferFunction::Srgb)
-        .with_primaries(ColorPrimaries::Bt709);
+    let src = PixelDescriptor::new(
+        ChannelType::U8,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    )
+    .with_primaries(ColorPrimaries::DisplayP3);
+    let dst = PixelDescriptor::new(
+        ChannelType::U8,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    )
+    .with_primaries(ColorPrimaries::Bt709);
     let trace = trace_one_row(src, dst, &RGB_U8_PIXEL, 1);
     assert!(
         trace.contains(&"FusedSrgbU8GamutRgb"),
@@ -86,10 +96,20 @@ fn fused_srgb_u8_gamut_rgba_emits_per_kind_trace_name() {
 #[test]
 fn fused_srgb_u16_gamut_rgb_emits_per_kind_trace_name() {
     // sRGB U16 RGB DisplayP3 → sRGB U16 RGB BT.709: 65K-LUT fused.
-    let src = PixelDescriptor::new(ChannelType::U16, ChannelLayout::Rgb, None, TransferFunction::Srgb)
-        .with_primaries(ColorPrimaries::DisplayP3);
-    let dst = PixelDescriptor::new(ChannelType::U16, ChannelLayout::Rgb, None, TransferFunction::Srgb)
-        .with_primaries(ColorPrimaries::Bt709);
+    let src = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    )
+    .with_primaries(ColorPrimaries::DisplayP3);
+    let dst = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    )
+    .with_primaries(ColorPrimaries::Bt709);
     let u16_pixel: [u16; 3] = [40_000, 20_000, 10_000];
     let src_bytes: [u8; 6] = bytemuck::cast(u16_pixel);
     let trace = trace_one_row(src, dst, &src_bytes, 1);
@@ -109,15 +129,23 @@ fn fused_u8_to_f32_cross_depth_with_primaries_change() {
     // — both encode the same byte-equivalent work — but the result
     // must include the gamut matrix AND a U8→F32 linearize step (fused
     // or unfused), never just the linearize alone.
-    let src = PixelDescriptor::new(ChannelType::U8, ChannelLayout::Rgb, None, TransferFunction::Srgb)
-        .with_primaries(ColorPrimaries::DisplayP3);
-    let dst =
-        PixelDescriptor::new(ChannelType::F32, ChannelLayout::Rgb, None, TransferFunction::Linear)
-            .with_primaries(ColorPrimaries::Bt709);
+    let src = PixelDescriptor::new(
+        ChannelType::U8,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    )
+    .with_primaries(ColorPrimaries::DisplayP3);
+    let dst = PixelDescriptor::new(
+        ChannelType::F32,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Linear,
+    )
+    .with_primaries(ColorPrimaries::Bt709);
     let trace = trace_one_row(src, dst, &RGB_U8_PIXEL, 1);
     let fused = trace.contains(&"FusedSrgbU8ToLinearF32Rgb");
-    let unfused_pair =
-        trace.contains(&"SrgbU8ToLinearF32") && trace.contains(&"GamutMatrixRgbF32");
+    let unfused_pair = trace.contains(&"SrgbU8ToLinearF32") && trace.contains(&"GamutMatrixRgbF32");
     assert!(
         fused || unfused_pair,
         "u8 sRGB DP3 → f32 Linear BT.709 must emit either the fused cross-depth step or the linearize + matrix pair, got {trace:?}"
@@ -130,11 +158,20 @@ fn fused_f32_to_u8_cross_depth_with_primaries_change() {
     // side. The kernel path `FusedLinearF32ToSrgbU8Rgb` exists for the
     // single-step direct emission; the planner currently splits into
     // gamut matrix + encode. Either is correct.
-    let src =
-        PixelDescriptor::new(ChannelType::F32, ChannelLayout::Rgb, None, TransferFunction::Linear)
-            .with_primaries(ColorPrimaries::DisplayP3);
-    let dst = PixelDescriptor::new(ChannelType::U8, ChannelLayout::Rgb, None, TransferFunction::Srgb)
-        .with_primaries(ColorPrimaries::Bt709);
+    let src = PixelDescriptor::new(
+        ChannelType::F32,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Linear,
+    )
+    .with_primaries(ColorPrimaries::DisplayP3);
+    let dst = PixelDescriptor::new(
+        ChannelType::U8,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    )
+    .with_primaries(ColorPrimaries::Bt709);
     let f32_pixel: [f32; 3] = [0.5, 0.25, 0.1];
     let src_bytes: [u8; 12] = bytemuck::cast(f32_pixel);
     let trace = trace_one_row(src, dst, &src_bytes, 1);
@@ -147,8 +184,7 @@ fn fused_f32_to_u8_cross_depth_with_primaries_change() {
     // primaries hop being silently dropped.
     let fused_cross_depth = trace.contains(&"FusedLinearF32ToSrgbU8Rgb");
     let fused_u8_gamut = trace.contains(&"FusedSrgbU8GamutRgb");
-    let unfused_pair =
-        trace.contains(&"GamutMatrixRgbF32") && trace.contains(&"LinearF32ToSrgbU8");
+    let unfused_pair = trace.contains(&"GamutMatrixRgbF32") && trace.contains(&"LinearF32ToSrgbU8");
     assert!(
         fused_cross_depth || fused_u8_gamut || unfused_pair,
         "f32 Linear DP3 → u8 sRGB BT.709 must emit some primaries-conversion step, got {trace:?}"
@@ -190,10 +226,20 @@ fn fused_u8_gamut_avoids_unfused_three_step_pair() {
     // For each fused configuration the planner must NOT also emit the
     // unfused `SrgbU8ToLinearF32` + `LinearF32ToSrgbU8` legs — that's the
     // wasted work the peephole exists to eliminate.
-    let src = PixelDescriptor::new(ChannelType::U8, ChannelLayout::Rgb, None, TransferFunction::Srgb)
-        .with_primaries(ColorPrimaries::DisplayP3);
-    let dst = PixelDescriptor::new(ChannelType::U8, ChannelLayout::Rgb, None, TransferFunction::Srgb)
-        .with_primaries(ColorPrimaries::Bt709);
+    let src = PixelDescriptor::new(
+        ChannelType::U8,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    )
+    .with_primaries(ColorPrimaries::DisplayP3);
+    let dst = PixelDescriptor::new(
+        ChannelType::U8,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    )
+    .with_primaries(ColorPrimaries::Bt709);
     let trace = trace_one_row(src, dst, &RGB_U8_PIXEL, 1);
     assert!(
         trace.contains(&"FusedSrgbU8GamutRgb"),

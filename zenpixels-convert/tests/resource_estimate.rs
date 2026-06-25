@@ -66,8 +66,8 @@ fn identity_plan_is_essentially_memcpy() {
 #[test]
 fn zero_pixel_plan_returns_zero() {
     // 0×0 is the trivially-empty case called out in the doc contract.
-    let plan = ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB)
-        .expect("plan");
+    let plan =
+        ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).expect("plan");
     let est = plan.estimate(0, 0);
     assert_eq!(mem_of(&est), 0);
     assert_eq!(ms_of(&est), 0.0);
@@ -103,10 +103,7 @@ fn linear_f32_to_srgb_u8_4mp_matches_bench_within_30_pct() {
     // Memory must at least cover the destination (4 MP × 3 bytes).
     let pixels = 2048u64 * 2048u64;
     let dst_bytes = pixels * 3;
-    assert!(
-        mem >= dst_bytes,
-        "peak memory {mem} below dst {dst_bytes}",
-    );
+    assert!(mem >= dst_bytes, "peak memory {mem} below dst {dst_bytes}",);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,10 +223,7 @@ fn estimate_does_not_panic_across_reasonable_sizes() {
         assert!(ms >= 0.0, "negative time at {w}x{h}: {ms}");
         // Memory must be at least the destination buffer (16 bpp × pixels).
         let dst = (w as u64) * (h as u64) * 16;
-        assert!(
-            mem >= dst,
-            "peak memory {mem} below dst {dst} at {w}x{h}",
-        );
+        assert!(mem >= dst, "peak memory {mem} below dst {dst} at {w}x{h}",);
     }
 }
 
@@ -254,7 +248,10 @@ fn estimate_grows_monotonically_with_pixel_count() {
     let mem_4mp = mem_of(&est_4mp);
     let ms_1mp = ms_of(&est_1mp);
     let ms_4mp = ms_of(&est_4mp);
-    assert!(mem_4mp >= mem_1mp, "memory non-monotonic: {mem_4mp} < {mem_1mp}");
+    assert!(
+        mem_4mp >= mem_1mp,
+        "memory non-monotonic: {mem_4mp} < {mem_1mp}"
+    );
     assert!(ms_4mp >= ms_1mp, "time non-monotonic: {ms_4mp} < {ms_1mp}");
     // 4 MP should take roughly 4× the time of 1 MP (within ±50 %).
     assert!(
@@ -334,16 +331,14 @@ fn higher_simd_tier_shrinks_wall_ms() {
     let image = ImageCharacteristics::new(4096, 4096, from);
 
     let cases = [
-        (SimdTier::Wasm, 2.0),     // scalar
-        (SimdTier::X86V1, 1.4),    // SSE2 baseline
-        (SimdTier::X86V3, 1.0),    // AVX2 reference
-        (SimdTier::X86V4, 0.85),   // AVX-512
+        (SimdTier::Wasm, 2.0),   // scalar
+        (SimdTier::X86V1, 1.4),  // SSE2 baseline
+        (SimdTier::X86V3, 1.0),  // AVX2 reference
+        (SimdTier::X86V4, 0.85), // AVX-512
     ];
     let mut prev_ms = u64::MAX;
     for (tier, mul) in cases {
-        let env = ComputeEnvironment::new()
-            .with_cores(1)
-            .with_simd_tier(tier);
+        let env = ComputeEnvironment::new().with_cores(1).with_simd_tier(tier);
         let est = plan.estimate_in(&image, &env);
         let ms = est.wall_ms().unwrap_or(0);
         // Sanity: higher tier = smaller wall.

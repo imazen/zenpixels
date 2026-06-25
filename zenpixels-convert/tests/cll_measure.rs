@@ -82,8 +82,7 @@ fn measure_max_handles_strided_rows() {
 fn measure_max_zero_area_yields_zero_zero() {
     // The contract documents zero-area input as Some(0, 0). Build a
     // 0×0 buffer to pin this.
-    let buf =
-        PixelBuffer::from_vec(alloc::vec::Vec::new(), 0, 0, PixelDescriptor::RGBF32_LINEAR);
+    let buf = PixelBuffer::from_vec(alloc::vec::Vec::new(), 0, 0, PixelDescriptor::RGBF32_LINEAR);
     if let Ok(buf) = buf {
         let cll = ContentLightLevel::measure_max(
             buf.as_slice(),
@@ -156,12 +155,8 @@ fn measure_max_custom_anchor_on_pixel_buffer_color_context() {
         .color_context()
         .and_then(|c| c.diffuse_white)
         .expect("ColorContext carries the 100-nit anchor");
-    let cll = ContentLightLevel::measure_max(
-        buf.as_slice(),
-        ctx_anchor,
-        LightLevelMethod::MaxRgb,
-    )
-    .expect("linear input");
+    let cll = ContentLightLevel::measure_max(buf.as_slice(), ctx_anchor, LightLevelMethod::MaxRgb)
+        .expect("linear input");
     // 1.0 sample · 100 anchor = 100 cd/m² peak.
     assert_eq!(cll.max_content_light_level, 100);
     // And the 203 default would have given 203 — bounds-check the
