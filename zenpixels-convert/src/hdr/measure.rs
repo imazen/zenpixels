@@ -751,10 +751,9 @@ mod simd_kernel {
     /// the scan.
     const LANES: usize = 8;
 
-    // BT.2020 NCL luma coefficients — shared with `bt2446a` / `bt2446a_simd`
-    // via the parent module's `BT2020_L*` constants. Re-aliased here so the
-    // SIMD splat and scalar tail use the same names that previously appeared
-    // in this kernel.
+    // BT.2020 NCL luma coefficients — shared with `bt2446a` via the parent
+    // module's `BT2020_L*` constants. Re-aliased here so the SIMD splat and
+    // scalar tail use the same names that previously appeared in this kernel.
     use crate::hdr::{BT2020_LB as KB, BT2020_LG as KG, BT2020_LR as KR};
 
     /// Per-lane sub-histograms flattened into a single heap allocation

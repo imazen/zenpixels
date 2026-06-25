@@ -22,10 +22,9 @@
 
 /// BT.2020 NCL luma coefficients shared by the HDR submodules:
 /// `Y = 0.2627·R + 0.6780·G + 0.0593·B`. Used by [`measure`]'s
-/// `LuminanceBt2020` reduction and by both the scalar [`Bt2446A`] curve
-/// and the SIMD strip kernel. Pinned at the parent-module scope so the
-/// three call sites stay in lock-step (they previously had three copies
-/// under names `LR/LG/LB` + `LR_2020/LG_2020/LB_2020` + `KR/KG/KB`).
+/// `LuminanceBt2020` reduction and by the [`Bt2446A`] curve (both the
+/// SIMD body and the scalar remainder tail of `bt2446a_tier`). Pinned at
+/// the parent-module scope so the call sites stay in lock-step.
 #[cfg(feature = "hdr-experimental")]
 pub(super) const BT2020_LR: f32 = 0.2627;
 #[cfg(feature = "hdr-experimental")]
@@ -46,8 +45,6 @@ pub mod measure;
 /// `hdr-experimental` while the cross-crate API surface settles.
 #[cfg(feature = "hdr-experimental")]
 mod bt2446a;
-#[cfg(feature = "hdr-experimental")]
-mod bt2446a_simd;
 
 /// Soft chroma compression in OKLch with a precomputed gamut boundary LUT.
 /// Gated behind `hdr-experimental`.
