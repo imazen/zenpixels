@@ -371,6 +371,74 @@
 //! Codecs should match on specific variants and return actionable errors
 //! to callers. Do not flatten `ConvertError` into a generic string.
 //!
+//! ## Pluggable HDR tone mapping
+//!
+//! When the `hdr-experimental` feature is enabled, [`ConvertPlan`]
+//! supports two tone-mapping modes for HDR→SDR conversions.
+//!
+//! **Built-in default** — pass `source_peak_nits` to the plan and the
+//! BT.2446 Method A reference curve ([`hdr::Bt2446A`]) handles the
+//! HDR→SDR step automatically. Identical behavior to before the
+//! pluggable surface landed.
+//!
+//! ```rust,ignore
+//! use zenpixels_convert::{ConvertPlan, PixelDescriptor};
+//!
+//! let plan = ConvertPlan::new_with_hdr_peak(src_descriptor, dst_descriptor, 1000.0)?;
+//! // run `plan` row by row with `RowConverter` / `convert_row`.
+//! ```
+//!
+//! **Custom mapper via the [`hdr::ToneMapper`] trait** — for non-reference
+//! curves (FilmicSpline, ACES, ITU-R BT.2408, Möbius, or your own
+//! implementation) provide an `Arc<dyn ToneMapper>` through the new
+//! [`ConvertPlanBuilder`]:
+//!
+//! ```rust,ignore
+//! use alloc::sync::Arc;
+//! use zenpixels_convert::{ConvertPlan, ColorPrimaries};
+//! use zenpixels_convert::hdr::ToneMapper;
+//!
+//! #[derive(Debug)]
+//! struct LinearClip { peak: f32 }
+//!
+//! impl ToneMapper for LinearClip {
+//!     fn map_strip(&self, input: &[f32], output: &mut [f32]) {
+//!         for (i, o) in input.iter().zip(output.iter_mut()) {
+//!             *o = (i / self.peak).min(1.0);
+//!         }
+//!     }
+//!     fn name(&self) -> &'static str { "linear-clip-example" }
+//!     fn peaks(&self) -> Option<(f32, f32)> { Some((self.peak, 100.0)) }
+//! }
+//!
+//! let plan = ConvertPlan::builder()
+//!     .from(src_descriptor)
+//!     .to(dst_descriptor)
+//!     .source_peak_nits(1000.0)
+//!     .with_tone_mapper(Arc::new(LinearClip { peak: 1000.0 }))
+//!     .build()?;
+//! ```
+//!
+//! **Ergonomic injection via extension traits.** Crates that ship
+//! multiple curves (notably `zentone`) define an extension trait on
+//! [`ConvertPlanBuilder`] that adds one method per mapper. The
+//! extension reads the staged `HdrConfig` via
+//! [`ConvertPlanBuilder::current_hdr_config`] to construct the mapper
+//! and then calls [`ConvertPlanBuilder::with_tone_mapper`] internally,
+//! so the caller never writes `Arc::new(..)` themselves:
+//!
+//! ```rust,ignore
+//! use zenpixels_convert::ConvertPlan;
+//! use zentone::ConvertPlanBuilderToneExt;   // unlocks `.with_filmic_spline()` et al.
+//!
+//! let plan = ConvertPlan::builder()
+//!     .from(src_descriptor)
+//!     .to(dst_descriptor)
+//!     .source_peak_nits(1000.0)            // read implicitly by the next call
+//!     .with_filmic_spline(Default::default())
+//!     .build()?;
+//! ```
+//!
 //! ## Checklist
 //!
 //! - [ ] Declare `CodecFormats` with correct `effective_bits` and `can_overshoot`

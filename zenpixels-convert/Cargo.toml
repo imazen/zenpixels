@@ -225,3 +225,8 @@ required-features = ["__bench_orient"]
 name = "measure_histogram_throughput"
 path = "examples/measure_histogram_throughput.rs"
 required-features = ["hdr-experimental"]
+
+[[example]]
+name = "custom_tone_mapper"
+path = "examples/custom_tone_mapper.rs"
+required-features = ["hdr-experimental"]
