@@ -930,6 +930,24 @@ impl ConvertPlan {
         to: PixelDescriptor,
         hdr: HdrConfig,
     ) -> Result<Self, At<ConvertError>> {
+        // Default tone mapper: the ITU-R BT.2446-1 §4 reference curve.
+        // Routes through the same internal planner that
+        // `ConvertPlanBuilder::build` uses, so byte-for-byte output is
+        // preserved.
+        Self::plan_hdr(from, to, hdr, None)
+    }
+
+    /// Internal HDR planner shared by [`Self::new_with_hdr_config`] and
+    /// [`ConvertPlanBuilder::build`]. When `mapper` is `None` we
+    /// construct the default [`crate::hdr::Bt2446A`] from `hdr`.
+    #[cfg(feature = "hdr-experimental")]
+    #[track_caller]
+    fn plan_hdr(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        hdr: HdrConfig,
+        mapper: Option<alloc::sync::Arc<dyn crate::hdr::ToneMapper>>,
+    ) -> Result<Self, At<ConvertError>> {
         if requires_cms(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
@@ -1012,13 +1030,17 @@ impl ConvertPlan {
             steps.push(step);
         }
 
-        // ---- (c) BT.2446 Method A tone map (BT.2020 HDR → BT.2020 SDR).
-        // The default mapper is the ITU-R BT.2446-1 §4 reference curve;
-        // `ConvertPlanBuilder::with_tone_mapper` swaps in a custom one
-        // before the planner is invoked.
-        steps.push(ConvertStep::ToneMap(alloc::sync::Arc::new(
-            crate::hdr::Bt2446A::new(hdr.source_peak_nits, hdr.target_peak_nits),
-        )));
+        // ---- (c) Tone-map step. The mapper is either the caller-supplied
+        // one (via `ConvertPlanBuilder::with_tone_mapper`) or the
+        // in-crate BT.2446-A reference curve, constructed from the
+        // builder's `HdrConfig`.
+        let mapper = mapper.unwrap_or_else(|| {
+            alloc::sync::Arc::new(crate::hdr::Bt2446A::new(
+                hdr.source_peak_nits,
+                hdr.target_peak_nits,
+            )) as alloc::sync::Arc<dyn crate::hdr::ToneMapper>
+        });
+        steps.push(ConvertStep::ToneMap(mapper));
 
         // ---- (d) BT.2020 → target primaries (skip when target IS BT.2020).
         if to.primaries != ColorPrimaries::Bt2020
@@ -1416,6 +1438,252 @@ impl ConvertPlan {
         let image = crate::estimate::ImageCharacteristics::new(width, height, self.from());
         let compute = crate::estimate::ComputeEnvironment::new();
         self.estimate_in(&image, &compute)
+    }
+
+    /// Begin a fluent build of a [`ConvertPlan`] with optional pluggable
+    /// HDR tone mapping.
+    ///
+    /// Equivalent to [`ConvertPlanBuilder::new`]. See the
+    /// [crate-level "Pluggable HDR tone mapping" section][docs] for the
+    /// full usage story and [`ConvertPlanBuilder`] for the method roster.
+    ///
+    /// [docs]: crate#pluggable-hdr-tone-mapping
+    ///
+    /// ```rust,ignore
+    /// use zenpixels_convert::ConvertPlan;
+    ///
+    /// let plan = ConvertPlan::builder()
+    ///     .from(src_descriptor)
+    ///     .to(dst_descriptor)
+    ///     .source_peak_nits(1000.0)
+    ///     .build()?;
+    /// ```
+    #[cfg(feature = "hdr-experimental")]
+    #[must_use]
+    pub fn builder() -> ConvertPlanBuilder {
+        ConvertPlanBuilder::new()
+    }
+}
+
+/// Fluent builder for [`ConvertPlan`] with optional pluggable HDR tone
+/// mapping.
+///
+/// Entry: [`ConvertPlan::builder`]. The builder is the **permanent**
+/// entry point for injecting a custom [`ToneMapper`](crate::hdr::ToneMapper)
+/// into a plan — see the
+/// [crate-level "Pluggable HDR tone mapping" section][docs].
+///
+/// [docs]: crate#pluggable-hdr-tone-mapping
+///
+/// # Order independence
+///
+/// Builder methods are order-independent **except** for extension-trait
+/// methods (e.g., the zentone-side `ConvertPlanBuilderToneExt`) that
+/// read the staged HDR configuration via
+/// [`current_hdr_config`](Self::current_hdr_config) to construct a
+/// mapper at the call site. Those require the peaks / knee to be set
+/// **before** the extension method is called. The natural fluent order
+/// is `from → to → source_peak_nits → with_<curve> → build`.
+///
+/// # Defaults
+///
+/// - `from` / `to`: must be set; `build` errors otherwise via
+///   [`ConvertError::NoPath`].
+/// - `source_peak_nits`: `0.0` (unset). For HDR sources, set it
+///   explicitly — the BT.2446-A reference curve is degenerate at
+///   `0.0`.
+/// - `target_peak_nits`: `100.0` (SDR reference white).
+/// - `gamut_knee`: `0.96` (empirically calibrated against the
+///   imazen-26 gain-mapped HDR corpus, 2026-06-23).
+/// - `tone_mapper`: `None` (the planner builds the in-crate
+///   [`Bt2446A`](crate::hdr::Bt2446A) reference from the staged
+///   `HdrConfig`).
+///
+/// # Examples
+///
+/// Default mapper (BT.2446 Method A):
+///
+/// ```rust,ignore
+/// use zenpixels_convert::ConvertPlan;
+///
+/// let plan = ConvertPlan::builder()
+///     .from(src)
+///     .to(dst)
+///     .source_peak_nits(1000.0)
+///     .build()?;
+/// ```
+///
+/// Custom mapper via [`with_tone_mapper`](Self::with_tone_mapper):
+///
+/// ```rust,ignore
+/// use core::sync::Arc;
+/// use zenpixels_convert::{ConvertPlan, ToneMapper, ColorPrimaries};
+///
+/// # #[derive(Debug)]
+/// # struct MyMapper;
+/// # impl ToneMapper for MyMapper {
+/// #     fn map_strip(&self, i: &[f32], o: &mut [f32]) { o.copy_from_slice(i); }
+/// #     fn name(&self) -> &'static str { "my" }
+/// # }
+/// let plan = ConvertPlan::builder()
+///     .from(src)
+///     .to(dst)
+///     .source_peak_nits(1000.0)
+///     .with_tone_mapper(Arc::new(MyMapper))
+///     .build()?;
+/// ```
+///
+/// The builder's storage is opaque (`#[non_exhaustive]` is unnecessary
+/// because no fields are publicly visible); the only public surface is
+/// the method roster on this type.
+#[cfg(feature = "hdr-experimental")]
+#[derive(Debug)]
+pub struct ConvertPlanBuilder {
+    from: Option<PixelDescriptor>,
+    to: Option<PixelDescriptor>,
+    hdr_config: HdrConfig,
+    tone_mapper: Option<alloc::sync::Arc<dyn crate::hdr::ToneMapper>>,
+}
+
+#[cfg(feature = "hdr-experimental")]
+impl ConvertPlanBuilder {
+    /// New builder with default HDR settings and no descriptors set.
+    ///
+    /// Same as [`ConvertPlan::builder`]; provided so the type can be
+    /// constructed directly when storing it in a struct field, etc.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            from: None,
+            to: None,
+            hdr_config: HdrConfig::default(),
+            tone_mapper: None,
+        }
+    }
+
+    /// Source pixel descriptor (required).
+    #[must_use]
+    pub fn from(mut self, descriptor: PixelDescriptor) -> Self {
+        self.from = Some(descriptor);
+        self
+    }
+
+    /// Target pixel descriptor (required).
+    #[must_use]
+    pub fn to(mut self, descriptor: PixelDescriptor) -> Self {
+        self.to = Some(descriptor);
+        self
+    }
+
+    /// Source peak luminance in cd/m².
+    ///
+    /// Required for HDR sources. Default `0.0` (unset). Typical values:
+    /// 1000 (HDR10, Apple HDR), 4000 (HDR10+ reference), 10000 (PQ peak).
+    #[must_use]
+    pub fn source_peak_nits(mut self, nits: f32) -> Self {
+        self.hdr_config.source_peak_nits = nits;
+        self
+    }
+
+    /// Target peak luminance in cd/m².
+    ///
+    /// Default `100.0` (SDR reference white, BT.1886 / BT.709 / sRGB
+    /// diffuse-white peak).
+    #[must_use]
+    pub fn target_peak_nits(mut self, nits: f32) -> Self {
+        self.hdr_config.target_peak_nits = nits;
+        self
+    }
+
+    /// OKLch soft chroma-compression knee.
+    ///
+    /// Default `0.96` (the largest knee where the imazen-26 corpus-p90
+    /// fraction of pre-clamp out-of-gamut pixels stays under 0.1 %).
+    /// Ignored when the target primaries are BT.2020.
+    #[must_use]
+    pub fn gamut_knee(mut self, knee: f32) -> Self {
+        self.hdr_config.gamut_knee = knee;
+        self
+    }
+
+    /// Replace the staged [`HdrConfig`] in one call.
+    ///
+    /// Overwrites any prior
+    /// [`source_peak_nits`](Self::source_peak_nits) /
+    /// [`target_peak_nits`](Self::target_peak_nits) /
+    /// [`gamut_knee`](Self::gamut_knee) setters.
+    #[must_use]
+    pub fn hdr_config(mut self, config: HdrConfig) -> Self {
+        self.hdr_config = config;
+        self
+    }
+
+    /// Inject a custom [`ToneMapper`](crate::hdr::ToneMapper).
+    ///
+    /// The mapper is invoked once per strip during conversion; it must
+    /// carry its own configuration (peak nits, primaries) — typically
+    /// constructed using the values set on this builder via
+    /// [`current_hdr_config`](Self::current_hdr_config).
+    ///
+    /// If unset on an HDR-source plan, the builder defaults to the
+    /// in-crate [`Bt2446A`](crate::hdr::Bt2446A) reference, constructed
+    /// from the builder's [`HdrConfig`].
+    #[must_use]
+    pub fn with_tone_mapper(
+        mut self,
+        mapper: alloc::sync::Arc<dyn crate::hdr::ToneMapper>,
+    ) -> Self {
+        self.tone_mapper = Some(mapper);
+        self
+    }
+
+    /// Read the [`HdrConfig`] currently staged on this builder.
+    ///
+    /// Used by extension traits (e.g., zentone's
+    /// `ConvertPlanBuilderToneExt`) to construct tone mappers using the
+    /// peak nits and gamut knee set on the builder. Returns the
+    /// in-progress config; subsequent
+    /// [`source_peak_nits`](Self::source_peak_nits) /
+    /// [`target_peak_nits`](Self::target_peak_nits) /
+    /// [`gamut_knee`](Self::gamut_knee) /
+    /// [`hdr_config`](Self::hdr_config) calls will mutate it.
+    #[must_use]
+    pub fn current_hdr_config(&self) -> &HdrConfig {
+        &self.hdr_config
+    }
+
+    /// Finalize and return the [`ConvertPlan`].
+    ///
+    /// Routes through the same internal planner as
+    /// [`ConvertPlan::new_with_hdr_config`]; an unset
+    /// [`with_tone_mapper`](Self::with_tone_mapper) makes the planner
+    /// construct the in-crate [`Bt2446A`](crate::hdr::Bt2446A)
+    /// reference.
+    ///
+    /// # Errors
+    ///
+    /// - [`ConvertError::NoPath`] when `from` or `to` is missing, or
+    ///   when the source/target combination has no conversion path.
+    /// - All errors [`ConvertPlan::new_with_hdr_config`] can return.
+    #[track_caller]
+    pub fn build(self) -> Result<ConvertPlan, At<ConvertError>> {
+        let from = self
+            .from
+            .ok_or_else(|| whereat::at!(ConvertError::NoPath {
+                from: PixelDescriptor::RGBF32_LINEAR,
+                to: PixelDescriptor::RGBF32_LINEAR,
+            }))?;
+        let to = self
+            .to
+            .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to: from }))?;
+        ConvertPlan::plan_hdr(from, to, self.hdr_config, self.tone_mapper)
+    }
+}
+
+#[cfg(feature = "hdr-experimental")]
+impl Default for ConvertPlanBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
