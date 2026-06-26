@@ -1667,12 +1667,12 @@ impl ConvertPlanBuilder {
     /// - All errors [`ConvertPlan::new_with_hdr_config`] can return.
     #[track_caller]
     pub fn build(self) -> Result<ConvertPlan, At<ConvertError>> {
-        let from = self
-            .from
-            .ok_or_else(|| whereat::at!(ConvertError::NoPath {
+        let from = self.from.ok_or_else(|| {
+            whereat::at!(ConvertError::NoPath {
                 from: PixelDescriptor::RGBF32_LINEAR,
                 to: PixelDescriptor::RGBF32_LINEAR,
-            }))?;
+            })
+        })?;
         let to = self
             .to
             .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to: from }))?;

@@ -6,7 +6,8 @@
 //! The HDR plan inserts:
 //!   1. Source transfer decode → linear F32.
 //!   2. Source primaries → BT.2020 matrix (if not already BT.2020).
-//!   3. `ToneMapBt2446A` step.
+//!   3. `ToneMap` step (BT.2446 Method A by default, swappable via
+//!      `ConvertPlanBuilder::with_tone_mapper`).
 //!   4. BT.2020 → target primaries matrix (if not BT.2020 target).
 //!   5. `SoftCompressOklch` step (if not BT.2020 target).
 //!   6. Layout / depth / target transfer encode.
@@ -123,16 +124,18 @@ mod plan_shape {
     #[test]
     fn hdr_pipeline_inserts_bt2446a_step() {
         // PQ U16 BT.2020 → sRGB U8 BT.709 plan must include the
-        // `ToneMapBt2446A` step. Anything else means the HDR-aware
-        // constructor silently degraded to the SDR planner.
+        // `ToneMap` step (the BT.2446-A default curve dispatched
+        // through the pluggable [`ToneMapper`] trait). Anything else
+        // means the HDR-aware constructor silently degraded to the SDR
+        // planner.
         let src = pq_u16_bt2020_rgb();
         let dst = PixelDescriptor::RGB8_SRGB;
         let src_pixel: [u16; 3] = [40_000, 30_000, 20_000];
         let src_bytes: [u8; 6] = bytemuck::cast(src_pixel);
         let trace = trace_hdr_plan(src, dst, default_hdr(1000.0), &src_bytes, 1);
         assert!(
-            trace.contains(&"ToneMapBt2446A"),
-            "PQ→sRGB pipeline must include ToneMapBt2446A, got {trace:?}"
+            trace.contains(&"ToneMap"),
+            "PQ→sRGB pipeline must include ToneMap, got {trace:?}"
         );
     }
 
@@ -164,7 +167,7 @@ mod plan_shape {
         let src_bytes: [u8; 12] = bytemuck::cast(src_pixel);
         let trace = trace_hdr_plan(src, dst, default_hdr(1000.0), &src_bytes, 1);
         assert!(
-            trace.contains(&"ToneMapBt2446A"),
+            trace.contains(&"ToneMap"),
             "tone-map still expected for BT.2020 → BT.2020, got {trace:?}"
         );
         assert!(
@@ -184,14 +187,14 @@ mod plan_shape {
         let src_pixel: [u16; 3] = [40_000, 30_000, 20_000];
         let src_bytes: [u8; 6] = bytemuck::cast(src_pixel);
         let trace = trace_hdr_plan(src, dst, default_hdr(1000.0), &src_bytes, 1);
-        // The pipeline-essential steps must all appear, and ToneMapBt2446A
+        // The pipeline-essential steps must all appear, and ToneMap
         // must precede SoftCompressOklch (compression operates on
         // tone-mapped values).
-        let tm_pos = trace.iter().position(|s| s == &"ToneMapBt2446A");
+        let tm_pos = trace.iter().position(|s| s == &"ToneMap");
         let sc_pos = trace.iter().position(|s| s == &"SoftCompressOklch");
         assert!(
             tm_pos.is_some() && sc_pos.is_some() && tm_pos < sc_pos,
-            "ToneMapBt2446A must precede SoftCompressOklch, got {trace:?}"
+            "ToneMap must precede SoftCompressOklch, got {trace:?}"
         );
     }
 
@@ -205,8 +208,8 @@ mod plan_shape {
         let src_bytes: [u8; 6] = bytemuck::cast(src_pixel);
         let trace = trace_hdr_plan(src, dst, default_hdr(1000.0), &src_bytes, 1);
         assert!(
-            trace.contains(&"ToneMapBt2446A"),
-            "HLG → sRGB pipeline must include ToneMapBt2446A, got {trace:?}"
+            trace.contains(&"ToneMap"),
+            "HLG → sRGB pipeline must include ToneMap, got {trace:?}"
         );
     }
 
@@ -221,7 +224,7 @@ mod plan_shape {
         let src_bytes: [u8; 8] = bytemuck::cast(src_pixel);
         let trace = trace_hdr_plan(src, dst, default_hdr(1000.0), &src_bytes, 1);
         assert!(
-            trace.contains(&"ToneMapBt2446A"),
+            trace.contains(&"ToneMap"),
             "RGBA PQ → RGBA sRGB pipeline must tonemap, got {trace:?}"
         );
     }

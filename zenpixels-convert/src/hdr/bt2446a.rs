@@ -396,8 +396,15 @@ pub(crate) fn bt2446a_tier(
 // contract — see the trait docs.
 impl crate::hdr::ToneMapper for Bt2446A {
     fn map_strip(&self, input: &[f32], output: &mut [f32]) {
-        debug_assert_eq!(input.len(), output.len(), "ToneMapper::map_strip: slice length mismatch");
-        debug_assert!(input.len() % 3 == 0, "ToneMapper::map_strip: input not RGB-triple-aligned");
+        debug_assert_eq!(
+            input.len(),
+            output.len(),
+            "ToneMapper::map_strip: slice length mismatch"
+        );
+        debug_assert!(
+            input.len().is_multiple_of(3),
+            "ToneMapper::map_strip: input not RGB-triple-aligned"
+        );
         // The SIMD body operates in-place on `[[f32; 3]]`, so copy
         // input → output first, then dispatch with a recast of the
         // destination. The copy is a single memcpy in the contiguous

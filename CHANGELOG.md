@@ -2,6 +2,54 @@
 
 ## [Unreleased]
 
+### zenpixels-convert 0.2.16 — added (pluggable HDR tone mapping)
+
+- **New `pub trait hdr::ToneMapper`** — object-safe `Send + Sync + Debug`
+  trait, the permanent dependency-injection surface for HDR→SDR tone
+  mapping inside [`ConvertPlan`]. Methods: `map_strip(&[f32], &mut [f32])`,
+  `working_primaries` (default `Bt2020`), `peaks` (`Option<(f32, f32)>`),
+  `name(&'static str)`, `cost_ns_per_mp` (default 1500). Gated behind
+  `hdr-experimental`. Reachable at the module path
+  `zenpixels_convert::hdr::ToneMapper` (kept aligned with the
+  `hdr::Bt2446A` re-export shape — neither is re-exported at the crate
+  root).
+- **New `pub struct ConvertPlanBuilder` + `ConvertPlan::builder()`** —
+  fluent builder for HDR plans. Setters: `from`, `to`,
+  `source_peak_nits`, `target_peak_nits`, `gamut_knee`, `hdr_config`,
+  `with_tone_mapper(Arc<dyn ToneMapper>)`. Read accessor for extension
+  traits: `current_hdr_config(&self) -> &HdrConfig`. Finalize with
+  `build() -> Result<ConvertPlan, At<ConvertError>>`. Re-exported at the
+  crate root alongside `HdrConfig`. Gated on `hdr-experimental`.
+- **`hdr::Bt2446A` now implements `ToneMapper`** — `name == "bt2446a"`,
+  primaries `Bt2020`, peaks `Some((source_peak_nits, target_peak_nits))`,
+  `cost_ns_per_mp == 4_194_304` (matches the per-step calibration in
+  `estimate`). New `Bt2446A::source_peak_nits()` /
+  `Bt2446A::target_peak_nits()` accessors expose the constructor inputs.
+- **New runnable `examples/custom_tone_mapper.rs`** — minimal
+  `LinearClip` mapper injected via the builder, demonstrating the
+  dyn-dispatch wiring end-to-end.
+- **Crate-internal `ConvertStep::ToneMapBt2446A` →
+  `ConvertStep::ToneMap(Arc<dyn ToneMapper>)`.** `pub(crate)` enum —
+  internal refactor only, no semver impact. Existing public entry points
+  (`new_with_hdr_peak`, `new_with_hdr_config`, the `ext::PixelBufferHdrConvertExt`
+  trait, and `convert_to_with_hdr_config`) preserve byte-for-byte output;
+  they construct the in-crate `Bt2446A` internally and feed it through
+  the same kernel as before.
+- **Cost model.** `estimate::step_cost_ns_per_mp` now delegates to
+  `ToneMapper::cost_ns_per_mp` for tone-map steps, so custom mappers'
+  per-MP cost shows up in
+  `ConvertPlan::estimate` / `ConvertPlan::estimate_in` automatically.
+- Tests: new `tests/builder.rs` (9 integration tests) covers default-mapper
+  parity with `new_with_hdr_peak`, full-`HdrConfig` parity, piecemeal
+  setter composition, custom-mapper dispatch end-to-end, RGBA alpha
+  passthrough through a custom mapper, `current_hdr_config` introspection,
+  `Default` parity with `new()`, missing-descriptor error, and the
+  `Bt2446A` trait roster. New unit tests in `src/hdr/tone_mapper.rs`
+  assert object-safety (`fn _assert_obj_safe(_: &dyn ToneMapper)`) and
+  identity-mapper round-trip through `Arc<dyn ToneMapper>`.
+- `cargo semver-checks` reports additive only against 0.2.15. Version
+  bumped to `0.2.16` (patch).
+
 ### zenpixels-convert — changed (Tier 1 ablation: drop codec-only fields; add intermediate_buffer_count)
 
 - **Trimmed the estimate-API surface to what `zenpixels-convert` actually

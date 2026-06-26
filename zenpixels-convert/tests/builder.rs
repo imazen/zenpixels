@@ -330,6 +330,20 @@ fn builder_without_from_or_to_errors() {
 }
 
 #[test]
+fn convert_plan_is_send_and_sync_under_hdr_experimental() {
+    // The Arc<dyn ToneMapper> field must keep ConvertPlan Send + Sync
+    // — this is what the supertrait bounds on ToneMapper buy. If they
+    // ever stop propagating, this test fails to compile (which is the
+    // exactly the breakage we want at the trait-edit site).
+    fn assert_send<T: Send>() {}
+    fn assert_sync<T: Sync>() {}
+    assert_send::<ConvertPlan>();
+    assert_sync::<ConvertPlan>();
+    assert_send::<ConvertPlanBuilder>();
+    assert_sync::<ConvertPlanBuilder>();
+}
+
+#[test]
 fn bt2446a_implements_tone_mapper_with_stable_name() {
     use zenpixels_convert::hdr::Bt2446A;
     let curve = Bt2446A::new(1000.0, 100.0);
@@ -364,10 +378,7 @@ fn rgba_plan_with_custom_mapper_preserves_alpha() {
         .build()
         .unwrap();
     let mut input = Vec::new();
-    for px in [
-        [0.1f32, 0.2, 0.3, 0.75],
-        [0.4, 0.5, 0.6, 0.25],
-    ] {
+    for px in [[0.1f32, 0.2, 0.3, 0.75], [0.4, 0.5, 0.6, 0.25]] {
         for c in px {
             input.extend_from_slice(&c.to_ne_bytes());
         }

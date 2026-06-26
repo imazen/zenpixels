@@ -563,9 +563,9 @@ mod scan;
 
 // Re-export key conversion types at crate root.
 pub use adapt::{adapt_for_encode_explicit, try_adapt_in_place};
+pub use convert::{ConvertPlan, convert_row, requires_cms};
 #[cfg(feature = "hdr-experimental")]
 pub use convert::{ConvertPlanBuilder, HdrConfig};
-pub use convert::{ConvertPlan, convert_row, requires_cms};
 // `hdr::ToneMapper` is reached at the module path
 // `zenpixels_convert::hdr::ToneMapper` (kept aligned with the
 // `hdr::Bt2446A` re-export shape — neither type is re-exported at the

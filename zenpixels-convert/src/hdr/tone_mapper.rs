@@ -18,6 +18,7 @@
 //! implementation must uphold.
 
 use core::fmt::Debug;
+use core::panic::{RefUnwindSafe, UnwindSafe};
 
 use crate::ColorPrimaries;
 
@@ -26,21 +27,16 @@ use crate::ColorPrimaries;
 ///
 /// Implementations live in three places:
 ///
-/// - **This crate.** [`Bt2446A`](crate::hdr::Bt2446A) — the ITU-R
-///   BT.2446-1 §4 Method A reference curve, the default mapper used when a
-///   plan is built with [`ConvertPlan::new_with_hdr_peak`] /
-///   [`ConvertPlan::new_with_hdr_config`] /
-///   [`ConvertPlanBuilder`](crate::ConvertPlanBuilder) without explicit
-///   mapper injection.
+/// - **This crate.** [`Bt2446A`](crate::hdr::Bt2446A) — the ITU-R BT.2446-1
+///   §4 Method A reference curve, the default mapper used when a plan is
+///   built without explicit injection.
 /// - **`zentone`.** FilmicSpline, AcesRrt, ITU-R BT.2408, Möbius, Yrg,
 ///   Jzazbz, … injected through
 ///   [`ConvertPlanBuilder::with_tone_mapper`](crate::ConvertPlanBuilder::with_tone_mapper)
-///   + a zentone-side extension trait that reads
-///   [`ConvertPlanBuilder::current_hdr_config`](crate::ConvertPlanBuilder::current_hdr_config)
-///   to construct the mapper at the call site.
+///   plus a zentone-side extension trait.
 /// - **Downstream callers.** Any custom curve — bespoke film emulation,
-///   research operators, etc. — implements this trait and feeds it into
-///   the builder.
+///   research operators, etc. — implements this trait and feeds it into the
+///   builder.
 ///
 /// The trait is **object-safe**:
 /// [`ConvertPlan`](crate::ConvertPlan) stores `Arc<dyn ToneMapper>`
@@ -59,10 +55,15 @@ use crate::ColorPrimaries;
 ///   strip-encoder loops; it must not allocate on its own, must not
 ///   panic on well-formed inputs (see the precondition list on the
 ///   method), and should be inlinable around the loop.
-/// - **`Send + Sync + Debug`.** The supertrait bounds are required so
-///   plans (which are `Clone + Debug`) keep their auto-traits and so a
-///   plan can be shared across threads. Implementations should keep
-///   their `Debug` short — a single-line "`MyMapper { … }`" is plenty.
+/// - **`Send + Sync + UnwindSafe + RefUnwindSafe + Debug`.** The
+///   supertrait bounds are required so plans (which are `Clone + Debug`)
+///   keep their auto-traits across the `Arc<dyn ToneMapper>` field
+///   stored on `ConvertStep::ToneMap`. Mappers are pure functions of
+///   their inputs and pose no panic-safety hazard; concrete
+///   implementations virtually always satisfy this without thought
+///   (any `#[derive(Debug)]` struct of plain numeric / `Arc` fields
+///   does). Implementations should keep their `Debug` short — a
+///   single-line `"MyMapper { … }"` is plenty.
 /// - **Stable [`name`](Self::name).** The string is consumed by
 ///   diagnostics, trace recorders, and estimate / oracle cache keys.
 ///   Treat it as part of the implementation's public contract: once
@@ -77,7 +78,7 @@ use crate::ColorPrimaries;
 /// gamut (a few Filmic variants prefer DCI-P3) override
 /// `working_primaries`; the pipeline inserts an extra gamut matrix on
 /// each side of the strip to honor that.
-pub trait ToneMapper: Send + Sync + Debug {
+pub trait ToneMapper: Send + Sync + UnwindSafe + RefUnwindSafe + Debug {
     /// Apply tone mapping to one strip of interleaved RGB pixels.
     ///
     /// **Precondition.** Both slices are interleaved RGB triplets, i.e.
