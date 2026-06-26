@@ -96,6 +96,13 @@ pub struct Bt2446A {
     pub(crate) inv_log_rho_hdr: f32,
     pub(crate) rho_sdr: f32,
     pub(crate) inv_rho_sdr_minus_1: f32,
+    /// Source peak in cd/m² as constructed. Stored so we can answer
+    /// [`source_peak_nits`](Self::source_peak_nits) /
+    /// [`peaks`](crate::hdr::ToneMapper::peaks) without inverting the
+    /// derived `rho_hdr`.
+    pub(crate) source_peak_nits: f32,
+    /// Target peak in cd/m² as constructed. See `source_peak_nits`.
+    pub(crate) target_peak_nits: f32,
 }
 
 impl Bt2446A {
@@ -121,7 +128,27 @@ impl Bt2446A {
             inv_log_rho_hdr: 1.0 / log_rho_hdr,
             rho_sdr,
             inv_rho_sdr_minus_1: 1.0 / (rho_sdr - 1.0),
+            source_peak_nits: hdr_peak_nits,
+            target_peak_nits: sdr_peak_nits,
         }
+    }
+
+    /// HDR source peak luminance in cd/m², as constructed.
+    ///
+    /// Mirrors the `hdr_peak_nits` passed to [`new`](Self::new); useful
+    /// for diagnostics and for the
+    /// [`ToneMapper::peaks`](crate::hdr::ToneMapper::peaks) implementation.
+    #[must_use]
+    pub fn source_peak_nits(&self) -> f32 {
+        self.source_peak_nits
+    }
+
+    /// SDR target peak luminance in cd/m², as constructed.
+    ///
+    /// Mirrors the `sdr_peak_nits` passed to [`new`](Self::new).
+    #[must_use]
+    pub fn target_peak_nits(&self) -> f32 {
+        self.target_peak_nits
     }
 
     /// Map a single HDR pixel (linear-light BT.2020 RGB, source-normalized)
@@ -360,6 +387,56 @@ pub(crate) fn bt2446a_tier(
             powf(g_prime_out, 2.4),
             powf(b_prime_out, 2.4),
         ];
+    }
+}
+
+// `Bt2446A` is the in-crate reference [`ToneMapper`]. The pipeline
+// constructs it as the default when an HDR plan is built without an
+// explicit mapper. `name()` is part of the implementation's public
+// contract — see the trait docs.
+impl crate::hdr::ToneMapper for Bt2446A {
+    fn map_strip(&self, input: &[f32], output: &mut [f32]) {
+        debug_assert_eq!(input.len(), output.len(), "ToneMapper::map_strip: slice length mismatch");
+        debug_assert!(input.len() % 3 == 0, "ToneMapper::map_strip: input not RGB-triple-aligned");
+        // The SIMD body operates in-place on `[[f32; 3]]`, so copy
+        // input → output first, then dispatch with a recast of the
+        // destination. The copy is a single memcpy in the contiguous
+        // (non-aliased) case and a no-op write when the caller passed
+        // overlapping slices.
+        if !core::ptr::eq(input.as_ptr(), output.as_ptr()) {
+            output.copy_from_slice(input);
+        }
+        // Cast the flat RGB strip to `[[f32; 3]]` for the SIMD entry.
+        // Safe (and panic-free) because the precondition guarantees
+        // `len % 3 == 0`; release builds without the assertion will
+        // truncate any rogue trailing scalars rather than panic.
+        let triples = output.len() / 3;
+        let strip: &mut [[f32; 3]] = bytemuck::cast_slice_mut(&mut output[..triples * 3]);
+        self.map_strip_simd(strip);
+    }
+
+    fn working_primaries(&self) -> crate::ColorPrimaries {
+        // BT.2446 Method A is defined in BT.2020 RGB — see the
+        // struct-level docs and the planner's BT.2020-bracketing of
+        // this step in `ConvertPlan::new_with_hdr_config`.
+        crate::ColorPrimaries::Bt2020
+    }
+
+    fn peaks(&self) -> Option<(f32, f32)> {
+        Some((self.source_peak_nits, self.target_peak_nits))
+    }
+
+    fn name(&self) -> &'static str {
+        "bt2446a"
+    }
+
+    fn cost_ns_per_mp(&self) -> u32 {
+        // BT.2446-A: ~250 Mpix/s on RGB f32 linear-light (Ryzen 9 7950X,
+        // AVX2, 2026-06-20). 1 MP / 250 Mpix/s ≈ 4.194 ms/MP. Kept in
+        // lockstep with the per-step cost in `crate::estimate` —
+        // `ConvertStep::ToneMap` delegates to this method now, so the
+        // two figures cannot drift.
+        4_194_304
     }
 }
 

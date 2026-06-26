@@ -238,23 +238,24 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> f64 {
             FusedKind::SrgbU8ToLinearF32Rgb => gib(11.19),
             FusedKind::LinearF32ToSrgbU8Rgb => gib(3.11),
         },
-        // HDR. BT.2446-A: ~250 Mpix/s on RGB f32 linear-light (2026-06-20).
-        // 1 MP / 250 Mpix/s = 4.194 ms/MP.
+        // HDR. Pluggable: the mapper reports its own per-MP cost via
+        // `ToneMapper::cost_ns_per_mp` (default 1500, BT.2446-A 4_194_304).
+        // The default keeps schedulers conservative for unknown curves.
         #[cfg(feature = "hdr-experimental")]
-        ConvertStep::ToneMapBt2446A { .. } => 4_194_304.0,
+        ConvertStep::ToneMap(mapper) => f64::from(mapper.cost_ns_per_mp()),
         // Hue-preserving rational knee in OKLch; ~3 GiB/s (cbrt-dominated).
         #[cfg(feature = "hdr-experimental")]
         ConvertStep::SoftCompressOklch { .. } => gib(3.0),
     }
 }
 
-/// Every row-stride SIMD kernel is parallel. HDR steps (BT.2446-A, OKLch
-/// soft-compress) read per-image scalars and are scheduled serially. Bias for
-/// ambiguous future steps: SERIAL (over-estimate wall time).
+/// Every row-stride SIMD kernel is parallel. HDR steps (pluggable
+/// `ToneMap`, OKLch soft-compress) read per-image scalars and are scheduled
+/// serially. Bias for ambiguous future steps: SERIAL (over-estimate wall time).
 #[rustfmt::skip]
 fn step_is_parallelizable(step: &ConvertStep) -> bool {
     #[cfg(feature = "hdr-experimental")]
-    if matches!(step, ConvertStep::ToneMapBt2446A { .. } | ConvertStep::SoftCompressOklch { .. }) {
+    if matches!(step, ConvertStep::ToneMap(_) | ConvertStep::SoftCompressOklch { .. }) {
         return false;
     }
     let _ = step;

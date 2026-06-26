@@ -276,21 +276,31 @@ pub(crate) enum ConvertStep {
     /// sequence `[<lin>, GamutMatrix*F32, <enc>]` whenever the planner can
     /// peephole it. See [`FusedKind`] for the supported shapes.
     Fused { kind: FusedKind, matrix: [f32; 9] },
-    /// BT.2446 Method A HDR→SDR tone-map on linear-light f32 RGB in BT.2020
-    /// primaries. The plan builder ensures this step sees BT.2020 linear-light
-    /// input via preceding gamut-matrix steps; a following gamut-matrix step
+    /// Pluggable HDR→SDR tone-map step on linear-light f32 RGB in
+    /// [`ColorPrimaries::Bt2020`] (the working space). The plan builder
+    /// ensures this step sees BT.2020 linear-light input via preceding
+    /// gamut-matrix steps; a following gamut-matrix step
     /// (BT.2020 → target.primaries) handles the destination primaries.
-    /// Input is source-normalized (`1.0 = source_peak_nits`); output is
-    /// target-normalized (`1.0 = target_peak_nits`). RGB-only — alpha is
-    /// handled at descriptor-layout level (the planner pairs this with the
+    ///
+    /// Carries an `Arc<dyn crate::hdr::ToneMapper>`, so the concrete
+    /// curve is injected at plan build time:
+    ///   - default plans (`new_with_hdr_peak` / `new_with_hdr_config`)
+    ///     construct [`crate::hdr::Bt2446A`] — the ITU-R BT.2446-1 §4
+    ///     reference;
+    ///   - explicit injection via
+    ///     [`crate::ConvertPlanBuilder::with_tone_mapper`] swaps in any
+    ///     `ToneMapper` (FilmicSpline / ACES / ITU-R BT.2408 / Möbius /
+    ///     custom).
+    ///
+    /// Input is source-normalized (`1.0 = source_peak_nits` from
+    /// `mapper.peaks()`); output is target-normalized
+    /// (`1.0 = target_peak_nits`). RGB-only — alpha is handled at
+    /// descriptor-layout level (the planner pairs this with the
     /// appropriate RGB/RGBA carrier).
     ///
     /// Gated behind `hdr-experimental` at the kernel side.
     #[cfg(feature = "hdr-experimental")]
-    ToneMapBt2446A {
-        source_peak_nits: f32,
-        target_peak_nits: f32,
-    },
+    ToneMap(alloc::sync::Arc<dyn crate::hdr::ToneMapper>),
     /// OKLch soft chroma compression on linear-light f32 RGB in
     /// `primaries`. Pulls residual out-of-gamut excursions back into the
     /// target unit cube using a hue-preserving rational knee curve.
@@ -364,7 +374,11 @@ impl ConvertStep {
             Self::GamutMatrixRgbaF32(_) => "GamutMatrixRgbaF32",
             Self::Fused { kind, .. } => kind.variant_name(),
             #[cfg(feature = "hdr-experimental")]
-            Self::ToneMapBt2446A { .. } => "ToneMapBt2446A",
+            // The variant name is the generic tag; the trace recorder
+            // (`__trace_ops`) reports the kebab-case mapper name via the
+            // dedicated dispatcher in `apply_step_u8`, so this stays
+            // shape-stable across mapper choices.
+            Self::ToneMap(_) => "ToneMap",
             #[cfg(feature = "hdr-experimental")]
             Self::SoftCompressOklch { .. } => "SoftCompressOklch",
         }
@@ -879,8 +893,9 @@ impl ConvertPlan {
     ///    [`ConvertPlan::new`]. Skipped when the source is already
     ///    `Linear`.
     /// 2. Source primaries → BT.2020 matrix (skipped when source is BT.2020).
-    /// 3. `ToneMapBt2446A` step (the BT.2446 Method A curve operating in
-    ///    BT.2020 RGB).
+    /// 3. `ToneMap` step (BT.2446 Method A by default — the in-crate
+    ///    [`crate::hdr::Bt2446A`] reference; swappable via
+    ///    [`crate::ConvertPlanBuilder::with_tone_mapper`]).
     /// 4. BT.2020 → target primaries matrix (skipped when target is BT.2020).
     /// 5. `SoftCompressOklch` step (skipped when target is BT.2020 —
     ///    wide-gamut output mode preserves chroma).
@@ -892,7 +907,7 @@ impl ConvertPlan {
     /// [`ConvertPlan::new`] would build — no tone-map gets injected into
     /// a path that doesn't need one.
     ///
-    // ToneMapBt2446A / SoftCompressOklch are crate-internal `ConvertStep` variants
+    // ToneMap / SoftCompressOklch are crate-internal `ConvertStep` variants
     // — referenced by name in the prose above; explicit links would point at
     // private items.
     ///
@@ -998,10 +1013,12 @@ impl ConvertPlan {
         }
 
         // ---- (c) BT.2446 Method A tone map (BT.2020 HDR → BT.2020 SDR).
-        steps.push(ConvertStep::ToneMapBt2446A {
-            source_peak_nits: hdr.source_peak_nits,
-            target_peak_nits: hdr.target_peak_nits,
-        });
+        // The default mapper is the ITU-R BT.2446-1 §4 reference curve;
+        // `ConvertPlanBuilder::with_tone_mapper` swaps in a custom one
+        // before the planner is invoked.
+        steps.push(ConvertStep::ToneMap(alloc::sync::Arc::new(
+            crate::hdr::Bt2446A::new(hdr.source_peak_nits, hdr.target_peak_nits),
+        )));
 
         // ---- (d) BT.2020 → target primaries (skip when target IS BT.2020).
         if to.primaries != ColorPrimaries::Bt2020
@@ -2358,12 +2375,12 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.transfer(),
         ),
         // HDR steps. Both operate on linear-light F32 RGB and preserve the
-        // layout/alpha/transfer/depth of the carrier. ToneMapBt2446A operates
+        // layout/alpha/transfer/depth of the carrier. `ToneMap` operates
         // in BT.2020 (planner-enforced); SoftCompressOklch operates in the
         // step's stored `primaries`. Neither step changes the descriptor
         // shape — they only update pixel values.
         #[cfg(feature = "hdr-experimental")]
-        ConvertStep::ToneMapBt2446A { .. } => current,
+        ConvertStep::ToneMap(_) => current,
         #[cfg(feature = "hdr-experimental")]
         ConvertStep::SoftCompressOklch { .. } => current,
     }
