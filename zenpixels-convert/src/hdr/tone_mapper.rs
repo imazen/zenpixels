@@ -401,21 +401,39 @@ mod tests {
         assert_eq!(LuminanceHistogram::NUM_BINS, 1024);
     }
 
-    /// Identity-style mock that demands `source_peak_nits` AND
-    /// `log_avg_luminance` to verify [`ToneMapContext`] honors the
-    /// declared requirements when populated by the test harness.
-    #[derive(Debug)]
+    /// Mock that records what context fields it observed at
+    /// `prepare()` time, using atomic storage so the `&self` method
+    /// can mutate state without interior unsafe (the crate is
+    /// `#![forbid(unsafe_code)]`).
+    #[derive(Debug, Default)]
     struct MockMapper {
-        observed_source_peak: core::cell::Cell<f32>,
-        observed_target_peak: core::cell::Cell<f32>,
-        observed_log_avg: core::cell::Cell<Option<f32>>,
+        observed_source_peak_bits: core::sync::atomic::AtomicU32,
+        observed_target_peak_bits: core::sync::atomic::AtomicU32,
+        // `u64::MAX` sentinel = unobserved; otherwise low 32 bits = the
+        // observed f32 bits, high 32 bits = 1 if `Some`, 0 if `None`.
+        observed_log_avg: core::sync::atomic::AtomicU64,
     }
-    // SAFETY: only used in single-threaded test execution; Cell is not
-    // Sync. We assert manually here for the trait bounds to satisfy.
-    unsafe impl Send for MockMapper {}
-    unsafe impl Sync for MockMapper {}
-    impl UnwindSafe for MockMapper {}
-    impl RefUnwindSafe for MockMapper {}
+
+    impl MockMapper {
+        const LOG_AVG_UNSEEN: u64 = u64::MAX;
+        fn pack_log_avg(v: Option<f32>) -> u64 {
+            match v {
+                Some(x) => (1u64 << 32) | u64::from(x.to_bits()),
+                None => 0,
+            }
+        }
+        fn unpack_log_avg(bits: u64) -> Option<Option<f32>> {
+            if bits == Self::LOG_AVG_UNSEEN {
+                return None;
+            }
+            if bits == 0 {
+                return Some(None);
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            let lo = bits as u32;
+            Some(Some(f32::from_bits(lo)))
+        }
+    }
 
     impl ToneMapper for MockMapper {
         fn requirements(&self) -> Requirements {
@@ -426,9 +444,13 @@ mod tests {
             }
         }
         fn prepare(&self, ctx: &ToneMapContext<'_>) -> PreparedMapper {
-            self.observed_source_peak.set(ctx.source_peak_nits);
-            self.observed_target_peak.set(ctx.target_peak_nits);
-            self.observed_log_avg.set(ctx.log_avg_luminance);
+            use core::sync::atomic::Ordering;
+            self.observed_source_peak_bits
+                .store(ctx.source_peak_nits.to_bits(), Ordering::Relaxed);
+            self.observed_target_peak_bits
+                .store(ctx.target_peak_nits.to_bits(), Ordering::Relaxed);
+            self.observed_log_avg
+                .store(Self::pack_log_avg(ctx.log_avg_luminance), Ordering::Relaxed);
             PreparedMapper::Streaming(Box::new(IdentityStripMapper))
         }
         fn name(&self) -> &'static str {
@@ -446,10 +468,10 @@ mod tests {
 
     #[test]
     fn mock_mapper_receives_populated_context() {
+        use core::sync::atomic::Ordering;
         let mapper = MockMapper {
-            observed_source_peak: 0.0.into(),
-            observed_target_peak: 0.0.into(),
-            observed_log_avg: None.into(),
+            observed_log_avg: core::sync::atomic::AtomicU64::new(MockMapper::LOG_AVG_UNSEEN),
+            ..MockMapper::default()
         };
         // Drive `prepare` directly to verify the field plumbing: the
         // pipeline integration test in `tests/builder.rs` exercises the
@@ -462,18 +484,22 @@ mod tests {
             luminance_histogram: None,
         };
         let _prepared = mapper.prepare(&ctx);
-        assert_eq!(mapper.observed_source_peak.get(), 1000.0);
-        assert_eq!(mapper.observed_target_peak.get(), 100.0);
-        assert_eq!(mapper.observed_log_avg.get(), Some(0.18));
+        assert_eq!(
+            f32::from_bits(mapper.observed_source_peak_bits.load(Ordering::Relaxed)),
+            1000.0
+        );
+        assert_eq!(
+            f32::from_bits(mapper.observed_target_peak_bits.load(Ordering::Relaxed)),
+            100.0
+        );
+        let log_avg =
+            MockMapper::unpack_log_avg(mapper.observed_log_avg.load(Ordering::Relaxed)).unwrap();
+        assert_eq!(log_avg, Some(0.18));
     }
 
     #[test]
     fn dyn_dispatch_round_trip() {
-        let mapper: Arc<dyn ToneMapper> = Arc::new(MockMapper {
-            observed_source_peak: 0.0.into(),
-            observed_target_peak: 0.0.into(),
-            observed_log_avg: None.into(),
-        });
+        let mapper: Arc<dyn ToneMapper> = Arc::new(MockMapper::default());
         assert_eq!(mapper.name(), "mock");
         let r = mapper.requirements();
         assert!(r.source_peak_nits);
