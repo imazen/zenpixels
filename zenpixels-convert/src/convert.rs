@@ -139,6 +139,86 @@ impl FusedKind {
     }
 }
 
+/// State for the [`ConvertStep::ToneMap`] variant.
+///
+/// Bundles the pluggable [`ToneMapper`](crate::hdr::ToneMapper), its
+/// declared [`Requirements`](crate::hdr::Requirements), the resolved
+/// peaks / working primaries from the plan builder, and a shared
+/// lazily-populated `OnceCell` for the compiled
+/// [`StripMapper`](crate::hdr::StripMapper).
+///
+/// The `Arc<OnceCell<…>>` shape lets plan clones share the lazy cache:
+/// once one strip dispatches and runs
+/// [`ToneMapper::prepare`](crate::hdr::ToneMapper::prepare), every
+/// future strip — across rows, threads, and plan clones — reuses the
+/// cached [`StripMapper`](crate::hdr::StripMapper).
+#[cfg(feature = "hdr-experimental")]
+#[derive(Clone)]
+pub(crate) struct ToneMapStep {
+    /// The user-supplied mapper. Consulted via `mapper.requirements()`
+    /// once at plan-build time; the result is cached in
+    /// [`requirements`](Self::requirements) for hot-path branchless
+    /// dispatch.
+    pub(crate) mapper: alloc::sync::Arc<dyn crate::hdr::ToneMapper>,
+    /// Analysis requirements captured at plan-build time. Kept here
+    /// so neither the kernel dispatcher nor the estimate walker has to
+    /// re-virtualize a method call per row.
+    pub(crate) requirements: crate::hdr::Requirements,
+    /// Source peak luminance in cd/m². Threaded from the builder's
+    /// [`HdrConfig::source_peak_nits`](crate::HdrConfig::source_peak_nits).
+    /// When pipeline-managed mappers run through the buffer-level
+    /// orchestration ([`PixelBufferHdrConvertExt::convert_to_sdr`](crate::PixelBufferHdrConvertExt::convert_to_sdr))
+    /// this value is already resolved via
+    /// [`CllMeasure::measure_max`](crate::hdr::CllMeasure::measure_max)
+    /// before the plan is built.
+    pub(crate) source_peak_nits: f32,
+    /// Target peak luminance in cd/m². Threaded from
+    /// [`HdrConfig::target_peak_nits`](crate::HdrConfig::target_peak_nits).
+    pub(crate) target_peak_nits: f32,
+    /// Working primaries the strip is in when dispatched. Read from
+    /// [`ToneMapper::working_primaries_for`](crate::hdr::ToneMapper::working_primaries_for)
+    /// at plan-build time; the planner brackets the step with gamut
+    /// matrices to reach these primaries.
+    pub(crate) working_primaries: ColorPrimaries,
+    /// Lazily-cached compiled strip executor.
+    ///
+    /// On the first row dispatch through this step, the kernel calls
+    /// `get_or_init` with a closure that builds a
+    /// [`ToneMapContext`](crate::hdr::ToneMapContext) from the fields
+    /// above and runs
+    /// [`ToneMapper::prepare`](crate::hdr::ToneMapper::prepare). The
+    /// resulting [`Arc<dyn StripMapper>`](crate::hdr::StripMapper) is
+    /// then shared across every subsequent strip via this
+    /// `Arc<OnceBox>`.
+    ///
+    /// Uses [`once_cell::race::OnceBox`] so the cell is `no_std`-safe
+    /// (the crate's `once_cell` dep does not pull in `std`) and atomic
+    /// across threads. Wraps `Arc<dyn StripMapper>` (vs `dyn StripMapper`
+    /// directly) because `OnceBox`'s internal `AtomicPtr` requires a
+    /// `Sized` inner type.
+    pub(crate) prepared: alloc::sync::Arc<
+        once_cell::race::OnceBox<alloc::sync::Arc<dyn crate::hdr::StripMapper>>,
+    >,
+}
+
+#[cfg(feature = "hdr-experimental")]
+impl core::fmt::Debug for ToneMapStep {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // `Arc<dyn ToneMapper>` `Debug` would dump the mapper's full
+        // struct shape, which is verbose and not useful for plan
+        // debugging. The `name()` + the `OnceCell` populated-state
+        // are the load-bearing facts.
+        f.debug_struct("ToneMapStep")
+            .field("mapper", &self.mapper.name())
+            .field("requirements", &self.requirements)
+            .field("source_peak_nits", &self.source_peak_nits)
+            .field("target_peak_nits", &self.target_peak_nits)
+            .field("working_primaries", &self.working_primaries)
+            .field("prepared_cached", &self.prepared.get().is_some())
+            .finish()
+    }
+}
+
 /// A single conversion step.
 ///
 /// Not `Copy` — some variants (e.g., `ExternalTransform`) carry an
@@ -276,21 +356,37 @@ pub(crate) enum ConvertStep {
     /// sequence `[<lin>, GamutMatrix*F32, <enc>]` whenever the planner can
     /// peephole it. See [`FusedKind`] for the supported shapes.
     Fused { kind: FusedKind, matrix: [f32; 9] },
-    /// BT.2446 Method A HDR→SDR tone-map on linear-light f32 RGB in BT.2020
-    /// primaries. The plan builder ensures this step sees BT.2020 linear-light
-    /// input via preceding gamut-matrix steps; a following gamut-matrix step
-    /// (BT.2020 → target.primaries) handles the destination primaries.
-    /// Input is source-normalized (`1.0 = source_peak_nits`); output is
-    /// target-normalized (`1.0 = target_peak_nits`). RGB-only — alpha is
-    /// handled at descriptor-layout level (the planner pairs this with the
+    /// Pluggable HDR→SDR tone-map step on linear-light f32 RGB in the
+    /// working primaries declared by
+    /// [`ToneMapper::working_primaries_for`](crate::hdr::ToneMapper::working_primaries_for)
+    /// (default [`ColorPrimaries::Bt2020`] — the canonical HDR working
+    /// space). The plan builder brackets this step with gamut matrices
+    /// so the strip sees the mapper's chosen working primaries.
+    ///
+    /// Carries an [`Arc<dyn ToneMapper>`](crate::hdr::ToneMapper) and a
+    /// lazily-populated [`Arc<OnceCell<Arc<dyn StripMapper>>>`](crate::hdr::StripMapper)
+    /// — the in-crate two-phase design:
+    ///
+    ///   - On the **first strip dispatch** through this step, the
+    ///     pipeline assembles a [`ToneMapContext`](crate::hdr::ToneMapContext)
+    ///     from the resolved peaks / working primaries stored alongside
+    ///     the mapper, calls
+    ///     [`ToneMapper::prepare`](crate::hdr::ToneMapper::prepare), and
+    ///     caches the resulting [`StripMapper`](crate::hdr::StripMapper)
+    ///     in the `OnceCell`.
+    ///   - On **every subsequent strip** (across all rows, plus across
+    ///     plan clones — the `Arc<OnceCell>` is shared), the cached
+    ///     [`StripMapper`](crate::hdr::StripMapper) is reused.
+    ///
+    /// Input is source-normalized (`1.0 = source_peak_nits` on the
+    /// step); output is target-normalized
+    /// (`1.0 = target_peak_nits`). RGB-only — alpha is handled at
+    /// descriptor-layout level (the planner pairs this with the
     /// appropriate RGB/RGBA carrier).
     ///
     /// Gated behind `hdr-experimental` at the kernel side.
     #[cfg(feature = "hdr-experimental")]
-    ToneMapBt2446A {
-        source_peak_nits: f32,
-        target_peak_nits: f32,
-    },
+    ToneMap(ToneMapStep),
     /// OKLch soft chroma compression on linear-light f32 RGB in
     /// `primaries`. Pulls residual out-of-gamut excursions back into the
     /// target unit cube using a hue-preserving rational knee curve.
@@ -364,7 +460,13 @@ impl ConvertStep {
             Self::GamutMatrixRgbaF32(_) => "GamutMatrixRgbaF32",
             Self::Fused { kind, .. } => kind.variant_name(),
             #[cfg(feature = "hdr-experimental")]
-            Self::ToneMapBt2446A { .. } => "ToneMapBt2446A",
+            // The variant name is the generic tag; the concrete mapper's
+            // kebab-case `name()` is shown alongside by the
+            // `__trace_ops` recorder via a separate dispatcher when it
+            // wants to differentiate Bt2446-A vs FilmicSpline vs custom.
+            // Tests that pinned the historical `"ToneMapBt2446A"` were
+            // updated to `"ToneMap"` in the same commit.
+            Self::ToneMap(_) => "ToneMap",
             #[cfg(feature = "hdr-experimental")]
             Self::SoftCompressOklch { .. } => "SoftCompressOklch",
         }
@@ -879,8 +981,10 @@ impl ConvertPlan {
     ///    [`ConvertPlan::new`]. Skipped when the source is already
     ///    `Linear`.
     /// 2. Source primaries → BT.2020 matrix (skipped when source is BT.2020).
-    /// 3. `ToneMapBt2446A` step (the BT.2446 Method A curve operating in
-    ///    BT.2020 RGB).
+    /// 3. `ToneMap` step — the in-crate BT.2446 Method A
+    ///    [`Bt2446A`](crate::hdr::Bt2446A) reference curve when called
+    ///    through this entry; swappable via
+    ///    [`ConvertPlanBuilder::with_tone_mapper`](crate::ConvertPlanBuilder::with_tone_mapper).
     /// 4. BT.2020 → target primaries matrix (skipped when target is BT.2020).
     /// 5. `SoftCompressOklch` step (skipped when target is BT.2020 —
     ///    wide-gamut output mode preserves chroma).
@@ -892,7 +996,7 @@ impl ConvertPlan {
     /// [`ConvertPlan::new`] would build — no tone-map gets injected into
     /// a path that doesn't need one.
     ///
-    // ToneMapBt2446A / SoftCompressOklch are crate-internal `ConvertStep` variants
+    // ToneMap / SoftCompressOklch are crate-internal `ConvertStep` variants
     // — referenced by name in the prose above; explicit links would point at
     // private items.
     ///
@@ -914,6 +1018,31 @@ impl ConvertPlan {
         from: PixelDescriptor,
         to: PixelDescriptor,
         hdr: HdrConfig,
+    ) -> Result<Self, At<ConvertError>> {
+        // Default mapper: the ITU-R BT.2446-1 §4 reference curve, with
+        // peaks baked from the supplied `HdrConfig`. Routes through the
+        // shared planner that `ConvertPlanBuilder::build` also uses, so
+        // byte-for-byte output is preserved across the two entry
+        // points.
+        Self::plan_hdr(from, to, hdr, None)
+    }
+
+    /// Internal HDR planner shared by [`Self::new_with_hdr_config`] and
+    /// [`ConvertPlanBuilder::build`].
+    ///
+    /// When `mapper_override` is `None` the planner constructs the
+    /// in-crate [`Bt2446A`](crate::hdr::Bt2446A) from `hdr`. When
+    /// `Some`, the supplied mapper rides into the
+    /// [`ConvertStep::ToneMap`] step verbatim (any peaks come from
+    /// `hdr`; the mapper's own `requirements()` is consulted to
+    /// determine the working primaries and analysis scope).
+    #[cfg(feature = "hdr-experimental")]
+    #[track_caller]
+    pub(crate) fn plan_hdr(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        hdr: HdrConfig,
+        mapper_override: Option<alloc::sync::Arc<dyn crate::hdr::ToneMapper>>,
     ) -> Result<Self, At<ConvertError>> {
         if requires_cms(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
@@ -997,11 +1126,35 @@ impl ConvertPlan {
             steps.push(step);
         }
 
-        // ---- (c) BT.2446 Method A tone map (BT.2020 HDR → BT.2020 SDR).
-        steps.push(ConvertStep::ToneMapBt2446A {
+        // ---- (c) Tone-map step. The mapper is either the caller-supplied
+        // one (via `ConvertPlanBuilder::with_tone_mapper`) or the in-crate
+        // BT.2446-A reference curve, constructed from the supplied
+        // `HdrConfig`. The mapper's working primaries are read here
+        // (default BT.2020) so an adaptive curve could re-target P3 etc.
+        // The shared `OnceCell` is freshly allocated so plan clones
+        // reuse the same lazy cache.
+        let mapper: alloc::sync::Arc<dyn crate::hdr::ToneMapper> =
+            mapper_override.unwrap_or_else(|| {
+                alloc::sync::Arc::new(crate::hdr::Bt2446A::new(
+                    hdr.source_peak_nits,
+                    hdr.target_peak_nits,
+                ))
+            });
+        let requirements = mapper.requirements();
+        if requirements.full_image {
+            return Err(whereat::at!(ConvertError::FullImageMapperNotSupported {
+                mapper_name: mapper.name(),
+            }));
+        }
+        let working_primaries = mapper.working_primaries_for(to.primaries);
+        steps.push(ConvertStep::ToneMap(ToneMapStep {
+            mapper,
+            requirements,
             source_peak_nits: hdr.source_peak_nits,
             target_peak_nits: hdr.target_peak_nits,
-        });
+            working_primaries,
+            prepared: alloc::sync::Arc::new(once_cell::race::OnceBox::new()),
+        }));
 
         // ---- (d) BT.2020 → target primaries (skip when target IS BT.2020).
         if to.primaries != ColorPrimaries::Bt2020
@@ -2358,12 +2511,13 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.transfer(),
         ),
         // HDR steps. Both operate on linear-light F32 RGB and preserve the
-        // layout/alpha/transfer/depth of the carrier. ToneMapBt2446A operates
-        // in BT.2020 (planner-enforced); SoftCompressOklch operates in the
+        // layout/alpha/transfer/depth of the carrier. `ToneMap` operates
+        // in the mapper's working primaries (planner-enforced via
+        // bracketing gamut matrices); SoftCompressOklch operates in the
         // step's stored `primaries`. Neither step changes the descriptor
         // shape — they only update pixel values.
         #[cfg(feature = "hdr-experimental")]
-        ConvertStep::ToneMapBt2446A { .. } => current,
+        ConvertStep::ToneMap(_) => current,
         #[cfg(feature = "hdr-experimental")]
         ConvertStep::SoftCompressOklch { .. } => current,
     }

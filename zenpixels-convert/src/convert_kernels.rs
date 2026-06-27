@@ -287,11 +287,8 @@ pub(super) fn apply_step_u8(
         }
 
         #[cfg(feature = "hdr-experimental")]
-        ConvertStep::ToneMapBt2446A {
-            source_peak_nits,
-            target_peak_nits,
-        } => {
-            tone_map_bt2446a_kernel(src, dst, w, from, *source_peak_nits, *target_peak_nits);
+        ConvertStep::ToneMap(step) => {
+            tone_map_kernel(src, dst, w, from, step);
         }
 
         #[cfg(feature = "hdr-experimental")]
@@ -301,13 +298,22 @@ pub(super) fn apply_step_u8(
     }
 }
 
-/// Apply the BT.2446 Method A tone curve to a row of linear-light F32 RGB(A)
-/// pixels in BT.2020 primaries.
+/// Apply a pluggable HDR tone-map step to one row of linear-light F32
+/// RGB(A) pixels in the mapper's working primaries.
 ///
-/// The carrier layout (RGB vs RGBA) is read from `from.layout()`. For RGBA,
-/// the alpha channel is copied through verbatim. Input is scrubbed for
-/// non-finite values and negatives; output is clamped to `[0, 1]` to absorb
-/// f32 epsilon-level overshoot at the saturated end.
+/// The carrier layout (RGB vs RGBA) is read from `from.layout()`. For
+/// RGBA, the alpha channel is copied through verbatim. Input is scrubbed
+/// for non-finite values and negatives before reaching the mapper;
+/// output is clamped to `[0, 1]` to absorb f32 epsilon-level overshoot at
+/// the saturated end.
+///
+/// **Lazy compilation.** On the first row that flows through a given
+/// step, this kernel resolves the [`ToneMapContext`](crate::hdr::ToneMapContext)
+/// from the step's stored peaks / working primaries, calls
+/// [`ToneMapper::prepare`](crate::hdr::ToneMapper::prepare), and stashes
+/// the resulting [`StripMapper`](crate::hdr::StripMapper) in the step's
+/// shared `OnceCell`. Every subsequent row reuses the cached executor
+/// without rebuilding context or re-virtualizing `prepare`.
 //
 // `needless_range_loop` would flatten the loops to iter_mut() + enumerate
 // over the strip — but each iter writes BOTH `rgb_strip[p]` and the parallel
@@ -316,44 +322,74 @@ pub(super) fn apply_step_u8(
 // below; suppress for the whole function rather than per-loop.
 #[cfg(feature = "hdr-experimental")]
 #[allow(clippy::needless_range_loop)]
-fn tone_map_bt2446a_kernel(
+fn tone_map_kernel(
     src: &[u8],
     dst: &mut [u8],
     width: usize,
     from: PixelDescriptor,
-    source_peak_nits: f32,
-    target_peak_nits: f32,
+    step: &super::ToneMapStep,
 ) {
-    let curve = crate::hdr::Bt2446A::new(source_peak_nits, target_peak_nits);
+    // Lazy-compile the strip executor on the first dispatch through
+    // this step. The `Arc<OnceBox>` is shared across plan clones, so
+    // even when a caller reuses the plan from multiple threads they
+    // pay the `prepare` cost at most once total.
+    let strip_mapper: &alloc::sync::Arc<dyn crate::hdr::StripMapper> =
+        step.prepared.get_or_init(|| {
+            let ctx = crate::hdr::ToneMapContext {
+                source_peak_nits: step.source_peak_nits,
+                target_peak_nits: step.target_peak_nits,
+                working_primaries: step.working_primaries,
+                // The v0.2.16 pipeline does not yet thread richer stats
+                // (`log_avg_luminance` / `luminance_histogram`) into
+                // the analysis pass — those are reserved capacity on
+                // `Requirements`. Mappers can still declare them and
+                // receive `None`; the builder rejects `full_image`
+                // requirements at construction time.
+                log_avg_luminance: None,
+                luminance_histogram: None,
+            };
+            match step.mapper.prepare(&ctx) {
+                crate::hdr::PreparedMapper::Streaming(boxed) => {
+                    alloc::boxed::Box::new(alloc::sync::Arc::from(boxed))
+                }
+            }
+        });
+
     let has_alpha = from.layout().has_alpha();
     let channels = if has_alpha { 4 } else { 3 };
     let src_f32: &[f32] = bytemuck::cast_slice(src);
     let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
 
     if has_alpha {
-        // RGBA: extract RGB triples into a scratch strip, run the SIMD
-        // curve, write back while passing alpha through verbatim. The
-        // scratch keeps the SIMD kernel's contiguous `[[f32; 3]]` shape.
+        // RGBA: extract RGB triples into a scratch strip, run the
+        // mapper, write back while passing alpha through verbatim. The
+        // scratch matches the trait's flat-RGB strip contract.
         use alloc::vec;
-        let mut rgb_strip: alloc::vec::Vec<[f32; 3]> = vec![[0.0; 3]; width];
+        let mut rgb_in: alloc::vec::Vec<f32> = vec![0.0; width * 3];
+        let mut rgb_out: alloc::vec::Vec<f32> = vec![0.0; width * 3];
         for p in 0..width {
             let base = p * channels;
             let r = src_f32[base];
             let g = src_f32[base + 1];
             let b = src_f32[base + 2];
-            // Scrub non-finite / negatives — matches the prior HdrToSdr
-            // contract so consumers see clean linear-light values.
+            // Scrub non-finite / negatives — matches the prior
+            // HdrToSdr contract so mappers see clean linear-light
+            // values.
             let r = if r.is_finite() && r >= 0.0 { r } else { 0.0 };
             let g = if g.is_finite() && g >= 0.0 { g } else { 0.0 };
             let b = if b.is_finite() && b >= 0.0 { b } else { 0.0 };
-            rgb_strip[p] = [r, g, b];
+            let o = p * 3;
+            rgb_in[o] = r;
+            rgb_in[o + 1] = g;
+            rgb_in[o + 2] = b;
         }
-        curve.map_strip_simd(&mut rgb_strip);
+        strip_mapper.map_strip(&rgb_in, &mut rgb_out);
         for p in 0..width {
             let base = p * channels;
-            let [r, g, b] = rgb_strip[p];
-            // Final clamp absorbs BT.2446-A's near-peak ~1e-4 overshoot
-            // (matches the prior HdrToSdr final-clamp postcondition).
+            let o = p * 3;
+            let r = rgb_out[o];
+            let g = rgb_out[o + 1];
+            let b = rgb_out[o + 2];
             dst_f32[base] = if r.is_finite() {
                 r.clamp(0.0, 1.0)
             } else {
@@ -373,26 +409,27 @@ fn tone_map_bt2446a_kernel(
             dst_f32[base + 3] = src_f32[base + 3];
         }
     } else {
-        // RGB: cast straight to `[[f32; 3]]` and apply in-place after
-        // copying src → dst. The SIMD curve is in-place.
+        // RGB: copy src → dst, scrub in place, then run the mapper
+        // in-place (the trait permits aliased input/output).
         let n_floats = width * 3;
         dst_f32[..n_floats].copy_from_slice(&src_f32[..n_floats]);
-        let strip: &mut [[f32; 3]] = bytemuck::cast_slice_mut(&mut dst_f32[..n_floats]);
-        for px in strip.iter_mut() {
-            for c in px.iter_mut() {
-                if !c.is_finite() || *c < 0.0 {
-                    *c = 0.0;
-                }
+        for c in dst_f32[..n_floats].iter_mut() {
+            if !c.is_finite() || *c < 0.0 {
+                *c = 0.0;
             }
         }
-        curve.map_strip_simd(strip);
-        for px in strip.iter_mut() {
-            for c in px.iter_mut() {
-                if !c.is_finite() {
-                    *c = 0.0;
-                } else {
-                    *c = c.clamp(0.0, 1.0);
-                }
+        // Stage through a small heap scratch so the trait method sees
+        // a non-aliased source. This matches the contract: the trait
+        // permits aliasing but in-place is harder for safe-Rust callers
+        // to express without bytemuck-style splits.
+        use alloc::vec::Vec;
+        let in_strip: Vec<f32> = dst_f32[..n_floats].to_vec();
+        strip_mapper.map_strip(&in_strip, &mut dst_f32[..n_floats]);
+        for c in dst_f32[..n_floats].iter_mut() {
+            if !c.is_finite() {
+                *c = 0.0;
+            } else {
+                *c = c.clamp(0.0, 1.0);
             }
         }
     }

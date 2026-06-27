@@ -71,6 +71,28 @@ pub enum ConvertError {
         from: PixelDescriptor,
         to: PixelDescriptor,
     },
+    /// The injected [`ToneMapper`](crate::hdr::ToneMapper) declared
+    /// [`Requirements::full_image == true`](crate::hdr::Requirements::full_image)
+    /// from
+    /// [`ConvertPlanBuilder::with_tone_mapper`](crate::ConvertPlanBuilder::with_tone_mapper),
+    /// but the v0.2.16 pipeline does not yet support full-image local
+    /// operators (Mantiuk gradient processing, Fattal, bilateral, …).
+    ///
+    /// The capacity is reserved in the public types
+    /// ([`Requirements::full_image`](crate::hdr::Requirements::full_image)
+    /// and [`PreparedMapper::Buffered`](crate::hdr::PreparedMapper))
+    /// under `#[non_exhaustive]` so the variant can be activated in a
+    /// patch release without semver impact. Pick a streaming mapper
+    /// (any pointwise curve — BT.2446-A, ACES, FilmicSpline, the
+    /// adaptive family in zentone, …) until that lands.
+    ///
+    /// `mapper_name` is the [`ToneMapper::name`](crate::hdr::ToneMapper::name)
+    /// of the offending mapper, captured for diagnostics.
+    FullImageMapperNotSupported {
+        /// The kebab-case identifier returned by
+        /// [`ToneMapper::name`](crate::hdr::ToneMapper::name).
+        mapper_name: &'static str,
+    },
     /// The conversion requires a color management plugin but none was provided.
     ///
     /// Returned when one (or both) sides use a non-native color model — CMYK,
@@ -177,6 +199,13 @@ impl fmt::Display for ConvertError {
                  and pass the source's MaxCLL (e.g. CllMeasure::measure_robust)",
                 from.transfer(),
                 to.transfer(),
+            ),
+            Self::FullImageMapperNotSupported { mapper_name } => write!(
+                f,
+                "tone mapper '{mapper_name}' requires full-image buffering \
+                 (Requirements::full_image == true); the v0.2.16 ConvertPlan only \
+                 supports streaming mappers. Pick a pointwise curve (Bt2446A, ACES, \
+                 FilmicSpline, …) — local-operator support is reserved capacity",
             ),
             Self::NeedsCms { from, to } => write!(
                 f,
@@ -329,5 +358,16 @@ mod tests {
         };
         let e2 = e.clone();
         assert_eq!(e, e2);
+    }
+
+    #[test]
+    fn display_full_image_mapper_not_supported() {
+        let e = ConvertError::FullImageMapperNotSupported {
+            mapper_name: "mantiuk08",
+        };
+        let s = format!("{e}");
+        assert!(s.contains("mantiuk08"), "{s}");
+        assert!(s.contains("full-image"), "{s}");
+        assert!(s.contains("streaming"), "{s}");
     }
 }
