@@ -469,6 +469,57 @@ impl PixelBufferConvertTypedExt for PixelBuffer {
     }
 }
 
+/// Convert any [`PixelBuffer`] into an `image`-crate buffer, performing the
+/// necessary color and format conversion. Requires the `image` feature.
+///
+/// These are the "save my pixels" helpers: they take a buffer in *any* native
+/// format and produce a standard sRGB `image` buffer ready to hand to the
+/// `image` crate's encoders. Conversion is full-fidelity — alpha is dropped or
+/// added, gray is expanded, 16-bit / `f32` are narrowed to 8-bit, non-BT.709
+/// primaries are gamut-mapped, and the transfer function is encoded to sRGB.
+///
+/// Sources that need a CMS plugin (CMYK, Lab, …) return
+/// [`ConvertError::NeedsCms`](crate::ConvertError::NeedsCms); build a
+/// [`RowConverter`](crate::RowConverter) with a CMS for those. (For a cheap
+/// *format-preserving* reinterpret with no conversion, use zenpixels'
+/// [`PixelBuffer::to_dynamic_image`](zenpixels::buffer::PixelBuffer::to_dynamic_image)
+/// directly.)
+#[cfg(feature = "image")]
+pub trait PixelBufferImageExt {
+    /// Convert to a standard sRGB [`image::RgbImage`] (alpha dropped).
+    ///
+    /// **Allocates.** Errors only when the source needs a CMS plugin.
+    fn to_image_rgb8(&self) -> Result<image::RgbImage, At<crate::ConvertError>>;
+
+    /// Convert to a standard sRGB [`image::RgbaImage`] (alpha kept, or added opaque).
+    ///
+    /// **Allocates.** Errors only when the source needs a CMS plugin.
+    fn to_image_rgba8(&self) -> Result<image::RgbaImage, At<crate::ConvertError>>;
+}
+
+#[cfg(feature = "image")]
+impl PixelBufferImageExt for PixelBuffer {
+    #[track_caller]
+    fn to_image_rgb8(&self) -> Result<image::RgbImage, At<crate::ConvertError>> {
+        let buf = self.convert_to(PixelDescriptor::RGB8_SRGB)?;
+        let (w, h) = (buf.width(), buf.height());
+        Ok(
+            image::RgbImage::from_raw(w, h, buf.copy_to_contiguous_bytes())
+                .expect("a converted RGB8 buffer always fills a valid RgbImage"),
+        )
+    }
+
+    #[track_caller]
+    fn to_image_rgba8(&self) -> Result<image::RgbaImage, At<crate::ConvertError>> {
+        let buf = self.convert_to(PixelDescriptor::RGBA8_SRGB)?;
+        let (w, h) = (buf.width(), buf.height());
+        Ok(
+            image::RgbaImage::from_raw(w, h, buf.copy_to_contiguous_bytes())
+                .expect("a converted RGBA8 buffer always fills a valid RgbaImage"),
+        )
+    }
+}
+
 /// Internal: convert to any target descriptor, returning a typed buffer.
 #[cfg(feature = "rgb")]
 fn convert_to_typed<Q: Pixel>(buf: &PixelBuffer, target: PixelDescriptor) -> PixelBuffer<Q> {

@@ -517,7 +517,25 @@ pub use pipeline::{
 pub use ext::PixelBufferConvertTypedExt;
 #[cfg(feature = "hdr-experimental")]
 pub use ext::PixelBufferHdrConvertExt;
+#[cfg(feature = "image")]
+pub use ext::PixelBufferImageExt;
 pub use ext::{ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
+
+/// One-line import for conversion work.
+///
+/// `use zenpixels_convert::prelude::*;` re-exports [`zenpixels::prelude`] plus
+/// the extension traits whose methods (`convert_to`, `to_rgb8`,
+/// `to_image_rgba8`, …) must be in scope to be callable — the single most
+/// common source of import boilerplate for callers of this crate.
+pub mod prelude {
+    pub use zenpixels::prelude::*;
+
+    #[cfg(feature = "rgb")]
+    pub use crate::ext::PixelBufferConvertTypedExt;
+    #[cfg(feature = "image")]
+    pub use crate::ext::PixelBufferImageExt;
+    pub use crate::ext::{ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
+}
 
 // Re-export gamut conversion utilities.
 pub use gamut::{
