@@ -4,7 +4,7 @@ version = "0.2.15"
 edition.workspace = true
 rust-version = "1.89"
 license.workspace = true
-readme = "README.md"
+readme = "README.crates.md"
 repository.workspace = true
 categories.workspace = true
 description = "Transfer-function-aware pixel conversion, gamut mapping, and codec format negotiation for zenpixels"
@@ -12,7 +12,7 @@ keywords = ["image", "pixel", "conversion", "srgb", "codec"]
 include = [
     "/src/**",
     "/benches/*.rs",
-    "/README.md",
+    "/README.crates.md",
 ]
 
 [features]

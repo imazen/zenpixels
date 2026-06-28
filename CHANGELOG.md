@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Workspace — docs
+
+- **README overhaul + crates.io README split for both crates.** Each crate now
+  ships a generated `README.crates.md` (badge-free, all links absolute) via
+  `readme = "README.crates.md"` (`../README.crates.md` for `zenpixels`, whose
+  README is the repo root); the GitHub `README.md` keeps the full badge row and
+  the rendered crosslink footer. `zenpixels` README: added the `&label=CI` CI
+  badge + an MSRV badge, fixed the license badge to the `#license` anchor,
+  bumped the install snippet to current versions, refreshed the HDR section
+  (native `ConvertPlan` HDR path + `CllMeasure`; legacy `reinhard_*` /
+  `exposure_tonemap` now deprecated → `zentone`), added `fast-transpose` /
+  `hdr-experimental` to the feature table, corrected the `serde` row (no-op stub
+  since 0.2.15), and added a Resource-estimation summary. `zenpixels-convert`
+  README: added an MSRV badge, fixed the license anchor, corrected the `serde`
+  row, and added the crosslink footer.
+
 ### zenpixels-convert — changed (Tier 1 ablation: drop codec-only fields; add intermediate_buffer_count)
 
 - **Trimmed the estimate-API surface to what `zenpixels-convert` actually
