@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### zenpixels — added (`image` interop)
+
+- Add the opt-in `image` feature with type-erased, raw-subpixel conversions
+  between supported `image::ImageBuffer` / `DynamicImage` values and
+  `PixelBuffer` / `PixelSlice`. Eight-bit owned inputs reuse their allocation;
+  wide-channel inputs copy into correctly aligned storage. Borrowed image
+  buffers remain zero-copy. `PixelBuffer::to_dynamic_image` preserves supported
+  formats and removes row padding.
+- Add `PixelBuffer::to_imgvec` as the owned, de-striding counterpart to
+  `try_as_imgref`, plus `zenpixels::prelude`.
+
+### zenpixels-convert — added (`image` interop)
+
+- Add the opt-in `image` feature and `PixelBufferImageExt::{to_image_rgb8,
+  to_image_rgba8}` for fallible conversion to standard sRGB image buffers.
+  Add `zenpixels_convert::prelude` for the core and conversion traits.
+
+### Workspace — CI
+
+- Run both opt-in image interoperability suites explicitly.
+
 ### zenpixels-convert — fixed (HDR correctness; all behind `hdr-experimental`, unreleased)
 
 - **Tier-consistent NaN/negative fold in the SIMD CLL kernels (eea47c01).**

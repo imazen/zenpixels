@@ -367,7 +367,25 @@ scan) so encoders can route formats without rewriting anything.
 
 ### Interop
 
-With `imgref` feature: `From<ImgRef<P>>`, `From<ImgVec<P>>`, `as_imgref()`, `try_as_imgref::<P>()` and mutable counterparts. With `rgb` feature: `Pixel` impls for `Rgb<u8>`, `Rgba<u8>`, `Gray<u8>`, `BGRA<u8>`, and their `u16`/`f32` variants.
+With `rgb` feature: `Pixel` impls for `Rgb<u8>`, `Rgba<u8>`, `Gray<u8>`, `BGRA<u8>`, and their `u16`/`f32` variants.
+
+With `imgref` feature: `From<ImgRef<P>>`, `From<ImgVec<P>>`, `as_imgref()`, `try_as_imgref::<P>()`, `to_imgvec::<P>()` and mutable counterparts.
+
+With `image` feature: bridges to the [`image`](https://crates.io/crates/image) crate at the raw-subpixel level (the `image` crate's pixel types can't implement `bytemuck::Pod`, so the result is a type-erased buffer):
+
+```rust
+// image crate -> zenpixels (8-bit is zero-copy)
+let pb: PixelBuffer = image::open(path)?.into();   // From<DynamicImage>
+let pb: PixelBuffer = rgba_image.into();           // From<{Rgb,Rgba,Gray,GrayAlpha}{8,16}Image>, From<{Rgb,Rgba}32FImage>
+let slice: PixelSlice = (&rgb_image).into();       // From<&ImageBuffer>, zero-copy borrow
+
+// zenpixels -> image crate (format-preserving reinterpret, strips row padding)
+let dynimg = pb.to_dynamic_image();                // Option<DynamicImage>, None for BGRA/Rgbx/Oklab/CMYK/f16
+```
+
+To convert *any* format into an `image` buffer (not just a matching reinterpret), use `zenpixels-convert`'s `PixelBufferImageExt`: `pb.to_image_rgb8()?` / `pb.to_image_rgba8()?` handle alpha, depth, gamut, and transfer in one call.
+
+Either crate also ships a `prelude` (`use zenpixels::prelude::*;` / `use zenpixels_convert::prelude::*;`) to pull the core types — and, for convert, the extension traits — into scope in one line.
 
 ## Conversion
 
@@ -443,7 +461,8 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | `std` | yes | Standard library (currently a no-op; everything is `no_std + alloc`) |
 | `icc` | yes | `icc` module — hash-based ICC profile identification (~100ns) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed `from_pixels()` constructors |
-| `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
+| `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions, `to_imgvec()` (implies `rgb`) |
+| `image` | | `From`/`to_dynamic_image()` bridges to the [`image`](https://crates.io/crates/image) crate's `ImageBuffer`/`DynamicImage` (implies `std`; needs Rust 1.88+) |
 | `planar` | | Multi-plane image types (YCbCr, Oklab, gain maps) |
 | `serde` | | No-op stub (soft-removed in 0.2.16, queued for removal); previously added `Serialize`/`Deserialize` derives on the core types — a workspace-wide sweep found zero consumers |
 
@@ -457,6 +476,7 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed convenience methods (`to_rgb8()`, `to_rgba8()`, etc.) |
 | `imgref` | | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
+| `image` | | `PixelBufferImageExt` (`to_image_rgb8()`/`to_image_rgba8()`) converting helpers to the [`image`](https://crates.io/crates/image) crate (implies `std`) |
 | `planar` | | Multi-plane image types |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
 | `hdr-experimental` | | Native HDR→SDR display mapping inside `ConvertPlan` (BT.2446 Method A + OKLch soft compress + CTA-861.3 CLL measurement); API shape may move ahead of 0.3.0 |
