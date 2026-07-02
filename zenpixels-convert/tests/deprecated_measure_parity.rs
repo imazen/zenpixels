@@ -127,9 +127,8 @@ fn parity_strided_rows_ignore_padding() {
         data[base..base + 3].copy_from_slice(p);
     }
     let bytes: &[u8] = bytemuck::cast_slice(&data);
-    let mk = || {
-        PixelSlice::new(bytes, w, h, row_floats * 4, PixelDescriptor::RGBF32_LINEAR).unwrap()
-    };
+    let mk =
+        || PixelSlice::new(bytes, w, h, row_floats * 4, PixelDescriptor::RGBF32_LINEAR).unwrap();
     #[allow(deprecated)]
     let old = ContentLightLevel::measure(mk(), DiffuseWhite::BT2408).unwrap();
     let new = ContentLightLevel::measure_max(mk(), DiffuseWhite::BT2408, LightLevelMethod::MaxRgb)
