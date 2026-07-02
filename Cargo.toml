@@ -11,8 +11,9 @@ resolver = "2"
 [workspace.dependencies]
 zenpixels = { path = "zenpixels", version = "0.2.16", default-features = false }
 
+# NOTE: no shared `version` here on purpose — each member declares its own
+# version (they release independently), so a workspace-level one only rots.
 [workspace.package]
-version = "0.2.11"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0 OR MIT"
