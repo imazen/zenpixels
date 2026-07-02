@@ -130,6 +130,15 @@ palette = { version = "0.7", default-features = false, features = ["std", "appro
 # accidental regen is caught. Not part of the shipped crate.
 sha2 = "0.11.0"
 
+# Parity gate between the deprecated `zenpixels::ContentLightLevel::measure`
+# and its replacement `CllMeasure::measure_max`. The trait is behind
+# `hdr-experimental`, so the target opts in explicitly; CI runs it via the
+# dedicated `--features hdr-experimental` test step.
+[[test]]
+name = "deprecated_measure_parity"
+path = "tests/deprecated_measure_parity.rs"
+required-features = ["hdr-experimental"]
+
 [[bench]]
 name = "bench_cms"
 path = "benches/bench_cms.rs"

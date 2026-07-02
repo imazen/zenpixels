@@ -54,6 +54,12 @@ jobs:
       - name: Test (zenpixels-convert plan validation, with __trace_ops)
         run: cargo test -p zenpixels-convert --features __trace_ops --test plan_validation
 
+      # The CllMeasure surface (and its test targets, including the
+      # deprecated-measure parity gate) is behind the hdr-experimental
+      # feature — run it explicitly so those suites execute in CI.
+      - name: Test (zenpixels-convert HDR measurement, hdr-experimental)
+        run: cargo test -p zenpixels-convert --features hdr-experimental
+
       - name: Check no_std (zenpixels)
         run: cargo check -p zenpixels --no-default-features
 
