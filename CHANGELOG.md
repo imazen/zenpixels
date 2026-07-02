@@ -17,6 +17,36 @@
   since 0.2.15), and added a Resource-estimation summary. `zenpixels-convert`
   README: added an MSRV badge, fixed the license anchor, corrected the `serde`
   row, and added the crosslink footer.
+- **Rustdoc link hygiene + docs.rs feature metadata** (258e9da8). All doc
+  builds are now warning-free for both crates (default features, the docs.rs
+  feature set, and `--all-features`). The 8 `zenpixels-convert` intra-doc
+  links that pointed at feature-gated items (`ConvertPlan::new_with_hdr_peak`
+  / `new_with_hdr_config`, `hdr::measure` and its `CllMeasure` /
+  `LightLevelHistogram` / `LightLevelMethod`) are now plain code spans so the
+  default-features build renders link-clean; a new
+  `[package.metadata.docs.rs]` features list makes docs.rs document the gated
+  surfaces. Also fixed the unresolved `with_subsampling` link in
+  `zenpixels/src/planar.rs` (`planar` feature only).
+
+### zenpixels — added (testing)
+
+- **`tests/dep_guard.rs` dependency-lean guard** (675ed30b). Std-only test
+  that parses `zenpixels/Cargo.toml` and fails if `[dependencies]` names
+  anything outside the frozen 0.2.14 set (`bytemuck`, `serde`, `rgb`,
+  `imgref`, `whereat`) — enforcing the rule that `zenpixels` never gains a
+  dependency; measurement/SIMD machinery lives only in `zenpixels-convert`.
+
+### zenpixels-convert — fixed (no-per-row-allocation contract)
+
+- **HDR tone-map kernels no longer heap-allocate per row** (a1d8114c). The
+  `hdr-experimental` BT.2446-A and `SoftCompressOklch` step kernels allocated
+  a fresh `Vec<[f32; 3]>` RGB strip per RGBA row, and the SoftCompress kernel
+  additionally rebuilt its gamut-boundary LUT (16 k bisection searches) every
+  row. Both now use an `HdrKernelScratch` owned by `ConvertScratch`:
+  allocated once per plan/strip run with grow-only strip reuse, and the
+  compressor cached keyed on `(primaries, knee)`. Internal only — no
+  public-surface change; `convert_row`'s one-off path stays allocation-free
+  for identity and single-step plans.
 
 ### zenpixels-convert — changed (Tier 1 ablation: drop codec-only fields; add intermediate_buffer_count)
 
