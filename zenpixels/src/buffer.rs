@@ -2033,19 +2033,24 @@ impl PixelBuffer {
 // format-preserving reinterpret with no color conversion — convert with
 // `zenpixels-convert` first when the layout isn't one `image` can represent.
 
-/// Reinterpret a contiguous `Vec<u8>` (global-allocator aligned) as `Vec<u16>`/
-/// `Vec<f32>` for the `image`-crate reverse path. The input comes from
-/// [`PixelBuffer::copy_to_contiguous_bytes`], whose backing `Vec<u8>` is
-/// over-aligned by the allocator and whose length is a multiple of the element
-/// size for every 16-bit / `f32` format, so the cast cannot fail.
+/// Copy a contiguous `Vec<u8>` into a `Vec<u16>`/`Vec<f32>` for the
+/// `image`-crate reverse path via [`bytemuck::pod_collect_to_vec`], which
+/// allocates the destination at the target type's alignment and `memcpy`s —
+/// no alignment requirement on the source. (A `bytemuck::cast_slice` here
+/// would panic whenever the allocator happened to hand the `Vec<u8>` a
+/// pointer not aligned for the wider element type; a 1-byte allocation
+/// carries no such guarantee.) The input comes from
+/// [`PixelBuffer::copy_to_contiguous_bytes`], whose length is a multiple of
+/// the element size for every 16-bit / `f32` format, so the rounded-up
+/// destination length equals the exact element count.
 #[cfg(feature = "image")]
 fn bytes_to_u16(bytes: Vec<u8>) -> Vec<u16> {
-    bytemuck::cast_slice::<u8, u16>(&bytes).to_vec()
+    bytemuck::pod_collect_to_vec::<u8, u16>(&bytes)
 }
 
 #[cfg(feature = "image")]
 fn bytes_to_f32(bytes: Vec<u8>) -> Vec<f32> {
-    bytemuck::cast_slice::<u8, f32>(&bytes).to_vec()
+    bytemuck::pod_collect_to_vec::<u8, f32>(&bytes)
 }
 
 #[cfg(feature = "image")]

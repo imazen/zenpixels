@@ -488,12 +488,22 @@ impl PixelBufferConvertTypedExt for PixelBuffer {
 pub trait PixelBufferImageExt {
     /// Convert to a standard sRGB [`image::RgbImage`] (alpha dropped).
     ///
-    /// **Allocates.** Errors only when the source needs a CMS plugin.
+    /// **Allocates.** Errors when the source needs a CMS plugin
+    /// ([`NeedsCms`](crate::ConvertError::NeedsCms)), when an HDR source
+    /// lacks a peak-luminance hint
+    /// ([`HdrSourceRequiresPeak`](crate::ConvertError::HdrSourceRequiresPeak)),
+    /// when no conversion path exists
+    /// ([`NoPath`](crate::ConvertError::NoPath)), or on allocation failure.
     fn to_image_rgb8(&self) -> Result<image::RgbImage, At<crate::ConvertError>>;
 
     /// Convert to a standard sRGB [`image::RgbaImage`] (alpha kept, or added opaque).
     ///
-    /// **Allocates.** Errors only when the source needs a CMS plugin.
+    /// **Allocates.** Errors when the source needs a CMS plugin
+    /// ([`NeedsCms`](crate::ConvertError::NeedsCms)), when an HDR source
+    /// lacks a peak-luminance hint
+    /// ([`HdrSourceRequiresPeak`](crate::ConvertError::HdrSourceRequiresPeak)),
+    /// when no conversion path exists
+    /// ([`NoPath`](crate::ConvertError::NoPath)), or on allocation failure.
     fn to_image_rgba8(&self) -> Result<image::RgbaImage, At<crate::ConvertError>>;
 }
 
