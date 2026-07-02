@@ -14,8 +14,8 @@
 
 use zenpixels::AlphaMode;
 use zenpixels_convert::{
-    ChannelType, ColorPrimaries, ComputeEnvironment, ConvertPlan, ImageCharacteristics,
-    PixelDescriptor, SimdTier, TransferFunction,
+    ChannelType, ComputeEnvironment, ConvertPlan, ImageCharacteristics, PixelDescriptor, SimdTier,
+    TransferFunction,
 };
 
 /// Assert that `actual_ms` is within ±30 % of `expected_ms`.
@@ -115,7 +115,9 @@ fn linear_f32_to_srgb_u8_4mp_matches_bench_within_30_pct() {
 #[cfg(feature = "hdr-experimental")]
 #[test]
 fn hdr_bt2446a_pipeline_at_24mp_matches_bench_within_30_pct() {
-    use zenpixels_convert::HdrConfig;
+    // Scoped here: this is the only user, and the test is feature-gated —
+    // a top-level import trips `-D unused-imports` under default features.
+    use zenpixels_convert::{ColorPrimaries, HdrConfig};
 
     let from = PixelDescriptor::new_full(
         ChannelType::U16,

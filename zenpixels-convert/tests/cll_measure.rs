@@ -245,7 +245,7 @@ fn measure_max_rejects_integer_pixel_formats() {
     let desc = PixelDescriptor::RGB16
         .with_transfer(TransferFunction::Pq)
         .with_primaries(zenpixels::ColorPrimaries::Bt2020);
-    let data = alloc::vec![0u8; (desc.bytes_per_pixel() * 4) as usize];
+    let data = alloc::vec![0u8; desc.bytes_per_pixel() * 4];
     let buf = PixelBuffer::from_vec(data, 2, 2, desc).expect("u16 pq buf");
     let cll = ContentLightLevel::measure_max(
         buf.as_slice(),
