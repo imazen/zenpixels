@@ -300,7 +300,8 @@ impl PlaneDescriptor {
     /// write or a codec mapping an out-of-range subsampling code to factor 0
     /// can leave the divisor at 0 — which would panic the `div_ceil` in
     /// release. We saturate the divisor at 1 here so production servers
-    /// never see a divide-by-zero abort; the [`with_subsampling`] builder's
+    /// never see a divide-by-zero abort; the
+    /// [`with_subsampling`](Self::with_subsampling) builder's
     /// `debug_assert!` still catches the misuse in dev/test.
     #[inline]
     pub const fn plane_width(&self, ref_width: u32) -> u32 {

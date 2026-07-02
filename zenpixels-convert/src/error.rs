@@ -56,12 +56,12 @@ pub enum ConvertError {
     /// were supplied. HDR→SDR requires a tone-map step parameterized by
     /// source peak luminance; the plain
     /// [`ConvertPlan::new`](crate::ConvertPlan::new) entry point doesn't
-    /// take one. Build the plan via
-    /// [`ConvertPlan::new_with_hdr_peak`](crate::ConvertPlan::new_with_hdr_peak)
-    /// instead (or
-    /// [`ConvertPlan::new_with_hdr_config`](crate::ConvertPlan::new_with_hdr_config)
-    /// for full knob control), and pass the source's MaxCLL — e.g. from
-    /// [`hdr::CllMeasure::measure_robust`](crate::hdr::CllMeasure::measure_robust).
+    /// take one. Build the plan via `ConvertPlan::new_with_hdr_peak`
+    /// instead (or `ConvertPlan::new_with_hdr_config` for full knob
+    /// control), and pass the source's MaxCLL — e.g. from
+    /// `hdr::measure::CllMeasure::measure_robust`. All three live behind
+    /// the `hdr-experimental` Cargo feature (plain code spans here, not
+    /// intra-doc links, so this page renders link-clean without it).
     ///
     /// Pre-0.2.16 the plain `ConvertPlan::new` silently routed HDR→SDR
     /// through the linear intermediate with no tone-mapping, producing

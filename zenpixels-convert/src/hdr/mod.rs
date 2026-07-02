@@ -7,14 +7,16 @@
 //! The core PQ/HLG EOTF/OETF math is always available through the main
 //! conversion pipeline in [`ConvertPlan`](crate::ConvertPlan).
 //!
-//! # Experimental: [`measure`] — content-light-level measurement
+//! # Experimental: `measure` — content-light-level measurement
 //!
-//! Behind the `hdr-experimental` Cargo feature, the [`measure`] submodule
-//! exposes the [`measure::CllMeasure`] extension trait (with
+//! Behind the `hdr-experimental` Cargo feature, the `measure` submodule
+//! exposes the `measure::CllMeasure` extension trait (with
 //! `measure_max` / `measure_robust` / `measure_max_smoothed` /
 //! `measure_percentile` / `measure_histogram` on
-//! [`ContentLightLevel`]), the [`measure::LightLevelHistogram`]
-//! primitive, and the [`measure::LightLevelMethod`] enum.
+//! [`ContentLightLevel`]), the `measure::LightLevelHistogram`
+//! primitive, and the `measure::LightLevelMethod` enum. (Plain code
+//! spans, not intra-doc links — the targets only exist when the feature
+//! is enabled, and this page renders either way.)
 //! The trait + module shape may move or rename ahead of 0.3.0 (in particular
 //! `measure_robust` is queued to become the unqualified `measure` once the
 //! deprecated 2-arg `ContentLightLevel::measure` ships its 0.3.0 removal);

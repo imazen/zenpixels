@@ -15,6 +15,21 @@ include = [
     "/README.crates.md",
 ]
 
+# docs.rs builds with the public opt-in features enabled so the gated
+# surfaces (hdr::measure / CllMeasure, the HDR ConvertPlan constructors,
+# cms-moxcms, rgb/imgref/planar interop, fast-transpose) are documented
+# and their intra-doc links resolve. Bench-only `__*` features stay out.
+[package.metadata.docs.rs]
+features = [
+    "hdr-experimental",
+    "pipeline",
+    "cms-moxcms",
+    "rgb",
+    "imgref",
+    "planar",
+    "fast-transpose",
+]
+
 [features]
 default = ["std", "icc-db"]
 # The committed CICP->ICC profile database: the LZ4-compressed bundle
