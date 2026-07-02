@@ -20,7 +20,37 @@ use crate::f16_scalar::{
 /// mantissa=0000000000 → bits 0b0_01111_0000000000 = 0x3C00.
 const F16_ONE_BITS: u16 = 0x3C00;
 
+/// Scratch state reused by the HDR tone-map kernels across rows.
+///
+/// Owned by [`ConvertScratch`](super::ConvertScratch) so a plan/strip run
+/// allocates once and every subsequent row reuses it — keeping the step
+/// kernels free of per-row heap allocation (the module contract). Without
+/// the `hdr-experimental` feature this is an empty placeholder so
+/// [`apply_step_u8`]'s signature stays feature-independent.
+#[derive(Default)]
+pub(super) struct HdrKernelScratch {
+    /// RGB-triple strip for the RGBA carrier paths — the SIMD curves want a
+    /// contiguous `[[f32; 3]]` view, so alpha is peeled into this scratch.
+    /// Grow-only; sliced to the row width on each use.
+    #[cfg(feature = "hdr-experimental")]
+    rgb_strip: alloc::vec::Vec<[f32; 3]>,
+    /// Cached [`SoftCompress`](crate::hdr::SoftCompress) — it owns a
+    /// gamut-boundary LUT whose construction runs 16 k bisection searches,
+    /// so it must not be rebuilt per row. Keyed by the step params.
+    #[cfg(feature = "hdr-experimental")]
+    soft_compress: Option<CachedSoftCompress>,
+}
+
+#[cfg(feature = "hdr-experimental")]
+struct CachedSoftCompress {
+    primaries: ColorPrimaries,
+    /// Bit pattern of the knee so the key comparison is exact (no float `==`).
+    knee_bits: u32,
+    compressor: crate::hdr::SoftCompress,
+}
+
 /// Apply a single conversion step on raw byte slices.
+#[allow(clippy::too_many_arguments)] // internal step dispatcher; mirrors the plan's step tuple
 pub(super) fn apply_step_u8(
     step: &ConvertStep,
     src: &[u8],
@@ -31,7 +61,12 @@ pub(super) fn apply_step_u8(
     // Relative-linear → PQ-absolute scale (`diffuse_white / 10000`) carried by
     // the plan. Only the PQ kernels read it; `1.0` is a no-op for all steps.
     pq_scale: f32,
+    // Row-persistent scratch for the HDR tone-map kernels (unused when the
+    // `hdr-experimental` feature is off).
+    hdr_scratch: &mut HdrKernelScratch,
 ) {
+    #[cfg(not(feature = "hdr-experimental"))]
+    let _ = hdr_scratch;
     crate::__trace_ops::record_step(step);
     let w = width as usize;
 
@@ -291,12 +326,20 @@ pub(super) fn apply_step_u8(
             source_peak_nits,
             target_peak_nits,
         } => {
-            tone_map_bt2446a_kernel(src, dst, w, from, *source_peak_nits, *target_peak_nits);
+            tone_map_bt2446a_kernel(
+                src,
+                dst,
+                w,
+                from,
+                *source_peak_nits,
+                *target_peak_nits,
+                hdr_scratch,
+            );
         }
 
         #[cfg(feature = "hdr-experimental")]
         ConvertStep::SoftCompressOklch { primaries, knee } => {
-            soft_compress_oklch_kernel(src, dst, w, from, *primaries, *knee);
+            soft_compress_oklch_kernel(src, dst, w, from, *primaries, *knee, hdr_scratch);
         }
     }
 }
@@ -323,6 +366,7 @@ fn tone_map_bt2446a_kernel(
     from: PixelDescriptor,
     source_peak_nits: f32,
     target_peak_nits: f32,
+    scratch: &mut HdrKernelScratch,
 ) {
     let curve = crate::hdr::Bt2446A::new(source_peak_nits, target_peak_nits);
     let has_alpha = from.layout().has_alpha();
@@ -331,11 +375,16 @@ fn tone_map_bt2446a_kernel(
     let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
 
     if has_alpha {
-        // RGBA: extract RGB triples into a scratch strip, run the SIMD
-        // curve, write back while passing alpha through verbatim. The
-        // scratch keeps the SIMD kernel's contiguous `[[f32; 3]]` shape.
-        use alloc::vec;
-        let mut rgb_strip: alloc::vec::Vec<[f32; 3]> = vec![[0.0; 3]; width];
+        // RGBA: extract RGB triples into the row-persistent scratch strip,
+        // run the SIMD curve, write back while passing alpha through
+        // verbatim. The scratch keeps the SIMD kernel's contiguous
+        // `[[f32; 3]]` shape and is allocated once per plan/strip run
+        // (grow-only), not per row — the module's no-per-row-allocation
+        // contract. Every `[..width]` element is written before being read.
+        if scratch.rgb_strip.len() < width {
+            scratch.rgb_strip.resize(width, [0.0; 3]);
+        }
+        let rgb_strip = &mut scratch.rgb_strip[..width];
         for p in 0..width {
             let base = p * channels;
             let r = src_f32[base];
@@ -348,7 +397,7 @@ fn tone_map_bt2446a_kernel(
             let b = if b.is_finite() && b >= 0.0 { b } else { 0.0 };
             rgb_strip[p] = [r, g, b];
         }
-        curve.map_strip_simd(&mut rgb_strip);
+        curve.map_strip_simd(&mut *rgb_strip);
         for p in 0..width {
             let base = p * channels;
             let [r, g, b] = rgb_strip[p];
@@ -412,15 +461,33 @@ fn soft_compress_oklch_kernel(
     from: PixelDescriptor,
     primaries: ColorPrimaries,
     knee: f32,
+    scratch: &mut HdrKernelScratch,
 ) {
-    // Resolve target-primaries OKLab matrices once per row. Identical to
-    // SoftCompress::new but without rebuilding the LUT each call — the
-    // LUT is content-free and cheap to construct (a few KB lookup).
-    let m1 = crate::oklab::rgb_to_lms_matrix(primaries)
-        .expect("target primaries have a defined LMS matrix");
-    let m1_inv = crate::oklab::lms_to_rgb_matrix(primaries)
-        .expect("target primaries have a defined inverse LMS matrix");
-    let compressor = crate::hdr::SoftCompress::from_matrices(&m1, &m1_inv, knee);
+    // Resolve the compressor once per plan/strip run and cache it in the
+    // row-persistent scratch: `SoftCompress` owns a gamut-boundary LUT whose
+    // construction runs 16 k bisection searches, so rebuilding it per row
+    // dominated this kernel (and heap-allocated per row, violating the
+    // module contract). The cache key is the step params that shape it.
+    let stale = match &scratch.soft_compress {
+        Some(c) => c.primaries != primaries || c.knee_bits != knee.to_bits(),
+        None => true,
+    };
+    if stale {
+        let m1 = crate::oklab::rgb_to_lms_matrix(primaries)
+            .expect("target primaries have a defined LMS matrix");
+        let m1_inv = crate::oklab::lms_to_rgb_matrix(primaries)
+            .expect("target primaries have a defined inverse LMS matrix");
+        scratch.soft_compress = Some(CachedSoftCompress {
+            primaries,
+            knee_bits: knee.to_bits(),
+            compressor: crate::hdr::SoftCompress::from_matrices(&m1, &m1_inv, knee),
+        });
+    }
+    let compressor = &scratch
+        .soft_compress
+        .as_ref()
+        .expect("populated above when stale or missing")
+        .compressor;
 
     let has_alpha = from.layout().has_alpha();
     let channels = if has_alpha { 4 } else { 3 };
@@ -428,13 +495,16 @@ fn soft_compress_oklch_kernel(
     let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
 
     if has_alpha {
-        use alloc::vec;
-        let mut rgb_strip: alloc::vec::Vec<[f32; 3]> = vec![[0.0; 3]; width];
+        // Row-persistent RGB strip; see `tone_map_bt2446a_kernel`.
+        if scratch.rgb_strip.len() < width {
+            scratch.rgb_strip.resize(width, [0.0; 3]);
+        }
+        let rgb_strip = &mut scratch.rgb_strip[..width];
         for p in 0..width {
             let base = p * channels;
             rgb_strip[p] = [src_f32[base], src_f32[base + 1], src_f32[base + 2]];
         }
-        compressor.apply_strip(&mut rgb_strip);
+        compressor.apply_strip(&mut *rgb_strip);
         for p in 0..width {
             let base = p * channels;
             let [r, g, b] = rgb_strip[p];

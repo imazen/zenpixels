@@ -1883,12 +1883,19 @@ pub(crate) struct ConvertScratch {
     /// Stored as `Vec<u32>` to guarantee 4-byte alignment, which lets
     /// garb and bytemuck use fast aligned paths instead of unaligned fallbacks.
     buf: Vec<u32>,
+    /// Row-persistent scratch for the HDR tone-map kernels (RGB strip +
+    /// cached `SoftCompress` gamut LUT). Empty placeholder without the
+    /// `hdr-experimental` feature.
+    hdr: convert_kernels::HdrKernelScratch,
 }
 
 impl ConvertScratch {
     /// Create empty scratch (buffer grows on first use).
     pub(crate) fn new() -> Self {
-        Self { buf: Vec::new() }
+        Self {
+            buf: Vec::new(),
+            hdr: convert_kernels::HdrKernelScratch::default(),
+        }
     }
 
     /// Ensure the buffer is large enough for two halves of the max
@@ -1916,26 +1923,10 @@ impl core::fmt::Debug for ConvertScratch {
 /// For multi-step plans, an internal scratch buffer is allocated per call.
 /// Prefer [`RowConverter`](crate::RowConverter) in hot loops (reuses scratch buffers).
 pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
-    if plan.is_identity() {
-        let len = min(src.len(), dst.len());
-        dst[..len].copy_from_slice(&src[..len]);
-        return;
-    }
-
-    if plan.steps.len() == 1 {
-        apply_step_u8(
-            &plan.steps[0],
-            src,
-            dst,
-            width,
-            plan.from,
-            plan.to,
-            plan.pq_anchor_scale,
-        );
-        return;
-    }
-
-    // Allocating fallback for one-off calls.
+    // Allocating fallback for one-off calls: the scratch starts empty and
+    // only grows if the plan actually needs it (multi-step ping-pong or an
+    // HDR tone-map kernel); identity and other single-step plans stay
+    // allocation-free.
     let mut scratch = ConvertScratch::new();
     convert_row_buffered(plan, src, dst, width, &mut scratch);
 }
@@ -1966,13 +1957,17 @@ pub(crate) fn convert_row_buffered(
             plan.from,
             plan.to,
             plan.pq_anchor_scale,
+            &mut scratch.hdr,
         );
         return;
     }
 
     scratch.ensure_capacity(plan, width);
 
-    let buf_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut scratch.buf);
+    // Destructure so the ping-pong halves and the HDR kernel scratch are
+    // disjoint mutable borrows across the step loop.
+    let ConvertScratch { buf, hdr } = scratch;
+    let buf_bytes: &mut [u8] = bytemuck::cast_slice_mut(buf.as_mut_slice());
     let half = buf_bytes.len() / 2;
     let (buf_a, buf_b) = buf_bytes.split_at_mut(half);
 
@@ -2004,6 +1999,7 @@ pub(crate) fn convert_row_buffered(
                     current_desc,
                     next_desc,
                     plan.pq_anchor_scale,
+                    &mut *hdr,
                 );
             } else {
                 apply_step_u8(
@@ -2014,6 +2010,7 @@ pub(crate) fn convert_row_buffered(
                     current_desc,
                     next_desc,
                     plan.pq_anchor_scale,
+                    &mut *hdr,
                 );
             }
         } else {
@@ -2027,6 +2024,7 @@ pub(crate) fn convert_row_buffered(
                     current_desc,
                     next_desc,
                     plan.pq_anchor_scale,
+                    &mut *hdr,
                 );
             } else {
                 apply_step_u8(
@@ -2037,6 +2035,7 @@ pub(crate) fn convert_row_buffered(
                     current_desc,
                     next_desc,
                     plan.pq_anchor_scale,
+                    &mut *hdr,
                 );
             }
         }
