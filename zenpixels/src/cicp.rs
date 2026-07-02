@@ -122,13 +122,14 @@ impl Cicp {
 
     /// Resolve the `matrix_coefficients` field to a concrete, decoder-usable value.
     ///
-    /// ITU-T H.273 defines three categories of `matrix_coefficients` (MC):
+    /// Rec. ITU-T H.273 (V4) (07/2024), Table 4, defines three categories of
+    /// `matrix_coefficients` (MC):
     ///
     /// | Category | MC values | Action |
     /// |---|---|---|
-    /// | Self-contained | 0, 1, 4–11, 14 | `Ok(self)` — recipe is fixed |
+    /// | Self-contained | 0, 1, 4–11, 14–17 | `Ok(self)` — recipe is fixed |
     /// | Chromaticity-derived | 12, 13 | `Ok(self)` if `color_primaries` has known chromaticity; `Err` otherwise |
-    /// | Unspecified / Reserved | 2, 3, 15–255 | `Ok` with `hint_mc` substituted in; `Err` if no valid hint |
+    /// | Unspecified / Reserved | 2, 3, 18–255 | `Ok` with `hint_mc` substituted in; `Err` if no valid hint |
     ///
     /// # MC=0 (Identity)
     ///
@@ -145,20 +146,30 @@ impl Cicp {
     /// consumed for MC=12/13 (the matrix is fully specified by CP; a hint
     /// cannot override that).
     ///
-    /// # MC=2 / Reserved (2, 3, 15–255)
+    /// # MC=2 / Reserved (2, 3, 18–255)
     ///
     /// MC=2 (Unspecified) and reserved values require external disambiguation.
     /// If `hint_mc` is `Some(h)` and `h` is itself self-contained (category 1
     /// above) or chromaticity-derived with a valid CP, the returned `Cicp` has
     /// `matrix_coefficients` replaced with `h`. Otherwise `Err` is returned.
     ///
+    /// # MC=15/16/17 (IPT-C2 / YCgCo-Re / YCgCo-Ro)
+    ///
+    /// These code points were reserved in editions up to H.273 (07/2021) but
+    /// are **defined, self-contained recipes** since H.273 (09/2023): 15 is
+    /// SMPTE IPT-PQ-C2 (equations 85–87), 16/17 are the even/odd-bit-shift
+    /// reversible YCgCo variants (equations 58–65). They resolve to
+    /// `Ok(self)` and are never hint-substituted. References written against
+    /// pre-2023 editions list them as reserved — the pinned edition here is
+    /// V4 (07/2024), where only 3 and 18–255 remain reserved.
+    ///
     /// # Resolved ≠ Supported
     ///
     /// `resolve_matrix` normalizes **signaling**. A successful return means the
     /// matrix is unambiguous, not that the caller implements the corresponding
-    /// decode math. Receiving `Ok` with MC=13 (Chroma CL) or MC=14 (ICtCp)
-    /// does not imply those transforms exist in the decoder — the caller must
-    /// still reject or handle unsupported matrices explicitly.
+    /// decode math. Receiving `Ok` with MC=13 (Chroma CL), MC=14 (ICtCp), or
+    /// MC=15 (IPT-C2) does not imply those transforms exist in the decoder —
+    /// the caller must still reject or handle unsupported matrices explicitly.
     ///
     /// # Example
     ///
@@ -176,10 +187,7 @@ impl Cicp {
     /// // MC=0 (Identity) → self-contained, no hint needed
     /// assert!(Cicp::SRGB.resolve_matrix(None).is_ok());
     /// ```
-    pub const fn resolve_matrix(
-        self,
-        hint_mc: Option<u8>,
-    ) -> Result<Self, UnspecifiedMatrixError> {
+    pub const fn resolve_matrix(self, hint_mc: Option<u8>) -> Result<Self, UnspecifiedMatrixError> {
         let mc = self.matrix_coefficients;
 
         if mc_is_self_contained(mc) {
@@ -200,7 +208,7 @@ impl Cicp {
             });
         }
 
-        // MC=2 (Unspecified) or reserved (3, 15–255).
+        // MC=2 (Unspecified) or reserved (3, 18–255).
         // Try to apply the hint.
         match hint_mc {
             Some(h) if mc_is_self_contained(h) => Ok(Self {
@@ -319,6 +327,9 @@ impl Cicp {
             12 => "Chroma NCL",
             13 => "Chroma CL",
             14 => "ICtCp",
+            15 => "IPT-C2",
+            16 => "YCgCo-Re",
+            17 => "YCgCo-Ro",
             _ => "Unknown",
         }
     }
@@ -326,12 +337,19 @@ impl Cicp {
 
 // ── resolve_matrix helpers ────────────────────────────────────────────────
 
-/// Returns `true` for MC values that are fully self-contained (H.273 Table 4).
+/// Returns `true` for MC values that are fully self-contained
+/// (Rec. ITU-T H.273 (V4) (07/2024), Table 4).
 ///
 /// These are `Ok(self)` in [`Cicp::resolve_matrix`]: the matrix recipe is
 /// fixed by the spec and does not depend on `color_primaries`.
+///
+/// 15 (IPT-C2), 16 (YCgCo-Re), and 17 (YCgCo-Ro) are defined since the
+/// 09/2023 edition; only 3 and 18–255 remain reserved in V4.
 const fn mc_is_self_contained(mc: u8) -> bool {
-    matches!(mc, 0 | 1 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 14)
+    matches!(
+        mc,
+        0 | 1 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 14 | 15 | 16 | 17
+    )
 }
 
 /// Returns `true` for MC=12 (Chroma NCL) and MC=13 (Chroma CL).
@@ -358,7 +376,7 @@ const fn cp_has_known_chromaticity(cp: u8) -> bool {
 ///
 /// Occurs when:
 /// - `matrix_coefficients` is 2 (Unspecified per H.273) and no valid hint was supplied.
-/// - `matrix_coefficients` is reserved (3 or 15–255) and no valid hint was supplied.
+/// - `matrix_coefficients` is reserved (3 or 18–255 per H.273 V4 (07/2024)) and no valid hint was supplied.
 /// - `matrix_coefficients` is 12 or 13 (chromaticity-derived; H.273 §8.3) and
 ///   `color_primaries` is 0 (Reserved), 2 (Unspecified), or otherwise has no
 ///   defined chromaticity coordinates in H.273 Table 2.
@@ -379,6 +397,14 @@ impl UnspecifiedMatrixError {
     /// The CICP `transfer_characteristics` of the input that failed to resolve.
     pub fn transfer_characteristics(&self) -> u8 {
         self.transfer_characteristics
+    }
+
+    /// The CICP `matrix_coefficients` of the input that failed to resolve —
+    /// the unresolvable signaled value itself (2/reserved with no usable
+    /// hint, or 12/13 with an underivable `color_primaries`), never the
+    /// rejected hint.
+    pub fn matrix_coefficients(&self) -> u8 {
+        self.matrix_coefficients
     }
 }
 
@@ -605,9 +631,11 @@ mod tests {
     }
 
     /// All self-contained MC codes return Ok(self) with no hint.
+    /// 15 (IPT-C2), 16 (YCgCo-Re), 17 (YCgCo-Ro) are defined recipes since
+    /// H.273 (09/2023) — self-contained, never hint-substituted.
     #[test]
     fn resolve_matrix_self_contained() {
-        for mc in [0u8, 1, 4, 5, 6, 7, 8, 9, 10, 11, 14] {
+        for mc in [0u8, 1, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 17] {
             let c = Cicp::new(1, 13, mc, true);
             let r = c.resolve_matrix(None);
             assert!(r.is_ok(), "MC={mc} should be self-contained");
@@ -687,7 +715,7 @@ mod tests {
         assert_eq!(r.matrix_coefficients, 9);
         assert_eq!(r.color_primaries, 9);
         assert_eq!(r.transfer_characteristics, 16);
-        assert_eq!(r.full_range, true);
+        assert!(r.full_range);
     }
 
     /// MC=2 with no hint → Err, with correct CP/TC in the error.
@@ -721,10 +749,13 @@ mod tests {
         assert_eq!(r.matrix_coefficients, 1);
     }
 
-    /// MC=15 (first reserved value ≥ 15) and MC=255 require a hint.
+    /// MC=18 (first reserved value in H.273 V4) through MC=255 require a
+    /// hint. (An earlier revision of this test used 15 as the first reserved
+    /// value — wrong against H.273 ≥ 09/2023, where 15/16/17 are defined;
+    /// corrected together with the classification fix.)
     #[test]
     fn resolve_matrix_large_reserved_mc() {
-        for mc in [15u8, 100, 255] {
+        for mc in [18u8, 100, 255] {
             let c = Cicp::new(1, 13, mc, true);
             assert!(
                 c.resolve_matrix(None).is_err(),
@@ -783,5 +814,129 @@ mod tests {
     fn resolve_matrix_is_const_callable() {
         const _R: Result<Cicp, UnspecifiedMatrixError> = Cicp::SRGB.resolve_matrix(None);
         assert!(_R.is_ok());
+    }
+
+    /// The error exposes the unresolvable signaled MC — the original value,
+    /// never a rejected hint.
+    #[test]
+    fn unspecified_matrix_error_exposes_mc() {
+        // MC=2, invalid hint: error carries 2, not the hint.
+        let err = Cicp::new(1, 13, 2, true)
+            .resolve_matrix(Some(3))
+            .unwrap_err();
+        assert_eq!(err.matrix_coefficients(), 2);
+        // MC=12 with underivable CP: error carries 12.
+        let err = Cicp::new(2, 1, 12, false)
+            .resolve_matrix(Some(6))
+            .unwrap_err();
+        assert_eq!(err.matrix_coefficients(), 12);
+        // Reserved MC=200, no hint: error carries 200.
+        let err = Cicp::new(1, 13, 200, true)
+            .resolve_matrix(None)
+            .unwrap_err();
+        assert_eq!(err.matrix_coefficients(), 200);
+    }
+
+    /// Exhaustive classification over the full MC byte range, pinned to
+    /// Rec. ITU-T H.273 (V4) (07/2024), Table 4:
+    /// - self-contained (0, 1, 4–11, 14–17): Ok(self) with or without hint;
+    /// - chromaticity-derived (12, 13): Ok(self) iff CP has Table 2
+    ///   chromaticity, hint never consulted;
+    /// - unspecified/reserved (2, 3, 18–255): Err without hint, resolved to
+    ///   the hint with a valid hint.
+    #[test]
+    fn resolve_matrix_exhaustive_full_byte_range() {
+        const SELF_CONTAINED: [u8; 14] = [0, 1, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 17];
+        const CHROMA_DERIVED: [u8; 2] = [12, 13];
+        for mc in 0..=255u8 {
+            let known_cp = Cicp::new(1, 13, mc, true); // CP=1: has chromaticity
+            let unknown_cp = Cicp::new(2, 13, mc, true); // CP=2: Unspecified
+            if SELF_CONTAINED.contains(&mc) {
+                // Ok(self) regardless of hint or CP.
+                assert_eq!(known_cp.resolve_matrix(None).unwrap(), known_cp);
+                assert_eq!(known_cp.resolve_matrix(Some(1)).unwrap(), known_cp);
+                assert_eq!(unknown_cp.resolve_matrix(None).unwrap(), unknown_cp);
+            } else if CHROMA_DERIVED.contains(&mc) {
+                // CP-gated; the hint is never consulted.
+                assert_eq!(known_cp.resolve_matrix(None).unwrap(), known_cp);
+                assert!(unknown_cp.resolve_matrix(None).is_err(), "MC={mc} CP=2");
+                assert!(
+                    unknown_cp.resolve_matrix(Some(1)).is_err(),
+                    "MC={mc} CP=2: a hint must not override a CP-derived matrix"
+                );
+            } else {
+                // 2, 3, 18–255: hint-substituted or Err.
+                assert!(known_cp.resolve_matrix(None).is_err(), "MC={mc} no hint");
+                let r = known_cp.resolve_matrix(Some(6)).unwrap();
+                assert_eq!(r.matrix_coefficients, 6, "MC={mc} hint=6");
+            }
+        }
+    }
+
+    /// Hint-validity matrix: for an unspecified MC, sweep every possible
+    /// hint byte. A hint is consumed iff it is itself self-contained, or
+    /// chromaticity-derived with a CP that has Table 2 chromaticity.
+    #[test]
+    fn resolve_matrix_hint_validity_matrix() {
+        const SELF_CONTAINED: [u8; 14] = [0, 1, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 17];
+        const CHROMA_DERIVED: [u8; 2] = [12, 13];
+        for hint in 0..=255u8 {
+            let known_cp = Cicp::new(1, 13, 2, true);
+            let unknown_cp = Cicp::new(2, 13, 2, true);
+            if SELF_CONTAINED.contains(&hint) {
+                // Valid regardless of CP.
+                assert_eq!(
+                    known_cp
+                        .resolve_matrix(Some(hint))
+                        .unwrap()
+                        .matrix_coefficients,
+                    hint,
+                    "hint={hint} should substitute"
+                );
+                assert_eq!(
+                    unknown_cp
+                        .resolve_matrix(Some(hint))
+                        .unwrap()
+                        .matrix_coefficients,
+                    hint,
+                    "hint={hint} should substitute even with CP=2"
+                );
+            } else if CHROMA_DERIVED.contains(&hint) {
+                // Valid only when CP can derive the matrix.
+                assert_eq!(
+                    known_cp
+                        .resolve_matrix(Some(hint))
+                        .unwrap()
+                        .matrix_coefficients,
+                    hint,
+                    "hint={hint} with derivable CP should substitute"
+                );
+                assert!(
+                    unknown_cp.resolve_matrix(Some(hint)).is_err(),
+                    "hint={hint} with CP=2 cannot derive"
+                );
+            } else {
+                // 2, 3, 18–255: never a valid hint.
+                assert!(
+                    known_cp.resolve_matrix(Some(hint)).is_err(),
+                    "hint={hint} is unspecified/reserved and must be rejected"
+                );
+            }
+        }
+    }
+
+    /// The CP gate for MC=12/13 accepts exactly the Table 2
+    /// chromaticity-bearing codes: 1, 4–12, 22.
+    #[test]
+    fn resolve_matrix_cp_gate_exhaustive() {
+        const CHROMA_CP: [u8; 11] = [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 22];
+        for cp in 0..=255u8 {
+            let c = Cicp::new(cp, 1, 12, false);
+            if CHROMA_CP.contains(&cp) {
+                assert!(c.resolve_matrix(None).is_ok(), "CP={cp} should derive");
+            } else {
+                assert!(c.resolve_matrix(None).is_err(), "CP={cp} cannot derive");
+            }
+        }
     }
 }

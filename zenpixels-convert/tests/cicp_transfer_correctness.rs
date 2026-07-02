@@ -293,14 +293,17 @@ fn cicp_name_functions_cover_all_listed_codes() {
     assert_eq!(Cicp::transfer_characteristics_name(3), "Unknown");
     assert_eq!(Cicp::transfer_characteristics_name(19), "Unknown");
 
-    // Matrix coefficients: all codes in the match
-    let mc_codes = [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+    // Matrix coefficients: all codes in the match. 15 (IPT-C2),
+    // 16 (YCgCo-Re), and 17 (YCgCo-Ro) are defined since H.273 (09/2023);
+    // an earlier revision of this test pinned 15 as a gap per the
+    // pre-2023 table.
+    let mc_codes = [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
     for code in mc_codes {
         let name = Cicp::matrix_coefficients_name(code);
         assert_ne!(name, "Unknown", "MC code {code} should have a name");
     }
     assert_eq!(Cicp::matrix_coefficients_name(3), "Unknown");
-    assert_eq!(Cicp::matrix_coefficients_name(15), "Unknown");
+    assert_eq!(Cicp::matrix_coefficients_name(18), "Unknown");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
