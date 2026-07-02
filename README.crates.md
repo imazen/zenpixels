@@ -447,7 +447,7 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed `from_pixels()` constructors |
 | `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
 | `planar` | | Multi-plane image types (YCbCr, Oklab, gain maps) |
-| `serde` | | `Serialize`/`Deserialize` derives on all core types |
+| `serde` | | No-op stub (soft-removed in 0.2.16, queued for removal); previously added `Serialize`/`Deserialize` derives on the core types — a workspace-wide sweep found zero consumers |
 
 ### zenpixels-convert
 

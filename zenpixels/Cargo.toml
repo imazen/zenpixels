@@ -20,11 +20,21 @@ planar = []
 icc = []
 rgb = ["dep:rgb"]
 imgref = ["dep:imgref", "rgb"]
-serde = ["dep:serde"]
+# Soft-removed in 0.2.16 (unreleased at the time; crates.io latest was
+# 0.2.14, whose builds are unaffected). The `serde` feature previously pulled an optional
+# `serde` dependency and added `Serialize`/`Deserialize` derives on the
+# descriptor/CICP/HDR-metadata types. A 2026-07 sweep of every Cargo.toml,
+# CI workflow, and Rust source under ~/work found ZERO consumers enabling
+# it (no `features = ["serde"]`, no `zenpixels/serde` forwarding, no code
+# serializing these types) — the derives were pure speculative surface.
+# Kept as an empty stub so any external consumer that wrote
+# `features = ["serde"]` still builds; the feature does nothing and is
+# queued for hard removal in 0.3.0. Mirrors the zenpixels-convert 0.2.15
+# soft-removal precedent.
+serde = []
 
 [dependencies]
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
-serde = { version = "1", optional = true, default-features = false, features = ["derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 imgref = { version = "1.12", optional = true }
 whereat = { version = "0.1.5", default-features = false }

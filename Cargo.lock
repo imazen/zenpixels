@@ -936,7 +936,6 @@ dependencies = [
  "bytemuck",
  "imgref",
  "rgb",
- "serde",
  "whereat",
 ]
 

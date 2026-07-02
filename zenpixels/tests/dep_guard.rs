@@ -8,8 +8,9 @@
 //! Parses `Cargo.toml` with plain string handling (no dev-deps, std-only) and
 //! fails if `[dependencies]` names anything outside the frozen allowlist.
 
-/// The exact dependency set of the published 0.2.14 manifest. Frozen.
-const ALLOWED: &[&str] = &["bytemuck", "serde", "rgb", "imgref", "whereat"];
+/// The 0.2.14 dependency set minus `serde` (optional dep soft-removed in
+/// 0.2.16 — the feature is now an inert stub). Frozen.
+const ALLOWED: &[&str] = &["bytemuck", "rgb", "imgref", "whereat"];
 
 #[test]
 fn dependencies_stay_lean() {

@@ -15,7 +15,7 @@
 #   inherent methods                           98
 #   struct fields                              16
 #   enum variants                              54
-#   trait roster entries (type × trait)       107
+#   trait roster entries (type × trait)        81
 #   auto-trait-complete types                   8
 #
 # per-module pub lines:
@@ -236,7 +236,7 @@ pub const planar::PlaneMask::CHROMA: Self
 pub const planar::PlaneMask::LUMA: Self
 pub const planar::PlaneMask::NONE: Self
 
-## trait impls (53 types)
+## trait impls (40 types)
 
 buffer::PixelSlice<'a, rgb::formats::bgra::Bgra<u8>>: From<imgref::Img<&'a [rgb::formats::bgra::Bgra<u8>]>>
 buffer::PixelSlice<'a, rgb::formats::gray::Gray_v08<f32>>: From<imgref::Img<&'a [rgb::formats::gray::Gray_v08<f32>]>>
@@ -258,19 +258,6 @@ buffer::PixelSliceMut<'a, rgb::formats::rgb::Rgb<u8>>: From<imgref::Img<&'a mut 
 buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<f32>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<f32>]>>
 buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u16>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<u16>]>>
 buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<u8>]>>
-cicp::Cicp: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
-descriptor::AlphaMode: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
-descriptor::ChannelLayout: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
-descriptor::ChannelType: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
-descriptor::ColorModel: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
-descriptor::ColorPrimaries: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
-descriptor::PixelDescriptor: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
-descriptor::PixelFormat: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
-descriptor::SignalRange: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
-descriptor::TransferFunction: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
-hdr::ContentLightLevel: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
-hdr::DiffuseWhite: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
-hdr::MasteringDisplay: serde_core::de::Deserialize<'de>, serde_core::ser::Serialize
 pixel_types::GrayAlpha16: buffer::Pixel
 pixel_types::GrayAlpha8: buffer::Pixel
 pixel_types::GrayAlphaF32: buffer::Pixel

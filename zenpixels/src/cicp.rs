@@ -20,7 +20,6 @@ use crate::{ColorPrimaries, TransferFunction};
 ///
 /// Video/YCbCr content uses non-zero matrix_coefficients (e.g., 6=BT.601, 9=BT.2020).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct Cicp {
     /// Color primaries (ColourPrimaries). Common values:

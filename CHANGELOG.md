@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### zenpixels — changed (serde soft-removal; tolerated in 0.2.x)
+
+- **`serde` feature soft-removed — now an inert no-op stub.** Dropped the
+  optional `serde` dependency and the 13 `#[cfg_attr(feature = "serde",
+  derive(serde::Serialize, serde::Deserialize))]` attributes across
+  `descriptor.rs` (9), `cicp.rs` (1), and `hdr.rs` (3). A 2026-07-02 sweep of
+  every `Cargo.toml` (direct deps, target-specific deps, workspace deps, and
+  `zenpixels/serde` feature-forwarding), CI workflow, justfile, and Rust
+  source under `~/work` found **zero consumers**: nothing enables the feature
+  and nothing serializes these types — the derives were speculative surface
+  from the original `feat/serde` branch (357971e) with no adopter in the
+  ecosystem (zenwasm, zensquoosh, imageflow, zencodec, zenpipe, zenmetrics,
+  zenanalyze all checked). The feature name is kept as an empty stub so any
+  external `features = ["serde"]` consumer of the published 0.2.14 still
+  builds after updating; hard removal of the stub is queued for 0.3.0 (see
+  QUEUED BREAKING CHANGES). Mirrors the zenpixels-convert 0.2.15 precedent
+  (e5ac694). `tests/dep_guard.rs`'s frozen allowlist drops `serde`
+  accordingly; README feature tables updated in both crates' READMEs.
+
 ### Workspace — docs
 
 - **README overhaul + crates.io README split for both crates.** Each crate now
@@ -32,9 +51,11 @@
 
 - **`tests/dep_guard.rs` dependency-lean guard** (675ed30b). Std-only test
   that parses `zenpixels/Cargo.toml` and fails if `[dependencies]` names
-  anything outside the frozen 0.2.14 set (`bytemuck`, `serde`, `rgb`,
-  `imgref`, `whereat`) — enforcing the rule that `zenpixels` never gains a
-  dependency; measurement/SIMD machinery lives only in `zenpixels-convert`.
+  anything outside the frozen allowlist (`bytemuck`, `rgb`, `imgref`,
+  `whereat` — the published 0.2.14 set minus `serde`, whose optional dep was
+  soft-removed in this unreleased line) — enforcing the rule that `zenpixels`
+  never gains a dependency; measurement/SIMD machinery lives only in
+  `zenpixels-convert`.
 
 ### zenpixels-convert — fixed (no-per-row-allocation contract)
 
@@ -130,7 +151,8 @@
   primitives; zentone runs the empirical sweeps that gate regressions).
 - The main `zenpixels-convert/Cargo.toml` is now free of test-only
   optional deps; the only remaining optional deps are the production
-  ones (`rgb`, `lz4_flex`, `moxcms`, `serde`).
+  ones (`rgb`, `lz4_flex`, `moxcms` — `serde` was also on this list until
+  its optional dep was soft-removed later in this unreleased line, e5ac694).
 
 ### zenpixels-convert — changed (foundation-crate layering restored)
 
@@ -260,13 +282,12 @@
   honouring (203 vs 100 cd/m²), the `LightLevelMethod::MaxRgb` /
   `LuminanceBt2020` discriminants, `DEFAULT_PERCENTILE` pin, and the
   rejection-path contracts (non-linear transfer + integer pixel formats).
-- **`zenpixels-convert/tests/serde_feature.rs`** (new). 5 tests gated on
-  `serde,hdr-experimental` — the `serde` feature combo that 0.2.15's
-  `5ab70a0` fixed. Pins JSON round-trip semantics for `LightLevelMethod`
-  (both discriminants), `ContentLightLevel` (re-exported derive), `DiffuseWhite`
-  (tuple-struct convention), and the `DEFAULT_PERCENTILE = 0.99999` bit
-  pattern; plus a typed-error contract for unknown enum variants. Adds
-  `serde_json = "1.0.150"` as a dev-only dep.
+- **`zenpixels-convert/tests/serde_feature.rs`** (added then removed within
+  this unreleased line). 5 tests gated on `serde,hdr-experimental` pinning
+  JSON round-trip semantics for `LightLevelMethod` / `ContentLightLevel` /
+  `DiffuseWhite`. Deleted together with its `serde_json` dev-dep when the
+  `zenpixels-convert` `serde` feature was soft-removed to an inert stub
+  (e5ac694) — there are no derives left to pin. Never shipped in a release.
 - **`zenpixels-convert/tests/fused_variants.rs`** (new). 7 tests gated on
   `__trace_ops` covering the `ConvertStep::Fused { kind: FusedKind, matrix:
   [f32; 9] }` merge (commit `03c63b5c`). Pins the historical per-kind
@@ -440,6 +461,11 @@
      0.x) release. Add items here as you discover them. Do NOT ship these
      piecemeal — batch them. -->
 
+- **Delete the inert `serde` feature stubs from BOTH crates.** `zenpixels`
+  (soft-removed 0.2.16) and `zenpixels-convert` (soft-removed 0.2.15,
+  e5ac694) each keep an empty `serde = []` feature so consumers who wrote
+  `features = ["serde"]` still build; 0.3.0 removes the stub feature names
+  outright. Workspace-wide sweeps found zero consumers of either.
 - **Remove `zenpixels-convert::hdr::HdrMetadata`** (struct + methods) and its
   re-export — deprecated in 0.2.14; superseded by carrying `ContentLightLevel`
   / `MasteringDisplay` directly (or `zencodec::Metadata` at the codec layer).
