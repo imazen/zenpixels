@@ -1,4 +1,4 @@
-# Public API delta: v0.2.14 → main (zenpixels 0.3.0 / zenpixels-convert 0.2.15)
+# Public API delta: v0.2.14 → main (zenpixels 0.2.16 / zenpixels-convert 0.2.15, both unreleased)
 
 Generated 2026-06-23 by diffing the committed `docs/public-api/v0.2.14/*.txt`
 snapshots (frozen at the `zenpixels-v0.2.14` / `zenpixels-convert-v0.2.14`
@@ -41,7 +41,7 @@ Per crate (sum over the three files):
 
 | Crate | Added (net `pub` lines) | Removed (net `pub` lines) | Version on main |
 |---|---:|---:|---|
-| `zenpixels` | 19 | 9 | 0.3.0 (was 0.2.14) |
+| `zenpixels` | 19 | 9 | 0.2.16 (was 0.2.14, unreleased) |
 | `zenpixels-convert` | 127 | 4 | 0.2.15 (was 0.2.14) |
 
 Header-block line counts on `main` vs `v0.2.14` (after the 2026-06-25
@@ -138,11 +138,14 @@ noise-reduction regen — see the format note above):
 ### `zenpixels` — default surface
 
 - **`ContentLightLevel::measure(PixelSlice<'_>, DiffuseWhite) -> Option<Self>`**
-  removed. The literal-maximum MaxCLL was outlier-sensitive (one bright
-  pixel inflated it) and is replaced in `zenpixels-convert` by the
-  `CllMeasure::measure_max` / `measure_robust` family. This is the only
-  semver-breaking removal — it's what drove the `zenpixels` 0.2.14 →
-  0.3.0 major bump.
+  moved off the default surface to `zenpixels.internal.txt`: it is now
+  `#[deprecated]` + `#[doc(hidden)]` but **still present and fully
+  functional** (an earlier pass on this unreleased line replaced its body
+  with an `unimplemented!()` shim and mislabeled the removal as a shipped
+  0.3.0; commit 6019aeef restored the working 0.2.14 body). The maintained
+  replacement is `zenpixels-convert`'s `CllMeasure::measure_max` /
+  `measure_robust` family; the actual removal stays in the CHANGELOG's
+  QUEUED BREAKING CHANGES for the next breaking release.
 
 ### `zenpixels` — feature surface (`zenpixels.features.txt`)
 
@@ -170,12 +173,14 @@ default features:
   v0.2.14 → 0.2.15 (minor) bump is correct. All new variants land on the
   `#[non_exhaustive] ConvertError` enum; no inherent methods, free
   functions, or trait items were removed.
-- **`zenpixels`**: 0 fails reported against the v0.2.14 → 0.3.0
-  (major) bump — the `ContentLightLevel::measure` removal IS a semver
-  break, and the major version bump accommodates it. Everything else on
-  the zenpixels surface is additive (new `with_*` relabel builders, new
-  in-place ctor).
+- **`zenpixels`**: the v0.2.14 → 0.2.16 bump stays inside the 0.2.x
+  line. `ContentLightLevel::measure` is NOT removed — it is
+  `#[deprecated]` + `#[doc(hidden)]` with its working 0.2.14 body
+  restored (6019aeef), so the signature and behavior both survive.
+  Everything else on the zenpixels surface is additive (new `with_*`
+  relabel builders, new in-place ctor).
 
-Net: the only hard break is `ContentLightLevel::measure`; the major
-bump is required and sufficient to absorb it. All other deltas are
-additive or visibility-changes inside the same major.
+Net: no hard break ships on this line. The `ContentLightLevel::measure`
+*removal* — which WOULD be a semver break requiring the leading-digit
+bump — remains queued in the CHANGELOG's QUEUED BREAKING CHANGES for
+the next breaking release.

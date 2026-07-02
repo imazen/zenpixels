@@ -169,35 +169,44 @@
   build path stays free of the new dependency, but also loses the estimate
   surface until built with `std`.
 
-### zenpixels — removed (0.3.0)
+### zenpixels — deprecated (removal queued for the next breaking release)
 
-- **Removed the deprecated `ContentLightLevel::measure(px, white)` inherent
-  method** from `zenpixels::hdr` — the literal-maximum MaxCLL is
-  outlier-sensitive (one specular/noise pixel inflates it, making displays
-  over-tone-map); production HDR metadata uses a percentile-aware reading.
-  Replacement lives in `zenpixels-convert` behind the `hdr-experimental`
-  feature gate: `zenpixels_convert::hdr::measure::CllMeasure::measure_max`
-  (literal max — the 2026-06-22 shootout winner for `pct_above_de5`) +
+- **`ContentLightLevel::measure(px, white)` is `#[deprecated]` +
+  `#[doc(hidden)]` but stays fully functional through 0.2.x** (6019aeef).
+  The literal-maximum MaxCLL logic now has a maintained (SIMD) home in
+  `zenpixels-convert` behind the `hdr-experimental` feature gate:
+  `zenpixels_convert::hdr::measure::CllMeasure::measure_max` (literal max
+  — the 2026-06-22 shootout winner for `pct_above_de5`) +
   `measure_percentile` / `measure_robust` for the defect-tolerant readouts.
   `ContentLightLevel::DEFAULT_PERCENTILE` (the `0.99999` constant) STAYS
   — it's data, not logic, and external callers building their own
   percentile policy refer to it.
-  - **Why bump leading digit.** `ContentLightLevel::measure` was
-    `#[doc(hidden)]` + `#[deprecated]` in 0.2.15 but is still a
-    publicly-callable inherent method, so `cargo semver-checks` reports
-    `inherent_method_missing` as a major-required break (semver-checks
-    doesn't treat `#[doc(hidden)]` as exempt from removal-detection,
-    correctly — downstream code may still depend on doc-hidden APIs at
-    the source level). Bumping to 0.3.0 lets the removal ship cleanly.
-    `cargo semver-checks --release-type major` validates the bump (252
-    checks pass, 0 fail) — the leading-digit move is the minimum required
-    by the queued removal.
-- **Test cleanup.** The two `ContentLightLevel::measure` test cases in
-  `zenpixels/src/hdr.rs` (`measure_two_grays_cta_stills_semantics` +
-  `measure_handles_stride_and_ignores_padding`) are removed alongside the
-  method; equivalent coverage lives in `zenpixels-convert/src/hdr/measure.rs`
-  (the `measure_max` / `measure_robust` / strided-row tests) and the new
-  `zenpixels-convert/tests/cll_measure.rs` boundary test.
+  - **History.** An earlier pass on this unreleased line replaced the
+    working 0.2.14 body with an `unimplemented!()` shim and narrated the
+    removal as "shipped in 0.3.0" — but no 0.3.0 was ever released and
+    the manifest queues 0.2.16, so the shim would have been a runtime
+    panic inside the semver-stable 0.2.x line. 6019aeef restored the
+    0.2.14 body verbatim (private `row_max_sum` + `nits_to_u16` helpers),
+    kept the `#[deprecated]` attribute pointing at
+    `CllMeasure::measure_max`, and re-queued the actual removal under
+    QUEUED BREAKING CHANGES below.
+  - **Removing it later still needs the leading-digit bump.** The method
+    is a publicly-callable inherent method, so `cargo semver-checks`
+    reports `inherent_method_missing` as a major-required break
+    (semver-checks doesn't treat `#[doc(hidden)]` as exempt from
+    removal-detection, correctly — downstream code may still depend on
+    doc-hidden APIs at the source level). That's why the removal waits
+    in the 0.3.0 queue instead of shipping in 0.2.16.
+- **Tests.** The five 0.2.14 `ContentLightLevel::measure` behavior tests
+  in `zenpixels/src/hdr.rs` are restored alongside the body, and a new
+  cross-crate parity gate
+  (`zenpixels-convert/tests/deprecated_measure_parity.rs`, 6 tests,
+  `required-features = ["hdr-experimental"]`) pins that the deprecated
+  method returns readings identical to `CllMeasure::measure_max` with
+  `LightLevelMethod::MaxRgb` and rejects the same inputs. CI gained a
+  `--features hdr-experimental` test step so the gated measurement
+  suites (including the previously never-run-in-CI
+  `tests/cll_measure.rs`) actually execute (6019aeef).
 
 ### zenpixels-convert — added (testing)
 
@@ -413,12 +422,16 @@
   `zentone` crate (`zentone::Bt2446A` for ITU-R BT.2446 Method A,
   `Bt2408Tonemapper`, ACES, AgX, filmic-spline, gain-map, plus SIMD strip
   processing).
-- ~~**Remove the deprecated `ContentLightLevel::measure`**~~ — **shipped
-  in 0.3.0** (see `### zenpixels — removed (0.3.0)` above). The literal-
-  maximum MaxCLL was outlier-sensitive; replacement is
+- **Remove the deprecated `ContentLightLevel::measure`** — still queued;
+  NOT shipped (an earlier pass on this unreleased line mislabeled it
+  "shipped in 0.3.0", but no 0.3.0 exists — main queues 0.2.16, and
+  6019aeef restored the working body; see `### zenpixels — deprecated`
+  above). The literal-maximum MaxCLL is outlier-sensitive; replacement is
   `zenpixels_convert::hdr::measure::CllMeasure::measure_max` (literal max,
   spec-strict / sparse-bright) + `measure_percentile` (defect-tolerant
-  via `DEFAULT_PERCENTILE`). Removed from this queue.
+  via `DEFAULT_PERCENTILE`). Remove the restored body, its five in-crate
+  behavior tests, and the `deprecated_measure_parity.rs` gate together
+  when this ships.
 - **Rename `CllMeasure::measure_robust(px, white, method)` →
   `CllMeasure::measure(px, white, method)`** in `zenpixels-convert` at the
   same release that deletes the deprecated 2-arg `zenpixels::ContentLightLevel::measure`.
