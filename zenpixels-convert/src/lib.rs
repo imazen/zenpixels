@@ -403,13 +403,15 @@ pub mod error;
 /// [`ConvertPlan::estimate`](crate::ConvertPlan::estimate), and
 /// [`ConvertPlan::estimate_in`](crate::ConvertPlan::estimate_in).
 ///
-/// The four estimate types are defined locally here and are **shape-
-/// compatible** with the corresponding `zencodec::estimate::*` types (same
-/// field names, same builders, same accessors, same `#[non_exhaustive]`
-/// discipline) so a `decode → convert → encode` pipeline can wire estimates
-/// through the boundary with a trivial `From` conversion. `zenpixels-convert`
+/// These estimate types are defined locally here. `zenpixels-convert`
 /// is a foundation crate and does NOT depend on `zencodec` — the layering
-/// rule keeps codec abstractions strictly above pixel math.
+/// rule keeps codec abstractions strictly above pixel math. There is
+/// currently no `From` conversion to/from the similarly-named
+/// `zencodec::estimate::*` types — the shapes have diverged (for example,
+/// `zencodec`'s `ResourceEstimate` additionally tracks `cpu_ms` and
+/// `peak_memory_bytes_max`, and its `ImageCharacteristics` tracks
+/// `frame_count`, none of which exist here). A `decode → convert → encode`
+/// pipeline bridging the two currently has to map fields by hand.
 pub mod estimate;
 pub use estimate::{ComputeEnvironment, ImageCharacteristics, ResourceEstimate, SimdTier};
 pub(crate) mod f16_scalar;

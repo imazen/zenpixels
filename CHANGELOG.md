@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### zenpixels-convert — docs
+
+- **Removed a false "trivial `From` conversion" claim from the `estimate`
+  module doc comment.** The doc claimed the four local estimate types
+  (`ResourceEstimate`, `ComputeEnvironment`, `ImageCharacteristics`,
+  `SimdTier`) were "shape-compatible" with `zencodec::estimate::*` and
+  wireable via "a trivial `From` conversion" — but no `From` impls exist
+  (zenpixels-convert does not depend on zencodec, by design) and the shapes
+  have since diverged further: `zencodec`'s `ResourceEstimate` additionally
+  tracks `cpu_ms` / `peak_memory_bytes_max`, and its `ImageCharacteristics`
+  tracks `frame_count`, none of which exist on the zenpixels-convert side.
+  The doc now states plainly that bridging the two currently requires a
+  manual field-by-field mapping. No public API change — comment-only.
+
 ### zenpixels — changed (serde soft-removal; tolerated in 0.2.x)
 
 - **`serde` feature soft-removed — now an inert no-op stub.** Dropped the
