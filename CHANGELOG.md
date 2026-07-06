@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Workspace — CI
+
+- **CI gains a `cargo doc --no-deps` link-check step and a "Public API
+  snapshots" job (zenpixels#bug-19).** Neither existed before, so a broken
+  intra-doc link or a new `pub` item added without a `docs/public-api/`
+  snapshot regen could land on `main` unaudited. The `clippy` job now also
+  runs `cargo doc --workspace --no-deps --all-features` with
+  `RUSTDOCFLAGS=-D warnings` (fails on unresolved intra-doc links), and a new
+  `api-doc` job runs `ZEN_API_DOC=check cargo test --manifest-path
+  apidoc/Cargo.toml` against a checked-out `imazen/zenutils` sibling (needed
+  because `apidoc/Cargo.toml` currently path-depends on the unpublished
+  `zenutils-apidoc` 0.1.2 builders — see that manifest's comment). Both
+  steps pass cleanly against current `main`; this is a gate addition only,
+  no source changes.
+
 ### zenpixels-convert — docs
 
 - **Removed a false "trivial `From` conversion" claim from the `estimate`

@@ -137,6 +137,61 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # Broken intra-doc links (e.g. `[\`Foo\`]` referring to a renamed/removed
+      # item) are only caught by actually running rustdoc; plain `cargo check`
+      # never sees them. RUSTDOCFLAGS=-D warnings turns those warnings into a
+      # failing step (zenpixels#bug-19: this gate was previously absent).
+      - name: Check docs (broken intra-doc links fail the build)
+        run: cargo doc --workspace --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # ==========================================================================
+  # Public-API surface snapshots (docs/public-api/) — the CI-free `apidoc/`
+  # runner package (see its Cargo.toml), so this is the only job that ever
+  # compiles zenutils-apidoc's dependency tree or invokes rustdoc. Standalone
+  # (not folded into the `clippy` job above) because it needs a nightly
+  # toolchain for rustdoc JSON, distinct from every other job's stable
+  # toolchain (zenpixels#bug-19: this gate was previously absent, so 6 new
+  # public types + a broken doc link slipped in without the committed
+  # snapshots ever being checked against them).
+  #
+  # apidoc/Cargo.toml currently path-depends on the sibling imazen/zenutils
+  # checkout (zenutils-apidoc 0.1.2's `no_file_meta_header`/
+  # `no_autotraits_summary` builders aren't on crates.io yet — see the
+  # comment in apidoc/Cargo.toml), so this job checks that sibling out next
+  # to zenpixels before running the snapshot test, mirroring the
+  # `checkout-siblings` pattern used by zenwebp/zenpipe for their own
+  # path-dependent siblings.
+  api-doc:
+    name: Public API snapshots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Checkout sibling imazen/zenutils
+        uses: actions/checkout@v6
+        with:
+          repository: imazen/zenutils
+          ref: main
+          path: __siblings/zenutils
+
+      - name: Move sibling to parent of GITHUB_WORKSPACE
+        run: |
+          mv __siblings/zenutils ../zenutils
+          rmdir __siblings || true
+
+      - uses: dtolnay/rust-toolchain@nightly # rustdoc JSON for public-api
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check committed API snapshots are current
+        run: cargo test --manifest-path apidoc/Cargo.toml
+        env:
+          ZEN_API_DOC: check
+
   # ==========================================================================
   # Format check
   # ==========================================================================
