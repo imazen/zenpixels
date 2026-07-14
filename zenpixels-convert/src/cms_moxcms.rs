@@ -587,6 +587,25 @@ pub(crate) fn icc_bytes_for_cicp(cicp: &Cicp) -> Option<alloc::vec::Vec<u8>> {
     profile.encode().ok()
 }
 
+/// moxcms's D50 white point (`white_point_from_temperature(5003)`), reconstructed so
+/// the gray oracle below builds against the whole `>=0.8.1, <0.10` moxcms range.
+///
+/// moxcms exposed this value as the const `WHITE_POINT_D50` (moxcms ≤ 0.8) and then
+/// renamed it to the fn `white_point_d50()` (moxcms ≥ 0.9) — identical value,
+/// mutually-exclusive spellings. Reproducing it through the stable [`moxcms::XyY`]
+/// API (public f64 fields + f64→f32 `to_xyz`, unchanged across the range) avoids
+/// pinning this crate to either moxcms minor. Kept bit-identical to upstream by
+/// `moxcms_d50_tests::moxcms_d50_matches_upstream`.
+#[cfg(test)]
+fn moxcms_d50_xyz() -> moxcms::Xyz {
+    // moxcms's McCamy CCT→xy for T = 5003 K (its `4000 < T ≤ 7000` branch), in f64:
+    const T: f64 = 5003.0;
+    const X: f64 =
+        -4.6070 * (1e9 / (T * T * T)) + 2.9678 * (1e6 / (T * T)) + 0.09911 * (1e3 / T) + 0.244063;
+    const Y: f64 = -3.000 * X * X + 2.870 * X - 0.275;
+    moxcms::XyY::new(X, Y, 1.0).to_xyz()
+}
+
 /// Synthesize a **GRAY-class** ICC for a CICP, exactly as `icc-gen`'s
 /// `cicp_bundle_gen` generator does for the committed gray bundle: `kTRC` =
 /// the transfer's tone curve (taken from a throwaway RGB synthesis so the
@@ -627,10 +646,7 @@ pub(crate) fn gray_icc_bytes_for_cicp(cicp: &Cicp) -> Option<alloc::vec::Vec<u8>
     let mut gray = ColorProfile::new_gray_with_gamma(2.2);
     gray.gray_trc = Some(trc);
     gray.media_white_point = Some(white);
-    gray.chromatic_adaptation = Some(moxcms::adaption_matrix_d(
-        white.to_xyz(),
-        moxcms::WHITE_POINT_D50.to_xyz(),
-    ));
+    gray.chromatic_adaptation = Some(moxcms::adaption_matrix_d(white.to_xyz(), moxcms_d50_xyz()));
     gray.description = Some(moxcms::ProfileText::Localizable(alloc::vec![
         moxcms::LocalizableString::new(
             "en".into(),
@@ -804,5 +820,24 @@ pub struct MoxCmsError(pub String);
 impl core::fmt::Display for MoxCmsError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+#[cfg(test)]
+mod moxcms_d50_tests {
+    use super::moxcms_d50_xyz;
+
+    /// The reconstructed D50 white must stay bit-identical to moxcms's own D50
+    /// (`white_point_from_temperature(5003).to_xyz()`, ≈ (0.96391, 1.0, 0.82475)).
+    /// This golden was verified equal to `moxcms::WHITE_POINT_D50.to_xyz()`
+    /// (moxcms 0.8.x) and `moxcms::white_point_d50().to_xyz()` (moxcms 0.9.x) when
+    /// written; the exact f32 bits guard against an upstream `XyY::to_xyz` change
+    /// within the `>=0.8.1, <0.10` range.
+    #[test]
+    fn moxcms_d50_matches_upstream() {
+        let d50 = moxcms_d50_xyz();
+        assert_eq!(d50.x.to_bits(), 0x3f76_c28e); // 0.9639062
+        assert_eq!(d50.y, 1.0_f32);
+        assert_eq!(d50.z.to_bits(), 0x3f53_2290); // 0.8247461
     }
 }

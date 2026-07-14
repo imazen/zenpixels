@@ -131,11 +131,12 @@ once_cell = { version = "1.21.4", default-features = false, features = ["race", 
 # `#![forbid(unsafe_code)]`.
 lz4_flex = { version = "0.13.1", default-features = false, features = ["safe-decode"], optional = true }
 whereat = { version = "0.1.5", default-features = false }
-# Upper bound is the next unreleased minor, NOT a wider pre-authorization:
-# moxcms is 0.8.1 today and a 0.9.0 could break the `options`/transform API we
-# call. `<0.9` means a fresh resolution of the published crate can't silently
-# pull an untested 0.9.x; widen to `<0.10` after testing against 0.9 when it ships.
-moxcms = { version = ">=0.8.1, <0.9", optional = true, features = ["options"] }
+# Verified against both moxcms 0.8.1 and the unreleased 0.9.0 (master): the only
+# API our code touches that changed is the D50 white-point spelling (const
+# `WHITE_POINT_D50` → fn `white_point_d50()`), which the gray test oracle
+# reconstructs version-agnostically (see `cms_moxcms::moxcms_d50_xyz`). `<0.10`
+# excludes the next untested minor.
+moxcms = { version = ">=0.8.1, <0.10", optional = true, features = ["options"] }
 
 [dev-dependencies]
 zenpixels = { workspace = true, features = ["planar", "imgref"] }
