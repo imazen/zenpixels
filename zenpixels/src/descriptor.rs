@@ -1165,6 +1165,48 @@ impl PixelDescriptor {
         Self { primaries, ..self }
     }
 
+    /// Return a copy of this descriptor with its **transfer function and
+    /// color primaries** taken from a decoded [`Cicp`](crate::Cicp), leaving the pixel
+    /// format, channel type, alpha mode, and signal range unchanged.
+    ///
+    /// The "I decoded a CICP tag and want to retag my buffer descriptor's
+    /// color axes" path — folds the recurring
+    /// [`from_cicp`](TransferFunction::from_cicp)-then-[`with_transfer`](Self::with_transfer)
+    /// (+ the primaries pair) chain into one call. Only codes that map to a
+    /// known [`TransferFunction`] / [`ColorPrimaries`] are applied; unmapped
+    /// codes (e.g. `Unspecified` / reserved) leave that axis as-is.
+    ///
+    /// Distinct from [`Cicp::to_descriptor`](crate::Cicp::to_descriptor), which
+    /// *builds a fresh* descriptor from a [`PixelFormat`] rather than retagging
+    /// the color axes of one you already hold. Signal range is deliberately
+    /// left untouched — relabeling narrow↔full without rescaling pixels is a
+    /// footgun; convert instead.
+    ///
+    /// **Metadata-only** — like [`with_transfer`](Self::with_transfer) /
+    /// [`with_primaries`](Self::with_primaries), no pixel bytes change and no
+    /// gamut matrix is applied.
+    ///
+    /// ```
+    /// use zenpixels::{Cicp, ColorPrimaries, PixelDescriptor, TransferFunction};
+    /// // Decoded HDR10 CICP: BT.2020 primaries (9), PQ transfer (16).
+    /// let hdr = Cicp::new(9, 16, 0, true);
+    /// let d = PixelDescriptor::RGBA8_SRGB.with_color_from_cicp(hdr);
+    /// assert_eq!(d.primaries, ColorPrimaries::Bt2020);
+    /// assert_eq!(d.transfer(), TransferFunction::Pq);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn with_color_from_cicp(self, cicp: crate::Cicp) -> Self {
+        let mut d = self;
+        if let Some(tf) = TransferFunction::from_cicp(cicp.transfer_characteristics) {
+            d = d.with_transfer(tf);
+        }
+        if let Some(p) = ColorPrimaries::from_cicp(cicp.color_primaries) {
+            d = d.with_primaries(p);
+        }
+        d
+    }
+
     /// Return a copy of this descriptor **relabeled** with a different
     /// alpha mode. Does not touch any pixel bytes or apply (un)premultiply.
     ///

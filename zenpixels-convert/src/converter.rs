@@ -6,7 +6,7 @@
 use alloc::boxed::Box;
 
 use crate::convert::{ConvertPlan, ConvertScratch, convert_row_buffered};
-use crate::{ChannelLayout, ConvertError, PixelDescriptor};
+use crate::{ChannelLayout, ConvertError, PixelBuffer, PixelDescriptor, PixelSlice};
 use whereat::{At, ResultAtExt};
 
 /// Pre-computed pixel format converter with pre-allocated scratch buffers.
@@ -339,6 +339,63 @@ impl RowConverter {
             );
         }
         Ok(())
+    }
+
+    /// Convert an entire [`PixelSlice`] into a freshly-allocated
+    /// [`PixelBuffer`] of this converter's target format.
+    ///
+    /// Bundles the common "allocate `rows * stride`, loop
+    /// [`convert_row`](Self::convert_row)" block behind the [`PixelSlice`]
+    /// stride contract: the source may be strided (a crop, a decoder
+    /// row-guard, an [`Adapted`](crate::adapt::Adapted) view) and the owned output is
+    /// SIMD-aligned. The source's color context, if any, is carried over.
+    ///
+    /// Prefer [`PixelBufferConvertExt::convert_to`] when you already hold an
+    /// owned [`PixelBuffer`]; reach for this when you hold a [`PixelSlice`] and
+    /// want owned output without threading the six positional stride arguments
+    /// through [`convert_rows`](Self::convert_rows).
+    ///
+    /// [`PixelBufferConvertExt::convert_to`]: crate::ext::PixelBufferConvertExt::convert_to
+    ///
+    /// # Errors
+    ///
+    /// Errors if the output byte count overflows `usize`
+    /// ([`ConvertError::AllocationFailed`]) or the target descriptor rejects
+    /// the computed buffer.
+    ///
+    /// ```
+    /// use zenpixels::{PixelDescriptor, PixelSlice};
+    /// use zenpixels_convert::RowConverter;
+    ///
+    /// // Two RGB8 pixels -> RGBA8 (an opaque alpha byte is appended per pixel).
+    /// let src = [10u8, 20, 30, 40, 50, 60];
+    /// let slice = PixelSlice::new_tight(&src, 2, 1, PixelDescriptor::RGB8_SRGB)?;
+    /// let mut conv = RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB)?;
+    /// let out = conv.convert_slice(slice)?;
+    /// assert_eq!((out.width(), out.height()), (2, 1));
+    /// assert_eq!(out.descriptor(), PixelDescriptor::RGBA8_SRGB);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[track_caller]
+    pub fn convert_slice(&mut self, src: PixelSlice<'_>) -> Result<PixelBuffer, At<ConvertError>> {
+        let (width, rows) = (src.width(), src.rows());
+        let target = self.plan.to();
+        let dst_stride = target.aligned_stride(width);
+        let total = dst_stride
+            .checked_mul(rows as usize)
+            .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))?;
+        let mut out = alloc::vec![0u8; total];
+        for y in 0..rows {
+            let src_row = src.row(y);
+            let dst_start = y as usize * dst_stride;
+            self.convert_row(src_row, &mut out[dst_start..dst_start + dst_stride], width);
+        }
+        let mut buf =
+            PixelBuffer::from_vec(out, width, rows, target).map_err_at(ConvertError::from)?;
+        if let Some(ctx) = src.color_context() {
+            buf = buf.with_color_context(alloc::sync::Arc::clone(ctx));
+        }
+        Ok(buf)
     }
 
     /// True if the conversion is a no-op (formats are identical).

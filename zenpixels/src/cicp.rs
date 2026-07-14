@@ -52,6 +52,25 @@ impl Cicp {
         }
     }
 
+    /// Create a CICP description from a 4-byte code-point tuple, in ISO/IEC
+    /// 23091-2 / cICP-box order: `[color_primaries, transfer_characteristics,
+    /// matrix_coefficients, video_full_range_flag]`.
+    ///
+    /// The final byte is the full-range flag: `0` = narrow (studio) range,
+    /// non-zero = full range. This removes the `!= 0` papercut when unpacking
+    /// a parsed CICP tuple straight from a container box.
+    ///
+    /// ```
+    /// use zenpixels::Cicp;
+    /// // BT.709 primaries, sRGB transfer, Identity matrix, full range.
+    /// assert_eq!(Cicp::from_bytes([1, 13, 0, 1]), Cicp::SRGB);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 4]) -> Self {
+        Self::new(bytes[0], bytes[1], bytes[2], bytes[3] != 0)
+    }
+
     /// sRGB color space: BT.709 primaries, sRGB transfer, Identity (RGB) matrix, full range.
     pub const SRGB: Self = Self {
         color_primaries: 1,

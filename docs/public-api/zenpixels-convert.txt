@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)        57
 #   pub consts/statics                         19
 #   free functions                             40
-#   inherent methods                          129
+#   inherent methods                          132
 #   struct fields                              50
 #   enum variants                              74
 #   re-exports                                  5
@@ -22,9 +22,9 @@
 #
 # per-module pub lines:
 #   (root)                          167
-#   adapt                            10
+#   adapt                            11
 #   cms                              27
-#   converter                        23
+#   converter                        25
 #   error                            27
 #   estimate                         47
 #   ext                              13
@@ -36,7 +36,7 @@
 #   orient                            3
 #   output                           17
 
-## items (354 lines)
+## items (357 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -48,6 +48,7 @@ pub adapt::Adapted::data: alloc::borrow::Cow<'a, [u8]>
 pub adapt::Adapted::descriptor: zenpixels::descriptor::PixelDescriptor
 pub adapt::Adapted::rows: u32
 pub adapt::Adapted::width: u32
+pub fn adapt::Adapted<'a>::as_pixel_slice(&self) -> core::result::Result<zenpixels::buffer::PixelSlice<'_>, whereat::at::At<error::ConvertError>>
 pub fn adapt::adapt_for_encode<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor]) -> core::result::Result<adapt::Adapted<'a>, whereat::at::At<error::ConvertError>>
 pub fn adapt::adapt_for_encode_with_intent<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], ConvertIntent) -> core::result::Result<adapt::Adapted<'a>, whereat::at::At<error::ConvertError>>
 pub fn adapt::convert_buffer(&[u8], u32, u32, zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<error::ConvertError>>
@@ -73,6 +74,7 @@ pub mod converter
 pub fn converter::RowConverter::compose(&self, &Self) -> core::option::Option<Self>
 pub fn converter::RowConverter::convert_row(&mut self, &[u8], &mut [u8], u32)
 pub fn converter::RowConverter::convert_rows(&mut self, &[u8], usize, &mut [u8], usize, u32, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn converter::RowConverter::convert_slice(&mut self, zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::from_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn converter::RowConverter::from_plan(ConvertPlan) -> Self
 pub fn converter::RowConverter::is_identity(&self) -> bool
@@ -336,6 +338,7 @@ pub struct RowConverter [also: converter]
 pub fn converter::RowConverter::compose(&self, &Self) -> core::option::Option<Self>
 pub fn converter::RowConverter::convert_row(&mut self, &[u8], &mut [u8], u32)
 pub fn converter::RowConverter::convert_rows(&mut self, &[u8], usize, &mut [u8], usize, u32, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn converter::RowConverter::convert_slice(&mut self, zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::from_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn converter::RowConverter::from_plan(ConvertPlan) -> Self
 pub fn converter::RowConverter::is_identity(&self) -> bool

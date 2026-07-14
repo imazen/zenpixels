@@ -380,6 +380,45 @@ impl<'a> PixelSlice<'a> {
             _pixel: PhantomData,
         })
     }
+
+    /// Create a slice over **tightly-packed** rows, where the stride is exactly
+    /// `width * bytes_per_pixel` (no inter-row padding).
+    ///
+    /// A convenience over [`new`](Self::new) for the overwhelmingly common
+    /// packed case, so call sites stop restating `width * bpp` by hand.
+    /// Equivalent to
+    /// `PixelSlice::new(data, width, rows, width as usize * descriptor.bytes_per_pixel(), descriptor)`.
+    /// For strided views (SIMD-aligned padding, sub-region crops), use
+    /// [`new`](Self::new) with the explicit stride.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`new`](Self::new): errors if `data` is smaller than
+    /// `rows * width * bytes_per_pixel`, or is misaligned for the channel type.
+    ///
+    /// ```
+    /// use zenpixels::{PixelDescriptor, PixelSlice};
+    /// // 2x2 RGB8 = 12 tightly-packed bytes.
+    /// let data = [0u8; 12];
+    /// let ps = PixelSlice::new_tight(&data, 2, 2, PixelDescriptor::RGB8_SRGB)?;
+    /// assert_eq!(ps.stride(), 6); // 2 px * 3 bytes/px
+    /// # Ok::<(), zenpixels::At<zenpixels::BufferError>>(())
+    /// ```
+    #[track_caller]
+    pub fn new_tight(
+        data: &'a [u8],
+        width: u32,
+        rows: u32,
+        descriptor: PixelDescriptor,
+    ) -> Result<Self, At<BufferError>> {
+        Self::new(
+            data,
+            width,
+            rows,
+            width as usize * descriptor.bytes_per_pixel(),
+            descriptor,
+        )
+    }
 }
 
 impl<'a, P> PixelSlice<'a, P> {
@@ -878,6 +917,41 @@ impl<'a> PixelSliceMut<'a> {
             color: None,
             _pixel: PhantomData,
         })
+    }
+
+    /// Create a mutable slice over **tightly-packed** rows, where the stride is
+    /// exactly `width * bytes_per_pixel` (no inter-row padding).
+    ///
+    /// The `&mut` counterpart to [`PixelSlice::new_tight`]; a convenience over
+    /// [`new`](Self::new) for the packed case so call sites stop restating
+    /// `width * bpp`. For strided views, use [`new`](Self::new).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`new`](Self::new): errors if `data` is smaller than
+    /// `rows * width * bytes_per_pixel`, or is misaligned for the channel type.
+    ///
+    /// ```
+    /// use zenpixels::{PixelDescriptor, PixelSliceMut};
+    /// let mut data = [0u8; 12]; // 2x2 RGB8, tightly packed
+    /// let ps = PixelSliceMut::new_tight(&mut data, 2, 2, PixelDescriptor::RGB8_SRGB)?;
+    /// assert_eq!(ps.stride(), 6);
+    /// # Ok::<(), zenpixels::At<zenpixels::BufferError>>(())
+    /// ```
+    #[track_caller]
+    pub fn new_tight(
+        data: &'a mut [u8],
+        width: u32,
+        rows: u32,
+        descriptor: PixelDescriptor,
+    ) -> Result<Self, At<BufferError>> {
+        Self::new(
+            data,
+            width,
+            rows,
+            width as usize * descriptor.bytes_per_pixel(),
+            descriptor,
+        )
     }
 }
 

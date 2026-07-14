@@ -68,7 +68,7 @@ use crate::negotiate::{ConvertIntent, best_match};
 use crate::policy::{AlphaPolicy, ConvertOptions};
 use crate::{
     AlphaMode, ChannelLayout, ChannelType, ColorModel, ConvertError, PixelBuffer, PixelDescriptor,
-    PixelSliceMut,
+    PixelSlice, PixelSliceMut,
 };
 use whereat::{At, ResultAtExt};
 
@@ -149,6 +149,42 @@ pub struct Adapted<'a> {
     pub width: u32,
     /// Number of rows.
     pub rows: u32,
+}
+
+impl<'a> Adapted<'a> {
+    /// Borrow the adapted pixels as a tightly-packed [`PixelSlice`], ready to
+    /// hand to an encoder — without restating the `width * bytes_per_pixel`
+    /// stride by hand.
+    ///
+    /// Every `adapt_for_encode*` result is contiguous (the zero-copy path only
+    /// borrows already-packed source; the conversion path writes a packed
+    /// buffer), so the stride is exactly `width * descriptor.bytes_per_pixel()`.
+    /// This folds the recompute-stride-then-[`PixelSlice::new`] block that
+    /// encoders otherwise repeat verbatim after [`adapt_for_encode`].
+    ///
+    /// # Errors
+    ///
+    /// Errors only when the *borrowed* source bytes are misaligned for a
+    /// multi-byte channel type ([`PixelSlice`] requires native-aligned U16 /
+    /// F16 / F32 samples). The freshly-converted (owned) path is always
+    /// aligned, so it never errors.
+    ///
+    /// ```
+    /// use zenpixels::PixelDescriptor;
+    /// use zenpixels_convert::adapt::adapt_for_encode;
+    ///
+    /// let rgb = [1u8, 2, 3, 4, 5, 6]; // 2x1 RGB8
+    /// let supported = [PixelDescriptor::RGB8_SRGB];
+    /// let adapted = adapt_for_encode(&rgb, PixelDescriptor::RGB8_SRGB, 2, 1, 6, &supported)?;
+    /// let slice = adapted.as_pixel_slice()?; // ready for encoder.encode(slice)
+    /// assert_eq!((slice.width(), slice.rows(), slice.stride()), (2, 1, 6));
+    /// # Ok::<(), whereat::At<zenpixels_convert::ConvertError>>(())
+    /// ```
+    #[track_caller]
+    pub fn as_pixel_slice(&self) -> Result<PixelSlice<'_>, At<ConvertError>> {
+        PixelSlice::new_tight(&self.data, self.width, self.rows, self.descriptor)
+            .map_err_at(ConvertError::from)
+    }
 }
 
 /// Negotiate format and convert pixel data for encoding.
