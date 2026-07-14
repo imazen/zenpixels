@@ -421,6 +421,28 @@ impl<'a> PixelSlice<'a> {
             descriptor,
         )
     }
+
+    /// Alias for [`new_contiguous`](Self::new_contiguous) — identical behavior.
+    ///
+    /// Provided because "packed" is the term many callers reach for;
+    /// `new_contiguous` is the canonical name (it pairs with
+    /// [`is_contiguous`](Self::is_contiguous)). Like `new_contiguous`, this
+    /// delegates to [`new`](Self::new) with **no unchecked fast path**, so the
+    /// [`PixelSlice`] alignment invariant callers rely on is upheld: a
+    /// base pointer misaligned for the channel type is rejected
+    /// ([`BufferError::AlignmentViolation`]), and the tight `width * bpp`
+    /// stride (always a multiple of the channel alignment) keeps every row
+    /// start aligned — so consumers may reinterpret any row as `&[u16]` /
+    /// `&[f32]` safely.
+    #[track_caller]
+    pub fn new_packed(
+        data: &'a [u8],
+        width: u32,
+        rows: u32,
+        descriptor: PixelDescriptor,
+    ) -> Result<Self, At<BufferError>> {
+        Self::new_contiguous(data, width, rows, descriptor)
+    }
 }
 
 impl<'a, P> PixelSlice<'a, P> {
@@ -954,6 +976,24 @@ impl<'a> PixelSliceMut<'a> {
             width as usize * descriptor.bytes_per_pixel(),
             descriptor,
         )
+    }
+
+    /// Alias for [`new_contiguous`](Self::new_contiguous) — identical behavior.
+    ///
+    /// The `&mut` counterpart to [`PixelSlice::new_packed`]. `new_contiguous`
+    /// is the canonical name (it pairs with
+    /// [`PixelSlice::is_contiguous`]); this delegates to
+    /// [`new`](Self::new) with **no unchecked fast path**, upholding the
+    /// alignment invariant — a base misaligned for the channel type is
+    /// rejected, and the tight `width * bpp` stride keeps every row aligned.
+    #[track_caller]
+    pub fn new_packed(
+        data: &'a mut [u8],
+        width: u32,
+        rows: u32,
+        descriptor: PixelDescriptor,
+    ) -> Result<Self, At<BufferError>> {
+        Self::new_contiguous(data, width, rows, descriptor)
     }
 }
 
