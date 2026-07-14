@@ -114,10 +114,7 @@ mod plan_shape {
     }
 
     fn default_hdr(peak_nits: f32) -> HdrConfig {
-        HdrConfig {
-            source_peak_nits: peak_nits,
-            ..HdrConfig::default()
-        }
+        HdrConfig::for_source_peak(peak_nits)
     }
 
     #[test]
@@ -257,6 +254,63 @@ fn hdr_config_default_source_peak_is_zero_and_must_be_set() {
     // it explicitly (the curve is parameterized by it). HdrConfig
     // documents `source_peak_nits = 0.0` as the "you forgot" sentinel.
     assert_eq!(HdrConfig::default().source_peak_nits, 0.0);
+}
+
+#[test]
+fn hdr_config_builders_set_fields_and_keep_defaults() {
+    let cfg = HdrConfig::for_source_peak(1000.0);
+    assert_eq!(cfg.source_peak_nits, 1000.0);
+    assert_eq!(cfg.target_peak_nits, 100.0);
+    assert_eq!(cfg.gamut_knee, SoftCompress::DEFAULT_KNEE);
+    let cfg = cfg.with_target_peak_nits(203.0).with_gamut_knee(0.9);
+    assert_eq!(cfg.target_peak_nits, 203.0);
+    assert_eq!(cfg.gamut_knee, 0.9);
+    // The other fields survive each builder step.
+    assert_eq!(cfg.source_peak_nits, 1000.0);
+}
+
+#[test]
+fn degenerate_peaks_are_rejected_not_tone_mapped_to_black() {
+    // Pre-guard, a zero / negative / non-finite peak flowed into the
+    // BT.2446-A constants (1/ln(1) = inf, powf(neg) → NaN) and the
+    // kernel's NaN scrub emitted a fully BLACK image with NO error —
+    // silent total pixel loss. The plan constructor must refuse instead.
+    let src = pq_u16_bt2020_rgb();
+    let dst = PixelDescriptor::RGB8_SRGB;
+    let bad_sources = [
+        HdrConfig::default(), // unset (0.0) source peak
+        HdrConfig::for_source_peak(-1000.0),
+        HdrConfig::for_source_peak(f32::NAN),
+        HdrConfig::for_source_peak(f32::INFINITY),
+        HdrConfig::for_source_peak(1000.0).with_target_peak_nits(0.0),
+        HdrConfig::for_source_peak(1000.0).with_target_peak_nits(f32::NAN),
+    ];
+    for (i, cfg) in bad_sources.iter().enumerate() {
+        let err = ConvertPlan::new_with_hdr_config(src, dst, *cfg)
+            .expect_err("degenerate peak must be rejected");
+        assert!(
+            matches!(
+                *err.error(),
+                zenpixels_convert::ConvertError::HdrSourceRequiresPeak { .. }
+            ),
+            "case {i}: expected HdrSourceRequiresPeak, got {err:?}"
+        );
+    }
+    // And the peak-shortcut constructor routes through the same guard.
+    assert!(ConvertPlan::new_with_hdr_peak(src, dst, 0.0).is_err());
+    assert!(ConvertPlan::new_with_hdr_peak(src, dst, f32::NAN).is_err());
+
+    // SDR-encoded sources still ignore the config entirely (documented):
+    // a degenerate config with an sRGB source builds the plain plan.
+    assert!(
+        ConvertPlan::new_with_hdr_config(
+            PixelDescriptor::RGB8_SRGB,
+            PixelDescriptor::RGB8_SRGB,
+            HdrConfig::default(),
+        )
+        .is_ok(),
+        "SDR source must keep ignoring the hdr argument"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -456,10 +510,7 @@ fn hdr_pipeline_e2e_neutral_gray_lands_in_sdr_range() {
     // must be a valid u8 (no clipping to 0 or wrapping past 255).
     let src = pq_u16_bt2020_rgb();
     let dst = PixelDescriptor::RGB8_SRGB;
-    let hdr = HdrConfig {
-        source_peak_nits: 1000.0,
-        ..HdrConfig::default()
-    };
+    let hdr = HdrConfig::for_source_peak(1000.0);
     let plan = ConvertPlan::new_with_hdr_config(src, dst, hdr).expect("hdr plan");
     let src_pixel: [u16; 3] = [40_000, 40_000, 40_000];
     let src_bytes: [u8; 6] = bytemuck::cast(src_pixel);
@@ -482,7 +533,7 @@ fn hdr_pipeline_e2e_neutral_gray_lands_in_sdr_range() {
 #[test]
 fn new_with_hdr_peak_delegates_to_config_with_defaults() {
     // `ConvertPlan::new_with_hdr_peak(_, _, peak)` is documented as
-    // `new_with_hdr_config(_, _, HdrConfig { peak, ..default() })`. Pin
+    // `new_with_hdr_config(_, _, HdrConfig::for_source_peak(peak))`. Pin
     // that contract by building both and comparing the resource
     // estimates — identical plans produce identical tuple estimates.
     let src = pq_u16_bt2020_rgb();
@@ -491,10 +542,7 @@ fn new_with_hdr_peak_delegates_to_config_with_defaults() {
     let plan_config = ConvertPlan::new_with_hdr_config(
         src,
         dst,
-        HdrConfig {
-            source_peak_nits: 1000.0,
-            ..HdrConfig::default()
-        },
+        HdrConfig::for_source_peak(1000.0),
     )
     .expect("config plan");
     // Same input/output descriptors → same estimated work + memory.
@@ -531,10 +579,7 @@ fn convert_to_with_hdr_config_runs_end_to_end_from_pixel_buffer() {
         }
     }
     let buf = PixelBuffer::from_vec(data, 2, 1, src).expect("src buffer");
-    let hdr = HdrConfig {
-        source_peak_nits: 1000.0,
-        ..HdrConfig::default()
-    };
+    let hdr = HdrConfig::for_source_peak(1000.0);
     let out = buf
         .convert_to_with_hdr_config(dst, hdr)
         .expect("hdr convert");
