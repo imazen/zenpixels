@@ -151,12 +151,8 @@ fn hdr_bt2446a_pipeline_at_24mp_matches_bench_within_30_pct() {
         ColorPrimaries::Bt2020,
     );
     let to = PixelDescriptor::RGB8_SRGB;
-    let plan = ConvertPlan::new_with_hdr_config(
-        from,
-        to,
-        HdrConfig::for_source_peak(1000.0),
-    )
-    .expect("plan");
+    let plan = ConvertPlan::new_with_hdr_config(from, to, HdrConfig::for_source_peak(1000.0))
+        .expect("plan");
 
     // 6144 × 4096 ≈ 24 MP.
     let width = 6144u32;

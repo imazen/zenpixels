@@ -539,12 +539,9 @@ fn new_with_hdr_peak_delegates_to_config_with_defaults() {
     let src = pq_u16_bt2020_rgb();
     let dst = PixelDescriptor::RGB8_SRGB;
     let plan_peak = ConvertPlan::new_with_hdr_peak(src, dst, 1000.0).expect("peak plan");
-    let plan_config = ConvertPlan::new_with_hdr_config(
-        src,
-        dst,
-        HdrConfig::for_source_peak(1000.0),
-    )
-    .expect("config plan");
+    let plan_config =
+        ConvertPlan::new_with_hdr_config(src, dst, HdrConfig::for_source_peak(1000.0))
+            .expect("config plan");
     // Same input/output descriptors → same estimated work + memory.
     let est_peak = plan_peak.estimate(1024, 1024);
     let est_config = plan_config.estimate(1024, 1024);

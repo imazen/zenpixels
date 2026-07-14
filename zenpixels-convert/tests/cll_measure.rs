@@ -295,7 +295,11 @@ fn oracle_max_fall(pixels: &[[f32; 3]], white: f32, method: LightLevelMethod) ->
         }
         sum += f64::from(nits);
     }
-    let mean = if pixels.is_empty() { 0.0 } else { sum / pixels.len() as f64 };
+    let mean = if pixels.is_empty() {
+        0.0
+    } else {
+        sum / pixels.len() as f64
+    };
     (to_u16(f64::from(max_nits)), to_u16(mean))
 }
 
@@ -328,15 +332,15 @@ fn measure_max_folds_nan_and_negative_across_simd_chunks() {
                 // Mid-row, inside a full SIMD chunk for both widths.
                 pixels[20] = *poison;
                 let buf = rgbf32(&pixels, width, 1);
-                let got = ContentLightLevel::measure_max(
-                    buf.as_slice(),
-                    DiffuseWhite::BT2408,
-                    method,
-                )
-                .expect("linear RgbF32 accepted");
+                let got =
+                    ContentLightLevel::measure_max(buf.as_slice(), DiffuseWhite::BT2408, method)
+                        .expect("linear RgbF32 accepted");
                 let (want_cll, want_fall) = oracle_max_fall(&pixels, 203.0, method);
                 assert_eq!(
-                    (got.max_content_light_level, got.max_frame_average_light_level),
+                    (
+                        got.max_content_light_level,
+                        got.max_frame_average_light_level
+                    ),
                     (want_cll, want_fall),
                     "case {case} ({poison:?}) method {method:?} width {width}: \
                      SIMD result diverged from the scalar fold contract"
@@ -356,12 +360,14 @@ fn measure_max_folds_nan_in_rgba_and_ignores_nan_alpha() {
     let buf = rgbaf32(&pixels, 40, 1);
     let rgb: alloc::vec::Vec<[f32; 3]> = pixels.iter().map(|p| [p[0], p[1], p[2]]).collect();
     for method in [LightLevelMethod::MaxRgb, LightLevelMethod::LuminanceBt2020] {
-        let got =
-            ContentLightLevel::measure_max(buf.as_slice(), DiffuseWhite::BT2408, method)
-                .expect("linear RgbaF32 accepted");
+        let got = ContentLightLevel::measure_max(buf.as_slice(), DiffuseWhite::BT2408, method)
+            .expect("linear RgbaF32 accepted");
         let (want_cll, want_fall) = oracle_max_fall(&rgb, 203.0, method);
         assert_eq!(
-            (got.max_content_light_level, got.max_frame_average_light_level),
+            (
+                got.max_content_light_level,
+                got.max_frame_average_light_level
+            ),
             (want_cll, want_fall),
             "RGBA method {method:?}: SIMD result diverged from the scalar fold contract"
         );
