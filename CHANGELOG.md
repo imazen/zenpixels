@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+### zenpixels — added
+
+- **Ergonomic constructors + a color-retag helper (2e1a4fb).** All additive
+  (`cargo semver-checks`: minor change, no bump); each has real downstream
+  consumers from the `~/work/zen` usage audit and a runnable doctest.
+  - `PixelSlice::new_tight` / `PixelSliceMut::new_tight(data, width, rows, descriptor)`
+    — packed-stride constructor (`stride = width * bytes_per_pixel`); the single
+    most-repeated line in the audit (~361 `PixelSlice::new` sites hand-compute
+    the tight stride).
+  - `PixelDescriptor::with_color_from_cicp(Cicp)` (`const fn`) — retag transfer +
+    primaries from a decoded CICP, keeping format / type / alpha / signal range.
+  - `Cicp::from_bytes([u8; 4])` (`const fn`) — unpack a cICP-box tuple without the
+    `!= 0` papercut on the full-range flag.
+
+### zenpixels-convert — added
+
+- **`PixelSlice`-oriented encode / convert helpers (2e1a4fb).** Additive.
+  - `Adapted::as_pixel_slice() -> Result<PixelSlice>` — hand the adapted bytes
+    straight to an encoder; folds the recompute-stride + `PixelSlice::new` block
+    duplicated 5× across zenpipe / zencodecs. Returns `Result` (the zero-copy
+    borrow path can be misaligned for a wide-channel `PixelSlice`).
+  - `RowConverter::convert_slice(PixelSlice) -> PixelBuffer` — bundles the
+    "alloc `rows*stride`, loop `convert_row`" block behind the `PixelSlice`
+    stride contract; carries the source color context.
+
+### Workspace — added
+
+- **Tested usage-example galleries + a CI `--examples` gate (d672211).**
+  `zenpixels/examples/common_usage.rs` (9 scenarios) and
+  `zenpixels-convert/examples/convert_pipeline.rs` (14 scenarios) exercise the
+  common usages and double as compile-tested docs; a
+  `cargo test --workspace --examples` CI step runs them across the platform
+  matrix (`cargo test --workspace` builds example targets but never runs their
+  `#[test]`s). Ergonomics analysis of the call sites lives in
+  `docs/ergonomics-2026-07-14.md`.
+
 ### zenpixels-convert — fixed (HDR correctness; all behind `hdr-experimental`, unreleased)
 
 - **Tier-consistent NaN/negative fold in the SIMD CLL kernels (eea47c01).**

@@ -114,6 +114,14 @@ fn walk_strided_rows() {
         // `row` hands back exactly the pixel bytes — the 4 padding bytes are gone.
         assert_eq!(slice.row(y).len(), 3 * 4);
     }
+
+    // For the common *packed* case, `new_tight` derives `width * bpp` for you —
+    // no hand-computed stride (the single most-repeated line across the ecosystem).
+    let packed = vec![0u8; width as usize * rows as usize * 4];
+    let tight =
+        PixelSlice::new_tight(&packed, width, rows, PixelDescriptor::RGBA8).expect("packed buffer");
+    assert_eq!(tight.stride(), width as usize * 4);
+    assert!(tight.is_contiguous());
 }
 
 /// BGRX -> RGBX is a pure channel swizzle: do it in place, no allocation.
@@ -152,6 +160,10 @@ fn describe_color_with_cicp() {
     let srgb = Cicp::SRGB;
     assert_eq!(srgb.transfer_function_enum(), TransferFunction::Srgb);
 
+    // Unpack a 4-byte CICP tuple straight from a container box (primaries,
+    // transfer, matrix, full-range flag) — no `!= 0` papercut on the last byte.
+    assert_eq!(Cicp::from_bytes([1, 13, 0, 1]), Cicp::SRGB);
+
     // A descriptor's color axes round-trip through CICP.
     let desc = Cicp::DISPLAY_P3.to_descriptor(PixelFormat::Rgba8);
     assert_eq!(
@@ -159,6 +171,13 @@ fn describe_color_with_cicp() {
         zenpixels::descriptor::ColorPrimaries::DisplayP3
     );
     assert_eq!(Cicp::from_descriptor(&desc), Some(Cicp::DISPLAY_P3));
+
+    // Retag *only* the color axes of an existing descriptor from a decoded
+    // CICP, keeping the format/type/alpha. Contrast with `to_descriptor`, which
+    // builds a fresh descriptor from a `PixelFormat`.
+    let hdr = PixelDescriptor::RGBA8_SRGB.with_color_from_cicp(Cicp::BT2100_PQ);
+    assert_eq!(hdr.transfer(), TransferFunction::Pq);
+    assert_eq!(hdr.primaries, zenpixels::descriptor::ColorPrimaries::Bt2020);
 
     // Named profiles bridge friendly names and CICP codes.
     assert_eq!(NamedProfile::Srgb.to_cicp(), Some(Cicp::SRGB));

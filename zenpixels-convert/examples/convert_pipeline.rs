@@ -137,18 +137,14 @@ fn adapt_pixels_before_encoding() -> Fallible {
     assert!(matches!(adapted.data, std::borrow::Cow::Borrowed(_)));
     assert_eq!(adapted.descriptor, PixelDescriptor::RGB8_SRGB);
 
-    // Every downstream encoder then re-wraps the adapted bytes as a `PixelSlice`,
-    // recomputing the tight stride by hand (this exact block is duplicated 5×
-    // across zenpipe/zencodecs). See the ergonomics report, findings A + B.
-    let adapted_stride = adapted.width as usize * adapted.descriptor.bytes_per_pixel();
-    let slice = zenpixels::buffer::PixelSlice::new(
-        &adapted.data,
-        adapted.width,
-        adapted.rows,
-        adapted_stride,
-        adapted.descriptor,
-    )?;
-    assert_eq!(slice.width(), 4);
+    // `Adapted::as_pixel_slice()` wraps the adapted bytes in one call — ready
+    // to hand to `encoder.encode(slice)`. Before this helper every encoder
+    // repeated a recompute-stride + `PixelSlice::new` block (duplicated 5×
+    // across zenpipe/zencodecs — ergonomics report findings 1 + 2), i.e.:
+    //     let stride = adapted.width as usize * adapted.descriptor.bytes_per_pixel();
+    //     let slice = PixelSlice::new(&adapted.data, adapted.width, adapted.rows, stride, adapted.descriptor)?;
+    let slice = adapted.as_pixel_slice()?;
+    assert_eq!((slice.width(), slice.rows()), (4, 4));
     Ok(())
 }
 
@@ -184,6 +180,16 @@ fn convert_a_strip_with_a_plan() -> Fallible {
     }
     // RGB8 -> RGBA8 fills an opaque alpha byte after each triple.
     assert_eq!(&dst[0..4], &[9, 9, 9, 255]);
+
+    // The same conversion, bundled: wrap the (possibly strided) source as a
+    // `PixelSlice` and let `RowConverter::convert_slice` size the output and
+    // drive the row loop — no manual `alloc w*h*bpp` + `convert_row` scaffolding.
+    let mut conv = RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB)?;
+    let src_slice =
+        zenpixels::buffer::PixelSlice::new_tight(&src, w, h, PixelDescriptor::RGB8_SRGB)?;
+    let out = conv.convert_slice(src_slice)?;
+    assert_eq!(out.descriptor(), PixelDescriptor::RGBA8_SRGB);
+    assert_eq!(&out.as_slice().row(0)[0..4], &[9, 9, 9, 255]);
     Ok(())
 }
 
