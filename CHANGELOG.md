@@ -62,10 +62,18 @@
 
 ### zenpixels-convert — changed (deps)
 
-- **`moxcms` bound tightened `">=0.8.1, <0.10"` → `">=0.8.1, <0.9"`
-  (556bf31c).** The wider bound pre-authorized an unreleased 0.9.x that could
-  break the `options`/transform API this crate calls; widen deliberately
-  after testing when 0.9 ships.
+- **`moxcms` now builds and tests against both 0.8.1 and 0.9.0; bound stays
+  `">=0.8.1, <0.10"` (db2b0fc).** moxcms 0.9.0 renames the one symbol this crate
+  touches that changed — the D50 white point — from the const `WHITE_POINT_D50`
+  to the fn `white_point_d50()` (identical value:
+  `white_point_from_temperature(5003)`). The `#[cfg(test)]` gray-ICC oracle now
+  reconstructs that white through the stable `moxcms::XyY` API instead of naming
+  either version-specific symbol, so a fresh resolution across the whole range
+  compiles; `moxcms_d50_matches_upstream` pins it bit-identical (exact f32 bits).
+  Verified against moxcms 0.9.0 master — the
+  `gray_blob_decodes_byte_identical_to_moxcms` guard passes on both versions.
+  Supersedes the transient 556bf31c `<0.9` tightening (net bound vs 0.2.14 is
+  unchanged).
 
 ### Workspace — CI
 
