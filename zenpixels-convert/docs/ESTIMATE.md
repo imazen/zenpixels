@@ -16,27 +16,32 @@ Both return a [`ResourceEstimate`] with projected peak memory, wall-clock
 milliseconds (already core-scaled in `estimate_in`), and the number of
 simultaneously-live intermediate buffers.
 
-## API-shape-compatible with codec-side estimates
+## Relationship to codec-side estimates
 
 `zenpixels-convert` is a **foundation crate** — it sits below codec
 abstractions in the workspace dep graph and does NOT depend on `zencodec`.
-To keep multi-stage `decode → convert → encode` pipelines ergonomic, the four
-types defined here (`ResourceEstimate`, `ComputeEnvironment`,
-`ImageCharacteristics`, `SimdTier`) are **shape-compatible** with the
-corresponding `zencodec::estimate::*` types — same field names, same builder
-method names, same accessor signatures, same `#[non_exhaustive]` discipline —
-so a codec author whose stack already uses the zencodec contract can wire
-per-stage estimates through with a trivial `From` conversion (a follow-up
-will gate that conversion behind a feature flag).
+The four types defined here (`ResourceEstimate`, `ComputeEnvironment`,
+`ImageCharacteristics`, `SimdTier`) are **named after** and structurally
+resemble the corresponding `zencodec::estimate::*` types (same builder /
+accessor idiom, same `#[non_exhaustive]` discipline), so a `decode → convert
+→ encode` pipeline reads consistently across the codec boundary.
 
-Every field is `Option`, the structs are `#[non_exhaustive]`, and the builders
-are growable: future fields land additively without breaking match-bind sites
-at the call boundary.
+**There is no `From` conversion, and the shapes have diverged.** An earlier
+note here promised a "trivial `From`" bridge; that was removed (module doc
+fixed in 760a677) because no such impl exists and the field sets are no
+longer identical:
 
-TODO(follow-up): add `From<zencodec::estimate::ResourceEstimate>` (and the
-sibling conversions) behind a feature flag so callers at the codec boundary
-get a one-liner. Out of scope for the foundation-crate layer; the bridge
-lands separately.
+- `zencodec::estimate::ResourceEstimate` additionally tracks
+  `peak_memory_bytes_max` and `cpu_ms`; the local one drops those and adds
+  `intermediate_buffer_count` (paging-pressure signal the convert planner
+  computes for free).
+- `zencodec::estimate::ImageCharacteristics` tracks `frame_count`; the local
+  one is per-frame and omits it.
+
+A caller bridging the two must map fields by hand today. Every field is
+`Option`, the structs are `#[non_exhaustive]`, and the builders are growable,
+so a future `From` (behind a feature flag, if a real consumer needs it) can
+land additively — but it is not built and not promised.
 
 ## Accuracy contract
 

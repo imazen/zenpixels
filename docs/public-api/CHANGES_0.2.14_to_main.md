@@ -74,16 +74,19 @@ noise-reduction regen — see the format note above):
   predicate for schedulers to probe (source, target) pairs before
   attaching a CMS plugin to a batch. Returns true iff either side's
   `ColorModel` is outside the native `{Gray, Rgb, Oklab}` set.
-- **`ConvertPlan::estimate(w, h) -> (u64, f64)`** — predicting
-  `(peak_memory_bytes, wall_time_ms)` for any conversion plan. The single
-  tuple-returning method that survives pre-publish YAGNI cleanup; an
-  earlier iteration in this work cycle elaborated `pub mod estimate` +
-  `struct ResourceEstimate { peak_memory_bytes, wall_time_ms, breakdown,
-  confidence }` + `struct StepEstimate` + `enum EstimateConfidence` and
-  11 `estimate_*` shadow methods across `PixelBufferConvertExt` /
-  `PixelBufferConvertTypedExt` / `PixelBufferHdrConvertExt` — all of that
-  was scratched in favor of the one method on `ConvertPlan` (CHANGELOG
-  "changed" entry for details).
+- **`pub mod estimate` + `ConvertPlan::estimate(w, h) -> ResourceEstimate`
+  and `ConvertPlan::estimate_in(&image, &compute) -> ResourceEstimate`** —
+  resource projection for any conversion plan. The shipped shape is the
+  `estimate` module with `ResourceEstimate { peak_memory_bytes_est, wall_ms,
+  intermediate_buffer_count }` + `ComputeEnvironment` + `ImageCharacteristics`
+  + `SimdTier` (all `#[non_exhaustive]`, builder-constructed, locally defined
+  and shape-compatible with `zencodec::estimate::*`). The work cycle churned
+  through two discarded intermediates before this: a bare
+  `estimate(w, h) -> (u64, f64)` tuple, and a wider `ResourceEstimate {
+  breakdown, confidence, … }` + `StepEstimate` + `EstimateConfidence` + a
+  family of `estimate_*` shadow methods on the `PixelBuffer*ConvertExt`
+  traits. Both were scratched; the module + two `ConvertPlan` methods are
+  what actually ship (CHANGELOG "changed" entries for the full arc).
 
 ### `zenpixels-convert` — feature additions (`zenpixels-convert.features.txt`, mostly behind `hdr-experimental`)
 
@@ -92,17 +95,20 @@ noise-reduction regen — see the format note above):
   processing.
 - **`hdr::SoftCompress { new, from_matrices, apply_strip, knee, lut,
   DEFAULT_KNEE }` + `hdr::GamutBoundaryLut { new, max_chroma,
-  compress_planes }`** — gamut-aware compress pipeline used by
-  `HdrToSdr`. `DEFAULT_KNEE` shipped at `0.96` (corpus-calibrated
-  2026-06-23) vs the prior un-calibrated `0.9`.
+  compress_planes }`** — gamut-aware compress pipeline used by the
+  `ConvertPlan` HDR tone-map path (the `SoftCompressOklch` step; the earlier
+  standalone `HdrToSdr` type was folded into `ConvertPlan`). `DEFAULT_KNEE`
+  shipped at `0.96` (corpus-calibrated 2026-06-23) vs the prior
+  un-calibrated `0.9`.
 - **`pub trait CllMeasure` (also reachable as `hdr::measure::CllMeasure`)
   with `measure_max(px, white, method)`** — promoted (production-default)
   ContentLightLevel reading. The percentile / smoothed / histogram
   variants live in `internal.txt` as `#[doc(hidden)]` opt-ins.
 - **`pub trait PixelBufferHdrConvertExt { convert_to_sdr,
-  convert_to_with_hdr_config, estimate_convert_to_sdr,
-  estimate_convert_to_with_hdr_config }`** — fluent HDR-source ext
-  methods on `PixelBuffer`.
+  convert_to_with_hdr_config }`** — fluent HDR-source ext methods on
+  `PixelBuffer`. (The `estimate_convert_to_*` shadow methods from an earlier
+  iteration were removed with the rest of the `estimate_*` family; estimation
+  is now via `ConvertPlan::estimate`.)
 - **`ConvertPlan::new_with_hdr_peak` + `ConvertPlan::new_with_hdr_config`**
   — plan-builders for HDR sources with explicit peak luminance or full
   `HdrConfig`.

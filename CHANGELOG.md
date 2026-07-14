@@ -2,6 +2,71 @@
 
 ## [Unreleased]
 
+### zenpixels-convert — fixed (HDR correctness; all behind `hdr-experimental`, unreleased)
+
+- **Tier-consistent NaN/negative fold in the SIMD CLL kernels (eea47c01).**
+  The four `measure_max` / histogram SIMD kernels folded per-channel with a
+  `max`-chain, but platform `max` NaN semantics diverge (x86 `maxps` returns
+  the second operand; NEON/WASM propagate NaN), so a single `NaN` sample
+  violated the documented "Negative/NaN clamps to 0" contract — zeroing
+  MaxFALL and potentially underreporting MaxCLL, with **different results per
+  architecture**. Now folds each channel with an ordered compare + blend
+  (`v > 0`), matching the scalar tail exactly. Also flushes the f32 lane sums
+  into the f64 total every 256 chunks so MaxFALL precision no longer depends
+  on row width. The pre-existing NaN test used 2 pixels (scalar tail only);
+  added wide-row NaN/negative tests across both kernel families × methods ×
+  RGB/RGBA. Fixed the `measure_max` rustdoc (no `simd` feature exists; no
+  `-C target-cpu` flag needed — runtime dispatch).
+- **Reject degenerate `HdrConfig` peaks instead of emitting a black image
+  (6013acc2).** `new_with_hdr_config` / `new_with_hdr_peak` now return
+  `HdrSourceRequiresPeak` when `source_peak_nits` or `target_peak_nits` is
+  non-finite or `<= 0` (including `HdrConfig::default()`'s unset `0.0`).
+  Before, a degenerate peak flowed into the BT.2446-A constants
+  (`1/ln(1) = inf`, `powf` of a negative → NaN) and the kernel's NaN scrub
+  silently produced an **all-black image with no error**.
+
+### zenpixels-convert — changed (API shape, unreleased surfaces)
+
+- **`HdrConfig` is now `#[non_exhaustive]` with builders (6013acc2).**
+  Added `HdrConfig::for_source_peak(nits)` + `with_target_peak_nits` +
+  `with_gamut_knee`; fields stay `pub`. Prevents the frozen-public-fields
+  defect `HdrMetadata` is deprecated for, caught while the surface is still
+  unreleased (`hdr-experimental`, never on crates.io). All in-tree literals
+  migrated to the builder.
+- **`ConvertPlan::estimate(_in)` rounds wall-time up (816b9598).** Sub-
+  millisecond plans (thumbnails) reported `wall_ms = Some(0)`,
+  indistinguishable from zero work; now `ceil`/`div_ceil` so `Some(0)` means
+  genuinely zero work. `SimdTier::Unknown` rustdoc corrected to state it maps
+  to the AVX2 baseline (1.0) — there is no separate cross-tier model yet.
+
+### zenpixels-convert — changed (no_std robustness / internal, unreleased)
+
+- **`hdr/gamut_compress.rs` uses `libm::sqrtf`/`atan2f` explicitly (614a8e15),**
+  consistent with the `bt2446a` / `measure` kernels, instead of the `f32`
+  inherent methods (which resolve in no_std only via a transitive trait — the
+  crate does still compile `--no-default-features --features hdr-experimental`
+  today; this removes the fragile reliance). Output-neutral. Also documented
+  the `SoftCompress::new` singular-matrix panic + `from_matrices`
+  unchecked-pair contract, promoted the `compress_planes` plane-length
+  `debug_assert` to a message-carrying `assert!`, documented the finite-input
+  contract on `Bt2446A::{map_rgb,map_strip_simd}` / `apply_strip`, and removed
+  a no-op `0.1_f32.max(0.0)` in the BT.2446-A scalar tail.
+
+### zenpixels — changed (testing)
+
+- **`tests/dep_guard.rs` now covers `[build-dependencies]` and
+  `[target.'cfg(..)'.…]` dependency tables (556bf31c),** not just
+  `[dependencies]` — a dep added via a build or target-scoped table would
+  otherwise have slipped past the dependency-lean guard. `[dev-dependencies]`
+  stays exempt. Added a synthetic-manifest unit test.
+
+### zenpixels-convert — changed (deps)
+
+- **`moxcms` bound tightened `">=0.8.1, <0.10"` → `">=0.8.1, <0.9"`
+  (556bf31c).** The wider bound pre-authorized an unreleased 0.9.x that could
+  break the `options`/transform API this crate calls; widen deliberately
+  after testing when 0.9 ships.
+
 ### Workspace — CI
 
 - **CI gains a `cargo doc --no-deps` link-check step and a "Public API
@@ -516,12 +581,19 @@
   spec-strict / sparse-bright) + `measure_percentile` (defect-tolerant
   via `DEFAULT_PERCENTILE`). Remove the restored body, its five in-crate
   behavior tests, and the `deprecated_measure_parity.rs` gate together
-  when this ships.
+  when this ships. **Known migration victim (2026-07-14 sweep):**
+  `zenpipe/zencodecs/src/gainmap.rs:108` calls the deprecated 2-arg form
+  at runtime (resolves against git-`main` `zenpixels` via zenpipe's
+  `[patch.crates-io]`), so it must migrate to `CllMeasure::measure_max`
+  in the same change that removes the body — otherwise gain-map decoding
+  breaks. (This is also why the brief `unimplemented!()` shim on this
+  unreleased line, since reverted in 6019aeef, would have panicked
+  production gain-map code.)
 - **Rename `CllMeasure::measure_robust(px, white, method)` →
   `CllMeasure::measure(px, white, method)`** in `zenpixels-convert` at the
   same release that deletes the deprecated 2-arg `zenpixels::ContentLightLevel::measure`.
   The 0.2.x `measure_robust` slot is defect-tolerant via
-  [`ContentLightLevel::DEFAULT_PERCENTILE`] (0.9999) — the industry-default
+  [`ContentLightLevel::DEFAULT_PERCENTILE`] (0.99999) — the industry-default
   reading every production HDR tool already uses. Promoting it to the
   obvious `measure` name in 0.3.0 makes the "I don't know which to pick"
   entry point give the production-correct answer. Keep `measure_robust`
@@ -561,8 +633,28 @@
   1.1–4.7× faster transpose, output bit-identical
   (`benchmarks/orient_fast_transpose_2026-06-18.md`). Flipping a default feature
   batches here; size-sensitive builds opt out via `default-features = false`.
+- **`zenpixels-convert::cms::RowTransform` / `RowTransformMut`: make
+  `transform_row` return `Result`.** Both trait methods currently return
+  `()`, so the moxcms wrapper (`MoxRowTransformMut`) has to `.expect()` on a
+  transform failure (buffer-size mismatch, moxcms internal error) — a panic
+  on a public row-conversion path. A `Result<(), CmsError>` return lets the
+  converter surface the failure typed. Signature change on a public trait →
+  breaking; batch here. (Considered but rejected for 0.2.x: a panic on a
+  size mismatch that the plan layer already validates is not reachable in
+  practice, so this is a robustness upgrade, not a live bug fix.)
 
-## [0.2.15] - 2026-06-23
+## [0.2.15] - 2026-06-23 (authored; NOT yet published)
+
+> **Publication status (2026-07-14):** crates.io latest is **0.2.14** for
+> both crates — neither `zenpixels-convert` 0.2.15 nor `zenpixels` 0.2.16 has
+> shipped, and there is no `v0.2.15` / `v0.2.16` tag. The date above is the
+> authoring date, not a release date; the entries here stage the next
+> `zenpixels-convert` publish. `zenpixels` itself goes **0.2.14 → 0.2.16**
+> (the 0.2.15 slot was consumed mid-cycle and renumbered), so the two crates
+> publish at different numbers from the same unreleased `main`. Everything in
+> this section plus the [Unreleased] section above ships together at that
+> publish. Move these under a real dated release header only when the tag and
+> crates.io upload actually happen.
 
 ### zenpixels-convert — fixed (publish-prep audit)
 
@@ -614,7 +706,7 @@
 
 ### zenpixels — added
 
-- **`ContentLightLevel::DEFAULT_PERCENTILE = 0.9999`** — public constant for
+- **`ContentLightLevel::DEFAULT_PERCENTILE = 0.99999`** — public constant for
   the industry-default percentile used by `CllMeasure::measure_robust` in
   `zenpixels-convert`. Surfaced on the type itself (not the trait) so any
   caller — including ones that don't pull `zenpixels-convert` — can refer
@@ -807,7 +899,7 @@
   - **`CllMeasure::measure_robust(px, white, method)`** — the recommended-
     default reader, equivalent to `measure_percentile(_, _,
     ContentLightLevel::DEFAULT_PERCENTILE, _)` with `DEFAULT_PERCENTILE` =
-    0.9999. Drops the top 0.01 % of pixels as the outlier budget — the
+    0.99999. Drops the top 0.001 % of pixels as the outlier budget — the
     production-correct answer for content with possible defect-driven hot
     pixels (sensor noise, stuck pixels, specular blowouts). Matches what
     libplacebo (`pl_color_space_infer`), DaVinci Resolve, x265's
