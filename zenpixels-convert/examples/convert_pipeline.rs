@@ -186,7 +186,7 @@ fn convert_a_strip_with_a_plan() -> Fallible {
     // drive the row loop — no manual `alloc w*h*bpp` + `convert_row` scaffolding.
     let mut conv = RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB)?;
     let src_slice =
-        zenpixels::buffer::PixelSlice::new_tight(&src, w, h, PixelDescriptor::RGB8_SRGB)?;
+        zenpixels::buffer::PixelSlice::new_contiguous(&src, w, h, PixelDescriptor::RGB8_SRGB)?;
     let out = conv.convert_slice(src_slice)?;
     assert_eq!(out.descriptor(), PixelDescriptor::RGBA8_SRGB);
     assert_eq!(&out.as_slice().row(0)[0..4], &[9, 9, 9, 255]);

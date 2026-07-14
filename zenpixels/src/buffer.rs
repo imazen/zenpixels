@@ -389,7 +389,8 @@ impl<'a> PixelSlice<'a> {
     /// Equivalent to
     /// `PixelSlice::new(data, width, rows, width as usize * descriptor.bytes_per_pixel(), descriptor)`.
     /// For strided views (SIMD-aligned padding, sub-region crops), use
-    /// [`new`](Self::new) with the explicit stride.
+    /// [`new`](Self::new) with the explicit stride. The resulting slice
+    /// satisfies [`is_contiguous`](Self::is_contiguous).
     ///
     /// # Errors
     ///
@@ -400,12 +401,13 @@ impl<'a> PixelSlice<'a> {
     /// use zenpixels::{PixelDescriptor, PixelSlice};
     /// // 2x2 RGB8 = 12 tightly-packed bytes.
     /// let data = [0u8; 12];
-    /// let ps = PixelSlice::new_tight(&data, 2, 2, PixelDescriptor::RGB8_SRGB)?;
+    /// let ps = PixelSlice::new_contiguous(&data, 2, 2, PixelDescriptor::RGB8_SRGB)?;
     /// assert_eq!(ps.stride(), 6); // 2 px * 3 bytes/px
+    /// assert!(ps.is_contiguous());
     /// # Ok::<(), zenpixels::At<zenpixels::BufferError>>(())
     /// ```
     #[track_caller]
-    pub fn new_tight(
+    pub fn new_contiguous(
         data: &'a [u8],
         width: u32,
         rows: u32,
@@ -922,7 +924,7 @@ impl<'a> PixelSliceMut<'a> {
     /// Create a mutable slice over **tightly-packed** rows, where the stride is
     /// exactly `width * bytes_per_pixel` (no inter-row padding).
     ///
-    /// The `&mut` counterpart to [`PixelSlice::new_tight`]; a convenience over
+    /// The `&mut` counterpart to [`PixelSlice::new_contiguous`]; a convenience over
     /// [`new`](Self::new) for the packed case so call sites stop restating
     /// `width * bpp`. For strided views, use [`new`](Self::new).
     ///
@@ -934,12 +936,12 @@ impl<'a> PixelSliceMut<'a> {
     /// ```
     /// use zenpixels::{PixelDescriptor, PixelSliceMut};
     /// let mut data = [0u8; 12]; // 2x2 RGB8, tightly packed
-    /// let ps = PixelSliceMut::new_tight(&mut data, 2, 2, PixelDescriptor::RGB8_SRGB)?;
+    /// let ps = PixelSliceMut::new_contiguous(&mut data, 2, 2, PixelDescriptor::RGB8_SRGB)?;
     /// assert_eq!(ps.stride(), 6);
     /// # Ok::<(), zenpixels::At<zenpixels::BufferError>>(())
     /// ```
     #[track_caller]
-    pub fn new_tight(
+    pub fn new_contiguous(
         data: &'a mut [u8],
         width: u32,
         rows: u32,

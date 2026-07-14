@@ -7,7 +7,7 @@
 - **Ergonomic constructors + a color-retag helper (2e1a4fb).** All additive
   (`cargo semver-checks`: minor change, no bump); each has real downstream
   consumers from the `~/work/zen` usage audit and a runnable doctest.
-  - `PixelSlice::new_tight` / `PixelSliceMut::new_tight(data, width, rows, descriptor)`
+  - `PixelSlice::new_contiguous` / `PixelSliceMut::new_contiguous(data, width, rows, descriptor)`
     — packed-stride constructor (`stride = width * bytes_per_pixel`); the single
     most-repeated line in the audit (~361 `PixelSlice::new` sites hand-compute
     the tight stride).

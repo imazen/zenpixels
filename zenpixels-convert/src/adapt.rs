@@ -182,7 +182,7 @@ impl<'a> Adapted<'a> {
     /// ```
     #[track_caller]
     pub fn as_pixel_slice(&self) -> Result<PixelSlice<'_>, At<ConvertError>> {
-        PixelSlice::new_tight(&self.data, self.width, self.rows, self.descriptor)
+        PixelSlice::new_contiguous(&self.data, self.width, self.rows, self.descriptor)
             .map_err_at(ConvertError::from)
     }
 }

@@ -369,7 +369,7 @@ impl RowConverter {
     ///
     /// // Two RGB8 pixels -> RGBA8 (an opaque alpha byte is appended per pixel).
     /// let src = [10u8, 20, 30, 40, 50, 60];
-    /// let slice = PixelSlice::new_tight(&src, 2, 1, PixelDescriptor::RGB8_SRGB)?;
+    /// let slice = PixelSlice::new_contiguous(&src, 2, 1, PixelDescriptor::RGB8_SRGB)?;
     /// let mut conv = RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB)?;
     /// let out = conv.convert_slice(slice)?;
     /// assert_eq!((out.width(), out.height()), (2, 1));

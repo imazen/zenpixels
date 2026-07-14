@@ -121,7 +121,7 @@ pub fn buffer::PixelSlice<'a, P>::with_primaries(self, descriptor::ColorPrimarie
 pub fn buffer::PixelSlice<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
 pub fn buffer::PixelSlice<'a>::new(&'a [u8], u32, u32, usize, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelSlice<'a>::new_tight(&'a [u8], u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSlice<'a>::new_contiguous(&'a [u8], u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSliceMut<'a, P>::new_typed(&'a mut [u8], u32, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSliceMut<'a, P>::as_pixel_slice(&self) -> buffer::PixelSlice<'_, P>
 pub fn buffer::PixelSliceMut<'a, P>::as_strided_bytes(&self) -> &[u8]
@@ -149,7 +149,7 @@ pub fn buffer::PixelSliceMut<'a, P>::with_transfer(self, descriptor::TransferFun
 pub fn buffer::PixelSliceMut<'a, buffer::Bgrx>::swap_to_rgbx(self) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
 pub fn buffer::PixelSliceMut<'a, buffer::Rgbx>::swap_to_bgrx(self) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
 pub fn buffer::PixelSliceMut<'a>::new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelSliceMut<'a>::new_tight(&'a mut [u8], u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'a>::new_contiguous(&'a mut [u8], u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub buffer::Rgbx::b: u8
 pub buffer::Rgbx::g: u8
 pub buffer::Rgbx::r: u8
@@ -790,7 +790,7 @@ pub fn buffer::PixelSlice<'a, P>::with_primaries(self, descriptor::ColorPrimarie
 pub fn buffer::PixelSlice<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
 pub fn buffer::PixelSlice<'a>::new(&'a [u8], u32, u32, usize, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelSlice<'a>::new_tight(&'a [u8], u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSlice<'a>::new_contiguous(&'a [u8], u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 #[non_exhaustive] pub struct PixelSliceMut<'a, P> [also: buffer]
 pub fn buffer::PixelSliceMut<'a, P>::new_typed(&'a mut [u8], u32, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSliceMut<'a, P>::as_pixel_slice(&self) -> buffer::PixelSlice<'_, P>
@@ -819,7 +819,7 @@ pub fn buffer::PixelSliceMut<'a, P>::with_transfer(self, descriptor::TransferFun
 pub fn buffer::PixelSliceMut<'a, buffer::Bgrx>::swap_to_rgbx(self) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
 pub fn buffer::PixelSliceMut<'a, buffer::Rgbx>::swap_to_bgrx(self) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
 pub fn buffer::PixelSliceMut<'a>::new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelSliceMut<'a>::new_tight(&'a mut [u8], u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'a>::new_contiguous(&'a mut [u8], u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 #[repr(C)] pub struct Rgbx [also: buffer]
 pub Rgbx::b: u8
 pub Rgbx::g: u8

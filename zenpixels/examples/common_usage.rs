@@ -115,11 +115,11 @@ fn walk_strided_rows() {
         assert_eq!(slice.row(y).len(), 3 * 4);
     }
 
-    // For the common *packed* case, `new_tight` derives `width * bpp` for you —
+    // For the common *packed* case, `new_contiguous` derives `width * bpp` for you —
     // no hand-computed stride (the single most-repeated line across the ecosystem).
     let packed = vec![0u8; width as usize * rows as usize * 4];
-    let tight =
-        PixelSlice::new_tight(&packed, width, rows, PixelDescriptor::RGBA8).expect("packed buffer");
+    let tight = PixelSlice::new_contiguous(&packed, width, rows, PixelDescriptor::RGBA8)
+        .expect("packed buffer");
     assert_eq!(tight.stride(), width as usize * 4);
     assert!(tight.is_contiguous());
 }
