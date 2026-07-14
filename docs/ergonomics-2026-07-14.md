@@ -23,13 +23,13 @@ demotion queued for the next breaking release.
 
 | # | Finding | Real consumers | Change | Semver | Status |
 |---|---------|---------------:|--------|--------|--------|
-| 1 | `PixelSlice::new_contiguous` / `PixelSliceMut::new_contiguous` (packed-stride ctor) | ~361 | add method | additive (0.2.x) | **landed** |
+| 1 | `PixelSlice::new_contiguous` / `PixelSliceMut::new_contiguous` (+ `new_packed` alias) — packed-stride ctor | ~361 | add method | additive (0.2.x) | **landed** |
 | 2 | `Adapted::as_pixel_slice()` | 5 | add method | additive (0.2.x) | **landed** |
 | 3 | `RowConverter::convert_slice(PixelSlice) -> PixelBuffer` | 4–5 | add method | additive (0.2.x) | **landed** |
 | 4 | `PixelDescriptor::with_color_from_cicp(Cicp)` | 3+ | add method | additive (0.2.x) | **landed** |
 | 5 | Steer bare-`Vec` callers to `convert_to` | — | docs | none | doc |
 | 6 | Crate-doc examples are `rust,ignore` (untested) | — | docs | none | galleries |
-| 7 | `finalize_for_output*` / `EncodeReady` / `OutputProfile` unadopted | **0** | demote | **0.3.0 breaking** | queued |
+| 7 | `finalize_for_output_with` / `EncodeReady` — atomic encode contract, unadopted by codecs (weaker two-track path) | **0 ext.** | keep / adopt | none | see §7 |
 | 8 | `PixelBufferConvertTypedExt` (`.to_rgba8`) is top idiom but `rgb`-gated | ~93 | docs | none | doc |
 | 9 | `Cicp::from_bytes([u8; 4])` | ~161 `Cicp::new` | add method | additive (0.2.x) | **landed** |
 
@@ -154,15 +154,46 @@ source of truth; the crate docs now point at the galleries (and the illustrative
 `ignore` blocks that use pseudo-symbols like `my_codec_decode` are labeled as
 such). Follow-up: convert the self-contained ones to real doctests.
 
-## 7. Unadopted encode-finalization surface → 0.3.0 demotion candidate
+## 7. Encode-finalization surface (`finalize_for_output_with` / `EncodeReady`) — keep, do NOT demote
 
-`finalize_for_output`, `finalize_for_output_with`, `EncodeReady`,
-`OutputProfile`, `OutputMetadata` are public and documented as the "encode" step,
-but the audit found **zero** non-def/non-doc downstream call sites. The encode
-color role is filled by `adapt_for_encode` + zencodec's `resolve_color_emit`.
-Per YAGNI these should be `pub(crate)`, but they shipped in 0.2.14, so removal is
-breaking. Recommendation: add to `CHANGELOG.md` **QUEUED BREAKING CHANGES** and
-demote at 0.3.0 (do not ship piecemeal). Same status as `cms_lite::ZenCmsLite`.
+**Correction to an earlier draft of this report, which wrongly flagged this
+surface for 0.3.0 demotion.** A full consumer audit confirms
+`finalize_for_output_with`, `EncodeReady`, `OutputProfile`, `OutputMetadata`
+have **zero external consumers** — but that is *under-adoption of the stronger
+contract*, not dead weight to delete. (Only the `finalize_for_output`
+`<C: ColorManagement>` overload and the `OutputMetadata::hdr` field are
+deprecated.)
+
+`finalize_for_output_with` is the crate's **type-enforced atomic encode
+contract**: it converts pixels to the target profile and produces the matching
+ICC/CICP *together*, so they cannot diverge — and its `EncodeReady::pixels()`
+come off a `PixelBuffer`, hence always SIMD-aligned (never the
+fallible-alignment case that `Adapted::as_pixel_slice` guards).
+
+**What the codecs do instead (two-track, by-convention):**
+
+- Track A — pixels: `adapt_for_encode` (format negotiation only; it *refuses*
+  to relabel primaries/range without a real conversion).
+- Track B — metadata: `zencodec::resolve_color_emit` → `ColorEmitPlan{cicp,icc}`
+  (pure/`no_std`, never sees pixels), lowered per-codec via
+  `synthesize_icc_for_cicp`.
+
+This mostly dodges the "P3 pixels / sRGB tag" bug **because the codecs never
+color-convert at encode** — pixels arrive already in their working space. But
+the guarantee is weaker than `EncodeReady`'s: the emitted metadata comes from a
+caller-supplied `Metadata{cicp,icc}` that is a *separate input from the pixels*
+and is never cross-checked. AVIF (`zenavif/src/codec.rs:999-1053`) treats the
+caller CICP as authoritative and ignores the descriptor, so an upstream mislabel
+is emitted faithfully wrong.
+
+**Recommendation (reversed):** do NOT demote. Either (a) adopt
+`finalize_for_output_with` in the codec lowering path for the type-enforced
+guarantee, (b) keep the two-track design but add a pixel↔metadata cross-check,
+or (c) at minimum keep the API as the reference contract. Two stale docs to fix
+regardless: the crate's own module docs (`lib.rs:256,259,286,357,388`)
+recommend the **deprecated** `finalize_for_output` instead of `_with`, and
+`zencodec/src/color.rs:43` claims the encode path already lowers "through
+zenpixels_convert's atomic finalize_for_output_with" — it does not.
 
 ## 8. Top convert idiom is `rgb`-gated and under-documented
 
@@ -187,16 +218,18 @@ An additive `Cicp::from_bytes([u8; 4])` removes the `!= 0` papercut. Low priorit
 - **Galleries + CI + docs**: the two tested example galleries, the CI
   `--examples` step, and this document.
 - **Additive API (approved 2026-07-14)**: findings 1, 2, 3, 4, 9 — `new_contiguous`
-  on both slice types, `Adapted::as_pixel_slice`,
+  (+ its `new_packed` alias) on both slice types, `Adapted::as_pixel_slice`,
   `RowConverter::convert_slice`, `PixelDescriptor::with_color_from_cicp`, and
   `Cicp::from_bytes`. Each is exercised in a gallery scenario and a doctest, and
   is used inside the crates where it removes boilerplate. `cargo semver-checks`
-  classifies all five as non-breaking additions.
+  classifies all of them as non-breaking additions.
 - **Docs-only**: findings 5 (steer to `convert_to`), 6 (galleries replace the
   `rust,ignore` blocks as the source of truth), 8 (document the `rgb`-gated
   `to_rgba8`).
-- **0.3.0 queue**: finding 7 (demote the unadopted `finalize_for_output*`
-  surface) belongs in the batched breaking release, not shipped piecemeal.
+- **Finding 7 (corrected — NOT a demotion)**: `finalize_for_output_with` /
+  `EncodeReady` is the type-enforced atomic encode contract and stays. The
+  codecs' weaker two-track path (`adapt_for_encode` + `resolve_color_emit`)
+  carries the residual pixel↔metadata divergence gap. See §7.
 
 Sibling repos (imageflow, zengif, zenpipe, zencodecs, zenpng, zenavif, …) still
 hold the ~361 + N hand-rolled call sites the helpers target; migrating them is a

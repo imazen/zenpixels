@@ -193,13 +193,18 @@ fn convert_a_strip_with_a_plan() -> Fallible {
     Ok(())
 }
 
-/// Turn a processed buffer + its provenance into encoder-ready pixels+metadata.
+/// Atomically turn a processed buffer + its provenance into encoder-ready
+/// pixels AND matching color metadata — the crate's recommended encode step.
 ///
-/// NOTE: `finalize_for_output*` / `EncodeReady` / `OutputProfile` are the
-/// documented "encode" step, but the downstream-usage audit found *zero*
-/// real call sites — codecs use `adapt_for_encode` + zencodec's color
-/// resolution instead. Flagged in the ergonomics report as an unadopted
-/// surface (a 0.3.0 demotion candidate), shown here only for completeness.
+/// This is the *color-correct* encode path: `finalize_for_output_with`
+/// converts the pixels to the target profile and produces the exact ICC/CICP
+/// to embed **together**, so they can never diverge (the classic "pixels are
+/// Display P3 but the file says sRGB" bug). [`EncodeReady`] is the only way to
+/// obtain both, and its `pixels()` come off a `PixelBuffer` — so, unlike
+/// `Adapted::as_pixel_slice` above, they are always SIMD-aligned and never
+/// fallible on alignment. Contrast with `adapt_for_encode`, which negotiates
+/// pixel *format* only and leaves the color metadata to the caller (faster /
+/// zero-copy when you are not changing color and manage the metadata yourself).
 fn finalize_metadata_for_the_encoder() -> Fallible {
     let buffer = PixelBuffer::new(4, 4, PixelDescriptor::RGBA8_SRGB);
     let origin = ColorOrigin::from_cicp(Cicp::SRGB); // how the source declared color
