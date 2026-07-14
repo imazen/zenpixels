@@ -439,10 +439,11 @@ pub trait CllMeasure {
     /// CLL metadata — the kind of measurement that runs on every frame
     /// of every encode. Implementation skips the histogram entirely:
     /// SIMD per-pixel `max + sum` only, scaled by the diffuse-white
-    /// anchor at end-of-image. On Ryzen 9 7950X with the `simd` feature
-    /// and `-C target-cpu=native` this reaches ≥1 Gpix/s sustained
-    /// (vs ~490 Mpix/s via the histogram path), giving the SOTA spec-
-    /// conformant CLL reading in the workspace.
+    /// anchor at end-of-image. The SIMD path is unconditional (runtime
+    /// dispatch — no cargo feature, no `-C target-cpu` flag needed): on
+    /// a Ryzen 9 7950X via the AVX2 tier this reaches ≥1 Gpix/s
+    /// sustained, several times the histogram path's throughput
+    /// (`examples/measure_histogram_throughput.rs` prints both).
     fn measure_max(
         px: PixelSlice<'_>,
         white: DiffuseWhite,
@@ -751,6 +752,14 @@ mod simd_kernel {
     /// the scan.
     const LANES: usize = 8;
 
+    /// Flush the f32 lane sums into the f64 running total every this many
+    /// chunks (256 chunks = 2 048 samples per lane). f32 accumulation error
+    /// grows with the number of sequential adds; flushing bounds the f32
+    /// span to 2 048 adds regardless of row width, so MaxFALL stays within
+    /// the ±1-nit parity contract even for panorama-wide rows at PQ-peak
+    /// nit levels. Cost: one horizontal reduce per 2 048 pixels (~free).
+    const SUM_FLUSH_CHUNKS: u32 = 256;
+
     // BT.2020 NCL luma coefficients — shared with `bt2446a` via the parent
     // module's `BT2020_L*` constants. Re-aliased here so the SIMD splat and
     // scalar tail use the same names that previously appeared in this kernel.
@@ -890,10 +899,12 @@ mod simd_kernel {
         let num_bins_minus_1 = f32x8::splat(token, (LightLevelHistogram::NUM_BINS - 1) as f32);
 
         let mut local_max = zero;
-        // Accumulate in f32 lanes inside the loop and convert to f64 once
-        // per row to bound rounding error — a 4K row is at most 3840 pixels
-        // and f32 sums of cd/m² values stay precise across that span.
+        // Accumulate in f32 lanes, flushing into the f64 running total
+        // every `SUM_FLUSH_CHUNKS` chunks so the f32 error span is bounded
+        // regardless of row width (the previous once-per-row conversion
+        // assumed rows ≤ 4K pixels).
         let mut local_sum = zero;
+        let mut chunks_since_flush = 0u32;
 
         let mut iter = row.chunks_exact(LANES * N);
         for chunk in &mut iter {
@@ -911,14 +922,29 @@ mod simd_kernel {
             let g = f32x8::load(token, &ga);
             let b = f32x8::load(token, &ba);
 
-            // Folded `0.0.max(R).max(G).max(B)`: non-NaN-propagating max
-            // means negative inputs and NaN both fold to 0 (matches the
-            // scalar contract).
-            let m_rel = zero.max(r).max(g).max(b);
+            // Tier-consistent NaN/negative fold: `v > 0` is an ORDERED
+            // compare — false for NaN, for negatives, and for zero on
+            // every tier — so the blend picks 0 for all three, matching
+            // the scalar tail's `max(0.0)` semantics exactly. A bare
+            // `zero.max(v)` chain is NOT tier-consistent for NaN input:
+            // x86 `maxps` returns the second operand while NEON/WASM
+            // propagate NaN, which zeroed MaxFALL (and could underreport
+            // MaxCLL) whenever any sample was NaN. Pinned by the
+            // wide-row NaN tests in tests/cll_measure.rs.
+            let r = f32x8::blend(r.simd_gt(zero), r, zero);
+            let g = f32x8::blend(g.simd_gt(zero), g, zero);
+            let b = f32x8::blend(b.simd_gt(zero), b, zero);
+            let m_rel = r.max(g).max(b);
             let m_nits = m_rel * wn;
 
             local_max = local_max.max(m_nits);
             local_sum += m_nits;
+            chunks_since_flush += 1;
+            if chunks_since_flush == SUM_FLUSH_CHUNKS {
+                *sum_nits += f64::from(local_sum.reduce_add());
+                local_sum = zero;
+                chunks_since_flush = 0;
+            }
 
             // SIMD log2 → bin index. Use `safe = max(m_nits, BIN_MIN_NITS)`
             // so log2(0) doesn't underflow into NaN/-inf.
@@ -995,7 +1021,10 @@ mod simd_kernel {
         let num_bins_minus_1 = f32x8::splat(token, (LightLevelHistogram::NUM_BINS - 1) as f32);
 
         let mut local_max = zero;
+        // f32 lane sums flushed to f64 every `SUM_FLUSH_CHUNKS` chunks —
+        // see `accumulate_strip_max_rgb_tier`.
         let mut local_sum = zero;
+        let mut chunks_since_flush = 0u32;
 
         let mut iter = row.chunks_exact(LANES * N);
         for chunk in &mut iter {
@@ -1008,15 +1037,28 @@ mod simd_kernel {
                 ga[i] = chunk[base + 1];
                 ba[i] = chunk[base + 2];
             }
-            let r = f32x8::load(token, &ra).max(zero);
-            let g = f32x8::load(token, &ga).max(zero);
-            let b = f32x8::load(token, &ba).max(zero);
+            // Tier-consistent NaN/negative fold — see the comment in
+            // `accumulate_strip_max_rgb_tier`. A `.max(zero)` load fold
+            // propagated NaN on NEON/WASM (and was order-dependent on
+            // x86), poisoning the luminance dot product.
+            let r = f32x8::load(token, &ra);
+            let g = f32x8::load(token, &ga);
+            let b = f32x8::load(token, &ba);
+            let r = f32x8::blend(r.simd_gt(zero), r, zero);
+            let g = f32x8::blend(g.simd_gt(zero), g, zero);
+            let b = f32x8::blend(b.simd_gt(zero), b, zero);
 
             let y_rel = kr * r + kg * g + kb * b;
             let y_nits = y_rel * wn;
 
             local_max = local_max.max(y_nits);
             local_sum += y_nits;
+            chunks_since_flush += 1;
+            if chunks_since_flush == SUM_FLUSH_CHUNKS {
+                *sum_nits += f64::from(local_sum.reduce_add());
+                local_sum = zero;
+                chunks_since_flush = 0;
+            }
 
             let safe = y_nits.max(bin_min_nits);
             let log2 = safe.log2_midp();
@@ -1157,7 +1199,10 @@ mod simd_kernel {
     ) {
         let zero = f32x8::zero(token);
         let mut local_max = zero;
+        // f32 lane sums flushed to f64 every `SUM_FLUSH_CHUNKS` chunks —
+        // see `accumulate_strip_max_rgb_tier`.
         let mut local_sum = zero;
+        let mut chunks_since_flush = 0u32;
 
         let mut iter = row.chunks_exact(LANES * N);
         for chunk in &mut iter {
@@ -1170,12 +1215,23 @@ mod simd_kernel {
                 ga[i] = chunk[base + 1];
                 ba[i] = chunk[base + 2];
             }
+            // Tier-consistent NaN/negative fold — see the comment in
+            // `accumulate_strip_max_rgb_tier`.
             let r = f32x8::load(token, &ra);
             let g = f32x8::load(token, &ga);
             let b = f32x8::load(token, &ba);
-            let m = zero.max(r).max(g).max(b);
+            let r = f32x8::blend(r.simd_gt(zero), r, zero);
+            let g = f32x8::blend(g.simd_gt(zero), g, zero);
+            let b = f32x8::blend(b.simd_gt(zero), b, zero);
+            let m = r.max(g).max(b);
             local_max = local_max.max(m);
             local_sum += m;
+            chunks_since_flush += 1;
+            if chunks_since_flush == SUM_FLUSH_CHUNKS {
+                *row_sum_rel += f64::from(local_sum.reduce_add());
+                local_sum = zero;
+                chunks_since_flush = 0;
+            }
         }
 
         *row_max_rel = local_max.reduce_max().max(*row_max_rel);
@@ -1205,7 +1261,10 @@ mod simd_kernel {
         let kb = f32x8::splat(token, KB);
 
         let mut local_max = zero;
+        // f32 lane sums flushed to f64 every `SUM_FLUSH_CHUNKS` chunks —
+        // see `accumulate_strip_max_rgb_tier`.
         let mut local_sum = zero;
+        let mut chunks_since_flush = 0u32;
 
         let mut iter = row.chunks_exact(LANES * N);
         for chunk in &mut iter {
@@ -1218,12 +1277,23 @@ mod simd_kernel {
                 ga[i] = chunk[base + 1];
                 ba[i] = chunk[base + 2];
             }
-            let r = f32x8::load(token, &ra).max(zero);
-            let g = f32x8::load(token, &ga).max(zero);
-            let b = f32x8::load(token, &ba).max(zero);
+            // Tier-consistent NaN/negative fold — see the comment in
+            // `accumulate_strip_max_rgb_tier`.
+            let r = f32x8::load(token, &ra);
+            let g = f32x8::load(token, &ga);
+            let b = f32x8::load(token, &ba);
+            let r = f32x8::blend(r.simd_gt(zero), r, zero);
+            let g = f32x8::blend(g.simd_gt(zero), g, zero);
+            let b = f32x8::blend(b.simd_gt(zero), b, zero);
             let y = kr * r + kg * g + kb * b;
             local_max = local_max.max(y);
             local_sum += y;
+            chunks_since_flush += 1;
+            if chunks_since_flush == SUM_FLUSH_CHUNKS {
+                *row_sum_rel += f64::from(local_sum.reduce_add());
+                local_sum = zero;
+                chunks_since_flush = 0;
+            }
         }
 
         *row_max_rel = local_max.reduce_max().max(*row_max_rel);
