@@ -987,7 +987,10 @@ impl ConvertPlan {
         // a fully BLACK image with no error — silent total pixel loss.
         let peak_usable = |v: f32| v.is_finite() && v > 0.0;
         if !peak_usable(hdr.source_peak_nits) || !peak_usable(hdr.target_peak_nits) {
-            return Err(whereat::at!(ConvertError::HdrSourceRequiresPeak { from, to }));
+            return Err(whereat::at!(ConvertError::HdrSourceRequiresPeak {
+                from,
+                to
+            }));
         }
         // Note: do NOT early-return on `from == to`. The HDR-aware
         // constructor is the caller's opt-in signal that the source carries
@@ -1119,6 +1122,20 @@ impl ConvertPlan {
         }
 
         // ---- (h) Alpha mode (Straight↔Premultiplied).
+        //
+        // KNOWN LIMITATION (premultiplied HDR sources): steps (b)–(e) above —
+        // including the NONLINEAR tone-map and OKLch soft-compress — run on the
+        // source's alpha mode carried through from step (a). Linear ops (the
+        // gamut matrices) commute with premultiplication, but the nonlinear
+        // tone-map does not: `TM(α·R) ≠ α·TM(R)`. A `Premultiplied` source is
+        // therefore tone-mapped on premultiplied values, and this step only
+        // reconciles the alpha *mode* afterwards. Correct handling needs an
+        // unpremultiply before step (b) and a re-premultiply here — but the
+        // library's premul convention is encoded-space (Canvas 2D; see the
+        // `new_explicit` MatteComposite note), so doing it in the linear
+        // pipeline is subtle and deferred rather than done wrong. In practice
+        // PQ/HLG sources are virtually always straight/opaque; premultiplied
+        // HDR is the rare case. Tracked for the `hdr-experimental` stabilization.
         if from.alpha() != to.alpha() && from.alpha().is_some() && to.alpha().is_some() {
             match (from.alpha(), to.alpha()) {
                 (Some(AlphaMode::Straight), Some(AlphaMode::Premultiplied)) => {
