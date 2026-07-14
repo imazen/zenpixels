@@ -57,7 +57,7 @@
 //!
 //! 4. **Pixels and metadata travel together.** [`ColorContext`] rides on
 //!    [`PixelBuffer`] via `Arc` so ICC/CICP metadata follows pixel data
-//!    through the pipeline. [`finalize_for_output`] couples converted pixels
+//!    through the pipeline. [`finalize_for_output_with`] couples converted pixels
 //!    with matching encoder metadata atomically.
 //!
 //! 5. **Provenance enables lossless round-trips.** The cost model tracks
@@ -253,15 +253,19 @@
 //! The encoder receives pixel data in a format it natively supports and
 //! must embed correct color metadata.
 //!
-//! For the atomic path (recommended), use [`finalize_for_output`]:
+//! For the atomic path (recommended), use [`finalize_for_output_with`]. It does
+//! **color conversion + matching metadata, not format negotiation**: it takes a
+//! *single* target [`PixelFormat`] — the byte layout you already chose, typically
+//! the winner of [`best_match`] / [`adapt::adapt_for_encode`] (via
+//! `descriptor.pixel_format()`). Negotiate first, then finalize:
 //!
 //! ```rust,ignore
-//! let ready = finalize_for_output(
+//! let ready = finalize_for_output_with(
 //!     &buffer,
 //!     &color_origin,
 //!     OutputProfile::SameAsOrigin,
-//!     target_format,
-//!     &cms,
+//!     target_format,      // a single, already-negotiated PixelFormat
+//!     Some(&cms),         // Option<&dyn PluggableCms>; None for Named profiles
 //! )?;
 //!
 //! // Pixels and metadata are guaranteed to match
@@ -283,7 +287,7 @@
 //!   so negotiation will route f32 data directly to the encoder instead of
 //!   doing a redundant f32→u8 conversion first.
 //!
-//! - Use [`finalize_for_output`] to bundle pixels and metadata atomically.
+//! - Use [`finalize_for_output_with`] to bundle pixels and metadata atomically.
 //!   This prevents the most common color management bug: pixel values that
 //!   don't match the embedded ICC/CICP.
 //!
@@ -354,7 +358,7 @@
 //! Codecs that handle ICC profiles must:
 //! 1. Extract ICC bytes on decode and store them on [`ColorContext`].
 //! 2. Record provenance on [`ColorOrigin`].
-//! 3. On encode, let [`finalize_for_output`] handle the ICC transform
+//! 3. On encode, let [`finalize_for_output_with`] handle the ICC transform
 //!    (if the target profile differs from the source) or pass-through
 //!    (if `SameAsOrigin`).
 //!
@@ -385,7 +389,7 @@
 //! - [ ] Decode: record provenance → [`ColorOrigin`]
 //! - [ ] Encode: negotiate via [`best_match`] or [`adapt::adapt_for_encode`]
 //! - [ ] Encode: convert via [`RowConverter`] (not hand-rolled)
-//! - [ ] Encode: embed metadata via [`finalize_for_output`]
+//! - [ ] Encode: embed metadata via [`finalize_for_output_with`]
 //! - [ ] Encode: embed ICC/CICP when the format supports it
 //! - [ ] Handle [`ConvertError`] variants specifically
 //! - [ ] Test round-trip: native format → encode → decode = lossless
