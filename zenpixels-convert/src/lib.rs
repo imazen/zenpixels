@@ -9,6 +9,13 @@
 //! All interchange types from `zenpixels` are re-exported at the crate root,
 //! so downstream code can depend on `zenpixels-convert` alone.
 //!
+//! # Examples
+//!
+//! A runnable, self-checking walk through the Decode → Negotiate → Convert →
+//! Encode lifecycle lives in
+//! [`examples/convert_pipeline.rs`](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/examples/convert_pipeline.rs)
+//! (`cargo run -p zenpixels-convert --example convert_pipeline`).
+//!
 //! # Core concepts
 //!
 //! - **Format negotiation**: [`best_match`] picks the cheapest conversion

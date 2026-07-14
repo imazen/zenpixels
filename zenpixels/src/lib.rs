@@ -8,6 +8,12 @@
 //! gamut mapping, and codec format negotiation, see
 //! [`zenpixels-convert`](https://docs.rs/zenpixels-convert).
 //!
+//! # Examples
+//!
+//! A runnable, self-checking gallery of the common usages lives in
+//! [`examples/common_usage.rs`](https://github.com/imazen/zenpixels/blob/main/zenpixels/examples/common_usage.rs)
+//! (`cargo run -p zenpixels --example common_usage`).
+//!
 //! # Core types
 //!
 //! - [`PixelFormat`] — flat enum of byte layouts (`Rgb8`, `Rgba16`, `OklabF32`, etc.)

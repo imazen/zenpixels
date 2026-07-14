@@ -44,6 +44,12 @@ jobs:
       - name: Test (workspace)
         run: cargo test --workspace
 
+      # `cargo test --workspace` builds example targets but does not run the
+      # `#[test]`s inside them (that needs `--examples`). The `common_usage` /
+      # `convert_pipeline` galleries assert the documented behavior, so run them.
+      - name: Test (usage examples)
+        run: cargo test --workspace --examples
+
       # Default `cargo test` exercises only the portable scalar transpose tiers.
       # Run the orient suite again with the SIMD kernels enabled so the per-width
       # AVX2 (x64) / NEON (arm64 runners) register transposes are executed and
