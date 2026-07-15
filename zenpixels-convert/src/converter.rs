@@ -6,7 +6,7 @@
 use alloc::boxed::Box;
 
 use crate::convert::{ConvertPlan, ConvertScratch, convert_row_buffered};
-use crate::{ChannelLayout, ConvertError, PixelBuffer, PixelDescriptor, PixelSlice};
+use crate::{ChannelLayout, ConvertError, PixelBuffer, PixelDescriptor, PixelSlice, PixelSliceMut};
 use whereat::{At, ResultAtExt};
 
 /// Pre-computed pixel format converter with pre-allocated scratch buffers.
@@ -380,22 +380,77 @@ impl RowConverter {
     pub fn convert_slice(&mut self, src: PixelSlice<'_>) -> Result<PixelBuffer, At<ConvertError>> {
         let (width, rows) = (src.width(), src.rows());
         let target = self.plan.to();
-        let dst_stride = target.aligned_stride(width);
-        let total = dst_stride
-            .checked_mul(rows as usize)
-            .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))?;
-        let mut out = alloc::vec![0u8; total];
-        for y in 0..rows {
-            let src_row = src.row(y);
-            let dst_start = y as usize * dst_stride;
-            self.convert_row(src_row, &mut out[dst_start..dst_start + dst_stride], width);
-        }
-        let mut buf =
-            PixelBuffer::from_vec(out, width, rows, target).map_err_at(ConvertError::from)?;
-        if let Some(ctx) = src.color_context() {
-            buf = buf.with_color_context(alloc::sync::Arc::clone(ctx));
+        // Captured before `src` moves into the no-alloc primitive below.
+        let ctx = src.color_context().cloned();
+        let mut buf = PixelBuffer::try_new(width, rows, target).map_err_at(ConvertError::from)?;
+        self.convert_slice_into(src, buf.as_slice_mut())?;
+        if let Some(ctx) = ctx {
+            buf = buf.with_color_context(ctx);
         }
         Ok(buf)
+    }
+
+    /// Convert an entire [`PixelSlice`] into a caller-provided
+    /// [`PixelSliceMut`] — no allocation.
+    ///
+    /// The no-alloc primitive that [`convert_slice`](Self::convert_slice) is
+    /// sugar over. Both sides may be strided (a crop, a decoder row-guard, a
+    /// reused scratch buffer, a staging buffer with a required pitch), because
+    /// each [`PixelSlice`] carries its own stride — which is why neither is
+    /// passed separately. Use this when you already own the destination or are
+    /// converting many frames through one buffer; use `convert_slice` for the
+    /// one-shot case.
+    ///
+    /// The destination's [`ColorContext`](zenpixels::ColorContext) is left
+    /// alone — the caller owns `dst` and its metadata. (`convert_slice` copies
+    /// the source's context onto the buffer it allocates.)
+    ///
+    /// # Errors
+    ///
+    /// * [`ConvertError::BufferSize`] if `dst`'s dimensions differ from `src`'s.
+    /// * [`ConvertError::NoPath`] if `dst`'s descriptor is not this converter's
+    ///   target — the plan was built for a specific `to`, so writing into a
+    ///   differently-shaped destination would silently produce wrong pixels.
+    ///
+    /// ```
+    /// use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice};
+    /// use zenpixels_convert::RowConverter;
+    ///
+    /// let src_bytes = [10u8, 20, 30, 40, 50, 60];
+    /// let src = PixelSlice::new_contiguous(&src_bytes, 2, 1, PixelDescriptor::RGB8_SRGB)?;
+    /// // A destination you already own — reused across frames, no alloc here.
+    /// let mut dst = PixelBuffer::new(2, 1, PixelDescriptor::RGBA8_SRGB);
+    ///
+    /// let mut conv = RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB)?;
+    /// conv.convert_slice_into(src, dst.as_slice_mut())?;
+    /// assert_eq!(&dst.as_slice().row(0)[0..4], &[10, 20, 30, 255]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[track_caller]
+    pub fn convert_slice_into(
+        &mut self,
+        src: PixelSlice<'_>,
+        mut dst: PixelSliceMut<'_>,
+    ) -> Result<(), At<ConvertError>> {
+        let (width, rows) = (src.width(), src.rows());
+        if dst.width() != width || dst.rows() != rows {
+            return Err(whereat::at!(ConvertError::BufferSize {
+                expected: (width as usize) * (rows as usize),
+                actual: (dst.width() as usize) * (dst.rows() as usize),
+            }));
+        }
+        let target = self.plan.to();
+        if dst.descriptor() != target {
+            return Err(whereat::at!(ConvertError::NoPath {
+                from: dst.descriptor(),
+                to: target,
+            }));
+        }
+        for y in 0..rows {
+            let src_row = src.row(y);
+            self.convert_row(src_row, dst.row_mut(y), width);
+        }
+        Ok(())
     }
 
     /// True if the conversion is a no-op (formats are identical).

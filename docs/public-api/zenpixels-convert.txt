@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)        49
 #   pub consts/statics                         19
 #   free functions                             40
-#   inherent methods                           96
+#   inherent methods                           98
 #   struct fields                              50
 #   enum variants                              56
 #   re-exports                                  5
@@ -24,7 +24,7 @@
 #   (root)                          151
 #   adapt                            11
 #   cms                              27
-#   converter                        25
+#   converter                        27
 #   error                            27
 #   ext                              13
 #   gamut                             6
@@ -35,7 +35,7 @@
 #   orient                            3
 #   output                           17
 
-## items (298 lines)
+## items (300 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -74,6 +74,7 @@ pub fn converter::RowConverter::compose(&self, &Self) -> core::option::Option<Se
 pub fn converter::RowConverter::convert_row(&mut self, &[u8], &mut [u8], u32)
 pub fn converter::RowConverter::convert_rows(&mut self, &[u8], usize, &mut [u8], usize, u32, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::convert_slice(&mut self, zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn converter::RowConverter::convert_slice_into(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::from_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn converter::RowConverter::from_plan(ConvertPlan) -> Self
 pub fn converter::RowConverter::is_identity(&self) -> bool
@@ -279,6 +280,7 @@ pub fn converter::RowConverter::compose(&self, &Self) -> core::option::Option<Se
 pub fn converter::RowConverter::convert_row(&mut self, &[u8], &mut [u8], u32)
 pub fn converter::RowConverter::convert_rows(&mut self, &[u8], usize, &mut [u8], usize, u32, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::convert_slice(&mut self, zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn converter::RowConverter::convert_slice_into(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::from_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn converter::RowConverter::from_plan(ConvertPlan) -> Self
 pub fn converter::RowConverter::is_identity(&self) -> bool
