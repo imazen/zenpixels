@@ -4,7 +4,7 @@
 //! `zenpixels` (no heavy deps), while the conversion math lives here
 //! (depends on `linear-srgb`).
 
-use zenpixels::{ColorPrimaries, TransferFunction};
+use zenpixels::{ColorPrimaries, PixelSliceMut, TransferFunction};
 
 use crate::convert::{hlg_eotf, hlg_oetf, pq_eotf, pq_oetf};
 use crate::gamut::GamutMatrix;
@@ -104,15 +104,64 @@ use zenpixels::PixelDescriptor;
 use zenpixels::buffer::PixelBuffer;
 use zenpixels::descriptor::{AlphaMode, ChannelLayout, ChannelType};
 
+mod sealed {
+    /// Seals the `PixelBuffer*ConvertExt` traits.
+    ///
+    /// These are extension traits over a concrete foreign type — implementing
+    /// them elsewhere was never meaningful (every method returns a
+    /// `PixelBuffer`), and a full audit of `~/work/zen` found zero external
+    /// impls. Sealing makes adding methods a non-breaking change, which is
+    /// what `convert_into` needed; without it every future addition would be
+    /// a major bump for impls that do not exist.
+    pub trait Sealed {}
+    impl Sealed for zenpixels::buffer::PixelBuffer {}
+}
+
 /// Adds format conversion methods to type-erased [`PixelBuffer`].
-pub trait PixelBufferConvertExt {
+///
+/// Sealed — this crate is the only implementor.
+pub trait PixelBufferConvertExt: sealed::Sealed {
     /// Convert pixel data to a different layout and depth.
     ///
     /// Uses [`RowConverter`](crate::RowConverter) for transfer-function-aware
     /// conversion. Color metadata is preserved.
     ///
-    /// **Allocates** a new [`PixelBuffer`].
+    /// **Allocates** a new [`PixelBuffer`]. For a no-allocation conversion into
+    /// storage you already own, use [`convert_into`](Self::convert_into).
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>>;
+
+    /// Convert into a caller-provided destination — **no allocation**.
+    ///
+    /// The no-alloc primitive that [`convert_to`](Self::convert_to) is sugar
+    /// over. The target descriptor is read from `dst`, and both sides may be
+    /// strided (a crop, a decoder row-guard, a reused scratch buffer, a
+    /// staging buffer with a required pitch) because each carries its own
+    /// stride. Reach for this when converting many frames through one
+    /// destination, or when you already own the output.
+    ///
+    /// `dst`'s [`ColorContext`](zenpixels::ColorContext) is left alone — the
+    /// caller owns `dst` and its metadata. (`convert_to` copies the source's
+    /// context onto the buffer it allocates.)
+    ///
+    /// # Errors
+    ///
+    /// [`ConvertError::NeedsCms`](crate::ConvertError::NeedsCms) if the pair
+    /// needs a CMS, [`ConvertError::NoPath`](crate::ConvertError::NoPath) if no
+    /// kernel exists, or [`ConvertError::BufferSize`](crate::ConvertError::BufferSize)
+    /// if `dst`'s dimensions differ from this buffer's.
+    ///
+    /// ```
+    /// use zenpixels::{PixelBuffer, PixelDescriptor};
+    /// use zenpixels_convert::PixelBufferConvertExt;
+    ///
+    /// let src = PixelBuffer::new(4, 4, PixelDescriptor::RGB8_SRGB);
+    /// // A destination you already own — reused across frames, no alloc here.
+    /// let mut dst = PixelBuffer::new(4, 4, PixelDescriptor::RGBA8_SRGB);
+    /// src.convert_into(dst.as_slice_mut())?;
+    /// assert_eq!(dst.as_slice().row(0)[3], 255); // opaque alpha filled in
+    /// # Ok::<(), whereat::At<zenpixels_convert::ConvertError>>(())
+    /// ```
+    fn convert_into(&self, dst: PixelSliceMut<'_>) -> Result<(), At<crate::ConvertError>>;
 
     /// Add an alpha channel. **Allocates** a new `PixelBuffer`.
     ///
@@ -194,51 +243,28 @@ fn check_needs_cms(
 impl PixelBufferConvertExt for PixelBuffer {
     #[track_caller]
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>> {
-        let src_desc = self.descriptor();
-        check_needs_cms(&src_desc, &target)?;
-        if src_desc == target {
-            // Identity — just copy.
-            let dst_stride = target.aligned_stride(self.width());
-            let total = dst_stride
-                .checked_mul(self.height() as usize)
-                .ok_or_else(|| whereat::at!(crate::ConvertError::AllocationFailed))?;
-            let mut out = alloc::vec![0u8; total];
-            let src_slice = self.as_slice();
-            for y in 0..self.height() {
-                let src_row = src_slice.row(y);
-                let dst_start = y as usize * dst_stride;
-                out[dst_start..dst_start + src_row.len()].copy_from_slice(src_row);
-            }
-            let mut buf = PixelBuffer::from_vec(out, self.width(), self.height(), target)
-                .map_err_at(crate::ConvertError::from)?;
-            if let Some(ctx) = self.color_context() {
-                buf = buf.with_color_context(Arc::clone(ctx));
-            }
-            return Ok(buf);
-        }
-
-        let mut converter = crate::RowConverter::new(src_desc, target).at()?;
-
-        let dst_stride = target.aligned_stride(self.width());
-        let total = dst_stride
-            .checked_mul(self.height() as usize)
-            .ok_or_else(|| whereat::at!(crate::ConvertError::AllocationFailed))?;
-        let mut out = alloc::vec![0u8; total];
-
-        let src_slice = self.as_slice();
-        for y in 0..self.height() {
-            let src_row = src_slice.row(y);
-            let dst_start = y as usize * dst_stride;
-            let dst_end = dst_start + dst_stride;
-            converter.convert_row(src_row, &mut out[dst_start..dst_end], self.width());
-        }
-
-        let mut buf = PixelBuffer::from_vec(out, self.width(), self.height(), target)
+        // Sugar over `convert_into`: allocate the destination, then run the
+        // one row loop that lives in `RowConverter::convert_slice_into`. The
+        // identity case is not special-cased — the plan is identity and the
+        // kernel degrades to a row copy, which is what the old hand-written
+        // identity branch did anyway. (The allocation is inherent: `&self` in,
+        // owned out. Callers who own their destination want `convert_into`.)
+        let mut buf = PixelBuffer::try_new(self.width(), self.height(), target)
             .map_err_at(crate::ConvertError::from)?;
+        self.convert_into(buf.as_slice_mut())?;
         if let Some(ctx) = self.color_context() {
             buf = buf.with_color_context(Arc::clone(ctx));
         }
         Ok(buf)
+    }
+
+    #[track_caller]
+    fn convert_into(&self, dst: PixelSliceMut<'_>) -> Result<(), At<crate::ConvertError>> {
+        let src_desc = self.descriptor();
+        let target = dst.descriptor();
+        check_needs_cms(&src_desc, &target)?;
+        let mut converter = crate::RowConverter::new(src_desc, target).at()?;
+        converter.convert_slice_into(self.as_slice(), dst)
     }
 
     #[track_caller]

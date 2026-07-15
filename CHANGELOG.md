@@ -19,6 +19,43 @@
   - `Cicp::from_bytes([u8; 4])` (`const fn`) — unpack a cICP-box tuple without the
     `!= 0` papercut on the full-range flag.
 
+### zenpixels-convert — added (no-alloc primitives)
+
+- **`PixelBufferConvertExt::convert_into(&self, dst: PixelSliceMut)`** — convert
+  into a destination you already own; **no allocation**. `convert_to` is now
+  sugar over it, and `try_add_alpha` / `try_widen_to_u16` / `try_narrow_to_u8` /
+  `linearize` / `delinearize` all inherit it, since they delegate to
+  `convert_to`. Two hand-written row loops (including a special-cased identity
+  copy) are deleted — everything now flows through the single loop in
+  `RowConverter::convert_slice_into`.
+- **`RowConverter::convert_slice_into(src: PixelSlice, dst: PixelSliceMut)`** —
+  the no-alloc primitive `convert_slice` is sugar over. Neither takes a stride:
+  each slice carries its own, so both sides may be strided.
+  Validates rather than assumes — dimension mismatch → `BufferSize`, a
+  destination whose descriptor is not the plan's target → `NoPath`.
+
+### zenpixels-convert — deprecated
+
+- **`RowConverter::convert_rows`** → use `convert_slice_into`. Four of its six
+  positional arguments are a `PixelSlice`/`PixelSliceMut` taken apart; nothing
+  type-checks that `src_stride` belongs to `src` or that the descriptors match
+  the plan, so transposing a stride argument compiles and silently produces
+  wrong pixels. Still works; still tested.
+
+#### Changed (BREAKING, tolerated in 0.2.x)
+
+- **`PixelBufferConvertExt` / `PixelBufferConvertTypedExt` are now sealed**, and
+  `PixelBufferConvertExt` gained the required `convert_into` method. Three
+  `cargo semver-checks` failures accepted under tolerated-break categories 7+8
+  (see `CLAUDE.md`): `trait_newly_sealed`, `trait_added_supertrait`,
+  `trait_method_added`.
+  **Audit:** a grep of `~/work/zen` found the only `impl`s of either trait
+  anywhere are the two in-tree ones (`ext.rs`); zenpng/zentone call them but
+  never implement them. External implementation was never meaningful — these
+  are extension traits over a concrete foreign type whose methods all return
+  `PixelBuffer`. Sealing is what the API-design policy already required; it
+  makes this and every future method addition structurally non-breaking.
+
 ### zenpixels-convert — changed (pre-release API-surface audit)
 
 - **Resource estimation is now behind `estimation-experimental` (default-off).**

@@ -309,7 +309,24 @@ impl RowConverter {
     /// Convert multiple rows from a strided source buffer to a strided destination.
     ///
     /// The source and destination can have different strides.
+    ///
+    /// # Deprecated
+    ///
+    /// Four of these six arguments are a [`PixelSlice`] / [`PixelSliceMut`]
+    /// taken apart, and `width`/`rows` live on those types too — nothing
+    /// type-checks that `src_stride` belongs to `src`, or that either
+    /// descriptor matches the plan, so transposing a pair of stride arguments
+    /// compiles and silently produces wrong pixels.
+    /// [`convert_slice_into`](Self::convert_slice_into) is the bundled
+    /// equivalent: both sides carry their own stride, a dimension mismatch
+    /// errors with [`ConvertError::BufferSize`], and a destination whose
+    /// descriptor is not this converter's target errors with
+    /// [`ConvertError::NoPath`] instead of being written into.
     #[track_caller]
+    #[deprecated(
+        since = "0.2.15",
+        note = "use convert_slice_into(src: PixelSlice, dst: PixelSliceMut) — it carries the strides, dimensions and descriptors together and validates them"
+    )]
     pub fn convert_rows(
         &mut self,
         src: &[u8],
@@ -1312,6 +1329,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    #[allow(deprecated)] // deliberately exercises the deprecated fn; it must keep working
     fn convert_rows_basic() {
         let mut conv =
             RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
@@ -1328,6 +1346,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // deliberately exercises the deprecated fn; it must keep working
     fn convert_rows_buffer_too_small() {
         let mut conv =
             RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();

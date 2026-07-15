@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)        49
 #   pub consts/statics                         19
 #   free functions                             40
-#   inherent methods                           98
+#   inherent methods                          100
 #   struct fields                              50
 #   enum variants                              56
 #   re-exports                                  5
@@ -21,12 +21,12 @@
 #   auto-trait exceptions                       2
 #
 # per-module pub lines:
-#   (root)                          151
+#   (root)                          152
 #   adapt                            11
 #   cms                              27
 #   converter                        27
 #   error                            27
-#   ext                              13
+#   ext                              14
 #   gamut                             6
 #   hdr                              15
 #   icc_profiles                     13
@@ -35,7 +35,7 @@
 #   orient                            3
 #   output                           17
 
-## items (300 lines)
+## items (302 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -113,6 +113,7 @@ pub error::ConvertError::UnsupportedTransfer::to: zenpixels::descriptor::Transfe
 pub mod ext
 pub fn ext::ColorPrimariesExt::from_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub fn ext::ColorPrimariesExt::to_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
+pub fn ext::PixelBufferConvertExt::convert_into(&self, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::delinearize(&self, zenpixels::descriptor::TransferFunction) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::linearize(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
@@ -297,7 +298,8 @@ pub fn ColorManagement::identify_profile(&self, &[u8]) -> core::option::Option<z
 pub trait ColorPrimariesExt [also: ext]
 pub fn ColorPrimariesExt::from_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub fn ColorPrimariesExt::to_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
-pub trait PixelBufferConvertExt [also: ext]
+pub trait PixelBufferConvertExt: ext::sealed::Sealed [also: ext]
+pub fn PixelBufferConvertExt::convert_into(&self, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::delinearize(&self, zenpixels::descriptor::TransferFunction) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::linearize(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>

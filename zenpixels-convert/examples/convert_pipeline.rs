@@ -12,7 +12,7 @@
 //! Run the whole gallery:   `cargo run -p zenpixels-convert --example convert_pipeline`
 //! Run it as tests:         `cargo test -p zenpixels-convert --examples`
 
-use zenpixels::buffer::PixelBuffer;
+use zenpixels::buffer::{PixelBuffer, PixelSlice, PixelSliceMut};
 use zenpixels::cicp::Cicp;
 use zenpixels::color::ColorOrigin;
 use zenpixels::descriptor::{PixelDescriptor, PixelFormat, TransferFunction};
@@ -149,7 +149,7 @@ fn adapt_pixels_before_encoding() -> Fallible {
     Ok(())
 }
 
-/// Streaming: build the plan once, convert row-strips many times.
+/// Streaming: build the plan once, convert into a destination you own.
 fn stream_rows_through_a_converter() -> Fallible {
     // RGBA8 -> BGRA8 is a pure R<->B swizzle.
     let mut conv = RowConverter::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::BGRA8_SRGB)?;
@@ -157,7 +157,15 @@ fn stream_rows_through_a_converter() -> Fallible {
 
     let src = [10u8, 20, 30, 40, 50, 60, 70, 80]; // two RGBA pixels
     let mut dst = [0u8; 8];
-    conv.convert_rows(&src, 8, &mut dst, 8, 2, 1)?;
+
+    // `convert_slice_into` is the no-alloc primitive: each slice carries its own
+    // stride, so neither is passed separately, and the descriptors are checked
+    // against the plan. It supersedes `convert_rows(src, src_stride, dst,
+    // dst_stride, width, rows)`, whose six positional args nothing type-checks.
+    let src_slice = PixelSlice::new_contiguous(&src, 2, 1, PixelDescriptor::RGBA8_SRGB)?;
+    let dst_slice = PixelSliceMut::new_contiguous(&mut dst, 2, 1, PixelDescriptor::BGRA8_SRGB)?;
+    conv.convert_slice_into(src_slice, dst_slice)?;
+
     assert_eq!(dst, [30, 20, 10, 40, 70, 60, 50, 80]); // R and B swapped
     Ok(())
 }

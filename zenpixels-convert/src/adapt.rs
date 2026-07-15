@@ -191,6 +191,11 @@ impl<'a> Adapted<'a> {
 ///
 /// Uses [`ConvertIntent::Fastest`] — minimizes conversion cost.
 ///
+/// Note the zero-copy claim below is conditional: [`Adapted`] has no stride
+/// field, so a source that is **strided** — even when it already matches a
+/// supported format — is repacked into an owned buffer rather than borrowed.
+/// See the "Strided buffers" section and imazen/zenpixels#68.
+///
 /// If the input already matches one of the `supported` formats, returns
 /// `Cow::Borrowed` (zero-copy). Otherwise, converts to the best match.
 ///
