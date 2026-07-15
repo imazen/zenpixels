@@ -18,7 +18,9 @@
 //!
 //! - [`PixelFormat`] — flat enum of byte layouts (`Rgb8`, `Rgba16`, `OklabF32`, etc.)
 //! - [`PixelDescriptor`] — format + transfer function + primaries + alpha mode + signal range
-//! - [`PixelBuffer`] — owned pixel storage with SIMD-aligned allocation
+//! - [`PixelBuffer`] — owned pixel storage, tightly packed
+//!   (`width * bytes_per_pixel`); base aligned to the channel type. Opt into a
+//!   SIMD-padded row stride with [`PixelBuffer::new_simd_aligned`].
 //! - [`PixelSlice`] / [`PixelSliceMut`] — borrowed views with stride support
 //! - [`Pixel`] — trait mapping concrete types to their descriptor
 //! - [`Cicp`] — ITU-T H.273 color signaling codes

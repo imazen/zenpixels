@@ -191,10 +191,13 @@ pub trait PixelSliceLoadBearingExt: sealed::Sealed {
     /// available; `None` if the buffer is already at its load-bearing
     /// minimum, the predicates couldn't run, or allocation failed.
     ///
-    /// The returned [`PixelBuffer`] carries the narrowed descriptor and
-    /// the buffer's standard SIMD-aligned row stride (it is not
-    /// byte-tightly packed; use the buffer's own accessors or
-    /// [`PixelBuffer::as_slice`] downstream).
+    /// The returned [`PixelBuffer`] carries the narrowed descriptor and a
+    /// tightly-packed row stride (`width * bytes_per_pixel`) — it is allocated
+    /// with [`PixelBuffer::try_new`], and `PixelDescriptor::aligned_stride` is
+    /// packed despite its name (`simd_aligned_stride` is the padded one, and
+    /// nothing in these crates allocates with it). Use the buffer's own
+    /// accessors or [`PixelBuffer::as_slice`] downstream rather than assuming
+    /// either stride.
     fn try_reduce_to_load_bearing_format(&self) -> Option<PixelBuffer>;
 }
 

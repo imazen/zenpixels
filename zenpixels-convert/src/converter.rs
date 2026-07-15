@@ -348,7 +348,9 @@ impl RowConverter {
     /// [`convert_row`](Self::convert_row)" block behind the [`PixelSlice`]
     /// stride contract: the source may be strided (a crop, a decoder
     /// row-guard, an [`Adapted`](crate::adapt::Adapted) view) and the owned output is
-    /// SIMD-aligned. The source's color context, if any, is carried over.
+    /// tightly packed (`width * bytes_per_pixel`) — every [`PixelBuffer`] this
+    /// crate allocates is, despite the `aligned_stride` name. The source's
+    /// color context, if any, is carried over.
     ///
     /// Prefer [`PixelBufferConvertExt::convert_to`] when you already hold an
     /// owned [`PixelBuffer`]; reach for this when you hold a [`PixelSlice`] and
