@@ -8,25 +8,24 @@
 
 ## summary
 #
-#   pub modules                                14
-#   pub types (struct/enum/trait/alias)        57
+#   pub modules                                13
+#   pub types (struct/enum/trait/alias)        49
 #   pub consts/statics                         19
 #   free functions                             40
-#   inherent methods                          132
+#   inherent methods                           96
 #   struct fields                              50
-#   enum variants                              74
+#   enum variants                              56
 #   re-exports                                  5
-#   trait roster entries (type × trait)        91
-#   auto-trait-complete types                  19
+#   trait roster entries (type × trait)        71
+#   auto-trait-complete types                  15
 #   auto-trait exceptions                       2
 #
 # per-module pub lines:
-#   (root)                          167
+#   (root)                          151
 #   adapt                            11
 #   cms                              27
 #   converter                        25
 #   error                            27
-#   estimate                         47
 #   ext                              13
 #   gamut                             6
 #   hdr                              15
@@ -36,7 +35,7 @@
 #   orient                            3
 #   output                           17
 
-## items (357 lines)
+## items (298 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -110,33 +109,6 @@ pub error::ConvertError::RgbToGray
 pub error::ConvertError::UnsupportedTransfer
 pub error::ConvertError::UnsupportedTransfer::from: zenpixels::descriptor::TransferFunction
 pub error::ConvertError::UnsupportedTransfer::to: zenpixels::descriptor::TransferFunction
-pub mod estimate
-pub estimate::SimdTier::CurrentHost
-pub estimate::SimdTier::Neon
-pub estimate::SimdTier::Unknown
-pub estimate::SimdTier::Wasm
-pub estimate::SimdTier::Wasm128
-pub estimate::SimdTier::X86V1
-pub estimate::SimdTier::X86V2
-pub estimate::SimdTier::X86V3
-pub estimate::SimdTier::X86V4
-pub fn estimate::ComputeEnvironment::available_ram_bytes(&self) -> core::option::Option<u64>
-pub fn estimate::ComputeEnvironment::cores(&self) -> usize
-pub fn estimate::ComputeEnvironment::new() -> Self
-pub fn estimate::ComputeEnvironment::simd_tier(&self) -> core::option::Option<estimate::SimdTier>
-pub fn estimate::ComputeEnvironment::with_available_ram_bytes(self, u64) -> Self
-pub fn estimate::ComputeEnvironment::with_cores(self, usize) -> Self
-pub fn estimate::ComputeEnvironment::with_simd_tier(self, estimate::SimdTier) -> Self
-pub fn estimate::ImageCharacteristics::descriptor(&self) -> &zenpixels::descriptor::PixelDescriptor
-pub fn estimate::ImageCharacteristics::height(&self) -> u32
-pub fn estimate::ImageCharacteristics::new(u32, u32, zenpixels::descriptor::PixelDescriptor) -> Self
-pub fn estimate::ImageCharacteristics::width(&self) -> u32
-pub fn estimate::ResourceEstimate::intermediate_buffer_count(&self) -> core::option::Option<u32>
-pub fn estimate::ResourceEstimate::new(u64, u64) -> Self
-pub fn estimate::ResourceEstimate::peak_memory_bytes_est(&self) -> core::option::Option<u64>
-pub fn estimate::ResourceEstimate::unknown() -> Self
-pub fn estimate::ResourceEstimate::wall_ms(&self) -> core::option::Option<u64>
-pub fn estimate::ResourceEstimate::with_intermediate_buffer_count(self, u32) -> Self
 pub mod ext
 pub fn ext::ColorPrimariesExt::from_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub fn ext::ColorPrimariesExt::to_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
@@ -253,28 +225,10 @@ pub RenderingIntent::AbsoluteColorimetric
 pub RenderingIntent::Perceptual
 pub RenderingIntent::RelativeColorimetric
 pub RenderingIntent::Saturation
-#[non_exhaustive] pub enum SimdTier [also: estimate]
-pub SimdTier::CurrentHost
-pub SimdTier::Neon
-pub SimdTier::Unknown
-pub SimdTier::Wasm
-pub SimdTier::Wasm128
-pub SimdTier::X86V1
-pub SimdTier::X86V2
-pub SimdTier::X86V3
-pub SimdTier::X86V4
 pub struct CmsPluginError(_) [also: cms]
 pub fn cms::CmsPluginError::as_inner(&self) -> &(dyn core::error::Error + core::marker::Send + core::marker::Sync + 'static)
 pub fn cms::CmsPluginError::msg(impl core::convert::Into<alloc::string::String>) -> Self
 pub fn cms::CmsPluginError::new<E>(E) -> Self where E: core::error::Error + core::marker::Send + core::marker::Sync + 'static
-#[non_exhaustive] pub struct ComputeEnvironment [also: estimate]
-pub fn estimate::ComputeEnvironment::available_ram_bytes(&self) -> core::option::Option<u64>
-pub fn estimate::ComputeEnvironment::cores(&self) -> usize
-pub fn estimate::ComputeEnvironment::new() -> Self
-pub fn estimate::ComputeEnvironment::simd_tier(&self) -> core::option::Option<estimate::SimdTier>
-pub fn estimate::ComputeEnvironment::with_available_ram_bytes(self, u64) -> Self
-pub fn estimate::ComputeEnvironment::with_cores(self, usize) -> Self
-pub fn estimate::ComputeEnvironment::with_simd_tier(self, estimate::SimdTier) -> Self
 pub struct ConversionCost
 pub ConversionCost::effort: u16
 pub ConversionCost::loss: u16
@@ -282,8 +236,6 @@ pub const ConversionCost::ZERO: Self
 pub const fn ConversionCost::new(u16, u16) -> Self
 pub struct ConvertPlan
 pub fn ConvertPlan::compose(&self, &Self) -> core::option::Option<Self>
-pub fn ConvertPlan::estimate(&self, u32, u32) -> estimate::ResourceEstimate
-pub fn ConvertPlan::estimate_in(&self, &estimate::ImageCharacteristics, &estimate::ComputeEnvironment) -> estimate::ResourceEstimate
 pub fn ConvertPlan::from(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn ConvertPlan::is_identity(&self) -> bool
 pub fn ConvertPlan::new(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
@@ -305,11 +257,6 @@ pub fn hdr::HdrMetadata::hdr10(zenpixels::hdr::ContentLightLevel) -> Self
 pub fn hdr::HdrMetadata::hlg() -> Self
 pub fn hdr::HdrMetadata::is_hdr(&self) -> bool
 pub fn hdr::HdrMetadata::is_sdr(&self) -> bool
-#[non_exhaustive] pub struct ImageCharacteristics [also: estimate]
-pub fn estimate::ImageCharacteristics::descriptor(&self) -> &zenpixels::descriptor::PixelDescriptor
-pub fn estimate::ImageCharacteristics::height(&self) -> u32
-pub fn estimate::ImageCharacteristics::new(u32, u32, zenpixels::descriptor::PixelDescriptor) -> Self
-pub fn estimate::ImageCharacteristics::width(&self) -> u32
 #[non_exhaustive] pub struct LoadBearingReport [also: load_bearing]
 pub LoadBearingReport::uses_alpha: core::option::Option<bool>
 pub LoadBearingReport::uses_chroma: core::option::Option<bool>
@@ -327,13 +274,6 @@ pub fn Provenance::invalidate_primaries(&mut self, zenpixels::descriptor::ColorP
 pub const fn Provenance::with_origin(zenpixels::descriptor::ChannelType, zenpixels::descriptor::ColorPrimaries) -> Self
 pub const fn Provenance::with_origin_depth(zenpixels::descriptor::ChannelType) -> Self
 pub fn Provenance::with_origin_primaries(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::ColorPrimaries) -> Self
-#[non_exhaustive] pub struct ResourceEstimate [also: estimate]
-pub fn estimate::ResourceEstimate::intermediate_buffer_count(&self) -> core::option::Option<u32>
-pub fn estimate::ResourceEstimate::new(u64, u64) -> Self
-pub fn estimate::ResourceEstimate::peak_memory_bytes_est(&self) -> core::option::Option<u64>
-pub fn estimate::ResourceEstimate::unknown() -> Self
-pub fn estimate::ResourceEstimate::wall_ms(&self) -> core::option::Option<u64>
-pub fn estimate::ResourceEstimate::with_intermediate_buffer_count(self, u32) -> Self
 pub struct RowConverter [also: converter]
 pub fn converter::RowConverter::compose(&self, &Self) -> core::option::Option<Self>
 pub fn converter::RowConverter::convert_row(&mut self, &[u8], &mut [u8], u32)
@@ -396,7 +336,7 @@ pub fn requires_cms(&zenpixels::descriptor::PixelDescriptor, &zenpixels::descrip
 pub fn try_adapt_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: adapt]
 pub type GamutMatrix = [[f32; 3]; 3] [also: gamut]
 
-## trait impls (24 types)
+## trait impls (20 types)
 
 ConversionCost: Add, Clone, Copy, Debug, Default, Eq, PartialEq
 ConvertIntent: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -409,10 +349,6 @@ cms::ColorPriority: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 cms::RenderingIntent: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 converter::RowConverter: Clone
 error::ConvertError: Clone, Debug, Display, Error, From<zenpixels::buffer::BufferError>, PartialEq
-estimate::ComputeEnvironment: Clone, Copy, Debug, Default, Eq, PartialEq
-estimate::ImageCharacteristics: Clone, Debug, Eq, PartialEq
-estimate::ResourceEstimate: Clone, Copy, Debug, PartialEq
-estimate::SimdTier: Clone, Copy, Debug, Eq, Hash, PartialEq
 hdr::HdrMetadata: Clone, Copy, Debug, PartialEq
 icc_profiles::SynthesizedIcc: Clone, Debug, Eq, PartialEq
 load_bearing::LoadBearingReport: Clone, Copy, Debug, Default

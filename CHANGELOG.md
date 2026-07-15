@@ -19,6 +19,29 @@
   - `Cicp::from_bytes([u8; 4])` (`const fn`) — unpack a cICP-box tuple without the
     `!= 0` papercut on the full-range flag.
 
+### zenpixels-convert — changed (pre-release API-surface audit)
+
+- **Resource estimation is now behind `estimation-experimental` (default-off).**
+  The `estimate` module (`ResourceEstimate` / `ComputeEnvironment` /
+  `ImageCharacteristics` / `SimdTier`) and `ConvertPlan::estimate(_in)` were
+  added after 0.2.14 and never shipped. Pre-release audit found **zero
+  consumers**: the goal — estimating a `decode → convert → encode` job
+  end-to-end — is real, but no scheduler consumes it, so neither the API shape
+  nor the ±30 % accuracy contract has been validated against a caller. Gated
+  rather than deleted (the bench calibration is worth keeping) and rather than
+  shipped (a release would freeze an unvalidated shape forever). Opt in with
+  `features = ["estimation-experimental"]`; expect the surface to change as the
+  first consumer lands.
+  - `tests/resource_estimate.rs` is `#![cfg]`-gated on the feature, and the
+    `mem_probe_convert` example (the heaptrack/marginal-WS harness that
+    validates the estimate against measured peak RSS) gains
+    `required-features`. A CI step runs both with the feature on, so the gated
+    surface is executed, not merely `check`ed.
+  - Known gap the first consumer should force: the module doc claims shape-
+    compatibility with `zencodec::estimate::*`, but the shapes **have** diverged
+    (`zencodec` additionally tracks `cpu_ms` / `peak_memory_bytes_max` /
+    `frame_count`), so bridging still means mapping fields by hand.
+
 ### zenpixels-convert — added
 
 - **`PixelSlice`-oriented encode / convert helpers (2e1a4fb).** Additive.

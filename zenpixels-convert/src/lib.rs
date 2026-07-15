@@ -414,6 +414,13 @@ pub mod error;
 /// [`ConvertPlan::estimate`](crate::ConvertPlan::estimate), and
 /// [`ConvertPlan::estimate_in`](crate::ConvertPlan::estimate_in).
 ///
+/// **Experimental** — requires `features = ["estimation-experimental"]`.
+/// The goal is estimating a `decode → convert → encode` job end-to-end, but
+/// no scheduler consumes this yet, so neither the API shape nor the ±30 %
+/// accuracy contract has been validated against a real caller. Expect both
+/// to change; the gate keeps the surface revisable rather than frozen by a
+/// release. See `docs/ESTIMATE.md`.
+///
 /// These estimate types are defined locally here. `zenpixels-convert`
 /// is a foundation crate and does NOT depend on `zencodec` — the layering
 /// rule keeps codec abstractions strictly above pixel math. There is
@@ -422,8 +429,11 @@ pub mod error;
 /// `zencodec`'s `ResourceEstimate` additionally tracks `cpu_ms` and
 /// `peak_memory_bytes_max`, and its `ImageCharacteristics` tracks
 /// `frame_count`, none of which exist here). A `decode → convert → encode`
-/// pipeline bridging the two currently has to map fields by hand.
+/// pipeline bridging the two currently has to map fields by hand — closing
+/// that gap is the main thing the first consumer should force.
+#[cfg(feature = "estimation-experimental")]
 pub mod estimate;
+#[cfg(feature = "estimation-experimental")]
 pub use estimate::{ComputeEnvironment, ImageCharacteristics, ResourceEstimate, SimdTier};
 pub(crate) mod f16_scalar;
 pub(crate) mod negotiate;

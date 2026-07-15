@@ -66,6 +66,14 @@ jobs:
       - name: Test (zenpixels-convert HDR measurement, hdr-experimental)
         run: cargo test -p zenpixels-convert --features hdr-experimental
 
+      # The estimate surface (estimate module + ConvertPlan::estimate(_in)) and
+      # its whole test suite (tests/resource_estimate.rs is `#![cfg]`-gated on
+      # the feature) only exist behind estimation-experimental. Without this
+      # step the feature-powerset job would `check` it but never RUN a single
+      # assertion — the opt-in-feature-untested-in-CI trap.
+      - name: Test (zenpixels-convert resource estimation, estimation-experimental)
+        run: cargo test -p zenpixels-convert --features estimation-experimental --examples --tests
+
       # The `avx512` feature routes the f16 slice path and the AVX-512 SIMD
       # tiers through magetypes/archmage's w512 kernels. Dispatch is at
       # runtime, so this compiles and runs on any x86-64 host (it just takes

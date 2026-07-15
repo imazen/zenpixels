@@ -22,6 +22,7 @@ include = [
 [package.metadata.docs.rs]
 features = [
     "hdr-experimental",
+    "estimation-experimental",
     "pipeline",
     "cms-moxcms",
     "rgb",
@@ -72,6 +73,20 @@ pipeline = []
 # `features = ["hdr-experimental"]` to access measurement until the API
 # locks at 0.3.0.
 hdr-experimental = []
+# Resource estimation for a `ConvertPlan` (the `estimate` module —
+# `ResourceEstimate` / `ComputeEnvironment` / `ImageCharacteristics` /
+# `SimdTier`, plus `ConvertPlan::estimate(_in)`). Answers "will this op fit a
+# memory budget / SLA before it runs", and is deliberately shape-compatible
+# with `zencodec::estimate::*` so a `decode → convert → encode` caller can
+# estimate a job end-to-end.
+#
+# Experimental because it has not been adopted yet: the numbers come from the
+# 2026-04-23 bench suite (±30 % contract) but no scheduler consumes them, so
+# neither the API shape nor the accuracy has been validated against a real
+# caller. Gated rather than shipped so the surface stays revisable — expect
+# both to change as the first consumer lands. Default-off; opt in with
+# `features = ["estimation-experimental"]`. See `docs/ESTIMATE.md`.
+estimation-experimental = []
 cms-moxcms = ["std", "dep:moxcms"]
 # Soft-removed in 0.2.15. The `serde` feature previously forwarded to
 # `zenpixels/serde` and added a `Serialize`/`Deserialize` derive on
@@ -254,3 +269,11 @@ required-features = ["__bench_orient"]
 name = "measure_histogram_throughput"
 path = "examples/measure_histogram_throughput.rs"
 required-features = ["hdr-experimental"]
+
+# The heaptrack/marginal-WS harness that validates `ConvertPlan::estimate`
+# against measured peak RSS — i.e. the apparatus behind the estimate's ±30 %
+# accuracy contract. Follows the surface it measures behind the gate.
+[[example]]
+name = "mem_probe_convert"
+path = "examples/mem_probe_convert.rs"
+required-features = ["estimation-experimental"]

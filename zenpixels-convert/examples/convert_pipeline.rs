@@ -42,6 +42,7 @@ fn main() {
     apply_a_transfer_function_to_one_value();
     reorient_pixels();
     synthesize_then_read_back_an_icc();
+    #[cfg(feature = "estimation-experimental")]
     estimate_conversion_resources().unwrap();
     carry_hdr_metadata();
     println!("all zenpixels-convert examples passed");
@@ -259,6 +260,11 @@ fn synthesize_then_read_back_an_icc() {
 }
 
 /// Estimate memory + wall-time for a conversion before committing to it.
+///
+/// Requires `--features estimation-experimental` — the estimate surface is
+/// experimental and off by default until a real scheduler consumer validates
+/// its shape and its ±30 % accuracy contract.
+#[cfg(feature = "estimation-experimental")]
 fn estimate_conversion_resources() -> Fallible {
     let plan = ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBAF32_LINEAR)?;
     let est = plan.estimate(1920, 1080);

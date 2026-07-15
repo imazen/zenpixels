@@ -1,5 +1,5 @@
 # zenpixels-convert public API — additions from non-default features
-# features: avx512,cms-moxcms,fast-transpose,hdr-experimental,icc-db,imgref,pipeline,planar,rgb,serde,std
+# features: avx512,cms-moxcms,estimation-experimental,fast-transpose,hdr-experimental,icc-db,imgref,pipeline,planar,rgb,serde,std
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -9,30 +9,58 @@
 
 ## summary
 #
-#   pub modules                                 6
-#   pub types (struct/enum/trait/alias)        42
+#   pub modules                                 7
+#   pub types (struct/enum/trait/alias)        50
 #   pub consts/statics                         12
 #   free functions                             12
-#   inherent methods                           48
+#   inherent methods                           84
 #   struct fields                             108
-#   enum variants                              70
-#   trait roster entries (type × trait)        63
-#   auto-trait-complete types                  16
+#   enum variants                              88
+#   trait roster entries (type × trait)        83
+#   auto-trait-complete types                  20
 #
 # per-module pub lines:
-#   (root)                           89
+#   (root)                          105
 #   cms_moxcms                        5
+#   estimate                         47
 #   ext                               8
 #   hdr                              26
 #   pipeline                        170
 
-## items (269 lines)
+## items (328 lines)
 
 pub mod cms_moxcms
 pub struct cms_moxcms::MoxCmsError(pub alloc::string::String)
 pub fn cms_moxcms::cicp_transform_opts() -> moxcms::transform::TransformOptions
 pub fn cms_moxcms::lut_transform_opts() -> moxcms::transform::TransformOptions
 pub fn cms_moxcms::transform_opts(cms::ColorPriority, cms::RenderingIntent) -> moxcms::transform::TransformOptions
+pub mod estimate
+pub estimate::SimdTier::CurrentHost
+pub estimate::SimdTier::Neon
+pub estimate::SimdTier::Unknown
+pub estimate::SimdTier::Wasm
+pub estimate::SimdTier::Wasm128
+pub estimate::SimdTier::X86V1
+pub estimate::SimdTier::X86V2
+pub estimate::SimdTier::X86V3
+pub estimate::SimdTier::X86V4
+pub fn estimate::ComputeEnvironment::available_ram_bytes(&self) -> core::option::Option<u64>
+pub fn estimate::ComputeEnvironment::cores(&self) -> usize
+pub fn estimate::ComputeEnvironment::new() -> Self
+pub fn estimate::ComputeEnvironment::simd_tier(&self) -> core::option::Option<estimate::SimdTier>
+pub fn estimate::ComputeEnvironment::with_available_ram_bytes(self, u64) -> Self
+pub fn estimate::ComputeEnvironment::with_cores(self, usize) -> Self
+pub fn estimate::ComputeEnvironment::with_simd_tier(self, estimate::SimdTier) -> Self
+pub fn estimate::ImageCharacteristics::descriptor(&self) -> &zenpixels::descriptor::PixelDescriptor
+pub fn estimate::ImageCharacteristics::height(&self) -> u32
+pub fn estimate::ImageCharacteristics::new(u32, u32, zenpixels::descriptor::PixelDescriptor) -> Self
+pub fn estimate::ImageCharacteristics::width(&self) -> u32
+pub fn estimate::ResourceEstimate::intermediate_buffer_count(&self) -> core::option::Option<u32>
+pub fn estimate::ResourceEstimate::new(u64, u64) -> Self
+pub fn estimate::ResourceEstimate::peak_memory_bytes_est(&self) -> core::option::Option<u64>
+pub fn estimate::ResourceEstimate::unknown() -> Self
+pub fn estimate::ResourceEstimate::wall_ms(&self) -> core::option::Option<u64>
+pub fn estimate::ResourceEstimate::with_intermediate_buffer_count(self, u32) -> Self
 pub fn ext::PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
@@ -234,6 +262,16 @@ pub QualityThreshold::Lossless
 pub QualityThreshold::MaxBucket(pipeline::path::LossBucket)
 pub QualityThreshold::NearLossless
 pub QualityThreshold::SubPerceptual
+#[non_exhaustive] pub enum SimdTier [also: estimate]
+pub SimdTier::CurrentHost
+pub SimdTier::Neon
+pub SimdTier::Unknown
+pub SimdTier::Wasm
+pub SimdTier::Wasm128
+pub SimdTier::X86V1
+pub SimdTier::X86V2
+pub SimdTier::X86V3
+pub SimdTier::X86V4
 pub struct CodecFormats [also: pipeline, pipeline::registry]
 pub CodecFormats::cicp: bool
 pub CodecFormats::decode_outputs: &'static [pipeline::registry::FormatEntry]
@@ -241,6 +279,14 @@ pub CodecFormats::encode_inputs: &'static [pipeline::registry::FormatEntry]
 pub CodecFormats::icc_decode: bool
 pub CodecFormats::icc_encode: bool
 pub CodecFormats::name: &'static str
+#[non_exhaustive] pub struct ComputeEnvironment [also: estimate]
+pub fn estimate::ComputeEnvironment::available_ram_bytes(&self) -> core::option::Option<u64>
+pub fn estimate::ComputeEnvironment::cores(&self) -> usize
+pub fn estimate::ComputeEnvironment::new() -> Self
+pub fn estimate::ComputeEnvironment::simd_tier(&self) -> core::option::Option<estimate::SimdTier>
+pub fn estimate::ComputeEnvironment::with_available_ram_bytes(self, u64) -> Self
+pub fn estimate::ComputeEnvironment::with_cores(self, usize) -> Self
+pub fn estimate::ComputeEnvironment::with_simd_tier(self, estimate::SimdTier) -> Self
 pub struct ConversionPath [also: pipeline, pipeline::path]
 pub ConversionPath::output_format: zenpixels::descriptor::PixelDescriptor
 pub ConversionPath::proven_lossless: bool
@@ -252,6 +298,8 @@ pub ConversionPath::working_format: zenpixels::descriptor::PixelDescriptor
 pub ConversionPath::working_suitability: u16
 pub ConversionPath::working_to_output: ConversionCost
 pub fn pipeline::path::ConversionPath::loss_bucket(&self) -> pipeline::path::LossBucket
+pub fn ConvertPlan::estimate(&self, u32, u32) -> estimate::ResourceEstimate
+pub fn ConvertPlan::estimate_in(&self, &estimate::ImageCharacteristics, &estimate::ComputeEnvironment) -> estimate::ResourceEstimate
 pub fn ConvertPlan::new_with_hdr_config(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn ConvertPlan::new_with_hdr_peak(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, f32) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub struct FormatEntry [also: pipeline, pipeline::registry]
@@ -265,6 +313,11 @@ pub HdrConfig::target_peak_nits: f32
 pub fn HdrConfig::for_source_peak(f32) -> Self
 pub fn HdrConfig::with_gamut_knee(self, f32) -> Self
 pub fn HdrConfig::with_target_peak_nits(self, f32) -> Self
+#[non_exhaustive] pub struct ImageCharacteristics [also: estimate]
+pub fn estimate::ImageCharacteristics::descriptor(&self) -> &zenpixels::descriptor::PixelDescriptor
+pub fn estimate::ImageCharacteristics::height(&self) -> u32
+pub fn estimate::ImageCharacteristics::new(u32, u32, zenpixels::descriptor::PixelDescriptor) -> Self
+pub fn estimate::ImageCharacteristics::width(&self) -> u32
 pub struct MatrixStats [also: pipeline, pipeline::path]
 pub MatrixStats::by_bucket: [usize; 5]
 pub MatrixStats::distinct_working_formats: usize
@@ -286,6 +339,13 @@ pub PathEntry::path: core::option::Option<pipeline::path::ConversionPath>
 pub PathEntry::source_codec: &'static str
 pub PathEntry::source_effective_bits: u8
 pub PathEntry::source_format: zenpixels::descriptor::PixelDescriptor
+#[non_exhaustive] pub struct ResourceEstimate [also: estimate]
+pub fn estimate::ResourceEstimate::intermediate_buffer_count(&self) -> core::option::Option<u32>
+pub fn estimate::ResourceEstimate::new(u64, u64) -> Self
+pub fn estimate::ResourceEstimate::peak_memory_bytes_est(&self) -> core::option::Option<u64>
+pub fn estimate::ResourceEstimate::unknown() -> Self
+pub fn estimate::ResourceEstimate::wall_ms(&self) -> core::option::Option<u64>
+pub fn estimate::ResourceEstimate::with_intermediate_buffer_count(self, u32) -> Self
 pub trait PixelBufferConvertTypedExt: ext::PixelBufferConvertExt [also: ext]
 pub fn PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>
 pub fn PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
@@ -298,11 +358,15 @@ pub fn generate_path_matrix(&[&pipeline::registry::CodecFormats], &[pipeline::op
 pub fn matrix_stats(&[pipeline::path::PathEntry]) -> pipeline::path::MatrixStats [also: pipeline, pipeline::path]
 pub fn optimal_path(zenpixels::descriptor::PixelDescriptor, Provenance, pipeline::op_format::OpCategory, zenpixels::descriptor::PixelDescriptor, pipeline::path::QualityThreshold) -> core::option::Option<pipeline::path::ConversionPath> [also: pipeline, pipeline::path]
 
-## trait impls (18 types)
+## trait impls (22 types)
 
 HdrConfig: Clone, Copy, Debug, Default, PartialEq
 cms_moxcms::MoxCms: Clone, Copy, Debug, Default, cms::ColorManagement, cms::PluggableCms
 cms_moxcms::MoxCmsError: Clone, Debug, Display
+estimate::ComputeEnvironment: Clone, Copy, Debug, Default, Eq, PartialEq
+estimate::ImageCharacteristics: Clone, Debug, Eq, PartialEq
+estimate::ResourceEstimate: Clone, Copy, Debug, PartialEq
+estimate::SimdTier: Clone, Copy, Debug, Eq, Hash, PartialEq
 hdr::Bt2446A: Clone, Copy, Debug
 hdr::GamutBoundaryLut: Clone, Debug
 hdr::SoftCompress: Clone, Debug

@@ -1364,7 +1364,8 @@ impl ConvertPlan {
 
     /// Crate-internal view of the planned step list — exposed for the
     /// estimate-API code under `crate::estimate`. NOT public:
-    /// `ConvertStep` itself is `pub(crate)`.
+    /// `ConvertStep` itself is `pub(crate)`. Gated with its only caller.
+    #[cfg(feature = "estimation-experimental")]
     pub(crate) fn steps(&self) -> &[ConvertStep] {
         &self.steps
     }
@@ -1438,6 +1439,7 @@ impl ConvertPlan {
     /// assert!(est.wall_ms().is_some());
     /// ```
     #[must_use]
+    #[cfg(feature = "estimation-experimental")]
     pub fn estimate_in(
         &self,
         image: &crate::estimate::ImageCharacteristics,
@@ -1470,6 +1472,7 @@ impl ConvertPlan {
     /// assert!(est.wall_ms().is_some());
     /// ```
     #[must_use]
+    #[cfg(feature = "estimation-experimental")]
     pub fn estimate(&self, width: u32, height: u32) -> crate::estimate::ResourceEstimate {
         let image = crate::estimate::ImageCharacteristics::new(width, height, self.from());
         let compute = crate::estimate::ComputeEnvironment::new();
@@ -1478,7 +1481,9 @@ impl ConvertPlan {
 }
 
 /// Bridge for the [`crate::estimate`] module: mirror of
-/// [`intermediate_desc`] without making that function public.
+/// [`intermediate_desc`] without making that function public. Gated with
+/// its only caller.
+#[cfg(feature = "estimation-experimental")]
 pub(crate) fn intermediate_desc_for_estimate(
     current: PixelDescriptor,
     step: &ConvertStep,
