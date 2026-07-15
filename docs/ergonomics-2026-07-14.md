@@ -45,7 +45,7 @@ tight stride first. It is the most-repeated single line in the whole audit.
 let stride = width as usize * descriptor.bytes_per_pixel();
 let ps = PixelSlice::new(data, width, height, stride, descriptor)?;
 
-// proposed
+// landed (`new_packed` is an alias for the same call)
 let ps = PixelSlice::new_contiguous(data, width, height, descriptor)?;
 ```
 
@@ -109,7 +109,7 @@ let plan = ConvertPlan::new(src.descriptor(), target)?;
 let mut out = vec![0u8; row_bytes * h as usize];
 for y in 0..h { convert_row(&plan, src.row(y), &mut out[y*row_bytes..][..row_bytes], w); }
 
-// proposed
+// landed
 let out: PixelBuffer = RowConverter::new(src.descriptor(), target)?.convert_slice(src.as_slice())?;
 ```
 
@@ -122,14 +122,15 @@ case; this covers "I hold a `PixelSlice` and want scratch/streaming control."
 ## 4. `PixelDescriptor::with_color_from_cicp(Cicp)` — retag transfer+primaries
 
 The "keep the format, adopt transfer+primaries from a decoded CICP" chain repeats
-(`zenpng/src/codec.rs:2063`, `zenavif/src/codec.rs:3276`, `zencodec/src/helpers/icc.rs:135`):
+(`zenpng/src/codec.rs:2063` `enrich_descriptor_from_cicp`, `zenavif/src/codec.rs:2255`
+**and** `:3274`, plus the same shape in `zenjxl/src/codec.rs` / `heic/src/codec.rs`):
 
 ```rust
 // today
 if let Some(tf) = TransferFunction::from_cicp(c.transfer_characteristics) { desc = desc.with_transfer(tf); }
 if let Some(p)  = ColorPrimaries::from_cicp(c.color_primaries)          { desc = desc.with_primaries(p); }
 
-// proposed (const fn, keeps format/type/alpha, updates only color axes)
+// landed (const fn, keeps format/type/alpha, updates only color axes)
 let desc = desc.with_color_from_cicp(cicp);
 ```
 
