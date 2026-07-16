@@ -423,7 +423,7 @@ impl ConvertStep {
 ///
 /// Anything outside this set is a device-dependent / CMS-only path —
 /// CMYK today, Lab / XYZ / spot inks if/when those land as
-/// [`crate::ColorModel`] variants. See [`requires_cms`].
+/// [`crate::ColorModel`] variants. See `requires_cms` (crate-internal; the public signal is `ConvertError::NeedsCms`).
 #[inline]
 fn native_color_model(m: crate::ColorModel) -> bool {
     // `Gray`, `Rgb` and `Oklab` are the colorimetric spaces the built-in
@@ -455,7 +455,12 @@ fn native_color_model(m: crate::ColorModel) -> bool {
 /// attach a CMS plugin (e.g. `&MoxCms`) for that batch.
 ///
 /// [`color_model`]: zenpixels::PixelDescriptor::color_model
-pub fn requires_cms(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
+///
+/// `pub(crate)`: the **public** "needs a CMS" signal is the
+/// [`ConvertError::NeedsCms`] variant returned by the no-CMS entry points
+/// (`convert_to`, `to_rgba8`, …). This predicate had no external consumer, so
+/// it is not part of the public surface; catch `NeedsCms` instead of probing.
+pub(crate) fn requires_cms(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
     !native_color_model(from.color_model()) || !native_color_model(to.color_model())
 }
 
@@ -1706,7 +1711,7 @@ fn f32_tf_pair_steps(from: TransferFunction, to: TransferFunction) -> Vec<Conver
 
 /// Depth conversion step into F32 for any non-F32 channel type (U8, U16, F16).
 /// Panics for F32 (caller must check); CMYK is rejected upstream by
-/// [`requires_cms`] before any plan steps are picked.
+/// `requires_cms` before any plan steps are picked (the public signal is `ConvertError::NeedsCms`).
 fn to_f32_step(ct: ChannelType) -> ConvertStep {
     match ct {
         ChannelType::U8 => ConvertStep::NaiveU8ToF32,

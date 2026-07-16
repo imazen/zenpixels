@@ -1,3 +1,4 @@
+#![allow(deprecated)] // exercises the deprecated convert_buffer; it must keep working
 //! Extended tests for adapt module — strided buffers, policy enforcement,
 //! and edge cases not covered by the basic adapt tests.
 

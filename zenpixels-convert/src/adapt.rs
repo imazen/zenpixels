@@ -139,7 +139,14 @@ fn checked_byte_alloc(rows: u32, stride: usize) -> Result<usize, At<ConvertError
 }
 
 /// Result of format adaptation: the converted data and its descriptor.
+///
+/// `#[non_exhaustive]`: construct it only via [`adapt_for_encode`] and read it
+/// via the accessors / [`as_pixel_slice`](Self::as_pixel_slice). The fields are
+/// still `pub` for now, but a future `stride` field (imazen/zenpixels#68) will
+/// land additively behind this attribute — code that reads through the
+/// accessors won't need to change.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Adapted<'a> {
     /// Pixel data — borrowed if no conversion was needed, owned otherwise.
     pub data: Cow<'a, [u8]>,
@@ -152,6 +159,35 @@ pub struct Adapted<'a> {
 }
 
 impl<'a> Adapted<'a> {
+    /// The adapted pixel bytes — borrowed on the zero-copy path, owned when a
+    /// conversion ran. Tightly packed (`width * bytes_per_pixel`).
+    #[inline]
+    #[must_use]
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// The pixel format of [`data`](Self::data).
+    #[inline]
+    #[must_use]
+    pub fn descriptor(&self) -> PixelDescriptor {
+        self.descriptor
+    }
+
+    /// Width in pixels.
+    #[inline]
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Row count.
+    #[inline]
+    #[must_use]
+    pub fn rows(&self) -> u32 {
+        self.rows
+    }
+
     /// Borrow the adapted pixels as a tightly-packed [`PixelSlice`], ready to
     /// hand to an encoder — without restating the `width * bytes_per_pixel`
     /// stride by hand.
@@ -324,7 +360,30 @@ pub fn adapt_for_encode_with_intent<'a>(
 /// Convert a raw byte buffer from one format to another.
 ///
 /// Assumes packed (stride = width * bpp) layout.
+///
+/// # Deprecated
+///
+/// Two footguns: it **assumes packed input** (a strided buffer is read with its
+/// padding interpreted as pixels — the length check cannot catch it), and it
+/// returns a bare `Vec<u8>` that drops the dimensions and descriptor the caller
+/// then has to carry separately. Build a [`PixelBuffer`] and use
+/// [`PixelBufferConvertExt`](crate::PixelBufferConvertExt)'s `convert_to` /
+/// `convert_into` / `convert_in_place`, which carry the geometry and honour
+/// stride:
+///
+/// ```
+/// use zenpixels::{PixelBuffer, PixelDescriptor};
+/// use zenpixels_convert::PixelBufferConvertExt;
+///
+/// let src = PixelBuffer::from_vec(vec![255, 0, 0, 0, 255, 0], 2, 1, PixelDescriptor::RGB8_SRGB)?;
+/// let dst = src.convert_to(PixelDescriptor::BGRA8_SRGB)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[track_caller]
+#[deprecated(
+    since = "0.2.15",
+    note = "assumes packed input and drops geometry into a bare Vec; build a PixelBuffer and use PixelBufferConvertExt::convert_to / convert_into / convert_in_place"
+)]
 pub fn convert_buffer(
     src: &[u8],
     width: u32,
@@ -1088,6 +1147,7 @@ mod anchor_tests {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // several tests exercise the deprecated convert_buffer; it must keep working
 mod tests {
     use super::*;
     use zenpixels::descriptor::{ColorPrimaries, SignalRange};

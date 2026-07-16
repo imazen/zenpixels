@@ -2009,10 +2009,18 @@ impl PixelBuffer {
 
     /// Consume the buffer and return the pixels as a typed `Vec<P>`.
     ///
+    /// **Allocation:** zero-copy **only** when `P` has alignment 1 (u8-component
+    /// types — `Rgb<u8>`, `Rgba<u8>`, `Gray<u8>`, `BGRA<u8>`) *and* the buffer
+    /// is tightly packed with no offset. For **any multi-byte `P`**
+    /// (`Rgb<u16>`, `Rgba<f32>`, …) this **copies the whole image** — the
+    /// backing `Vec<u8>` has alignment 1 and cannot be reinterpreted as a
+    /// `Vec` of a wider element, so the move-implied-by-`into_` does not hold
+    /// there. If you only need to read the pixels, prefer
+    /// [`as_contiguous_pixels`](Self::as_contiguous_pixels) (borrows, never
+    /// copies, `None` when it cannot).
+    ///
     /// Returns `None` if the descriptor is not layout-compatible with `P`.
-    /// Strips stride padding if present. Zero-copy when the buffer is
-    /// tightly packed and `P` has alignment 1 (u8-component types like
-    /// `Rgb<u8>`, `Rgba<u8>`); copies otherwise.
+    /// Strips stride padding if present.
     pub fn into_contiguous_pixels<P: Pixel>(self) -> Option<Vec<P>> {
         if !self.descriptor.layout_compatible(P::DESCRIPTOR) {
             return None;

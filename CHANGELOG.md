@@ -34,8 +34,27 @@
   Validates rather than assumes — dimension mismatch → `BufferSize`, a
   destination whose descriptor is not the plan's target → `NoPath`.
 
+### zenpixels-convert — added (no-alloc / move + fallible)
+
+- **`PixelBufferConvertExt::convert_in_place(&mut self, target)`** — the
+  move-counterpart to `convert_into`: reuses the buffer's own allocation.
+  Identity is a no-op; narrowing (RGBA→RGB, U16→U8, RGB→Gray) and same-size
+  swizzles shuffle-collapse front-to-back in place (O(row) scratch only);
+  widening reallocates. Turns the common narrowing/identity cases from a
+  full-image allocation into none.
+- **`PixelBufferConvertTypedExt::try_to_rgb8` / `try_to_rgba8` / `try_to_gray8`
+  / `try_to_bgra8`** — fallible siblings of the `to_*8` decode helpers, which
+  **panic** on a CMYK / Lab / XYZ source (`RowConverter: no conversion path`).
+  Mirrors the crate's `new`/`try_new` pattern; the infallible `to_*8` stay with
+  a documented panic and now delegate through the same fixed core.
+
 ### zenpixels-convert — deprecated
 
+- **`adapt::convert_buffer`** → build a `PixelBuffer` and use
+  `PixelBufferConvertExt::convert_to` / `convert_into` / `convert_in_place`. It
+  assumes packed input (a strided buffer is read with its padding as pixels —
+  the length check cannot catch it) and returns a bare `Vec<u8>` that drops the
+  dimensions and descriptor.
 - **`RowConverter::convert_rows`** → use `convert_slice_into`. Four of its six
   positional arguments are a `PixelSlice`/`PixelSliceMut` taken apart; nothing
   type-checks that `src_stride` belongs to `src` or that the descriptors match
@@ -44,6 +63,16 @@
 
 #### Changed (BREAKING, tolerated in 0.2.x)
 
+- **`Adapted` is now `#[non_exhaustive]`** and gained `data()` / `descriptor()`
+  / `width()` / `rows()` accessors (fields stay `pub` for now). Tolerated
+  break: a grep of `~/work/zen` found zero external struct-literal
+  construction — `Adapted` is only ever *returned* by `adapt_for_encode`. This
+  lets the `stride` field (imazen/zenpixels#68) land additively later; read via
+  the accessors and it won't churn.
+- **`requires_cms` is no longer `pub`** (demoted to `pub(crate)`, removed from
+  the crate re-export). It was added after 0.2.14, has no external consumer,
+  and the public "needs a CMS" signal is the `ConvertError::NeedsCms` variant.
+  Unshipped removal — no released version exposed it.
 - **`PixelBufferConvertExt` / `PixelBufferConvertTypedExt` are now sealed**, and
   `PixelBufferConvertExt` gained the required `convert_into` method. Three
   `cargo semver-checks` failures accepted under tolerated-break categories 7+8

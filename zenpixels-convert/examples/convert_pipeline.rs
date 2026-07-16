@@ -19,7 +19,7 @@ use zenpixels::descriptor::{PixelDescriptor, PixelFormat, TransferFunction};
 use zenpixels::hdr::ContentLightLevel;
 use zenpixels::orientation::Orientation;
 
-use zenpixels_convert::adapt::{adapt_for_encode, convert_buffer};
+use zenpixels_convert::adapt::adapt_for_encode;
 use zenpixels_convert::converter::RowConverter;
 use zenpixels_convert::ext::{PixelBufferConvertExt, TransferFunctionExt};
 use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
@@ -48,22 +48,20 @@ fn main() {
     println!("all zenpixels-convert examples passed");
 }
 
-/// The lowest-friction one-shot: raw bytes in, converted bytes out.
+/// The lowest-friction one-shot: hold a `PixelBuffer`, convert it.
 fn convert_a_whole_buffer_one_shot() -> Fallible {
-    // 2x1 opaque RGB8 (red, green), tightly packed.
-    let rgb = [255u8, 0, 0, 0, 255, 0];
-    let bgr = convert_buffer(
-        &rgb,
-        2,
-        1,
-        PixelDescriptor::RGB8_SRGB,
-        PixelDescriptor::BGRA8_SRGB,
-    )?;
+    // 2x1 opaque RGB8 (red, green).
+    let rgb = PixelBuffer::from_vec(vec![255, 0, 0, 0, 255, 0], 2, 1, PixelDescriptor::RGB8_SRGB)?;
+
+    // `convert_to` keeps width/height/descriptor together on the result — no
+    // separate bookkeeping. (The old `convert_buffer` free function returned a
+    // bare `Vec<u8>` and dropped that geometry; it is deprecated.)
+    let bgra = rgb.convert_to(PixelDescriptor::BGRA8_SRGB)?;
     // R and B are swapped and an opaque alpha byte is appended.
-    assert_eq!(bgr, vec![0, 0, 255, 255, 0, 255, 0, 255]);
-    // NOTE: `convert_buffer` returns a bare `Vec<u8>` — the caller has to keep
-    // width/height/descriptor on the side. Prefer the buffer path below when
-    // you already hold a `PixelBuffer`.
+    assert_eq!(
+        &bgra.as_slice().row(0)[..8],
+        &[0, 0, 255, 255, 0, 255, 0, 255]
+    );
     Ok(())
 }
 
