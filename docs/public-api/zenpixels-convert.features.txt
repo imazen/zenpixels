@@ -13,21 +13,21 @@
 #   pub types (struct/enum/trait/alias)        50
 #   pub consts/statics                         12
 #   free functions                             12
-#   inherent methods                           84
+#   inherent methods                           92
 #   struct fields                             108
 #   enum variants                              88
 #   trait roster entries (type × trait)        83
 #   auto-trait-complete types                  20
 #
 # per-module pub lines:
-#   (root)                          105
+#   (root)                          109
 #   cms_moxcms                        5
 #   estimate                         47
-#   ext                               8
+#   ext                              12
 #   hdr                              26
 #   pipeline                        170
 
-## items (328 lines)
+## items (336 lines)
 
 pub mod cms_moxcms
 pub struct cms_moxcms::MoxCmsError(pub alloc::string::String)
@@ -65,6 +65,10 @@ pub fn ext::PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::Pi
 pub fn ext::PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_rgba8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>
+pub fn ext::PixelBufferConvertTypedExt::try_to_bgra8(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>, whereat::at::At<error::ConvertError>>
+pub fn ext::PixelBufferConvertTypedExt::try_to_gray8(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>, whereat::at::At<error::ConvertError>>
+pub fn ext::PixelBufferConvertTypedExt::try_to_rgb8(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>, whereat::at::At<error::ConvertError>>
+pub fn ext::PixelBufferConvertTypedExt::try_to_rgba8(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferHdrConvertExt::convert_to_sdr(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferHdrConvertExt::convert_to_with_hdr_config(&self, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub mod hdr::measure
@@ -351,6 +355,10 @@ pub fn PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBu
 pub fn PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
 pub fn PixelBufferConvertTypedExt::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
 pub fn PixelBufferConvertTypedExt::to_rgba8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>
+pub fn PixelBufferConvertTypedExt::try_to_bgra8(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>, whereat::at::At<error::ConvertError>>
+pub fn PixelBufferConvertTypedExt::try_to_gray8(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>, whereat::at::At<error::ConvertError>>
+pub fn PixelBufferConvertTypedExt::try_to_rgb8(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>, whereat::at::At<error::ConvertError>>
+pub fn PixelBufferConvertTypedExt::try_to_rgba8(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>, whereat::at::At<error::ConvertError>>
 pub trait PixelBufferHdrConvertExt [also: ext]
 pub fn PixelBufferHdrConvertExt::convert_to_sdr(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferHdrConvertExt::convert_to_with_hdr_config(&self, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>

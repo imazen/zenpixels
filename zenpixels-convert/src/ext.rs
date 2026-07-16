@@ -163,6 +163,49 @@ pub trait PixelBufferConvertExt: sealed::Sealed {
     /// ```
     fn convert_into(&self, dst: PixelSliceMut<'_>) -> Result<(), At<crate::ConvertError>>;
 
+    /// Convert **in place**, reusing this buffer's own allocation.
+    ///
+    /// The move-counterpart to [`convert_into`](Self::convert_into): where
+    /// `convert_into` writes into a destination *you* provide, this rewrites
+    /// the buffer's *own* storage. Whether it allocates depends on the size
+    /// relationship, because the bytes shrink or grow with the format:
+    ///
+    /// | Case | Behavior |
+    /// |---|---|
+    /// | **identity** (`target` == current) | no-op — zero copy, zero alloc |
+    /// | **narrowing** (RGBA→RGB, U16→U8, RGB→Gray) | shuffle-collapses front-to-back in the same allocation; only an O(row) scratch |
+    /// | **same size** (BGRA↔RGBA swizzle) | rewrites in place |
+    /// | **widening** (RGB→RGBA, U8→U16) | reallocates — the result is larger than the current storage |
+    ///
+    /// On success the buffer adopts `target`, a tightly-packed stride, and (for
+    /// the reused-allocation cases) keeps its existing
+    /// [`ColorContext`](zenpixels::ColorContext); a stale descriptor is never
+    /// observable. Prefer this over [`convert_to`](Self::convert_to) whenever
+    /// you are done with the source in its old format — it turns the common
+    /// narrowing and identity cases from a full-image allocation into none.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`convert_to`](Self::convert_to):
+    /// [`NeedsCms`](crate::ConvertError::NeedsCms),
+    /// [`NoPath`](crate::ConvertError::NoPath), or
+    /// [`AllocationFailed`](crate::ConvertError::AllocationFailed) on the
+    /// widening path.
+    ///
+    /// ```
+    /// use zenpixels::{PixelBuffer, PixelDescriptor};
+    /// use zenpixels_convert::PixelBufferConvertExt;
+    ///
+    /// // RGBA8 -> RGB8 is a narrowing: the alpha lane is dropped in place,
+    /// // no new image buffer is allocated.
+    /// let mut buf = PixelBuffer::new(4, 4, PixelDescriptor::RGBA8_SRGB);
+    /// buf.convert_in_place(PixelDescriptor::RGB8_SRGB)?;
+    /// assert_eq!(buf.descriptor(), PixelDescriptor::RGB8_SRGB);
+    /// assert_eq!(buf.stride(), 4 * 3);
+    /// # Ok::<(), whereat::At<zenpixels_convert::ConvertError>>(())
+    /// ```
+    fn convert_in_place(&mut self, target: PixelDescriptor) -> Result<(), At<crate::ConvertError>>;
+
     /// Add an alpha channel. **Allocates** a new `PixelBuffer`.
     ///
     /// - Gray → GrayAlpha (opaque alpha)
@@ -204,16 +247,44 @@ pub trait PixelBufferConvertExt: sealed::Sealed {
 #[cfg(feature = "rgb")]
 pub trait PixelBufferConvertTypedExt: PixelBufferConvertExt {
     /// Convert to RGB8, allocating a new buffer.
+    ///
+    /// **Panics** if the conversion needs a CMS (a CMYK / Lab / XYZ source) or
+    /// has no path. Use [`try_to_rgb8`](Self::try_to_rgb8) for untrusted or
+    /// non-RGB-family input.
     fn to_rgb8(&self) -> PixelBuffer<rgb::Rgb<u8>>;
 
     /// Convert to RGBA8, allocating a new buffer.
+    ///
+    /// **Panics** if the conversion needs a CMS or has no path — see
+    /// [`try_to_rgba8`](Self::try_to_rgba8).
     fn to_rgba8(&self) -> PixelBuffer<rgb::Rgba<u8>>;
 
     /// Convert to Gray8, allocating a new buffer.
+    ///
+    /// **Panics** if the conversion needs a CMS or has no path — see
+    /// [`try_to_gray8`](Self::try_to_gray8).
     fn to_gray8(&self) -> PixelBuffer<rgb::Gray<u8>>;
 
     /// Convert to BGRA8, allocating a new buffer.
+    ///
+    /// **Panics** if the conversion needs a CMS or has no path — see
+    /// [`try_to_bgra8`](Self::try_to_bgra8).
     fn to_bgra8(&self) -> PixelBuffer<rgb::alt::BGRA<u8>>;
+
+    /// Fallible [`to_rgb8`](Self::to_rgb8) — returns
+    /// [`ConvertError::NeedsCms`](crate::ConvertError::NeedsCms) instead of
+    /// panicking on a CMYK / Lab / XYZ source. Prefer this for decode output,
+    /// where the source format is not known in advance.
+    fn try_to_rgb8(&self) -> Result<PixelBuffer<rgb::Rgb<u8>>, At<crate::ConvertError>>;
+
+    /// Fallible [`to_rgba8`](Self::to_rgba8).
+    fn try_to_rgba8(&self) -> Result<PixelBuffer<rgb::Rgba<u8>>, At<crate::ConvertError>>;
+
+    /// Fallible [`to_gray8`](Self::to_gray8).
+    fn try_to_gray8(&self) -> Result<PixelBuffer<rgb::Gray<u8>>, At<crate::ConvertError>>;
+
+    /// Fallible [`to_bgra8`](Self::to_bgra8).
+    fn try_to_bgra8(&self) -> Result<PixelBuffer<rgb::alt::BGRA<u8>>, At<crate::ConvertError>>;
 }
 
 /// Reject conversions that require a CMS plugin from these
@@ -265,6 +336,66 @@ impl PixelBufferConvertExt for PixelBuffer {
         check_needs_cms(&src_desc, &target)?;
         let mut converter = crate::RowConverter::new(src_desc, target).at()?;
         converter.convert_slice_into(self.as_slice(), dst)
+    }
+
+    #[track_caller]
+    fn convert_in_place(&mut self, target: PixelDescriptor) -> Result<(), At<crate::ConvertError>> {
+        let source = self.descriptor();
+        check_needs_cms(&source, &target)?;
+        if source == target {
+            return Ok(()); // identity — no bytes move, no allocation.
+        }
+
+        let src_bpp = source.bytes_per_pixel();
+        let dst_bpp = target.bytes_per_pixel();
+
+        if dst_bpp > src_bpp {
+            // Widening: the result is larger than the current storage, so it
+            // cannot be written in place — allocate and replace.
+            *self = self.convert_to(target)?;
+            return Ok(());
+        }
+
+        // Narrowing or same-size: reuse the allocation. Each source row is
+        // copied to an O(row) scratch before the (smaller-or-equal) destination
+        // row is written over it, so an arbitrary conversion — not just byte
+        // selection — stays overlap-safe front-to-back. The image allocation is
+        // never duplicated.
+        let mut converter = crate::RowConverter::new(source, target).at()?;
+        let width = self.width();
+        let rows = self.height();
+        let out_stride = target.aligned_stride(width);
+        let src_row_bytes = width as usize * src_bpp;
+        let dst_row_bytes = width as usize * dst_bpp;
+        let mut scratch = alloc::vec![0u8; src_row_bytes];
+
+        self.transform_in_place(|px| {
+            let zenpixels::InPlacePixels {
+                bytes,
+                stride: in_stride,
+                color,
+                ..
+            } = px;
+            for y in 0..rows as usize {
+                let s = y * in_stride;
+                scratch.copy_from_slice(&bytes[s..s + src_row_bytes]);
+                let d = y * out_stride;
+                converter.convert_row(&scratch, &mut bytes[d..d + dst_row_bytes], width);
+            }
+            let out = PixelSliceMut::new(
+                &mut bytes[..rows as usize * out_stride],
+                width,
+                rows,
+                out_stride,
+                target,
+            )
+            .expect("in-place conversion geometry is always valid");
+            match color {
+                Some(c) => out.with_color_context(c),
+                None => out,
+            }
+        });
+        Ok(())
     }
 
     #[track_caller]
@@ -493,38 +624,48 @@ impl PixelBufferConvertTypedExt for PixelBuffer {
     fn to_bgra8(&self) -> PixelBuffer<rgb::alt::BGRA<u8>> {
         convert_to_typed(self, PixelDescriptor::BGRA8_SRGB)
     }
+
+    fn try_to_rgb8(&self) -> Result<PixelBuffer<rgb::Rgb<u8>>, At<crate::ConvertError>> {
+        try_convert_to_typed(self, PixelDescriptor::RGB8_SRGB)
+    }
+
+    fn try_to_rgba8(&self) -> Result<PixelBuffer<rgb::Rgba<u8>>, At<crate::ConvertError>> {
+        try_convert_to_typed(self, PixelDescriptor::RGBA8_SRGB)
+    }
+
+    fn try_to_gray8(&self) -> Result<PixelBuffer<rgb::Gray<u8>>, At<crate::ConvertError>> {
+        try_convert_to_typed(self, PixelDescriptor::GRAY8_SRGB)
+    }
+
+    fn try_to_bgra8(&self) -> Result<PixelBuffer<rgb::alt::BGRA<u8>>, At<crate::ConvertError>> {
+        try_convert_to_typed(self, PixelDescriptor::BGRA8_SRGB)
+    }
 }
 
-/// Internal: convert to any target descriptor, returning a typed buffer.
+/// Internal fallible core: convert to any target descriptor, returning a typed
+/// buffer. The `try_to_*` methods surface its errors; the infallible `to_*`
+/// wrappers `.expect()` over it.
+#[cfg(feature = "rgb")]
+fn try_convert_to_typed<Q: Pixel>(
+    buf: &PixelBuffer,
+    target: PixelDescriptor,
+) -> Result<PixelBuffer<Q>, At<crate::ConvertError>> {
+    let erased = buf.convert_to(target)?;
+    erased.try_typed::<Q>().ok_or_else(|| {
+        whereat::at!(crate::ConvertError::NoPath {
+            from: buf.descriptor(),
+            to: target,
+        })
+    })
+}
+
+/// Internal: infallible convert to a typed buffer. **Panics** on the errors
+/// [`try_convert_to_typed`] returns — used by the documented-panic `to_*`
+/// methods only.
 #[cfg(feature = "rgb")]
 fn convert_to_typed<Q: Pixel>(buf: &PixelBuffer, target: PixelDescriptor) -> PixelBuffer<Q> {
-    use alloc::vec;
-    let mut conv = crate::RowConverter::new(buf.descriptor(), target)
-        .expect("RowConverter: no conversion path");
-    let dst_bpp = target.bytes_per_pixel();
-    let dst_stride = target.aligned_stride(buf.width());
-    let total = dst_stride * buf.height() as usize;
-    let mut out = vec![0u8; total];
-    let src_slice = buf.as_slice();
-    for y in 0..buf.height() {
-        let src_row = src_slice.row(y);
-        let dst_start = y as usize * dst_stride;
-        let dst_end = dst_start + buf.width() as usize * dst_bpp;
-        conv.convert_row(src_row, &mut out[dst_start..dst_end], buf.width());
-    }
-    // We need to construct PixelBuffer<Q> from raw parts.
-    // Use from_vec to build the erased form, then reinterpret.
-    let erased = PixelBuffer::from_vec(out, buf.width(), buf.height(), target)
-        .expect("convert_to_typed: buffer construction failed");
-    // Carry over color context
-    let erased = if let Some(ctx) = buf.color_context() {
-        erased.with_color_context(Arc::clone(ctx))
-    } else {
-        erased
-    };
-    erased
-        .try_typed::<Q>()
-        .expect("convert_to_typed: type mismatch after conversion")
+    try_convert_to_typed(buf, target)
+        .expect("convert_to_typed: use try_to_* for fallible conversion")
 }
 
 #[cfg(test)]
@@ -716,6 +857,73 @@ mod tests {
         assert_eq!(row[5], 100);
         assert_eq!(row[6], 150);
         assert_eq!(row[7], 255);
+    }
+
+    // ── convert_in_place ──────────────────────────────────────────────────
+
+    /// Narrowing in place must produce byte-identical pixels to the allocating
+    /// `convert_to` — this is the shuffle-collapse overlap-safety gate.
+    #[test]
+    fn convert_in_place_narrowing_matches_convert_to() {
+        // Non-tight source (RGBA8, width 3) so the front-to-back overlap is real.
+        let data: Vec<u8> = (0..3 * 4 * 5).map(|i| (i * 7 % 251) as u8).collect();
+        let buf = PixelBuffer::from_vec(data, 3, 5, PixelDescriptor::RGBA8_SRGB).unwrap();
+
+        let allocated = buf.convert_to(PixelDescriptor::RGB8_SRGB).unwrap();
+
+        let mut in_place = buf;
+        in_place
+            .convert_in_place(PixelDescriptor::RGB8_SRGB)
+            .unwrap();
+
+        assert_eq!(in_place.descriptor(), PixelDescriptor::RGB8_SRGB);
+        assert_eq!(in_place.stride(), 3 * 3); // packed
+        for y in 0..5 {
+            assert_eq!(
+                in_place.as_slice().row(y),
+                allocated.as_slice().row(y),
+                "row {y} diverged from convert_to"
+            );
+        }
+    }
+
+    /// Identity is a no-op: descriptor and every byte unchanged.
+    #[test]
+    fn convert_in_place_identity_is_noop() {
+        let data = vec![100u8, 150, 200, 50, 100, 150];
+        let mut buf =
+            PixelBuffer::from_vec(data.clone(), 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+        buf.convert_in_place(PixelDescriptor::RGB8_SRGB).unwrap();
+        assert_eq!(buf.descriptor(), PixelDescriptor::RGB8_SRGB);
+        assert_eq!(&buf.as_slice().row(0)[..6], &data[..]);
+    }
+
+    /// Widening reallocates and still matches `convert_to`.
+    #[test]
+    fn convert_in_place_widening_matches_convert_to() {
+        let data = vec![100u8, 150, 200, 50, 100, 150];
+        let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+        let allocated = buf.convert_to(PixelDescriptor::RGBA8_SRGB).unwrap();
+        let mut in_place = buf;
+        in_place
+            .convert_in_place(PixelDescriptor::RGBA8_SRGB)
+            .unwrap();
+        assert_eq!(in_place.descriptor(), PixelDescriptor::RGBA8_SRGB);
+        assert_eq!(in_place.as_slice().row(0), allocated.as_slice().row(0));
+    }
+
+    /// Same-size swizzle (RGBA8 -> BGRA8) rewrites in place, matches convert_to.
+    #[test]
+    fn convert_in_place_same_size_swizzle() {
+        let data = vec![10u8, 20, 30, 40, 50, 60, 70, 80];
+        let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let allocated = buf.convert_to(PixelDescriptor::BGRA8_SRGB).unwrap();
+        let mut in_place = buf;
+        in_place
+            .convert_in_place(PixelDescriptor::BGRA8_SRGB)
+            .unwrap();
+        assert_eq!(in_place.descriptor(), PixelDescriptor::BGRA8_SRGB);
+        assert_eq!(in_place.as_slice().row(0), allocated.as_slice().row(0));
     }
 
     #[test]
