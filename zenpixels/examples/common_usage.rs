@@ -122,14 +122,6 @@ fn walk_strided_rows() {
         .expect("packed buffer");
     assert_eq!(tight.stride(), width as usize * 4);
     assert!(tight.is_contiguous());
-
-    // `new_packed` is an alias for `new_contiguous` — same result, and it
-    // upholds the same alignment invariant (every row aligned to the channel
-    // type, since it delegates to `new` rather than skipping validation).
-    let via_alias = PixelSlice::new_packed(&packed, width, rows, PixelDescriptor::RGBA8)
-        .expect("packed buffer");
-    assert_eq!(via_alias.stride(), tight.stride());
-    assert!(via_alias.is_contiguous());
 }
 
 /// BGRX -> RGBX is a pure channel swizzle: do it in place, no allocation.

@@ -10,8 +10,8 @@
   - `PixelSlice::new_contiguous` / `PixelSliceMut::new_contiguous(data, width, rows, descriptor)`
     — packed-stride constructor (`stride = width * bytes_per_pixel`); the single
     most-repeated line in the audit (~361 `PixelSlice::new` sites hand-compute
-    the tight stride). Aliased by `new_packed` (identical behavior). Both
-    delegate to `new`, so `validate_slice`'s base-alignment + `stride % bpp`
+    the tight stride). Both constructors delegate to `new`, so
+    `validate_slice`'s base-alignment + `stride % bpp`
     checks always run — no unchecked path; every row stays aligned to the
     channel type, so consumers may reinterpret rows as `&[u16]` / `&[f32]`.
   - `PixelDescriptor::with_color_from_cicp(Cicp)` (`const fn`) — retag transfer +

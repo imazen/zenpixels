@@ -23,7 +23,7 @@ demotion queued for the next breaking release.
 
 | # | Finding | Real consumers | Change | Semver | Status |
 |---|---------|---------------:|--------|--------|--------|
-| 1 | `PixelSlice::new_contiguous` / `PixelSliceMut::new_contiguous` (+ `new_packed` alias) — packed-stride ctor | ~361 | add method | additive (0.2.x) | **landed** |
+| 1 | `PixelSlice::new_contiguous` / `PixelSliceMut::new_contiguous` — packed-stride ctor | ~361 | add method | additive (0.2.x) | **landed** |
 | 2 | `Adapted::as_pixel_slice()` | 5 | add method | additive (0.2.x) | **landed** |
 | 3 | `RowConverter::convert_slice(PixelSlice) -> PixelBuffer` | 4–5 | add method | additive (0.2.x) | **landed** |
 | 4 | `PixelDescriptor::with_color_from_cicp(Cicp)` | 3+ | add method | additive (0.2.x) | **landed** |
@@ -45,7 +45,7 @@ tight stride first. It is the most-repeated single line in the whole audit.
 let stride = width as usize * descriptor.bytes_per_pixel();
 let ps = PixelSlice::new(data, width, height, stride, descriptor)?;
 
-// landed (`new_packed` is an alias for the same call)
+// landed
 let ps = PixelSlice::new_contiguous(data, width, height, descriptor)?;
 ```
 
@@ -219,7 +219,7 @@ An additive `Cicp::from_bytes([u8; 4])` removes the `!= 0` papercut. Low priorit
 - **Galleries + CI + docs**: the two tested example galleries, the CI
   `--examples` step, and this document.
 - **Additive API (approved 2026-07-14)**: findings 1, 2, 3, 4, 9 — `new_contiguous`
-  (+ its `new_packed` alias) on both slice types, `Adapted::as_pixel_slice`,
+  on both slice types, `Adapted::as_pixel_slice`,
   `RowConverter::convert_slice`, `PixelDescriptor::with_color_from_cicp`, and
   `Cicp::from_bytes`. Each is exercised in a gallery scenario and a doctest, and
   is used inside the crates where it removes boilerplate. `cargo semver-checks`
