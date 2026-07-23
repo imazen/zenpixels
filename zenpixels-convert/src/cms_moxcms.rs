@@ -629,7 +629,7 @@ pub(crate) fn gray_icc_bytes_for_cicp(cicp: &Cicp) -> Option<alloc::vec::Vec<u8>
     gray.media_white_point = Some(white);
     gray.chromatic_adaptation = Some(moxcms::adaption_matrix_d(
         white.to_xyz(),
-        moxcms::WHITE_POINT_D50.to_xyz(),
+        moxcms::white_point_d50().to_xyz(),
     ));
     gray.description = Some(moxcms::ProfileText::Localizable(alloc::vec![
         moxcms::LocalizableString::new(

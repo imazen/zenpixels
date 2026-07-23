@@ -33,7 +33,7 @@ use std::path::PathBuf;
 
 use moxcms::{
     CicpColorPrimaries, CicpProfile, ColorProfile, LocalizableString, MatrixCoefficients,
-    ProfileText, TransferCharacteristics, WHITE_POINT_D50, Xyzd, adaption_matrix_d,
+    ProfileText, TransferCharacteristics, Xyzd, adaption_matrix_d, white_point_d50,
 };
 
 /// The assigned H.273 colour-primaries codes (everything that is neither
@@ -159,7 +159,10 @@ fn synth_gray_icc(primaries: u8, transfer: u8) -> Option<Vec<u8>> {
     let mut gray = ColorProfile::new_gray_with_gamma(2.2);
     gray.gray_trc = Some(trc);
     gray.media_white_point = Some(white);
-    gray.chromatic_adaptation = Some(adaption_matrix_d(white.to_xyz(), WHITE_POINT_D50.to_xyz()));
+    gray.chromatic_adaptation = Some(adaption_matrix_d(
+        white.to_xyz(),
+        white_point_d50().to_xyz(),
+    ));
     gray.description = Some(ProfileText::Localizable(vec![LocalizableString::new(
         "en".to_string(),
         "US".to_string(),
