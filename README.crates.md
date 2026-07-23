@@ -47,7 +47,7 @@ let first_row: &[u8] = view.row(0);
 let strided: &[u8]   = view.as_strided_bytes();
 
 // Recover the allocation for pool reuse.
-let raw: Vec<u8> = buf.into_vec();
+let (raw, layout) = buf.into_parts();
 # Ok::<(), zenpixels::At<zenpixels::BufferError>>(())
 ```
 

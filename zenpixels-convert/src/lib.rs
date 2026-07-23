@@ -517,7 +517,9 @@ pub mod pipeline;
 mod scan;
 
 // Re-export key conversion types at crate root.
-pub use adapt::{adapt_for_encode_explicit, try_adapt_in_place};
+#[allow(deprecated)]
+pub use adapt::adapt_for_encode_explicit;
+pub use adapt::{adapt_for_encode_explicit_cow, try_adapt_in_place};
 #[cfg(feature = "hdr-experimental")]
 pub use convert::HdrConfig;
 pub use convert::{ConvertPlan, convert_row};

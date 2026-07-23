@@ -67,8 +67,8 @@ use crate::converter::RowConverter;
 use crate::negotiate::{ConvertIntent, best_match};
 use crate::policy::{AlphaPolicy, ConvertOptions};
 use crate::{
-    AlphaMode, ChannelLayout, ChannelType, ColorModel, ConvertError, PixelBuffer, PixelDescriptor,
-    PixelSlice, PixelSliceMut,
+    AlphaMode, ChannelLayout, ChannelType, ColorModel, ConvertError, PixelBuffer, PixelCow,
+    PixelDescriptor, PixelSlice, PixelSliceMut,
 };
 use whereat::{At, ResultAtExt};
 
@@ -145,8 +145,11 @@ fn checked_byte_alloc(rows: u32, stride: usize) -> Result<usize, At<ConvertError
 /// still `pub` for now, but a future `stride` field (imazen/zenpixels#68) will
 /// land additively behind this attribute — code that reads through the
 /// accessors won't need to change.
+#[deprecated(
+    since = "0.2.15",
+    note = "use PixelCow via the *_cow adaptation functions"
+)]
 #[derive(Clone, Debug)]
-#[non_exhaustive]
 pub struct Adapted<'a> {
     /// Pixel data — borrowed if no conversion was needed, owned otherwise.
     pub data: Cow<'a, [u8]>,
@@ -158,6 +161,7 @@ pub struct Adapted<'a> {
     pub rows: u32,
 }
 
+#[allow(deprecated)]
 impl<'a> Adapted<'a> {
     /// The adapted pixel bytes — borrowed on the zero-copy path, owned when a
     /// conversion ran. Tightly packed (`width * bytes_per_pixel`).
@@ -223,6 +227,38 @@ impl<'a> Adapted<'a> {
     }
 }
 
+#[allow(deprecated)]
+fn adapted_into_pixel_cow(adapted: Adapted<'_>) -> PixelCow<'_> {
+    match adapted.data {
+        Cow::Borrowed(data) => {
+            let stride = adapted.width as usize * adapted.descriptor.bytes_per_pixel();
+            PixelCow::Borrowed(
+                PixelSlice::new(
+                    data,
+                    adapted.width,
+                    adapted.rows,
+                    stride,
+                    adapted.descriptor,
+                )
+                .expect("Adapted compatibility output is validated and packed"),
+            )
+        }
+        Cow::Owned(data) => {
+            let mut buffer = PixelBuffer::new(adapted.width, adapted.rows, adapted.descriptor);
+            let row_bytes = adapted.width as usize * adapted.descriptor.bytes_per_pixel();
+            {
+                let mut dst = buffer.as_slice_mut();
+                for y in 0..adapted.rows {
+                    let start = y as usize * row_bytes;
+                    dst.row_mut(y)
+                        .copy_from_slice(&data[start..start + row_bytes]);
+                }
+            }
+            PixelCow::Owned(buffer)
+        }
+    }
+}
+
 /// Negotiate format and convert pixel data for encoding.
 ///
 /// Uses [`ConvertIntent::Fastest`] — minimizes conversion cost.
@@ -250,6 +286,8 @@ impl<'a> Adapted<'a> {
 /// * `stride` - Bytes between row starts (use `width * descriptor.bytes_per_pixel()` for packed).
 /// * `supported` - Formats the encoder accepts.
 #[track_caller]
+#[deprecated(since = "0.2.15", note = "use adapt_for_encode_cow")]
+#[allow(deprecated)]
 pub fn adapt_for_encode<'a>(
     data: &'a [u8],
     descriptor: PixelDescriptor,
@@ -269,10 +307,25 @@ pub fn adapt_for_encode<'a>(
     )
 }
 
+#[track_caller]
+#[allow(deprecated)]
+pub fn adapt_for_encode_cow<'a>(
+    data: &'a [u8],
+    descriptor: PixelDescriptor,
+    width: u32,
+    rows: u32,
+    stride: usize,
+    supported: &[PixelDescriptor],
+) -> Result<PixelCow<'a>, At<ConvertError>> {
+    adapt_for_encode(data, descriptor, width, rows, stride, supported).map(adapted_into_pixel_cow)
+}
+
 /// Negotiate format and convert with intent awareness.
 ///
 /// Like [`adapt_for_encode`], but lets the caller specify a [`ConvertIntent`].
 #[track_caller]
+#[deprecated(since = "0.2.15", note = "use adapt_for_encode_with_intent_cow")]
+#[allow(deprecated)]
 pub fn adapt_for_encode_with_intent<'a>(
     data: &'a [u8],
     descriptor: PixelDescriptor,
@@ -355,6 +408,21 @@ pub fn adapt_for_encode_with_intent<'a>(
         width,
         rows,
     })
+}
+
+#[track_caller]
+#[allow(deprecated)]
+pub fn adapt_for_encode_with_intent_cow<'a>(
+    data: &'a [u8],
+    descriptor: PixelDescriptor,
+    width: u32,
+    rows: u32,
+    stride: usize,
+    supported: &[PixelDescriptor],
+    intent: ConvertIntent,
+) -> Result<PixelCow<'a>, At<ConvertError>> {
+    adapt_for_encode_with_intent(data, descriptor, width, rows, stride, supported, intent)
+        .map(adapted_into_pixel_cow)
 }
 
 /// Convert a raw byte buffer from one format to another.
@@ -705,6 +773,8 @@ fn rewrap<'a>(
 /// on the conversion. Returns an error if a policy forbids the required
 /// conversion.
 #[track_caller]
+#[deprecated(since = "0.2.15", note = "use adapt_for_encode_explicit_cow")]
+#[allow(deprecated)]
 pub fn adapt_for_encode_explicit<'a>(
     data: &'a [u8],
     descriptor: PixelDescriptor,
@@ -793,6 +863,21 @@ pub fn adapt_for_encode_explicit<'a>(
         width,
         rows,
     })
+}
+
+#[track_caller]
+#[allow(deprecated)]
+pub fn adapt_for_encode_explicit_cow<'a>(
+    data: &'a [u8],
+    descriptor: PixelDescriptor,
+    width: u32,
+    rows: u32,
+    stride: usize,
+    supported: &[PixelDescriptor],
+    options: &ConvertOptions,
+) -> Result<PixelCow<'a>, At<ConvertError>> {
+    adapt_for_encode_explicit(data, descriptor, width, rows, stride, supported, options)
+        .map(adapted_into_pixel_cow)
 }
 
 /// Check if all alpha values in a strided buffer are fully opaque.

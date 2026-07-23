@@ -11,6 +11,8 @@ are not compatibility removals and therefore do not belong in this queue.
 
 **`zenpixels`:**
 
+- Remove deprecated `PixelBuffer::into_vec`; use `into_parts` to retain layout
+  or `into_contiguous_bytes` for packed logical pixels.
 - Delete the inert `serde` Cargo feature name.
 - Remove `ContentLightLevel::measure`; use
   `zenpixels_convert::hdr::measure::CllMeasure`.
@@ -57,6 +59,9 @@ the single canonical `new_contiguous` spelling.
   backing `Vec<u8>` from a private-field `PixelBufferLayout`;
   `PixelBuffer::try_from_parts` validates and reconstructs it without copying.
   Typed reconstruction remains the existing `try_typed` step.
+- **`PixelBuffer::into_vec` deprecated** in favor of `into_parts`; raw
+  allocation extraction without its offset/stride/descriptor made accidental
+  loss of the information needed to interpret or reconstruct pixels too easy.
 - **Ownership-preserving extraction:** `PixelBuffer::into_contiguous_bytes`
   collapses alignment prefix and row padding front-to-back inside the existing
   `Vec`. `into_contiguous_pixels` now uses the same compaction, allowing

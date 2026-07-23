@@ -333,6 +333,20 @@ pub struct PixelSlice<'a, P = ()> {
     _pixel: PhantomData<P>,
 }
 
+impl<P> Clone for PixelSlice<'_, P> {
+    fn clone(&self) -> Self {
+        Self {
+            data: self.data,
+            width: self.width,
+            rows: self.rows,
+            stride: self.stride,
+            descriptor: self.descriptor,
+            color: self.color.clone(),
+            _pixel: PhantomData,
+        }
+    }
+}
+
 impl<'a> PixelSlice<'a> {
     /// Create a new pixel slice with validation.
     ///
@@ -1595,6 +1609,69 @@ pub struct PixelBuffer<P = ()> {
     _pixel: PhantomData<P>,
 }
 
+/// Borrowed-or-owned pixels with the same metadata and stride-aware view.
+pub enum PixelCow<'a, P = ()> {
+    Borrowed(PixelSlice<'a, P>),
+    Owned(PixelBuffer<P>),
+}
+
+impl<P> PixelCow<'_, P> {
+    pub const fn is_borrowed(&self) -> bool {
+        matches!(self, Self::Borrowed(_))
+    }
+
+    pub const fn is_owned(&self) -> bool {
+        matches!(self, Self::Owned(_))
+    }
+
+    pub fn as_slice(&self) -> PixelSlice<'_, P> {
+        match self {
+            Self::Borrowed(slice) => slice.clone(),
+            Self::Owned(buffer) => buffer.as_slice(),
+        }
+    }
+}
+
+impl PixelCow<'_> {
+    pub fn to_mut(&mut self) -> &mut PixelBuffer {
+        if let Self::Borrowed(slice) = self {
+            *self = Self::Owned(pixel_slice_to_owned(slice));
+        }
+        match self {
+            Self::Owned(buffer) => buffer,
+            Self::Borrowed(_) => unreachable!(),
+        }
+    }
+
+    pub fn into_owned(self) -> PixelBuffer {
+        match self {
+            Self::Borrowed(slice) => pixel_slice_to_owned(&slice),
+            Self::Owned(buffer) => buffer,
+        }
+    }
+}
+
+impl<'a, P> From<PixelSlice<'a, P>> for PixelCow<'a, P> {
+    fn from(value: PixelSlice<'a, P>) -> Self {
+        Self::Borrowed(value)
+    }
+}
+
+impl<'a, P> From<PixelBuffer<P>> for PixelCow<'a, P> {
+    fn from(value: PixelBuffer<P>) -> Self {
+        Self::Owned(value)
+    }
+}
+
+impl<P> fmt::Debug for PixelCow<'_, P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Borrowed(slice) => f.debug_tuple("Borrowed").field(slice).finish(),
+            Self::Owned(buffer) => f.debug_tuple("Owned").field(buffer).finish(),
+        }
+    }
+}
+
 /// Geometry and metadata separated from a [`PixelBuffer`]'s byte allocation.
 ///
 /// Produced by [`PixelBuffer::into_parts`] and consumed by
@@ -2386,6 +2463,10 @@ impl<P> PixelBuffer<P> {
     /// This is the allocation exactly as stored: it may contain an alignment
     /// prefix and row padding. Use [`into_contiguous_bytes`](Self::into_contiguous_bytes)
     /// for logical packed pixel bytes.
+    #[deprecated(
+        since = "0.2.16",
+        note = "use into_parts() to retain the layout, or into_contiguous_bytes() for packed pixels"
+    )]
     pub fn into_vec(self) -> Vec<u8> {
         self.data
     }
@@ -2748,6 +2829,20 @@ impl<P> fmt::Debug for PixelBuffer<P> {
     }
 }
 
+fn pixel_slice_to_owned(slice: &PixelSlice<'_>) -> PixelBuffer {
+    let mut buffer = PixelBuffer::new(slice.width(), slice.rows(), slice.descriptor());
+    {
+        let mut destination = buffer.as_slice_mut();
+        for y in 0..slice.rows() {
+            destination.row_mut(y).copy_from_slice(slice.row(y));
+        }
+    }
+    if let Some(color) = slice.color_context() {
+        buffer = buffer.with_color_context(color.clone());
+    }
+    buffer
+}
+
 // ---------------------------------------------------------------------------
 // ImgRef -> PixelSlice (zero-copy From impls) -- imgref feature only
 // ---------------------------------------------------------------------------
@@ -2956,7 +3051,9 @@ mod tests {
 
     #[test]
     fn pixel_buffer_into_vec_roundtrip() {
+        #[allow(deprecated)]
         let buf = PixelBuffer::new(4, 4, PixelDescriptor::RGBA8_SRGB);
+        #[allow(deprecated)]
         let v = buf.into_vec();
         // Can re-wrap it
         let buf2 = PixelBuffer::from_vec(v, 4, 4, PixelDescriptor::RGBA8_SRGB).unwrap();

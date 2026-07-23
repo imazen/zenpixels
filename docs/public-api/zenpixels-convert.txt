@@ -11,7 +11,7 @@
 #   pub modules                                13
 #   pub types (struct/enum/trait/alias)        49
 #   pub consts/statics                         19
-#   free functions                             40
+#   free functions                             44
 #   inherent methods                          110
 #   struct fields                              50
 #   enum variants                              56
@@ -21,8 +21,8 @@
 #   auto-trait exceptions                       2
 #
 # per-module pub lines:
-#   (root)                          154
-#   adapt                            15
+#   (root)                          155
+#   adapt                            18
 #   cms                              27
 #   converter                        27
 #   error                            27
@@ -35,14 +35,14 @@
 #   orient                            4
 #   output                           17
 
-## items (312 lines)
+## items (315 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
 pub use ContentLightLevel
 pub use MasteringDisplay
 pub mod adapt
-#[non_exhaustive] pub struct adapt::Adapted<'a>
+pub struct adapt::Adapted<'a>
 pub adapt::Adapted::data: alloc::borrow::Cow<'a, [u8]>
 pub adapt::Adapted::descriptor: zenpixels::descriptor::PixelDescriptor
 pub adapt::Adapted::rows: u32
@@ -53,7 +53,9 @@ pub fn adapt::Adapted<'a>::descriptor(&self) -> zenpixels::descriptor::PixelDesc
 pub fn adapt::Adapted<'a>::rows(&self) -> u32
 pub fn adapt::Adapted<'a>::width(&self) -> u32
 pub fn adapt::adapt_for_encode<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor]) -> core::result::Result<adapt::Adapted<'a>, whereat::at::At<error::ConvertError>>
+pub fn adapt::adapt_for_encode_cow<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor]) -> core::result::Result<zenpixels::buffer::PixelCow<'a>, whereat::at::At<error::ConvertError>>
 pub fn adapt::adapt_for_encode_with_intent<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], ConvertIntent) -> core::result::Result<adapt::Adapted<'a>, whereat::at::At<error::ConvertError>>
+pub fn adapt::adapt_for_encode_with_intent_cow<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], ConvertIntent) -> core::result::Result<zenpixels::buffer::PixelCow<'a>, whereat::at::At<error::ConvertError>>
 pub fn adapt::convert_buffer(&[u8], u32, u32, zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<error::ConvertError>>
 pub mod cms
 pub cms::ColorPriority::PreferCicp
@@ -333,6 +335,7 @@ pub trait TransferFunctionExt [also: ext]
 pub fn TransferFunctionExt::delinearize(&self, f32) -> f32
 pub fn TransferFunctionExt::linearize(&self, f32) -> f32
 pub fn adapt_for_encode_explicit<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], &zenpixels::policy::ConvertOptions) -> core::result::Result<adapt::Adapted<'a>, whereat::at::At<error::ConvertError>> [also: adapt]
+pub fn adapt_for_encode_explicit_cow<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelCow<'a>, whereat::at::At<error::ConvertError>> [also: adapt]
 pub fn apply_matrix_f32(&mut [f32; 3], &gamut::GamutMatrix) [also: gamut]
 pub fn apply_matrix_row_f32(&mut [f32], usize, &gamut::GamutMatrix) [also: gamut]
 pub fn apply_matrix_row_rgba_f32(&mut [f32], usize, &gamut::GamutMatrix) [also: gamut]
