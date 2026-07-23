@@ -9,20 +9,20 @@
 ## summary
 #
 #   pub modules                                10
-#   pub types (struct/enum/trait/alias)        76
-#   pub consts/statics                        280
+#   pub types (struct/enum/trait/alias)        78
+#   pub consts/statics                        290
 #   free functions                              4
-#   inherent methods                          238
+#   inherent methods                          244
 #   struct fields                             107
 #   enum variants                             208
 #   re-exports                                  4
-#   trait roster entries (type × trait)       239
-#   auto-trait-complete types                  34
+#   trait roster entries (type × trait)       241
+#   auto-trait-complete types                  35
 #   auto-trait exceptions                       4
 #
 # per-module pub lines:
-#   (root)                          397
-#   buffer                          218
+#   (root)                          408
+#   buffer                          225
 #   cicp                             27
 #   color                            64
 #   descriptor                      148
@@ -32,7 +32,7 @@
 #   pixel_types                       9
 #   policy                           25
 
-## items (795 lines)
+## items (807 lines)
 
 pub mod zenpixels
 pub use At
@@ -61,6 +61,7 @@ pub fn buffer::InPlacePixels<'a>::new(&'a mut [u8], u32, u32, usize, descriptor:
 pub fn buffer::PixelBuffer::from_vec(alloc::vec::Vec<u8>, u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::new(u32, u32, descriptor::PixelDescriptor) -> Self
 pub fn buffer::PixelBuffer::new_simd_aligned(u32, u32, descriptor::PixelDescriptor, usize) -> Self
+pub fn buffer::PixelBuffer::try_from_parts(alloc::vec::Vec<u8>, buffer::PixelBufferLayout) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::try_new(u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::try_new_simd_aligned(u32, u32, descriptor::PixelDescriptor, usize) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::transform_in_place<F>(&mut self, F) where F: for<'a> core::ops::function::FnOnce(buffer::InPlacePixels<'a>) -> buffer::PixelSliceMut<'a>
@@ -78,6 +79,7 @@ pub fn buffer::PixelBuffer<P>::erase(self) -> buffer::PixelBuffer
 pub fn buffer::PixelBuffer<P>::has_alpha(&self) -> bool
 pub fn buffer::PixelBuffer<P>::height(&self) -> u32
 pub fn buffer::PixelBuffer<P>::into_contiguous_bytes(self) -> alloc::vec::Vec<u8>
+pub fn buffer::PixelBuffer<P>::into_parts(self) -> (alloc::vec::Vec<u8>, buffer::PixelBufferLayout)
 pub fn buffer::PixelBuffer<P>::into_vec(self) -> alloc::vec::Vec<u8>
 pub fn buffer::PixelBuffer<P>::is_grayscale(&self) -> bool
 pub fn buffer::PixelBuffer<P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
@@ -95,6 +97,12 @@ pub fn buffer::PixelBuffer<P>::with_icc(self, impl core::convert::Into<alloc::sy
 pub fn buffer::PixelBuffer<P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
 pub fn buffer::PixelBuffer<P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelBuffer<P>::with_transfer(self, descriptor::TransferFunction) -> Self
+pub fn buffer::PixelBufferLayout::color_context(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
+pub const fn buffer::PixelBufferLayout::descriptor(&self) -> descriptor::PixelDescriptor [also: (root)]
+pub const fn buffer::PixelBufferLayout::height(&self) -> u32 [also: (root)]
+pub const fn buffer::PixelBufferLayout::offset(&self) -> usize [also: (root)]
+pub const fn buffer::PixelBufferLayout::stride(&self) -> usize [also: (root)]
+pub const fn buffer::PixelBufferLayout::width(&self) -> u32 [also: (root)]
 pub fn buffer::PixelSlice<'a, P>::new_typed(&'a [u8], u32, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSlice<'a, P>::as_contiguous_bytes(&self) -> core::option::Option<&'a [u8]>
 pub fn buffer::PixelSlice<'a, P>::as_strided_bytes(&self) -> &'a [u8]
@@ -689,6 +697,7 @@ pub const hdr::MasteringDisplay::HDR10_REFERENCE: Self
 pub fn buffer::PixelBuffer::from_vec(alloc::vec::Vec<u8>, u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::new(u32, u32, descriptor::PixelDescriptor) -> Self
 pub fn buffer::PixelBuffer::new_simd_aligned(u32, u32, descriptor::PixelDescriptor, usize) -> Self
+pub fn buffer::PixelBuffer::try_from_parts(alloc::vec::Vec<u8>, buffer::PixelBufferLayout) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::try_new(u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::try_new_simd_aligned(u32, u32, descriptor::PixelDescriptor, usize) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::transform_in_place<F>(&mut self, F) where F: for<'a> core::ops::function::FnOnce(buffer::InPlacePixels<'a>) -> buffer::PixelSliceMut<'a>
@@ -706,6 +715,7 @@ pub fn buffer::PixelBuffer<P>::erase(self) -> buffer::PixelBuffer
 pub fn buffer::PixelBuffer<P>::has_alpha(&self) -> bool
 pub fn buffer::PixelBuffer<P>::height(&self) -> u32
 pub fn buffer::PixelBuffer<P>::into_contiguous_bytes(self) -> alloc::vec::Vec<u8>
+pub fn buffer::PixelBuffer<P>::into_parts(self) -> (alloc::vec::Vec<u8>, buffer::PixelBufferLayout)
 pub fn buffer::PixelBuffer<P>::into_vec(self) -> alloc::vec::Vec<u8>
 pub fn buffer::PixelBuffer<P>::is_grayscale(&self) -> bool
 pub fn buffer::PixelBuffer<P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
@@ -723,6 +733,8 @@ pub fn buffer::PixelBuffer<P>::with_icc(self, impl core::convert::Into<alloc::sy
 pub fn buffer::PixelBuffer<P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
 pub fn buffer::PixelBuffer<P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelBuffer<P>::with_transfer(self, descriptor::TransferFunction) -> Self
+pub struct PixelBufferLayout [also: buffer]
+pub fn buffer::PixelBufferLayout::color_context(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
 #[non_exhaustive] pub struct PixelDescriptor [also: descriptor]
 pub PixelDescriptor::alpha: core::option::Option<descriptor::AlphaMode>
 pub PixelDescriptor::format: descriptor::PixelFormat
@@ -830,12 +842,13 @@ pub Rgbx::x: u8
 pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 
-## trait impls (41 types)
+## trait impls (42 types)
 
 buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 buffer::PixelBuffer: From<buffer::PixelBuffer<P>>
 buffer::PixelBuffer<P>: Debug
+buffer::PixelBufferLayout: Clone, Debug
 buffer::PixelSlice<'_, P>: Debug
 buffer::PixelSlice<'a, P>: From<buffer::PixelSliceMut<'a, P>>
 buffer::PixelSlice<'a>: From<buffer::PixelSlice<'a, P>>

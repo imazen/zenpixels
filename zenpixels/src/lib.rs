@@ -106,7 +106,8 @@ pub use planar::{
 
 // Re-export buffer types at crate root.
 pub use buffer::{
-    Bgrx, BufferError, InPlacePixels, Pixel, PixelBuffer, PixelSlice, PixelSliceMut, Rgbx,
+    Bgrx, BufferError, InPlacePixels, Pixel, PixelBuffer, PixelBufferLayout, PixelSlice,
+    PixelSliceMut, Rgbx,
 };
 
 // Re-export color types at crate root.

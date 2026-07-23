@@ -1595,7 +1595,86 @@ pub struct PixelBuffer<P = ()> {
     _pixel: PhantomData<P>,
 }
 
+/// Geometry and metadata separated from a [`PixelBuffer`]'s byte allocation.
+///
+/// Produced by [`PixelBuffer::into_parts`] and consumed by
+/// [`PixelBuffer::try_from_parts`]. Fields are private so invalid layouts
+/// cannot be assembled independently of validated pixel storage.
+#[derive(Clone, Debug)]
+pub struct PixelBufferLayout {
+    offset: usize,
+    width: u32,
+    height: u32,
+    stride: usize,
+    descriptor: PixelDescriptor,
+    color: Option<Arc<ColorContext>>,
+}
+
+impl PixelBufferLayout {
+    pub const fn offset(&self) -> usize {
+        self.offset
+    }
+
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub const fn stride(&self) -> usize {
+        self.stride
+    }
+
+    pub const fn descriptor(&self) -> PixelDescriptor {
+        self.descriptor
+    }
+
+    pub fn color_context(&self) -> Option<&Arc<ColorContext>> {
+        self.color.as_ref()
+    }
+}
+
 impl PixelBuffer {
+    /// Reconstruct a buffer from its allocation and layout without copying.
+    #[track_caller]
+    pub fn try_from_parts(
+        data: Vec<u8>,
+        layout: PixelBufferLayout,
+    ) -> Result<Self, At<BufferError>> {
+        if layout.offset > data.len() {
+            return Err(whereat::at!(BufferError::InsufficientData));
+        }
+        let full_rows = layout
+            .stride
+            .checked_mul(layout.height as usize)
+            .and_then(|bytes| layout.offset.checked_add(bytes))
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        if data.len() < full_rows {
+            return Err(whereat::at!(BufferError::InsufficientData));
+        }
+        validate_slice(
+            data.len() - layout.offset,
+            data[layout.offset..].as_ptr(),
+            layout.width,
+            layout.height,
+            layout.stride,
+            &layout.descriptor,
+        )
+        .map_err(|error| whereat::at!(error))?;
+        Ok(Self {
+            data,
+            offset: layout.offset,
+            width: layout.width,
+            height: layout.height,
+            stride: layout.stride,
+            descriptor: layout.descriptor,
+            color: layout.color,
+            _pixel: PhantomData,
+        })
+    }
+
     /// Allocate a zero-filled buffer for the given dimensions and format.
     ///
     /// The default path is infallible for speed — see the
@@ -2175,6 +2254,24 @@ impl PixelBuffer {
 }
 
 impl<P> PixelBuffer<P> {
+    /// Decompose into the allocation and complete layout without copying.
+    ///
+    /// Reconstruct an erased buffer with [`PixelBuffer::try_from_parts`], then
+    /// call [`PixelBuffer::try_typed`] if a typed buffer is required.
+    pub fn into_parts(self) -> (Vec<u8>, PixelBufferLayout) {
+        (
+            self.data,
+            PixelBufferLayout {
+                offset: self.offset,
+                width: self.width,
+                height: self.height,
+                stride: self.stride,
+                descriptor: self.descriptor,
+                color: self.color,
+            },
+        )
+    }
+
     /// Erase the pixel type, returning a type-erased buffer.
     pub fn erase(self) -> PixelBuffer {
         PixelBuffer {
@@ -2864,6 +2961,35 @@ mod tests {
         // Can re-wrap it
         let buf2 = PixelBuffer::from_vec(v, 4, 4, PixelDescriptor::RGBA8_SRGB).unwrap();
         assert_eq!(buf2.width(), 4);
+    }
+
+    #[test]
+    fn pixel_buffer_parts_roundtrip_without_copy() {
+        let buf = PixelBuffer::new_simd_aligned(3, 2, PixelDescriptor::RGB16, 32)
+            .with_color_context(Arc::new(ColorContext::from_cicp(Cicp::SRGB)));
+        let original_ptr = buf.data.as_ptr();
+        let original_stride = buf.stride();
+        let (storage, layout) = buf.into_parts();
+
+        assert_eq!(storage.as_ptr(), original_ptr);
+        assert_eq!((layout.width(), layout.height()), (3, 2));
+        assert_eq!(layout.stride(), original_stride);
+        assert_eq!(layout.descriptor(), PixelDescriptor::RGB16);
+        assert!(layout.color_context().is_some());
+
+        let rebuilt = PixelBuffer::try_from_parts(storage, layout).unwrap();
+        assert_eq!(rebuilt.data.as_ptr(), original_ptr);
+        assert_eq!(rebuilt.stride(), original_stride);
+        assert!(rebuilt.color_context().is_some());
+    }
+
+    #[test]
+    fn pixel_buffer_parts_reject_truncated_storage() {
+        let buf = PixelBuffer::new(4, 4, PixelDescriptor::RGBA8_SRGB);
+        let (mut storage, layout) = buf.into_parts();
+        storage.truncate(3);
+        let error = PixelBuffer::try_from_parts(storage, layout).err().unwrap();
+        assert_eq!(*error.error(), BufferError::InsufficientData);
     }
 
     #[test]

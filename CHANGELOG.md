@@ -53,6 +53,10 @@ the single canonical `new_contiguous` spelling.
 
 ### zenpixels — added
 
+- **Zero-copy storage decomposition:** `PixelBuffer::into_parts` separates the
+  backing `Vec<u8>` from a private-field `PixelBufferLayout`;
+  `PixelBuffer::try_from_parts` validates and reconstructs it without copying.
+  Typed reconstruction remains the existing `try_typed` step.
 - **Ownership-preserving extraction:** `PixelBuffer::into_contiguous_bytes`
   collapses alignment prefix and row padding front-to-back inside the existing
   `Vec`. `into_contiguous_pixels` now uses the same compaction, allowing
