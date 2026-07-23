@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES — complete public-API removal inventory for 0.3.0
+
+This is the canonical removal checklist. It includes every published API
+currently planned for deletion or demotion. Unreleased experiments made
+private before publication (such as resource estimation and `requires_cms`)
+are not compatibility removals and therefore do not belong in this queue.
+
+**`zenpixels`:**
+
+- Delete the inert `serde` Cargo feature name.
+- Remove `ContentLightLevel::measure`; use
+  `zenpixels_convert::hdr::measure::CllMeasure`.
+- Remove `ColorContext::from_icc_and_cicp`; construct from the authoritative
+  ICC or CICP source and retain round-trip metadata in `ColorOrigin`.
+- Demote `KnownColorSpace`, `REGISTRY`, `find_by_cicp`,
+  `find_by_primaries_transfer`, and `find_by_named` to `pub(crate)`.
+- Remove the legacy planar `Plane`; use `PlaneLayout` and the separate
+  `PixelBuffer`s carried by `MultiPlaneImage`.
+
+**`zenpixels-convert`:**
+
+- Delete the inert `serde` Cargo feature name.
+- Remove the packed `Adapted` compatibility type and the deprecated
+  `adapt_for_encode`, `adapt_for_encode_with_intent`, and
+  `adapt_for_encode_explicit` wrappers; use the corresponding `_cow`
+  functions returning `PixelCow`.
+- Remove `adapt::convert_buffer`; use `PixelBuffer` with `convert_to`,
+  `convert_into`, or `convert_in_place`.
+- Remove `RowConverter::convert_rows`; use `convert_slice_into`.
+- Remove `hdr::HdrMetadata`, its root re-export, and
+  `OutputMetadata::hdr`.
+- Remove `hdr::reinhard_tonemap`, `hdr::reinhard_inverse`, and
+  `hdr::exposure_tonemap`; use `zentone`.
+- Remove `ColorManagement`; use `PluggableCms`.
+- Remove `finalize_for_output<C: ColorManagement>`; use
+  `finalize_for_output_with`.
+- Remove `ZenCmsLite::extended` and `ZenCmsLite::extended()`; control clipping
+  through `ConvertOptions`.
+- Remove `cms_moxcms::lut_transform_opts` and
+  `cms_moxcms::cicp_transform_opts`; use `transform_opts`.
+- Remove `icc_profiles::ADOBE_RGB_V4`; use `ADOBE_RGB`.
+- Remove `icc_profiles::PROPHOTO_V4`; no canonical bundled ProPhoto profile
+  replaces it.
+- Remove `icc_profiles::icc_profile_for_primaries`; use
+  `synthesize_icc_for_cicp` or an explicit bundled profile.
+
+`new_packed` is absent because it was removed before publication in favor of
+the single canonical `new_contiguous` spelling.
+
 ### zenpixels — added
 
 - **Ergonomic constructors + a color-retag helper (2e1a4fb).** All additive
