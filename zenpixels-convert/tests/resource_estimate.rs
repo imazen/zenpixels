@@ -73,6 +73,30 @@ fn zero_pixel_plan_returns_zero() {
     assert_eq!(ms_of(&est), 0.0);
 }
 
+#[test]
+fn sub_millisecond_plans_round_up_to_one_ms() {
+    // A 16×16 thumbnail through a real (non-identity) plan takes far less
+    // than a millisecond. The f64→u64 conversion used to truncate that to
+    // 0 ms — indistinguishable from "zero work" for a scheduler summing
+    // many small conversions. The contract now rounds UP: `Some(0)` is
+    // reserved for genuinely zero work (see the `wall_ms` accessor docs).
+    let plan =
+        ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).expect("plan");
+    assert_eq!(
+        plan.estimate(16, 16).wall_ms(),
+        Some(1),
+        "sub-ms non-identity work must report 1 ms, not 0"
+    );
+    // Identity on the same tiny image is also sub-ms → also rounds to 1.
+    let idplan =
+        ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGB8_SRGB).expect("identity");
+    assert_eq!(
+        idplan.estimate(16, 16).wall_ms(),
+        Some(1),
+        "sub-ms identity memcpy must report 1 ms, not 0"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // (3) Pure sRGB encode (Linear F32 → sRGB U8) at 4 MP. Should match t3
 //     benchmark (Linear F32 → sRGB U8 RGB: 4.56 GiB/s at 4096-row).
@@ -127,16 +151,8 @@ fn hdr_bt2446a_pipeline_at_24mp_matches_bench_within_30_pct() {
         ColorPrimaries::Bt2020,
     );
     let to = PixelDescriptor::RGB8_SRGB;
-    let plan = ConvertPlan::new_with_hdr_config(
-        from,
-        to,
-        HdrConfig {
-            source_peak_nits: 1000.0,
-            target_peak_nits: 100.0,
-            gamut_knee: 0.96,
-        },
-    )
-    .expect("plan");
+    let plan = ConvertPlan::new_with_hdr_config(from, to, HdrConfig::for_source_peak(1000.0))
+        .expect("plan");
 
     // 6144 × 4096 ≈ 24 MP.
     let width = 6144u32;

@@ -60,11 +60,29 @@ jobs:
       - name: Test (zenpixels-convert HDR measurement, hdr-experimental)
         run: cargo test -p zenpixels-convert --features hdr-experimental
 
+      # The `avx512` feature routes the f16 slice path and the AVX-512 SIMD
+      # tiers through magetypes/archmage's w512 kernels. Dispatch is at
+      # runtime, so this compiles and runs on any x86-64 host (it just takes
+      # the narrower tier when the runner lacks AVX-512) — but the feature was
+      # otherwise never built or run in CI. x64-only: the feature gates
+      # x86-specific kernels. (Opt-in SIMD features that only ever get a
+      # feature-powerset `check` compile but never execute — this runs them.)
+      - name: Test (zenpixels-convert avx512 tier, x64 only)
+        if: runner.arch == 'X64'
+        run: cargo test -p zenpixels-convert --features avx512
+
       - name: Check no_std (zenpixels)
         run: cargo check -p zenpixels --no-default-features
 
       - name: Check no_std (zenpixels-convert)
         run: cargo check -p zenpixels-convert --no-default-features
+
+      # hdr-experimental adds transcendental math (Bt2446A / SoftCompress /
+      # gamut compression). It must stay no_std-clean (libm, not the std f32
+      # inherents) — this combination was previously never built in CI, so a
+      # std-only method could regress the no_std path unnoticed.
+      - name: Check no_std + hdr-experimental (zenpixels-convert)
+        run: cargo check -p zenpixels-convert --no-default-features --features hdr-experimental
 
   # ==========================================================================
   # Cross-compiled 32-bit testing (i686 via QEMU)
@@ -169,11 +187,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Pinned to a specific commit, NOT `ref: main` — an unrelated push to
+      # imazen/zenutils would otherwise be able to break this repo's CI. Bump
+      # this SHA deliberately when adopting a newer zenutils-apidoc (and regen
+      # the docs/public-api snapshots in the same commit). Eliminated entirely
+      # once zenutils-apidoc 0.1.2's builders reach crates.io (then apidoc/
+      # can depend on the published crate and this checkout goes away).
       - name: Checkout sibling imazen/zenutils
         uses: actions/checkout@v6
         with:
           repository: imazen/zenutils
-          ref: main
+          ref: 1921bc23d2834c203e017d89197decf4fd3330d3 # zenutils main @ 2026-07-14
           path: __siblings/zenutils
 
       - name: Move sibling to parent of GITHUB_WORKSPACE

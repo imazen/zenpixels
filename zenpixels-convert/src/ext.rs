@@ -342,7 +342,8 @@ pub trait PixelBufferHdrConvertExt {
     ///
     /// `hdr.source_peak_nits` is mandatory and parameterizes the BT.2446-A
     /// curve. `target_peak_nits` defaults to `100.0` (SDR), `gamut_knee`
-    /// to `0.9` — pass via [`HdrConfig::default()`](crate::HdrConfig).
+    /// to `0.96` — start from
+    /// [`HdrConfig::for_source_peak`](crate::HdrConfig::for_source_peak).
     ///
     /// For non-HDR sources the `hdr` argument is ignored and the call
     /// behaves like [`convert_to`](PixelBufferConvertExt::convert_to).
@@ -402,13 +403,7 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
             ContentLightLevel::measure_max(lin_slice, diffuse_white, LightLevelMethod::MaxRgb)
                 .unwrap_or(ContentLightLevel::new(1000, 0));
         let source_peak_nits = f32::from(cll.max_content_light_level).max(100.0);
-        self.convert_to_with_hdr_config(
-            target,
-            crate::HdrConfig {
-                source_peak_nits,
-                ..crate::HdrConfig::default()
-            },
-        )
+        self.convert_to_with_hdr_config(target, crate::HdrConfig::for_source_peak(source_peak_nits))
     }
 
     #[track_caller]

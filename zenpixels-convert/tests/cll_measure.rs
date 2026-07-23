@@ -257,3 +257,147 @@ fn measure_max_rejects_integer_pixel_formats() {
         "u16 PQ input must yield None at the trait boundary, got {cll:?}"
     );
 }
+
+// ── NaN / negative fold: SIMD-width rows must match the scalar contract ──
+//
+// Regression tests for the tier-divergent NaN handling fixed in the SIMD
+// kernels: platform `max` NaN semantics differ (x86 `maxps` returns the
+// second operand; NEON/WASM propagate NaN), so a `max`-chain fold silently
+// violated the documented "Negative/NaN samples clamp to 0" contract —
+// one NaN sample zeroed MaxFALL (poisoned running sum) and could
+// underreport MaxCLL, with *different* results per architecture. The
+// pre-existing NaN test used 2 pixels — below one SIMD chunk (8 px) — so
+// only the scalar tail was exercised. These rows are wide enough to cross
+// several SIMD chunks plus a scalar-tail remainder.
+
+/// Scalar reference implementing the documented contract directly:
+/// per-channel fold to 0 for NaN/negative/zero, f64 mean, CTA-861.3
+/// u16-nits rounding (`(nits + 0.5)` truncated, saturating).
+fn oracle_max_fall(pixels: &[[f32; 3]], white: f32, method: LightLevelMethod) -> (u16, u16) {
+    // BT.2020 NCL luma coefficients (ITU-R BT.2020-2 Table 4).
+    const KR: f32 = 0.2627;
+    const KG: f32 = 0.6780;
+    const KB: f32 = 0.0593;
+    let fold = |v: f32| if v > 0.0 { v } else { 0.0 };
+    let to_u16 = |nits: f64| (nits + 0.5) as u16;
+    let mut max_nits = 0.0f32;
+    let mut sum = 0.0f64;
+    for p in pixels {
+        let (r, g, b) = (fold(p[0]), fold(p[1]), fold(p[2]));
+        let m = match method {
+            LightLevelMethod::MaxRgb => r.max(g).max(b),
+            LightLevelMethod::LuminanceBt2020 => KR * r + KG * g + KB * b,
+            _ => unreachable!("non-exhaustive method enum grew — extend the oracle"),
+        };
+        let nits = m * white;
+        if nits > max_nits {
+            max_nits = nits;
+        }
+        sum += f64::from(nits);
+    }
+    let mean = if pixels.is_empty() {
+        0.0
+    } else {
+        sum / pixels.len() as f64
+    };
+    (to_u16(f64::from(max_nits)), to_u16(mean))
+}
+
+fn rgbaf32(pixels: &[[f32; 4]], w: u32, h: u32) -> PixelBuffer {
+    let mut data = alloc::vec::Vec::with_capacity(pixels.len() * 16);
+    for p in pixels {
+        for c in p {
+            data.extend_from_slice(&c.to_ne_bytes());
+        }
+    }
+    PixelBuffer::from_vec(data, w, h, PixelDescriptor::RGBAF32_LINEAR).expect("rgba f32 buf")
+}
+
+#[test]
+fn measure_max_folds_nan_and_negative_across_simd_chunks() {
+    // Poison one pixel per case; every other pixel is (1.0, 1.0, 1.0).
+    // Widths: 64 px = 8 full SIMD chunks (RGB); 26 px = 3 chunks + 2-px
+    // scalar tail, so the chunk/tail seam is covered too.
+    let poisons: [[f32; 3]; 5] = [
+        [0.5, 0.5, f32::NAN],           // NaN in B — the last max operand
+        [f32::NAN, 0.5, 0.5],           // NaN in R — the first
+        [f32::NAN, f32::NAN, f32::NAN], // all-NaN pixel
+        [-5.0, -5.0, -5.0],             // all-negative pixel
+        [0.5, -1.0, f32::NAN],          // mixed
+    ];
+    for method in [LightLevelMethod::MaxRgb, LightLevelMethod::LuminanceBt2020] {
+        for width in [64u32, 26u32] {
+            for (case, poison) in poisons.iter().enumerate() {
+                let mut pixels = alloc::vec![[1.0f32; 3]; width as usize];
+                // Mid-row, inside a full SIMD chunk for both widths.
+                pixels[20] = *poison;
+                let buf = rgbf32(&pixels, width, 1);
+                let got =
+                    ContentLightLevel::measure_max(buf.as_slice(), DiffuseWhite::BT2408, method)
+                        .expect("linear RgbF32 accepted");
+                let (want_cll, want_fall) = oracle_max_fall(&pixels, 203.0, method);
+                assert_eq!(
+                    (
+                        got.max_content_light_level,
+                        got.max_frame_average_light_level
+                    ),
+                    (want_cll, want_fall),
+                    "case {case} ({poison:?}) method {method:?} width {width}: \
+                     SIMD result diverged from the scalar fold contract"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn measure_max_folds_nan_in_rgba_and_ignores_nan_alpha() {
+    // N == 4 kernels take a different chunk layout (32 floats/chunk).
+    // NaN in a color channel folds to 0; NaN in alpha is ignored entirely.
+    let mut pixels = alloc::vec![[0.25f32, 0.5, 0.75, 1.0]; 40];
+    pixels[9] = [0.5, f32::NAN, 0.5, 1.0]; // color-channel NaN
+    pixels[17] = [0.5, 0.5, 0.5, f32::NAN]; // alpha NaN — must not matter
+    let buf = rgbaf32(&pixels, 40, 1);
+    let rgb: alloc::vec::Vec<[f32; 3]> = pixels.iter().map(|p| [p[0], p[1], p[2]]).collect();
+    for method in [LightLevelMethod::MaxRgb, LightLevelMethod::LuminanceBt2020] {
+        let got = ContentLightLevel::measure_max(buf.as_slice(), DiffuseWhite::BT2408, method)
+            .expect("linear RgbaF32 accepted");
+        let (want_cll, want_fall) = oracle_max_fall(&rgb, 203.0, method);
+        assert_eq!(
+            (
+                got.max_content_light_level,
+                got.max_frame_average_light_level
+            ),
+            (want_cll, want_fall),
+            "RGBA method {method:?}: SIMD result diverged from the scalar fold contract"
+        );
+    }
+}
+
+#[test]
+fn measure_robust_histogram_path_folds_nan_across_simd_chunks() {
+    // The histogram kernels (`accumulate_strip_*`) are a separate SIMD
+    // path from the `measure_max` scan kernels — pin the same fold
+    // contract there. MaxFALL from the histogram path is the exact
+    // arithmetic mean (not binned), so it compares exactly against the
+    // oracle; the percentile CLL readout is bin-quantised, so only
+    // sanity-bound it.
+    let mut pixels = alloc::vec![[1.0f32; 3]; 64];
+    pixels[20] = [0.5, 0.5, f32::NAN];
+    let buf = rgbf32(&pixels, 64, 1);
+    for method in [LightLevelMethod::MaxRgb, LightLevelMethod::LuminanceBt2020] {
+        let got = ContentLightLevel::measure_robust(buf.as_slice(), DiffuseWhite::BT2408, method)
+            .expect("linear RgbF32 accepted");
+        let (want_cll, want_fall) = oracle_max_fall(&pixels, 203.0, method);
+        assert_eq!(
+            got.max_frame_average_light_level, want_fall,
+            "histogram-path MaxFALL diverged from the scalar fold contract (method {method:?})"
+        );
+        assert!(
+            got.max_content_light_level <= want_cll
+                && f64::from(got.max_content_light_level) >= f64::from(want_cll) * 0.95,
+            "histogram-path MaxCLL {} implausible vs literal max {want_cll} (method {method:?})",
+            got.max_content_light_level
+        );
+    }
+}

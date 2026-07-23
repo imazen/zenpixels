@@ -33,8 +33,11 @@ use crate::convert::{ConvertPlan, ConvertStep, FusedKind};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SimdTier {
-    /// SIMD tier unknown — estimates use a conservative cross-tier baseline.
-    /// Use [`CurrentHost`](SimdTier::CurrentHost) for the local machine.
+    /// SIMD tier unknown. Currently treated as the AVX2 calibration
+    /// baseline (multiplier 1.0) — there is no separate conservative
+    /// cross-tier model yet; one lands with the per-tier calibration
+    /// sweep (see the TODO on `estimate_plan`). Use
+    /// [`CurrentHost`](SimdTier::CurrentHost) for the local machine.
     Unknown,
     /// Host running the estimate (≈ calibration host's native tier). Distinct
     /// from [`Unknown`](SimdTier::Unknown) which is a cross-tier average.
@@ -151,6 +154,10 @@ impl ResourceEstimate {
     /// Predicted **wall-clock** ms. Already scaled to
     /// [`ComputeEnvironment::cores`] when produced by
     /// [`ConvertPlan::estimate_in`](crate::ConvertPlan::estimate_in).
+    /// Rounded **up**, so sub-millisecond work reports `Some(1)` and
+    /// `Some(0)` means genuinely zero work (empty plan / zero pixels) —
+    /// schedulers summing many small conversions overestimate slightly
+    /// rather than seeing a stream of zeros.
     #[must_use] pub fn wall_ms(&self) -> Option<u64> { self.wall_ms }
     /// Full-image intermediate buffers held simultaneously (input/output
     /// excluded). `None` when the planner can't determine it.
@@ -287,9 +294,11 @@ pub(crate) fn estimate_plan(plan: &ConvertPlan, image: &ImageCharacteristics, co
     let pixels = u64::from(width) * u64::from(height);
     let dst_bytes = pixels * plan.to().bytes_per_pixel() as u64;
     // Identity: memcpy-only ~30 GB/s midpoint, SERIAL, no scratch.
+    // `ceil` (here and below): sub-ms work must report 1, not truncate to
+    // 0 — see the `wall_ms` accessor doc.
     if plan.is_identity() {
         let ms = (dst_bytes as f64) / (30.0 * GIB) * 1_000.0 * tier_mul;
-        return finalize(dst_bytes, ms as u64, 1, 0, compute);
+        return finalize(dst_bytes, ms.ceil() as u64, 1, 0, compute);
     }
     let pixels_mp = (pixels as f64) / ONE_MP;
     // Multi-step: 2 ping-pong row halves sized to the widest intermediate bpp.
@@ -308,14 +317,15 @@ pub(crate) fn estimate_plan(plan: &ConvertPlan, image: &ImageCharacteristics, co
     let scratch_bytes = if multi { (u64::from(width) * max_bpp as u64).saturating_mul(2) } else { 0 };
     let buffer_count: u32 = if multi { 2 } else { 0 };
     let bottleneck = if any_serial || min_knee == u32::MAX { 1 } else { min_knee };
-    finalize(dst_bytes.saturating_add(scratch_bytes), (total_time_ms * tier_mul) as u64, bottleneck, buffer_count, compute)
+    finalize(dst_bytes.saturating_add(scratch_bytes), (total_time_ms * tier_mul).ceil() as u64, bottleneck, buffer_count, compute)
 }
 
 /// Divide single-thread wall by `min(cores, bottleneck)` + attach buffer count.
+/// `div_ceil` keeps the round-up contract: nonzero work never scales to 0.
 #[rustfmt::skip]
 fn finalize(peak: u64, wall_st: u64, bottleneck: u32, buffers: u32, compute: &ComputeEnvironment) -> ResourceEstimate {
     let eff = (compute.cores() as u64).max(1).min(bottleneck.max(1) as u64);
-    ResourceEstimate::new(peak, wall_st / eff).with_intermediate_buffer_count(buffers)
+    ResourceEstimate::new(peak, wall_st.div_ceil(eff)).with_intermediate_buffer_count(buffers)
 }
 
 /// Re-call of `crate::convert::intermediate_desc_for_estimate` to keep the

@@ -105,20 +105,40 @@ impl GamutBoundaryLut {
     /// stays under 0.1 %. Smaller values bring the rolloff in earlier
     /// (more desaturation, lower clipping); larger values let more
     /// clipping leak through.
+    ///
+    /// Chroma-compresses `NaN`/`inf` OKLab inputs to `NaN`/`inf` outputs
+    /// (no scrubbing — the caller owns input sanitisation; the pipeline
+    /// path feeds this finite values).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `a.len()` or `b.len()` differs from `l.len()`. The three
+    /// planes describe one image and must be the same length; a mismatch
+    /// is a caller bug. (Promoted from a `debug_assert` so release builds
+    /// get this message instead of a raw index-out-of-bounds panic.)
     pub fn compress_planes(&self, l: &[f32], a: &mut [f32], b: &mut [f32], knee: f32) {
         let n = l.len();
-        debug_assert!(a.len() == n && b.len() == n);
+        assert!(
+            a.len() == n && b.len() == n,
+            "compress_planes: L/a/b plane lengths must match (l={n}, a={}, b={})",
+            a.len(),
+            b.len(),
+        );
 
         for i in 0..n {
             let av = a[i];
             let bv = b[i];
 
-            let c = (av * av + bv * bv).sqrt();
+            // libm, not the std `f32::sqrt`/`atan2` inherents: this crate is
+            // `#![cfg_attr(not(feature = "std"), no_std)]` and `hdr-experimental`
+            // does not pull `std`, so a no_std consumer enabling it must not hit
+            // std-only float methods.
+            let c = libm::sqrtf(av * av + bv * bv);
             if c < 1e-10 {
                 continue; // achromatic, nothing to compress
             }
 
-            let h = bv.atan2(av);
+            let h = libm::atan2f(bv, av);
 
             let max_c = self.max_chroma(l[i], h);
             if max_c < 1e-10 {
@@ -256,7 +276,18 @@ impl SoftCompress {
     ///
     /// The matching forward matrix is derived by inverting `m1_inv`. If you
     /// already have the forward matrix on hand (the `rgb_to_lms_matrix`
-    /// output), prefer [`SoftCompress::from_matrices`].
+    /// output), prefer [`SoftCompress::from_matrices`] (which takes both
+    /// and cannot panic).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `m1_inv` is singular (non-invertible). Every matrix from
+    /// [`crate::oklab::lms_to_rgb_matrix`] — the intended input — is
+    /// invertible, so the pipeline path never triggers this; it only
+    /// fires for a hand-constructed degenerate matrix. Pass matrices from
+    /// `oklab::lms_to_rgb_matrix` / `rgb_to_lms_matrix`, or use
+    /// [`from_matrices`](Self::from_matrices) to supply the inverse
+    /// directly.
     #[must_use]
     pub fn new(m1_inv: &GamutMatrix, knee: f32) -> Self {
         let m1 = invert_3x3(m1_inv).expect("LMS→RGB matrix must be invertible");
@@ -271,6 +302,12 @@ impl SoftCompress {
     /// Construct a [`SoftCompress`] from both forward and inverse matrices.
     /// `m1` is the linear-RGB → LMS matrix (from `oklab::rgb_to_lms_matrix`);
     /// `m1_inv` is the LMS → linear-RGB matrix.
+    ///
+    /// The two matrices must be a matched inverse pair for the same
+    /// primaries — this constructor does not verify that (it's the cheap,
+    /// no-panic path). A mismatched pair yields a wrong (but non-panicking)
+    /// color transform. Prefer [`new`](Self::new) when you only have the
+    /// inverse and want the forward derived consistently.
     #[must_use]
     pub fn from_matrices(m1: &GamutMatrix, m1_inv: &GamutMatrix, knee: f32) -> Self {
         Self {
@@ -282,6 +319,11 @@ impl SoftCompress {
     }
 
     /// Apply soft gamut compression to a strip of linear RGB pixels in place.
+    ///
+    /// Expects finite linear-RGB input; `NaN`/`inf` channels pass through
+    /// to `NaN`/`inf` output (this is an inner strip primitive — the
+    /// pipeline scrubs non-finite values before the tone-map chain, so
+    /// direct callers own that themselves).
     pub fn apply_strip(&self, rgb: &mut [[f32; 3]]) {
         // Convert to OKLab in planar form for the LUT — small temporaries
         // per pixel keep the API allocation-free even for short strips.
@@ -291,11 +333,12 @@ impl SoftCompress {
             let mut a = lab[1];
             let mut b = lab[2];
 
-            let c = (a * a + b * b).sqrt();
+            // libm float math — no_std discipline (see `compress_planes`).
+            let c = libm::sqrtf(a * a + b * b);
             if c < 1e-10 {
                 continue;
             }
-            let h = b.atan2(a);
+            let h = libm::atan2f(b, a);
             let max_c = self.lut.max_chroma(l, h);
             if max_c < 1e-10 {
                 a = 0.0;

@@ -52,14 +52,17 @@ pub enum ConvertError {
     Buffer(zenpixels::BufferError),
     /// CMS transform could not be built (invalid ICC profile, unsupported color space, etc.).
     CmsError(alloc::string::String),
-    /// The conversion is HDR (`Pq` / `Hlg`) → SDR but no source-peak nits
-    /// were supplied. HDR→SDR requires a tone-map step parameterized by
-    /// source peak luminance; the plain
-    /// [`ConvertPlan::new`](crate::ConvertPlan::new) entry point doesn't
-    /// take one. Build the plan via `ConvertPlan::new_with_hdr_peak`
-    /// instead (or `ConvertPlan::new_with_hdr_config` for full knob
-    /// control), and pass the source's MaxCLL — e.g. from
-    /// `hdr::measure::CllMeasure::measure_robust`. All three live behind
+    /// The conversion is HDR (`Pq` / `Hlg`) → SDR but no usable peak
+    /// luminance was supplied. Raised both when no peak was given at all
+    /// (the plain [`ConvertPlan::new`](crate::ConvertPlan::new) entry
+    /// point doesn't take one) and when a supplied `HdrConfig` carries a
+    /// non-finite or non-positive `source_peak_nits` / `target_peak_nits`
+    /// (including the unset `HdrConfig::default()` value `0.0`) — a
+    /// degenerate peak would tone-map every pixel to black. Build the
+    /// plan via `ConvertPlan::new_with_hdr_peak` (or
+    /// `ConvertPlan::new_with_hdr_config` for full knob control), and
+    /// pass the source's MaxCLL — e.g. from
+    /// `hdr::measure::CllMeasure::measure_max`. All three live behind
     /// the `hdr-experimental` Cargo feature (plain code spans here, not
     /// intra-doc links, so this page renders link-clean without it).
     ///
@@ -172,9 +175,10 @@ impl fmt::Display for ConvertError {
             Self::CmsError(msg) => write!(f, "CMS transform failed: {msg}"),
             Self::HdrSourceRequiresPeak { from, to } => write!(
                 f,
-                "HDR→SDR conversion ({:?} → {:?}) requires a source-peak luminance; \
-                 build the plan via ConvertPlan::new_with_hdr_peak (or new_with_hdr_config) \
-                 and pass the source's MaxCLL (e.g. CllMeasure::measure_robust)",
+                "HDR→SDR conversion ({:?} → {:?}) requires positive, finite peak \
+                 luminances; build the plan via ConvertPlan::new_with_hdr_peak (or \
+                 new_with_hdr_config) and pass the source's MaxCLL (e.g. \
+                 CllMeasure::measure_max)",
                 from.transfer(),
                 to.transfer(),
             ),

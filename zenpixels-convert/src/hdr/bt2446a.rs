@@ -127,6 +127,9 @@ impl Bt2446A {
     /// Map a single HDR pixel (linear-light BT.2020 RGB, source-normalized)
     /// to an SDR pixel (linear-light BT.2020 RGB, target-normalized).
     ///
+    /// Input must be finite; `NaN`/negative channels are not scrubbed here
+    /// (see [`Self::map_strip_simd`]).
+    ///
     /// Implemented as a 1-element strip through [`Self::map_strip_simd`].
     /// A single pixel never reaches the SIMD body (`chunks_exact(16)`
     /// yields zero chunks); it goes through the scalar remainder tail,
@@ -144,6 +147,14 @@ impl Bt2446A {
 
     /// Apply the curve to a strip of HDR pixels in place, dispatching to
     /// the widest available SIMD tier.
+    /// # Input contract
+    ///
+    /// Expects **finite** linear-light BT.2020 RGB. Non-finite input is
+    /// not scrubbed: the SIMD body can carry `NaN`/`inf` through to the
+    /// output while the scalar-tail branch folds it toward black, so the
+    /// two paths need not agree on garbage input. The conversion pipeline
+    /// (`ConvertPlan` tone-map step) scrubs non-finite values *before*
+    /// calling this; direct callers own that themselves.
     pub fn map_strip_simd(&self, strip: &mut [[f32; 3]]) {
         archmage::incant!(
             bt2446a_tier(
@@ -346,7 +357,9 @@ pub(crate) fn bt2446a_tier(
         let f = y_sdr / (1.1 * y_p);
         let cb = f * (b_p - y_p) / 1.8814;
         let cr = f * (r_p - y_p) / 1.4746;
-        let y_tmo = y_sdr - 0.1_f32.max(0.0) * cr.max(0.0);
+        // 0.1 · max(Cr, 0) — matches the SIMD `zero_one * cr_pos` above.
+        // (Was `0.1_f32.max(0.0)`: a no-op `max` on the constant.)
+        let y_tmo = y_sdr - 0.1 * cr.max(0.0);
         let r_prime_out = (y_tmo + 1.4746 * cr).clamp(0.0, 1.0);
         // 0.16455 / 0.57135 are already the BT.2020 G' coefficients (already
         // divided by Kg); see the `POW24_*` comment + struct docs above for

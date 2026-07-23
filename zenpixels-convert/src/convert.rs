@@ -22,8 +22,20 @@ use whereat::{At, ResultAtExt};
 /// Bundles the source-peak luminance (mandatory — the curve is
 /// parameterized by it), target-peak luminance (typically 100 cd/m² for
 /// SDR), and the OKLch soft chroma-compression knee (production default `0.96`).
+///
+/// Construct via [`for_source_peak`](Self::for_source_peak) and refine
+/// with the `with_*` builders — the struct is `#[non_exhaustive]` so
+/// future knobs can land additively without a breaking release. The
+/// existing fields stay `pub` for reading (and in-place mutation).
+///
+/// Both peak fields must be **positive and finite**;
+/// [`ConvertPlan::new_with_hdr_config`] rejects anything else (including
+/// the unset `Default` value) with
+/// [`ConvertError::HdrSourceRequiresPeak`](crate::ConvertError::HdrSourceRequiresPeak)
+/// instead of silently tone-mapping through a degenerate curve.
 #[cfg(feature = "hdr-experimental")]
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct HdrConfig {
     /// HDR source peak luminance in cd/m². The BT.2446-A curve treats
     /// `1.0` source-normalized as this peak. Typical values: 1000 (HDR10,
@@ -51,15 +63,51 @@ impl Default for HdrConfig {
     /// Pipeline defaults: `target_peak_nits = 100.0` (SDR reference white)
     /// and `gamut_knee = 0.96` (empirically calibrated against the
     /// imazen-26 gain-mapped HDR corpus, 2026-06-23). `source_peak_nits`
-    /// has no default — callers must set it explicitly. Returns
-    /// `source_peak_nits = 0.0`; override before passing to
-    /// [`ConvertPlan::new_with_hdr_config`].
+    /// has no default — it returns `0.0` ("unset"), which
+    /// [`ConvertPlan::new_with_hdr_config`] rejects with
+    /// [`ConvertError::HdrSourceRequiresPeak`](crate::ConvertError::HdrSourceRequiresPeak).
+    /// Start from [`HdrConfig::for_source_peak`] instead.
     fn default() -> Self {
         Self {
             source_peak_nits: 0.0,
             target_peak_nits: 100.0,
             gamut_knee: 0.96,
         }
+    }
+}
+
+#[cfg(feature = "hdr-experimental")]
+impl HdrConfig {
+    /// Config for an HDR source with the given peak luminance in cd/m²,
+    /// keeping the calibrated defaults for everything else
+    /// (`target_peak_nits = 100.0`, `gamut_knee = 0.96`).
+    ///
+    /// Typical `source_peak_nits` values: 1000 (HDR10, Apple HDR), 4000
+    /// (HDR10+ reference), 10000 (PQ peak) — or better, the measured
+    /// MaxCLL of the actual content
+    /// ([`CllMeasure::measure_max`](crate::hdr::measure::CllMeasure::measure_max)).
+    #[must_use]
+    pub fn for_source_peak(source_peak_nits: f32) -> Self {
+        Self {
+            source_peak_nits,
+            ..Self::default()
+        }
+    }
+
+    /// Set the SDR target peak luminance in cd/m² (default `100.0`).
+    #[must_use]
+    pub fn with_target_peak_nits(mut self, nits: f32) -> Self {
+        self.target_peak_nits = nits;
+        self
+    }
+
+    /// Set the OKLch soft-compression knee (default `0.96`; meaningful
+    /// range `0.0..=1.0` — values outside it are not validated and
+    /// produce under-/over-compression rather than an error).
+    #[must_use]
+    pub fn with_gamut_knee(mut self, knee: f32) -> Self {
+        self.gamut_knee = knee;
+        self
     }
 }
 
@@ -834,7 +882,8 @@ impl ConvertPlan {
     /// luminance.
     ///
     /// Equivalent to [`ConvertPlan::new_with_hdr_config`] called with
-    /// `HdrConfig { source_peak_nits, target_peak_nits: 100.0, gamut_knee: 0.96 }`.
+    /// [`HdrConfig::for_source_peak(source_peak_nits)`](HdrConfig::for_source_peak)
+    /// (`target_peak_nits = 100.0`, `gamut_knee = 0.96`).
     ///
     /// The plan inserts a [`Bt2446A`](crate::hdr::Bt2446A) tone-map step
     /// (and an OKLch soft-compress step for non-BT.2020 targets) into the
@@ -843,9 +892,10 @@ impl ConvertPlan {
     ///
     /// # Errors
     ///
-    /// Same as [`ConvertPlan::new`] for non-HDR conversions. For HDR
-    /// sources the rejection list shrinks by one ([`HdrSourceRequiresPeak`]
-    /// is no longer raised — peak is supplied).
+    /// Same as [`ConvertPlan::new`] for non-HDR conversions.
+    /// [`HdrSourceRequiresPeak`] is raised only when `source_peak_nits`
+    /// is not a positive, finite number — a supplied-but-degenerate peak
+    /// would otherwise tone-map every pixel to black.
     ///
     /// [`HdrSourceRequiresPeak`]: ConvertError::HdrSourceRequiresPeak
     ///
@@ -859,14 +909,7 @@ impl ConvertPlan {
         to: PixelDescriptor,
         source_peak_nits: f32,
     ) -> Result<Self, At<ConvertError>> {
-        Self::new_with_hdr_config(
-            from,
-            to,
-            HdrConfig {
-                source_peak_nits,
-                ..HdrConfig::default()
-            },
-        )
+        Self::new_with_hdr_config(from, to, HdrConfig::for_source_peak(source_peak_nits))
     }
 
     /// Create an HDR→SDR conversion plan with full knob control.
@@ -899,8 +942,12 @@ impl ConvertPlan {
     /// # Errors
     ///
     /// Same as [`ConvertPlan::new`] for non-HDR conversions. For HDR
-    /// sources the rejection list shrinks by one ([`HdrSourceRequiresPeak`]
-    /// is no longer raised — peak is supplied via `hdr.source_peak_nits`).
+    /// sources, [`HdrSourceRequiresPeak`] is raised when
+    /// `hdr.source_peak_nits` or `hdr.target_peak_nits` is not a
+    /// positive, finite number (including the unset
+    /// [`HdrConfig::default`] value `0.0`) — degenerate peaks would
+    /// otherwise flow into the BT.2446-A constants as `inf`/NaN and the
+    /// kernel's NaN scrub would silently emit an all-black image.
     ///
     /// [`HdrSourceRequiresPeak`]: ConvertError::HdrSourceRequiresPeak
     ///
@@ -930,6 +977,20 @@ impl ConvertPlan {
         );
         if src_is_sdr_encoded {
             return Self::new(from, to);
+        }
+        // Reject unusable peak luminances up front (only on the HDR path —
+        // the SDR early-return above documents `hdr` as ignored there).
+        // `HdrConfig::default()` ships `source_peak_nits = 0.0` ("unset");
+        // before this guard a zero / negative / non-finite peak flowed
+        // into the BT.2446-A constants (`1 / ln(1) = inf`, `powf` of a
+        // negative → NaN) and the tone-map kernel's NaN scrub then emitted
+        // a fully BLACK image with no error — silent total pixel loss.
+        let peak_usable = |v: f32| v.is_finite() && v > 0.0;
+        if !peak_usable(hdr.source_peak_nits) || !peak_usable(hdr.target_peak_nits) {
+            return Err(whereat::at!(ConvertError::HdrSourceRequiresPeak {
+                from,
+                to
+            }));
         }
         // Note: do NOT early-return on `from == to`. The HDR-aware
         // constructor is the caller's opt-in signal that the source carries
@@ -1061,6 +1122,20 @@ impl ConvertPlan {
         }
 
         // ---- (h) Alpha mode (Straight↔Premultiplied).
+        //
+        // KNOWN LIMITATION (premultiplied HDR sources): steps (b)–(e) above —
+        // including the NONLINEAR tone-map and OKLch soft-compress — run on the
+        // source's alpha mode carried through from step (a). Linear ops (the
+        // gamut matrices) commute with premultiplication, but the nonlinear
+        // tone-map does not: `TM(α·R) ≠ α·TM(R)`. A `Premultiplied` source is
+        // therefore tone-mapped on premultiplied values, and this step only
+        // reconciles the alpha *mode* afterwards. Correct handling needs an
+        // unpremultiply before step (b) and a re-premultiply here — but the
+        // library's premul convention is encoded-space (Canvas 2D; see the
+        // `new_explicit` MatteComposite note), so doing it in the linear
+        // pipeline is subtle and deferred rather than done wrong. In practice
+        // PQ/HLG sources are virtually always straight/opaque; premultiplied
+        // HDR is the rare case. Tracked for the `hdr-experimental` stabilization.
         if from.alpha() != to.alpha() && from.alpha().is_some() && to.alpha().is_some() {
             match (from.alpha(), to.alpha()) {
                 (Some(AlphaMode::Straight), Some(AlphaMode::Premultiplied)) => {
@@ -2443,11 +2518,7 @@ mod hdr_plan_tests {
             TransferFunction::Linear,
             ColorPrimaries::Bt709,
         );
-        let hdr = HdrConfig {
-            source_peak_nits: 1000.0,
-            target_peak_nits: 100.0,
-            gamut_knee: 0.96,
-        };
+        let hdr = HdrConfig::for_source_peak(1000.0);
         let inputs = [
             [0.0_f32, 0.0, 0.0],
             [0.18, 0.18, 0.18],
@@ -2490,11 +2561,7 @@ mod hdr_plan_tests {
             TransferFunction::Linear,
             ColorPrimaries::Bt709,
         );
-        let hdr = HdrConfig {
-            source_peak_nits: 1000.0,
-            target_peak_nits: 100.0,
-            gamut_knee: 0.96,
-        };
+        let hdr = HdrConfig::for_source_peak(1000.0);
         let plan = ConvertPlan::new_with_hdr_config(src, to, hdr).expect("plan");
         let inputs = [
             [0.0_f32, 0.0, 0.0],

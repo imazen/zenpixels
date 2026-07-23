@@ -13,20 +13,20 @@
 #   pub types (struct/enum/trait/alias)        42
 #   pub consts/statics                         12
 #   free functions                             12
-#   inherent methods                           45
+#   inherent methods                           48
 #   struct fields                             108
 #   enum variants                              70
 #   trait roster entries (type × trait)        63
 #   auto-trait-complete types                  16
 #
 # per-module pub lines:
-#   (root)                           86
+#   (root)                           89
 #   cms_moxcms                        5
 #   ext                               8
 #   hdr                              26
 #   pipeline                        170
 
-## items (266 lines)
+## items (269 lines)
 
 pub mod cms_moxcms
 pub struct cms_moxcms::MoxCmsError(pub alloc::string::String)
@@ -258,10 +258,13 @@ pub struct FormatEntry [also: pipeline, pipeline::registry]
 pub FormatEntry::can_overshoot: bool
 pub FormatEntry::descriptor: zenpixels::descriptor::PixelDescriptor
 pub FormatEntry::effective_bits: u8
-pub struct HdrConfig
+#[non_exhaustive] pub struct HdrConfig
 pub HdrConfig::gamut_knee: f32
 pub HdrConfig::source_peak_nits: f32
 pub HdrConfig::target_peak_nits: f32
+pub fn HdrConfig::for_source_peak(f32) -> Self
+pub fn HdrConfig::with_gamut_knee(self, f32) -> Self
+pub fn HdrConfig::with_target_peak_nits(self, f32) -> Self
 pub struct MatrixStats [also: pipeline, pipeline::path]
 pub MatrixStats::by_bucket: [usize; 5]
 pub MatrixStats::distinct_working_formats: usize
