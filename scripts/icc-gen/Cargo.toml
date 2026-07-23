@@ -20,7 +20,7 @@ default = ["lcms2-crosscheck"]
 lcms2-crosscheck = ["dep:lcms2", "dep:bytemuck"]
 
 [dependencies]
-moxcms = { version = "0.8.1", features = ["options"] }
+moxcms = { version = ">=0.8.1, <0.10", features = ["options"] }
 lcms2 = { version = "6.1.1", optional = true }
 bytemuck = { version = "1.18.0", optional = true }
 # Build-time only: pure-Rust LZ4 block compression for the CICP bundle
