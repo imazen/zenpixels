@@ -1969,9 +1969,10 @@ impl PixelBuffer {
 
     /// Consume the buffer and return the pixels as a typed `Vec<P>`.
     ///
-    /// **Allocation:** zero-copy **only** when `P` has alignment 1 (u8-component
-    /// types — `Rgb<u8>`, `Rgba<u8>`, `Gray<u8>`, `BGRA<u8>`) *and* the buffer
-    /// is tightly packed with no offset. For **any multi-byte `P`**
+    /// **Allocation:** reuses the existing allocation when `P` has alignment 1
+    /// (u8-component types — `Rgb<u8>`, `Rgba<u8>`, `Gray<u8>`, `BGRA<u8>`),
+    /// compacting offset/padding in place first when necessary. For
+    /// **any multi-byte `P`**
     /// (`Rgb<u16>`, `Rgba<f32>`, …) this **copies the whole image** — the
     /// backing `Vec<u8>` has alignment 1 and cannot be reinterpreted as a
     /// `Vec` of a wider element, so the move-implied-by-`into_` does not hold
@@ -1989,32 +1990,14 @@ impl PixelBuffer {
         if pixel_size == 0 {
             return None;
         }
-        let row_bytes = self.width as usize * pixel_size;
         let total_pixels = self.width as usize * self.height as usize;
-
-        if self.stride == row_bytes && self.offset == 0 {
-            // Fast path: tightly packed, no offset -- try zero-copy reinterpret
-            let mut data = self.data;
-            data.truncate(total_pixels * pixel_size);
-            match bytemuck::try_cast_vec(data) {
-                Ok(pixels) => return Some(pixels),
-                Err((_err, data)) => {
-                    // Alignment mismatch -- copy
-                    return Some(
-                        bytemuck::cast_slice::<u8, P>(&data[..total_pixels * pixel_size]).to_vec(),
-                    );
-                }
+        let data = self.into_contiguous_bytes();
+        match bytemuck::try_cast_vec(data) {
+            Ok(pixels) => Some(pixels),
+            Err((_err, data)) => {
+                Some(bytemuck::cast_slice::<u8, P>(&data[..total_pixels * pixel_size]).to_vec())
             }
         }
-
-        // Slow path: has offset or stride padding -- copy row by row
-        let mut out = Vec::with_capacity(total_pixels);
-        for y in 0..self.height as usize {
-            let row_start = self.offset + y * self.stride;
-            let row_data = &self.data[row_start..row_start + row_bytes];
-            out.extend_from_slice(bytemuck::cast_slice(row_data));
-        }
-        Some(out)
     }
 }
 
@@ -2302,7 +2285,31 @@ impl<P> PixelBuffer<P> {
     }
 
     /// Consume the buffer and return the backing `Vec<u8>` for pool reuse.
+    ///
+    /// This is the allocation exactly as stored: it may contain an alignment
+    /// prefix and row padding. Use [`into_contiguous_bytes`](Self::into_contiguous_bytes)
+    /// for logical packed pixel bytes.
     pub fn into_vec(self) -> Vec<u8> {
+        self.data
+    }
+
+    /// Consume the buffer and return packed logical pixel bytes.
+    ///
+    /// Alignment prefix and row padding are removed by compacting rows
+    /// front-to-back within the existing `Vec`; this does not allocate a
+    /// second image buffer and preserves the allocation's capacity for reuse.
+    pub fn into_contiguous_bytes(mut self) -> Vec<u8> {
+        let row_bytes = self.width as usize * self.descriptor.bytes_per_pixel();
+        let total = row_bytes * self.height as usize;
+        if self.offset != 0 || self.stride != row_bytes {
+            for y in 0..self.height as usize {
+                let source = self.offset + y * self.stride;
+                let destination = y * row_bytes;
+                self.data
+                    .copy_within(source..source + row_bytes, destination);
+            }
+        }
+        self.data.truncate(total);
         self.data
     }
 
@@ -3172,6 +3179,20 @@ mod tests {
         // Should only contain the actual pixel data, no padding
         assert_eq!(bytes.len(), 12);
         assert_eq!(bytes, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    }
+
+    #[test]
+    fn into_contiguous_bytes_collapses_padding_and_keeps_capacity() {
+        let mut buf = PixelBuffer::new_simd_aligned(2, 2, PixelDescriptor::RGB8_SRGB, 16);
+        let capacity = buf.data.capacity();
+        {
+            let mut slice = buf.as_slice_mut();
+            slice.row_mut(0).copy_from_slice(&[1, 2, 3, 4, 5, 6]);
+            slice.row_mut(1).copy_from_slice(&[7, 8, 9, 10, 11, 12]);
+        }
+        let bytes = buf.into_contiguous_bytes();
+        assert_eq!(bytes, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        assert_eq!(bytes.capacity(), capacity);
     }
 
     // --- BufferError Display for all variants ---

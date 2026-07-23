@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)        76
 #   pub consts/statics                        280
 #   free functions                              4
-#   inherent methods                          236
+#   inherent methods                          238
 #   struct fields                             107
 #   enum variants                             208
 #   re-exports                                  4
@@ -22,7 +22,7 @@
 #
 # per-module pub lines:
 #   (root)                          397
-#   buffer                          216
+#   buffer                          218
 #   cicp                             27
 #   color                            64
 #   descriptor                      148
@@ -32,7 +32,7 @@
 #   pixel_types                       9
 #   policy                           25
 
-## items (793 lines)
+## items (795 lines)
 
 pub mod zenpixels
 pub use At
@@ -77,6 +77,7 @@ pub fn buffer::PixelBuffer<P>::descriptor(&self) -> descriptor::PixelDescriptor
 pub fn buffer::PixelBuffer<P>::erase(self) -> buffer::PixelBuffer
 pub fn buffer::PixelBuffer<P>::has_alpha(&self) -> bool
 pub fn buffer::PixelBuffer<P>::height(&self) -> u32
+pub fn buffer::PixelBuffer<P>::into_contiguous_bytes(self) -> alloc::vec::Vec<u8>
 pub fn buffer::PixelBuffer<P>::into_vec(self) -> alloc::vec::Vec<u8>
 pub fn buffer::PixelBuffer<P>::is_grayscale(&self) -> bool
 pub fn buffer::PixelBuffer<P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
@@ -704,6 +705,7 @@ pub fn buffer::PixelBuffer<P>::descriptor(&self) -> descriptor::PixelDescriptor
 pub fn buffer::PixelBuffer<P>::erase(self) -> buffer::PixelBuffer
 pub fn buffer::PixelBuffer<P>::has_alpha(&self) -> bool
 pub fn buffer::PixelBuffer<P>::height(&self) -> u32
+pub fn buffer::PixelBuffer<P>::into_contiguous_bytes(self) -> alloc::vec::Vec<u8>
 pub fn buffer::PixelBuffer<P>::into_vec(self) -> alloc::vec::Vec<u8>
 pub fn buffer::PixelBuffer<P>::is_grayscale(&self) -> bool
 pub fn buffer::PixelBuffer<P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>

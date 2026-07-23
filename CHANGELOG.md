@@ -53,6 +53,10 @@ the single canonical `new_contiguous` spelling.
 
 ### zenpixels — added
 
+- **Ownership-preserving extraction:** `PixelBuffer::into_contiguous_bytes`
+  collapses alignment prefix and row padding front-to-back inside the existing
+  `Vec`. `into_contiguous_pixels` now uses the same compaction, allowing
+  alignment-1 pixel vectors to reuse strided/offset storage too.
 - **Ergonomic constructors + a color-retag helper (2e1a4fb).** All additive
   (`cargo semver-checks`: minor change, no bump); each has real downstream
   consumers from the `~/work/zen` usage audit and a runnable doctest.
@@ -70,6 +74,10 @@ the single canonical `new_contiguous` spelling.
 
 ### zenpixels-convert — added (no-alloc primitives)
 
+- **Consuming reuse conveniences:** `PixelBufferConvertExt::into_converted`,
+  `orient::into_oriented`, and
+  `PixelBufferLoadBearingExt::into_load_bearing_format` return the transformed
+  buffer while delegating to the existing in-place primitives.
 - **`PixelBufferConvertExt::convert_into(&self, dst: PixelSliceMut)`** — convert
   into a destination you already own; **no allocation**. `convert_to` is now
   sugar over it, and `try_add_alpha` / `try_widen_to_u16` / `try_narrow_to_u8` /

@@ -242,6 +242,18 @@ pub fn apply_orientation_in_place(
     Ok(())
 }
 
+/// Consume and orient a buffer while reusing its pixel allocation.
+///
+/// This is the ownership-taking convenience over
+/// [`apply_orientation_in_place`].
+pub fn into_oriented(
+    mut buffer: PixelBuffer,
+    orientation: Orientation,
+) -> Result<PixelBuffer, ConvertError> {
+    apply_orientation_in_place(&mut buffer, orientation)?;
+    Ok(buffer)
+}
+
 /// The transform body behind [`apply_orientation_in_place`]: permute the
 /// bytes and return the re-described tight-stride view for
 /// [`PixelBuffer::transform_in_place`] to adopt.

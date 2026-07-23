@@ -463,6 +463,16 @@ fn chroma_collapsed(src: ChannelLayout, dst: ChannelLayout) -> bool {
 ///
 /// Sealed: implemented for [`PixelBuffer`] only.
 pub trait PixelBufferLoadBearingExt: sealed::Sealed {
+    /// Consume this buffer and return its load-bearing representation while
+    /// reusing the existing allocation.
+    fn into_load_bearing_format(mut self, force_alpha_restructuring: bool) -> Self
+    where
+        Self: Sized,
+    {
+        self.reduce_to_load_bearing_format_in_place(force_alpha_restructuring);
+        self
+    }
+
     /// Run the load-bearing analysis and rewrite this buffer in place to
     /// the narrowest justified format, adopting the narrowed descriptor
     /// and tight row stride (`width * bytes_per_pixel`) in the same call.

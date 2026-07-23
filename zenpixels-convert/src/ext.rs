@@ -206,6 +206,17 @@ pub trait PixelBufferConvertExt: sealed::Sealed {
     /// ```
     fn convert_in_place(&mut self, target: PixelDescriptor) -> Result<(), At<crate::ConvertError>>;
 
+    /// Consume and convert this buffer, reusing its allocation whenever
+    /// [`convert_in_place`](Self::convert_in_place) can.
+    #[track_caller]
+    fn into_converted(mut self, target: PixelDescriptor) -> Result<Self, At<crate::ConvertError>>
+    where
+        Self: Sized,
+    {
+        self.convert_in_place(target)?;
+        Ok(self)
+    }
+
     /// Add an alpha channel. **Allocates** a new `PixelBuffer`.
     ///
     /// - Gray → GrayAlpha (opaque alpha)

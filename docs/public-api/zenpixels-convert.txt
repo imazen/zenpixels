@@ -11,8 +11,8 @@
 #   pub modules                                13
 #   pub types (struct/enum/trait/alias)        49
 #   pub consts/statics                         19
-#   free functions                             39
-#   inherent methods                          106
+#   free functions                             40
+#   inherent methods                          110
 #   struct fields                              50
 #   enum variants                              56
 #   re-exports                                  5
@@ -21,21 +21,21 @@
 #   auto-trait exceptions                       2
 #
 # per-module pub lines:
-#   (root)                          152
+#   (root)                          154
 #   adapt                            15
 #   cms                              27
 #   converter                        27
 #   error                            27
-#   ext                              15
+#   ext                              16
 #   gamut                             6
 #   hdr                              15
 #   icc_profiles                     13
-#   load_bearing                     11
+#   load_bearing                     12
 #   oklab                             9
-#   orient                            3
+#   orient                            4
 #   output                           17
 
-## items (307 lines)
+## items (312 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -121,6 +121,7 @@ pub fn ext::PixelBufferConvertExt::convert_in_place(&mut self, zenpixels::descri
 pub fn ext::PixelBufferConvertExt::convert_into(&self, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::delinearize(&self, zenpixels::descriptor::TransferFunction) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn ext::PixelBufferConvertExt::into_converted(self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>> where Self: core::marker::Sized
 pub fn ext::PixelBufferConvertExt::linearize(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::try_add_alpha(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::try_narrow_to_u8(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
@@ -161,6 +162,7 @@ pub load_bearing::LoadBearingReport::uses_chroma: core::option::Option<bool>
 pub load_bearing::LoadBearingReport::uses_low_bits: core::option::Option<bool>
 pub const fn load_bearing::LoadBearingReport::any_analyzed(&self) -> bool [also: (root)]
 pub fn load_bearing::LoadBearingReport::apply_to(&self, &zenpixels::descriptor::PixelDescriptor) -> zenpixels::descriptor::PixelDescriptor
+pub fn load_bearing::PixelBufferLoadBearingExt::into_load_bearing_format(self, bool) -> Self where Self: core::marker::Sized
 pub fn load_bearing::PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place(&mut self, bool)
 pub fn load_bearing::PixelSliceLoadBearingExt::determine_load_bearing(&self) -> load_bearing::LoadBearingReport
 pub fn load_bearing::PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuffer>
@@ -178,6 +180,7 @@ pub mod orient
 pub fn orient::apply_orientation(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation) -> zenpixels::buffer::PixelBuffer
 pub fn orient::apply_orientation_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::orientation::Orientation) -> core::result::Result<(), error::ConvertError>
 pub fn orient::apply_orientation_into(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), error::ConvertError>
+pub fn orient::into_oriented(zenpixels::buffer::PixelBuffer, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, error::ConvertError>
 pub mod output
 pub output::OutputProfile::Icc(alloc::sync::Arc<[u8]>)
 pub output::OutputProfile::Named(zenpixels::cicp::Cicp)
@@ -308,11 +311,13 @@ pub fn PixelBufferConvertExt::convert_in_place(&mut self, zenpixels::descriptor:
 pub fn PixelBufferConvertExt::convert_into(&self, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::delinearize(&self, zenpixels::descriptor::TransferFunction) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn PixelBufferConvertExt::into_converted(self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>> where Self: core::marker::Sized
 pub fn PixelBufferConvertExt::linearize(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::try_add_alpha(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::try_narrow_to_u8(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::try_widen_to_u16(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub trait PixelBufferLoadBearingExt: load_bearing::sealed::Sealed [also: load_bearing]
+pub fn PixelBufferLoadBearingExt::into_load_bearing_format(self, bool) -> Self where Self: core::marker::Sized
 pub fn PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place(&mut self, bool)
 pub trait PixelSliceLoadBearingExt: load_bearing::sealed::Sealed [also: load_bearing]
 pub fn PixelSliceLoadBearingExt::determine_load_bearing(&self) -> load_bearing::LoadBearingReport
