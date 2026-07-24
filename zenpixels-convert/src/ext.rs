@@ -100,9 +100,11 @@ impl ColorPrimariesExt for ColorPrimaries {
 
 use alloc::sync::Arc;
 use whereat::{At, ResultAtExt};
-use zenpixels::buffer::{PixelBuffer, PixelSlice};
+use zenpixels::PixelDescriptor;
+use zenpixels::buffer::PixelBuffer;
 use zenpixels::descriptor::{AlphaMode, ChannelLayout, ChannelType};
-use zenpixels::{BufferError, PixelDescriptor};
+#[cfg(feature = "image")]
+use zenpixels::{BufferError, PixelSlice};
 
 /// Adds format conversion methods to type-erased [`PixelBuffer`].
 pub trait PixelBufferConvertExt {
