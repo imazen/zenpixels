@@ -1,3 +1,5 @@
+#![cfg(feature = "estimation-experimental")]
+
 //! Tests for the `ResourceEstimate` returned by `ConvertPlan::estimate(_in)`.
 //! The estimate types live locally in `zenpixels_convert::estimate` and are
 //! shape-compatible with the corresponding `zencodec::estimate::*` types

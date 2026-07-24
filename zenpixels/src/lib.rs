@@ -8,11 +8,19 @@
 //! gamut mapping, and codec format negotiation, see
 //! [`zenpixels-convert`](https://docs.rs/zenpixels-convert).
 //!
+//! # Examples
+//!
+//! A runnable, self-checking gallery of the common usages lives in
+//! [`examples/common_usage.rs`](https://github.com/imazen/zenpixels/blob/main/zenpixels/examples/common_usage.rs)
+//! (`cargo run -p zenpixels --example common_usage`).
+//!
 //! # Core types
 //!
 //! - [`PixelFormat`] — flat enum of byte layouts (`Rgb8`, `Rgba16`, `OklabF32`, etc.)
 //! - [`PixelDescriptor`] — format + transfer function + primaries + alpha mode + signal range
-//! - [`PixelBuffer`] — owned pixel storage with SIMD-aligned allocation
+//! - [`PixelBuffer`] — owned pixel storage, tightly packed
+//!   (`width * bytes_per_pixel`); base aligned to the channel type. Opt into a
+//!   SIMD-padded row stride with [`PixelBuffer::new_simd_aligned`].
 //! - [`PixelSlice`] / [`PixelSliceMut`] — borrowed views with stride support
 //! - [`Pixel`] — trait mapping concrete types to their descriptor
 //! - [`Cicp`] — ITU-T H.273 color signaling codes
@@ -98,7 +106,8 @@ pub use planar::{
 
 // Re-export buffer types at crate root.
 pub use buffer::{
-    Bgrx, BufferError, InPlacePixels, Pixel, PixelBuffer, PixelSlice, PixelSliceMut, Rgbx,
+    Bgrx, BufferError, InPlacePixels, Pixel, PixelBuffer, PixelBufferLayout, PixelCow, PixelSlice,
+    PixelSliceMut, Rgbx,
 };
 
 // Re-export color types at crate root.

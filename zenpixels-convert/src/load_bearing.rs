@@ -191,10 +191,13 @@ pub trait PixelSliceLoadBearingExt: sealed::Sealed {
     /// available; `None` if the buffer is already at its load-bearing
     /// minimum, the predicates couldn't run, or allocation failed.
     ///
-    /// The returned [`PixelBuffer`] carries the narrowed descriptor and
-    /// the buffer's standard SIMD-aligned row stride (it is not
-    /// byte-tightly packed; use the buffer's own accessors or
-    /// [`PixelBuffer::as_slice`] downstream).
+    /// The returned [`PixelBuffer`] carries the narrowed descriptor and a
+    /// tightly-packed row stride (`width * bytes_per_pixel`) — it is allocated
+    /// with [`PixelBuffer::try_new`], and `PixelDescriptor::aligned_stride` is
+    /// packed despite its name (`simd_aligned_stride` is the padded one, and
+    /// nothing in these crates allocates with it). Use the buffer's own
+    /// accessors or [`PixelBuffer::as_slice`] downstream rather than assuming
+    /// either stride.
     fn try_reduce_to_load_bearing_format(&self) -> Option<PixelBuffer>;
 }
 
@@ -460,6 +463,16 @@ fn chroma_collapsed(src: ChannelLayout, dst: ChannelLayout) -> bool {
 ///
 /// Sealed: implemented for [`PixelBuffer`] only.
 pub trait PixelBufferLoadBearingExt: sealed::Sealed {
+    /// Consume this buffer and return its load-bearing representation while
+    /// reusing the existing allocation.
+    fn into_load_bearing_format(mut self, force_alpha_restructuring: bool) -> Self
+    where
+        Self: Sized,
+    {
+        self.reduce_to_load_bearing_format_in_place(force_alpha_restructuring);
+        self
+    }
+
     /// Run the load-bearing analysis and rewrite this buffer in place to
     /// the narrowest justified format, adopting the narrowed descriptor
     /// and tight row stride (`width * bytes_per_pixel`) in the same call.
@@ -611,9 +624,7 @@ fn reduce_in_place_impl(
     let in_bpp = src.bytes_per_pixel();
     let out_bpp = target.bytes_per_pixel();
     debug_assert!(out_bpp < in_bpp, "reduction always shrinks bpp");
-    let out_stride = width as usize * out_bpp;
-
-    compact_rows_in_place(
+    let out_stride = compact_rows_in_place(
         bytes,
         width as usize,
         rows as usize,
@@ -624,27 +635,39 @@ fn reduce_in_place_impl(
         target.layout(),
         map,
         narrow16,
+        CompactionStride::Packed,
     );
 
     rewrap(bytes, width, rows, out_stride, target, ctx)
 }
 
 /// Rewrite rows front-to-back in place, narrowing `in_bpp` -> `out_bpp`
-/// per pixel (channel selection via `map`, optional U16 -> U8
-/// narrowing). Output rows are tightly packed at `width * out_bpp`.
+/// per pixel (channel selection via `map`, optional U16 -> U8 narrowing).
+/// Returns the selected output stride.
 ///
 /// Overlap safety (plain index math, no `unsafe`): for pixel `(y, x)`,
 /// `dst_end = y*out_stride + (x+1)*out_bpp <= y*in_stride +
 /// (x+1)*in_bpp`, the start of the next unread source pixel -- every
-/// write lands at or before the bytes already consumed. Rows whose
-/// destination span is disjoint from their source span (all but the
-/// first `~out_bpp / (in_bpp - out_bpp)` rows on tight input) borrow
-/// both spans via `split_at_mut` and reuse the allocating path's
-/// SIMD/shuffle row kernels; the overlapping prefix rows stage each
-/// pixel through a fixed temp so the within-pixel read stays ahead of
-/// the write (dst == src only at the very first pixel).
+/// write lands at or before the bytes already consumed. Rows whose destination
+/// span is disjoint from their source span borrow both via `split_at_mut` and
+/// reuse the allocating path's SIMD/shuffle row kernels. With packed output
+/// this is all but the first `~out_bpp / (in_bpp - out_bpp)` rows on tight
+/// input; a row-preserving stride may intentionally overlap more rows. The
+/// overlapping rows stage each pixel through a fixed temp so the within-pixel
+/// read stays ahead of the write (dst == src only at the very first pixel).
+#[derive(Clone, Copy)]
+pub(crate) enum CompactionStride {
+    /// Collapse every row front-to-back into a tightly packed image.
+    Packed,
+    /// Keep rows at the closest valid stride not exceeding the input stride.
+    ///
+    /// This avoids unnecessary cross-row movement for a lane-only adaptation
+    /// while still satisfying `PixelSlice`'s whole-pixel stride invariant.
+    PreserveRows,
+}
+
 #[allow(clippy::too_many_arguments)]
-fn compact_rows_in_place(
+pub(crate) fn compact_rows_in_place(
     data: &mut [u8],
     width: usize,
     rows: usize,
@@ -655,8 +678,14 @@ fn compact_rows_in_place(
     dst_layout: ChannelLayout,
     map: &[usize],
     narrow16: bool,
-) {
-    let out_stride = width * out_bpp;
+    stride_policy: CompactionStride,
+) -> usize {
+    let packed_stride = width * out_bpp;
+    let out_stride = match stride_policy {
+        CompactionStride::Packed => packed_stride,
+        CompactionStride::PreserveRows => in_stride - (in_stride % out_bpp),
+    };
+    debug_assert!(out_stride >= packed_stride);
     let in_ch = src_layout.channels();
     let elem = if narrow16 { 2 } else { in_bpp / in_ch };
     let row_in_len = width * in_bpp;
@@ -712,6 +741,7 @@ fn compact_rows_in_place(
             }
         }
     }
+    out_stride
 }
 
 // ── Strided row iteration helpers ──────────────────────────────────────

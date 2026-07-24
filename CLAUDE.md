@@ -49,6 +49,10 @@ Changes that may ship inside a `0.2.N` patch release:
 4. **Removing a Cargo feature** when the feature was either experimental (no release had it in default) or has been folded into the default behavior (e.g., `zencms-lite` was dropped when its functionality became unconditional via `OnceBox`).
 5. **Losing auto-trait impls as a mechanical consequence** of new private fields (e.g., `RowConverter` lost `Sync` because it now holds `Box<dyn RowTransformMut: Send>`). Acceptable when the type's primary use is `&mut self` and cross-thread shared access was never meaningful.
 6. **Dropping a derive like `Debug`** when the type's fields are not meaningfully Debug-able and no callers rely on the default derive. Replace with a curated manual impl or a `_opaque: "<redacted>"` placeholder if needed.
+7. **Sealing a public trait** (`trait_newly_sealed` + `trait_added_supertrait`) when a grep of `~/work/zen` finds **zero external `impl`s**, and external implementation was never meaningful — e.g. an extension trait over a concrete foreign type, whose methods all return that type. Sealing is what this file's API-design section already asks for ("Traits should be sealed … unless external implementation is a required feature"); doing it later is the tolerated cost of not having done it at first release.
+8. **Adding a method to such a trait** (`trait_method_added`) — once sealed, this is structurally non-breaking; the semver-checks failure is against the *published* unsealed shape, not against any real implementor. Requires the same zero-external-impl audit, documented in the commit.
+
+   Applied 2026-07-15 to `PixelBufferConvertExt` / `PixelBufferConvertTypedExt` (adding `convert_into`): audit found the only impls anywhere are the two in-tree ones (`ext.rs`), with zenpng/zentone *calling* but never implementing. Three failures accepted: `trait_newly_sealed`, `trait_added_supertrait`, `trait_method_added`.
 
 ### Not tolerated in 0.2.N
 

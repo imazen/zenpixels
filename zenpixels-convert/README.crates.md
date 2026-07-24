@@ -131,9 +131,10 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 
 The buffer-baking half of the zen orientation story lives here (the `Orientation` enum and its composition algebra are in `zenpixels`):
 
-- [`orient::apply_orientation`] — fresh buffer; SIMD-tiled transpose for 4-byte pixels (behind the `fast-transpose` feature; portable scalar otherwise).
-- [`orient::apply_orientation_into`] — caller-provided target, no allocation.
-- [`orient::apply_orientation_in_place`] — reuses the buffer's own allocation.
+- [`PixelSliceOrientationExt`] — `apply_orientation` returns a fresh buffer;
+  `apply_orientation_into` writes caller-provided storage.
+- [`PixelBufferOrientationExt`] — applies orientation while reusing the owned
+  buffer's allocation.
 
 ## Atomic output assembly
 
@@ -185,8 +186,8 @@ println!(
 | [`ConvertIntent`] | Effort-vs-loss weighting for negotiation |
 | [`Provenance`] / [`ConversionCost`] / [`FormatOption`] | Cost-model inputs and results |
 | `ConvertOptions` (re-export) | Explicit lossy-operation policy |
-| [`ConvertPlan`] / [`convert_row`] | Lower-level plan + stateless row convert |
-| [`adapt::adapt_for_encode`] / [`adapt_for_encode_explicit`] / [`try_adapt_in_place`] | One-call negotiate-and-convert helpers |
+| [`ConvertPlan`] | Lower-level plan + one-off `convert_row` |
+| [`adapt::adapt_for_encode_cow`] / [`adapt_for_encode_explicit_cow`] / [`try_adapt_in_place`] | One-call format-adaptation helpers returning `PixelCow` |
 | [`PluggableCms`] / [`RowTransformMut`] / [`MoxCms`] | Pluggable CMS backend interface + moxcms impl |
 | [`GamutMatrix`] / [`conversion_matrix`] / `apply_matrix_*` | Gamut matrix construction and application |
 | [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`hdr-experimental` feature) |
@@ -330,9 +331,10 @@ Apache-2.0 OR MIT.
 [`FormatOption`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.FormatOption.html
 [`ConvertOptions`]: https://docs.rs/zenpixels/latest/zenpixels/struct.ConvertOptions.html
 [`ConvertPlan`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html
-[`convert_row`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.convert_row.html
-[`adapt::adapt_for_encode`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/adapt/fn.adapt_for_encode.html
-[`adapt_for_encode_explicit`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.adapt_for_encode_explicit.html
+[`PixelSliceOrientationExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.PixelSliceOrientationExt.html
+[`PixelBufferOrientationExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.PixelBufferOrientationExt.html
+[`adapt::adapt_for_encode_cow`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/adapt/fn.adapt_for_encode_cow.html
+[`adapt_for_encode_explicit_cow`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.adapt_for_encode_explicit_cow.html
 [`try_adapt_in_place`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.try_adapt_in_place.html
 [`PluggableCms`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/cms/trait.PluggableCms.html
 [`RowTransformMut`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/cms/trait.RowTransformMut.html
@@ -359,9 +361,6 @@ Apache-2.0 OR MIT.
 [`LoadBearingReport`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.LoadBearingReport.html
 [`PixelSliceLoadBearingExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.PixelSliceLoadBearingExt.html
 [`PixelBufferLoadBearingExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.PixelBufferLoadBearingExt.html
-[`orient::apply_orientation`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/orient/fn.apply_orientation.html
-[`orient::apply_orientation_into`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/orient/fn.apply_orientation_into.html
-[`orient::apply_orientation_in_place`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/orient/fn.apply_orientation_in_place.html
 [`CodecFormats`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/pipeline/struct.CodecFormats.html
 [`optimal_path`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/pipeline/fn.optimal_path.html
 [`generate_path_matrix`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/pipeline/fn.generate_path_matrix.html

@@ -44,6 +44,12 @@ jobs:
       - name: Test (workspace)
         run: cargo test --workspace
 
+      # `cargo test --workspace` builds example targets but does not run the
+      # `#[test]`s inside them (that needs `--examples`). The `common_usage` /
+      # `convert_pipeline` galleries assert the documented behavior, so run them.
+      - name: Test (usage examples)
+        run: cargo test --workspace --examples
+
       # Default `cargo test` exercises only the portable scalar transpose tiers.
       # Run the orient suite again with the SIMD kernels enabled so the per-width
       # AVX2 (x64) / NEON (arm64 runners) register transposes are executed and
@@ -59,6 +65,32 @@ jobs:
       # feature — run it explicitly so those suites execute in CI.
       - name: Test (zenpixels-convert HDR measurement, hdr-experimental)
         run: cargo test -p zenpixels-convert --features hdr-experimental
+
+      # The strongest bundled-profile correctness gates compare every generated
+      # RGB/gray ICC profile byte-for-byte with a fresh moxcms synthesis. The
+      # default workspace test does not enable this optional backend.
+      - name: Test (zenpixels-convert ICC synthesis parity, cms-moxcms)
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: cargo test -p zenpixels-convert --lib --features cms-moxcms
+
+      # Exercise the feature combinations used by small downstream codecs, not
+      # just compile them in the feature-powerset job. In particular this keeps
+      # the no-icc-db fallback paths and their test harness buildable.
+      - name: Test (zenpixels-convert rgb without default features)
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: cargo test -p zenpixels-convert --no-default-features --features rgb
+
+      - name: Test (zenpixels-convert rgb + std without default features)
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: cargo test -p zenpixels-convert --no-default-features --features rgb,std
+
+      # The estimate surface (estimate module + ConvertPlan::estimate(_in)) and
+      # its whole test suite (tests/resource_estimate.rs is `#![cfg]`-gated on
+      # the feature) only exist behind estimation-experimental. Without this
+      # step the feature-powerset job would `check` it but never RUN a single
+      # assertion — the opt-in-feature-untested-in-CI trap.
+      - name: Test (zenpixels-convert resource estimation, estimation-experimental)
+        run: cargo test -p zenpixels-convert --features estimation-experimental --examples --tests
 
       # The `avx512` feature routes the f16 slice path and the AVX-512 SIMD
       # tiers through magetypes/archmage's w512 kernels. Dispatch is at

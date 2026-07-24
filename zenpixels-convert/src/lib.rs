@@ -9,6 +9,13 @@
 //! All interchange types from `zenpixels` are re-exported at the crate root,
 //! so downstream code can depend on `zenpixels-convert` alone.
 //!
+//! # Examples
+//!
+//! A runnable, self-checking walk through the Decode → Negotiate → Convert →
+//! Encode lifecycle lives in
+//! [`examples/convert_pipeline.rs`](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/examples/convert_pipeline.rs)
+//! (`cargo run -p zenpixels-convert --example convert_pipeline`).
+//!
 //! # Core concepts
 //!
 //! - **Format negotiation**: [`best_match`] picks the cheapest conversion
@@ -50,7 +57,7 @@
 //!
 //! 4. **Pixels and metadata travel together.** [`ColorContext`] rides on
 //!    [`PixelBuffer`] via `Arc` so ICC/CICP metadata follows pixel data
-//!    through the pipeline. [`finalize_for_output`] couples converted pixels
+//!    through the pipeline. [`finalize_for_output_with`] couples converted pixels
 //!    with matching encoder metadata atomically.
 //!
 //! 5. **Provenance enables lossless round-trips.** The cost model tracks
@@ -202,15 +209,19 @@
 //! }
 //! ```
 //!
-//! Or use the convenience function that combines negotiation and conversion:
+//! For an encode path, first obtain the formats supported by the codec under
+//! its active configuration, then select from that candidate list and convert:
 //!
 //! ```rust,ignore
-//! let adapted = adapt_for_encode(
+//! let encode_pixels = adapt_for_encode_cow(
 //!     raw_bytes, descriptor, width, rows, stride,
 //!     &encoder_supported,
 //! )?;
-//! // adapted.data is Cow::Borrowed if no conversion needed
+//! // PixelCow::Borrowed if no conversion is needed.
 //! ```
+//!
+//! The adaptation helpers do not inspect codec configuration or encoded image
+//! data and therefore are not general codec negotiation.
 //!
 //! **Rules for conversion:**
 //!
@@ -246,15 +257,19 @@
 //! The encoder receives pixel data in a format it natively supports and
 //! must embed correct color metadata.
 //!
-//! For the atomic path (recommended), use [`finalize_for_output`]:
+//! For the atomic path (recommended), use [`finalize_for_output_with`]. It does
+//! **color conversion + matching metadata, not format negotiation**: it takes a
+//! *single* target [`PixelFormat`] — the byte layout you already chose, typically
+//! the winner of [`best_match`] / [`adapt::adapt_for_encode`] (via
+//! `descriptor.pixel_format()`). Negotiate first, then finalize:
 //!
 //! ```rust,ignore
-//! let ready = finalize_for_output(
+//! let ready = finalize_for_output_with(
 //!     &buffer,
 //!     &color_origin,
 //!     OutputProfile::SameAsOrigin,
-//!     target_format,
-//!     &cms,
+//!     target_format,      // a single, already-negotiated PixelFormat
+//!     Some(&cms),         // Option<&dyn PluggableCms>; None for Named profiles
 //! )?;
 //!
 //! // Pixels and metadata are guaranteed to match
@@ -276,7 +291,7 @@
 //!   so negotiation will route f32 data directly to the encoder instead of
 //!   doing a redundant f32→u8 conversion first.
 //!
-//! - Use [`finalize_for_output`] to bundle pixels and metadata atomically.
+//! - Use [`finalize_for_output_with`] to bundle pixels and metadata atomically.
 //!   This prevents the most common color management bug: pixel values that
 //!   don't match the embedded ICC/CICP.
 //!
@@ -347,7 +362,7 @@
 //! Codecs that handle ICC profiles must:
 //! 1. Extract ICC bytes on decode and store them on [`ColorContext`].
 //! 2. Record provenance on [`ColorOrigin`].
-//! 3. On encode, let [`finalize_for_output`] handle the ICC transform
+//! 3. On encode, let [`finalize_for_output_with`] handle the ICC transform
 //!    (if the target profile differs from the source) or pass-through
 //!    (if `SameAsOrigin`).
 //!
@@ -378,7 +393,7 @@
 //! - [ ] Decode: record provenance → [`ColorOrigin`]
 //! - [ ] Encode: negotiate via [`best_match`] or [`adapt::adapt_for_encode`]
 //! - [ ] Encode: convert via [`RowConverter`] (not hand-rolled)
-//! - [ ] Encode: embed metadata via [`finalize_for_output`]
+//! - [ ] Encode: embed metadata via [`finalize_for_output_with`]
 //! - [ ] Encode: embed ICC/CICP when the format supports it
 //! - [ ] Handle [`ConvertError`] variants specifically
 //! - [ ] Test round-trip: native format → encode → decode = lossless
@@ -403,6 +418,13 @@ pub mod error;
 /// [`ConvertPlan::estimate`](crate::ConvertPlan::estimate), and
 /// [`ConvertPlan::estimate_in`](crate::ConvertPlan::estimate_in).
 ///
+/// **Experimental** — requires `features = ["estimation-experimental"]`.
+/// The goal is estimating a `decode → convert → encode` job end-to-end, but
+/// no scheduler consumes this yet, so neither the API shape nor the ±30 %
+/// accuracy contract has been validated against a real caller. Expect both
+/// to change; the gate keeps the surface revisable rather than frozen by a
+/// release. See `docs/ESTIMATE.md`.
+///
 /// These estimate types are defined locally here. `zenpixels-convert`
 /// is a foundation crate and does NOT depend on `zencodec` — the layering
 /// rule keeps codec abstractions strictly above pixel math. There is
@@ -411,8 +433,11 @@ pub mod error;
 /// `zencodec`'s `ResourceEstimate` additionally tracks `cpu_ms` and
 /// `peak_memory_bytes_max`, and its `ImageCharacteristics` tracks
 /// `frame_count`, none of which exist here). A `decode → convert → encode`
-/// pipeline bridging the two currently has to map fields by hand.
+/// pipeline bridging the two currently has to map fields by hand — closing
+/// that gap is the main thing the first consumer should force.
+#[cfg(feature = "estimation-experimental")]
 pub mod estimate;
+#[cfg(feature = "estimation-experimental")]
 pub use estimate::{ComputeEnvironment, ImageCharacteristics, ResourceEstimate, SimdTier};
 pub(crate) mod f16_scalar;
 pub(crate) mod negotiate;
@@ -496,16 +521,21 @@ pub mod pipeline;
 mod scan;
 
 // Re-export key conversion types at crate root.
-pub use adapt::{adapt_for_encode_explicit, try_adapt_in_place};
+#[allow(deprecated)]
+pub use adapt::adapt_for_encode_explicit;
+pub use adapt::{adapt_for_encode_explicit_cow, try_adapt_in_place};
+pub use convert::ConvertPlan;
 #[cfg(feature = "hdr-experimental")]
 pub use convert::HdrConfig;
-pub use convert::{ConvertPlan, convert_row, requires_cms};
+#[allow(deprecated)]
+pub use convert::convert_row;
 pub use converter::RowConverter;
 pub use error::ConvertError;
 pub use negotiate::{
     ConversionCost, ConvertIntent, FormatOption, Provenance, best_match, best_match_with,
     conversion_cost, conversion_cost_with_provenance, ideal_format, negotiate,
 };
+pub use orient::{PixelBufferOrientationExt, PixelSliceOrientationExt};
 #[cfg(feature = "pipeline")]
 pub use pipeline::{
     CodecFormats, ConversionPath, FormatEntry, LossBucket, MatrixStats, OpCategory, OpRequirement,

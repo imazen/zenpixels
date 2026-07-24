@@ -333,6 +333,20 @@ pub struct PixelSlice<'a, P = ()> {
     _pixel: PhantomData<P>,
 }
 
+impl<P> Clone for PixelSlice<'_, P> {
+    fn clone(&self) -> Self {
+        Self {
+            data: self.data,
+            width: self.width,
+            rows: self.rows,
+            stride: self.stride,
+            descriptor: self.descriptor,
+            color: self.color.clone(),
+            _pixel: PhantomData,
+        }
+    }
+}
+
 impl<'a> PixelSlice<'a> {
     /// Create a new pixel slice with validation.
     ///
@@ -379,6 +393,47 @@ impl<'a> PixelSlice<'a> {
             color: None,
             _pixel: PhantomData,
         })
+    }
+
+    /// Create a slice over **tightly-packed** rows, where the stride is exactly
+    /// `width * bytes_per_pixel` (no inter-row padding).
+    ///
+    /// A convenience over [`new`](Self::new) for the overwhelmingly common
+    /// packed case, so call sites stop restating `width * bpp` by hand.
+    /// Equivalent to
+    /// `PixelSlice::new(data, width, rows, width as usize * descriptor.bytes_per_pixel(), descriptor)`.
+    /// For strided views (SIMD-aligned padding, sub-region crops), use
+    /// [`new`](Self::new) with the explicit stride. The resulting slice
+    /// satisfies [`is_contiguous`](Self::is_contiguous).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`new`](Self::new): errors if `data` is smaller than
+    /// `rows * width * bytes_per_pixel`, or is misaligned for the channel type.
+    ///
+    /// ```
+    /// use zenpixels::{PixelDescriptor, PixelSlice};
+    /// // 2x2 RGB8 = 12 tightly-packed bytes.
+    /// let data = [0u8; 12];
+    /// let ps = PixelSlice::new_contiguous(&data, 2, 2, PixelDescriptor::RGB8_SRGB)?;
+    /// assert_eq!(ps.stride(), 6); // 2 px * 3 bytes/px
+    /// assert!(ps.is_contiguous());
+    /// # Ok::<(), zenpixels::At<zenpixels::BufferError>>(())
+    /// ```
+    #[track_caller]
+    pub fn new_contiguous(
+        data: &'a [u8],
+        width: u32,
+        rows: u32,
+        descriptor: PixelDescriptor,
+    ) -> Result<Self, At<BufferError>> {
+        Self::new(
+            data,
+            width,
+            rows,
+            width as usize * descriptor.bytes_per_pixel(),
+            descriptor,
+        )
     }
 }
 
@@ -878,6 +933,41 @@ impl<'a> PixelSliceMut<'a> {
             color: None,
             _pixel: PhantomData,
         })
+    }
+
+    /// Create a mutable slice over **tightly-packed** rows, where the stride is
+    /// exactly `width * bytes_per_pixel` (no inter-row padding).
+    ///
+    /// The `&mut` counterpart to [`PixelSlice::new_contiguous`]; a convenience over
+    /// [`new`](Self::new) for the packed case so call sites stop restating
+    /// `width * bpp`. For strided views, use [`new`](Self::new).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`new`](Self::new): errors if `data` is smaller than
+    /// `rows * width * bytes_per_pixel`, or is misaligned for the channel type.
+    ///
+    /// ```
+    /// use zenpixels::{PixelDescriptor, PixelSliceMut};
+    /// let mut data = [0u8; 12]; // 2x2 RGB8, tightly packed
+    /// let ps = PixelSliceMut::new_contiguous(&mut data, 2, 2, PixelDescriptor::RGB8_SRGB)?;
+    /// assert_eq!(ps.stride(), 6);
+    /// # Ok::<(), zenpixels::At<zenpixels::BufferError>>(())
+    /// ```
+    #[track_caller]
+    pub fn new_contiguous(
+        data: &'a mut [u8],
+        width: u32,
+        rows: u32,
+        descriptor: PixelDescriptor,
+    ) -> Result<Self, At<BufferError>> {
+        Self::new(
+            data,
+            width,
+            rows,
+            width as usize * descriptor.bytes_per_pixel(),
+            descriptor,
+        )
     }
 }
 
@@ -1501,8 +1591,8 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
 ///
 /// Wraps a `Vec<u8>` with an optional alignment offset so that pixel
 /// rows start at the correct alignment for the channel type. The
-/// backing vec can be recovered with [`into_vec`](Self::into_vec) for
-/// pool reuse.
+/// backing allocation and its complete interpretation can be recovered with
+/// [`into_parts`](Self::into_parts) for pool reuse.
 ///
 /// The type parameter `P` tracks pixel format at compile time, same as
 /// [`PixelSlice`].
@@ -1519,7 +1609,167 @@ pub struct PixelBuffer<P = ()> {
     _pixel: PhantomData<P>,
 }
 
+/// Borrowed-or-owned pixels with one stride-aware viewing API.
+///
+/// This is the pixel-buffer analogue of [`alloc::borrow::Cow`]. Borrowed
+/// values retain the source stride and color context without allocating.
+/// [`to_mut`](Self::to_mut) and [`into_owned`](Self::into_owned) copy logical
+/// rows into one contiguous allocation only when the value is borrowed;
+/// already-owned values are returned without copying.
+pub enum PixelCow<'a, P = ()> {
+    /// A zero-copy view into caller-owned storage.
+    Borrowed(PixelSlice<'a, P>),
+    /// An owned pixel allocation.
+    Owned(PixelBuffer<P>),
+}
+
+impl<P> PixelCow<'_, P> {
+    /// Whether this value is borrowing its pixel storage.
+    pub const fn is_borrowed(&self) -> bool {
+        matches!(self, Self::Borrowed(_))
+    }
+
+    /// Whether this value owns its pixel storage.
+    pub const fn is_owned(&self) -> bool {
+        matches!(self, Self::Owned(_))
+    }
+
+    /// Borrow either variant through the same stride-aware view.
+    pub fn as_slice(&self) -> PixelSlice<'_, P> {
+        match self {
+            Self::Borrowed(slice) => slice.clone(),
+            Self::Owned(buffer) => buffer.as_slice(),
+        }
+    }
+}
+
+impl PixelCow<'_> {
+    /// Obtain mutable owned pixels, copying logical rows only when borrowed.
+    ///
+    /// A borrowed strided view becomes a contiguous [`PixelBuffer`]. The
+    /// descriptor and color context are preserved.
+    pub fn to_mut(&mut self) -> &mut PixelBuffer {
+        if let Self::Borrowed(slice) = self {
+            *self = Self::Owned(pixel_slice_to_owned(slice));
+        }
+        match self {
+            Self::Owned(buffer) => buffer,
+            Self::Borrowed(_) => unreachable!(),
+        }
+    }
+
+    /// Return an owned buffer, copying logical rows only when borrowed.
+    ///
+    /// An already-owned value is moved out without allocating.
+    pub fn into_owned(self) -> PixelBuffer {
+        match self {
+            Self::Borrowed(slice) => pixel_slice_to_owned(&slice),
+            Self::Owned(buffer) => buffer,
+        }
+    }
+}
+
+impl<'a, P> From<PixelSlice<'a, P>> for PixelCow<'a, P> {
+    fn from(value: PixelSlice<'a, P>) -> Self {
+        Self::Borrowed(value)
+    }
+}
+
+impl<'a, P> From<PixelBuffer<P>> for PixelCow<'a, P> {
+    fn from(value: PixelBuffer<P>) -> Self {
+        Self::Owned(value)
+    }
+}
+
+impl<P> fmt::Debug for PixelCow<'_, P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Borrowed(slice) => f.debug_tuple("Borrowed").field(slice).finish(),
+            Self::Owned(buffer) => f.debug_tuple("Owned").field(buffer).finish(),
+        }
+    }
+}
+
+/// Geometry and metadata separated from a [`PixelBuffer`]'s byte allocation.
+///
+/// Produced by [`PixelBuffer::into_parts`] and consumed by
+/// [`PixelBuffer::try_from_parts`]. Fields are private so invalid layouts
+/// cannot be assembled independently of validated pixel storage.
+#[derive(Clone, Debug)]
+pub struct PixelBufferLayout {
+    offset: usize,
+    width: u32,
+    height: u32,
+    stride: usize,
+    descriptor: PixelDescriptor,
+    color: Option<Arc<ColorContext>>,
+}
+
+impl PixelBufferLayout {
+    pub const fn offset(&self) -> usize {
+        self.offset
+    }
+
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub const fn stride(&self) -> usize {
+        self.stride
+    }
+
+    pub const fn descriptor(&self) -> PixelDescriptor {
+        self.descriptor
+    }
+
+    pub fn color_context(&self) -> Option<&Arc<ColorContext>> {
+        self.color.as_ref()
+    }
+}
+
 impl PixelBuffer {
+    /// Reconstruct a buffer from its allocation and layout without copying.
+    #[track_caller]
+    pub fn try_from_parts(
+        data: Vec<u8>,
+        layout: PixelBufferLayout,
+    ) -> Result<Self, At<BufferError>> {
+        if layout.offset > data.len() {
+            return Err(whereat::at!(BufferError::InsufficientData));
+        }
+        let full_rows = layout
+            .stride
+            .checked_mul(layout.height as usize)
+            .and_then(|bytes| layout.offset.checked_add(bytes))
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        if data.len() < full_rows {
+            return Err(whereat::at!(BufferError::InsufficientData));
+        }
+        validate_slice(
+            data.len() - layout.offset,
+            data[layout.offset..].as_ptr(),
+            layout.width,
+            layout.height,
+            layout.stride,
+            &layout.descriptor,
+        )
+        .map_err(|error| whereat::at!(error))?;
+        Ok(Self {
+            data,
+            offset: layout.offset,
+            width: layout.width,
+            height: layout.height,
+            stride: layout.stride,
+            descriptor: layout.descriptor,
+            color: layout.color,
+            _pixel: PhantomData,
+        })
+    }
+
     /// Allocate a zero-filled buffer for the given dimensions and format.
     ///
     /// The default path is infallible for speed — see the
@@ -1893,10 +2143,22 @@ impl PixelBuffer {
 
     /// Consume the buffer and return the pixels as a typed `Vec<P>`.
     ///
+    /// **Allocation:** reuses the existing allocation when `Vec<u8>` →
+    /// `Vec<P>` satisfies bytemuck's allocation-layout requirements: equal
+    /// alignment and a byte capacity divisible by `size_of::<P>()`. This is
+    /// normally true for u8-component buffers allocated by `PixelBuffer`, but
+    /// an externally supplied `Vec` may have incompatible spare capacity.
+    ///
+    /// When reuse is impossible (always for multi-byte-aligned `P`, and
+    /// occasionally for an external alignment-1 allocation), this allocates
+    /// exactly one `Vec<P>` and copies logical rows directly into it. It does
+    /// not first compact or allocate an intermediate byte image. If you only
+    /// need to read the pixels, prefer
+    /// [`as_contiguous_pixels`](Self::as_contiguous_pixels) (borrows, never
+    /// copies, `None` when it cannot).
+    ///
     /// Returns `None` if the descriptor is not layout-compatible with `P`.
-    /// Strips stride padding if present. Zero-copy when the buffer is
-    /// tightly packed and `P` has alignment 1 (u8-component types like
-    /// `Rgb<u8>`, `Rgba<u8>`); copies otherwise.
+    /// Strips stride padding if present.
     pub fn into_contiguous_pixels<P: Pixel>(self) -> Option<Vec<P>> {
         if !self.descriptor.layout_compatible(P::DESCRIPTOR) {
             return None;
@@ -1905,32 +2167,32 @@ impl PixelBuffer {
         if pixel_size == 0 {
             return None;
         }
-        let row_bytes = self.width as usize * pixel_size;
         let total_pixels = self.width as usize * self.height as usize;
 
-        if self.stride == row_bytes && self.offset == 0 {
-            // Fast path: tightly packed, no offset -- try zero-copy reinterpret
-            let mut data = self.data;
-            data.truncate(total_pixels * pixel_size);
-            match bytemuck::try_cast_vec(data) {
-                Ok(pixels) => return Some(pixels),
-                Err((_err, data)) => {
-                    // Alignment mismatch -- copy
-                    return Some(
-                        bytemuck::cast_slice::<u8, P>(&data[..total_pixels * pixel_size]).to_vec(),
-                    );
-                }
-            }
+        // bytemuck can reuse a Vec allocation only when its deallocation
+        // Layout remains identical: equal element alignment and a capacity
+        // that is an exact number of destination elements. Check before
+        // compacting so a known-to-fail cast does not add a full-frame memory
+        // pass before the unavoidable copy.
+        if core::mem::align_of::<P>() == core::mem::align_of::<u8>()
+            && self.data.capacity() % pixel_size == 0
+        {
+            let data = self.into_contiguous_bytes();
+            return Some(
+                bytemuck::try_cast_vec(data)
+                    .expect("prevalidated Vec allocation layout must be castable"),
+            );
         }
 
-        // Slow path: has offset or stride padding -- copy row by row
-        let mut out = Vec::with_capacity(total_pixels);
-        for y in 0..self.height as usize {
-            let row_start = self.offset + y * self.stride;
-            let row_data = &self.data[row_start..row_start + row_bytes];
-            out.extend_from_slice(bytemuck::cast_slice(row_data));
+        // Copy directly from logical rows into the final typed allocation.
+        // PixelSlice construction already validated row alignment, and layout
+        // compatibility above guarantees each row contains whole P values.
+        let mut pixels = Vec::with_capacity(total_pixels);
+        let slice = self.as_slice();
+        for y in 0..self.height {
+            pixels.extend_from_slice(bytemuck::cast_slice::<u8, P>(slice.row(y)));
         }
-        Some(out)
+        Some(pixels)
     }
 }
 
@@ -2108,6 +2370,24 @@ impl PixelBuffer {
 }
 
 impl<P> PixelBuffer<P> {
+    /// Decompose into the allocation and complete layout without copying.
+    ///
+    /// Reconstruct an erased buffer with [`PixelBuffer::try_from_parts`], then
+    /// call [`PixelBuffer::try_typed`] if a typed buffer is required.
+    pub fn into_parts(self) -> (Vec<u8>, PixelBufferLayout) {
+        (
+            self.data,
+            PixelBufferLayout {
+                offset: self.offset,
+                width: self.width,
+                height: self.height,
+                stride: self.stride,
+                descriptor: self.descriptor,
+                color: self.color,
+            },
+        )
+    }
+
     /// Erase the pixel type, returning a type-erased buffer.
     pub fn erase(self) -> PixelBuffer {
         PixelBuffer {
@@ -2218,7 +2498,35 @@ impl<P> PixelBuffer<P> {
     }
 
     /// Consume the buffer and return the backing `Vec<u8>` for pool reuse.
+    ///
+    /// This is the allocation exactly as stored: it may contain an alignment
+    /// prefix and row padding. Use [`into_contiguous_bytes`](Self::into_contiguous_bytes)
+    /// for logical packed pixel bytes.
+    #[deprecated(
+        since = "0.2.16",
+        note = "use into_parts() to retain the layout, or into_contiguous_bytes() for packed pixels"
+    )]
     pub fn into_vec(self) -> Vec<u8> {
+        self.data
+    }
+
+    /// Consume the buffer and return packed logical pixel bytes.
+    ///
+    /// Alignment prefix and row padding are removed by compacting rows
+    /// front-to-back within the existing `Vec`; this does not allocate a
+    /// second image buffer and preserves the allocation's capacity for reuse.
+    pub fn into_contiguous_bytes(mut self) -> Vec<u8> {
+        let row_bytes = self.width as usize * self.descriptor.bytes_per_pixel();
+        let total = row_bytes * self.height as usize;
+        if self.offset != 0 || self.stride != row_bytes {
+            for y in 0..self.height as usize {
+                let source = self.offset + y * self.stride;
+                let destination = y * row_bytes;
+                self.data
+                    .copy_within(source..source + row_bytes, destination);
+            }
+        }
+        self.data.truncate(total);
         self.data
     }
 
@@ -2560,6 +2868,20 @@ impl<P> fmt::Debug for PixelBuffer<P> {
     }
 }
 
+fn pixel_slice_to_owned(slice: &PixelSlice<'_>) -> PixelBuffer {
+    let mut buffer = PixelBuffer::new(slice.width(), slice.rows(), slice.descriptor());
+    {
+        let mut destination = buffer.as_slice_mut();
+        for y in 0..slice.rows() {
+            destination.row_mut(y).copy_from_slice(slice.row(y));
+        }
+    }
+    if let Some(color) = slice.color_context() {
+        buffer = buffer.with_color_context(color.clone());
+    }
+    buffer
+}
+
 // ---------------------------------------------------------------------------
 // ImgRef -> PixelSlice (zero-copy From impls) -- imgref feature only
 // ---------------------------------------------------------------------------
@@ -2768,11 +3090,71 @@ mod tests {
 
     #[test]
     fn pixel_buffer_into_vec_roundtrip() {
+        #[allow(deprecated)]
         let buf = PixelBuffer::new(4, 4, PixelDescriptor::RGBA8_SRGB);
+        #[allow(deprecated)]
         let v = buf.into_vec();
         // Can re-wrap it
         let buf2 = PixelBuffer::from_vec(v, 4, 4, PixelDescriptor::RGBA8_SRGB).unwrap();
         assert_eq!(buf2.width(), 4);
+    }
+
+    #[test]
+    fn pixel_buffer_parts_roundtrip_without_copy() {
+        let buf = PixelBuffer::new_simd_aligned(3, 2, PixelDescriptor::RGB16, 32)
+            .with_color_context(Arc::new(ColorContext::from_cicp(Cicp::SRGB)));
+        let original_ptr = buf.data.as_ptr();
+        let original_stride = buf.stride();
+        let (storage, layout) = buf.into_parts();
+
+        assert_eq!(storage.as_ptr(), original_ptr);
+        assert_eq!((layout.width(), layout.height()), (3, 2));
+        assert_eq!(layout.stride(), original_stride);
+        assert_eq!(layout.descriptor(), PixelDescriptor::RGB16);
+        assert!(layout.color_context().is_some());
+
+        let rebuilt = PixelBuffer::try_from_parts(storage, layout).unwrap();
+        assert_eq!(rebuilt.data.as_ptr(), original_ptr);
+        assert_eq!(rebuilt.stride(), original_stride);
+        assert!(rebuilt.color_context().is_some());
+    }
+
+    #[test]
+    fn pixel_buffer_parts_reject_truncated_storage() {
+        let buf = PixelBuffer::new(4, 4, PixelDescriptor::RGBA8_SRGB);
+        let (mut storage, layout) = buf.into_parts();
+        storage.truncate(3);
+        let error = PixelBuffer::try_from_parts(storage, layout).err().unwrap();
+        assert_eq!(*error.error(), BufferError::InsufficientData);
+    }
+
+    #[test]
+    fn pixel_cow_borrowed_to_mut_copies_rows_and_preserves_metadata() {
+        let data = [
+            1, 2, 3, 4, 5, 6, 90, 91, 92, //
+            7, 8, 9, 10, 11, 12, 93, 94, 95,
+        ];
+        let color = Arc::new(ColorContext::from_cicp(Cicp::SRGB));
+        let slice = PixelSlice::new(&data, 2, 2, 9, PixelDescriptor::RGB8_SRGB)
+            .unwrap()
+            .with_color_context(color.clone());
+        let mut cow = PixelCow::Borrowed(slice);
+
+        let owned = cow.to_mut();
+        assert_eq!(owned.stride(), 6);
+        assert_eq!(owned.as_slice().row(0), &[1, 2, 3, 4, 5, 6]);
+        assert_eq!(owned.as_slice().row(1), &[7, 8, 9, 10, 11, 12]);
+        assert!(Arc::ptr_eq(owned.color_context().unwrap(), &color));
+    }
+
+    #[test]
+    fn pixel_cow_owned_into_owned_moves_without_reallocation() {
+        let buffer = PixelBuffer::new(2, 1, PixelDescriptor::RGB8_SRGB);
+        let pointer = buffer.data.as_ptr();
+        let cow = PixelCow::Owned(buffer);
+
+        let owned = cow.into_owned();
+        assert_eq!(owned.data.as_ptr(), pointer);
     }
 
     #[test]
@@ -3088,6 +3470,84 @@ mod tests {
         // Should only contain the actual pixel data, no padding
         assert_eq!(bytes.len(), 12);
         assert_eq!(bytes, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    }
+
+    #[test]
+    fn into_contiguous_bytes_collapses_padding_and_keeps_capacity() {
+        let mut buf = PixelBuffer::new_simd_aligned(2, 2, PixelDescriptor::RGB8_SRGB, 16);
+        let capacity = buf.data.capacity();
+        {
+            let mut slice = buf.as_slice_mut();
+            slice.row_mut(0).copy_from_slice(&[1, 2, 3, 4, 5, 6]);
+            slice.row_mut(1).copy_from_slice(&[7, 8, 9, 10, 11, 12]);
+        }
+        let bytes = buf.into_contiguous_bytes();
+        assert_eq!(bytes, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        assert_eq!(bytes.capacity(), capacity);
+    }
+
+    #[cfg(feature = "rgb")]
+    #[test]
+    fn into_contiguous_pixels_reuses_castable_u8_allocation() {
+        use rgb::Rgba;
+
+        let mut buf = PixelBuffer::new(2, 1, PixelDescriptor::RGBA8);
+        buf.as_slice_mut()
+            .row_mut(0)
+            .copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        let allocation = buf.data.as_ptr();
+
+        let pixels = buf
+            .into_contiguous_pixels::<Rgba<u8>>()
+            .expect("compatible pixels");
+        assert_eq!(pixels.as_ptr().cast::<u8>(), allocation);
+        assert_eq!(
+            bytemuck::cast_slice::<Rgba<u8>, u8>(&pixels),
+            &[1, 2, 3, 4, 5, 6, 7, 8]
+        );
+    }
+
+    #[cfg(feature = "rgb")]
+    #[test]
+    fn into_contiguous_pixels_copies_directly_when_vec_capacity_has_slop() {
+        use rgb::Rgb;
+
+        let mut data = Vec::with_capacity(7);
+        data.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+        assert_ne!(data.capacity() % core::mem::size_of::<Rgb<u8>>(), 0);
+        let allocation = data.as_ptr();
+        let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8).unwrap();
+
+        let pixels = buf
+            .into_contiguous_pixels::<Rgb<u8>>()
+            .expect("compatible pixels");
+        assert_ne!(pixels.as_ptr().cast::<u8>(), allocation);
+        assert_eq!(
+            bytemuck::cast_slice::<Rgb<u8>, u8>(&pixels),
+            &[1, 2, 3, 4, 5, 6]
+        );
+    }
+
+    #[cfg(feature = "rgb")]
+    #[test]
+    fn into_contiguous_pixels_wide_copy_strips_padding_in_one_pass() {
+        use rgb::Rgba;
+
+        let mut buf = PixelBuffer::new_simd_aligned(1, 2, PixelDescriptor::RGBA16, 32);
+        buf.as_slice_mut()
+            .row_mut(0)
+            .copy_from_slice(&[1, 0, 2, 0, 3, 0, 4, 0]);
+        buf.as_slice_mut()
+            .row_mut(1)
+            .copy_from_slice(&[5, 0, 6, 0, 7, 0, 8, 0]);
+
+        let pixels = buf
+            .into_contiguous_pixels::<Rgba<u16>>()
+            .expect("compatible pixels");
+        assert_eq!(
+            bytemuck::cast_slice::<Rgba<u16>, u8>(&pixels),
+            &[1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8, 0]
+        );
     }
 
     // --- BufferError Display for all variants ---

@@ -2,6 +2,213 @@
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES — complete public-API removal inventory for 0.3.0
+
+This is the canonical removal checklist. It includes every published API
+currently planned for deletion or demotion. Unreleased experiments made
+private before publication (such as resource estimation and `requires_cms`)
+are not compatibility removals and therefore do not belong in this queue.
+
+**`zenpixels`:**
+
+- Remove deprecated `PixelBuffer::into_vec`; use `into_parts` to retain layout
+  or `into_contiguous_bytes` for packed logical pixels.
+- Delete the inert `serde` Cargo feature name.
+- Remove `ContentLightLevel::measure`; use
+  `zenpixels_convert::hdr::measure::CllMeasure`.
+- Remove `ColorContext::from_icc_and_cicp`; construct from the authoritative
+  ICC or CICP source and retain round-trip metadata in `ColorOrigin`.
+- Demote `KnownColorSpace`, `REGISTRY`, `find_by_cicp`,
+  `find_by_primaries_transfer`, and `find_by_named` to `pub(crate)`.
+- Remove the legacy planar `Plane`; use `PlaneLayout` and the separate
+  `PixelBuffer`s carried by `MultiPlaneImage`.
+
+**`zenpixels-convert`:**
+
+- Delete the inert `serde` Cargo feature name.
+- Remove the packed `Adapted` compatibility type and the deprecated
+  `adapt_for_encode`, `adapt_for_encode_with_intent`, and
+  `adapt_for_encode_explicit` wrappers; use the corresponding `_cow`
+  functions returning `PixelCow`.
+- Remove `adapt::convert_buffer`; use `PixelBuffer` with `convert_to`,
+  `convert_into`, or `convert_in_place`.
+- Remove `RowConverter::convert_rows`; use `convert_slice_into`.
+- Remove the free `convert_row`; use `ConvertPlan::convert_row`.
+- Remove the free orientation functions `apply_orientation`,
+  `apply_orientation_into`, and `apply_orientation_in_place`;
+  import `PixelSliceOrientationExt` or `PixelBufferOrientationExt` and use the
+  corresponding receiver method.
+- Remove `hdr::HdrMetadata`, its root re-export, and
+  `OutputMetadata::hdr`.
+- Remove `hdr::reinhard_tonemap`, `hdr::reinhard_inverse`, and
+  `hdr::exposure_tonemap`; use `zentone`.
+- Remove `ColorManagement`; use `PluggableCms`.
+- Remove `finalize_for_output<C: ColorManagement>`; use
+  `finalize_for_output_with`.
+- Remove `ZenCmsLite::extended` and `ZenCmsLite::extended()`; control clipping
+  through `ConvertOptions`.
+- Remove `cms_moxcms::lut_transform_opts` and
+  `cms_moxcms::cicp_transform_opts`; use `transform_opts`.
+- Remove `icc_profiles::ADOBE_RGB_V4`; use `ADOBE_RGB`.
+- Remove `icc_profiles::PROPHOTO_V4`; no canonical bundled ProPhoto profile
+  replaces it.
+- Remove `icc_profiles::icc_profile_for_primaries`; use
+  `synthesize_icc_for_cicp` or an explicit bundled profile.
+
+`new_packed` is absent because it was removed before publication in favor of
+the single canonical `new_contiguous` spelling.
+
+### zenpixels — added
+
+- **Zero-copy storage decomposition:** `PixelBuffer::into_parts` separates the
+  backing `Vec<u8>` from a private-field `PixelBufferLayout`;
+  `PixelBuffer::try_from_parts` validates and reconstructs it without copying.
+  Typed reconstruction remains the existing `try_typed` step.
+- **`PixelBuffer::into_vec` deprecated** in favor of `into_parts`; raw
+  allocation extraction without its offset/stride/descriptor made accidental
+  loss of the information needed to interpret or reconstruct pixels too easy.
+- **Ownership-preserving extraction:** `PixelBuffer::into_contiguous_bytes`
+  collapses alignment prefix and row padding front-to-back inside the existing
+  `Vec`. `into_contiguous_pixels` now uses the same compaction, allowing
+  alignment-1 pixel vectors to reuse strided/offset storage too.
+- **Ergonomic constructors + a color-retag helper (2e1a4fb).** All additive
+  (`cargo semver-checks`: minor change, no bump); each has real downstream
+  consumers from the `~/work/zen` usage audit and a runnable doctest.
+  - `PixelSlice::new_contiguous` / `PixelSliceMut::new_contiguous(data, width, rows, descriptor)`
+    — packed-stride constructor (`stride = width * bytes_per_pixel`); the single
+    most-repeated line in the audit (~361 `PixelSlice::new` sites hand-compute
+    the tight stride). Both constructors delegate to `new`, so
+    `validate_slice`'s base-alignment + `stride % bpp`
+    checks always run — no unchecked path; every row stays aligned to the
+    channel type, so consumers may reinterpret rows as `&[u16]` / `&[f32]`.
+  - `PixelDescriptor::with_color_from_cicp(Cicp)` (`const fn`) — retag transfer +
+    primaries from a decoded CICP, keeping format / type / alpha / signal range.
+
+### zenpixels-convert — added (no-alloc primitives)
+
+- **Consuming reuse conveniences:** `PixelBufferConvertExt::into_converted`,
+  `PixelBufferOrientationExt::apply_orientation`, and
+  `PixelBufferLoadBearingExt::into_load_bearing_format` return the transformed
+  buffer while delegating to the existing in-place primitives.
+- **`PixelBufferConvertExt::convert_into(&self, dst: PixelSliceMut)`** — convert
+  into a destination you already own; **no allocation**. `convert_to` is now
+  sugar over it, and `try_add_alpha` / `try_widen_to_u16` / `try_narrow_to_u8` /
+  `linearize` / `delinearize` all inherit it, since they delegate to
+  `convert_to`. Two hand-written row loops (including a special-cased identity
+  copy) are deleted — everything now flows through the single loop in
+  `RowConverter::convert_slice_into`.
+- **`RowConverter::convert_slice_into(src: PixelSlice, dst: PixelSliceMut)`** —
+  the no-alloc primitive `convert_slice` is sugar over. Neither takes a stride:
+  each slice carries its own, so both sides may be strided.
+  Validates rather than assumes — dimension mismatch → `BufferSize`, a
+  destination whose descriptor is not the plan's target → `NoPath`.
+
+### zenpixels-convert — added (no-alloc / move + fallible)
+
+- **`PixelBufferConvertExt::convert_in_place(&mut self, target)`** — the
+  move-counterpart to `convert_into`: reuses the buffer's own allocation.
+  Identity is a no-op; narrowing (RGBA→RGB, U16→U8, RGB→Gray) and same-size
+  swizzles shuffle-collapse front-to-back in place (O(row) scratch only);
+  widening reallocates. Turns the common narrowing/identity cases from a
+  full-image allocation into none.
+- **One overlap-safe narrowing primitive:** load-bearing reduction and
+  `try_adapt_in_place` now share the same front-to-back channel compactor.
+  An explicit private stride policy preserves adaptation's row layout while
+  load-bearing reduction requests packed output, preventing the two paths from
+  drifting in overlap safety or channel-selection behavior.
+- **`PixelBufferConvertTypedExt::try_to_rgb8` / `try_to_rgba8` / `try_to_gray8`
+  / `try_to_bgra8`** — fallible siblings of the `to_*8` decode helpers, which
+  **panic** on a CMYK / Lab / XYZ source (`RowConverter: no conversion path`).
+  Mirrors the crate's `new`/`try_new` pattern; the infallible `to_*8` stay with
+  a documented panic and now delegate through the same fixed core.
+
+### zenpixels-convert — deprecated
+
+- **Free operation functions now have receiver-based replacements.**
+  `convert_row` delegates to `ConvertPlan::convert_row`; the four orientation
+  functions delegate to sealed `PixelSliceOrientationExt` and
+  `PixelBufferOrientationExt` methods. The wrappers remain source-compatible
+  through 0.2.x.
+
+- **`adapt::convert_buffer`** → build a `PixelBuffer` and use
+  `PixelBufferConvertExt::convert_to` / `convert_into` / `convert_in_place`. It
+  assumes packed input (a strided buffer is read with its padding as pixels —
+  the length check cannot catch it) and returns a bare `Vec<u8>` that drops the
+  dimensions and descriptor.
+- **`RowConverter::convert_rows`** → use `convert_slice_into`. Four of its six
+  positional arguments are a `PixelSlice`/`PixelSliceMut` taken apart; nothing
+  type-checks that `src_stride` belongs to `src` or that the descriptors match
+  the plan, so transposing a stride argument compiles and silently produces
+  wrong pixels. Still works; still tested.
+
+#### Changed (BREAKING, tolerated in 0.2.x)
+
+- **`Adapted` is deprecated but remains source-compatible.** Its public fields
+  and struct-literal construction remain available for 0.2.x; accessors were
+  added for callers migrating incrementally. New `_cow` adapters return
+  stride-aware `PixelCow`, and the deprecated adapters are compatibility
+  wrappers over that canonical implementation.
+- **`requires_cms` is no longer `pub`** (demoted to `pub(crate)`, removed from
+  the crate re-export). It was added after 0.2.14, has no external consumer,
+  and the public "needs a CMS" signal is the `ConvertError::NeedsCms` variant.
+  Unshipped removal — no released version exposed it.
+- **`PixelBufferConvertExt` / `PixelBufferConvertTypedExt` are now sealed**, and
+  `PixelBufferConvertExt` gained the required `convert_into` method. Three
+  `cargo semver-checks` failures accepted under tolerated-break categories 7+8
+  (see `CLAUDE.md`): `trait_newly_sealed`, `trait_added_supertrait`,
+  `trait_method_added`.
+  **Audit:** a grep of `~/work/zen` found the only `impl`s of either trait
+  anywhere are the two in-tree ones (`ext.rs`); zenpng/zentone call them but
+  never implement them. External implementation was never meaningful — these
+  are extension traits over a concrete foreign type whose methods all return
+  `PixelBuffer`. Sealing is what the API-design policy already required; it
+  makes this and every future method addition structurally non-breaking.
+
+### zenpixels-convert — changed (pre-release API-surface audit)
+
+- **Resource estimation is now behind `estimation-experimental` (default-off).**
+  The `estimate` module (`ResourceEstimate` / `ComputeEnvironment` /
+  `ImageCharacteristics` / `SimdTier`) and `ConvertPlan::estimate(_in)` were
+  added after 0.2.14 and never shipped. Pre-release audit found **zero
+  consumers**: the goal — estimating a `decode → convert → encode` job
+  end-to-end — is real, but no scheduler consumes it, so neither the API shape
+  nor the ±30 % accuracy contract has been validated against a caller. Gated
+  rather than deleted (the bench calibration is worth keeping) and rather than
+  shipped (a release would freeze an unvalidated shape forever). Opt in with
+  `features = ["estimation-experimental"]`; expect the surface to change as the
+  first consumer lands.
+  - `tests/resource_estimate.rs` is `#![cfg]`-gated on the feature, and the
+    `mem_probe_convert` example (the heaptrack/marginal-WS harness that
+    validates the estimate against measured peak RSS) gains
+    `required-features`. A CI step runs both with the feature on, so the gated
+    surface is executed, not merely `check`ed.
+  - Known gap the first consumer should force: the module doc claims shape-
+    compatibility with `zencodec::estimate::*`, but the shapes **have** diverged
+    (`zencodec` additionally tracks `cpu_ms` / `peak_memory_bytes_max` /
+    `frame_count`), so bridging still means mapping fields by hand.
+
+### zenpixels-convert — added
+
+- **`PixelSlice`-oriented encode / convert helpers (2e1a4fb).** Additive.
+  - `PixelCow` and the `_cow` adaptation entry points carry pixels and layout
+    together, eliminating the recompute-stride + `PixelSlice::new` block
+    duplicated across zenpipe / zencodecs. The published `Adapted` surface is
+    retained as a deprecated compatibility wrapper for 0.2.x.
+  - `RowConverter::convert_slice(PixelSlice) -> PixelBuffer` — bundles the
+    "alloc `rows*stride`, loop `convert_row`" block behind the `PixelSlice`
+    stride contract; carries the source color context.
+
+### Workspace — added
+
+- **Tested usage-example galleries + a CI `--examples` gate (d672211).**
+  `zenpixels/examples/common_usage.rs` (9 scenarios) and
+  `zenpixels-convert/examples/convert_pipeline.rs` (14 scenarios) exercise the
+  common usages and double as compile-tested docs; a
+  `cargo test --workspace --examples` CI step runs them across the platform
+  matrix (`cargo test --workspace` builds example targets but never runs their
+  `#[test]`s). Ergonomics analysis of the call sites lives in
+  `docs/ergonomics-2026-07-14.md`.
+
 ### zenpixels-convert — fixed (HDR correctness; all behind `hdr-experimental`, unreleased)
 
 - **Tier-consistent NaN/negative fold in the SIMD CLL kernels (eea47c01).**

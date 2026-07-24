@@ -6,7 +6,7 @@
 use alloc::boxed::Box;
 
 use crate::convert::{ConvertPlan, ConvertScratch, convert_row_buffered};
-use crate::{ChannelLayout, ConvertError, PixelDescriptor};
+use crate::{ChannelLayout, ConvertError, PixelBuffer, PixelDescriptor, PixelSlice, PixelSliceMut};
 use whereat::{At, ResultAtExt};
 
 /// Pre-computed pixel format converter with pre-allocated scratch buffers.
@@ -309,7 +309,24 @@ impl RowConverter {
     /// Convert multiple rows from a strided source buffer to a strided destination.
     ///
     /// The source and destination can have different strides.
+    ///
+    /// # Deprecated
+    ///
+    /// Four of these six arguments are a [`PixelSlice`] / [`PixelSliceMut`]
+    /// taken apart, and `width`/`rows` live on those types too — nothing
+    /// type-checks that `src_stride` belongs to `src`, or that either
+    /// descriptor matches the plan, so transposing a pair of stride arguments
+    /// compiles and silently produces wrong pixels.
+    /// [`convert_slice_into`](Self::convert_slice_into) is the bundled
+    /// equivalent: both sides carry their own stride, a dimension mismatch
+    /// errors with [`ConvertError::BufferSize`], and a destination whose
+    /// descriptor is not this converter's target errors with
+    /// [`ConvertError::NoPath`] instead of being written into.
     #[track_caller]
+    #[deprecated(
+        since = "0.2.15",
+        note = "use convert_slice_into(src: PixelSlice, dst: PixelSliceMut) — it carries the strides, dimensions and descriptors together and validates them"
+    )]
     pub fn convert_rows(
         &mut self,
         src: &[u8],
@@ -337,6 +354,120 @@ impl RowConverter {
                 &mut dst[dst_start..dst_end],
                 width,
             );
+        }
+        Ok(())
+    }
+
+    /// Convert an entire [`PixelSlice`] into a freshly-allocated
+    /// [`PixelBuffer`] of this converter's target format.
+    ///
+    /// Bundles the common "allocate `rows * stride`, loop
+    /// [`convert_row`](Self::convert_row)" block behind the [`PixelSlice`]
+    /// stride contract: the source may be strided (a crop, a decoder
+    /// row-guard, an [`Adapted`](crate::adapt::Adapted) view) and the owned output is
+    /// tightly packed (`width * bytes_per_pixel`) — every [`PixelBuffer`] this
+    /// crate allocates is, despite the `aligned_stride` name. The source's
+    /// color context, if any, is carried over.
+    ///
+    /// Prefer [`PixelBufferConvertExt::convert_to`] when you already hold an
+    /// owned [`PixelBuffer`]; reach for this when you hold a [`PixelSlice`] and
+    /// want owned output without threading the six positional stride arguments
+    /// through [`convert_rows`](Self::convert_rows).
+    ///
+    /// [`PixelBufferConvertExt::convert_to`]: crate::ext::PixelBufferConvertExt::convert_to
+    ///
+    /// # Errors
+    ///
+    /// Errors if the output byte count overflows `usize`
+    /// ([`ConvertError::AllocationFailed`]) or the target descriptor rejects
+    /// the computed buffer.
+    ///
+    /// ```
+    /// use zenpixels::{PixelDescriptor, PixelSlice};
+    /// use zenpixels_convert::RowConverter;
+    ///
+    /// // Two RGB8 pixels -> RGBA8 (an opaque alpha byte is appended per pixel).
+    /// let src = [10u8, 20, 30, 40, 50, 60];
+    /// let slice = PixelSlice::new_contiguous(&src, 2, 1, PixelDescriptor::RGB8_SRGB)?;
+    /// let mut conv = RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB)?;
+    /// let out = conv.convert_slice(slice)?;
+    /// assert_eq!((out.width(), out.height()), (2, 1));
+    /// assert_eq!(out.descriptor(), PixelDescriptor::RGBA8_SRGB);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[track_caller]
+    pub fn convert_slice(&mut self, src: PixelSlice<'_>) -> Result<PixelBuffer, At<ConvertError>> {
+        let (width, rows) = (src.width(), src.rows());
+        let target = self.plan.to();
+        // Captured before `src` moves into the no-alloc primitive below.
+        let ctx = src.color_context().cloned();
+        let mut buf = PixelBuffer::try_new(width, rows, target).map_err_at(ConvertError::from)?;
+        self.convert_slice_into(src, buf.as_slice_mut())?;
+        if let Some(ctx) = ctx {
+            buf = buf.with_color_context(ctx);
+        }
+        Ok(buf)
+    }
+
+    /// Convert an entire [`PixelSlice`] into a caller-provided
+    /// [`PixelSliceMut`] — no allocation.
+    ///
+    /// The no-alloc primitive that [`convert_slice`](Self::convert_slice) is
+    /// sugar over. Both sides may be strided (a crop, a decoder row-guard, a
+    /// reused scratch buffer, a staging buffer with a required pitch), because
+    /// each [`PixelSlice`] carries its own stride — which is why neither is
+    /// passed separately. Use this when you already own the destination or are
+    /// converting many frames through one buffer; use `convert_slice` for the
+    /// one-shot case.
+    ///
+    /// The destination's [`ColorContext`](zenpixels::ColorContext) is left
+    /// alone — the caller owns `dst` and its metadata. (`convert_slice` copies
+    /// the source's context onto the buffer it allocates.)
+    ///
+    /// # Errors
+    ///
+    /// * [`ConvertError::BufferSize`] if `dst`'s dimensions differ from `src`'s.
+    /// * [`ConvertError::NoPath`] if `dst`'s descriptor is not this converter's
+    ///   target — the plan was built for a specific `to`, so writing into a
+    ///   differently-shaped destination would silently produce wrong pixels.
+    ///
+    /// ```
+    /// use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice};
+    /// use zenpixels_convert::RowConverter;
+    ///
+    /// let src_bytes = [10u8, 20, 30, 40, 50, 60];
+    /// let src = PixelSlice::new_contiguous(&src_bytes, 2, 1, PixelDescriptor::RGB8_SRGB)?;
+    /// // A destination you already own — reused across frames, no alloc here.
+    /// let mut dst = PixelBuffer::new(2, 1, PixelDescriptor::RGBA8_SRGB);
+    ///
+    /// let mut conv = RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB)?;
+    /// conv.convert_slice_into(src, dst.as_slice_mut())?;
+    /// assert_eq!(&dst.as_slice().row(0)[0..4], &[10, 20, 30, 255]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[track_caller]
+    pub fn convert_slice_into(
+        &mut self,
+        src: PixelSlice<'_>,
+        mut dst: PixelSliceMut<'_>,
+    ) -> Result<(), At<ConvertError>> {
+        let (width, rows) = (src.width(), src.rows());
+        if dst.width() != width || dst.rows() != rows {
+            return Err(whereat::at!(ConvertError::BufferSize {
+                expected: (width as usize) * (rows as usize),
+                actual: (dst.width() as usize) * (dst.rows() as usize),
+            }));
+        }
+        let target = self.plan.to();
+        if dst.descriptor() != target {
+            return Err(whereat::at!(ConvertError::NoPath {
+                from: dst.descriptor(),
+                to: target,
+            }));
+        }
+        for y in 0..rows {
+            let src_row = src.row(y);
+            self.convert_row(src_row, dst.row_mut(y), width);
         }
         Ok(())
     }
@@ -1198,6 +1329,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    #[allow(deprecated)] // deliberately exercises the deprecated fn; it must keep working
     fn convert_rows_basic() {
         let mut conv =
             RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
@@ -1214,6 +1346,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // deliberately exercises the deprecated fn; it must keep working
     fn convert_rows_buffer_too_small() {
         let mut conv =
             RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();

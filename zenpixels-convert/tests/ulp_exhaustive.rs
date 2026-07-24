@@ -7,7 +7,7 @@
 //! This replaces statistical sampling with exhaustive numerical proof:
 //! "u8 sRGB → f32 linear → u8 sRGB is lossless (max error = 0 for all 256 values)".
 
-use zenpixels_convert::{ConvertPlan, PixelDescriptor, convert_row};
+use zenpixels_convert::{ConvertPlan, PixelDescriptor};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Helper: exhaustive u8 round-trip through an intermediate format
@@ -32,8 +32,8 @@ fn measure_u8_roundtrip_max_error(intermediate: PixelDescriptor) -> u8 {
                 let mut mid = vec![0u8; inter_bpp];
                 let mut output = [0u8; 3];
 
-                convert_row(&plan_fwd, &input, &mut mid, 1);
-                convert_row(&plan_back, &mid, &mut output, 1);
+                plan_fwd.convert_row(&input, &mut mid, 1);
+                plan_back.convert_row(&mid, &mut output, 1);
 
                 for c in 0..3 {
                     let err = (output[c] as i16 - input[c] as i16).unsigned_abs() as u8;
@@ -64,8 +64,8 @@ fn measure_u8_roundtrip_full_cube(intermediate: PixelDescriptor) -> u8 {
                 let mut mid = vec![0u8; inter_bpp];
                 let mut output = [0u8; 3];
 
-                convert_row(&plan_fwd, &input, &mut mid, 1);
-                convert_row(&plan_back, &mid, &mut output, 1);
+                plan_fwd.convert_row(&input, &mut mid, 1);
+                plan_back.convert_row(&mid, &mut output, 1);
 
                 for c in 0..3 {
                     let err = (output[c] as i16 - input[c] as i16).unsigned_abs() as u8;
@@ -128,8 +128,8 @@ fn ulp_u8_u16_roundtrip() {
         let mut mid = [0u8; 6]; // 3 × u16
         let mut output = [0u8; 3];
 
-        convert_row(&plan_fwd, &input, &mut mid, 1);
-        convert_row(&plan_back, &mid, &mut output, 1);
+        plan_fwd.convert_row(&input, &mut mid, 1);
+        plan_back.convert_row(&mid, &mut output, 1);
 
         for c in 0..3 {
             let err = (output[c] as i16 - input[c] as i16).unsigned_abs() as u8;
@@ -163,7 +163,7 @@ fn ulp_u16_to_u8_max_error() {
         let v16 = v as u16;
         let input: [u8; 6] = bytemuck::cast([v16, v16, v16]);
         let mut output = [0u8; 3];
-        convert_row(&plan, &input, &mut output, 1);
+        plan.convert_row(&input, &mut output, 1);
 
         // Expected: (v * 255 + 32768) >> 16
         let expected = ((v * 255 + 32768) >> 16) as u8;
@@ -194,7 +194,7 @@ fn ulp_u8_to_u16_exact() {
     for v in 0u8..=255 {
         let input = [v, v, v];
         let mut output = [0u8; 6];
-        convert_row(&plan, &input, &mut output, 1);
+        plan.convert_row(&input, &mut output, 1);
 
         let out16: &[u16] = bytemuck::cast_slice(&output);
         let expected = v as u16 * 257; // 0→0, 255→65535
@@ -226,8 +226,8 @@ fn ulp_bgra_rgba_swizzle_roundtrip() {
                     let input = [r, g, b, a];
                     let mut mid = [0u8; 4];
                     let mut output = [0u8; 4];
-                    convert_row(&plan_fwd, &input, &mut mid, 1);
-                    convert_row(&plan_back, &mid, &mut output, 1);
+                    plan_fwd.convert_row(&input, &mut mid, 1);
+                    plan_back.convert_row(&mid, &mut output, 1);
                     if input != output {
                         error_count += 1;
                     }
@@ -257,7 +257,7 @@ fn ulp_srgb_eotf_monotonic() {
     for v in 0u8..=255 {
         let input = [v, 0, 0]; // Only R channel
         let mut output = [0u8; 12]; // 3 × f32
-        convert_row(&plan, &input, &mut output, 1);
+        plan.convert_row(&input, &mut output, 1);
         let outf: &[f32] = bytemuck::cast_slice(&output);
         assert!(
             outf[0] >= prev,
@@ -275,8 +275,8 @@ fn ulp_srgb_eotf_monotonic() {
     let input_255 = [255u8, 0, 0];
     let mut out_0 = [0u8; 12];
     let mut out_255 = [0u8; 12];
-    convert_row(&plan, &input_0, &mut out_0, 1);
-    convert_row(&plan, &input_255, &mut out_255, 1);
+    plan.convert_row(&input_0, &mut out_0, 1);
+    plan.convert_row(&input_255, &mut out_255, 1);
     let f0: &[f32] = bytemuck::cast_slice(&out_0);
     let f255: &[f32] = bytemuck::cast_slice(&out_255);
     assert_eq!(f0[0], 0.0, "sRGB EOTF(0) should be 0.0");
@@ -305,11 +305,11 @@ fn ulp_srgb_oetf_boundary_values() {
         // Get the f32 value for this u8.
         let u8_input = [v, 0, 0];
         let mut f32_bytes = [0u8; 12];
-        convert_row(&eotf_plan, &u8_input, &mut f32_bytes, 1);
+        eotf_plan.convert_row(&u8_input, &mut f32_bytes, 1);
 
         // Convert back to u8.
         let mut u8_output = [0u8; 3];
-        convert_row(&plan, &f32_bytes, &mut u8_output, 1);
+        plan.convert_row(&f32_bytes, &mut u8_output, 1);
 
         assert_eq!(
             u8_output[0], v,
@@ -348,8 +348,8 @@ fn ulp_naive_u8_f32_roundtrip() {
         let input = [v, v, v];
         let mut mid = [0u8; 12];
         let mut output = [0u8; 3];
-        convert_row(&plan_fwd, &input, &mut mid, 1);
-        convert_row(&plan_back, &mid, &mut output, 1);
+        plan_fwd.convert_row(&input, &mut mid, 1);
+        plan_back.convert_row(&mid, &mut output, 1);
 
         for c in 0..3 {
             let err = (output[c] as i16 - input[c] as i16).unsigned_abs() as u8;
@@ -394,8 +394,8 @@ fn ulp_u16_f32_roundtrip_exhaustive() {
         let mut mid = [0u8; 4]; // 1 × f32
         let mut output = [0u8; 2]; // 1 × u16
 
-        convert_row(&plan_fwd, &input, &mut mid, 1);
-        convert_row(&plan_back, &mid, &mut output, 1);
+        plan_fwd.convert_row(&input, &mut mid, 1);
+        plan_back.convert_row(&mid, &mut output, 1);
 
         let result = u16::from_ne_bytes(output);
         let err = (result as i32 - v16 as i32).unsigned_abs() as u16;
@@ -444,8 +444,8 @@ fn ulp_premul_roundtrip_u8_exhaustive() {
             let mut mid = [0u8; 4];
             let mut output = [0u8; 4];
 
-            convert_row(&plan_to_premul, &input, &mut mid, 1);
-            convert_row(&plan_to_straight, &mid, &mut output, 1);
+            plan_to_premul.convert_row(&input, &mut mid, 1);
+            plan_to_straight.convert_row(&mid, &mut output, 1);
 
             let err = (output[0] as i16 - value as i16).unsigned_abs() as u8;
             if err > max_err {
@@ -509,8 +509,8 @@ fn ulp_premul_roundtrip_f32() {
             let mut mid = [0u8; 16];
             let mut output = [0u8; 16];
 
-            convert_row(&plan_to_premul, &input, &mut mid, 1);
-            convert_row(&plan_to_straight, &mid, &mut output, 1);
+            plan_to_premul.convert_row(&input, &mut mid, 1);
+            plan_to_straight.convert_row(&mid, &mut output, 1);
 
             let result: [f32; 4] = bytemuck::cast(output);
 
@@ -548,8 +548,8 @@ fn ulp_gray_rgb_gray_roundtrip() {
         let mut mid = [0u8; 3];
         let mut output = [0u8; 1];
 
-        convert_row(&plan_to_rgb, &input, &mut mid, 1);
-        convert_row(&plan_to_gray, &mid, &mut output, 1);
+        plan_to_rgb.convert_row(&input, &mut mid, 1);
+        plan_to_gray.convert_row(&mid, &mut output, 1);
 
         let err = (output[0] as i16 - v as i16).unsigned_abs() as u8;
         max_err = max_err.max(err);
@@ -584,10 +584,10 @@ fn ulp_add_drop_alpha_roundtrip() {
                 let mut mid = [0u8; 4];
                 let mut output = [0u8; 3];
 
-                convert_row(&plan_add, &input, &mut mid, 1);
+                plan_add.convert_row(&input, &mut mid, 1);
                 // Verify alpha is opaque.
                 assert_eq!(mid[3], 255, "added alpha should be 255");
-                convert_row(&plan_drop, &mid, &mut output, 1);
+                plan_drop.convert_row(&mid, &mut output, 1);
 
                 for c in 0..3 {
                     let err = (output[c] as i16 - input[c] as i16).unsigned_abs() as u8;
@@ -624,7 +624,7 @@ fn ulp_gray_alpha_rgba_roundtrip() {
         for &a in &[0u8, 1, 128, 254, 255] {
             let input = [v, a];
             let mut output = [0u8; 4];
-            convert_row(&plan_to_rgba, &input, &mut output, 1);
+            plan_to_rgba.convert_row(&input, &mut output, 1);
 
             assert_eq!(output[0], v, "R should equal gray");
             assert_eq!(output[1], v, "G should equal gray");
@@ -660,14 +660,14 @@ fn ulp_pq_eotf_boundary_values() {
     // PQ code 0 → linear 0.0
     let input_0: [u8; 2] = 0u16.to_ne_bytes();
     let mut out_0 = [0u8; 4];
-    convert_row(&plan, &input_0, &mut out_0, 1);
+    plan.convert_row(&input_0, &mut out_0, 1);
     let f0: f32 = bytemuck::cast(out_0);
     assert_eq!(f0, 0.0, "PQ EOTF(0) should be 0.0");
 
     // PQ code 65535 → linear ~1.0 (10000 cd/m² normalized)
     let input_max: [u8; 2] = 65535u16.to_ne_bytes();
     let mut out_max = [0u8; 4];
-    convert_row(&plan, &input_max, &mut out_max, 1);
+    plan.convert_row(&input_max, &mut out_max, 1);
     let fmax: f32 = bytemuck::cast(out_max);
     assert!(
         (fmax - 1.0).abs() < 0.001,
@@ -677,7 +677,7 @@ fn ulp_pq_eotf_boundary_values() {
     // PQ mid-range (~0.508 encoded ≈ 100 nits / 10000 = 0.01 linear)
     let input_mid: [u8; 2] = 33280u16.to_ne_bytes(); // ~0.508
     let mut out_mid = [0u8; 4];
-    convert_row(&plan, &input_mid, &mut out_mid, 1);
+    plan.convert_row(&input_mid, &mut out_mid, 1);
     let fmid: f32 = bytemuck::cast(out_mid);
     // PQ encodes the full 0-10000 cd/m² range. ~0.508 encodes roughly 100 nits.
     assert!(
@@ -714,8 +714,8 @@ fn ulp_pq_roundtrip_u16() {
         let mut mid = [0u8; 4];
         let mut output = [0u8; 2];
 
-        convert_row(&plan_fwd, &input, &mut mid, 1);
-        convert_row(&plan_back, &mid, &mut output, 1);
+        plan_fwd.convert_row(&input, &mut mid, 1);
+        plan_back.convert_row(&mid, &mut output, 1);
 
         let result = u16::from_ne_bytes(output);
         let err = (result as i32 - v16 as i32).unsigned_abs() as u16;
@@ -759,8 +759,8 @@ fn ulp_pq_f32_roundtrip() {
         let mut mid = [0u8; 4];
         let mut output = [0u8; 4];
 
-        convert_row(&plan_fwd, &input, &mut mid, 1);
-        convert_row(&plan_back, &mid, &mut output, 1);
+        plan_fwd.convert_row(&input, &mut mid, 1);
+        plan_back.convert_row(&mid, &mut output, 1);
 
         let result: f32 = bytemuck::cast(output);
         if pq_val > 0.01 {
@@ -800,7 +800,7 @@ fn ulp_pq_eotf_monotonic() {
         let v16 = v as u16;
         let input: [u8; 2] = v16.to_ne_bytes();
         let mut output = [0u8; 4];
-        convert_row(&plan, &input, &mut output, 1);
+        plan.convert_row(&input, &mut output, 1);
         let result: f32 = bytemuck::cast(output);
         assert!(
             result >= prev,
@@ -836,14 +836,14 @@ fn ulp_hlg_boundary_values() {
     // HLG code 0 → linear 0.0
     let input_0: [u8; 2] = 0u16.to_ne_bytes();
     let mut out_0 = [0u8; 4];
-    convert_row(&plan, &input_0, &mut out_0, 1);
+    plan.convert_row(&input_0, &mut out_0, 1);
     let f0: f32 = bytemuck::cast(out_0);
     assert_eq!(f0, 0.0, "HLG EOTF(0) should be 0.0");
 
     // HLG code 65535 → linear 1.0
     let input_max: [u8; 2] = 65535u16.to_ne_bytes();
     let mut out_max = [0u8; 4];
-    convert_row(&plan, &input_max, &mut out_max, 1);
+    plan.convert_row(&input_max, &mut out_max, 1);
     let fmax: f32 = bytemuck::cast(out_max);
     assert!(
         (fmax - 1.0).abs() < 0.01,
@@ -878,8 +878,8 @@ fn ulp_hlg_roundtrip_u16() {
         let mut mid = [0u8; 4];
         let mut output = [0u8; 2];
 
-        convert_row(&plan_fwd, &input, &mut mid, 1);
-        convert_row(&plan_back, &mid, &mut output, 1);
+        plan_fwd.convert_row(&input, &mut mid, 1);
+        plan_back.convert_row(&mid, &mut output, 1);
 
         let result = u16::from_ne_bytes(output);
         let err = (result as i32 - v16 as i32).unsigned_abs() as u16;
@@ -917,7 +917,7 @@ fn ulp_hlg_eotf_monotonic() {
         let v16 = v as u16;
         let input: [u8; 2] = v16.to_ne_bytes();
         let mut output = [0u8; 4];
-        convert_row(&plan, &input, &mut output, 1);
+        plan.convert_row(&input, &mut output, 1);
         let result: f32 = bytemuck::cast(output);
         assert!(
             result >= prev,
@@ -957,14 +957,14 @@ fn ulp_pq_to_srgb_basic() {
     // PQ code 0 → sRGB 0
     let input_0: [u8; 6] = [0; 6]; // 3 × u16(0)
     let mut out_0 = [0u8; 3];
-    convert_row(&plan, &input_0, &mut out_0, 1);
+    plan.convert_row(&input_0, &mut out_0, 1);
     assert_eq!(out_0, [0, 0, 0], "PQ(0) → sRGB should be black");
 
     // ~203 nits (diffuse white) in PQ ≈ code ~33280 → should map to sRGB ~200-255
     let mid_val: u16 = 33280;
     let input_mid: [u8; 6] = bytemuck::cast([mid_val, mid_val, mid_val]);
     let mut out_mid = [0u8; 3];
-    convert_row(&plan, &input_mid, &mut out_mid, 1);
+    plan.convert_row(&input_mid, &mut out_mid, 1);
     println!(
         "PQ({mid_val}) → sRGB: [{}, {}, {}]",
         out_mid[0], out_mid[1], out_mid[2]

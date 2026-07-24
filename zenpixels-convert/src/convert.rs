@@ -423,7 +423,7 @@ impl ConvertStep {
 ///
 /// Anything outside this set is a device-dependent / CMS-only path —
 /// CMYK today, Lab / XYZ / spot inks if/when those land as
-/// [`crate::ColorModel`] variants. See [`requires_cms`].
+/// [`crate::ColorModel`] variants. See `requires_cms` (crate-internal; the public signal is `ConvertError::NeedsCms`).
 #[inline]
 fn native_color_model(m: crate::ColorModel) -> bool {
     // `Gray`, `Rgb` and `Oklab` are the colorimetric spaces the built-in
@@ -455,7 +455,12 @@ fn native_color_model(m: crate::ColorModel) -> bool {
 /// attach a CMS plugin (e.g. `&MoxCms`) for that batch.
 ///
 /// [`color_model`]: zenpixels::PixelDescriptor::color_model
-pub fn requires_cms(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
+///
+/// `pub(crate)`: the **public** "needs a CMS" signal is the
+/// [`ConvertError::NeedsCms`] variant returned by the no-CMS entry points
+/// (`convert_to`, `to_rgba8`, …). This predicate had no external consumer, so
+/// it is not part of the public surface; catch `NeedsCms` instead of probing.
+pub(crate) fn requires_cms(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
     !native_color_model(from.color_model()) || !native_color_model(to.color_model())
 }
 
@@ -1364,7 +1369,8 @@ impl ConvertPlan {
 
     /// Crate-internal view of the planned step list — exposed for the
     /// estimate-API code under `crate::estimate`. NOT public:
-    /// `ConvertStep` itself is `pub(crate)`.
+    /// `ConvertStep` itself is `pub(crate)`. Gated with its only caller.
+    #[cfg(feature = "estimation-experimental")]
     pub(crate) fn steps(&self) -> &[ConvertStep] {
         &self.steps
     }
@@ -1438,6 +1444,7 @@ impl ConvertPlan {
     /// assert!(est.wall_ms().is_some());
     /// ```
     #[must_use]
+    #[cfg(feature = "estimation-experimental")]
     pub fn estimate_in(
         &self,
         image: &crate::estimate::ImageCharacteristics,
@@ -1470,15 +1477,29 @@ impl ConvertPlan {
     /// assert!(est.wall_ms().is_some());
     /// ```
     #[must_use]
+    #[cfg(feature = "estimation-experimental")]
     pub fn estimate(&self, width: u32, height: u32) -> crate::estimate::ResourceEstimate {
         let image = crate::estimate::ImageCharacteristics::new(width, height, self.from());
         let compute = crate::estimate::ComputeEnvironment::new();
         self.estimate_in(&image, &compute)
     }
+
+    /// Convert one row of `width` pixels using this plan.
+    ///
+    /// `src` and `dst` must be sized for `width` pixels in the plan's source
+    /// and destination formats. Multi-step plans allocate temporary scratch for
+    /// this call; use [`RowConverter`](crate::RowConverter) when processing
+    /// repeated rows so that scratch is retained between calls.
+    pub fn convert_row(&self, src: &[u8], dst: &mut [u8], width: u32) {
+        let mut scratch = ConvertScratch::new();
+        convert_row_buffered(self, src, dst, width, &mut scratch);
+    }
 }
 
 /// Bridge for the [`crate::estimate`] module: mirror of
-/// [`intermediate_desc`] without making that function public.
+/// [`intermediate_desc`] without making that function public. Gated with
+/// its only caller.
+#[cfg(feature = "estimation-experimental")]
 pub(crate) fn intermediate_desc_for_estimate(
     current: PixelDescriptor,
     step: &ConvertStep,
@@ -1701,7 +1722,7 @@ fn f32_tf_pair_steps(from: TransferFunction, to: TransferFunction) -> Vec<Conver
 
 /// Depth conversion step into F32 for any non-F32 channel type (U8, U16, F16).
 /// Panics for F32 (caller must check); CMYK is rejected upstream by
-/// [`requires_cms`] before any plan steps are picked.
+/// `requires_cms` before any plan steps are picked (the public signal is `ConvertError::NeedsCms`).
 fn to_f32_step(ct: ChannelType) -> ConvertStep {
     match ct {
         ChannelType::U8 => ConvertStep::NaiveU8ToF32,
@@ -1997,13 +2018,9 @@ impl core::fmt::Debug for ConvertScratch {
 /// `src` and `dst` must be sized for `width` pixels in their respective formats.
 /// For multi-step plans, an internal scratch buffer is allocated per call.
 /// Prefer [`RowConverter`](crate::RowConverter) in hot loops (reuses scratch buffers).
+#[deprecated(since = "0.2.15", note = "use ConvertPlan::convert_row")]
 pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
-    // Allocating fallback for one-off calls: the scratch starts empty and
-    // only grows if the plan actually needs it (multi-step ping-pong or an
-    // HDR tone-map kernel); identity and other single-step plans stay
-    // allocation-free.
-    let mut scratch = ConvertScratch::new();
-    convert_row_buffered(plan, src, dst, width, &mut scratch);
+    plan.convert_row(src, dst, width);
 }
 
 /// Convert one row of `width` pixels, reusing pre-allocated scratch buffers.
@@ -2574,7 +2591,7 @@ mod hdr_plan_tests {
             let expected = reference_pipeline(inp);
             let bytes: Vec<u8> = bytemuck::cast_slice(&inp).to_vec();
             let mut out = vec![0u8; 12];
-            convert_row(&plan, &bytes, &mut out, 1);
+            plan.convert_row(&bytes, &mut out, 1);
             let got_f: &[f32] = bytemuck::cast_slice(&out);
             for k in 0..3 {
                 let diff = (expected[k] - got_f[k]).abs();

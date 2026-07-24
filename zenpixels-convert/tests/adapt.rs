@@ -1,3 +1,4 @@
+#![allow(deprecated)] // exercises the deprecated convert_buffer; it must keep working
 //! Tests for the adapt module (codec helper functions).
 
 use zenpixels_convert::PixelDescriptor;
