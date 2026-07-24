@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+## [0.2.16] - 2026-07-24
+
+Publishes `zenpixels` 0.2.16 and `zenpixels-convert` 0.2.16 — the first
+release since 0.2.14. The `[0.2.15] - 2026-06-23` section below documents
+work that was prepared but never actually published to crates.io (Cargo.toml
+was pre-bumped, `cargo publish` never ran); everything from that section and
+everything below it in this 0.2.16 section ships together in this release.
+`cargo semver-checks` against the published 0.2.14 baseline reports zero
+breaking changes for both crates (196 checks, 196 pass).
+
+### Pixel ownership and construction
+
+- Added the generic `PixelCow<'a, P>` borrowed-or-owned pixel container and
+  `adapt_for_encode_cow`, `adapt_for_encode_with_intent_cow`, and
+  `adapt_for_encode_explicit_cow`. The `Adapted` type and original adaptation
+  functions are retained as deprecated, behavior-compatible wrappers because
+  that API is present in the published 0.2.14 crate.
+- Added `InPlacePixels::try_new`, which validates size, stride, and alignment
+  before construction. The existing `new` remains as its panicking convenience
+  wrapper; `transform_in_place` uses a private constructor over its
+  already-validated buffer state.
+- Metadata `with_*` builders continue to replace only their named field and
+  preserve every other descriptor and color-context field.
+
 ### zenpixels-convert — fixed (HDR correctness; all behind `hdr-experimental`, unreleased)
 
 - **Tier-consistent NaN/negative fold in the SIMD CLL kernels (eea47c01).**
@@ -562,6 +586,62 @@
 <!-- Breaking changes that will ship together in the next major (or minor for
      0.x) release. Add items here as you discover them. Do NOT ship these
      piecemeal — batch them. -->
+
+#### Complete public-API removal inventory for 0.3.0
+
+This is the canonical removal checklist. It includes every published API
+currently planned for deletion or demotion; the longer entries below retain
+the rationale and migration details. Unreleased experiments made private
+before publication (such as resource estimation and `requires_cms`) are not
+compatibility removals and therefore do not belong in this queue.
+
+**`zenpixels`:**
+
+- Delete the inert `serde` Cargo feature name.
+- Remove `ContentLightLevel::measure`; use
+  `zenpixels_convert::hdr::measure::CllMeasure`.
+- Remove `ColorContext::from_icc_and_cicp`; construct from the authoritative
+  ICC or CICP source and retain round-trip metadata in `ColorOrigin`.
+- Demote the unadopted registry lookup API to `pub(crate)`:
+  `KnownColorSpace`, `REGISTRY`, `find_by_cicp`,
+  `find_by_primaries_transfer`, and `find_by_named`.
+- Remove the legacy planar `Plane`; use `PlaneLayout` and the separate
+  `PixelBuffer`s carried by `MultiPlaneImage`.
+
+**`zenpixels-convert`:**
+
+- Delete the inert `serde` Cargo feature name.
+- Remove the packed `Adapted` compatibility type and the deprecated
+  `adapt_for_encode`, `adapt_for_encode_with_intent`, and
+  `adapt_for_encode_explicit` wrappers; use the corresponding `_cow`
+  functions returning `PixelCow`.
+- Remove `adapt::convert_buffer`; use `PixelBuffer` with `convert_to`,
+  `convert_into`, or `convert_in_place`.
+- Remove `RowConverter::convert_rows`; use the slice-typed
+  `convert_slice_into`.
+- Remove `hdr::HdrMetadata` and its root re-export.
+- Remove the deprecated `OutputMetadata::hdr` field; HDR content metadata
+  remains on the codec-boundary metadata carrier rather than this color-output
+  structure.
+- Remove `hdr::reinhard_tonemap`, `hdr::reinhard_inverse`, and
+  `hdr::exposure_tonemap`; use `zentone`.
+- Remove the `ColorManagement` trait; use `PluggableCms`.
+- Remove the generic `finalize_for_output<C: ColorManagement>` overload; use
+  `finalize_for_output_with`.
+- Remove `ZenCmsLite::extended` and `ZenCmsLite::extended()`; control clipping
+  through `ConvertOptions`.
+- Remove `cms_moxcms::lut_transform_opts` and
+  `cms_moxcms::cicp_transform_opts`; use `transform_opts` with explicit
+  priority and rendering intent.
+- Remove `icc_profiles::ADOBE_RGB_V4`; use `ADOBE_RGB`.
+- Remove `icc_profiles::PROPHOTO_V4`; no canonical bundled ProPhoto profile
+  replaces it.
+- Remove `icc_profiles::icc_profile_for_primaries`; use
+  `synthesize_icc_for_cicp` or an explicit bundled profile.
+
+`new_packed` is deliberately absent: the alias was removed before publication
+in favor of the single canonical `new_contiguous` spelling, so it is not a
+future compatibility break.
 
 - **Delete the inert `serde` feature stubs from BOTH crates.** `zenpixels`
   (soft-removed 0.2.16) and `zenpixels-convert` (soft-removed 0.2.15,

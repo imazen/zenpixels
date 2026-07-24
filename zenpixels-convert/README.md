@@ -12,23 +12,23 @@ A JPEG decoder gives you `RGB8` in sRGB. An AVIF decoder gives you `RGBA16` in B
 
 ```toml
 [dependencies]
-zenpixels-convert = "0.2.15"
+zenpixels-convert = "0.2.16"
 ```
 
 Common feature combinations:
 
 ```toml
 # Plus the rgb crate's typed buffers and convenience methods
-zenpixels-convert = { version = "0.2.15", features = ["rgb"] }
+zenpixels-convert = { version = "0.2.16", features = ["rgb"] }
 
 # Plus a pluggable CMS backend (moxcms) for arbitrary ICC profiles
-zenpixels-convert = { version = "0.2.15", features = ["cms-moxcms"] }
+zenpixels-convert = { version = "0.2.16", features = ["cms-moxcms"] }
 
 # Plus the experimental HDR→SDR display-mapping surface
-zenpixels-convert = { version = "0.2.15", features = ["hdr-experimental"] }
+zenpixels-convert = { version = "0.2.16", features = ["hdr-experimental"] }
 
 # Size-sensitive / wasm builds (drops the bundled CICP->ICC database)
-zenpixels-convert = { version = "0.2.15", default-features = false, features = ["std"] }
+zenpixels-convert = { version = "0.2.16", default-features = false, features = ["std"] }
 ```
 
 ## Quick start
@@ -217,7 +217,7 @@ println!(
 `zenpixels-convert` is `no_std + alloc` by default-construction (`std` is on by default but everything works without it). For `no_std`, set `default-features = false` and re-enable only what you need (note that `cms-moxcms` requires `std`):
 
 ```toml
-zenpixels-convert = { version = "0.2.15", default-features = false }
+zenpixels-convert = { version = "0.2.16", default-features = false }
 ```
 
 ## MSRV

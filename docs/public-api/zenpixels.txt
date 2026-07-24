@@ -9,20 +9,20 @@
 ## summary
 #
 #   pub modules                                10
-#   pub types (struct/enum/trait/alias)        76
-#   pub consts/statics                        276
+#   pub types (struct/enum/trait/alias)        78
+#   pub consts/statics                        280
 #   free functions                              4
-#   inherent methods                          232
+#   inherent methods                          240
 #   struct fields                             107
-#   enum variants                             208
+#   enum variants                             212
 #   re-exports                                  4
-#   trait roster entries (type × trait)       239
+#   trait roster entries (type × trait)       243
 #   auto-trait-complete types                  34
-#   auto-trait exceptions                       4
+#   auto-trait exceptions                       5
 #
 # per-module pub lines:
-#   (root)                          393
-#   buffer                          212
+#   (root)                          400
+#   buffer                          223
 #   cicp                             27
 #   color                            64
 #   descriptor                      148
@@ -32,7 +32,7 @@
 #   pixel_types                       9
 #   policy                           25
 
-## items (787 lines)
+## items (802 lines)
 
 pub mod zenpixels
 pub use At
@@ -47,6 +47,13 @@ pub buffer::BufferError::InsufficientData
 pub buffer::BufferError::InvalidDimensions
 pub buffer::BufferError::StrideNotPixelAligned
 pub buffer::BufferError::StrideTooSmall
+pub buffer::PixelCow::Borrowed(buffer::PixelSlice<'a, P>)
+pub buffer::PixelCow::Owned(buffer::PixelBuffer<P>)
+pub fn buffer::PixelCow<'a>::into_owned(self) -> buffer::PixelBuffer
+pub fn buffer::PixelCow<'a>::to_mut(&mut self) -> &mut buffer::PixelBuffer
+pub fn buffer::PixelCow<'_, P>::as_slice(&self) -> buffer::PixelSlice<'_, P>
+pub const fn buffer::PixelCow<'_, P>::is_borrowed(&self) -> bool [also: (root)]
+pub const fn buffer::PixelCow<'_, P>::is_owned(&self) -> bool [also: (root)]
 pub buffer::Bgrx::b: u8
 pub buffer::Bgrx::g: u8
 pub buffer::Bgrx::r: u8
@@ -58,6 +65,7 @@ pub buffer::InPlacePixels::rows: u32
 pub buffer::InPlacePixels::stride: usize
 pub buffer::InPlacePixels::width: u32
 pub fn buffer::InPlacePixels<'a>::new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<color::ColorContext>>) -> Self
+pub fn buffer::InPlacePixels<'a>::try_new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<color::ColorContext>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::from_vec(alloc::vec::Vec<u8>, u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::new(u32, u32, descriptor::PixelDescriptor) -> Self
 pub fn buffer::PixelBuffer::new_simd_aligned(u32, u32, descriptor::PixelDescriptor, usize) -> Self
@@ -565,6 +573,12 @@ pub Orientation::Rotate90 = 6
 pub Orientation::Transpose = 5
 pub Orientation::Transverse = 7
 pub const orientation::Orientation::ALL: [orientation::Orientation; 8]
+pub enum PixelCow<'a, P> [also: buffer]
+pub PixelCow::Borrowed(buffer::PixelSlice<'a, P>)
+pub PixelCow::Owned(buffer::PixelBuffer<P>)
+pub fn buffer::PixelCow<'a>::into_owned(self) -> buffer::PixelBuffer
+pub fn buffer::PixelCow<'a>::to_mut(&mut self) -> &mut buffer::PixelBuffer
+pub fn buffer::PixelCow<'_, P>::as_slice(&self) -> buffer::PixelSlice<'_, P>
 #[non_exhaustive] #[repr(u8)] pub enum PixelFormat [also: descriptor]
 pub PixelFormat::Bgra8 = 13
 pub PixelFormat::Bgrx8 = 15
@@ -673,6 +687,7 @@ pub InPlacePixels::rows: u32
 pub InPlacePixels::stride: usize
 pub InPlacePixels::width: u32
 pub fn buffer::InPlacePixels<'a>::new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<color::ColorContext>>) -> Self
+pub fn buffer::InPlacePixels<'a>::try_new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<color::ColorContext>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub struct MasteringDisplay [also: hdr]
 pub MasteringDisplay::max_luminance: f32
 pub MasteringDisplay::min_luminance: f32
@@ -822,13 +837,15 @@ pub Rgbx::x: u8
 pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 
-## trait impls (41 types)
+## trait impls (43 types)
 
 buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 buffer::PixelBuffer: From<buffer::PixelBuffer<P>>
 buffer::PixelBuffer<P>: Debug
-buffer::PixelSlice<'_, P>: Debug
+buffer::PixelCow<'_, P>: Debug
+buffer::PixelCow<'a, P>: From<buffer::PixelBuffer<P>>, From<buffer::PixelSlice<'a, P>>
+buffer::PixelSlice<'_, P>: Clone, Debug
 buffer::PixelSlice<'a, P>: From<buffer::PixelSliceMut<'a, P>>
 buffer::PixelSlice<'a>: From<buffer::PixelSlice<'a, P>>
 buffer::PixelSliceMut<'_, P>: Debug
@@ -870,5 +887,6 @@ policy::LumaCoefficients: Clone, Copy, Debug, Eq, Hash, PartialEq
 
 buffer::InPlacePixels<'a>: !UnwindSafe
 buffer::PixelBuffer<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
+buffer::PixelCow<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::PixelSlice<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::PixelSliceMut<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe

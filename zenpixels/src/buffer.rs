@@ -333,6 +333,20 @@ pub struct PixelSlice<'a, P = ()> {
     _pixel: PhantomData<P>,
 }
 
+impl<P> Clone for PixelSlice<'_, P> {
+    fn clone(&self) -> Self {
+        Self {
+            data: self.data,
+            width: self.width,
+            rows: self.rows,
+            stride: self.stride,
+            descriptor: self.descriptor,
+            color: self.color.clone(),
+            _pixel: PhantomData,
+        }
+    }
+}
+
 impl<'a> PixelSlice<'a> {
     /// Create a new pixel slice with validation.
     ///
@@ -1519,6 +1533,83 @@ pub struct PixelBuffer<P = ()> {
     _pixel: PhantomData<P>,
 }
 
+/// Borrowed-or-owned pixels with the same metadata and stride-aware view.
+///
+/// This is the pixel-buffer analogue of [`alloc::borrow::Cow`]: operations
+/// can return a borrowed [`PixelSlice`] on their fast path and an owned
+/// [`PixelBuffer`] only when conversion or mutation requires allocation.
+pub enum PixelCow<'a, P = ()> {
+    /// Pixels borrowed from the caller.
+    Borrowed(PixelSlice<'a, P>),
+    /// Independently owned pixels.
+    Owned(PixelBuffer<P>),
+}
+
+impl<P> PixelCow<'_, P> {
+    /// Whether this value still borrows its pixel storage.
+    #[inline]
+    pub const fn is_borrowed(&self) -> bool {
+        matches!(self, Self::Borrowed(_))
+    }
+
+    /// Whether this value owns its pixel storage.
+    #[inline]
+    pub const fn is_owned(&self) -> bool {
+        matches!(self, Self::Owned(_))
+    }
+
+    /// Borrow either representation as a uniform pixel slice.
+    pub fn as_slice(&self) -> PixelSlice<'_, P> {
+        match self {
+            Self::Borrowed(slice) => slice.clone(),
+            Self::Owned(buffer) => buffer.as_slice(),
+        }
+    }
+}
+
+impl<'a> PixelCow<'a> {
+    /// Obtain mutable owned pixels, cloning the borrowed pixels if needed.
+    pub fn to_mut(&mut self) -> &mut PixelBuffer {
+        if let Self::Borrowed(slice) = self {
+            let owned = pixel_slice_to_owned(slice);
+            *self = Self::Owned(owned);
+        }
+        match self {
+            Self::Owned(buffer) => buffer,
+            Self::Borrowed(_) => unreachable!(),
+        }
+    }
+
+    /// Consume this value, cloning the pixels only when they are borrowed.
+    pub fn into_owned(self) -> PixelBuffer {
+        match self {
+            Self::Borrowed(slice) => pixel_slice_to_owned(&slice),
+            Self::Owned(buffer) => buffer,
+        }
+    }
+}
+
+impl<'a, P> From<PixelSlice<'a, P>> for PixelCow<'a, P> {
+    fn from(value: PixelSlice<'a, P>) -> Self {
+        Self::Borrowed(value)
+    }
+}
+
+impl<'a, P> From<PixelBuffer<P>> for PixelCow<'a, P> {
+    fn from(value: PixelBuffer<P>) -> Self {
+        Self::Owned(value)
+    }
+}
+
+impl<P> fmt::Debug for PixelCow<'_, P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Borrowed(slice) => f.debug_tuple("Borrowed").field(slice).finish(),
+            Self::Owned(buffer) => f.debug_tuple("Owned").field(buffer).finish(),
+        }
+    }
+}
+
 impl PixelBuffer {
     /// Allocate a zero-filled buffer for the given dimensions and format.
     ///
@@ -2022,12 +2113,59 @@ pub struct InPlacePixels<'a> {
 }
 
 impl<'a> InPlacePixels<'a> {
-    /// Construct directly — the escape hatch for a layout transform invoked
-    /// outside [`PixelBuffer::transform_in_place`] (e.g. a unit test exercising
-    /// an arbitrary stride). Inside `transform_in_place` the buffer builds this
-    /// for you from its own backing bytes and description.
+    /// Construct directly, panicking if the bytes and geometry disagree.
+    ///
+    /// Prefer [`try_new`](Self::try_new) when the geometry is supplied by an
+    /// untrusted caller. Inside [`PixelBuffer::transform_in_place`] the buffer
+    /// constructs this from its already-validated state.
+    ///
+    /// # Panics
+    ///
+    /// Panics for the same invalid geometry, undersized backing storage, or
+    /// alignment errors reported by [`try_new`](Self::try_new).
+    #[track_caller]
     #[must_use]
     pub fn new(
+        bytes: &'a mut [u8],
+        width: u32,
+        rows: u32,
+        stride: usize,
+        descriptor: PixelDescriptor,
+        color: Option<Arc<ColorContext>>,
+    ) -> Self {
+        Self::try_new(bytes, width, rows, stride, descriptor, color)
+            .expect("invalid in-place pixel geometry")
+    }
+
+    /// Construct directly after validating storage, stride, and alignment.
+    ///
+    /// This applies the same invariants as [`PixelSliceMut::new`], preventing
+    /// malformed transform inputs from reaching row-oriented conversion code.
+    #[track_caller]
+    pub fn try_new(
+        bytes: &'a mut [u8],
+        width: u32,
+        rows: u32,
+        stride: usize,
+        descriptor: PixelDescriptor,
+        color: Option<Arc<ColorContext>>,
+    ) -> Result<Self, At<BufferError>> {
+        validate_slice(
+            bytes.len(),
+            bytes.as_ptr(),
+            width,
+            rows,
+            stride,
+            &descriptor,
+        )
+        .map_err(|e| whereat::at!(e))?;
+        Ok(Self::new_unchecked(
+            bytes, width, rows, stride, descriptor, color,
+        ))
+    }
+
+    #[inline]
+    fn new_unchecked(
         bytes: &'a mut [u8],
         width: u32,
         rows: u32,
@@ -2079,14 +2217,14 @@ impl PixelBuffer {
         let avail = self.data.len() - offset;
         let base = self.data[offset..].as_ptr() as usize;
 
-        let out = f(InPlacePixels {
-            bytes: &mut self.data[offset..offset + total],
-            width: self.width,
-            rows: self.height,
-            stride: self.stride,
-            descriptor: self.descriptor,
-            color: self.color.clone(),
-        });
+        let out = f(InPlacePixels::new_unchecked(
+            &mut self.data[offset..offset + total],
+            self.width,
+            self.height,
+            self.stride,
+            self.descriptor,
+            self.color.clone(),
+        ));
 
         let out_bytes = out.as_strided_bytes();
         assert_eq!(
@@ -2560,6 +2698,20 @@ impl<P> fmt::Debug for PixelBuffer<P> {
     }
 }
 
+fn pixel_slice_to_owned(slice: &PixelSlice<'_>) -> PixelBuffer {
+    let mut buffer = PixelBuffer::new(slice.width(), slice.rows(), slice.descriptor());
+    {
+        let mut destination = buffer.as_slice_mut();
+        for y in 0..slice.rows() {
+            destination.row_mut(y).copy_from_slice(slice.row(y));
+        }
+    }
+    if let Some(color) = slice.color_context() {
+        buffer = buffer.with_color_context(color.clone());
+    }
+    buffer
+}
+
 // ---------------------------------------------------------------------------
 // ImgRef -> PixelSlice (zero-copy From impls) -- imgref feature only
 // ---------------------------------------------------------------------------
@@ -2749,6 +2901,29 @@ mod tests {
         let slice = buf.as_slice();
         assert_eq!(slice.row(0), &[0u8; 30]);
         assert_eq!(slice.row(4), &[0u8; 30]);
+    }
+
+    #[test]
+    fn in_place_pixels_try_new_rejects_invalid_geometry() {
+        let mut bytes = [0u8; 5];
+        let error = InPlacePixels::try_new(&mut bytes, 2, 1, 5, PixelDescriptor::RGB8_SRGB, None)
+            .err()
+            .unwrap();
+        assert_eq!(*error.error(), BufferError::StrideTooSmall);
+    }
+
+    #[test]
+    fn pixel_cow_clones_only_when_mutated() {
+        let bytes = [1u8, 2, 3];
+        let slice = PixelSlice::new(&bytes, 1, 1, 3, PixelDescriptor::RGB8_SRGB).unwrap();
+        let mut pixels = PixelCow::Borrowed(slice);
+
+        assert!(pixels.is_borrowed());
+        pixels.to_mut().as_slice_mut().row_mut(0)[0] = 9;
+
+        assert!(pixels.is_owned());
+        assert_eq!(pixels.as_slice().row(0), &[9, 2, 3]);
+        assert_eq!(bytes, [1, 2, 3]);
     }
 
     #[test]

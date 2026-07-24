@@ -15,7 +15,7 @@ Two crates: **zenpixels** (types, buffers, metadata) and **zenpixels-convert** (
 zenpixels = "0.2.16"
 
 # Types + conversion — for processing pipelines
-zenpixels-convert = "0.2.15"
+zenpixels-convert = "0.2.16"
 ```
 
 ## Quick start

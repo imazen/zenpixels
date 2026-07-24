@@ -17,8 +17,8 @@
 //! - **Row conversion**: [`RowConverter`] pre-computes a conversion plan and
 //!   converts rows with no per-row allocation, using SIMD where available.
 //!
-//! - **Codec helpers**: [`adapt::adapt_for_encode`] negotiates format and converts
-//!   pixel data in one call, returning `Cow::Borrowed` when the input
+//! - **Codec helpers**: [`adapt::adapt_for_encode_cow`] negotiates format and converts
+//!   pixel data in one call, returning [`PixelCow::Borrowed`] when the input
 //!   already matches a supported format.
 //!
 //! - **Extension traits**: [`TransferFunctionExt`], [`ColorPrimariesExt`],
@@ -496,7 +496,9 @@ pub mod pipeline;
 mod scan;
 
 // Re-export key conversion types at crate root.
-pub use adapt::{adapt_for_encode_explicit, try_adapt_in_place};
+#[allow(deprecated)]
+pub use adapt::adapt_for_encode_explicit;
+pub use adapt::{adapt_for_encode_explicit_cow, try_adapt_in_place};
 #[cfg(feature = "hdr-experimental")]
 pub use convert::HdrConfig;
 pub use convert::{ConvertPlan, convert_row, requires_cms};

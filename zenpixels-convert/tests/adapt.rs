@@ -1,7 +1,8 @@
 //! Tests for the adapt module (codec helper functions).
+#![allow(deprecated)]
 
 use zenpixels_convert::PixelDescriptor;
-use zenpixels_convert::adapt::{adapt_for_encode, convert_buffer};
+use zenpixels_convert::adapt::{adapt_for_encode, adapt_for_encode_cow, convert_buffer};
 
 /// When input matches a supported format, should return borrowed data.
 #[test]
@@ -20,6 +21,24 @@ fn adapt_exact_match_is_borrowed() {
         matches!(result.data, std::borrow::Cow::Borrowed(_)),
         "exact match should be zero-copy"
     );
+}
+
+#[test]
+fn pixel_cow_preserves_valid_source_stride() {
+    let data = [1u8, 2, 3, 0, 0, 0, 4, 5, 6, 0, 0, 0];
+    let result = adapt_for_encode_cow(
+        &data,
+        PixelDescriptor::RGB8_SRGB,
+        1,
+        2,
+        6,
+        &[PixelDescriptor::RGB8_SRGB],
+    )
+    .unwrap();
+
+    assert!(result.is_borrowed());
+    assert_eq!(result.as_slice().stride(), 6);
+    assert_eq!(result.as_slice().row(1), &[4, 5, 6]);
 }
 
 /// When input doesn't match, should convert and return owned data.
