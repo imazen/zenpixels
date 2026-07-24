@@ -17,10 +17,6 @@ use zenpixels_convert::{
     ChannelType, ComputeEnvironment, ConvertPlan, ImageCharacteristics, PixelDescriptor, SimdTier,
     TransferFunction,
 };
-// Only referenced by the hdr-experimental test below; gating the import keeps
-// the default-feature build (and `cargo clippy -- -D warnings`) warning-free.
-#[cfg(feature = "hdr-experimental")]
-use zenpixels_convert::ColorPrimaries;
 
 /// Assert that `actual_ms` is within ±30 % of `expected_ms`.
 fn assert_close(actual_ms: f64, expected_ms: f64, label: &str) {

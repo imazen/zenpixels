@@ -72,9 +72,6 @@ jobs:
         run: cargo test -p zenpixels-convert --features avx512
 
       # The opt-in image bridge is not exercised by default workspace tests.
-      - name: Test (zenpixels image interop)
-        run: cargo test -p zenpixels --features image,rgb,imgref
-
       - name: Test (zenpixels-convert image interop)
         run: cargo test -p zenpixels-convert --features image
 

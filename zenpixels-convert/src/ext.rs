@@ -100,9 +100,9 @@ impl ColorPrimariesExt for ColorPrimaries {
 
 use alloc::sync::Arc;
 use whereat::{At, ResultAtExt};
-use zenpixels::PixelDescriptor;
-use zenpixels::buffer::PixelBuffer;
+use zenpixels::buffer::{PixelBuffer, PixelSlice};
 use zenpixels::descriptor::{AlphaMode, ChannelLayout, ChannelType};
+use zenpixels::{BufferError, PixelDescriptor};
 
 /// Adds format conversion methods to type-erased [`PixelBuffer`].
 pub trait PixelBufferConvertExt {
@@ -469,8 +469,137 @@ impl PixelBufferConvertTypedExt for PixelBuffer {
     }
 }
 
-/// Convert any [`PixelBuffer`] into an `image`-crate buffer, performing the
-/// necessary color and format conversion. Requires the `image` feature.
+/// Borrow or consume an `image`-crate buffer as zenpixels storage.
+///
+/// Eight-bit owned buffers move their allocation directly. Wide-channel
+/// buffers copy once into correctly aligned zenpixels storage.
+#[cfg(feature = "image")]
+pub trait ImageBufferExt: image_private::Sealed {
+    /// Consume this image buffer and preserve its native pixel format.
+    fn try_into_pixel_buffer(self) -> Result<PixelBuffer, At<BufferError>>;
+
+    /// Borrow this tightly packed image buffer without copying.
+    fn try_as_pixel_slice(&self) -> Result<PixelSlice<'_>, At<BufferError>>;
+}
+
+#[cfg(feature = "image")]
+fn image_pixels_into_buffer<T: bytemuck::Pod>(
+    pixels: alloc::vec::Vec<T>,
+    width: u32,
+    height: u32,
+    descriptor: PixelDescriptor,
+) -> Result<PixelBuffer, At<BufferError>> {
+    match bytemuck::try_cast_vec(pixels) {
+        Ok(bytes) => PixelBuffer::from_vec(bytes, width, height, descriptor),
+        Err((_error, pixels)) => {
+            let mut buffer = PixelBuffer::try_new(width, height, descriptor)?;
+            let source = bytemuck::cast_slice(&pixels);
+            let row_bytes = descriptor.aligned_stride(width);
+            let mut destination = buffer.as_slice_mut();
+            for (src, y) in source.chunks_exact(row_bytes).zip(0..height) {
+                destination.row_mut(y).copy_from_slice(src);
+            }
+            Ok(buffer)
+        }
+    }
+}
+
+#[cfg(feature = "image")]
+macro_rules! impl_image_buffer_ext {
+    ($( $image:ty => $descriptor:ident ; )*) => {
+        $(
+            impl image_private::Sealed for $image {}
+
+            impl ImageBufferExt for $image {
+                fn try_into_pixel_buffer(self) -> Result<PixelBuffer, At<BufferError>> {
+                    let (width, height) = self.dimensions();
+                    image_pixels_into_buffer(
+                        self.into_raw(),
+                        width,
+                        height,
+                        PixelDescriptor::$descriptor,
+                    )
+                }
+
+                fn try_as_pixel_slice(&self) -> Result<PixelSlice<'_>, At<BufferError>> {
+                    let (width, height) = self.dimensions();
+                    let descriptor = PixelDescriptor::$descriptor;
+                    PixelSlice::new(
+                        bytemuck::cast_slice(self.as_raw().as_slice()),
+                        width,
+                        height,
+                        descriptor.aligned_stride(width),
+                        descriptor,
+                    )
+                }
+            }
+        )*
+    };
+}
+
+#[cfg(feature = "image")]
+impl_image_buffer_ext! {
+    image::RgbImage => RGB8_SRGB;
+    image::RgbaImage => RGBA8_SRGB;
+    image::GrayImage => GRAY8_SRGB;
+    image::GrayAlphaImage => GRAYA8_SRGB;
+    image::ImageBuffer<image::Rgb<u16>, alloc::vec::Vec<u16>> => RGB16;
+    image::ImageBuffer<image::Rgba<u16>, alloc::vec::Vec<u16>> => RGBA16;
+    image::ImageBuffer<image::Luma<u16>, alloc::vec::Vec<u16>> => GRAY16;
+    image::ImageBuffer<image::LumaA<u16>, alloc::vec::Vec<u16>> => GRAYA16;
+    image::Rgb32FImage => RGBF32_LINEAR;
+    image::Rgba32FImage => RGBAF32_LINEAR;
+}
+
+/// Consume a [`image::DynamicImage`] as a format-preserving [`PixelBuffer`].
+#[cfg(feature = "image")]
+pub trait DynamicImageExt: image_private::Sealed {
+    /// Preserve all currently defined `DynamicImage` variants; future variants
+    /// fall back to RGBA8.
+    fn try_into_pixel_buffer(self) -> Result<PixelBuffer, At<BufferError>>;
+}
+
+#[cfg(feature = "image")]
+impl image_private::Sealed for image::DynamicImage {}
+
+#[cfg(feature = "image")]
+impl DynamicImageExt for image::DynamicImage {
+    fn try_into_pixel_buffer(self) -> Result<PixelBuffer, At<BufferError>> {
+        use image::DynamicImage;
+        match self {
+            DynamicImage::ImageLuma8(image) => image.try_into_pixel_buffer(),
+            DynamicImage::ImageLumaA8(image) => image.try_into_pixel_buffer(),
+            DynamicImage::ImageRgb8(image) => image.try_into_pixel_buffer(),
+            DynamicImage::ImageRgba8(image) => image.try_into_pixel_buffer(),
+            DynamicImage::ImageLuma16(image) => image.try_into_pixel_buffer(),
+            DynamicImage::ImageLumaA16(image) => image.try_into_pixel_buffer(),
+            DynamicImage::ImageRgb16(image) => image.try_into_pixel_buffer(),
+            DynamicImage::ImageRgba16(image) => image.try_into_pixel_buffer(),
+            DynamicImage::ImageRgb32F(image) => image.try_into_pixel_buffer(),
+            DynamicImage::ImageRgba32F(image) => image.try_into_pixel_buffer(),
+            other => other.to_rgba8().try_into_pixel_buffer(),
+        }
+    }
+}
+
+#[cfg(feature = "image")]
+fn copy_to_contiguous_elements<T: bytemuck::Pod>(buffer: &PixelBuffer) -> alloc::vec::Vec<T> {
+    let element_size = core::mem::size_of::<T>();
+    let row_bytes = buffer.width() as usize * buffer.descriptor().bytes_per_pixel();
+    debug_assert!(element_size != 0 && row_bytes.is_multiple_of(element_size));
+    let mut out =
+        alloc::vec::Vec::with_capacity(row_bytes / element_size * buffer.height() as usize);
+    let pixels = buffer.as_slice();
+    for y in 0..buffer.height() {
+        let row = pixels.row(y);
+        if !row.is_empty() {
+            out.extend_from_slice(bytemuck::cast_slice(row));
+        }
+    }
+    out
+}
+
+/// Convert any [`PixelBuffer`] into an `image`-crate buffer. Requires `image`.
 ///
 /// These are the "save my pixels" helpers: they take a buffer in *any* native
 /// format and produce a standard sRGB `image` buffer ready to hand to the
@@ -480,12 +609,15 @@ impl PixelBufferConvertTypedExt for PixelBuffer {
 ///
 /// Sources that need a CMS plugin (CMYK, Lab, …) return
 /// [`ConvertError::NeedsCms`](crate::ConvertError::NeedsCms); build a
-/// [`RowConverter`](crate::RowConverter) with a CMS for those. (For a cheap
-/// *format-preserving* reinterpret with no conversion, use zenpixels'
-/// [`PixelBuffer::to_dynamic_image`](zenpixels::buffer::PixelBuffer::to_dynamic_image)
-/// directly.)
+/// [`RowConverter`](crate::RowConverter) with a CMS for those. For a
+/// format-preserving copy with no conversion, use
+/// [`PixelBufferImageExt::to_dynamic_image`].
 #[cfg(feature = "image")]
-pub trait PixelBufferImageExt {
+pub trait PixelBufferImageExt: image_private::Sealed {
+    /// Preserve this buffer's format when `image::DynamicImage` can represent
+    /// it. Copies logical rows directly into the final output allocation.
+    fn to_dynamic_image(&self) -> Option<image::DynamicImage>;
+
     /// Convert to a standard sRGB [`image::RgbImage`] (alpha dropped).
     ///
     /// **Allocates.** Errors when the source needs a CMS plugin
@@ -508,26 +640,89 @@ pub trait PixelBufferImageExt {
 }
 
 #[cfg(feature = "image")]
+impl image_private::Sealed for PixelBuffer {}
+
+#[cfg(feature = "image")]
 impl PixelBufferImageExt for PixelBuffer {
+    fn to_dynamic_image(&self) -> Option<image::DynamicImage> {
+        use image::DynamicImage;
+        use zenpixels::PixelFormat as F;
+        let (width, height) = (self.width(), self.height());
+        Some(match self.descriptor().format {
+            F::Gray8 => DynamicImage::ImageLuma8(image::GrayImage::from_raw(
+                width,
+                height,
+                self.copy_to_contiguous_bytes(),
+            )?),
+            F::GrayA8 => DynamicImage::ImageLumaA8(image::GrayAlphaImage::from_raw(
+                width,
+                height,
+                self.copy_to_contiguous_bytes(),
+            )?),
+            F::Rgb8 => DynamicImage::ImageRgb8(image::RgbImage::from_raw(
+                width,
+                height,
+                self.copy_to_contiguous_bytes(),
+            )?),
+            F::Rgba8 => DynamicImage::ImageRgba8(image::RgbaImage::from_raw(
+                width,
+                height,
+                self.copy_to_contiguous_bytes(),
+            )?),
+            F::Gray16 => DynamicImage::ImageLuma16(image::ImageBuffer::from_raw(
+                width,
+                height,
+                copy_to_contiguous_elements::<u16>(self),
+            )?),
+            F::GrayA16 => DynamicImage::ImageLumaA16(image::ImageBuffer::from_raw(
+                width,
+                height,
+                copy_to_contiguous_elements::<u16>(self),
+            )?),
+            F::Rgb16 => DynamicImage::ImageRgb16(image::ImageBuffer::from_raw(
+                width,
+                height,
+                copy_to_contiguous_elements::<u16>(self),
+            )?),
+            F::Rgba16 => DynamicImage::ImageRgba16(image::ImageBuffer::from_raw(
+                width,
+                height,
+                copy_to_contiguous_elements::<u16>(self),
+            )?),
+            F::RgbF32 => DynamicImage::ImageRgb32F(image::ImageBuffer::from_raw(
+                width,
+                height,
+                copy_to_contiguous_elements::<f32>(self),
+            )?),
+            F::RgbaF32 => DynamicImage::ImageRgba32F(image::ImageBuffer::from_raw(
+                width,
+                height,
+                copy_to_contiguous_elements::<f32>(self),
+            )?),
+            _ => return None,
+        })
+    }
+
     #[track_caller]
     fn to_image_rgb8(&self) -> Result<image::RgbImage, At<crate::ConvertError>> {
         let buf = self.convert_to(PixelDescriptor::RGB8_SRGB)?;
         let (w, h) = (buf.width(), buf.height());
-        Ok(
-            image::RgbImage::from_raw(w, h, buf.copy_to_contiguous_bytes())
-                .expect("a converted RGB8 buffer always fills a valid RgbImage"),
-        )
+        Ok(image::RgbImage::from_raw(w, h, buf.into_vec())
+            .expect("a converted RGB8 buffer always fills a valid RgbImage"))
     }
 
     #[track_caller]
     fn to_image_rgba8(&self) -> Result<image::RgbaImage, At<crate::ConvertError>> {
         let buf = self.convert_to(PixelDescriptor::RGBA8_SRGB)?;
         let (w, h) = (buf.width(), buf.height());
-        Ok(
-            image::RgbaImage::from_raw(w, h, buf.copy_to_contiguous_bytes())
-                .expect("a converted RGBA8 buffer always fills a valid RgbaImage"),
-        )
+        Ok(image::RgbaImage::from_raw(w, h, buf.into_vec())
+            .expect("a converted RGBA8 buffer always fills a valid RgbaImage"))
     }
+}
+
+#[cfg(feature = "image")]
+mod image_private {
+    pub trait Sealed {}
 }
 
 /// Internal: convert to any target descriptor, returning a typed buffer.

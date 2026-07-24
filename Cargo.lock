@@ -362,7 +362,7 @@ dependencies = [
  "bytemuck",
  "lcms2",
  "lz4_flex",
- "moxcms",
+ "moxcms 0.9.0",
 ]
 
 [[package]]
@@ -373,7 +373,7 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
- "moxcms",
+ "moxcms 0.8.1",
  "num-traits",
 ]
 
@@ -479,6 +479,16 @@ name = "memchr"
 version = "2.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
+
+[[package]]
+name = "moxcms"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
+dependencies = [
+ "num-traits",
+ "pxfm",
+]
 
 [[package]]
 name = "moxcms"
@@ -952,7 +962,6 @@ name = "zenpixels"
 version = "0.2.16"
 dependencies = [
  "bytemuck",
- "image",
  "imgref",
  "rgb",
  "whereat",
@@ -971,7 +980,7 @@ dependencies = [
  "linear-srgb",
  "lz4_flex",
  "magetypes",
- "moxcms",
+ "moxcms 0.9.0",
  "once_cell",
  "palette",
  "paste",

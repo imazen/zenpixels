@@ -373,9 +373,10 @@ With `rgb` feature: `Pixel` impls for `Rgb<u8>`, `Rgba<u8>`, `Gray<u8>`, `BGRA<u
 
 With `imgref` feature: `From<ImgRef<P>>`, `From<ImgVec<P>>`, `as_imgref()`, `try_as_imgref::<P>()`, `to_imgvec::<P>()` and mutable counterparts.
 
-With `image` feature: type-erased bridges to the [`image`](https://crates.io/crates/image) crate — `From<DynamicImage>` / `From<{Rgb,Rgba,Gray,GrayAlpha}{8,16}Image>` / `From<{Rgb,Rgba}32FImage>` → `PixelBuffer`, `From<&ImageBuffer>` → `PixelSlice` (zero-copy borrow), and `PixelBuffer::to_dynamic_image()` for the format-preserving reverse. For full format/color conversion into an `image` buffer, use `zenpixels-convert`'s `PixelBufferImageExt` (`to_image_rgb8()` / `to_image_rgba8()`).
-
-Both crates also ship a `prelude` for one-line imports of the common types.
+`image`-crate interop lives in `zenpixels-convert` so the dependency does not
+enter this foundation crate. Its opt-in `image` feature provides fallible
+owned/borrowed adapters, format-preserving `to_dynamic_image`, and converting
+`to_image_rgb8` / `to_image_rgba8` helpers.
 
 ## Conversion
 
@@ -452,7 +453,6 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | `icc` | yes | `icc` module — hash-based ICC profile identification (~100ns) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed `from_pixels()` constructors |
 | `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions, `to_imgvec()` (implies `rgb`) |
-| `image` | | `From`/`to_dynamic_image()` bridges to the [`image`](https://crates.io/crates/image) crate's `ImageBuffer`/`DynamicImage` (implies `std`; needs Rust 1.88+) |
 | `planar` | | Multi-plane image types (YCbCr, Oklab, gain maps) |
 | `serde` | | No-op stub (soft-removed in 0.2.16, queued for removal); previously added `Serialize`/`Deserialize` derives on the core types — a workspace-wide sweep found zero consumers |
 

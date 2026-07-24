@@ -2,26 +2,23 @@
 
 ## [Unreleased]
 
-### zenpixels — added (`image` interop)
+### zenpixels — added
 
-- Add the opt-in `image` feature with type-erased, raw-subpixel conversions
-  between supported `image::ImageBuffer` / `DynamicImage` values and
-  `PixelBuffer` / `PixelSlice`. Eight-bit owned inputs reuse their allocation;
-  wide-channel inputs copy into correctly aligned storage. Borrowed image
-  buffers remain zero-copy. `PixelBuffer::to_dynamic_image` preserves supported
-  formats and removes row padding.
 - Add `PixelBuffer::to_imgvec` as the owned, de-striding counterpart to
-  `try_as_imgref`, plus `zenpixels::prelude`.
+  `try_as_imgref`.
 
 ### zenpixels-convert — added (`image` interop)
 
-- Add the opt-in `image` feature and `PixelBufferImageExt::{to_image_rgb8,
-  to_image_rgba8}` for fallible conversion to standard sRGB image buffers.
-  Add `zenpixels_convert::prelude` for the core and conversion traits.
+- Add the opt-in `image` feature with `ImageBufferExt`, `DynamicImageExt`, and
+  `PixelBufferImageExt`. The bridge stays here so `zenpixels` gains no
+  dependency. Eight-bit owned inputs reuse their allocation, borrowed inputs
+  remain zero-copy, and wide-channel paths copy directly into one correctly
+  aligned final allocation. `to_dynamic_image` preserves supported formats;
+  `to_image_rgb8` / `to_image_rgba8` perform color and format conversion.
 
 ### Workspace — CI
 
-- Run both opt-in image interoperability suites explicitly.
+- Run the opt-in image interoperability suite explicitly.
 
 ### zenpixels-convert — fixed (HDR correctness; all behind `hdr-experimental`, unreleased)
 

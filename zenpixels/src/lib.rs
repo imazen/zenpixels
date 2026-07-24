@@ -55,14 +55,8 @@
 //! | `std` | Standard library (default; currently a no-op, everything is `no_std + alloc`) |
 //! | `rgb` | [`Pixel`] impls for `rgb` crate types, typed `from_pixels()` constructors |
 //! | `imgref` | `From<ImgRef>` / `From<ImgVec>` conversions, `to_imgvec()` (implies `rgb`) |
-//! | `image` | `From`/`to_dynamic_image()` bridges to the [`image`](https://crates.io/crates/image) crate (implies `std`; needs Rust 1.88+) |
 //! | `planar` | Multi-plane image types (YCbCr, Oklab, gain maps) |
 //!
-//! # Prelude
-//!
-//! `use zenpixels::prelude::*;` brings the core buffer, slice, descriptor, and
-//! color types into scope in one line — see [`prelude`].
-
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 
@@ -123,19 +117,3 @@ pub use policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GrayExpand, LumaCoeff
 
 // Re-export whereat types for error tracing.
 pub use whereat::{At, ResultAtExt, at};
-
-/// Common imports for working with zenpixels.
-///
-/// `use zenpixels::prelude::*;` brings the core pixel-storage, format-descriptor,
-/// and color types into scope. This is the set you reach for to *hold and
-/// describe* pixels; conversion lives in `zenpixels-convert` (which has its own
-/// prelude re-exporting this one plus its extension traits).
-pub mod prelude {
-    pub use crate::buffer::{Pixel, PixelBuffer, PixelSlice, PixelSliceMut};
-    pub use crate::cicp::Cicp;
-    pub use crate::color::ColorContext;
-    pub use crate::descriptor::{
-        AlphaMode, ColorPrimaries, PixelDescriptor, PixelFormat, TransferFunction,
-    };
-    pub use crate::policy::ConvertOptions;
-}

@@ -33,12 +33,6 @@ use rgb::alt::BGRA;
 #[cfg(feature = "rgb")]
 use rgb::{Gray, Rgb, Rgba};
 
-// `image`-crate interop (feature = "image"). `DynamicImage`/`ImageBuffer` carry
-// no `bytemuck::Pod` impl on their pixel types, so the bridge is raw-subpixel
-// level (see the interop section lower in this file).
-#[cfg(feature = "image")]
-use image::{DynamicImage, ImageBuffer};
-
 use crate::cicp::Cicp;
 use crate::color::ColorContext;
 use crate::descriptor::{
@@ -301,7 +295,7 @@ fn required_bytes(rows: u32, stride: usize, min_stride: usize) -> Result<usize, 
 
 /// Convert `Vec<P>` to `Vec<u8>`. Zero-copy when alignment matches (u8-component
 /// types), copies via `cast_slice` otherwise.
-#[cfg(any(feature = "rgb", feature = "image"))]
+#[cfg(feature = "rgb")]
 fn pixels_to_bytes<P: bytemuck::Pod>(pixels: Vec<P>) -> Vec<u8> {
     match bytemuck::try_cast_vec(pixels) {
         Ok(bytes) => bytes,
@@ -2020,177 +2014,6 @@ impl PixelBuffer {
 }
 
 // ---------------------------------------------------------------------------
-// `image` crate interop (feature = "image")
-// ---------------------------------------------------------------------------
-//
-// Unlike the `rgb` feature (which makes `image`-style pixel *types* implement
-// `Pixel`), the `image` crate's pixel types cannot implement `bytemuck::Pod`
-// (orphan rule: foreign trait, foreign type). So this bridge works at the raw
-// subpixel level and always yields a *type-erased* `PixelBuffer`/`PixelSlice`.
-//
-// Descriptor tagging mirrors the `imgref` bridge: 8-bit → sRGB, 16-bit →
-// transfer-agnostic, `f32` → linear. The reverse (`to_dynamic_image`) is a
-// format-preserving reinterpret with no color conversion — convert with
-// `zenpixels-convert` first when the layout isn't one `image` can represent.
-
-/// Copy a contiguous `Vec<u8>` into a `Vec<u16>`/`Vec<f32>` for the
-/// `image`-crate reverse path via [`bytemuck::pod_collect_to_vec`], which
-/// allocates the destination at the target type's alignment and `memcpy`s —
-/// no alignment requirement on the source. (A `bytemuck::cast_slice` here
-/// would panic whenever the allocator happened to hand the `Vec<u8>` a
-/// pointer not aligned for the wider element type; a 1-byte allocation
-/// carries no such guarantee.) The input comes from
-/// [`PixelBuffer::copy_to_contiguous_bytes`], whose length is a multiple of
-/// the element size for every 16-bit / `f32` format, so the rounded-up
-/// destination length equals the exact element count.
-#[cfg(feature = "image")]
-fn bytes_to_u16(bytes: Vec<u8>) -> Vec<u16> {
-    bytemuck::pod_collect_to_vec::<u8, u16>(&bytes)
-}
-
-#[cfg(feature = "image")]
-fn bytes_to_f32(bytes: Vec<u8>) -> Vec<f32> {
-    bytemuck::pod_collect_to_vec::<u8, f32>(&bytes)
-}
-
-#[cfg(feature = "image")]
-macro_rules! impl_image_buffer_interop {
-    ($( $img:ty => $desc:ident ; )*) => {
-        $(
-            #[doc = concat!(
-                "Convert an `image`-crate buffer into a type-erased [`PixelBuffer`] \
-                 tagged [`PixelDescriptor::", stringify!($desc), "`]. Zero-copy for \
-                 8-bit buffers; 16-bit / `f32` buffers are copied once (their \
-                 `Vec<u16>` / `Vec<f32>` backing cannot be reinterpreted as \
-                 `Vec<u8>` without reallocating)."
-            )]
-            impl From<$img> for PixelBuffer {
-                fn from(img: $img) -> Self {
-                    let (width, height) = img.dimensions();
-                    let descriptor = PixelDescriptor::$desc;
-                    let stride = descriptor.aligned_stride(width);
-                    // `offset: 0` relies on the global allocator's natural
-                    // over-alignment for the 16-bit/`f32` copy path — the same
-                    // contract `from_pixels` / `from_imgvec` already use.
-                    let data = pixels_to_bytes(img.into_raw());
-                    Self {
-                        data,
-                        offset: 0,
-                        width,
-                        height,
-                        stride,
-                        descriptor,
-                        color: None,
-                        _pixel: PhantomData,
-                    }
-                }
-            }
-
-            #[doc = concat!(
-                "Borrow an `image`-crate buffer as a type-erased [`PixelSlice`] \
-                 tagged [`PixelDescriptor::", stringify!($desc), "`] — always \
-                 zero-copy (the `image` crate stores rows tightly packed)."
-            )]
-            impl<'a> From<&'a $img> for PixelSlice<'a> {
-                fn from(img: &'a $img) -> Self {
-                    let (width, height) = img.dimensions();
-                    let descriptor = PixelDescriptor::$desc;
-                    let stride = descriptor.aligned_stride(width);
-                    let bytes: &[u8] = bytemuck::cast_slice(img.as_raw().as_slice());
-                    PixelSlice::new(bytes, width, height, stride, descriptor)
-                        .expect("image buffer is always a valid, tightly-packed PixelSlice")
-                }
-            }
-        )*
-    };
-}
-
-#[cfg(feature = "image")]
-impl_image_buffer_interop! {
-    image::RgbImage => RGB8_SRGB;
-    image::RgbaImage => RGBA8_SRGB;
-    image::GrayImage => GRAY8_SRGB;
-    image::GrayAlphaImage => GRAYA8_SRGB;
-    ImageBuffer<image::Rgb<u16>, Vec<u16>> => RGB16;
-    ImageBuffer<image::Rgba<u16>, Vec<u16>> => RGBA16;
-    ImageBuffer<image::Luma<u16>, Vec<u16>> => GRAY16;
-    ImageBuffer<image::LumaA<u16>, Vec<u16>> => GRAYA16;
-    image::Rgb32FImage => RGBF32_LINEAR;
-    image::Rgba32FImage => RGBAF32_LINEAR;
-}
-
-#[cfg(feature = "image")]
-impl From<DynamicImage> for PixelBuffer {
-    /// Convert a [`DynamicImage`] into a type-erased [`PixelBuffer`], dispatching
-    /// on the variant.
-    ///
-    /// All ten `image` 0.25 variants map directly to a native format. The enum
-    /// is `#[non_exhaustive]`, so any future variant falls back to an 8-bit
-    /// RGBA conversion via [`DynamicImage::to_rgba8`].
-    fn from(img: DynamicImage) -> Self {
-        match img {
-            DynamicImage::ImageLuma8(b) => b.into(),
-            DynamicImage::ImageLumaA8(b) => b.into(),
-            DynamicImage::ImageRgb8(b) => b.into(),
-            DynamicImage::ImageRgba8(b) => b.into(),
-            DynamicImage::ImageLuma16(b) => b.into(),
-            DynamicImage::ImageLumaA16(b) => b.into(),
-            DynamicImage::ImageRgb16(b) => b.into(),
-            DynamicImage::ImageRgba16(b) => b.into(),
-            DynamicImage::ImageRgb32F(b) => b.into(),
-            DynamicImage::ImageRgba32F(b) => b.into(),
-            other => PixelBuffer::from(other.to_rgba8()),
-        }
-    }
-}
-
-/// `image`-crate reverse conversion.
-#[cfg(feature = "image")]
-impl PixelBuffer {
-    /// Reinterpret this buffer as an `image`-crate [`DynamicImage`], if its
-    /// pixel layout is one the `image` crate can represent.
-    ///
-    /// Returns `Some` for the ten mappable layouts (`Gray` / `GrayA` / `Rgb` /
-    /// `Rgba` in 8- and 16-bit, plus `Rgb` / `Rgba` `f32`); returns `None` for
-    /// BGRA, padded (`Rgbx` / `Bgrx`), Oklab, CMYK, and `f16` layouts.
-    ///
-    /// This is a **format-preserving** copy that strips any row padding — it
-    /// does *not* color-convert, and the descriptor's transfer / primaries tags
-    /// are dropped (the `image` crate carries no transfer tag on its buffers).
-    /// To obtain a specific output format from an arbitrary input, convert first
-    /// with `zenpixels-convert` (e.g. `to_rgba8()`), then call this — or use the
-    /// `to_image_*` helpers that crate provides.
-    pub fn to_dynamic_image(&self) -> Option<DynamicImage> {
-        use crate::descriptor::PixelFormat as F;
-        let w = self.width;
-        let h = self.height;
-        let bytes = self.copy_to_contiguous_bytes();
-        Some(match self.descriptor.format {
-            F::Gray8 => DynamicImage::ImageLuma8(image::GrayImage::from_raw(w, h, bytes)?),
-            F::GrayA8 => DynamicImage::ImageLumaA8(image::GrayAlphaImage::from_raw(w, h, bytes)?),
-            F::Rgb8 => DynamicImage::ImageRgb8(image::RgbImage::from_raw(w, h, bytes)?),
-            F::Rgba8 => DynamicImage::ImageRgba8(image::RgbaImage::from_raw(w, h, bytes)?),
-            F::Gray16 => {
-                DynamicImage::ImageLuma16(ImageBuffer::from_raw(w, h, bytes_to_u16(bytes))?)
-            }
-            F::GrayA16 => {
-                DynamicImage::ImageLumaA16(ImageBuffer::from_raw(w, h, bytes_to_u16(bytes))?)
-            }
-            F::Rgb16 => DynamicImage::ImageRgb16(ImageBuffer::from_raw(w, h, bytes_to_u16(bytes))?),
-            F::Rgba16 => {
-                DynamicImage::ImageRgba16(ImageBuffer::from_raw(w, h, bytes_to_u16(bytes))?)
-            }
-            F::RgbF32 => {
-                DynamicImage::ImageRgb32F(ImageBuffer::from_raw(w, h, bytes_to_f32(bytes))?)
-            }
-            F::RgbaF32 => {
-                DynamicImage::ImageRgba32F(ImageBuffer::from_raw(w, h, bytes_to_f32(bytes))?)
-            }
-            _ => return None,
-        })
-    }
-}
-
 /// Everything a layout-changing in-place transform receives from
 /// [`PixelBuffer::transform_in_place`]: the buffer's backing bytes (from
 /// the aligned base, including stride padding) plus its current

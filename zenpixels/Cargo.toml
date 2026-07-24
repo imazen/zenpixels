@@ -20,11 +20,6 @@ planar = []
 icc = []
 rgb = ["dep:rgb"]
 imgref = ["dep:imgref", "rgb"]
-# `image`-crate interop at the raw-subpixel level. This is independent of the
-# `rgb`/`imgref` adapters because `image` pixel types cannot implement
-# `bytemuck::Pod` across the crate boundary. The dependency is opt-in and
-# codec-free; enabling it also enables `std`.
-image = ["dep:image", "std"]
 # Soft-removed in 0.2.16 (unreleased at the time; crates.io latest was
 # 0.2.14, whose builds are unaffected). The `serde` feature previously pulled an optional
 # `serde` dependency and added `Serialize`/`Deserialize` derives on the
@@ -42,15 +37,8 @@ serde = []
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 imgref = { version = "1.12", optional = true }
-# Core types only (no codecs/IO): `default-features = false` keeps the dependency
-# light — `ImageBuffer`, `DynamicImage`, the pixel structs, and the type aliases
-# are all unconditional in the `image` crate.
-image = { version = "0.25.10", default-features = false, optional = true }
 whereat = { version = "0.1.5", default-features = false }
 
 [dev-dependencies]
 imgref = "1.12"
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"] }
-# Core types only — the bridge tests construct `ImageBuffer`/`DynamicImage`
-# directly and assert on bytes, so no decoders are needed.
-image = { version = "0.25.10", default-features = false }

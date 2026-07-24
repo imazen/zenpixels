@@ -12,7 +12,7 @@
 #   pub modules                                 1
 #   pub types (struct/enum/trait/alias)        16
 #   pub consts/statics                         56
-#   inherent methods                           98
+#   inherent methods                          100
 #   struct fields                              16
 #   enum variants                              54
 #   trait roster entries (type × trait)        81
@@ -20,14 +20,15 @@
 #
 # per-module pub lines:
 #   (root)                           90
-#   buffer                           34
+#   buffer                           36
 #   planar                          117
 
-## items (210 lines)
+## items (212 lines)
 
 pub fn buffer::PixelBuffer::as_contiguous_pixels<P: buffer::Pixel>(&self) -> core::option::Option<&[P]>
 pub fn buffer::PixelBuffer::from_pixels_erased<P: buffer::Pixel>(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::into_contiguous_pixels<P: buffer::Pixel>(self) -> core::option::Option<alloc::vec::Vec<P>>
+pub fn buffer::PixelBuffer::to_imgvec<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgVec<P>>
 pub fn buffer::PixelBuffer::try_as_imgref<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
 pub fn buffer::PixelBuffer::try_as_imgref_mut<P: buffer::Pixel>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
 pub fn buffer::PixelBuffer<P>::as_imgref(&self) -> imgref::ImgRef<'_, P>
@@ -210,6 +211,7 @@ pub fn planar::MultiPlaneImage::with_origin(self, alloc::sync::Arc<color::ColorC
 pub fn buffer::PixelBuffer::as_contiguous_pixels<P: buffer::Pixel>(&self) -> core::option::Option<&[P]>
 pub fn buffer::PixelBuffer::from_pixels_erased<P: buffer::Pixel>(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::into_contiguous_pixels<P: buffer::Pixel>(self) -> core::option::Option<alloc::vec::Vec<P>>
+pub fn buffer::PixelBuffer::to_imgvec<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgVec<P>>
 pub fn buffer::PixelBuffer::try_as_imgref<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
 pub fn buffer::PixelBuffer::try_as_imgref_mut<P: buffer::Pixel>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
 pub fn buffer::PixelBuffer<P>::as_imgref(&self) -> imgref::ImgRef<'_, P>
