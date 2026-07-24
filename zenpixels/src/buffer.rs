@@ -1995,6 +1995,25 @@ impl PixelBuffer {
     }
 }
 
+/// Owned `imgref` de-striding helper.
+#[cfg(feature = "imgref")]
+impl PixelBuffer {
+    /// Copy this buffer into an owned [`ImgVec`], stripping any row padding.
+    ///
+    /// Returns `None` if the descriptor is not layout-compatible with `P`.
+    ///
+    /// This is the owned counterpart to [`try_as_imgref`](Self::try_as_imgref):
+    /// `buf.to_imgvec::<Rgb<u8>>()` replaces the common
+    /// `buf.try_as_imgref::<Rgb<u8>>()?.pixels().collect()` →
+    /// `ImgVec::new(…)` boilerplate with one call.
+    pub fn to_imgvec<P: Pixel>(&self) -> Option<ImgVec<P>> {
+        let view = self.try_as_imgref::<P>()?;
+        let (buf, w, h) = view.to_contiguous_buf();
+        Some(ImgVec::new(buf.into_owned(), w, h))
+    }
+}
+
+// ---------------------------------------------------------------------------
 /// Everything a layout-changing in-place transform receives from
 /// [`PixelBuffer::transform_in_place`]: the buffer's backing bytes (from
 /// the aligned base, including stride padding) plus its current
@@ -3476,5 +3495,42 @@ mod buffer_tests {
         let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 1, g: 2, b: 3 }];
         let err = PixelBuffer::from_pixels_erased(pixels, 2, 1);
         assert_eq!(*err.unwrap_err().error(), BufferError::InvalidDimensions);
+    }
+
+    // --- to_imgvec ---
+
+    #[test]
+    fn to_imgvec_destrides_to_tight_owned() {
+        // A SIMD-aligned buffer carries stride padding; `to_imgvec` must strip it.
+        let mut pb = PixelBuffer::new_simd_aligned(2, 2, PixelDescriptor::RGB8_SRGB, 64);
+        assert!(pb.stride() > 2 * 3, "test needs a padded stride");
+        for y in 0..2u32 {
+            let mut rows = pb.rows_mut(y, 1);
+            let row = rows.row_mut(0);
+            for (i, b) in row.iter_mut().enumerate() {
+                *b = (y as usize * 10 + i) as u8;
+            }
+        }
+
+        let iv = pb
+            .to_imgvec::<Rgb<u8>>()
+            .expect("RGB8 is layout-compatible");
+        assert_eq!(iv.width(), 2);
+        assert_eq!(iv.height(), 2);
+        assert_eq!(iv.stride(), 2, "owned ImgVec is tightly packed");
+
+        // Round-trip back through from_imgvec and confirm the de-strided bytes.
+        let tight: PixelBuffer = PixelBuffer::<Rgb<u8>>::from_imgvec(iv).into();
+        assert_eq!(
+            tight.copy_to_contiguous_bytes(),
+            vec![0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 14, 15]
+        );
+    }
+
+    #[test]
+    fn to_imgvec_returns_none_on_layout_mismatch() {
+        let pb = PixelBuffer::new(2, 2, PixelDescriptor::RGB8_SRGB);
+        // Requesting a Gray view from an RGB buffer is not layout-compatible.
+        assert!(pb.to_imgvec::<Gray<u8>>().is_none());
     }
 }

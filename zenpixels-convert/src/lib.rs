@@ -518,6 +518,8 @@ pub use ext::PixelBufferConvertTypedExt;
 #[cfg(feature = "hdr-experimental")]
 pub use ext::PixelBufferHdrConvertExt;
 pub use ext::{ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
+#[cfg(feature = "image")]
+pub use ext::{DynamicImageExt, ImageBufferExt, PixelBufferImageExt};
 
 // Re-export gamut conversion utilities.
 pub use gamut::{

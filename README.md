@@ -367,7 +367,22 @@ scan) so encoders can route formats without rewriting anything.
 
 ### Interop
 
-With `imgref` feature: `From<ImgRef<P>>`, `From<ImgVec<P>>`, `as_imgref()`, `try_as_imgref::<P>()` and mutable counterparts. With `rgb` feature: `Pixel` impls for `Rgb<u8>`, `Rgba<u8>`, `Gray<u8>`, `BGRA<u8>`, and their `u16`/`f32` variants.
+With `rgb` feature: `Pixel` impls for `Rgb<u8>`, `Rgba<u8>`, `Gray<u8>`, `BGRA<u8>`, and their `u16`/`f32` variants.
+
+With `imgref` feature: `From<ImgRef<P>>`, `From<ImgVec<P>>`, `as_imgref()`, `try_as_imgref::<P>()`, `to_imgvec::<P>()` and mutable counterparts.
+
+`image`-crate interop lives in `zenpixels-convert` so the dependency does not
+enter this foundation crate. Enable its `image` feature and import the interop
+traits:
+
+```rust
+use zenpixels_convert::{DynamicImageExt, ImageBufferExt, PixelBufferImageExt};
+
+let pb = image::open(path)?.try_into_pixel_buffer()?;
+let slice = rgb_image.try_as_pixel_slice()?; // zero-copy borrow
+let dynimg = pb.to_dynamic_image();           // format-preserving
+let rgba = pb.to_image_rgba8()?;              // converts format and color
+```
 
 ## Conversion
 
@@ -443,7 +458,7 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | `std` | yes | Standard library (currently a no-op; everything is `no_std + alloc`) |
 | `icc` | yes | `icc` module — hash-based ICC profile identification (~100ns) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed `from_pixels()` constructors |
-| `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
+| `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions, `to_imgvec()` (implies `rgb`) |
 | `planar` | | Multi-plane image types (YCbCr, Oklab, gain maps) |
 | `serde` | | No-op stub (soft-removed in 0.2.16, queued for removal); previously added `Serialize`/`Deserialize` derives on the core types — a workspace-wide sweep found zero consumers |
 
@@ -457,6 +472,7 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed convenience methods (`to_rgb8()`, `to_rgba8()`, etc.) |
 | `imgref` | | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
+| `image` | | `PixelBufferImageExt` (`to_image_rgb8()`/`to_image_rgba8()`) converting helpers to the [`image`](https://crates.io/crates/image) crate (implies `std`) |
 | `planar` | | Multi-plane image types |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
 | `hdr-experimental` | | Native HDR→SDR display mapping inside `ConvertPlan` (BT.2446 Method A + OKLch soft compress + CTA-861.3 CLL measurement); API shape may move ahead of 0.3.0 |

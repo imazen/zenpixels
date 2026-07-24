@@ -54,9 +54,9 @@
 //! |---------|----------------|
 //! | `std` | Standard library (default; currently a no-op, everything is `no_std + alloc`) |
 //! | `rgb` | [`Pixel`] impls for `rgb` crate types, typed `from_pixels()` constructors |
-//! | `imgref` | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
+//! | `imgref` | `From<ImgRef>` / `From<ImgVec>` conversions, `to_imgvec()` (implies `rgb`) |
 //! | `planar` | Multi-plane image types (YCbCr, Oklab, gain maps) |
-
+//!
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 

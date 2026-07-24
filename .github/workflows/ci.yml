@@ -71,6 +71,10 @@ jobs:
         if: runner.arch == 'X64'
         run: cargo test -p zenpixels-convert --features avx512
 
+      # The opt-in image bridge is not exercised by default workspace tests.
+      - name: Test (zenpixels-convert image interop)
+        run: cargo test -p zenpixels-convert --features image
+
       - name: Check no_std (zenpixels)
         run: cargo check -p zenpixels --no-default-features
 

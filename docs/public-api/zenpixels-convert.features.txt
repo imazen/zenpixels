@@ -1,5 +1,5 @@
 # zenpixels-convert public API — additions from non-default features
-# features: avx512,cms-moxcms,fast-transpose,hdr-experimental,icc-db,imgref,pipeline,planar,rgb,serde,std
+# features: avx512,cms-moxcms,fast-transpose,hdr-experimental,icc-db,image,imgref,pipeline,planar,rgb,serde,std
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -10,35 +10,41 @@
 ## summary
 #
 #   pub modules                                 6
-#   pub types (struct/enum/trait/alias)        42
+#   pub types (struct/enum/trait/alias)        48
 #   pub consts/statics                         12
 #   free functions                             12
-#   inherent methods                           48
+#   inherent methods                           60
 #   struct fields                             108
 #   enum variants                              70
-#   trait roster entries (type × trait)        63
+#   trait roster entries (type × trait)        75
 #   auto-trait-complete types                  16
 #
 # per-module pub lines:
-#   (root)                           89
+#   (root)                           98
 #   cms_moxcms                        5
-#   ext                               8
+#   ext                              17
 #   hdr                              26
 #   pipeline                        170
 
-## items (269 lines)
+## items (284 lines)
 
 pub mod cms_moxcms
 pub struct cms_moxcms::MoxCmsError(pub alloc::string::String)
 pub fn cms_moxcms::cicp_transform_opts() -> moxcms::transform::TransformOptions
 pub fn cms_moxcms::lut_transform_opts() -> moxcms::transform::TransformOptions
 pub fn cms_moxcms::transform_opts(cms::ColorPriority, cms::RenderingIntent) -> moxcms::transform::TransformOptions
+pub fn ext::DynamicImageExt::try_into_pixel_buffer(self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<zenpixels::buffer::BufferError>>
+pub fn ext::ImageBufferExt::try_as_pixel_slice(&self) -> core::result::Result<zenpixels::buffer::PixelSlice<'_>, whereat::at::At<zenpixels::buffer::BufferError>>
+pub fn ext::ImageBufferExt::try_into_pixel_buffer(self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<zenpixels::buffer::BufferError>>
 pub fn ext::PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_rgba8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>
 pub fn ext::PixelBufferHdrConvertExt::convert_to_sdr(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferHdrConvertExt::convert_to_with_hdr_config(&self, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn ext::PixelBufferImageExt::to_dynamic_image(&self) -> core::option::Option<image::images::dynimage::DynamicImage>
+pub fn ext::PixelBufferImageExt::to_image_rgb8(&self) -> core::result::Result<image::images::buffer::RgbImage, whereat::at::At<error::ConvertError>>
+pub fn ext::PixelBufferImageExt::to_image_rgba8(&self) -> core::result::Result<image::images::buffer::RgbaImage, whereat::at::At<error::ConvertError>>
 pub mod hdr::measure
 pub hdr::measure::LightLevelMethod::LuminanceBt2020
 pub hdr::measure::LightLevelMethod::MaxRgb
@@ -286,6 +292,11 @@ pub PathEntry::path: core::option::Option<pipeline::path::ConversionPath>
 pub PathEntry::source_codec: &'static str
 pub PathEntry::source_effective_bits: u8
 pub PathEntry::source_format: zenpixels::descriptor::PixelDescriptor
+pub trait DynamicImageExt: ext::image_private::Sealed [also: ext]
+pub fn DynamicImageExt::try_into_pixel_buffer(self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<zenpixels::buffer::BufferError>>
+pub trait ImageBufferExt: ext::image_private::Sealed [also: ext]
+pub fn ImageBufferExt::try_as_pixel_slice(&self) -> core::result::Result<zenpixels::buffer::PixelSlice<'_>, whereat::at::At<zenpixels::buffer::BufferError>>
+pub fn ImageBufferExt::try_into_pixel_buffer(self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<zenpixels::buffer::BufferError>>
 pub trait PixelBufferConvertTypedExt: ext::PixelBufferConvertExt [also: ext]
 pub fn PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>
 pub fn PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
@@ -294,11 +305,15 @@ pub fn PixelBufferConvertTypedExt::to_rgba8(&self) -> zenpixels::buffer::PixelBu
 pub trait PixelBufferHdrConvertExt [also: ext]
 pub fn PixelBufferHdrConvertExt::convert_to_sdr(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferHdrConvertExt::convert_to_with_hdr_config(&self, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub trait PixelBufferImageExt: ext::image_private::Sealed [also: ext]
+pub fn PixelBufferImageExt::to_dynamic_image(&self) -> core::option::Option<image::images::dynimage::DynamicImage>
+pub fn PixelBufferImageExt::to_image_rgb8(&self) -> core::result::Result<image::images::buffer::RgbImage, whereat::at::At<error::ConvertError>>
+pub fn PixelBufferImageExt::to_image_rgba8(&self) -> core::result::Result<image::images::buffer::RgbaImage, whereat::at::At<error::ConvertError>>
 pub fn generate_path_matrix(&[&pipeline::registry::CodecFormats], &[pipeline::op_format::OpCategory], &[&pipeline::registry::CodecFormats], pipeline::path::QualityThreshold) -> alloc::vec::Vec<pipeline::path::PathEntry> [also: pipeline, pipeline::path]
 pub fn matrix_stats(&[pipeline::path::PathEntry]) -> pipeline::path::MatrixStats [also: pipeline, pipeline::path]
 pub fn optimal_path(zenpixels::descriptor::PixelDescriptor, Provenance, pipeline::op_format::OpCategory, zenpixels::descriptor::PixelDescriptor, pipeline::path::QualityThreshold) -> core::option::Option<pipeline::path::ConversionPath> [also: pipeline, pipeline::path]
 
-## trait impls (18 types)
+## trait impls (29 types)
 
 HdrConfig: Clone, Copy, Debug, Default, PartialEq
 cms_moxcms::MoxCms: Clone, Copy, Debug, Default, cms::ColorManagement, cms::PluggableCms
@@ -307,6 +322,17 @@ hdr::Bt2446A: Clone, Copy, Debug
 hdr::GamutBoundaryLut: Clone, Debug
 hdr::SoftCompress: Clone, Debug
 hdr::measure::LightLevelMethod: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+image::images::buffer::GrayAlphaImage: ext::ImageBufferExt
+image::images::buffer::GrayImage: ext::ImageBufferExt
+image::images::buffer::ImageBuffer<image::color::Luma<u16>, alloc::vec::Vec<u16>>: ext::ImageBufferExt
+image::images::buffer::ImageBuffer<image::color::LumaA<u16>, alloc::vec::Vec<u16>>: ext::ImageBufferExt
+image::images::buffer::ImageBuffer<image::color::Rgb<u16>, alloc::vec::Vec<u16>>: ext::ImageBufferExt
+image::images::buffer::ImageBuffer<image::color::Rgba<u16>, alloc::vec::Vec<u16>>: ext::ImageBufferExt
+image::images::buffer::Rgb32FImage: ext::ImageBufferExt
+image::images::buffer::RgbImage: ext::ImageBufferExt
+image::images::buffer::Rgba32FImage: ext::ImageBufferExt
+image::images::buffer::RgbaImage: ext::ImageBufferExt
+image::images::dynimage::DynamicImage: ext::DynamicImageExt
 pipeline::op_format::OpCategory: Clone, Copy, Debug, Eq, Hash, PartialEq
 pipeline::op_format::OpRequirement: Clone, Copy, Debug
 pipeline::path::ConversionPath: Clone, Debug
@@ -316,5 +342,5 @@ pipeline::path::PathEntry: Clone, Debug
 pipeline::path::QualityThreshold: Clone, Copy, Debug
 pipeline::registry::CodecFormats: Clone, Debug
 pipeline::registry::FormatEntry: Clone, Copy, Debug
-zenpixels::buffer::PixelBuffer: ext::PixelBufferConvertTypedExt, ext::PixelBufferHdrConvertExt
+zenpixels::buffer::PixelBuffer: ext::PixelBufferConvertTypedExt, ext::PixelBufferHdrConvertExt, ext::PixelBufferImageExt
 zenpixels::hdr::ContentLightLevel: hdr::measure::CllMeasure
