@@ -24,14 +24,14 @@ demotion queued for the next breaking release.
 | # | Finding | Real consumers | Change | Semver | Status |
 |---|---------|---------------:|--------|--------|--------|
 | 1 | `PixelSlice::new_contiguous` / `PixelSliceMut::new_contiguous` — packed-stride ctor | ~361 | add method | additive (0.2.x) | **landed** |
-| 2 | `Adapted::as_pixel_slice()` | 5 | add method | additive (0.2.x) | **landed** |
+| 2 | Owned-or-borrowed adapted pixels | 5 | return `PixelCow`; retain `Adapted` compatibility | additive (0.2.x) | **superseded and landed** |
 | 3 | `RowConverter::convert_slice(PixelSlice) -> PixelBuffer` | 4–5 | add method | additive (0.2.x) | **landed** |
 | 4 | `PixelDescriptor::with_color_from_cicp(Cicp)` | 3+ | add method | additive (0.2.x) | **landed** |
 | 5 | Steer bare-`Vec` callers to `convert_to` | — | docs | none | doc |
 | 6 | Crate-doc examples are `rust,ignore` (untested) | — | docs | none | galleries |
 | 7 | `finalize_for_output_with` / `EncodeReady` — atomic encode contract, unadopted by codecs (weaker two-track path) | **0 ext.** | keep / adopt | none | see §7 |
 | 8 | `PixelBufferConvertTypedExt` (`.to_rgba8`) is top idiom but `rgb`-gated | ~93 | docs | none | doc |
-| 9 | `Cicp::from_bytes([u8; 4])` | ~161 `Cicp::new` | add method | additive (0.2.x) | **landed** |
+| 9 | Raw CICP tuple convenience | ~161 `Cicp::new` | leave validation in codec/container parsers | — | **abated** |
 
 ---
 
@@ -68,12 +68,13 @@ Representative victims: `imageflow_core/.../zen_encoder.rs:618`,
 Verdict: **highest value, lowest risk.** 361 concrete consumers clear the YAGNI
 bar by a wide margin.
 
-## 2. `Adapted::as_pixel_slice()` — kill the re-slice boilerplate
+## 2. `PixelCow` — remove re-slicing and make ownership explicit
 
 The `adapt_for_encode` → recompute-stride → `PixelSlice::new` → `encode` block is
 **duplicated verbatim 5×** in zenpipe/zencodecs (`avif_enc.rs:159`,
 `jxl_enc.rs:130`, `encode.rs:824`, `dispatch.rs:171`, `transcode.rs:706`).
-`Adapted` already owns `data` / `descriptor` / `width` / `rows`.
+The original proposal added an accessor to `Adapted`; subsequent review found
+that `Adapted` duplicated a general owned-or-borrowed pixel concept.
 
 ```rust
 // today
@@ -82,17 +83,16 @@ let adapted_stride = adapted.width as usize * adapted.descriptor.bytes_per_pixel
 let slice = PixelSlice::new(&adapted.data, adapted.width, adapted.rows, adapted_stride, adapted.descriptor)?;
 encoder.encode(slice)?;
 
-// landed
-let adapted = adapt_for_encode(pixel_data, descriptor, w, h, stride, caps)?;
-encoder.encode(adapted.as_pixel_slice()?)?;   // one call, no hand-computed stride
+// canonical API
+let adapted = adapt_for_encode_cow(pixel_data, descriptor, w, h, stride, caps)?;
+encoder.encode(adapted.as_pixel_slice())?;
 ```
 
-Method on `Adapted<'_>` returning `PixelSlice<'_>` over its own bytes. It returns
-`Result` (not the infallible form first sketched): the zero-copy borrow path can
-hand back wide-channel bytes that are misaligned for a `PixelSlice`, so the
-alignment check stays. Shown in
-`convert_pipeline.rs::adapt_pixels_before_encoding` (with the verbose form it
-replaces quoted inline).
+`PixelCow` carries bytes and layout together and exposes a `PixelSlice`
+directly. The already-published `Adapted` type and free adaptation functions
+remain as deprecated compatibility wrappers for 0.2.x; its accessor stays
+fallible because an old `Adapted` can contain bytes that are not suitably
+aligned. Shown in `convert_pipeline.rs::adapt_pixels_before_encoding`.
 
 ## 3. `RowConverter::convert_slice` — bundle the 6-arg row loop
 
@@ -168,12 +168,12 @@ deprecated.)
 `finalize_for_output_with` is the crate's **type-enforced atomic encode
 contract**: it converts pixels to the target profile and produces the matching
 ICC/CICP *together*, so they cannot diverge — and its `EncodeReady::pixels()`
-come off a `PixelBuffer`, hence always SIMD-aligned (never the
-fallible-alignment case that `Adapted::as_pixel_slice` guards).
+come off a `PixelBuffer`, hence always SIMD-aligned (unlike the deprecated
+compatibility path through `Adapted`).
 
 **What the codecs do instead (two-track, by-convention):**
 
-- Track A — pixels: `adapt_for_encode` (format negotiation only; it *refuses*
+- Track A — pixels: `adapt_for_encode_cow` (format adaptation only; it *refuses*
   to relabel primaries/range without a real conversion).
 - Track B — metadata: `zencodec::resolve_color_emit` → `ColorEmitPlan{cicp,icc}`
   (pure/`no_std`, never sees pixels), lowered per-codec via
@@ -206,11 +206,12 @@ Recommendation: document both prominently and cross-link the feature gate. (No
 API change — the galleries use `convert_to` since they build with default
 features.)
 
-## 9. (minor) `Cicp::from_bytes([u8; 4])`
+## 9. Raw CICP tuple convenience
 
-`Cicp::new(c[0], c[1], c[2], c[3] != 0)` from a parsed 4-byte tuple recurs
-(~161 `Cicp::new` sites, many of this shape, e.g. `zenpng/src/codec.rs:2152`).
-An additive `Cicp::from_bytes([u8; 4])` removes the `!= 0` papercut. Low priority.
+Abated after review. A four-byte container tuple has validation semantics
+(especially for `video_full_range_flag`) that belong in the codec/container
+parser, while `Cicp` deliberately preserves raw H.273 code points. No local
+consumer needed a second constructor beside `Cicp::new`.
 
 ---
 
@@ -218,10 +219,10 @@ An additive `Cicp::from_bytes([u8; 4])` removes the `!= 0` papercut. Low priorit
 
 - **Galleries + CI + docs**: the two tested example galleries, the CI
   `--examples` step, and this document.
-- **Additive API (approved 2026-07-14)**: findings 1, 2, 3, 4, 9 — `new_contiguous`
-  on both slice types, `Adapted::as_pixel_slice`,
-  `RowConverter::convert_slice`, `PixelDescriptor::with_color_from_cicp`, and
-  `Cicp::from_bytes`. Each is exercised in a gallery scenario and a doctest, and
+- **Additive API (approved 2026-07-14)**: findings 1, 2, 3, 4 — `new_contiguous`
+  on both slice types, `PixelCow` plus the canonical `_cow` adaptation APIs,
+  `RowConverter::convert_slice`, and `PixelDescriptor::with_color_from_cicp`.
+  Each is exercised in a gallery scenario and a doctest, and
   is used inside the crates where it removes boilerplate. `cargo semver-checks`
   classifies all of them as non-breaking additions.
 - **Docs-only**: findings 5 (steer to `convert_to`), 6 (galleries replace the
@@ -229,7 +230,7 @@ An additive `Cicp::from_bytes([u8; 4])` removes the `!= 0` papercut. Low priorit
   `to_rgba8`).
 - **Finding 7 (corrected — NOT a demotion)**: `finalize_for_output_with` /
   `EncodeReady` is the type-enforced atomic encode contract and stays. The
-  codecs' weaker two-track path (`adapt_for_encode` + `resolve_color_emit`)
+  codecs' weaker two-track path (`adapt_for_encode_cow` + `resolve_color_emit`)
   carries the residual pixel↔metadata divergence gap. See §7.
 
 Sibling repos (imageflow, zengif, zenpipe, zencodecs, zenpng, zenavif, …) still

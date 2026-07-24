@@ -10,7 +10,7 @@
 #
 #   pub modules                                10
 #   pub types (struct/enum/trait/alias)        80
-#   pub consts/statics                        294
+#   pub consts/statics                        292
 #   free functions                              4
 #   inherent methods                          250
 #   struct fields                             107
@@ -21,7 +21,7 @@
 #   auto-trait exceptions                       5
 #
 # per-module pub lines:
-#   (root)                          415
+#   (root)                          413
 #   buffer                          234
 #   cicp                             27
 #   color                            64
@@ -32,7 +32,7 @@
 #   pixel_types                       9
 #   policy                           25
 
-## items (820 lines)
+## items (819 lines)
 
 pub mod zenpixels
 pub use At
@@ -182,7 +182,6 @@ pub const cicp::Cicp::DISPLAY_P3: Self
 pub const cicp::Cicp::SRGB: Self
 pub fn cicp::Cicp::color_primaries_enum(&self) -> descriptor::ColorPrimaries
 pub fn cicp::Cicp::color_primaries_name(u8) -> &'static str
-pub const fn cicp::Cicp::from_bytes([u8; 4]) -> Self [also: (root)]
 pub fn cicp::Cicp::from_descriptor(&descriptor::PixelDescriptor) -> core::option::Option<Self>
 pub fn cicp::Cicp::matrix_coefficients_name(u8) -> &'static str
 pub const fn cicp::Cicp::new(u8, u8, u8, bool) -> Self [also: (root)]

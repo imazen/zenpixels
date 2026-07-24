@@ -19,11 +19,11 @@ use zenpixels::descriptor::{PixelDescriptor, PixelFormat, TransferFunction};
 use zenpixels::hdr::ContentLightLevel;
 use zenpixels::orientation::Orientation;
 
-use zenpixels_convert::adapt::adapt_for_encode;
+use zenpixels_convert::PixelSliceOrientationExt;
+use zenpixels_convert::adapt::adapt_for_encode_cow;
 use zenpixels_convert::converter::RowConverter;
 use zenpixels_convert::ext::{PixelBufferConvertExt, TransferFunctionExt};
 use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
-use zenpixels_convert::orient::apply_orientation;
 use zenpixels_convert::output::OutputProfile;
 use zenpixels_convert::{ConvertIntent, ConvertPlan, best_match, finalize_for_output_with};
 
@@ -124,7 +124,7 @@ fn adapt_pixels_before_encoding() -> Fallible {
     let stride = 4 * 3; // tightly packed
     let encoder_supports = [PixelDescriptor::RGB8_SRGB];
 
-    let adapted = adapt_for_encode(
+    let encode_pixels = adapt_for_encode_cow(
         &pixels,
         PixelDescriptor::RGB8_SRGB, // source already matches a supported format
         4,
@@ -133,16 +133,15 @@ fn adapt_pixels_before_encoding() -> Fallible {
         &encoder_supports,
     )?;
     // No conversion was necessary, so the data is borrowed, not copied.
-    assert!(matches!(adapted.data, std::borrow::Cow::Borrowed(_)));
-    assert_eq!(adapted.descriptor, PixelDescriptor::RGB8_SRGB);
+    assert!(encode_pixels.is_borrowed());
+    assert_eq!(
+        encode_pixels.as_slice().descriptor(),
+        PixelDescriptor::RGB8_SRGB
+    );
 
-    // `Adapted::as_pixel_slice()` wraps the adapted bytes in one call — ready
-    // to hand to `encoder.encode(slice)`. Before this helper every encoder
-    // repeated a recompute-stride + `PixelSlice::new` block (duplicated 5×
-    // across zenpipe/zencodecs — ergonomics report findings 1 + 2), i.e.:
-    //     let stride = adapted.width as usize * adapted.descriptor.bytes_per_pixel();
-    //     let slice = PixelSlice::new(&adapted.data, adapted.width, adapted.rows, stride, adapted.descriptor)?;
-    let slice = adapted.as_pixel_slice()?;
+    // `PixelCow::as_slice()` gives an encoder-ready, stride-aware view for
+    // either the borrowed fast path or an owned conversion result.
+    let slice = encode_pixels.as_slice();
     assert_eq!((slice.width(), slice.rows()), (4, 4));
     Ok(())
 }
@@ -168,12 +167,10 @@ fn stream_rows_through_a_converter() -> Fallible {
     Ok(())
 }
 
-/// Streaming with the free-function plan API: build the plan once, then convert
-/// row strips into a reused scratch buffer. This "alloc `w*h*bpp`, loop
-/// `convert_row`" block is hand-rolled in ~5 downstream crates (see report).
+/// One-off plan execution: build the plan once, then convert row strips.
+/// `ConvertPlan::convert_row` creates scratch per call; use `RowConverter`
+/// below when repeated rows should reuse scratch.
 fn convert_a_strip_with_a_plan() -> Fallible {
-    use zenpixels_convert::convert_row;
-
     let plan = ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB)?;
     let (w, h) = (2u32, 2u32);
     let src = vec![9u8; (w * h) as usize * 3];
@@ -183,7 +180,7 @@ fn convert_a_strip_with_a_plan() -> Fallible {
     for y in 0..h as usize {
         let s = &src[y * w as usize * 3..][..w as usize * 3];
         let d = &mut dst[y * w as usize * dst_bpp..][..w as usize * dst_bpp];
-        convert_row(&plan, s, d, w);
+        plan.convert_row(s, d, w);
     }
     // RGB8 -> RGBA8 fills an opaque alpha byte after each triple.
     assert_eq!(&dst[0..4], &[9, 9, 9, 255]);
@@ -245,7 +242,7 @@ fn apply_a_transfer_function_to_one_value() {
 /// Rotate pixels to match an EXIF orientation.
 fn reorient_pixels() {
     let img = PixelBuffer::new(4, 2, PixelDescriptor::RGBA8_SRGB);
-    let rotated = apply_orientation(img.as_slice(), Orientation::Rotate90);
+    let rotated = img.as_slice().apply_orientation(Orientation::Rotate90);
     // 90-degree rotation swaps the axes.
     assert_eq!((rotated.width(), rotated.height()), (2, 4));
 }

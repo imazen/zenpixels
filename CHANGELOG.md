@@ -33,6 +33,11 @@ are not compatibility removals and therefore do not belong in this queue.
 - Remove `adapt::convert_buffer`; use `PixelBuffer` with `convert_to`,
   `convert_into`, or `convert_in_place`.
 - Remove `RowConverter::convert_rows`; use `convert_slice_into`.
+- Remove the free `convert_row`; use `ConvertPlan::convert_row`.
+- Remove the free orientation functions `apply_orientation`,
+  `apply_orientation_into`, and `apply_orientation_in_place`;
+  import `PixelSliceOrientationExt` or `PixelBufferOrientationExt` and use the
+  corresponding receiver method.
 - Remove `hdr::HdrMetadata`, its root re-export, and
   `OutputMetadata::hdr`.
 - Remove `hdr::reinhard_tonemap`, `hdr::reinhard_inverse`, and
@@ -78,13 +83,11 @@ the single canonical `new_contiguous` spelling.
     channel type, so consumers may reinterpret rows as `&[u16]` / `&[f32]`.
   - `PixelDescriptor::with_color_from_cicp(Cicp)` (`const fn`) — retag transfer +
     primaries from a decoded CICP, keeping format / type / alpha / signal range.
-  - `Cicp::from_bytes([u8; 4])` (`const fn`) — unpack a cICP-box tuple without the
-    `!= 0` papercut on the full-range flag.
 
 ### zenpixels-convert — added (no-alloc primitives)
 
 - **Consuming reuse conveniences:** `PixelBufferConvertExt::into_converted`,
-  `orient::into_oriented`, and
+  `PixelBufferOrientationExt::apply_orientation`, and
   `PixelBufferLoadBearingExt::into_load_bearing_format` return the transformed
   buffer while delegating to the existing in-place primitives.
 - **`PixelBufferConvertExt::convert_into(&self, dst: PixelSliceMut)`** — convert
@@ -108,6 +111,11 @@ the single canonical `new_contiguous` spelling.
   swizzles shuffle-collapse front-to-back in place (O(row) scratch only);
   widening reallocates. Turns the common narrowing/identity cases from a
   full-image allocation into none.
+- **One overlap-safe narrowing primitive:** load-bearing reduction and
+  `try_adapt_in_place` now share the same front-to-back channel compactor.
+  An explicit private stride policy preserves adaptation's row layout while
+  load-bearing reduction requests packed output, preventing the two paths from
+  drifting in overlap safety or channel-selection behavior.
 - **`PixelBufferConvertTypedExt::try_to_rgb8` / `try_to_rgba8` / `try_to_gray8`
   / `try_to_bgra8`** — fallible siblings of the `to_*8` decode helpers, which
   **panic** on a CMYK / Lab / XYZ source (`RowConverter: no conversion path`).
@@ -115,6 +123,12 @@ the single canonical `new_contiguous` spelling.
   a documented panic and now delegate through the same fixed core.
 
 ### zenpixels-convert — deprecated
+
+- **Free operation functions now have receiver-based replacements.**
+  `convert_row` delegates to `ConvertPlan::convert_row`; the four orientation
+  functions delegate to sealed `PixelSliceOrientationExt` and
+  `PixelBufferOrientationExt` methods. The wrappers remain source-compatible
+  through 0.2.x.
 
 - **`adapt::convert_buffer`** → build a `PixelBuffer` and use
   `PixelBufferConvertExt::convert_to` / `convert_into` / `convert_in_place`. It
@@ -129,12 +143,11 @@ the single canonical `new_contiguous` spelling.
 
 #### Changed (BREAKING, tolerated in 0.2.x)
 
-- **`Adapted` is now `#[non_exhaustive]`** and gained `data()` / `descriptor()`
-  / `width()` / `rows()` accessors (fields stay `pub` for now). Tolerated
-  break: a grep of `~/work/zen` found zero external struct-literal
-  construction — `Adapted` is only ever *returned* by `adapt_for_encode`. This
-  lets the `stride` field (imazen/zenpixels#68) land additively later; read via
-  the accessors and it won't churn.
+- **`Adapted` is deprecated but remains source-compatible.** Its public fields
+  and struct-literal construction remain available for 0.2.x; accessors were
+  added for callers migrating incrementally. New `_cow` adapters return
+  stride-aware `PixelCow`, and the deprecated adapters are compatibility
+  wrappers over that canonical implementation.
 - **`requires_cms` is no longer `pub`** (demoted to `pub(crate)`, removed from
   the crate re-export). It was added after 0.2.14, has no external consumer,
   and the public "needs a CMS" signal is the `ConvertError::NeedsCms` variant.
@@ -177,10 +190,10 @@ the single canonical `new_contiguous` spelling.
 ### zenpixels-convert — added
 
 - **`PixelSlice`-oriented encode / convert helpers (2e1a4fb).** Additive.
-  - `Adapted::as_pixel_slice() -> Result<PixelSlice>` — hand the adapted bytes
-    straight to an encoder; folds the recompute-stride + `PixelSlice::new` block
-    duplicated 5× across zenpipe / zencodecs. Returns `Result` (the zero-copy
-    borrow path can be misaligned for a wide-channel `PixelSlice`).
+  - `PixelCow` and the `_cow` adaptation entry points carry pixels and layout
+    together, eliminating the recompute-stride + `PixelSlice::new` block
+    duplicated across zenpipe / zencodecs. The published `Adapted` surface is
+    retained as a deprecated compatibility wrapper for 0.2.x.
   - `RowConverter::convert_slice(PixelSlice) -> PixelBuffer` — bundles the
     "alloc `rows*stride`, loop `convert_row`" block behind the `PixelSlice`
     stride contract; carries the source color context.

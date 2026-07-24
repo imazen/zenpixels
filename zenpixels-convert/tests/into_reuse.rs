@@ -1,7 +1,7 @@
 use zenpixels::{Orientation, PixelBuffer, PixelDescriptor};
 use zenpixels_convert::PixelBufferConvertExt;
+use zenpixels_convert::PixelBufferOrientationExt;
 use zenpixels_convert::load_bearing::PixelBufferLoadBearingExt;
-use zenpixels_convert::orient::into_oriented;
 
 #[test]
 fn into_converted_returns_the_rewritten_buffer() {
@@ -14,7 +14,7 @@ fn into_converted_returns_the_rewritten_buffer() {
 #[test]
 fn into_oriented_returns_adopted_geometry() {
     let buffer = PixelBuffer::new(2, 3, PixelDescriptor::RGB8_SRGB);
-    let oriented = into_oriented(buffer, Orientation::Rotate90).unwrap();
+    let oriented = buffer.apply_orientation(Orientation::Rotate90).unwrap();
     assert_eq!((oriented.width(), oriented.height()), (3, 2));
 }
 

@@ -15,7 +15,8 @@
 
 use zenbench::prelude::*;
 use zenpixels::{Orientation, PixelDescriptor, PixelSlice};
-use zenpixels_convert::orient::{__bench_apply_orientation_scalar, apply_orientation};
+use zenpixels_convert::PixelSliceOrientationExt;
+use zenpixels_convert::orient::__bench_apply_orientation_scalar;
 
 // (label, width, height)
 const SIZES: &[(&str, u32, u32)] = &[
@@ -63,7 +64,7 @@ fn bench_transpose(suite: &mut Suite) {
                         b.iter(|| {
                             let s =
                                 PixelSlice::new(&data_prod, w, h, w as usize * bpp, desc).unwrap();
-                            black_box(apply_orientation(s, orientation));
+                            black_box(s.apply_orientation(orientation));
                         })
                     });
                     g.bench("fwdmap", move |b| {

@@ -174,7 +174,8 @@ Owned 2D buffer with SIMD alignment and optional margins.
 - `from_pixels(pixels, w, h)` — from typed vec (P: Pixel)
 - `as_slice() -> PixelSlice<P>` — borrow immutable
 - `as_slice_mut() -> PixelSliceMut<P>` — borrow mutable
-- `into_vec() -> Vec<u8>` — recover allocation for pool reuse
+- `into_parts() -> (Vec<u8>, PixelBufferLayout)` — recover the allocation and
+  the layout needed to reconstruct it (`into_vec` is deprecated)
 - `erase()` / `try_typed::<Q>()` — type erasure/recovery
 
 ### BufferError
@@ -777,17 +778,19 @@ vectorized processing. The spec should document:
 
 ### 5. Pool-friendly buffer lifecycle
 
-`into_vec()` recovers the backing allocation for reuse. The spec should
-document the intended lifecycle: allocate once, use `into_vec()` to return
-to pool, `from_vec()` to reuse. This matters for real-time pipelines where
-allocation is the bottleneck.
+`into_parts()` recovers the backing allocation and its `PixelBufferLayout`
+without copying, so a pool can retain the allocation without forcing callers
+to juggle dimensions, stride, and descriptor as separate values. Reconstruct
+with `try_from_parts()`. This matters for real-time pipelines where allocation
+is the bottleneck.
 
-### 6. adapt_for_encode
+### 6. `adapt_for_encode_cow`
 
-`adapt_for_encode()` is the main codec integration point — given pixel data
-and a list of supported formats, it picks the best match and converts if
-needed. Returns `Cow` (borrowed if already compatible, owned if converted).
-The spec should document this as the primary codec handoff function.
+`adapt_for_encode_cow()` is the main codec integration point — given pixel
+data and a list of supported formats, it picks the best match and converts if
+needed. It returns `PixelCow`, which keeps the layout attached whether the
+pixels are borrowed or owned. The published `adapt_for_encode()` remains only
+as a deprecated 0.2.x compatibility wrapper.
 
 ### 7. Path analysis
 

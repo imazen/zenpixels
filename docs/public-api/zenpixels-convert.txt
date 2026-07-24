@@ -9,19 +9,19 @@
 ## summary
 #
 #   pub modules                                13
-#   pub types (struct/enum/trait/alias)        49
+#   pub types (struct/enum/trait/alias)        53
 #   pub consts/statics                         19
-#   free functions                             44
-#   inherent methods                          110
+#   free functions                             43
+#   inherent methods                          119
 #   struct fields                              50
 #   enum variants                              56
 #   re-exports                                  5
-#   trait roster entries (type × trait)        71
+#   trait roster entries (type × trait)        73
 #   auto-trait-complete types                  15
 #   auto-trait exceptions                       2
 #
 # per-module pub lines:
-#   (root)                          155
+#   (root)                          162
 #   adapt                            18
 #   cms                              27
 #   converter                        27
@@ -32,10 +32,10 @@
 #   icc_profiles                     13
 #   load_bearing                     12
 #   oklab                             9
-#   orient                            4
+#   orient                            9
 #   output                           17
 
-## items (315 lines)
+## items (325 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -179,10 +179,13 @@ pub fn oklab::oklab_to_rgb(f32, f32, f32, &gamut::GamutMatrix) -> [f32; 3]
 pub fn oklab::rgb_to_lms_matrix(zenpixels::descriptor::ColorPrimaries) -> core::option::Option<gamut::GamutMatrix>
 pub fn oklab::rgb_to_oklab(f32, f32, f32, &gamut::GamutMatrix) -> [f32; 3]
 pub mod orient
+pub fn orient::PixelBufferOrientationExt::apply_orientation(self, zenpixels::orientation::Orientation) -> core::result::Result<Self, error::ConvertError>
+pub fn orient::PixelBufferOrientationExt::apply_orientation_in_place(&mut self, zenpixels::orientation::Orientation) -> core::result::Result<(), error::ConvertError>
+pub fn orient::PixelSliceOrientationExt::apply_orientation(self, zenpixels::orientation::Orientation) -> zenpixels::buffer::PixelBuffer
+pub fn orient::PixelSliceOrientationExt::apply_orientation_into(self, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), error::ConvertError>
 pub fn orient::apply_orientation(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation) -> zenpixels::buffer::PixelBuffer
 pub fn orient::apply_orientation_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::orientation::Orientation) -> core::result::Result<(), error::ConvertError>
 pub fn orient::apply_orientation_into(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), error::ConvertError>
-pub fn orient::into_oriented(zenpixels::buffer::PixelBuffer, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, error::ConvertError>
 pub mod output
 pub output::OutputProfile::Icc(alloc::sync::Arc<[u8]>)
 pub output::OutputProfile::Named(zenpixels::cicp::Cicp)
@@ -248,6 +251,7 @@ pub const ConversionCost::ZERO: Self
 pub const fn ConversionCost::new(u16, u16) -> Self
 pub struct ConvertPlan
 pub fn ConvertPlan::compose(&self, &Self) -> core::option::Option<Self>
+pub fn ConvertPlan::convert_row(&self, &[u8], &mut [u8], u32)
 pub fn ConvertPlan::from(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn ConvertPlan::is_identity(&self) -> bool
 pub fn ConvertPlan::new(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
@@ -321,9 +325,15 @@ pub fn PixelBufferConvertExt::try_widen_to_u16(&self) -> core::result::Result<ze
 pub trait PixelBufferLoadBearingExt: load_bearing::sealed::Sealed [also: load_bearing]
 pub fn PixelBufferLoadBearingExt::into_load_bearing_format(self, bool) -> Self where Self: core::marker::Sized
 pub fn PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place(&mut self, bool)
+pub trait PixelBufferOrientationExt: orient::sealed::Sealed + core::marker::Sized [also: orient]
+pub fn PixelBufferOrientationExt::apply_orientation(self, zenpixels::orientation::Orientation) -> core::result::Result<Self, error::ConvertError>
+pub fn PixelBufferOrientationExt::apply_orientation_in_place(&mut self, zenpixels::orientation::Orientation) -> core::result::Result<(), error::ConvertError>
 pub trait PixelSliceLoadBearingExt: load_bearing::sealed::Sealed [also: load_bearing]
 pub fn PixelSliceLoadBearingExt::determine_load_bearing(&self) -> load_bearing::LoadBearingReport
 pub fn PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuffer>
+pub trait PixelSliceOrientationExt: orient::sealed::Sealed + core::marker::Sized [also: orient]
+pub fn PixelSliceOrientationExt::apply_orientation(self, zenpixels::orientation::Orientation) -> zenpixels::buffer::PixelBuffer
+pub fn PixelSliceOrientationExt::apply_orientation_into(self, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), error::ConvertError>
 pub trait PluggableCms: core::marker::Send + core::marker::Sync [also: cms]
 pub fn PluggableCms::build_shared_source_transform(&self, zenpixels::color::ColorProfileSource<'_>, zenpixels::color::ColorProfileSource<'_>, zenpixels::descriptor::PixelFormat, zenpixels::descriptor::PixelFormat, &zenpixels::policy::ConvertOptions) -> core::option::Option<core::result::Result<alloc::sync::Arc<dyn cms::RowTransform>, whereat::at::At<cms::CmsPluginError>>>
 pub fn PluggableCms::build_source_transform(&self, zenpixels::color::ColorProfileSource<'_>, zenpixels::color::ColorProfileSource<'_>, zenpixels::descriptor::PixelFormat, zenpixels::descriptor::PixelFormat, &zenpixels::policy::ConvertOptions) -> core::option::Option<core::result::Result<alloc::boxed::Box<dyn cms::RowTransformMut>, whereat::at::At<cms::CmsPluginError>>>
@@ -353,7 +363,7 @@ pub fn quantize_to(zenpixels::buffer::PixelSlice<'_>, zenpixels::descriptor::Pix
 pub fn try_adapt_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: adapt]
 pub type GamutMatrix = [[f32; 3]; 3] [also: gamut]
 
-## trait impls (20 types)
+## trait impls (21 types)
 
 ConversionCost: Add, Clone, Copy, Debug, Default, Eq, PartialEq
 ConvertIntent: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -371,8 +381,9 @@ icc_profiles::SynthesizedIcc: Clone, Debug, Eq, PartialEq
 load_bearing::LoadBearingReport: Clone, Copy, Debug, Default
 output::OutputMetadata: Clone, Debug
 output::OutputProfile: Clone, Debug
-zenpixels::buffer::PixelBuffer: ext::PixelBufferConvertExt, load_bearing::PixelBufferLoadBearingExt
+zenpixels::buffer::PixelBuffer: ext::PixelBufferConvertExt, load_bearing::PixelBufferLoadBearingExt, orient::PixelBufferOrientationExt
 zenpixels::buffer::PixelSlice<'_, P>: load_bearing::PixelSliceLoadBearingExt
+zenpixels::buffer::PixelSlice<'_>: orient::PixelSliceOrientationExt
 zenpixels::descriptor::ColorPrimaries: ext::ColorPrimariesExt
 zenpixels::descriptor::TransferFunction: ext::TransferFunctionExt
 

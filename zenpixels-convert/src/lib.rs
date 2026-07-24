@@ -209,15 +209,19 @@
 //! }
 //! ```
 //!
-//! Or use the convenience function that combines negotiation and conversion:
+//! For an encode path, first obtain the formats supported by the codec under
+//! its active configuration, then select from that candidate list and convert:
 //!
 //! ```rust,ignore
-//! let adapted = adapt_for_encode(
+//! let encode_pixels = adapt_for_encode_cow(
 //!     raw_bytes, descriptor, width, rows, stride,
 //!     &encoder_supported,
 //! )?;
-//! // adapted.data is Cow::Borrowed if no conversion needed
+//! // PixelCow::Borrowed if no conversion is needed.
 //! ```
+//!
+//! The adaptation helpers do not inspect codec configuration or encoded image
+//! data and therefore are not general codec negotiation.
 //!
 //! **Rules for conversion:**
 //!
@@ -520,15 +524,18 @@ mod scan;
 #[allow(deprecated)]
 pub use adapt::adapt_for_encode_explicit;
 pub use adapt::{adapt_for_encode_explicit_cow, try_adapt_in_place};
+pub use convert::ConvertPlan;
 #[cfg(feature = "hdr-experimental")]
 pub use convert::HdrConfig;
-pub use convert::{ConvertPlan, convert_row};
+#[allow(deprecated)]
+pub use convert::convert_row;
 pub use converter::RowConverter;
 pub use error::ConvertError;
 pub use negotiate::{
     ConversionCost, ConvertIntent, FormatOption, Provenance, best_match, best_match_with,
     conversion_cost, conversion_cost_with_provenance, ideal_format, negotiate,
 };
+pub use orient::{PixelBufferOrientationExt, PixelSliceOrientationExt};
 #[cfg(feature = "pipeline")]
 pub use pipeline::{
     CodecFormats, ConversionPath, FormatEntry, LossBucket, MatrixStats, OpCategory, OpRequirement,

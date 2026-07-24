@@ -160,10 +160,6 @@ fn describe_color_with_cicp() {
     let srgb = Cicp::SRGB;
     assert_eq!(srgb.transfer_function_enum(), TransferFunction::Srgb);
 
-    // Unpack a 4-byte CICP tuple straight from a container box (primaries,
-    // transfer, matrix, full-range flag) — no `!= 0` papercut on the last byte.
-    assert_eq!(Cicp::from_bytes([1, 13, 0, 1]), Cicp::SRGB);
-
     // A descriptor's color axes round-trip through CICP.
     let desc = Cicp::DISPLAY_P3.to_descriptor(PixelFormat::Rgba8);
     assert_eq!(

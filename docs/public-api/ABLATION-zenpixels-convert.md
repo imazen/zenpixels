@@ -133,7 +133,7 @@ pub const ADOBE_RGB_V4: &[u8] = ADOBE_RGB;
 | `icc_profiles::SynthesizedIcc`, `synthesize_icc_for_cicp` | zenjpeg, zenpng, zenavif, zentiff active `.rs` |
 | `icc_profiles::DISPLAY_P3_V4`, `DISPLAY_P3_V2` | zenjpeg tests, zenpng tests, zentiff tests |
 | `icc_profiles::ADOBE_RGB` | zenjpeg `codec.rs` (AdobeRGB ICC embed path) |
-| `orient::apply_orientation`, `apply_orientation_into` | Fresh deliberate API (PR #30, June 2026); KEEP per task instructions |
+| `orient::apply_orientation`, `apply_orientation_into`, `apply_orientation_in_place` | Published compatibility wrappers; deprecated in favor of the sealed slice/buffer orientation traits, then remove in 0.3 |
 | `converter::RowConverter` | zenanalyze `row_stream.rs` (multiple worktrees + main); zenmetrics `decode.rs` |
 | `ConvertPlan`, `convert_row` | zenmetrics cvvdp pipeline, zenmetrics-api, zenmetrics-gpu-core |
 | `PixelBufferConvertTypedExt` | zenpng, zenavif, zenanalyze, `_dbg/wv.rs` |

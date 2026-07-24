@@ -66,6 +66,24 @@ jobs:
       - name: Test (zenpixels-convert HDR measurement, hdr-experimental)
         run: cargo test -p zenpixels-convert --features hdr-experimental
 
+      # The strongest bundled-profile correctness gates compare every generated
+      # RGB/gray ICC profile byte-for-byte with a fresh moxcms synthesis. The
+      # default workspace test does not enable this optional backend.
+      - name: Test (zenpixels-convert ICC synthesis parity, cms-moxcms)
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: cargo test -p zenpixels-convert --lib --features cms-moxcms
+
+      # Exercise the feature combinations used by small downstream codecs, not
+      # just compile them in the feature-powerset job. In particular this keeps
+      # the no-icc-db fallback paths and their test harness buildable.
+      - name: Test (zenpixels-convert rgb without default features)
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: cargo test -p zenpixels-convert --no-default-features --features rgb
+
+      - name: Test (zenpixels-convert rgb + std without default features)
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: cargo test -p zenpixels-convert --no-default-features --features rgb,std
+
       # The estimate surface (estimate module + ConvertPlan::estimate(_in)) and
       # its whole test suite (tests/resource_estimate.rs is `#![cfg]`-gated on
       # the feature) only exist behind estimation-experimental. Without this

@@ -1,14 +1,15 @@
 //! Physical orientation baking — rotate / flip a whole pixel buffer.
 //!
-//! [`apply_orientation`] takes a (possibly strided) [`PixelSlice`] and an
-//! [`Orientation`] and returns a fresh, tightly-allocated [`PixelBuffer`] with
-//! the pixels physically rearranged. It is the "bake" half of the zen
+//! Import [`PixelSliceOrientationExt`] or [`PixelBufferOrientationExt`] to
+//! physically apply an [`Orientation`] using receiver-style methods. A
+//! borrowed, possibly strided [`PixelSlice`] can produce a fresh, tightly
+//! allocated [`PixelBuffer`] or write into caller-owned storage. An owned
+//! buffer can reuse and update its backing allocation. This is the "bake" half of the zen
 //! orientation model: codecs that decode to a raster buffer and are asked to
 //! resolve orientation (`OrientationHint::bakes()` is true) call this; the
 //! cheap coordinate math (`Orientation::forward_map` / `output_dimensions`)
 //! lives in `zenpixels`, and this is the buffer operation that consumes it.
-//! [`apply_orientation_into`] writes a caller-owned buffer (no allocation), and
-//! [`apply_orientation_in_place`] permutes the backing allocation itself.
+//! The older free functions remain as deprecated compatibility wrappers.
 //!
 //! # Algorithm
 //!
@@ -96,6 +97,68 @@ use magetypes::simd::generic::f32x4 as GenericF32x4;
 /// the per-tile loop overhead.
 const TILE: u32 = 32;
 
+mod sealed {
+    pub trait Sealed {}
+
+    impl Sealed for zenpixels::PixelSlice<'_> {}
+    impl Sealed for zenpixels::PixelBuffer {}
+}
+
+/// Orientation operations on a borrowed pixel view.
+///
+/// Sealed and implemented only for [`PixelSlice`]. Import this trait to use
+/// receiver-style orientation without moving the SIMD implementation into the
+/// dependency-light `zenpixels` crate.
+pub trait PixelSliceOrientationExt: sealed::Sealed + Sized {
+    /// Apply an orientation and return a newly allocated buffer.
+    fn apply_orientation(self, orientation: Orientation) -> PixelBuffer;
+
+    /// Apply an orientation into caller-provided storage.
+    fn apply_orientation_into(
+        self,
+        orientation: Orientation,
+        dst: PixelSliceMut<'_>,
+    ) -> Result<(), ConvertError>;
+}
+
+#[allow(deprecated)]
+impl PixelSliceOrientationExt for PixelSlice<'_> {
+    fn apply_orientation(self, orientation: Orientation) -> PixelBuffer {
+        apply_orientation(self, orientation)
+    }
+
+    fn apply_orientation_into(
+        self,
+        orientation: Orientation,
+        dst: PixelSliceMut<'_>,
+    ) -> Result<(), ConvertError> {
+        apply_orientation_into(self, orientation, dst)
+    }
+}
+
+/// Orientation operations on an owned pixel buffer.
+///
+/// Sealed and implemented only for [`PixelBuffer`].
+pub trait PixelBufferOrientationExt: sealed::Sealed + Sized {
+    /// Consume the buffer, apply an orientation, and reuse its allocation.
+    fn apply_orientation(self, orientation: Orientation) -> Result<Self, ConvertError>;
+
+    /// Apply an orientation in place, updating geometry and stride atomically.
+    fn apply_orientation_in_place(&mut self, orientation: Orientation) -> Result<(), ConvertError>;
+}
+
+#[allow(deprecated)]
+impl PixelBufferOrientationExt for PixelBuffer {
+    fn apply_orientation(mut self, orientation: Orientation) -> Result<Self, ConvertError> {
+        apply_orientation_in_place(&mut self, orientation)?;
+        Ok(self)
+    }
+
+    fn apply_orientation_in_place(&mut self, orientation: Orientation) -> Result<(), ConvertError> {
+        apply_orientation_in_place(self, orientation)
+    }
+}
+
 /// Apply `orientation` to `src`, returning a freshly-allocated buffer with the
 /// pixels physically rearranged.
 ///
@@ -112,6 +175,11 @@ const TILE: u32 = 32;
 /// `Orientation::Identity` still allocates and copies (callers that want to skip
 /// the copy entirely should check `orientation.is_identity()` themselves).
 #[must_use]
+#[allow(deprecated)]
+#[deprecated(
+    since = "0.2.15",
+    note = "import PixelSliceOrientationExt and use src.apply_orientation(orientation)"
+)]
 pub fn apply_orientation(src: PixelSlice<'_>, orientation: Orientation) -> PixelBuffer {
     let (ow, oh) = orientation.output_dimensions(src.width(), src.rows());
     let desc = src.descriptor();
@@ -131,6 +199,10 @@ pub fn apply_orientation(src: PixelSlice<'_>, orientation: Orientation) -> Pixel
 /// and the same bytes-per-pixel as `src`; otherwise [`ConvertError::BufferSize`]
 /// is returned and `dst` is left untouched. The allocating [`apply_orientation`]
 /// is a thin wrapper over this.
+#[deprecated(
+    since = "0.2.15",
+    note = "import PixelSliceOrientationExt and use src.apply_orientation_into(orientation, dst)"
+)]
 pub fn apply_orientation_into(
     src: PixelSlice<'_>,
     orientation: Orientation,
@@ -208,6 +280,10 @@ const MAX_INPLACE_BPP: usize = 16;
 ///
 /// Returns [`ConvertError::BufferSize`] if `bpp` exceeds 16 (the per-element temp
 /// limit) or if re-describing the output fails.
+#[deprecated(
+    since = "0.2.15",
+    note = "import PixelBufferOrientationExt and use buffer.apply_orientation_in_place(orientation)"
+)]
 pub fn apply_orientation_in_place(
     dst: &mut PixelBuffer,
     orientation: Orientation,
@@ -240,18 +316,6 @@ pub fn apply_orientation_in_place(
     }
     dst.transform_in_place(|px| orient_in_place_impl(px, orientation));
     Ok(())
-}
-
-/// Consume and orient a buffer while reusing its pixel allocation.
-///
-/// This is the ownership-taking convenience over
-/// [`apply_orientation_in_place`].
-pub fn into_oriented(
-    mut buffer: PixelBuffer,
-    orientation: Orientation,
-) -> Result<PixelBuffer, ConvertError> {
-    apply_orientation_in_place(&mut buffer, orientation)?;
-    Ok(buffer)
 }
 
 /// The transform body behind [`apply_orientation_in_place`]: permute the

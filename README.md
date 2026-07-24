@@ -45,7 +45,7 @@ let first_row: &[u8] = view.row(0);
 let strided: &[u8]   = view.as_strided_bytes();
 
 // Recover the allocation for pool reuse.
-let (raw, layout) = buf.into_parts();
+let (_raw, _layout) = buf.into_parts();
 # Ok::<(), zenpixels::At<zenpixels::BufferError>>(())
 ```
 
@@ -284,11 +284,10 @@ let (w, h) = Orientation::Rotate90.output_dimensions(1920, 1080);
 assert_eq!((w, h), (1080, 1920));
 ```
 
-The buffer-baking half lives in zenpixels-convert: `apply_orientation`
-(fresh buffer; SIMD-tiled transpose for 4-byte pixels behind the
-`fast-transpose` feature, portable scalar tiled path otherwise),
-`apply_orientation_into` (caller-provided target, no allocation), and
-`apply_orientation_in_place` (reuses the buffer's own allocation; see below).
+The buffer-baking half lives in zenpixels-convert. Import
+`PixelSliceOrientationExt` for `slice.apply_orientation(...)` (fresh output)
+or `slice.apply_orientation_into(...)` (caller-provided target). Import
+`PixelBufferOrientationExt` to reuse an owned buffer's allocation.
 
 ## Pixel buffers
 
@@ -341,8 +340,10 @@ existing `Vec<u8>` (tight stride, no copy). The `try_*` variants return
 location wrapper around [`BufferError`] — `AllocationFailed`, `InvalidDimensions`,
 `InsufficientData`, `StrideTooSmall`, …); the un-prefixed forms panic on failure
 (see [allocation policy](https://docs.rs/zenpixels/latest/zenpixels/#allocation-policy)).
-All constructors validate dimensions, stride, and alignment. `into_vec()`
-recovers the allocation for pool reuse.
+All constructors validate dimensions, stride, and alignment.
+`into_parts()` recovers the allocation together with the private-field layout
+needed to validate and reconstruct it; `into_contiguous_bytes()` instead
+returns packed logical pixels while preserving the `Vec` capacity.
 
 ### In-place layout transforms
 
@@ -358,7 +359,7 @@ operations on it, all allocation-free:
   bit-replicated U16 to U8) driven by a SIMD content scan;
 - `try_adapt_in_place(&mut buf, target)` — metadata re-tags, `Rgba8`↔`Bgra8`
   SIMD B↔R swap, and contract-exact alpha-lane drops (RGBX→RGB and friends);
-- `apply_orientation_in_place(&mut buf, orientation)` — orientation baking
+- `buf.apply_orientation_in_place(orientation)` — orientation baking
   without a second pixel buffer.
 
 The analysis half is allocation-free too: `slice.determine_load_bearing()`

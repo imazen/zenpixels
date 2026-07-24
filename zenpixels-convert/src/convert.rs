@@ -1483,6 +1483,17 @@ impl ConvertPlan {
         let compute = crate::estimate::ComputeEnvironment::new();
         self.estimate_in(&image, &compute)
     }
+
+    /// Convert one row of `width` pixels using this plan.
+    ///
+    /// `src` and `dst` must be sized for `width` pixels in the plan's source
+    /// and destination formats. Multi-step plans allocate temporary scratch for
+    /// this call; use [`RowConverter`](crate::RowConverter) when processing
+    /// repeated rows so that scratch is retained between calls.
+    pub fn convert_row(&self, src: &[u8], dst: &mut [u8], width: u32) {
+        let mut scratch = ConvertScratch::new();
+        convert_row_buffered(self, src, dst, width, &mut scratch);
+    }
 }
 
 /// Bridge for the [`crate::estimate`] module: mirror of
@@ -2007,13 +2018,9 @@ impl core::fmt::Debug for ConvertScratch {
 /// `src` and `dst` must be sized for `width` pixels in their respective formats.
 /// For multi-step plans, an internal scratch buffer is allocated per call.
 /// Prefer [`RowConverter`](crate::RowConverter) in hot loops (reuses scratch buffers).
+#[deprecated(since = "0.2.15", note = "use ConvertPlan::convert_row")]
 pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
-    // Allocating fallback for one-off calls: the scratch starts empty and
-    // only grows if the plan actually needs it (multi-step ping-pong or an
-    // HDR tone-map kernel); identity and other single-step plans stay
-    // allocation-free.
-    let mut scratch = ConvertScratch::new();
-    convert_row_buffered(plan, src, dst, width, &mut scratch);
+    plan.convert_row(src, dst, width);
 }
 
 /// Convert one row of `width` pixels, reusing pre-allocated scratch buffers.
@@ -2584,7 +2591,7 @@ mod hdr_plan_tests {
             let expected = reference_pipeline(inp);
             let bytes: Vec<u8> = bytemuck::cast_slice(&inp).to_vec();
             let mut out = vec![0u8; 12];
-            convert_row(&plan, &bytes, &mut out, 1);
+            plan.convert_row(&bytes, &mut out, 1);
             let got_f: &[f32] = bytemuck::cast_slice(&out);
             for k in 0..3 {
                 let diff = (expected[k] - got_f[k]).abs();

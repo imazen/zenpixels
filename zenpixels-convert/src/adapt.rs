@@ -1,23 +1,28 @@
-//! Codec adapter functions — the fastest path to a compliant encoder.
+//! Pixel-format selection and conversion for encode paths.
 //!
-//! These functions combine format negotiation with pixel conversion in a
-//! single call, replacing the per-codec format dispatch if-chains that
-//! every encoder would otherwise need to write.
+//! These functions choose from a caller-provided list of candidate pixel
+//! formats and perform the required conversion. The candidate list is
+//! authoritative: callers must first restrict it to formats supported by the
+//! codec under the active configuration.
+//!
+//! This is deliberately not general codec negotiation. These helpers do not
+//! inspect encoded image data, codec configuration, or content-dependent
+//! constraints.
 //!
 //! # Which function to use
 //!
 //! | Function | Negotiation | Policy | Use case |
 //! |----------|-------------|--------|----------|
-//! | [`adapt_for_encode`] | `Fastest` intent | Permissive | Simple encode path |
-//! | [`adapt_for_encode_with_intent`] | Caller-specified | Permissive | Encode after processing |
-//! | [`adapt_for_encode_explicit`] | `Fastest` intent | [`ConvertOptions`] | Policy-sensitive encode |
+//! | [`adapt_for_encode_cow`] | `Fastest` intent | Permissive | Simple encode path |
+//! | [`adapt_for_encode_with_intent_cow`] | Caller-specified | Permissive | Encode after processing |
+//! | [`adapt_for_encode_explicit_cow`] | `Fastest` intent | [`ConvertOptions`] | Policy-sensitive encode |
 //! | [`convert_buffer`] | None (caller picks) | Permissive | Direct format→format |
 //!
 //! # Zero-copy fast path
 //!
-//! All `adapt_for_encode*` functions check for an exact match first. If the
+//! All `adapt_for_encode*_cow` functions check for an exact match first. If the
 //! source descriptor matches one of the supported formats, the function
-//! returns `Cow::Borrowed` — no allocation, no copy, no conversion. This
+//! returns [`PixelCow::Borrowed`] — no allocation, no copy, no conversion. This
 //! means the common case (JPEG u8 sRGB → JPEG u8 sRGB) has zero overhead.
 //!
 //! A second fast path handles transfer-agnostic matches: if the source has
@@ -29,33 +34,26 @@
 //!
 //! The `stride` parameter allows adapting buffers with row padding (common
 //! when rows are SIMD-aligned or when working with sub-regions of a larger
-//! buffer). If `stride > width * bpp`, the padding is stripped during
-//! conversion and the output is always packed (stride = width * bpp).
+//! buffer). A matching format remains borrowed with its original stride.
+//! When conversion is required, the owned output is packed
+//! (`stride = width * bpp`).
 //!
 //! # Example
 //!
 //! ```rust,ignore
-//! use zenpixels_convert::adapt::adapt_for_encode;
+//! use zenpixels_convert::adapt::adapt_for_encode_cow;
 //!
 //! let supported = &[
 //!     PixelDescriptor::RGB8_SRGB,
 //!     PixelDescriptor::GRAY8_SRGB,
 //! ];
 //!
-//! let adapted = adapt_for_encode(
+//! let encode_pixels = adapt_for_encode_cow(
 //!     raw_bytes, source_desc, width, rows, stride, supported,
 //! )?;
 //!
-//! match &adapted.data {
-//!     Cow::Borrowed(data) => {
-//!         // Fast path: source was already in a supported format.
-//!         encoder.write_direct(data, adapted.descriptor)?;
-//!     }
-//!     Cow::Owned(data) => {
-//!         // Converted: write the new data with the new descriptor.
-//!         encoder.write_converted(data, adapted.descriptor)?;
-//!     }
-//! }
+//! let pixels = encode_pixels.as_slice();
+//! encoder.write(pixels)?;
 //! ```
 
 use alloc::borrow::Cow;
@@ -64,11 +62,12 @@ use alloc::vec::Vec;
 
 use crate::convert::ConvertPlan;
 use crate::converter::RowConverter;
+use crate::load_bearing::{CompactionStride, compact_rows_in_place};
 use crate::negotiate::{ConvertIntent, best_match};
 use crate::policy::{AlphaPolicy, ConvertOptions};
 use crate::{
-    AlphaMode, ChannelLayout, ChannelType, ColorModel, ConvertError, PixelBuffer, PixelCow,
-    PixelDescriptor, PixelSlice, PixelSliceMut,
+    AlphaMode, BufferError, ChannelLayout, ChannelType, ColorModel, ConvertError, PixelBuffer,
+    PixelCow, PixelDescriptor, PixelSlice, PixelSliceMut,
 };
 use whereat::{At, ResultAtExt};
 
@@ -140,11 +139,9 @@ fn checked_byte_alloc(rows: u32, stride: usize) -> Result<usize, At<ConvertError
 
 /// Result of format adaptation: the converted data and its descriptor.
 ///
-/// `#[non_exhaustive]`: construct it only via [`adapt_for_encode`] and read it
-/// via the accessors / [`as_pixel_slice`](Self::as_pixel_slice). The fields are
-/// still `pub` for now, but a future `stride` field (imazen/zenpixels#68) will
-/// land additively behind this attribute — code that reads through the
-/// accessors won't need to change.
+/// Deprecated compatibility representation. Its public fields remain
+/// constructible for 0.2.x source compatibility; new code should use
+/// stride-aware [`PixelCow`] through the `_cow` adapters.
 #[deprecated(
     since = "0.2.15",
     note = "use PixelCow via the *_cow adaptation functions"
@@ -228,34 +225,53 @@ impl<'a> Adapted<'a> {
 }
 
 #[allow(deprecated)]
-fn adapted_into_pixel_cow(adapted: Adapted<'_>) -> PixelCow<'_> {
-    match adapted.data {
-        Cow::Borrowed(data) => {
-            let stride = adapted.width as usize * adapted.descriptor.bytes_per_pixel();
-            PixelCow::Borrowed(
-                PixelSlice::new(
-                    data,
-                    adapted.width,
-                    adapted.rows,
-                    stride,
-                    adapted.descriptor,
-                )
-                .expect("Adapted compatibility output is validated and packed"),
-            )
+fn pixel_cow_into_adapted(cow: PixelCow<'_>) -> Adapted<'_> {
+    match cow {
+        PixelCow::Borrowed(slice) => Adapted {
+            data: slice.contiguous_bytes(),
+            descriptor: slice.descriptor(),
+            width: slice.width(),
+            rows: slice.rows(),
+        },
+        PixelCow::Owned(buffer) => {
+            let descriptor = buffer.descriptor();
+            let width = buffer.width();
+            let rows = buffer.height();
+            Adapted {
+                data: Cow::Owned(buffer.into_contiguous_bytes()),
+                descriptor,
+                width,
+                rows,
+            }
         }
-        Cow::Owned(data) => {
-            let mut buffer = PixelBuffer::new(adapted.width, adapted.rows, adapted.descriptor);
-            let row_bytes = adapted.width as usize * adapted.descriptor.bytes_per_pixel();
+    }
+}
+
+fn borrow_or_pack<'a>(
+    data: &'a [u8],
+    width: u32,
+    rows: u32,
+    stride: usize,
+    descriptor: PixelDescriptor,
+) -> Result<PixelCow<'a>, At<ConvertError>> {
+    match PixelSlice::new(data, width, rows, stride, descriptor) {
+        Ok(slice) => Ok(PixelCow::Borrowed(slice)),
+        Err(error) if *error.error() == BufferError::StrideNotPixelAligned => {
+            let mut buffer =
+                PixelBuffer::try_new(width, rows, descriptor).map_err_at(ConvertError::from)?;
+            let row_bytes = width as usize * descriptor.bytes_per_pixel();
             {
-                let mut dst = buffer.as_slice_mut();
-                for y in 0..adapted.rows {
-                    let start = y as usize * row_bytes;
-                    dst.row_mut(y)
+                let mut destination = buffer.as_slice_mut();
+                for y in 0..rows {
+                    let start = y as usize * stride;
+                    destination
+                        .row_mut(y)
                         .copy_from_slice(&data[start..start + row_bytes]);
                 }
             }
-            PixelCow::Owned(buffer)
+            Ok(PixelCow::Owned(buffer))
         }
+        Err(error) => Err(error.map_error(ConvertError::from)),
     }
 }
 
@@ -296,19 +312,24 @@ pub fn adapt_for_encode<'a>(
     stride: usize,
     supported: &[PixelDescriptor],
 ) -> Result<Adapted<'a>, At<ConvertError>> {
-    adapt_for_encode_with_intent(
-        data,
-        descriptor,
-        width,
-        rows,
-        stride,
-        supported,
-        ConvertIntent::Fastest,
-    )
+    adapt_for_encode_cow(data, descriptor, width, rows, stride, supported)
+        .map(pixel_cow_into_adapted)
 }
 
+/// Negotiate an encoder format, borrowing the original stride-aware pixels
+/// when no conversion is required.
+///
+/// A matching input returns [`PixelCow::Borrowed`] with the caller's stride
+/// when that stride satisfies [`PixelSlice`]'s row-alignment contract. A
+/// byte-valid but non-pixel-aligned stride is packed once into
+/// [`PixelCow::Owned`]. A conversion likewise returns an owned value and
+/// allocates exactly one [`PixelBuffer`].
+///
+/// # Errors
+///
+/// Returns a typed error for invalid geometry, insufficient or misaligned
+/// input, an empty format list, or an unsupported conversion.
 #[track_caller]
-#[allow(deprecated)]
 pub fn adapt_for_encode_cow<'a>(
     data: &'a [u8],
     descriptor: PixelDescriptor,
@@ -317,7 +338,15 @@ pub fn adapt_for_encode_cow<'a>(
     stride: usize,
     supported: &[PixelDescriptor],
 ) -> Result<PixelCow<'a>, At<ConvertError>> {
-    adapt_for_encode(data, descriptor, width, rows, stride, supported).map(adapted_into_pixel_cow)
+    adapt_for_encode_with_intent_cow(
+        data,
+        descriptor,
+        width,
+        rows,
+        stride,
+        supported,
+        ConvertIntent::Fastest,
+    )
 }
 
 /// Negotiate format and convert with intent awareness.
@@ -335,6 +364,21 @@ pub fn adapt_for_encode_with_intent<'a>(
     supported: &[PixelDescriptor],
     intent: ConvertIntent,
 ) -> Result<Adapted<'a>, At<ConvertError>> {
+    adapt_for_encode_with_intent_cow(data, descriptor, width, rows, stride, supported, intent)
+        .map(pixel_cow_into_adapted)
+}
+
+/// Intent-aware form of [`adapt_for_encode_cow`].
+#[track_caller]
+pub fn adapt_for_encode_with_intent_cow<'a>(
+    data: &'a [u8],
+    descriptor: PixelDescriptor,
+    width: u32,
+    rows: u32,
+    stride: usize,
+    supported: &[PixelDescriptor],
+    intent: ConvertIntent,
+) -> Result<PixelCow<'a>, At<ConvertError>> {
     ensure_src_buffer_fits(data.len(), rows, stride)?;
     if supported.is_empty() {
         return Err(whereat::at!(ConvertError::EmptyFormatList));
@@ -345,12 +389,7 @@ pub fn adapt_for_encode_with_intent<'a>(
 
     // Check for exact match (zero-copy path).
     if supported.contains(&descriptor) {
-        return Ok(Adapted {
-            data: contiguous_from_strided(data, width, rows, stride, descriptor.bytes_per_pixel()),
-            descriptor,
-            width,
-            rows,
-        });
+        return borrow_or_pack(data, width, rows, stride, descriptor);
     }
 
     // Check for transfer-agnostic match: if source has Unknown transfer
@@ -358,24 +397,14 @@ pub fn adapt_for_encode_with_intent<'a>(
     // still a zero-copy path. Primaries and signal range must also match
     // — relabeling BT.2020 as BT.709 without gamut conversion is wrong.
     for &target in supported {
-        if descriptor.channel_type() == target.channel_type()
+        if descriptor.transfer == crate::TransferFunction::Unknown
+            && descriptor.channel_type() == target.channel_type()
             && descriptor.layout() == target.layout()
             && descriptor.alpha() == target.alpha()
             && descriptor.primaries == target.primaries
             && descriptor.signal_range == target.signal_range
         {
-            return Ok(Adapted {
-                data: contiguous_from_strided(
-                    data,
-                    width,
-                    rows,
-                    stride,
-                    descriptor.bytes_per_pixel(),
-                ),
-                descriptor: target,
-                width,
-                rows,
-            });
+            return borrow_or_pack(data, width, rows, stride, target);
         }
     }
 
@@ -386,43 +415,18 @@ pub fn adapt_for_encode_with_intent<'a>(
     let mut converter = RowConverter::new(descriptor, target).at()?;
 
     let src_bpp = descriptor.bytes_per_pixel();
-    let dst_bpp = target.bytes_per_pixel();
-    let dst_stride = (width as usize) * dst_bpp;
-    let mut output = vec![0u8; checked_byte_alloc(rows, dst_stride)?];
+    let mut output = PixelBuffer::try_new(width, rows, target).map_err_at(ConvertError::from)?;
 
-    for y in 0..rows {
-        let src_start = y as usize * stride;
-        let src_end = src_start + (width as usize * src_bpp);
-        let dst_start = y as usize * dst_stride;
-        let dst_end = dst_start + dst_stride;
-        converter.convert_row(
-            &data[src_start..src_end],
-            &mut output[dst_start..dst_end],
-            width,
-        );
+    {
+        let mut dst = output.as_slice_mut();
+        for y in 0..rows {
+            let src_start = y as usize * stride;
+            let src_end = src_start + (width as usize * src_bpp);
+            converter.convert_row(&data[src_start..src_end], dst.row_mut(y), width);
+        }
     }
 
-    Ok(Adapted {
-        data: Cow::Owned(output),
-        descriptor: target,
-        width,
-        rows,
-    })
-}
-
-#[track_caller]
-#[allow(deprecated)]
-pub fn adapt_for_encode_with_intent_cow<'a>(
-    data: &'a [u8],
-    descriptor: PixelDescriptor,
-    width: u32,
-    rows: u32,
-    stride: usize,
-    supported: &[PixelDescriptor],
-    intent: ConvertIntent,
-) -> Result<PixelCow<'a>, At<ConvertError>> {
-    adapt_for_encode_with_intent(data, descriptor, width, rows, stride, supported, intent)
-        .map(adapted_into_pixel_cow)
+    Ok(PixelCow::Owned(output))
 }
 
 /// Convert a raw byte buffer from one format to another.
@@ -723,29 +727,20 @@ fn drop_lane_impl<'a>(
     elem: usize,
 ) -> PixelSliceMut<'a> {
     let width = px.width as usize;
-    // Output stride: the input stride rounded down to a whole number
-    // of target pixels (PixelSlice requires stride % bpp == 0). When
-    // the input stride is already a multiple of the narrower pixel,
-    // rows stay at their own bases (zero cross-row movement, freed
-    // bytes become row padding); otherwise rows shift up slightly.
-    // Either way dst(y, x) <= src(y, x) for every pixel, so a
-    // forward pass staged through a fixed temp never clobbers unread
-    // source.
-    let out_stride = px.stride - (px.stride % out_bpp);
-    for y in 0..px.rows as usize {
-        let sbase = y * px.stride;
-        let dbase = y * out_stride;
-        for x in 0..width {
-            let s = sbase + x * in_bpp;
-            let mut tmp = [0u8; 16];
-            tmp[..in_bpp].copy_from_slice(&px.bytes[s..s + in_bpp]);
-            let d = dbase + x * out_bpp;
-            for (k, &c) in map.iter().enumerate() {
-                px.bytes[d + k * elem..d + (k + 1) * elem]
-                    .copy_from_slice(&tmp[c * elem..(c + 1) * elem]);
-            }
-        }
-    }
+    let out_stride = compact_rows_in_place(
+        px.bytes,
+        width,
+        px.rows as usize,
+        px.stride,
+        in_bpp,
+        out_bpp,
+        px.descriptor.layout(),
+        target.layout(),
+        map,
+        false,
+        CompactionStride::PreserveRows,
+    );
+    debug_assert_eq!(elem, px.descriptor.bytes_per_channel());
     rewrap(px.bytes, px.width, px.rows, out_stride, target, px.color)
 }
 
@@ -784,6 +779,24 @@ pub fn adapt_for_encode_explicit<'a>(
     supported: &[PixelDescriptor],
     options: &ConvertOptions,
 ) -> Result<Adapted<'a>, At<ConvertError>> {
+    adapt_for_encode_explicit_cow(data, descriptor, width, rows, stride, supported, options)
+        .map(pixel_cow_into_adapted)
+}
+
+/// Policy-aware form of [`adapt_for_encode_cow`].
+///
+/// Exact and transfer-agnostic matches borrow the original stride-aware
+/// pixels. A required conversion allocates one owned [`PixelBuffer`].
+#[track_caller]
+pub fn adapt_for_encode_explicit_cow<'a>(
+    data: &'a [u8],
+    descriptor: PixelDescriptor,
+    width: u32,
+    rows: u32,
+    stride: usize,
+    supported: &[PixelDescriptor],
+    options: &ConvertOptions,
+) -> Result<PixelCow<'a>, At<ConvertError>> {
     ensure_src_buffer_fits(data.len(), rows, stride)?;
     if supported.is_empty() {
         return Err(whereat::at!(ConvertError::EmptyFormatList));
@@ -792,34 +805,19 @@ pub fn adapt_for_encode_explicit<'a>(
 
     // Check for exact match (zero-copy path).
     if supported.contains(&descriptor) {
-        return Ok(Adapted {
-            data: contiguous_from_strided(data, width, rows, stride, descriptor.bytes_per_pixel()),
-            descriptor,
-            width,
-            rows,
-        });
+        return borrow_or_pack(data, width, rows, stride, descriptor);
     }
 
     // Check for transfer-agnostic match (primaries and signal range must match).
     for &target in supported {
-        if descriptor.channel_type() == target.channel_type()
+        if descriptor.transfer == crate::TransferFunction::Unknown
+            && descriptor.channel_type() == target.channel_type()
             && descriptor.layout() == target.layout()
             && descriptor.alpha() == target.alpha()
             && descriptor.primaries == target.primaries
             && descriptor.signal_range == target.signal_range
         {
-            return Ok(Adapted {
-                data: contiguous_from_strided(
-                    data,
-                    width,
-                    rows,
-                    stride,
-                    descriptor.bytes_per_pixel(),
-                ),
-                descriptor: target,
-                width,
-                rows,
-            });
+            return borrow_or_pack(data, width, rows, stride, target);
         }
     }
 
@@ -841,43 +839,18 @@ pub fn adapt_for_encode_explicit<'a>(
 
     let mut converter = RowConverter::from_plan(plan);
     let src_bpp = descriptor.bytes_per_pixel();
-    let dst_bpp = target.bytes_per_pixel();
-    let dst_stride = (width as usize) * dst_bpp;
-    let mut output = vec![0u8; checked_byte_alloc(rows, dst_stride)?];
+    let mut output = PixelBuffer::try_new(width, rows, target).map_err_at(ConvertError::from)?;
 
-    for y in 0..rows {
-        let src_start = y as usize * stride;
-        let src_end = src_start + (width as usize * src_bpp);
-        let dst_start = y as usize * dst_stride;
-        let dst_end = dst_start + dst_stride;
-        converter.convert_row(
-            &data[src_start..src_end],
-            &mut output[dst_start..dst_end],
-            width,
-        );
+    {
+        let mut dst = output.as_slice_mut();
+        for y in 0..rows {
+            let src_start = y as usize * stride;
+            let src_end = src_start + (width as usize * src_bpp);
+            converter.convert_row(&data[src_start..src_end], dst.row_mut(y), width);
+        }
     }
 
-    Ok(Adapted {
-        data: Cow::Owned(output),
-        descriptor: target,
-        width,
-        rows,
-    })
-}
-
-#[track_caller]
-#[allow(deprecated)]
-pub fn adapt_for_encode_explicit_cow<'a>(
-    data: &'a [u8],
-    descriptor: PixelDescriptor,
-    width: u32,
-    rows: u32,
-    stride: usize,
-    supported: &[PixelDescriptor],
-    options: &ConvertOptions,
-) -> Result<PixelCow<'a>, At<ConvertError>> {
-    adapt_for_encode_explicit(data, descriptor, width, rows, stride, supported, options)
-        .map(adapted_into_pixel_cow)
+    Ok(PixelCow::Owned(output))
 }
 
 /// Check if all alpha values in a strided buffer are fully opaque.
@@ -926,30 +899,6 @@ fn is_fully_opaque(
         }
     }
     true
-}
-
-/// Extract contiguous packed rows from potentially strided data.
-fn contiguous_from_strided<'a>(
-    data: &'a [u8],
-    width: u32,
-    rows: u32,
-    stride: usize,
-    bpp: usize,
-) -> Cow<'a, [u8]> {
-    let row_bytes = width as usize * bpp;
-    if stride == row_bytes {
-        // Already packed.
-        let total = row_bytes * rows as usize;
-        Cow::Borrowed(&data[..total])
-    } else {
-        // Need to strip padding.
-        let mut packed = Vec::with_capacity(row_bytes * rows as usize);
-        for y in 0..rows as usize {
-            let start = y * stride;
-            packed.extend_from_slice(&data[start..start + row_bytes]);
-        }
-        Cow::Owned(packed)
-    }
 }
 
 #[cfg(test)]
