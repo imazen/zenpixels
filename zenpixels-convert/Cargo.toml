@@ -142,6 +142,10 @@ moxcms = { version = ">=0.8.1, <0.10", optional = true, features = ["options"] }
 zenpixels = { workspace = true, features = ["planar", "imgref"] }
 zenpixels-convert = { path = ".", features = ["pipeline", "imgref", "cms-moxcms"] }
 zenbench = { version = "0.1.2"}
+# DEV-only: lets benches/kernel_tiers.rs disable the baseline SIMD token (NEON
+# on aarch64) so the "scalar" arm is real. Feature unification applies this to
+# test/bench builds only, so consumers are unaffected.
+archmage = { version = "0.9.28", features = ["testable_dispatch"] }
 # Dev-only: cross-validate our local f16 impl (src/f16_scalar.rs) and drive
 # the perceptual-loss test suite, which uses half's f64 conversion paths.
 half = "2.7.1"
@@ -254,3 +258,8 @@ required-features = ["__bench_orient"]
 name = "measure_histogram_throughput"
 path = "examples/measure_histogram_throughput.rs"
 required-features = ["hdr-experimental"]
+
+[[bench]]
+name = "kernel_tiers"
+harness = false
+required-features = ["__bench_scan"]
