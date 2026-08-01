@@ -249,6 +249,23 @@ stamp_trc_kernels!(hlg,
 
 /// Convert linear f32 RGB pixels in-place using only the 3×3 matrix.
 /// No TRC linearization or encoding — input/output are already linear.
+/// Convert linear f32 RGB pixels in-place using only the 3x3 matrix.
+///
+/// Stays SCALAR, deliberately. A `vld3q_f32`/`vst3q_f32` twin of
+/// [`convert_linear_rgba_neon`] was written and MEASURED at 1.00x on M4 Pro
+/// (baseline 63.1us; NEON 62.8 / 63.1 / 62.4us over 256k px), so it was
+/// reverted rather than shipped for zero gain.
+///
+/// The RGBA sibling gets 1.17x from the same transform with `vld4q_f32`, so
+/// the difference is the structure load itself, not the arithmetic: garb
+/// measured the same thing independently and recorded that Apple's cores
+/// crack `vld3q`/`vst3q` into several uops with limited structure
+/// load/store throughput. That note was about pure byte permutation and so
+/// arguably did not apply to an arithmetic-heavy kernel — this measurement
+/// says it does apply.
+///
+/// Do not re-attempt without re-running the measurement on the target
+/// hardware; a 4-wide (RGBA) path is the one that pays here.
 pub fn convert_linear_rgb(m: &[[f32; 3]; 3], data: &mut [f32]) {
     debug_assert_eq!(data.len() % 3, 0);
     for pixel in data.chunks_exact_mut(3) {

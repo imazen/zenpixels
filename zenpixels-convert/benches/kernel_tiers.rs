@@ -140,6 +140,24 @@ fn bench_linear_gamut(suite: &mut Suite) {
             })
             .collect()
     };
+    let mk3 = || -> Vec<f32> {
+        let mut s = 0x1234_5677u32;
+        (0..PX * 3)
+            .map(|_| {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (s >> 8) as f32 / 16_777_216.0
+            })
+            .collect()
+    };
+    suite.compare("convert_linear_rgb", |g| {
+        g.throughput(Throughput::Bytes((PX * 12) as u64));
+        g.bench("shipped", move |b| {
+            b.with_input(mk3).run(move |mut d| {
+                zenpixels_convert::__bench_scan::convert_linear_rgb(&m, &mut d);
+                d
+            })
+        });
+    });
     suite.compare("convert_linear_rgba", |g| {
         g.throughput(Throughput::Bytes((PX * 16) as u64));
         g.bench("shipped", move |b| {
