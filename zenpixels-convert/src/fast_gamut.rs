@@ -261,14 +261,70 @@ pub fn convert_linear_rgb(m: &[[f32; 3]; 3], data: &mut [f32]) {
 }
 
 /// Convert linear f32 RGBA pixels in-place (alpha unchanged).
+///
+/// Every OTHER conversion in this file dispatches `[v3, neon, wasm128,
+/// scalar]`; this identity-TRC path had no dispatch at all and ran the scalar
+/// loop everywhere. Each output channel needs all three inputs, so this is a
+/// cross-lane (transpose-shaped) problem — the pattern LLVM autovectorizes
+/// worst and `vld4q_f32` handles natively.
 pub fn convert_linear_rgba(m: &[[f32; 3]; 3], data: &mut [f32]) {
     debug_assert_eq!(data.len() % 4, 0);
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken;
+        if let Some(t) = archmage::NeonToken::summon() {
+            convert_linear_rgba_neon(t, m, data);
+            return;
+        }
+    }
+    convert_linear_rgba_scalar(m, data);
+}
+
+#[inline]
+pub(crate) fn convert_linear_rgba_scalar(m: &[[f32; 3]; 3], data: &mut [f32]) {
     for pixel in data.chunks_exact_mut(4) {
         let (r, g, b) = (pixel[0], pixel[1], pixel[2]);
         let (nr, ng, nb) = mat3x3(m, r, g, b);
         pixel[0] = nr;
         pixel[1] = ng;
         pixel[2] = nb;
+    }
+}
+
+/// Hand-written NEON: `vld4q_f32` gives r/g/b/a planes for 4 pixels, so the
+/// 3x3 becomes nine `vfmaq`/`vmulq` on whole vectors with no shuffling, and
+/// alpha rides through untouched.
+///
+/// Bit-exact with the scalar body: `mat3x3` is
+/// `m0.mul_add(r, m1.mul_add(g, m2 * b))` — one multiply then two fused
+/// multiply-adds, in that association — and this issues exactly that, with
+/// `vfmaq_f32` being the same fused operation `f32::mul_add` compiles to on
+/// aarch64. No reassociation, so no rounding difference.
+#[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
+pub(crate) fn convert_linear_rgba_neon(_token: archmage::NeonToken, m: &[[f32; 3]; 3], data: &mut [f32]) {
+    let full = data.len() / 16 * 16;
+    let (body, tail) = data.split_at_mut(full);
+    let c = |i: usize, j: usize| vdupq_n_f32(m[i][j]);
+    let (m00, m01, m02) = (c(0, 0), c(0, 1), c(0, 2));
+    let (m10, m11, m12) = (c(1, 0), c(1, 1), c(1, 2));
+    let (m20, m21, m22) = (c(2, 0), c(2, 1), c(2, 2));
+    for chunk in body.chunks_exact_mut(16) {
+        let block: &mut [f32; 16] = chunk.try_into().unwrap();
+        let p = vld4q_f32(block);
+        let (r, g, b) = (p.0, p.1, p.2);
+        vst4q_f32(
+            block,
+            float32x4x4_t(
+                vfmaq_f32(vfmaq_f32(vmulq_f32(m02, b), m01, g), m00, r),
+                vfmaq_f32(vfmaq_f32(vmulq_f32(m12, b), m11, g), m10, r),
+                vfmaq_f32(vfmaq_f32(vmulq_f32(m22, b), m21, g), m20, r),
+                p.3,
+            ),
+        );
+    }
+    if !tail.is_empty() {
+        convert_linear_rgba_scalar(m, tail);
     }
 }
 
@@ -2326,5 +2382,71 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, target_arch = "aarch64"))]
+mod linear_gamut_neon_gate {
+    use super::*;
+
+    /// The NEON identity-TRC gamut kernel must equal the scalar body
+    /// BIT-FOR-BIT. Colour conversion feeds everything downstream, so the
+    /// tolerance is zero.
+    ///
+    /// The association must match exactly, which is the whole risk here:
+    /// scalar is `fma(m00, r, fma(m01, g, m02*b))` and the NEON form is
+    /// `vfmaq(vfmaq(m02*b, m01, g), m00, r)` — the same one multiply plus two
+    /// fused multiply-adds, nested the same way. Any reassociation (e.g.
+    /// summing three products pairwise) would round differently and this test
+    /// is what catches it.
+    #[test]
+    fn linear_rgba_neon_matches_scalar_bitexact() {
+        use archmage::SimdToken;
+        let Some(t) = archmage::NeonToken::summon() else {
+            panic!("aarch64 must have NEON; this test must not skip silently");
+        };
+        // A real wide-gamut matrix plus adversarial ones (sign mix, tiny, huge).
+        let mats: [[[f32; 3]; 3]; 3] = [
+            [
+                [0.9555766, -0.0230393, 0.0631636],
+                [-0.0282895, 1.0099416, 0.0210077],
+                [0.0122982, -0.0204830, 1.3299098],
+            ],
+            [[1e-30, -1e-30, 1e30], [1e30, 1e-30, -1e-30], [-1.0, 1.0, 0.0]],
+            [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [-1.0, -1.0, -1.0]],
+        ];
+        let specials = [
+            0.0f32, -0.0, 1.0, -1.0, f32::MIN_POSITIVE, f32::MIN_POSITIVE / 4.0,
+            f32::MAX, f32::INFINITY, f32::NEG_INFINITY, f32::NAN, 0.5, 65504.0,
+        ];
+        let mut s = 0x2545_F491u32;
+        let mut cases = 0usize;
+        for m in &mats {
+            // Lengths straddle the 4-pixel (16-float) stride so the scalar tail
+            // runs at every remainder.
+            for px in 1usize..=13 {
+                let n = px * 4;
+                let mut row = Vec::with_capacity(n);
+                for i in 0..n {
+                    s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    row.push(if i % 4 == 0 {
+                        specials[(s >> 9) as usize % specials.len()]
+                    } else {
+                        ((s >> 8) as f32 / 4_194_304.0) - 2.0
+                    });
+                }
+                let mut got = row.clone();
+                let mut want = row.clone();
+                convert_linear_rgba_neon(t, m, &mut got);
+                convert_linear_rgba_scalar(m, &mut want);
+                // Bit patterns: `==` calls NaN != NaN and -0.0 == 0.0, either of
+                // which would let a real divergence through.
+                let g: Vec<u32> = got.iter().map(|v| v.to_bits()).collect();
+                let w: Vec<u32> = want.iter().map(|v| v.to_bits()).collect();
+                assert_eq!(g, w, "NEON gamut diverges from scalar at {px} px");
+                cases += 1;
+            }
+        }
+        assert_eq!(cases, 39);
     }
 }

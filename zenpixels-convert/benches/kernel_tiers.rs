@@ -111,4 +111,44 @@ fn bench_scan(suite: &mut Suite) {
     set_simd(true);
 }
 
-zenbench::main!(bench_scan);
+
+/// `convert_linear_rgba` — the identity-TRC gamut path: a 3x3 matrix per pixel,
+/// in place, on f32 RGBA.
+///
+/// Measured 2026-08-01 because it has NO dispatch at all — it is a plain
+/// `chunks_exact_mut(4)` scalar loop, while its TRC-carrying siblings in the
+/// same file all dispatch `[v3, neon, wasm128, scalar]`. Each output channel
+/// needs all three input channels, so this is a cross-lane (transpose-shaped)
+/// problem, which is the pattern LLVM autovectorizes worst and `vld4q_f32`
+/// handles natively.
+///
+/// The A/B here is scalar-vs-hand-written, NOT tier-toggled: there is no
+/// dispatch to toggle yet. That is the point of the measurement.
+fn bench_linear_gamut(suite: &mut Suite) {
+    const PX: usize = 1 << 18;
+    let m = [
+        [0.9555766, -0.0230393, 0.0631636],
+        [-0.0282895, 1.0099416, 0.0210077],
+        [0.0122982, -0.0204830, 1.3299098],
+    ];
+    let mk = || -> Vec<f32> {
+        let mut s = 0x9e37_79b9u32;
+        (0..PX * 4)
+            .map(|_| {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (s >> 8) as f32 / 16_777_216.0
+            })
+            .collect()
+    };
+    suite.compare("convert_linear_rgba", |g| {
+        g.throughput(Throughput::Bytes((PX * 16) as u64));
+        g.bench("shipped", move |b| {
+            b.with_input(mk).run(move |mut d| {
+                zenpixels_convert::__bench_scan::convert_linear_rgba(&m, &mut d);
+                d
+            })
+        });
+    });
+}
+
+zenbench::main!(bench_linear_gamut, bench_scan);
