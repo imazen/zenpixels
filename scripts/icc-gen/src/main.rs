@@ -1564,7 +1564,6 @@ fn write_gray(rows: &BTreeMap<u64, GrayRow>, out_path: &Path) {
 /// Classify one ICC profile (by bytes) into the RGB / gray table maps —
 /// the shared body behind both the on-disk corpus scan and the committed
 /// CICP-bundle ingestion.
-#[allow(clippy::too_many_arguments)]
 fn ingest_profile(
     fname: &str,
     data: &[u8],

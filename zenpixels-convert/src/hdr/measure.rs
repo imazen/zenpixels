@@ -1126,7 +1126,6 @@ mod simd_kernel {
 
     /// Top-level dispatcher for the fast measure_max path.
     /// Loops rows and calls the right per-method tier kernel.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn scan_max_mean_simd(
         bytes: &[u8],
         h: usize,

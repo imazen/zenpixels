@@ -265,7 +265,6 @@ fn validate_slice(
     if stride_bytes < min_stride {
         return Err(BufferError::StrideTooSmall);
     }
-    #[allow(clippy::manual_is_multiple_of)] // is_multiple_of stabilized 1.87; MSRV is 1.85
     if bpp > 0 && stride_bytes % bpp != 0 {
         return Err(BufferError::StrideNotPixelAligned);
     }
@@ -276,7 +275,6 @@ fn validate_slice(
         }
     }
     let align = descriptor.min_alignment();
-    #[allow(clippy::manual_is_multiple_of)] // is_multiple_of stabilized 1.87; MSRV is 1.85
     if (data_ptr as usize) % align != 0 {
         return Err(BufferError::AlignmentViolation);
     }
@@ -2036,7 +2034,6 @@ impl PixelBuffer {
             return None;
         }
         let pixel_size = core::mem::size_of::<P>();
-        #[allow(clippy::manual_is_multiple_of)] // is_multiple_of stabilized 1.87; MSRV is 1.85
         if pixel_size == 0 || self.stride % pixel_size != 0 {
             return None;
         }
@@ -2064,7 +2061,6 @@ impl PixelBuffer {
             return None;
         }
         let pixel_size = core::mem::size_of::<P>();
-        #[allow(clippy::manual_is_multiple_of)] // is_multiple_of stabilized 1.87; MSRV is 1.85
         if pixel_size == 0 || self.stride % pixel_size != 0 {
             return None;
         }

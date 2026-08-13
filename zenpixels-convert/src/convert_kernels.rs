@@ -1861,13 +1861,10 @@ pub(crate) fn multiply_color_channels(buf: &mut [f32], channels: usize, factor: 
 // even though the literals run longer than the shortest round-trip.
 #[allow(clippy::excessive_precision)]
 const PQ_M1: f32 = 0.1593017578125;
-#[allow(clippy::excessive_precision)]
 const PQ_M2: f32 = 78.84375;
-#[allow(clippy::excessive_precision)]
 const PQ_C1: f32 = 0.8359375;
 #[allow(clippy::excessive_precision)]
 const PQ_C2: f32 = 18.8515625;
-#[allow(clippy::excessive_precision)]
 const PQ_C3: f32 = 18.6875;
 
 /// PQ EOTF (signal → linear), exact, precise SIMD.
