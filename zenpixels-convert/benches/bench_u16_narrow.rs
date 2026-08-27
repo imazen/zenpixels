@@ -5,13 +5,12 @@
 //! The replacement must be exact (`round(v / 257)`) with no throughput
 //! loss. Arms:
 //!
-//!   - `garb (inexact)`  — the previous kernel, for reference.
-//!   - `shift u32`       — `z = (v+128)·255; (z + (z>>16) + 1) >> 16`.
-//!   - `byte lanes`      — `hi + [lo−hi ≥ 129] − [hi−lo ≥ 129]` on the two
-//!                         bytes of `v` (saturating subs + compares; the
-//!                         form LLVM vectorises widest).
-//!   - `shipped`         — whatever `ConvertStep::U16ToU8` currently runs,
-//!                         via the public `RowConverter`.
+//! - `garb (inexact)`: the previous kernel, for reference.
+//! - `shift u32`: `z = (v+128)·255; (z + (z>>16) + 1) >> 16`.
+//! - `byte lanes`: `hi + [lo−hi ≥ 129] − [hi−lo ≥ 129]` on the two bytes of
+//!   `v` (saturating subs + compares; the form LLVM vectorises widest).
+//! - `shipped`: whatever `ConvertStep::U16ToU8` currently runs, via the
+//!   public `RowConverter`.
 //!
 //! All arms are exhaustively cross-checked against `(v + 128) / 257` before
 //! timing so a fast-but-wrong arm cannot post a number.
