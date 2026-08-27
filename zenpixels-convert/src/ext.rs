@@ -363,8 +363,7 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
         &self,
         target: PixelDescriptor,
     ) -> Result<PixelBuffer, At<crate::ConvertError>> {
-        use crate::hdr::{CllMeasure, LightLevelMethod};
-        use zenpixels::hdr::{ContentLightLevel, DiffuseWhite};
+        use zenpixels::hdr::DiffuseWhite;
 
         let src_desc = self.descriptor();
         check_needs_cms(&src_desc, &target)?;
@@ -382,6 +381,14 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
         // Measure source peak. For PQ buffers we need linear-light F32
         // first (CllMeasure operates on relative-linear RGB f32).
         // For HLG, same thing.
+        //
+        // The linearized image is only needed to find the brightest pixel,
+        // so it is never materialized: each row is decoded into one reused
+        // F32 scratch row and measured immediately (imazen/zenpixels#69 —
+        // this used to allocate a full F32 copy, 4× an RGBA8 source, and
+        // throw it away). MaxCLL is a max, so the per-row maximum of
+        // `measure_max` composes exactly with the whole-image reading
+        // (`nits_to_u16` is monotone); the MaxFALL half is unused here.
         let lin_desc = PixelDescriptor::new_full(
             ChannelType::F32,
             if src_desc.has_alpha() {
@@ -393,16 +400,12 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
             TransferFunction::Linear,
             src_desc.primaries,
         );
-        let linear_src = self.convert_to(lin_desc)?;
-        let lin_slice = linear_src.as_slice();
         let diffuse_white = self
             .color_context()
             .and_then(|c| c.diffuse_white)
             .unwrap_or(DiffuseWhite::BT2408);
-        let cll =
-            ContentLightLevel::measure_max(lin_slice, diffuse_white, LightLevelMethod::MaxRgb)
-                .unwrap_or(ContentLightLevel::new(1000, 0));
-        let source_peak_nits = f32::from(cll.max_content_light_level).max(100.0);
+        let max_cll = measure_peak_rowwise(self, lin_desc, diffuse_white)?;
+        let source_peak_nits = f32::from(max_cll).max(100.0);
         self.convert_to_with_hdr_config(target, crate::HdrConfig::for_source_peak(source_peak_nits))
     }
 
@@ -445,6 +448,51 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
         }
         Ok(buf)
     }
+}
+
+/// Spec-literal MaxCLL (cd/m², CTA-861.3) of `src` after decoding it to
+/// `lin_desc` (relative-linear `RgbF32` / `RgbaF32`), one row at a time
+/// through a single reused scratch row — no full-image intermediate.
+///
+/// Byte-parity with measuring a fully materialized `src.convert_to(lin_desc)`:
+/// each row goes through the same `RowConverter`, and MaxCLL is a maximum
+/// (`max_y nits_to_u16(max_row_y · white) == nits_to_u16(max_all · white)`
+/// because `nits_to_u16` is monotone non-decreasing).
+#[cfg(feature = "hdr-experimental")]
+#[track_caller]
+fn measure_peak_rowwise(
+    src: &PixelBuffer,
+    lin_desc: PixelDescriptor,
+    white: zenpixels::hdr::DiffuseWhite,
+) -> Result<u16, At<crate::ConvertError>> {
+    use crate::hdr::{CllMeasure, LightLevelMethod};
+    use zenpixels::hdr::ContentLightLevel;
+
+    let src_desc = src.descriptor();
+    check_needs_cms(&src_desc, &lin_desc)?;
+    let mut converter = crate::RowConverter::new(src_desc, lin_desc).at()?;
+
+    let width = src.width();
+    // `Vec<f32>` (not `Vec<u8>`) so the scratch row satisfies the F32
+    // alignment `PixelSlice::new` validates.
+    let floats_per_row = (width as usize)
+        .checked_mul(lin_desc.channels())
+        .ok_or_else(|| whereat::at!(crate::ConvertError::AllocationFailed))?;
+    let mut scratch = alloc::vec![0f32; floats_per_row];
+    let row_bytes = floats_per_row * 4;
+
+    let src_slice = src.as_slice();
+    let mut max_cll = 0u16;
+    for y in 0..src.height() {
+        let row: &mut [u8] = bytemuck::cast_slice_mut(&mut scratch);
+        converter.convert_row(src_slice.row(y), row, width);
+        let lin_row = zenpixels::PixelSlice::new(row, width, 1, row_bytes, lin_desc)
+            .map_err_at(crate::ConvertError::from)?;
+        let row_cll = ContentLightLevel::measure_max(lin_row, white, LightLevelMethod::MaxRgb)
+            .map_or(1000, |c| c.max_content_light_level);
+        max_cll = max_cll.max(row_cll);
+    }
+    Ok(max_cll)
 }
 
 #[cfg(feature = "rgb")]

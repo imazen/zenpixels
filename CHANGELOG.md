@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### zenpixels-convert — changed
+
+- `PixelBufferHdrConvertExt::convert_to_sdr` no longer materializes a full
+  linear-F32 copy of the source (16 B/pixel — 4× an RGBA8 output) just to
+  measure MaxCLL: the peak is measured row-by-row through one reused scratch
+  row. Output is byte-identical (MaxCLL is a maximum, so per-row `measure_max`
+  composes exactly); peak allocation drops to the output buffer + O(row).
+  Gates: `tests/hdr_sdr_alloc.rs` (allocation ceiling via the dev-only
+  `allocation-counter` crate + parity with the materialize-then-measure
+  sequence it replaced). Partial for #69 — the consuming/borrowing
+  `finalize_for_output_with` / `EncodeReady` design is a public-API addition
+  and stays open.
+
 ### zenpixels-convert — fixed
 
 - `U16ToU8` narrowing is now correctly rounded (`round(v / 257)`, i.e.

@@ -153,6 +153,19 @@ palette = { version = "0.7", default-features = false, features = ["std", "appro
 # Dev-only: pin the committed CICP bundle blob's sha256 (golden test) so an
 # accidental regen is caught. Not part of the shipped crate.
 sha2 = "0.11.0"
+# Dev-only: counts allocations for the HDR→SDR intermediate-buffer regression
+# gate (tests/hdr_sdr_alloc.rs, imazen/zenpixels#69). Only that test binary
+# references the crate, so only it gets the counting global allocator.
+allocation-counter = "0.8.1"
+
+# Allocation gate for `convert_to_sdr`: the peak measurement must stream
+# through a scratch row, never a full-image F32 intermediate (#69). The trait
+# is behind `hdr-experimental`; CI runs it via the dedicated feature step.
+[[test]]
+name = "hdr_sdr_alloc"
+path = "tests/hdr_sdr_alloc.rs"
+required-features = ["hdr-experimental"]
+
 # Parity gate between the deprecated `zenpixels::ContentLightLevel::measure`
 # and its replacement `CllMeasure::measure_max`. The trait is behind
 # `hdr-experimental`, so the target opts in explicitly; CI runs it via the
