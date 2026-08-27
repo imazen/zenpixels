@@ -8,20 +8,31 @@ r2_prefix := "icc-profiles/"
 # Run all checks (fmt, clippy, test)
 ci: fmt clippy test
 
+# The rustdoc-JSON nightly for the public-API snapshots is PINNED (keep in
+# sync with the `api-doc` job in .github/workflows/ci.yml). An unpinned
+# tracking nightly churns the rendered surface with zero repo changes: the
+# 2026-08-26 nightly started rendering `PixelBuffer<P>`'s (unconditional,
+# PhantomData-only) `Freeze` impl as conditional on Linux x86_64 while the
+# same nightly on macOS aarch64 did not, so the committed snapshots could
+# not be current on both sides at once. The harness auto-installs the pin
+# via rustup. Bump deliberately, regenerating the snapshots in the same
+# commit.
+apidoc_toolchain := "nightly-2026-07-13"
+
 # Format + regenerate the public-API surface snapshots (docs/public-api/).
 # The snapshot runner lives in the workspace-excluded apidoc/ package, so it
 # is never built or run by plain `cargo test` or any CI job.
 fmt:
     cargo fmt --check
-    cargo test --manifest-path apidoc/Cargo.toml
+    ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
 
 # Regenerate the public-API surface snapshots only
 api-doc:
-    cargo test --manifest-path apidoc/Cargo.toml
+    ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
 
 # Verify the committed snapshots are current
 api-doc-check:
-    ZEN_API_DOC=check cargo test --manifest-path apidoc/Cargo.toml
+    ZEN_API_DOC=check ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
 
 # Clippy
 clippy:

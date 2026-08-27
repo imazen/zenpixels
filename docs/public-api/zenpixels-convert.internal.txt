@@ -12,7 +12,7 @@
 #   pub modules                                 3
 #   pub types (struct/enum/trait/alias)         4
 #   pub consts/statics                          3
-#   free functions                             15
+#   free functions                             17
 #   inherent methods                           42
 #   struct fields                               4
 #   trait roster entries (type × trait)        36
@@ -20,7 +20,7 @@
 #
 # per-module pub lines:
 #   (root)                            9
-#   __bench_scan                     17
+#   __bench_scan                     19
 #   __bench_u16_hybrids               4
 #   __trace_ops                       2
 #   cms                               2
@@ -31,7 +31,7 @@
 #   pipeline                          2
 #   zenpixels                         4
 
-## items (67 lines)
+## items (69 lines)
 
 #[non_exhaustive] pub struct hdr::LightLevelHistogram [also: hdr::measure]
 pub const hdr::measure::LightLevelHistogram::BIN_MAX_NITS: f32
@@ -54,6 +54,8 @@ pub fn __bench_scan::FusedResult::clone(&self) -> __bench_scan::FusedResult
 pub fn __bench_scan::FusedResult::default() -> __bench_scan::FusedResult
 pub fn __bench_scan::FusedResult::eq(&self, &__bench_scan::FusedResult) -> bool
 pub fn __bench_scan::FusedResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn __bench_scan::convert_linear_rgb(&[[f32; 3]; 3], &mut [f32])
+pub fn __bench_scan::convert_linear_rgba(&[[f32; 3]; 3], &mut [f32])
 pub fn __bench_scan::fused_predicates_rgba8_cg(&[u8], __bench_scan::FusedRequest) -> __bench_scan::FusedResult
 pub fn __bench_u16_hybrids::lut_lut(&[[f32; 3]; 3], &[u16], &mut [u16])
 pub fn __bench_u16_hybrids::lut_poly(&[[f32; 3]; 3], &[u16], &mut [u16])

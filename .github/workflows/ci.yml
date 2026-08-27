@@ -213,16 +213,24 @@ jobs:
           mv __siblings/zenutils ../zenutils
           rmdir __siblings || true
 
-      - uses: dtolnay/rust-toolchain@nightly # rustdoc JSON for public-api
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      # The rustdoc-JSON nightly is PINNED (keep in sync with `apidoc_toolchain`
+      # in the justfile); the harness installs it via rustup itself, so no
+      # tracking-`nightly` toolchain step here. An unpinned nightly churns the
+      # rendered surface with zero repo changes — the 2026-08-26 nightly began
+      # rendering `PixelBuffer<P>`'s unconditional `Freeze` impl as conditional
+      # on this Linux x86_64 runner (and not on macOS aarch64), so the committed
+      # snapshots could not be current on both sides at once. Bump the pin
+      # deliberately, in the same commit as a `just api-doc` regen.
       - name: Check committed API snapshots are current
         run: cargo test --manifest-path apidoc/Cargo.toml
         env:
           ZEN_API_DOC: check
+          ZEN_API_DOC_TOOLCHAIN: nightly-2026-07-13
 
   # ==========================================================================
   # Format check
