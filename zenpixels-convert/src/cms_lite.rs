@@ -633,7 +633,12 @@ mod accuracy_ground_truth_tests {
         encode: fn(f64) -> f64,
     ) -> Vec<u8> {
         let mut dst = vec![0u8; src.len()];
-        for (s, d) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+        for (s, d) in src
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(dst.as_chunks_mut::<3>().0)
+        {
             let r = linearize(s[0] as f64 / 255.0);
             let g = linearize(s[1] as f64 / 255.0);
             let b = linearize(s[2] as f64 / 255.0);

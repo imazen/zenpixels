@@ -651,10 +651,9 @@ fn transpose_tiled<const BPP: usize>(
                 let sx = (if flip_sx { w - 1 - dy } else { dy }) as usize;
                 let mut soff = (sy0 * sstride + sx * BPP) as isize;
                 let drow = &mut dst.row_mut(dy)[tx as usize * BPP..tx_end as usize * BPP];
-                for dpx in drow.chunks_exact_mut(BPP) {
+                for dpx in drow.as_chunks_mut::<BPP>().0 {
                     let s = soff as usize;
-                    let px: [u8; BPP] = sbytes[s..s + BPP].try_into().unwrap();
-                    dpx.copy_from_slice(&px);
+                    *dpx = sbytes[s..s + BPP].try_into().unwrap();
                     soff += sstep;
                 }
             }
@@ -1044,7 +1043,7 @@ fn transpose16_deep(
                     tx + c
                 };
                 let drow = &mut dbytes[dy * dstride + dx * 16..dy * dstride + (dx + T) * 16];
-                for (k, chunk) in drow.chunks_exact_mut(16).enumerate() {
+                for (k, chunk) in drow.as_chunks_mut::<16>().0.iter_mut().enumerate() {
                     let r = if flip_sy { T - 1 - k } else { k };
                     chunk.copy_from_slice(&srows[r][c * 16..c * 16 + 16]);
                 }

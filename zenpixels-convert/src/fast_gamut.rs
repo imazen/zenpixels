@@ -252,7 +252,7 @@ stamp_trc_kernels!(hlg,
 /// Convert linear f32 RGB pixels in-place using only the 3x3 matrix.
 ///
 /// Stays SCALAR, deliberately. A `vld3q_f32`/`vst3q_f32` twin of
-/// [`convert_linear_rgba_neon`] was written and MEASURED at 1.00x on M4 Pro
+/// `convert_linear_rgba_neon` was written and MEASURED at 1.00x on M4 Pro
 /// (baseline 63.1us; NEON 62.8 / 63.1 / 62.4us over 256k px), so it was
 /// reverted rather than shipped for zero gain.
 ///
@@ -268,7 +268,7 @@ stamp_trc_kernels!(hlg,
 /// hardware; a 4-wide (RGBA) path is the one that pays here.
 pub fn convert_linear_rgb(m: &[[f32; 3]; 3], data: &mut [f32]) {
     debug_assert_eq!(data.len() % 3, 0);
-    for pixel in data.chunks_exact_mut(3) {
+    for pixel in data.as_chunks_mut::<3>().0 {
         let (r, g, b) = (pixel[0], pixel[1], pixel[2]);
         let (nr, ng, nb) = mat3x3(m, r, g, b);
         pixel[0] = nr;
@@ -299,7 +299,7 @@ pub fn convert_linear_rgba(m: &[[f32; 3]; 3], data: &mut [f32]) {
 
 #[inline]
 pub(crate) fn convert_linear_rgba_scalar(m: &[[f32; 3]; 3], data: &mut [f32]) {
-    for pixel in data.chunks_exact_mut(4) {
+    for pixel in data.as_chunks_mut::<4>().0 {
         let (r, g, b) = (pixel[0], pixel[1], pixel[2]);
         let (nr, ng, nb) = mat3x3(m, r, g, b);
         pixel[0] = nr;
@@ -330,8 +330,7 @@ pub(crate) fn convert_linear_rgba_neon(
     let (m00, m01, m02) = (c(0, 0), c(0, 1), c(0, 2));
     let (m10, m11, m12) = (c(1, 0), c(1, 1), c(1, 2));
     let (m20, m21, m22) = (c(2, 0), c(2, 1), c(2, 2));
-    for chunk in body.chunks_exact_mut(16) {
-        let block: &mut [f32; 16] = chunk.try_into().unwrap();
+    for block in body.as_chunks_mut::<16>().0 {
         let p = vld4q_f32(block);
         let (r, g, b) = (p.0, p.1, p.2);
         vst4q_f32(
@@ -544,7 +543,7 @@ pub(crate) fn convert_f32_rgb_extended(
     let Some(enc) = scalar_encode_extended(dst_trc) else {
         return false;
     };
-    for pixel in data.chunks_exact_mut(3) {
+    for pixel in data.as_chunks_mut::<3>().0 {
         let r = lin(pixel[0]);
         let g = lin(pixel[1]);
         let b = lin(pixel[2]);
@@ -569,7 +568,7 @@ pub(crate) fn convert_f32_rgba_extended(
     let Some(enc) = scalar_encode_extended(dst_trc) else {
         return false;
     };
-    for pixel in data.chunks_exact_mut(4) {
+    for pixel in data.as_chunks_mut::<4>().0 {
         let r = lin(pixel[0]);
         let g = lin(pixel[1]);
         let b = lin(pixel[2]);
@@ -723,7 +722,7 @@ pub(crate) fn convert_f32_rgb_dispatch(
     let Some(enc) = scalar_encode(dst_trc) else {
         return false;
     };
-    for pixel in data.chunks_exact_mut(3) {
+    for pixel in data.as_chunks_mut::<3>().0 {
         let r = lin(pixel[0]);
         let g = lin(pixel[1]);
         let b = lin(pixel[2]);
@@ -807,7 +806,7 @@ pub(crate) fn convert_f32_rgba_dispatch(
     let Some(enc) = scalar_encode(dst_trc) else {
         return false;
     };
-    for pixel in data.chunks_exact_mut(4) {
+    for pixel in data.as_chunks_mut::<4>().0 {
         let r = lin(pixel[0]);
         let g = lin(pixel[1]);
         let b = lin(pixel[2]);
@@ -848,7 +847,12 @@ pub(crate) fn convert_u8_rgb(
 ) {
     debug_assert_eq!(src.len() % 3, 0);
     debug_assert_eq!(src.len(), dst.len());
-    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+    for (src_px, dst_px) in src
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<3>().0)
+    {
         let r = linearize_fn(src_px[0] as f32 / 255.0);
         let g = linearize_fn(src_px[1] as f32 / 255.0);
         let b = linearize_fn(src_px[2] as f32 / 255.0);
@@ -893,7 +897,12 @@ pub(crate) fn convert_u8_rgb_lut_lut(
 ) {
     debug_assert_eq!(src.len() % 3, 0);
     debug_assert_eq!(src.len(), dst.len());
-    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+    for (src_px, dst_px) in src
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<3>().0)
+    {
         let r = lin_lut[src_px[0] as usize];
         let g = lin_lut[src_px[1] as usize];
         let b = lin_lut[src_px[2] as usize];
@@ -1189,7 +1198,12 @@ fn convert_u16_rgb_matlut_scalar(
     lin_lut: &[f32; 65536],
     enc_lut: &[u16; 65536],
 ) {
-    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+    for (src_px, dst_px) in src
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<3>().0)
+    {
         let r = lin_lut[src_px[0] as usize];
         let g = lin_lut[src_px[1] as usize];
         let b = lin_lut[src_px[2] as usize];
@@ -1422,7 +1436,12 @@ mod hybrids {
         dst: &mut [u16],
         lin_lut: &[f32; 65536],
     ) {
-        for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+        for (src_px, dst_px) in src
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(dst.as_chunks_mut::<3>().0)
+        {
             let r = lin_lut[src_px[0] as usize];
             let g = lin_lut[src_px[1] as usize];
             let b = lin_lut[src_px[2] as usize];
@@ -1440,7 +1459,12 @@ mod hybrids {
         dst: &mut [u16],
         enc_lut: &[u16; 65536],
     ) {
-        for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+        for (src_px, dst_px) in src
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(dst.as_chunks_mut::<3>().0)
+        {
             let r = linear_srgb::default::srgb_u16_to_linear(src_px[0]);
             let g = linear_srgb::default::srgb_u16_to_linear(src_px[1]);
             let b = linear_srgb::default::srgb_u16_to_linear(src_px[2]);
@@ -1457,7 +1481,12 @@ mod hybrids {
         src: &[u16],
         dst: &mut [u16],
     ) {
-        for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+        for (src_px, dst_px) in src
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(dst.as_chunks_mut::<3>().0)
+        {
             let r = linear_srgb::default::srgb_u16_to_linear(src_px[0]);
             let g = linear_srgb::default::srgb_u16_to_linear(src_px[1]);
             let b = linear_srgb::default::srgb_u16_to_linear(src_px[2]);
@@ -1643,7 +1672,12 @@ fn convert_u8_to_f32_lin_scalar(
     dst: &mut [f32],
     lin_lut: &[f32; 256],
 ) {
-    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+    for (src_px, dst_px) in src
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<3>().0)
+    {
         let r = lin_lut[src_px[0] as usize];
         let g = lin_lut[src_px[1] as usize];
         let b = lin_lut[src_px[2] as usize];
@@ -1790,7 +1824,12 @@ fn convert_f32_lin_to_u8_scalar(
     dst: &mut [u8],
     enc_lut: &[u8; 4096],
 ) {
-    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+    for (src_px, dst_px) in src
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<3>().0)
+    {
         let (nr, ng, nb) = mat3x3(m, src_px[0], src_px[1], src_px[2]);
         dst_px[0] = enc_lut[(nr.clamp(0.0, 1.0) * 4095.0 + 0.5) as usize & 0xFFF];
         dst_px[1] = enc_lut[(ng.clamp(0.0, 1.0) * 4095.0 + 0.5) as usize & 0xFFF];
@@ -1855,7 +1894,12 @@ fn convert_u8_rgb_matlut_scalar(
     lin_lut: &[f32; 256],
     enc_u8: fn(f32) -> u8,
 ) {
-    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+    for (src_px, dst_px) in src
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<3>().0)
+    {
         let r = lin_lut[src_px[0] as usize];
         let g = lin_lut[src_px[1] as usize];
         let b = lin_lut[src_px[2] as usize];
@@ -1927,7 +1971,12 @@ fn convert_u8_rgb_fused_scalar(
     _dst_trc: TransferFunction,
     scalar_enc: fn(f32) -> f32,
 ) {
-    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+    for (src_px, dst_px) in src
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<3>().0)
+    {
         let r = lin_lut[src_px[0] as usize];
         let g = lin_lut[src_px[1] as usize];
         let b = lin_lut[src_px[2] as usize];
@@ -2039,7 +2088,12 @@ fn convert_u8_rgba_lut_simd_scalar(
     lin_lut: &[f32; 256],
     enc_u8: fn(f32) -> u8,
 ) {
-    for (src_px, dst_px) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
+    for (src_px, dst_px) in src
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<4>().0)
+    {
         let r = lin_lut[src_px[0] as usize];
         let g = lin_lut[src_px[1] as usize];
         let b = lin_lut[src_px[2] as usize];
@@ -2083,7 +2137,12 @@ pub(crate) fn convert_u8_rgba(
 ) {
     debug_assert_eq!(src.len() % 4, 0);
     debug_assert_eq!(src.len(), dst.len());
-    for (src_px, dst_px) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
+    for (src_px, dst_px) in src
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<4>().0)
+    {
         let r = linearize_fn(src_px[0] as f32 / 255.0);
         let g = linearize_fn(src_px[1] as f32 / 255.0);
         let b = linearize_fn(src_px[2] as f32 / 255.0);
@@ -2105,7 +2164,12 @@ pub(crate) fn convert_u16_rgb(
 ) {
     debug_assert_eq!(src.len() % 3, 0);
     debug_assert_eq!(src.len(), dst.len());
-    for (src_px, dst_px) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+    for (src_px, dst_px) in src
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<3>().0)
+    {
         let r = linearize_fn(src_px[0] as f32 / 65535.0);
         let g = linearize_fn(src_px[1] as f32 / 65535.0);
         let b = linearize_fn(src_px[2] as f32 / 65535.0);

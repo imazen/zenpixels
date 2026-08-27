@@ -1391,7 +1391,7 @@ mod tests {
 
     impl crate::cms::RowTransformMut for PaintRedTransform {
         fn transform_row(&mut self, _src: &[u8], dst: &mut [u8], width: u32) {
-            for px in dst.chunks_exact_mut(3).take(width as usize) {
+            for px in dst.as_chunks_mut::<3>().0.iter_mut().take(width as usize) {
                 px[0] = 255;
                 px[1] = 0;
                 px[2] = 0;
@@ -1466,7 +1466,7 @@ mod tests {
 
         impl crate::cms::RowTransform for PaintBlueShared {
             fn transform_row(&self, _src: &[u8], dst: &mut [u8], width: u32) {
-                for px in dst.chunks_exact_mut(3).take(width as usize) {
+                for px in dst.as_chunks_mut::<3>().0.iter_mut().take(width as usize) {
                     px[0] = 0;
                     px[1] = 0;
                     px[2] = 255;

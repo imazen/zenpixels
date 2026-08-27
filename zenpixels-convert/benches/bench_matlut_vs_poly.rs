@@ -45,7 +45,7 @@ fn make_row_u16(width: usize) -> Vec<u16> {
 
 #[inline]
 fn matrix_in_place_rgb_f32(buf: &mut [f32], m: &[[f32; 3]; 3]) {
-    for chunk in buf.chunks_exact_mut(3) {
+    for chunk in buf.as_chunks_mut::<3>().0 {
         let r = chunk[0];
         let g = chunk[1];
         let b = chunk[2];

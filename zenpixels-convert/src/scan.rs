@@ -117,7 +117,7 @@ fn is_opaque_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
             return false;
         }
     }
-    for px in tail.chunks_exact(4) {
+    for px in tail.as_chunks::<4>().0 {
         if px[3] != 255 {
             return false;
         }
@@ -154,7 +154,7 @@ fn is_grayscale_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
         }
         i += 32;
     }
-    for px in rgba[i..].chunks_exact(4) {
+    for px in rgba[i..].as_chunks::<4>().0 {
         if px[0] != px[1] || px[1] != px[2] {
             return false;
         }
@@ -196,7 +196,7 @@ fn is_grayscale_rgb8_impl(token: Token, rgb: &[u8]) -> bool {
         }
         i += 96;
     }
-    for px in rgb[i..].chunks_exact(3) {
+    for px in rgb[i..].as_chunks::<3>().0 {
         if px[0] != px[1] || px[1] != px[2] {
             return false;
         }
@@ -342,7 +342,7 @@ fn is_opaque_rgba16_impl(token: Token, rgba: &[u16]) -> bool {
             return false;
         }
     }
-    for px in tail.chunks_exact(4) {
+    for px in tail.as_chunks::<4>().0 {
         if px[3] != 0xFFFF {
             return false;
         }
@@ -372,7 +372,7 @@ fn is_grayscale_rgba16_impl(token: Token, rgba: &[u16]) -> bool {
         }
         i += 16;
     }
-    for px in rgba[i..].chunks_exact(4) {
+    for px in rgba[i..].as_chunks::<4>().0 {
         if px[0] != px[1] || px[1] != px[2] {
             return false;
         }
@@ -409,7 +409,7 @@ fn is_grayscale_rgb16_impl(token: Token, rgb: &[u16]) -> bool {
         }
         i += 48;
     }
-    for px in rgb[i..].chunks_exact(3) {
+    for px in rgb[i..].as_chunks::<3>().0 {
         if px[0] != px[1] || px[1] != px[2] {
             return false;
         }
@@ -448,7 +448,7 @@ fn is_opaque_ga8_impl(token: Token, ga: &[u8]) -> bool {
             return false;
         }
     }
-    for px in tail.chunks_exact(2) {
+    for px in tail.as_chunks::<2>().0 {
         if px[1] != 255 {
             return false;
         }
@@ -475,7 +475,7 @@ fn is_opaque_ga16_impl(token: Token, ga: &[u16]) -> bool {
             return false;
         }
     }
-    for px in tail.chunks_exact(2) {
+    for px in tail.as_chunks::<2>().0 {
         if px[1] != 0xFFFF {
             return false;
         }
@@ -557,7 +557,7 @@ fn is_opaque_rgba_f32_impl(token: Token, rgba: &[f32]) -> bool {
             return false;
         }
     }
-    for px in tail.chunks_exact(4) {
+    for px in tail.as_chunks::<4>().0 {
         if px[3] != 1.0 {
             return false;
         }
@@ -590,7 +590,7 @@ fn is_grayscale_rgba_f32_impl(token: Token, rgba: &[f32]) -> bool {
         }
         i += 8;
     }
-    for px in rgba[i..].chunks_exact(4) {
+    for px in rgba[i..].as_chunks::<4>().0 {
         if px[0] != px[1] || px[1] != px[2] {
             return false;
         }
@@ -627,7 +627,7 @@ fn is_grayscale_rgb_f32_impl(token: Token, rgb: &[f32]) -> bool {
         }
         i += 24;
     }
-    for px in rgb[i..].chunks_exact(3) {
+    for px in rgb[i..].as_chunks::<3>().0 {
         if px[0] != px[1] || px[1] != px[2] {
             return false;
         }
@@ -652,7 +652,7 @@ fn is_opaque_ga_f32_impl(token: Token, ga: &[f32]) -> bool {
             return false;
         }
     }
-    for px in tail.chunks_exact(2) {
+    for px in tail.as_chunks::<2>().0 {
         if px[1] != 1.0 {
             return false;
         }
@@ -895,7 +895,7 @@ fn fused_cg_impl<const A: bool, const B: bool>(token: Token, rgba: &[u8]) -> Fus
             // narrowed specialization.
             let mut next_a = A;
             let mut next_b = B;
-            for px in rgba[i..block_end].chunks_exact(4) {
+            for px in rgba[i..block_end].as_chunks::<4>().0 {
                 if A && px[3] != 255 {
                     next_a = false;
                 }
@@ -942,13 +942,19 @@ mod tests {
     use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
     fn scalar_is_opaque(rgba: &[u8]) -> bool {
-        rgba.chunks_exact(4).all(|p| p[3] == 255)
+        rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255)
     }
     fn scalar_is_grayscale_rgba8(rgba: &[u8]) -> bool {
-        rgba.chunks_exact(4).all(|p| p[0] == p[1] && p[1] == p[2])
+        rgba.as_chunks::<4>()
+            .0
+            .iter()
+            .all(|p| p[0] == p[1] && p[1] == p[2])
     }
     fn scalar_is_grayscale_rgb8(rgb: &[u8]) -> bool {
-        rgb.chunks_exact(3).all(|p| p[0] == p[1] && p[1] == p[2])
+        rgb.as_chunks::<3>()
+            .0
+            .iter()
+            .all(|p| p[0] == p[1] && p[1] == p[2])
     }
     fn scalar_bit_replication_u16(samples: &[u16]) -> bool {
         samples.iter().all(|&s| (s >> 8) == (s & 0xFF))
@@ -1449,7 +1455,7 @@ mod tests {
     fn scalar_fused(rgba: &[u8], req: super::FusedRequest) -> super::FusedResult {
         let mut o = req.check_opaque;
         let mut g = req.check_grayscale;
-        for chunk in rgba.chunks_exact(4) {
+        for chunk in rgba.as_chunks::<4>().0 {
             if o && chunk[3] != 255 {
                 o = false;
             }

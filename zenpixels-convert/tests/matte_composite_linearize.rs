@@ -144,7 +144,9 @@ fn f16_srgb_composite_matches_linear_light_reference() {
     conv.convert_row(&src_bytes, &mut dst_bytes, 1);
 
     let dst: Vec<f32> = dst_bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| half::f16::from_le_bytes([c[0], c[1]]).to_f32())
         .collect();
 

@@ -36,7 +36,7 @@ fn gray_opaque_rgba(dim: usize) -> Vec<u8> {
 /// tail loop (the exit branch keeps LLVM from auto-vectorizing it).
 fn scalar_fused_ref(rgba: &[u8]) -> (bool, bool) {
     let (mut o, mut g) = (true, true);
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0 {
         if o && px[3] != 255 {
             o = false;
         }

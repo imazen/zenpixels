@@ -439,9 +439,12 @@ mod simd {
         let (in_bulk, in_tail) = rgb_in.split_at(simd_bytes);
         let (out_bulk, out_tail) = rgb_out.split_at_mut(simd_bytes);
 
-        for (in_chunk, out_chunk) in in_bulk.chunks_exact(24).zip(out_bulk.chunks_exact_mut(24)) {
-            let in_arr: &[u8; 24] = in_chunk.try_into().expect("24 bytes");
-            let out_arr: &mut [u8; 24] = out_chunk.try_into().expect("24 bytes");
+        for (in_arr, out_arr) in in_bulk
+            .as_chunks::<24>()
+            .0
+            .iter()
+            .zip(out_bulk.as_chunks_mut::<24>().0)
+        {
             invert_8px(token, in_arr, out_arr);
         }
 

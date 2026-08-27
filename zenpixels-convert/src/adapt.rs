@@ -1068,8 +1068,8 @@ mod anchor_tests {
         for y in 0..rows as usize {
             let s = y * stride;
             strided[s..s + row].copy_from_slice(&gray_rgb_f32(&row_vals));
-            for b in strided[s + row..s + stride].chunks_exact_mut(4) {
-                b.copy_from_slice(&999.0f32.to_ne_bytes());
+            for b in strided[s + row..s + stride].as_chunks_mut::<4>().0 {
+                *b = 999.0f32.to_ne_bytes();
             }
         }
         let got = convert_buffer_with_anchor(

@@ -144,7 +144,12 @@ fn adobe_rgb_to_bt2020_pq_f32_preserves_neutral_gray() {
 
     // Gamut matrix preserves neutral gray (D65 → D65 white point match).
     // Expected: gamma22 EOTF(v), then identity on gray axis, then PQ OETF.
-    for (chunk, &sv) in dst.chunks_exact(3).zip([0.25f32, 0.5, 0.75].iter()) {
+    for (chunk, &sv) in dst
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip([0.25f32, 0.5, 0.75].iter())
+    {
         let lin = gamma22_to_linear(sv);
         let pq_expected = linear_srgb::tf::linear_to_pq(lin);
         for &d in chunk {
@@ -176,7 +181,7 @@ fn adobe_rgb_u8_to_srgb_u8_neutral_gray() {
     conv.convert_row(&src, &mut dst, 3);
 
     // Neutral gray should stay neutral (same luminance on gamut axis).
-    for px in dst.chunks_exact(3) {
+    for px in dst.as_chunks::<3>().0 {
         assert!(
             (px[0] as i32 - px[1] as i32).abs() <= 1 && (px[1] as i32 - px[2] as i32).abs() <= 1,
             "neutral gray should stay neutral: {px:?}"

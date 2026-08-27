@@ -576,14 +576,18 @@ fn to_u8_srgb_packed(pixels: &[[f64; 3]]) -> Vec<u8> {
 
 /// Unpack zenresize f32 linear output to f64 triples.
 fn from_f32_linear_packed(data: &[f32]) -> Vec<[f64; 3]> {
-    data.chunks_exact(3)
+    data.as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| [c[0] as f64, c[1] as f64, c[2] as f64])
         .collect()
 }
 
 /// Unpack zenresize u8 sRGB output to f64 linear triples.
 fn from_u8_srgb_packed(data: &[u8]) -> Vec<[f64; 3]> {
-    data.chunks_exact(3)
+    data.as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| {
             [
                 srgb_eotf(c[0] as f64 / 255.0),

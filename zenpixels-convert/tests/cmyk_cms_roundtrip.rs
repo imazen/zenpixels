@@ -182,7 +182,7 @@ fn cmyk_to_rgb_through_moxcms_8bit() {
         }
 
         let mut distinct = alloc::collections::BTreeSet::new();
-        for px in dst.chunks_exact(3) {
+        for px in dst.as_chunks::<3>().0 {
             distinct.insert((px[0], px[1], px[2]));
         }
         assert!(
@@ -285,7 +285,7 @@ fn cmyk_with_real_icc_profile() {
     }
 
     let mut distinct = alloc::collections::BTreeSet::new();
-    for px in rgb.chunks_exact(3) {
+    for px in rgb.as_chunks::<3>().0 {
         distinct.insert((px[0], px[1], px[2]));
     }
     assert!(

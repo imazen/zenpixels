@@ -1837,7 +1837,7 @@ fn multiply_color_channels_tier(token: Token, buf: &mut [f32], channels: usize, 
         *chunk = (v * mul).to_array();
     }
     if channels == 4 {
-        for px in remainder.chunks_exact_mut(4) {
+        for px in remainder.as_chunks_mut::<4>().0 {
             px[0] *= factor;
             px[1] *= factor;
             px[2] *= factor;
@@ -1957,7 +1957,7 @@ fn pq_u16_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usiz
     multiply_color_channels(&mut dstf[..count], channels, 1.0 / scale);
     if channels == 4 {
         let src16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
-        for (i, px) in dstf[..count].chunks_exact_mut(4).enumerate() {
+        for (i, px) in dstf[..count].as_chunks_mut::<4>().0.iter_mut().enumerate() {
             px[3] = f32::from(src16[i * 4 + 3]) / 65535.0;
         }
     }
@@ -1991,7 +1991,7 @@ fn linear_f32_to_pq_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usiz
         .expect("pre-validated row size");
         if channels == 4 {
             let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[off * 2..(off + n) * 2]);
-            for (k, px) in dst16.chunks_exact_mut(4).enumerate() {
+            for (k, px) in dst16.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let a = srcf[off + k * 4 + 3];
                 px[3] = (a.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
             }
@@ -2014,7 +2014,7 @@ fn pq_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usiz
     pq_eotf_slice(&mut dstf[..count]);
     multiply_color_channels(&mut dstf[..count], channels, 1.0 / scale);
     if channels == 4 {
-        for (i, px) in dstf[..count].chunks_exact_mut(4).enumerate() {
+        for (i, px) in dstf[..count].as_chunks_mut::<4>().0.iter_mut().enumerate() {
             px[3] = srcf[i * 4 + 3];
         }
     }
@@ -2033,7 +2033,7 @@ fn linear_f32_to_pq_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usiz
     multiply_color_channels(&mut dstf[..count], channels, scale);
     pq_oetf_slice(&mut dstf[..count]);
     if channels == 4 {
-        for (i, px) in dstf[..count].chunks_exact_mut(4).enumerate() {
+        for (i, px) in dstf[..count].as_chunks_mut::<4>().0.iter_mut().enumerate() {
             px[3] = srcf[i * 4 + 3];
         }
     }
@@ -2080,7 +2080,12 @@ fn hlg_u16_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usi
 
 #[autoversion]
 fn hlg_u16_to_linear_f32_inner(src: &[u16], dst: &mut [f32]) {
-    for (s, d) in src.chunks_exact(16).zip(dst.chunks_exact_mut(16)) {
+    for (s, d) in src
+        .as_chunks::<16>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<16>().0)
+    {
         for i in 0..16 {
             d[i] = linear_srgb::tf::hlg_to_linear(s[i] as f32 / 65535.0);
         }
@@ -2104,7 +2109,12 @@ fn linear_f32_to_hlg_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usi
 
 #[autoversion]
 fn linear_f32_to_hlg_u16_inner(src: &[f32], dst: &mut [u16]) {
-    for (s, d) in src.chunks_exact(16).zip(dst.chunks_exact_mut(16)) {
+    for (s, d) in src
+        .as_chunks::<16>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<16>().0)
+    {
         for i in 0..16 {
             let encoded = linear_srgb::tf::linear_to_hlg(s[i]);
             d[i] = (encoded.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
@@ -2192,7 +2202,12 @@ fn bt709_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, channels: u
 
 #[autoversion]
 fn bt709_f32_to_linear_f32_inner(src: &[f32], dst: &mut [f32]) {
-    for (s, d) in src.chunks_exact(16).zip(dst.chunks_exact_mut(16)) {
+    for (s, d) in src
+        .as_chunks::<16>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<16>().0)
+    {
         for i in 0..16 {
             d[i] = linear_srgb::tf::bt709_to_linear(s[i]);
         }
@@ -2216,7 +2231,12 @@ fn linear_f32_to_bt709_f32(src: &[u8], dst: &mut [u8], width: usize, channels: u
 
 #[autoversion]
 fn linear_f32_to_bt709_f32_inner(src: &[f32], dst: &mut [f32]) {
-    for (s, d) in src.chunks_exact(16).zip(dst.chunks_exact_mut(16)) {
+    for (s, d) in src
+        .as_chunks::<16>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<16>().0)
+    {
         for i in 0..16 {
             d[i] = linear_srgb::tf::linear_to_bt709(s[i]);
         }
@@ -2755,7 +2775,12 @@ fn linear_rgb_to_oklab_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: 
 #[autoversion]
 fn rgb_to_oklab_3ch_inner(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
     // 16 pixels × 3 channels = 48 f32s = 192 bytes
-    for (s, d) in src.chunks_exact(48).zip(dst.chunks_exact_mut(48)) {
+    for (s, d) in src
+        .as_chunks::<48>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<48>().0)
+    {
         for p in 0..16 {
             let i = p * 3;
             let [l, a, b] = rgb_to_oklab(s[i], s[i + 1], s[i + 2], m1);
@@ -2790,7 +2815,12 @@ fn oklab_to_linear_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: 
 /// 3-channel Oklab→RGB inner loop (16 pixels = 48 f32s per chunk).
 #[autoversion]
 fn oklab_to_rgb_3ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) {
-    for (s, d) in src.chunks_exact(48).zip(dst.chunks_exact_mut(48)) {
+    for (s, d) in src
+        .as_chunks::<48>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<48>().0)
+    {
         for p in 0..16 {
             let i = p * 3;
             let [r, g, b] = oklab_to_rgb(s[i], s[i + 1], s[i + 2], m1_inv);
@@ -2825,7 +2855,12 @@ fn linear_rgba_to_oklaba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries
 /// 4-channel RGBA→Oklaba inner loop (16 pixels = 64 f32s per chunk).
 #[autoversion]
 fn rgb_to_oklab_4ch_inner(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
-    for (s, d) in src.chunks_exact(64).zip(dst.chunks_exact_mut(64)) {
+    for (s, d) in src
+        .as_chunks::<64>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<64>().0)
+    {
         for p in 0..16 {
             let i = p * 4;
             let [l, a, b] = rgb_to_oklab(s[i], s[i + 1], s[i + 2], m1);
@@ -2862,7 +2897,12 @@ fn oklaba_to_linear_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries
 /// 4-channel Oklaba→RGBA inner loop (16 pixels = 64 f32s per chunk).
 #[autoversion]
 fn oklab_to_rgb_4ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) {
-    for (s, d) in src.chunks_exact(64).zip(dst.chunks_exact_mut(64)) {
+    for (s, d) in src
+        .as_chunks::<64>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<64>().0)
+    {
         for p in 0..16 {
             let i = p * 4;
             let [r, g, b] = oklab_to_rgb(s[i], s[i + 1], s[i + 2], m1_inv);
