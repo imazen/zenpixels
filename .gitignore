@@ -61,3 +61,6 @@ Cargo.toml.original.txt
 fuzz-*.log
 
 .workongoing
+
+# colocated jj state dir
+.jj/
