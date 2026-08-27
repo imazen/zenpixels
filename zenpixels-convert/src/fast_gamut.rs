@@ -319,7 +319,11 @@ pub(crate) fn convert_linear_rgba_scalar(m: &[[f32; 3]; 3], data: &mut [f32]) {
 /// aarch64. No reassociation, so no rounding difference.
 #[cfg(target_arch = "aarch64")]
 #[archmage::arcane]
-pub(crate) fn convert_linear_rgba_neon(_token: archmage::NeonToken, m: &[[f32; 3]; 3], data: &mut [f32]) {
+pub(crate) fn convert_linear_rgba_neon(
+    _token: archmage::NeonToken,
+    m: &[[f32; 3]; 3],
+    data: &mut [f32],
+) {
     let full = data.len() / 16 * 16;
     let (body, tail) = data.split_at_mut(full);
     let c = |i: usize, j: usize| vdupq_n_f32(m[i][j]);
@@ -2429,12 +2433,26 @@ mod linear_gamut_neon_gate {
                 [-0.0282895, 1.0099416, 0.0210077],
                 [0.0122982, -0.0204830, 1.3299098],
             ],
-            [[1e-30, -1e-30, 1e30], [1e30, 1e-30, -1e-30], [-1.0, 1.0, 0.0]],
+            [
+                [1e-30, -1e-30, 1e30],
+                [1e30, 1e-30, -1e-30],
+                [-1.0, 1.0, 0.0],
+            ],
             [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [-1.0, -1.0, -1.0]],
         ];
         let specials = [
-            0.0f32, -0.0, 1.0, -1.0, f32::MIN_POSITIVE, f32::MIN_POSITIVE / 4.0,
-            f32::MAX, f32::INFINITY, f32::NEG_INFINITY, f32::NAN, 0.5, 65504.0,
+            0.0f32,
+            -0.0,
+            1.0,
+            -1.0,
+            f32::MIN_POSITIVE,
+            f32::MIN_POSITIVE / 4.0,
+            f32::MAX,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+            0.5,
+            65504.0,
         ];
         let mut s = 0x2545_F491u32;
         let mut cases = 0usize;

@@ -479,9 +479,9 @@ pub mod __bench_u16_hybrids {
 #[cfg(feature = "__bench_scan")]
 #[doc(hidden)]
 pub mod __bench_scan {
-    pub use crate::scan::{FusedRequest, FusedResult, fused_predicates_rgba8_cg};
     /// The identity-TRC gamut path — no dispatch today, hence measured.
     pub use crate::fast_gamut::{convert_linear_rgb, convert_linear_rgba};
+    pub use crate::scan::{FusedRequest, FusedResult, fused_predicates_rgba8_cg};
 }
 pub mod gamut;
 pub mod hdr;

@@ -88,10 +88,38 @@ fn bench_scan(suite: &mut Suite) {
     });
 
     let cases: &[(&str, &[u8], FusedRequest)] = &[
-        ("opaque_only/all_true", opaque, FusedRequest { check_opaque: true, check_grayscale: false }),
-        ("grayscale_only/all_true", gray, FusedRequest { check_opaque: false, check_grayscale: true }),
-        ("both/all_true", gray, FusedRequest { check_opaque: true, check_grayscale: true }),
-        ("both/fails_first_pixel", early, FusedRequest { check_opaque: true, check_grayscale: true }),
+        (
+            "opaque_only/all_true",
+            opaque,
+            FusedRequest {
+                check_opaque: true,
+                check_grayscale: false,
+            },
+        ),
+        (
+            "grayscale_only/all_true",
+            gray,
+            FusedRequest {
+                check_opaque: false,
+                check_grayscale: true,
+            },
+        ),
+        (
+            "both/all_true",
+            gray,
+            FusedRequest {
+                check_opaque: true,
+                check_grayscale: true,
+            },
+        ),
+        (
+            "both/fails_first_pixel",
+            early,
+            FusedRequest {
+                check_opaque: true,
+                check_grayscale: true,
+            },
+        ),
     ];
 
     for &(name, data, req) in cases {
@@ -110,7 +138,6 @@ fn bench_scan(suite: &mut Suite) {
 
     set_simd(true);
 }
-
 
 /// `convert_linear_rgba` — the identity-TRC gamut path: a 3x3 matrix per pixel,
 /// in place, on f32 RGBA.
