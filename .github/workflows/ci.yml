@@ -60,6 +60,14 @@ jobs:
       - name: Test (zenpixels-convert HDR measurement, hdr-experimental)
         run: cargo test -p zenpixels-convert --features hdr-experimental
 
+      # Downstream consumers ship `default-features = false, features = ["rgb"]`
+      # (no `icc-db`, no `std`). Run the whole suite in that exact configuration
+      # so the no-db gray-collapse suppress path and the feature-gated test
+      # helpers stay green — the feature-powerset job below only `check`s
+      # (imazen/zenpixels#40).
+      - name: Test (zenpixels-convert no-default-features + rgb)
+        run: cargo test -p zenpixels-convert --no-default-features --features rgb
+
       # The `avx512` feature routes the f16 slice path and the AVX-512 SIMD
       # tiers through magetypes/archmage's w512 kernels. Dispatch is at
       # runtime, so this compiles and runs on any x86-64 host (it just takes

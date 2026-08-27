@@ -140,6 +140,14 @@ moxcms = { version = ">=0.8.1, <0.10", optional = true, features = ["options"] }
 
 [dev-dependencies]
 zenpixels = { workspace = true, features = ["planar", "imgref"] }
+# Self dev-dependency: these features unify into every test/bench build of
+# this crate, so plain `cargo test -p zenpixels-convert` (default features)
+# already compiles the lib WITH `cms-moxcms` and runs the `#[cfg(feature =
+# "cms-moxcms")]` unit tests — including the byte-identical gray-ICC gate
+# `icc_profiles::cicp_bundle::tests::gray_blob_decodes_byte_identical_to_moxcms`
+# (verified: it appears in `cargo test --lib -- --list` under default
+# features, imazen/zenpixels#40). Dropping `cms-moxcms` here would silently
+# remove those gates from CI.
 zenpixels-convert = { path = ".", features = ["pipeline", "imgref", "cms-moxcms"] }
 zenbench = { version = "0.1.2"}
 # DEV-only: lets benches/kernel_tiers.rs disable the baseline SIMD token (NEON

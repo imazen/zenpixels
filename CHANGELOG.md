@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Workspace — CI
+
+- CI now runs `cargo test -p zenpixels-convert --no-default-features --features rgb`
+  — the exact configuration downstream no-`icc-db` consumers ship — so the
+  no-db gray-collapse suppress path and the feature-gated test helpers stay
+  green (the powerset job only `check`s). The other half of #40 was already
+  true: the self dev-dependency's `cms-moxcms` feature unifies into default
+  `cargo test` builds, so `gray_blob_decodes_byte_identical_to_moxcms` runs
+  in the existing workspace test step (now documented on the dev-dependency).
+  Fixes #40.
+
 ### zenpixels-convert — changed
 
 - `PixelBufferHdrConvertExt::convert_to_sdr` no longer materializes a full
