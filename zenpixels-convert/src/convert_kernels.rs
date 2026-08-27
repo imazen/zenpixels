@@ -1718,11 +1718,34 @@ fn naive_f32_to_u8(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
         .expect("pre-validated row size");
 }
 
-/// u16 → u8: (v * 255 + 32768) >> 16.
+/// u16 → u8, correctly rounded: `round(v / 257)` (65535 = 255 · 257, so
+/// `v * 255 / 65535 == v / 257` exactly; 257 is odd, so no input ever sits
+/// on an exact .5 tie and `(v + 128) / 257` is the unique nearest u8).
+///
+/// Byte-lane form: with `v = 256·hi + lo = 257·hi + (lo − hi)`,
+/// `round(v / 257) = hi + [lo − hi ≥ 129] − [hi − lo ≥ 129]` (the
+/// correction term is in `(−1, 1)` and rounds away from zero exactly when
+/// `|lo − hi| ≥ 129`). Two saturating subs + two compares + two adds, all
+/// in 8-bit lanes — LLVM auto-vectorises it 16 lanes wide; pinned
+/// exhaustively against `(v + 128) / 257` by
+/// `tests/ulp_exhaustive.rs::ulp_u16_to_u8_max_error`.
+///
+/// Deliberately local rather than `garb::bytes::convert_u16_to_u8`: garb's
+/// `(v * 255 + 32768) >> 16` divides by 65536, which floors 127 of the 65536
+/// inputs by 1 LSB (e.g. `33025 → 128`, exact `129`) and made this step
+/// disagree with the f32 route (`U16ToF32` → `NaiveF32ToU8`, `v * 255 + 0.5`).
+/// Two routes for one operation must be byte-identical — imazen/zenpixels#72.
+/// Measured 4.5× faster than garb's kernel as well (`benches/bench_u16_narrow.rs`,
+/// `benchmarks/u16_narrow_2026-08-27.txt`).
 fn u16_to_u8(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
-    garb::bytes::convert_u16_to_u8(&src[..count * 2], &mut dst[..count])
-        .expect("pre-validated row size");
+    let (pairs, _) = src[..count * 2].as_chunks::<2>();
+    for (s, d) in pairs.iter().zip(dst[..count].iter_mut()) {
+        let [lo, hi] = u16::from_ne_bytes(*s).to_le_bytes();
+        let up = u8::from(lo.saturating_sub(hi) > 128);
+        let down = u8::from(hi.saturating_sub(lo) > 128);
+        *d = hi.wrapping_add(up).wrapping_sub(down);
+    }
 }
 
 /// u8 → u16: v * 257.

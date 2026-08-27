@@ -153,7 +153,6 @@ palette = { version = "0.7", default-features = false, features = ["std", "appro
 # Dev-only: pin the committed CICP bundle blob's sha256 (golden test) so an
 # accidental regen is caught. Not part of the shipped crate.
 sha2 = "0.11.0"
-
 # Parity gate between the deprecated `zenpixels::ContentLightLevel::measure`
 # and its replacement `CllMeasure::measure_max`. The trait is behind
 # `hdr-experimental`, so the target opts in explicitly; CI runs it via the
@@ -240,6 +239,13 @@ name = "bench_u16_hybrids"
 path = "benches/bench_u16_hybrids.rs"
 harness = false
 required-features = ["__bench_u16_hybrids"]
+
+# u16→u8 narrowing kernel shootout (#72): garb's inexact kernel vs the
+# exact local candidates, every arm exhaustively cross-checked first.
+[[bench]]
+name = "bench_u16_narrow"
+path = "benches/bench_u16_narrow.rs"
+harness = false
 
 [[bench]]
 name = "bench_orient"

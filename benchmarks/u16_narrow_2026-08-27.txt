@@ -1,0 +1,23 @@
+# zenbench results (complete)
+# git: 3dbf24634fbd854e01d52f524ef87bac85e5507b
+# 2026-08-27T09:57:28Z
+#
+# Re-read this file instead of re-running the benchmark.
+# Formats:  cargo bench -- --format=llm|csv|md|json
+# Env var:  ZENBENCH_FORMAT=llm cargo bench
+# Disable:  ZENBENCH_NO_SAVE=1 cargo bench
+#
+# Fields: group | benchmark | vs_base comparison | min mean median mad | throughput | n cv rounds calls
+#
+group="u16→u8   256px" benchmark="garb (inexact)"  |  vs_base=baseline  |  min=136.2ns mean=259.0ns median=259.5ns mad=33.5ns  |  throughput=8.29 GiB/s  |  n=30 cv=15.8% rounds=30 calls=12658 mean_ci=[244.2ns 272.5ns] cold=458.0ns
+group="u16→u8   256px" benchmark="shift u32"  |  vs_base_pct=-29.13 ci=[-31.53% -26.78%] significant=true effect=-2.10 p=0.0000  |  min=91.1ns mean=183.5ns median=185.3ns mad=22.1ns  |  throughput=11.69 GiB/s  |  n=30 cv=16.5% rounds=30 calls=12658 mean_ci=[172.4ns 193.5ns] cold=83.0ns
+group="u16→u8   256px" benchmark="byte lanes"  |  vs_base_pct=-78.49 ci=[-81.85% -75.27%] significant=true effect=-10.41 p=0.0000  |  min=28.8ns mean=55.7ns median=56.8ns mad=7.7ns  |  throughput=38.54 GiB/s  |  n=30 cv=15.4% rounds=30 calls=12658 mean_ci=[52.4ns 58.5ns] cold=166.0ns
+group="u16→u8   256px" benchmark=shipped  |  vs_base_pct=-73.37 ci=[-76.52% -70.29%] significant=true effect=-9.32 p=0.0000  |  min=31.7ns mean=68.6ns median=71.8ns mad=11.0ns  |  throughput=31.28 GiB/s  |  n=30 cv=20.0% rounds=30 calls=12658 mean_ci=[63.5ns 73.2ns] cold=333.0ns
+group="u16→u8  4096px" benchmark="garb (inexact)"  |  vs_base=baseline  |  min=2.19µs mean=4.14µs median=4.09µs mad=482.9ns  |  throughput=8.29 GiB/s  |  n=50 cv=18.0% rounds=50 calls=873 mean_ci=[3.94µs 4.35µs] cold=2.17µs
+group="u16→u8  4096px" benchmark="shift u32"  |  vs_base_pct=-28.28 ci=[-30.87% -25.78%] significant=true effect=-1.81 p=0.0000  |  min=1.47µs mean=2.96µs median=2.94µs mad=441.4ns  |  throughput=11.59 GiB/s  |  n=50 cv=20.2% rounds=50 calls=873 mean_ci=[2.80µs 3.12µs] cold=1.33µs
+group="u16→u8  4096px" benchmark="byte lanes"  |  vs_base_pct=-77.88 ci=[-81.28% -74.65%] significant=true effect=-7.83 p=0.0000  |  min=469.8ns mean=902.8ns median=908.4ns mad=124.4ns  |  throughput=38.03 GiB/s  |  n=50 cv=17.4% rounds=50 calls=873 mean_ci=[858.5ns 945.0ns] cold=500.0ns
+group="u16→u8  4096px" benchmark=shipped  |  vs_base_pct=-77.13 ci=[-79.95% -74.25%] significant=true effect=-8.61 p=0.0000  |  min=474.3ns mean=930.7ns median=926.1ns mad=150.0ns  |  throughput=36.89 GiB/s  |  n=50 cv=18.8% rounds=50 calls=873 mean_ci=[882.1ns 978.2ns] cold=375.0ns
+group="u16→u8 1080p  " benchmark="garb (inexact)"  |  vs_base=baseline  |  min=1.04ms mean=1.22ms median=1.21ms mad=71.81µs  |  throughput=14.26 GiB/s  |  n=40 cv=7.5% rounds=40 calls=8 mean_ci=[1.19ms 1.25ms] cold=864.08µs
+group="u16→u8 1080p  " benchmark="shift u32"  |  vs_base_pct=-32.53 ci=[-35.73% -29.28%] significant=true effect=-4.37 p=0.0000  |  min=642.31µs mean=822.07µs median=810.71µs mad=101.09µs  |  throughput=21.14 GiB/s  |  n=40 cv=10.9% rounds=40 calls=8 mean_ci=[795.45µs 850.11µs] cold=581.88µs
+group="u16→u8 1080p  " benchmark="byte lanes"  |  vs_base_pct=-78.31 ci=[-80.45% -76.17%] significant=true effect=-15.29 p=0.0000  |  min=217.07µs mean=263.23µs median=261.43µs mad=27.64µs  |  throughput=66.03 GiB/s  |  n=40 cv=9.9% rounds=40 calls=8 mean_ci=[255.14µs 271.12µs] cold=197.96µs
+group="u16→u8 1080p  " benchmark=shipped  |  vs_base_pct=-78.28 ci=[-80.52% -76.06%] significant=true effect=-15.27 p=0.0000  |  min=226.55µs mean=263.01µs median=253.51µs mad=22.31µs  |  throughput=66.09 GiB/s  |  n=40 cv=10.0% rounds=40 calls=8 mean_ci=[255.22µs 271.25µs] cold=205.12µs

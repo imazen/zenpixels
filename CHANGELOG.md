@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### zenpixels-convert — fixed
+
+- `U16ToU8` narrowing is now correctly rounded (`round(v / 257)`, i.e.
+  `(v + 128) / 257`) instead of garb's `(v * 255 + 32768) >> 16`, which
+  divides by 65536 and floored 127 of the 65536 inputs by 1 LSB (e.g.
+  `33025 → 128`, exact `129`). The integer step and the f32 route
+  (`v * 255 + 0.5`) now agree byte-for-byte on every input, so any
+  conversion the planner reroutes between them is output-identical.
+  Exhaustive gate: `tests/ulp_exhaustive.rs::ulp_u16_to_u8_integer_and_f32_routes_agree`.
+  The replacement is a byte-lane formulation (`hi + [lo−hi ≥ 129] − [hi−lo ≥ 129]`)
+  that auto-vectorises 16 lanes wide: measured 4.5× faster than the garb
+  kernel it replaces (Apple M4 Pro, `benches/bench_u16_narrow.rs`,
+  `benchmarks/u16_narrow_2026-08-27.{txt,meta}`). Fixes #72.
+
 ## [0.2.16] - 2026-07-24
 
 Publishes `zenpixels` 0.2.16 and `zenpixels-convert` 0.2.16 — the first
