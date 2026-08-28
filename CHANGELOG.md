@@ -24,7 +24,9 @@
   `allocation-counter` crate + parity with the materialize-then-measure
   sequence it replaced). Partial for #69 — the consuming/borrowing
   `finalize_for_output_with` / `EncodeReady` design is a public-API addition
-  and stays open.
+  and stays open; `finalize_for_output_with` now documents (in a new
+  *Allocation* section) that its result always owns one full output buffer,
+  no-conversion path included, so callers can budget for it.
 
 ### zenpixels-convert — fixed
 

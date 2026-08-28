@@ -180,6 +180,10 @@ pub struct OutputMetadata {
 ///
 /// Use [`into_parts()`](Self::into_parts) to destructure if needed, but
 /// the default path keeps them coupled.
+///
+/// The pixels are always owned (one full output buffer per call, even when
+/// no conversion was needed); see the *Allocation* section on
+/// [`finalize_for_output_with`].
 #[non_exhaustive]
 pub struct EncodeReady {
     pixels: PixelBuffer,
@@ -405,6 +409,18 @@ fn build_cms_transform<C: ColorManagement>(
 /// Pass `cms = Some(&MoxCms)` (or another `PluggableCms`) for full ICC
 /// support; pass `None` for named-profile-only builds that avoid pulling
 /// in a full CMS dependency.
+///
+/// # Allocation
+///
+/// The returned [`EncodeReady`] always owns its pixels, so this call
+/// allocates exactly one output buffer of `width × height` in
+/// `pixel_format` — including on the no-conversion path (source and target
+/// agree on format, transfer, primaries, and signal range), where the source
+/// rows are copied into it unchanged. The signature (`&PixelBuffer` in,
+/// owned out) makes that copy structural rather than avoidable; a
+/// by-value/borrowing sibling is tracked in imazen/zenpixels#69. No other
+/// per-image allocation occurs: the conversion path's scratch is per-row and
+/// lives inside [`RowConverter`](crate::RowConverter).
 ///
 /// # Errors
 ///
