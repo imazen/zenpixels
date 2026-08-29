@@ -577,3 +577,71 @@ fn linearize_rgba8_buffer_carries_alpha() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Chunk-boundary coverage for the one kernel that processes a row in pieces
+// ---------------------------------------------------------------------------
+
+/// `linear_f32_to_pq_u16` is the only transfer kernel that walks the row in
+/// fixed `CHUNK = 1024`-lane pieces (the u16 output is half-width, so it
+/// cannot host the in-place f32 transform). Its alpha restore is therefore
+/// **chunk-relative** — it slices `srcf[off..off + n]` against a `dst16` that
+/// starts at the same pixel — which is the one place an off-by-`off` would
+/// hide.
+///
+/// Every other case in this file is 7 pixels wide and so never reaches the
+/// second iteration of that loop. These widths do: 1024 lanes is 256 RGBA
+/// pixels and 512 GrayAlpha pixels, so 300 and 600 both cross exactly one
+/// boundary, and neither is a multiple of the vector width.
+#[test]
+fn pq_u16_alpha_survives_across_the_chunk_boundary() {
+    for (layout_channels, width) in [(4usize, 300usize), (2, 600)] {
+        // Alpha ramps with the pixel index so a chunk-relative slip shows up
+        // as a shifted value, not just a wrong constant.
+        let alpha_at = |i: usize| ((i * 7 + 3) % 251 + 1) as f32 / 255.0;
+        let mut v: Vec<f32> = Vec::with_capacity(width * layout_channels);
+        for i in 0..width {
+            for c in 0..layout_channels {
+                v.push(if c == layout_channels - 1 {
+                    alpha_at(i)
+                } else {
+                    (i % 97) as f32 / 96.0
+                });
+            }
+        }
+        let src: Vec<u8> = bytemuck::cast_slice(&v).to_vec();
+
+        let desc = |ct, tf| {
+            PixelDescriptor::new(
+                ct,
+                if layout_channels == 4 {
+                    ChannelLayout::Rgba
+                } else {
+                    ChannelLayout::GrayAlpha
+                },
+                Some(AlphaMode::Straight),
+                tf,
+            )
+        };
+
+        let mut conv = RowConverter::new_explicit(
+            desc(ChannelType::F32, TransferFunction::Linear),
+            desc(ChannelType::U16, TransferFunction::Pq),
+            &ConvertOptions::permissive(),
+        )
+        .unwrap();
+        let mut dst = vec![0u8; width * layout_channels * 2];
+        conv.convert_row(&src, &mut dst, width as u32);
+
+        let codes: &[u16] = bytemuck::cast_slice(&dst);
+        for i in 0..width {
+            let want = (alpha_at(i).clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
+            assert_eq!(
+                codes[i * layout_channels + layout_channels - 1],
+                want,
+                "{layout_channels}ch width {width}, pixel {i} (chunk {}): alpha code changed",
+                i * layout_channels / 1024
+            );
+        }
+    }
+}
