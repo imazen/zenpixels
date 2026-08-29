@@ -70,9 +70,12 @@
   error compounded on the blend path: with `ConvertIntent::Blend`
   `negotiate::ideal_format` asks for premultiplied, so the plan became
   `[SrgbU8ToLinearF32, StraightToPremul]` and the colour channels were then
-  multiplied by the corrupted alpha (~2.3× error in premultiplied colour on
-  top of a wrong stored alpha). `ConvertIntent::LinearLight` — resize and
-  blur — took the same path. Fixed in all 14 affected kernels: sRGB
+  multiplied by the corrupted alpha, on top of a wrong stored alpha. The
+  premultiplied colour came out too dark by `(a/255) / srgb_to_linear(a/255)`,
+  which is 2.3× at alpha 128 but grows as alpha falls — 4.9× at alpha 64,
+  12.9× at alpha 1 — so the worst error lands exactly on the soft edges and
+  antialiased content that carry low alpha. `ConvertIntent::LinearLight` —
+  resize and blur — took the same path. Fixed in all 14 affected kernels: sRGB
   (`u8↔linear f32`, `f32↔linear f32`, and both extended-range variants),
   BT.709, Gamma 2.2 (Adobe RGB), and HLG (`u16↔linear f32` and
   `f32↔linear f32`). Alpha is now carried linearly across the depth change
