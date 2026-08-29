@@ -1221,8 +1221,20 @@ impl ConvertPlan {
         // `MatteComposite`.
         //
         // We deliberately do NOT wrap with `SrgbF32ToLinearF32` /
-        // `LinearF32ToSrgbF32` to handle non-linear data: those steps
-        // linearize alpha too, which breaks the blend math.
+        // `LinearF32ToSrgbF32` to handle non-linear data. Historically the
+        // stated reason was that those steps linearized alpha too; they no
+        // longer do (every transfer kernel now restores the alpha lane —
+        // see the alpha-peel section in `convert_kernels.rs`). The wrapping
+        // is still the wrong shape, for reasons that outlive that bug:
+        //
+        //  * Those steps are **F32-only**, while `matte_composite` blends
+        //    u8 / u16 / f16 / f32 natively (`dispatch_matte_*`). Wrapping
+        //    would force a u8 → f32 → u8 depth round trip onto the common
+        //    8-bit case for no gain.
+        //  * The kernel already fuses EOTF → blend → OETF per pixel in one
+        //    pass; wrapping turns that into three full row passes.
+        //  * `MatteComposite` also drops the alpha channel (RGBA → RGB) in
+        //    the same pass, which a pair of same-layout TF steps cannot do.
         if drops_alpha && let AlphaPolicy::CompositeOnto { r, g, b } = options.alpha_policy {
             let src_is_premul = from.alpha() == Some(AlphaMode::Premultiplied);
             let mut idx = 0;

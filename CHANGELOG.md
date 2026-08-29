@@ -39,6 +39,45 @@
 
 ### zenpixels-convert — fixed
 
+- **Transfer functions no longer transform the alpha channel.** Every SDR
+  transfer kernel computed `count = width * channels` and handed that flat
+  span to a channel-agnostic EOTF/OETF, so on RGBA the alpha lane was pushed
+  through the curve along with colour. `PixelBuffer::linearize()` on an
+  `RGBA8_SRGB` buffer turned alpha 128 into 0.2158 instead of 0.502, and the
+  error compounded on the blend path: with `ConvertIntent::Blend`
+  `negotiate::ideal_format` asks for premultiplied, so the plan became
+  `[SrgbU8ToLinearF32, StraightToPremul]` and the colour channels were then
+  multiplied by the corrupted alpha (~2.3× error in premultiplied colour on
+  top of a wrong stored alpha). `ConvertIntent::LinearLight` — resize and
+  blur — took the same path. Fixed in all 14 affected kernels: sRGB
+  (`u8↔linear f32`, `f32↔linear f32`, and both extended-range variants),
+  BT.709, Gamma 2.2 (Adobe RGB), and HLG (`u16↔linear f32` and
+  `f32↔linear f32`). Alpha is now carried linearly across the depth change
+  (`v/255`, `v/65535`, `clamp(v)*255 + 0.5`, `clamp(v)*65535 + 0.5`) — the
+  same scale factors the TF-free `garb` depth kernels use, so an alpha lane
+  lands on exactly the byte a naive conversion would have produced. The four
+  PQ kernels already restored alpha and are unchanged in behaviour for every
+  layout the planner can reach; they now share the one helper. Gate:
+  `tests/transfer_alpha.rs` covers **every** transfer kernel, asserting the
+  dispatched kernel by name under `__trace_ops`, at a width that is not a
+  multiple of the vector width (7 px = 28 RGBA lanes, so the SIMD body and
+  its scalar tail are both exercised) and with partially-transparent alpha
+  (0 and 255 are fixed points of every TF and witness nothing — which is why
+  the pre-existing `*_opaque_alpha_preserved` tests passed throughout).
+- The alpha-lane predicate is `ChannelLayout::has_alpha()`, not the PQ
+  kernels' former `channels == 4`. That test was imprecise in both
+  directions: `GrayAlpha` carries alpha at index 1 of 2 (so it was missed
+  entirely), and `Cmyk` is four channels with *no* alpha (so its K lane
+  would be wrongly skipped). Only the `GrayAlpha` half is reachable today —
+  CMYK is a non-native colour model and `requires_cms` diverts it to the CMS
+  path before the built-in planner runs — so the CMYK half is defensive.
+- Two tests named for this property asserted nothing about it and are now
+  real gates: `tests/transfer.rs::srgb_rgba_to_linear_preserves_alpha_semantics`
+  (whose trailing comment had rationalised the bug as "technically correct
+  for the raw conversion") and `ext.rs::linearize_preserves_alpha` (which
+  checked only that the descriptor still had an alpha channel, never the
+  alpha values).
+
 - `U16ToU8` narrowing is now correctly rounded (`round(v / 257)`, i.e.
   `(v + 128) / 257`) instead of garb's `(v * 255 + 32768) >> 16`, which
   divides by 65536 and floored 127 of the 65536 inputs by 1 LSB (e.g.

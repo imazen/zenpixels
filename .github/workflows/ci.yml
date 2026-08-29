@@ -60,6 +60,13 @@ jobs:
       - name: Test (zenpixels-convert plan validation, with __trace_ops)
         run: cargo test -p zenpixels-convert --features __trace_ops --test plan_validation
 
+      # The alpha-vs-transfer gate runs under plain `cargo test` too, but only
+      # with __trace_ops does it assert *which* kernel each case dispatched —
+      # that is what makes "every SDR transfer kernel is covered" a checked
+      # claim rather than a comment.
+      - name: Test (zenpixels-convert transfer alpha, with __trace_ops)
+        run: cargo test -p zenpixels-convert --features __trace_ops --test transfer_alpha
+
       # The CllMeasure surface (and its test targets, including the
       # deprecated-measure parity gate) is behind the hdr-experimental
       # feature — run it explicitly so those suites execute in CI.

@@ -843,7 +843,8 @@ mod tests {
 
     #[test]
     fn linearize_preserves_alpha() {
-        let data = vec![100u8, 150, 200, 128, 50, 100, 150, 64];
+        let alphas = [128u8, 64];
+        let data = vec![100u8, 150, 200, alphas[0], 50, 100, 150, alphas[1]];
         let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGBA8_SRGB).unwrap();
         let lin = buf.linearize().unwrap();
         assert_eq!(
@@ -851,6 +852,22 @@ mod tests {
             zenpixels::descriptor::ChannelLayout::Rgba
         );
         assert!(lin.descriptor().alpha().is_some());
+
+        // The alpha *values* must survive too, not just the descriptor:
+        // alpha is coverage, not light, so it is rescaled (a / 255) and
+        // never pushed through the sRGB EOTF (which would turn 128 into
+        // ~0.2158 instead of ~0.502).
+        let slice = lin.as_slice();
+        let row: &[f32] = bytemuck::cast_slice(slice.row(0));
+        for (i, &a) in alphas.iter().enumerate() {
+            let want = f32::from(a) / 255.0;
+            assert_eq!(
+                row[i * 4 + 3].to_bits(),
+                want.to_bits(),
+                "pixel {i}: alpha must be carried linearly, got {} want {want}",
+                row[i * 4 + 3]
+            );
+        }
     }
 
     #[test]
