@@ -299,6 +299,31 @@ fn linear_f32_to_hlg_u16_carries_alpha() {
     }
 }
 
+/// GrayAlpha through the **PQ** kernels — the one layout whose alpha the PQ
+/// kernels used to get wrong.
+///
+/// They restored alpha under `if channels == 4`, which is true of RGBA/BGRA
+/// but not of GrayAlpha (2 channels, alpha at index 1), so GrayAlpha alpha was
+/// PQ-transferred like every other SDR kernel's. The planner reaches this:
+/// `f32_tf_pair_steps` picks the step from the transfer function alone and
+/// never consults the layout, so `GrayAlphaF32 PQ -> GrayAlphaF32 Linear`
+/// dispatches `PqF32ToLinearF32` with `channels == 2`.
+#[test]
+fn gray_alpha_pq_carries_alpha() {
+    let color = |i: usize| f32::from(COLOR_U8[i]) / 255.0;
+    let src = src_gray_alpha_f32(color);
+    let dst = run_row(
+        gray_alpha(ChannelType::F32, TransferFunction::Pq),
+        gray_alpha(ChannelType::F32, TransferFunction::Linear),
+        &ConvertOptions::permissive(),
+        &src,
+        WIDTH * 2 * 4,
+        "PqF32ToLinearF32",
+    );
+    assert_alpha_f32(&dst, 2, 1, |i| f32::from(ALPHA_U8[i]) / 255.0);
+    assert_color_changed_f32(&dst, 2, color);
+}
+
 #[test]
 fn pq_u16_round_trip_still_carries_alpha() {
     let mut v: Vec<u16> = Vec::with_capacity(WIDTH * 4);

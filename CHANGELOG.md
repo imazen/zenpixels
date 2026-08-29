@@ -56,21 +56,27 @@
   (`v/255`, `v/65535`, `clamp(v)*255 + 0.5`, `clamp(v)*65535 + 0.5`) — the
   same scale factors the TF-free `garb` depth kernels use, so an alpha lane
   lands on exactly the byte a naive conversion would have produced. The four
-  PQ kernels already restored alpha and are unchanged in behaviour for every
-  layout the planner can reach; they now share the one helper. Gate:
+  PQ kernels already restored alpha for RGBA/BGRA and are unchanged there;
+  they now share the one helper, which also fixes them for `GrayAlpha` (see
+  the next entry). Gate:
   `tests/transfer_alpha.rs` covers **every** transfer kernel, asserting the
   dispatched kernel by name under `__trace_ops`, at a width that is not a
   multiple of the vector width (7 px = 28 RGBA lanes, so the SIMD body and
   its scalar tail are both exercised) and with partially-transparent alpha
   (0 and 255 are fixed points of every TF and witness nothing — which is why
   the pre-existing `*_opaque_alpha_preserved` tests passed throughout).
-- The alpha-lane predicate is `ChannelLayout::has_alpha()`, not the PQ
-  kernels' former `channels == 4`. That test was imprecise in both
-  directions: `GrayAlpha` carries alpha at index 1 of 2 (so it was missed
-  entirely), and `Cmyk` is four channels with *no* alpha (so its K lane
-  would be wrongly skipped). Only the `GrayAlpha` half is reachable today —
-  CMYK is a non-native colour model and `requires_cms` diverts it to the CMS
-  path before the built-in planner runs — so the CMYK half is defensive.
+- **`GrayAlpha` alpha is no longer PQ-transferred either.** The alpha-lane
+  predicate is `ChannelLayout::has_alpha()`, not the PQ kernels' former
+  `channels == 4`, which was imprecise in both directions: `GrayAlpha`
+  carries alpha at index 1 of 2 and so was missed entirely, and `Cmyk` is
+  four channels with *no* alpha, so its K lane would be wrongly skipped.
+  The `GrayAlpha` half is a real behaviour change and is reachable —
+  `f32_tf_pair_steps` picks the transfer step from the transfer function
+  alone and never consults the layout, so `GrayAlphaF32 PQ → GrayAlphaF32
+  Linear` dispatches `PqF32ToLinearF32` with `channels == 2` (pinned by
+  `tests/transfer_alpha.rs::gray_alpha_pq_carries_alpha`). The `Cmyk` half is
+  defensive only: CMYK is a non-native colour model, so `requires_cms`
+  diverts it to the CMS path before the built-in planner runs.
 - Two tests named for this property asserted nothing about it and are now
   real gates: `tests/transfer.rs::srgb_rgba_to_linear_preserves_alpha_semantics`
   (whose trailing comment had rationalised the bug as "technically correct
