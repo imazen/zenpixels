@@ -9,7 +9,7 @@ exclude = ["apidoc", "benchmarks/transpose-shootout"]
 resolver = "2"
 
 [workspace.dependencies]
-zenpixels = { path = "zenpixels", version = "0.2.16", default-features = false }
+zenpixels = { path = "zenpixels", version = ">=0.2.16, <0.4.0", default-features = false }
 
 # NOTE: no shared `version` here on purpose — each member declares its own
 # version (they release independently), so a workspace-level one only rots.

@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Workspace — changed
+
+- **`[workspace.dependencies] zenpixels` now spans the published minor AND the
+  next one**: `">=0.2.16, <0.4.0"` (was `"0.2.16"`). This is the requirement
+  `zenpixels-convert` inherits via `workspace = true`, so it is what a *published*
+  `zenpixels-convert` declares against `zenpixels`. For a `0.x` crate Cargo treats
+  the minor as the major, so the plain requirement meant `^0.2.16` =
+  `>=0.2.16, <0.3.0` and a `zenpixels 0.3.0` release would have been invisible to
+  every consumer of a published `zenpixels-convert` until this line was
+  hand-edited. The `path =` binding is unchanged, so in-workspace builds are
+  unaffected and resolution is identical (`cargo metadata --all-features`
+  resolves exactly one `zenpixels` and one `zenpixels-convert`; the tracked
+  `Cargo.lock` is unchanged by this commit).
+
+  This is one line of a workspace-wide sweep (2026-08-29) that widened the same
+  four crates — `zencodec`, `zencodec-testkit`, `zenpixels`,
+  `zenpixels-convert` — across 19 consumer repos in one pass. Widening must be
+  uniform: if some consumers move and others do not, one dependency graph can
+  resolve **two copies** of a `0.x` crate whose types then fail to unify (this
+  workspace's own `[patch]` comments in zenpng and zentone document that exact
+  failure). The standing rule — current-plus-next, re-derived at each release —
+  is documented in the zencodec repo's `CLAUDE.md`.
+
 ### Workspace — CI
 
 - **Pushes to `main` now cancel their superseded CI runs.** `ci.yml` keyed its
