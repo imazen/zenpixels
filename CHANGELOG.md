@@ -4,6 +4,8 @@
 
 ### Workspace — changed
 
+- **`Cargo.lock` refreshed within the existing requirements — third-party crates only.** 39 registry packages moved (`bytemuck 1.25.0 -> 1.25.2`, `palette 0.7.6 -> 0.7.7`, `imgref 1.12.2 -> 1.12.3`, `lcms2 6.1.1 -> 6.2.0`, `libc 0.2.186 -> 0.2.189`, `serde 1.0.228 -> 1.0.229`, `getrandom 0.3.4 -> 0.4.3` among them). No manifest requirement changed. `magetypes` and `zenbench` both had newer releases available and were deliberately held: zen-family requirements are governed separately, so the lock diff contains no `zenpixels`/`archmage`/`magetypes`/`linear-srgb`/`garb`/`whereat`/`zenbench` line at all. `palette 0.7.7` swaps its sRGB backend from `fast-srgb8` to the new `palette_math` crate, and `palette` is the oracle for the perceptual-loss suite, so it was the change to watch — every test result is byte-for-byte identical to the pre-update baseline across `cargo test --workspace`, and the ICC-bundle goldens (`golden_blob_sha256_is_pinned`, `gray_blob_decodes_byte_identical_to_moxcms`, `every_group_decodes_to_its_declared_length`) still pass. Also verified green: `--features fast-transpose`, `--features __trace_ops --test plan_validation`, `--features __trace_ops --test transfer_alpha`, `--features hdr-experimental`, `--no-default-features --features rgb`, `clippy --workspace --all-targets -D warnings`, and `fmt --check`.
+
 - **`[workspace.dependencies] zenpixels` now spans the published minor AND the
   next one**: `">=0.2.16, <0.4.0"` (was `"0.2.16"`). This is the requirement
   `zenpixels-convert` inherits via `workspace = true`, so it is what a *published*
