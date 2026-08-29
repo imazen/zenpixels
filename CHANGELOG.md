@@ -49,6 +49,7 @@
 
 ### zenpixels-convert — changed
 
+- **`lz4_flex` 0.13.1 -> 0.14.0** in `zenpixels-convert` (the `icc-db` runtime decoder) and in `scripts/icc-gen` (the `cicp_bundle_gen` encoder), moved together so the compress and decompress sides of the committed CICP->ICC bundle stay one implementation. `lz4_flex` is internal — the only call site is `block::decompress_into` in `icc_profiles/cicp_bundle.rs` — so nothing in the public surface changes, and 0.14.0's MSRV (1.81) is well under this crate's 1.89. The bundle blob is a committed binary asset pinned by a sha256 golden, so the encoder side was verified explicitly rather than assumed: compressing every ICC profile under `zenpixels-convert/src/profiles/` (plus the 35,967-byte bundle blob itself) with both versions produces **byte-identical** output, and each version decodes the other's blocks byte-identically. A future `just`-driven blob regeneration therefore will not spuriously trip `golden_blob_sha256_is_pinned`. All 12 `cicp_bundle` goldens pass unchanged, including `blob_decodes_byte_identical_to_moxcms` and `gray_blob_decodes_byte_identical_to_moxcms`.
 - `PixelBufferHdrConvertExt::convert_to_sdr` no longer materializes a full
   linear-F32 copy of the source (16 B/pixel — 4× an RGBA8 output) just to
   measure MaxCLL: the peak is measured row-by-row through one reused scratch

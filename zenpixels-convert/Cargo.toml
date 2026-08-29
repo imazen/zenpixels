@@ -129,7 +129,7 @@ once_cell = { version = "1.21.4", default-features = false, features = ["race", 
 # (block format only); decodes the standard LZ4 blocks emitted by the icc-gen
 # `cicp_bundle_gen` build tool. The `safe-decode` feature keeps us inside
 # `#![forbid(unsafe_code)]`.
-lz4_flex = { version = "0.13.1", default-features = false, features = ["safe-decode"], optional = true }
+lz4_flex = { version = "0.14.0", default-features = false, features = ["safe-decode"], optional = true }
 whereat = { version = "0.1.5", default-features = false }
 # Verified against both moxcms 0.8.1 and the unreleased 0.9.0 (master): the only
 # API our code touches that changed is the D50 white-point spelling (const
