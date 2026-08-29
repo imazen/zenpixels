@@ -393,6 +393,169 @@ fn gray_alpha_f32_transfer_carries_alpha() {
 }
 
 // ---------------------------------------------------------------------------
+// Round trips: encode → linear → encode must return the alpha it started with
+// ---------------------------------------------------------------------------
+
+/// Every SDR transfer pairing, driven **both ways** through two separate
+/// converters, must return the exact alpha it was handed.
+///
+/// Two converters rather than one: the planner peephole-cancels an
+/// EOTF immediately followed by its own OETF (`can_cancel` in `convert.rs`),
+/// so a single `RGBA8 sRGB -> RGBA8 sRGB` plan would collapse to `Identity`
+/// and test nothing. Splitting the hop forces both kernels to run.
+#[test]
+fn alpha_survives_a_full_round_trip_through_every_sdr_pairing() {
+    let clip = ConvertOptions::permissive();
+    let noclip = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+
+    // f32 encoded <-> f32 linear, for each transfer function.
+    let color = |i: usize| f32::from(COLOR_U8[i]) / 255.0;
+    let src = src_rgba_f32(color);
+    for (tf, opts, decode, encode) in [
+        (
+            TransferFunction::Srgb,
+            &clip,
+            "SrgbF32ToLinearF32",
+            "LinearF32ToSrgbF32",
+        ),
+        (
+            TransferFunction::Srgb,
+            &noclip,
+            "SrgbF32ToLinearF32Extended",
+            "LinearF32ToSrgbF32Extended",
+        ),
+        (
+            TransferFunction::Bt709,
+            &clip,
+            "Bt709F32ToLinearF32",
+            "LinearF32ToBt709F32",
+        ),
+        (
+            TransferFunction::Gamma22,
+            &clip,
+            "Gamma22F32ToLinearF32",
+            "LinearF32ToGamma22F32",
+        ),
+        (
+            TransferFunction::Hlg,
+            &clip,
+            "HlgF32ToLinearF32",
+            "LinearF32ToHlgF32",
+        ),
+        (
+            TransferFunction::Pq,
+            &clip,
+            "PqF32ToLinearF32",
+            "LinearF32ToPqF32",
+        ),
+    ] {
+        let lin = run_row(
+            rgba(ChannelType::F32, tf),
+            rgba(ChannelType::F32, TransferFunction::Linear),
+            opts,
+            &src,
+            WIDTH * 4 * 4,
+            decode,
+        );
+        let back = run_row(
+            rgba(ChannelType::F32, TransferFunction::Linear),
+            rgba(ChannelType::F32, tf),
+            opts,
+            &lin,
+            WIDTH * 4 * 4,
+            encode,
+        );
+        let out: &[f32] = bytemuck::cast_slice(&back);
+        for i in 0..WIDTH {
+            let want = f32::from(ALPHA_U8[i]) / 255.0;
+            assert_eq!(
+                out[i * 4 + 3].to_bits(),
+                want.to_bits(),
+                "{tf:?} round trip, pixel {i}: alpha changed ({} != {want})",
+                out[i * 4 + 3]
+            );
+        }
+    }
+}
+
+/// The u8 round trip: `RGBA8 sRGB -> RGBAF32 linear -> RGBA8 sRGB` must give
+/// back the identical alpha **byte**. This is the pairing behind
+/// `PixelBuffer::linearize()` and the `ConvertIntent::Blend` /
+/// `ConvertIntent::LinearLight` plans.
+#[test]
+fn alpha_byte_survives_the_u8_srgb_round_trip() {
+    let src = src_rgba8();
+    let lin = run_row(
+        rgba(ChannelType::U8, TransferFunction::Srgb),
+        rgba(ChannelType::F32, TransferFunction::Linear),
+        &ConvertOptions::permissive(),
+        &src,
+        WIDTH * 4 * 4,
+        "SrgbU8ToLinearF32",
+    );
+    let back = run_row(
+        rgba(ChannelType::F32, TransferFunction::Linear),
+        rgba(ChannelType::U8, TransferFunction::Srgb),
+        &ConvertOptions::permissive(),
+        &lin,
+        WIDTH * 4,
+        "LinearF32ToSrgbU8",
+    );
+    for i in 0..WIDTH {
+        assert_eq!(
+            back[i * 4 + 3],
+            ALPHA_U8[i],
+            "pixel {i}: alpha byte changed across the u8 sRGB round trip"
+        );
+    }
+}
+
+/// The u16 HDR pairings, round-tripped the same way.
+#[test]
+fn alpha_survives_the_u16_hdr_round_trips() {
+    let mut v: Vec<u16> = Vec::with_capacity(WIDTH * 4);
+    for (i, &a) in ALPHA_U8.iter().enumerate() {
+        let c = u16::from(COLOR_U8[i]) * 257;
+        v.extend_from_slice(&[c, c, c, u16::from(a) * 257]);
+    }
+    let src: Vec<u8> = bytemuck::cast_slice(&v).to_vec();
+
+    for (tf, decode, encode) in [
+        (
+            TransferFunction::Hlg,
+            "HlgU16ToLinearF32",
+            "LinearF32ToHlgU16",
+        ),
+        (TransferFunction::Pq, "PqU16ToLinearF32", "LinearF32ToPqU16"),
+    ] {
+        let lin = run_row(
+            rgba(ChannelType::U16, tf),
+            rgba(ChannelType::F32, TransferFunction::Linear),
+            &ConvertOptions::permissive(),
+            &src,
+            WIDTH * 4 * 4,
+            decode,
+        );
+        let back = run_row(
+            rgba(ChannelType::F32, TransferFunction::Linear),
+            rgba(ChannelType::U16, tf),
+            &ConvertOptions::permissive(),
+            &lin,
+            WIDTH * 4 * 2,
+            encode,
+        );
+        let codes: &[u16] = bytemuck::cast_slice(&back);
+        for (i, &a) in ALPHA_U8.iter().enumerate() {
+            assert_eq!(
+                codes[i * 4 + 3],
+                u16::from(a) * 257,
+                "{tf:?} u16 round trip, pixel {i}: alpha code changed"
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // End-to-end: the reported trigger, and the compounding premultiply path.
 // ---------------------------------------------------------------------------
 
