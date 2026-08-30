@@ -239,21 +239,22 @@ Apache-2.0 OR MIT.
 
 | | |
 |:--|:--|
-| **Codecs** ¹ | [zenjpeg] · [zenpng] · [zenwebp] · [zengif] · [zenavif] · [zenjxl] · [zenbitmaps] · [heic] · [zentiff] · [zenpdf] · [zensvg] · [zenjp2] · [zenraw] · [ultrahdr] |
-| Codec internals | [zenjxl-decoder] · [jxl-encoder] · [zenrav1e] · [rav1d-safe] · [zenavif-parse] · [zenavif-serialize] |
+| **Codecs** ¹ | [zenjpeg] · [zenpng] · [zenwebp] · [zengif] · [zenavif] · [zenjxl] · [zenjxl-decoder] · [jxl-encoder] · [zenbitmaps] · [heic] · [zentiff] · [zenpdf] · [zensvg] · [zenjp2] · [zenraw] · [ultrahdr] |
+| Codec internals | [zenrav1e] · [rav1d-safe] · [zenravif] · [zenavif-parse] · [zenavif-serialize] |
 | Compression | [zenflate] · [zenzop] · [zenzstd] |
 | Processing | [zenresize] · [zenquant] · [zenblend] · [zenfilters] · [zensally] · [zentone] |
-| Pixels & color | [zenpixels] · **zenpixels-convert** · [linear-srgb] · [garb] |
+| Pixels & color | [zenpixels] · **zenpixels-convert** · [linear-srgb] · [garb] · [zenyuv] |
 | Pipeline & framework | [zenpipe] · [zencodec] · [zencodecs] · [zenlayout] · [zennode] · [zenwasm] · [zentract] |
 | Metrics | [zensim] · [fast-ssim2] · [butteraugli] · [zenmetrics] · [resamplescope-rs] |
-| Pickers & ML | [zenanalyze] · [zenpredict] · [zenpicker] |
+| Pickers & ML | [zenanalyze] · [zenpredict] · [zenpicker] · [zenanalyze-api] |
+| Test corpora | [codec-corpus] · [imazen-26] |
 | Products | [Imageflow] image engine ([.NET][imageflow-dotnet] · [Node][imageflow-node] · [Go][imageflow-go]) · [Imageflow Server] · [ImageResizer] (C#) |
 
 <sub>¹ pure-Rust, `#![forbid(unsafe_code)]` codecs, as of 2026</sub>
 
 ### General Rust awesomeness
 
-[zenbench] · [archmage] · [magetypes] · [enough] · [whereat] · [cargo-copter]
+[zenbench] · [archmage] · [magetypes] · [enough] · [whereat] · [cargo-copter] · [zenutils]
 
 [Open source](https://www.imazen.io/open-source) · [@imazen](https://github.com/imazen) · [@lilith](https://github.com/lilith) · [lib.rs/~lilith](https://lib.rs/~lilith)
 
@@ -263,36 +264,38 @@ Apache-2.0 OR MIT.
 [zengif]: https://github.com/imazen/zengif
 [zenavif]: https://github.com/imazen/zenavif
 [zenjxl]: https://github.com/imazen/zenjxl
+[zenjxl-decoder]: https://github.com/imazen/zenjxl-decoder
+[jxl-encoder]: https://github.com/imazen/jxl-encoder
 [zenbitmaps]: https://github.com/imazen/zenbitmaps
 [heic]: https://github.com/imazen/heic
-[zentiff]: https://github.com/imazen/zentiff
-[zenpdf]: https://github.com/imazen/zenpdf
+[zentiff]: https://github.com/imazen/zenextras
+[zenpdf]: https://github.com/imazen/zenextras
 [zensvg]: https://github.com/imazen/zenextras
 [zenjp2]: https://github.com/imazen/zenextras
 [zenraw]: https://github.com/imazen/zenraw
 [ultrahdr]: https://github.com/imazen/ultrahdr
-[zenjxl-decoder]: https://github.com/imazen/zenjxl-decoder
-[jxl-encoder]: https://github.com/imazen/jxl-encoder
 [zenrav1e]: https://github.com/imazen/zenrav1e
 [rav1d-safe]: https://github.com/imazen/rav1d-safe
-[zenavif-parse]: https://github.com/imazen/zenavif-parse
-[zenavif-serialize]: https://github.com/imazen/zenavif-serialize
+[zenravif]: https://github.com/imazen/cavif-rs
+[zenavif-parse]: https://github.com/imazen/zenavif
+[zenavif-serialize]: https://github.com/imazen/zenavif
 [zenflate]: https://github.com/imazen/zenflate
 [zenzop]: https://github.com/imazen/zenzop
 [zenzstd]: https://github.com/imazen/zenzstd
 [zenresize]: https://github.com/imazen/zenresize
 [zenquant]: https://github.com/imazen/zenquant
 [zenblend]: https://github.com/imazen/zenblend
-[zenfilters]: https://github.com/imazen/zenfilters
+[zenfilters]: https://github.com/imazen/zenpipe
 [zensally]: https://github.com/imazen/zensally
 [zentone]: https://github.com/imazen/zentone
 [zenpixels]: https://github.com/imazen/zenpixels
 [linear-srgb]: https://github.com/imazen/linear-srgb
 [garb]: https://github.com/imazen/garb
+[zenyuv]: https://github.com/imazen/zenjpeg
 [zenpipe]: https://github.com/imazen/zenpipe
 [zencodec]: https://github.com/imazen/zencodec
-[zencodecs]: https://github.com/imazen/zencodecs
-[zenlayout]: https://github.com/imazen/zenlayout
+[zencodecs]: https://github.com/imazen/zenpipe
+[zenlayout]: https://github.com/imazen/zenpipe
 [zennode]: https://github.com/imazen/zennode
 [zenwasm]: https://github.com/imazen/zenwasm
 [zentract]: https://github.com/imazen/zentract
@@ -304,72 +307,19 @@ Apache-2.0 OR MIT.
 [zenanalyze]: https://github.com/imazen/zenanalyze
 [zenpredict]: https://github.com/imazen/zenanalyze
 [zenpicker]: https://github.com/imazen/zenanalyze
+[zenanalyze-api]: https://github.com/imazen/zenanalyze
+[codec-corpus]: https://github.com/imazen/codec-corpus
+[imazen-26]: https://github.com/imazen/imazen-26
 [zenbench]: https://github.com/imazen/zenbench
 [archmage]: https://github.com/imazen/archmage
 [magetypes]: https://github.com/imazen/archmage
 [enough]: https://github.com/imazen/enough
 [whereat]: https://github.com/lilith/whereat
 [cargo-copter]: https://github.com/imazen/cargo-copter
+[zenutils]: https://github.com/imazen/zenutils
 [Imageflow]: https://github.com/imazen/imageflow
 [Imageflow Server]: https://github.com/imazen/imageflow-dotnet-server
 [ImageResizer]: https://github.com/imazen/resizer
 [imageflow-dotnet]: https://github.com/imazen/imageflow-dotnet
 [imageflow-node]: https://github.com/imazen/imageflow-node
 [imageflow-go]: https://github.com/imazen/imageflow-go
-
-[`PixelBuffer`]: https://docs.rs/zenpixels/latest/zenpixels/struct.PixelBuffer.html
-[`PixelDescriptor`]: https://docs.rs/zenpixels/latest/zenpixels/struct.PixelDescriptor.html
-[`PixelFormat`]: https://docs.rs/zenpixels/latest/zenpixels/enum.PixelFormat.html
-[`RowConverter`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.RowConverter.html
-[`best_match`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.best_match.html
-[`best_match_with`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.best_match_with.html
-[`negotiate`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.negotiate.html
-[`ConvertIntent`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/enum.ConvertIntent.html
-[`Provenance`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/enum.Provenance.html
-[`ConversionCost`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConversionCost.html
-[`FormatOption`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.FormatOption.html
-[`ConvertOptions`]: https://docs.rs/zenpixels/latest/zenpixels/struct.ConvertOptions.html
-[`ConvertPlan`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html
-[`convert_row`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.convert_row.html
-[`adapt::adapt_for_encode`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/adapt/fn.adapt_for_encode.html
-[`adapt_for_encode_explicit`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.adapt_for_encode_explicit.html
-[`try_adapt_in_place`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.try_adapt_in_place.html
-[`PluggableCms`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/cms/trait.PluggableCms.html
-[`RowTransformMut`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/cms/trait.RowTransformMut.html
-[`MoxCms`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.MoxCms.html
-[`GamutMatrix`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/gamut/type.GamutMatrix.html
-[`conversion_matrix`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/gamut/fn.conversion_matrix.html
-[`quantize_to`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/fn.quantize_to.html
-[`Bt2446A`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/struct.Bt2446A.html
-[`SoftCompress`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/struct.SoftCompress.html
-[`CllMeasure`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/trait.CllMeasure.html
-[`CllMeasure::measure_max`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/trait.CllMeasure.html#tymethod.measure_max
-[`ConvertPlan`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html
-[`ConvertPlan::new_with_hdr_peak`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.new_with_hdr_peak
-[`ConvertPlan::new_with_hdr_config`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.new_with_hdr_config
-[`ConvertError::HdrSourceRequiresPeak`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/enum.ConvertError.html#variant.HdrSourceRequiresPeak
-[`ContentLightLevel`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/struct.ContentLightLevel.html
-[`MasteringDisplay`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/struct.MasteringDisplay.html
-[`finalize_for_output`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.finalize_for_output.html
-[`EncodeReady`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/output/struct.EncodeReady.html
-[`OutputMetadata`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/output/struct.OutputMetadata.html
-[`TransferFunctionExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.TransferFunctionExt.html
-[`ColorPrimariesExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.ColorPrimariesExt.html
-[`PixelBufferConvertExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.PixelBufferConvertExt.html
-[`LoadBearingReport`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.LoadBearingReport.html
-[`PixelSliceLoadBearingExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.PixelSliceLoadBearingExt.html
-[`PixelBufferLoadBearingExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.PixelBufferLoadBearingExt.html
-[`orient::apply_orientation`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/orient/fn.apply_orientation.html
-[`orient::apply_orientation_into`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/orient/fn.apply_orientation_into.html
-[`orient::apply_orientation_in_place`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/orient/fn.apply_orientation_in_place.html
-[`CodecFormats`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/pipeline/struct.CodecFormats.html
-[`optimal_path`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/pipeline/fn.optimal_path.html
-[`generate_path_matrix`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/pipeline/fn.generate_path_matrix.html
-[`ConvertError`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/enum.ConvertError.html
-[`ResourceEstimate`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ResourceEstimate.html
-[`ComputeEnvironment`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ComputeEnvironment.html
-[`ImageCharacteristics`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ImageCharacteristics.html
-[`SimdTier`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/enum.SimdTier.html
-[`ConvertPlan::estimate`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.estimate
-[`ConvertPlan::estimate_in`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.estimate_in
-[`PixelBufferConvertTypedExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.PixelBufferConvertTypedExt.html
