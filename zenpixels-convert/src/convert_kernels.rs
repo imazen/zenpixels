@@ -147,6 +147,9 @@ pub(super) fn apply_step_u8(
         ConvertStep::U16ToU8 => {
             u16_to_u8(src, dst, w, from.layout().channels());
         }
+        ConvertStep::SdrU16ToU8 { to } => {
+            sdr_u16_to_u8(src, dst, w, from.layout(), from.transfer(), *to);
+        }
 
         ConvertStep::U8ToU16 => {
             u8_to_u16(src, dst, w, from.layout().channels());
@@ -1840,6 +1843,83 @@ fn u16_to_u8(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
         let up = u8::from(lo.saturating_sub(hi) > 128);
         let down = u8::from(hi.saturating_sub(lo) > 128);
         *d = hi.wrapping_add(up).wrapping_sub(down);
+    }
+}
+
+/// Compose an actual SDR transfer change before the one final quantisation.
+/// Alpha is always linear and only narrows; color channels use f64 so the
+/// f32 transfer approximations cannot flip values close to u8 midpoints.
+fn sdr_u16_to_u8(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    layout: ChannelLayout,
+    from: TransferFunction,
+    to: TransferFunction,
+) {
+    const BT709_BETA: f64 = 0.018053968510807;
+    const BT709_ALPHA: f64 = 0.09929682680944;
+
+    #[inline]
+    fn decode(tf: TransferFunction, x: f64) -> f64 {
+        match tf {
+            TransferFunction::Linear => x,
+            TransferFunction::Srgb => {
+                if x <= 0.04045 {
+                    x / 12.92
+                } else {
+                    ((x + 0.055) / 1.055).powf(2.4)
+                }
+            }
+            TransferFunction::Bt709 => {
+                if x < 4.5 * BT709_BETA {
+                    x / 4.5
+                } else {
+                    ((x + BT709_ALPHA) / (1.0 + BT709_ALPHA)).powf(1.0 / 0.45)
+                }
+            }
+            _ => unreachable!("planner admits only Linear, sRGB and BT.709"),
+        }
+    }
+
+    #[inline]
+    fn encode(tf: TransferFunction, x: f64) -> f64 {
+        match tf {
+            TransferFunction::Linear => x,
+            TransferFunction::Srgb => {
+                if x <= 0.0031308 {
+                    x * 12.92
+                } else {
+                    1.055 * x.powf(1.0 / 2.4) - 0.055
+                }
+            }
+            TransferFunction::Bt709 => {
+                if x < BT709_BETA {
+                    x * 4.5
+                } else {
+                    (1.0 + BT709_ALPHA) * x.powf(0.45) - BT709_ALPHA
+                }
+            }
+            _ => unreachable!("planner admits only Linear, sRGB and BT.709"),
+        }
+    }
+
+    let channels = layout.channels();
+    let color_channels = if layout.has_alpha() {
+        channels - 1
+    } else {
+        channels
+    };
+    let count = width * channels;
+    let (pairs, _) = src[..count * 2].as_chunks::<2>();
+    for (i, (s, d)) in pairs.iter().zip(dst[..count].iter_mut()).enumerate() {
+        let v = u16::from_ne_bytes(*s);
+        *d = if i % channels < color_channels {
+            let encoded = encode(to, decode(from, f64::from(v) / 65535.0));
+            (encoded.clamp(0.0, 1.0) * 255.0 + 0.5).floor() as u8
+        } else {
+            ((u32::from(v) * 255 + 32767) / 65535) as u8
+        };
     }
 }
 

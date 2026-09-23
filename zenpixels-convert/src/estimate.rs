@@ -206,6 +206,8 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> f64 {
         // Depth (t2). 4096-row, RGB.
         ConvertStep::U8ToU16 => gib(112.82),
         ConvertStep::U16ToU8 => gib(34.39),
+        // Conservative until a dedicated transfer-pair benchmark is recorded.
+        ConvertStep::SdrU16ToU8 { .. } => gib(1.0),
         ConvertStep::NaiveU8ToF32 => gib(95.21),
         ConvertStep::NaiveF32ToU8 => gib(52.99),
         ConvertStep::U16ToF32 => gib(88.68),

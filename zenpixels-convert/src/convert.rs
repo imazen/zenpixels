@@ -252,8 +252,10 @@ pub(crate) enum ConvertStep {
     NaiveU8ToF32,
     /// Naive f32 → u8 (clamp * 255 + 0.5, no gamma).
     NaiveF32ToU8,
-    /// u16 → u8 ((v * 255 + 32768) >> 16).
+    /// Exact u16 → u8 round-to-nearest.
     U16ToU8,
+    /// Composite SDR transfer conversion and final u16 → u8 quantisation in f64.
+    SdrU16ToU8 { to: TransferFunction },
     /// u8 → u16 (v * 257).
     U8ToU16,
     /// u16 → f32 (v / 65535.0).
@@ -381,6 +383,7 @@ impl ConvertStep {
             Self::NaiveU8ToF32 => "NaiveU8ToF32",
             Self::NaiveF32ToU8 => "NaiveF32ToU8",
             Self::U16ToU8 => "U16ToU8",
+            Self::SdrU16ToU8 { .. } => "SdrU16ToU8",
             Self::U8ToU16 => "U8ToU16",
             Self::U16ToF32 => "U16ToF32",
             Self::F32ToU16 => "F32ToU16",
@@ -615,6 +618,7 @@ impl ConvertPlan {
                         to.channel_type(),
                         from.transfer(),
                         to.transfer(),
+                        from.primaries == to.primaries,
                     )
                     .map_err(|e| whereat::at!(e))?,
                 );
@@ -629,6 +633,7 @@ impl ConvertPlan {
                             to.channel_type(),
                             from.transfer(),
                             to.transfer(),
+                            from.primaries == to.primaries,
                         )
                         .map_err(|e| whereat::at!(e))?,
                     );
@@ -641,6 +646,7 @@ impl ConvertPlan {
                     to.channel_type(),
                     from.transfer(),
                     to.transfer(),
+                    from.primaries == to.primaries,
                 )
                 .map_err(|e| whereat::at!(e))?,
             );
@@ -1030,6 +1036,7 @@ impl ConvertPlan {
                 ChannelType::F32,
                 from.transfer(),
                 TransferFunction::Linear,
+                false,
             )
             .map_err(|e| whereat::at!(e))?,
         );
@@ -1116,6 +1123,7 @@ impl ConvertPlan {
                     to.channel_type(),
                     TransferFunction::Linear,
                     to.transfer(),
+                    false,
                 )
                 .map_err(|e| whereat::at!(e))?,
             );
@@ -1745,6 +1753,7 @@ fn depth_steps(
     to: ChannelType,
     from_tf: TransferFunction,
     to_tf: TransferFunction,
+    same_primaries: bool,
 ) -> Result<Vec<ConvertStep>, ConvertError> {
     if from == to && from_tf == to_tf {
         return Ok(Vec::new());
@@ -1856,6 +1865,19 @@ fn depth_steps(
                 ])
             } else if from_tf == to_tf {
                 Ok(vec![ConvertStep::U16ToU8])
+            } else if same_primaries
+                && matches!(
+                    from_tf,
+                    TransferFunction::Linear | TransferFunction::Bt709 | TransferFunction::Srgb
+                )
+                && matches!(
+                    to_tf,
+                    TransferFunction::Linear | TransferFunction::Bt709 | TransferFunction::Srgb
+                )
+            {
+                // A composed f32 EOTF/OETF can cross a u8 midpoint before
+                // quantisation. Keep the full mapping in f64 on this path.
+                Ok(vec![ConvertStep::SdrU16ToU8 { to: to_tf }])
             } else {
                 let mut steps = Vec::with_capacity(4);
                 steps.push(ConvertStep::U16ToF32);
@@ -2313,6 +2335,9 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
                 current.alpha(),
                 TransferFunction::Srgb,
             )
+        }
+        ConvertStep::SdrU16ToU8 { to } => {
+            PixelDescriptor::new(ChannelType::U8, current.layout(), current.alpha(), *to)
         }
         ConvertStep::U8ToU16 => PixelDescriptor::new(
             ChannelType::U16,
