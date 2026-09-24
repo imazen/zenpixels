@@ -1859,8 +1859,12 @@ fn sdr_u16_to_u8(
     from: TransferFunction,
     to: TransferFunction,
 ) {
+    use once_cell::race::OnceBox;
+
     const BT709_BETA: f64 = 0.018053968510807;
     const BT709_ALPHA: f64 = 0.09929682680944;
+    // Cache each actual transfer change separately on first use.
+    static TABLES: [OnceBox<[u8; 65536]>; 6] = [const { OnceBox::new() }; 6];
 
     #[inline]
     fn decode(tf: TransferFunction, x: f64) -> f64 {
@@ -1906,22 +1910,48 @@ fn sdr_u16_to_u8(
         }
     }
 
-    let channels = layout.channels();
-    let color_channels = if layout.has_alpha() {
-        channels - 1
-    } else {
-        channels
+    let pair = match (from, to) {
+        (TransferFunction::Linear, TransferFunction::Bt709) => 0,
+        (TransferFunction::Linear, TransferFunction::Srgb) => 1,
+        (TransferFunction::Bt709, TransferFunction::Linear) => 2,
+        (TransferFunction::Bt709, TransferFunction::Srgb) => 3,
+        (TransferFunction::Srgb, TransferFunction::Linear) => 4,
+        (TransferFunction::Srgb, TransferFunction::Bt709) => 5,
+        _ => unreachable!("planner admits only distinct Linear, sRGB and BT.709 pairs"),
     };
+    let table = TABLES[pair].get_or_init(|| {
+        let mut table: alloc::boxed::Box<[u8; 65536]> = alloc::vec![0; 65536]
+            .into_boxed_slice()
+            .try_into()
+            .expect("fixed-size SDR transfer table");
+        for (code, output) in table.iter_mut().enumerate() {
+            let encoded = encode(to, decode(from, code as f64 / 65535.0));
+            *output = (encoded.clamp(0.0, 1.0) * 255.0 + 0.5).floor() as u8;
+        }
+        table
+    });
+
+    let channels = layout.channels();
     let count = width * channels;
     let (pairs, _) = src[..count * 2].as_chunks::<2>();
-    for (i, (s, d)) in pairs.iter().zip(dst[..count].iter_mut()).enumerate() {
-        let v = u16::from_ne_bytes(*s);
-        *d = if i % channels < color_channels {
-            let encoded = encode(to, decode(from, f64::from(v) / 65535.0));
-            (encoded.clamp(0.0, 1.0) * 255.0 + 0.5).floor() as u8
-        } else {
-            ((u32::from(v) * 255 + 32767) / 65535) as u8
-        };
+    if layout.has_alpha() {
+        for (source_pixel, dest_pixel) in pairs
+            .chunks_exact(channels)
+            .zip(dst[..count].chunks_exact_mut(channels))
+        {
+            for (source, dest) in source_pixel[..channels - 1]
+                .iter()
+                .zip(dest_pixel[..channels - 1].iter_mut())
+            {
+                *dest = table[usize::from(u16::from_ne_bytes(*source))];
+            }
+            let alpha = u16::from_ne_bytes(source_pixel[channels - 1]);
+            dest_pixel[channels - 1] = ((u32::from(alpha) * 255 + 32767) / 65535) as u8;
+        }
+    } else {
+        for (source, dest) in pairs.iter().zip(dst[..count].iter_mut()) {
+            *dest = table[usize::from(u16::from_ne_bytes(*source))];
+        }
     }
 }
 
