@@ -1849,6 +1849,8 @@ fn u16_to_u8(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
 /// Compose an actual SDR transfer change before the one final quantisation.
 /// Alpha is always linear and only narrows; color channels use f64 so the
 /// f32 transfer approximations cannot flip values close to u8 midpoints.
+/// `src` is one tight native-endian U16 row; `dst` is one tight U8 row.
+/// Both contain `width` pixels in `layout`; `RowConverter` handles outer strides.
 fn sdr_u16_to_u8(
     src: &[u8],
     dst: &mut [u8],
