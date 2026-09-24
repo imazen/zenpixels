@@ -124,6 +124,12 @@
   that auto-vectorises 16 lanes wide: measured 4.5× faster than the garb
   kernel it replaces (Apple M4 Pro, `benches/bench_u16_narrow.rs`,
   `benchmarks/u16_narrow_2026-08-27.{txt,meta}`). Fixes #72.
+  The original fix is commit `1eb8c9b8`; the RGB16 rounding audit adds an
+  exhaustive public-`RowConverter` regression gate for RGB, RGBA, gray,
+  gray-alpha, straight/premultiplied alpha, three SDR transfers, and strides.
+  Real Linear/BT.709/sRGB u16→u8 transfer changes now compose in f64 before
+  one final quantisation, fixing 9–90 one-code errors per exhaustive pair;
+  the audit and transfer correction are `d019ae98`.
 
 ## [0.2.16] - 2026-07-24
 
