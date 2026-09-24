@@ -129,7 +129,11 @@
   gray-alpha, straight/premultiplied alpha, three SDR transfers, and strides.
   Real Linear/BT.709/sRGB u16→u8 transfer changes now compose in f64 before
   one final quantisation, fixing 9–90 one-code errors per exhaustive pair;
-  the audit and transfer correction are `d019ae98`.
+  the audit and transfer correction are `d019ae98`. The follow-up
+  `bc0e2467` caches each of the six f64 composites as a lazy 65,536-entry
+  u8 table, avoiding per-sample `powf`; the contended four-size A/B and
+  measured 4.0 GiB/s planner estimate are recorded in
+  `benchmarks/rgb16_round_2026-09-23.md`.
 
 ## [0.2.16] - 2026-07-24
 
