@@ -15,14 +15,16 @@
 //! All arms are exhaustively cross-checked against `(v + 128) / 257` before
 //! timing so a fast-but-wrong arm cannot post a number.
 
+use std::time::Duration;
 use zenbench::prelude::*;
 use zenpixels::{ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
 use zenpixels_convert::RowConverter;
 
 const SIZES: &[(&str, usize)] = &[
-    ("  256px", 256),
-    (" 4096px", 4096),
-    ("1080p  ", 1920 * 1080),
+    ("64²", 64 * 64),
+    ("256²", 256 * 256),
+    ("1024²", 1024 * 1024),
+    ("4096²", 4096 * 4096),
 ];
 
 fn garb_inexact(src: &[u8], dst: &mut [u8]) {
@@ -52,7 +54,7 @@ fn exact_oracle(v: u16) -> u8 {
     ((u32::from(v) + 128) / 257) as u8
 }
 
-fn check_exact(name: &str, f: fn(&[u8], &mut [u8])) -> bool {
+fn check_exact(name: &str, mut f: impl FnMut(&[u8], &mut [u8])) -> bool {
     let src: Vec<u8> = (0..=u16::MAX).flat_map(u16::to_ne_bytes).collect();
     let mut dst = vec![0u8; 65536];
     f(&src, &mut dst);
@@ -69,8 +71,11 @@ fn main() {
     let exact_shift = check_exact("shift u32", shift_u32);
     let exact_bytes = check_exact("byte lanes", byte_lanes);
     let exact_garb = check_exact("garb", garb_inexact);
+    let mut shipped =
+        RowConverter::new(PixelDescriptor::GRAY16_SRGB, PixelDescriptor::GRAY8_SRGB).unwrap();
+    let exact_shipped = check_exact("shipped", |src, dst| shipped.convert_row(src, dst, 65536));
     assert!(
-        exact_shift && exact_bytes,
+        exact_shift && exact_bytes && exact_shipped,
         "candidate kernels must be exact"
     );
     eprintln!("[garb] exact = {exact_garb} (expected false on 0.2.8)");
@@ -101,6 +106,9 @@ fn main() {
             let s4 = src;
             suite.group(format!("u16→u8 {label}"), move |g| {
                 g.throughput(Throughput::Bytes(bytes));
+                g.config()
+                    .max_time(Duration::from_secs(3))
+                    .max_wall_time(Duration::from_secs(30));
                 let mut d = vec![0u8; count];
                 g.bench("garb (inexact)", move |b| {
                     b.iter(|| garb_inexact(&s1, &mut d))
