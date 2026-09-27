@@ -332,7 +332,8 @@ pub fn adapt_for_encode_with_intent_cow<'a>(
     // still a zero-copy path. Primaries and signal range must also match
     // — relabeling BT.2020 as BT.709 without gamut conversion is wrong.
     for &target in supported {
-        if descriptor.channel_type() == target.channel_type()
+        if descriptor.transfer == crate::TransferFunction::Unknown
+            && descriptor.channel_type() == target.channel_type()
             && descriptor.layout() == target.layout()
             && descriptor.alpha() == target.alpha()
             && descriptor.primaries == target.primaries
@@ -519,8 +520,8 @@ pub(crate) fn convert_into_with_anchor(
 /// classes succeed:
 ///
 /// * **identical byte layout** (same [`PixelFormat`](zenpixels::PixelFormat)):
-///   descriptor re-tag only (transfer / primaries / signal range / alpha
-///   mode) — zero data movement;
+///   only with matching transfer, primaries, signal range and alpha association
+///   — zero data movement;
 /// * **`Rgba8`-family ↔ `Bgra8`-family** (the X-padding forms included):
 ///   garb's SIMD B↔R swap, per row — strided buffers handled, padding
 ///   bytes untouched;
@@ -560,6 +561,16 @@ pub fn try_adapt_in_place(
             to: target
         }))
     };
+
+    // Physical adaptation does not execute transfer/gamut/range conversion.
+    // Refuse before mutation, without scanning pixels or allocating scratch.
+    if src.transfer != target.transfer
+        || src.primaries != target.primaries
+        || src.signal_range != target.signal_range
+        || (src.bytes_per_pixel() == target.bytes_per_pixel() && src.alpha != target.alpha)
+    {
+        return no_path();
+    }
 
     // Same byte layout: metadata-only re-tag, no pixel work.
     if src.format == target.format {
@@ -726,7 +737,8 @@ pub fn adapt_for_encode_explicit_cow<'a>(
 
     // Check for transfer-agnostic match (primaries and signal range must match).
     for &target in supported {
-        if descriptor.channel_type() == target.channel_type()
+        if descriptor.transfer == crate::TransferFunction::Unknown
+            && descriptor.channel_type() == target.channel_type()
             && descriptor.layout() == target.layout()
             && descriptor.alpha() == target.alpha()
             && descriptor.primaries == target.primaries
@@ -1168,12 +1180,13 @@ mod tests {
     }
 
     #[test]
-    fn in_place_metadata_retag_moves_no_bytes() {
+    fn in_place_rejects_semantic_retag_and_preserves_identity() {
         let original = [1u8, 2, 3, 4, 5, 6];
         let mut buf = buf_from(&original, 2, 1, PixelDescriptor::RGB8);
         let target = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
-        try_adapt_in_place(&mut buf, target).expect("same-format retag");
-        assert_eq!(buf.descriptor(), target);
+        try_adapt_in_place(&mut buf, target).expect_err("color changes require conversion");
+        assert_eq!(buf.descriptor(), PixelDescriptor::RGB8);
+        try_adapt_in_place(&mut buf, PixelDescriptor::RGB8).expect("identity");
         assert_eq!(buf.as_slice().row(0), &original[..]);
     }
 

@@ -369,8 +369,14 @@ impl RowConverter {
     /// becomes identity). This eliminates intermediate buffers in zenpipe's
     /// TransformSource when chaining format conversions.
     ///
-    /// Returns `None` if the converters are incompatible (self.to != other.from).
+    /// Returns `None` if the converters are incompatible or either uses an
+    /// external CMS transform that cannot be represented by its descriptor plan.
     pub fn compose(&self, other: &Self) -> Option<Self> {
+        // A shell descriptor plan does not contain the external CMS operation.
+        // Refuse composition rather than silently drop that transform.
+        if self.external.is_some() || other.external.is_some() {
+            return None;
+        }
         self.plan.compose(&other.plan).map(Self::from_plan)
     }
 
@@ -1414,6 +1420,33 @@ mod tests {
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             Some(Ok(Box::new(PaintRedTransform)))
         }
+    }
+
+    #[test]
+    fn composition_refuses_external_cms_in_either_operand() {
+        let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(zenpixels::ColorPrimaries::DisplayP3);
+        let srgb = PixelDescriptor::RGB8_SRGB;
+        let cms = PaintRedCms {
+            accepted: core::sync::atomic::AtomicUsize::new(0),
+        };
+        let external = RowConverter::new_explicit_with_cms(
+            p3,
+            srgb,
+            &ConvertOptions::permissive(),
+            Some(&cms),
+        )
+        .unwrap();
+        assert!(
+            external
+                .compose(&RowConverter::new(srgb, srgb).unwrap())
+                .is_none()
+        );
+        assert!(
+            RowConverter::new(p3, p3)
+                .unwrap()
+                .compose(&external)
+                .is_none()
+        );
     }
 
     #[test]

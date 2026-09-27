@@ -151,27 +151,8 @@ pub(crate) fn f32_to_f16_bits(v: f32) -> u16 {
     // For target_exp < -10: shift > 24, result underflows.
 
     if target_exp < -10 {
-        // Underflow (beyond even smallest subnormal's rounding range).
-        // The rounded-to-nearest-even result is ±0 for all f32 values
-        // smaller than (1/2 × smallest subnormal) = 2^-25.
-        //
-        // For values exactly equal to 2^-25 (tie), ties-to-even rounds to 0.
-        // For values in (2^-25, 2^-24), we'd round up to the smallest
-        // subnormal. exp_f32 for those: 2^-25 has exp_f32 = 102.
-        if target_exp == -11 {
-            // Value is in [2^-25, 2^-24). Check sticky for round-up.
-            //
-            // Full significand = (1 | frac_f32), 24 bits. Shifting right by 25
-            // puts the implicit 1 at bit 0 of the round position. Round bit = 1.
-            // Sticky = frac_f32 != 0. Truncated = 0.
-            // Round up if (sticky || truncated is odd = false). So round up
-            // iff sticky (frac_f32 != 0), giving smallest subnormal (mant=1).
-            // If frac_f32 == 0 (value exactly 2^-25), round to even: truncated
-            // is 0 (even), so stays at 0.
-            if frac_f32 != 0 {
-                return sign | 1;
-            }
-        }
+        // target_exp == -10 covers [2^-25, 2^-24), including the midpoint.
+        // Every smaller exponent is strictly below half the minimum subnormal.
         return sign;
     }
 
@@ -261,6 +242,28 @@ fn cvt_f32_to_f16(token: Token, src: &[f32], dst: &mut [u16]) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn minimum_subnormal_midpoint_matches_half() {
+        // Both signs and f32 neighbours of half the smallest f16 subnormal.
+        let midpoint = 102u32 << 23; // 2^-25
+        for bits in (midpoint - 8)..=(midpoint + 8) {
+            for sign in [0, 1u32 << 31] {
+                let value = f32::from_bits(bits | sign);
+                assert_eq!(
+                    super::f32_to_f16_bits(value),
+                    half::f16::from_f32(value).to_bits()
+                );
+            }
+        }
+        for sign in [1.0, -1.0] {
+            let value = sign * 0.375 * f32::from_bits(103 << 23);
+            assert_eq!(
+                super::f32_to_f16_bits(value),
+                half::f16::from_f32(value).to_bits()
+            );
+        }
+    }
+
     use super::*;
 
     /// Exhaustive: all 65536 f16 bit patterns round-trip through f32 and back.

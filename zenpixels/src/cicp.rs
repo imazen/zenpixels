@@ -130,12 +130,8 @@ impl Cicp {
         } else {
             crate::SignalRange::Narrow
         };
-        // Derive alpha from the pixel format's channel layout.
-        let alpha = if format.layout().has_alpha() {
-            Some(crate::AlphaMode::Straight)
-        } else {
-            None
-        };
+        // RGBX/BGRX carry an undefined padding lane, not straight alpha.
+        let alpha = format.default_alpha();
         crate::PixelDescriptor {
             format,
             transfer,

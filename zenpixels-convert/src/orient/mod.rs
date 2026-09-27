@@ -116,6 +116,9 @@ pub fn apply_orientation(src: PixelSlice<'_>, orientation: Orientation) -> Pixel
     let (ow, oh) = orientation.output_dimensions(src.width(), src.rows());
     let desc = src.descriptor();
     let mut out = PixelBuffer::new(ow, oh, desc);
+    if let Some(context) = src.color_context() {
+        out = out.with_color_context(context.clone());
+    }
     // The buffer is constructed to the exact output geometry + descriptor, so
     // the size/format check inside `apply_orientation_into` cannot fail.
     apply_orientation_into(src, orientation, out.as_slice_mut())

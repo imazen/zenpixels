@@ -30,6 +30,25 @@
 
 ### zenpixels — fixed
 
+- Preserve ImgVec storage/stride, color semantics through RGB/BGR swaps, and
+  format padding semantics through CICP descriptor construction. Empty-width
+  crop rows return empty slices. Gamut containment uses actual supported
+  containment relationships, not a scalar ranking (including P3 red outside
+  BT.2020). Clarify the existing Adobe RGB gamma convention, 563/256.
+
+### zenpixels-convert — fixed
+
+- Known-transfer encoding adapters execute the requested transfer conversion;
+  strict in-place adaptation refuses unsupported color/range/association retags
+  before mutation. Allocating orientation preserves attached color context.
+- Scalar Gamma22 uses the existing Adobe gamma convention; F16 values below
+  half the minimum subnormal round to signed zero.
+- RowConverter composition refuses external CMS operations it cannot retain.
+  Ordinary composition still optimizes away avoidable intermediate quantization;
+  execute separate converters to retain intentional materialized stages.
+
+### zenpixels — earlier fixes
+
 - Owned buffer views and in-place transforms accept the minimum visible final-row
   extent instead of indexing nonexistent trailing padding. Existing full padding
   remains available when present; parts adoption uses the same view validation.

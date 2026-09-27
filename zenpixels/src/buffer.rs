@@ -670,6 +670,9 @@ impl<'a, P> PixelSlice<'a, P> {
             "row index {y} out of bounds (rows: {})",
             self.rows
         );
+        if self.width == 0 {
+            return &[];
+        }
         let start = y as usize * self.stride;
         let len = self.width as usize * self.descriptor.bytes_per_pixel();
         &self.data[start..start + len]
@@ -1114,6 +1117,9 @@ impl<'a, P> PixelSliceMut<'a, P> {
             "row index {y} out of bounds (rows: {})",
             self.rows
         );
+        if self.width == 0 {
+            return &[];
+        }
         let start = y as usize * self.stride;
         let len = self.width as usize * self.descriptor.bytes_per_pixel();
         &self.data[start..start + len]
@@ -1131,6 +1137,9 @@ impl<'a, P> PixelSliceMut<'a, P> {
             "row index {y} out of bounds (rows: {})",
             self.rows
         );
+        if self.width == 0 {
+            return &mut [];
+        }
         let start = y as usize * self.stride;
         let len = self.width as usize * self.descriptor.bytes_per_pixel();
         &mut self.data[start..start + len]
@@ -1255,6 +1264,8 @@ impl<'a> PixelSliceMut<'a, Rgbx> {
         let rows = self.rows;
         let stride = self.stride;
 
+        let mut descriptor = self.descriptor;
+        descriptor.format = crate::PixelFormat::Bgrx8;
         let color = self.color;
         let data = self.data;
         for_each_pixel_4bpp(data, width, rows, stride, |px| {
@@ -1265,7 +1276,7 @@ impl<'a> PixelSliceMut<'a, Rgbx> {
             width,
             rows,
             stride,
-            descriptor: PixelDescriptor::BGRX8_SRGB,
+            descriptor,
 
             color,
             _pixel: PhantomData,
@@ -1308,6 +1319,8 @@ impl<'a> PixelSliceMut<'a, Bgrx> {
         let rows = self.rows;
         let stride = self.stride;
 
+        let mut descriptor = self.descriptor;
+        descriptor.format = crate::PixelFormat::Rgbx8;
         let color = self.color;
         let data = self.data;
         for_each_pixel_4bpp(data, width, rows, stride, |px| {
@@ -1318,7 +1331,7 @@ impl<'a> PixelSliceMut<'a, Bgrx> {
             width,
             rows,
             stride,
-            descriptor: PixelDescriptor::RGBX8_SRGB,
+            descriptor,
 
             color,
             _pixel: PhantomData,
@@ -1412,6 +1425,8 @@ impl<'a> PixelSliceMut<'a, Rgba<u8>> {
         let rows = self.rows;
         let stride = self.stride;
 
+        let mut descriptor = self.descriptor;
+        descriptor.format = crate::PixelFormat::Bgra8;
         let color = self.color;
         let data = self.data;
         for_each_pixel_4bpp(data, width, rows, stride, |px| {
@@ -1422,7 +1437,7 @@ impl<'a> PixelSliceMut<'a, Rgba<u8>> {
             width,
             rows,
             stride,
-            descriptor: PixelDescriptor::BGRA8_SRGB,
+            descriptor,
 
             color,
             _pixel: PhantomData,
@@ -1487,6 +1502,8 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
         let rows = self.rows;
         let stride = self.stride;
 
+        let mut descriptor = self.descriptor;
+        descriptor.format = crate::PixelFormat::Rgba8;
         let color = self.color;
         let data = self.data;
         for_each_pixel_4bpp(data, width, rows, stride, |px| {
@@ -1497,7 +1514,7 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
             width,
             rows,
             stride,
-            descriptor: PixelDescriptor::RGBA8_SRGB,
+            descriptor,
 
             color,
             _pixel: PhantomData,
@@ -2035,8 +2052,9 @@ impl<P: Pixel> PixelBuffer<P> {
         let stride_pixels = img.stride();
         let descriptor = P::DESCRIPTOR;
         let stride_bytes = stride_pixels * core::mem::size_of::<P>();
-        let (buf, ..) = img.into_contiguous_buf();
-        let data: Vec<u8> = pixels_to_bytes(buf);
+        // Keep the actual backing storage and its stride; do not compact an
+        // allocation only to retain the pre-compaction stride.
+        let data: Vec<u8> = pixels_to_bytes(img.into_buf());
         Self {
             data,
             offset: 0,

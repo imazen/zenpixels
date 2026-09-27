@@ -227,7 +227,7 @@ pub enum TransferFunction {
     Bt709 = 2,
     /// Perceptual Quantizer (SMPTE ST 2084, HDR10).
     Pq = 3,
-    /// Pure power-law gamma 2.2. Used for Adobe RGB (1998).
+    /// Adobe RGB (1998) power-law gamma, nominally 2.2 (exactly 563/256).
     ///
     /// The Adobe RGB 1998 encoding spec (§4.3.4.2) defines pure gamma
     /// 2.19921875 with no linear segment near black. About 85% of real-world
@@ -518,27 +518,20 @@ impl ColorPrimaries {
 
     /// Whether `self` fully contains the gamut of `other`.
     ///
-    /// Returns `false` when white points differ (cross-adapted containment
-    /// is not defined without a chromatic adaptation transform).
-    /// D65 hierarchy: BT.2020 > Display P3 > Adobe RGB ≈ BT.709.
+    /// Unknown primaries are not provably contained. Display P3 and Adobe RGB
+    /// each contain BT.709, but neither contains the other. BT.2020 does not
+    /// quite contain Display P3: P3 red lies outside its triangle. All currently
+    /// supported known primaries use D65; future white points need a defined
+    /// adaptation contract before claiming containment.
     #[inline]
     pub const fn contains(self, other: Self) -> bool {
-        !self.needs_chromatic_adaptation(other)
-            && self.gamut_width() >= other.gamut_width()
-            && !matches!(self, Self::Unknown)
-            && !matches!(other, Self::Unknown)
-    }
-
-    #[allow(unreachable_patterns)]
-    const fn gamut_width(self) -> u8 {
-        match self {
-            Self::Bt709 => 1,
-            Self::AdobeRgb => 2,
-            Self::DisplayP3 => 3,
-            Self::Bt2020 => 4,
-            Self::Unknown => 0,
-            _ => 0,
-        }
+        matches!(
+            (self, other),
+            (Self::Bt2020, Self::Bt2020 | Self::AdobeRgb | Self::Bt709)
+                | (Self::DisplayP3, Self::DisplayP3 | Self::Bt709)
+                | (Self::AdobeRgb, Self::AdobeRgb | Self::Bt709)
+                | (Self::Bt709, Self::Bt709)
+        )
     }
 }
 
@@ -1863,7 +1856,7 @@ mod tests {
 
     #[test]
     fn color_primaries_containment() {
-        assert!(ColorPrimaries::Bt2020.contains(ColorPrimaries::DisplayP3));
+        assert!(!ColorPrimaries::Bt2020.contains(ColorPrimaries::DisplayP3));
         assert!(ColorPrimaries::Bt2020.contains(ColorPrimaries::Bt709));
         assert!(ColorPrimaries::DisplayP3.contains(ColorPrimaries::Bt709));
         assert!(!ColorPrimaries::Bt709.contains(ColorPrimaries::DisplayP3));
