@@ -1,7 +1,6 @@
 # Implemented bridge contracts
 
-2026-09-27. These are unreleased additions/fixes on the 0.2 line. Public signatures
-are also intended for 0.3.1. Runtime behavior and allocation checks live in
+2026-09-27. These are unreleased additions/fixes on the 0.2 line. Migrated signatures are tested unchanged against the packaged 0.3.1 candidate. Runtime behavior and allocation checks live in
 `zenpixels-convert/tests/prepared_contracts.rs` and `zenpixels/tests/storage_contracts.rs`.
 
 ## Prepare rows once

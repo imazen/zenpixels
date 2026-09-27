@@ -117,9 +117,9 @@ color transform.
 | Independent CMS workers | Done for reviewed contract | Setup cost per worker; immutable LUTs may share | Avoid mutex serialization; factory/preparation cost visible |
 | Reinterpret sample alignment | Done for reviewed contract | O(1) pointer/stride check | No sample scan |
 | Typed reinterpretation | Done for reviewed contract | O(1) layout/type check plus explicit erasure | No sample scan or runtime type taxonomy |
-| Reorder metadata retention | Partial | O(1) metadata assignment around existing swap loop | No new traversal/Arc clone |
+| Reorder metadata retention | Done for reviewed swaps | O(1) metadata assignment around existing swap loop | No new traversal/Arc clone |
 | ImgVec stride preservation | Done | Can eliminate current compaction | Move original storage with actual stride; alignment conversion may still copy |
-| Resolve color authority | Partial | O(1) selection plus possible profile validation/parsing | Resolve once per image/plan; unknown/conflict refusal without pixel scans |
+| Resolve color authority | Done at conversion/output boundaries | O(1) selection plus possible profile validation/parsing | Resolve once per image/plan; unknown/conflict refusal without pixel scans |
 | Prepared width/extent validation | Done for reviewed contract | O(1) per execution call | Row checks outside pixel loop; explicit capacity growth |
 | Fallible CMS row method | Done for reviewed contract | Result branch once per row/call | No per-pixel Result, allocation or backtrace on success |
 | Exact preservation | Done for reviewed contract | Cheap proof/rejection or explicit O(samples) scan | No automatic scan inferred from provenance or heuristic loss |
@@ -127,7 +127,7 @@ color transform.
 | HDR peak discovery | Done for reviewed contract | O(samples), possibly decoding/linearizing first | Must be explicit measurement or caller-supplied peak; don't hide in generic conversion |
 | Borrowed/consuming identity | Existing APIs; wrappers deferred | O(1) metadata comparison/ownership | No pixel copies; large ICC equality may cost O(profile bytes), resolve/cache appropriately |
 | Caller-output identity | Existing APIs; wrappers deferred | Required copy into supplied destination | Document; caller selected independent destination |
-| Strict in-place | Partial | May need preflight, scratch or refusal | No replacement image or hidden rollback buffer; explicit scan policy |
+| Strict in-place | Done for existing adapter; wider API deferred | May need preflight, scratch or refusal | No replacement image or hidden rollback buffer; explicit scan policy |
 | Parts adoption/error retention | Done | O(1) validation/ownership; error trace allocates only on failure | Implemented; strip image with without_buffer before retaining error |
 | Contiguous export | Done | O(image) moves only if needed | Explicit consuming operation; prefer parts for stride-aware receiver |
 | Typed owned export | Done for reviewed contract | May copy for allocator-layout incompatibility | Preflight alignment/capacity, reuse when legal; never compact then knowingly copy |
@@ -135,11 +135,11 @@ color transform.
 | CallbackSource scratch | Done for reviewed contract | Reuse one row instead of allocating each time | Check production before append; no invented EOF row |
 | Resident row iterator | Deferred | O(1) bookkeeping per row | Optional convenience; no full image buffering |
 | Video plane carrier | Deferred | O(planes) checks, no pixel scan | Deferred; borrow independent storage/strides |
-| Bit-depth sample validation | Pending | O(samples) if actually checking values | Separate explicit scan; metadata checks alone do not validate every sample |
-| YUV→CVVDP RGB | Pending | Real matrix/range/chroma/display conversion and filter halos | Explicit conversion with caller scratch, not hidden carrier coercion |
+| Bit-depth sample validation | Deferred with native video carrier | O(samples) if actually checking values | Separate explicit scan; metadata checks alone do not validate every sample |
+| YUV→CVVDP RGB | Deferred with native video adapters | Real matrix/range/chroma/display conversion and filter halos | Explicit conversion with caller scratch, not hidden carrier coercion |
 | Cosmetic names/trait sealing | Deferred | No runtime benefit | Keep established imports and open traits; optional aliases only with concrete benefit |
-| docs.rs organization | Partial | Build/docs only | No runtime change; keep core dependency boundary |
-| Compile-time cleanup | Pending | Macro/generic expansion costs | Measure; no extra public crates, unsafe POD or type-level policy proliferation by default |
+| docs.rs organization | Done for candidates | Build/docs only | No runtime change; keep core dependency boundary |
+| Compile-time cleanup | Measured; no dependency additions | Macro/generic expansion costs | Measure; no extra public crates, unsafe POD or type-level policy proliferation by default |
 
 Status updated after PR #75 and the prepared/conversion follow-up: **Done** only for the listed scope;
 **Partial** means related fixes exist but the requested contract is incomplete;
