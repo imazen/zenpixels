@@ -7,6 +7,8 @@ same-source compatibility with one core version per connected pipeline; local
 wide dependency ranges were not published, and replacement signatures must
 remain unchanged across the bridge and destination releases. The historical
 inventory and reference commits below remain useful implementation inputs.
+For current planar retirement and explicit 10/12-bit requirements, see the
+[sample-signaling proposal](final-0.2-and-0.3-sample-signaling.md).
 
 Written 2026-09-26 against `main` = `0e1c659` (both crates at 0.2.16 in
 `Cargo.toml`; crates.io latest 0.2.16, published 2026-07-24). Every claim
@@ -84,7 +86,8 @@ victims ourselves.
    | `estimate::*`, `requires_cms`, `REC2020_V4`, `planar::Plane`, `ByteOrder`, `serde` feature, external impls of any `*Ext` trait / `ColorManagement` / `RowTransform*` | none |
    | `ConvertError` variants matched downstream | `AllocationFailed` ×5, `NoPath` ×1 |
    | `FormatOption { .. }` / `ConversionCost { .. }` literals | none (hits in `coefficient` and `retired/zenimage` are their own types) |
-   | `PlaneDescriptor`/`PlaneSemantic`/`Subsampling`/`YuvMatrix` | zenjpeg, heavily (hundreds of sites) |
+   | Legacy planar image/layout types | **Correction, 2026-09-27:** no downstream users found in the focused source audit; zenjpeg's `Subsampling` is its own type, not zenpixels's |
+   | `PlaneMask` | **Correction, 2026-09-27:** zenpipe/zenfilters `access.rs`, `masked.rs`, `filters/alpha.rs`; includes public signatures and Cargo feature requirements |
    | `hdr-experimental` API (`CllMeasure`, `HdrConfig`, `new_with_hdr_peak`, `convert_to_sdr`) | zentone, ultrahdr, zenmetrics, zenpipe, zenjpeg, zenavif |
 
 6. **The widened requirement creates a forward-compatibility obligation.**
@@ -412,10 +415,12 @@ deprecated alias once `transform_row` returns `Result` (§5.2).
 | `pipeline` module dev-only; feature name kept as an empty stub | zero users | deprecation |
 | zenpixels-convert requires `zenpixels >=0.3.1, <0.5.0` (current-plus-next) | — | — |
 
-Not tightened: `FormatOption`, `ConversionCost`, `PlaneDescriptor` and the
-other exhaustive structs stay constructible by literal (zenjpeg builds
-`PlaneDescriptor` literals in hundreds of places); the `Pixel` trait stays
-open; `pub use zenpixels::*` stays.
+Historical proposal: keep `FormatOption`, `ConversionCost` and other exhaustive
+structs constructible by literal, keep `Pixel` open, and retain
+`pub use zenpixels::*`. **Correction, 2026-09-27:** the claimed hundreds of
+zenjpeg `PlaneDescriptor` literals do not exist; its similarly named types are
+local. The [sample-signaling proposal](final-0.2-and-0.3-sample-signaling.md)
+governs retirement of the entire deprecated planar surface.
 
 ### 5.3 Kept in 0.3.1 despite earlier notes
 
