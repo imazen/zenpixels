@@ -27,8 +27,11 @@ branch as its target; merging into it afterward did not put its changes on main.
 `44f7716` is not an ancestor of current main; `a9bdfe5` and `640dced` are.
 
 The release commit manually brought over PixelCow, the cow adapters,
-`Adapted::as_pixel_slice`, and checked InPlacePixels construction, among its
-changes. It also copied the removal inventory. It did **not** bring over the
+`Adapted::as_pixel_slice`, and the removal inventory. It separately added checked
+InPlacePixels construction: despite the PR description mentioning it, that
+implementation is absent from PR #63's final head and merge. See the complete
+[21-commit inventory and port decisions](pr63-commit-inventory.md).
+The release did **not** bring over the
 estimation feature gate, the `requires_cms` demotion, the new conversion/parts
 interfaces, or their full deprecation work. These are distinct facts; the
 release was neither the unmodified pre-review branch nor the full reviewed PR.

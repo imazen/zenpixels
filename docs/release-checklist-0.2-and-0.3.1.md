@@ -4,6 +4,8 @@ Status: 2026-09-27. This is the short execution checklist; the
 [contract proposal](api-contract-proposal-0.2-and-0.3.1.md) holds the detailed
 design and the [migration cards](migration-examples-and-audit-0.3.1.md) hold
 examples/callers. Commit each completed chunk before moving on.
+The [PR #63 inventory](pr63-commit-inventory.md) records all 21 commits and which
+missing implementations/tests to reuse, rewrite or skip.
 
 ## Completed on main, not yet released
 
@@ -22,7 +24,8 @@ not the alignment prefix. Checked adoption is not implemented yet.
 
 | Order | Chunk | Completion condition |
 |---|---|---|
-| 1 — next | Checked parts adoption | `try_from_parts` validates geometry/alignment and returns the supplied allocation on error; round-trips preserve pointer, capacity, offset, stride and context. Settle construction for external decoder-owned allocations without adding redundant constructor families. |
+| 0 — immediate fix | Known-transfer adapter guard | Port both missing `Unknown` guards from PR #63's final revision. Known sRGB → linear requests must convert or fail, never borrow unchanged bytes under a new descriptor. Cover intent, explicit-policy and legacy paths. |
+| 1 — next ownership chunk | Checked parts adoption and allocation reuse | `try_from_parts` validates geometry/alignment and returns the supplied allocation on error; round-trips preserve pointer, capacity, offset, stride and context. Adapt PR #63's typed U8 export and owned-cow adapter optimizations to avoid unnecessary full-image copies. Settle construction for external decoder-owned allocations without adding redundant constructor families. |
 | 2 | Storage and typed-layout correctness | Repair minimal final-row extents, zero-area behavior, arithmetic and typed reinterpretation/mutation. Validate descriptor combinations at acceptance boundaries while retaining convenient public descriptors. Add replacement paths before deprecating problematic existing ones. |
 | 3 | Current color and CMS inputs | One interpretation of descriptor, ICC/CICP, range, alpha and luminance anchor; no known-color retag masquerading as conversion. Pass actual source/target profiles to CMS and finalization. Resolve constructor/authority choices before publishing new types. |
 | 4 | Prepared, fallible conversion | Complete plans preserve composed operations; preparation owns scratch and backend state; execution within capacity does not allocate. Backend errors propagate, and independent workers do not hide shared mutable state behind cloning. |

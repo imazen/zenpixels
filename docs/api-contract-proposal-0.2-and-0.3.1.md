@@ -187,9 +187,10 @@ justification. Typed/high-depth interchange in zenavif and zenjpeg merits
 validation but is not itself evidence of a parts consumer.
 Acceptance tests must verify pointer/capacity preservation, offset/stride/color
 round-trip, allocation-free extraction and recovery of rejected allocations.
-The previous orphaned PR #63 contains reference implementations, but
-its code must be reconciled with current invariant fixes rather than rebased
-mechanically.
+The previous orphaned PR #63 contains reference implementations. The
+[complete commit inventory](pr63-commit-inventory.md) distinguishes missing work,
+manually copied code, superseded APIs and rejected changes. Reconcile selected
+implementations with current invariant fixes rather than rebasing mechanically.
 
 ## 3. Descriptors: description versus validated execution
 
