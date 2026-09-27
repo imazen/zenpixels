@@ -52,7 +52,7 @@ on `ConvertError` was found. This textual audit is not proof about unknown calle
   scratch is reused, and public filter masks no longer depend on retired planar.
 
 Unrelated pre-existing edits in those repositories are preserved. These are local
-commits; paired release-candidate builds and coordinated publication remain gates.
+commits; paired release-candidate builds now pass as described below. Coordinated publication remains.
 
 ## Compile cost
 
@@ -85,3 +85,48 @@ Raw results: [compile-cost JSON](../benchmarks/bridge-compile-cost-2026-09-27.js
 `cargo package -p zenpixels -p zenpixels-convert --allow-dirty` builds and verifies
 both 0.2.17 archives, including the converter against Cargo’s staged core registry.
 Package warnings only note intentionally excluded integration-test files.
+
+
+## 0.3.1 and packaged compatibility
+
+`release/0.3.1` at `5e40423` builds on bridge `835612e`. Both 0.3.1 package
+archives verify. Default/all-feature tests, strict default/all-feature Clippy,
+broken-link rustdoc, core 1.85 / converter 1.89 and 128 removal probes pass.
+The 0.3 API snapshots were regenerated. No package was published.
+
+Force a patch comparison so the audit actually lists breaks rather than skipping
+checks because 0.3 is already a semver-major increment:
+
+```sh
+cargo semver-checks -p zenpixels -p zenpixels-convert --baseline-rev 835612e --release-type patch
+cargo semver-checks -p zenpixels-convert --baseline-rev 835612e --release-type patch --default-features
+```
+
+Core reports only legacy planar, `into_vec` and the ambiguous current-context
+constructor removal (219 pass, four removal categories). Converter reports only
+`requires_cms` and packed adapters/Adapted (221 pass, two categories). Its default
+configuration additionally reports estimation module/types/methods moving behind
+`estimation-experimental`. No additional signature/trait changes were reported.
+
+```sh
+CARGO_TARGET_DIR=/tmp/zenpixels-target-status-20260927 python3 scripts/check-bridge-compat.py \
+  --packages /tmp/zenpixels-target-status-20260927/package \
+  --siblings /home/lilith/work/zen
+```
+
+All 16 packaged same-source feature/pairing cases pass, plus a bridge→0.3.1
+lockfile update. The fixture denies deprecations, crosses actual buffer/descriptor
+boundaries and implements the open backend traits. It tests core/converter
+0.2.17/0.3.1 in all four combinations. Each selected graph has exactly one core
+and one converter. Artifacts are normalized Cargo packages, not workspace path
+manifests, so the converter's published dependency requirement is exercised.
+
+Companions are local zencodec, zenpipe and zenresize working trees. The latter
+already accepts both core lines. Registry zencodec and zenresize pulled a second
+0.2 core until these migration sources were patched into the test: a concrete
+confirmation that the entire connected pipeline must opt in together. This is
+not an all-codec-feature or all-published-reverse-dependency test.
+
+The zencodec testkit example was migrated to the stride-aware cow adapter in
+`f4d5da4`; all 11 usage examples pass against the 0.3 candidates. Previously
+reported companion workspace tests remain valid for the earlier functional fixes.
