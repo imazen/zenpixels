@@ -1833,8 +1833,11 @@ fn naive_f32_to_u8(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
 /// inputs by 1 LSB (e.g. `33025 → 128`, exact `129`) and made this step
 /// disagree with the f32 route (`U16ToF32` → `NaiveF32ToU8`, `v * 255 + 0.5`).
 /// Two routes for one operation must be byte-identical — imazen/zenpixels#72.
-/// Measured 4.5× faster than garb's kernel as well (`benches/bench_u16_narrow.rs`,
-/// `benchmarks/u16_narrow_2026-08-27.txt`).
+/// The M4 Pro measurement was 4.5× faster than garb's scalar fallback
+/// (`benchmarks/u16_narrow_2026-08-27.txt`); this does not generalize to x86.
+/// The default-target x86 follow-up was slower than the exact u32 candidate
+/// (`benchmarks/u16_narrow_2026-09-24_x86.txt`). Keep exactness while comparing
+/// platform-specific implementations with `benches/bench_u16_narrow.rs`.
 fn u16_to_u8(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
     let (pairs, _) = src[..count * 2].as_chunks::<2>();

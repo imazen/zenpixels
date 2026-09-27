@@ -1,0 +1,69 @@
+[garb] NOT exact: 127 of 65536 inputs differ from round(v/257)
+[garb] exact = false (expected false on 0.2.8)
+[zenbench] calibration: int=0.21ns/iter mem_bw=95.5GiB/s mem_lat=11.7ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.21ns/iter, TSC: 4.299 ticks/ns (invariant)
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1790533258-28964a
+  git: c5d894543baffaad9ab19d277a22e35e70af3cd8
+═══════════════════════════════════════════════════════════════
+
+  u16→u8 64²  1 rounds × 627 calls ⚠ only 1 rounds
+                     mean ±mad µs  95% CI vs base        iB/s
+  ├─ garb (inexact)   1.7 ±0.0µs                       20.6G
+  ├─ shift u32        3.0 ±0.0µs  [+77.5%–+77.5%]      11.6G
+  ├─ sat u16          0.9 ±0.0µs  [-47.3%–-47.3%]      39.2G
+  ├─ byte lanes       7.4 ±0.0µs  [+343.4%–+343.4%]    4.66G
+  ╰─ shipped          7.0 ±0.0µs  [+322.5%–+322.5%]    4.89G
+
+  sat u16         ███████████████████████████████████████████████████ 39.2 GiB/s
+  garb (inexact)  ███████████████████████████ 20.6 GiB/s
+  shift u32       ███████████████ 11.6 GiB/s
+  shipped         ██████ 4.89 GiB/s
+  byte lanes      ██████ 4.66 GiB/s
+
+  u16→u8 256²  1 rounds × 63 calls ⚠ only 1 rounds
+                      mean ±mad µs  95% CI vs base        iB/s
+  ├─ garb (inexact)   13.8 ±0.0µs                       39.9G
+  ├─ shift u32        24.8 ±0.0µs  [+80.4%–+80.4%]      22.1G
+  ├─ sat u16           9.8 ±0.0µs  [-28.7%–-28.7%]      56.0G
+  ├─ byte lanes       77.2 ±0.0µs  [+461.0%–+461.0%]    7.12G
+  ╰─ shipped          78.1 ±0.0µs  [+467.4%–+467.4%]    7.03G
+
+  sat u16         ███████████████████████████████████████████████████ 56.0 GiB/s
+  garb (inexact)  ████████████████████████████████████ 39.9 GiB/s
+  shift u32       ████████████████████ 22.1 GiB/s
+  byte lanes      ██████ 7.12 GiB/s
+  shipped         ██████ 7.03 GiB/s
+
+  u16→u8 1024²  1 rounds × 12 calls ⚠ only 1 rounds
+                        mean ±mad µs  95% CI vs base        iB/s
+  ├─ garb (inexact)    227.3 ±0.0µs                       38.7G
+  ├─ shift u32         394.6 ±0.0µs  [+73.7%–+73.7%]      22.3G
+  ├─ sat u16           171.2 ±0.0µs  [-24.6%–-24.6%]      51.3G
+  ├─ byte lanes       1236.1 ±0.0µs  [+444.0%–+444.0%]    7.11G
+  ╰─ shipped          1231.8 ±0.0µs  [+442.0%–+442.0%]    7.14G
+
+  sat u16         ███████████████████████████████████████████████████ 51.3 GiB/s
+  garb (inexact)  ██████████████████████████████████████ 38.7 GiB/s
+  shift u32       ██████████████████████ 22.3 GiB/s
+  shipped         ███████ 7.14 GiB/s
+  byte lanes      ███████ 7.11 GiB/s
+
+  u16→u8 4096²  1 rounds × 1 calls ⚠ only 1 rounds
+                     mean ±mad ms  95% CI vs base        iB/s
+  ├─ garb (inexact)    4.4 ±0.0ms                       31.8G
+  ├─ shift u32         6.6 ±0.0ms  [+48.4%–+48.4%]      21.4G
+  ├─ sat u16           4.1 ±0.0ms  [-8.0%–-8.0%]        34.6G
+  ├─ byte lanes       20.3 ±0.0ms  [+359.1%–+359.1%]    6.92G
+  ╰─ shipped          20.3 ±0.0ms  [+358.4%–+358.4%]    6.93G
+
+  sat u16         ███████████████████████████████████████████████████ 34.6 GiB/s
+  garb (inexact)  ███████████████████████████████████████████████ 31.8 GiB/s
+  shift u32       ████████████████████████████████ 21.4 GiB/s
+  shipped         ██████████ 6.93 GiB/s
+  byte lanes      ██████████ 6.92 GiB/s
+
+  total: 132.9s  (112 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json

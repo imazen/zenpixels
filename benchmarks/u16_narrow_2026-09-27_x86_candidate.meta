@@ -1,0 +1,13 @@
+# Exploratory exact U16 narrowing candidate, 2026-09-27
+# Base: c5d894543baffaad9ab19d277a22e35e70af3cd8 plus candidate in accompanying commit
+# CPU: AMD Ryzen 9 9950X3D; x86_64 default target, no target-cpu=native
+# Compiler: rustc 1.98.1 (48a229cea 2026-09-01), LLVM 22.1.8
+# Command: ZENBENCH_NO_SAVE=1 cargo bench --offline -j 4 -p zenpixels-convert --bench bench_u16_narrow -- --group='u16→u8 64²'
+# Harness ran all four sizes despite requested group; raw output preserved.
+# Shared busy host; only ONE accepted round per size, 112 noisy rounds total.
+# Diagnostic only. No portable speed guarantee; no ARM candidate measurement.
+# All exact candidates verified on every u16 value before timing.
+# Production kernel unchanged; new candidate is benchmark-only.
+# RUSTFLAGS=<unset>
+# CARGO_ENCODED_RUSTFLAGS=<unset>
+# Benchmark source sha256: 8fd17080a2113b5bcb93e9d50c61f708f7a8407f86f15f7a62e7428091cb2090

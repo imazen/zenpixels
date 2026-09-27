@@ -108,16 +108,13 @@ mod tests {
         .unwrap()
     }
     #[test]
-    fn compose_discards_external_transform() {
+    fn compose_refuses_to_discard_external_transform() {
         let mut a = custom_converter();
         let b = RowConverter::new(a.to_descriptor(), a.to_descriptor()).unwrap();
-        let mut c = a.compose(&b).unwrap();
+        assert!(a.compose(&b).is_none());
         let mut direct = [0; 3];
-        let mut composed = [0; 3];
         a.convert_row(&[1, 2, 3], &mut direct, 1);
-        c.convert_row(&[1, 2, 3], &mut composed, 1);
         assert_eq!(direct, [42, 42, 42]);
-        assert_eq!(composed, [1, 2, 3]);
     }
     #[cfg(not(feature = "std"))]
     #[test]
@@ -152,7 +149,7 @@ mod tests {
         assert_eq!(s.descriptor().pixel_format(), PixelFormat::Bgra8);
     }
     #[test]
-    fn layout_helper_resets_color_and_alpha() {
+    fn layout_helper_preserves_color_and_alpha() {
         let mut data = [1u8, 2, 3, 128];
         let s = PixelSliceMut::<rgb::RGBA<u8>>::new_typed(&mut data, 1, 1, 1)
             .unwrap()
@@ -160,16 +157,18 @@ mod tests {
             .with_transfer(TransferFunction::Linear)
             .with_alpha_mode(Some(AlphaMode::Premultiplied));
         let s = s.swap_to_bgra();
-        assert_eq!(s.descriptor().primaries, ColorPrimaries::Bt709);
-        assert_eq!(s.descriptor().transfer(), TransferFunction::Srgb);
-        assert_eq!(s.descriptor().alpha(), Some(AlphaMode::Straight));
+        assert_eq!(s.descriptor().primaries, ColorPrimaries::DisplayP3);
+        assert_eq!(s.descriptor().transfer(), TransferFunction::Linear);
+        assert_eq!(s.descriptor().alpha(), Some(AlphaMode::Premultiplied));
     }
     #[test]
-    fn from_imgvec_keeps_old_stride_after_compacting() {
+    fn from_imgvec_preserves_strided_allocation() {
         let px = rgb::RGB8::new(1, 2, 3);
         let img = imgref::Img::new_stride(vec![px; 6], 2, 2, 3);
+        let ptr = img.buf().as_ptr().cast::<u8>();
         let b = PixelBuffer::<rgb::RGB8>::from_imgvec(img);
         assert_eq!(b.stride(), 9);
-        assert!(std::panic::catch_unwind(|| b.as_slice().row(1).to_vec()).is_err());
+        assert_eq!(b.as_slice().row(1), &[1, 2, 3, 1, 2, 3]);
+        assert_eq!(b.as_slice().row(0).as_ptr(), ptr);
     }
 }

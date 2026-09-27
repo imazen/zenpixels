@@ -4,7 +4,7 @@
 mod tests {
     use zenpixels_convert::*;
     #[test]
-    fn known_transfer_is_silently_retagged() {
+    fn known_transfer_is_converted() {
         let src = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Linear);
         let pixels = [128u8; 3];
         let out = adapt::adapt_for_encode_cow(&pixels, src, 1, 1, 3, &[PixelDescriptor::RGB8_SRGB])
@@ -13,14 +13,14 @@ mod tests {
             out.as_slice().descriptor().transfer(),
             TransferFunction::Srgb
         );
-        assert_eq!(out.as_slice().row(0), &[128; 3]);
+        assert!(out.as_slice().row(0)[0] >= 187);
         let mut real = RowConverter::new(src, PixelDescriptor::RGB8_SRGB).unwrap();
         let mut converted = [0; 3];
         real.convert_row(&pixels, &mut converted, 1);
         assert!(converted[0] >= 187, "actual linear→sRGB must encode ~188");
     }
     #[test]
-    fn compose_removes_requested_quantization() {
+    fn compose_optimizes_final_output_by_default() {
         let f = PixelDescriptor::RGBF32_LINEAR;
         let u = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Linear);
         let mut a = RowConverter::new(f, u).unwrap();
@@ -57,11 +57,13 @@ mod tests {
         assert!(converter.is_identity());
     }
     #[test]
-    fn gamma22_scalar_is_identity() {
-        assert_eq!(TransferFunction::Gamma22.linearize(0.5), 0.5);
+    fn gamma22_scalar_matches_adobe_gamma() {
+        let linear = TransferFunction::Gamma22.linearize(0.5);
+        assert!((linear - 0.5f32.powf(563.0 / 256.0)).abs() < 1e-6);
+        assert!((TransferFunction::Gamma22.delinearize(linear) - 0.5).abs() < 1e-6);
     }
     #[test]
-    fn f16_premultiply_rounds_below_midpoint_up() {
+    fn f16_premultiply_rounds_below_midpoint_to_zero() {
         let src = PixelDescriptor::new(
             ChannelType::F16,
             ChannelLayout::Rgba,
@@ -78,7 +80,7 @@ mod tests {
             1,
         );
         assert_eq!(
-            out[0], 1,
+            out[0], 0,
             "minimum-subnormal times .375 is below midpoint and should round to zero"
         );
     }

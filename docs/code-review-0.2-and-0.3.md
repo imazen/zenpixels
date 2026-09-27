@@ -1,9 +1,10 @@
 # Code review: adoption, planar retirement and remaining contracts
 
 2026-09-27. **Read this instead of prose-only proposals when deciding the next
-chunk.** Adoption and planar warnings below are implemented. The remaining
-cases show code that currently runs, its incorrect result, and the assertion or
-interface we want. Those proposed fixes are not silently implemented here.
+chunk.** Adoption, planar warnings and the small fixes listed below are implemented.
+Historical before/after examples remain below; use the runnable case files for
+current behavior. The broader prepared-worker, output/CMS and validation contracts
+are still outstanding.
 
 The complete current-behavior examples are checked in under `contract-cases/`.
 Run `python3 scripts/check-contract-cases.py`. Most assertions deliberately
@@ -11,7 +12,16 @@ recognize bugs: a passing review suite is evidence of reproduction, **not a clea
 bill of health**. It is separate from ordinary CI/release correctness tests.
 Default and minimal feature configurations exercise different CMS/Clone cases.
 Both runs passed 26 assertions/tests in this audit, covering 27 distinct test cases
-(26 reproduce remaining defects; one storage case now verifies the fix).
+(15 reproduce remaining defects; 11 verify fixes; one verifies the selected
+final-output composition policy).
+
+Implemented in the latest chunk: empty crop row reads, primary containment, CICP
+padding semantics, orientation context, known-transfer adapter conversion, strict
+in-place refusal of color retagging, scalar Adobe gamma, F16 underflow rounding,
+CMS composition refusal, swap metadata and strided ImgVec adoption. No additional
+image prepass was introduced. See the [performance review](performance-review-0.2-and-0.3.md)
+for the owner-selected cost model and [U16 review](u16-signaling-and-narrowing-review.md)
+for native-code signaling.
 
 ## Implemented: adoption and small retained errors
 
@@ -131,7 +141,7 @@ assert_eq!(b.as_slice().row(1).len(), 3);
 
 The current assertion catches the panic. A valid empty crop must give empty visible rows. This broader empty-view fix is still proposed.
 
-Current executable case ([storage.rs](contract-cases/storage.rs)):
+Before this fix (historical repro; runnable case now asserts the corrected behavior) ([storage.rs](contract-cases/storage.rs)):
 
 ```rust
 fn empty_crop_positive_rows_panics() {
@@ -151,7 +161,7 @@ assert_eq!(crop.row(1), &[]);
 
 The declared containment is false: Adobe green maps outside P3. Use an accurate predicate, and never treat approximate containment as exact preservation.
 
-Current executable case ([storage.rs](contract-cases/storage.rs)):
+Before this fix (historical repro; runnable case now asserts the corrected behavior) ([storage.rs](contract-cases/storage.rs)):
 
 ```rust
 fn p3_does_not_contain_adobe_green_despite_predicate() {
@@ -178,7 +188,7 @@ assert!(!ColorPrimaries::DisplayP3.contains(ColorPrimaries::AdobeRgb));
 
 Signaling transfer/primaries must preserve the physical RGBX alpha semantics.
 
-Current executable case ([storage.rs](contract-cases/storage.rs)):
+Before this fix (historical repro; runnable case now asserts the corrected behavior) ([storage.rs](contract-cases/storage.rs)):
 
 ```rust
 fn cicp_to_descriptor_promotes_padding_to_alpha() {
@@ -244,7 +254,7 @@ assert!(PixelSlice::new(&[1, 2, 3], 1, 1, 3, invalid).is_err());
 
 The allocating route drops context while the in-place route keeps it. Both must retain the same current interpretation.
 
-Current executable case ([storage.rs](contract-cases/storage.rs)):
+Before this fix (historical repro; runnable case now asserts the corrected behavior) ([storage.rs](contract-cases/storage.rs)):
 
 ```rust
 fn orientation_allocating_drops_color_but_in_place_keeps_it() {
@@ -270,7 +280,7 @@ assert_eq!(out.color_context().unwrap().cicp, Some(Cicp::DISPLAY_P3));
 
 Current fast path relabels linear 128 as sRGB 128; real conversion is approximately 188. Fix both intent and explicit-policy adapters, and inspect in-place paths.
 
-Current executable case ([conversion.rs](contract-cases/conversion.rs)):
+Before this fix (historical repro; runnable case now asserts the corrected behavior) ([conversion.rs](contract-cases/conversion.rs)):
 
 ```rust
 fn known_transfer_is_silently_retagged() {
@@ -297,14 +307,18 @@ assert!(!out.is_borrowed());
 assert_eq!(out.as_slice().row(0), converted);
 ```
 
-### Composition must retain quantization
+### Composition optimizes final output; preserve stages explicitly
 
-The current composed converter is identity and differs from sequential execution. A faithful composer retains the intermediate representation; a legacy composer may refuse with None.
+The owner selected final-output optimization: ordinary composition may eliminate
+the intermediate quantization. Execute the converters separately through a reusable
+row to preserve an intentional integer stage. A future stage-preserving composition
+option must retain descriptor boundaries and per-stage parameters, not merely
+concatenate step lists.
 
 Current executable case ([conversion.rs](contract-cases/conversion.rs)):
 
 ```rust
-fn compose_removes_requested_quantization() {
+fn compose_optimizes_final_output_by_default() {
     let f = PixelDescriptor::RGBF32_LINEAR;
     let u = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Linear);
     let mut a = RowConverter::new(f, u).unwrap();
@@ -330,9 +344,11 @@ fn compose_removes_requested_quantization() {
 Wanted:
 
 ```rust,ignore
-// If composition succeeds:
-assert!(!composed.is_identity());
-assert_eq!(together, separate);
+// Owner-selected default: avoid accidental intermediate quantization.
+assert!(composed.is_identity());
+assert_eq!(together, src);
+// Explicitly execute a then b through a reusable row to preserve the U8 stage.
+assert_ne!(separate, src);
 ```
 
 ### Different layout is not identity
@@ -371,7 +387,7 @@ assert_eq!(out[1], 99); // alpha, not the source green channel
 
 Returning the input is not a supported Gamma22 conversion. Correct the math or expose refusal at a supported boundary.
 
-Current executable case ([conversion.rs](contract-cases/conversion.rs)):
+Before this fix (historical repro; runnable case now asserts the corrected behavior) ([conversion.rs](contract-cases/conversion.rs)):
 
 ```rust
 fn gamma22_scalar_is_identity() {
@@ -382,14 +398,14 @@ fn gamma22_scalar_is_identity() {
 Wanted:
 
 ```rust,ignore
-assert!((TransferFunction::Gamma22.linearize(0.5) - 0.5f32.powf(2.2)).abs() < 1e-6);
+assert!((TransferFunction::Gamma22.linearize(0.5) - 0.5f32.powf(563.0 / 256.0)).abs() < 1e-6);
 ```
 
 ### F16 rounding at a subnormal boundary
 
 The minimum subnormal multiplied by .375 is below the midpoint and must round to zero under nearest rounding. This is a numerical fix, not a source migration.
 
-Current executable case ([conversion.rs](contract-cases/conversion.rs)):
+Before this fix (historical repro; runnable case now asserts the corrected behavior) ([conversion.rs](contract-cases/conversion.rs)):
 
 ```rust
 fn f16_premultiply_rounds_below_midpoint_up() {
@@ -772,7 +788,7 @@ assert_eq!(*cms.0.lock().unwrap(), vec![(true, true)]);
 
 The custom transform fills 42. A successful composed converter must do that same work, not return input samples.
 
-Current executable case ([output_cms.rs](contract-cases/output_cms.rs)):
+Before this fix (historical repro; runnable case now asserts the corrected behavior) ([output_cms.rs](contract-cases/output_cms.rs)):
 
 ```rust
 fn compose_discards_external_transform() {
@@ -880,7 +896,7 @@ let _: PixelSliceMut<'_ , rgb::BGRA<u8>> = bgra.try_typed()?;
 
 Swapping R/B is not a transfer, gamut or alpha conversion. The helper currently resets all three declarations.
 
-Current executable case ([output_cms.rs](contract-cases/output_cms.rs)):
+Before this fix (historical repro; runnable case now asserts the corrected behavior) ([output_cms.rs](contract-cases/output_cms.rs)):
 
 ```rust
 fn layout_helper_resets_color_and_alpha() {
@@ -909,7 +925,7 @@ assert_eq!(s.descriptor().alpha(), Some(AlphaMode::Premultiplied));
 
 The copied data was compacted while the old stride survived. Either retain strided storage or update the stride to match the compacted allocation.
 
-Current executable case ([output_cms.rs](contract-cases/output_cms.rs)):
+Before this fix (historical repro; runnable case now asserts the corrected behavior) ([output_cms.rs](contract-cases/output_cms.rs)):
 
 ```rust
 fn from_imgvec_keeps_old_stride_after_compacting() {

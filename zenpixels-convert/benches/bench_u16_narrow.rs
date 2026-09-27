@@ -7,6 +7,7 @@
 //!
 //! - `garb (inexact)`: the previous kernel, for reference.
 //! - `shift u32`: `z = (v+128)·255; (z + (z>>16) + 1) >> 16`.
+//! - `sat u16`: `t = saturating_add(v, 128); (t - (t >> 8)) >> 8`.
 //! - `byte lanes`: `hi + [lo−hi ≥ 129] − [hi−lo ≥ 129]` on the two bytes of
 //!   `v` (saturating subs + compares; the form LLVM vectorises widest).
 //! - `shipped`: whatever `ConvertStep::U16ToU8` currently runs, via the
@@ -40,6 +41,16 @@ fn shift_u32(src: &[u8], dst: &mut [u8]) {
     }
 }
 
+// Exact over all 65536 inputs. Saturation only changes inputs that already
+// round to 255. Keep arithmetic in 16-bit lanes for SIMD-friendly lowering.
+fn sat_u16(src: &[u8], dst: &mut [u8]) {
+    let (pairs, _) = src.as_chunks::<2>();
+    for (s, d) in pairs.iter().zip(dst.iter_mut()) {
+        let t = u16::from_ne_bytes(*s).saturating_add(128);
+        *d = ((t - (t >> 8)) >> 8) as u8;
+    }
+}
+
 fn byte_lanes(src: &[u8], dst: &mut [u8]) {
     let (pairs, _) = src.as_chunks::<2>();
     for (s, d) in pairs.iter().zip(dst.iter_mut()) {
@@ -69,13 +80,14 @@ fn check_exact(name: &str, mut f: impl FnMut(&[u8], &mut [u8])) -> bool {
 
 fn main() {
     let exact_shift = check_exact("shift u32", shift_u32);
+    let exact_sat = check_exact("sat u16", sat_u16);
     let exact_bytes = check_exact("byte lanes", byte_lanes);
     let exact_garb = check_exact("garb", garb_inexact);
     let mut shipped =
         RowConverter::new(PixelDescriptor::GRAY16_SRGB, PixelDescriptor::GRAY8_SRGB).unwrap();
     let exact_shipped = check_exact("shipped", |src, dst| shipped.convert_row(src, dst, 65536));
     assert!(
-        exact_shift && exact_bytes && exact_shipped,
+        exact_shift && exact_sat && exact_bytes && exact_shipped,
         "candidate kernels must be exact"
     );
     eprintln!("[garb] exact = {exact_garb} (expected false on 0.2.8)");
@@ -103,7 +115,8 @@ fn main() {
             let s1 = src.clone();
             let s2 = src.clone();
             let s3 = src.clone();
-            let s4 = src;
+            let s4 = src.clone();
+            let s5 = src;
             suite.group(format!("u16→u8 {label}"), move |g| {
                 g.throughput(Throughput::Bytes(bytes));
                 g.config()
@@ -115,6 +128,8 @@ fn main() {
                 });
                 let mut d = vec![0u8; count];
                 g.bench("shift u32", move |b| b.iter(|| shift_u32(&s2, &mut d)));
+                let mut d = vec![0u8; count];
+                g.bench("sat u16", move |b| b.iter(|| sat_u16(&s5, &mut d)));
                 let mut d = vec![0u8; count];
                 g.bench("byte lanes", move |b| b.iter(|| byte_lanes(&s3, &mut d)));
                 let mut d = vec![0u8; count];

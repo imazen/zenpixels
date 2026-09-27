@@ -13,14 +13,14 @@ mod tests {
         assert_eq!(b.as_slice().row(1).len(), 3);
     }
     #[test]
-    fn empty_crop_positive_rows_panics() {
+    fn empty_crop_positive_rows_are_empty() {
         let b = PixelBuffer::new(4, 4, PixelDescriptor::RGB8);
         let crop = b.crop_view(0, 0, 0, 2);
-        assert!(std::panic::catch_unwind(|| crop.row(1)).is_err());
+        assert!(crop.row(1).is_empty());
     }
     #[test]
     fn p3_does_not_contain_adobe_green_despite_predicate() {
-        assert!(ColorPrimaries::DisplayP3.contains(ColorPrimaries::AdobeRgb));
+        assert!(!ColorPrimaries::DisplayP3.contains(ColorPrimaries::AdobeRgb));
         let m = ColorPrimaries::AdobeRgb
             .gamut_matrix_to(ColorPrimaries::DisplayP3)
             .unwrap();
@@ -32,10 +32,9 @@ mod tests {
         );
     }
     #[test]
-    fn cicp_to_descriptor_promotes_padding_to_alpha() {
+    fn cicp_to_descriptor_preserves_padding() {
         let d = Cicp::SRGB.to_descriptor(PixelFormat::Rgbx8);
-        assert_eq!(d.alpha, Some(AlphaMode::Straight));
-        assert_ne!(d.alpha, PixelFormat::Rgbx8.default_alpha());
+        assert_eq!(d.alpha, PixelFormat::Rgbx8.default_alpha());
     }
     #[test]
     fn named_pq_cicp_roundtrip_changes_resolution() {
@@ -56,14 +55,14 @@ mod tests {
 }
 
 #[test]
-fn orientation_allocating_drops_color_but_in_place_keeps_it() {
+fn orientation_preserves_color_context() {
     use std::sync::Arc;
     use zenpixels::{Cicp, ColorContext, Orientation, PixelBuffer, PixelDescriptor};
     use zenpixels_convert::orient::{apply_orientation, apply_orientation_in_place};
     let ctx = Arc::new(ColorContext::from_cicp(Cicp::DISPLAY_P3));
     let mut src = PixelBuffer::new(2, 3, PixelDescriptor::RGB8).with_color_context(ctx);
     let out = apply_orientation(src.as_slice(), Orientation::Rotate90);
-    assert!(out.color_context().is_none());
+    assert!(Arc::ptr_eq(out.color_context().unwrap(), src.color_context().unwrap()));
     apply_orientation_in_place(&mut src, Orientation::Rotate90).unwrap();
     assert!(src.color_context().is_some());
 }

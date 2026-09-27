@@ -8,7 +8,10 @@ Pixel format types and transfer-function-aware conversion for Rust image codecs.
 > full proposal is adopted. Implemented so far: the [three initial deprecations](docs/release-0.2.16-accidental-api-review.md),
 > estimation opt-in, validation in `DiffuseWhite::new`, and
 > `PixelBuffer::{into_contiguous, into_parts, try_from_parts}` and planar-module
-> deprecation. Other proposed APIs are not yet available.
+> deprecation. The [performance review](docs/performance-review-0.2-and-0.3.md)
+> records the selected cost model and small contract fixes; the
+> [U16 review](docs/u16-signaling-and-narrowing-review.md) covers sample encoding
+> and narrowing candidates. Broader proposed APIs remain outstanding.
 
 A JPEG decoder gives you `RGB8` in sRGB. An AVIF decoder gives you `RGBA16` in BT.2020 PQ. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
 
