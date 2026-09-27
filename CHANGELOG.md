@@ -18,6 +18,17 @@
 - Embedded ICC CICP alone no longer bypasses ICC TRCs/LUTs. Finalization emits
   only the chosen current/output authority and tags non-sRGB fallback output.
 
+#### Changed (BREAKING, tolerated in 0.2.x)
+
+- `ConvertError` retains original arbitrary CMS backend errors instead of reducing
+  them to strings. Consequently it no longer promises `UnwindSafe` or
+  `RefUnwindSafe`; `Send`, `Sync`, `Clone`, and `PartialEq` remain. This is the
+  sole semver-check failure against post-#75 main, under the documented
+  mechanical auto-trait-loss exception. Primary zenavif/zensim unwind callers
+  already use `AssertUnwindSafe`; no observed caller required those error markers.
+  The ordinary row success path has no added error allocation. `RowConverter`
+  retains its published std `Send + Sync`, including prepared workers.
+
 ### zenpixels — added
 
 - `PixelBuffer::into_contiguous()` packs rows in the existing allocation and

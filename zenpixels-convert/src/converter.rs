@@ -53,13 +53,46 @@ enum ExternalTransform {
     /// gate that caught the drop.
     #[cfg(feature = "std")]
     Owned(alloc::sync::Arc<std::sync::Mutex<Box<dyn crate::cms::RowTransformMut>>>),
-    /// A prepared worker owns its state without a mutex or cross-worker sharing.
-    Independent(Box<dyn crate::cms::RowTransformMut>),
+    /// A prepared worker owns its state without locking or cross-worker sharing.
+    Independent(IndependentWorker),
+}
+
+// Keep the published std Sync auto-trait without any execution-time locking.
+// A Mutex<T> can expose T through get_mut when the owner has exclusive access.
+// No reference to this private container is shared and it is never locked.
+struct IndependentWorker {
+    #[cfg(feature = "std")]
+    inner: std::sync::Mutex<Box<dyn crate::cms::RowTransformMut>>,
+    #[cfg(not(feature = "std"))]
+    inner: Box<dyn crate::cms::RowTransformMut>,
+}
+impl IndependentWorker {
+    fn new(worker: Box<dyn crate::cms::RowTransformMut>) -> Self {
+        Self {
+            #[cfg(feature = "std")]
+            inner: std::sync::Mutex::new(worker),
+            #[cfg(not(feature = "std"))]
+            inner: worker,
+        }
+    }
+    fn get_mut(&mut self) -> &mut dyn crate::cms::RowTransformMut {
+        #[cfg(feature = "std")]
+        {
+            self.inner
+                .get_mut()
+                .expect("private worker is never locked")
+                .as_mut()
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            self.inner.as_mut()
+        }
+    }
 }
 
 /// Wrap a freshly-built `Box<dyn RowTransformMut>` into the
 /// `ExternalTransform::Owned` carrier — `Arc<Mutex<_>>` when std is on
-/// (share-on-clone), bare `Box` when not (drop-on-clone).
+/// (share-on-clone), independent `Box` when not (clone refuses).
 #[inline]
 fn owned_external(t: Box<dyn crate::cms::RowTransformMut>) -> ExternalTransform {
     #[cfg(feature = "std")]
@@ -68,7 +101,7 @@ fn owned_external(t: Box<dyn crate::cms::RowTransformMut>) -> ExternalTransform 
     }
     #[cfg(not(feature = "std"))]
     {
-        ExternalTransform::Independent(t)
+        ExternalTransform::Independent(IndependentWorker::new(t))
     }
 }
 
@@ -398,7 +431,9 @@ impl RowConverter {
                     Ok(worker) => (worker, false),
                     Err(error) => (error.into_inner(), true),
                 };
-                self.external = Some(ExternalTransform::Independent(worker));
+                self.external = Some(ExternalTransform::Independent(IndependentWorker::new(
+                    worker,
+                )));
                 if poisoned {
                     return Err(whereat::at!(ConvertError::CmsError(
                         "CMS worker was poisoned".into()
@@ -411,7 +446,9 @@ impl RowConverter {
         };
         match &mut self.external {
             Some(ExternalTransform::Shared(t)) => t.prepare(max_width).map_err(map_error)?,
-            Some(ExternalTransform::Independent(t)) => t.prepare(max_width).map_err(map_error)?,
+            Some(ExternalTransform::Independent(t)) => {
+                t.get_mut().prepare(max_width).map_err(map_error)?
+            }
             #[cfg(feature = "std")]
             Some(ExternalTransform::Owned(_)) => unreachable!("moved to independent worker above"),
             None => self.scratch.prepare(&self.plan, max_width)?,
@@ -468,7 +505,9 @@ impl RowConverter {
                     whereat::at!(ConvertError::CmsError("CMS worker was poisoned".into()))
                 })?
                 .try_transform_row(src, dst, width),
-            Some(ExternalTransform::Independent(t)) => t.try_transform_row(src, dst, width),
+            Some(ExternalTransform::Independent(t)) => {
+                t.get_mut().try_transform_row(src, dst, width)
+            }
             None => {
                 convert_row_buffered(&self.plan, src, dst, width, &mut self.scratch);
                 return Ok(());

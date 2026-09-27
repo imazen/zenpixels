@@ -75,7 +75,7 @@ Implemented in this follow-up:
   paths retain stage descriptors/anchors. Ordinary composition still optimizes output.
 - `RowConverter::prepare` initializes scratch/LUT/backend work and sets width capacity;
   `try_convert_row` checks extents/alignment and propagates original backend errors.
-  Prepared stateful workers own their backend without a mutex. `try_clone` refuses
+  Prepared stateful workers own their backend without locking or cross-worker sharing (a private `Mutex::get_mut` container retains std `Sync`). `try_clone` refuses
   uncloneable state; legacy `Clone` never silently drops a no_std transform.
 - `ConvertPlan::new_preserving_samples` accepts proven representation changes and
   refuses unproven loss without scanning. HDR→encoded-SDR requires peak policy with

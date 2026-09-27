@@ -161,7 +161,7 @@ implementation. See the [complete status ledger](implementation-status-0.2-and-0
 - Legacy free row conversion creates scratch per call; unprepared RowConverter can grow
   scratch lazily. Explicit prepared capacity now removes those execution allocations.
 - Legacy std CMS clones share a mutex-backed executor. `prepare` requires a uniquely owned
-  worker and removes that mutex; build independent workers before preparation.
+  worker and uses exclusive `get_mut` without locking; build independent workers before preparation.
 - ImgVec adoption previously compacted but retained the old stride. The current
   fix moves its original storage, preserving geometry and avoiding that pass.
 - Profile setup and synthesized profiles can be expensive even when no image

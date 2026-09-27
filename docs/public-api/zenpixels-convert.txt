@@ -450,5 +450,5 @@ zenpixels::descriptor::TransferFunction: ext::TransferFunctionExt
 ## auto traits
 
 cms::CmsPluginError: !RefUnwindSafe !UnwindSafe
-converter::RowConverter: !RefUnwindSafe !Sync !UnwindSafe
+converter::RowConverter: !Freeze !RefUnwindSafe !UnwindSafe
 error::ConvertError: !RefUnwindSafe !UnwindSafe

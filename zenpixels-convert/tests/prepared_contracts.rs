@@ -397,3 +397,10 @@ fn padding_is_not_alpha_and_opaque_requires_a_proof() {
     worker.try_convert_row(&[0, 0, 0, 0], &mut dst, 1).unwrap();
     assert_eq!(&dst[..3], &[255; 3]);
 }
+
+#[cfg(feature = "std")]
+#[test]
+fn row_converter_retains_published_send_sync_traits() {
+    fn requires_send_sync<T: Send + Sync>() {}
+    requires_send_sync::<RowConverter>();
+}

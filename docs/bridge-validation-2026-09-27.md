@@ -1,0 +1,55 @@
+# Bridge validation, 2026-09-27
+
+Source: main after #75 (`197a38b`), storage `373f600`, conversion `3340940`, plus
+its API-compatibility follow-up. No package was published or version floor widened.
+
+- Workspace all-feature tests and strict all-feature Clippy pass.
+- 27 distinct corrected review cases pass in default/CMS and minimal builds.
+- 7,744 format/transfer pairs are checked; every accepted built-in plan prepares
+  and executes. This is an execution-safety matrix, not a numerical oracle for
+  every possible color pair; dedicated numerical regressions run separately.
+- Prepared execution counts zero allocations for repeated rows, independent CMS
+  workers and composed HDR stages with different gamut tables. Explicit capacity
+  and row geometry errors precede writes; backend failures may partially write.
+- 128 downstream deprecation probes pass, including `into_vec`.
+- Rust 1.85 core / Rust 1.89 minimal converter checks pass.
+- Minimal WASM and pure-Rust ARM (with HDR) cross-checks pass. The benchmark-only
+  LCMS feature's full ARM build needs `aarch64-linux-gnu-gcc`; no ARM runtime
+  throughput claim is made.
+- Public API snapshots are regenerated with `nightly-2026-07-13`; rustdoc with
+  broken links denied passes.
+
+## Semver audit
+
+```sh
+cargo semver-checks -p zenpixels -p zenpixels-convert --baseline-rev 197a38b
+```
+
+Core: 196 checks pass. Converter: 195 pass, one check flags `ConvertError` losing
+`UnwindSafe` and `RefUnwindSafe` when it retains arbitrary original backend errors.
+This is documented under the repository's tolerated mechanical auto-trait-loss
+policy, not represented as a fully clean semver check. Error transport remains
+`Send + Sync`; no extra bounds are imposed on external CMS implementations.
+
+`RowConverter` retains std `Sync`: independent workers use exclusive
+`Mutex::get_mut`, without locking or shared mutable execution. The no_std worker
+owns its backend directly and refuses cloning when it cannot duplicate state.
+
+Audit command: intersect Rust files matching `catch_unwind|RefUnwindSafe|UnwindSafe`
+with those matching `zenpixels_convert|ConvertError|RowConverter`, excluding build,
+vendor and `.claude` trees. 1,306 unwind candidates, 90 overlapping files including
+historical copies. Primary zenavif negotiation tests and zensim picker binaries
+already wrap their execution closures in `AssertUnwindSafe`; no direct marker bound
+on `ConvertError` was found. This textual audit is not proof about unknown callers.
+
+## Companion work
+
+- zencodec: `ab12c4c`, `3ab2afb`, branch `fix/fallible-pull-source-errors`.
+  Workspace tests pass; original pull-source errors survive; current color picks
+  one authoritative field without a deprecated ambiguous fallback.
+- zenpipe: `a978c10`, `f774d01`, branch `fix/zenpixels-bridge-contracts`.
+  98 zenpipe and 505 zenfilters tests pass; callback production/EOF is corrected,
+  scratch is reused, and public filter masks no longer depend on retired planar.
+
+Unrelated pre-existing edits in those repositories are preserved. These are local
+commits; paired release-candidate builds and coordinated publication remain gates.
