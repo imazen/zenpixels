@@ -44,8 +44,8 @@ marks existing behavior, proposed operations and known incorrect routes.
 | Streaming companion work | Done locally | Fallible zencodec pull methods and zenpipe callback fixes committed and tested. No universal core provider added. |
 | Native sample signaling / video | Pending | Checked vocabulary, adapter prototype and tests; U16 range-correct conversions or refusal; alpha/component roles; borrowed AOM/SVT integration; explicit RGB path for metrics |
 | U16 performance | Partial | Fused U16 analysis and explicit LUT preparation implemented. Production narrowing candidate still awaits cross-platform selection; direct native-code kernels remain separate work. |
-| docs.rs / examples | Partial | Reviews and annotations done; final canonical API navigation, executed galleries, accurate generated crate READMEs and complete cost docs remain |
-| Compile-time/performance acceptance | Pending | Controlled cold/incremental builds, prepared-path allocations, workers and platform checks; benchmark candidate is not full acceptance |
+| docs.rs / examples | Updated | Canonical re-exports inline, current guide/examples/costs corrected, generated READMEs refreshed, broken-link rustdoc gate passes. |
+| Compile-time/performance acceptance | Implemented local gates | Cold/warm/edited checks recorded; zero-allocation workers and pure-Rust ARM/WASM builds verified. ARM runtime and narrowing selection remain separate measurements. |
 | Dependent migrations | Partial | zenfilters mask/public boundaries and zencodec current-color fallback migrated. Complete ecosystem migration and paired release-candidate builds remain. |
 | 0.3.1 / releases | Pending | Complete bridge first; removal branch, feature gates, retained feature spellings, dependency pairing, semver/package/MSRV checks and publishing |
 

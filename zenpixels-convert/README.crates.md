@@ -121,7 +121,7 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 | `Blend` | 1× | 4× | Compositing — premultiplied alpha |
 | `Perceptual` | 1× | 3× | Color grading, sharpening |
 
-[`Provenance`] tracking lets the cost model know that f32 data decoded from a u8 JPEG has zero loss converting back to u8. Three entry points: [`best_match`] (simple), [`best_match_with`] (with consumer costs), [`negotiate`] (full control with provenance).
+[`Provenance`] guides cost-model ranking, not exactness after edits. Use `ConvertPlan::new_preserving_samples` for proven representation changes or explicitly request value analysis. Three entry points: [`best_match`] (simple), [`best_match_with`] (with consumer costs), [`negotiate`] (full control with provenance).
 
 ## Row conversion tiers
 

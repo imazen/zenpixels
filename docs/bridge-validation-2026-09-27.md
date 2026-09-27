@@ -53,3 +53,29 @@ on `ConvertError` was found. This textual audit is not proof about unknown calle
 
 Unrelated pre-existing edits in those repositories are preserved. These are local
 commits; paired release-candidate builds and coordinated publication remain gates.
+
+## Compile cost
+
+Fresh isolated build directories, identical rustc 1.98.1, four Cargo jobs,
+offline/locked dependencies. Baseline `197a38b`, current `c9fea15`. A single local
+observation on Ryzen 9 9950X3D; no statistical speed claim or CPU isolation.
+The converter's cold check follows the core check and may reuse its dependencies
+in both runs. Warm means no source changes; edited adds a comment to crate lib.rs.
+
+| Check | Baseline | Current |
+|---|---:|---:|
+| Minimal core, cold | 1.515 s | 1.439 s |
+| Minimal core, warm | 0.022 s | 0.022 s |
+| Minimal core, source invalidated | 0.083 s | 0.080 s |
+| Default converter, cold | 3.551 s | 3.656 s |
+| Default converter, warm | 0.024 s | 0.025 s |
+| Default converter, source invalidated | 0.300 s | 0.312 s |
+
+No new dependency was added. The script uses git archives, not worktrees, and
+cleans only its own temporary build directories:
+
+```sh
+python3 scripts/check-compile-cost.py 197a38b c9fea15 --out /tmp/compile-cost.json
+```
+
+Raw results: [compile-cost JSON](../benchmarks/bridge-compile-cost-2026-09-27.json).

@@ -151,8 +151,8 @@ returning `At<BufferError>` (`InsufficientData` / `StrideTooSmall` /
 ## Format conversion (zenpixels-convert)
 
 > **Review:** This descriptor-only example does not resolve attached ICC/context.
-> The complete proposal prepares a fallible worker once, with explicit policy and
-> a checked no-allocation execution capacity. The custom-ICC example below does
+> The unreleased bridge now prepares a fallible worker once, with explicit policy and
+> checked execution capacity. The custom-ICC example below does
 > not itself supply ICC bytes. [Conversion/CMS review](docs/readme-contract-review.md#conversion-examples-and-cms).
 
 ```rust
@@ -164,14 +164,15 @@ let source_desc = src.descriptor();
 let target = best_match(source_desc, &encoder_formats, ConvertIntent::Fastest)
     .ok_or("no compatible format")?;
 
-// Allocate the destination, then convert row by row — no per-row allocation
+// Unreleased bridge: allocate output and prepare once before the row loop
 let (w, h) = (src.width(), src.height());
 let mut dst = PixelBuffer::new(w, h, target);
 let src_view = src.as_slice();
 let mut dst_view = dst.as_slice_mut();
 let mut converter = RowConverter::new(source_desc, target)?;
+converter.prepare(w)?;
 for y in 0..h {
-    converter.convert_row(src_view.row(y), dst_view.row_mut(y), w);
+    converter.try_convert_row(src_view.row(y), dst_view.row_mut(y), w)?;
 }
 ```
 
@@ -465,7 +466,7 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 | `Blend` | 1x | 4x | Compositing — premultiplied alpha |
 | `Perceptual` | 1x | 3x | Color grading, sharpening |
 
-`Provenance` tracking lets the cost model know that f32 data decoded from a u8 JPEG has zero loss converting back to u8.
+`Provenance` guides cost-model ranking; it cannot prove exact narrowing after edits. Use `ConvertPlan::new_preserving_samples` for proven representation changes or explicitly request value analysis.
 
 Three entry points: `best_match()` (simple), `best_match_with()` (with consumer costs), `negotiate()` (full control with provenance).
 
