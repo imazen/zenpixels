@@ -9,6 +9,9 @@ design and the [migration cards](migration-examples-and-audit-0.3.1.md) hold
 examples/callers. Commit each completed chunk before moving on.
 The [PR #63 inventory](pr63-commit-inventory.md) records all 21 commits and which
 missing implementations/tests to reuse, rewrite or skip.
+The [final-bridge and sample-signaling proposal](final-0.2-and-0.3-sample-signaling.md)
+adds precise 10/12-bit mandates and release gates. These are proposed requirements,
+not implementation completed by this documentation change.
 
 ## Completed on main, not yet released
 
@@ -44,11 +47,23 @@ signature. Choose the smallest concrete interface within each chunk together.
 Correctness fixes and additions may ship in multiple 0.2 patches; the minimum
 compatible version is the patch that actually completes the common surface.
 Do not promise that 0.2.17 is the full bridge merely because it is next numerically.
+Designate the completed patch as the final API bridge; subsequent new API work
+targets 0.3 while the 0.2 maintenance line remains available.
 
 **Deferred video design:** the complete old planar module now warns. Its feature
-and code remain available; design a replacement with SVT/AOM/VMAF callers and
-explicit CVVDP RGB conversion. Zenfilters currently uses PlaneMask, including
-public access fields. Do not remove that API until its migration is ready.
+and code remain available in 0.2. Prototype the media API outside zencodec, using
+SVT/AOM/VMAF callers and explicit CVVDP RGB conversion. Zenfilters currently uses
+PlaneMask, including public access fields. Relocate that filter mask and migrate
+its consumers before removing the deprecated types in 0.3.1.
+
+Additional final-bridge checks from the sample-signaling proposal:
+
+- [ ] Document the legacy U16 numerical domain and prohibit implicit native
+  10/12-bit imports through ordinary RGB/gray views.
+- [ ] Fix or explicitly refuse unsupported narrow-range depth changes; the
+  current full-scale approximation does not preserve the specified anchors.
+- [ ] Complete the zenfilters mask migration and test its public boundaries.
+- [ ] Include `planar` forwarding in every admitted core/convert version pairing.
 
 **Deferred conveniences:** no duplicate context getter, contiguous-view
 constructor just to infer stride, new universal streaming-provider trait, or
@@ -61,6 +76,11 @@ bytes-only ownership export. Row iteration can wait for a useful adopter.
   are `requires_cms` and the `Adapted` compatibility family; old conversion/CMS
   interfaces need their replacement work above before removal.
 - [ ] Require `estimation-experimental` for estimation, retaining opted-in signatures.
+- [ ] Remove migrated legacy planar types/re-exports; keep the accepted `planar`
+  Cargo feature as a documented no-op/forwarding stub through 0.3.x.
+- [ ] Implement the checked sample-encoding vocabulary with a concrete adapter
+  and satisfy [S1–S4 and the acceptance gates](final-0.2-and-0.3-sample-signaling.md).
+  Preserve current image U16 semantics; do not require the complete media prototype.
 - [ ] Keep the migrated API identical: no surprise descriptor field privacy,
   new trait restrictions, signature/default changes or removed feature spellings.
 - [ ] Run identical downstream fixtures on the minimum bridge and 0.3.1 with

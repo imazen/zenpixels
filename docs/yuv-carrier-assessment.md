@@ -1,5 +1,11 @@
 # YUV at the AV1 and metrics boundaries
 
+> **Release placement:** the [final-bridge and sample-signaling
+> proposal](final-0.2-and-0.3-sample-signaling.md) supersedes this document's
+> recommendation to add a carrier under `planar`. Prototype the media interface
+> outside zencodec and promote only proven sample/color primitives into core.
+> The concrete callers below remain design inputs.
+
 > **2026-09-27 update:** checked parts adoption with `take_parts()` and
 > `without_buffer()` is implemented. The owner chose to deprecate the entire
 > existing planar module now and defer a better video representation. Earlier

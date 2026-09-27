@@ -1,5 +1,11 @@
 # API and contract proposal: 0.2 bridge → 0.3.1
 
+> **Sample-signaling supplement:** [Final 0.2 bridge and mandatory 0.3
+> sample signaling](final-0.2-and-0.3-sample-signaling.md) adds the explicit
+> 10/12-bit requirements, filter-mask migration and Cargo-feature disposition.
+> Video ownership/transport is prototyped outside zencodec initially. Historical
+> planar-extension sketches below are superseded, not implementation instructions.
+
 > **2026-09-27 update:** checked parts adoption with `take_parts()` and
 > `without_buffer()` is implemented. The owner chose to deprecate the entire
 > existing planar module now and defer a better video representation. Earlier

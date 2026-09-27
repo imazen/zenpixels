@@ -8,6 +8,12 @@ deprecated; its proposed extension APIs are deferred pending video design.
 For runnable current behavior and desired assertions, open the
 [code-first review](code-review-0.2-and-0.3.md).
 
+**New release proposal:** [Final 0.2 bridge and mandatory 0.3 sample
+signaling](final-0.2-and-0.3-sample-signaling.md) specifies the remaining bridge
+work, removal of legacy planar types after the filter-mask migration, and the
+10/12-bit contract. Its numbered mandates and acceptance gates supplement this
+review; video ownership/transport is prototyped outside zencodec initially.
+
 This is the single reading document for our current proposals. It consolidates
 contracts, API cleanup, consumer migration, docs.rs, streaming, YUV and missing
 PR #63 work. Detailed source evidence is linked at the end. No new production
@@ -43,11 +49,14 @@ Suggested review/implementation sequence:
 | C | One current color interpretation and complete CMS inputs | 0.2, identical in 0.3 |
 | D | Complete plans, prepared fallible workers and faithful composition | 0.2 replacements; retire warned legacy APIs in 0.3 |
 | E | Output ownership, matching metadata, preservation and HDR semantics | 0.2 replacements; retire warned legacy APIs in 0.3 |
-| F | **Done:** deprecate planar; defer video design | Keep legacy feature/code until migration exists |
+| F | **Done:** deprecate planar. **Proposed:** migrate the filter mask and establish explicit sample encoding | Legacy code in final 0.2; remove migrated types in 0.3.1, retaining the feature spelling |
 | G | Consumer migrations, docs.rs, release fixtures and selected cleanup | Finish bridge before removal release |
 
 Correctness fixes can ship independently in small patches. The table is a work
 order, not a reason to hold an urgent fix until every design is complete.
+Designate one completed final bridge, then target new API work at 0.3. The new
+sample-signaling proposal adds a 0.3.1 gate for checked code depth/bit placement;
+it does not require a complete media API before finishing the bridge.
 
 ## 2. Already implemented
 
@@ -375,23 +384,38 @@ tone mapper, HLG policy or gain-map algorithm into stable core is not proposed.
 
 **Done by owner decision:** deprecate the whole `planar` module, including root
 and convert re-exports and inferred methods. Keep the feature and implementations
-available. This supersedes the earlier suggestion to add `try_new`, `plane_mut`
-and `try_replace_plane` to the old container. No replacement is published now.
+available in the final 0.2 bridge. This supersedes the earlier suggestion to add
+`try_new`, `plane_mut` and `try_replace_plane` to the old container. No replacement
+is published now.
 
 A refreshed local search found zenfilters uses `PlaneMask` in three source files,
 including public `ChannelAccess` fields. Its Oklab planes are local types. Migrate
 that filter-specific mask deliberately before removing the module; absence of
 MultiPlaneImage consumers did not mean absence of all planar-module use.
 
-### F2. Video requirements to revisit with actual code
+**Proposed:** relocate the mask and public filter signatures to zenfilters, then
+remove the old module and its re-exports in 0.3.1. Keep `planar` as a documented
+empty compatibility feature through 0.3.x, including convert's forwarding path.
+This avoids Cargo resolution failures independently of Rust-item migration.
 
-Deferred design inputs remain independent byte strides, significant bits separate
-from U8/U16 storage, Y/Cb/Cr roles, odd subsampled extents, crop phase, chroma siting,
-matrix/range/transfer/primaries and explicit unknowns. Borrow AOM/SVT allocations;
+### F2. Mandatory sample interpretation; separate video prototype
+
+The [sample-signaling mandates](final-0.2-and-0.3-sample-signaling.md#3-03-mandates-for-1012-bit-samples)
+require storage width, code depth, bit placement and range to remain distinct.
+Raw 10/12-bit U16, left-aligned U16 and normalized U16 are different contracts;
+source precision must not silently override the current numerical interpretation.
+Core supplies checked vocabulary with real adapters. A new raw-sample interface
+does not change the migrated RGB/gray image interface's meaning.
+
+Prototype frame ownership and video I/O outside zencodec initially. Preserve
+independent byte strides, Y/Cb/Cr roles, odd subsampled extents, crop phase, chroma
+siting, matrix/range/transfer/primaries and explicit unknowns. Borrow AOM/SVT
+allocations;
 matching AOM-to-VMAF planes need no RGB roundtrip. CVVDP expects RGB and needs an
 explicit range/matrix/chroma/display conversion. No universal owned container or
-new YUV API is added in this chunk. See the [code review](code-review-0.2-and-0.3.md)
-and historical [YUV caller assessment](yuv-carrier-assessment.md).
+replacement plane API is frozen by this proposal. See the
+[code review](code-review-0.2-and-0.3.md) and historical
+[YUV caller assessment](yuv-carrier-assessment.md).
 
 ## 8. Streaming and row iteration
 
@@ -448,8 +472,7 @@ Warnings require working replacements; 0.3 removals require tested migrations.
 | Naive Reinhard/exposure helpers | Retain existing migration to zentone | Remove deprecated helpers after migration |
 | `ByteOrder` / `byte_order` | **Optional:** `ChannelOrder` / `channel_order` aliases plus deprecations | Remove old spelling only if this cleanup is adopted; no endian/representation change |
 | Transfer-blind ICC profiles/helpers, including legacy profile spellings | Exact supported profile or synthesis destination; explicit unsupported cases | Remove only with accurate migration, not a misleading profile alias |
-| Legacy `planar::Plane` | Separate review with an actual replacement/adopter | No automatic deletion based on old queue |
-| Entire legacy planar module | **Done:** module-wide warning; defer new video design | Remove only with a usable migration, including zenfilters PlaneMask |
+| Entire legacy planar module, including `Plane` | **Done:** module-wide warning; retain codec-owned planes for new integrations; migrate zenfilters' mask | Proposed removal after migration; retain empty `planar` feature, not legacy types; no migration into `PlaneLayout` |
 | Analysis-only `pipeline` surface | Separate scope review; predates 0.2.16 | Retire only properly deprecated items; keep feature name |
 | `serde` no-op feature | Document existing no-op; no claim that it implements serde | Keep cheap accepted spelling through migration |
 | `fast-transpose`, `hdr-experimental`, other accepted features | Preserve/test current opt-ins and defaults | No silent default flip or feature-name deletion |
