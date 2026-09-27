@@ -1,5 +1,12 @@
 # zenpixels / zenpixels-convert: consolidated 0.2.x and 0.3 review
 
+> **Implementation status (2026-09-27): not complete.** See the
+> [audited completion ledger](implementation-status-0.2-and-0.3.md), the
+> [U16 contract matrix](u16-contract-matrix.md), and the owner-selected
+> [performance policies](performance-review-0.2-and-0.3.md). Proposals below
+> are not claims of implementation. The composition policy below is updated.
+
+
 2026-09-27 · reviewed main baseline `5665d6f` · proposed next minor: **0.3.1**.
 
 **Latest implementation/decision:** `try_from_parts`, `FromPartsError::take_parts`
@@ -255,17 +262,18 @@ warn on the whole legacy type if its Clone/hidden-state contract must be retired
 A new `try_clone` alone cannot repair the old infallible Clone. If the existing
 plan cannot be repaired compatibly, migrate a whole replacement plan in 0.2 too.
 
-### D2. Composition preserves the sequence
+### D2. Optimize final output; preserve intentional stages explicitly
 
-```text
-OLD bug to reject: F32 -> U8 -> F32 becomes identity because endpoints match.
-NEW: retain quantization to the U8 grid; retain clipping, alpha and CMS stages.
-```
+The owner chose to eliminate avoidable intermediate quantization by default.
+An accidental F32 → U8 → F32 bridge may optimize to identity. When the U8 stage
+is intentional, execute both converters through a reusable intermediate row;
+a future explicit preserved-stage plan must retain its numerical and cost
+semantics. That new plan option is not implemented.
 
-`then` returns an error for incompatible sequences. Legacy `compose -> Option`
-must return None rather than silently erase work. Approximate fusion needs a
-separate explicit numerical contract. This affects zenpipe, which removes a
-transform stage when composition reports identity.
+Unrelated CMS operations, descriptor boundaries, luminance anchors and requested
+effects must not disappear just because endpoints match. Legacy composition now
+refuses external CMS transforms it cannot retain. Complete composition and
+per-stage parameter handling remain outstanding.
 
 ### D3. Replace incomplete CMS interfaces once
 
@@ -610,7 +618,8 @@ review document. No migration PR has yet been opened by this work.
 
 Already chosen: source-compatibility model, `DiffuseWhite::new` behavior,
 metadata-preserving `into_contiguous`, directly destructurable parts, and preserving
-large allocations. Do not reopen those decisions through a copied historical draft.
+large allocations, final-output composition optimization, and explicit preflight
+or opt-in fused content checks. Do not reopen those decisions through a copied historical draft.
 
 ## Detailed evidence and supplementary examples
 

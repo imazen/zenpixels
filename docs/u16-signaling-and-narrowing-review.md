@@ -4,6 +4,10 @@
 The API names below are sketches, not added public APIs. The benchmark candidate
 is implemented in the shootout, not selected by the production converter.
 
+For the full representation/operation/rounding/support tables, start with the
+[U16 contract matrix](u16-contract-matrix.md). The [implementation ledger](implementation-status-0.2-and-0.3.md)
+tracks the broader work still outstanding.
+
 ## 1. Keep existing U16 meaning; bind raw codes to their encoding
 
 Adopt PR #74's separation of storage width, code depth, padding and signal range.

@@ -10,6 +10,11 @@ examples/callers. Commit each completed chunk before moving on.
 The [PR #63 inventory](pr63-commit-inventory.md) records all 21 commits and which
 missing implementations/tests to reuse, rewrite or skip.
 
+**Overall implementation is incomplete.** The [status ledger](implementation-status-0.2-and-0.3.md)
+separates implemented work from fifteen still-reproduced defects and remaining
+API/migration work. The [U16 matrix](u16-contract-matrix.md) covers encoding,
+rounding, packing, replication and conversion support. Neither release is ready.
+
 ## Completed on main, not yet released
 
 - [x] Deprecate `requires_cms` and explicitly deprecate `Adapted::as_pixel_slice`.
@@ -23,6 +28,11 @@ missing implementations/tests to reuse, rewrite or skip.
 - [x] Checked `try_from_parts` adoption with `take_parts` / `without_buffer` error recovery.
 - [x] Deprecate the complete legacy planar module; defer its video replacement.
 - [x] Add a [code-first review](code-review-0.2-and-0.3.md) with executable defect cases.
+- [x] Fix both known-transfer adapter guards and reject strict in-place semantic retags.
+- [x] Fix the small storage/color/scalar cases listed in the status ledger (`7088a8b`).
+- [x] Refuse composition that would drop an external CMS transform.
+- [x] Record selected composition/check costs; benchmark an exact U16 candidate.
+  This does not implement prepared workers, checked raw samples or a new kernel.
 
 Compaction preserves the pixel offset for alignment. It removes row padding,
 not the alignment prefix. Checked adoption is implemented, including minimum final-row extents.
@@ -31,7 +41,7 @@ not the alignment prefix. Checked adoption is implemented, including minimum fin
 
 | Order | Chunk | Completion condition |
 |---|---|---|
-| 0 — immediate fix | Known-transfer adapter guard | Port both missing `Unknown` guards from PR #63's final revision. Known sRGB → linear requests must convert or fail, never borrow unchanged bytes under a new descriptor. Cover intent, explicit-policy and legacy paths. |
+| 0 — done | Known-transfer adapter guard | Both missing `Unknown` guards are implemented; regression coverage verifies real conversion. Strict in-place semantic retags are refused. |
 | 1 — remaining ownership work | Allocation reuse | Adoption/error recovery and round-trip tests are complete. Adapt PR #63's typed U8 export and owned-cow adapter optimizations to avoid unnecessary full-image copies. Settle construction for external decoder-owned allocations without adding redundant constructor families. |
 | 2 | Storage and typed-layout correctness | Repair minimal final-row extents, zero-area behavior, arithmetic and typed reinterpretation/mutation. Validate descriptor combinations at acceptance boundaries while retaining convenient public descriptors. Add replacement paths before deprecating problematic existing ones. |
 | 3 | Current color and CMS inputs | One interpretation of descriptor, ICC/CICP, range, alpha and luminance anchor; no known-color retag masquerading as conversion. Pass actual source/target profiles to CMS and finalization. Resolve constructor/authority choices before publishing new types. |
