@@ -1,5 +1,12 @@
 # Migration examples, caller audit, docs and streaming
 
+> **2026-09-27 update:** checked parts adoption with `take_parts()` and
+> `without_buffer()` is implemented. The owner chose to deprecate the entire
+> existing planar module now and defer a better video representation. Earlier
+> proposals below to expand that module are superseded. See the
+> [code-first review](code-review-0.2-and-0.3.md) for executable cases and wanted
+> behavior before approving the remaining guards/contracts.
+
 2026-09-27, zenpixels `main@17c78d9`. Companion to the
 [contract proposal](api-contract-proposal-0.2-and-0.3.1.md).
 For the verified release/stacked-PR history and immediate deprecation shortlist,

@@ -2,6 +2,12 @@
 
 2026-09-27 · reviewed main baseline `5665d6f` · proposed next minor: **0.3.1**.
 
+**Latest implementation/decision:** `try_from_parts`, `FromPartsError::take_parts`
+and `without_buffer` are now implemented. The entire legacy planar module is
+deprecated; its proposed extension APIs are deferred pending video design.
+For runnable current behavior and desired assertions, open the
+[code-first review](code-review-0.2-and-0.3.md).
+
 This is the single reading document for our current proposals. It consolidates
 contracts, API cleanup, consumer migration, docs.rs, streaming, YUV and missing
 PR #63 work. Detailed source evidence is linked at the end. No new production
@@ -37,7 +43,7 @@ Suggested review/implementation sequence:
 | C | One current color interpretation and complete CMS inputs | 0.2, identical in 0.3 |
 | D | Complete plans, prepared fallible workers and faithful composition | 0.2 replacements; retire warned legacy APIs in 0.3 |
 | E | Output ownership, matching metadata, preservation and HDR semantics | 0.2 replacements; retire warned legacy APIs in 0.3 |
-| F | Planar invariants and borrowed YUV with real adapters | Additive work, same surface on both lines |
+| F | **Done:** deprecate planar; defer video design | Keep legacy feature/code until migration exists |
 | G | Consumer migrations, docs.rs, release fixtures and selected cleanup | Finish bridge before removal release |
 
 Correctness fixes can ship independently in small patches. The table is a work
@@ -71,7 +77,7 @@ this work. Keep them, fixing their interpretation bugs rather than duplicating t
 
 ### B1. Keep large allocations with their interpretation
 
-**Done extraction / proposed adoption:**
+**Done extraction and adoption:**
 
 ```rust,ignore
 // OLD: backing bytes alone lose offset and interpretation.
@@ -86,8 +92,8 @@ let PixelBufferParts {
 let parts = buffer.into_contiguous().into_parts();
 let pixels = &parts.data[parts.offset..];
 
-// PROPOSED: checked adoption, final error spelling still under review.
-let buffer = PixelBuffer::try_from_parts(parts)?;
+// Implemented; release rejected storage before retaining/boxing an error.
+let buffer = PixelBuffer::try_from_parts(parts).map_err(|e| e.without_buffer())?;
 ```
 
 Extraction preserves Vec pointer, length, capacity, offset, stride and existing
@@ -96,9 +102,11 @@ Compaction preserves pointer/capacity/context but can move O(image bytes), and
 truncates length to offset plus packed size. **Contiguous does not mean offset
 zero:** retain the alignment prefix so wide samples remain aligned.
 
-Adoption validates the actual allocation, alignment, geometry and descriptor.
+Adoption applies the existing view storage checks to allocation, alignment and
+geometry. Proposed descriptor/color consistency checks remain separate work.
 On rejection, return the supplied parts with the error; do not discard a
-40–100 MB allocation. A provisional `FromPartsError` holds the cause and parts.
+40–100 MB allocation. `FromPartsError` holds the traced cause and optional parts; `take_parts()`
+recovers them once and `without_buffer()` discards them before propagation.
 Unchanged parts round-trip without a copy. Parts are intentionally mutable,
 unvalidated data; the reconstructed buffer establishes the invariant.
 
@@ -363,53 +371,27 @@ tone mapper, HLG policy or gain-map algorithm into stable core is not proposed.
 
 ## 7. Planar storage and YUV
 
-### F1. Repair owned-container invariants
+### F1. Deprecate the old module now; design video separately
 
-**Proposed:** checked `MultiPlaneImage` construction, mutable pixel views instead
-of replaceable owned-plane escape hatches, and checked plane replacement that
-rejects before mutation and returns the old plane on success. Candidate names:
-`try_new`, `plane_mut`, `try_replace_plane`. Review rejected-input ownership with
-the adopter before freezing signatures.
+**Done by owner decision:** deprecate the whole `planar` module, including root
+and convert re-exports and inferred methods. Keep the feature and implementations
+available. This supersedes the earlier suggestion to add `try_new`, `plane_mut`
+and `try_replace_plane` to the old container. No replacement is published now.
 
-Validate plane count/roles, format/depth, nonzero subsampling, ceil-rounded sizes,
-mask limits and a well-defined reference extent. Current debug assertions and
-`buffer_mut`/`buffers_mut` allow invalid states. Warn only once alternatives exist;
-otherwise retain APIs and validate at consumers. Do not privatize `PlaneDescriptor`
-just for consistency with other types. Keep image color separate from source origin.
+A refreshed local search found zenfilters uses `PlaneMask` in three source files,
+including public `ChannelAccess` fields. Its Oklab planes are local types. Migrate
+that filter-specific mask deliberately before removing the module; absence of
+MultiPlaneImage consumers did not mean absence of all planar-module use.
 
-### F2. Add a borrowed YCbCr carrier with real consumers
+### F2. Video requirements to revisit with actual code
 
-**Proposed now**, behind `planar`: a lean view, provisional name `YuvSlice`, with
-no codec/metric dependencies or allocation merely to borrow existing planes.
-Do not add only `PixelFormat::Yuv420`: independent plane geometry cannot fit an
-interleaved constant-bytes-per-pixel format contract.
-
-Carry full image dimensions; explicit Y/Cb/Cr roles; monochrome and optional
-full-resolution alpha; independent byte strides; storage U8/U16 separately from
-significant bit depth; unshifted/native sample interpretation; matrix, range,
-primaries, transfer, chroma siting and current color. Preserve unknown metadata.
-Validate checked ceil dimensions and crop phase. Explicitly reject unsupported
-packing, matrix variants or backend layouts. Scanning sample values is optional
-O(samples) work, not part of a claimed free wrapper.
-
-| Real consumer | Proposed integration |
-|---|---|
-| AOM / zenav1-aom | Borrow native U16 planes, including 8-bit codes stored in U16; retain depth/subsampling/color from frame/config |
-| zenav1-svt | Borrow U8 or unshifted U16; honor backend's luma/chroma stride restrictions; support odd geometry and alpha where accepted |
-| VMAF in the newly added zenmetrics checkout | Borrow matching tight U16 4:2:0 planes; keep model-specific depth/geometry checks; it uses chroma too |
-| CVVDP | Explicitly convert YCbCr into the expected RGB/display interpretation; its planar mode means RGB, not YUV |
-
-Start AOM → VMAF without pixel copies, then SVT adapters, then YUV → CVVDP with
-independent reference checks. CVVDP normalizes U16 by 65535: passing unshifted
-10-bit codes is not correct RGB normalization or limited-range conversion.
-Specify chroma reconstruction/filter, edge behavior, matrix/range and clipping.
-Reuse existing kernels where adequate; core describes/validates, convert executes.
-
-A strided carrier cannot make a tight-only backend accept padding. Report the
-restriction or explicitly repack. A universal owned planar redesign is deferred;
-borrowing current decoder allocations solves the immediate boundary. Keep adopted
-signatures identical across release lines. This additive work need not block
-retiring unrelated APIs.
+Deferred design inputs remain independent byte strides, significant bits separate
+from U8/U16 storage, Y/Cb/Cr roles, odd subsampled extents, crop phase, chroma siting,
+matrix/range/transfer/primaries and explicit unknowns. Borrow AOM/SVT allocations;
+matching AOM-to-VMAF planes need no RGB roundtrip. CVVDP expects RGB and needs an
+explicit range/matrix/chroma/display conversion. No universal owned container or
+new YUV API is added in this chunk. See the [code review](code-review-0.2-and-0.3.md)
+and historical [YUV caller assessment](yuv-carrier-assessment.md).
 
 ## 8. Streaming and row iteration
 
@@ -467,7 +449,7 @@ Warnings require working replacements; 0.3 removals require tested migrations.
 | `ByteOrder` / `byte_order` | **Optional:** `ChannelOrder` / `channel_order` aliases plus deprecations | Remove old spelling only if this cleanup is adopted; no endian/representation change |
 | Transfer-blind ICC profiles/helpers, including legacy profile spellings | Exact supported profile or synthesis destination; explicit unsupported cases | Remove only with accurate migration, not a misleading profile alias |
 | Legacy `planar::Plane` | Separate review with an actual replacement/adopter | No automatic deletion based on old queue |
-| Owned planar unchecked construction/mutation | Checked alternatives before warnings | Remove only migrated escape hatches |
+| Entire legacy planar module | **Done:** module-wide warning; defer new video design | Remove only with a usable migration, including zenfilters PlaneMask |
 | Analysis-only `pipeline` surface | Separate scope review; predates 0.2.16 | Retire only properly deprecated items; keep feature name |
 | `serde` no-op feature | Document existing no-op; no claim that it implements serde | Keep cheap accepted spelling through migration |
 | `fast-transpose`, `hdr-experimental`, other accepted features | Preserve/test current opt-ins and defaults | No silent default flip or feature-name deletion |
@@ -526,7 +508,7 @@ zenpixels
   Pixel / PixelDescriptor / PixelFormat / BufferError / Orientation
   color      current encoding, context, origin
   hdr        anchors and metadata, no execution engine
-  planar     validated planes and YUV borrowing
+  planar     deprecated legacy surface; video replacement deferred
   icc        optional inspection
   policy     data-only policies
 
@@ -617,12 +599,12 @@ review document. No migration PR has yet been opened by this work.
 
 ## 13. Decisions still to make, one chunk at a time
 
-1. Exact adoption error/recovery interface and independent allocation construction.
+1. Adoption recovery is implemented; independent allocation construction remains a separate API decision.
 2. Resolved encoding construction, authority and unknown-color assumptions.
 3. Complete plan/worker and CMS ownership/signatures, proven with real backends.
 4. Output-plan integration and which ownership forms have actual adopters.
 5. Preservation vocabulary and strict in-place refusal/consuming failure ownership.
-6. YUV view shape with AOM/SVT/VMAF adapters; later CVVDP conversion contract.
+6. Deferred video representation with AOM/SVT/VMAF adapters; later CVVDP conversion contract.
 7. Whether optional row iteration, fallible typed shortcuts and channel-order
    naming cleanup earn their added surface.
 

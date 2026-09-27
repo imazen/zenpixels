@@ -90,6 +90,25 @@ PROBES["estimate_module"] = (
 )
 
 
+# Cover inherited module warnings through both core and convert root re-exports.
+for crate in ("zenpixels", "zenpixels_convert"):
+    for name in ("MultiPlaneImage", "Plane", "PlaneDescriptor", "PlaneLayout", "PlaneMask",
+                 "PlaneRelationship", "PlaneSemantic", "Subsampling", "YuvMatrix"):
+        PROBES[f"planar_{crate}_{name.lower()}"] = (
+            f"fn accepts(_: {crate}::{name}) {{}} fn main() {{}}", name, False,
+        )
+PROBES["planar_module"] = (
+    "fn main() { let _ = zenpixels::planar::PlaneMask::ALL; }", "PlaneMask", False,
+)
+PROBES["planar_inferred"] = (
+    """
+#[allow(deprecated)]
+fn legacy_provider() -> zenpixels::PlaneMask { zenpixels::PlaneMask::ALL }
+fn main() { let _ = legacy_provider().count(); }
+""", "count", False,
+)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="zenpixels-deprecations-") as directory:
         project = Path(directory)
@@ -104,6 +123,7 @@ edition = "2021"
 default = ["zenpixels-convert/default"]
 estimation-experimental = ["zenpixels-convert/estimation-experimental"]
 [dependencies]
+zenpixels = {{ path = {json.dumps(str(ROOT / "zenpixels"))}, default-features = false }}
 zenpixels-convert = {{ path = {json.dumps(str(ROOT / 'zenpixels-convert'))}, default-features = false }}
 [patch.crates-io]
 zenpixels = {{ path = {json.dumps(str(ROOT / 'zenpixels'))} }}
@@ -116,6 +136,8 @@ zenpixels = {{ path = {json.dumps(str(ROOT / 'zenpixels'))} }}
             for opted_in in (False, True):
                 for name, (_, expected, estimation) in PROBES.items():
                     command = ["cargo", "check", "--offline", "--message-format=json", "--bin", name]
+                    if name.startswith("planar_"):
+                        command.extend(["--features", "zenpixels/planar,zenpixels-convert/planar"])
                     if not defaults:
                         command.append("--no-default-features")
                     if opted_in:

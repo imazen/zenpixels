@@ -55,10 +55,12 @@
 //! | `std` | Standard library (default; currently a no-op, everything is `no_std + alloc`) |
 //! | `rgb` | [`Pixel`] impls for `rgb` crate types, typed `from_pixels()` constructors |
 //! | `imgref` | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
-//! | `planar` | Multi-plane image types (YCbCr, Oklab, gain maps) |
+//! | `planar` | Deprecated legacy multi-plane types |
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
+// The generated test harness references tests inside the deprecated planar module.
+#![cfg_attr(test, allow(deprecated))]
 
 extern crate alloc;
 
@@ -67,6 +69,10 @@ whereat::define_at_crate_info!(path = "zenpixels/");
 pub mod descriptor;
 pub mod orientation;
 #[cfg(feature = "planar")]
+#[deprecated(
+    since = "0.2.17",
+    note = "the legacy planar API is being retired; retain codec-owned planes for now while a video-oriented replacement is designed"
+)]
 pub mod planar;
 pub mod policy;
 
@@ -91,6 +97,7 @@ pub use descriptor::{
 
 // Re-export planar types when the `planar` feature is enabled.
 #[cfg(feature = "planar")]
+#[allow(deprecated)]
 pub use planar::{
     MultiPlaneImage, Plane, PlaneDescriptor, PlaneLayout, PlaneMask, PlaneRelationship,
     PlaneSemantic, Subsampling, YuvMatrix,
@@ -98,8 +105,8 @@ pub use planar::{
 
 // Re-export buffer types at crate root.
 pub use buffer::{
-    Bgrx, BufferError, InPlacePixels, Pixel, PixelBuffer, PixelBufferParts, PixelCow, PixelSlice,
-    PixelSliceMut, Rgbx,
+    Bgrx, BufferError, FromPartsError, InPlacePixels, Pixel, PixelBuffer, PixelBufferParts,
+    PixelCow, PixelSlice, PixelSliceMut, Rgbx,
 };
 
 // Re-export color types at crate root.

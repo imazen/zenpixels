@@ -1,7 +1,15 @@
 //! Multi-plane image types (YCbCr, Oklab, gain maps, separate alpha planes).
 //!
+//! Deprecated: a video-oriented replacement is being designed. Existing APIs
+//! remain available; retain codec-owned planes instead of adopting this container
+//! for new integrations.
+//!
 //! Requires the `planar` feature. All types are re-exported at crate root
 //! when the feature is enabled.
+
+// Exercise the retained legacy API without internal deprecation noise. External
+// callers still receive the module's inherited deprecations.
+#![allow(deprecated)]
 
 use core::fmt;
 

@@ -16,6 +16,7 @@ include = [
 [features]
 default = ["std", "icc"]
 std = []
+# Retains the deprecated legacy planar API while a video replacement is designed.
 planar = []
 icc = []
 rgb = ["dep:rgb"]

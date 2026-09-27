@@ -1,0 +1,175 @@
+// Review evidence: most tests assert known CURRENT bugs, not desired behavior.
+// Run with scripts/check-contract-cases.py; intentionally outside the CI test suite.
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+    use zenpixels::*;
+    use zenpixels_convert::cms::{CmsPluginError, PluggableCms, RowTransformMut};
+    use zenpixels_convert::{RowConverter, finalize_for_output_with, output::OutputProfile};
+
+    #[test]
+    fn same_as_origin_can_mistag_current_pixels() {
+        let b = PixelBuffer::from_vec(vec![200, 50, 10], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+        let origin = ColorOrigin::from_cicp(Cicp::DISPLAY_P3);
+        let r = finalize_for_output_with(
+            &b,
+            &origin,
+            OutputProfile::SameAsOrigin,
+            PixelFormat::Rgb8,
+            None,
+        )
+        .unwrap();
+        assert_eq!(r.metadata().cicp, Some(Cicp::DISPLAY_P3));
+        assert_eq!(r.pixels().descriptor().primaries, ColorPrimaries::Bt709);
+        assert_eq!(r.pixels().row(0), [200, 50, 10]);
+    }
+
+    #[test]
+    fn output_identity_relabels_premultiplied_as_straight() {
+        let d = PixelDescriptor::RGBA8_SRGB.with_alpha(Some(AlphaMode::Premultiplied));
+        let b = PixelBuffer::from_vec(vec![64, 32, 16, 128], 1, 1, d).unwrap();
+        let r = finalize_for_output_with(
+            &b,
+            &ColorOrigin::assumed(),
+            OutputProfile::Named(Cicp::SRGB),
+            PixelFormat::Rgba8,
+            None,
+        )
+        .unwrap();
+        assert_eq!(r.pixels().descriptor().alpha(), Some(AlphaMode::Straight));
+        assert_eq!(r.pixels().row(0), [64, 32, 16, 128]);
+    }
+    #[test]
+    fn output_ignores_cicp_signal_range() {
+        let b =
+            PixelBuffer::from_vec(vec![255, 255, 255], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+        let narrow = Cicp::new(1, 13, 0, false);
+        let r = finalize_for_output_with(
+            &b,
+            &ColorOrigin::assumed(),
+            OutputProfile::Named(narrow),
+            PixelFormat::Rgb8,
+            None,
+        )
+        .unwrap();
+        assert_eq!(r.metadata().cicp, Some(narrow));
+        assert_eq!(r.pixels().descriptor().signal_range, SignalRange::Full);
+        assert_eq!(r.pixels().row(0), [255, 255, 255]);
+    }
+    struct Fill;
+    impl RowTransformMut for Fill {
+        fn transform_row(&mut self, _s: &[u8], d: &mut [u8], _: u32) {
+            d.fill(42)
+        }
+    }
+    #[derive(Default)]
+    struct Spy(Mutex<Vec<(bool, bool)>>);
+    impl PluggableCms for Spy {
+        fn build_source_transform(
+            &self,
+            s: ColorProfileSource<'_>,
+            d: ColorProfileSource<'_>,
+            _: PixelFormat,
+            _: PixelFormat,
+            _: &ConvertOptions,
+        ) -> Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>> {
+            self.0.lock().unwrap().push((
+                matches!(s, ColorProfileSource::Icc(_)),
+                matches!(d, ColorProfileSource::Icc(_)),
+            ));
+            Some(Ok(Box::new(Fill)))
+        }
+    }
+    #[test]
+    fn output_cms_does_not_receive_icc() {
+        let cms = Spy::default();
+        let icc: std::sync::Arc<[u8]> = zenpixels_convert::icc_profiles::DISPLAY_P3_V4.into();
+        let b = PixelBuffer::from_vec(vec![200, 50, 10], 1, 1, PixelDescriptor::RGB8_SRGB)
+            .unwrap()
+            .with_icc(icc.clone());
+        let r = finalize_for_output_with(
+            &b,
+            &ColorOrigin::from_icc(icc.clone()),
+            OutputProfile::Icc(icc),
+            PixelFormat::Rgb8,
+            Some(&cms),
+        )
+        .unwrap();
+        assert_eq!(*cms.0.lock().unwrap(), vec![(false, false)]);
+        assert_eq!(r.pixels().row(0), [42, 42, 42]);
+    }
+    fn custom_converter() -> RowConverter {
+        RowConverter::new_explicit_with_cms(
+            PixelDescriptor::RGB8_SRGB,
+            PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
+            &ConvertOptions::permissive(),
+            Some(&Spy::default()),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn compose_discards_external_transform() {
+        let mut a = custom_converter();
+        let b = RowConverter::new(a.to_descriptor(), a.to_descriptor()).unwrap();
+        let mut c = a.compose(&b).unwrap();
+        let mut direct = [0; 3];
+        let mut composed = [0; 3];
+        a.convert_row(&[1, 2, 3], &mut direct, 1);
+        c.convert_row(&[1, 2, 3], &mut composed, 1);
+        assert_eq!(direct, [42, 42, 42]);
+        assert_eq!(composed, [1, 2, 3]);
+    }
+    #[cfg(not(feature = "std"))]
+    #[test]
+    fn no_std_clone_discards_external_transform() {
+        let mut a = custom_converter();
+        let mut c = a.clone();
+        let mut direct = [0; 3];
+        let mut cloned = [0; 3];
+        a.convert_row(&[1, 2, 3], &mut direct, 1);
+        c.convert_row(&[1, 2, 3], &mut cloned, 1);
+        assert_eq!(direct, [42, 42, 42]);
+        assert_eq!(cloned, [1, 2, 3]);
+    }
+    #[test]
+    fn reinterpret_accepts_invalid_alignment() {
+        let data = [0u8; 8];
+        let offset = (0..4)
+            .find(|&i| (data.as_ptr() as usize + i) % 4 != 0)
+            .unwrap();
+        let bytes = &data[offset..offset + 4];
+        let s = PixelSlice::new(bytes, 1, 1, 4, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let f = PixelFormat::GrayF32.descriptor();
+        assert!(PixelSlice::new(bytes, 1, 1, 4, f).is_err());
+        assert!(s.reinterpret(f).is_ok());
+    }
+    #[test]
+    fn typed_reinterpret_retains_wrong_type() {
+        let mut data = [1u8, 2, 3, 4];
+        let s = PixelSliceMut::<rgb::RGBA<u8>>::new_typed(&mut data, 1, 1, 1).unwrap();
+        let s: PixelSliceMut<'_, rgb::RGBA<u8>> =
+            s.reinterpret(PixelDescriptor::BGRA8_SRGB).unwrap();
+        assert_eq!(s.descriptor().pixel_format(), PixelFormat::Bgra8);
+    }
+    #[test]
+    fn layout_helper_resets_color_and_alpha() {
+        let mut data = [1u8, 2, 3, 128];
+        let s = PixelSliceMut::<rgb::RGBA<u8>>::new_typed(&mut data, 1, 1, 1)
+            .unwrap()
+            .with_primaries(ColorPrimaries::DisplayP3)
+            .with_transfer(TransferFunction::Linear)
+            .with_alpha_mode(Some(AlphaMode::Premultiplied));
+        let s = s.swap_to_bgra();
+        assert_eq!(s.descriptor().primaries, ColorPrimaries::Bt709);
+        assert_eq!(s.descriptor().transfer(), TransferFunction::Srgb);
+        assert_eq!(s.descriptor().alpha(), Some(AlphaMode::Straight));
+    }
+    #[test]
+    fn from_imgvec_keeps_old_stride_after_compacting() {
+        let px = rgb::RGB8::new(1, 2, 3);
+        let img = imgref::Img::new_stride(vec![px; 6], 2, 2, 3);
+        let b = PixelBuffer::<rgb::RGB8>::from_imgvec(img);
+        assert_eq!(b.stride(), 9);
+        assert!(std::panic::catch_unwind(|| b.as_slice().row(1).to_vec()).is_err());
+    }
+}

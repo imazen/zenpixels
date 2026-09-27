@@ -1545,7 +1545,8 @@ pub struct PixelBuffer<P = ()> {
 /// Uncompacted storage can include a prefix, row padding and trailing bytes.
 ///
 /// This is a transfer record, not a validated pixel buffer: changing its public
-/// fields does not validate the resulting layout or convert the pixels.
+/// fields does not validate the resulting layout or convert the pixels. Use
+/// [`PixelBuffer::try_from_parts`] to validate and adopt the edited record.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct PixelBufferParts {
@@ -1563,6 +1564,63 @@ pub struct PixelBufferParts {
     pub descriptor: PixelDescriptor,
     /// Attached color context, moved from the buffer without an Arc clone.
     pub color_context: Option<Arc<ColorContext>>,
+}
+
+/// Failed [`PixelBuffer::try_from_parts`] adoption, retaining the rejected storage.
+///
+/// Use [`take_parts`](Self::take_parts) to recover the allocation, or
+/// `.map_err(|e| e.without_buffer())` when recovery is unnecessary. Strip the
+/// buffer before boxing or storing an error to avoid retaining a large image.
+/// Retaining the parts does not allocate or clone them. Capturing the validation
+/// error uses the usual `whereat` diagnostic trace allocation.
+#[must_use]
+pub struct FromPartsError {
+    error: At<BufferError>,
+    parts: Option<PixelBufferParts>,
+}
+
+impl FromPartsError {
+    /// The validation error, including its location trace.
+    pub fn error(&self) -> &At<BufferError> {
+        &self.error
+    }
+
+    /// Take the rejected allocation and metadata, leaving this error intact.
+    ///
+    /// Returns `None` after the parts have already been taken.
+    pub fn take_parts(&mut self) -> Option<PixelBufferParts> {
+        self.parts.take()
+    }
+
+    /// Discard any retained parts and return only the traced validation error.
+    ///
+    /// Prefer `.map_err(|e| e.without_buffer())?` before boxing or retaining an
+    /// error if the caller does not need to recover its potentially large buffer.
+    pub fn without_buffer(self) -> At<BufferError> {
+        self.error
+    }
+}
+
+impl fmt::Debug for FromPartsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Never dump a potentially 100 MB allocation into logs.
+        f.debug_struct("FromPartsError")
+            .field("error", &self.error)
+            .field("has_parts", &self.parts.is_some())
+            .finish()
+    }
+}
+
+impl fmt::Display for FromPartsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.error, f)
+    }
+}
+
+impl core::error::Error for FromPartsError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        Some(&self.error)
+    }
 }
 
 /// Borrowed-or-owned pixels with the same metadata and stride-aware view.
@@ -1643,6 +1701,71 @@ impl<P> fmt::Debug for PixelCow<'_, P> {
 }
 
 impl PixelBuffer {
+    /// Adopt an allocation, geometry and color context without copying pixels.
+    ///
+    /// Validates offset, byte stride, sample alignment and the minimum visible
+    /// extent, using the same storage checks as [`PixelSlice::new`]. The last row
+    /// need not include trailing padding. Successful adoption does not allocate,
+    /// compact or clone context; pointer, length, capacity, offset and metadata
+    /// are preserved. Failure captures a `whereat` diagnostic trace.
+    /// Color declarations are retained, not resolved or converted.
+    ///
+    /// On failure the error owns the original parts. Recover them with
+    /// [`FromPartsError::take_parts`], or strip them before propagating, boxing or
+    /// storing the error if recovery is unnecessary:
+    ///
+    /// ```
+    /// use zenpixels::{BufferError, PixelBuffer, PixelDescriptor};
+    /// # fn main() -> Result<(), whereat::At<BufferError>> {
+    /// let parts = PixelBuffer::new(2, 2, PixelDescriptor::RGB8_SRGB).into_parts();
+    /// let buffer = PixelBuffer::try_from_parts(parts).map_err(|e| e.without_buffer())?;
+    /// assert_eq!(buffer.width(), 2);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ```
+    /// use zenpixels::{PixelBuffer, PixelDescriptor};
+    /// let mut parts = PixelBuffer::new(2, 2, PixelDescriptor::RGB8_SRGB).into_parts();
+    /// parts.offset = parts.data.len() + 1;
+    /// let mut error = PixelBuffer::try_from_parts(parts).unwrap_err();
+    /// let mut parts = error.take_parts().unwrap();
+    /// assert!(error.take_parts().is_none());
+    /// parts.offset = 0;
+    /// let buffer = PixelBuffer::try_from_parts(parts).unwrap();
+    /// ```
+    #[track_caller]
+    #[allow(clippy::result_large_err)] // Keep rejected parts inline, without allocating an error box.
+    pub fn try_from_parts(parts: PixelBufferParts) -> Result<Self, FromPartsError> {
+        let validation = match parts.data.get(parts.offset..) {
+            Some(data) => validate_slice(
+                data.len(),
+                data.as_ptr(),
+                parts.width,
+                parts.height,
+                parts.stride_bytes,
+                &parts.descriptor,
+            ),
+            None => Err(BufferError::InsufficientData),
+        };
+        if let Err(error) = validation {
+            return Err(FromPartsError {
+                error: whereat::at!(error),
+                parts: Some(parts),
+            });
+        }
+        Ok(Self {
+            data: parts.data,
+            offset: parts.offset,
+            width: parts.width,
+            height: parts.height,
+            stride: parts.stride_bytes,
+            descriptor: parts.descriptor,
+            color: parts.color_context,
+            _pixel: PhantomData,
+        })
+    }
+
     /// Allocate a zero-filled buffer for the given dimensions and format.
     ///
     /// The default path is infallible for speed — see the
@@ -2242,7 +2365,7 @@ impl PixelBuffer {
     where
         F: for<'a> FnOnce(InPlacePixels<'a>) -> PixelSliceMut<'a>,
     {
-        let total = self.stride * self.height as usize;
+        let total = self.storage_span_len();
         let offset = self.offset;
         let avail = self.data.len() - offset;
         let base = self.data[offset..].as_ptr() as usize;
@@ -2276,6 +2399,14 @@ impl PixelBuffer {
 }
 
 impl<P> PixelBuffer<P> {
+    // Retain available final-row padding, but do not require it. Validation
+    // establishes the visible extent; padding need not fit or even be representable.
+    fn storage_span_len(&self) -> usize {
+        self.stride
+            .saturating_mul(self.height as usize)
+            .min(self.data.len() - self.offset)
+    }
+
     /// Erase the pixel type, returning a type-erased buffer.
     pub fn erase(self) -> PixelBuffer {
         PixelBuffer {
@@ -2606,7 +2737,7 @@ impl<P> PixelBuffer<P> {
 
     /// Borrow the full buffer as an immutable [`PixelSlice`].
     pub fn as_slice(&self) -> PixelSlice<'_, P> {
-        let total = self.stride * self.height as usize;
+        let total = self.storage_span_len();
         PixelSlice {
             data: &self.data[self.offset..self.offset + total],
             width: self.width,
@@ -2627,7 +2758,7 @@ impl<P> PixelBuffer<P> {
     /// transforms, use [`PixelBuffer::transform_in_place`], which adopts
     /// the new description atomically.
     pub fn as_slice_mut(&mut self) -> PixelSliceMut<'_, P> {
-        let total = self.stride * self.height as usize;
+        let total = self.storage_span_len();
         let offset = self.offset;
         PixelSliceMut {
             data: &mut self.data[offset..offset + total],

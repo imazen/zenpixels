@@ -7,7 +7,8 @@ Pixel format types and transfer-function-aware conversion for Rust image codecs.
 > for current inaccuracies, old/new examples and the resulting contracts if the
 > full proposal is adopted. Implemented so far: the [three initial deprecations](docs/release-0.2.16-accidental-api-review.md),
 > estimation opt-in, validation in `DiffuseWhite::new`, and
-> `PixelBuffer::{into_contiguous, into_parts}`. Other proposed APIs are not yet available.
+> `PixelBuffer::{into_contiguous, into_parts, try_from_parts}` and planar-module
+> deprecation. Other proposed APIs are not yet available.
 
 A JPEG decoder gives you `RGB8` in sRGB. An AVIF decoder gives you `RGBA16` in BT.2020 PQ. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
 
@@ -358,6 +359,16 @@ It moves padded rows within the existing allocation, preserving pointer and
 capacity, and truncates trailing bytes. Already packed rows need no pixel moves.
 The alignment offset is preserved: **packed rows do not imply offset zero**.
 For a receiver accepting stride, call `into_parts()` directly and avoid compaction.
+Reconstruct with `PixelBuffer::try_from_parts(parts)`. Rejected parts stay in
+`FromPartsError`; recover them once with `error.take_parts()`. If recovery is
+unnecessary, discard the allocation before propagating, boxing or storing errors:
+
+```rust,ignore
+let buffer = PixelBuffer::try_from_parts(parts).map_err(|e| e.without_buffer())?;
+```
+
+Adoption validates storage/stride/alignment and permits a final row without
+trailing padding. It preserves the color declarations rather than resolving them.
 
 ### Dimensions and descriptor
 
@@ -379,12 +390,12 @@ the descriptor is a small `Copy` struct, so read its fields freely
 
 > **Review:** Constructor checks need the geometry/empty-view repairs described in
 > the [buffer review](docs/readme-contract-review.md#wrapping-borrowing-and-buffer-access).
-> Parts extraction is implemented; checked strided ownership adoption remains proposed.
+> Parts extraction and checked strided ownership adoption are implemented.
 
 `PixelBuffer::new(w, h, desc)` / `try_new()` allocate a zero-filled buffer with
 tight stride; `new_simd_aligned()` / `try_new_simd_aligned()` pad rows for SIMD;
 [`from_vec(data, w, h, desc)`](#wrapping-a-decoders-vecu8-no-copy) wraps an
-existing `Vec<u8>` (tight stride, no copy). The `try_*` variants return
+existing `Vec<u8>` (tight stride, no copy). Allocating `try_*` constructors return
 `Result<_, At<BufferError>>` (a [`whereat`](https://crates.io/crates/whereat)
 location wrapper around [`BufferError`] — `AllocationFailed`, `InvalidDimensions`,
 `InsufficientData`, `StrideTooSmall`, …); `new` and `new_simd_aligned` panic on failure
@@ -499,12 +510,15 @@ that feature with the same opted-in signatures.
 
 ## Planar support
 
-> **Review:** The existing owned container is not a complete borrowed YUV boundary.
-> SVT, AOM and the new VMAF code justify shared validated plane views; CVVDP's
-> planar input is RGB and needs explicit YCbCr conversion.
-> [Concrete callers and proposed contract](docs/yuv-carrier-assessment.md).
+> **Deprecated in the 0.2 bridge:** the whole legacy `planar` module and its
+> re-exports. The feature and existing code remain available while a better
+> video-oriented representation is designed. No replacement is published yet.
+> See the [code review](docs/code-review-0.2-and-0.3.md) for actual callers and
+> the deferred video requirements.
 
-With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `Subsampling` (4:2:0/4:2:2/4:4:4/4:1:1), `YuvMatrix`, and `MultiPlaneImage` container. Handles YCbCr, Oklab planes, gain maps, and separate alpha planes.
+Zenfilters currently uses `PlaneMask` in its filter-channel access declarations;
+its image planes use its own `OklabPlanes`. Plan that companion migration before
+removing the legacy module.
 
 ## Features
 
@@ -520,7 +534,7 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | `icc` | yes | `icc` module — hash-based ICC profile identification (~100ns) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed `from_pixels()` constructors |
 | `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
-| `planar` | | Multi-plane image types (YCbCr, Oklab, gain maps) |
+| `planar` | | Deprecated legacy multi-plane types |
 | `serde` | | No-op stub (soft-removed in 0.2.16, queued for removal); previously added `Serialize`/`Deserialize` derives on the core types — a workspace-wide sweep found zero consumers |
 
 ### zenpixels-convert
@@ -533,7 +547,7 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed convenience methods (`to_rgb8()`, `to_rgba8()`, etc.) |
 | `imgref` | | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
-| `planar` | | Multi-plane image types |
+| `planar` | | Deprecated legacy multi-plane types |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
 | `estimation-experimental` | | Explicit resource-estimation opt-in; without it the 0.2 bridge retains the API with warnings; proposed 0.3.1 requires it |
 | `hdr-experimental` | | Native HDR→SDR display mapping inside `ConvertPlan` (BT.2446 Method A + OKLch soft compress + CTA-861.3 CLL measurement); API shape may move ahead of 0.3.0 |

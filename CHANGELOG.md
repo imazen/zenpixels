@@ -13,10 +13,26 @@
   containing `data`, `offset`, `stride_bytes`, dimensions, descriptor and color
   context. It preserves allocation length/capacity without copying or compaction.
   Use `buffer.into_contiguous().into_parts()` for packed ownership handoff;
-  pixels still begin at `data[offset]`. No bytes-only export or parts-adoption
-  constructor is added in this chunk.
+  pixels still begin at `data[offset]`.
+- `PixelBuffer::try_from_parts()` validates and adopts strided storage without
+  copying or allocating, preserving offset, capacity and color context. A failed
+  adoption returns `FromPartsError` with the original parts; use `take_parts()`
+  to recover them, or `.map_err(|e| e.without_buffer())` before boxing/storing
+  the error when recovery is unnecessary.
+
+### zenpixels — deprecated (0.2.17 bridge)
+
+- The entire legacy `planar` module, including root/convert re-exports and inferred
+  methods. Keep the feature and implementations available while a video-oriented
+  replacement is designed. No replacement planar API is introduced in this batch.
+  Zenfilters' current use is the `PlaneMask` type, including public ChannelAccess
+  fields; its image planes use its own OklabPlanes representation.
 
 ### zenpixels — fixed
+
+- Owned buffer views and in-place transforms accept the minimum visible final-row
+  extent instead of indexing nonexistent trailing padding. Existing full padding
+  remains available when present; parts adoption uses the same view validation.
 
 - `DiffuseWhite::new(nits)` now panics for zero (including negative zero),
   negative, NaN and infinite values, enforcing the finite positive anchor

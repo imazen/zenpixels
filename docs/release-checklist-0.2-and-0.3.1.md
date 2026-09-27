@@ -20,15 +20,19 @@ missing implementations/tests to reuse, rewrite or skip.
 - [x] Add destructurable `PixelBufferParts` / `into_parts`, moving ownership.
 - [x] Annotate the README, audit existing consumers and assess concrete YUV callers.
 
+- [x] Checked `try_from_parts` adoption with `take_parts` / `without_buffer` error recovery.
+- [x] Deprecate the complete legacy planar module; defer its video replacement.
+- [x] Add a [code-first review](code-review-0.2-and-0.3.md) with executable defect cases.
+
 Compaction preserves the pixel offset for alignment. It removes row padding,
-not the alignment prefix. Checked adoption is not implemented yet.
+not the alignment prefix. Checked adoption is implemented, including minimum final-row extents.
 
 ## 0.2.x: build the common API in reviewable chunks
 
 | Order | Chunk | Completion condition |
 |---|---|---|
 | 0 — immediate fix | Known-transfer adapter guard | Port both missing `Unknown` guards from PR #63's final revision. Known sRGB → linear requests must convert or fail, never borrow unchanged bytes under a new descriptor. Cover intent, explicit-policy and legacy paths. |
-| 1 — next ownership chunk | Checked parts adoption and allocation reuse | `try_from_parts` validates geometry/alignment and returns the supplied allocation on error; round-trips preserve pointer, capacity, offset, stride and context. Adapt PR #63's typed U8 export and owned-cow adapter optimizations to avoid unnecessary full-image copies. Settle construction for external decoder-owned allocations without adding redundant constructor families. |
+| 1 — remaining ownership work | Allocation reuse | Adoption/error recovery and round-trip tests are complete. Adapt PR #63's typed U8 export and owned-cow adapter optimizations to avoid unnecessary full-image copies. Settle construction for external decoder-owned allocations without adding redundant constructor families. |
 | 2 | Storage and typed-layout correctness | Repair minimal final-row extents, zero-area behavior, arithmetic and typed reinterpretation/mutation. Validate descriptor combinations at acceptance boundaries while retaining convenient public descriptors. Add replacement paths before deprecating problematic existing ones. |
 | 3 | Current color and CMS inputs | One interpretation of descriptor, ICC/CICP, range, alpha and luminance anchor; no known-color retag masquerading as conversion. Pass actual source/target profiles to CMS and finalization. Resolve constructor/authority choices before publishing new types. |
 | 4 | Prepared, fallible conversion | Complete plans preserve composed operations; preparation owns scratch and backend state; execution within capacity does not allocate. Backend errors propagate, and independent workers do not hide shared mutable state behind cloning. |
@@ -41,10 +45,10 @@ Correctness fixes and additions may ship in multiple 0.2 patches; the minimum
 compatible version is the patch that actually completes the common surface.
 Do not promise that 0.2.17 is the full bridge merely because it is next numerically.
 
-**Separate additive work:** borrowed YUV views with SVT/AOM/VMAF adapters, then
-explicit YCbCr-to-RGB adaptation for CVVDP. There are real callers, but this need
-not block retiring unrelated APIs. Keep the same adopted YUV surface on both
-lines. See [YUV assessment](yuv-carrier-assessment.md).
+**Deferred video design:** the complete old planar module now warns. Its feature
+and code remain available; design a replacement with SVT/AOM/VMAF callers and
+explicit CVVDP RGB conversion. Zenfilters currently uses PlaneMask, including
+public access fields. Do not remove that API until its migration is ready.
 
 **Deferred conveniences:** no duplicate context getter, contiguous-view
 constructor just to infer stride, new universal streaming-provider trait, or

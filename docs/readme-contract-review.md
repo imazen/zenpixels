@@ -1,5 +1,12 @@
 # Root README review and proposed 0.2 / 0.3.1 result
 
+> **2026-09-27 update:** checked parts adoption with `take_parts()` and
+> `without_buffer()` is implemented. The owner chose to deprecate the entire
+> existing planar module now and defer a better video representation. Earlier
+> proposals below to expand that module are superseded. See the
+> [code-first review](code-review-0.2-and-0.3.md) for executable cases and wanted
+> behavior before approving the remaining guards/contracts.
+
 Reviewed 2026-09-27 against `main@17c78d9` plus the accompanying deprecation
 edits. This annotates the root README, not just its quick start. **The three
 deprecations, estimation opt-in, validation in `DiffuseWhite::new`, and
