@@ -22,6 +22,53 @@ hunks and tests, reconciling them with current storage and compatibility rules.
 The [machine-readable ledger](audit-2026-09-27/pr63-commits.json) records all
 21 full SHAs, ancestry, patch-equivalence results and dispositions.
 
+## Exact traits and API spelling changes
+
+The PR sealed **two existing conversion traits** in `zenpixels-convert`:
+
+- `PixelBufferConvertExt`, directly through a private `sealed::Sealed`
+  supertrait, implemented only for the erased `PixelBuffer`.
+- `PixelBufferConvertTypedExt`, indirectly through its existing
+  `PixelBufferConvertExt` supertrait.
+
+These remain open on current main. Sealing prevents downstream implementations
+for callers' own wrapper types. Existing callers merely importing the traits and
+calling methods on `PixelBuffer` would be unaffected. The original justification
+was that a sibling audit found no external implementations and sealing would
+allow future required methods. That is an API evolution choice, with no runtime
+performance benefit; it is not necessary to implement caller-output conversion.
+The PR also added required methods, a separate compatibility concern for existing
+implementors. Our recommendation is to retain the existing open traits for the
+common-source bridge, unless an explicit implementation migration is agreed.
+
+The final PR revision also introduced two **new, already-sealed** traits:
+`PixelSliceOrientationExt` and `PixelBufferOrientationExt`. These were method
+wrappers around existing orientation functions, plus a consuming owned-buffer
+method. Neither trait exists on main. This was not sealing an existing orientation
+trait. The already-sealed `PixelSliceLoadBearingExt` and
+`PixelBufferLoadBearingExt` are separate and are not the compatibility objection.
+
+Most changes loosely called “renames” were actually new methods plus deprecated
+wrappers, not immediate removal of an old spelling:
+
+| Old spelling | PR destination | Status / recommendation |
+|---|---|---|
+| `PixelSlice::new_tight(...)`, `PixelSliceMut::new_tight(...)` | `::new_contiguous(...)` | Actual rename within the unpublished PR. Neither spelling reached main. Defer redundant constructors. |
+| Free `convert_row(&plan, src, dst, width)` | `plan.convert_row(src, dst, width)` | Proposed deprecation absent main. Same per-call scratch behavior; do not require this intermediate migration. |
+| Free `apply_orientation(src, orientation)` | `src.apply_orientation(orientation)` via `PixelSliceOrientationExt` | Proposed deprecation absent main. Retain the free function; method syntax is optional design, not a correctness fix. |
+| Free `apply_orientation_into(src, orientation, dst)` | `src.apply_orientation_into(orientation, dst)` via the same trait | Same disposition. |
+| Free `apply_orientation_in_place(&mut buffer, orientation)` | `buffer.apply_orientation_in_place(orientation)` via `PixelBufferOrientationExt` | Same disposition. |
+| Unreleased free `into_oriented(buffer, orientation)` | `buffer.apply_orientation(orientation)` via `PixelBufferOrientationExt` | The PR removed its own new free helper. Neither destination exists on main. |
+| `RowConverter::convert_rows(...)` with raw buffers/strides | `converter.convert_slice_into(src_view, dst_view)` | A substantive signature/contract improvement, not merely a rename. Neither replacement nor warning landed; repair source checks, preparation and metadata before migration. |
+| `adapt::convert_buffer(...)` | Owned buffer conversion methods (`convert_to`, `convert_into`, `convert_in_place`) | Proposed migration rather than a one-to-one rename. Defer warning until the final replacement contract is ready. |
+| `adapt_for_encode`, `adapt_for_encode_with_intent`, `adapt_for_encode_explicit` | Corresponding `_cow` functions | Already on main with deprecations. This changes the result from packed `Adapted` to stride-aware `PixelCow`; keep this migration. |
+
+`new_packed` was an alias added and removed inside the PR, not a main API to
+migrate. Our newly adopted `into_contiguous()` is also not a rename of a shipped
+`into_contiguous_bytes()`: the latter never landed, and returning the buffer
+preserves its descriptor and color context. `convert_to` was retained in the PR;
+`convert_into` and `convert_in_place` were additional ownership/output choices.
+
 ## Recommended small chunks
 
 1. **Fix known-transfer relabeling first.** Port the `Unknown` guards from
