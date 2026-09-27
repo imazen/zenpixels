@@ -203,7 +203,7 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> f64 {
         ConvertStep::GrayToRgb => bucketed(&[(1, 12.85)], 60.0),
         ConvertStep::GrayToRgba => gib(8.6),
         ConvertStep::RgbToGray { .. } => gib(12.0),
-        ConvertStep::RgbaToGray { .. } => gib(10.0),
+        ConvertStep::RgbaToGray { .. } | ConvertStep::RgbaToGrayAlpha { .. } => gib(10.0),
         ConvertStep::GrayAlphaToRgba => bucketed(&[(2, 95.30), (4, 119.80), (8, 149.72)], 60.0),
         ConvertStep::GrayAlphaToRgb | ConvertStep::GrayAlphaToGray => gib(80.0),
         ConvertStep::GrayToGrayAlpha => gib(100.0),

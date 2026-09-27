@@ -234,6 +234,21 @@ impl crate::cms::RowTransformMut for LiteTransformMut {
     fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
         self.inner.convert_row(src, dst, width);
     }
+    fn try_transform_row(
+        &mut self,
+        src: &[u8],
+        dst: &mut [u8],
+        width: u32,
+    ) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        self.inner
+            .try_convert_row(src, dst, width)
+            .map_err(|e| whereat::at!(crate::cms::CmsPluginError::new(e)))
+    }
+    fn prepare(&mut self, max_width: u32) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        self.inner
+            .prepare(max_width)
+            .map_err(|e| whereat::at!(crate::cms::CmsPluginError::new(e)))
+    }
 }
 
 impl crate::cms::PluggableCms for ZenCmsLite {

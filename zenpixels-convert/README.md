@@ -35,7 +35,7 @@ zenpixels-convert = { version = "0.2.16", default-features = false, features = [
 
 ### Negotiate a format, then convert row by row
 
-[`best_match`] picks the cheapest target format an encoder supports for a given source descriptor; [`RowConverter`] pre-computes the conversion plan once and converts rows with no per-row allocation.
+[`best_match`] picks the cheapest target format an encoder supports for a given source descriptor; [`RowConverter`] plans conversion once. On the unreleased bridge, `prepare` reserves scratch and initializes selected tables before fallible execution.
 
 ```rust
 use zenpixels_convert::{RowConverter, best_match, ConvertIntent};
@@ -44,12 +44,27 @@ use zenpixels_convert::{RowConverter, best_match, ConvertIntent};
 let target = best_match(source_desc, &encoder_formats, ConvertIntent::Fastest)
     .ok_or("no compatible format")?;
 
-// Pre-compute the plan, then convert row by row — no per-row allocation.
+// Unreleased bridge: setup costs occur before the row loop.
 let mut converter = RowConverter::new(source_desc, target)?;
+converter.prepare(width)?;
 for y in 0..height {
-    converter.convert_row(src_row, dst_row, width);
+    converter.try_convert_row(src_row, dst_row, width)?;
 }
 ```
+
+Within prepared capacity, built-in execution does not allocate. Each stateful
+CMS worker must be built independently and support preparation; cloning a shared
+mutable worker does not create an independent worker. Row extent/alignment errors
+precede writes. A backend error can leave partial destination data.
+
+`compose` optimizes the final output and may remove incidental quantization.
+Use `compose_preserving` for intentional integer boundaries. Use
+`adapt::check_opaque` explicitly before requesting `DiscardUnchecked` if opacity
+is required; ordinary row planning refuses `DiscardIfOpaque` without inspecting
+pixels. `ConvertPlan::new_preserving_samples` proves supported exact changes or
+refuses without scanning.
+
+These additions are unreleased. See the [tested bridge examples](../docs/implemented-bridge-contracts.md).
 
 ### Color profile conversion (no CMS needed for named profiles)
 

@@ -11,7 +11,7 @@ The [PR #63 inventory](pr63-commit-inventory.md) records all 21 commits and whic
 missing implementations/tests to reuse, rewrite or skip.
 
 **Overall implementation is incomplete.** The [status ledger](implementation-status-0.2-and-0.3.md)
-separates implemented work from fifteen still-reproduced defects and remaining
+separates implemented work from the 27 corrected contract cases and remaining
 API/migration work. The [U16 matrix](u16-contract-matrix.md) covers encoding,
 rounding, packing, replication and conversion support. Neither release is ready.
 
@@ -32,10 +32,13 @@ rounding, packing, replication and conversion support. Neither release is ready.
 - [x] Fix the small storage/color/scalar cases listed in the status ledger (`7088a8b`).
 - [x] Refuse composition that would drop an external CMS transform.
 - [x] Record selected composition/check costs; benchmark an exact U16 candidate.
-  This does not implement prepared workers, checked raw samples or a new kernel.
+  Prepared workers and fused U16 analysis are now implemented; native raw-sample adapters and narrowing-kernel selection remain separate work.
 
 Compaction preserves the pixel offset for alignment. It removes row padding,
 not the alignment prefix. Checked adoption is implemented, including minimum final-row extents.
+
+- [x] Close the reproduced conversion/output/CMS defects; add prepared/fallible rows and explicit preserved-stage composition.
+- [x] Commit/test companion streaming fixes and zenfilters mask migration.
 
 ## 0.2.x: build the common API in reviewable chunks
 

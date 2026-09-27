@@ -1,5 +1,4 @@
-// Review evidence: most tests assert known CURRENT bugs, not desired behavior.
-// Run with scripts/check-contract-cases.py; intentionally outside the CI test suite.
+// Regression cases from the API contract review.
 #[cfg(test)]
 mod tests {
     use zenpixels_convert::*;
@@ -88,8 +87,14 @@ mod tests {
     fn opaque_only_policy_requires_preflight() {
         let options = policy::ConvertOptions::permissive()
             .with_alpha_policy(policy::AlphaPolicy::DiscardIfOpaque);
-        assert!(RowConverter::new_explicit(PixelDescriptor::RGBA8_SRGB,
-            PixelDescriptor::RGB8_SRGB, &options).is_err());
+        assert!(
+            RowConverter::new_explicit(
+                PixelDescriptor::RGBA8_SRGB,
+                PixelDescriptor::RGB8_SRGB,
+                &options
+            )
+            .is_err()
+        );
     }
     #[test]
     fn composite_to_gray_includes_background() {
@@ -145,12 +150,18 @@ mod tests {
         .with_primaries(ColorPrimaries::AdobeRgb);
         assert!(RowConverter::new(src, dst).is_err());
     }
-    #[cfg(feature = "cms")]
+    #[cfg(feature = "cms-moxcms")]
     #[test]
     fn moxcms_crossdepth_refused_at_planning() {
         let from = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
-        assert!(RowConverter::new_explicit_with_cms(
-            from, PixelDescriptor::RGBF32_LINEAR,
-            &policy::ConvertOptions::permissive(), Some(&MoxCms)).is_err());
+        assert!(
+            RowConverter::new_explicit_with_cms(
+                from,
+                PixelDescriptor::RGBF32_LINEAR,
+                &policy::ConvertOptions::permissive(),
+                Some(&MoxCms)
+            )
+            .is_err()
+        );
     }
 }

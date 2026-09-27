@@ -99,3 +99,11 @@ fn padded_u8_export_reuses_allocation() {
         &[1, 2, 3, 4, 5, 6, 7, 8]
     );
 }
+
+#[cfg(feature = "imgref")]
+#[test]
+fn zero_width_imgref_export_keeps_geometry() {
+    let mut buffer = PixelBuffer::<rgb::RGBA<u8>>::new_typed(0, 7);
+    assert_eq!(buffer.as_imgref().width(), 0);
+    assert_eq!(buffer.as_imgref_mut().height(), 7);
+}

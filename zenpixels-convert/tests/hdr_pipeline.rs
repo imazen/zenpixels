@@ -193,17 +193,14 @@ mod plan_shape {
     }
 
     #[test]
-    fn hdr_pipeline_hlg_source_uses_same_chain_shape() {
-        // HLG U16 BT.2020 → sRGB U8 BT.709: same pipeline shape as PQ;
-        // tone-map still fires (HLG is HDR-source).
-        let src = hlg_u16_bt2020_rgb();
-        let dst = PixelDescriptor::RGB8_SRGB;
-        let src_pixel: [u16; 3] = [30_000, 30_000, 30_000];
-        let src_bytes: [u8; 6] = bytemuck::cast(src_pixel);
-        let trace = trace_hdr_plan(src, dst, default_hdr(1000.0), &src_bytes, 1);
+    fn hdr_pipeline_hlg_requires_an_explicit_display_mapping() {
         assert!(
-            trace.contains(&"ToneMapBt2446A"),
-            "HLG → sRGB pipeline must include ToneMapBt2446A, got {trace:?}"
+            ConvertPlan::new_with_hdr_config(
+                hlg_u16_bt2020_rgb(),
+                PixelDescriptor::RGB8_SRGB,
+                HdrConfig::for_source_peak(1000.)
+            )
+            .is_err()
         );
     }
 

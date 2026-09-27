@@ -2187,7 +2187,13 @@ impl<P: Pixel> PixelBuffer<P> {
         } else {
             bytemuck::cast_slice(data)
         };
-        let stride_px = self.stride / core::mem::size_of::<P>();
+        assert_eq!(
+            self.stride % core::mem::size_of::<P>(),
+            0,
+            "ImgRef requires a stride in whole pixels"
+        );
+        // imgref requires positive stride even for zero-area views.
+        let stride_px = (self.stride / core::mem::size_of::<P>()).max(1);
         imgref::Img::new_stride(pixels, self.width as usize, self.height as usize, stride_px)
     }
 
@@ -2208,7 +2214,13 @@ impl<P: Pixel> PixelBuffer<P> {
         } else {
             bytemuck::cast_slice_mut(data)
         };
-        let stride_px = self.stride / core::mem::size_of::<P>();
+        assert_eq!(
+            self.stride % core::mem::size_of::<P>(),
+            0,
+            "ImgRef requires a stride in whole pixels"
+        );
+        // imgref requires positive stride even for zero-area views.
+        let stride_px = (self.stride / core::mem::size_of::<P>()).max(1);
         imgref::Img::new_stride(pixels, self.width as usize, self.height as usize, stride_px)
     }
 }
@@ -2683,6 +2695,10 @@ impl<P> PixelBuffer<P> {
     }
 
     /// Consume the buffer and return the backing `Vec<u8>` for pool reuse.
+    #[deprecated(
+        since = "0.2.17",
+        note = "use into_parts().data for pool reuse; keep the parts to retain pixel offset, stride, descriptor and color context"
+    )]
     pub fn into_vec(self) -> Vec<u8> {
         self.data
     }
@@ -3505,7 +3521,7 @@ mod tests {
     #[test]
     fn pixel_buffer_into_vec_roundtrip() {
         let buf = PixelBuffer::new(4, 4, PixelDescriptor::RGBA8_SRGB);
-        let v = buf.into_vec();
+        let v = buf.into_parts().data;
         // Can re-wrap it
         let buf2 = PixelBuffer::from_vec(v, 4, 4, PixelDescriptor::RGBA8_SRGB).unwrap();
         assert_eq!(buf2.width(), 4);

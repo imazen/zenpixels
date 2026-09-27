@@ -38,6 +38,9 @@ pub enum ConvertError {
     },
     /// Alpha channel is not fully opaque and [`AlphaPolicy::DiscardIfOpaque`](crate::AlphaPolicy::DiscardIfOpaque) was set.
     AlphaNotOpaque,
+    /// A conditional alpha policy needs explicit `adapt::check_opaque` preflight.
+    /// After successful preflight, use `AlphaPolicy::DiscardUnchecked`.
+    AlphaCheckRequired,
     /// Depth reduction was requested but [`DepthPolicy::Forbid`](crate::DepthPolicy::Forbid) was set.
     DepthReductionForbidden,
     /// Alpha removal was requested but [`AlphaPolicy::Forbid`](crate::AlphaPolicy::Forbid) was set.
@@ -52,6 +55,9 @@ pub enum ConvertError {
     Buffer(zenpixels::BufferError),
     /// CMS transform could not be built (invalid ICC profile, unsupported color space, etc.).
     CmsError(alloc::string::String),
+    /// Original CMS build/row failure, retaining its concrete error chain.
+    /// Clones share the error; equality compares error identity.
+    CmsBackend(alloc::sync::Arc<crate::cms::CmsPluginError>),
     /// The conversion is HDR (`Pq` / `Hlg`) → SDR but no usable peak
     /// luminance was supplied. Raised both when no peak was given at all
     /// (the plain [`ConvertPlan::new`](crate::ConvertPlan::new) entry
@@ -173,6 +179,10 @@ impl fmt::Display for ConvertError {
             Self::UnsupportedTransfer { from, to } => {
                 write!(f, "unsupported transfer conversion: {from:?} → {to:?}")
             }
+            Self::AlphaCheckRequired => write!(
+                f,
+                "DiscardIfOpaque requires explicit adapt::check_opaque preflight; then use DiscardUnchecked"
+            ),
             Self::AlphaNotOpaque => write!(f, "alpha channel is not fully opaque"),
             Self::DepthReductionForbidden => write!(f, "depth reduction forbidden by policy"),
             Self::AlphaRemovalForbidden => write!(f, "alpha removal forbidden by policy"),
@@ -181,6 +191,7 @@ impl fmt::Display for ConvertError {
             }
             Self::AllocationFailed => write!(f, "buffer allocation failed"),
             Self::Buffer(e) => write!(f, "buffer construction failed: {e}"),
+            Self::CmsBackend(error) => write!(f, "CMS failure: {error}"),
             Self::CmsError(msg) => write!(f, "CMS transform failed: {msg}"),
             Self::HdrSourceRequiresPeak { from, to } => write!(
                 f,
@@ -213,8 +224,15 @@ impl From<zenpixels::BufferError> for ConvertError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for ConvertError {}
+impl core::error::Error for ConvertError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::CmsBackend(error) => Some(error.as_ref()),
+            Self::Buffer(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

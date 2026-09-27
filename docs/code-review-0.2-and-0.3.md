@@ -1,27 +1,15 @@
 # Code review: adoption, planar retirement and remaining contracts
 
-2026-09-27. **Read this instead of prose-only proposals when deciding the next
-chunk.** Adoption, planar warnings and the small fixes listed below are implemented.
-Historical before/after examples remain below; use the runnable case files for
-current behavior. The broader prepared-worker, output/CMS and validation contracts
-are still outstanding.
+2026-09-27. Historical before/after examples remain below; the executable
+`contract-cases/` now asserts corrected behavior for all 27 distinct cases
+(26 regressions plus the selected composition policy). Both default/CMS and
+minimal configurations pass. Conversion/output cases also run as normal tests.
 
-The complete current-behavior examples are checked in under `contract-cases/`.
-Run `python3 scripts/check-contract-cases.py`. Most assertions deliberately
-recognize bugs: a passing review suite is evidence of reproduction, **not a clean
-bill of health**. It is separate from ordinary CI/release correctness tests.
-Default and minimal feature configurations exercise different CMS/Clone cases.
-Both runs passed 26 assertions/tests in this audit, covering 27 distinct test cases
-(15 reproduce remaining defects; 11 verify fixes; one verifies the selected
-final-output composition policy).
-
-Implemented in the latest chunk: empty crop row reads, primary containment, CICP
-padding semantics, orientation context, known-transfer adapter conversion, strict
-in-place refusal of color retagging, scalar Adobe gamma, F16 underflow rounding,
-CMS composition refusal, swap metadata and strided ImgVec adoption. No additional
-image prepass was introduced. See the [performance review](performance-review-0.2-and-0.3.md)
-for the owner-selected cost model and [U16 review](u16-signaling-and-narrowing-review.md)
-for native-code signaling.
+Prepared/fallible rows, output/CMS fixes, alpha ordering, storage guards and
+explicit peak discovery are implemented. Read the [implemented bridge guide](implemented-bridge-contracts.md)
+for actual public names and the [status ledger](implementation-status-0.2-and-0.3.md)
+for remaining integration/release work. Historical proposed spelling below is
+not a promise of a public API.
 
 ## Implemented: adoption and small retained errors
 

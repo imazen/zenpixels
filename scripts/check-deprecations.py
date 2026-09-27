@@ -76,6 +76,11 @@ fn main() {
         False,
     ),
 }
+PROBES["into_vec"] = (
+    "fn main() { let _ = zenpixels::PixelBuffer::new(1, 1, zenpixels::PixelDescriptor::RGB8_SRGB).into_vec(); }",
+    "into_vec", False,
+)
+
 for name, expression in {
     "ComputeEnvironment": "ComputeEnvironment::new()",
     "ImageCharacteristics": "ImageCharacteristics::new(1, 1, zenpixels_convert::PixelDescriptor::RGB8_SRGB)",
@@ -130,7 +135,7 @@ zenpixels = {{ path = {json.dumps(str(ROOT / 'zenpixels'))} }}
 """)
         for name, (source, _, _) in PROBES.items():
             (project / f"src/bin/{name}.rs").write_text("#![deny(deprecated)]\n" + source)
-        env = dict(os.environ, CARGO_TARGET_DIR=str(ROOT / "target/deprecation-ui"))
+        env = dict(os.environ, CARGO_TARGET_DIR=str(Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "deprecation-ui"))
         count = 0
         for defaults in (True, False):
             for opted_in in (False, True):

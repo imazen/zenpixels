@@ -1229,45 +1229,14 @@ fn pq_u16_to_srgb_u8_correctness() {
     );
 }
 
-/// HLG U16 → sRGB U8 path produces reasonable output via the HDR-aware
-/// plan (BT.2446-A tone-map step).
+/// A peak alone cannot map scene-referred HLG to display-referred SDR.
 #[test]
 #[cfg(feature = "hdr-experimental")]
-fn hlg_u16_to_srgb_u8_correctness() {
-    use zenpixels_convert::ConvertPlan;
-    let hlg_u16 = PixelDescriptor::new(
-        ChannelType::U16,
-        ChannelLayout::Rgb,
-        None,
-        TransferFunction::Hlg,
-    );
-    let srgb_u8 = PixelDescriptor::RGB8_SRGB;
-    let plan = ConvertPlan::new_with_hdr_peak(hlg_u16, srgb_u8, 1000.0).unwrap();
-    let mut conv = RowConverter::from_plan(plan);
-
-    let width = 3u32;
-    let hlg_values: [u16; 3] = [0, 32768, 65535];
-    let mut src = vec![0u8; 3 * 3 * 2];
-    for (i, &v) in hlg_values.iter().enumerate() {
-        for ch in 0..3 {
-            let base = (i * 3 + ch) * 2;
-            src[base..base + 2].copy_from_slice(&v.to_ne_bytes());
-        }
-    }
-
-    let mut dst = vec![0u8; 3 * 3];
-    conv.convert_row(&src, &mut dst, width);
-
-    // Black stays black.
-    assert_eq!(dst[0], 0);
-    // Monotonically increasing.
-    assert!(dst[3] > dst[0]);
-    assert!(dst[6] > dst[3]);
-    // Peak HLG tone-maps near (but possibly under) SDR peak.
+fn hlg_u16_to_srgb_u8_requires_display_mapping() {
+    let hlg = PixelDescriptor::RGB16_SRGB.with_transfer(TransferFunction::Hlg);
     assert!(
-        dst[6] > 180,
-        "peak HLG should land near SDR peak, got {}",
-        dst[6]
+        zenpixels_convert::ConvertPlan::new_with_hdr_peak(hlg, PixelDescriptor::RGB8_SRGB, 1000.)
+            .is_err()
     );
 }
 

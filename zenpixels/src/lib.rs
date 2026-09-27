@@ -90,6 +90,7 @@ pub mod buffer;
 pub use orientation::Orientation;
 
 // Re-export key descriptor types at crate root for ergonomics.
+#[doc(inline)]
 pub use descriptor::{
     AlphaMode, ByteOrder, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, PixelDescriptor,
     PixelFormat, SignalRange, TransferFunction,
@@ -104,6 +105,7 @@ pub use planar::{
 };
 
 // Re-export buffer types at crate root.
+#[doc(inline)]
 pub use buffer::{
     Bgrx, BufferError, FromPartsError, InPlacePixels, Pixel, PixelBuffer, PixelBufferParts,
     PixelCow, PixelSlice, PixelSliceMut, Rgbx,
@@ -111,6 +113,7 @@ pub use buffer::{
 
 // Re-export color types at crate root.
 pub use cicp::Cicp;
+#[doc(inline)]
 pub use color::{
     ColorAuthority, ColorContext, ColorOrigin, ColorProfileSource, ColorProvenance, NamedProfile,
 };

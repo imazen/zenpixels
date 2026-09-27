@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Conversion follow-up
+
+- Correct PQ source-peak normalization, honor explicit linear luminance anchors,
+  and retain target luminance after HDR mapping. HLG display mapping refuses
+  until an OOTF is supplied; a peak alone is insufficient.
+- Retain all gamut tables across composed HDR rows after preparation; unassociate
+  premultiplied HDR samples before nonlinear mapping and reassociate afterwards.
+- Reject ambiguous current color signaling; replace stale current metadata after
+  conversion, and retain raw PQ-decoded linear units explicitly.
+- BGRA swaps stay at their U8 endpoints; Oklab remains F32 through model
+  conversion. A 7,744-case format/transfer matrix exercises accepted plans.
+- Initialize real alpha when converting padding formats; enforce alpha-loss
+  policy for RGBX/BGRX targets and reject unproven Opaque declarations.
+- Embedded ICC CICP alone no longer bypasses ICC TRCs/LUTs. Finalization emits
+  only the chosen current/output authority and tags non-sRGB fallback output.
+
 ### zenpixels — added
 
 - `PixelBuffer::into_contiguous()` packs rows in the existing allocation and
@@ -44,7 +60,35 @@
   containment relationships, not a scalar ranking (including P3 red outside
   BT.2020). Clarify the existing Adobe RGB gamma convention, 563/256.
 
+### zenpixels-convert — added
+
+- `RowConverter::{prepare, try_convert_row, try_clone, compose_preserving}`;
+  `ConvertPlan::{compose_preserving, new_preserving_samples}`; explicit
+  `adapt::check_opaque` preflight. Preparation moves scratch/LUT costs ahead of
+  execution and sets a checked row-width capacity.
+- Additive CMS `prepare` / `try_transform_row` hooks preserve existing trait
+  implementations. Prepared mutable workers own independent state. `CmsBackend`
+  errors preserve the concrete backend error chain, including without std.
+- `convert_to_sdr_measuring_peak` names the extra measurement pass; the ambiguous
+  `convert_to_sdr` spelling is deprecated. `PixelBuffer::into_vec` now warns;
+  use `into_parts().data` for pool reuse or retain the full parts for pixel handoff.
+
 ### zenpixels-convert — fixed
+
+- Correct RGBA→GrayAlpha, matte-to-gray and source-domain unassociation before
+  nonlinear transfer conversion. Preserve per-stage descriptors and PQ anchors
+  through composition; ordinary composition still removes avoidable quantization.
+- Explicit row planning rejects `DiscardIfOpaque` until the caller performs
+  `adapt::check_opaque` and selects `DiscardUnchecked`. Existing whole-image
+  explicit adaptation retains its opacity preflight. Floating opacity rejects
+  NaN/infinity and out-of-range values.
+- Reject missing layout/Oklab matrix routes and unsupported MoxCms cross-depth/F16
+  pairs before execution. HDR→encoded-SDR requires peak policy regardless of features.
+- Finalization converts SameAsOrigin correctly, includes alpha/range in identity,
+  forwards actual ICC profiles, and propagates backend row errors. No_std cloning
+  refuses uncloneable state instead of dropping its transform.
+- Fuse explicit U16 opacity/chroma/replication analysis in a single traversal.
+  The full-range narrowing kernel remains unchanged pending platform measurements.
 
 - Reject narrow-range channel-type changes (including U8↔U16) with
   `ConvertError::NoPath` instead of using incorrect full-range scaling.

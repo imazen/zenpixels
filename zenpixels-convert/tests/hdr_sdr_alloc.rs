@@ -78,7 +78,7 @@ fn reference_convert_to_sdr(src: &PixelBuffer, target: PixelDescriptor) -> Pixel
     let linear = src.convert_to(lin_desc).expect("materialized linear copy");
     let cll = ContentLightLevel::measure_max(
         linear.as_slice(),
-        DiffuseWhite::BT2408,
+        DiffuseWhite::new(10_000.0),
         LightLevelMethod::MaxRgb,
     )
     .expect("linear f32 measurable");
@@ -93,7 +93,9 @@ fn convert_to_sdr_matches_materialized_measure_then_convert() {
     let target = PixelDescriptor::RGBA8_SRGB;
 
     let expected = reference_convert_to_sdr(&src, target);
-    let actual = src.convert_to_sdr(target).expect("convert_to_sdr");
+    let actual = src
+        .convert_to_sdr_measuring_peak(target)
+        .expect("convert_to_sdr");
 
     assert_eq!(actual.descriptor(), expected.descriptor());
     assert_eq!(
@@ -112,11 +114,14 @@ fn convert_to_sdr_does_not_materialize_a_full_f32_intermediate() {
 
     // Warm any lazily-initialised globals (LUTs, dispatch caches) outside
     // the measured region so they cannot be mistaken for the intermediate.
-    let _ = src.convert_to_sdr(target).expect("warm-up");
+    let _ = src.convert_to_sdr_measuring_peak(target).expect("warm-up");
 
     let mut result = None;
     let info = allocation_counter::measure(|| {
-        result = Some(src.convert_to_sdr(target).expect("convert_to_sdr"));
+        result = Some(
+            src.convert_to_sdr_measuring_peak(target)
+                .expect("convert_to_sdr"),
+        );
     });
     drop(result);
 
@@ -135,10 +140,12 @@ fn convert_to_sdr_does_not_materialize_a_full_f32_intermediate() {
         f32_intermediate_bytes,
         out_bytes
     );
-    // `result` is still alive here, so exactly the output buffer's bytes
-    // remain allocated — anything more is a leaked intermediate.
-    assert_eq!(
-        info.bytes_current, out_bytes as i64,
-        "bytes still live after convert_to_sdr must be exactly the output buffer"
+    // The output now also retains its target luminance anchor in ColorContext.
+    // Allow fixed-size metadata, never another image/row allocation.
+    assert!(info.bytes_current >= out_bytes as i64);
+    assert!(
+        info.bytes_current <= out_bytes as i64 + 128,
+        "only output pixels and fixed-size color context should remain: {}",
+        info.bytes_current
     );
 }

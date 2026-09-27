@@ -762,17 +762,17 @@ pub fn adapt_for_encode_explicit_cow<'a>(
     let target = best_match(descriptor, supported, ConvertIntent::Fastest)
         .ok_or_else(|| whereat::at!(ConvertError::EmptyFormatList))?;
 
-    // Validate policies before doing work.
-    let plan = ConvertPlan::new_explicit(descriptor, target, options).at()?;
-
-    // Runtime opacity check for DiscardIfOpaque.
-    let drops_alpha = descriptor.alpha().is_some() && target.alpha().is_none();
+    // This whole-image adapter explicitly preflights conditional alpha before
+    // allocation or output writes. Row planners themselves never hide this scan.
+    let mut checked_options = *options;
+    let drops_alpha = descriptor.has_alpha() && !target.has_alpha();
     if drops_alpha && options.alpha_policy == AlphaPolicy::DiscardIfOpaque {
-        let src_bpp = descriptor.bytes_per_pixel();
-        if !is_fully_opaque(data, width, rows, stride, src_bpp, &descriptor) {
-            return Err(whereat::at!(ConvertError::AlphaNotOpaque));
-        }
+        let view = PixelSlice::new(data, width, rows, stride, descriptor)
+            .map_err_at(ConvertError::from)?;
+        check_opaque(view)?;
+        checked_options.alpha_policy = AlphaPolicy::DiscardUnchecked;
     }
+    let plan = ConvertPlan::new_explicit(descriptor, target, &checked_options).at()?;
 
     let mut converter = RowConverter::from_plan(plan);
     let src_bpp = descriptor.bytes_per_pixel();
@@ -789,52 +789,35 @@ pub fn adapt_for_encode_explicit_cow<'a>(
     Ok(PixelCow::Owned(output))
 }
 
-/// Check if all alpha values in a strided buffer are fully opaque.
-fn is_fully_opaque(
-    data: &[u8],
-    width: u32,
-    rows: u32,
-    stride: usize,
-    bpp: usize,
-    desc: &PixelDescriptor,
-) -> bool {
-    if desc.alpha().is_none() {
-        return true;
+/// Explicit opacity preflight: scans visible alpha samples, stopping at the
+/// first non-opaque pixel. Padding is ignored. No allocation or mutation.
+///
+/// Use this before planning with `AlphaPolicy::DiscardUnchecked` when the
+/// destination must remain unchanged on opacity failure. Floating alpha must
+/// equal 1.0 exactly; NaN, infinity and values above 1 are not opaque.
+pub fn check_opaque(pixels: PixelSlice<'_>) -> Result<(), At<ConvertError>> {
+    let desc = pixels.descriptor();
+    if !desc.has_alpha() {
+        return Ok(());
     }
     let cs = desc.channel_type().byte_size();
-    let alpha_offset = (desc.layout().channels() - 1) * cs;
-    for y in 0..rows {
-        let row_start = y as usize * stride;
-        for x in 0..width as usize {
-            let off = row_start + x * bpp + alpha_offset;
-            match desc.channel_type() {
-                crate::ChannelType::U8 => {
-                    if data[off] != 255 {
-                        return false;
-                    }
-                }
-                crate::ChannelType::U16 => {
-                    let v = u16::from_ne_bytes([data[off], data[off + 1]]);
-                    if v != 65535 {
-                        return false;
-                    }
-                }
-                crate::ChannelType::F32 => {
-                    let v = f32::from_ne_bytes([
-                        data[off],
-                        data[off + 1],
-                        data[off + 2],
-                        data[off + 3],
-                    ]);
-                    if v < 1.0 {
-                        return false;
-                    }
-                }
-                _ => return false,
+    let bpp = desc.bytes_per_pixel();
+    for y in 0..pixels.rows() {
+        for pixel in pixels.row(y).chunks_exact(bpp) {
+            let alpha = &pixel[bpp - cs..];
+            let opaque = match desc.channel_type() {
+                crate::ChannelType::U8 => alpha[0] == 255,
+                crate::ChannelType::U16 => u16::from_ne_bytes(alpha.try_into().unwrap()) == 65535,
+                crate::ChannelType::F16 => u16::from_ne_bytes(alpha.try_into().unwrap()) == 0x3c00,
+                crate::ChannelType::F32 => f32::from_ne_bytes(alpha.try_into().unwrap()) == 1.0,
+                _ => false,
+            };
+            if !opaque {
+                return Err(whereat::at!(ConvertError::AlphaNotOpaque));
             }
         }
     }
-    true
+    Ok(())
 }
 
 #[cfg(test)]

@@ -2,20 +2,15 @@
 
 Pixel format types and transfer-function-aware conversion for Rust image codecs.
 
-> **Contract review (2026-09-27):** This README is annotated for the proposed
-> 0.2 bridge → 0.3.1 migration. See the [section-by-section review](docs/readme-contract-review.md)
-> for current inaccuracies, old/new examples and the resulting contracts if the
-> full proposal is adopted. Implemented so far: the [three initial deprecations](docs/release-0.2.16-accidental-api-review.md),
-> estimation opt-in, validation in `DiffuseWhite::new`, and
-> `PixelBuffer::{into_contiguous, into_parts, try_from_parts}` and planar-module
-> deprecation. The [performance review](docs/performance-review-0.2-and-0.3.md)
-> records the selected cost model and small contract fixes; the
-> [U16 review](docs/u16-signaling-and-narrowing-review.md) covers sample encoding
-> and narrowing candidates. The [U16 matrix](docs/u16-contract-matrix.md) covers
-> packing, rounding and range. The [implementation ledger](docs/implementation-status-0.2-and-0.3.md)
-> lists completed work and remaining defects; the release implementation is incomplete.
+> **Unreleased bridge work (2026-09-27):** checked storage/ownership,
+> prepared and fallible conversion, alpha/output fixes, explicit preserved-stage
+> composition and fused U16 analysis are implemented. See the
+> [migration examples](docs/implemented-bridge-contracts.md) and
+> [status ledger](docs/implementation-status-0.2-and-0.3.md) for exact scope and
+> release gates. The install versions below remain the published versions.
 
-A JPEG decoder gives you `RGB8` in sRGB. An AVIF decoder gives you `RGBA16` in BT.2020 PQ. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
+
+A JPEG decoder might produce `RGB8` in sRGB; an AVIF decoder might produce full-range `RGBA16` in BT.2020 PQ. Other profiles and native 10/12-bit video codes need their actual signaling. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
 
 zenpixels makes pixel format descriptions first-class types that travel with the data. The conversion crate handles transfer functions, gamut matrices, depth scaling, and alpha compositing so codecs don't have to.
 
@@ -112,13 +107,13 @@ assert_eq!(buf.stride(), 64 * 4);              // bytes, not pixels — see belo
 
 `from_vec` returns [`BufferError::InsufficientData`] (wrapped as
 `At<BufferError>`) if the `Vec` is shorter than `aligned_stride(width) * height`
-plus the leading bytes skipped for channel alignment. It does **not** accept an
+plus any leading bytes skipped for channel alignment. For an exact decoder offset or strided owned storage, use `try_from_parts`; it preserves ownership on failure. It does **not** accept an
 explicit stride: rows are assumed tightly packed at
 `width * bytes_per_pixel`. For padded/strided bytes you don't own — a decoder's
 scratch row buffer, a crop of a parent image, a GPU-readback strip — borrow a
 view with an explicit stride instead (next section).
 
-> **Stride is always measured in BYTES**, never pixels or elements
+> **Erased byte-view stride is measured in BYTES**. Typed constructors and imgref adapters use pixels
 > (`stride()` returns `usize`; `aligned_stride(width) = width * bytes_per_pixel`).
 > So for 64-pixel-wide RGBA8 the tight stride is `64 * 4 = 256`, and for
 > 16-bit RGB it is `64 * 6 = 384`. Passing a pixel count where a byte stride is

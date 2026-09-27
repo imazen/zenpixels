@@ -1,6 +1,6 @@
 # Implementation status: 0.2 bridge and 0.3.1
 
-2026-09-27, source audited at `b644ac6`, with the narrow-depth refusal and storage acceptance updates. **No, the complete requested
+2026-09-27, updated after merging PR #75 and implementing the correctness/preparation batch. **No, the complete requested
 implementation is not finished.** Review documents and chosen policies are not
 implemented APIs. Nothing here declares the bridge or 0.3.1 ready to release.
 
@@ -17,7 +17,7 @@ marks existing behavior, proposed operations and known incorrect routes.
 | Accidental 0.2.16 API exposure | `requires_cms` warning; explicit `Adapted::as_pixel_slice` warning; estimation opt-in/warnings | External consumer warning checks; no blanket conversion API removal |
 | Anchor validation | `DiffuseWhite::new` rejects invalid values and remains const | Validity tests; HDR planning still needs work |
 | Ownership | `into_parts`, `try_from_parts`, `take_parts`, `without_buffer`, `into_contiguous` | Allocation/offset/stride/context tests; typed U8 export reuse implemented for compatible allocator layouts |
-| Legacy planar retirement, first step | Whole module and re-export warnings | Warning probes; module removal and zenfilters migration not done |
+| Legacy planar retirement, first step | Whole module and re-export warnings | Warning probes; zenfilters migrated on its companion branch; module removal remains for 0.3 |
 | Final-row extent | Owned views/transforms accept minimal visible final row | Adoption regression; broader zero-area/arithmetic audit not complete |
 | Small metadata/storage fixes (`7088a8b`) | Empty crop row read; primary containment; CICP padding; orientation context; four RGB/BGR swap helpers; ImgVec stride/storage | Core/convert contract regressions; not every metadata-mutating helper audited/fixed |
 | Small conversion fixes (`7088a8b`) | Both known-transfer adapter guards; strict in-place semantic-retag refusal; scalar Adobe gamma; F16 subnormal rounding | Default/minimal tests; no extra full-image analysis pass |
@@ -30,23 +30,23 @@ marks existing behavior, proposed operations and known incorrect routes.
 |---|---|---|
 | Storage and typed layout | Partial | Reinterpretation alignment/type guards and descriptor validation implemented; zero-area row/subview and checked constructor arithmetic hardened. Continue auditing imgref and unusual custom Pixel paths. |
 | Remaining allocation reuse | Done | Padded U8 typed exports compact in place and reuse compatible allocation layouts; legacy owned-cow adapters move their allocation. Higher alignment or nonintegral typed capacity requires a copy. |
-| Current-color authority | Pending | Resolve descriptor/ICC/CICP/unknown assumptions once; named-PQ/HLG CICP agreement fixed; remove ambiguous fallback only after a working migration |
-| RGBA→GrayAlpha and matte-to-gray | Pending | Correct luma and alpha/compositing order or reject unsupported route during planning |
-| Premultiplied nonlinear transfer | Pending | Unassociate/transform/reassociate correctly, preferably fused |
-| Content-dependent alpha checks | Pending | Owner chose explicit preflight or opt-in fused checks; enforce that contract rather than silently accepting unchecked RowConverter work |
-| Unsupported routes | Pending | Reject unsupported gamut/layout and CMS depth pairs during planning instead of panicking during execution |
-| Output semantics | Pending | Correct SameAsOrigin conversion; identity includes alpha/range; actual ICC profiles reach CMS; output metadata describes resulting pixels |
-| Complete composition | Partial | Default quantization optimization retained; external CMS erasure refused. Per-stage descriptor/anchor semantics and explicit preserved-stage plan option remain unimplemented. Separate row conversions currently preserve a stage |
-| Prepared execution | Pending | Explicit scratch/LUT/backend setup; width capacity/extent checks; fallible execution; no allocation growth during execution within capacity |
-| CMS ownership and errors | Pending | Fallible backend row interface; independently prepared workers; stop no_std cloning from losing transforms; avoid std mutex serialization in independent workers |
-| Exact preservation / HDR | Partial | Anchor validation done. Exactness proof/refusal, explicit peak measurement, unsupported mapping refusal, luminance conventions and output policy remain |
+| Current-color authority | Implemented for buffer/output boundaries | Reject contradictory current CICP/descriptor and dual-field context; forward actual ICC, replace stale signaling after color conversion. zencodec ambiguity fallback migrated. No new public resolved type. Embedded ICC CICP alone no longer proves matrix/TRC substitution; output emits only the selected authority. |
+| RGBA→GrayAlpha and matte-to-gray | Done | Dedicated alpha-preserving luma; explicit matte before gray conversion; regressions in CI. |
+| Premultiplied nonlinear transfer | Done for ordinary conversion | Source-domain unassociation and destination-domain reassociation. HDR tone mapping also unassociates in the source domain. Additional kernel fusion remains optional. |
+| Content-dependent alpha checks | Done via preflight | Padding becomes opaque alpha through explicit insertion; false Opaque claims refuse. `check_opaque` is explicit; row planners refuse unchecked conditional policy. No implicit extra pass was added. Opt-in fused checking remains optional. |
+| Unsupported routes | Done for reviewed cases | Missing layouts/Oklab matrices/MoxCms depths fail during setup. A 7,744-case format/transfer matrix verifies accepted plans prepare and execute; BGRA/Oklab depth ordering repaired. |
+| Output semantics | Done for current finalizer | SameAsOrigin converts; identity includes alpha/range; actual ICC reaches CMS; failures do not return EncodeReady. Output-plan ownership wrappers remain separate integration work. |
+| Complete composition | Done for built-in plans | Stage descriptors/anchors retained; `compose_preserving` explicitly retains quantization. External CMS composition still refuses and requires separate execution. |
+| Prepared execution | Implemented | `prepare` / `try_convert_row`, capacity/extent/alignment guards, selected LUT setup; zero-allocation tests. Composed HDR tables are all cached and covered by the zero-allocation gate. |
+| CMS ownership and errors | Done | Additive fallible/preparation hooks; independent prepared workers; original error chains; fallible cloning refusal for unique stateful workers. |
+| Exact preservation / HDR | Implemented for reviewed routes | Metadata-only exactness proof/refusal; explicit peak measurement; PQ source-peak normalization; linear anchor scaling and target anchor; HLG mapping refuses without OOTF. |
 | Conversion ownership modes | Partial | Parts/compaction implemented; broader borrowed/consuming/caller-output identity and failure-ownership contracts not completed |
-| Streaming companion work | Pending | In zencodec, propagate pull-encoder source errors; in zenpipe, fix CallbackSource EOF/row scratch behavior. Optional core resident iterator remains deferred until useful to a caller |
+| Streaming companion work | Done locally | Fallible zencodec pull methods and zenpipe callback fixes committed and tested. No universal core provider added. |
 | Native sample signaling / video | Pending | Checked vocabulary, adapter prototype and tests; U16 range-correct conversions or refusal; alpha/component roles; borrowed AOM/SVT integration; explicit RGB path for metrics |
-| U16 performance | Candidate only | Production selection after adequate x86/ARM measurements; fuse requested U16 analysis; explicit transfer-LUT preparation; evaluate direct 10/12-bit kernels |
+| U16 performance | Partial | Fused U16 analysis and explicit LUT preparation implemented. Production narrowing candidate still awaits cross-platform selection; direct native-code kernels remain separate work. |
 | docs.rs / examples | Partial | Reviews and annotations done; final canonical API navigation, executed galleries, accurate generated crate READMEs and complete cost docs remain |
 | Compile-time/performance acceptance | Pending | Controlled cold/incremental builds, prepared-path allocations, workers and platform checks; benchmark candidate is not full acceptance |
-| Dependent migrations | Audit only | Migrate actual callers, including zenfilters PlaneMask/public boundaries; remove suppressed deprecations; same-source tests against both release candidates |
+| Dependent migrations | Partial | zenfilters mask/public boundaries and zencodec current-color fallback migrated. Complete ecosystem migration and paired release-candidate builds remain. |
 | 0.3.1 / releases | Pending | Complete bridge first; removal branch, feature gates, retained feature spellings, dependency pairing, semver/package/MSRV checks and publishing |
 
 The owner already authorized implementation of wanted items. These remaining
@@ -54,40 +54,50 @@ tasks do not need another blanket approval. Concrete API spelling still needs
 to be justified by actual callers; numerical and cost policies already selected
 should not be reopened as permission questions.
 
-## Eleven remaining reproduced defects
+## Reproduced defects closed
 
-The standalone [contract-case runner](../scripts/check-contract-cases.py) runs
-26 tests under each of default/CMS and minimal configurations: 27 distinct cases
-overall. Fifteen verify fixes, one verifies the selected composition policy, and
-**eleven still deliberately reproduce incorrect behavior**. Passing that runner
-does not establish release correctness.
+All 27 distinct contract cases now assert the intended behavior: 26 regressions
+and the selected quantization-optimization policy. The runner passes in default/CMS
+and minimal configurations. Conversion and output cases are also normal integration
+tests; storage has its own acceptance-boundary regressions.
 
-| Case file | Remaining incorrect behavior |
-|---|---|
-| [conversion](contract-cases/conversion.rs) | RGBA→GrayAlpha is accepted as identity |
-| conversion | RowConverter does not enforce DiscardIfOpaque |
-| conversion | Composite-to-gray ignores the background |
-| conversion | Premultiplied transfer conversion uses the wrong domain |
-| conversion | Unsupported Adobe/Oklab route panics during execution |
-| conversion (CMS feature) | MoxCms cross-depth route panics after successful construction |
-| [output/CMS](contract-cases/output_cms.rs) | SameAsOrigin can mistag current pixels |
-| output/CMS | Output identity relabels premultiplied alpha as straight |
-| output/CMS | Output ignores requested signal range |
-| output/CMS | CMS does not receive the actual ICC profiles |
-| output/CMS (minimal features) | Clone discards the external transform |
+Implemented in this follow-up:
 
-This is a known-case inventory, not a claim that only eleven defects exist.
-For example, correct narrow-range cross-depth kernels and composition anchor
-handling are outstanding beyond this set. The new range guards reject narrow
-endpoint depth changes before conversion/CMS setup and prevent replicated-byte depth compaction of narrow U16. Correct narrow
-scaling kernels and broader same-depth color semantics remain outstanding. Keep
-adding behavior regressions as work lands.
+- RGBA→GrayAlpha retains alpha; matte-to-gray includes the background.
+- Premultiplied nonlinear transfer unassociates before conversion and reassociates
+  after it. Intermediate descriptors retain primaries/range.
+- Unsupported layouts, Oklab primaries and MoxCms sample-depth pairs refuse during setup.
+- `DiscardIfOpaque` requires explicit `adapt::check_opaque` preflight for row planning.
+  The whole-image explicit adapter retains its documented preflight.
+- `SameAsOrigin` converts current pixels back to the origin profile; identity includes
+  alpha/range; actual ICC bytes reach the CMS. Unsupported range changes refuse.
+- `compose_preserving` retains intentional intermediate quantization; both composition
+  paths retain stage descriptors/anchors. Ordinary composition still optimizes output.
+- `RowConverter::prepare` initializes scratch/LUT/backend work and sets width capacity;
+  `try_convert_row` checks extents/alignment and propagates original backend errors.
+  Prepared stateful workers own their backend without a mutex. `try_clone` refuses
+  uncloneable state; legacy `Clone` never silently drops a no_std transform.
+- `ConvertPlan::new_preserving_samples` accepts proven representation changes and
+  refuses unproven loss without scanning. HDR→encoded-SDR requires peak policy with
+  or without experimental kernels. `convert_to_sdr_measuring_peak` makes the prepass
+  explicit; the old ambiguous method is deprecated.
+- U16 load-bearing analysis fuses opacity/chroma/replication checks in one traversal.
+  Explicit preparation warms the selected U16 transfer table before execution.
+
+Prepared execution tests count **zero allocations** over repeated within-capacity
+rows. A backend-error regression checks the original concrete error remains in
+`Error::source` and finalization never returns `EncodeReady` after a row failure.
+This closes the reproduced cases; it is not a claim that every broader release
+contract or codec adapter is complete.
+
+Companion commits (local branches, not published): zencodec `ab12c4c` / `3ab2afb` fix current-color fallback and add fallible
+pull entry points preserving source errors; zenpipe `a978c10` / `f774d01` fix callback
+EOF/scratch reuse and migrate zenfilters to its own `PlaneMask`. Existing unrelated
+changes in those checkouts were preserved.
 
 ## Cleanup disposition is not a list of completed deprecations
 
-`into_vec`, typed-preserving reinterpretation, conversion/CMS/finalization
-interfaces and ambiguous color construction still need their final replacements
-and migrations. Transfer-blind ICC helpers and legacy HDR measurement/tonemapping
+`into_vec` now warns with `into_parts` migration; typed reinterpretation rejects contradictory layouts. Broader conversion ownership and ambiguous color construction still need final migrations. Transfer-blind ICC helpers and legacy HDR measurement/tonemapping
 callers still need the individual audits in the consolidated review. Do not
 remove them merely because a historical removal queue mentions them.
 
@@ -97,13 +107,23 @@ helpers and orientation-method renames are not missing required implementations;
 they were deferred or declined. A new video carrier is not built by extending
 the now-deprecated planar module.
 
-## Next implementation chunks
+## Remaining integration and release work
 
-1. Finish metadata/layout guards and planning-time unsupported-route refusal.
-2. Correct alpha/transfer/output/CMS behavior with explicit check costs.
-3. Complete prepared execution, backend ownership and streaming contracts.
-4. Prove the sample vocabulary in real codec adapters and select measured kernels.
-5. Finish consumer migrations, docs.rs and both release-candidate checks.
+The reviewed storage, conversion, alpha, output, prepared-worker and streaming
+fixes are implemented. The [bridge guide](implemented-bridge-contracts.md) shows
+actual API spellings and costs. Continue with:
+
+1. Prototype native video/sample adapters with real codec/metric owners; the
+   existing review explicitly deferred a universal public carrier.
+2. Integrate an ownership-aware output plan with zencodec's existing color-emission
+   authority before publishing additional output wrappers.
+3. Complete ecosystem migrations, cold/incremental build comparisons and paired
+   0.2/0.3 release-candidate checks; then remove only fully migrated legacy APIs.
+
+Verification now includes workspace/all-feature tests, 128 external warning probes,
+MSRV core 1.85 / converter 1.89, minimal WASM and pure-Rust ARM cross-compilation,
+and strict all-feature Clippy. The benchmark-only LCMS feature's ARM cross-build
+requires a C cross compiler; no ARM runtime throughput result is claimed.
 
 U16 arithmetic/adapter work can proceed independently where it does not change
 the established normalized U16 image contract. Commit each completed chunk.

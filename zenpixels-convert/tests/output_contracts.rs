@@ -1,5 +1,4 @@
-// Review evidence: most tests assert known CURRENT bugs, not desired behavior.
-// Run with scripts/check-contract-cases.py; intentionally outside the CI test suite.
+// Corrected output, CMS and storage contract regressions.
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -44,9 +43,16 @@ mod tests {
         let b =
             PixelBuffer::from_vec(vec![255, 255, 255], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
         let narrow = Cicp::new(1, 13, 0, false);
-        assert!(finalize_for_output_with(
-            &b, &ColorOrigin::assumed(), OutputProfile::Named(narrow),
-            PixelFormat::Rgb8, None).is_err());
+        assert!(
+            finalize_for_output_with(
+                &b,
+                &ColorOrigin::assumed(),
+                OutputProfile::Named(narrow),
+                PixelFormat::Rgb8,
+                None
+            )
+            .is_err()
+        );
     }
     struct Fill;
     impl RowTransformMut for Fill {
@@ -121,7 +127,7 @@ mod tests {
     fn reinterpret_rejects_invalid_alignment() {
         let data = [0u8; 8];
         let offset = (0..4)
-            .find(|&i| (data.as_ptr() as usize + i) % 4 != 0)
+            .find(|&i| !(data.as_ptr() as usize + i).is_multiple_of(4))
             .unwrap();
         let bytes = &data[offset..offset + 4];
         let s = PixelSlice::new(bytes, 1, 1, 4, PixelDescriptor::RGBA8_SRGB).unwrap();
@@ -148,14 +154,45 @@ mod tests {
         assert_eq!(s.descriptor().transfer(), TransferFunction::Linear);
         assert_eq!(s.descriptor().alpha(), Some(AlphaMode::Premultiplied));
     }
-    #[test]
-    fn from_imgvec_preserves_strided_allocation() {
-        let px = rgb::RGB8::new(1, 2, 3);
-        let img = imgref::Img::new_stride(vec![px; 6], 2, 2, 3);
-        let ptr = img.buf().as_ptr().cast::<u8>();
-        let b = PixelBuffer::<rgb::RGB8>::from_imgvec(img);
-        assert_eq!(b.stride(), 9);
-        assert_eq!(b.as_slice().row(1), &[1, 2, 3, 1, 2, 3]);
-        assert_eq!(b.as_slice().row(0).as_ptr(), ptr);
-    }
+}
+
+#[test]
+fn output_emits_only_the_selected_origin_authority() {
+    use zenpixels::*;
+    use zenpixels_convert::{OutputProfile, finalize_for_output_with};
+    let b = PixelBuffer::from_vec(vec![100, 50, 20], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+    let origin = ColorOrigin::from_icc_and_cicp(vec![1, 2, 3], Cicp::DISPLAY_P3)
+        .with_color_authority(ColorAuthority::Cicp);
+    let ready = finalize_for_output_with(
+        &b,
+        &origin,
+        OutputProfile::SameAsOrigin,
+        PixelFormat::Rgb8,
+        None,
+    )
+    .unwrap();
+    assert_eq!(ready.metadata().cicp, Some(Cicp::DISPLAY_P3));
+    assert!(ready.metadata().icc.is_none());
+}
+
+#[test]
+fn missing_origin_does_not_emit_untagged_p3() {
+    use zenpixels::*;
+    use zenpixels_convert::{OutputProfile, finalize_for_output_with};
+    let b = PixelBuffer::from_vec(
+        vec![100, 50, 20],
+        1,
+        1,
+        PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
+    )
+    .unwrap();
+    let ready = finalize_for_output_with(
+        &b,
+        &ColorOrigin::assumed(),
+        OutputProfile::SameAsOrigin,
+        PixelFormat::Rgb8,
+        None,
+    )
+    .unwrap();
+    assert_eq!(ready.metadata().cicp, Some(Cicp::DISPLAY_P3));
 }

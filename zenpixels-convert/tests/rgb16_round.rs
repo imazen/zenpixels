@@ -35,7 +35,7 @@ fn check(layout: ChannelLayout, alpha: Option<AlphaMode>, tf: TransferFunction) 
     );
 
     // Two rows with padding on both sides exercise the public stride path.
-    let src_stride = input.len() + 7;
+    let src_stride = input.len() + 8;
     let dst_stride = output.len() + 5;
     let mut strided_src = vec![0x91; src_stride * 2];
     strided_src[..input.len()].copy_from_slice(&input);
@@ -286,7 +286,12 @@ fn real_transfer_rgba_keeps_alpha_linear() {
                     .convert_row(&input, &mut output, width as u32);
                 for v in 0..=u16::MAX {
                     let encoded = encode_f64(to_tf, decode_f64(from_tf, f64::from(v) / 65535.0));
-                    let want_color = (encoded.clamp(0.0, 1.0) * 255.0 + 0.5).floor() as u8;
+                    let want_color = if alpha == AlphaMode::Premultiplied {
+                        // RGB == alpha: unassociated RGB is white, in every TF.
+                        oracle(v)
+                    } else {
+                        (encoded.clamp(0.0, 1.0) * 255.0 + 0.5).floor() as u8
+                    };
                     let px = &output[v as usize * 4..v as usize * 4 + 4];
                     assert_eq!(
                         &px[..3],

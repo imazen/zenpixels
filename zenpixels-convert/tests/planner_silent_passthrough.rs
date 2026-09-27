@@ -239,9 +239,7 @@ fn u8_same_depth_pq_to_srgb_diverges_wildly() {
     // `hdr-experimental` the plain plan REFUSES this combination
     // (HDR→SDR-encoded requires a peak); the HDR-aware constructor
     // accepts it and produces a tone-mapped result that's not identity.
-    // Without `hdr-experimental` the historic linear-intermediate
-    // (no-tone-map) chain still runs; assert it re-encodes (not
-    // pass-through), matching the original test intent.
+    // Without the feature, HDR→SDR still refuses; it cannot silently skip mapping.
     let src_d = rgb(ChannelType::U8, TransferFunction::Pq);
     let dst_d = rgb(ChannelType::U8, TransferFunction::Srgb);
     #[cfg(feature = "hdr-experimental")]
@@ -254,19 +252,31 @@ fn u8_same_depth_pq_to_srgb_diverges_wildly() {
         ));
         let plan = ConvertPlan::new_with_hdr_peak(src_d, dst_d, 1000.0).unwrap();
         let mut c = RowConverter::from_plan(plan);
-        let src = [128u8, 128, 128];
-        let mut dst = [0u8; 3];
-        c.convert_row(&src, &mut dst, 1);
-        assert_ne!(dst[0], 128, "PQ→sRGB at U8 128 must re-encode");
+        let src: Vec<u8> = (0..=255u8).flat_map(|value| [value; 3]).collect();
+        let mut dst = vec![0u8; src.len()];
+        c.convert_row(&src, &mut dst, 256);
+        // An individual code can coincide after rounding (128 does). The
+        // whole transfer curve must change, with monotone neutral output.
+        assert_ne!(dst, src);
+        assert_eq!(dst[0], 0);
+        assert!(
+            dst.as_chunks::<3>()
+                .0
+                .iter()
+                .map(|p| p[0])
+                .collect::<Vec<_>>()
+                .windows(2)
+                .all(|p| p[0] <= p[1])
+        );
     }
     #[cfg(not(feature = "hdr-experimental"))]
-    {
-        let mut c = RowConverter::new(src_d, dst_d).unwrap();
-        let src = [128u8, 128, 128];
-        let mut dst = [0u8; 3];
-        c.convert_row(&src, &mut dst, 1);
-        assert_ne!(dst[0], 128, "PQ→sRGB at U8 128 must re-encode");
-    }
+    assert!(matches!(
+        *RowConverter::new(src_d, dst_d)
+            .err()
+            .expect("HDR mapping requires a supplied peak even without the feature")
+            .error(),
+        zenpixels_convert::ConvertError::HdrSourceRequiresPeak { .. }
+    ));
 }
 
 #[test]
@@ -552,20 +562,13 @@ fn u16_pq_to_u8_srgb_fused_path() {
         );
     }
     #[cfg(not(feature = "hdr-experimental"))]
-    {
-        let mut c = RowConverter::new(src_d, dst_d).unwrap();
-        let src = [32768u16; 3];
-        let mut dst = [0u8; 3];
-        c.convert_row(bytemuck::cast_slice(&src), &mut dst, 1);
-        let expected = u8_of(srgb_oetf(pq_eotf(u16_to_f32(32768))));
-        for ch in dst {
-            let diff = (ch as i32 - expected as i32).abs();
-            assert!(
-                diff <= HDR_U8_TOL,
-                "U16 PQ → U8 Srgb (fused): got {ch}, expected {expected}"
-            );
-        }
-    }
+    assert!(matches!(
+        *RowConverter::new(src_d, dst_d)
+            .err()
+            .expect("HDR mapping requires a supplied peak even without the feature")
+            .error(),
+        zenpixels_convert::ConvertError::HdrSourceRequiresPeak { .. }
+    ));
 }
 
 // =========================================================================

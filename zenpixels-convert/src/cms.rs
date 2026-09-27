@@ -261,6 +261,26 @@ pub trait RowTransform: Send + Sync {
     /// the pixel format (e.g., CMYK to RGB). `width` is the number of
     /// pixels, not bytes.
     fn transform_row(&self, src: &[u8], dst: &mut [u8], width: u32);
+
+    /// Fallible execution hook. Legacy implementations retain their existing
+    /// behavior; backends with row errors should override this method.
+    fn try_transform_row(
+        &self,
+        src: &[u8],
+        dst: &mut [u8],
+        width: u32,
+    ) -> Result<(), whereat::At<CmsPluginError>> {
+        self.transform_row(src, dst, width);
+        Ok(())
+    }
+
+    /// Perform backend setup for bounded-width execution. The default refuses:
+    /// a legacy backend has not promised allocation-free execution.
+    fn prepare(&self, _max_width: u32) -> Result<(), whereat::At<CmsPluginError>> {
+        Err(whereat::at!(CmsPluginError::msg(
+            "backend does not support explicit preparation"
+        )))
+    }
 }
 
 /// Owned, stateful row-level color transform.
@@ -281,6 +301,24 @@ pub trait RowTransformMut: Send {
     /// the pixel format (e.g., CMYK to RGB). `width` is the number of
     /// pixels, not bytes.
     fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32);
+
+    /// Fallible execution hook, preserving source compatibility for old backends.
+    fn try_transform_row(
+        &mut self,
+        src: &[u8],
+        dst: &mut [u8],
+        width: u32,
+    ) -> Result<(), whereat::At<CmsPluginError>> {
+        self.transform_row(src, dst, width);
+        Ok(())
+    }
+
+    /// Allocate backend scratch for bounded-width execution before reading pixels.
+    fn prepare(&mut self, _max_width: u32) -> Result<(), whereat::At<CmsPluginError>> {
+        Err(whereat::at!(CmsPluginError::msg(
+            "backend does not support explicit preparation"
+        )))
+    }
 }
 
 /// Color management system interface.
@@ -455,6 +493,14 @@ pub trait PluggableCms: Send + Sync {
 /// Type-erased wrapper over any `core::error::Error + Send + Sync`. Use
 /// [`CmsPluginError::new`] or [`From`] to construct.
 pub struct CmsPluginError(Box<dyn core::error::Error + Send + Sync + 'static>);
+
+// Opaque backend errors have no value-equality contract. Shared errors retain
+// identity through ConvertError clones without imposing Eq on plugin errors.
+impl PartialEq for CmsPluginError {
+    fn eq(&self, other: &Self) -> bool {
+        core::ptr::eq(self, other)
+    }
+}
 
 impl CmsPluginError {
     /// Construct from any error that implements `core::error::Error`.

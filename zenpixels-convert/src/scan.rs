@@ -2119,3 +2119,172 @@ mod tests {
         }
     }
 }
+
+/// One traversal for U16 opacity, chroma and replicated-byte precision.
+/// Return load-bearing flags, with already-known flags allowing early exit.
+pub(crate) fn fused_u16(
+    samples: &[u16],
+    channels: usize,
+    scan_alpha: bool,
+    scan_chroma: bool,
+    known: [bool; 3],
+) -> [bool; 3] {
+    incant!(
+        fused_u16_impl(samples, channels, scan_alpha, scan_chroma, known),
+        [v3, neon, wasm128, scalar]
+    )
+}
+
+#[magetypes(define(u16x16), v3, neon, wasm128, scalar)]
+fn fused_u16_impl(
+    token: Token,
+    samples: &[u16],
+    channels: usize,
+    scan_alpha: bool,
+    scan_chroma: bool,
+    known: [bool; 3],
+) -> [bool; 3] {
+    let mut known = known;
+    let phases = [0usize, 16 % channels, 32 % channels];
+    let alpha_masks = phases.map(|phase| {
+        u16x16::from_array(
+            token,
+            core::array::from_fn(|i| {
+                if (i + phase) % channels == channels - 1 {
+                    u16::MAX
+                } else {
+                    0
+                }
+            }),
+        )
+    });
+    let chroma_masks = phases.map(|phase| {
+        u16x16::from_array(
+            token,
+            core::array::from_fn(|i| {
+                if (i + phase) % channels < 2 {
+                    u16::MAX
+                } else {
+                    0
+                }
+            }),
+        )
+    });
+    let ones = u16x16::splat(token, u16::MAX);
+    let low = u16x16::splat(token, 255);
+    let complete = |v: [bool; 3]| (!scan_alpha || v[0]) && (!scan_chroma || v[1]) && v[2];
+    let mut i = 0;
+    // 48 samples is a whole number of pixels for every supported layout.
+    while i + 49 <= samples.len() && !complete(known) {
+        let mut alpha_bad = u16x16::splat(token, 0);
+        let mut chroma_bad = u16x16::splat(token, 0);
+        let mut precision_bad = u16x16::splat(token, 0);
+        for n in 0..3 {
+            let at = i + n * 16;
+            let v = u16x16::load(token, (&samples[at..at + 16]).try_into().unwrap());
+            if scan_alpha && !known[0] {
+                alpha_bad |= v.simd_ne(ones) & alpha_masks[n];
+            }
+            if scan_chroma && !known[1] {
+                let shifted = u16x16::load(token, (&samples[at + 1..at + 17]).try_into().unwrap());
+                chroma_bad |= v.simd_ne(shifted) & chroma_masks[n];
+            }
+            if !known[2] {
+                precision_bad |= v.shr_logical_const::<8>().simd_ne(v & low);
+            }
+        }
+        known[0] |= alpha_bad.any_true();
+        known[1] |= chroma_bad.any_true();
+        known[2] |= precision_bad.any_true();
+        i += 48;
+    }
+    for pixel in samples[i..].chunks_exact(channels) {
+        if complete(known) {
+            break;
+        }
+        if scan_alpha {
+            known[0] |= pixel[channels - 1] != u16::MAX;
+        }
+        if scan_chroma {
+            known[1] |= pixel[0] != pixel[1] || pixel[1] != pixel[2];
+        }
+        known[2] |= pixel.iter().any(|&v| v >> 8 != v & 255);
+    }
+    known
+}
+
+#[cfg(test)]
+mod fused_u16_contracts {
+    #[test]
+    fn fused_matches_independent_scalar_predicates() {
+        for channels in 1..=4 {
+            for pixels in 0..137 {
+                for defect in 0..4 {
+                    let mut values = alloc::vec![257u16; pixels * channels];
+                    let alpha = channels == 2 || channels == 4;
+                    let chroma = channels >= 3;
+                    if alpha {
+                        for px in values.chunks_exact_mut(channels) {
+                            px[channels - 1] = 65535;
+                        }
+                    }
+                    if let Some(last) = values.last_mut() {
+                        *last = [*last, 0, 258, 12345][defect];
+                    }
+                    let expected = [
+                        alpha
+                            && values
+                                .chunks_exact(channels)
+                                .any(|p| p[channels - 1] != 65535),
+                        chroma
+                            && values
+                                .chunks_exact(channels)
+                                .any(|p| p[0] != p[1] || p[1] != p[2]),
+                        values.iter().any(|&v| v >> 8 != v & 255),
+                    ];
+                    assert_eq!(
+                        super::fused_u16(&values, channels, alpha, chroma, [false; 3]),
+                        expected,
+                        "channels={channels}, pixels={pixels}, defect={defect}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "local performance comparison; run with --release --ignored --nocapture"]
+    fn fused_u16_benchmark() {
+        use std::{hint::black_box, time::Instant};
+        for pixels in [4096, 1_000_000] {
+            let values: alloc::vec::Vec<u16> = [257, 257, 257, 65535]
+                .into_iter()
+                .cycle()
+                .take(pixels * 4)
+                .collect();
+            let start = Instant::now();
+            for _ in 0..100 {
+                black_box(super::fused_u16(
+                    black_box(&values),
+                    4,
+                    true,
+                    true,
+                    [false; 3],
+                ));
+            }
+            let fused = start.elapsed();
+            let start = Instant::now();
+            for _ in 0..100 {
+                black_box((
+                    super::is_opaque_rgba16(black_box(&values)),
+                    super::is_grayscale_rgba16(black_box(&values)),
+                    super::bit_replication_lossless_u16(black_box(&values)),
+                ));
+            }
+            std::eprintln!(
+                "{pixels} pixels: fused {fused:?}, separate {:?}",
+                start.elapsed()
+            );
+        }
+    }
+}

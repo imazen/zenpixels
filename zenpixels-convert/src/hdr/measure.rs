@@ -23,6 +23,10 @@
 //! 0.2.14 release line). This module is the post-0.2.14 home for
 //! everything richer.
 
+// SIMD macro bodies use LANES * N; stable Rust cannot express this generic
+// const product as an as_chunks array length. Keep chunk/remainder iteration.
+#![allow(clippy::chunks_exact_to_as_chunks)]
+
 use alloc::boxed::Box;
 use alloc::vec;
 

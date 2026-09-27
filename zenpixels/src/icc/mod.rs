@@ -895,6 +895,13 @@ mod tests {
     }
 
     #[test]
+    fn embedded_cicp_does_not_prove_icc_matrix_trc_substitution() {
+        let icc = build_icc_with_cicp(1, 13, 0, true);
+        assert!(extract_cicp(&icc).is_some());
+        assert!(crate::ColorProfileSource::Icc(&icc).resolve().is_none());
+    }
+
+    #[test]
     fn extract_cicp_srgb() {
         let icc = build_icc_with_cicp(1, 13, 0, true);
         let cicp = extract_cicp(&icc).unwrap();
