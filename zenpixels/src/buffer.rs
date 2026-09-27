@@ -1513,8 +1513,9 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
 ///
 /// Wraps a `Vec<u8>` with an optional alignment offset so that pixel
 /// rows start at the correct alignment for the channel type. The
-/// backing vec can be recovered with [`into_vec`](Self::into_vec) for
-/// pool reuse.
+/// allocation and its layout/metadata can be recovered together with
+/// [`into_parts`](Self::into_parts). Use [`into_contiguous`](Self::into_contiguous)
+/// first when the receiver needs tightly packed rows.
 ///
 /// The type parameter `P` tracks pixel format at compile time, same as
 /// [`PixelSlice`].
@@ -1529,6 +1530,39 @@ pub struct PixelBuffer<P = ()> {
     descriptor: PixelDescriptor,
     color: Option<Arc<ColorContext>>,
     _pixel: PhantomData<P>,
+}
+
+/// An owned allocation with the layout and color metadata of its pixels.
+///
+/// Returned by [`PixelBuffer::into_parts`]. Extraction moves the allocation and
+/// color context without copying pixels or cloning the context. Destructure with
+/// `..` to allow future metadata fields. The pixel type parameter is erased;
+/// [`descriptor`](Self::descriptor) describes the physical format and semantics.
+///
+/// The first pixel starts at [`offset`](Self::offset), which can be nonzero even
+/// after [`PixelBuffer::into_contiguous`]. Row starts are `stride_bytes` apart;
+/// only `width * descriptor.bytes_per_pixel()` bytes of each row are pixels.
+/// Uncompacted storage can include a prefix, row padding and trailing bytes.
+///
+/// This is a transfer record, not a validated pixel buffer: changing its public
+/// fields does not validate the resulting layout or convert the pixels.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct PixelBufferParts {
+    /// Original backing allocation, including any alignment prefix or padding.
+    pub data: Vec<u8>,
+    /// Byte offset to the first pixel (or the empty pixel span).
+    pub offset: usize,
+    /// Bytes between successive row starts.
+    pub stride_bytes: usize,
+    /// Image width in pixels.
+    pub width: u32,
+    /// Image height in pixels.
+    pub height: u32,
+    /// Physical pixel format and color semantics.
+    pub descriptor: PixelDescriptor,
+    /// Attached color context, moved from the buffer without an Arc clone.
+    pub color_context: Option<Arc<ColorContext>>,
 }
 
 /// Borrowed-or-owned pixels with the same metadata and stride-aware view.
@@ -2356,6 +2390,101 @@ impl<P> PixelBuffer<P> {
         self.data
     }
 
+    /// Move out the allocation together with its layout and color metadata.
+    ///
+    /// Does not allocate, copy or compact pixels, or clone the color context.
+    /// Preserves the Vec's pointer, length and capacity, including prefix,
+    /// padding and trailing bytes. The first pixel is at `parts.data[parts.offset]`,
+    /// not necessarily at the start of the allocation. The pixel type is erased.
+    ///
+    /// Call [`into_contiguous`](Self::into_contiguous) first if the receiver
+    /// requires packed rows; otherwise pass the offset and stride onward.
+    #[must_use]
+    pub fn into_parts(self) -> PixelBufferParts {
+        PixelBufferParts {
+            data: self.data,
+            offset: self.offset,
+            stride_bytes: self.stride,
+            width: self.width,
+            height: self.height,
+            descriptor: self.descriptor,
+            color_context: self.color,
+        }
+    }
+
+    /// Pack the rows within this allocation, preserving the pixel type and metadata.
+    ///
+    /// The result has `stride() == width() * descriptor().bytes_per_pixel()`.
+    /// Pixels retain their values and native byte order. The existing pixel
+    /// offset is preserved to maintain sample alignment: contiguous rows do
+    /// **not** imply that the first pixel is at allocation offset zero.
+    ///
+    /// Does not allocate, reallocate or clone the color context. Packing padded
+    /// rows moves O(image bytes) within the existing allocation. Already packed
+    /// rows need no pixel moves. The Vec's length is truncated to the offset plus
+    /// the packed pixel length; its pointer and capacity are preserved. Zero-area
+    /// images keep their dimensions and contain no pixel bytes.
+    ///
+    /// Use [`as_contiguous_bytes`](Self::as_contiguous_bytes) to borrow the packed
+    /// pixels, or [`into_parts`](Self::into_parts) to move out storage and metadata:
+    ///
+    /// ```
+    /// use zenpixels::{PixelBuffer, PixelBufferParts, PixelDescriptor};
+    ///
+    /// let buffer = PixelBuffer::new_simd_aligned(3, 2, PixelDescriptor::RGB8_SRGB, 16);
+    /// let PixelBufferParts {
+    ///     data, offset, stride_bytes, width, height, descriptor, color_context, ..
+    /// } = buffer.into_contiguous().into_parts();
+    /// assert_eq!(stride_bytes, width as usize * descriptor.bytes_per_pixel());
+    /// let pixels = &data[offset..];
+    /// assert_eq!(pixels.len(), stride_bytes * height as usize);
+    /// // Move `data` and its description into the receiver; retain `offset`.
+    /// ```
+    #[must_use]
+    pub fn into_contiguous(mut self) -> Self {
+        let row_bytes = (self.width as usize)
+            .checked_mul(self.descriptor.bytes_per_pixel())
+            .expect("pixel buffer row size overflows usize");
+        let pixel_bytes = row_bytes
+            .checked_mul(self.height as usize)
+            .expect("pixel buffer size overflows usize");
+        let packed_end = self
+            .offset
+            .checked_add(pixel_bytes)
+            .expect("pixel buffer extent overflows usize");
+
+        if pixel_bytes != 0 {
+            // Check the visible extent, not stride * height: a layout transform
+            // can return a view without padding after its final row.
+            assert!(self.stride >= row_bytes, "pixel buffer stride is too small");
+            let source_end = (self.height as usize - 1)
+                .checked_mul(self.stride)
+                .and_then(|n| n.checked_add(self.offset))
+                .and_then(|n| n.checked_add(row_bytes))
+                .expect("pixel buffer extent overflows usize");
+            assert!(
+                source_end <= self.data.len(),
+                "pixel buffer storage is too short"
+            );
+            if self.stride != row_bytes {
+                // Destinations never reach a subsequent source row. copy_within
+                // also handles overlap within the current row, without scratch.
+                for y in 1..self.height as usize {
+                    let src = self.offset + y * self.stride;
+                    let dst = self.offset + y * row_bytes;
+                    self.data.copy_within(src..src + row_bytes, dst);
+                }
+            }
+        }
+        assert!(
+            packed_end <= self.data.len(),
+            "pixel buffer storage is too short"
+        );
+        self.data.truncate(packed_end);
+        self.stride = row_bytes;
+        self
+    }
+
     /// Zero-copy access to the raw pixel bytes when rows are tightly packed.
     ///
     /// Returns `Some(&[u8])` if `stride == width * bpp` (no padding),
@@ -2885,6 +3014,142 @@ mod tests {
     use alloc::vec;
 
     // --- PixelBuffer allocation and row access ---
+
+    #[test]
+    fn into_contiguous_preserves_pixels_across_offsets_padding_and_empty_extents() {
+        for descriptor in [
+            PixelDescriptor::GRAY8_SRGB,
+            PixelDescriptor::RGB8_SRGB,
+            PixelDescriptor::RGBA16_SRGB,
+        ] {
+            let bpp = descriptor.bytes_per_pixel();
+            for width in [0, 1, 2, 5] {
+                for height in [0, 1, 2, 5] {
+                    for padding_pixels in [0, 1, 3] {
+                        for prefix_samples in [0, 3] {
+                            for final_padding in [false, true] {
+                                let row_bytes = width as usize * bpp;
+                                let stride = row_bytes + padding_pixels * bpp;
+                                let visible_len = if width == 0 || height == 0 {
+                                    0
+                                } else {
+                                    (height as usize - 1) * stride + row_bytes
+                                };
+                                // Reserve enough first: computing the offset must
+                                // precede initialization but follow allocation.
+                                let mut data = Vec::with_capacity(visible_len + stride + 128);
+                                let align = descriptor.min_alignment();
+                                let offset =
+                                    align_offset(data.as_ptr(), align) + prefix_samples * align;
+                                let len = offset
+                                    + visible_len
+                                    + if final_padding { stride + 7 } else { 0 };
+                                data.resize(len, 0xEE);
+                                let mut expected = Vec::new();
+                                for y in 0..height as usize {
+                                    for x in 0..row_bytes {
+                                        let value = (y * 13 + x) as u8;
+                                        data[offset + y * stride + x] = value;
+                                        expected.push(value);
+                                    }
+                                }
+                                let pointer = data.as_ptr();
+                                let capacity = data.capacity();
+                                let buffer = PixelBuffer::<()> {
+                                    data,
+                                    offset,
+                                    width,
+                                    height,
+                                    stride,
+                                    descriptor,
+                                    color: None,
+                                    _pixel: PhantomData,
+                                };
+                                let packed = buffer.into_contiguous();
+                                assert_eq!(packed.as_contiguous_bytes(), Some(expected.as_slice()));
+                                assert_eq!(packed.stride(), row_bytes);
+                                assert_eq!((packed.width(), packed.height()), (width, height));
+                                assert_eq!(packed.descriptor(), descriptor);
+                                let parts = packed.into_parts();
+                                assert_eq!(parts.data.as_ptr(), pointer);
+                                assert_eq!(parts.data.capacity(), capacity);
+                                assert_eq!(parts.offset, offset);
+                                assert_eq!(parts.data.len(), offset + expected.len());
+                                assert!(parts.data[..offset].iter().all(|&v| v == 0xEE));
+                                assert_eq!(parts.data[offset..], expected);
+                                assert!(parts.color_context.is_none());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn into_parts_moves_the_complete_uncompacted_allocation_and_context() {
+        let context = Arc::new(
+            ColorContext::from_icc([1u8, 2, 3, 4]).with_diffuse_white(DiffuseWhite::new(120.0)),
+        );
+        let mut buffer = PixelBuffer::new_simd_aligned(3, 2, PixelDescriptor::RGB8_SRGB, 64)
+            .with_color_context(context.clone());
+        buffer.data.fill(0xAB);
+        let (pointer, len, capacity, offset, stride) = (
+            buffer.data.as_ptr(),
+            buffer.data.len(),
+            buffer.data.capacity(),
+            buffer.offset,
+            buffer.stride,
+        );
+        let parts = buffer.into_parts();
+        assert_eq!(parts.data.as_ptr(), pointer);
+        assert_eq!((parts.data.len(), parts.data.capacity()), (len, capacity));
+        assert_eq!((parts.offset, parts.stride_bytes), (offset, stride));
+        assert_eq!((parts.width, parts.height), (3, 2));
+        assert_eq!(parts.descriptor, PixelDescriptor::RGB8_SRGB);
+        assert!(parts.data.iter().all(|&v| v == 0xAB));
+        assert!(Arc::ptr_eq(parts.color_context.as_ref().unwrap(), &context));
+        assert_eq!(Arc::strong_count(&context), 2);
+    }
+
+    #[test]
+    fn into_contiguous_preserves_type_and_moves_color_context() {
+        let context = Arc::new(ColorContext::from_cicp(Cicp::SRGB));
+        let mut buffer = PixelBuffer::new_simd_aligned(2, 3, Rgbx::DESCRIPTOR, 16)
+            .try_typed::<Rgbx>()
+            .unwrap()
+            .with_color_context(context.clone());
+        for y in 0..3 {
+            buffer.as_slice_mut().row_mut(y).fill(y as u8 + 1);
+        }
+        let pointer = buffer.data.as_ptr();
+        let packed: PixelBuffer<Rgbx> = buffer.into_contiguous();
+        assert_eq!(packed.data.as_ptr(), pointer);
+        assert_eq!(packed.descriptor(), Rgbx::DESCRIPTOR);
+        for y in 0..3 {
+            assert_eq!(packed.as_slice().row(y), &[y as u8 + 1; 8]);
+        }
+        assert!(Arc::ptr_eq(packed.color_context().unwrap(), &context));
+        assert_eq!(Arc::strong_count(&context), 2);
+        let parts = packed.into_parts();
+        assert!(Arc::ptr_eq(parts.color_context.as_ref().unwrap(), &context));
+        assert_eq!(Arc::strong_count(&context), 2);
+    }
+
+    #[test]
+    fn into_contiguous_is_idempotent_and_trims_trailing_storage() {
+        let mut buffer =
+            PixelBuffer::from_vec(vec![1, 2, 3, 0xEE, 0xEE], 1, 1, PixelDescriptor::RGB8_SRGB)
+                .unwrap();
+        buffer.data.reserve(128);
+        let (pointer, capacity) = (buffer.data.as_ptr(), buffer.data.capacity());
+        let packed = buffer.into_contiguous().into_contiguous();
+        assert_eq!(packed.as_contiguous_bytes(), Some([1, 2, 3].as_slice()));
+        let parts = packed.into_parts();
+        assert_eq!(parts.data, [1, 2, 3]);
+        assert_eq!(parts.data.as_ptr(), pointer);
+        assert_eq!(parts.data.capacity(), capacity);
+    }
 
     #[test]
     fn pixel_buffer_new_rgb8() {

@@ -40,13 +40,17 @@
 //! ```
 
 use alloc::boxed::Box;
+#[cfg(feature = "std")]
 use alloc::format;
 
+#[cfg(any(feature = "std", test))]
+use crate::Cicp;
+use crate::PixelFormat;
 #[cfg(test)]
 use crate::TransferFunction;
 #[allow(deprecated)]
+#[cfg(feature = "std")]
 use crate::cms::{ColorManagement, RowTransform};
-use crate::{Cicp, PixelFormat};
 
 /// Lightweight CMS using fused SIMD gamut conversion kernels.
 ///
@@ -268,7 +272,7 @@ impl crate::cms::PluggableCms for ZenCmsLite {
         // Decline non-native color models (CMYK today; Lab / XYZ / spot inks
         // when they land). We have no kernels for them — let MoxCms or the
         // user-supplied plugin handle it.
-        if crate::convert::requires_cms(&from, &to) {
+        if crate::convert::needs_cms_for_color_model(&from, &to) {
             return None;
         }
 

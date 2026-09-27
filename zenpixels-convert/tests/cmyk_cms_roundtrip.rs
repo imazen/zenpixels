@@ -10,7 +10,7 @@
 //!    CMYK ICC is supplied via `ColorProfileSource::Icc(...)`.
 //! 2. CMYK without an attached CMS surfaces as
 //!    `ConvertError::NeedsCms { from, to }` (typed error, not panic).
-//! 3. The `requires_cms` predicate is `pub` so schedulers can probe it.
+//! 3. Native RGB identity plans succeed without a CMS.
 //! 4. RGB → RGB with `MoxCms` attached still uses the built-in plan.
 //!
 //! Test 3 (`lab_through_moxcms`) is intentionally omitted: there is no
@@ -39,9 +39,7 @@
 extern crate alloc;
 
 use zenpixels::buffer::PixelBuffer;
-use zenpixels_convert::{
-    ConvertError, ConvertOptions, PixelDescriptor, RowConverter, requires_cms,
-};
+use zenpixels_convert::{ConvertError, ConvertOptions, PixelDescriptor, RowConverter};
 
 #[cfg(feature = "cms-moxcms")]
 use zenpixels_convert::cms_moxcms::MoxCms;
@@ -70,12 +68,6 @@ fn cmyk_no_cms_returns_needs_cms_not_panic() {
 
 #[test]
 fn rgb_to_rgb_does_not_require_cms() {
-    // `requires_cms` is the predicate schedulers probe before deciding
-    // whether to attach a plugin. Native RGB→RGB must be `false`.
-    assert!(!requires_cms(
-        &PixelDescriptor::RGB8_SRGB,
-        &PixelDescriptor::RGB8_SRGB
-    ));
     let res = RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGB8_SRGB);
     assert!(res.is_ok(), "RGB→RGB identity must succeed without CMS");
 }

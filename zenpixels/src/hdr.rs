@@ -55,8 +55,17 @@ impl DiffuseWhite {
 
     /// An anchor of `nits` cd/m² (the luminance that relative-linear `1.0`
     /// represents).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `nits` is zero, negative, NaN, or infinite.
+    #[track_caller]
     #[must_use]
     pub const fn new(nits: f32) -> Self {
+        assert!(
+            nits.is_finite() && nits > 0.0,
+            "diffuse white must be finite and strictly positive"
+        );
         Self(nits)
     }
 
@@ -418,6 +427,51 @@ mod tests {
         // PartialEq honours bit equality (see the impl above) so two
         // independently constructed anchors compare equal.
         assert_eq!(DiffuseWhite::new(203.0), DiffuseWhite::BT2408);
+    }
+
+    #[test]
+    fn diffuse_white_accepts_positive_finite_bounds_and_const_construction() {
+        const CUSTOM: DiffuseWhite = DiffuseWhite::new(100.0);
+        assert_eq!(CUSTOM.nits(), 100.0);
+        for nits in [f32::from_bits(1), f32::MIN_POSITIVE, f32::MAX] {
+            assert_eq!(DiffuseWhite::new(nits).nits().to_bits(), nits.to_bits());
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "diffuse white must be finite and strictly positive")]
+    fn diffuse_white_rejects_zero() {
+        let _ = DiffuseWhite::new(0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "diffuse white must be finite and strictly positive")]
+    fn diffuse_white_rejects_negative_zero() {
+        let _ = DiffuseWhite::new(-0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "diffuse white must be finite and strictly positive")]
+    fn diffuse_white_rejects_negative() {
+        let _ = DiffuseWhite::new(-100.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "diffuse white must be finite and strictly positive")]
+    fn diffuse_white_rejects_nan() {
+        let _ = DiffuseWhite::new(f32::NAN);
+    }
+
+    #[test]
+    #[should_panic(expected = "diffuse white must be finite and strictly positive")]
+    fn diffuse_white_rejects_infinity() {
+        let _ = DiffuseWhite::new(f32::INFINITY);
+    }
+
+    #[test]
+    #[should_panic(expected = "diffuse white must be finite and strictly positive")]
+    fn diffuse_white_rejects_negative_infinity() {
+        let _ = DiffuseWhite::new(f32::NEG_INFINITY);
     }
 
     #[test]

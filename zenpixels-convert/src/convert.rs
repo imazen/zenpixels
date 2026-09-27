@@ -453,12 +453,20 @@ fn native_color_model(m: crate::ColorModel) -> bool {
 /// [`ConvertError::NeedsCms`] is what entry points return when this is
 /// true and no `cms` was passed.
 ///
-/// Useful to schedulers: a caller doing batch encode/decode can probe
-/// `requires_cms` once per source/target pair and decide whether to
-/// attach a CMS plugin (e.g. `&MoxCms`) for that batch.
+/// This color-model predicate does not establish conversion support. Attempt
+/// conversion planning and handle [`ConvertError::NeedsCms`] and other errors
+/// instead of using this as a capability preflight.
 ///
 /// [`color_model`]: zenpixels::PixelDescriptor::color_model
+#[deprecated(
+    since = "0.2.17",
+    note = "attempt conversion planning and handle ConvertError::NeedsCms; this color-model predicate does not establish conversion support"
+)]
 pub fn requires_cms(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
+    needs_cms_for_color_model(from, to)
+}
+
+pub(crate) fn needs_cms_for_color_model(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
     !native_color_model(from.color_model()) || !native_color_model(to.color_model())
 }
 
@@ -512,7 +520,7 @@ impl ConvertPlan {
     /// through `RowConverter` for that.
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
-        if requires_cms(&from, &to) {
+        if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
         if from == to {
@@ -968,7 +976,7 @@ impl ConvertPlan {
         to: PixelDescriptor,
         hdr: HdrConfig,
     ) -> Result<Self, At<ConvertError>> {
-        if requires_cms(&from, &to) {
+        if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
         // SDR source paths take the regular plan path — calling the
@@ -1181,7 +1189,7 @@ impl ConvertPlan {
         to: PixelDescriptor,
         options: &ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
-        if requires_cms(&from, &to) {
+        if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
         // Check alpha removal policy.
@@ -1458,6 +1466,14 @@ impl ConvertPlan {
     /// assert!(est.wall_ms().is_some());
     /// ```
     #[must_use]
+    #[cfg_attr(
+        not(feature = "estimation-experimental"),
+        deprecated(
+            since = "0.2.17",
+            note = "enable estimation-experimental; this feature will be required for the estimation API in 0.3.1"
+        )
+    )]
+    #[allow(deprecated)] // The 0.2 compatibility signature/body still uses estimate types.
     pub fn estimate_in(
         &self,
         image: &crate::estimate::ImageCharacteristics,
@@ -1490,6 +1506,14 @@ impl ConvertPlan {
     /// assert!(est.wall_ms().is_some());
     /// ```
     #[must_use]
+    #[cfg_attr(
+        not(feature = "estimation-experimental"),
+        deprecated(
+            since = "0.2.17",
+            note = "enable estimation-experimental; this feature will be required for the estimation API in 0.3.1"
+        )
+    )]
+    #[allow(deprecated)] // The 0.2 compatibility implementation delegates to estimate_in.
     pub fn estimate(&self, width: u32, height: u32) -> crate::estimate::ResourceEstimate {
         let image = crate::estimate::ImageCharacteristics::new(width, height, self.from());
         let compute = crate::estimate::ComputeEnvironment::new();

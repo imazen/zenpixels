@@ -412,7 +412,15 @@ pub mod error;
 /// `peak_memory_bytes_max`, and its `ImageCharacteristics` tracks
 /// `frame_count`, none of which exist here). A `decode → convert → encode`
 /// pipeline bridging the two currently has to map fields by hand.
+#[cfg_attr(
+    not(feature = "estimation-experimental"),
+    deprecated(
+        since = "0.2.17",
+        note = "enable estimation-experimental; this feature will be required for the estimation API in 0.3.1"
+    )
+)]
 pub mod estimate;
+#[allow(deprecated)] // Preserve the old root imports and their downstream warnings.
 pub use estimate::{ComputeEnvironment, ImageCharacteristics, ResourceEstimate, SimdTier};
 pub(crate) mod f16_scalar;
 pub(crate) mod negotiate;
@@ -503,7 +511,9 @@ pub use adapt::adapt_for_encode_explicit;
 pub use adapt::{adapt_for_encode_explicit_cow, try_adapt_in_place};
 #[cfg(feature = "hdr-experimental")]
 pub use convert::HdrConfig;
-pub use convert::{ConvertPlan, convert_row, requires_cms};
+#[allow(deprecated)] // Compatibility export; the definition carries the warning.
+pub use convert::requires_cms;
+pub use convert::{ConvertPlan, convert_row};
 pub use converter::RowConverter;
 pub use error::ConvertError;
 pub use negotiate::{

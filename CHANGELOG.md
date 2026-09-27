@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+### zenpixels — added
+
+- `PixelBuffer::into_contiguous()` packs rows in the existing allocation and
+  returns the same buffer type, preserving its descriptor and color context.
+  It never allocates or clones the context; padded rows move within the Vec,
+  while already packed rows need no pixel moves. Pointer/capacity and the
+  alignment offset are preserved; trailing storage is truncated from the length.
+- `PixelBuffer::into_parts()` moves out a destructurable `PixelBufferParts`
+  containing `data`, `offset`, `stride_bytes`, dimensions, descriptor and color
+  context. It preserves allocation length/capacity without copying or compaction.
+  Use `buffer.into_contiguous().into_parts()` for packed ownership handoff;
+  pixels still begin at `data[offset]`. No bytes-only export or parts-adoption
+  constructor is added in this chunk.
+
+### zenpixels — fixed
+
+- `DiffuseWhite::new(nits)` now panics for zero (including negative zero),
+  negative, NaN and infinite values, enforcing the finite positive anchor
+  contract. Valid inputs retain their exact value, and the constructor remains
+  `const`. Invalid constant construction fails at compile time. The existing
+  constructor remains supported; no deprecation or new constructor is introduced.
+
+### zenpixels-convert — deprecated (0.2.17 bridge)
+
+- `requires_cms`: plan the conversion and handle `ConvertError::NeedsCms`
+  instead. The old predicate only checks the color-model family and does not
+  establish conversion support. Its signature and behavior are retained.
+- Implicit resource-estimation exposure: enable the new, default-off
+  `estimation-experimental` feature to keep using `estimate`, its four types,
+  and `ConvertPlan::{estimate, estimate_in}` without deprecation warnings.
+  Without the feature, the existing API still compiles and behaves identically
+  in 0.2.x. The proposed 0.3.1 release requires the feature with the same opted-in
+  signatures. The opt-in is not a change to estimator accuracy or semantics.
+- `Adapted::as_pixel_slice` now explicitly warns, including calls on inferred
+  receivers. Use the `*_cow` adapters and `PixelCow::as_slice`; the existing
+  method is retained unchanged. Deprecating its containing type did not warn
+  at these inferred call sites.
+
+The three migrations are checked from an external consumer with default and
+minimal features, with estimation opt-in both enabled and disabled. This batch
+does not implement the broader proposed buffer/conversion contracts; see the
+[README review](docs/readme-contract-review.md).
+
 ### Workspace — changed
 
 - **`Cargo.lock` refreshed within the existing requirements — third-party crates only.** 39 registry packages moved (`bytemuck 1.25.0 -> 1.25.2`, `palette 0.7.6 -> 0.7.7`, `imgref 1.12.2 -> 1.12.3`, `lcms2 6.1.1 -> 6.2.0`, `libc 0.2.186 -> 0.2.189`, `serde 1.0.228 -> 1.0.229`, `getrandom 0.3.4 -> 0.4.3` among them). No manifest requirement changed. `magetypes` and `zenbench` both had newer releases available and were deliberately held: zen-family requirements are governed separately, so the lock diff contains no `zenpixels`/`archmage`/`magetypes`/`linear-srgb`/`garb`/`whereat`/`zenbench` line at all. `palette 0.7.7` swaps its sRGB backend from `fast-srgb8` to the new `palette_math` crate, and `palette` is the oracle for the perceptual-loss suite, so it was the change to watch — every test result is byte-for-byte identical to the pre-update baseline across `cargo test --workspace`, and the ICC-bundle goldens (`golden_blob_sha256_is_pinned`, `gray_blob_decodes_byte_identical_to_moxcms`, `every_group_decodes_to_its_declared_length`) still pass. Also verified green: `--features fast-transpose`, `--features __trace_ops --test plan_validation`, `--features __trace_ops --test transfer_alpha`, `--features hdr-experimental`, `--no-default-features --features rgb`, `clippy --workspace --all-targets -D warnings`, and `fmt --check`.
@@ -722,11 +765,14 @@ breaking changes for both crates (196 checks, 196 pass).
 
 #### Complete public-API removal inventory for 0.3.0
 
-This is the canonical removal checklist. It includes every published API
-currently planned for deletion or demotion; the longer entries below retain
-the rationale and migration details. Unreleased experiments made private
-before publication (such as resource estimation and `requires_cms`) are not
-compatibility removals and therefore do not belong in this queue.
+**Correction (2026-09-27):** this historical checklist was copied from PR #63,
+which merged into an already-merged base branch rather than main. Resource
+estimation and `requires_cms` **did ship publicly in 0.2.16**, without the
+planned experimental gate/demotion. Several replacement methods named below
+did not ship either. These entries are not evidence of available replacements
+or completed deprecations. See the [published-release review](docs/release-0.2.16-accidental-api-review.md)
+and [current 0.2 bridge → 0.3.1 proposal](docs/api-contract-proposal-0.2-and-0.3.1.md)
+for the corrected disposition. The historical rationale follows.
 
 **`zenpixels`:**
 

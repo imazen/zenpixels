@@ -161,6 +161,10 @@ pub struct Adapted<'a> {
 #[allow(deprecated)]
 impl Adapted<'_> {
     /// Borrow this compatibility result as a validated packed pixel view.
+    #[deprecated(
+        since = "0.2.17",
+        note = "use a *_cow adapter returning PixelCow, then PixelCow::as_slice"
+    )]
     pub fn as_pixel_slice(&self) -> Result<PixelSlice<'_>, At<ConvertError>> {
         let stride = (self.width as usize)
             .checked_mul(self.descriptor.bytes_per_pixel())

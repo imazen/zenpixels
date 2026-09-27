@@ -163,7 +163,7 @@ impl RowConverter {
         //     Falling through to another backend could silently produce
         //     different output — surface the failure instead.
         let primaries_differ = from.primaries != to.primaries;
-        let needs_cms_dispatch = crate::convert::requires_cms(&from, &to);
+        let needs_cms_dispatch = crate::convert::needs_cms_for_color_model(&from, &to);
         if primaries_differ || needs_cms_dispatch {
             let src_src = from.color_profile_source();
             let dst_src = to.color_profile_source();

@@ -543,7 +543,9 @@ fn new_with_hdr_peak_delegates_to_config_with_defaults() {
         ConvertPlan::new_with_hdr_config(src, dst, HdrConfig::for_source_peak(1000.0))
             .expect("config plan");
     // Same input/output descriptors → same estimated work + memory.
+    #[allow(deprecated)] // Retained 0.2 estimation API; no opt-in needed for this parity gate.
     let est_peak = plan_peak.estimate(1024, 1024);
+    #[allow(deprecated)]
     let est_config = plan_config.estimate(1024, 1024);
     assert_eq!(
         est_peak, est_config,

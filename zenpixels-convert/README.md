@@ -139,6 +139,11 @@ The buffer-baking half of the zen orientation story lives here (the `Orientation
 
 ## Resource estimation
 
+Enable `estimation-experimental` to use this API without deprecation warnings.
+In the 0.2.17 bridge it remains available without the feature, with warnings;
+the proposed 0.3.1 release requires the same opt-in. This feature does not change
+the estimates or their accuracy. See the [contract review](../docs/readme-contract-review.md#resource-estimation).
+
 For schedulers / throttlers / SLA-bound pipelines that need to know cost *before* running an op, [`ConvertPlan::estimate_in`] (and the [`ConvertPlan::estimate`] shortcut) returns a [`ResourceEstimate`] for a `width × height` image under a given [`ComputeEnvironment`] (core count + optional SIMD tier + optional RAM budget). The estimate reports `peak_memory_bytes_est`, `wall_ms` (already scaled to `cores()`), and `intermediate_buffer_count` (so schedulers can distinguish 1-giant-buffer plans from N-medium-buffer plans for paging-pressure decisions). Cheap to call — walks the planned steps, no row work, no allocation. Calibrated against the `bench_t1`–`bench_t7` series (Ryzen 9 7950X, AVX2/V3), ±30 % design tolerance.
 
 The four estimate types — [`ResourceEstimate`], [`ComputeEnvironment`], [`ImageCharacteristics`], [`SimdTier`] — are defined locally and are **shape-compatible** with the corresponding `zencodec::estimate::*` types (same field names, same builders, same accessors, same `#[non_exhaustive]` discipline). `zenpixels-convert` is a **foundation crate** and does NOT depend on `zencodec` — keeping codec abstractions strictly above pixel math. Codec authors whose stack uses the zencodec contract can wire `decode → convert → encode` estimates through the boundary with a trivial `From` conversion. The full type contract: sealed, growable, every field `Option`. Wall-time scaling across cores is handled internally by `ConvertPlan::estimate_in` — the resulting `wall_ms` is already divided by the effective parallel thread count.

@@ -182,7 +182,7 @@ fn check_needs_cms(
     from: &PixelDescriptor,
     to: &PixelDescriptor,
 ) -> Result<(), At<crate::ConvertError>> {
-    if crate::convert::requires_cms(from, to) {
+    if crate::convert::needs_cms_for_color_model(from, to) {
         return Err(whereat::at!(crate::ConvertError::NeedsCms {
             from: *from,
             to: *to,

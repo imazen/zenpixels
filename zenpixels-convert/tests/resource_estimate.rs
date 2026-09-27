@@ -12,6 +12,10 @@
 //! (`peak_memory_bytes_est()` / `wall_ms()` /
 //! `intermediate_buffer_count()`) — the surface is sealed and growable.
 
+// Exercise the retained 0.2 API without opt-in too; warning coverage is checked
+// separately by scripts/check-deprecations.py in a downstream crate.
+#![cfg_attr(not(feature = "estimation-experimental"), allow(deprecated))]
+
 use zenpixels::AlphaMode;
 use zenpixels_convert::{
     ChannelType, ComputeEnvironment, ConvertPlan, ImageCharacteristics, PixelDescriptor, SimdTier,
@@ -449,4 +453,42 @@ fn intermediate_buffer_count_increases_for_multi_step_plan() {
         count >= 2,
         "multi-step plan must report ≥ 2 intermediate buffers (ping-pong scratch), got {count}",
     );
+}
+
+#[cfg(test)]
+#[rustfmt::skip]
+mod local_type_contract_tests {
+    //! Retained 0.2 type behavior, exercised with and without the opt-in.
+    use zenpixels_convert::{ComputeEnvironment, ImageCharacteristics, PixelDescriptor, ResourceEstimate, SimdTier};
+    const D: PixelDescriptor = PixelDescriptor::RGB8_SRGB;
+
+    #[test]
+    fn compute_environment_builder_clamps_and_defaults() {
+        assert_eq!(ComputeEnvironment::new().cores(), 1);
+        assert_eq!(ComputeEnvironment::new().with_cores(0).cores(), 1);
+        assert_eq!(ComputeEnvironment::default().with_cores(16).cores(), 16);
+        let e = ComputeEnvironment::new().with_available_ram_bytes(1 << 30);
+        assert_eq!(e.available_ram_bytes(), Some(1 << 30));
+        assert_eq!(ComputeEnvironment::new().simd_tier(), None);
+        let t = ComputeEnvironment::new().with_simd_tier(SimdTier::X86V3);
+        assert_eq!(t.simd_tier(), Some(SimdTier::X86V3));
+    }
+    #[test]
+    fn image_characteristics_fields() {
+        let im = ImageCharacteristics::new(1024, 768, D);
+        assert_eq!((im.width(), im.height(), *im.descriptor()), (1024, 768, D));
+    }
+    #[test]
+    fn resource_estimate_new_unknown_and_buffer_count() {
+        let est = ResourceEstimate::new(200, 1000);
+        assert_eq!(est.peak_memory_bytes_est(), Some(200));
+        assert_eq!(est.wall_ms(), Some(1000));
+        assert_eq!(est.intermediate_buffer_count(), None);
+        let u = ResourceEstimate::unknown();
+        assert_eq!(u.peak_memory_bytes_est(), None);
+        assert_eq!(u.wall_ms(), None);
+        assert_eq!(u.intermediate_buffer_count(), None);
+        let withbuf = ResourceEstimate::new(200, 1000).with_intermediate_buffer_count(2);
+        assert_eq!(withbuf.intermediate_buffer_count(), Some(2));
+    }
 }

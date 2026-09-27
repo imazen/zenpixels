@@ -2,6 +2,13 @@
 
 Pixel format types and transfer-function-aware conversion for Rust image codecs.
 
+> **Contract review (2026-09-27):** This README is annotated for the proposed
+> 0.2 bridge → 0.3.1 migration. See the [section-by-section review](docs/readme-contract-review.md)
+> for current inaccuracies, old/new examples and the resulting contracts if the
+> full proposal is adopted. Implemented so far: the [three initial deprecations](docs/release-0.2.16-accidental-api-review.md),
+> estimation opt-in, validation in `DiffuseWhite::new`, and
+> `PixelBuffer::{into_contiguous, into_parts}`. Other proposed APIs are not yet available.
+
 A JPEG decoder gives you `RGB8` in sRGB. An AVIF decoder gives you `RGBA16` in BT.2020 PQ. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
 
 zenpixels makes pixel format descriptions first-class types that travel with the data. The conversion crate handles transfer functions, gamut matrices, depth scaling, and alpha compositing so codecs don't have to.
@@ -18,6 +25,11 @@ zenpixels-convert = "0.2.16"
 
 ## Quick start
 
+> **Review:** Typed layout does not establish color interpretation.
+> `with_descriptor` declares semantics without converting samples; `into_vec`
+> loses layout/context. Use destructurable, zero-copy `into_parts()` for ownership
+> handoff. [Details](docs/readme-contract-review.md#introduction-and-quick-start).
+
 `zenpixels` gives you a [`PixelBuffer`] that carries its [`PixelDescriptor`]
 (format + color semantics) so the bytes never travel without a description of
 what they mean. Allocate one, hand the rows to a codec, recover the `Vec` when
@@ -28,24 +40,25 @@ and needs the `rgb` feature; the descriptor-based path below works without it.)
 use zenpixels::{PixelBuffer, PixelDescriptor};
 use rgb::Rgba;
 
-// Typed buffer — format enforced at compile time, SIMD-aligned rows.
+// Typed buffer — format enforced at compile time, tightly packed rows.
 // A typed buffer knows its byte layout but leaves color semantics
 // Unknown: the `rgb` crate's `Rgba<u8>` says nothing about sRGB vs
 // linear, so stamp the encoding when you know it. `with_descriptor`
-// keeps the layout and only changes the transfer/primaries.
+// keeps the physical layout and declares the supplied color semantics.
 let pixels = vec![Rgba::new(255u8, 128, 0, 255); 64 * 48];
 let buf = PixelBuffer::<Rgba<u8>>::from_pixels(pixels, 64, 48)?
     .with_descriptor(PixelDescriptor::RGBA8_SRGB);
 
 // Row and byte access live on the view; `as_slice()` is the entry point.
-// `row(y)` is unpadded; `as_strided_bytes()` is the whole backing buffer
-// (stride included) — zero-copy passthrough to a codec or GPU upload.
+// `row(y)` is unpadded; `as_strided_bytes()` exposes this view
+// with its stride. Pass geometry too; final-row padding is not guaranteed.
 let view = buf.as_slice();
 let first_row: &[u8] = view.row(0);
 let strided: &[u8]   = view.as_strided_bytes();
 
-// Recover the allocation for pool reuse.
-let raw: Vec<u8> = buf.into_vec();
+// Move the allocation and its complete description to the next owner.
+let parts = buf.into_parts();
+// The first pixel is at parts.data[parts.offset]; rows are parts.stride_bytes apart.
 # Ok::<(), zenpixels::At<zenpixels::BufferError>>(())
 ```
 
@@ -110,7 +123,7 @@ image) or you only want to borrow rather than own them, wrap a
 use zenpixels::{PixelSlice, PixelDescriptor};
 
 let (width, rows) = (64u32, 48u32);
-let stride_bytes = 256usize;                   // e.g. SIMD-padded; >= width*bpp
+let stride_bytes = 320usize;                   // padded; > width*bpp (256)
 let backing: Vec<u8> = vec![0u8; stride_bytes * rows as usize];
 
 // Borrows `backing` (lifetime-bound, zero-copy). `stride_bytes` is BYTES
@@ -127,6 +140,11 @@ returning `At<BufferError>` (`InsufficientData` / `StrideTooSmall` /
 `StrideNotPixelAligned` / `AlignmentViolation`) on a mismatch.
 
 ## Format conversion (zenpixels-convert)
+
+> **Review:** This descriptor-only example does not resolve attached ICC/context.
+> The complete proposal prepares a fallible worker once, with explicit policy and
+> a checked no-allocation execution capacity. The custom-ICC example below does
+> not itself supply ICC bytes. [Conversion/CMS review](docs/readme-contract-review.md#conversion-examples-and-cms).
 
 ```rust
 use zenpixels::PixelBuffer;
@@ -206,7 +224,7 @@ Bgra8, Rgbx8, Bgrx8, Cmyk8, OklabF32, OklabaF32
 F16 variants are descriptor-only today — typed `Pixel` impls land when Rust
 stable ships native `f16`.
 
-**`PixelDescriptor`** wraps a `PixelFormat` with everything needed to interpret the color data:
+**`PixelDescriptor`** wraps a `PixelFormat` with basic color semantics:
 
 ```rust
 pub struct PixelDescriptor {
@@ -256,6 +274,11 @@ Every buffer carries one. Every codec declares which ones it produces and consum
 `None` means the format has no alpha channel at all; `Some(Undefined)` (the `X` formats) means the lane is present but its bytes are padding, not coverage. Every constant that does carry alpha defaults to **straight** (unassociated) — never premultiplied. Transfer-agnostic siblings (`RGB8`, `RGBA8`, `RGB16`, … without the `_SRGB`/`_LINEAR` suffix) are identical except `transfer = Unknown`; reach for those when you don't yet know the encoding and want to stamp it later with `with_transfer(...)`.
 
 ### CICP and ICC
+
+> **Review:** Current encoding, attached profiles and source provenance need an
+> explicit authority rule. Re-embedding an original profile may require converting
+> pixels back to it. ICC synthesis alone does not perform YCbCr conversion.
+> [Descriptor/context review](docs/readme-contract-review.md#descriptors-icc-cicp-and-provenance).
 
 `Cicp` carries ITU-T H.273 code points (used by AVIF, HEIF, JPEG XL, AV1). Named constants for `SRGB`, `DISPLAY_P3`, `BT2100_PQ`, `BT2100_HLG`. Human-readable name lookups via `color_primaries_name()` etc.
 
@@ -311,14 +334,35 @@ Row and byte accessors live on `PixelSlice` / `PixelSliceMut`; reach them from a
 
 Row-level: `row(y)` returns pixel bytes without padding. `row_with_stride(y)` includes padding.
 
-Bulk: `as_strided_bytes()` returns the full backing `&[u8]` including stride padding — zero-copy passthrough to GPU uploads, codec writers, or anything that takes a buffer + stride. `as_contiguous_bytes()` returns `Some` only when rows are tightly packed. `contiguous_bytes()` returns `Cow` — borrows when tight, copies to strip padding otherwise.
+Bulk: `as_strided_bytes()` returns this view's byte span with its stride, not the whole owning allocation. Pass dimensions and stride alongside it; final-row padding is not guaranteed. `as_contiguous_bytes()` returns `Some` only when rows are tightly packed. `contiguous_bytes()` returns `Cow` — borrows when tight, copies to strip padding otherwise.
 
 Views: `sub_rows(y, count)` and `crop_view(x, y, w, h)` are zero-copy. `crop_copy()` allocates.
 
+### Ownership handoff and packed rows
+
+`into_parts()` moves the allocation, offset, stride, dimensions, descriptor and
+color context together. It does not allocate, copy pixels or clone the context.
+If the receiver requires packed rows, compact first:
+
+```rust
+use zenpixels::PixelBufferParts;
+
+let PixelBufferParts {
+    data, offset, stride_bytes, width, height, descriptor, color_context, ..
+} = buffer.into_contiguous().into_parts();
+let packed_pixels = &data[offset..];
+```
+
+`into_contiguous()` returns the same buffer type, preserving its metadata.
+It moves padded rows within the existing allocation, preserving pointer and
+capacity, and truncates trailing bytes. Already packed rows need no pixel moves.
+The alignment offset is preserved: **packed rows do not imply offset zero**.
+For a receiver accepting stride, call `into_parts()` directly and avoid compaction.
+
 ### Dimensions and descriptor
 
-Read a buffer's geometry and color semantics directly — these accessors exist
-on `PixelBuffer`, `PixelSlice`, and `PixelSliceMut` alike:
+Read a buffer's geometry and color semantics directly. Views share `width()`,
+`stride()` and `descriptor()`, but use `rows()` in place of `height()`:
 
 ```rust
 let w: u32          = buf.width();        // pixels
@@ -333,18 +377,28 @@ the descriptor is a small `Copy` struct, so read its fields freely
 
 ### Allocation
 
+> **Review:** Constructor checks need the geometry/empty-view repairs described in
+> the [buffer review](docs/readme-contract-review.md#wrapping-borrowing-and-buffer-access).
+> Parts extraction is implemented; checked strided ownership adoption remains proposed.
+
 `PixelBuffer::new(w, h, desc)` / `try_new()` allocate a zero-filled buffer with
 tight stride; `new_simd_aligned()` / `try_new_simd_aligned()` pad rows for SIMD;
 [`from_vec(data, w, h, desc)`](#wrapping-a-decoders-vecu8-no-copy) wraps an
 existing `Vec<u8>` (tight stride, no copy). The `try_*` variants return
 `Result<_, At<BufferError>>` (a [`whereat`](https://crates.io/crates/whereat)
 location wrapper around [`BufferError`] — `AllocationFailed`, `InvalidDimensions`,
-`InsufficientData`, `StrideTooSmall`, …); the un-prefixed forms panic on failure
+`InsufficientData`, `StrideTooSmall`, …); `new` and `new_simd_aligned` panic on failure
 (see [allocation policy](https://docs.rs/zenpixels/latest/zenpixels/#allocation-policy)).
-All constructors validate dimensions, stride, and alignment. `into_vec()`
-recovers the allocation for pool reuse.
+All constructors validate dimensions, stride, and alignment. `into_parts()`
+recovers the allocation with its description; `into_vec()` recovers only the
+allocation for pool reuse and discards layout/color information.
 
 ### In-place layout transforms
+
+> **Review:** The guarantees in this section need narrowing: arbitrary transforms
+> are not transactional; known color changes cannot be mere retags; rectangular
+> in-place transpose allocates a visited array. Avoiding a second pixel buffer is
+> not allocation-free. [In-place review](docs/readme-contract-review.md#orientation-and-in-place-operations).
 
 Layout-changing in-place work goes through one atomic primitive:
 `PixelBuffer::transform_in_place` runs a transform over the buffer's own
@@ -398,6 +452,11 @@ Three entry points: `best_match()` (simple), `best_match_with()` (with consumer 
 
 ### No silent lossy conversions
 
+> **Review:** This is an intended guarantee, not fully enforced today.
+> `forbid_lossy` still allows clipping, provenance alone cannot prove sample
+> preservation, and output metadata can disagree with converted pixels.
+> [Preservation/output/HDR changes](docs/readme-contract-review.md#negotiation-preservation-output-and-hdr).
+
 Every operation that destroys information requires an explicit policy via `ConvertOptions`:
 
 - **Alpha removal**: `DiscardIfOpaque`, `CompositeOnto { r, g, b }`, `DiscardUnchecked`, or `Forbid`
@@ -428,13 +487,30 @@ Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `C
 
 ### Resource estimation
 
+Enable `estimation-experimental` to opt in without warnings. The 0.2 bridge
+retains the API without the feature, deprecated; the proposed 0.3.1 requires
+that feature with the same opted-in signatures.
+
+> **Review:** The shape-compatibility claim below is not established by the current
+> zencodec types. Estimates are heuristics, not allocation limits; core-count
+> scaling does not parallelize execution. [Estimation review](docs/readme-contract-review.md#resource-estimation).
+
 `ConvertPlan::estimate(w, h)` (and `estimate_in(&ImageCharacteristics, &ComputeEnvironment)`) predicts a plan's `peak_memory_bytes_est`, `wall_ms` (already scaled to core count), and `intermediate_buffer_count` *before* running it — cheap to call (walks the planned steps, no row work, no allocation), so schedulers and throttlers can budget ahead. The estimate types are shape-compatible with `zencodec::estimate::*` for wiring `decode → convert → encode` across the boundary, without `zenpixels-convert` depending on `zencodec`. See the [zenpixels-convert README](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/README.md#resource-estimation) for the full contract.
 
 ## Planar support
 
+> **Review:** The existing owned container is not a complete borrowed YUV boundary.
+> SVT, AOM and the new VMAF code justify shared validated plane views; CVVDP's
+> planar input is RGB and needs explicit YCbCr conversion.
+> [Concrete callers and proposed contract](docs/yuv-carrier-assessment.md).
+
 With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `Subsampling` (4:2:0/4:2:2/4:4:4/4:1:1), `YuvMatrix`, and `MultiPlaneImage` container. Handles YCbCr, Oklab planes, gain maps, and separate alpha planes.
 
 ## Features
+
+> **Review:** Historical removal queues below do not supersede the proposed
+> common-source contract. Preserve recognized feature names/stubs and test both
+> release lines. [Features, docs.rs and compilation review](docs/readme-contract-review.md#features-docsrs-build-time-and-remaining-sections).
 
 ### zenpixels
 
@@ -459,6 +535,7 @@ With the `planar` feature: `PlaneLayout`, `PlaneDescriptor`, `PlaneSemantic`, `S
 | `imgref` | | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
 | `planar` | | Multi-plane image types |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
+| `estimation-experimental` | | Explicit resource-estimation opt-in; without it the 0.2 bridge retains the API with warnings; proposed 0.3.1 requires it |
 | `hdr-experimental` | | Native HDR→SDR display mapping inside `ConvertPlan` (BT.2446 Method A + OKLch soft compress + CTA-861.3 CLL measurement); API shape may move ahead of 0.3.0 |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
 | `serde` | | No-op stub (soft-removed in 0.2.15, queued for removal); previously forwarded to `zenpixels/serde` |

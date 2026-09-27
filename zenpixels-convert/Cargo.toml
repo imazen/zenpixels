@@ -22,6 +22,7 @@ include = [
 [package.metadata.docs.rs]
 features = [
     "hdr-experimental",
+    "estimation-experimental",
     "pipeline",
     "cms-moxcms",
     "rgb",
@@ -62,6 +63,10 @@ rgb = ["zenpixels/rgb", "dep:rgb"]
 imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]
 pipeline = []
+# Explicit opt-in to the estimation API accidentally exposed by default in
+# 0.2.16. Without this feature it remains available but deprecated in 0.2.x;
+# 0.3.1 will require the feature while retaining the opted-in signatures.
+estimation-experimental = []
 # Experimental HDR analysis surface (gates `hdr::measure` — the `CllMeasure`
 # extension trait + `LightLevelHistogram` / `LightLevelMethod` + the SIMD
 # CLL scan kernel). The underlying scan + accuracy contracts are stable —
@@ -285,6 +290,11 @@ required-features = ["__bench_orient"]
 # path = "benches/bench_fast_p3.rs"
 # harness = false
 # required-features = ["cms-moxcms"]
+
+[[example]]
+name = "mem_probe_convert"
+path = "examples/mem_probe_convert.rs"
+required-features = ["estimation-experimental"]
 
 [[example]]
 name = "measure_histogram_throughput"
