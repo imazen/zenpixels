@@ -1,5 +1,8 @@
 # API and contract proposal: 0.2 bridge → 0.3.1
 
+For one reading document covering this design plus cleanup, consumers, YUV,
+streaming and docs, see the [consolidated review](zenpixels-0.2-and-0.3-review.md).
+
 Draft for signature and scope review, 2026-09-27, against `main@17c78d9`.
 This is a design and PR breakdown, not a release promise already satisfied by
 current code. Implemented increments are marked explicitly; other new names and

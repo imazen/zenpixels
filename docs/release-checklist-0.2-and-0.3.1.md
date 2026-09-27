@@ -1,5 +1,8 @@
 # Remaining work: 0.2 bridge and 0.3.1
 
+Start with the [consolidated review](zenpixels-0.2-and-0.3-review.md) for all
+proposals, status, API cleanup and decisions in one document.
+
 Status: 2026-09-27. This is the short execution checklist; the
 [contract proposal](api-contract-proposal-0.2-and-0.3.1.md) holds the detailed
 design and the [migration cards](migration-examples-and-audit-0.3.1.md) hold

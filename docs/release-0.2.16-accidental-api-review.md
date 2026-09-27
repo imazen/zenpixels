@@ -241,7 +241,7 @@ accidentally introduced in 0.2.16:
 | Free orientation functions | Present in 0.2.14. Keep per current design; unnecessary method aliases are not obligatory recovery work |
 | pipeline module/feature | Already published in 0.2.14; separate cleanup decision, not part of accidental estimation exposure |
 | planar::Plane and REC2020_V4 | Already published in 0.2.14; separate actionable deprecations if removing |
-| DiffuseWhite::new | Already published in 0.2.14; deprecate together with the checked constructor, not as a new 0.2.16 mistake |
+| DiffuseWhite::new | Already published in 0.2.14; owner subsequently chose to retain its const signature and panic on invalid values, now implemented without deprecation |
 
 Already deprecated in the published 0.2.16 sources: Adapted and the three old
 adapters, ContentLightLevel::measure, and the naive Reinhard/exposure helpers.
