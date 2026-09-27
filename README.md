@@ -15,6 +15,11 @@ Pixel format types and transfer-function-aware conversion for Rust image codecs.
 > packing, rounding and range. The [implementation ledger](docs/implementation-status-0.2-and-0.3.md)
 > lists completed work and remaining defects; the release implementation is incomplete.
 
+Native codec planes can now carry a checked
+[`sample::SampleEncoding`](docs/sample-encoding-contract.md): storage width,
+code depth and bit placement remain explicit. This additive bridge preserves
+the existing RGB/gray U16 domain while the media APIs are validated in zenmedia.
+
 A JPEG decoder gives you `RGB8` in sRGB. An AVIF decoder gives you `RGBA16` in BT.2020 PQ. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
 
 zenpixels makes pixel format descriptions first-class types that travel with the data. The conversion crate handles transfer functions, gamut matrices, depth scaling, and alpha compositing so codecs don't have to.

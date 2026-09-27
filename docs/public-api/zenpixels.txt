@@ -8,20 +8,20 @@
 
 ## summary
 #
-#   pub modules                                10
-#   pub types (struct/enum/trait/alias)        82
-#   pub consts/statics                        280
+#   pub modules                                11
+#   pub types (struct/enum/trait/alias)        84
+#   pub consts/statics                        284
 #   free functions                              4
 #   inherent methods                          252
 #   struct fields                             121
-#   enum variants                             212
+#   enum variants                             215
 #   re-exports                                  4
-#   trait roster entries (type × trait)       247
-#   auto-trait-complete types                  35
+#   trait roster entries (type × trait)       260
+#   auto-trait-complete types                  37
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          409
+#   (root)                          414
 #   buffer                          244
 #   cicp                             27
 #   color                            64
@@ -31,8 +31,9 @@
 #   orientation                      11
 #   pixel_types                       9
 #   policy                           25
+#   sample                            5
 
-## items (830 lines)
+## items (840 lines)
 
 pub mod zenpixels
 pub use At
@@ -490,6 +491,16 @@ pub const fn policy::ConvertOptions::with_clip_out_of_gamut(self, bool) -> Self 
 pub const fn policy::ConvertOptions::with_depth_policy(self, policy::DepthPolicy) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_gray_expand(self, policy::GrayExpand) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_luma(self, core::option::Option<policy::LumaCoefficients>) -> Self [also: (root)]
+pub mod sample
+#[non_exhaustive] pub enum sample::SampleEncodingError
+pub sample::SampleEncodingError::InvalidBitDepth
+pub sample::SampleEncodingError::InvalidBitShift
+pub sample::SampleEncodingError::UnsupportedStorage
+pub struct sample::SampleEncoding
+pub const fn sample::SampleEncoding::bit_shift(self) -> u8
+pub const fn sample::SampleEncoding::code_bits(self) -> u8
+pub const fn sample::SampleEncoding::new(descriptor::ChannelType, u8, u8) -> core::result::Result<Self, sample::SampleEncodingError>
+pub const fn sample::SampleEncoding::storage(self) -> descriptor::ChannelType
 #[non_exhaustive] #[repr(u8)] pub enum AlphaMode [also: descriptor]
 pub AlphaMode::Opaque = 4
 pub AlphaMode::Premultiplied = 3
@@ -865,7 +876,7 @@ pub Rgbx::x: u8
 pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 
-## trait impls (45 types)
+## trait impls (47 types)
 
 buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
@@ -912,6 +923,8 @@ policy::ConvertOptions: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::DepthPolicy: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::GrayExpand: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::LumaCoefficients: Clone, Copy, Debug, Eq, Hash, PartialEq
+sample::SampleEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
+sample::SampleEncodingError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 
 ## auto traits
 
