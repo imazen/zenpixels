@@ -1,7 +1,7 @@
 # Bridge validation, 2026-09-27
 
 Source: main after #75 (`197a38b`), storage `373f600`, conversion `3340940`, plus
-its API-compatibility follow-up. No package was published or version floor widened.
+its API-compatibility follow-up. Both crates are staged at 0.2.17; the converter core floor is 0.2.17 because it uses the new descriptor validation. No package was published.
 
 - Workspace all-feature tests and strict all-feature Clippy pass.
 - 27 distinct corrected review cases pass in default/CMS and minimal builds.
@@ -79,3 +79,9 @@ python3 scripts/check-compile-cost.py 197a38b c9fea15 --out /tmp/compile-cost.js
 ```
 
 Raw results: [compile-cost JSON](../benchmarks/bridge-compile-cost-2026-09-27.json).
+
+## Packaging
+
+`cargo package -p zenpixels -p zenpixels-convert --allow-dirty` builds and verifies
+both 0.2.17 archives, including the converter against Cargo’s staged core registry.
+Package warnings only note intentionally excluded integration-test files.
