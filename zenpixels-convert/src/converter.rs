@@ -142,7 +142,7 @@ impl RowConverter {
 
         // Check before CMS setup: its profile/format interface cannot express
         // the missing narrow-range depth scaling either.
-        crate::convert::validate_signal_range(from, to)?;
+        crate::convert::validate_descriptors(from, to)?;
 
         // CMS dispatch chain. Fires when:
         //   - primaries differ (cross-gamut RGB↔RGB, where ZenCmsLite or

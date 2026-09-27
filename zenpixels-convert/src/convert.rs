@@ -20,10 +20,14 @@ use whereat::{At, ResultAtExt};
 /// Shared with CMS dispatch so an external descriptor-only plan cannot bypass
 /// the range contract before a backend is asked to prepare a transform.
 #[track_caller]
-pub(crate) fn validate_signal_range(
+pub(crate) fn validate_descriptors(
     from: PixelDescriptor,
     to: PixelDescriptor,
 ) -> Result<(), At<ConvertError>> {
+    from.validate()
+        .map_err(|e| whereat::at!(ConvertError::Buffer(e)))?;
+    to.validate()
+        .map_err(|e| whereat::at!(ConvertError::Buffer(e)))?;
     if from.signal_range != to.signal_range
         || (from.signal_range == zenpixels::SignalRange::Narrow
             && from.channel_type() != to.channel_type())
@@ -539,6 +543,7 @@ impl ConvertPlan {
     /// through `RowConverter` for that.
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
+        validate_descriptors(from, to)?;
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
@@ -555,7 +560,6 @@ impl ConvertPlan {
         // range is preserved verbatim or the conversion fails loudly.
         // Narrow depth changes also need their own scaling: e.g. narrow
         // U8 white 235 must widen to 60160, not full-scale 60395.
-        validate_signal_range(from, to)?;
 
         // Refuse HLG↔PQ. HLG is scene-referred — these kernels apply only its
         // OETF, with no OOTF and no `Lw`/peak — while PQ is absolute display
@@ -1033,7 +1037,7 @@ impl ConvertPlan {
         // perform.
 
         // Same endpoint range/depth restrictions as the ordinary planner.
-        validate_signal_range(from, to)?;
+        validate_descriptors(from, to)?;
 
         // The pipeline: src → linear-F32-in-source-primaries → (source→BT.2020)
         // → ToneMap → (BT.2020→target) → SoftCompress → target-encode.

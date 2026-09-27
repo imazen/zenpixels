@@ -183,12 +183,22 @@ fn into_adapted<'a>(pixels: PixelCow<'a>) -> Adapted<'a> {
             width: slice.width(),
             rows: slice.rows(),
         },
-        PixelCow::Owned(buffer) => Adapted {
-            data: Cow::Owned(buffer.copy_to_contiguous_bytes()),
-            descriptor: buffer.descriptor(),
-            width: buffer.width(),
-            rows: buffer.height(),
-        },
+        PixelCow::Owned(buffer) => {
+            let parts = buffer.into_contiguous().into_parts();
+            let mut data = parts.data;
+            let len =
+                parts.width as usize * parts.height as usize * parts.descriptor.bytes_per_pixel();
+            if parts.offset != 0 {
+                data.copy_within(parts.offset..parts.offset + len, 0);
+            }
+            data.truncate(len);
+            Adapted {
+                data: Cow::Owned(data),
+                descriptor: parts.descriptor,
+                width: parts.width,
+                rows: parts.height,
+            }
+        }
     }
 }
 

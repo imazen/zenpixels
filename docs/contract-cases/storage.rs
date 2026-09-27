@@ -37,19 +37,21 @@ mod tests {
         assert_eq!(d.alpha, PixelFormat::Rgbx8.default_alpha());
     }
     #[test]
-    fn named_pq_cicp_roundtrip_changes_resolution() {
+    fn named_pq_cicp_roundtrip_agrees() {
         let named = ColorProfileSource::Named(NamedProfile::Bt2020Pq);
         let cicp = ColorProfileSource::Cicp(NamedProfile::Bt2020Pq.to_cicp().unwrap());
         assert!(named.resolve().is_some());
-        assert!(cicp.resolve().is_none());
+        assert_eq!(cicp.resolve(), named.resolve());
     }
     #[test]
-    fn pixel_format_alpha_and_descriptor_alpha_can_disagree() {
+    fn contradictory_descriptors_are_rejected_at_boundaries() {
         let d = PixelDescriptor::RGBX8.with_alpha(Some(AlphaMode::Straight));
         assert_eq!(d.pixel_format(), PixelFormat::Rgbx8);
         assert!(d.has_alpha());
+        assert!(PixelBuffer::try_new(1, 1, d).is_err());
         let d = PixelDescriptor::RGB8.with_alpha(Some(AlphaMode::Premultiplied));
         assert!(d.has_alpha());
+        assert!(PixelBuffer::try_new(1, 1, d).is_err());
         assert!(!d.pixel_format().has_alpha_bytes());
     }
 }

@@ -129,7 +129,7 @@ mod tests {
         assert_eq!(cloned, [1, 2, 3]);
     }
     #[test]
-    fn reinterpret_accepts_invalid_alignment() {
+    fn reinterpret_rejects_invalid_alignment() {
         let data = [0u8; 8];
         let offset = (0..4)
             .find(|&i| (data.as_ptr() as usize + i) % 4 != 0)
@@ -138,15 +138,13 @@ mod tests {
         let s = PixelSlice::new(bytes, 1, 1, 4, PixelDescriptor::RGBA8_SRGB).unwrap();
         let f = PixelFormat::GrayF32.descriptor();
         assert!(PixelSlice::new(bytes, 1, 1, 4, f).is_err());
-        assert!(s.reinterpret(f).is_ok());
+        assert!(s.reinterpret(f).is_err());
     }
     #[test]
-    fn typed_reinterpret_retains_wrong_type() {
+    fn typed_reinterpret_rejects_wrong_type() {
         let mut data = [1u8, 2, 3, 4];
         let s = PixelSliceMut::<rgb::RGBA<u8>>::new_typed(&mut data, 1, 1, 1).unwrap();
-        let s: PixelSliceMut<'_, rgb::RGBA<u8>> =
-            s.reinterpret(PixelDescriptor::BGRA8_SRGB).unwrap();
-        assert_eq!(s.descriptor().pixel_format(), PixelFormat::Bgra8);
+        assert!(s.reinterpret(PixelDescriptor::BGRA8_SRGB).is_err());
     }
     #[test]
     fn layout_helper_preserves_color_and_alpha() {

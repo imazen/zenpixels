@@ -30,6 +30,14 @@
 
 ### zenpixels — fixed
 
+- Validate alpha declarations at buffer and conversion acceptance boundaries.
+  Reinterpretation checks destination alignment; typed views require explicit
+  erasure before changing physical layout. Empty views avoid unused offset
+  arithmetic. Typed constructors check stride overflow and preserve alignment.
+- Padded U8 typed exports compact in place and reuse compatible allocations;
+  legacy owned-cow adapters move their storage instead of copying it.
+- Named PQ/HLG RGB profiles emit identity-matrix CICP matching their resolution.
+
 - Preserve ImgVec storage/stride, color semantics through RGB/BGR swaps, and
   format padding semantics through CICP descriptor construction. Empty-width
   crop rows return empty slices. Gamut containment uses actual supported

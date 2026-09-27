@@ -99,8 +99,8 @@ impl NamedProfile {
                 matrix_coefficients: 0,
                 full_range: true,
             }),
-            Self::Bt2020Pq => Some(Cicp::BT2100_PQ),
-            Self::Bt2020Hlg => Some(Cicp::BT2100_HLG),
+            Self::Bt2020Pq => Some(Cicp::new(9, 16, 0, true)),
+            Self::Bt2020Hlg => Some(Cicp::new(9, 18, 0, true)),
             Self::LinearSrgb => Some(Cicp {
                 color_primaries: 1,
                 transfer_characteristics: 8,
@@ -534,7 +534,10 @@ mod tests {
     #[test]
     fn named_profile_to_cicp() {
         assert_eq!(NamedProfile::Srgb.to_cicp(), Some(Cicp::SRGB));
-        assert_eq!(NamedProfile::Bt2020Pq.to_cicp(), Some(Cicp::BT2100_PQ));
+        assert_eq!(
+            NamedProfile::Bt2020Pq.to_cicp(),
+            Some(Cicp::new(9, 16, 0, true))
+        );
         assert!(NamedProfile::AdobeRgb.to_cicp().is_none());
     }
 

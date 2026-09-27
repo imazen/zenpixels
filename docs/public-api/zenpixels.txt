@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)        82
 #   pub consts/statics                        280
 #   free functions                              4
-#   inherent methods                          252
+#   inherent methods                          254
 #   struct fields                             121
 #   enum variants                             212
 #   re-exports                                  4
@@ -25,14 +25,14 @@
 #   buffer                          244
 #   cicp                             27
 #   color                            64
-#   descriptor                      148
+#   descriptor                      150
 #   hdr                              15
 #   icc                              13
 #   orientation                      11
 #   pixel_types                       9
 #   policy                           25
 
-## items (830 lines)
+## items (832 lines)
 
 pub mod zenpixels
 pub use At
@@ -398,6 +398,7 @@ pub const fn descriptor::PixelDescriptor::new_full(descriptor::ChannelType, desc
 pub const fn descriptor::PixelDescriptor::pixel_format(&self) -> descriptor::PixelFormat [also: (root)]
 pub const fn descriptor::PixelDescriptor::simd_aligned_stride(self, u32, usize) -> usize [also: (root)]
 pub const fn descriptor::PixelDescriptor::transfer(&self) -> descriptor::TransferFunction [also: (root)]
+pub fn descriptor::PixelDescriptor::validate(self) -> core::result::Result<(), buffer::BufferError>
 pub const fn descriptor::PixelDescriptor::with_alpha(self, core::option::Option<descriptor::AlphaMode>) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::with_primaries(self, descriptor::ColorPrimaries) -> Self [also: (root)]
@@ -801,6 +802,7 @@ pub const descriptor::PixelDescriptor::RGBF32: Self
 pub const descriptor::PixelDescriptor::RGBF32_LINEAR: Self
 pub const descriptor::PixelDescriptor::RGBX8: Self
 pub const descriptor::PixelDescriptor::RGBX8_SRGB: Self
+pub fn descriptor::PixelDescriptor::validate(self) -> core::result::Result<(), buffer::BufferError>
 #[non_exhaustive] pub struct PixelSlice<'a, P> [also: buffer]
 pub fn buffer::PixelSlice<'a, P>::new_typed(&'a [u8], u32, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSlice<'a, P>::as_contiguous_bytes(&self) -> core::option::Option<&'a [u8]>

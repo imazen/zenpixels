@@ -1,6 +1,6 @@
 # Implementation status: 0.2 bridge and 0.3.1
 
-2026-09-27, source audited at `b644ac6`, with the narrow-depth refusal update. **No, the complete requested
+2026-09-27, source audited at `b644ac6`, with the narrow-depth refusal and storage acceptance updates. **No, the complete requested
 implementation is not finished.** Review documents and chosen policies are not
 implemented APIs. Nothing here declares the bridge or 0.3.1 ready to release.
 
@@ -16,7 +16,7 @@ marks existing behavior, proposed operations and known incorrect routes.
 |---|---|---|
 | Accidental 0.2.16 API exposure | `requires_cms` warning; explicit `Adapted::as_pixel_slice` warning; estimation opt-in/warnings | External consumer warning checks; no blanket conversion API removal |
 | Anchor validation | `DiffuseWhite::new` rejects invalid values and remains const | Validity tests; HDR planning still needs work |
-| Ownership | `into_parts`, `try_from_parts`, `take_parts`, `without_buffer`, `into_contiguous` | Allocation/offset/stride/context tests; typed export reuse still pending |
+| Ownership | `into_parts`, `try_from_parts`, `take_parts`, `without_buffer`, `into_contiguous` | Allocation/offset/stride/context tests; typed U8 export reuse implemented for compatible allocator layouts |
 | Legacy planar retirement, first step | Whole module and re-export warnings | Warning probes; module removal and zenfilters migration not done |
 | Final-row extent | Owned views/transforms accept minimal visible final row | Adoption regression; broader zero-area/arithmetic audit not complete |
 | Small metadata/storage fixes (`7088a8b`) | Empty crop row read; primary containment; CICP padding; orientation context; four RGB/BGR swap helpers; ImgVec stride/storage | Core/convert contract regressions; not every metadata-mutating helper audited/fixed |
@@ -28,9 +28,9 @@ marks existing behavior, proposed operations and known incorrect routes.
 
 | Work | Status | What is still needed |
 |---|---|---|
-| Storage and typed layout | Partial | All zero-area/overflow paths; new alignment checks for reinterpretation; stop typed reinterpretation retaining a contradictory pixel type; validate contradictory descriptors at acceptance boundaries |
-| Remaining allocation reuse | Pending | Typed U8 exports and owned-cow paths from PR #63; prove reuse or document unavoidable allocator-layout copies; no speculative constructor family |
-| Current-color authority | Pending | Resolve descriptor/ICC/CICP/unknown assumptions once; named-PQ/CICP agreement; remove ambiguous fallback only after a working migration |
+| Storage and typed layout | Partial | Reinterpretation alignment/type guards and descriptor validation implemented; zero-area row/subview and checked constructor arithmetic hardened. Continue auditing imgref and unusual custom Pixel paths. |
+| Remaining allocation reuse | Done | Padded U8 typed exports compact in place and reuse compatible allocation layouts; legacy owned-cow adapters move their allocation. Higher alignment or nonintegral typed capacity requires a copy. |
+| Current-color authority | Pending | Resolve descriptor/ICC/CICP/unknown assumptions once; named-PQ/HLG CICP agreement fixed; remove ambiguous fallback only after a working migration |
 | RGBA→GrayAlpha and matte-to-gray | Pending | Correct luma and alpha/compositing order or reject unsupported route during planning |
 | Premultiplied nonlinear transfer | Pending | Unassociate/transform/reassociate correctly, preferably fused |
 | Content-dependent alpha checks | Pending | Owner chose explicit preflight or opt-in fused checks; enforce that contract rather than silently accepting unchecked RowConverter work |
@@ -54,18 +54,16 @@ tasks do not need another blanket approval. Concrete API spelling still needs
 to be justified by actual callers; numerical and cost policies already selected
 should not be reopened as permission questions.
 
-## Fifteen remaining reproduced defects
+## Eleven remaining reproduced defects
 
 The standalone [contract-case runner](../scripts/check-contract-cases.py) runs
 26 tests under each of default/CMS and minimal configurations: 27 distinct cases
-overall. Eleven verify fixes, one verifies the selected composition policy, and
-**fifteen still deliberately reproduce incorrect behavior**. Passing that runner
+overall. Fifteen verify fixes, one verifies the selected composition policy, and
+**eleven still deliberately reproduce incorrect behavior**. Passing that runner
 does not establish release correctness.
 
 | Case file | Remaining incorrect behavior |
 |---|---|
-| [storage](contract-cases/storage.rs) | Named PQ versus equivalent CICP resolves differently |
-| storage | Contradictory format/alpha declarations are accepted |
 | [conversion](contract-cases/conversion.rs) | RGBA→GrayAlpha is accepted as identity |
 | conversion | RowConverter does not enforce DiscardIfOpaque |
 | conversion | Composite-to-gray ignores the background |
@@ -77,10 +75,8 @@ does not establish release correctness.
 | output/CMS | Output ignores requested signal range |
 | output/CMS | CMS does not receive the actual ICC profiles |
 | output/CMS (minimal features) | Clone discards the external transform |
-| output/CMS | Reinterpretation accepts invalid sample alignment |
-| output/CMS | Typed reinterpretation retains the wrong pixel type |
 
-This is a known-case inventory, not a claim that only fifteen defects exist.
+This is a known-case inventory, not a claim that only eleven defects exist.
 For example, correct narrow-range cross-depth kernels and composition anchor
 handling are outstanding beyond this set. The new range guards reject narrow
 endpoint depth changes before conversion/CMS setup and prevent replicated-byte depth compaction of narrow U16. Correct narrow

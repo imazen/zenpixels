@@ -1278,6 +1278,23 @@ impl PixelDescriptor {
         align_up_general(raw, align)
     }
 
+    /// Validate that alpha semantics agree with the physical format.
+    ///
+    /// Descriptors remain freely constructible declarations. Buffer acceptance
+    /// and conversion planning call this before using them; no pixels are read.
+    pub fn validate(self) -> Result<(), crate::BufferError> {
+        let valid = match self.format.default_alpha() {
+            None => self.alpha.is_none(),
+            Some(AlphaMode::Undefined) => self.alpha == Some(AlphaMode::Undefined),
+            Some(_) => self.alpha.is_some(),
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(crate::BufferError::IncompatibleDescriptor)
+        }
+    }
+
     /// Whether this descriptor's channel type and layout are compatible with `other`.
     ///
     /// "Compatible" means the raw bytes can be reinterpreted as `other`
@@ -1304,7 +1321,7 @@ const fn lcm(a: usize, b: usize) -> usize {
     if a == 0 || b == 0 {
         0
     } else {
-        a / gcd(a, b) * b
+        (a / gcd(a, b)).saturating_mul(b)
     }
 }
 
