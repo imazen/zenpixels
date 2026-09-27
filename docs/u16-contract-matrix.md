@@ -1,6 +1,6 @@
 # U16 contract matrix
 
-2026-09-27, implementation audited at `b644ac6`. **This is a contract and
+2026-09-27. Base audit at `b644ac6`; updated with narrow-depth refusal guards. **This is a contract and
 implementation matrix, not a claim that all entries are supported.** Start with
 the representation table, then choose the numeric operation. Applying the wrong
 operation quickly is still incorrect.
@@ -172,10 +172,10 @@ limits. Padding validation does not check any of these signal limits.
 | Left-align N-bit storage | `w = q << (16-N)` | Code-exact packing | Writes/reuses destination; no proof scan | Proposed raw-code adapter |
 | Full-range widening | `F(N,M,q)` | Original codes recoverable; rational intensity approximated when necessary | One pass or fused with other work | Existing 8→16; raw 10/12 pending |
 | Ordinary full-range narrowing | `F(N,M,q)` | Lossy for arbitrary source | One pass; no losslessness preflight | Existing 16→8; raw 10/12 pending |
-| Proven replicated-U16 compaction, full range | Select one identical byte; inverse `b*257` | Exact on proved subset | Existing analysis plus rewrite; proof must reflect current pixels | Existing; range-aware eligibility and U16 scan fusion pending |
+| Proven replicated-U16 compaction, full range | Select one identical byte; inverse `b*257` | Exact on proved subset | Existing analysis plus rewrite; proof must reflect current pixels | Full-range eligibility guarded; U16 scan fusion pending |
 | Exact compaction of left-padded raw codes | Shift back under known encoding | Exact codes; canonical repack matches payload | No scan needed for interpretation; strict padding check optional | Proposed |
-| Narrow→narrow widening | `q << (M-N)` | Exact code/anchor scaling | One pass or fused | Current full-scale route needs fix/refusal |
-| Narrow→narrow narrowing | Round `q / 2^(N-M)` | Generally lossy; ties possible | One pass; apply explicit destination limits | Pending |
+| Narrow→narrow widening | `q << (M-N)` | Exact code/anchor scaling | One pass or fused | Refused pending range-aware kernel |
+| Narrow→narrow narrowing | Round `q / 2^(N-M)` | Generally lossy; ties possible | One pass; apply explicit destination limits | Refused pending range-aware kernel |
 | Full↔narrow RGB/Y′ | Decode source offset/span, encode destination offset/span | Often lossy; excursions may exceed destination domain | One pass possible; specify clipping/refusal | Currently refused |
 | Full/narrow chroma conversion | Offset-aware affine map, with source/destination chroma spans | Generally lossy; must preserve neutral | One pass possible; explicit limits | No YCbCr API yet |
 | Transfer-changing narrowing | Decode transfer, encode target, quantize once | Generally lossy | Existing lookup execution; first-use setup is currently hidden | Existing limited SDR pairs; preparation fix pending |
@@ -184,13 +184,13 @@ limits. Padding validation does not check any of these signal limits.
 | Dithered narrowing | Explicit quantizer and noise/error policy | Intentionally lossy; not bit-exact inversion | Adds per-pixel work, possibly row state; no automatic prepass | Not proposed as an implicit default |
 | YCbCr→RGB | Chroma reconstruction, range/matrix conversion; transfer as requested | Beyond bit-depth conversion | May require neighboring rows/halos; no implicit RGB copy on handoff | Video backend work pending |
 
-**Existing analysis also needs a range guard.** `uses_low_bits == Some(false)`
+**Analysis now has a range guard.** `uses_low_bits == Some(false)`
 checks byte replication, independently of `SignalRange`. For narrow U16,
 `0x1010 = 4112` decodes to `(4112-4096)/56064`, but extracting `0x10` as narrow
 U8 decodes to zero. Re-expansion by 257 recovers the bytes while reproducing the
 original range bug. Narrow 16→8 lossless eligibility instead needs code-domain
 scaling (multiples of 256 within the destination code domain), plus its applicable
-format limits. Until implemented, refuse that semantic reduction. Do not change
+format limits. The reduction now keeps narrow data at U16. Do not change
 the meaning of the public report field to silently stand for a different proof.
 
 “No scan” means no additional content-analysis pass. A transformation that

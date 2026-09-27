@@ -29,6 +29,12 @@ zenpixels = "0.2.16"
 zenpixels-convert = "0.2.16"
 ```
 
+Full-range U8↔U16 conversion uses exact endpoint scaling and nearest narrowing.
+Narrow-range depth changes currently return `ConvertError::NoPath` before
+execution; lossless reduction retains narrow U16 at U16. Same-depth identity and
+value-preserving layout changes remain available. No range-aware kernels are
+introduced by this refusal guard.
+
 ## Quick start
 
 > **Review:** Typed layout does not establish color interpretation.

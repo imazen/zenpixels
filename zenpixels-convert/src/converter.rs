@@ -140,6 +140,10 @@ impl RowConverter {
     ) -> Result<Self, At<ConvertError>> {
         use crate::policy::{AlphaPolicy, DepthPolicy};
 
+        // Check before CMS setup: its profile/format interface cannot express
+        // the missing narrow-range depth scaling either.
+        crate::convert::validate_signal_range(from, to)?;
+
         // CMS dispatch chain. Fires when:
         //   - primaries differ (cross-gamut RGB↔RGB, where ZenCmsLite or
         //     moxcms supplies a matlut / 3x3+TF transform), OR

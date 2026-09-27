@@ -16,6 +16,23 @@ use crate::{
 };
 use whereat::{At, ResultAtExt};
 
+/// Reject range operations for which the planner has no correct kernels.
+/// Shared with CMS dispatch so an external descriptor-only plan cannot bypass
+/// the range contract before a backend is asked to prepare a transform.
+#[track_caller]
+pub(crate) fn validate_signal_range(
+    from: PixelDescriptor,
+    to: PixelDescriptor,
+) -> Result<(), At<ConvertError>> {
+    if from.signal_range != to.signal_range
+        || (from.signal_range == zenpixels::SignalRange::Narrow
+            && from.channel_type() != to.channel_type())
+    {
+        return Err(whereat::at!(ConvertError::NoPath { from, to }));
+    }
+    Ok(())
+}
+
 /// HDR→SDR tone-mapping configuration for
 /// [`ConvertPlan::new_with_hdr_config`].
 ///
@@ -509,7 +526,9 @@ impl ConvertPlan {
     /// Returns `Err` if no conversion path exists. A
     /// [`SignalRange`](zenpixels::SignalRange) mismatch always refuses
     /// ([`ConvertError::NoPath`]): there are no Narrow↔Full conversion
-    /// kernels, and relabeling without rescaling would corrupt pixels — see
+    /// kernels. Narrow-range channel-type changes also refuse: existing depth
+    /// kernels use full-range scaling and cannot preserve narrow anchors.
+    /// Relabeling without correct rescaling would corrupt pixels — see
     /// the signal-range notes on the [crate docs](crate#step-3-convert).
     ///
     /// CMYK (and any other non-native color model) returns
@@ -534,10 +553,9 @@ impl ConvertPlan {
         // when narrow data is labeled full, crushed when full data is later
         // expanded as narrow), not a conversion. Until range kernels land,
         // range is preserved verbatim or the conversion fails loudly.
-        // Same-range plans (including Narrow→Narrow) are unaffected.
-        if from.signal_range != to.signal_range {
-            return Err(whereat::at!(ConvertError::NoPath { from, to }));
-        }
+        // Narrow depth changes also need their own scaling: e.g. narrow
+        // U8 white 235 must widen to 60160, not full-scale 60395.
+        validate_signal_range(from, to)?;
 
         // Refuse HLG↔PQ. HLG is scene-referred — these kernels apply only its
         // OETF, with no OOTF and no `Lw`/peak — while PQ is absolute display
@@ -1014,11 +1032,8 @@ impl ConvertPlan {
         // would silently skip the HDR work the constructor was called to
         // perform.
 
-        // Same signal-range posture as `new` — Narrow↔Full crossings refuse
-        // because no kernels exist yet.
-        if from.signal_range != to.signal_range {
-            return Err(whereat::at!(ConvertError::NoPath { from, to }));
-        }
+        // Same endpoint range/depth restrictions as the ordinary planner.
+        validate_signal_range(from, to)?;
 
         // The pipeline: src → linear-F32-in-source-primaries → (source→BT.2020)
         // → ToneMap → (BT.2020→target) → SoftCompress → target-encode.

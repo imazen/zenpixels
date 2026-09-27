@@ -151,6 +151,15 @@ impl fmt::Display for ConvertError {
                         from.signal_range, to.signal_range
                     )?;
                 }
+                if from.signal_range == crate::SignalRange::Narrow
+                    && to.signal_range == crate::SignalRange::Narrow
+                    && from.channel_type() != to.channel_type()
+                {
+                    write!(
+                        f,
+                        " (narrow signal range depth conversion is unsupported; full-range scaling would change the signal)"
+                    )?;
+                }
                 Ok(())
             }
             Self::BufferSize { expected, actual } => {

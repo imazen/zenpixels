@@ -582,11 +582,10 @@ impl fmt::Display for ColorPrimaries {
 /// **There are no Narrow↔Full conversion kernels yet.** `zenpixels-convert`
 /// refuses range-crossing conversions rather than relabeling (relabeling
 /// without rescaling lifts or crushes blacks); narrow data must be preserved
-/// verbatim end-to-end. Caveat while that holds: cross-*depth* conversion of
-/// narrow data uses full-scale rescaling (×(2^M−1)/(2^N−1)), which maps ITU
-/// anchors only approximately (8-bit 235 widens to 60 395 where the ITU
-/// 16-bit anchor is 235·256 = 60 160, ≈0.36 % of full scale); exact anchor
-/// remapping is the future range kernels' job.
+/// by value-preserving operations. `zenpixels-convert` also refuses narrow-range
+/// channel-type changes (including U8↔U16) until range-aware kernels exist.
+/// Full-range widening by 257 would map narrow U8 white 235 to 60395 rather than
+/// the correct U16 anchor 60160. Full-range U8↔U16 conversions remain supported.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 #[repr(u8)]
