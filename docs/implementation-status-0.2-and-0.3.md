@@ -1,6 +1,6 @@
 # Implementation status: 0.2 bridge and 0.3.1
 
-2026-09-27, source audited at `b644ac6`. **No, the complete requested
+2026-09-27, source audited at `b644ac6`, with the narrow-depth refusal update. **No, the complete requested
 implementation is not finished.** Review documents and chosen policies are not
 implemented APIs. Nothing here declares the bridge or 0.3.1 ready to release.
 
@@ -81,9 +81,10 @@ does not establish release correctness.
 | output/CMS | Typed reinterpretation retains the wrong pixel type |
 
 This is a known-case inventory, not a claim that only fifteen defects exist.
-For example, narrow-range cross-depth arithmetic and composition anchor handling
-are outstanding beyond this set. The U16 matrix also identifies replicated-byte
-compaction as insufficient proof for narrow-range semantic preservation. Keep
+For example, correct narrow-range cross-depth kernels and composition anchor
+handling are outstanding beyond this set. The new range guards reject narrow
+endpoint depth changes before conversion/CMS setup and prevent replicated-byte depth compaction of narrow U16. Correct narrow
+scaling kernels and broader same-depth color semantics remain outstanding. Keep
 adding behavior regressions as work lands.
 
 ## Cleanup disposition is not a list of completed deprecations

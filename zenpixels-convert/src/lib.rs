@@ -235,11 +235,12 @@
 //!   Narrow↔Full (limited↔full / studio↔full swing) conversion kernels, so
 //!   any plan whose endpoints differ in [`SignalRange`] fails with
 //!   [`ConvertError::NoPath`] instead of relabeling unscaled values
-//!   (which would lift or crush blacks). Narrow data passes through only
-//!   verbatim — same range on both sides (value-preserving steps like
-//!   swizzles are fine). If you hit the refusal, either present a
-//!   same-range target or expand the data upstream where the semantics
-//!   are known.
+//!   (which would lift or crush blacks). Narrow-range channel-type changes
+//!   (including U8↔U16) also refuse because existing depth kernels scale the
+//!   full range instead of preserving narrow anchors. These checks run before
+//!   CMS setup too. Same-depth identity and value-preserving layout changes
+//!   remain supported. Use a same-range, same-depth target or explicitly
+//!   convert the signal upstream with a range-aware implementation.
 //!
 //! ### Step 4: Encode
 //!

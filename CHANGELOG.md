@@ -38,6 +38,17 @@
 
 ### zenpixels-convert — fixed
 
+- Reject narrow-range channel-type changes (including U8↔U16) with
+  `ConvertError::NoPath` instead of using incorrect full-range scaling.
+  For example, narrow white 235 must widen to 60160, not 60395; sixteen-bit
+  white 60160 previously narrowed to 234 instead of 235. Validate range/depth
+  before CMS dispatch as well as in ordinary/explicit and HDR plan construction.
+- Keep narrow U16 at its original depth during allocating and in-place
+  load-bearing reduction. `uses_low_bits` still reports byte replication;
+  it cannot authorize narrow-range depth changes. Independently valid alpha
+  and grayscale reductions remain available. Full-range conversion arithmetic
+  is unchanged; these guards add no sample scan or conversion pass.
+
 - Known-transfer encoding adapters execute the requested transfer conversion;
   strict in-place adaptation refuses unsupported color/range/association retags
   before mutation. Allocating orientation preserves attached color context.

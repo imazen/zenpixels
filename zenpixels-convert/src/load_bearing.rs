@@ -74,9 +74,11 @@ pub struct LoadBearingReport {
 
     /// `Some(true)` → at least one U16 sample has its low byte differ
     /// from its high byte. `Some(false)` → no information lost in
-    /// U16 → U8 narrowing (either bit-replicated samples or the
+    /// full-range U16 → U8 narrowing (either bit-replicated samples or the
     /// buffer is already at U8). `None` → predicate didn't run (F32,
-    /// F16, etc.).
+    /// F16, etc.). This is a byte-pattern measurement, not proof of
+    /// narrow-range semantic preservation. [`Self::apply_to`] keeps narrow
+    /// U16 at its original depth even when this field is `Some(false)`.
     pub uses_low_bits: Option<bool>,
 }
 
@@ -95,7 +97,7 @@ impl LoadBearingReport {
     /// Produce the narrowest descriptor justified by this report.
     ///
     /// Order of reduction (each step's outcome feeds the next):
-    ///   1. Channel-type narrowing (U16 → U8 when `uses_low_bits` is
+    ///   1. Full-range channel-type narrowing (U16 → U8 when `uses_low_bits` is
     ///      false)
     ///   2. Alpha drop (when `uses_alpha` is false and the layout has
     ///      alpha)
@@ -124,8 +126,13 @@ impl LoadBearingReport {
         // "not load-bearing" signal. Some(true) and None both mean
         // "leave this dimension alone".
 
-        // 1. Channel-type narrowing.
-        if matches!(self.uses_low_bits, Some(false)) && channel_type == ChannelType::U16 {
+        // 1. Channel-type narrowing. Byte replication proves a full-range
+        // round trip; narrow U16 uses anchors scaled by 256, not 257.
+        // Keep the measured report intact, but do not authorize that rewrite.
+        if matches!(self.uses_low_bits, Some(false))
+            && channel_type == ChannelType::U16
+            && src.signal_range == zenpixels::SignalRange::Full
+        {
             channel_type = ChannelType::U8;
         }
 
