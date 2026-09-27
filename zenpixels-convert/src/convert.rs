@@ -458,7 +458,7 @@ impl ConvertStep {
 ///
 /// Anything outside this set is a device-dependent / CMS-only path —
 /// CMYK today, Lab / XYZ / spot inks if/when those land as
-/// [`crate::ColorModel`] variants. See [`requires_cms`].
+/// [`crate::ColorModel`] variants. Used internally before planning.
 #[inline]
 fn native_color_model(m: crate::ColorModel) -> bool {
     // `Gray`, `Rgb` and `Oklab` are the colorimetric spaces the built-in
@@ -474,28 +474,6 @@ fn native_color_model(m: crate::ColorModel) -> bool {
         m,
         crate::ColorModel::Gray | crate::ColorModel::Rgb | crate::ColorModel::Oklab
     )
-}
-
-/// True when the `(from, to)` pair cannot be handled by the built-in
-/// kernels and must dispatch through a color management plugin.
-///
-/// Today this fires when either side's [`color_model`](PixelDescriptor::color_model)
-/// is outside the native set (currently just CMYK; future variants —
-/// Lab / XYZ / spot inks — will plug in here). The companion
-/// [`ConvertError::NeedsCms`] is what entry points return when this is
-/// true and no `cms` was passed.
-///
-/// This color-model predicate does not establish conversion support. Attempt
-/// conversion planning and handle [`ConvertError::NeedsCms`] and other errors
-/// instead of using this as a capability preflight.
-///
-/// [`color_model`]: zenpixels::PixelDescriptor::color_model
-#[deprecated(
-    since = "0.2.17",
-    note = "attempt conversion planning and handle ConvertError::NeedsCms; this color-model predicate does not establish conversion support"
-)]
-pub fn requires_cms(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
-    needs_cms_for_color_model(from, to)
 }
 
 pub(crate) fn needs_cms_for_color_model(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
@@ -1688,6 +1666,7 @@ impl ConvertPlan {
     /// Crate-internal view of the planned step list — exposed for the
     /// estimate-API code under `crate::estimate`. NOT public:
     /// `ConvertStep` itself is `pub(crate)`.
+    #[cfg(feature = "estimation-experimental")]
     pub(crate) fn steps(&self) -> &[ConvertStep] {
         &self.steps
     }
@@ -1769,6 +1748,7 @@ impl ConvertPlan {
         )
     )]
     #[allow(deprecated)] // The 0.2 compatibility signature/body still uses estimate types.
+    #[cfg(feature = "estimation-experimental")]
     pub fn estimate_in(
         &self,
         image: &crate::estimate::ImageCharacteristics,
@@ -1809,6 +1789,7 @@ impl ConvertPlan {
         )
     )]
     #[allow(deprecated)] // The 0.2 compatibility implementation delegates to estimate_in.
+    #[cfg(feature = "estimation-experimental")]
     pub fn estimate(&self, width: u32, height: u32) -> crate::estimate::ResourceEstimate {
         let image = crate::estimate::ImageCharacteristics::new(width, height, self.from());
         let compute = crate::estimate::ComputeEnvironment::new();
@@ -1818,6 +1799,7 @@ impl ConvertPlan {
 
 /// Bridge for the [`crate::estimate`] module: mirror of
 /// [`intermediate_desc`] without making that function public.
+#[cfg(feature = "estimation-experimental")]
 pub(crate) fn intermediate_desc_for_estimate(
     current: PixelDescriptor,
     step: &ConvertStep,
@@ -2050,7 +2032,7 @@ fn f32_tf_pair_steps(from: TransferFunction, to: TransferFunction) -> Vec<Conver
 
 /// Depth conversion step into F32 for any non-F32 channel type (U8, U16, F16).
 /// Panics for F32 (caller must check); CMYK is rejected upstream by
-/// [`requires_cms`] before any plan steps are picked.
+/// the internal color-model check before any plan steps are picked.
 fn to_f32_step(ct: ChannelType) -> ConvertStep {
     match ct {
         ChannelType::U8 => ConvertStep::NaiveU8ToF32,

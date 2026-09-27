@@ -1,6 +1,6 @@
 [package]
 name = "zenpixels"
-version = "0.2.17"
+version = "0.3.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -16,7 +16,7 @@ include = [
 [features]
 default = ["std", "icc"]
 std = []
-# Retains the deprecated legacy planar API while a video replacement is designed.
+# Retained feature spelling for shared 0.2/0.3 consumer manifests; no API.
 planar = []
 icc = []
 rgb = ["dep:rgb"]

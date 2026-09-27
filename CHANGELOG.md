@@ -1,6 +1,24 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.1] — unreleased candidate
+
+Built on the 0.2.17 bridge, with identical migrated signatures and feature names.
+
+- Remove the deprecated legacy `planar` module/re-exports; retain `planar` as a
+  no-op feature. Zenfilters carries its own filter-channel mask.
+- Remove `requires_cms`, `Adapted` and the three packed `adapt_for_encode*`
+  compatibility wrappers; use planning errors and stride-aware `*_cow` adapters.
+- Remove `PixelBuffer::into_vec`; use `into_parts` to retain offset/stride/context.
+- Remove ambiguous `ColorContext::from_icc_and_cicp`; select current authority
+  explicitly. `ColorOrigin` may still retain both original metadata fields.
+- Require `estimation-experimental` for estimation APIs; opted-in signatures
+  stay unchanged. All existing Cargo feature spellings remain accepted.
+- Keep open traits, legacy CMS methods/finalizer and existing conversion imports
+  where migration is not complete. No new trait restrictions or default flips.
+- Both converter versions accept core `>=0.2.17, <0.4.0`; a connected pipeline
+  must resolve one core version. Candidate archives are tested before publishing.
+
+## [0.2.17] — unreleased bridge
 
 ### Conversion follow-up
 

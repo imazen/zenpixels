@@ -424,8 +424,10 @@ pub mod error;
         note = "enable estimation-experimental; this feature will be required for the estimation API in 0.3.1"
     )
 )]
+#[cfg(feature = "estimation-experimental")]
 pub mod estimate;
 #[allow(deprecated)] // Preserve the old root imports and their downstream warnings.
+#[cfg(feature = "estimation-experimental")]
 pub use estimate::{ComputeEnvironment, ImageCharacteristics, ResourceEstimate, SimdTier};
 pub(crate) mod f16_scalar;
 pub(crate) mod negotiate;
@@ -511,13 +513,9 @@ pub mod pipeline;
 mod scan;
 
 // Re-export key conversion types at crate root.
-#[allow(deprecated)]
-pub use adapt::adapt_for_encode_explicit;
 pub use adapt::{adapt_for_encode_explicit_cow, try_adapt_in_place};
 #[cfg(feature = "hdr-experimental")]
 pub use convert::HdrConfig;
-#[allow(deprecated)] // Compatibility export; the definition carries the warning.
-pub use convert::requires_cms;
 pub use convert::{ConvertPlan, convert_row};
 #[doc(inline)]
 pub use converter::RowConverter;

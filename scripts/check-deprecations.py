@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check warnings at a real downstream boundary, including inferred receivers.
+"""Check removed legacy APIs and required estimation opt-in at a downstream boundary.
 
 Run after fetching workspace dependencies: python3 scripts/check-deprecations.py
 No extra Rust test dependency; each probe denies deprecation warnings locally.
@@ -47,7 +47,7 @@ fn legacy_provider() -> zenpixels_convert::ResourceEstimate {
 }
 fn main() { let _ = legacy_provider().wall_ms(); }
 """,
-        "wall_ms",
+        "ResourceEstimate",
         True,
     ),
     "adapted_inferred": (
@@ -61,7 +61,7 @@ fn legacy_provider() -> zenpixels_convert::adapt::Adapted<'static> {
 }
 fn main() { let _ = legacy_provider().as_pixel_slice(); }
 """,
-        "as_pixel_slice",
+        "Adapted",
         False,
     ),
     "cow": (
@@ -90,7 +90,7 @@ for name, expression in {
     PROBES[name.lower()] = (f"fn main() {{ let _ = zenpixels_convert::{expression}; }}", name, True)
 PROBES["estimate_module"] = (
     "fn main() { let _ = zenpixels_convert::estimate::ResourceEstimate::unknown(); }",
-    "ResourceEstimate",
+    "estimate",
     True,
 )
 
@@ -103,14 +103,14 @@ for crate in ("zenpixels", "zenpixels_convert"):
             f"fn accepts(_: {crate}::{name}) {{}} fn main() {{}}", name, False,
         )
 PROBES["planar_module"] = (
-    "fn main() { let _ = zenpixels::planar::PlaneMask::ALL; }", "PlaneMask", False,
+    "fn main() { let _ = zenpixels::planar::PlaneMask::ALL; }", "planar", False,
 )
 PROBES["planar_inferred"] = (
     """
 #[allow(deprecated)]
 fn legacy_provider() -> zenpixels::PlaneMask { zenpixels::PlaneMask::ALL }
 fn main() { let _ = legacy_provider().count(); }
-""", "count", False,
+""", "PlaneMask", False,
 )
 
 
@@ -156,7 +156,7 @@ zenpixels = {{ path = {json.dumps(str(ROOT / 'zenpixels'))} }}
                     should_warn = expected is not None and not (estimation and opted_in)
                     if should_warn:
                         ok = result.returncode != 0 and bool(errors) and all(
-                            (error.get("code") or {}).get("code") == "deprecated" for error in errors
+                            (error.get("code") or {}).get("code") in {"E0432", "E0433", "E0425", "E0412", "E0599", "E0422"} for error in errors
                         ) and any(expected in error["message"] for error in errors)
                     else:
                         ok = result.returncode == 0
@@ -166,7 +166,7 @@ zenpixels = {{ path = {json.dumps(str(ROOT / 'zenpixels'))} }}
                             + result.stderr + "\n" + "\n".join(e.get("rendered", e["message"]) for e in errors)
                         )
                     count += 1
-        print(f"Passed {count} downstream deprecation checks (default/no-default, opt-in/off).")
+        print(f"Passed {count} downstream legacy-removal checks (default/no-default, opt-in/off).")
 
 
 if __name__ == "__main__":

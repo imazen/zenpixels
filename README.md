@@ -1,5 +1,10 @@
 # zenpixels [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenpixels/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenpixels/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/zenpixels?style=flat-square)](https://crates.io/crates/zenpixels) [![lib.rs](https://img.shields.io/crates/v/zenpixels?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zenpixels) [![docs.rs](https://img.shields.io/docsrs/zenpixels?style=flat-square)](https://docs.rs/zenpixels) [![MSRV](https://img.shields.io/badge/MSRV-1.85-blue?style=flat-square)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field) [![license](https://img.shields.io/crates/l/zenpixels?style=flat-square)](#license)
 
+> **0.3.1 candidate:** migrated source uses the same APIs as the 0.2.17 bridge.
+> The deprecated packed adapters, planar API, `requires_cms`, `into_vec`, and
+> ambiguous context constructor are removed; estimation now requires its feature.
+> Feature spellings and established open traits remain available.
+
 Pixel format types and transfer-function-aware conversion for Rust image codecs.
 
 > **Unreleased bridge work (2026-09-27):** checked storage/ownership,
@@ -408,7 +413,7 @@ location wrapper around [`BufferError`] — `AllocationFailed`, `InvalidDimensio
 `InsufficientData`, `StrideTooSmall`, …); `new` and `new_simd_aligned` panic on failure
 (see [allocation policy](https://docs.rs/zenpixels/latest/zenpixels/#allocation-policy)).
 All constructors validate dimensions, stride, and alignment. `into_parts()`
-recovers the allocation with its description; `into_vec()` recovers only the
+recovers the allocation with its description; the removed `into_vec()` recovered only the
 allocation for pool reuse and discards layout/color information.
 
 ### In-place layout transforms
@@ -506,7 +511,7 @@ Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `C
 ### Resource estimation
 
 Enable `estimation-experimental` to opt in without warnings. The 0.2 bridge
-retains the API without the feature, deprecated; the proposed 0.3.1 requires
+retains the API without the feature, deprecated; 0.3.1 requires
 that feature with the same opted-in signatures.
 
 > **Review:** The shape-compatibility claim below is not established by the current
@@ -517,15 +522,13 @@ that feature with the same opted-in signatures.
 
 ## Planar support
 
-> **Deprecated in the 0.2 bridge:** the whole legacy `planar` module and its
-> re-exports. The feature and existing code remain available while a better
-> video-oriented representation is designed. No replacement is published yet.
-> See the [code review](docs/code-review-0.2-and-0.3.md) for actual callers and
-> the deferred video requirements.
+The legacy `planar` module and its root re-exports were deprecated in 0.2.17
+and removed in 0.3.1. The `planar` Cargo feature remains a no-op so migrated
+consumers can retain their feature lists across versions. No replacement video
+carrier is published in this release.
 
-Zenfilters currently uses `PlaneMask` in its filter-channel access declarations;
-its image planes use its own `OklabPlanes`. Plan that companion migration before
-removing the legacy module.
+Zenfilters uses its own `PlaneMask` and `OklabPlanes` on the companion migration
+branch. See the [code review](docs/code-review-0.2-and-0.3.md) for video requirements.
 
 ## Features
 
@@ -541,7 +544,7 @@ removing the legacy module.
 | `icc` | yes | `icc` module — hash-based ICC profile identification (~100ns) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed `from_pixels()` constructors |
 | `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
-| `planar` | | Deprecated legacy multi-plane types |
+| `planar` | | Retained no-op feature; legacy planar API removed |
 | `serde` | | No-op stub (soft-removed in 0.2.16, queued for removal); previously added `Serialize`/`Deserialize` derives on the core types — a workspace-wide sweep found zero consumers |
 
 ### zenpixels-convert
@@ -554,7 +557,7 @@ removing the legacy module.
 | `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed convenience methods (`to_rgb8()`, `to_rgba8()`, etc.) |
 | `imgref` | | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
-| `planar` | | Deprecated legacy multi-plane types |
+| `planar` | | Retained no-op feature; legacy planar API removed |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
 | `estimation-experimental` | | Explicit resource-estimation opt-in; without it the 0.2 bridge retains the API with warnings; proposed 0.3.1 requires it |
 | `hdr-experimental` | | Native HDR→SDR display mapping inside `ConvertPlan` (BT.2446 Method A + OKLch soft compress + CTA-861.3 CLL measurement); API shape may move ahead of 0.3.0 |
