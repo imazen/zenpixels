@@ -1,3 +1,10 @@
+## Commit completed work
+
+The owner requests commits by default: commit completed changes before ending a
+work chunk, rather than leaving them uncommitted. Preserve unrelated user work;
+do not discard it or silently include it in a different task. Commit locally;
+pushing or publishing still follows the user's instructions for that action.
+
 ## Public API surface — YAGNI is the rule, not a suggestion
 
 **Every public item in zenpixels is forever. Treat each `pub` as a load-bearing external commitment.**

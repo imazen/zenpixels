@@ -1,5 +1,13 @@
 # Release plan: 0.2.17 (paving) → 0.3.1 (breaking)
 
+**Superseded draft:** the 2026-09-27
+[API/contract proposal](api-contract-proposal-0.2-and-0.3.1.md) replaces this
+plan's scope and migration recommendations. In particular, the owner selected
+same-source compatibility with one core version per connected pipeline; local
+wide dependency ranges were not published, and replacement signatures must
+remain unchanged across the bridge and destination releases. The historical
+inventory and reference commits below remain useful implementation inputs.
+
 Written 2026-09-26 against `main` = `0e1c659` (both crates at 0.2.16 in
 `Cargo.toml`; crates.io latest 0.2.16, published 2026-07-24). Every claim
 below was checked against source, crates.io, or a `rg` sweep of `~/work` on

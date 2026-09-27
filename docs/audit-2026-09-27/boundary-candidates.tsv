@@ -1,0 +1,612 @@
+repo	class	file	line	role	relevance	categories	text
+coefficient	primary	coefficient/src/analysis/feature_extract.rs	804	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn extract_features_from_slice(slice: &zenpixels::PixelSlice<'_>) -> ImageFeatures {
+coefficient	primary	coefficient/src/analysis/feature_extract.rs	810	source	explicit-type-reference	type_reference,public_boundary_candidate	slice: &zenpixels::PixelSlice<'_>,
+coefficient	primary	coefficient/src/auto_encode/dispatch.rs	63	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn infer_hdr_intent(image: &PixelSlice<'_>) -> HdrIntent {
+coefficient	primary	coefficient/src/auto_encode/dispatch.rs	115	source	explicit-type-reference	type_reference,public_boundary_candidate	image: PixelSlice<'_>,
+coefficient	primary	coefficient/src/auto_encode/encoders.rs	22	source	explicit-type-reference	type_reference,public_boundary_candidate	image: PixelSlice<'_>,
+coefficient	primary	coefficient/src/auto_encode/mod.rs	64	source	explicit-type-reference	type_reference,public_boundary_candidate	image: PixelSlice<'_>,
+hdr-corpus-convert	primary	hdr-corpus-convert/src/codec.rs	145	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub fn render_pq16(hdr: &DecodeOutput) -> (PixelBuffer, ContentLightLevel) {
+hdr-corpus-convert	primary	hdr-corpus-convert/src/codec.rs	159	source	explicit-type-reference	type_reference,public_boundary_candidate	px: PixelSlice,
+imageflow	primary	imageflow/imageflow_core/src/graphics/bitmaps.rs	1346	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn get_pixel_buffer(&self) -> Result<PixelBuffer<'_>, FlowError> {
+imageflow	primary	imageflow/imageflow_core/src/graphics/bitmaps.rs	1472	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn get_pixel_buffer(&self) -> Result<PixelBuffer<'_>, FlowError> {
+imageflow	primary	imageflow/imageflow_core/src/graphics/color.rs	14	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub struct ColorContext {
+imageflow	primary	imageflow/imageflow_core/src/graphics/color.rs	23	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub fn new(space: WorkingFloatspace, gamma: f32) -> ColorContext {
+imageflow	primary	imageflow/imageflow_core/src/graphics/color.rs	75	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub fn flow_colorcontext_floatspace_to_srgb(c: &ColorContext, space_value: f32) -> u8 {
+imageflow	primary	imageflow/imageflow_core/src/graphics/color.rs	80	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub fn flow_colorcontext_srgb_to_floatspace(c: &ColorContext, value: u8) -> f32 {
+imageflow	primary	imageflow/imageflow_types/src/lib.rs	132	source	explicit-type-reference	type_reference,public_boundary_candidate	pub enum PixelBuffer<'a> {
+zen/_zensim-pu-panel	primary	zen/_zensim-pu-panel/zensim/src/zenpixels_compat.rs	61	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn try_from_slice(slice: &'a PixelSlice<'a>) -> Result<Self, UnsupportedFormat> {
+zen/_zensim-pu-panel	primary	zen/_zensim-pu-panel/zensim/src/zenpixels_compat.rs	91	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn try_from_buffer(buf: &'a PixelBuffer) -> Result<Self, UnsupportedFormat> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/color/mod.rs	52	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels_convert::hdr::Bt2446A;
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/color/mod.rs	62	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub use zenpixels_convert::hdr::{CllMeasure, LightLevelMethod};
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/color/mod.rs	67	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub use zenpixels::hdr::{ContentLightLevel, DiffuseWhite};
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/color/tonemap.rs	395	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn fit(hdr: &PixelBuffer, sdr: &PixelBuffer) -> Result<Self> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/color/tonemap.rs	401	source	explicit-type-reference	type_reference,public_boundary_candidate	hdr: &PixelBuffer,
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/color/tonemap.rs	402	source	explicit-type-reference	type_reference,public_boundary_candidate	sdr: &PixelBuffer,
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/color/tonemap.rs	445	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn apply(&self, hdr: &PixelBuffer) -> Result<PixelBuffer> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/color/tonemap.rs	488	source	explicit-type-reference	type_reference,public_boundary_candidate	hdr: &PixelBuffer,
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/color/tonemap.rs	491	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/color/tonemap.rs	1099	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn tonemap_image_to_srgb8(img: &PixelBuffer, target_gamut: ColorPrimaries) -> Result<Vec<u8>> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/gainmap/apply.rs	150	source	explicit-type-reference	type_reference,public_boundary_candidate	sdr: &PixelBuffer,
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/gainmap/apply.rs	156	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/gainmap/apply.rs	174	source	explicit-type-reference	type_reference,public_boundary_candidate	sdr: PixelSlice<'_>,
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/gainmap/apply.rs	180	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/gainmap/compute.rs	82	source	explicit-type-reference	type_reference,public_boundary_candidate	hdr: &PixelBuffer,
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/gainmap/compute.rs	83	source	explicit-type-reference	type_reference,public_boundary_candidate	sdr: &PixelBuffer,
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/gainmap/compute.rs	92	source	explicit-type-reference	type_reference,public_boundary_candidate	hdr: PixelSlice<'_>,
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/gainmap/compute.rs	93	source	explicit-type-reference	type_reference,public_boundary_candidate	sdr: PixelSlice<'_>,
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/gainmap/compute.rs	127	source	explicit-type-reference	type_reference,public_boundary_candidate	hdr: PixelSlice<'_>,
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/gainmap/compute.rs	128	source	explicit-type-reference	type_reference,public_boundary_candidate	sdr: PixelSlice<'_>,
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/lib.rs	137	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub use color::audited::{Bt2446A, CllMeasure, ContentLightLevel, DiffuseWhite, LightLevelMethod};
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/types.rs	123	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels::ColorPrimaries;
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/types.rs	127	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels::TransferFunction;
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/types.rs	134	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels::PixelFormat;
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/types.rs	141	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels::PixelBuffer;
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/types.rs	144	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels::PixelSlice;
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/types.rs	147	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels::PixelSliceMut;
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/types.rs	156	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> zenpixels::PixelDescriptor {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/types.rs	242	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn validate_ultrahdr_image(buffer: &PixelBuffer) -> Result<()> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/types.rs	250	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn validate_ultrahdr_slice(slice: &PixelSlice<'_>) -> Result<()> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/types.rs	267	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/types.rs	280	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn clone_pixel_buffer(src: &PixelBuffer) -> PixelBuffer {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-core/src/types.rs	293	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-rs/src/decode.rs	227	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn decode_sdr(&self) -> Result<PixelBuffer> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-rs/src/decode.rs	235	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn decode_sdr_with_stop(&self, stop: impl Stop) -> Result<PixelBuffer> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-rs/src/decode.rs	339	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn decode_hdr(&self, display_boost: f32) -> Result<PixelBuffer> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-rs/src/decode.rs	352	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn decode_hdr_with_stop(&self, display_boost: f32, stop: impl Stop) -> Result<PixelBuffer> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-rs/src/decode.rs	361	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-rs/src/decode.rs	372	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-rs/src/decode.rs	436	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn decode_full_sdr(&self, target_primaries: ColorPrimaries) -> Result<PixelBuffer> {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-rs/src/encode.rs	242	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn set_hdr_image(&mut self, image: PixelBuffer) -> &mut Self {
+zen/ultrahdr	primary	zen/ultrahdr/ultrahdr-rs/src/encode.rs	248	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn set_sdr_image(&mut self, image: PixelBuffer) -> &mut Self {
+zen/zenanalyze	primary	zen/zenanalyze/src/alpha.rs	77	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(crate) fn scan_alpha(slice: &PixelSlice<'_>, pixel_budget: usize) -> AlphaStats {
+zen/zenanalyze	primary	zen/zenanalyze/src/dimensions.rs	43	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenanalyze	primary	zen/zenanalyze/src/feature.rs	263	source	explicit-type-reference	type_reference,public_boundary_candidate	source_descriptor: zenpixels::PixelDescriptor,
+zen/zenanalyze	primary	zen/zenanalyze/src/feature.rs	2267	source	explicit-type-reference	type_reference,public_boundary_candidate	source_descriptor: zenpixels::PixelDescriptor,
+zen/zenanalyze	primary	zen/zenanalyze/src/lib.rs	406	source	explicit-type-reference	type_reference,public_boundary_candidate	slice: PixelSlice<'_>,
+zen/zenanalyze	primary	zen/zenanalyze/src/lib.rs	968	source	explicit-type-reference	type_reference,public_boundary_candidate	slice: PixelSlice<'_>,
+zen/zenanalyze	primary	zen/zenanalyze/src/lib.rs	999	source	explicit-type-reference	type_reference,public_boundary_candidate	slice: PixelSlice<'_>,
+zen/zenanalyze	primary	zen/zenanalyze/src/lib.rs	1249	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn feature_vector(slice: PixelSlice<'_>, ids: &[u16], out: &mut [f32]) -> bool {
+zen/zenanalyze	primary	zen/zenanalyze/src/lib.rs	1276	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn feature_vector_all(slice: PixelSlice<'_>, out: &mut [f32]) -> bool {
+zen/zenanalyze	primary	zen/zenanalyze/src/row_stream.rs	179	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn new(slice: PixelSlice<'a>) -> Result<Self, String> {
+zen/zenanalyze	primary	zen/zenanalyze/src/row_stream.rs	242	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn new_normalized_linear(slice: PixelSlice<'a>, clip: bool) -> Result<Self, String> {
+zen/zenanalyze	primary	zen/zenanalyze/src/row_stream.rs	270	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn primaries(&self) -> zenpixels::ColorPrimaries {
+zen/zenanalyze	primary	zen/zenanalyze/src/tests.rs	72	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(crate) fn analyze(slice: PixelSlice<'_>) -> Result<TestOutput, String> {
+zen/zenanalyze	primary	zen/zenanalyze/src/tests.rs	82	source	explicit-type-reference	type_reference,public_boundary_candidate	slice: PixelSlice<'_>,
+zen/zenanalyze	primary	zen/zenanalyze/src/tier_depth.rs	380	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(crate) fn scan_depth(slice: &PixelSlice<'_>, pixel_budget: usize) -> DepthStats {
+zen/zenanalyze	primary	zen/zenanalyze/src/versioning.rs	211	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn descriptor_hash(slice: &zenpixels::PixelSlice<'_>) -> u64 {
+zen/zenanalyze	primary	zen/zenanalyze/src/versioning.rs	225	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: &zenpixels::PixelDescriptor,
+zen/zenavif	primary	zen/zenavif/src/codec/anim_decoder.rs	59	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) preferred: Vec<PixelDescriptor>,
+zen/zenavif	primary	zen/zenavif/src/codec/anim_decoder.rs	62	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) current_frame: Option<PixelBuffer>,
+zen/zenavif	primary	zen/zenavif/src/codec/anim_encoder.rs	64	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) pixel_format: Option<zenpixels::PixelFormat>,
+zen/zenavif	primary	zen/zenavif/src/codec/anim_encoder.rs	84	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: PixelSlice<'_>,
+zen/zenavif	primary	zen/zenavif/src/codec/animation_spatial.rs	74	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: PixelBuffer,
+zen/zenavif	primary	zen/zenavif/src/codec/animation_spatial.rs	77	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/codec/color.rs	15	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) fn icc_class_matches_layout(icc: &[u8], layout: zenpixels::ChannelLayout) -> bool {
+zen/zenavif	primary	zen/zenavif/src/codec/color.rs	45	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: PixelBuffer,
+zen/zenavif	primary	zen/zenavif/src/codec/color.rs	47	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> PixelBuffer {
+zen/zenavif	primary	zen/zenavif/src/codec/color.rs	60	source	explicit-type-reference	type_reference,public_boundary_candidate	layout: zenpixels::ChannelLayout,
+zen/zenavif	primary	zen/zenavif/src/codec/color.rs	61	source	explicit-type-reference	color,type_reference,public_boundary_candidate	) -> Option<Arc<zenpixels::ColorContext>> {
+zen/zenavif	primary	zen/zenavif/src/codec/color.rs	138	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: PixelBuffer,
+zen/zenavif	primary	zen/zenavif/src/codec/color.rs	140	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> PixelBuffer {
+zen/zenavif	primary	zen/zenavif/src/codec/color.rs	145	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: PixelBuffer,
+zen/zenavif	primary	zen/zenavif/src/codec/color.rs	147	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> PixelBuffer {
+zen/zenavif	primary	zen/zenavif/src/codec/decoder.rs	26	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) preferred: Vec<PixelDescriptor>,
+zen/zenavif	primary	zen/zenavif/src/codec/gain_map.rs	46	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: zenpixels::PixelBuffer,
+zen/zenavif	primary	zen/zenavif/src/codec/gain_map.rs	51	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<(zenpixels::PixelBuffer, (u16, u16)), At<Error>> {
+zen/zenavif	primary	zen/zenavif/src/codec/negotiate.rs	13	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) fn format_matches(a: PixelDescriptor, b: PixelDescriptor) -> bool {
+zen/zenavif	primary	zen/zenavif/src/codec/negotiate.rs	31	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) fn wants_gray_output(preferred: &[PixelDescriptor]) -> bool {
+zen/zenavif	primary	zen/zenavif/src/codec/negotiate.rs	76	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) fn reduction_is_offered(native: PixelDescriptor, pref: PixelDescriptor) -> bool {
+zen/zenavif	primary	zen/zenavif/src/codec/negotiate.rs	147	source	explicit-type-reference	type_reference,public_boundary_candidate	native: PixelDescriptor,
+zen/zenavif	primary	zen/zenavif/src/codec/negotiate.rs	148	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zenavif	primary	zen/zenavif/src/codec/negotiate.rs	149	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Option<PixelDescriptor> {
+zen/zenavif	primary	zen/zenavif/src/codec/negotiate.rs	175	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: PixelBuffer,
+zen/zenavif	primary	zen/zenavif/src/codec/negotiate.rs	176	source	explicit-type-reference	type_reference,public_boundary_candidate	target: PixelDescriptor,
+zen/zenavif	primary	zen/zenavif/src/codec/negotiate.rs	177	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Option<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/codec/negotiate.rs	193	source	explicit-type-reference	type_reference,public_boundary_candidate	mut pixels: PixelBuffer,
+zen/zenavif	primary	zen/zenavif/src/codec/negotiate.rs	194	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zenavif	primary	zen/zenavif/src/codec/negotiate.rs	196	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> PixelBuffer {
+zen/zenavif	primary	zen/zenavif/src/codec/orientation.rs	76	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: PixelBuffer,
+zen/zenavif	primary	zen/zenavif/src/codec/orientation.rs	79	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> (PixelBuffer, zencodec::Orientation, u32, u32) {
+zen/zenavif	primary	zen/zenavif/src/codec/streaming.rs	55	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) strip_descriptor: PixelDescriptor,
+zen/zenavif	primary	zen/zenavif/src/codec/streaming.rs	57	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) strip_buffer: Option<PixelBuffer>,
+zen/zenavif	primary	zen/zenavif/src/codec/streaming.rs	67	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub(super) strip_color_context: Option<Arc<zenpixels::ColorContext>>,
+zen/zenavif	primary	zen/zenavif/src/codec/streaming.rs	73	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) baked: Option<PixelBuffer>,
+zen/zenavif	primary	zen/zenavif/src/codec/streaming.rs	84	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) output_descriptor: Option<PixelDescriptor>,
+zen/zenavif	primary	zen/zenavif/src/codec/streaming.rs	88	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) output_buffer: Option<PixelBuffer>,
+zen/zenavif	primary	zen/zenavif/src/convert.rs	52	source	explicit-type-reference	type_reference,public_boundary_candidate	mut desc: PixelDescriptor,
+zen/zenavif	primary	zen/zenavif/src/convert.rs	54	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> PixelDescriptor {
+zen/zenavif	primary	zen/zenavif/src/convert.rs	105	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn downscale_to_8bit(image: PixelBuffer) -> PixelBuffer {
+zen/zenavif	primary	zen/zenavif/src/convert.rs	173	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn scale_pixels_to_u16(image: &mut PixelBuffer, bit_depth: u8) {
+zen/zenavif	primary	zen/zenavif/src/convert.rs	250	source	explicit-type-reference	type_reference,public_boundary_candidate	buf: &mut PixelBuffer,
+zen/zenavif	primary	zen/zenavif/src/convert.rs	291	source	explicit-type-reference	type_reference,public_boundary_candidate	buf: &mut PixelBuffer,
+zen/zenavif	primary	zen/zenavif/src/decoder.rs	720	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn decode(&mut self, stop: &(impl Stop + ?Sized)) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/aom.rs	48	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<(PixelBuffer, ImageInfo)> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/aom.rs	140	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<(PixelBuffer, ImageInfo)> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/aom.rs	150	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<(PixelBuffer, ImageInfo)> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/decoder.rs	214	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn decode(&mut self, stop: &(impl Stop + ?Sized)) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/decoder.rs	259	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn decode_full(&mut self, stop: &(impl Stop + ?Sized)) -> Result<(PixelBuffer, ImageInfo)> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/frame_convert.rs	71	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<(PixelBuffer, ImageInfo)> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/frame_convert.rs	81	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<(PixelBuffer, ImageInfo)> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/grid.rs	17	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) fn decode_grid(&mut self, stop: &(impl Stop + ?Sized)) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/grid.rs	121	source	explicit-type-reference	type_reference,public_boundary_candidate	tile_images: Vec<PixelBuffer>,
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/grid.rs	125	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/grid.rs	145	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<Vec<PixelBuffer>> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/grid.rs	177	source	explicit-type-reference	type_reference,public_boundary_candidate	tile_images: Vec<PixelBuffer>,
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/grid.rs	182	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/plane_convert.rs	64	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/plane_convert.rs	95	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/plane_convert.rs	123	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/plane_convert.rs	181	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) fn convert_8bit_identity(planes: &Planes8<'_>, ctx: ConvertCtx) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/plane_convert.rs	243	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/plane_convert.rs	313	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/plane_convert.rs	495	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/decoder_managed/plane_convert.rs	558	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/image.rs	182	source	explicit-type-reference	type_reference,public_boundary_candidate	pub pixels: zenpixels::PixelBuffer,
+zen/zenavif	primary	zen/zenavif/src/lib.rs	233	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels::PixelBuffer;
+zen/zenavif	primary	zen/zenavif/src/lib.rs	246	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn decode(data: &[u8]) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/lib.rs	272	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/zenavif	primary	zen/zenavif/src/lib.rs	331	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn encode(image: &PixelBuffer) -> Result<EncodedImage> {
+zen/zenavif	primary	zen/zenavif/src/lib.rs	346	source	explicit-type-reference	type_reference,public_boundary_candidate	image: &PixelBuffer,
+zen/zenavif	primary	zen/zenavif/src/strip_convert.rs	90	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenavif	primary	zen/zenavif/src/strip_convert.rs	122	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn new_from_pixels(pixels: PixelBuffer) -> Self {
+zen/zenavif	primary	zen/zenavif/src/strip_convert.rs	134	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn descriptor(&self) -> PixelDescriptor {
+zen/zenavif	primary	zen/zenavif/src/strip_convert.rs	196	source	explicit-type-reference	type_reference,public_boundary_candidate	out_buf: &mut PixelBuffer,
+zen/zenbitmaps	primary	zen/zenbitmaps/src/codec/mod.rs	150	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: &zenpixels::PixelSlice<'_>,
+zen/zenbitmaps	primary	zen/zenbitmaps/src/codec/mod.rs	151	source	explicit-type-reference	type_reference,public_boundary_candidate	can_encode: impl Fn(&PixelDescriptor) -> bool,
+zen/zenbitmaps	primary	zen/zenbitmaps/src/codec/mod.rs	152	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Option<zenpixels::PixelBuffer> {
+zen/zenbitmaps	primary	zen/zenbitmaps/src/codec/mod.rs	203	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(crate) fn layout_to_descriptor(layout: crate::PixelLayout) -> PixelDescriptor {
+zen/zenbitmaps	primary	zen/zenbitmaps/src/codec/mod.rs	220	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> crate::Result<PixelBuffer> {
+zen/zencodec	primary	zen/zencodec/src/cost.rs	37	source	explicit-type-reference	type_reference,public_boundary_candidate	pub native_format: PixelDescriptor,
+zen/zencodec	primary	zen/zencodec/src/cost.rs	60	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn full_decode(width: u32, height: u32, native_format: PixelDescriptor) -> Self {
+zen/zencodec	primary	zen/zencodec/src/estimate.rs	206	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn new(width: u32, height: u32, descriptor: PixelDescriptor) -> Self {
+zen/zencodec	primary	zen/zencodec/src/estimate.rs	236	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn descriptor(&self) -> &PixelDescriptor {
+zen/zencodec	primary	zen/zencodec/src/gainmap.rs	665	source	explicit-type-reference	type_reference,public_boundary_candidate	pub pixels: zenpixels::PixelBuffer,
+zen/zencodec	primary	zen/zencodec/src/gainmap.rs	672	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn new(pixels: zenpixels::PixelBuffer, metadata: GainMapInfo) -> Self {
+zen/zencodec	primary	zen/zencodec/src/helpers/icc.rs	56	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> PixelDescriptor {
+zen/zencodec	primary	zen/zencodec/src/helpers/icc.rs	96	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> PixelDescriptor {
+zen/zencodec	primary	zen/zencodec/src/helpers/mod.rs	48	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zencodec	primary	zen/zencodec/src/info.rs	16	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels::Cicp;
+zen/zencodec	primary	zen/zencodec/src/info.rs	199	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub use zenpixels::{ContentLightLevel, DiffuseWhite, MasteringDisplay};
+zen/zencodec	primary	zen/zencodec/src/info.rs	268	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub diffuse_white: Option<DiffuseWhite>,
+zen/zencodec	primary	zen/zencodec/src/info.rs	362	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub fn to_color_context(&self) -> zenpixels::ColorContext {
+zen/zencodec	primary	zen/zencodec/src/lib.rs	111	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub use zenpixels::ColorAuthority;
+zen/zencodec	primary	zen/zencodec/src/metadata.rs	68	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub diffuse_white: Option<DiffuseWhite>,
+zen/zencodec	primary	zen/zencodec/src/metadata.rs	172	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub fn with_diffuse_white(mut self, white: DiffuseWhite) -> Self {
+zen/zencodec	primary	zen/zencodec/src/negotiate.rs	50	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zencodec	primary	zen/zencodec/src/negotiate.rs	51	source	explicit-type-reference	type_reference,public_boundary_candidate	available: &[PixelDescriptor],
+zen/zencodec	primary	zen/zencodec/src/negotiate.rs	52	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Option<PixelDescriptor> {
+zen/zencodec	primary	zen/zencodec/src/negotiate.rs	95	source	explicit-type-reference	type_reference,public_boundary_candidate	source: PixelDescriptor,
+zen/zencodec	primary	zen/zencodec/src/negotiate.rs	96	source	explicit-type-reference	type_reference,public_boundary_candidate	supported: &[PixelDescriptor],
+zen/zencodec	primary	zen/zencodec/src/negotiate.rs	97	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Option<PixelDescriptor> {
+zen/zencodec	primary	zen/zencodec/src/negotiate.rs	119	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn is_format_available(target: PixelFormat, available: &[PixelDescriptor]) -> bool {
+zen/zencodec	primary	zen/zencodec/src/orientation.rs	7	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels::Orientation;
+zen/zencodec	primary	zen/zencodec/src/output.rs	205	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn new(pixels: PixelBuffer, info: ImageInfo) -> Self {
+zen/zencodec	primary	zen/zencodec/src/output.rs	277	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn pixels(&self) -> PixelSlice<'_> {
+zen/zencodec	primary	zen/zencodec/src/output.rs	282	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn into_buffer(self) -> PixelBuffer {
+zen/zencodec	primary	zen/zencodec/src/output.rs	307	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn descriptor(&self) -> PixelDescriptor {
+zen/zencodec	primary	zen/zencodec/src/output.rs	349	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn new(pixels: PixelSlice<'a>, duration_ms: u32, frame_index: u32) -> Self {
+zen/zencodec	primary	zen/zencodec/src/output.rs	358	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn pixels(&self) -> &PixelSlice<'a> {
+zen/zencodec	primary	zen/zencodec/src/output.rs	430	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn new(pixels: PixelBuffer, duration_ms: u32, frame_index: u32) -> Self {
+zen/zencodec	primary	zen/zencodec/src/output.rs	440	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn pixels(&self) -> PixelSlice<'_> {
+zen/zencodec	primary	zen/zencodec/src/output.rs	445	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn into_buffer(self) -> PixelBuffer {
+zen/zencodec	primary	zen/zencodec/src/set.rs	359	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zencodec	primary	zen/zencodec/src/set.rs	370	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zencodec	primary	zen/zencodec/src/set.rs	384	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zencodec	primary	zen/zencodec/src/set.rs	399	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zencodec	primary	zen/zencodec/src/set.rs	417	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zencodec	primary	zen/zencodec/src/set.rs	456	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: PixelSlice<'_>,
+zen/zencodec	primary	zen/zencodec/src/set.rs	470	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: PixelSlice<'_>,
+zen/zencodec	primary	zen/zencodec/src/set.rs	622	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: PixelSlice<'_>,
+zen/zencodec	primary	zen/zencodec/zencodec-testkit/src/lib.rs	165	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn as_slice(&self) -> PixelSlice<'_> {
+zen/zencodec	primary	zen/zencodec/zencodec-testkit/src/reference.rs	149	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(crate) fn descriptor_for_bpp(bpp: u8) -> Result<PixelDescriptor, RefError> {
+zen/zencodec	primary	zen/zencodec/zencodec-testkit/src/reference.rs	314	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(crate) fn encode_single(pixels: PixelSlice<'_>, meta: &Metadata) -> Vec<u8> {
+zen/zenextras	primary	zen/zenextras/zenexr/src/lib.rs	65	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn pixels(&self) -> &PixelBuffer {
+zen/zenextras	primary	zen/zenextras/zenexr/src/lib.rs	73	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn into_pixels(self) -> PixelBuffer {
+zen/zenextras	primary	zen/zenextras/zenpdf/src/render.rs	124	source	explicit-type-reference	type_reference,public_boundary_candidate	pub buffer: PixelBuffer<Rgba<u8>>,
+zen/zenextras	primary	zen/zenextras/zentiff/src/decode.rs	80	source	explicit-type-reference	type_reference,public_boundary_candidate	pub pixels: PixelBuffer,
+zen/zenextras	primary	zen/zenextras/zentiff/src/encode.rs	382	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: &PixelSlice<'_>,
+zen/zenextras	primary	zen/zenextras/zentiff/src/encode.rs	420	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: &PixelSlice<'_>,
+zen/zenextras	primary	zen/zenextras/zentiff/src/encode.rs	458	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: &PixelSlice<'_>,
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/codec/decode.rs	1021	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/codec/decode.rs	1023	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> PixelDescriptor {
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/codec/encode.rs	180	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn encode(&self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<CodecError>> {
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/codec/info.rs	64	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/codec/info.rs	67	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> PixelDescriptor {
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/codec/streaming.rs	18	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(super) descriptor: PixelDescriptor,
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/container/probe.rs	205	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(crate) icc_identification: Option<zenpixels::icc::IccIdentification>,
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/container/probe.rs	289	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn icc_identification(&self) -> Option<&zenpixels::icc::IccIdentification> {
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/encode/adaptive.rs	393	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn adaptive(image: PixelSlice<'_>, quality: impl Into<Quality>) -> Result<Self, String> {
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/encode/adaptive.rs	400	source	explicit-type-reference	type_reference,public_boundary_candidate	image: PixelSlice<'_>,
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/lossless/coeff_transform.rs	39	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(crate) fn as_orientation(self) -> zenpixels::Orientation {
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/ultrahdr/decode.rs	204	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn decode_ultrahdr(bytes: &[u8]) -> Result<PixelBuffer> {
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/ultrahdr/decode.rs	230	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer> {
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/ultrahdr/encode.rs	38	source	explicit-type-reference	type_reference,public_boundary_candidate	hdr: &PixelBuffer,
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/ultrahdr/encode.rs	68	source	explicit-type-reference	type_reference,public_boundary_candidate	hdr: &PixelBuffer,
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/ultrahdr/encode.rs	127	source	explicit-type-reference	type_reference,public_boundary_candidate	hdr: &PixelBuffer,
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/ultrahdr/encode.rs	458	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn encode_ultrahdr_luma(hdr: &PixelBuffer) -> Result<Vec<u8>> {
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/ultrahdr/encode.rs	574	source	explicit-type-reference	type_reference,public_boundary_candidate	sdr: &PixelBuffer,
+zen/zenjpeg	primary	zen/zenjpeg/zenjpeg/src/ultrahdr/encode.rs	594	source	explicit-type-reference	type_reference,public_boundary_candidate	sdr: &PixelBuffer,
+zen/zenjxl	primary	zen/zenjxl/src/decode.rs	195	source	explicit-type-reference	type_reference,public_boundary_candidate	pub pixels: PixelBuffer,
+zen/zenjxl	primary	zen/zenjxl/src/decode.rs	396	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zenjxl	primary	zen/zenjxl/src/decode.rs	712	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zenjxl	primary	zen/zenjxl/src/decode.rs	726	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zenjxl	primary	zen/zenjxl/src/decode.rs	749	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zenjxl	primary	zen/zenjxl/src/decode.rs	798	source	explicit-type-reference	type_reference,public_boundary_candidate	preferred: &[PixelDescriptor],
+zen/zenjxl	primary	zen/zenjxl/src/decode.rs	991	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> PixelBuffer {
+zen/zenmetrics	primary	zen/zenmetrics/crates/butteraugli-gpu/src/opaque.rs	610	source	explicit-type-reference	type_reference,public_boundary_candidate	ref_px: PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/butteraugli-gpu/src/opaque.rs	611	source	explicit-type-reference	type_reference,public_boundary_candidate	dis_px: PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/butteraugli-gpu/src/opaque.rs	639	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn compute_pixels(&mut self, r: PixelSlice<'_>, d: PixelSlice<'_>) -> Result<Score> {
+zen/zenmetrics	primary	zen/zenmetrics/crates/butteraugli-gpu/src/opaque.rs	773	source	explicit-type-reference	type_reference,public_boundary_candidate	s: &PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/cvvdp-gpu/src/opaque.rs	538	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn compute_pixels(&mut self, r: PixelSlice<'_>, d: PixelSlice<'_>) -> Result<Score> {
+zen/zenmetrics	primary	zen/zenmetrics/crates/cvvdp-gpu/src/opaque.rs	772	source	explicit-type-reference	type_reference,public_boundary_candidate	s: &PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/cvvdp/src/pipeline.rs	2425	source	explicit-type-reference	type_reference,public_boundary_candidate	reference: zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/cvvdp/src/pipeline.rs	2426	source	explicit-type-reference	type_reference,public_boundary_candidate	distorted: zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/dssim-gpu/src/opaque.rs	403	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn compute_pixels(&mut self, r: PixelSlice<'_>, d: PixelSlice<'_>) -> Result<Score> {
+zen/zenmetrics	primary	zen/zenmetrics/crates/dssim-gpu/src/opaque.rs	484	source	explicit-type-reference	type_reference,public_boundary_candidate	s: &PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/gmsd/src/lib.rs	304	source	explicit-type-reference	type_reference,public_boundary_candidate	reference: &zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/gmsd/src/lib.rs	305	source	explicit-type-reference	type_reference,public_boundary_candidate	distorted: &zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/gmsd/src/lib.rs	322	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn pixels_to_gray(s: &zenpixels::PixelSlice<'_>) -> Result<Vec<f32>> {
+zen/zenmetrics	primary	zen/zenmetrics/crates/iwssim-gpu/src/opaque.rs	433	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn compute_pixels(&mut self, r: PixelSlice<'_>, d: PixelSlice<'_>) -> Result<Score> {
+zen/zenmetrics	primary	zen/zenmetrics/crates/iwssim-gpu/src/opaque.rs	513	source	explicit-type-reference	type_reference,public_boundary_candidate	s: &PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/ssim2-gpu/src/opaque.rs	387	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn compute_pixels(&mut self, r: PixelSlice<'_>, d: PixelSlice<'_>) -> Result<Score> {
+zen/zenmetrics	primary	zen/zenmetrics/crates/ssim2-gpu/src/opaque.rs	492	source	explicit-type-reference	type_reference,public_boundary_candidate	s: &PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/hdr.rs	593	source	explicit-type-reference	type_reference,public_boundary_candidate	r: zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/hdr.rs	594	source	explicit-type-reference	type_reference,public_boundary_candidate	d: zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/hdr.rs	608	source	explicit-type-reference	type_reference,public_boundary_candidate	r: zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/hdr.rs	609	source	explicit-type-reference	type_reference,public_boundary_candidate	d: zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/hdr.rs	618	source	explicit-type-reference	type_reference,public_boundary_candidate	s: &zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/hdr.rs	668	source	explicit-type-reference	type_reference,public_boundary_candidate	s: &zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/hdr.rs	687	source	explicit-type-reference	type_reference,public_boundary_candidate	s: &zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/hdr.rs	703	source	explicit-type-reference	type_reference,public_boundary_candidate	s: &zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/metric.rs	696	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn compute_pixels_multi(&mut self, r: PixelSlice<'_>, d: PixelSlice<'_>) -> Result<Scores> {
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/metric.rs	787	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn compute_pixels(&mut self, r: PixelSlice<'_>, d: PixelSlice<'_>) -> Result<Score> {
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/metric.rs	806	source	explicit-type-reference	type_reference,public_boundary_candidate	r: PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/metric.rs	807	source	explicit-type-reference	type_reference,public_boundary_candidate	d: PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/metric.rs	2164	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn compute_pixels(&mut self, r: PixelSlice<'_>, d: PixelSlice<'_>) -> Result<Score> {
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/metric.rs	2263	source	explicit-type-reference	type_reference,public_boundary_candidate	r: PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/metric.rs	2264	source	explicit-type-reference	type_reference,public_boundary_candidate	d: PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/metric.rs	3239	source	explicit-type-reference	type_reference,public_boundary_candidate	reference: PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/metric.rs	3240	source	explicit-type-reference	type_reference,public_boundary_candidate	distorted: PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/metric.rs	3269	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn score(&mut self, distorted: PixelSlice<'_>) -> Result<Score> {
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/metric.rs	3289	source	explicit-type-reference	type_reference,public_boundary_candidate	reference: PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/session.rs	564	source	explicit-type-reference	type_reference,public_boundary_candidate	r: zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-api/src/session.rs	565	source	explicit-type-reference	type_reference,public_boundary_candidate	d: zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-cli/src/hdr.rs	441	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(crate) fn png_to_rgb16_pq(data: &[u8]) -> Result<(Vec<u16>, u32, u32, zenpixels::Cicp), Err> {
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-cli/src/sweep/hdr.rs	83	source	explicit-type-reference	type_reference,public_boundary_candidate	pub cicp: zenpixels::Cicp,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-cli/src/sweep/hdr.rs	919	source	explicit-type-reference	type_reference,public_boundary_candidate	cicp: zenpixels::Cicp,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-gpu-core/src/lib.rs	209	source	explicit-type-reference	type_reference,public_boundary_candidate	s: &zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-gpu-core/src/lib.rs	210	source	explicit-type-reference	type_reference,public_boundary_candidate	target: zenpixels::PixelDescriptor,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-gpu-core/src/lib.rs	211	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> core::result::Result<Vec<u8>, zenpixels_convert::ConvertError> {
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-gpu-core/src/lib.rs	419	source	explicit-type-reference	type_reference,public_boundary_candidate	s: &zenpixels::PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zenmetrics-gpu-core/src/lib.rs	420	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> core::result::Result<Vec<f32>, zenpixels_convert::ConvertError> {
+zen/zenmetrics	primary	zen/zenmetrics/crates/zensim-gpu/src/opaque.rs	779	source	explicit-type-reference	type_reference,public_boundary_candidate	r: PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zensim-gpu/src/opaque.rs	780	source	explicit-type-reference	type_reference,public_boundary_candidate	d: PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zensim-gpu/src/opaque.rs	817	source	explicit-type-reference	type_reference,public_boundary_candidate	r: PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zensim-gpu/src/opaque.rs	818	source	explicit-type-reference	type_reference,public_boundary_candidate	d: PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zensim-gpu/src/opaque.rs	903	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn set_reference_pixels(&mut self, r: PixelSlice<'_>) -> Result<()> {
+zen/zenmetrics	primary	zen/zenmetrics/crates/zensim-gpu/src/opaque.rs	915	source	explicit-type-reference	type_reference,public_boundary_candidate	d: PixelSlice<'_>,
+zen/zenmetrics	primary	zen/zenmetrics/crates/zensim-gpu/src/opaque.rs	1063	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn compute_pixels(&mut self, r: PixelSlice<'_>, d: PixelSlice<'_>) -> Result<Score> {
+zen/zenmetrics	primary	zen/zenmetrics/crates/zensim-gpu/src/opaque.rs	1440	source	explicit-type-reference	type_reference,public_boundary_candidate	s: &PixelSlice<'_>,
+zen/zenpipe	primary	zen/zenpipe/src/execute_layout.rs	154	source	explicit-type-reference	type_reference,public_boundary_candidate	desc: PixelDescriptor,
+zen/zenpipe	primary	zen/zenpipe/src/execute_layout.rs	325	source	explicit-type-reference	type_reference,public_boundary_candidate	desc: PixelDescriptor,
+zen/zenpipe	primary	zen/zenpipe/src/execute_layout.rs	374	source	explicit-type-reference	type_reference,public_boundary_candidate	desc: PixelDescriptor,
+zen/zenpipe	primary	zen/zenpipe/src/execute_layout.rs	409	source	explicit-type-reference	type_reference,public_boundary_candidate	desc: PixelDescriptor,
+zen/zenpipe	primary	zen/zenpipe/src/execute_layout.rs	442	source	explicit-type-reference	type_reference,public_boundary_candidate	desc: PixelDescriptor,
+zen/zenpipe	primary	zen/zenpipe/src/execute_layout.rs	685	source	explicit-type-reference	type_reference,public_boundary_candidate	desc: PixelDescriptor,
+zen/zenpipe	primary	zen/zenpipe/src/execute_layout.rs	728	source	explicit-type-reference	type_reference,public_boundary_candidate	desc: PixelDescriptor,
+zen/zenpipe	primary	zen/zenpipe/src/execute_layout.rs	824	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn canvas_color_to_pixel(color: &CanvasColor, desc: PixelDescriptor) -> Vec<u8> {
+zen/zenpipe	primary	zen/zenpipe/src/execute_layout.rs	1074	source	explicit-type-reference	type_reference,public_boundary_candidate	desc: PixelDescriptor,
+zen/zenpipe	primary	zen/zenpipe/src/execute_layout.rs	1160	source	explicit-type-reference	type_reference,public_boundary_candidate	desc: PixelDescriptor,
+zen/zenpipe	primary	zen/zenpipe/src/execute_layout.rs	1175	source	explicit-type-reference	type_reference,public_boundary_candidate	desc: PixelDescriptor,
+zen/zenpipe	primary	zen/zenpipe/src/format.rs	8	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels_convert::{
+zen/zenpipe	primary	zen/zenpipe/src/format.rs	13	source	explicit-type-reference	type_reference,public_boundary_candidate	pub type PixelFormat = PixelDescriptor;
+zen/zenpipe	primary	zen/zenpipe/src/lib.rs	117	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels_convert::{
+zen/zenpipe	primary	zen/zenpipe/src/lib.rs	130	source	explicit-type-reference	cms,type_reference,public_boundary_candidate	pub use zenpixels_convert::cms::{ColorManagement, RowTransform};
+zen/zenpipe	primary	zen/zenpipe/src/lib.rs	132	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels_convert::cms_moxcms::MoxCms;
+zen/zenpipe	primary	zen/zenpipe/src/ops.rs	73	source	explicit-type-reference	type_reference,public_boundary_candidate	options: &zenpixels_convert::policy::ConvertOptions,
+zen/zenpipe	primary	zen/zenpipe/src/ops.rs	85	source	explicit-type-reference	conversion,type_reference,public_boundary_candidate	converter: zenpixels_convert::RowConverter,
+zen/zenpipe	primary	zen/zenpipe/src/sources/icc_transform.rs	72	source	explicit-type-reference	cms,type_reference,public_boundary_candidate	pub fn new<C: ColorManagement>(
+zen/zenpipe	primary	zen/zenpipe/src/sources/icc_transform.rs	100	source	explicit-type-reference	cms,type_reference,public_boundary_candidate	transform: Box<dyn RowTransform>,
+zen/zenpipe	primary	zen/zenpipe/src/strip.rs	14	source	explicit-type-reference	type_reference,public_boundary_candidate	pub type Strip<'a> = zenpixels::PixelSlice<'a>;
+zen/zenpipe	primary	zen/zenpipe/src/strip.rs	59	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub fn set_color_context(&mut self, ctx: Option<Arc<ColorContext>>) {
+zen/zenpipe	primary	zen/zenpipe/src/trace.rs	349	source	explicit-type-reference	type_reference,public_boundary_candidate	pub conversion_cost: Option<zenpixels_convert::ConversionCost>,
+zen/zenpipe	primary	zen/zenpipe/zencodecs/src/codecs/avif_enc.rs	76	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: zenpixels::PixelDescriptor,
+zen/zenpipe	primary	zen/zenpipe/zencodecs/src/codecs/jxl_enc.rs	54	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: zenpixels::PixelDescriptor,
+zen/zenpipe	primary	zen/zenpipe/zencodecs/src/dispatch.rs	82	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(crate) type EncodeFn<'a> = Box<dyn FnOnce(PixelSlice<'_>) -> Result<EncodeOutput> + 'a>;
+zen/zenpipe	primary	zen/zenpipe/zencodecs/src/dispatch.rs	87	source	explicit-type-reference	type_reference,public_boundary_candidate	pub supported: &'static [PixelDescriptor],
+zen/zenpipe	primary	zen/zenpipe/zencodecs/src/dispatch.rs	271	source	explicit-type-reference	type_reference,public_boundary_candidate	pub supported: &'static [PixelDescriptor],
+zen/zenpipe	primary	zen/zenpipe/zencodecs/src/dyn_dispatch.rs	45	source	explicit-type-reference	type_reference,public_boundary_candidate	pub preferred: &'a [zenpixels::PixelDescriptor],
+zen/zenpipe	primary	zen/zenpipe/zencodecs/src/encode.rs	596	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: zenpixels::PixelSlice<'_>,
+zen/zenpipe	primary	zen/zenpipe/zencodecs/src/encode.rs	768	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenpipe	primary	zen/zenpipe/zencodecs/src/lib.rs	249	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels_convert::PixelBufferConvertExt;
+zen/zenpipe	primary	zen/zenpipe/zencodecs/src/lib.rs	250	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels_convert::PixelBufferConvertTypedExt;
+zen/zenpipe	primary	zen/zenpipe/zencodecs/src/transcode.rs	662	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn new(encoder: Box<dyn DynEncoder + 'a>, supported: &'static [PixelDescriptor]) -> Self {
+zen/zenpipe	primary	zen/zenpipe/zenfilters/src/convenience.rs	127	source	explicit-type-reference	type_reference,public_boundary_candidate	input: &PixelBuffer,
+zen/zenpipe	primary	zen/zenpipe/zenfilters/src/convenience.rs	130	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer, At<ConvenienceError>> {
+zen/zenpipe	primary	zen/zenpipe/zenfilters/src/lib.rs	251	source	explicit-type-reference	type_reference,public_boundary_candidate	m1: &zenpixels_convert::gamut::GamutMatrix,
+zen/zenpipe	primary	zen/zenpipe/zenfilters/src/lib.rs	252	source	explicit-type-reference	type_reference,public_boundary_candidate	m1_inv: &zenpixels_convert::gamut::GamutMatrix,
+zen/zenpipe	primary	zen/zenpipe/zenfilters/src/srgb_filters.rs	38	source	explicit-type-reference	type_reference,public_boundary_candidate	slice: &mut PixelSliceMut<'_>,
+zen/zenpipe	primary	zen/zenpipe/zenfilters/src/srgb_filters.rs	79	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn color_matrix(slice: &mut PixelSliceMut<'_>, matrix: &[f32; 25]) {
+zen/zenpipe	primary	zen/zenpipe/zenfilters/src/srgb_filters.rs	122	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn color_filter(slice: &mut PixelSliceMut<'_>, filter: &SrgbColorFilter) {
+zen/zenpipe	primary	zen/zenpipe/zenfilters/src/srgb_filters.rs	184	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn sharpen(pixels: &mut PixelBuffer, amount: f32) {
+zen/zenpipe	primary	zen/zenpipe/zenfilters/src/srgb_filters.rs	219	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn blur(pixels: &mut PixelBuffer, sigma: f32) {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	154	source	explicit-type-reference	type_reference,public_boundary_candidate	pub descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	164	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn as_pixel_slice(&self) -> Result<PixelSlice<'_>, At<ConvertError>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	253	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	257	source	explicit-type-reference	type_reference,public_boundary_candidate	supported: &[PixelDescriptor],
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	266	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	270	source	explicit-type-reference	type_reference,public_boundary_candidate	supported: &[PixelDescriptor],
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	271	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelCow<'a>, At<ConvertError>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	291	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	295	source	explicit-type-reference	type_reference,public_boundary_candidate	supported: &[PixelDescriptor],
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	306	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	310	source	explicit-type-reference	type_reference,public_boundary_candidate	supported: &[PixelDescriptor],
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	312	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelCow<'a>, At<ConvertError>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	369	source	explicit-type-reference	type_reference,public_boundary_candidate	from: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	370	source	explicit-type-reference	type_reference,public_boundary_candidate	to: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	422	source	explicit-type-reference	type_reference,public_boundary_candidate	from: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	423	source	explicit-type-reference	type_reference,public_boundary_candidate	to: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	424	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	anchor: zenpixels::hdr::DiffuseWhite,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	425	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer, At<ConvertError>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	467	source	explicit-type-reference	type_reference,public_boundary_candidate	from: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	468	source	explicit-type-reference	type_reference,public_boundary_candidate	to: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	469	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	anchor: zenpixels::hdr::DiffuseWhite,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	549	source	explicit-type-reference	type_reference,public_boundary_candidate	buf: &mut PixelBuffer,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	550	source	explicit-type-reference	type_reference,public_boundary_candidate	target: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	690	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	694	source	explicit-type-reference	type_reference,public_boundary_candidate	supported: &[PixelDescriptor],
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	705	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	709	source	explicit-type-reference	type_reference,public_boundary_candidate	supported: &[PixelDescriptor],
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/adapt.rs	711	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelCow<'a>, At<ConvertError>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/cms.rs	257	source	explicit-type-reference	cms,type_reference,public_boundary_candidate	pub trait RowTransform: Send + Sync {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/cms.rs	277	source	explicit-type-reference	cms,type_reference,public_boundary_candidate	pub trait RowTransformMut: Send {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/cms.rs	312	source	explicit-type-reference	cms,type_reference,public_boundary_candidate	pub trait ColorManagement {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/cms.rs	405	source	explicit-type-reference	cms,type_reference,public_boundary_candidate	pub trait PluggableCms: Send + Sync {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/cms_lite.rs	164	source	explicit-type-reference	cms,type_reference,public_boundary_candidate	) -> Option<Result<Box<dyn RowTransform>, ZenCmsLiteError>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	140	source	explicit-type-reference	conversion,type_reference,public_boundary_candidate	pub struct ConvertPlan {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	141	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(crate) from: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	142	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(crate) to: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	461	source	explicit-type-reference	policy_cleanup,type_reference,public_boundary_candidate	pub fn requires_cms(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	490	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub(crate) fn with_pq_anchor(mut self, anchor: zenpixels::hdr::DiffuseWhite) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	514	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	914	source	explicit-type-reference	type_reference,public_boundary_candidate	from: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	915	source	explicit-type-reference	type_reference,public_boundary_candidate	to: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	967	source	explicit-type-reference	type_reference,public_boundary_candidate	from: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	968	source	explicit-type-reference	type_reference,public_boundary_candidate	to: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	1180	source	explicit-type-reference	type_reference,public_boundary_candidate	from: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	1181	source	explicit-type-reference	type_reference,public_boundary_candidate	to: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	1303	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(crate) fn identity(from: PixelDescriptor, to: PixelDescriptor) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	1393	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn from(&self) -> PixelDescriptor {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	1398	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn to(&self) -> PixelDescriptor {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	1503	source	explicit-type-reference	type_reference,public_boundary_candidate	current: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	1505	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> PixelDescriptor {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	2034	source	explicit-type-reference	conversion,type_reference,public_boundary_candidate	pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert.rs	2048	source	explicit-type-reference	conversion,type_reference,public_boundary_candidate	plan: &ConvertPlan,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert_kernels.rs	59	source	explicit-type-reference	type_reference,public_boundary_candidate	from: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/convert_kernels.rs	60	source	explicit-type-reference	type_reference,public_boundary_candidate	_to: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/converter.rs	32	source	explicit-type-reference	conversion,type_reference,public_boundary_candidate	pub struct RowConverter {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/converter.rs	102	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/converter.rs	115	source	explicit-type-reference	type_reference,public_boundary_candidate	from: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/converter.rs	116	source	explicit-type-reference	type_reference,public_boundary_candidate	to: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/converter.rs	136	source	explicit-type-reference	type_reference,public_boundary_candidate	from: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/converter.rs	137	source	explicit-type-reference	type_reference,public_boundary_candidate	to: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/converter.rs	139	source	explicit-type-reference	cms,type_reference,public_boundary_candidate	cms: Option<&dyn crate::cms::PluggableCms>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/converter.rs	273	source	explicit-type-reference	conversion,type_reference,public_boundary_candidate	pub fn from_plan(plan: ConvertPlan) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/converter.rs	356	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn from_descriptor(&self) -> PixelDescriptor {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/converter.rs	362	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn to_descriptor(&self) -> PixelDescriptor {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/converter.rs	378	source	explicit-type-reference	conversion,type_reference,public_boundary_candidate	pub fn plan(&self) -> &ConvertPlan {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/estimate.rs	113	source	explicit-type-reference	type_reference,public_boundary_candidate	#[must_use] pub fn new(width: u32, height: u32, descriptor: PixelDescriptor) -> Self { Self { width, height, descriptor } }
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/estimate.rs	119	source	explicit-type-reference	type_reference,public_boundary_candidate	#[must_use] pub fn descriptor(&self) -> &PixelDescriptor { &self.descriptor }
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/estimate.rs	295	source	explicit-type-reference	conversion,type_reference,public_boundary_candidate	pub(crate) fn estimate_plan(plan: &ConvertPlan, image: &ImageCharacteristics, compute: &ComputeEnvironment) -> ResourceEstimate {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/ext.rs	108	source	explicit-type-reference	type_reference,public_boundary_candidate	pub trait PixelBufferConvertExt {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/ext.rs	156	source	explicit-type-reference	type_reference,public_boundary_candidate	pub trait PixelBufferConvertTypedExt: PixelBufferConvertExt {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/hdr/mod.rs	82	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub use zenpixels::hdr::{ContentLightLevel, MasteringDisplay};
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/hdr/mod.rs	353	source	explicit-type-reference	type_reference,public_boundary_candidate	px: PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/hdr/mod.rs	354	source	explicit-type-reference	type_reference,public_boundary_candidate	target: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/hdr/mod.rs	355	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer, At<ConvertError>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/hdr/mod.rs	411	source	explicit-type-reference	type_reference,public_boundary_candidate	px: PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/hdr/mod.rs	412	source	explicit-type-reference	type_reference,public_boundary_candidate	target: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/lib.rs	395	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels::*;
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/lib.rs	506	source	explicit-type-reference	conversion,policy_cleanup,type_reference,public_boundary_candidate	pub use convert::{ConvertPlan, convert_row, requires_cms};
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/lib.rs	507	source	explicit-type-reference	conversion,type_reference,public_boundary_candidate	pub use converter::RowConverter;
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/lib.rs	521	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use ext::PixelBufferConvertTypedExt;
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/lib.rs	524	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use ext::{ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/lib.rs	567	source	explicit-type-reference	conversion,color,type_reference,public_boundary_candidate	pub use output::{EncodeReady, OutputMetadata, OutputProfile, finalize_for_output};
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/load_bearing.rs	118	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn apply_to(&self, src: &PixelDescriptor) -> PixelDescriptor {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	143	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn from_source(desc: PixelDescriptor) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	178	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn with_origin_primaries(desc: PixelDescriptor, primaries: ColorPrimaries) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	286	source	explicit-type-reference	type_reference,public_boundary_candidate	pub descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	324	source	explicit-type-reference	type_reference,public_boundary_candidate	source: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	325	source	explicit-type-reference	type_reference,public_boundary_candidate	supported: &[PixelDescriptor],
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	327	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Option<PixelDescriptor> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	348	source	explicit-type-reference	type_reference,public_boundary_candidate	source: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	351	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Option<PixelDescriptor> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	384	source	explicit-type-reference	type_reference,public_boundary_candidate	source: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	388	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Option<PixelDescriptor> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	408	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn ideal_format(source: PixelDescriptor, intent: ConvertIntent) -> PixelDescriptor {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	482	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn conversion_cost(from: PixelDescriptor, to: PixelDescriptor) -> ConversionCost {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	494	source	explicit-type-reference	type_reference,public_boundary_candidate	from: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	495	source	explicit-type-reference	type_reference,public_boundary_candidate	to: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	515	source	explicit-type-reference	type_reference,public_boundary_candidate	source: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	517	source	explicit-type-reference	type_reference,public_boundary_candidate	target: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/negotiate.rs	568	source	explicit-type-reference	type_reference,public_boundary_candidate	pub(crate) fn suitability_loss(target: PixelDescriptor, intent: ConvertIntent) -> u16 {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/mod.rs	115	source	explicit-type-reference	policy_cleanup,type_reference,public_boundary_candidate	pub fn apply_orientation(src: PixelSlice<'_>, orientation: Orientation) -> PixelBuffer {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/mod.rs	135	source	explicit-type-reference	type_reference,public_boundary_candidate	src: PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/mod.rs	137	source	explicit-type-reference	type_reference,public_boundary_candidate	mut dst: PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/mod.rs	212	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelBuffer,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/mod.rs	432	source	explicit-type-reference	type_reference,public_boundary_candidate	src: PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/mod.rs	434	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> PixelBuffer {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/mod.rs	828	source	explicit-type-reference	type_reference,public_boundary_candidate	src: PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/mod.rs	830	source	explicit-type-reference	type_reference,public_boundary_candidate	mut dst: PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_neon.rs	123	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_neon.rs	124	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_neon.rs	226	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_neon.rs	227	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_neon.rs	345	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_neon.rs	346	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_neon.rs	453	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_neon.rs	454	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_neon.rs	547	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_neon.rs	548	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_neon.rs	645	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_neon.rs	646	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_neon.rs	747	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_neon.rs	748	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_x86.rs	130	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_x86.rs	131	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_x86.rs	252	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_x86.rs	253	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_x86.rs	370	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_x86.rs	371	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_x86.rs	476	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_x86.rs	477	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_x86.rs	564	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_x86.rs	565	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_x86.rs	686	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_x86.rs	687	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_x86.rs	822	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/pxn_x86.rs	823	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/rgb3_x86.rs	20	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/orient/rgb3_x86.rs	21	source	explicit-type-reference	type_reference,public_boundary_candidate	dst: &mut PixelSliceMut<'_>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/output.rs	96	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub enum OutputProfile {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/output.rs	188	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub struct EncodeReady {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/output.rs	195	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn pixels(&self) -> PixelSlice<'_> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/output.rs	205	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn into_parts(self) -> (PixelBuffer, OutputMetadata) {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/output.rs	242	source	explicit-type-reference	conversion,cms,type_reference,public_boundary_candidate	pub fn finalize_for_output<C: ColorManagement>(
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/output.rs	243	source	explicit-type-reference	type_reference,public_boundary_candidate	buffer: &PixelBuffer,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/output.rs	244	source	explicit-type-reference	color,type_reference,public_boundary_candidate	origin: &ColorOrigin,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/output.rs	245	source	explicit-type-reference	color,type_reference,public_boundary_candidate	target: OutputProfile,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/output.rs	248	source	explicit-type-reference	color,type_reference,public_boundary_candidate	) -> Result<EncodeReady, At<ConvertError>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/output.rs	433	source	explicit-type-reference	type_reference,public_boundary_candidate	buffer: &PixelBuffer,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/output.rs	434	source	explicit-type-reference	color,type_reference,public_boundary_candidate	origin: &ColorOrigin,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/output.rs	435	source	explicit-type-reference	color,type_reference,public_boundary_candidate	target: OutputProfile,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/output.rs	437	source	explicit-type-reference	cms,type_reference,public_boundary_candidate	cms: Option<&dyn crate::cms::PluggableCms>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/output.rs	438	source	explicit-type-reference	color,type_reference,public_boundary_candidate	) -> Result<EncodeReady, At<ConvertError>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/pipeline/op_format.rs	214	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn candidate_working_formats(self, source: PixelDescriptor) -> Vec<PixelDescriptor> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/pipeline/path.rs	96	source	explicit-type-reference	type_reference,public_boundary_candidate	pub source_format: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/pipeline/path.rs	98	source	explicit-type-reference	type_reference,public_boundary_candidate	pub working_format: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/pipeline/path.rs	100	source	explicit-type-reference	type_reference,public_boundary_candidate	pub output_format: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/pipeline/path.rs	134	source	explicit-type-reference	type_reference,public_boundary_candidate	source: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/pipeline/path.rs	137	source	explicit-type-reference	type_reference,public_boundary_candidate	output: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/pipeline/path.rs	202	source	explicit-type-reference	type_reference,public_boundary_candidate	pub source_format: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/pipeline/path.rs	210	source	explicit-type-reference	type_reference,public_boundary_candidate	pub output_format: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels-convert/src/pipeline/registry.rs	88	source	explicit-type-reference	type_reference,public_boundary_candidate	pub descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	324	source	explicit-type-reference	type_reference,public_boundary_candidate	pub struct PixelSlice<'a, P = ()> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	373	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	401	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn erase(self) -> PixelSlice<'a> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	419	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn try_typed<Q: Pixel>(self) -> Option<PixelSlice<'a, Q>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	453	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn with_descriptor(mut self, descriptor: PixelDescriptor) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	473	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn reinterpret(mut self, descriptor: PixelDescriptor) -> Result<Self, At<BufferError>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	533	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn descriptor(&self) -> PixelDescriptor {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	539	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub fn color_context(&self) -> Option<&Arc<ColorContext>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	546	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub fn with_color_context(mut self, ctx: Arc<ColorContext>) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	556	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub fn with_diffuse_white(self, white: DiffuseWhite) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	701	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn sub_rows(&self, y: u32, count: u32) -> PixelSlice<'_, P> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	740	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn crop_view(&self, x: u32, y: u32, w: u32, h: u32) -> PixelSlice<'_, P> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	842	source	explicit-type-reference	type_reference,public_boundary_candidate	pub struct PixelSliceMut<'a, P = ()> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	872	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	898	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn erase(self) -> PixelSliceMut<'a> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	914	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn try_typed<Q: Pixel>(self) -> Option<PixelSliceMut<'a, Q>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	936	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn with_descriptor(mut self, descriptor: PixelDescriptor) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	952	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn reinterpret(mut self, descriptor: PixelDescriptor) -> Result<Self, At<BufferError>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1012	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn descriptor(&self) -> PixelDescriptor {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1018	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub fn color_context(&self) -> Option<&Arc<ColorContext>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1025	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub fn with_color_context(mut self, ctx: Arc<ColorContext>) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1035	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub fn with_diffuse_white(self, white: DiffuseWhite) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1075	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn as_pixel_slice(&self) -> PixelSlice<'_, P> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1144	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn sub_rows_mut(&mut self, y: u32, count: u32) -> PixelSliceMut<'_, P> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1253	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn swap_to_bgrx(self) -> PixelSliceMut<'a, Bgrx> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1280	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn upgrade_to_rgba(self) -> PixelSliceMut<'a, Rgba<u8>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1306	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn swap_to_rgbx(self) -> PixelSliceMut<'a, Rgbx> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1333	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn upgrade_to_bgra(self) -> PixelSliceMut<'a, BGRA<u8>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1363	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn matte_to_rgbx(self, bg: Rgb<u8>) -> PixelSliceMut<'a, Rgbx> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1395	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn strip_alpha_to_rgbx(self) -> PixelSliceMut<'a, Rgbx> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1410	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn swap_to_bgra(self) -> PixelSliceMut<'a, BGRA<u8>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1440	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn matte_to_bgrx(self, bg: Rgb<u8>) -> PixelSliceMut<'a, Bgrx> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1470	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn strip_alpha_to_bgrx(self) -> PixelSliceMut<'a, Bgrx> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1485	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn swap_to_rgba(self) -> PixelSliceMut<'a, Rgba<u8>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1522	source	explicit-type-reference	type_reference,public_boundary_candidate	pub struct PixelBuffer<P = ()> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1539	source	explicit-type-reference	type_reference,public_boundary_candidate	pub enum PixelCow<'a, P = ()> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1560	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn as_slice(&self) -> PixelSlice<'_, P> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1570	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn to_mut(&mut self) -> &mut PixelBuffer {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1582	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn into_owned(self) -> PixelBuffer {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1623	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn new(width: u32, height: u32, descriptor: PixelDescriptor) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1635	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1681	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1696	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	1735	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2096	source	explicit-type-reference	storage_candidate,type_reference,public_boundary_candidate	pub struct InPlacePixels<'a> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2106	source	explicit-type-reference	type_reference,public_boundary_candidate	pub descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2108	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub color: Option<Arc<ColorContext>>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2129	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2130	source	explicit-type-reference	color,type_reference,public_boundary_candidate	color: Option<Arc<ColorContext>>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2146	source	explicit-type-reference	type_reference,public_boundary_candidate	descriptor: PixelDescriptor,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2147	source	explicit-type-reference	color,type_reference,public_boundary_candidate	color: Option<Arc<ColorContext>>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2209	source	explicit-type-reference	storage_candidate,type_reference,public_boundary_candidate	F: for<'a> FnOnce(InPlacePixels<'a>) -> PixelSliceMut<'a>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2246	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn erase(self) -> PixelBuffer {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2263	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn try_typed<Q: Pixel>(self) -> Option<PixelBuffer<Q>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2286	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn with_descriptor(mut self, descriptor: PixelDescriptor) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2302	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn reinterpret(mut self, descriptor: PixelDescriptor) -> Result<Self, At<BufferError>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2420	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn descriptor(&self) -> PixelDescriptor {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2426	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub fn color_context(&self) -> Option<&Arc<ColorContext>> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2433	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub fn with_color_context(mut self, ctx: Arc<ColorContext>) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2443	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub fn with_diffuse_white(self, white: DiffuseWhite) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2479	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn as_slice(&self) -> PixelSlice<'_, P> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2500	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn as_slice_mut(&mut self) -> PixelSliceMut<'_, P> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2520	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn rows(&self, y: u32, count: u32) -> PixelSlice<'_, P> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2560	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn rows_mut(&mut self, y: u32, count: u32) -> PixelSliceMut<'_, P> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2600	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn crop_view(&self, x: u32, y: u32, w: u32, h: u32) -> PixelSlice<'_, P> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/buffer.rs	2650	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn crop_copy(&self, x: u32, y: u32, w: u32, h: u32) -> PixelBuffer<P> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/cicp.rs	108	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn from_descriptor(desc: &crate::PixelDescriptor) -> Option<Self> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/cicp.rs	125	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn to_descriptor(&self, format: crate::PixelFormat) -> crate::PixelDescriptor {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/color.rs	317	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub struct ColorContext {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/color.rs	328	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub diffuse_white: Option<DiffuseWhite>,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/color.rs	358	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub fn with_diffuse_white(mut self, white: DiffuseWhite) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/color.rs	455	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub struct ColorOrigin {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/descriptor.rs	631	source	explicit-type-reference	type_reference,public_boundary_candidate	pub struct PixelDescriptor {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/hdr.rs	36	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub struct DiffuseWhite(f32);
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/hdr.rs	212	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub fn measure(px: PixelSlice<'_>, white: DiffuseWhite) -> Option<Self> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/lib.rs	111	source	explicit-type-reference	hdr,type_reference,public_boundary_candidate	pub use hdr::{ContentLightLevel, DiffuseWhite, MasteringDisplay};
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/planar.rs	251	source	explicit-type-reference	planar,type_reference,public_boundary_candidate	pub struct PlaneDescriptor {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/planar.rs	489	source	explicit-type-reference	type_reference,public_boundary_candidate	pub buffer: crate::buffer::PixelBuffer,
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/planar.rs	685	source	explicit-type-reference	planar,type_reference,public_boundary_candidate	pub fn planes(&self) -> &[PlaneDescriptor] {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/planar.rs	840	source	explicit-type-reference	planar,type_reference,public_boundary_candidate	pub struct MultiPlaneImage {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/planar.rs	852	source	explicit-type-reference	planar,type_reference,public_boundary_candidate	pub fn new(layout: PlaneLayout, buffers: alloc::vec::Vec<crate::buffer::PixelBuffer>) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/planar.rs	872	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub fn with_origin(mut self, ctx: alloc::sync::Arc<crate::color::ColorContext>) -> Self {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/planar.rs	891	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn buffer(&self, idx: usize) -> Option<&crate::buffer::PixelBuffer> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/planar.rs	897	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn buffer_mut(&mut self, idx: usize) -> Option<&mut crate::buffer::PixelBuffer> {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/planar.rs	903	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn buffers(&self) -> &[crate::buffer::PixelBuffer] {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/planar.rs	909	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn buffers_mut(&mut self) -> &mut [crate::buffer::PixelBuffer] {
+zen/zenpixels	primary	zen/zenpixels/zenpixels/src/planar.rs	915	source	explicit-type-reference	color,type_reference,public_boundary_candidate	pub fn origin(&self) -> Option<&alloc::sync::Arc<crate::color::ColorContext>> {
+zen/zenpng	primary	zen/zenpng/src/decode.rs	200	source	explicit-type-reference	type_reference,public_boundary_candidate	pub pixels: PixelBuffer,
+zen/zenpng	primary	zen/zenpng/src/decode.rs	431	source	explicit-type-reference	type_reference,public_boundary_candidate	pub pixels: PixelBuffer,
+zen/zenpng	primary	zen/zenpng/src/decoder/apng.rs	26	source	explicit-type-reference	type_reference,public_boundary_candidate	pub pixels: PixelBuffer,
+zen/zenpng	primary	zen/zenpng/src/decoder/postprocess.rs	473	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> crate::error::Result<PixelBuffer> {
+zen/zenraw	primary	zen/zenraw/src/decode.rs	272	source	explicit-type-reference	type_reference,public_boundary_candidate	pub pixels: PixelBuffer,
+zen/zenresize	primary	zen/zenresize/src/composite.rs	112	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn from_srgb_u8(r: u8, g: u8, b: u8, a: u8, desc: PixelDescriptor) -> Self {
+zen/zenresize	primary	zen/zenresize/src/composite.rs	132	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn from_linear(r: f32, g: f32, b: f32, a: f32, desc: PixelDescriptor) -> Self {
+zen/zenresize	primary	zen/zenresize/src/composite.rs	141	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn transparent(_desc: PixelDescriptor) -> Self {
+zen/zenresize	primary	zen/zenresize/src/composite.rs	149	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn white(desc: PixelDescriptor) -> Self {
+zen/zenresize	primary	zen/zenresize/src/composite.rs	154	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn black(desc: PixelDescriptor) -> Self {
+zen/zenresize	primary	zen/zenresize/src/lib.rs	60	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels::{
+zen/zenresize	primary	zen/zenresize/src/pixel.rs	268	source	explicit-type-reference	type_reference,public_boundary_candidate	pub input: PixelDescriptor,
+zen/zenresize	primary	zen/zenresize/src/pixel.rs	270	source	explicit-type-reference	type_reference,public_boundary_candidate	pub output: PixelDescriptor,
+zen/zenresize	primary	zen/zenresize/src/pixel.rs	779	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn format(mut self, desc: PixelDescriptor) -> Self {
+zen/zenresize	primary	zen/zenresize/src/pixel.rs	786	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn input(mut self, desc: PixelDescriptor) -> Self {
+zen/zenresize	primary	zen/zenresize/src/pixel.rs	792	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn output(mut self, desc: PixelDescriptor) -> Self {
+zen/zenresize	primary	zen/zenresize/src/resize.rs	780	source	explicit-type-reference	type_reference,public_boundary_candidate	desc: PixelDescriptor,
+zen/zensim	primary	zen/zensim/zensim/src/zenpixels_compat.rs	61	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn try_from_slice(slice: &'a PixelSlice<'a>) -> Result<Self, UnsupportedFormat> {
+zen/zensim	primary	zen/zensim/zensim/src/zenpixels_compat.rs	91	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn try_from_buffer(buf: &'a PixelBuffer) -> Result<Self, UnsupportedFormat> {
+zen/zensim-featcompress	primary	zen/zensim-featcompress/zensim/src/zenpixels_compat.rs	61	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn try_from_slice(slice: &'a PixelSlice<'a>) -> Result<Self, UnsupportedFormat> {
+zen/zensim-featcompress	primary	zen/zensim-featcompress/zensim/src/zenpixels_compat.rs	91	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn try_from_buffer(buf: &'a PixelBuffer) -> Result<Self, UnsupportedFormat> {
+zen/zensquoosh	primary	zen/zensquoosh/crates/zensquoosh-codecs/src/lib.rs	111	source	explicit-type-reference	type_reference,public_boundary_candidate	pixels: &PixelBuffer,
+zen/zensquoosh	primary	zen/zensquoosh/crates/zensquoosh-codecs/src/lib.rs	112	source	explicit-type-reference	type_reference,public_boundary_candidate	target: PixelDescriptor,
+zen/zensr	primary	zen/zensr/crates/zensr-bench/src/lib.rs	14	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn pixelbuffer_to_rgb8(buf: &zenpixels::PixelBuffer) -> Option<Rgb8Img> {
+zen/zensr	primary	zen/zensr/crates/zensr-micro/src/px.rs	49	source	explicit-type-reference	type_reference,public_boundary_candidate	src: &PixelSlice<'_>,
+zen/zensr	primary	zen/zensr/crates/zensr-micro/src/px.rs	52	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Result<PixelBuffer, PxError> {
+zen/zensysbench	primary	zen/zensysbench/src/codecs/zc.rs	47	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn rgb8_slice(w: u32, h: u32, rgb: &[u8]) -> zenpixels::PixelSlice<'_> {
+zen/zentone	primary	zen/zentone/src/gainmap.rs	779	source	explicit-type-reference	type_reference,public_boundary_candidate	src: zenpixels::PixelSlice<'_>,
+zen/zentone	primary	zen/zentone/src/gainmap.rs	782	source	explicit-type-reference	type_reference,public_boundary_candidate	) -> Option<zenpixels::PixelBuffer> {
+zen/zenwebp	primary	zen/zenwebp/src/codec.rs	1626	source	explicit-type-reference	type_reference,public_boundary_candidate	pub fn with_preferred(mut self, preferred: &[PixelDescriptor]) -> Self {
+zen/zenwebp	primary	zen/zenwebp/src/decoder/api.rs	1873	source	explicit-type-reference	type_reference,public_boundary_candidate	pub orientation: Option<zenpixels::Orientation>,
+zen/zenwebp	primary	zen/zenwebp/src/lib.rs	171	source	explicit-type-reference	type_reference,public_boundary_candidate	pub use zenpixels::Orientation;
