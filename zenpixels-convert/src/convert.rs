@@ -537,6 +537,8 @@ impl ConvertPlan {
     /// with a [`PluggableCms`](crate::cms::PluggableCms) backend attached.
     /// `ConvertPlan` itself never dispatches through CMS — wire the call
     /// through `RowConverter` for that.
+    /// Premultiplied transfer changes also require `RowConverter`, which
+    /// preserves explicit unassociate/transform/reassociate stages.
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
         if needs_cms_for_color_model(&from, &to) {
@@ -556,6 +558,13 @@ impl ConvertPlan {
         // Narrow depth changes also need their own scaling: e.g. narrow
         // U8 white 235 must widen to 60160, not full-scale 60395.
         validate_signal_range(from, to)?;
+
+        if from.transfer() != to.transfer()
+            && (from.alpha() == Some(AlphaMode::Premultiplied)
+                || to.alpha() == Some(AlphaMode::Premultiplied))
+        {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
 
         // Refuse HLG↔PQ. HLG is scene-referred — these kernels apply only its
         // OETF, with no OOTF and no `Lw`/peak — while PQ is absolute display
@@ -987,6 +996,8 @@ impl ConvertPlan {
     /// [`ConvertError::NeedsCms`] — same posture as
     /// [`ConvertPlan::new`]. HDR tone-mapping is RGB-only; a CMS is the
     /// right tool for CMYK↔RGB even on the HDR construction path.
+    /// Premultiplied HDR sources return [`ConvertError::NoPath`]; unassociate
+    /// them in their source transfer domain before requesting tone mapping.
     #[cfg(feature = "hdr-experimental")]
     #[track_caller]
     pub fn new_with_hdr_config(
@@ -1034,6 +1045,13 @@ impl ConvertPlan {
 
         // Same endpoint range/depth restrictions as the ordinary planner.
         validate_signal_range(from, to)?;
+        // The tone-map chain operates on straight samples. Reject an
+        // associated source until this entry point owns an explicit
+        // unassociate stage; applying a nonlinear tone map before dividing
+        // by alpha produces the wrong colors.
+        if from.alpha() == Some(AlphaMode::Premultiplied) {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
 
         // The pipeline: src → linear-F32-in-source-primaries → (source→BT.2020)
         // → ToneMap → (BT.2020→target) → SoftCompress → target-encode.
@@ -1154,19 +1172,8 @@ impl ConvertPlan {
 
         // ---- (h) Alpha mode (Straight↔Premultiplied).
         //
-        // KNOWN LIMITATION (premultiplied HDR sources): steps (b)–(e) above —
-        // including the NONLINEAR tone-map and OKLch soft-compress — run on the
-        // source's alpha mode carried through from step (a). Linear ops (the
-        // gamut matrices) commute with premultiplication, but the nonlinear
-        // tone-map does not: `TM(α·R) ≠ α·TM(R)`. A `Premultiplied` source is
-        // therefore tone-mapped on premultiplied values, and this step only
-        // reconciles the alpha *mode* afterwards. Correct handling needs an
-        // unpremultiply before step (b) and a re-premultiply here — but the
-        // library's premul convention is encoded-space (Canvas 2D; see the
-        // `new_explicit` MatteComposite note), so doing it in the linear
-        // pipeline is subtle and deferred rather than done wrong. In practice
-        // PQ/HLG sources are virtually always straight/opaque; premultiplied
-        // HDR is the rare case. Tracked for the `hdr-experimental` stabilization.
+        // Premultiplied sources were rejected above. A straight source can
+        // acquire associated target alpha after all nonlinear color work.
         if from.alpha() != to.alpha() && from.alpha().is_some() && to.alpha().is_some() {
             match (from.alpha(), to.alpha()) {
                 (Some(AlphaMode::Straight), Some(AlphaMode::Premultiplied)) => {

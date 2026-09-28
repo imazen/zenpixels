@@ -15,6 +15,10 @@ use whereat::{At, ResultAtExt};
 /// Multi-step conversions reuse internal scratch buffers, eliminating
 /// per-row heap allocation.
 ///
+/// Cloning is available with `std`, where owned CMS state can be shared behind
+/// a mutex. Without `std`, construct a separate converter instead: a mutable
+/// plugin cannot be cloned through its trait object without losing its state.
+///
 /// # Example
 ///
 /// ```rust,ignore
@@ -55,10 +59,8 @@ enum ExternalTransform {
     /// gate that caught the drop.
     #[cfg(feature = "std")]
     Owned(alloc::sync::Arc<std::sync::Mutex<dyn crate::cms::RowTransformMut>>),
-    /// no_std fallback — keep the historical drop-on-clone semantics
-    /// since `std::sync::Mutex` isn't available without `std` and
-    /// `RowTransformMut::transform_row(&mut self)` can't be shared
-    /// behind a bare `Arc` (no interior mutability).
+    /// no_std owns mutable plugin state directly. RowConverter deliberately
+    /// does not implement Clone in that configuration.
     #[cfg(not(feature = "std"))]
     Owned(Box<dyn crate::cms::RowTransformMut>),
 }
@@ -90,6 +92,7 @@ impl AlphaPipeline {
     }
 }
 
+#[cfg(feature = "std")]
 impl Clone for AlphaPipeline {
     fn clone(&self) -> Self {
         Self {
@@ -104,7 +107,7 @@ impl Clone for AlphaPipeline {
 
 /// Wrap a freshly-built `Box<dyn RowTransformMut>` into the
 /// `ExternalTransform::Owned` carrier — `Arc<Mutex<_>>` when std is on
-/// (share-on-clone), bare `Box` when not (drop-on-clone).
+/// (share-on-clone), bare `Box` when not (non-cloneable).
 #[inline]
 fn owned_external(t: Box<dyn crate::cms::RowTransformMut>) -> ExternalTransform {
     #[cfg(feature = "std")]
@@ -233,7 +236,11 @@ impl RowConverter {
         let has_icc = matches!(src_src, crate::ColorProfileSource::Icc(_))
             || matches!(dst_src, crate::ColorProfileSource::Icc(_));
         let explicit_profile_change = has_icc && src_src != dst_src;
-        if primaries_differ || needs_cms_dispatch || explicit_profile_change {
+        let color_dispatch = primaries_differ || needs_cms_dispatch || explicit_profile_change;
+        let premultiplied_transfer = from.transfer() != to.transfer()
+            && (from.alpha() == Some(crate::AlphaMode::Premultiplied)
+                || to.alpha() == Some(crate::AlphaMode::Premultiplied));
+        if color_dispatch || premultiplied_transfer {
             // PixelFormat does not carry an overridden alpha convention. Do
             // alpha-only math around the CMS, retaining the real ICC sources
             // for the middle stage. Padding/opaque overrides remain explicit
@@ -279,6 +286,8 @@ impl RowConverter {
                     }))),
                 });
             }
+        }
+        if color_dispatch {
             let src_fmt = from.pixel_format();
             let dst_fmt = to.pixel_format();
 
@@ -506,6 +515,7 @@ impl RowConverter {
     }
 }
 
+#[cfg(feature = "std")]
 impl Clone for RowConverter {
     fn clone(&self) -> Self {
         // Both Shared and Owned external transforms now clone cheaply
@@ -524,8 +534,6 @@ impl Clone for RowConverter {
             Some(ExternalTransform::Owned(arc)) => {
                 Some(ExternalTransform::Owned(alloc::sync::Arc::clone(arc)))
             }
-            #[cfg(not(feature = "std"))]
-            Some(ExternalTransform::Owned(_)) => None,
             None => None,
         };
         Self {

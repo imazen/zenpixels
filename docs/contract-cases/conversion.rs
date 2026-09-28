@@ -124,7 +124,7 @@ mod tests {
         );
     }
     #[test]
-    fn premul_transfer_changes_values_in_wrong_domain() {
+    fn premul_transfer_unassociates_before_linearizing() {
         let src = PixelDescriptor::RGBAF32_LINEAR
             .with_transfer(TransferFunction::Srgb)
             .with_alpha(Some(AlphaMode::Premultiplied));
@@ -137,7 +137,7 @@ mod tests {
             bytemuck::cast_slice_mut(&mut out),
             1,
         );
-        assert!((out[0] - 0.101752).abs() < 1e-5, "got {}", out[0]);
+        assert!((out[0] - 0.214041).abs() < 1e-5, "got {}", out[0]);
         assert!((TransferFunction::Srgb.linearize(0.5) - 0.214041).abs() < 1e-5);
     }
     #[test]

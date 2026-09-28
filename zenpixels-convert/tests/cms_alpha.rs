@@ -4,6 +4,53 @@ use zenpixels_convert::{
 };
 
 #[test]
+fn nonlinear_transfer_operates_on_unassociated_samples() {
+    use zenpixels_convert::{ConvertPlan, TransferFunction};
+    let from = PixelDescriptor::RGBAF32_LINEAR
+        .with_transfer(TransferFunction::Srgb)
+        .with_alpha(Some(AlphaMode::Premultiplied));
+    let input = [0.25_f32, 0.125, 0.0, 0.5];
+    // Independent sRGB EOTF at unassociated values 0.5 and 0.25.
+    let linear = [0.21404114_f32, 0.05087609, 0.0, 0.5];
+    for target_alpha in [AlphaMode::Straight, AlphaMode::Premultiplied] {
+        let to = PixelDescriptor::RGBAF32_LINEAR.with_alpha(Some(target_alpha));
+        assert!(ConvertPlan::new(from, to).is_err());
+        let mut converter = RowConverter::new(from, to).unwrap();
+        let mut output = [0.0_f32; 4];
+        converter.convert_row(
+            bytemuck::cast_slice(&input),
+            bytemuck::cast_slice_mut(&mut output),
+            1,
+        );
+        for channel in 0..3 {
+            let expected = linear[channel]
+                * if target_alpha == AlphaMode::Premultiplied {
+                    0.5
+                } else {
+                    1.0
+                };
+            // Match the existing transfer review's 1e-5 bound: the production
+            // sRGB polynomial is approximate. The former alpha-domain error
+            // produces 0.101752 here instead of approximately 0.214041.
+            assert!(
+                (output[channel] - expected).abs() < 1e-5,
+                "{target_alpha:?} channel {channel}: {} != {expected}",
+                output[channel]
+            );
+        }
+        assert_eq!(output[3], 0.5);
+    }
+}
+
+#[cfg(feature = "hdr-experimental")]
+#[test]
+fn tone_mapping_rejects_associated_source_samples() {
+    use zenpixels_convert::ConvertPlan;
+    let from = PixelDescriptor::RGBAF32_LINEAR.with_alpha(Some(AlphaMode::Premultiplied));
+    assert!(ConvertPlan::new_with_hdr_peak(from, PixelDescriptor::RGBA8_SRGB, 1000.0).is_err());
+}
+
+#[test]
 fn cross_gamut_preserves_partial_alpha_and_cloned_transforms() {
     let from = PixelDescriptor::RGBAF32_LINEAR.with_primaries(ColorPrimaries::DisplayP3);
     let to = PixelDescriptor::RGBAF32_LINEAR;

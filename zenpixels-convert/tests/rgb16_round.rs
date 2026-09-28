@@ -285,7 +285,15 @@ fn real_transfer_rgba_keeps_alpha_linear() {
                     .unwrap()
                     .convert_row(&input, &mut output, width as u32);
                 for v in 0..=u16::MAX {
-                    let encoded = encode_f64(to_tf, decode_f64(from_tf, f64::from(v) / 65535.0));
+                    // The associated fixture has R=G=B=alpha: every nonzero
+                    // sample is straight white, independent of transfer.
+                    // Transforming the associated code itself would be the
+                    // wrong-domain bug. At alpha zero the result stays black.
+                    let encoded = if alpha == AlphaMode::Premultiplied {
+                        f64::from(v) / 65535.0
+                    } else {
+                        encode_f64(to_tf, decode_f64(from_tf, f64::from(v) / 65535.0))
+                    };
                     let want_color = (encoded.clamp(0.0, 1.0) * 255.0 + 0.5).floor() as u8;
                     let px = &output[v as usize * 4..v as usize * 4 + 4];
                     assert_eq!(

@@ -43,3 +43,18 @@ zenpixels = {{ path = {json.dumps(str(root / 'zenpixels'))} }}
     for features in ([], ["--no-default-features"]):
         subprocess.run(["cargo", "test", "--offline", "--quiet", *features],
                        cwd=project, env=env, check=True)
+    # The breaking release removes no_std Clone rather than silently losing
+    # owned CMS state. Check both halves of that feature-dependent contract.
+    (project / "src/bin").mkdir()
+    (project / "src/bin/clone.rs").write_text("""
+use zenpixels_convert::RowConverter;
+fn assert_clone<T: Clone>() {}
+fn main() { assert_clone::<RowConverter>(); }
+""")
+    command = ["cargo", "check", "--offline", "--quiet", "--bin", "clone"]
+    subprocess.run(command, cwd=project, env=env, check=True)
+    negative = subprocess.run(command + ["--no-default-features"],
+                              cwd=project, env=env, text=True, capture_output=True)
+    if negative.returncode == 0 or "RowConverter: Clone" not in negative.stderr:
+        raise RuntimeError("Expected no_std RowConverter Clone bound rejection:\n" + negative.stderr)
+    print("std Clone accepted; no_std Clone rejected without erasing CMS state")

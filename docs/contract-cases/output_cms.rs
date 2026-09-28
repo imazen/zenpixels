@@ -8,7 +8,7 @@ mod tests {
     use zenpixels_convert::{RowConverter, finalize_for_output_with, output::OutputProfile};
 
     #[test]
-    fn same_as_origin_can_mistag_current_pixels() {
+    fn same_as_origin_converts_current_pixels() {
         let b = PixelBuffer::from_vec(vec![200, 50, 10], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
         let origin = ColorOrigin::from_cicp(Cicp::DISPLAY_P3);
         let r = finalize_for_output_with(
@@ -20,12 +20,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r.metadata().cicp, Some(Cicp::DISPLAY_P3));
-        assert_eq!(r.pixels().descriptor().primaries, ColorPrimaries::Bt709);
-        assert_eq!(r.pixels().row(0), [200, 50, 10]);
+        assert_eq!(r.pixels().descriptor().primaries, ColorPrimaries::DisplayP3);
+        let mut expected = [0; 3];
+        RowConverter::new(b.descriptor(), r.pixels().descriptor())
+            .unwrap()
+            .convert_row(b.as_slice().row(0), &mut expected, 1);
+        assert_eq!(r.pixels().row(0), expected);
+        assert_ne!(expected, [200, 50, 10]);
     }
 
     #[test]
-    fn output_identity_relabels_premultiplied_as_straight() {
+    fn output_unpremultiplies_to_straight() {
         let d = PixelDescriptor::RGBA8_SRGB.with_alpha(Some(AlphaMode::Premultiplied));
         let b = PixelBuffer::from_vec(vec![64, 32, 16, 128], 1, 1, d).unwrap();
         let r = finalize_for_output_with(
@@ -37,10 +42,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r.pixels().descriptor().alpha(), Some(AlphaMode::Straight));
-        assert_eq!(r.pixels().row(0), [64, 32, 16, 128]);
+        assert_eq!(r.pixels().row(0), [128, 64, 32, 128]);
     }
     #[test]
-    fn output_ignores_cicp_signal_range() {
+    fn output_rejects_unimplemented_signal_range_change() {
         let b =
             PixelBuffer::from_vec(vec![255, 255, 255], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
         let narrow = Cicp::new(1, 13, 0, false);
@@ -50,11 +55,8 @@ mod tests {
             OutputProfile::Named(narrow),
             PixelFormat::Rgb8,
             None,
-        )
-        .unwrap();
-        assert_eq!(r.metadata().cicp, Some(narrow));
-        assert_eq!(r.pixels().descriptor().signal_range, SignalRange::Full);
-        assert_eq!(r.pixels().row(0), [255, 255, 255]);
+        );
+        assert!(r.is_err());
     }
     struct Fill;
     impl RowTransformMut for Fill {
@@ -81,7 +83,7 @@ mod tests {
         }
     }
     #[test]
-    fn output_cms_does_not_receive_icc() {
+    fn output_cms_receives_actual_icc() {
         let cms = Spy::default();
         let icc: std::sync::Arc<[u8]> = zenpixels_convert::icc_profiles::DISPLAY_P3_V4.into();
         let b = PixelBuffer::from_vec(vec![200, 50, 10], 1, 1, PixelDescriptor::RGB8_SRGB)
@@ -90,12 +92,14 @@ mod tests {
         let r = finalize_for_output_with(
             &b,
             &ColorOrigin::from_icc(icc.clone()),
-            OutputProfile::Icc(icc),
+            // Distinct actual profiles require CMS work; asking for the same
+            // ICC is an identity and should not invoke a plugin.
+            OutputProfile::Icc(zenpixels_convert::icc_profiles::ADOBE_RGB.into()),
             PixelFormat::Rgb8,
             Some(&cms),
         )
         .unwrap();
-        assert_eq!(*cms.0.lock().unwrap(), vec![(false, false)]);
+        assert_eq!(*cms.0.lock().unwrap(), vec![(true, true)]);
         assert_eq!(r.pixels().row(0), [42, 42, 42]);
     }
     fn custom_converter() -> RowConverter {
@@ -118,15 +122,15 @@ mod tests {
     }
     #[cfg(not(feature = "std"))]
     #[test]
-    fn no_std_clone_discards_external_transform() {
+    fn no_std_separate_converters_retain_external_transform() {
         let mut a = custom_converter();
-        let mut c = a.clone();
+        let mut c = custom_converter();
         let mut direct = [0; 3];
         let mut cloned = [0; 3];
         a.convert_row(&[1, 2, 3], &mut direct, 1);
         c.convert_row(&[1, 2, 3], &mut cloned, 1);
         assert_eq!(direct, [42, 42, 42]);
-        assert_eq!(cloned, [1, 2, 3]);
+        assert_eq!(cloned, [42, 42, 42]);
     }
     #[test]
     fn reinterpret_accepts_invalid_alignment() {

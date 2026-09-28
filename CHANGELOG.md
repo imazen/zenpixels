@@ -4,6 +4,10 @@
 
 ### Breaking media foundation changes
 
+- `zenpixels-convert::RowConverter` implements `Clone` only with `std`.
+  The old no_std clone silently discarded owned CMS transforms and could
+  return unchanged pixels under a different profile. Construct a separate
+  converter when building without `std`; mutable plugin state is not cloneable.
 - Remove the deprecated `planar` module, all nine root re-exports, and the
   `planar` feature from both zenpixels and zenpixels-convert. The companion
   zenpipe PR moves filter channel masks into `zenfilters::access::PlaneMask`.
@@ -23,6 +27,10 @@ items in the historical removal queue remain unchanged unless listed above.
 - Cross-profile row conversion normalizes premultiplied alpha around the CMS
   and restores the requested association afterward. The actual ICC profiles
   remain attached to the color stage; cloned converters preserve all stages.
+- `RowConverter` also unassociates before nonlinear transfer changes within
+  one gamut. Raw `ConvertPlan` refuses this route; use `RowConverter` for the
+  staged conversion. HDR tone-map planning refuses premultiplied sources
+  until they have been explicitly unassociated in their source domain.
 - `finalize_for_output_with` reads the current pixel ICC/CICP context and
   sends actual ICC bytes to the configured CMS. Distinct profiles whose
   descriptors are both unknown no longer bypass conversion. Unsupported ICC
