@@ -4,8 +4,8 @@
 It describes one unsigned code per U8/U16 storage word using private fields and
 a checked constant constructor. It introduces no default or sample-value scan.
 
-The concrete consumer is `zenmedia::plane::Plane` and its native AV1 adapter
-(`zenmedia/src/av1.rs`). The adapter retains rav1d-safe's frame allocation and
+The concrete consumer is `zencodec_media::plane::Plane` and its native AV1 adapter
+(`zencodec/media/src/av1.rs`). The adapter retains rav1d-safe's frame allocation and
 mapped borrow guards. Its corpus verifies all samples in 48 independently
 decoded lossless AV1 cases: 8/10/12-bit, full/narrow range, mono/420/422/444,
 even/odd dimensions. Thus native code 1023 remains 1023 in U16 and is explicitly
@@ -52,7 +52,8 @@ the implementation checks subtraction rather than overflowing depth + shift.
    backend guard cannot be returned as if it borrowed only the frame owner.
 
 These mandates do not freeze a new multi-plane ownership or video codec API in
-zenpixels. The working prototype lives in zenmedia until its conversions,
+zenpixels. The working prototype lives in the `media/` workspace of the zencodec repository
+(package `zencodec-media`) until its conversions,
 animation, timestamps, I/O and cross-codec behavior have been exercised together.
 The deprecated `planar` module remains available for the 0.2 bridge; migration
 and removal in 0.3 must include zenfilters' public `PlaneMask` consumers.
