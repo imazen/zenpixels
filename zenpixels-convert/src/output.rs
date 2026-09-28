@@ -400,7 +400,12 @@ fn build_cms_transform<C: ColorManagement>(
 
 /// Finalize a pixel buffer for output using the [`PluggableCms`](crate::cms::PluggableCms) dispatch chain.
 ///
-/// Modern replacement for [`finalize_for_output`].
+/// Modern replacement for [`finalize_for_output`]. Current interpretation comes
+/// from the buffer's ColorContext (ICC first, otherwise CICP), then its
+/// descriptor. `SameAsOrigin` converts back to the origin's authoritative
+/// profile if processing changed it; it does not merely attach stale metadata.
+/// Converted pixels carry the resulting ColorContext as well as OutputMetadata.
+/// An ICC conversion declined by all plugins returns an error.
 ///
 /// When a CMS plugin is supplied, it is offered the conversion first; on
 /// decline the built-in `ZenCmsLite` dispatcher handles named-profile
@@ -436,77 +441,134 @@ pub fn finalize_for_output_with(
     pixel_format: PixelFormat,
     cms: Option<&dyn crate::cms::PluggableCms>,
 ) -> Result<EncodeReady, At<ConvertError>> {
-    let _ = origin; // reserved for future HDR/intent policy gate
+    use crate::{ColorContext, ColorProfileSource};
+
     let source_desc = buffer.descriptor();
-    let target_desc = pixel_format.descriptor();
-
-    // Determine output metadata based on target profile.
-    let metadata = match &target {
-        OutputProfile::SameAsOrigin => OutputMetadata {
-            icc: origin.icc.clone(),
-            cicp: origin.cicp,
-            hdr: None,
-        },
-        OutputProfile::Named(cicp) => OutputMetadata {
-            icc: None,
-            cicp: Some(*cicp),
-            hdr: None,
-        },
-        OutputProfile::Icc(icc) => OutputMetadata {
-            icc: Some(icc.clone()),
-            cicp: None,
-            hdr: None,
-        },
-    };
-
-    // Build the target descriptor with resolved primaries + transfer so
-    // RowConverter's CMS dispatch chain has a concrete ColorProfileSource
-    // on both sides.
-    let target_desc_full = target_desc
-        .with_transfer(resolve_transfer(&target, &source_desc))
-        .with_primaries(resolve_primaries(&target, &source_desc));
-
-    // Fast path: no conversion needed.
-    if source_desc.layout_compatible(target_desc_full)
-        && descriptors_match(&source_desc, &target_desc_full)
+    let source = buffer
+        .color_context()
+        .and_then(|context| context.as_profile_source())
+        .unwrap_or_else(|| source_desc.color_profile_source());
+    // Current CICP must describe the actual packed values. An ICC context is
+    // authoritative even when the descriptor only gives a best-effort label.
+    if let ColorProfileSource::Cicp(cicp) = &source
+        && (cicp.matrix_coefficients != 0
+            || cicp.to_descriptor(source_desc.pixel_format()).transfer() != source_desc.transfer()
+            || cicp.to_descriptor(source_desc.pixel_format()).primaries != source_desc.primaries
+            || cicp.full_range != (source_desc.signal_range == crate::SignalRange::Full))
     {
-        let src_slice = buffer.as_slice();
-        let bytes = src_slice.contiguous_bytes();
-        let out = PixelBuffer::from_vec(
-            bytes.into_owned(),
-            buffer.width(),
-            buffer.height(),
-            target_desc_full,
-        )
-        .map_err_at(ConvertError::from)?;
-        return Ok(EncodeReady {
-            pixels: out,
-            metadata,
-        });
+        return Err(whereat::at!(ConvertError::CmsError(
+            alloc::string::String::from("current CICP conflicts with the packed pixel descriptor"),
+        )));
     }
 
-    // Dispatch through RowConverter — plugin (if Some) → ZenCmsLite default.
-    let mut converter = crate::RowConverter::new_explicit_with_cms(
+    let (metadata, destination) = match &target {
+        OutputProfile::SameAsOrigin => {
+            // Provenance can describe YUV video. The output here is packed
+            // RGB/gray: consumed matrix/range signaling cannot ride along.
+            let output_cicp = origin
+                .cicp
+                .map(|c| Cicp::new(c.color_primaries, c.transfer_characteristics, 0, true));
+            let original = match origin.color_authority {
+                ColorAuthority::Icc => origin
+                    .icc
+                    .as_deref()
+                    .map(ColorProfileSource::Icc)
+                    .or_else(|| output_cicp.map(ColorProfileSource::Cicp)),
+                ColorAuthority::Cicp => output_cicp
+                    .map(ColorProfileSource::Cicp)
+                    .or_else(|| origin.icc.as_deref().map(ColorProfileSource::Icc)),
+            };
+            (
+                OutputMetadata {
+                    icc: origin.icc.clone().or_else(|| {
+                        if original.is_none() {
+                            buffer.color_context().and_then(|c| c.icc.clone())
+                        } else {
+                            None
+                        }
+                    }),
+                    cicp: output_cicp.or_else(|| {
+                        if original.is_none() {
+                            buffer.color_context().and_then(|c| c.cicp)
+                        } else {
+                            None
+                        }
+                    }),
+                    hdr: None,
+                },
+                original.unwrap_or_else(|| source.clone()),
+            )
+        }
+        OutputProfile::Named(cicp) => (
+            OutputMetadata {
+                icc: None,
+                cicp: Some(*cicp),
+                hdr: None,
+            },
+            ColorProfileSource::Cicp(*cicp),
+        ),
+        OutputProfile::Icc(icc) => (
+            OutputMetadata {
+                icc: Some(icc.clone()),
+                cicp: None,
+                hdr: None,
+            },
+            ColorProfileSource::Icc(icc),
+        ),
+    };
+    if let ColorProfileSource::Cicp(cicp) = &destination
+        && cicp.matrix_coefficients != 0
+    {
+        return Err(whereat::at!(ConvertError::CmsError(
+            alloc::string::String::from("packed output cannot carry a YUV matrix"),
+        )));
+    }
+    let target_desc = match &destination {
+        ColorProfileSource::Cicp(cicp) => cicp.to_descriptor(pixel_format),
+        _ => {
+            let (primaries, transfer) = destination.primaries_transfer().unwrap_or_else(|| {
+                if source == destination {
+                    (source_desc.primaries, source_desc.transfer())
+                } else {
+                    (ColorPrimaries::Unknown, TransferFunction::Unknown)
+                }
+            });
+            pixel_format
+                .descriptor()
+                .with_primaries(primaries)
+                .with_transfer(transfer)
+        }
+    };
+    let mut converter = crate::RowConverter::new_explicit_with_profiles(
         source_desc,
-        target_desc_full,
+        target_desc,
+        source.clone(),
+        destination.clone(),
         &crate::policy::ConvertOptions::permissive(),
         cms,
     )?;
-    let src_slice = buffer.as_slice();
-    let mut out = PixelBuffer::try_new(buffer.width(), buffer.height(), target_desc_full)
+    let src = buffer.as_slice();
+    let mut output = PixelBuffer::try_new(buffer.width(), buffer.height(), target_desc)
         .map_err_at(ConvertError::from)?;
-
     {
-        let mut dst_slice = out.as_slice_mut();
+        let mut dst = output.as_slice_mut();
         for y in 0..buffer.height() {
-            let src_row = src_slice.row(y);
-            let dst_row = dst_slice.row_mut(y);
-            converter.convert_row(src_row, dst_row, buffer.width());
+            converter.convert_row(src.row(y), dst.row_mut(y), buffer.width());
         }
     }
-
+    // Keep working interpretation with the pixels, independently of historical
+    // fallback fields retained in OutputMetadata for container roundtripping.
+    let mut context = match destination {
+        ColorProfileSource::Icc(bytes) => ColorContext::from_icc(Arc::<[u8]>::from(bytes)),
+        ColorProfileSource::Cicp(cicp) => ColorContext::from_cicp(cicp),
+        _ => ColorContext::default(),
+    };
+    if source == destination {
+        context.diffuse_white = buffer.color_context().and_then(|c| c.diffuse_white);
+    }
+    output = output.with_color_context(Arc::new(context));
     Ok(EncodeReady {
-        pixels: out,
+        pixels: output,
         metadata,
     })
 }

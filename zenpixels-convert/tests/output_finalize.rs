@@ -922,13 +922,13 @@ fn no_metadata_no_hdr_guard() {
 // HDR contract pin (zenpixels#39 Rung 1)
 // ---------------------------------------------------------------------------
 
-/// A PQ (BT.2100) source finalized `SameAsOrigin` passes the origin CICP
-/// through for container signaling, and `OutputMetadata::hdr` stays `None` —
+/// A PQ (BT.2100) source finalized `SameAsOrigin` retains primaries/transfer,
+/// normalizes consumed YUV matrix/range to packed RGB, and keeps `hdr` None —
 /// the documented not-yet-wired contract (`output.rs` `TODO(0.3.0)`;
 /// zenpixels#39 Rung 4 is consumer-gated). Wiring `hdr` must consciously
 /// update this pin.
 #[test]
-fn pq_source_same_as_origin_pins_cicp_passthrough_and_unwired_hdr() {
+fn pq_source_same_as_origin_normalizes_packed_signaling_and_keeps_unwired_hdr() {
     let desc = PixelDescriptor::RGB16_BT2100_PQ;
     let px = vec![0u8; 2 * 2 * desc.bytes_per_pixel()];
     let buffer = PixelBuffer::from_vec(px, 2, 2, desc).unwrap();
@@ -944,7 +944,7 @@ fn pq_source_same_as_origin_pins_cicp_passthrough_and_unwired_hdr() {
     .expect("fast-path finalize of an already-PQ buffer");
 
     let meta = ready.metadata();
-    assert_eq!(meta.cicp, Some(Cicp::BT2100_PQ));
+    assert_eq!(meta.cicp, Some(Cicp::new(9, 16, 0, true)));
     assert!(meta.icc.is_none(), "no ICC was supplied at origin");
     assert!(
         meta.hdr.is_none(),

@@ -138,6 +138,26 @@ impl RowConverter {
         options: &crate::policy::ConvertOptions,
         cms: Option<&dyn crate::cms::PluggableCms>,
     ) -> Result<Self, At<ConvertError>> {
+        Self::new_explicit_with_profiles(
+            from,
+            to,
+            from.color_profile_source(),
+            to.color_profile_source(),
+            options,
+            cms,
+        )
+    }
+
+    /// Internal output-finalization path: descriptors alone cannot carry ICC
+    /// bytes. Keep the actual current and target profiles through CMS dispatch.
+    pub(crate) fn new_explicit_with_profiles(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        src_src: crate::ColorProfileSource<'_>,
+        dst_src: crate::ColorProfileSource<'_>,
+        options: &crate::policy::ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
         use crate::policy::{AlphaPolicy, DepthPolicy};
 
         // Check before CMS setup: its profile/format interface cannot express
@@ -168,9 +188,17 @@ impl RowConverter {
         //     different output — surface the failure instead.
         let primaries_differ = from.primaries != to.primaries;
         let needs_cms_dispatch = crate::convert::needs_cms_for_color_model(&from, &to);
-        if primaries_differ || needs_cms_dispatch {
-            let src_src = from.color_profile_source();
-            let dst_src = to.color_profile_source();
+        let has_icc = matches!(src_src, crate::ColorProfileSource::Icc(_))
+            || matches!(dst_src, crate::ColorProfileSource::Icc(_));
+        let explicit_profile_change = has_icc && src_src != dst_src;
+        if primaries_differ || needs_cms_dispatch || explicit_profile_change {
+            // PixelFormat does not carry an overridden alpha convention. A CMS
+            // cannot honor that convention through this interface.
+            if from.alpha() != from.pixel_format().descriptor().alpha()
+                || to.alpha() != to.pixel_format().descriptor().alpha()
+            {
+                return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            }
             let src_fmt = from.pixel_format();
             let dst_fmt = to.pixel_format();
 
@@ -264,7 +292,12 @@ impl RowConverter {
             }
         }
 
-        // Same profiles, or CMS chain declined — built-in plan.
+        // An ICC conversion cannot fall through to descriptor-only math: two
+        // unknown descriptors do not make two different profiles equivalent.
+        if explicit_profile_change {
+            return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
+        }
+        // Same profiles, or a named-profile CMS chain declined — built-in plan.
         let plan = ConvertPlan::new_explicit(from, to, options).at()?;
         Ok(Self {
             plan,

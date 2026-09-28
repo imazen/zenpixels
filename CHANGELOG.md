@@ -18,6 +18,17 @@ The last 0.2 bridge remains on `feat/explicit-sample-encoding`. This branch
 stages 0.3.1 because 0.3.0 is already yanked; nothing is published here. Other
 items in the historical removal queue remain unchanged unless listed above.
 
+### zenpixels-convert — fixed
+
+- `finalize_for_output_with` reads the current pixel ICC/CICP context and
+  sends actual ICC bytes to the configured CMS. Distinct profiles whose
+  descriptors are both unknown no longer bypass conversion. Unsupported ICC
+  conversion returns an error; it cannot silently relabel samples.
+- `SameAsOrigin` converts back to the original color interpretation, rather
+  than copying current values under old metadata. Packed output normalizes
+  original YUV matrix/range signaling to RGB/full; conflicting current CICP
+  is rejected. Output buffers carry their current color context.
+
 ### zenpixels — added
 
 - `sample::SampleEncoding` explicitly separates unsigned storage width, current
