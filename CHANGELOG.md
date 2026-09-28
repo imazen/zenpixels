@@ -1,6 +1,22 @@
 # Changelog
 
-## [Unreleased]
+## [Unreleased — 0.3.1]
+
+### Breaking media foundation changes
+
+- Remove the deprecated `planar` module, all nine root re-exports, and the
+  `planar` feature from both zenpixels and zenpixels-convert. The companion
+  zenpipe PR moves filter channel masks into `zenfilters::access::PlaneMask`.
+- Require explicit current sample encoding for native integer components as
+  documented in `docs/sample-encoding-contract.md`; ordinary RGB/gray U16
+  retains its existing full sixteen-bit domain.
+- Correct CICP transfer 7 (SMPTE 240M): it no longer resolves to BT.709. Its
+  slope and break point differ (H.273 table 3); retain raw signaling and
+  require an explicit supported interpretation before conversion.
+
+The last 0.2 bridge remains on `feat/explicit-sample-encoding`. This branch
+stages 0.3.1 because 0.3.0 is already yanked; nothing is published here. Other
+items in the historical removal queue remain unchanged unless listed above.
 
 ### zenpixels — added
 

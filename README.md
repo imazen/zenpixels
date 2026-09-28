@@ -524,17 +524,17 @@ that feature with the same opted-in signatures.
 
 `ConvertPlan::estimate(w, h)` (and `estimate_in(&ImageCharacteristics, &ComputeEnvironment)`) predicts a plan's `peak_memory_bytes_est`, `wall_ms` (already scaled to core count), and `intermediate_buffer_count` *before* running it — cheap to call (walks the planned steps, no row work, no allocation), so schedulers and throttlers can budget ahead. The estimate types are shape-compatible with `zencodec::estimate::*` for wiring `decode → convert → encode` across the boundary, without `zenpixels-convert` depending on `zencodec`. See the [zenpixels-convert README](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/README.md#resource-estimation) for the full contract.
 
-## Planar support
+## Legacy planar API removal in 0.3
 
-> **Deprecated in the 0.2 bridge:** the whole legacy `planar` module and its
-> re-exports. The feature and existing code remain available while a better
-> video-oriented representation is designed. No replacement is published yet.
-> See the [code review](docs/code-review-0.2-and-0.3.md) for actual callers and
-> the deferred video requirements.
+The `planar` module, its crate-root re-exports, and the `planar` features in both
+packages are removed. Zenfilters owns `access::PlaneMask` and continues to use
+its own `OklabPlanes`. Native video frames remain in codec-owned allocations;
+the experimental `zencodec-media` workspace in the zencodec repository carries
+explicit component views and I/O contracts.
 
-Zenfilters currently uses `PlaneMask` in its filter-channel access declarations;
-its image planes use its own `OklabPlanes`. Plan that companion migration before
-removing the legacy module.
+The [sample encoding contract](docs/sample-encoding-contract.md) mandates
+separate storage width, code depth, padding, range, and raw color signaling.
+Ordinary RGB/gray U16 retains its full sixteen-bit numerical domain.
 
 ## Features
 
@@ -550,7 +550,6 @@ removing the legacy module.
 | `icc` | yes | `icc` module — hash-based ICC profile identification (~100ns) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed `from_pixels()` constructors |
 | `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
-| `planar` | | Deprecated legacy multi-plane types |
 | `serde` | | No-op stub (soft-removed in 0.2.16, queued for removal); previously added `Serialize`/`Deserialize` derives on the core types — a workspace-wide sweep found zero consumers |
 
 ### zenpixels-convert
@@ -563,7 +562,6 @@ removing the legacy module.
 | `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed convenience methods (`to_rgb8()`, `to_rgba8()`, etc.) |
 | `imgref` | | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
-| `planar` | | Deprecated legacy multi-plane types |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
 | `estimation-experimental` | | Explicit resource-estimation opt-in; without it the 0.2 bridge retains the API with warnings; proposed 0.3.1 requires it |
 | `hdr-experimental` | | Native HDR→SDR display mapping inside `ConvertPlan` (BT.2446 Method A + OKLch soft compress + CTA-861.3 CLL measurement); API shape may move ahead of 0.3.0 |

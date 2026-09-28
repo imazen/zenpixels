@@ -9,14 +9,11 @@
 
 ## summary
 #
-#   pub types (struct/enum/trait/alias)         2
 #   pub consts/statics                          1
-#   inherent methods                           41
-#   struct fields                               4
-#   trait roster entries (type × trait)        39
+#   inherent methods                           34
+#   trait roster entries (type × trait)        33
 #
 # per-module pub lines:
-#   (root)                            3
 #   buffer                            3
 #   cicp                              1
 #   color                             6
@@ -25,11 +22,10 @@
 #   icc                               2
 #   orientation                       1
 #   pixel_types                       2
-#   planar                           10
 #   policy                            5
 #   sample                            2
 
-## items (47 lines)
+## items (35 lines)
 
 pub const hdr::ContentLightLevel::DEFAULT_PERCENTILE: f32
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
@@ -59,13 +55,6 @@ pub fn icc::IdentificationUse::assert_fields_are_eq(&self)
 pub fn orientation::Orientation::assert_fields_are_eq(&self)
 pub fn pixel_types::GrayAlpha16::assert_fields_are_eq(&self)
 pub fn pixel_types::GrayAlpha8::assert_fields_are_eq(&self)
-pub fn planar::PlaneDescriptor::assert_fields_are_eq(&self)
-pub fn planar::PlaneLayout::assert_fields_are_eq(&self)
-pub fn planar::PlaneMask::assert_fields_are_eq(&self)
-pub fn planar::PlaneRelationship::assert_fields_are_eq(&self)
-pub fn planar::PlaneSemantic::assert_fields_are_eq(&self)
-pub fn planar::Subsampling::assert_fields_are_eq(&self)
-pub fn planar::YuvMatrix::assert_fields_are_eq(&self)
 pub fn policy::AlphaPolicy::assert_fields_are_eq(&self)
 pub fn policy::ConvertOptions::assert_fields_are_eq(&self)
 pub fn policy::DepthPolicy::assert_fields_are_eq(&self)
@@ -73,13 +62,8 @@ pub fn policy::GrayExpand::assert_fields_are_eq(&self)
 pub fn policy::LumaCoefficients::assert_fields_are_eq(&self)
 pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
 pub fn sample::SampleEncodingError::assert_fields_are_eq(&self)
-pub struct Plane [also: planar]
-pub Plane::buffer: buffer::PixelBuffer
-pub Plane::semantic: planar::PlaneSemantic
-pub planar::Plane::buffer: buffer::PixelBuffer
-pub planar::Plane::semantic: planar::PlaneSemantic
 
-## trait impls (39 types)
+## trait impls (33 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
@@ -107,12 +91,6 @@ orientation::Orientation: TrivialClone
 pixel_types::GrayAlpha16: TrivialClone
 pixel_types::GrayAlpha8: TrivialClone
 pixel_types::GrayAlphaF32: TrivialClone
-planar::PlaneDescriptor: TrivialClone
-planar::PlaneMask: TrivialClone
-planar::PlaneRelationship: TrivialClone
-planar::PlaneSemantic: TrivialClone
-planar::Subsampling: TrivialClone
-planar::YuvMatrix: TrivialClone
 policy::AlphaPolicy: TrivialClone
 policy::ConvertOptions: TrivialClone
 policy::DepthPolicy: TrivialClone

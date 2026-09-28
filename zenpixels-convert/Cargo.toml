@@ -1,6 +1,6 @@
 [package]
 name = "zenpixels-convert"
-version = "0.2.16"
+version = "0.3.1"
 edition.workspace = true
 rust-version = "1.89"
 license.workspace = true
@@ -17,7 +17,7 @@ include = [
 
 # docs.rs builds with the public opt-in features enabled so the gated
 # surfaces (hdr::measure / CllMeasure, the HDR ConvertPlan constructors,
-# cms-moxcms, rgb/imgref/planar interop, fast-transpose) are documented
+# cms-moxcms, rgb/imgref interop, fast-transpose) are documented
 # and their intra-doc links resolve. Bench-only `__*` features stay out.
 [package.metadata.docs.rs]
 features = [
@@ -27,7 +27,6 @@ features = [
     "cms-moxcms",
     "rgb",
     "imgref",
-    "planar",
     "fast-transpose",
 ]
 
@@ -61,7 +60,6 @@ fast-transpose = []
 avx512 = ["magetypes/avx512", "archmage/avx512"]
 rgb = ["zenpixels/rgb", "dep:rgb"]
 imgref = ["zenpixels/imgref", "rgb"]
-planar = ["zenpixels/planar"]
 pipeline = []
 # Explicit opt-in to the estimation API accidentally exposed by default in
 # 0.2.16. Without this feature it remains available but deprecated in 0.2.x;
@@ -144,7 +142,7 @@ whereat = { version = "0.1.5", default-features = false }
 moxcms = { version = ">=0.8.1, <0.10", optional = true, features = ["options"] }
 
 [dev-dependencies]
-zenpixels = { workspace = true, features = ["planar", "imgref"] }
+zenpixels = { workspace = true, features = ["imgref"] }
 # Self dev-dependency: these features unify into every test/bench build of
 # this crate, so plain `cargo test -p zenpixels-convert` (default features)
 # already compiles the lib WITH `cms-moxcms` and runs the `#[cfg(feature =

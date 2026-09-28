@@ -72,7 +72,7 @@ fn all_color_primaries_have_cicp_code() {
     assert_eq!(ColorPrimaries::Unknown.to_cicp(), None);
 }
 
-/// from_cicp and to_cicp round-trip for primary codes (aliases like 6↔7 may collapse).
+/// from_cicp and to_cicp round-trip for canonical codes (the SMPTE 170M alias may collapse).
 #[test]
 fn transfer_function_cicp_bijection() {
     // Primary codes that must round-trip exactly
@@ -80,14 +80,16 @@ fn transfer_function_cicp_bijection() {
         let tf = TransferFunction::from_cicp(code).unwrap();
         assert_eq!(tf.to_cicp(), Some(code));
     }
-    // Aliases that map to another primary code (SMPTE 170M/240M → BT.709 curve)
+    // SMPTE 170M aliases BT.709. SMPTE 240M is a distinct unsupported curve.
     assert_eq!(
         TransferFunction::from_cicp(6),
         Some(TransferFunction::Bt709)
     );
-    assert_eq!(
-        TransferFunction::from_cicp(7),
-        Some(TransferFunction::Bt709)
+    assert_eq!(TransferFunction::from_cicp(7), None);
+    let source = zenpixels::ColorProfileSource::Cicp(Cicp::new(1, 7, 0, true));
+    assert!(
+        source.primaries_transfer().is_none(),
+        "SMPTE 240M must not select a BT.709 conversion kernel"
     );
     // Reverse: every non-Unknown enum maps to its primary code
     for tf in [
@@ -125,8 +127,8 @@ fn color_primaries_cicp_bijection() {
 /// Unrecognized CICP codes return None.
 #[test]
 fn unknown_cicp_codes_return_none() {
-    // TransferFunction: recognized = 1, 6, 7, 8, 13, 16, 18
-    for code in [0, 2, 3, 4, 5, 9, 10, 11, 12, 14, 15, 17, 19, 99, 255] {
+    // TransferFunction: recognized = 1, 6, 8, 13, 16, 18
+    for code in [0, 2, 3, 4, 5, 7, 9, 10, 11, 12, 14, 15, 17, 19, 99, 255] {
         assert!(
             TransferFunction::from_cicp(code).is_none(),
             "TC code {code} should not be recognized"
