@@ -39,6 +39,9 @@ pub struct RowConverter {
 
 /// External CMS transform variant.
 enum ExternalTransform {
+    /// Normalize alpha around a CMS whose PixelFormat API describes straight
+    /// samples. Keep each stage explicit so cloning cannot lose the transform.
+    AlphaPipeline(Box<AlphaPipeline>),
     /// Stateless, shareable. Supports cheap clone and parallel use.
     Shared(alloc::sync::Arc<dyn crate::cms::RowTransform>),
     /// Owned, stateful. Shares the same backing `RowTransformMut` across
@@ -58,6 +61,45 @@ enum ExternalTransform {
     /// behind a bare `Arc` (no interior mutability).
     #[cfg(not(feature = "std"))]
     Owned(Box<dyn crate::cms::RowTransformMut>),
+}
+
+struct AlphaPipeline {
+    before: RowConverter,
+    color: RowConverter,
+    after: RowConverter,
+    // u32 storage preserves the alignment required by F32 row transforms.
+    source: alloc::vec::Vec<u32>,
+    target: alloc::vec::Vec<u32>,
+}
+
+impl AlphaPipeline {
+    fn convert_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
+        let source_len = (width as usize)
+            .checked_mul(self.color.from_descriptor().bytes_per_pixel())
+            .expect("source row size overflow");
+        let target_len = (width as usize)
+            .checked_mul(self.color.to_descriptor().bytes_per_pixel())
+            .expect("target row size overflow");
+        self.source.resize(source_len.div_ceil(4), 0);
+        self.target.resize(target_len.div_ceil(4), 0);
+        let source = &mut bytemuck::cast_slice_mut(&mut self.source)[..source_len];
+        let target = &mut bytemuck::cast_slice_mut(&mut self.target)[..target_len];
+        self.before.convert_row(src, source, width);
+        self.color.convert_row(source, target, width);
+        self.after.convert_row(target, dst, width);
+    }
+}
+
+impl Clone for AlphaPipeline {
+    fn clone(&self) -> Self {
+        Self {
+            before: self.before.clone(),
+            color: self.color.clone(),
+            after: self.after.clone(),
+            source: alloc::vec::Vec::new(),
+            target: alloc::vec::Vec::new(),
+        }
+    }
 }
 
 /// Wrap a freshly-built `Box<dyn RowTransformMut>` into the
@@ -192,12 +234,50 @@ impl RowConverter {
             || matches!(dst_src, crate::ColorProfileSource::Icc(_));
         let explicit_profile_change = has_icc && src_src != dst_src;
         if primaries_differ || needs_cms_dispatch || explicit_profile_change {
-            // PixelFormat does not carry an overridden alpha convention. A CMS
-            // cannot honor that convention through this interface.
+            // PixelFormat does not carry an overridden alpha convention. Do
+            // alpha-only math around the CMS, retaining the real ICC sources
+            // for the middle stage. Padding/opaque overrides remain explicit
+            // errors: interpreting padding as coverage would corrupt pixels.
             if from.alpha() != from.pixel_format().descriptor().alpha()
                 || to.alpha() != to.pixel_format().descriptor().alpha()
             {
-                return Err(whereat::at!(ConvertError::NoPath { from, to }));
+                use crate::AlphaMode::{Premultiplied, Straight};
+                let normalized_from = from.with_alpha(from.pixel_format().descriptor().alpha());
+                let normalized_to = to.with_alpha(to.pixel_format().descriptor().alpha());
+                for (original, normalized) in [(from, normalized_from), (to, normalized_to)] {
+                    if original.alpha() != normalized.alpha()
+                        && !matches!(
+                            (original.alpha(), normalized.alpha()),
+                            (
+                                Some(Straight | Premultiplied),
+                                Some(Straight | Premultiplied)
+                            )
+                        )
+                    {
+                        return Err(whereat::at!(ConvertError::NoPath { from, to }));
+                    }
+                }
+                let before = Self::new_explicit(from, normalized_from, options)?;
+                let color = Self::new_explicit_with_profiles(
+                    normalized_from,
+                    normalized_to,
+                    src_src,
+                    dst_src,
+                    options,
+                    cms,
+                )?;
+                let after = Self::new_explicit(normalized_to, to, options)?;
+                return Ok(Self {
+                    plan: ConvertPlan::identity(from, to),
+                    scratch: ConvertScratch::new(),
+                    external: Some(ExternalTransform::AlphaPipeline(Box::new(AlphaPipeline {
+                        before,
+                        color,
+                        after,
+                        source: alloc::vec::Vec::new(),
+                        target: alloc::vec::Vec::new(),
+                    }))),
+                });
             }
             let src_fmt = from.pixel_format();
             let dst_fmt = to.pixel_format();
@@ -325,6 +405,9 @@ impl RowConverter {
     #[inline]
     pub fn convert_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
         match &mut self.external {
+            Some(ExternalTransform::AlphaPipeline(pipeline)) => {
+                pipeline.convert_row(src, dst, width)
+            }
             Some(ExternalTransform::Shared(arc)) => arc.transform_row(src, dst, width),
             #[cfg(feature = "std")]
             Some(ExternalTransform::Owned(arc)) => {
@@ -431,6 +514,9 @@ impl Clone for RowConverter {
         // RowTransformMut>>` so the same backing impl serializes its
         // `&mut self` transforms across clones. No silent drop.
         let external = match &self.external {
+            Some(ExternalTransform::AlphaPipeline(pipeline)) => {
+                Some(ExternalTransform::AlphaPipeline(pipeline.clone()))
+            }
             Some(ExternalTransform::Shared(arc)) => {
                 Some(ExternalTransform::Shared(alloc::sync::Arc::clone(arc)))
             }

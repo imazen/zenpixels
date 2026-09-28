@@ -20,6 +20,9 @@ items in the historical removal queue remain unchanged unless listed above.
 
 ### zenpixels-convert — fixed
 
+- Cross-profile row conversion normalizes premultiplied alpha around the CMS
+  and restores the requested association afterward. The actual ICC profiles
+  remain attached to the color stage; cloned converters preserve all stages.
 - `finalize_for_output_with` reads the current pixel ICC/CICP context and
   sends actual ICC bytes to the configured CMS. Distinct profiles whose
   descriptors are both unknown no longer bypass conversion. Unsupported ICC
