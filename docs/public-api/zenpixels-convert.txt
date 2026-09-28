@@ -11,7 +11,7 @@
 #   pub modules                                14
 #   pub types (struct/enum/trait/alias)        57
 #   pub consts/statics                         19
-#   free functions                             44
+#   free functions                             45
 #   inherent methods                          130
 #   struct fields                              50
 #   enum variants                              74
@@ -30,13 +30,13 @@
 #   ext                              13
 #   gamut                             6
 #   hdr                              15
-#   icc_profiles                     13
+#   icc_profiles                     14
 #   load_bearing                     11
 #   oklab                             9
 #   orient                            3
 #   output                           17
 
-## items (358 lines)
+## items (359 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -175,6 +175,7 @@ pub const icc_profiles::PROPHOTO_V4: &[u8]
 pub const icc_profiles::REC2020_V4: &[u8]
 pub const fn icc_profiles::display_p3_icc(bool) -> &'static [u8]
 pub const fn icc_profiles::icc_profile_for_primaries(zenpixels::descriptor::ColorPrimaries) -> core::option::Option<&'static [u8]>
+pub fn icc_profiles::normalize_known_icc(&[u8]) -> core::option::Option<&'static [u8]>
 pub fn icc_profiles::synthesize_gray_icc_for_cicp(zenpixels::cicp::Cicp) -> icc_profiles::SynthesizedIcc
 pub fn icc_profiles::synthesize_icc_for_cicp(zenpixels::cicp::Cicp) -> icc_profiles::SynthesizedIcc
 pub mod load_bearing

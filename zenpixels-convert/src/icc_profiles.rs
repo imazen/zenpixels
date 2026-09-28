@@ -135,6 +135,30 @@ pub const PROPHOTO_V4: &[u8] = &[];
 /// Source: <https://github.com/saucecontrol/Compact-ICC-Profiles> (CC0)
 pub const REC2020_V4: &[u8] = include_bytes!("profiles/Rec2020Compat-v4.icc");
 
+/// Return the bundled canonical bytes for an exactly recognized profile variant.
+///
+/// Recognition compares every byte except the creation timestamp (24..36),
+/// creator signature (80..84), and profile ID (84..100). Colorant/TRC/LUT tags,
+/// rendering intent, device class, flags, attributes, and all other fields must
+/// match. This is stricter than color-space identification: it never substitutes
+/// a merely similar matrix/TRC profile or changes pixel values.
+///
+/// Supports this module's bundled Display P3 v2/v4, Adobe RGB, and Rec.2020
+/// profiles. Returns `None` for unrecognized or truncated input. No allocation,
+/// CMS initialization, global state, or new dependency is required. Callers can
+/// inject this function into a metadata writer at runtime; the writer need not
+/// depend on zenpixels-convert. This is normalization, not ICC sanitization.
+pub fn normalize_known_icc(bytes: &[u8]) -> Option<&'static [u8]> {
+    [DISPLAY_P3_V2, DISPLAY_P3_V4, ADOBE_RGB, REC2020_V4]
+        .into_iter()
+        .find(|known| {
+            bytes.len() == known.len()
+                && bytes[..24] == known[..24]
+                && bytes[36..80] == known[36..80]
+                && bytes[100..] == known[100..]
+        })
+}
+
 // ProPhoto / ROMM RGB is intentionally not bundled — see the module-level
 // "ProPhoto — not bundled" note for the fragmentation analysis.
 
@@ -778,5 +802,35 @@ mod tests {
             not_needed, 2,
             "expected exactly 2 sRGB-default NotNeeded combos"
         );
+    }
+}
+
+#[cfg(test)]
+mod normalization_tests {
+    use super::*;
+    #[test]
+    fn known_variants_normalize_without_touching_color_or_intent() {
+        for profile in [DISPLAY_P3_V2, DISPLAY_P3_V4, ADOBE_RGB, REC2020_V4] {
+            assert_eq!(normalize_known_icc(profile), Some(profile));
+            let mut variant = profile.to_vec();
+            variant[24..36].fill(37);
+            variant[80..100].fill(19);
+            assert_eq!(normalize_known_icc(&variant), Some(profile));
+            for index in [16, 44, 56, 64, 68, 128, profile.len() - 1] {
+                let mut changed = variant.clone();
+                changed[index] ^= 1;
+                assert!(
+                    normalize_known_icc(&changed).is_none(),
+                    "color-critical byte {index}"
+                );
+            }
+        }
+    }
+    #[test]
+    fn unknown_and_truncated_profiles_are_not_replaced() {
+        for n in 0..DISPLAY_P3_V4.len() {
+            assert!(normalize_known_icc(&DISPLAY_P3_V4[..n]).is_none());
+        }
+        assert!(normalize_known_icc(&vec![0; DISPLAY_P3_V4.len()]).is_none());
     }
 }

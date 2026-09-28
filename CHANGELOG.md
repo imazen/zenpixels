@@ -2,6 +2,13 @@
 
 ## [Unreleased — 0.3.1]
 
+### Added
+
+- `zenpixels_convert::icc_profiles::normalize_known_icc` returns borrowed canonical
+  bytes only for exact bundled-profile variants differing in creation time or
+  identity fields. No CMS, pixel operation, allocation, or new dependency.
+  The concrete consumer is zencodecs metadata services, injected at runtime.
+
 ### Breaking media foundation changes
 
 - `zenpixels-convert::RowConverter` implements `Clone` only with `std`.
