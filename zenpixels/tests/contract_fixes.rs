@@ -7,7 +7,7 @@ fn empty_crop_positive_rows_are_empty() {
 }
 #[test]
 fn cicp_to_descriptor_preserves_padding() {
-    let d = Cicp::SRGB.to_descriptor(PixelFormat::Rgbx8);
+    let d = Cicp::SRGB.try_to_descriptor(PixelFormat::Rgbx8).unwrap();
     assert_eq!(d.alpha, PixelFormat::Rgbx8.default_alpha());
 }
 #[cfg(feature = "imgref")]

@@ -9,12 +9,12 @@
 
 ## summary
 #
-#   inherent methods                           33
-#   trait roster entries (type × trait)        33
+#   inherent methods                           34
+#   trait roster entries (type × trait)        34
 #
 # per-module pub lines:
 #   buffer                            3
-#   cicp                              1
+#   cicp                              2
 #   color                             6
 #   descriptor                       10
 #   hdr                               1
@@ -24,12 +24,13 @@
 #   policy                            5
 #   sample                            2
 
-## items (33 lines)
+## items (34 lines)
 
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
 pub fn buffer::Rgbx::assert_fields_are_eq(&self)
 pub fn cicp::Cicp::assert_fields_are_eq(&self)
+pub fn cicp::CicpDescriptorError::assert_fields_are_eq(&self)
 pub fn color::ColorAuthority::assert_fields_are_eq(&self)
 pub fn color::ColorContext::assert_fields_are_eq(&self)
 pub fn color::ColorOrigin::assert_fields_are_eq(&self)
@@ -60,12 +61,13 @@ pub fn policy::LumaCoefficients::assert_fields_are_eq(&self)
 pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
 pub fn sample::SampleEncodingError::assert_fields_are_eq(&self)
 
-## trait impls (33 types)
+## trait impls (34 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
 buffer::Rgbx: TrivialClone
 cicp::Cicp: TrivialClone
+cicp::CicpDescriptorError: TrivialClone
 color::ColorAuthority: TrivialClone
 color::ColorProvenance: TrivialClone
 color::NamedProfile: TrivialClone

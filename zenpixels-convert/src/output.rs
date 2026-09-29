@@ -586,16 +586,9 @@ fn descriptor_for_profile(
     profile: &crate::ColorProfileSource<'_>,
 ) -> Result<PixelDescriptor, At<ConvertError>> {
     if let crate::ColorProfileSource::Cicp(cicp) = profile {
-        if cicp.matrix_coefficients != 0
-            || ColorPrimaries::from_cicp(cicp.color_primaries).is_none()
-            || TransferFunction::from_cicp(cicp.transfer_characteristics).is_none()
-        {
-            return Err(whereat::at!(ConvertError::NoPath {
-                from: format.descriptor(),
-                to: cicp.to_descriptor(format)
-            }));
-        }
-        return Ok(cicp.to_descriptor(format));
+        return cicp
+            .try_to_descriptor(format)
+            .map_err(|error| whereat::at!(ConvertError::CicpDescriptor(error)));
     }
     let (primaries, transfer) = profile
         .resolve()
