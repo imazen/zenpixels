@@ -9,6 +9,10 @@ Pixel format types and transfer-function-aware conversion for Rust image codecs.
 > [status ledger](docs/implementation-status-0.2-and-0.3.md) for exact scope and
 > release gates. The install versions below remain the published versions.
 
+Native codec planes can now carry a checked
+[`sample::SampleEncoding`](docs/sample-encoding-contract.md): storage width,
+code depth and bit placement remain explicit. This additive bridge preserves
+the existing RGB/gray U16 domain while the media APIs are validated in zenmedia.
 
 A JPEG decoder might produce `RGB8` in sRGB; an AVIF decoder might produce full-range `RGBA16` in BT.2020 PQ. Other profiles and native 10/12-bit video codes need their actual signaling. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
 

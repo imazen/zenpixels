@@ -31,6 +31,13 @@
 
 ### zenpixels — added
 
+- `sample::SampleEncoding` explicitly separates unsigned storage width, current
+  code depth, and low padding bits. Checked constant construction describes
+  native 10/12-bit U16 and shifted words without confusing packing with numerical
+  normalization. It does not change existing RGB/gray U16 descriptors. The
+  `zenmedia` native AV1 mapping is the current consumer; its 48-case lossless
+  corpus covers exact 8/10/12-bit samples, range, chroma layouts and odd sizes.
+
 - `PixelBuffer::into_contiguous()` packs rows in the existing allocation and
   returns the same buffer type, preserving its descriptor and color context.
   It never allocates or clones the context; padded rows move within the Vec,

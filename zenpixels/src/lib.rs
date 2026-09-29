@@ -75,6 +75,7 @@ pub mod orientation;
 )]
 pub mod planar;
 pub mod policy;
+pub mod sample;
 
 pub mod cicp;
 pub mod color;
