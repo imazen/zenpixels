@@ -144,7 +144,7 @@ impl Cicp {
             .unwrap_or(TransferFunction::Unknown)
     }
 
-    /// Create a CICP from a [`PixelDescriptor`](crate::PixelDescriptor).
+    /// Create a CICP from a [`PixelDescriptor`].
     ///
     /// Returns `None` if the descriptor's transfer function or color primaries
     /// cannot be mapped to CICP code points (e.g., `Unknown` variants).
