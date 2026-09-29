@@ -12,16 +12,16 @@
 #   pub types (struct/enum/trait/alias)        57
 #   pub consts/statics                         19
 #   free functions                             45
-#   inherent methods                          148
+#   inherent methods                          150
 #   struct fields                              50
 #   enum variants                              78
-#   re-exports                                  5
+#   re-exports                                  3
 #   trait roster entries (type × trait)        92
 #   auto-trait-complete types                  18
 #   auto-trait exceptions                       3
 #
 # per-module pub lines:
-#   (root)                          176
+#   (root)                          174
 #   adapt                            15
 #   cms                              31
 #   converter                        31
@@ -34,14 +34,12 @@
 #   load_bearing                     11
 #   oklab                             9
 #   orient                            3
-#   output                           17
+#   output                           19
 
 ## items (381 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
-pub use ContentLightLevel
-pub use MasteringDisplay
 pub mod adapt
 pub struct adapt::Adapted<'a>
 pub adapt::Adapted::data: alloc::borrow::Cow<'a, [u8]>
@@ -215,6 +213,7 @@ pub mod output
 pub output::OutputProfile::Icc(alloc::sync::Arc<[u8]>)
 pub output::OutputProfile::Named(zenpixels::cicp::Cicp)
 pub output::OutputProfile::SameAsOrigin
+pub fn output::OutputProfile::normalize_known_icc(self) -> Self
 pub fn output::EncodeReady::into_parts(self) -> (zenpixels::buffer::PixelBuffer, output::OutputMetadata)
 pub fn output::EncodeReady::metadata(&self) -> &output::OutputMetadata
 pub fn output::EncodeReady::pixels(&self) -> zenpixels::buffer::PixelSlice<'_>
@@ -262,6 +261,7 @@ pub ConvertIntent::Perceptual
 pub OutputProfile::Icc(alloc::sync::Arc<[u8]>)
 pub OutputProfile::Named(zenpixels::cicp::Cicp)
 pub OutputProfile::SameAsOrigin
+pub fn output::OutputProfile::normalize_known_icc(self) -> Self
 pub enum RenderingIntent [also: cms]
 pub RenderingIntent::AbsoluteColorimetric
 pub RenderingIntent::Perceptual

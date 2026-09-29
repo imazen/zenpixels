@@ -10,10 +10,10 @@
 #
 #   pub modules                                11
 #   pub types (struct/enum/trait/alias)        84
-#   pub consts/statics                        284
+#   pub consts/statics                        278
 #   free functions                              4
 #   inherent methods                          254
-#   struct fields                             121
+#   struct fields                             115
 #   enum variants                             215
 #   re-exports                                  4
 #   trait roster entries (type × trait)       260
@@ -21,19 +21,19 @@
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          414
+#   (root)                          405
 #   buffer                          244
 #   cicp                             27
 #   color                            64
 #   descriptor                      150
-#   hdr                              15
+#   hdr                              12
 #   icc                              13
 #   orientation                      11
 #   pixel_types                       9
 #   policy                           25
 #   sample                            5
 
-## items (842 lines)
+## items (837 lines)
 
 pub mod zenpixels
 pub use At
@@ -406,19 +406,22 @@ pub const fn descriptor::PixelDescriptor::with_primaries(self, descriptor::Color
 pub const fn descriptor::PixelDescriptor::with_signal_range(self, descriptor::SignalRange) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::with_transfer(self, descriptor::TransferFunction) -> Self [also: (root)]
 pub mod hdr
+pub struct hdr::ContentLightLevel
 pub hdr::ContentLightLevel::max_content_light_level: u16
 pub hdr::ContentLightLevel::max_frame_average_light_level: u16
-pub const fn hdr::ContentLightLevel::new(u16, u16) -> Self [also: (root)]
+pub const fn hdr::ContentLightLevel::new(u16, u16) -> Self
+pub struct hdr::DiffuseWhite(_)
 pub const hdr::DiffuseWhite::BT2408: Self
-pub const fn hdr::DiffuseWhite::new(f32) -> Self [also: (root)]
-pub const fn hdr::DiffuseWhite::nits(self) -> f32 [also: (root)]
+pub const fn hdr::DiffuseWhite::new(f32) -> Self
+pub const fn hdr::DiffuseWhite::nits(self) -> f32
+pub struct hdr::MasteringDisplay
 pub hdr::MasteringDisplay::max_luminance: f32
 pub hdr::MasteringDisplay::min_luminance: f32
 pub hdr::MasteringDisplay::primaries_xy: [[f32; 2]; 3]
 pub hdr::MasteringDisplay::white_point_xy: [f32; 2]
 pub const hdr::MasteringDisplay::DISPLAY_P3_1000: Self
 pub const hdr::MasteringDisplay::HDR10_REFERENCE: Self
-pub const fn hdr::MasteringDisplay::new([[f32; 2]; 3], [f32; 2], f32, f32) -> Self [also: (root)]
+pub const fn hdr::MasteringDisplay::new([[f32; 2]; 3], [f32; 2], f32, f32) -> Self
 pub mod icc
 #[non_exhaustive] pub enum icc::IdentificationUse
 pub icc::IdentificationUse::MatrixTrcSubstitution
@@ -432,6 +435,7 @@ pub fn icc::IccIdentification::to_cicp(&self) -> core::option::Option<cicp::Cicp
 pub fn icc::extract_cicp(&[u8]) -> core::option::Option<cicp::Cicp>
 pub fn icc::identify_common(&[u8]) -> core::option::Option<icc::IccIdentification>
 pub fn icc::is_common_srgb(&[u8]) -> bool
+pub const fn icc::normalized_hash(&[u8]) -> u64
 pub fn icc::profile_color_space(&[u8]) -> core::option::Option<descriptor::ColorModel>
 pub mod orientation
 pub orientation::Orientation::FlipH = 2
@@ -684,17 +688,12 @@ pub fn color::ColorOrigin::from_gama_chrm() -> Self
 pub fn color::ColorOrigin::from_icc(impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
 pub fn color::ColorOrigin::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
 pub fn color::ColorOrigin::with_color_authority(self, color::ColorAuthority) -> Self
-pub struct ContentLightLevel [also: hdr]
-pub ContentLightLevel::max_content_light_level: u16
-pub ContentLightLevel::max_frame_average_light_level: u16
 #[non_exhaustive] pub struct ConvertOptions [also: policy]
 pub ConvertOptions::alpha_policy: policy::AlphaPolicy
 pub ConvertOptions::clip_out_of_gamut: bool
 pub ConvertOptions::depth_policy: policy::DepthPolicy
 pub ConvertOptions::gray_expand: policy::GrayExpand
 pub ConvertOptions::luma: core::option::Option<policy::LumaCoefficients>
-pub struct DiffuseWhite(_) [also: hdr]
-pub const hdr::DiffuseWhite::BT2408: Self
 pub struct FromPartsError [also: buffer]
 pub fn buffer::FromPartsError::error(&self) -> &whereat::at::At<buffer::BufferError>
 pub fn buffer::FromPartsError::take_parts(&mut self) -> core::option::Option<buffer::PixelBufferParts>
@@ -717,13 +716,6 @@ pub InPlacePixels::stride: usize
 pub InPlacePixels::width: u32
 pub fn buffer::InPlacePixels<'a>::new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<color::ColorContext>>) -> Self
 pub fn buffer::InPlacePixels<'a>::try_new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<color::ColorContext>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub struct MasteringDisplay [also: hdr]
-pub MasteringDisplay::max_luminance: f32
-pub MasteringDisplay::min_luminance: f32
-pub MasteringDisplay::primaries_xy: [[f32; 2]; 3]
-pub MasteringDisplay::white_point_xy: [f32; 2]
-pub const hdr::MasteringDisplay::DISPLAY_P3_1000: Self
-pub const hdr::MasteringDisplay::HDR10_REFERENCE: Self
 #[non_exhaustive] pub struct PixelBuffer<P> [also: buffer]
 pub fn buffer::PixelBuffer::from_vec(alloc::vec::Vec<u8>, u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::new(u32, u32, descriptor::PixelDescriptor) -> Self
@@ -877,6 +869,9 @@ pub Rgbx::r: u8
 pub Rgbx::x: u8
 pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
+pub type ContentLightLevel = hdr::ContentLightLevel
+pub type DiffuseWhite = hdr::DiffuseWhite
+pub type MasteringDisplay = hdr::MasteringDisplay
 
 ## trait impls (47 types)
 

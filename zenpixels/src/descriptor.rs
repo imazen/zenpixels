@@ -287,9 +287,9 @@ impl TransferFunction {
     pub const fn from_cicp(tc: u8) -> Option<Self> {
         match tc {
             1 => Some(Self::Bt709),
-            // SMPTE 170M (6) and SMPTE 240M (7) use the BT.709 curve —
-            // per BT.601/SMPTE 170M spec, the OETF is identical to BT.709.
-            6 | 7 => Some(Self::Bt709),
+            // SMPTE 170M (6) uses BT.709. SMPTE 240M (7) differs;
+            // leave it unresolved until a matching kernel exists.
+            6 => Some(Self::Bt709),
             8 => Some(Self::Linear),
             13 => Some(Self::Srgb),
             16 => Some(Self::Pq),

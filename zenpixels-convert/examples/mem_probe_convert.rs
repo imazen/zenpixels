@@ -1,3 +1,4 @@
+#![allow(deprecated)] // Legacy estimation diagnostic; removed with the 0.3 API.
 //! Verify `ConvertPlan::estimate` against the measured marginal peak
 //! (VmHWM − pre-RSS), using the heaptrack/marginal-WS methodology.
 //!

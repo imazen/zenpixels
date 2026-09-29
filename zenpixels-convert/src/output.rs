@@ -49,12 +49,48 @@ use whereat::{At, ResultAtExt};
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum OutputProfile {
-    /// Re-encode with the original ICC/CICP from the source file.
+    /// Re-encode in the original color space. For decoded RGB, CICP matrix
+    /// and range are emitted as identity/full; original YUV packing is provenance.
     SameAsOrigin,
     /// Use a well-known CICP-described profile.
     Named(Cicp),
     /// Use specific ICC profile bytes.
     Icc(Arc<[u8]>),
+}
+
+impl OutputProfile {
+    /// Replace an exactly recognized ICC with its bundled canonical profile.
+    ///
+    /// Uses the same normalized hash as `zenpixels::icc` identification, but
+    /// only exact bundled fingerprints, never approximate color-space matches.
+    /// Header CMM, timestamp, platform, device, creator and ID differences are
+    /// ignored. Tags, rendering intent and color transforms are not ignored.
+    /// This is explicit metadata normalization, not ICC sanitization or a CMS
+    /// conversion. Unknown profiles and non-ICC targets remain unchanged.
+    ///
+    /// Cost: one pass over the input profile; a recognized profile allocates
+    /// a small canonical `Arc`. No pixel access, scan, or image allocation.
+    #[must_use]
+    pub fn normalize_known_icc(self) -> Self {
+        use crate::icc_profiles::{ADOBE_RGB, DISPLAY_P3_V2, DISPLAY_P3_V4, REC2020_V4};
+        use zenpixels::icc::normalized_hash;
+        const KNOWN: &[(u64, &[u8])] = &[
+            (normalized_hash(DISPLAY_P3_V4), DISPLAY_P3_V4),
+            (normalized_hash(DISPLAY_P3_V2), DISPLAY_P3_V2),
+            (normalized_hash(ADOBE_RGB), ADOBE_RGB),
+            (normalized_hash(REC2020_V4), REC2020_V4),
+        ];
+        if let Self::Icc(ref profile) = self {
+            let hash = normalized_hash(profile);
+            if let Some((_, canonical)) = KNOWN
+                .iter()
+                .find(|(key, bytes)| *key == hash && bytes.len() == profile.len())
+            {
+                return Self::Icc(Arc::from(*canonical));
+            }
+        }
+        self
+    }
 }
 
 // TODO(0.3.0): Add HdrPolicy enum and ConvertOutputOptions here once
@@ -459,6 +495,19 @@ pub fn finalize_for_output_with(
         }
     };
 
+    // The current context must describe the returned samples, including identity.
+    let mut context = crate::ColorContext::default();
+    context.icc = metadata.icc.clone();
+    context.cicp = metadata.cicp;
+    context.diffuse_white = if source_desc.transfer() == TransferFunction::Pq
+        && target_desc_full.transfer() == TransferFunction::Linear
+    {
+        Some(zenpixels::hdr::DiffuseWhite::new(10_000.0))
+    } else {
+        buffer.color_context().and_then(|c| c.diffuse_white)
+    };
+    let context = Arc::new(context);
+
     // Fast path: no conversion needed.
     if source_desc.layout_compatible(target_desc_full)
         && descriptors_match(&source_desc, &target_desc_full)
@@ -474,7 +523,7 @@ pub fn finalize_for_output_with(
         )
         .map_err_at(ConvertError::from)?;
         return Ok(EncodeReady {
-            pixels: out,
+            pixels: out.with_color_context(context),
             metadata,
         });
     }
@@ -509,7 +558,7 @@ pub fn finalize_for_output_with(
     }
 
     Ok(EncodeReady {
-        pixels: out,
+        pixels: out.with_color_context(context),
         metadata,
     })
 }
@@ -552,7 +601,14 @@ pub(crate) fn current_profile(
 
 fn origin_profile(origin: &ColorOrigin) -> Option<crate::ColorProfileSource<'_>> {
     let icc = origin.icc.as_deref().map(crate::ColorProfileSource::Icc);
-    let cicp = origin.cicp.map(crate::ColorProfileSource::Cicp);
+    let cicp = origin.cicp.map(|c| {
+        crate::ColorProfileSource::Cicp(Cicp::new(
+            c.color_primaries,
+            c.transfer_characteristics,
+            0,
+            true,
+        ))
+    });
     match origin.color_authority {
         ColorAuthority::Icc => icc.or(cicp),
         ColorAuthority::Cicp => cicp.or(icc),

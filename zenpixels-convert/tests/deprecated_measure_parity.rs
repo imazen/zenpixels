@@ -1,4 +1,4 @@
-//! Parity gate: the deprecated `zenpixels::ContentLightLevel::measure`
+//! Parity gate: the deprecated `zenpixels::hdr::ContentLightLevel::measure`
 //! (restored to its working 0.2.14 body after briefly carrying an
 //! `unimplemented!()` shim on the unreleased 0.2.16 line) must return the
 //! same readings as its documented replacement,

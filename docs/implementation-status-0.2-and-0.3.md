@@ -1,3 +1,11 @@
+> **Superseded release decisions (2026-09-28):** See
+> [finalization/release contract](finalization-release-contract.md) for current
+> scope. Estimation is always deprecated in 0.2 and removed entirely in 0.3;
+> HDR root aliases and core measurement are removed in 0.3; concrete-type
+> conversion extension traits are sealed there. Exact ICC normalization uses
+> the existing hash through an `OutputProfile` method. The checks below describe
+> the older recorded revisions, not blanket validation of subsequent edits.
+
 # Implementation status: 0.2.17 bridge and 0.3.1
 
 2026-09-27. PR #75 is merged. The reviewed storage, conversion, color, alpha,

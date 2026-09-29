@@ -150,7 +150,7 @@ impl HdrConfig {
 /// tone mapping or carry the wide dynamic range through. HLG↔PQ is
 /// handled by the dedicated refusal upstream (different luminance
 /// domains, no straight tone-map path).
-fn is_hdr_to_sdr(from: TransferFunction, to: TransferFunction) -> bool {
+pub(crate) fn is_hdr_to_sdr(from: TransferFunction, to: TransferFunction) -> bool {
     let src_is_hdr = matches!(from, TransferFunction::Pq | TransferFunction::Hlg);
     let dst_is_sdr_encoded = matches!(
         to,
@@ -1761,12 +1761,9 @@ impl ConvertPlan {
     /// assert!(est.wall_ms().is_some());
     /// ```
     #[must_use]
-    #[cfg_attr(
-        not(feature = "estimation-experimental"),
-        deprecated(
-            since = "0.2.17",
-            note = "enable estimation-experimental; this feature will be required for the estimation API in 0.3.1"
-        )
+    #[deprecated(
+        since = "0.2.17",
+        note = "estimation is retired; it will be removed in 0.3.1, including with estimation-experimental enabled"
     )]
     #[allow(deprecated)] // The 0.2 compatibility signature/body still uses estimate types.
     pub fn estimate_in(
@@ -1801,12 +1798,9 @@ impl ConvertPlan {
     /// assert!(est.wall_ms().is_some());
     /// ```
     #[must_use]
-    #[cfg_attr(
-        not(feature = "estimation-experimental"),
-        deprecated(
-            since = "0.2.17",
-            note = "enable estimation-experimental; this feature will be required for the estimation API in 0.3.1"
-        )
+    #[deprecated(
+        since = "0.2.17",
+        note = "estimation is retired; it will be removed in 0.3.1, including with estimation-experimental enabled"
     )]
     #[allow(deprecated)] // The 0.2 compatibility implementation delegates to estimate_in.
     pub fn estimate(&self, width: u32, height: u32) -> crate::estimate::ResourceEstimate {

@@ -1,8 +1,7 @@
 //! Resource-estimation primitive for [`ConvertPlan`].
 //!
-//! Enable `estimation-experimental` to opt in. In the 0.2.17 bridge this API
-//! remains available without that feature, with deprecation warnings; the
-//! proposed 0.3.1 release requires the feature with the same signatures.
+//! Deprecated unconditionally in 0.2.17 and removed in 0.3.1.
+//! `estimation-experimental` no longer suppresses migration warnings.
 //!
 //! [`ConvertPlan::estimate`](crate::ConvertPlan::estimate) and
 //! [`ConvertPlan::estimate_in`](crate::ConvertPlan::estimate_in) walk a plan's

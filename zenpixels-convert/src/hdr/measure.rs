@@ -27,6 +27,9 @@
 // const product as an as_chunks array length. Keep chunk/remainder iteration.
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
+// Policy belongs with measurement, not the shared metadata carrier.
+const DEFAULT_PERCENTILE: f32 = 0.99999;
+
 use alloc::boxed::Box;
 use alloc::vec;
 
@@ -485,7 +488,7 @@ pub trait CllMeasure {
 
     /// **Internal / experimental.** Convenience wrapper around
     /// [`measure_percentile`](Self::measure_percentile) at
-    /// [`DEFAULT_PERCENTILE`](ContentLightLevel::DEFAULT_PERCENTILE).
+    /// `0.99999`.
     ///
     /// **Kept on the trait but doc-hidden** because the 2026-06-22
     /// audited shootout showed it splits 3-3 against
@@ -519,7 +522,7 @@ pub trait CllMeasure {
     /// caller commits to a percentile value explicitly per content
     /// policy. `1.0` is the spec-literal max (use
     /// [`measure_max`](Self::measure_max) directly if that's the goal).
-    /// `0.99999` ([`DEFAULT_PERCENTILE`](ContentLightLevel::DEFAULT_PERCENTILE))
+    /// `0.99999` (`0.99999`)
     /// is the tail-tightest tested value in the 2026-06-22 audited
     /// shootout — trades ~11 % more clearly-different pixels overall
     /// for ~1.5 % tighter worst-1-5 % tail.
@@ -658,12 +661,7 @@ impl CllMeasure for ContentLightLevel {
         white: DiffuseWhite,
         method: LightLevelMethod,
     ) -> Option<ContentLightLevel> {
-        <ContentLightLevel as CllMeasure>::measure_percentile(
-            px,
-            white,
-            ContentLightLevel::DEFAULT_PERCENTILE,
-            method,
-        )
+        <ContentLightLevel as CllMeasure>::measure_percentile(px, white, DEFAULT_PERCENTILE, method)
     }
 
     fn measure_percentile(
@@ -2121,7 +2119,7 @@ mod tests {
         // explicitly opt into percentile-based defect rejection via
         // `measure_percentile`. See
         // `zen/zentone/benchmarks/shootout_2026-06-22_findings_v2.md`.
-        assert_eq!(ContentLightLevel::DEFAULT_PERCENTILE, 0.99999);
+        assert_eq!(DEFAULT_PERCENTILE, 0.99999);
     }
 
     #[test]
@@ -2150,7 +2148,7 @@ mod tests {
             let pct = <ContentLightLevel as CllMeasure>::measure_percentile(
                 buf.as_slice(),
                 DiffuseWhite::BT2408,
-                ContentLightLevel::DEFAULT_PERCENTILE,
+                DEFAULT_PERCENTILE,
                 method,
             )
             .unwrap();

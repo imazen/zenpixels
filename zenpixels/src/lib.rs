@@ -120,7 +120,24 @@ pub use color::{
 };
 
 // Re-export HDR metadata types at crate root.
-pub use hdr::{ContentLightLevel, DiffuseWhite, MasteringDisplay};
+/// Compatibility alias; use [`hdr::ContentLightLevel`].
+#[deprecated(
+    since = "0.2.17",
+    note = "use zenpixels::hdr::ContentLightLevel; root HDR aliases are removed in 0.3.1"
+)]
+pub type ContentLightLevel = hdr::ContentLightLevel;
+/// Compatibility alias; use [`hdr::DiffuseWhite`].
+#[deprecated(
+    since = "0.2.17",
+    note = "use zenpixels::hdr::DiffuseWhite; root HDR aliases are removed in 0.3.1"
+)]
+pub type DiffuseWhite = hdr::DiffuseWhite;
+/// Compatibility alias; use [`hdr::MasteringDisplay`].
+#[deprecated(
+    since = "0.2.17",
+    note = "use zenpixels::hdr::MasteringDisplay; root HDR aliases are removed in 0.3.1"
+)]
+pub type MasteringDisplay = hdr::MasteringDisplay;
 
 // Re-export GrayAlpha pixel types at crate root.
 pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};

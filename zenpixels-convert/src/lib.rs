@@ -417,12 +417,9 @@ pub mod error;
 /// `peak_memory_bytes_max`, and its `ImageCharacteristics` tracks
 /// `frame_count`, none of which exist here). A `decode → convert → encode`
 /// pipeline bridging the two currently has to map fields by hand.
-#[cfg_attr(
-    not(feature = "estimation-experimental"),
-    deprecated(
-        since = "0.2.17",
-        note = "enable estimation-experimental; this feature will be required for the estimation API in 0.3.1"
-    )
+#[deprecated(
+    since = "0.2.17",
+    note = "estimation is retired; it will be removed in 0.3.1, including with estimation-experimental enabled"
 )]
 pub mod estimate;
 #[allow(deprecated)] // Preserve the old root imports and their downstream warnings.
@@ -565,9 +562,7 @@ pub use hdr::exposure_tonemap;
 // consumer or the §3.2 PixelBuffer-level surface lands — see hdr.rs.)
 pub use hdr::quantize_to;
 #[allow(deprecated)]
-pub use hdr::{
-    ContentLightLevel, HdrMetadata, MasteringDisplay, reinhard_inverse, reinhard_tonemap,
-};
+pub use hdr::{HdrMetadata, reinhard_inverse, reinhard_tonemap};
 
 // Re-export CMS traits, enums, and implementations.
 #[allow(deprecated)]

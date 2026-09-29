@@ -1,3 +1,19 @@
+## Release reconciliation — 0.2.17 bridge (2026-09-28)
+
+- Integrate checked native `sample::SampleEncoding` from #76.
+- Finalization attaches matching current color context on identity and converted
+  output; SameAsOrigin lowers original YUV signaling to full-range RGB output.
+- ICC premultiplied conversion uses prepared F32 rows around the CMS, avoiding
+  intermediate integer quantization. CMS paths cannot bypass HDR→SDR peak policy.
+- Add explicit `OutputProfile::normalize_known_icc`, sharing core's normalized
+  hash and recognizing exact bundled fingerprints only. No new dependencies.
+- Estimation always warns, even with `estimation-experimental`; remove it in 0.3.
+- Deprecate root HDR type aliases and core measurement percentile policy; use
+  `zenpixels::hdr` and explicit conversion-crate measurement.
+- Refuse SMPTE 240M TC7 as BT.709; retain unsupported CICP for a capable adapter.
+- Record finalization/release expectations and add a local interactive sample,
+  storage, color-authority and media scenario explorer.
+
 # Changelog
 
 ## [Unreleased]

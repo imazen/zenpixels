@@ -50,11 +50,11 @@ jobs:
       - name: Test (workspace)
         run: cargo test --workspace
 
-      - name: Check downstream deprecation warnings and estimation opt-in
+      - name: Check downstream warnings with compatibility features
         if: matrix.os == 'ubuntu-latest'
         run: python3 scripts/check-deprecations.py
 
-      - name: Test (estimation opt-in)
+      - name: Test legacy estimation behavior (still deprecated)
         run: cargo test -p zenpixels-convert --features estimation-experimental --test resource_estimate
 
       # Default `cargo test` exercises only the portable scalar transpose tiers.

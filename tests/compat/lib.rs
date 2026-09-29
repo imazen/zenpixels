@@ -96,13 +96,8 @@ fn typed_interop_keeps_layout_and_stride() {
 
 #[cfg(feature = "experimental")]
 #[test]
-fn opt_in_estimation_and_hdr_names_are_identical() {
-    use zenpixels_convert::{ComputeEnvironment, HdrConfig, ImageCharacteristics};
-    let plan = ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
-    let _ = plan.estimate_in(
-        &ImageCharacteristics::new(10, 20, plan.from()),
-        &ComputeEnvironment::new(),
-    );
+fn opt_in_hdr_names_are_identical() {
+    use zenpixels_convert::HdrConfig;
     let plan = ConvertPlan::new_with_hdr_config(
         PixelDescriptor::RGBF32_LINEAR,
         PixelDescriptor::RGB8_SRGB,

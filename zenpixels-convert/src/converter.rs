@@ -55,6 +55,59 @@ enum ExternalTransform {
     Owned(alloc::sync::Arc<std::sync::Mutex<Box<dyn crate::cms::RowTransformMut>>>),
     /// A prepared worker owns its state without locking or cross-worker sharing.
     Independent(IndependentWorker),
+    Alpha(Box<AlphaPipeline>),
+}
+
+// Alpha is associated in the source encoding, never inside an ICC transform.
+// Floating point intermediates avoid an extra integer quantization at each stage.
+struct AlphaPipeline {
+    before: RowConverter,
+    color: RowConverter,
+    after: RowConverter,
+    source: alloc::vec::Vec<f32>,
+    target: alloc::vec::Vec<f32>,
+}
+impl AlphaPipeline {
+    fn reserve(&mut self, width: u32) -> Result<(), At<ConvertError>> {
+        for (buffer, desc) in [
+            (&mut self.source, self.before.to_descriptor()),
+            (&mut self.target, self.after.from_descriptor()),
+        ] {
+            let len = (width as usize)
+                .checked_mul(desc.bytes_per_pixel() / 4)
+                .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
+            if len > buffer.len() {
+                buffer
+                    .try_reserve(len - buffer.len())
+                    .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
+                buffer.resize(len, 0.0);
+            }
+        }
+        Ok(())
+    }
+    fn prepare(&mut self, width: u32) -> Result<(), At<ConvertError>> {
+        self.reserve(width)?;
+        self.before.prepare(width)?;
+        self.color.prepare(width)?;
+        self.after.prepare(width)
+    }
+    fn convert(&mut self, src: &[u8], dst: &mut [u8], width: u32) -> Result<(), At<ConvertError>> {
+        self.reserve(width)?;
+        let source = bytemuck::cast_slice_mut(&mut self.source);
+        let target = bytemuck::cast_slice_mut(&mut self.target);
+        self.before.try_convert_row(src, source, width)?;
+        self.color.try_convert_row(source, target, width)?;
+        self.after.try_convert_row(target, dst, width)
+    }
+    fn try_clone(&self) -> Result<Self, At<ConvertError>> {
+        Ok(Self {
+            before: self.before.try_clone()?,
+            color: self.color.try_clone()?,
+            after: self.after.try_clone()?,
+            source: alloc::vec::Vec::new(),
+            target: alloc::vec::Vec::new(),
+        })
+    }
 }
 
 // Keep the published std Sync auto-trait without any execution-time locking.
@@ -167,6 +220,12 @@ impl RowConverter {
         // Check before CMS setup: its profile/format interface cannot express
         // the missing narrow-range depth scaling either.
         crate::convert::validate_descriptors(from, to)?;
+        if crate::convert::is_hdr_to_sdr(from.transfer(), to.transfer()) {
+            return Err(whereat::at!(ConvertError::HdrSourceRequiresPeak {
+                from,
+                to
+            }));
+        }
 
         if from.has_alpha()
             && !to.has_alpha()
@@ -328,12 +387,17 @@ impl RowConverter {
             .map(|(p, t)| to.with_primaries(p).with_transfer(t))
             .unwrap_or(to);
         crate::convert::validate_descriptors(from, to)?;
+        if crate::convert::is_hdr_to_sdr(from.transfer(), to.transfer()) {
+            return Err(whereat::at!(ConvertError::HdrSourceRequiresPeak {
+                from,
+                to
+            }));
+        }
         // Plugins accept PixelFormat, which cannot express association or range.
-        if from.alpha() == Some(crate::AlphaMode::Premultiplied)
-            || to.alpha() == Some(crate::AlphaMode::Premultiplied)
-            || (from.alpha() == Some(crate::AlphaMode::Undefined) && to.has_alpha())
+        if (from.alpha() == Some(crate::AlphaMode::Undefined) && to.has_alpha())
             || (to.alpha() == Some(crate::AlphaMode::Undefined) && from.has_alpha())
             || from.signal_range != crate::SignalRange::Full
+            || to.signal_range != crate::SignalRange::Full
         {
             return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
@@ -345,6 +409,46 @@ impl RowConverter {
                 }
                 _ => return Err(whereat::at!(ConvertError::AlphaRemovalForbidden)),
             }
+        }
+        if from.alpha() == Some(crate::AlphaMode::Premultiplied)
+            || to.alpha() == Some(crate::AlphaMode::Premultiplied)
+        {
+            let straight_float =
+                |desc: PixelDescriptor| -> Result<PixelDescriptor, At<ConvertError>> {
+                    let format = match desc.layout() {
+                        ChannelLayout::Rgb => crate::PixelFormat::RgbF32,
+                        ChannelLayout::Rgba | ChannelLayout::Bgra => crate::PixelFormat::RgbaF32,
+                        ChannelLayout::Gray => crate::PixelFormat::GrayF32,
+                        ChannelLayout::GrayAlpha => crate::PixelFormat::GrayAF32,
+                        _ => return Err(whereat::at!(ConvertError::NoPath { from, to })),
+                    };
+                    Ok(format
+                        .descriptor()
+                        .with_primaries(desc.primaries)
+                        .with_transfer(desc.transfer()))
+                };
+            let straight_from = straight_float(from)?;
+            let straight_to = straight_float(to)?;
+            let pipeline = AlphaPipeline {
+                before: Self::new_explicit(from, straight_from, options)?,
+                color: Self::new_with_sources(
+                    straight_from,
+                    straight_to,
+                    source,
+                    target,
+                    options,
+                    cms,
+                )?,
+                after: Self::new_explicit(straight_to, to, options)?,
+                source: alloc::vec::Vec::new(),
+                target: alloc::vec::Vec::new(),
+            };
+            return Ok(Self {
+                plan: ConvertPlan::identity(from, to),
+                scratch: ConvertScratch::new(),
+                prepared_width: None,
+                external: Some(ExternalTransform::Alpha(Box::new(pipeline))),
+            });
         }
         for plugin in cms.into_iter().chain(core::iter::once(
             &crate::cms_lite::ZenCmsLite as &dyn crate::cms::PluggableCms,
@@ -451,6 +555,7 @@ impl RowConverter {
             }
             #[cfg(feature = "std")]
             Some(ExternalTransform::Owned(_)) => unreachable!("moved to independent worker above"),
+            Some(ExternalTransform::Alpha(p)) => p.prepare(max_width)?,
             None => self.scratch.prepare(&self.plan, max_width)?,
         }
         self.prepared_width = Some(max_width);
@@ -497,6 +602,7 @@ impl RowConverter {
         let src = &src[..slen];
         let dst = &mut dst[..dlen];
         let result = match &mut self.external {
+            Some(ExternalTransform::Alpha(p)) => return p.convert(src, dst, width),
             Some(ExternalTransform::Shared(t)) => t.try_transform_row(src, dst, width),
             #[cfg(feature = "std")]
             Some(ExternalTransform::Owned(t)) => t
@@ -523,6 +629,9 @@ impl RowConverter {
     /// Construct another converter from the backend to obtain a parallel worker.
     pub fn try_clone(&self) -> Result<Self, At<ConvertError>> {
         let external = match &self.external {
+            Some(ExternalTransform::Alpha(p)) => {
+                Some(ExternalTransform::Alpha(Box::new(p.try_clone()?)))
+            }
             Some(ExternalTransform::Shared(t)) => Some(ExternalTransform::Shared(t.clone())),
             #[cfg(feature = "std")]
             Some(ExternalTransform::Owned(t)) => Some(ExternalTransform::Owned(t.clone())),
@@ -2287,5 +2396,82 @@ mod tests {
             "expected NeedsCms variant, got: {:?}",
             err.error(),
         );
+    }
+}
+
+#[cfg(test)]
+mod alpha_pipeline_contracts {
+    use super::*;
+    use crate::{
+        AlphaMode, ColorProfileSource, PixelDescriptor, PixelFormat,
+        cms::{CmsPluginError, PluggableCms, RowTransform},
+    };
+    use alloc::sync::Arc;
+    struct Copy;
+    impl RowTransform for Copy {
+        fn transform_row(&self, src: &[u8], dst: &mut [u8], _: u32) {
+            dst.copy_from_slice(src);
+        }
+        fn prepare(&self, _: u32) -> Result<(), At<CmsPluginError>> {
+            Ok(())
+        }
+    }
+    struct Cms;
+    impl PluggableCms for Cms {
+        fn build_source_transform(
+            &self,
+            _: ColorProfileSource<'_>,
+            _: ColorProfileSource<'_>,
+            _: PixelFormat,
+            _: PixelFormat,
+            _: &crate::ConvertOptions,
+        ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, At<CmsPluginError>>> {
+            None
+        }
+        fn build_shared_source_transform(
+            &self,
+            _: ColorProfileSource<'_>,
+            _: ColorProfileSource<'_>,
+            from: PixelFormat,
+            to: PixelFormat,
+            _: &crate::ConvertOptions,
+        ) -> Option<Result<Arc<dyn RowTransform>, At<CmsPluginError>>> {
+            assert_eq!(from, PixelFormat::RgbaF32);
+            assert_eq!(to, PixelFormat::RgbaF32);
+            Some(Ok(Arc::new(Copy)))
+        }
+    }
+    #[test]
+    fn prepared_icc_alpha_is_float_rowwise_and_allocates_nothing() {
+        let from = PixelDescriptor::RGBA8_SRGB.with_alpha(Some(AlphaMode::Premultiplied));
+        let to = PixelDescriptor::RGBA8_SRGB;
+        let mut converter = RowConverter::new_with_sources(
+            from,
+            to,
+            ColorProfileSource::Icc(crate::icc_profiles::ADOBE_RGB),
+            ColorProfileSource::Icc(crate::icc_profiles::ADOBE_RGB),
+            &crate::ConvertOptions::permissive(),
+            Some(&Cms),
+        )
+        .unwrap();
+        converter.prepare(2).unwrap();
+        let mut output = [0; 8];
+        let allocations = allocation_counter::measure(|| {
+            converter
+                .try_convert_row(&[64, 32, 16, 128, 0, 0, 0, 0], &mut output, 2)
+                .unwrap();
+            converter.try_convert_row(&[], &mut [], 0).unwrap();
+        });
+        assert_eq!(allocations.count_total, 0);
+        assert_eq!(output, [128, 64, 32, 128, 0, 0, 0, 0]);
+        let before = output;
+        assert!(converter.try_convert_row(&[0; 12], &mut output, 3).is_err());
+        assert_eq!(before, output);
+        let mut clone = converter.try_clone().unwrap();
+        clone.prepare(2).unwrap();
+        clone
+            .try_convert_row(&[64, 32, 16, 128], &mut output, 1)
+            .unwrap();
+        assert_eq!(&output[..4], &[128, 64, 32, 128]);
     }
 }

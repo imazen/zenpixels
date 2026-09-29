@@ -114,6 +114,15 @@ fn main() { let _ = legacy_provider().count(); }
 )
 
 
+for crate in ("zenpixels", "zenpixels_convert"):
+    for name in ("ContentLightLevel", "MasteringDisplay") if crate == "zenpixels_convert" else ("ContentLightLevel", "DiffuseWhite", "MasteringDisplay"):
+        PROBES[f"hdr_root_{crate}_{name.lower()}"] = (
+            f"fn accepts(_: {crate}::{name}) {{}} fn main() {{}}", name, False,
+        )
+        PROBES[f"hdr_module_{crate}_{name.lower()}"] = (
+            f"fn accepts(_: {crate}::hdr::{name}) {{}} fn main() {{}}", None, False,
+        )
+
 def main():
     with tempfile.TemporaryDirectory(prefix="zenpixels-deprecations-") as directory:
         project = Path(directory)
@@ -153,7 +162,7 @@ zenpixels = {{ path = {json.dumps(str(ROOT / 'zenpixels'))} }}
                         item = json.loads(line)
                         if item.get("reason") == "compiler-message" and item["message"]["level"] == "error":
                             errors.append(item["message"])
-                    should_warn = expected is not None and not (estimation and opted_in)
+                    should_warn = expected is not None
                     if should_warn:
                         ok = result.returncode != 0 and bool(errors) and all(
                             (error.get("code") or {}).get("code") == "deprecated" for error in errors
