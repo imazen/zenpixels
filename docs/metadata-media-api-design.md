@@ -9,7 +9,8 @@ tools depend directly on an independently versioned engine. Keep image-only
 users independent of media containers, networking, audio and video backends.
 
 Read sections 1–4 for the design and examples, 5–7 for gain maps/video/features,
-and 8–10 for implementation order and the six-commit review.
+and 8–10 for implementation order and the six-commit review. Section 11 records
+the release-baseline audit and the concrete behavior selected for reconciliation.
 
 ## 1. Ownership and repository boundaries
 
@@ -509,3 +510,124 @@ Both release branches were pushed without rewriting their history. Local main
 was moved back to origin/main only after those snapshots were secured. This
 proposal is a separate docs branch. Unrelated dirty zencodec/codec working trees
 were not changed, committed or pushed.
+
+## 11. Release baseline and selected reconciliation
+
+Registry API checked 2026-09-28: both zenpixels and zenpixels-convert still have
+0.2.16 as the latest non-yanked release. Their release tags both identify
+640dced. Current main is 197a38b. Neither 0.2.17 nor 0.3.1 is published. Earlier
+references to 0.2.14 describe the preceding release, not the current baseline.
+
+### Already on main since 0.2.16
+
+| Area | Implemented change | Representative commits |
+|---|---|---|
+| Full-range U16 | Correct U16-to-U8 rounding; precise SDR transfer-plus-narrowing composites and cached tables | 1eb8c9b, d019ae9, bc0e246 |
+| Alpha transfer | Alpha no longer goes through color transfer functions, including GrayAlpha/PQ; exhaustive route regressions | 88aa8f2, 558494f, 03bedaa, 071b785 |
+| HDR memory | Peak measurement streams through row scratch rather than a full-frame F32 temporary; finalizer's owned-copy cost documented | db6ec82, 01acaa7 |
+| Ownership | into_contiguous, into_parts, try_from_parts, recoverable FromPartsError; preserve stride/context and minimum visible extent | f7252be, c5d8945 |
+| Validation | DiffuseWhite::new rejects invalid nits; descriptor/padding/gamut and empty-view corrections | f7252be, 7088a8b |
+| Adapter/conversion correctness | Known transfers convert; strict in-place adaptation refuses relabeling; orientation retains context; Gamma22/F16 fixes; composition refuses dropping an external CMS | 7088a8b |
+| Narrow-range safety | Refuse unsupported narrow-range depth changes before planning/CMS; do not reduce narrow U16 based on byte-replication tests | 197a38b (#75) |
+| Bridge warnings | requires_cms, implicit estimation exposure, inferred Adapted method calls and the whole legacy planar module warn; estimation opt-in added | f7252be, c5d8945 |
+| Performance/build | Measured NEON path work, no-default rgb CI, pinned API-doc tooling, dependency refresh/lz4 update and extensive audit documents | cd1b216, 6bc634f, 32c0614, 75e681d |
+
+Some support types, deprecated legacy APIs and cow adapters already existed in
+0.2.16. Do not present them as new work simply because their documentation was
+rewritten. In particular, main still has the legacy planar module behind its
+feature; deprecation is not removal. main's into_vec does not yet warn; that
+warning is in the six-commit candidate.
+
+### The bridge is the implementation base, but is not release-ready
+
+Use the six-commit bridge for storage validation, prepared/fallible execution,
+error chains, stronger alpha/HDR handling and explicit cost contracts. Preserve
+its optimized default composition and explicit compose_preserving. Preserve its
+single-authority output metadata; do not restore #78's possibility of retaining
+both contradictory source fields in OutputMetadata.
+
+Two #78 behaviors must be integrated into that implementation before either
+candidate is released:
+
+1. **Attach the resulting ColorContext to finalized PixelBuffer output.** The
+   bridge computes OutputMetadata but both its identity and conversion exits
+   create buffers without attaching current context. Three transplanted #78
+   tests reach their color_context().unwrap() and fail. Pixel results and separate
+   metadata alone are insufficient for handing the buffer onward safely.
+2. **Support premultiplied ICC conversion through explicit alpha stages.** The
+   bridge's new_with_sources refuses the tested Adobe-RGB premultiplied RGBA8
+   input; #78 supports it. Adapt the before/CMS/after staging to prepare scratch
+   ahead of execution and propagate original errors. Do not copy #78's infallible
+   row calls or replace the bridge's preparation/error contracts.
+
+Reproduction: archive release/0.2-bridge (1d47131), copy cms_alpha.rs and
+output_current_color.rs from #78 (f28f6b8) into its converter tests under distinct
+reconcile_ names, then run:
+
+```sh
+cargo test --locked -p zenpixels-convert --features hdr-experimental \
+  --test reconcile_cms_alpha --test reconcile_output_current_color --no-fail-fast
+```
+
+Result: 3 of 10 pass, 7 fail. These are **not seven new defects**: four failures
+demonstrate the two gaps above; three expect conservative refusal of operations
+the bridge now implements (nonlinear premultiplied conversion, HDR alpha
+handling, padding-to-opaque-alpha). Replace those refusal assertions with
+independent numerical/alpha expectations when combining the suites. Existing
+bridge tests cover those successful routes. No production code was changed by
+this diagnostic transplant.
+
+### Concrete changes to the two candidates
+
+For 0.2.17:
+
+- Fold #76's checked SampleEncoding into the bridge. It is small vocabulary
+  used by an actual media consumer, not a new frame abstraction. Existing packed
+  RGB/gray U16 remains normalized; native 10/12-bit packing remains explicit.
+- Integrate the two missing #78 behaviors above and its useful tests into the
+  bridge implementation. Do not keep parallel finalizers.
+- Include #79's exact known-ICC helper in convert, explicitly called; do not
+  add automatic profile scanning/replacement or a conversion dependency to core.
+- Backport the TC=7 correction currently bundled with #77: retain the raw CICP
+  code and refuse unsupported SMPTE 240M conversion rather than calling it
+  BT.709. That correctness fix does not belong only to the breaking release.
+- Retain warned legacy APIs and feature names, including planar. Keep the new
+  converter dependency floor >=0.2.17. Audit semver against published 0.2.16,
+  not only post-#75 main; the recorded ConvertError unwind-marker exception
+  remains explicit.
+
+For 0.3.1:
+
+- Derive it from the reconciled 0.2.17 implementation. Its functional conversion
+  behavior must not fork. Carry over SampleEncoding and all numerical fixes.
+- Keep the already selected removals: legacy planar module, requires_cms,
+  Adapted/packed wrappers, into_vec, ambiguous from_icc_and_cicp; require the
+  existing estimation opt-in without changing opted-in signatures.
+- Keep planar as a no-op feature spelling, as the local candidate does. Do not
+  copy #77's feature removal: identical migrated manifests should work on both.
+- Finish the measurement migration: remove deprecated core
+  ContentLightLevel::measure after switching its real zencodecs gainmap caller
+  to the maintained converter measurement; remove deprecated convert_to_sdr
+  in favor of convert_to_sdr_measuring_peak or explicit supplied-peak conversion.
+  Both deprecated methods are still present in the current 0.3 candidate.
+- Do not remove Clone wholesale in no_std as #78 proposed; retain the bridge's
+  fallible try_clone and honest legacy refusal rather than silently dropping CMS
+  state. Do not seal established open traits or remove feature names casually.
+- Regenerate snapshots/packages and repeat source-identical four-pairing tests
+  on the reconciled heads, including actual media use. Old candidate validation
+  proves the old snapshots only.
+
+Use existing PR #76 as the consolidated bridge review and #77 as its 0.3 child.
+After their actual changes/tests are integrated, #78/#79 can be superseded; #74
+becomes historical design background. Keep #80 as the design/evidence review,
+not an alternative code release. PR #55 (matrix interpretation) and #62 (image
+interop) are independent and must not be swept into the releases unreviewed.
+This is the selected integration plan; these PR/code changes have not yet been
+made. Updating the branch graph without integrating the two missing behaviors
+would not fulfill the plan.
+
+The metadata engine extraction, gain-map type relocation, media contract crate
+and new native frame views remain separate implementation work. None is already
+on main or made complete by the candidate's previous status ledger. New view
+types can be additive; do not delay the 0.2 correctness bridge for a speculative
+universal video API or freeze an untested one into 0.3.
