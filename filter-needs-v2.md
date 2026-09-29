@@ -1,3 +1,6 @@
+> Historical design notes. The legacy zenpixels plane API described here was
+> removed in 0.3; zenfilters now owns its filter masks and Oklab buffers.
+
 # What zenfilters Needs from zenpixels
 
 zenfilters operates on planar Oklab f32 data. Filters see f32 slices — they never see primaries, transfer functions, or CICP. All color management lives in the conversion boundary.

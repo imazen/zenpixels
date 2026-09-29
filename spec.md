@@ -250,80 +250,13 @@ Named constants: `SRGB`, `BT2100_PQ`, `BT2100_HLG`, `DISPLAY_P3`.
 Srgb, DisplayP3, Bt2020, Bt2020Pq, Bt2020Hlg, AdobeRgb, LinearSrgb
 ```
 
-## Planar types (feature-gated)
+## Native component views
 
-Multi-plane image support for YCbCr, Oklab planes, gain maps, and alpha planes.
-
-### PlaneLayout
-
-```rust
-pub enum PlaneLayout {
-    Interleaved { channels: u8 },
-    Planar {
-        planes: Vec<PlaneDescriptor>,
-        relationship: PlaneRelationship,
-    },
-}
-```
-
-Factory methods: `ycbcr_420()`, `ycbcr_422()`, `ycbcr_444()`, `rgb()`,
-`rgba()`, `oklab()`, `oklab_alpha()`, `gray()`.
-
-### PlaneDescriptor
-
-Per-plane metadata: semantic, channel type, subsampling factors.
-
-```rust
-pub struct PlaneDescriptor {
-    pub semantic: PlaneSemantic,
-    pub channel_type: ChannelType,
-    pub h_subsample: u8,
-    pub v_subsample: u8,
-}
-```
-
-### PlaneSemantic
-
-```
-Luma, ChromaCb, ChromaCr,
-Red, Green, Blue,
-Alpha, Depth, GainMap,
-Gray,
-OklabL, OklabA, OklabB
-```
-
-Oklab planes allow perceptual-space processing without interleaving. An image
-can be stored as three planes (L, a, b) at different resolutions — the
-lightness plane at full resolution, chrominance planes subsampled. This
-mirrors YCbCr 4:2:0 but in a perceptually uniform space.
-
-### PlaneRelationship
-
-```
-Independent,
-YCbCr { matrix: YuvMatrix },
-Oklab,
-GainMap,
-```
-
-### Subsampling
-
-```
-S444, S422, S420, S411
-```
-
-### YuvMatrix
-
-```
-Identity, Bt601, Bt709, Bt2020
-```
-
-CICP matrix_coefficients mapping. `rgb_to_y_coeffs()` returns luma weights.
-
-### MultiPlaneImage
-
-Container for multi-plane data: `Vec<PixelBuffer>` + `PlaneLayout` +
-optional `Arc<ColorContext>`.
+The legacy multi-plane carrier was removed in 0.3. Native video component views
+live in the experimental zencodec-media workspace. See
+[the sample encoding contract](docs/sample-encoding-contract.md) for mandatory
+storage/code-depth/range signaling; this specification does not freeze a new
+video frame owner in zenpixels.
 
 ## Conversion architecture (zenpixels-convert)
 
