@@ -44,7 +44,9 @@ actual moxcms results, premultiplied ICC input, F32 staging, prepared zero-alloc
 execution, selected authority, decoded YUV origin signaling, exact hash matching,
 changed transforms/intent, unknown-profile ownership, TC7 refusal, and the existing
 7,744-pair accepted-plan execution matrix. A separate six-test JavaScript suite
-checks the explorer's arithmetic and scenario warnings.
+checks the explorer's arithmetic and scenario warnings. Chromium smoke checks
+exercise all five presets, P010 values, ambiguity warnings, direct file loading
+and a 390-pixel mobile viewport; desktop/mobile screenshots were inspected.
 
 ## Semver interpretation
 
