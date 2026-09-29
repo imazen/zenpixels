@@ -56,7 +56,7 @@ zenpixels. The working prototype lives in the `media/` workspace of the zencodec
 (package `zencodec-media`) until its conversions,
 animation, timestamps, I/O and cross-codec behavior have been exercised together.
 The deprecated `planar` module remains available on the 0.2 bridge branch.
-The 0.3 branch removes it together with both feature flags; zenfilters migrates
+The 0.3 branch removes its API, keeping both feature names as no-ops; zenfilters migrates
 its public channel-access declarations to `zenfilters::access::PlaneMask`.
 
 See the [U16 matrix](u16-contract-matrix.md) for existing normalized RGB/gray

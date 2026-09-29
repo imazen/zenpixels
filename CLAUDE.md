@@ -87,10 +87,18 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 The user explicitly authorized a coordinated breaking release. Branch
 `feat/0.3-retire-planar` stages both packages at 0.3.1 and removes the legacy
-planar module/re-exports/features after migrating zenfilters' filter mask.
+planar module/re-exports after migrating zenfilters' filter mask. Compatibility
+feature names remain no-ops.
 The final 0.2 bridge is retained on `feat/explicit-sample-encoding`. Do not
 publish either branch as part of this PR workflow. No generic video frame owner
 is added here: concrete native sample views are exercised in zencodec's
 `media/` workspace, using `sample::SampleEncoding`. Other historical breaking
 queues are not implicitly completed by this change. CICP TC7 now remains
 unresolved, per H.273 table 3, instead of incorrectly aliasing BT.709.
+
+The consolidated release candidates are `release/0.2-bridge` (#76) and
+`release/0.3.1` (#77). Follow `docs/finalization-release-contract.md`: estimation
+is unconditionally deprecated in 0.2 and removed in 0.3; core HDR computation
+and root aliases are removed in 0.3. Concrete-type conversion extensions are
+sealed there, while Pixel and CMS plugins remain open. No crate publication
+is authorized by release-branch preparation.
