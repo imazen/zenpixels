@@ -62,7 +62,7 @@ zenpixels = {{ path = {json.dumps(str(base / f"zenpixels-{core}"))} }}
 zenpixels-convert = {{ path = {json.dumps(str(base / f"zenpixels-convert-{convert}"))} }}
 {sibling_patch}
 ''')
-                env = dict(os.environ, CARGO_TARGET_DIR=str(Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target')) / 'bridge-compat'))
+                env = dict(os.environ, CARGO_TARGET_DIR=str(Path(os.environ.get('CARGO_TARGET_DIR', Path(tempfile.gettempdir()) / 'zenpixels-validation')) / 'bridge-compat'))
                 cases = [('--no-default-features',), (), ('--features', 'interop,experimental,legacy-features')]
                 if args.siblings:
                     cases.append(('--features', 'siblings,interop'))

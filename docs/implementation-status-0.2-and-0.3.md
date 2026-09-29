@@ -12,7 +12,7 @@
 prepared execution and streaming fixes are implemented and committed. Both
 release candidates build from packaged archives. Nothing has been published.
 
-`main` / `release/0.2-bridge` contain the 0.2.17 bridge. `release/0.3.1` adds the
+`main` remains at #75; `release/0.2-bridge` contains the 0.2.17 bridge. `release/0.3.1` adds the
 warned legacy removals. Companion fixes are on local branches in zencodec and
 zenpipe. This is a tested candidate set, not a claim that every published consumer
 has migrated. See the [code guide](implemented-bridge-contracts.md) and
@@ -57,11 +57,12 @@ Commit `5e40423` removes only the selected warned surface:
   use planning errors and stride-aware `*_cow` adapters.
 - `PixelBuffer::into_vec`; use `into_parts` with offset/stride/context intact.
 - `ColorContext::from_icc_and_cicp`; select current authority explicitly.
-- Estimation without `estimation-experimental`; opted-in signatures are unchanged.
+- All estimation, including opt-in; root HDR aliases, core measurement, legacy HDR bundle/helpers and ambiguous scan spelling.
 
-Open traits, established imports, legacy CMS/finalizer methods and feature
-spellings remain. No new field privacy, trait sealing, signature/default changes
-or renamed orientation API are part of this candidate.
+Concrete-type conversion/measurement extension traits are sealed in the updated
+0.3 candidate. Pixel and CMS extension points remain open. Legacy CMS/finalizer
+methods and feature spellings remain. See the dated validation record for the
+new candidate; the earlier results below describe their recorded revisions.
 
 Default/all-feature tests, strict Clippy, rustdoc, MSRV, 128 removal probes,
 public API snapshots and package verification pass. Forced patch-level semver

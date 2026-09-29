@@ -1,3 +1,10 @@
+> **2026-09-28 implementation update:** #76/#77 now contain the reconciled
+> zenpixels releases. See [finalization/release contract](finalization-release-contract.md)
+> and [validation](finalization-release-validation.md). These supersede the
+> estimation opt-in, free ICC helper, and HDR/sealing choices in this earlier
+> review. Metadata/media engine extraction below is a separate implementation
+> track and is not certified complete by the pixel release checks.
+
 # Metadata, image and media boundaries before the compatibility freeze
 
 Review proposal, 2026-09-28. This document proposes APIs and dependency changes;
