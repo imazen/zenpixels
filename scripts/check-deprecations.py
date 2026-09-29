@@ -20,6 +20,11 @@ fn plan() -> ConvertPlan {
 }
 """
 PROBES = {
+    "cicp_projection": (
+        "fn main() { let _ = zenpixels::Cicp::SRGB.to_descriptor(zenpixels::PixelFormat::Rgb8); }",
+        "to_descriptor",
+        False,
+    ),
     "predicate": (
         "fn main() { let d = zenpixels_convert::PixelDescriptor::RGB8_SRGB; "
         "let _ = zenpixels_convert::requires_cms(&d, &d); }",

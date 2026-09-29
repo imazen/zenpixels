@@ -1,3 +1,10 @@
+## Checked CICP declarations — 0.3.1
+
+- Share `Cicp::try_to_descriptor` and `cicp::CicpDescriptorError` with the
+  0.2.17 bridge; remove the deprecated lossy `Cicp::to_descriptor`.
+- Finalization uses the shared check and retains declaration failures through
+  `ConvertError::CicpDescriptor`. No allocation, pixel scan, or new dependency.
+
 ## 0.3.1 cleanup — release reconciliation (2026-09-28)
 
 Includes all 0.2.17 behavior fixes and `SampleEncoding`, then removes:
