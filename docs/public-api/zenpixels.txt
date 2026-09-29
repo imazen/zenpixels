@@ -9,21 +9,21 @@
 ## summary
 #
 #   pub modules                                11
-#   pub types (struct/enum/trait/alias)        84
+#   pub types (struct/enum/trait/alias)        85
 #   pub consts/statics                        278
 #   free functions                              4
-#   inherent methods                          254
+#   inherent methods                          256
 #   struct fields                             115
-#   enum variants                             215
+#   enum variants                             219
 #   re-exports                                  4
-#   trait roster entries (type × trait)       260
-#   auto-trait-complete types                  37
+#   trait roster entries (type × trait)       267
+#   auto-trait-complete types                  38
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
 #   (root)                          405
 #   buffer                          244
-#   cicp                             27
+#   cicp                             34
 #   color                            64
 #   descriptor                      150
 #   hdr                              12
@@ -33,7 +33,7 @@
 #   policy                           25
 #   sample                            5
 
-## items (837 lines)
+## items (844 lines)
 
 pub mod zenpixels
 pub use At
@@ -176,6 +176,11 @@ pub buffer::Rgbx::r: u8
 pub buffer::Rgbx::x: u8
 pub const buffer::Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 pub mod cicp
+#[non_exhaustive] pub enum cicp::CicpDescriptorError
+pub cicp::CicpDescriptorError::NonIdentityMatrix(u8)
+pub cicp::CicpDescriptorError::UnmappedPrimaries(u8)
+pub cicp::CicpDescriptorError::UnmappedTransfer(u8)
+pub cicp::CicpDescriptorError::UnsupportedLayout(descriptor::ChannelLayout)
 pub cicp::Cicp::color_primaries: u8
 pub cicp::Cicp::full_range: bool
 pub cicp::Cicp::matrix_coefficients: u8
@@ -192,6 +197,7 @@ pub const fn cicp::Cicp::new(u8, u8, u8, bool) -> Self [also: (root)]
 pub fn cicp::Cicp::to_descriptor(&self, descriptor::PixelFormat) -> descriptor::PixelDescriptor
 pub fn cicp::Cicp::transfer_characteristics_name(u8) -> &'static str
 pub fn cicp::Cicp::transfer_function_enum(&self) -> descriptor::TransferFunction
+pub fn cicp::Cicp::try_to_descriptor(&self, descriptor::PixelFormat) -> core::result::Result<descriptor::PixelDescriptor, cicp::CicpDescriptorError>
 pub mod color
 pub color::ColorAuthority::Cicp
 pub color::ColorAuthority::Icc
@@ -664,6 +670,7 @@ pub fn cicp::Cicp::matrix_coefficients_name(u8) -> &'static str
 pub fn cicp::Cicp::to_descriptor(&self, descriptor::PixelFormat) -> descriptor::PixelDescriptor
 pub fn cicp::Cicp::transfer_characteristics_name(u8) -> &'static str
 pub fn cicp::Cicp::transfer_function_enum(&self) -> descriptor::TransferFunction
+pub fn cicp::Cicp::try_to_descriptor(&self, descriptor::PixelFormat) -> core::result::Result<descriptor::PixelDescriptor, cicp::CicpDescriptorError>
 #[non_exhaustive] pub struct ColorContext [also: color]
 pub ColorContext::cicp: core::option::Option<cicp::Cicp>
 pub ColorContext::diffuse_white: core::option::Option<hdr::DiffuseWhite>
@@ -873,7 +880,7 @@ pub type ContentLightLevel = hdr::ContentLightLevel
 pub type DiffuseWhite = hdr::DiffuseWhite
 pub type MasteringDisplay = hdr::MasteringDisplay
 
-## trait impls (47 types)
+## trait impls (48 types)
 
 buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
@@ -890,6 +897,7 @@ buffer::PixelSliceMut<'_, P>: Debug
 buffer::PixelSliceMut<'a>: From<buffer::PixelSliceMut<'a, P>>
 buffer::Rgbx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 cicp::Cicp: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
+cicp::CicpDescriptorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 color::ColorAuthority: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 color::ColorContext: Clone, Debug, Default, Eq, PartialEq
 color::ColorOrigin: Clone, Debug, Eq, PartialEq
