@@ -9,38 +9,36 @@
 ## summary
 #
 #   pub modules                                13
-#   pub types (struct/enum/trait/alias)        48
+#   pub types (struct/enum/trait/alias)        46
 #   pub consts/statics                         19
 #   free functions                             40
-#   inherent methods                          111
-#   struct fields                              46
+#   inherent methods                          105
+#   struct fields                              38
 #   enum variants                              60
-#   re-exports                                  5
-#   trait roster entries (type × trait)        70
-#   auto-trait-complete types                  13
+#   re-exports                                  3
+#   trait roster entries (type × trait)        66
+#   auto-trait-complete types                  12
 #   auto-trait exceptions                       3
 #
 # per-module pub lines:
-#   (root)                          158
+#   (root)                          151
 #   adapt                             6
 #   cms                              31
 #   converter                        31
 #   error                            29
 #   ext                              13
 #   gamut                             6
-#   hdr                              15
+#   hdr                               3
 #   icc_profiles                     13
 #   load_bearing                     11
 #   oklab                             9
 #   orient                            3
-#   output                           17
+#   output                           18
 
-## items (312 lines)
+## items (295 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
-pub use ContentLightLevel
-pub use MasteringDisplay
 pub mod adapt
 pub fn adapt::adapt_for_encode_cow<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor]) -> core::result::Result<zenpixels::buffer::PixelCow<'a>, whereat::at::At<error::ConvertError>>
 pub fn adapt::adapt_for_encode_with_intent_cow<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], ConvertIntent) -> core::result::Result<zenpixels::buffer::PixelCow<'a>, whereat::at::At<error::ConvertError>>
@@ -129,13 +127,6 @@ pub fn gamut::mat3_mul(&gamut::GamutMatrix, &gamut::GamutMatrix) -> gamut::Gamut
 pub mod hdr
 pub use hdr::ContentLightLevel
 pub use hdr::MasteringDisplay
-pub hdr::HdrMetadata::content_light_level: core::option::Option<zenpixels::hdr::ContentLightLevel>
-pub hdr::HdrMetadata::mastering_display: core::option::Option<zenpixels::hdr::MasteringDisplay>
-pub hdr::HdrMetadata::transfer: zenpixels::descriptor::TransferFunction
-pub fn hdr::HdrMetadata::hdr10(zenpixels::hdr::ContentLightLevel) -> Self
-pub fn hdr::HdrMetadata::hlg() -> Self
-pub fn hdr::HdrMetadata::is_hdr(&self) -> bool
-pub fn hdr::HdrMetadata::is_sdr(&self) -> bool
 pub mod icc_profiles
 #[non_exhaustive] pub enum icc_profiles::SynthesizedIcc
 pub icc_profiles::SynthesizedIcc::CmsUnsupported
@@ -179,11 +170,11 @@ pub mod output
 pub output::OutputProfile::Icc(alloc::sync::Arc<[u8]>)
 pub output::OutputProfile::Named(zenpixels::cicp::Cicp)
 pub output::OutputProfile::SameAsOrigin
+pub fn output::OutputProfile::normalize_known_icc(self) -> Self
 pub fn output::EncodeReady::into_parts(self) -> (zenpixels::buffer::PixelBuffer, output::OutputMetadata)
 pub fn output::EncodeReady::metadata(&self) -> &output::OutputMetadata
 pub fn output::EncodeReady::pixels(&self) -> zenpixels::buffer::PixelSlice<'_>
 pub output::OutputMetadata::cicp: core::option::Option<zenpixels::cicp::Cicp>
-pub output::OutputMetadata::hdr: core::option::Option<hdr::HdrMetadata>
 pub output::OutputMetadata::icc: core::option::Option<alloc::sync::Arc<[u8]>>
 pub enum ColorPriority [also: cms]
 pub ColorPriority::PreferCicp
@@ -226,6 +217,7 @@ pub ConvertIntent::Perceptual
 pub OutputProfile::Icc(alloc::sync::Arc<[u8]>)
 pub OutputProfile::Named(zenpixels::cicp::Cicp)
 pub OutputProfile::SameAsOrigin
+pub fn output::OutputProfile::normalize_known_icc(self) -> Self
 pub enum RenderingIntent [also: cms]
 pub RenderingIntent::AbsoluteColorimetric
 pub RenderingIntent::Perceptual
@@ -257,14 +249,6 @@ pub struct FormatOption
 pub FormatOption::consumer_cost: ConversionCost
 pub FormatOption::descriptor: zenpixels::descriptor::PixelDescriptor
 pub const fn FormatOption::with_cost(zenpixels::descriptor::PixelDescriptor, ConversionCost) -> Self
-pub struct HdrMetadata [also: hdr]
-pub HdrMetadata::content_light_level: core::option::Option<zenpixels::hdr::ContentLightLevel>
-pub HdrMetadata::mastering_display: core::option::Option<zenpixels::hdr::MasteringDisplay>
-pub HdrMetadata::transfer: zenpixels::descriptor::TransferFunction
-pub fn hdr::HdrMetadata::hdr10(zenpixels::hdr::ContentLightLevel) -> Self
-pub fn hdr::HdrMetadata::hlg() -> Self
-pub fn hdr::HdrMetadata::is_hdr(&self) -> bool
-pub fn hdr::HdrMetadata::is_sdr(&self) -> bool
 #[non_exhaustive] pub struct LoadBearingReport [also: load_bearing]
 pub LoadBearingReport::uses_alpha: core::option::Option<bool>
 pub LoadBearingReport::uses_chroma: core::option::Option<bool>
@@ -272,7 +256,6 @@ pub LoadBearingReport::uses_low_bits: core::option::Option<bool>
 pub fn load_bearing::LoadBearingReport::apply_to(&self, &zenpixels::descriptor::PixelDescriptor) -> zenpixels::descriptor::PixelDescriptor
 #[non_exhaustive] pub struct OutputMetadata [also: output]
 pub OutputMetadata::cicp: core::option::Option<zenpixels::cicp::Cicp>
-pub OutputMetadata::hdr: core::option::Option<hdr::HdrMetadata>
 pub OutputMetadata::icc: core::option::Option<alloc::sync::Arc<[u8]>>
 #[non_exhaustive] pub struct Provenance
 pub Provenance::origin_depth: zenpixels::descriptor::ChannelType
@@ -303,10 +286,10 @@ pub type ColorManagement::Error: core::fmt::Debug
 pub fn ColorManagement::build_transform(&self, &[u8], &[u8]) -> core::result::Result<alloc::boxed::Box<dyn cms::RowTransform>, Self::Error>
 pub fn ColorManagement::build_transform_for_format(&self, &[u8], &[u8], zenpixels::descriptor::PixelFormat, zenpixels::descriptor::PixelFormat) -> core::result::Result<alloc::boxed::Box<dyn cms::RowTransform>, Self::Error>
 pub fn ColorManagement::identify_profile(&self, &[u8]) -> core::option::Option<zenpixels::cicp::Cicp>
-pub trait ColorPrimariesExt [also: ext]
+pub trait ColorPrimariesExt: sealed::Sealed [also: ext]
 pub fn ColorPrimariesExt::from_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub fn ColorPrimariesExt::to_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
-pub trait PixelBufferConvertExt [also: ext]
+pub trait PixelBufferConvertExt: sealed::Sealed [also: ext]
 pub fn PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::delinearize(&self, zenpixels::descriptor::TransferFunction) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::linearize(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
@@ -329,7 +312,7 @@ pub trait RowTransformMut: core::marker::Send [also: cms]
 pub fn RowTransformMut::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
 pub fn RowTransformMut::transform_row(&mut self, &[u8], &mut [u8], u32)
 pub fn RowTransformMut::try_transform_row(&mut self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
-pub trait TransferFunctionExt [also: ext]
+pub trait TransferFunctionExt: sealed::Sealed [also: ext]
 pub fn TransferFunctionExt::delinearize(&self, f32) -> f32
 pub fn TransferFunctionExt::linearize(&self, f32) -> f32
 pub fn adapt_for_encode_explicit_cow<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelCow<'a>, whereat::at::At<error::ConvertError>> [also: adapt]
@@ -350,7 +333,7 @@ pub fn quantize_to(zenpixels::buffer::PixelSlice<'_>, zenpixels::descriptor::Pix
 pub fn try_adapt_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: adapt]
 pub type GamutMatrix = [[f32; 3]; 3] [also: gamut]
 
-## trait impls (19 types)
+## trait impls (18 types)
 
 ConversionCost: Add, Clone, Copy, Debug, Default, Eq, PartialEq
 ConvertIntent: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -362,7 +345,6 @@ cms::ColorPriority: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 cms::RenderingIntent: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 converter::RowConverter: Clone
 error::ConvertError: Clone, Debug, Display, Error, From<zenpixels::buffer::BufferError>, PartialEq
-hdr::HdrMetadata: Clone, Copy, Debug, PartialEq
 icc_profiles::SynthesizedIcc: Clone, Debug, Eq, PartialEq
 load_bearing::LoadBearingReport: Clone, Copy, Debug, Default
 output::OutputMetadata: Clone, Debug

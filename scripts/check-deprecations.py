@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check removed legacy APIs and required estimation opt-in at a downstream boundary.
+"""Check removed legacy APIs and retired estimation and HDR aliases at a downstream boundary.
 
 Run after fetching workspace dependencies: python3 scripts/check-deprecations.py
 No extra Rust test dependency; each probe denies deprecation warnings locally.
@@ -114,6 +114,30 @@ fn main() { let _ = legacy_provider().count(); }
 )
 
 
+for crate in ("zenpixels", "zenpixels_convert"):
+    for name in ("ContentLightLevel", "MasteringDisplay") if crate == "zenpixels_convert" else ("ContentLightLevel", "DiffuseWhite", "MasteringDisplay"):
+        PROBES[f"hdr_root_{crate}_{name.lower()}"] = (
+            f"fn accepts(_: {crate}::{name}) {{}} fn main() {{}}", name, False,
+        )
+        PROBES[f"hdr_module_{crate}_{name.lower()}"] = (
+            f"fn accepts(_: {crate}::hdr::{name}) {{}} fn main() {{}}", None, False,
+        )
+
+PROBES["hdr_measure"] = (
+    "fn main() { let _ = zenpixels::hdr::ContentLightLevel::measure; }", "measure", False,
+)
+PROBES["hdr_percentile"] = (
+    "fn main() { let _ = zenpixels::hdr::ContentLightLevel::DEFAULT_PERCENTILE; }", "DEFAULT_PERCENTILE", False,
+)
+PROBES["hdr_bundle"] = (
+    "fn accepts(_: zenpixels_convert::hdr::HdrMetadata) {} fn main() {}", "HdrMetadata", False,
+)
+PROBES["sealed_transfer_extension"] = (
+    "struct External; impl zenpixels_convert::TransferFunctionExt for External {"
+    " fn linearize(&self, v: f32) -> f32 { v }"
+    " fn delinearize(&self, v: f32) -> f32 { v } } fn main() {}", "Sealed", False,
+)
+
 def main():
     with tempfile.TemporaryDirectory(prefix="zenpixels-deprecations-") as directory:
         project = Path(directory)
@@ -153,10 +177,10 @@ zenpixels = {{ path = {json.dumps(str(ROOT / 'zenpixels'))} }}
                         item = json.loads(line)
                         if item.get("reason") == "compiler-message" and item["message"]["level"] == "error":
                             errors.append(item["message"])
-                    should_warn = expected is not None and not (estimation and opted_in)
+                    should_warn = expected is not None
                     if should_warn:
                         ok = result.returncode != 0 and bool(errors) and all(
-                            (error.get("code") or {}).get("code") in {"E0432", "E0433", "E0425", "E0412", "E0599", "E0422"} for error in errors
+                            (error.get("code") or {}).get("code") in {"E0432", "E0433", "E0425", "E0412", "E0599", "E0422", "E0277"} for error in errors
                         ) and any(expected in error["message"] for error in errors)
                     else:
                         ok = result.returncode == 0

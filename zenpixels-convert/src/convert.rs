@@ -150,7 +150,7 @@ impl HdrConfig {
 /// tone mapping or carry the wide dynamic range through. HLG↔PQ is
 /// handled by the dedicated refusal upstream (different luminance
 /// domains, no straight tone-map path).
-fn is_hdr_to_sdr(from: TransferFunction, to: TransferFunction) -> bool {
+pub(crate) fn is_hdr_to_sdr(from: TransferFunction, to: TransferFunction) -> bool {
     let src_is_hdr = matches!(from, TransferFunction::Pq | TransferFunction::Hlg);
     let dst_is_sdr_encoded = matches!(
         to,
@@ -1663,14 +1663,6 @@ impl ConvertPlan {
         max_bpp
     }
 
-    /// Crate-internal view of the planned step list — exposed for the
-    /// estimate-API code under `crate::estimate`. NOT public:
-    /// `ConvertStep` itself is `pub(crate)`.
-    #[cfg(feature = "estimation-experimental")]
-    pub(crate) fn steps(&self) -> &[ConvertStep] {
-        &self.steps
-    }
-
     /// Source descriptor.
     pub fn from(&self) -> PixelDescriptor {
         self.from
@@ -1680,131 +1672,6 @@ impl ConvertPlan {
     pub fn to(&self) -> PixelDescriptor {
         self.to
     }
-
-    /// Estimate resources for executing this plan on `image` under the
-    /// given [`ComputeEnvironment`](crate::estimate::ComputeEnvironment).
-    /// Returns a [`ResourceEstimate`](crate::estimate::ResourceEstimate)
-    /// whose type shape matches `zencodec::estimate::ResourceEstimate` so
-    /// codec-side encode/decode estimates can be wired through a multi-
-    /// stage pipeline at the codec boundary with a trivial conversion.
-    ///
-    /// Calibrated from `benches/t1_layout`, `t2_depth`, `t3_tf_fused`,
-    /// `t4_tf_f32`, `t5_alpha`, `t6_oklab`, `t7_gamut` steady-state
-    /// throughput; best-effort, ±30 % on the reference machine
-    /// (Ryzen 9 7950X, AVX2). Real wall time varies with contention,
-    /// frequency scaling, and CPU model. Identity at 0×0 returns a
-    /// zero-cost estimate.
-    ///
-    /// `peak_memory_bytes_est` is the destination buffer plus row-sized
-    /// ping-pong scratch (multi-step plans). It does NOT include the
-    /// caller's persistent state. `intermediate_buffer_count` reports the
-    /// number of full-image intermediate buffers held simultaneously
-    /// (0 for identity / single-step plans; 2 for multi-step plans using
-    /// ping-pong scratch) so schedulers can distinguish 1-giant-buffer plans
-    /// from N-medium-buffer plans for paging-pressure decisions.
-    /// `wall_ms` is divided down by `compute.cores()` via the plan's
-    /// internal threading-bottleneck model (see the [`estimate`] module
-    /// docs): any SERIAL step forces the whole plan SERIAL; otherwise the
-    /// smallest per-step knee — `rows / 64` clamped to `[1, 16]` — caps
-    /// the useful thread count.
-    ///
-    /// [`estimate`]: crate::estimate
-    ///
-    /// `compute.simd_tier()` applies a coarse per-tier wall-time
-    /// multiplier on top of the AVX2 baseline (see the `estimate`
-    /// module docs for the per-tier ratios; TODO per-tier calibration).
-    ///
-    /// Cheap to call — walks the plan's steps once and does no
-    /// allocation. Safe to call repeatedly per-frame in throttled
-    /// pipelines.
-    ///
-    /// For a quick estimate using [`ComputeEnvironment::new()`](crate::estimate::ComputeEnvironment::new)
-    /// defaults on a `width × height` image, see [`estimate`](Self::estimate).
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use zenpixels::PixelDescriptor;
-    /// use zenpixels_convert::{ComputeEnvironment, ConvertPlan, ImageCharacteristics};
-    ///
-    /// let plan = ConvertPlan::new(
-    ///     PixelDescriptor::RGB8_SRGB,
-    ///     PixelDescriptor::RGBA8_SRGB,
-    /// ).unwrap();
-    /// let image = ImageCharacteristics::new(1920, 1080, PixelDescriptor::RGB8_SRGB);
-    /// let compute = ComputeEnvironment::new().with_cores(8);
-    /// let est = plan.estimate_in(&image, &compute);
-    /// assert!(est.peak_memory_bytes_est().unwrap_or(0) > 0);
-    /// // wall_ms is `Some(_)` once the plan has measurable work (it can
-    /// // round to 0 ms for trivial plans, but the field is populated).
-    /// assert!(est.wall_ms().is_some());
-    /// ```
-    #[must_use]
-    #[cfg_attr(
-        not(feature = "estimation-experimental"),
-        deprecated(
-            since = "0.2.17",
-            note = "enable estimation-experimental; this feature will be required for the estimation API in 0.3.1"
-        )
-    )]
-    #[allow(deprecated)] // The 0.2 compatibility signature/body still uses estimate types.
-    #[cfg(feature = "estimation-experimental")]
-    pub fn estimate_in(
-        &self,
-        image: &crate::estimate::ImageCharacteristics,
-        compute: &crate::estimate::ComputeEnvironment,
-    ) -> crate::estimate::ResourceEstimate {
-        crate::estimate::estimate_plan(self, image, compute)
-    }
-
-    /// Shortcut: estimate with [`ComputeEnvironment::new()`](crate::estimate::ComputeEnvironment::new)
-    /// defaults (single core, unknown RAM, unspecified SIMD tier) on a
-    /// `width × height` image. Builds the
-    /// [`ImageCharacteristics`](crate::estimate::ImageCharacteristics) from
-    /// the plan's `from()` descriptor and calls [`estimate_in`](Self::estimate_in).
-    /// Use [`estimate_in`](Self::estimate_in) directly when the caller has
-    /// a populated compute environment (e.g.
-    /// `available_parallelism() + archmage tier`).
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use zenpixels::PixelDescriptor;
-    /// use zenpixels_convert::ConvertPlan;
-    ///
-    /// let plan = ConvertPlan::new(
-    ///     PixelDescriptor::RGB8_SRGB,
-    ///     PixelDescriptor::RGBA8_SRGB,
-    /// ).unwrap();
-    /// let est = plan.estimate(1920, 1080);
-    /// assert!(est.peak_memory_bytes_est().unwrap_or(0) > 0);
-    /// assert!(est.wall_ms().is_some());
-    /// ```
-    #[must_use]
-    #[cfg_attr(
-        not(feature = "estimation-experimental"),
-        deprecated(
-            since = "0.2.17",
-            note = "enable estimation-experimental; this feature will be required for the estimation API in 0.3.1"
-        )
-    )]
-    #[allow(deprecated)] // The 0.2 compatibility implementation delegates to estimate_in.
-    #[cfg(feature = "estimation-experimental")]
-    pub fn estimate(&self, width: u32, height: u32) -> crate::estimate::ResourceEstimate {
-        let image = crate::estimate::ImageCharacteristics::new(width, height, self.from());
-        let compute = crate::estimate::ComputeEnvironment::new();
-        self.estimate_in(&image, &compute)
-    }
-}
-
-/// Bridge for the [`crate::estimate`] module: mirror of
-/// [`intermediate_desc`] without making that function public.
-#[cfg(feature = "estimation-experimental")]
-pub(crate) fn intermediate_desc_for_estimate(
-    current: PixelDescriptor,
-    step: &ConvertStep,
-) -> PixelDescriptor {
-    intermediate_desc(current, step)
 }
 
 /// Determine the layout conversion step(s).

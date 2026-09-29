@@ -1,3 +1,34 @@
+## 0.3.1 cleanup — release reconciliation (2026-09-28)
+
+Includes all 0.2.17 behavior fixes and `SampleEncoding`, then removes:
+
+- All estimation APIs and implementation, even with the compatibility feature.
+- Core HDR measurement and its percentile policy; root HDR type aliases.
+- Unwired `OutputMetadata::hdr`, legacy `HdrMetadata`, and naive global
+  Reinhard/exposure helpers. HDR types live under `zenpixels::hdr`.
+- Ambiguous `convert_to_sdr`; use `convert_to_sdr_measuring_peak` or supply a peak.
+- Previously selected planar/packed adaptation/into_vec/requires_cms APIs.
+
+Seal the concrete-type conversion extension traits and `CllMeasure`. Keep
+`Pixel` and CMS plugin traits open. Preserve no-op compatibility feature names.
+See `docs/finalization-release-contract.md` for semantics and release gates.
+
+## Release reconciliation — 0.2.17 bridge (2026-09-28)
+
+- Integrate checked native `sample::SampleEncoding` from #76.
+- Finalization attaches matching current color context on identity and converted
+  output; SameAsOrigin lowers original YUV signaling to full-range RGB output.
+- ICC premultiplied conversion uses prepared F32 rows around the CMS, avoiding
+  intermediate integer quantization. CMS paths cannot bypass HDR→SDR peak policy.
+- Add explicit `OutputProfile::normalize_known_icc`, sharing core's normalized
+  hash and recognizing exact bundled fingerprints only. No new dependencies.
+- Estimation always warns, even with `estimation-experimental`; remove it in 0.3.
+- Deprecate root HDR type aliases and core measurement percentile policy; use
+  `zenpixels::hdr` and explicit conversion-crate measurement.
+- Refuse SMPTE 240M TC7 as BT.709; retain unsupported CICP for a capable adapter.
+- Record finalization/release expectations and add a local interactive sample,
+  storage, color-authority and media scenario explorer.
+
 # Changelog
 
 ## [0.3.1] — unreleased candidate
@@ -48,6 +79,13 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   retains its published std `Send + Sync`, including prepared workers.
 
 ### zenpixels — added
+
+- `sample::SampleEncoding` explicitly separates unsigned storage width, current
+  code depth, and low padding bits. Checked constant construction describes
+  native 10/12-bit U16 and shifted words without confusing packing with numerical
+  normalization. It does not change existing RGB/gray U16 descriptors. The
+  `zenmedia` native AV1 mapping is the current consumer; its 48-case lossless
+  corpus covers exact 8/10/12-bit samples, range, chroma layouts and odd sizes.
 
 - `PixelBuffer::into_contiguous()` packs rows in the existing allocation and
   returns the same buffer type, preserving its descriptor and color context.

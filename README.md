@@ -14,6 +14,14 @@ Pixel format types and transfer-function-aware conversion for Rust image codecs.
 > [status ledger](docs/implementation-status-0.2-and-0.3.md) for exact scope and
 > release gates. The install versions below remain the published versions.
 
+See the [finalization/release contract](docs/finalization-release-contract.md)
+and the [interactive color & sample explorer](docs/color-explorer/index.html).
+Estimation is retired in both release plans; the 0.2 feature no longer suppresses warnings.
+
+Native codec planes can now carry a checked
+[`sample::SampleEncoding`](docs/sample-encoding-contract.md): storage width,
+code depth and bit placement remain explicit. This additive bridge preserves
+the existing RGB/gray U16 domain while the media APIs are validated in zenmedia.
 
 A JPEG decoder might produce `RGB8` in sRGB; an AVIF decoder might produce full-range `RGBA16` in BT.2020 PQ. Other profiles and native 10/12-bit video codes need their actual signaling. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
 
@@ -510,15 +518,10 @@ Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `C
 
 ### Resource estimation
 
-Enable `estimation-experimental` to opt in without warnings. The 0.2 bridge
-retains the API without the feature, deprecated; 0.3.1 requires
-that feature with the same opted-in signatures.
-
-> **Review:** The shape-compatibility claim below is not established by the current
-> zencodec types. Estimates are heuristics, not allocation limits; core-count
-> scaling does not parallelize execution. [Estimation review](docs/readme-contract-review.md#resource-estimation).
-
-`ConvertPlan::estimate(w, h)` (and `estimate_in(&ImageCharacteristics, &ComputeEnvironment)`) predicts a plan's `peak_memory_bytes_est`, `wall_ms` (already scaled to core count), and `intermediate_buffer_count` *before* running it — cheap to call (walks the planned steps, no row work, no allocation), so schedulers and throttlers can budget ahead. The estimate types are shape-compatible with `zencodec::estimate::*` for wiring `decode → convert → encode` across the boundary, without `zenpixels-convert` depending on `zencodec`. See the [zenpixels-convert README](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/README.md#resource-estimation) for the full contract.
+Retired: all estimation APIs warn in 0.2.17 and are removed in 0.3.1.
+`estimation-experimental` is a compatibility feature only; it does not suppress
+warnings or restore removed APIs. No replacement cost predictor is promised.
+Use measured workload costs and explicit buffer/stride arithmetic.
 
 ## Planar support
 
@@ -559,7 +562,7 @@ branch. See the [code review](docs/code-review-0.2-and-0.3.md) for video require
 | `imgref` | | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
 | `planar` | | Retained no-op feature; legacy planar API removed |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
-| `estimation-experimental` | | Explicit resource-estimation opt-in; without it the 0.2 bridge retains the API with warnings; proposed 0.3.1 requires it |
+| `estimation-experimental` | | Compatibility feature only; estimation is deprecated in 0.2 and absent in 0.3 |
 | `hdr-experimental` | | Native HDR→SDR display mapping inside `ConvertPlan` (BT.2446 Method A + OKLch soft compress + CTA-861.3 CLL measurement); API shape may move ahead of 0.3.0 |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
 | `serde` | | No-op stub (soft-removed in 0.2.15, queued for removal); previously forwarded to `zenpixels/serde` |

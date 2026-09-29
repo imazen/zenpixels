@@ -178,7 +178,6 @@ fn same_as_origin_metadata_has_no_icc_no_cicp_for_assumed() {
     let meta = ready.metadata();
     assert!(meta.icc.is_none());
     assert!(meta.cicp.is_none());
-    assert!(meta.hdr.is_none());
 }
 
 #[test]
@@ -946,8 +945,4 @@ fn pq_source_same_as_origin_pins_cicp_passthrough_and_unwired_hdr() {
     let meta = ready.metadata();
     assert_eq!(meta.cicp, Some(Cicp::new(9, 16, 0, true)));
     assert!(meta.icc.is_none(), "no ICC was supplied at origin");
-    assert!(
-        meta.hdr.is_none(),
-        "OutputMetadata::hdr is documented not-yet-wired (output.rs TODO(0.3.0))"
-    );
 }

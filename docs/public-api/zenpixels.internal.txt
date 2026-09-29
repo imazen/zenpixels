@@ -9,24 +9,23 @@
 
 ## summary
 #
-#   pub consts/statics                          1
-#   inherent methods                           32
-#   trait roster entries (type × trait)        31
+#   inherent methods                           33
+#   trait roster entries (type × trait)        33
 #
 # per-module pub lines:
 #   buffer                            3
 #   cicp                              1
 #   color                             6
 #   descriptor                       10
-#   hdr                               3
+#   hdr                               1
 #   icc                               2
 #   orientation                       1
 #   pixel_types                       2
 #   policy                            5
+#   sample                            2
 
 ## items (33 lines)
 
-pub const hdr::ContentLightLevel::DEFAULT_PERCENTILE: f32
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
 pub fn buffer::Rgbx::assert_fields_are_eq(&self)
@@ -48,7 +47,6 @@ pub fn descriptor::PixelFormat::assert_fields_are_eq(&self)
 pub fn descriptor::SignalRange::assert_fields_are_eq(&self)
 pub fn descriptor::TransferFunction::assert_fields_are_eq(&self)
 pub fn hdr::ContentLightLevel::assert_fields_are_eq(&self)
-pub fn hdr::ContentLightLevel::measure(buffer::PixelSlice<'_>, hdr::DiffuseWhite) -> core::option::Option<Self>
 pub fn icc::IccIdentification::assert_fields_are_eq(&self)
 pub fn icc::IdentificationUse::assert_fields_are_eq(&self)
 pub fn orientation::Orientation::assert_fields_are_eq(&self)
@@ -59,8 +57,10 @@ pub fn policy::ConvertOptions::assert_fields_are_eq(&self)
 pub fn policy::DepthPolicy::assert_fields_are_eq(&self)
 pub fn policy::GrayExpand::assert_fields_are_eq(&self)
 pub fn policy::LumaCoefficients::assert_fields_are_eq(&self)
+pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
+pub fn sample::SampleEncodingError::assert_fields_are_eq(&self)
 
-## trait impls (31 types)
+## trait impls (33 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
@@ -93,3 +93,5 @@ policy::ConvertOptions: TrivialClone
 policy::DepthPolicy: TrivialClone
 policy::GrayExpand: TrivialClone
 policy::LumaCoefficients: TrivialClone
+sample::SampleEncoding: TrivialClone
+sample::SampleEncodingError: TrivialClone

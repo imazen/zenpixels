@@ -72,7 +72,7 @@ fn all_color_primaries_have_cicp_code() {
     assert_eq!(ColorPrimaries::Unknown.to_cicp(), None);
 }
 
-/// from_cicp and to_cicp round-trip for primary codes (aliases like 6↔7 may collapse).
+/// from_cicp and to_cicp round-trip for primary codes (SMPTE 170M aliases BT.709).
 #[test]
 fn transfer_function_cicp_bijection() {
     // Primary codes that must round-trip exactly
@@ -80,15 +80,13 @@ fn transfer_function_cicp_bijection() {
         let tf = TransferFunction::from_cicp(code).unwrap();
         assert_eq!(tf.to_cicp(), Some(code));
     }
-    // Aliases that map to another primary code (SMPTE 170M/240M → BT.709 curve)
+    // Aliases that map to another primary code (SMPTE 170M → BT.709 curve)
     assert_eq!(
         TransferFunction::from_cicp(6),
         Some(TransferFunction::Bt709)
     );
-    assert_eq!(
-        TransferFunction::from_cicp(7),
-        Some(TransferFunction::Bt709)
-    );
+    // SMPTE 240M is not BT.709; keep raw CICP and use a capable CMS.
+    assert_eq!(TransferFunction::from_cicp(7), None);
     // Reverse: every non-Unknown enum maps to its primary code
     for tf in [
         TransferFunction::Linear,

@@ -68,6 +68,7 @@ whereat::define_at_crate_info!(path = "zenpixels/");
 pub mod descriptor;
 pub mod orientation;
 pub mod policy;
+pub mod sample;
 
 pub mod cicp;
 pub mod color;
@@ -102,9 +103,6 @@ pub use cicp::Cicp;
 pub use color::{
     ColorAuthority, ColorContext, ColorOrigin, ColorProfileSource, ColorProvenance, NamedProfile,
 };
-
-// Re-export HDR metadata types at crate root.
-pub use hdr::{ContentLightLevel, DiffuseWhite, MasteringDisplay};
 
 // Re-export GrayAlpha pixel types at crate root.
 pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};

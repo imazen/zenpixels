@@ -152,41 +152,14 @@ The buffer-baking half of the zen orientation story lives here (the `Orientation
 
 ## Atomic output assembly
 
-[`finalize_for_output`] couples converted pixels with matching encoder metadata in one step, preventing the bug where pixel values don't match the embedded ICC/CICP profile. Returns an [`EncodeReady`] bundle.
+[`finalize_for_output_with`] couples converted pixels with matching encoder metadata in one step, preventing the bug where pixel values don't match the embedded ICC/CICP profile. Returns an [`EncodeReady`] bundle.
 
 ## Resource estimation
 
-Enable `estimation-experimental` to use this API without deprecation warnings.
-In the 0.2.17 bridge it remains available without the feature, with warnings;
-the proposed 0.3.1 release requires the same opt-in. This feature does not change
-the estimates or their accuracy. See the [contract review](../docs/readme-contract-review.md#resource-estimation).
-
-For schedulers / throttlers / SLA-bound pipelines that need to know cost *before* running an op, [`ConvertPlan::estimate_in`] (and the [`ConvertPlan::estimate`] shortcut) returns a [`ResourceEstimate`] for a `width × height` image under a given [`ComputeEnvironment`] (core count + optional SIMD tier + optional RAM budget). The estimate reports `peak_memory_bytes_est`, `wall_ms` (already scaled to `cores()`), and `intermediate_buffer_count` (so schedulers can distinguish 1-giant-buffer plans from N-medium-buffer plans for paging-pressure decisions). Cheap to call — walks the planned steps, no row work, no allocation. Calibrated against the `bench_t1`–`bench_t7` series (Ryzen 9 7950X, AVX2/V3), ±30 % design tolerance.
-
-The four estimate types — [`ResourceEstimate`], [`ComputeEnvironment`], [`ImageCharacteristics`], [`SimdTier`] — are defined locally and are **shape-compatible** with the corresponding `zencodec::estimate::*` types (same field names, same builders, same accessors, same `#[non_exhaustive]` discipline). `zenpixels-convert` is a **foundation crate** and does NOT depend on `zencodec` — keeping codec abstractions strictly above pixel math. Codec authors whose stack uses the zencodec contract can wire `decode → convert → encode` estimates through the boundary with a trivial `From` conversion. The full type contract: sealed, growable, every field `Option`. Wall-time scaling across cores is handled internally by `ConvertPlan::estimate_in` — the resulting `wall_ms` is already divided by the effective parallel thread count.
-
-```rust
-use zenpixels::PixelDescriptor;
-use zenpixels_convert::{ComputeEnvironment, ConvertPlan, ImageCharacteristics};
-
-let plan = ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
-
-// Quick path: assumes a single core, unknown SIMD tier (the conservative default).
-let est = plan.estimate(1920, 1080);
-
-// Caller-controlled environment — populate from `std::thread::available_parallelism()`
-// and (optionally) an `archmage` tier detection.
-let image = ImageCharacteristics::new(1920, 1080, PixelDescriptor::RGB8_SRGB);
-let compute = ComputeEnvironment::new().with_cores(8);
-let est_8 = plan.estimate_in(&image, &compute);
-
-println!(
-    "peak ~{} MiB, wall ~{} ms, intermediates {}",
-    est_8.peak_memory_bytes_est().unwrap_or(0) / (1 << 20),
-    est_8.wall_ms().unwrap_or(0),
-    est_8.intermediate_buffer_count().map_or("?".to_string(), |n| n.to_string()),
-);
-```
+Retired: all estimation APIs warn in 0.2.17 and are removed in 0.3.1.
+`estimation-experimental` is a compatibility feature only; it does not suppress
+warnings or restore removed APIs. No replacement cost predictor is promised.
+Use measured workload costs and explicit buffer/stride arithmetic.
 
 ## Pipeline planner (`pipeline` feature)
 
@@ -212,8 +185,7 @@ println!(
 | [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`hdr-experimental` feature) |
 | [`Bt2446A`] / [`SoftCompress`] / [`CllMeasure`] | ITU-R BT.2446 Method A curve + OKLch knee + CTA-861.3 CLL measurement (`hdr-experimental` feature) |
 | [`quantize_to`] | Anchor-aware linear→PQ16 quantizer |
-| [`finalize_for_output`] / [`EncodeReady`] / [`OutputMetadata`] | Atomic pixels-plus-metadata output assembly |
-| [`ConvertPlan::estimate`] / [`ConvertPlan::estimate_in`] / [`ResourceEstimate`] / [`ComputeEnvironment`] / [`ImageCharacteristics`] | Predict peak memory + wall-clock + core-scaling before running an op (shape-compatible with `zencodec::estimate`, foundation-crate layering) |
+| [`finalize_for_output_with`] / [`EncodeReady`] / [`OutputMetadata`] | Atomic pixels-plus-metadata output assembly |
 | [`TransferFunctionExt`] / [`ColorPrimariesExt`] / [`PixelBufferConvertExt`] | Conversion methods bolted onto interchange types |
 | [`LoadBearingReport`] / [`PixelSliceLoadBearingExt`] | Channel-information analysis |
 | [`ConvertError`] | Conversion error type |
