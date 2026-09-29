@@ -11,14 +11,14 @@
 #
 #   pub types (struct/enum/trait/alias)         2
 #   pub consts/statics                          1
-#   inherent methods                           41
+#   inherent methods                           42
 #   struct fields                               4
-#   trait roster entries (type × trait)        39
+#   trait roster entries (type × trait)        40
 #
 # per-module pub lines:
 #   (root)                            3
 #   buffer                            3
-#   cicp                              1
+#   cicp                              2
 #   color                             6
 #   descriptor                       10
 #   hdr                               3
@@ -29,13 +29,14 @@
 #   policy                            5
 #   sample                            2
 
-## items (47 lines)
+## items (48 lines)
 
 pub const hdr::ContentLightLevel::DEFAULT_PERCENTILE: f32
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
 pub fn buffer::Rgbx::assert_fields_are_eq(&self)
 pub fn cicp::Cicp::assert_fields_are_eq(&self)
+pub fn cicp::CicpDescriptorError::assert_fields_are_eq(&self)
 pub fn color::ColorAuthority::assert_fields_are_eq(&self)
 pub fn color::ColorContext::assert_fields_are_eq(&self)
 pub fn color::ColorOrigin::assert_fields_are_eq(&self)
@@ -79,12 +80,13 @@ pub Plane::semantic: planar::PlaneSemantic
 pub planar::Plane::buffer: buffer::PixelBuffer
 pub planar::Plane::semantic: planar::PlaneSemantic
 
-## trait impls (39 types)
+## trait impls (40 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
 buffer::Rgbx: TrivialClone
 cicp::Cicp: TrivialClone
+cicp::CicpDescriptorError: TrivialClone
 color::ColorAuthority: TrivialClone
 color::ColorProvenance: TrivialClone
 color::NamedProfile: TrivialClone

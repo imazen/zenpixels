@@ -4,7 +4,50 @@
 //! transfer characteristics, and matrix coefficients. This struct
 //! carries the four fields needed by [`ColorContext`](crate::color::ColorContext).
 
-use crate::{ColorPrimaries, TransferFunction};
+use crate::{ChannelLayout, ColorPrimaries, PixelDescriptor, PixelFormat, TransferFunction};
+
+/// A CICP declaration cannot be represented by an RGB/gray pixel descriptor.
+///
+/// This is a declaration error, not a claim that a code is invalid in H.273
+/// or unsupported by every CMS. Raw [`Cicp`] remains available for preservation
+/// and for backends with a richer color model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CicpDescriptorError {
+    /// A component transform is required before declaring RGB/gray pixels.
+    NonIdentityMatrix(u8),
+    /// The primaries cannot be represented by [`ColorPrimaries`].
+    UnmappedPrimaries(u8),
+    /// The transfer cannot be represented by [`TransferFunction`].
+    UnmappedTransfer(u8),
+    /// This projection only describes RGB/gray layouts, not CMYK or Oklab.
+    UnsupportedLayout(ChannelLayout),
+}
+
+impl core::fmt::Display for CicpDescriptorError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NonIdentityMatrix(code) => write!(
+                f,
+                "CICP matrix {code} cannot declare RGB/gray samples without component reconstruction"
+            ),
+            Self::UnmappedPrimaries(code) => write!(
+                f,
+                "CICP primaries {code} are not representable by ColorPrimaries"
+            ),
+            Self::UnmappedTransfer(code) => write!(
+                f,
+                "CICP transfer {code} is not representable by TransferFunction"
+            ),
+            Self::UnsupportedLayout(layout) => write!(
+                f,
+                "CICP RGB/gray projection cannot describe {layout:?} samples"
+            ),
+        }
+    }
+}
+
+impl core::error::Error for CicpDescriptorError {}
 
 /// CICP color description (ITU-T H.273).
 ///
@@ -122,6 +165,10 @@ impl Cicp {
     ///
     /// Maps the CICP code points to the corresponding enum variants.
     /// Unmapped codes become `Unknown`.
+    #[deprecated(
+        since = "0.2.17",
+        note = "use try_to_descriptor for already-RGB/gray samples; reconstruct native components before declaring their RGB output"
+    )]
     pub fn to_descriptor(&self, format: crate::PixelFormat) -> crate::PixelDescriptor {
         let transfer = self.transfer_function_enum();
         let primaries = self.color_primaries_enum();
@@ -139,6 +186,68 @@ impl Cicp {
             primaries,
             signal_range,
         }
+    }
+
+    /// Describe already-RGB/gray samples without discarding CICP meaning.
+    ///
+    /// Requires identity matrix, an RGB/gray format, and primaries/transfer
+    /// representable by the descriptor enums. Preserves full/narrow range and
+    /// the format's default alpha semantics, including undefined RGBX padding.
+    ///
+    /// This does not convert, reorder, normalize, or inspect samples. The caller
+    /// declares that reconstruction has already occurred and that the samples
+    /// have the requested layout. Native 10/12-bit words are not normalized
+    /// RGB16 merely because this method can describe RGB16.
+    ///
+    /// An error does not invalidate the raw CICP. For an ICC or unsupported raw
+    /// color description, retain it in [`ColorContext`](crate::ColorContext)
+    /// alongside an explicitly constructed descriptor and select a capable
+    /// backend. Unknown enum values alone do not preserve raw numeric codes.
+    ///
+    /// Checks only a fixed amount of metadata: no allocation or pixel scan.
+    /// This is not a general H.273 validator or proof of converter support.
+    ///
+    /// ```
+    /// use zenpixels::{Cicp, PixelFormat};
+    /// let rgb = Cicp::SRGB.try_to_descriptor(PixelFormat::Rgb8)?;
+    /// assert!(Cicp::BT2100_PQ.try_to_descriptor(PixelFormat::Rgb16).is_err());
+    /// # Ok::<(), zenpixels::cicp::CicpDescriptorError>(())
+    /// ```
+    pub fn try_to_descriptor(
+        &self,
+        format: PixelFormat,
+    ) -> Result<PixelDescriptor, CicpDescriptorError> {
+        if self.matrix_coefficients != 0 {
+            return Err(CicpDescriptorError::NonIdentityMatrix(
+                self.matrix_coefficients,
+            ));
+        }
+        if !matches!(
+            format.layout(),
+            ChannelLayout::Rgb
+                | ChannelLayout::Rgba
+                | ChannelLayout::Bgra
+                | ChannelLayout::Gray
+                | ChannelLayout::GrayAlpha
+        ) {
+            return Err(CicpDescriptorError::UnsupportedLayout(format.layout()));
+        }
+        let primaries = ColorPrimaries::from_cicp(self.color_primaries)
+            .ok_or(CicpDescriptorError::UnmappedPrimaries(self.color_primaries))?;
+        let transfer = TransferFunction::from_cicp(self.transfer_characteristics).ok_or(
+            CicpDescriptorError::UnmappedTransfer(self.transfer_characteristics),
+        )?;
+        Ok(PixelDescriptor {
+            format,
+            transfer,
+            alpha: format.default_alpha(),
+            primaries,
+            signal_range: if self.full_range {
+                crate::SignalRange::Full
+            } else {
+                crate::SignalRange::Narrow
+            },
+        })
     }
 
     /// Human-readable name for the color primaries code (ITU-T H.273 Table 2).
@@ -369,7 +478,7 @@ mod tests {
     #[test]
     fn to_descriptor_srgb_rgba() {
         use crate::{AlphaMode, PixelFormat, SignalRange};
-        let desc = Cicp::SRGB.to_descriptor(PixelFormat::Rgba8);
+        let desc = Cicp::SRGB.try_to_descriptor(PixelFormat::Rgba8).unwrap();
         assert_eq!(desc.format, PixelFormat::Rgba8);
         assert_eq!(desc.transfer, TransferFunction::Srgb);
         assert_eq!(desc.primaries, ColorPrimaries::Bt709);
@@ -381,7 +490,7 @@ mod tests {
     fn to_descriptor_narrow_range() {
         use crate::{PixelFormat, SignalRange};
         let cicp = Cicp::new(1, 13, 0, false);
-        let desc = cicp.to_descriptor(PixelFormat::Rgb8);
+        let desc = cicp.try_to_descriptor(PixelFormat::Rgb8).unwrap();
         assert_eq!(desc.signal_range, SignalRange::Narrow);
         assert!(desc.alpha.is_none());
     }
@@ -391,11 +500,11 @@ mod tests {
         use crate::PixelFormat;
         for cicp in [
             Cicp::SRGB,
-            Cicp::BT2100_PQ,
-            Cicp::BT2100_HLG,
+            Cicp::new(9, 16, 0, true),
+            Cicp::new(9, 18, 0, true),
             Cicp::DISPLAY_P3,
         ] {
-            let desc = cicp.to_descriptor(PixelFormat::Rgb8);
+            let desc = cicp.try_to_descriptor(PixelFormat::Rgb8).unwrap();
             let back = Cicp::from_descriptor(&desc).unwrap();
             assert_eq!(back.color_primaries, cicp.color_primaries);
             assert_eq!(back.transfer_characteristics, cicp.transfer_characteristics);

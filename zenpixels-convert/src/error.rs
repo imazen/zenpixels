@@ -25,6 +25,8 @@ pub enum ConvertError {
         from: PixelDescriptor,
         to: PixelDescriptor,
     },
+    /// CICP cannot describe the requested RGB/gray samples without losing meaning.
+    CicpDescriptor(zenpixels::cicp::CicpDescriptorError),
     /// Source and destination buffer sizes don't match the expected dimensions.
     BufferSize { expected: usize, actual: usize },
     /// Width is zero or would overflow stride calculations.
@@ -191,6 +193,7 @@ impl fmt::Display for ConvertError {
             }
             Self::AllocationFailed => write!(f, "buffer allocation failed"),
             Self::Buffer(e) => write!(f, "buffer construction failed: {e}"),
+            Self::CicpDescriptor(e) => write!(f, "color declaration failed: {e}"),
             Self::CmsBackend(error) => write!(f, "CMS failure: {error}"),
             Self::CmsError(msg) => write!(f, "CMS transform failed: {msg}"),
             Self::HdrSourceRequiresPeak { from, to } => write!(
@@ -229,6 +232,7 @@ impl core::error::Error for ConvertError {
         match self {
             Self::CmsBackend(error) => Some(error.as_ref()),
             Self::Buffer(error) => Some(error),
+            Self::CicpDescriptor(error) => Some(error),
             _ => None,
         }
     }
