@@ -1,9 +1,9 @@
-> **2026-09-28 implementation update:** The
-> [finalization/release contract](finalization-release-contract.md) supersedes
-> estimation, ICC normalization and HDR/sealing proposals in this design.
-> Exact normalization is `OutputProfile::normalize_known_icc()` using the existing
-> normalized hash. It is not a free helper or approximate profile substitution.
-> Broader metadata/media extraction below remains separately staged work.
+> **2026-09-28 implementation update:** #76/#77 now contain the reconciled
+> zenpixels releases. See [finalization/release contract](finalization-release-contract.md)
+> and [validation](finalization-release-validation.md). These supersede the
+> estimation opt-in, free ICC helper, and HDR/sealing choices in this earlier
+> review. Metadata/media engine extraction below is a separate implementation
+> track and is not certified complete by the pixel release checks.
 
 # Metadata, image and media boundaries before the compatibility freeze
 

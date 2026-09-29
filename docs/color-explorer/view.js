@@ -10,7 +10,7 @@ function render(reset=false) {
   const max=2**s.bits-1, previous=Number($('code').max);$('code').max=max;
   if(reset || previous!==max) $('code').value=Math.round(max/2);
   const v=model.sample(s.bits,s.placement,s.range,Number($('code').value));
-  $('sample').textContent=`Code ${$('code').value} / ${max} → stored word ${v.stored} (0x${v.stored.toString(16).padStart(4,'0')}). Nominal luma: ${v.luma.toFixed(6)}. Full-range rescale to U16: ${v.full16}; nearest U8: ${v.narrow8}.`+(s.bits===8?` Widen U8 by replication: ${v.replicated8}; shift-only zero padding: ${v.zeroPadded8}. These are different contracts.`:' Storage shift is not full-range rescaling.');
+  $('sample').textContent=`Code ${$('code').value} / ${max} → stored word ${v.stored} (0x${v.stored.toString(16).padStart(4,'0')}). Nominal luma: ${v.luma.toFixed(6)}. If treated as full-range codes: U16 ${v.full16}, nearest U8 ${v.narrow8}. ${s.range === "limited" ? `Explicit limited → full expansion, clipping excursions: U16 ${v.expanded16}.` : ""}`+(s.bits===8?` Widen U8 by replication: ${v.replicated8}; shift-only zero padding: ${v.zeroPadded8}. These are different contracts.`:' Storage shift is not full-range rescaling.');
   $('marker').setAttribute('cx',20+560*Math.min(1,Math.max(0,v.luma)));
   const b=model.storage(Number($('width').value),Number($('height').value),s.bits,s.layout,Number($('padding').value));
   $('storage').replaceChildren();

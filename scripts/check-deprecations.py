@@ -159,7 +159,7 @@ zenpixels = {{ path = {json.dumps(str(ROOT / 'zenpixels'))} }}
 """)
         for name, (source, _, _) in PROBES.items():
             (project / f"src/bin/{name}.rs").write_text("#![deny(deprecated)]\n" + source)
-        env = dict(os.environ, CARGO_TARGET_DIR=str(Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "deprecation-ui"))
+        env = dict(os.environ, CARGO_TARGET_DIR=str(Path(os.environ.get("CARGO_TARGET_DIR", Path(tempfile.gettempdir()) / "zenpixels-validation")) / "deprecation-ui"))
         count = 0
         for defaults in (True, False):
             for opted_in in (False, True):

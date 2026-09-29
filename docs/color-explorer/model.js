@@ -18,6 +18,7 @@
     return { max, shift, stored: code * 2 ** shift, low, high,
       // Luma only: chroma's nominal upper code is 240, not 235.
       luma: (code - low) / (high - low), full16,
+      expanded16: Math.round(Math.max(0,Math.min(1,(code-low)/(high-low)))*65535),
       narrow8: Math.round(code * 255 / max),
       replicated8: bits === 8 ? code * 257 : null,
       zeroPadded8: bits === 8 ? code * 256 : null };
