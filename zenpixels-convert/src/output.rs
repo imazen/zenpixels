@@ -304,14 +304,16 @@ pub fn finalize_for_output<C: ColorManagement>(
     {
         // No conversion needed — copy the buffer.
         let src_slice = buffer.as_slice();
-        let bytes = src_slice.contiguous_bytes();
-        let out = PixelBuffer::from_vec(
-            bytes.into_owned(),
-            buffer.width(),
-            buffer.height(),
-            target_desc_full,
-        )
-        .map_err_at(ConvertError::from)?;
+        // Even identity can be a 100 MB allocation: keep it fallible and
+        // copy only active row bytes, without a temporary packed image.
+        let mut out = PixelBuffer::try_new(buffer.width(), buffer.height(), target_desc_full)
+            .map_err_at(ConvertError::from)?;
+        {
+            let mut dst = out.as_slice_mut();
+            for y in 0..buffer.height() {
+                dst.row_mut(y).copy_from_slice(src_slice.row(y));
+            }
+        }
         return Ok(EncodeReady {
             pixels: out,
             metadata,
@@ -514,14 +516,16 @@ pub fn finalize_for_output_with(
         && profiles_match(&source_profile, &target_profile)
     {
         let src_slice = buffer.as_slice();
-        let bytes = src_slice.contiguous_bytes();
-        let out = PixelBuffer::from_vec(
-            bytes.into_owned(),
-            buffer.width(),
-            buffer.height(),
-            target_desc_full,
-        )
-        .map_err_at(ConvertError::from)?;
+        // Even identity can be a 100 MB allocation: keep it fallible and
+        // copy only active row bytes, without a temporary packed image.
+        let mut out = PixelBuffer::try_new(buffer.width(), buffer.height(), target_desc_full)
+            .map_err_at(ConvertError::from)?;
+        {
+            let mut dst = out.as_slice_mut();
+            for y in 0..buffer.height() {
+                dst.row_mut(y).copy_from_slice(src_slice.row(y));
+            }
+        }
         return Ok(EncodeReady {
             pixels: out.with_color_context(context),
             metadata,
