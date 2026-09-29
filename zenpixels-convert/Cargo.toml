@@ -1,6 +1,6 @@
 [package]
 name = "zenpixels-convert"
-version = "0.2.16"
+version = "0.2.17"
 edition.workspace = true
 rust-version = "1.89"
 license.workspace = true
@@ -63,9 +63,8 @@ rgb = ["zenpixels/rgb", "dep:rgb"]
 imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]
 pipeline = []
-# Explicit opt-in to the estimation API accidentally exposed by default in
-# 0.2.16. Without this feature it remains available but deprecated in 0.2.x;
-# 0.3.1 will require the feature while retaining the opted-in signatures.
+# Compatibility feature name only. Estimation is always deprecated in 0.2.17
+# and removed in 0.3.1. Enabling this does not silence migration warnings.
 estimation-experimental = []
 # Experimental HDR analysis surface (gates `hdr::measure` — the `CllMeasure`
 # extension trait + `LightLevelHistogram` / `LightLevelMethod` + the SIMD

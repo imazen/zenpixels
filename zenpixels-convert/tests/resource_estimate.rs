@@ -14,7 +14,7 @@
 
 // Exercise the retained 0.2 API without opt-in too; warning coverage is checked
 // separately by scripts/check-deprecations.py in a downstream crate.
-#![cfg_attr(not(feature = "estimation-experimental"), allow(deprecated))]
+#![allow(deprecated)] // 0.2 compatibility behavior, always deprecated.
 
 use zenpixels::AlphaMode;
 use zenpixels_convert::{

@@ -37,7 +37,7 @@ zenpixels-convert = { version = "0.2.16", default-features = false, features = [
 
 ### Negotiate a format, then convert row by row
 
-[`best_match`] picks the cheapest target format an encoder supports for a given source descriptor; [`RowConverter`] pre-computes the conversion plan once and converts rows with no per-row allocation.
+[`best_match`] picks the cheapest target format an encoder supports for a given source descriptor; [`RowConverter`] plans conversion once. On the unreleased bridge, `prepare` reserves scratch and initializes selected tables before fallible execution.
 
 ```rust
 use zenpixels_convert::{RowConverter, best_match, ConvertIntent};
@@ -46,12 +46,27 @@ use zenpixels_convert::{RowConverter, best_match, ConvertIntent};
 let target = best_match(source_desc, &encoder_formats, ConvertIntent::Fastest)
     .ok_or("no compatible format")?;
 
-// Pre-compute the plan, then convert row by row — no per-row allocation.
+// Unreleased bridge: setup costs occur before the row loop.
 let mut converter = RowConverter::new(source_desc, target)?;
+converter.prepare(width)?;
 for y in 0..height {
-    converter.convert_row(src_row, dst_row, width);
+    converter.try_convert_row(src_row, dst_row, width)?;
 }
 ```
+
+Within prepared capacity, built-in execution does not allocate. Each stateful
+CMS worker must be built independently and support preparation; cloning a shared
+mutable worker does not create an independent worker. Row extent/alignment errors
+precede writes. A backend error can leave partial destination data.
+
+`compose` optimizes the final output and may remove incidental quantization.
+Use `compose_preserving` for intentional integer boundaries. Use
+`adapt::check_opaque` explicitly before requesting `DiscardUnchecked` if opacity
+is required; ordinary row planning refuses `DiscardIfOpaque` without inspecting
+pixels. `ConvertPlan::new_preserving_samples` proves supported exact changes or
+refuses without scanning.
+
+These additions are unreleased. See the [tested bridge examples](../docs/implemented-bridge-contracts.md).
 
 ### Color profile conversion (no CMS needed for named profiles)
 
@@ -106,7 +121,7 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 | `Blend` | 1× | 4× | Compositing — premultiplied alpha |
 | `Perceptual` | 1× | 3× | Color grading, sharpening |
 
-[`Provenance`] tracking lets the cost model know that f32 data decoded from a u8 JPEG has zero loss converting back to u8. Three entry points: [`best_match`] (simple), [`best_match_with`] (with consumer costs), [`negotiate`] (full control with provenance).
+[`Provenance`] guides cost-model ranking, not exactness after edits. Use `ConvertPlan::new_preserving_samples` for proven representation changes or explicitly request value analysis. Three entry points: [`best_match`] (simple), [`best_match_with`] (with consumer costs), [`negotiate`] (full control with provenance).
 
 ## Row conversion tiers
 
@@ -137,36 +152,14 @@ The buffer-baking half of the zen orientation story lives here (the `Orientation
 
 ## Atomic output assembly
 
-[`finalize_for_output`] couples converted pixels with matching encoder metadata in one step, preventing the bug where pixel values don't match the embedded ICC/CICP profile. Returns an [`EncodeReady`] bundle.
+[`finalize_for_output_with`] couples converted pixels with matching encoder metadata in one step, preventing the bug where pixel values don't match the embedded ICC/CICP profile. Returns an [`EncodeReady`] bundle.
 
 ## Resource estimation
 
-For schedulers / throttlers / SLA-bound pipelines that need to know cost *before* running an op, [`ConvertPlan::estimate_in`] (and the [`ConvertPlan::estimate`] shortcut) returns a [`ResourceEstimate`] for a `width × height` image under a given [`ComputeEnvironment`] (core count + optional SIMD tier + optional RAM budget). The estimate reports `peak_memory_bytes_est`, `wall_ms` (already scaled to `cores()`), and `intermediate_buffer_count` (so schedulers can distinguish 1-giant-buffer plans from N-medium-buffer plans for paging-pressure decisions). Cheap to call — walks the planned steps, no row work, no allocation. Calibrated against the `bench_t1`–`bench_t7` series (Ryzen 9 7950X, AVX2/V3), ±30 % design tolerance.
-
-The four estimate types — [`ResourceEstimate`], [`ComputeEnvironment`], [`ImageCharacteristics`], [`SimdTier`] — are defined locally and are **shape-compatible** with the corresponding `zencodec::estimate::*` types (same field names, same builders, same accessors, same `#[non_exhaustive]` discipline). `zenpixels-convert` is a **foundation crate** and does NOT depend on `zencodec` — keeping codec abstractions strictly above pixel math. Codec authors whose stack uses the zencodec contract can wire `decode → convert → encode` estimates through the boundary with a trivial `From` conversion. The full type contract: sealed, growable, every field `Option`. Wall-time scaling across cores is handled internally by `ConvertPlan::estimate_in` — the resulting `wall_ms` is already divided by the effective parallel thread count.
-
-```rust
-use zenpixels::PixelDescriptor;
-use zenpixels_convert::{ComputeEnvironment, ConvertPlan, ImageCharacteristics};
-
-let plan = ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
-
-// Quick path: assumes a single core, unknown SIMD tier (the conservative default).
-let est = plan.estimate(1920, 1080);
-
-// Caller-controlled environment — populate from `std::thread::available_parallelism()`
-// and (optionally) an `archmage` tier detection.
-let image = ImageCharacteristics::new(1920, 1080, PixelDescriptor::RGB8_SRGB);
-let compute = ComputeEnvironment::new().with_cores(8);
-let est_8 = plan.estimate_in(&image, &compute);
-
-println!(
-    "peak ~{} MiB, wall ~{} ms, intermediates {}",
-    est_8.peak_memory_bytes_est().unwrap_or(0) / (1 << 20),
-    est_8.wall_ms().unwrap_or(0),
-    est_8.intermediate_buffer_count().map_or("?".to_string(), |n| n.to_string()),
-);
-```
+Retired: all estimation APIs warn in 0.2.17 and are removed in 0.3.1.
+`estimation-experimental` is a compatibility feature only; it does not suppress
+warnings or restore removed APIs. No replacement cost predictor is promised.
+Use measured workload costs and explicit buffer/stride arithmetic.
 
 ## Pipeline planner (`pipeline` feature)
 
@@ -192,8 +185,7 @@ println!(
 | [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`hdr-experimental` feature) |
 | [`Bt2446A`] / [`SoftCompress`] / [`CllMeasure`] | ITU-R BT.2446 Method A curve + OKLch knee + CTA-861.3 CLL measurement (`hdr-experimental` feature) |
 | [`quantize_to`] | Anchor-aware linear→PQ16 quantizer |
-| [`finalize_for_output`] / [`EncodeReady`] / [`OutputMetadata`] | Atomic pixels-plus-metadata output assembly |
-| [`ConvertPlan::estimate`] / [`ConvertPlan::estimate_in`] / [`ResourceEstimate`] / [`ComputeEnvironment`] / [`ImageCharacteristics`] | Predict peak memory + wall-clock + core-scaling before running an op (shape-compatible with `zencodec::estimate`, foundation-crate layering) |
+| [`finalize_for_output_with`] / [`EncodeReady`] / [`OutputMetadata`] | Atomic pixels-plus-metadata output assembly |
 | [`TransferFunctionExt`] / [`ColorPrimariesExt`] / [`PixelBufferConvertExt`] | Conversion methods bolted onto interchange types |
 | [`LoadBearingReport`] / [`PixelSliceLoadBearingExt`] | Channel-information analysis |
 | [`ConvertError`] | Conversion error type |
@@ -208,7 +200,7 @@ println!(
 | `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for the [`rgb`](https://crates.io/crates/rgb) crate's types + typed convenience methods (`to_rgb8()`, `to_rgba8()`, …) |
 | `imgref` | | `ImgRef` / `ImgVec` conversions (implies `rgb`) |
-| `planar` | | Multi-plane image types (YCbCr, Oklab planes, gain maps) |
+| `planar` | | Deprecated legacy multi-plane types; video replacement pending |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
 | `hdr-experimental` | | HDR→SDR display mapping (ITU-R BT.2446 Method A curve + OKLch soft compress + CTA-861.3 CLL measurement). API shape may move ahead of 0.3.0 (in particular `measure_robust` → `measure` rename); scan kernels and accuracy contracts are stable. See [HDR section](#gamut-hdr-oklab) above. |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |

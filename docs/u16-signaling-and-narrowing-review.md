@@ -1,5 +1,12 @@
 # U16 signaling and narrowing: recommended next chunks
 
+**Implementation update (2026-09-27):** narrow-range depth changes refuse after
+PR #75. U16 analysis now fuses opacity/chroma/replication checks, and
+`RowConverter::prepare` explicitly initializes selected transfer tables. See
+[local x86 measurements](../benchmarks/bridge-u16-analysis-2026-09-27.md).
+The raw-sample vocabulary and video adapters below remain proposals; the
+production narrowing kernel was not changed without cross-platform evidence.
+
 2026-09-27. Review of [PR #74 at `100d8ed`](https://github.com/imazen/zenpixels/blob/100d8ed7307487b58ae7beb8640a18cdc7265cc5/docs/final-0.2-and-0.3-sample-signaling.md).
 The API names below are sketches, not added public APIs. The benchmark candidate
 is implemented in the shootout, not selected by the production converter.

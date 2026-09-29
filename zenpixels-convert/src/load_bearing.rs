@@ -235,6 +235,45 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
         };
         let scan_alpha = alpha_structural.is_none();
 
+        // Combine the requested U16 predicates in one explicit analysis pass.
+        // Stop once all applicable properties are known to carry information.
+        if channel_type == ChannelType::U16
+            && matches!(
+                layout,
+                ChannelLayout::Rgba
+                    | ChannelLayout::Bgra
+                    | ChannelLayout::Rgb
+                    | ChannelLayout::GrayAlpha
+                    | ChannelLayout::Gray
+            )
+        {
+            let has_alpha = layout.has_alpha();
+            let has_chroma = matches!(
+                layout,
+                ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
+            );
+            let mut alpha = false;
+            let mut chroma = false;
+            let mut low_bits = false;
+            for y in 0..self.rows() {
+                [alpha, chroma, low_bits] = scan::fused_u16(
+                    cast_u16(self.row(y)),
+                    layout.channels(),
+                    has_alpha && scan_alpha,
+                    has_chroma,
+                    [alpha, chroma, low_bits],
+                );
+                if (!has_alpha || !scan_alpha || alpha) && (!has_chroma || chroma) && low_bits {
+                    break;
+                }
+            }
+            return LoadBearingReport {
+                uses_alpha: Some(alpha),
+                uses_chroma: Some(chroma),
+                uses_low_bits: Some(low_bits),
+            };
+        }
+
         // ── Per-pixel byte-level predicates ──────────────────────
         // Each branch returns `Some(value)` when the predicate ran
         // (or the answer is structurally trivial -- e.g. `uses_alpha

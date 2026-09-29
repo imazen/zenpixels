@@ -190,6 +190,34 @@ enum MoxTransformInner {
     F32(Arc<dyn TransformExecutor<f32> + Send + Sync>),
 }
 
+fn try_mox_row(
+    inner: &MoxTransformInner,
+    src: &[u8],
+    dst: &mut [u8],
+) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+    let cast_error = |_| {
+        whereat::at!(crate::cms::CmsPluginError::msg(
+            "CMS sample alignment or extent mismatch"
+        ))
+    };
+    let result = match inner {
+        MoxTransformInner::U8(t) => t.transform(src, dst),
+        MoxTransformInner::U16(t) => t.transform(
+            bytemuck::try_cast_slice(src).map_err(cast_error)?,
+            bytemuck::try_cast_slice_mut(dst).map_err(cast_error)?,
+        ),
+        MoxTransformInner::F32(t) => t.transform(
+            bytemuck::try_cast_slice(src).map_err(cast_error)?,
+            bytemuck::try_cast_slice_mut(dst).map_err(cast_error)?,
+        ),
+    };
+    result.map_err(|e| {
+        whereat::at!(crate::cms::CmsPluginError::msg(format!(
+            "moxcms row failed: {e}"
+        )))
+    })
+}
+
 struct MoxRowTransform {
     inner: MoxTransformInner,
 }
@@ -219,6 +247,17 @@ impl RowTransform for MoxRowTransform {
             }
         }
     }
+    fn try_transform_row(
+        &self,
+        src: &[u8],
+        dst: &mut [u8],
+        _width: u32,
+    ) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        try_mox_row(&self.inner, src, dst)
+    }
+    fn prepare(&self, _max_width: u32) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +275,13 @@ fn build_transform_inner(
     src_format: PixelFormat,
     dst_format: PixelFormat,
 ) -> Result<Box<dyn RowTransform>, MoxCmsError> {
+    if src_format.channel_type() != dst_format.channel_type()
+        || src_format.channel_type() == ChannelType::F16
+    {
+        return Err(MoxCmsError(
+            "moxcms requires matching U8, U16 or F32 sample types; convert depth separately".into(),
+        ));
+    }
     let src_layout = pixel_format_to_layout(src_format).unwrap_or(Layout::Rgb);
     let dst_layout = pixel_format_to_layout(dst_format).unwrap_or(Layout::Rgb);
     let opts = transform_opts(ColorPriority::PreferIcc, RenderingIntent::default());
@@ -359,6 +405,17 @@ impl crate::cms::RowTransformMut for MoxRowTransformMut {
             }
         }
     }
+    fn try_transform_row(
+        &mut self,
+        src: &[u8],
+        dst: &mut [u8],
+        _width: u32,
+    ) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        try_mox_row(&self.inner, src, dst)
+    }
+    fn prepare(&mut self, _max_width: u32) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        Ok(())
+    }
 }
 
 impl crate::cms::PluggableCms for MoxCms {
@@ -396,6 +453,13 @@ impl crate::cms::PluggableCms for MoxCms {
     ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
     {
         use crate::cms::CmsPluginError;
+        if src_format.channel_type() != dst_format.channel_type()
+            || src_format.channel_type() == ChannelType::F16
+        {
+            return Some(Err(whereat::at!(CmsPluginError::msg(
+                "moxcms requires matching U8, U16 or F32 sample types; convert depth separately"
+            ))));
+        }
         // Decline when the format pair has no `Layout` mapping (e.g. Bgra
         // swizzles, Rgbx alpha-padding, Oklab variants). moxcms can't
         // describe those; let the built-in pipeline handle layout

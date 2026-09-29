@@ -483,7 +483,7 @@ pub fn identify_common(icc_bytes: &[u8]) -> Option<IccIdentification> {
 
 /// Internal identification with configurable tolerance.
 fn identify_common_at(icc_bytes: &[u8], tolerance: Tolerance) -> Option<IccIdentification> {
-    let hash = fnv1a_64_normalized(icc_bytes);
+    let hash = normalized_hash(icc_bytes);
     if let Ok(idx) = KNOWN_RGB_PROFILES.binary_search_by_key(&hash, |e| e.0) {
         let entry = &KNOWN_RGB_PROFILES[idx];
         if entry.3 <= tolerance as u8 {
@@ -539,7 +539,7 @@ pub(crate) fn identify_common_for(
     tolerance: Tolerance,
     use_for: CoalesceForUse,
 ) -> Option<IccIdentification> {
-    let hash = fnv1a_64_normalized(icc_bytes);
+    let hash = normalized_hash(icc_bytes);
     let required = use_for.required_mask();
 
     // Try RGB table first.
@@ -608,21 +608,32 @@ pub fn profile_color_space(icc_bytes: &[u8]) -> Option<crate::ColorModel> {
 /// - bytes 40–43: primary platform (advisory hint)
 /// - bytes 48–55: device manufacturer + device model (identification)
 /// - bytes 80–99: profile creator + profile ID (reserved in v2, MD5 in v4)
-fn fnv1a_64_normalized(data: &[u8]) -> u64 {
+///
+/// This is the fingerprint used by the committed identification tables and by
+/// `zenpixels-convert`'s explicit known-profile normalization. It is not a
+/// cryptographic digest, validation, or a proof of colorimetric equivalence.
+/// Bytes outside the listed header fields (including every tag) are hashed.
+/// Matching a table's approximate color identification does not make profiles
+/// interchangeable without a pixel conversion.
+pub const fn normalized_hash(data: &[u8]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
     let mut hash = FNV_OFFSET;
 
-    fn is_metadata_field(i: usize) -> bool {
-        ICC_CMM_TYPE.contains(&i)
-            || ICC_DATE_TIME.contains(&i)
-            || ICC_PLATFORM.contains(&i)
-            || ICC_DEVICE.contains(&i)
-            || ICC_CREATOR_ID.contains(&i)
+    const fn is_metadata_field(i: usize) -> bool {
+        (i >= ICC_CMM_TYPE.start && i < ICC_CMM_TYPE.end)
+            || (i >= ICC_DATE_TIME.start && i < ICC_DATE_TIME.end)
+            || (i >= ICC_PLATFORM.start && i < ICC_PLATFORM.end)
+            || (i >= ICC_DEVICE.start && i < ICC_DEVICE.end)
+            || (i >= ICC_CREATOR_ID.start && i < ICC_CREATOR_ID.end)
     }
 
     // Phase 1: header bytes — zero metadata fields.
-    let header_len = data.len().min(ICC_HEADER_NORMALIZE_END);
+    let header_len = if data.len() < ICC_HEADER_NORMALIZE_END {
+        data.len()
+    } else {
+        ICC_HEADER_NORMALIZE_END
+    };
     let mut i = 0;
     while i < header_len {
         let b = if is_metadata_field(i) { 0u8 } else { data[i] };
@@ -846,12 +857,12 @@ mod tests {
     #[test]
     fn hash_deterministic() {
         let data = b"test data for hashing";
-        assert_eq!(fnv1a_64_normalized(data), fnv1a_64_normalized(data));
+        assert_eq!(normalized_hash(data), normalized_hash(data));
     }
 
     #[test]
     fn hash_distinct() {
-        assert_ne!(fnv1a_64_normalized(b"abc"), fnv1a_64_normalized(b"abd"));
+        assert_ne!(normalized_hash(b"abc"), normalized_hash(b"abd"));
     }
 
     #[test]
@@ -861,12 +872,12 @@ mod tests {
         let mut b = a.clone();
         a[30] = 0xFF; // different date byte
         b[30] = 0x01;
-        assert_eq!(fnv1a_64_normalized(&a), fnv1a_64_normalized(&b));
+        assert_eq!(normalized_hash(&a), normalized_hash(&b));
 
         // But differ in color-critical field (byte 20 = PCS)
         let mut c = a.clone();
         c[20] = 0xFF;
-        assert_ne!(fnv1a_64_normalized(&a), fnv1a_64_normalized(&c));
+        assert_ne!(normalized_hash(&a), normalized_hash(&c));
     }
 
     #[test]
@@ -892,6 +903,13 @@ mod tests {
         data[154] = mc;
         data[155] = u8::from(fr);
         data
+    }
+
+    #[test]
+    fn embedded_cicp_does_not_prove_icc_matrix_trc_substitution() {
+        let icc = build_icc_with_cicp(1, 13, 0, true);
+        assert!(extract_cicp(&icc).is_some());
+        assert!(crate::ColorProfileSource::Icc(&icc).resolve().is_none());
     }
 
     #[test]

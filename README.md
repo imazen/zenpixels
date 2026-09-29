@@ -2,20 +2,23 @@
 
 Pixel format types and transfer-function-aware conversion for Rust image codecs.
 
-> **Contract review (2026-09-27):** This README is annotated for the proposed
-> 0.2 bridge → 0.3.1 migration. See the [section-by-section review](docs/readme-contract-review.md)
-> for current inaccuracies, old/new examples and the resulting contracts if the
-> full proposal is adopted. Implemented so far: the [three initial deprecations](docs/release-0.2.16-accidental-api-review.md),
-> estimation opt-in, validation in `DiffuseWhite::new`, and
-> `PixelBuffer::{into_contiguous, into_parts, try_from_parts}` and planar-module
-> deprecation. The [performance review](docs/performance-review-0.2-and-0.3.md)
-> records the selected cost model and small contract fixes; the
-> [U16 review](docs/u16-signaling-and-narrowing-review.md) covers sample encoding
-> and narrowing candidates. The [U16 matrix](docs/u16-contract-matrix.md) covers
-> packing, rounding and range. The [implementation ledger](docs/implementation-status-0.2-and-0.3.md)
-> lists completed work and remaining defects; the release implementation is incomplete.
+> **Unreleased bridge work (2026-09-27):** checked storage/ownership,
+> prepared and fallible conversion, alpha/output fixes, explicit preserved-stage
+> composition and fused U16 analysis are implemented. See the
+> [migration examples](docs/implemented-bridge-contracts.md) and
+> [status ledger](docs/implementation-status-0.2-and-0.3.md) for exact scope and
+> release gates. The install versions below remain the published versions.
 
-A JPEG decoder gives you `RGB8` in sRGB. An AVIF decoder gives you `RGBA16` in BT.2020 PQ. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
+See the [finalization/release contract](docs/finalization-release-contract.md)
+and the [interactive color & sample explorer](docs/color-explorer/index.html).
+Estimation is retired in both release plans; the 0.2 feature no longer suppresses warnings.
+
+Native codec planes can now carry a checked
+[`sample::SampleEncoding`](docs/sample-encoding-contract.md): storage width,
+code depth and bit placement remain explicit. This additive bridge preserves
+the existing RGB/gray U16 domain while the media APIs are validated in zenmedia.
+
+A JPEG decoder might produce `RGB8` in sRGB; an AVIF decoder might produce full-range `RGBA16` in BT.2020 PQ. Other profiles and native 10/12-bit video codes need their actual signaling. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
 
 zenpixels makes pixel format descriptions first-class types that travel with the data. The conversion crate handles transfer functions, gamut matrices, depth scaling, and alpha compositing so codecs don't have to.
 
@@ -112,13 +115,13 @@ assert_eq!(buf.stride(), 64 * 4);              // bytes, not pixels — see belo
 
 `from_vec` returns [`BufferError::InsufficientData`] (wrapped as
 `At<BufferError>`) if the `Vec` is shorter than `aligned_stride(width) * height`
-plus the leading bytes skipped for channel alignment. It does **not** accept an
+plus any leading bytes skipped for channel alignment. For an exact decoder offset or strided owned storage, use `try_from_parts`; it preserves ownership on failure. It does **not** accept an
 explicit stride: rows are assumed tightly packed at
 `width * bytes_per_pixel`. For padded/strided bytes you don't own — a decoder's
 scratch row buffer, a crop of a parent image, a GPU-readback strip — borrow a
 view with an explicit stride instead (next section).
 
-> **Stride is always measured in BYTES**, never pixels or elements
+> **Erased byte-view stride is measured in BYTES**. Typed constructors and imgref adapters use pixels
 > (`stride()` returns `usize`; `aligned_stride(width) = width * bytes_per_pixel`).
 > So for 64-pixel-wide RGBA8 the tight stride is `64 * 4 = 256`, and for
 > 16-bit RGB it is `64 * 6 = 384`. Passing a pixel count where a byte stride is
@@ -154,8 +157,8 @@ returning `At<BufferError>` (`InsufficientData` / `StrideTooSmall` /
 ## Format conversion (zenpixels-convert)
 
 > **Review:** This descriptor-only example does not resolve attached ICC/context.
-> The complete proposal prepares a fallible worker once, with explicit policy and
-> a checked no-allocation execution capacity. The custom-ICC example below does
+> The unreleased bridge now prepares a fallible worker once, with explicit policy and
+> checked execution capacity. The custom-ICC example below does
 > not itself supply ICC bytes. [Conversion/CMS review](docs/readme-contract-review.md#conversion-examples-and-cms).
 
 ```rust
@@ -167,14 +170,15 @@ let source_desc = src.descriptor();
 let target = best_match(source_desc, &encoder_formats, ConvertIntent::Fastest)
     .ok_or("no compatible format")?;
 
-// Allocate the destination, then convert row by row — no per-row allocation
+// Unreleased bridge: allocate output and prepare once before the row loop
 let (w, h) = (src.width(), src.height());
 let mut dst = PixelBuffer::new(w, h, target);
 let src_view = src.as_slice();
 let mut dst_view = dst.as_slice_mut();
 let mut converter = RowConverter::new(source_desc, target)?;
+converter.prepare(w)?;
 for y in 0..h {
-    converter.convert_row(src_view.row(y), dst_view.row_mut(y), w);
+    converter.try_convert_row(src_view.row(y), dst_view.row_mut(y), w)?;
 }
 ```
 
@@ -468,7 +472,7 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 | `Blend` | 1x | 4x | Compositing — premultiplied alpha |
 | `Perceptual` | 1x | 3x | Color grading, sharpening |
 
-`Provenance` tracking lets the cost model know that f32 data decoded from a u8 JPEG has zero loss converting back to u8.
+`Provenance` guides cost-model ranking; it cannot prove exact narrowing after edits. Use `ConvertPlan::new_preserving_samples` for proven representation changes or explicitly request value analysis.
 
 Three entry points: `best_match()` (simple), `best_match_with()` (with consumer costs), `negotiate()` (full control with provenance).
 
@@ -509,15 +513,10 @@ Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `C
 
 ### Resource estimation
 
-Enable `estimation-experimental` to opt in without warnings. The 0.2 bridge
-retains the API without the feature, deprecated; the proposed 0.3.1 requires
-that feature with the same opted-in signatures.
-
-> **Review:** The shape-compatibility claim below is not established by the current
-> zencodec types. Estimates are heuristics, not allocation limits; core-count
-> scaling does not parallelize execution. [Estimation review](docs/readme-contract-review.md#resource-estimation).
-
-`ConvertPlan::estimate(w, h)` (and `estimate_in(&ImageCharacteristics, &ComputeEnvironment)`) predicts a plan's `peak_memory_bytes_est`, `wall_ms` (already scaled to core count), and `intermediate_buffer_count` *before* running it — cheap to call (walks the planned steps, no row work, no allocation), so schedulers and throttlers can budget ahead. The estimate types are shape-compatible with `zencodec::estimate::*` for wiring `decode → convert → encode` across the boundary, without `zenpixels-convert` depending on `zencodec`. See the [zenpixels-convert README](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/README.md#resource-estimation) for the full contract.
+Retired: all estimation APIs warn in 0.2.17 and are removed in 0.3.1.
+`estimation-experimental` is a compatibility feature only; it does not suppress
+warnings or restore removed APIs. No replacement cost predictor is promised.
+Use measured workload costs and explicit buffer/stride arithmetic.
 
 ## Planar support
 
@@ -560,7 +559,7 @@ removing the legacy module.
 | `imgref` | | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
 | `planar` | | Deprecated legacy multi-plane types |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
-| `estimation-experimental` | | Explicit resource-estimation opt-in; without it the 0.2 bridge retains the API with warnings; proposed 0.3.1 requires it |
+| `estimation-experimental` | | Compatibility feature only; estimation is deprecated in 0.2 and absent in 0.3 |
 | `hdr-experimental` | | Native HDR→SDR display mapping inside `ConvertPlan` (BT.2446 Method A + OKLch soft compress + CTA-861.3 CLL measurement); API shape may move ahead of 0.3.0 |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
 | `serde` | | No-op stub (soft-removed in 0.2.15, queued for removal); previously forwarded to `zenpixels/serde` |

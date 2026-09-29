@@ -232,8 +232,8 @@ pub(crate) fn bt2446a_tier(
     let c1 = f32x16::splat(token, POW24_C1);
     let c0 = f32x16::splat(token, POW24_C0);
 
-    let mut iter = row.chunks_exact_mut(16);
-    for chunk in &mut iter {
+    let (chunks, remainder) = row.as_chunks_mut::<16>();
+    for chunk in chunks {
         let mut ra = [0.0_f32; 16];
         let mut ga = [0.0_f32; 16];
         let mut ba = [0.0_f32; 16];
@@ -336,7 +336,7 @@ pub(crate) fn bt2446a_tier(
     // ITU-R BT.2446-1 §4 spec, where the SIMD body's polynomial
     // approximations diverge by up to 5.88e-5 (still inside the 5e-4 parity
     // bound).
-    for px in iter.into_remainder().iter_mut() {
+    for px in remainder {
         let r_p = powf(px[0].max(0.0), 1.0 / 2.4);
         let g_p = powf(px[1].max(0.0), 1.0 / 2.4);
         let b_p = powf(px[2].max(0.0), 1.0 / 2.4);

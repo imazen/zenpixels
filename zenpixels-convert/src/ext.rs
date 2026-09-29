@@ -96,6 +96,43 @@ impl ColorPrimariesExt for ColorPrimaries {
     }
 }
 
+/// Retain an ICC only while its samples' color meaning is unchanged.
+fn context_after_conversion(
+    source: &PixelBuffer,
+    target: PixelDescriptor,
+) -> Option<Arc<zenpixels::ColorContext>> {
+    let from = source.descriptor();
+    let pq_decoded =
+        from.transfer() == TransferFunction::Pq && target.transfer() == TransferFunction::Linear;
+    let empty = zenpixels::ColorContext::default();
+    let current = match source.color_context() {
+        Some(c) => c.as_ref(),
+        None if pq_decoded => &empty,
+        None => return None,
+    };
+    if from.transfer() == target.transfer()
+        && from.primaries == target.primaries
+        && from.signal_range == target.signal_range
+    {
+        return source.color_context().map(Arc::clone);
+    }
+    let mut next = zenpixels::ColorContext::default();
+    next.diffuse_white = if pq_decoded {
+        Some(zenpixels::hdr::DiffuseWhite::new(10_000.0))
+    } else {
+        current.diffuse_white
+    };
+    if let (Some(p), Some(t)) = (target.primaries.to_cicp(), target.transfer().to_cicp()) {
+        next.cicp = Some(zenpixels::Cicp::new(
+            p,
+            t,
+            0,
+            target.signal_range == zenpixels::SignalRange::Full,
+        ));
+    }
+    Some(Arc::new(next))
+}
+
 // ---------------------------------------------------------------------------
 // PixelBufferConvertExt
 // ---------------------------------------------------------------------------
@@ -111,7 +148,10 @@ pub trait PixelBufferConvertExt {
     /// Convert pixel data to a different layout and depth.
     ///
     /// Uses [`RowConverter`](crate::RowConverter) for transfer-function-aware
-    /// conversion. Color metadata is preserved.
+    /// conversion. Layout/depth-only changes retain current color metadata;
+    /// color changes replace it with the destination signaling. An attached ICC
+    /// requiring a full CMS returns `NeedsCms`; use `finalize_for_output_with`.
+    /// Contradictory current CICP/descriptor signaling is refused.
     ///
     /// **Allocates** a new [`PixelBuffer`].
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>>;
@@ -198,47 +238,57 @@ impl PixelBufferConvertExt for PixelBuffer {
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>> {
         let src_desc = self.descriptor();
         check_needs_cms(&src_desc, &target)?;
+        let source_profile = crate::output::current_profile(self)?;
         if src_desc == target {
-            // Identity — just copy.
-            let dst_stride = target.aligned_stride(self.width());
-            let total = dst_stride
-                .checked_mul(self.height() as usize)
-                .ok_or_else(|| whereat::at!(crate::ConvertError::AllocationFailed))?;
-            let mut out = alloc::vec![0u8; total];
-            let src_slice = self.as_slice();
-            for y in 0..self.height() {
-                let src_row = src_slice.row(y);
-                let dst_start = y as usize * dst_stride;
-                out[dst_start..dst_start + src_row.len()].copy_from_slice(src_row);
-            }
-            let mut buf = PixelBuffer::from_vec(out, self.width(), self.height(), target)
+            let mut buf = PixelBuffer::try_new(self.width(), self.height(), target)
                 .map_err_at(crate::ConvertError::from)?;
+            let source = self.as_slice();
+            let mut destination = buf.as_slice_mut();
+            for y in 0..self.height() {
+                destination.row_mut(y).copy_from_slice(source.row(y));
+            }
             if let Some(ctx) = self.color_context() {
                 buf = buf.with_color_context(Arc::clone(ctx));
             }
             return Ok(buf);
         }
 
-        let mut converter = crate::RowConverter::new(src_desc, target).at()?;
+        let changes_color =
+            src_desc.transfer() != target.transfer() || src_desc.primaries != target.primaries;
+        let mut converter =
+            if changes_color && matches!(source_profile, zenpixels::ColorProfileSource::Icc(_)) {
+                crate::RowConverter::new_with_sources(
+                    src_desc,
+                    target,
+                    source_profile,
+                    target.color_profile_source(),
+                    &zenpixels::ConvertOptions::permissive()
+                        .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked),
+                    None,
+                )?
+            } else if src_desc.transfer() == TransferFunction::Linear
+                && target.transfer() == TransferFunction::Pq
+            {
+                let anchor = self
+                    .color_context()
+                    .and_then(|c| c.diffuse_white)
+                    .unwrap_or(zenpixels::hdr::DiffuseWhite::new(10_000.0));
+                crate::RowConverter::from_plan(
+                    crate::ConvertPlan::new(src_desc, target)?.with_pq_anchor(anchor),
+                )
+            } else {
+                crate::RowConverter::new(src_desc, target).at()?
+            };
 
-        let dst_stride = target.aligned_stride(self.width());
-        let total = dst_stride
-            .checked_mul(self.height() as usize)
-            .ok_or_else(|| whereat::at!(crate::ConvertError::AllocationFailed))?;
-        let mut out = alloc::vec![0u8; total];
-
-        let src_slice = self.as_slice();
-        for y in 0..self.height() {
-            let src_row = src_slice.row(y);
-            let dst_start = y as usize * dst_stride;
-            let dst_end = dst_start + dst_stride;
-            converter.convert_row(src_row, &mut out[dst_start..dst_end], self.width());
-        }
-
-        let mut buf = PixelBuffer::from_vec(out, self.width(), self.height(), target)
+        let mut buf = PixelBuffer::try_new(self.width(), self.height(), target)
             .map_err_at(crate::ConvertError::from)?;
-        if let Some(ctx) = self.color_context() {
-            buf = buf.with_color_context(Arc::clone(ctx));
+        let source = self.as_slice();
+        let mut destination = buf.as_slice_mut();
+        for y in 0..self.height() {
+            converter.try_convert_row(source.row(y), destination.row_mut(y), self.width())?;
+        }
+        if let Some(ctx) = context_after_conversion(self, target) {
+            buf = buf.with_color_context(ctx);
         }
         Ok(buf)
     }
@@ -257,7 +307,9 @@ impl PixelBufferConvertExt for PixelBuffer {
             desc.alpha()
         };
         let target =
-            PixelDescriptor::new(desc.channel_type(), target_layout, alpha, desc.transfer());
+            PixelDescriptor::new(desc.channel_type(), target_layout, alpha, desc.transfer())
+                .with_primaries(desc.primaries)
+                .with_signal_range(desc.signal_range);
         self.convert_to(target)
     }
 
@@ -269,7 +321,9 @@ impl PixelBufferConvertExt for PixelBuffer {
             desc.layout(),
             desc.alpha(),
             desc.transfer(),
-        );
+        )
+        .with_primaries(desc.primaries)
+        .with_signal_range(desc.signal_range);
         self.convert_to(target)
     }
 
@@ -281,7 +335,9 @@ impl PixelBufferConvertExt for PixelBuffer {
             desc.layout(),
             desc.alpha(),
             desc.transfer(),
-        );
+        )
+        .with_primaries(desc.primaries)
+        .with_signal_range(desc.signal_range);
         self.convert_to(target)
     }
 
@@ -335,10 +391,24 @@ pub trait PixelBufferHdrConvertExt {
     /// safe to use when the source's HDR-ness isn't known up front).
     ///
     /// **Allocates** a new [`PixelBuffer`].
+    #[deprecated(
+        since = "0.2.17",
+        note = "use convert_to_sdr_measuring_peak to make the extra measurement pass explicit, or convert_to_with_hdr_config with a supplied peak"
+    )]
     fn convert_to_sdr(
         &self,
         target: PixelDescriptor,
     ) -> Result<PixelBuffer, At<crate::ConvertError>>;
+
+    /// Explicitly measure peak luminance in a separate rowwise pass, then map
+    /// to SDR. Allocates one output image plus reusable row scratch.
+    #[allow(deprecated)] // Default preserves existing external trait impls.
+    fn convert_to_sdr_measuring_peak(
+        &self,
+        target: PixelDescriptor,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>> {
+        self.convert_to_sdr(target)
+    }
 
     /// Convert this HDR buffer to `target` with explicit HDR knobs.
     ///
@@ -362,6 +432,13 @@ pub trait PixelBufferHdrConvertExt {
 impl PixelBufferHdrConvertExt for PixelBuffer {
     #[track_caller]
     fn convert_to_sdr(
+        &self,
+        target: PixelDescriptor,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>> {
+        self.convert_to_sdr_measuring_peak(target)
+    }
+
+    fn convert_to_sdr_measuring_peak(
         &self,
         target: PixelDescriptor,
     ) -> Result<PixelBuffer, At<crate::ConvertError>> {
@@ -402,10 +479,16 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
             TransferFunction::Linear,
             src_desc.primaries,
         );
-        let diffuse_white = self
-            .color_context()
-            .and_then(|c| c.diffuse_white)
-            .unwrap_or(DiffuseWhite::BT2408);
+        // Unanchored PQ decoding yields L/10000, regardless of an attached
+        // relative-linear diffuse-white anchor. HLG needs a display OOTF and
+        // is refused until that mapping is supplied explicitly.
+        if src_desc.transfer() == TransferFunction::Hlg {
+            return Err(whereat::at!(crate::ConvertError::NoPath {
+                from: src_desc,
+                to: target
+            }));
+        }
+        let diffuse_white = DiffuseWhite::new(10_000.0);
         let max_cll = measure_peak_rowwise(self, lin_desc, diffuse_white)?;
         let source_peak_nits = f32::from(max_cll).max(100.0);
         self.convert_to_with_hdr_config(target, crate::HdrConfig::for_source_peak(source_peak_nits))
@@ -419,6 +502,15 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
     ) -> Result<PixelBuffer, At<crate::ConvertError>> {
         let src_desc = self.descriptor();
         check_needs_cms(&src_desc, &target)?;
+        if matches!(
+            crate::output::current_profile(self)?,
+            zenpixels::ColorProfileSource::Icc(_)
+        ) {
+            return Err(whereat::at!(crate::ConvertError::NeedsCms {
+                from: src_desc,
+                to: target
+            }));
+        }
         // Do NOT short-circuit on `src_desc == target` — the HDR-aware
         // constructor still needs to run the tone-map + soft-compress
         // chain when both descriptors are e.g. `RGBF32_LINEAR`. The plan
@@ -426,7 +518,10 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
         // transfer function (SDR-encoded sources fall through to plain
         // `ConvertPlan::new`).
 
-        let plan = crate::ConvertPlan::new_with_hdr_config(src_desc, target, hdr).at()?;
+        let mut plan = crate::ConvertPlan::new_with_hdr_config(src_desc, target, hdr).at()?;
+        if let Some(white) = self.color_context().and_then(|c| c.diffuse_white) {
+            plan = plan.with_linear_input_white(white, hdr.source_peak_nits);
+        }
         let mut converter = crate::RowConverter::from_plan(plan);
 
         let dst_stride = target.aligned_stride(self.width());
@@ -440,13 +535,22 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
             let src_row = src_slice.row(y);
             let dst_start = y as usize * dst_stride;
             let dst_end = dst_start + dst_stride;
-            converter.convert_row(src_row, &mut out[dst_start..dst_end], self.width());
+            converter.try_convert_row(src_row, &mut out[dst_start..dst_end], self.width())?;
         }
 
         let mut buf = PixelBuffer::from_vec(out, self.width(), self.height(), target)
             .map_err_at(crate::ConvertError::from)?;
-        if let Some(ctx) = self.color_context() {
-            buf = buf.with_color_context(Arc::clone(ctx));
+        if matches!(
+            src_desc.transfer(),
+            TransferFunction::Linear | TransferFunction::Pq
+        ) {
+            let mut context = context_after_conversion(self, target)
+                .map(|c| (*c).clone())
+                .unwrap_or_default();
+            context.diffuse_white = Some(zenpixels::hdr::DiffuseWhite::new(hdr.target_peak_nits));
+            buf = buf.with_color_context(Arc::new(context));
+        } else if let Some(ctx) = context_after_conversion(self, target) {
+            buf = buf.with_color_context(ctx);
         }
         Ok(buf)
     }
@@ -522,31 +626,8 @@ impl PixelBufferConvertTypedExt for PixelBuffer {
 /// Internal: convert to any target descriptor, returning a typed buffer.
 #[cfg(feature = "rgb")]
 fn convert_to_typed<Q: Pixel>(buf: &PixelBuffer, target: PixelDescriptor) -> PixelBuffer<Q> {
-    use alloc::vec;
-    let mut conv = crate::RowConverter::new(buf.descriptor(), target)
-        .expect("RowConverter: no conversion path");
-    let dst_bpp = target.bytes_per_pixel();
-    let dst_stride = target.aligned_stride(buf.width());
-    let total = dst_stride * buf.height() as usize;
-    let mut out = vec![0u8; total];
-    let src_slice = buf.as_slice();
-    for y in 0..buf.height() {
-        let src_row = src_slice.row(y);
-        let dst_start = y as usize * dst_stride;
-        let dst_end = dst_start + buf.width() as usize * dst_bpp;
-        conv.convert_row(src_row, &mut out[dst_start..dst_end], buf.width());
-    }
-    // We need to construct PixelBuffer<Q> from raw parts.
-    // Use from_vec to build the erased form, then reinterpret.
-    let erased = PixelBuffer::from_vec(out, buf.width(), buf.height(), target)
-        .expect("convert_to_typed: buffer construction failed");
-    // Carry over color context
-    let erased = if let Some(ctx) = buf.color_context() {
-        erased.with_color_context(Arc::clone(ctx))
-    } else {
-        erased
-    };
-    erased
+    buf.convert_to(target)
+        .expect("convert_to_typed: conversion failed; use convert_to for fallible conversion")
         .try_typed::<Q>()
         .expect("convert_to_typed: type mismatch after conversion")
 }

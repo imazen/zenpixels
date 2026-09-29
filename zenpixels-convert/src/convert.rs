@@ -7,7 +7,6 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
-use core::cmp::min;
 
 use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy, LumaCoefficients};
 use crate::{
@@ -20,13 +19,25 @@ use whereat::{At, ResultAtExt};
 /// Shared with CMS dispatch so an external descriptor-only plan cannot bypass
 /// the range contract before a backend is asked to prepare a transform.
 #[track_caller]
-pub(crate) fn validate_signal_range(
+pub(crate) fn validate_descriptors(
     from: PixelDescriptor,
     to: PixelDescriptor,
 ) -> Result<(), At<ConvertError>> {
+    from.validate()
+        .map_err(|e| whereat::at!(ConvertError::Buffer(e)))?;
+    to.validate()
+        .map_err(|e| whereat::at!(ConvertError::Buffer(e)))?;
+    if to.alpha() == Some(AlphaMode::Opaque)
+        && from.has_alpha()
+        && from.alpha() != Some(AlphaMode::Opaque)
+    {
+        return Err(whereat::at!(ConvertError::AlphaCheckRequired));
+    }
     if from.signal_range != to.signal_range
         || (from.signal_range == zenpixels::SignalRange::Narrow
-            && from.channel_type() != to.channel_type())
+            && (from.channel_type() != to.channel_type()
+                || from.transfer() != to.transfer()
+                || from.primaries != to.primaries))
     {
         return Err(whereat::at!(ConvertError::NoPath { from, to }));
     }
@@ -139,8 +150,7 @@ impl HdrConfig {
 /// tone mapping or carry the wide dynamic range through. HLG↔PQ is
 /// handled by the dedicated refusal upstream (different luminance
 /// domains, no straight tone-map path).
-#[cfg(feature = "hdr-experimental")]
-fn is_hdr_to_sdr(from: TransferFunction, to: TransferFunction) -> bool {
+pub(crate) fn is_hdr_to_sdr(from: TransferFunction, to: TransferFunction) -> bool {
     let src_is_hdr = matches!(from, TransferFunction::Pq | TransferFunction::Hlg);
     let dst_is_sdr_encoded = matches!(
         to,
@@ -166,6 +176,8 @@ pub struct ConvertPlan {
     /// Set via [`with_pq_anchor`](Self::with_pq_anchor). HLG steps ignore it
     /// (scene-referred — different anchoring, out of scope here).
     pub(crate) pq_anchor_scale: f32,
+    // Composition retains the exact descriptor/anchor at each materialized step.
+    execution: Option<Vec<(PixelDescriptor, PixelDescriptor, f32)>>,
 }
 
 /// Selects which fused TF + matrix + TF kernel a [`ConvertStep::Fused`]
@@ -253,6 +265,8 @@ pub(crate) enum ConvertStep {
     /// RGBA → Gray, drop alpha. See [`RgbToGray`](Self::RgbToGray) for
     /// semantic and coefficient resolution.
     RgbaToGray { coefficients: LumaCoefficients },
+    /// RGBA → GrayAlpha, preserving alpha and using encoded luma coefficients.
+    RgbaToGrayAlpha { coefficients: LumaCoefficients },
     /// GrayAlpha → RGBA (replicate gray, keep alpha).
     GrayAlphaToRgba,
     /// GrayAlpha → RGB (replicate gray, drop alpha).
@@ -391,6 +405,7 @@ impl ConvertStep {
             Self::GrayToRgba => "GrayToRgba",
             Self::RgbToGray { .. } => "RgbToGray",
             Self::RgbaToGray { .. } => "RgbaToGray",
+            Self::RgbaToGrayAlpha { .. } => "RgbaToGrayAlpha",
             Self::GrayAlphaToRgba => "GrayAlphaToRgba",
             Self::GrayAlphaToRgb => "GrayAlphaToRgb",
             Self::GrayToGrayAlpha => "GrayToGrayAlpha",
@@ -497,6 +512,7 @@ impl ConvertPlan {
             to,
             steps,
             pq_anchor_scale: 1.0,
+            execution: None,
         }
     }
 
@@ -518,6 +534,39 @@ impl ConvertPlan {
         let diffuse_white_nits = f64::from(anchor.nits());
         const PQ_PEAK_NITS: f64 = 10_000.0;
         self.pq_anchor_scale = (diffuse_white_nits / PQ_PEAK_NITS) as f32;
+        if let Some(execution) = &mut self.execution {
+            for (_, _, scale) in execution {
+                *scale = self.pq_anchor_scale;
+            }
+        }
+        self
+    }
+
+    /// Convert an explicitly anchored linear input to source-peak-relative
+    /// units in the existing row pipeline. No image prepass or image scratch.
+    #[cfg(feature = "hdr-experimental")]
+    pub(crate) fn with_linear_input_white(
+        mut self,
+        white: zenpixels::hdr::DiffuseWhite,
+        source_peak: f32,
+    ) -> Self {
+        if self.from.transfer() == TransferFunction::Linear && white.nits() != source_peak {
+            let scale = white.nits() / source_peak;
+            let matrix = [scale, 0., 0., 0., scale, 0., 0., 0., scale];
+            let index = self
+                .steps
+                .iter()
+                .position(|step| matches!(step, ConvertStep::ToneMapBt2446A { .. }))
+                .expect("HDR linear plan contains tone mapping");
+            self.steps.insert(
+                index,
+                if self.from.has_alpha() {
+                    ConvertStep::GamutMatrixRgbaF32(matrix)
+                } else {
+                    ConvertStep::GamutMatrixRgbF32(matrix)
+                },
+            );
+        }
         self
     }
 
@@ -539,6 +588,7 @@ impl ConvertPlan {
     /// through `RowConverter` for that.
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
+        validate_descriptors(from, to)?;
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
@@ -555,7 +605,6 @@ impl ConvertPlan {
         // range is preserved verbatim or the conversion fails loudly.
         // Narrow depth changes also need their own scaling: e.g. narrow
         // U8 white 235 must widen to 60160, not full-scale 60395.
-        validate_signal_range(from, to)?;
 
         // Refuse HLG↔PQ. HLG is scene-referred — these kernels apply only its
         // OETF, with no OOTF and no `Lw`/peak — while PQ is absolute display
@@ -582,16 +631,99 @@ impl ConvertPlan {
         // wrong pixels (any HDR sample above SDR diffuse-white saturates
         // to 1.0). Force the caller to use the tone-mapped entry point.
         // HLG↔PQ already refused above; this catches HDR→{Linear, Srgb,
-        // Bt709, Gamma22}. Under `hdr-experimental` only — without it
-        // the variant doesn't exist and the historic pass-through
-        // behavior is preserved as a deliberate semi-compatibility
-        // shim for legacy non-HDR builds.
-        #[cfg(feature = "hdr-experimental")]
+        // Bt709, Gamma22}, regardless of whether mapping kernels are enabled.
+        // Relative-linear decode remains available for explicit measurement.
         if is_hdr_to_sdr(from.transfer(), to.transfer()) {
             return Err(whereat::at!(ConvertError::HdrSourceRequiresPeak {
                 from,
                 to,
             }));
+        }
+
+        // BGRA storage exists only at U8. Keep it at the endpoint instead
+        // of inventing a BGRA F32/U16 intermediate during depth/TF work.
+        if (from.layout() == ChannelLayout::Bgra || to.layout() == ChannelLayout::Bgra)
+            && (from.channel_type() != to.channel_type()
+                || from.transfer() != to.transfer()
+                || from.primaries != to.primaries
+                || (from.alpha() == Some(AlphaMode::Undefined) && to.has_alpha()))
+        {
+            let canonical = |d: PixelDescriptor| {
+                if d.layout() == ChannelLayout::Bgra {
+                    PixelDescriptor::new(
+                        d.channel_type(),
+                        ChannelLayout::Rgba,
+                        d.alpha(),
+                        d.transfer(),
+                    )
+                    .with_primaries(d.primaries)
+                    .with_signal_range(d.signal_range)
+                } else {
+                    d
+                }
+            };
+            let mut plan = Self::new(canonical(from), canonical(to))?;
+            if from.layout() == ChannelLayout::Bgra {
+                plan.steps.insert(0, ConvertStep::SwizzleBgraRgba);
+            }
+            if to.layout() == ChannelLayout::Bgra {
+                plan.steps.push(ConvertStep::SwizzleBgraRgba);
+            }
+            plan.from = from;
+            plan.to = to;
+            return Ok(plan);
+        }
+
+        // Padding bytes must never become alpha samples. Discard padding,
+        // then use the normal opaque-alpha insertion route.
+        if from.alpha() == Some(AlphaMode::Undefined) && to.has_alpha() {
+            let rgb = PixelDescriptor::new(
+                from.channel_type(),
+                ChannelLayout::Rgb,
+                None,
+                from.transfer(),
+            )
+            .with_primaries(from.primaries)
+            .with_signal_range(from.signal_range);
+            let mut plan = Self::new(rgb, to)?;
+            plan.steps.insert(0, ConvertStep::DropAlpha);
+            plan.from = from;
+            return Ok(plan);
+        }
+
+        // Unassociate in the SOURCE encoding before any nonlinear color work.
+        // Reassociate in the DESTINATION encoding afterwards. This also covers
+        // dropping premultiplied alpha without compositing.
+        if from.alpha() == Some(AlphaMode::Premultiplied)
+            && (from.transfer() != to.transfer()
+                || from.primaries != to.primaries
+                || from.layout() != to.layout()
+                || !to.has_alpha())
+        {
+            let straight_from = from.with_alpha(Some(AlphaMode::Straight));
+            let straight_to = if to.alpha() == Some(AlphaMode::Premultiplied) {
+                to.with_alpha(Some(AlphaMode::Straight))
+            } else {
+                to
+            };
+            let mut plan = Self::new(straight_from, straight_to)?;
+            plan.steps.insert(0, ConvertStep::PremulToStraight);
+            if to.alpha() == Some(AlphaMode::Premultiplied) {
+                plan.steps.push(ConvertStep::StraightToPremul);
+            }
+            plan.from = from;
+            plan.to = to;
+            return Ok(plan);
+        }
+        if from.layout() != to.layout() && layout_steps(from.layout(), to.layout()).is_empty() {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        if from.primaries != to.primaries
+            && from.primaries != ColorPrimaries::Unknown
+            && to.primaries != ColorPrimaries::Unknown
+            && crate::gamut::conversion_matrix(from.primaries, to.primaries).is_none()
+        {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
 
         let mut steps = Vec::with_capacity(3);
@@ -629,11 +761,12 @@ impl ConvertPlan {
                     || matches!(to.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA);
 
             // Oklab conversion requires known primaries for the RGB→LMS matrix.
-            if involves_oklab && from.primaries == ColorPrimaries::Unknown {
+            if involves_oklab && crate::oklab::rgb_to_lms_matrix(from.primaries).is_none() {
                 return Err(whereat::at!(ConvertError::NoPath { from, to }));
             }
 
             let depth_first = need_depth_or_tf
+                && !matches!(from.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA)
                 && (dst_ch > src_ch || (involves_oklab && from.channel_type() != ChannelType::F32));
 
             if depth_first {
@@ -910,6 +1043,38 @@ impl ConvertPlan {
         Ok(Self::build(from, to, steps))
     }
 
+    /// Require a metadata-provable reversible representation change.
+    /// Refuses transfer/gamut changes, rounding, clipping and unchecked sample
+    /// removal. No pixel scan is performed. Exact U8→U16 widening and reversible
+    /// channel reorder/expansion are supported; no claim is inferred from origin.
+    pub fn new_preserving_samples(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+    ) -> Result<Self, At<ConvertError>> {
+        let plan = Self::new(from, to)?;
+        if from.transfer() != to.transfer()
+            || from.primaries != to.primaries
+            || (from.has_alpha() && from.alpha() != to.alpha())
+            || !plan.steps.iter().all(|step| {
+                matches!(
+                    step,
+                    ConvertStep::Identity
+                        | ConvertStep::SwizzleBgraRgba
+                        | ConvertStep::AddAlpha
+                        | ConvertStep::RgbToBgra
+                        | ConvertStep::GrayToRgb
+                        | ConvertStep::GrayToRgba
+                        | ConvertStep::GrayToGrayAlpha
+                        | ConvertStep::GrayAlphaToRgba
+                        | ConvertStep::U8ToU16
+                )
+            })
+        {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        Ok(plan)
+    }
+
     /// Create an HDR→SDR conversion plan with the given source-peak
     /// luminance.
     ///
@@ -950,7 +1115,7 @@ impl ConvertPlan {
     /// `Linear` source where the caller declares HDR semantics via this
     /// constructor) inserts:
     ///
-    /// 1. HDR transfer decode (PQ/HLG → linear) — same kernels as
+    /// 1. HDR transfer decode (PQ → source-peak-relative linear) — same kernels as
     ///    [`ConvertPlan::new`]. Skipped when the source is already
     ///    `Linear`.
     /// 2. Source primaries → BT.2020 matrix (skipped when source is BT.2020).
@@ -982,6 +1147,11 @@ impl ConvertPlan {
     /// kernel's NaN scrub would silently emit an all-black image.
     ///
     /// [`HdrSourceRequiresPeak`]: ConvertError::HdrSourceRequiresPeak
+    ///
+    /// HLG mapping is refused because a display OOTF is not specified by a
+    /// peak alone. Unsupported RGB layouts/primaries and HDR destinations also
+    /// refuse during setup. Linear source values use `1.0 = source_peak_nits`;
+    /// the buffer convenience honors an attached diffuse-white anchor instead.
     ///
     /// CMYK (and any other non-native color model) returns
     /// [`ConvertError::NeedsCms`] — same posture as
@@ -1033,7 +1203,49 @@ impl ConvertPlan {
         // perform.
 
         // Same endpoint range/depth restrictions as the ordinary planner.
-        validate_signal_range(from, to)?;
+        validate_descriptors(from, to)?;
+
+        // These kernels require RGB triples (optionally followed by alpha),
+        // defined gamut matrices and a finite soft-compression knee.
+        if matches!(
+            to.transfer(),
+            TransferFunction::Pq | TransferFunction::Hlg | TransferFunction::Unknown
+        ) || !matches!(from.layout(), ChannelLayout::Rgb | ChannelLayout::Rgba)
+            || !matches!(to.layout(), ChannelLayout::Rgb | ChannelLayout::Rgba)
+            || !matches!(
+                from.transfer(),
+                TransferFunction::Linear | TransferFunction::Pq
+            )
+            || (from.primaries != ColorPrimaries::Bt2020
+                && crate::gamut::conversion_matrix(from.primaries, ColorPrimaries::Bt2020)
+                    .is_none())
+            || (to.primaries != ColorPrimaries::Bt2020
+                && crate::gamut::conversion_matrix(ColorPrimaries::Bt2020, to.primaries).is_none())
+            || (to.primaries != ColorPrimaries::Bt2020
+                && (crate::oklab::rgb_to_lms_matrix(to.primaries).is_none()
+                    || !hdr.gamut_knee.is_finite()
+                    || !(0.0..=1.0).contains(&hdr.gamut_knee)))
+        {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        // Association is defined in the encoded source/destination domains.
+        // Unassociate BEFORE decoding or applying nonlinear tone mapping.
+        if from.alpha() == Some(AlphaMode::Premultiplied) {
+            let straight_from = from.with_alpha(Some(AlphaMode::Straight));
+            let straight_to = if to.alpha() == Some(AlphaMode::Premultiplied) {
+                to.with_alpha(Some(AlphaMode::Straight))
+            } else {
+                to
+            };
+            let mut plan = Self::new_with_hdr_config(straight_from, straight_to, hdr)?;
+            plan.steps.insert(0, ConvertStep::PremulToStraight);
+            if to.alpha() == Some(AlphaMode::Premultiplied) {
+                plan.steps.push(ConvertStep::StraightToPremul);
+            }
+            plan.from = from;
+            plan.to = to;
+            return Ok(plan);
+        }
 
         // The pipeline: src → linear-F32-in-source-primaries → (source→BT.2020)
         // → ToneMap → (BT.2020→target) → SoftCompress → target-encode.
@@ -1154,19 +1366,8 @@ impl ConvertPlan {
 
         // ---- (h) Alpha mode (Straight↔Premultiplied).
         //
-        // KNOWN LIMITATION (premultiplied HDR sources): steps (b)–(e) above —
-        // including the NONLINEAR tone-map and OKLch soft-compress — run on the
-        // source's alpha mode carried through from step (a). Linear ops (the
-        // gamut matrices) commute with premultiplication, but the nonlinear
-        // tone-map does not: `TM(α·R) ≠ α·TM(R)`. A `Premultiplied` source is
-        // therefore tone-mapped on premultiplied values, and this step only
-        // reconciles the alpha *mode* afterwards. Correct handling needs an
-        // unpremultiply before step (b) and a re-premultiply here — but the
-        // library's premul convention is encoded-space (Canvas 2D; see the
-        // `new_explicit` MatteComposite note), so doing it in the linear
-        // pipeline is subtle and deferred rather than done wrong. In practice
-        // PQ/HLG sources are virtually always straight/opaque; premultiplied
-        // HDR is the rare case. Tracked for the `hdr-experimental` stabilization.
+        // Premultiplied sources were unassociated by the recursive path above.
+        // Associate the output only after destination transfer encoding.
         if from.alpha() != to.alpha() && from.alpha().is_some() && to.alpha().is_some() {
             match (from.alpha(), to.alpha()) {
                 (Some(AlphaMode::Straight), Some(AlphaMode::Premultiplied)) => {
@@ -1183,7 +1384,13 @@ impl ConvertPlan {
             steps.push(ConvertStep::Identity);
         }
 
-        Ok(Self::build(from, to, steps))
+        let plan = Self::build(from, to, steps);
+        // PQ EOTF produces L/10000; the tone mapper requires L/source_peak.
+        Ok(if from.transfer() == TransferFunction::Pq {
+            plan.with_pq_anchor(zenpixels::hdr::DiffuseWhite::new(hdr.source_peak_nits))
+        } else {
+            plan
+        })
     }
 
     /// Create a conversion plan with explicit policy enforcement.
@@ -1208,7 +1415,10 @@ impl ConvertPlan {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
         // Check alpha removal policy.
-        let drops_alpha = from.alpha().is_some() && to.alpha().is_none();
+        let drops_alpha = from.has_alpha() && !to.has_alpha();
+        if drops_alpha && options.alpha_policy == AlphaPolicy::DiscardIfOpaque {
+            return Err(whereat::at!(ConvertError::AlphaCheckRequired));
+        }
         if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
             return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
         }
@@ -1231,6 +1441,20 @@ impl ConvertPlan {
         let dst_is_gray = matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
         if src_is_rgb && dst_is_gray && options.luma.is_none() {
             return Err(whereat::at!(ConvertError::RgbToGray));
+        }
+
+        if drops_alpha
+            && to.alpha() == Some(AlphaMode::Undefined)
+            && matches!(options.alpha_policy, AlphaPolicy::CompositeOnto { .. })
+        {
+            let rgb =
+                PixelDescriptor::new(to.channel_type(), ChannelLayout::Rgb, None, to.transfer())
+                    .with_primaries(to.primaries)
+                    .with_signal_range(to.signal_range);
+            let matte = Self::new_explicit(from, rgb, options)?;
+            return Ok(matte
+                .compose_preserving(&Self::new(rgb, to)?)
+                .expect("matching built-in endpoints"));
         }
 
         let mut plan = Self::new(from, to).at()?;
@@ -1267,7 +1491,33 @@ impl ConvertPlan {
         //  * `MatteComposite` also drops the alpha channel (RGBA → RGB) in
         //    the same pass, which a pair of same-layout TF steps cannot do.
         if drops_alpha && let AlphaPolicy::CompositeOnto { r, g, b } = options.alpha_policy {
-            let src_is_premul = from.alpha() == Some(AlphaMode::Premultiplied);
+            let mut expanded = Vec::new();
+            for step in plan.steps.drain(..) {
+                match step {
+                    ConvertStep::RgbaToGray { coefficients } => expanded.extend([
+                        ConvertStep::DropAlpha,
+                        ConvertStep::RgbToGray { coefficients },
+                    ]),
+                    ConvertStep::GrayAlphaToRgb => {
+                        expanded.extend([ConvertStep::GrayAlphaToRgba, ConvertStep::DropAlpha])
+                    }
+                    ConvertStep::GrayAlphaToGray => expanded.extend([
+                        ConvertStep::GrayAlphaToRgba,
+                        ConvertStep::DropAlpha,
+                        ConvertStep::RgbToGray {
+                            coefficients: options.luma.unwrap_or(LumaCoefficients::Bt709),
+                        },
+                    ]),
+                    other => expanded.push(other),
+                }
+            }
+            plan.steps = expanded;
+            // The ordinary planner already unassociates sources when dropping alpha.
+            let src_is_premul = from.alpha() == Some(AlphaMode::Premultiplied)
+                && !plan
+                    .steps
+                    .iter()
+                    .any(|s| matches!(s, ConvertStep::PremulToStraight));
             let mut idx = 0;
             while idx < plan.steps.len() {
                 if matches!(plan.steps[idx], ConvertStep::DropAlpha) {
@@ -1308,7 +1558,8 @@ impl ConvertPlan {
         for step in &mut plan.steps {
             match step {
                 ConvertStep::RgbToGray { coefficients }
-                | ConvertStep::RgbaToGray { coefficients } => {
+                | ConvertStep::RgbaToGray { coefficients }
+                | ConvertStep::RgbaToGrayAlpha { coefficients } => {
                     *coefficients = user_luma;
                 }
                 _ => {}
@@ -1336,54 +1587,76 @@ impl ConvertPlan {
     ///
     /// Returns `None` if `self.to` != `other.from` (incompatible plans).
     pub fn compose(&self, other: &Self) -> Option<Self> {
+        self.compose_impl(other, false)
+    }
+
+    /// Compose while preserving materialized intermediate samples, including
+    /// their quantization, descriptors and PQ anchor. This may perform more
+    /// row work than [`compose`](Self::compose), which optimizes final output.
+    pub fn compose_preserving(&self, other: &Self) -> Option<Self> {
+        self.compose_impl(other, true)
+    }
+
+    fn execution(&self) -> Vec<(PixelDescriptor, PixelDescriptor, f32)> {
+        if let Some(execution) = &self.execution {
+            return execution.clone();
+        }
+        let mut current = self.from;
+        self.steps
+            .iter()
+            .enumerate()
+            .map(|(i, step)| {
+                let next = if i + 1 == self.steps.len() {
+                    self.to
+                } else {
+                    intermediate_desc(current, step)
+                };
+                let entry = (current, next, self.pq_anchor_scale);
+                current = next;
+                entry
+            })
+            .collect()
+    }
+
+    fn compose_impl(&self, other: &Self, preserve: bool) -> Option<Self> {
         if self.to != other.from {
             return None;
         }
-
-        let mut steps = self.steps.clone();
-
-        // Append other's steps, skipping its Identity if present.
-        for step in &other.steps {
+        let mut steps = Vec::new();
+        let mut execution: Vec<(PixelDescriptor, PixelDescriptor, f32)> = Vec::new();
+        for (step, context) in self
+            .steps
+            .iter()
+            .cloned()
+            .zip(self.execution())
+            .chain(other.steps.iter().cloned().zip(other.execution()))
+        {
             if matches!(step, ConvertStep::Identity) {
                 continue;
             }
-            steps.push(step.clone());
-        }
-
-        // Peephole: cancel adjacent inverse pairs.
-        let mut changed = true;
-        while changed {
-            changed = false;
-            let mut i = 0;
-            while i + 1 < steps.len() {
-                if are_inverse(&steps[i], &steps[i + 1]) {
-                    steps.remove(i + 1);
-                    steps.remove(i);
-                    changed = true;
-                    // Don't advance — check the new adjacent pair.
-                } else {
-                    i += 1;
-                }
+            if !preserve
+                && steps.last().is_some_and(|last| are_inverse(last, &step))
+                && execution
+                    .last()
+                    .is_some_and(|previous| previous.0 == context.1 && previous.2 == context.2)
+            {
+                steps.pop();
+                execution.pop();
+            } else {
+                steps.push(step);
+                execution.push(context);
             }
         }
-
-        // If everything cancelled, produce identity.
         if steps.is_empty() {
-            steps.push(ConvertStep::Identity);
+            return Some(Self::build(
+                self.from,
+                other.to,
+                vec![ConvertStep::Identity],
+            ));
         }
-
-        // Remove leading/trailing Identity if there are real steps.
-        if steps.len() > 1 {
-            steps.retain(|s| !matches!(s, ConvertStep::Identity));
-            if steps.is_empty() {
-                steps.push(ConvertStep::Identity);
-            }
-        }
-
-        // Composition runs at plan-build time, before any anchor is attached
-        // (`with_pq_anchor` is applied to the finished plan), so both inputs
-        // carry the default scale; the merged plan does too.
-        Some(Self::build(self.from, other.to, steps))
+        let mut result = Self::build(self.from, other.to, steps);
+        result.execution = Some(execution);
+        Some(result)
     }
 
     /// True if conversion is a no-op.
@@ -1396,8 +1669,15 @@ impl ConvertPlan {
     ///
     /// Used to pre-allocate scratch buffers for streaming conversion.
     pub(crate) fn max_intermediate_bpp(&self) -> usize {
+        if let Some(execution) = &self.execution {
+            return execution
+                .iter()
+                .map(|(a, b, _)| a.bytes_per_pixel().max(b.bytes_per_pixel()))
+                .max()
+                .unwrap_or(0);
+        }
         let mut desc = self.from;
-        let mut max_bpp = desc.bytes_per_pixel();
+        let mut max_bpp = self.from.bytes_per_pixel().max(self.to.bytes_per_pixel());
         for step in &self.steps {
             desc = intermediate_desc(desc, step);
             max_bpp = max_bpp.max(desc.bytes_per_pixel());
@@ -1481,12 +1761,9 @@ impl ConvertPlan {
     /// assert!(est.wall_ms().is_some());
     /// ```
     #[must_use]
-    #[cfg_attr(
-        not(feature = "estimation-experimental"),
-        deprecated(
-            since = "0.2.17",
-            note = "enable estimation-experimental; this feature will be required for the estimation API in 0.3.1"
-        )
+    #[deprecated(
+        since = "0.2.17",
+        note = "estimation is retired; it will be removed in 0.3.1, including with estimation-experimental enabled"
     )]
     #[allow(deprecated)] // The 0.2 compatibility signature/body still uses estimate types.
     pub fn estimate_in(
@@ -1521,12 +1798,9 @@ impl ConvertPlan {
     /// assert!(est.wall_ms().is_some());
     /// ```
     #[must_use]
-    #[cfg_attr(
-        not(feature = "estimation-experimental"),
-        deprecated(
-            since = "0.2.17",
-            note = "enable estimation-experimental; this feature will be required for the estimation API in 0.3.1"
-        )
+    #[deprecated(
+        since = "0.2.17",
+        note = "estimation is retired; it will be removed in 0.3.1, including with estimation-experimental enabled"
     )]
     #[allow(deprecated)] // The 0.2 compatibility implementation delegates to estimate_in.
     pub fn estimate(&self, width: u32, height: u32) -> crate::estimate::ResourceEstimate {
@@ -1589,6 +1863,21 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
                 },
             ]
         }
+        (ChannelLayout::Rgba, ChannelLayout::GrayAlpha) => vec![ConvertStep::RgbaToGrayAlpha {
+            coefficients: LumaCoefficients::Bt709,
+        }],
+        (ChannelLayout::Bgra, ChannelLayout::GrayAlpha) => vec![
+            ConvertStep::SwizzleBgraRgba,
+            ConvertStep::RgbaToGrayAlpha {
+                coefficients: LumaCoefficients::Bt709,
+            },
+        ],
+        (ChannelLayout::Rgb, ChannelLayout::GrayAlpha) => vec![
+            ConvertStep::RgbToGray {
+                coefficients: LumaCoefficients::Bt709,
+            },
+            ConvertStep::GrayToGrayAlpha,
+        ],
         (ChannelLayout::GrayAlpha, ChannelLayout::Rgba) => vec![ConvertStep::GrayAlphaToRgba],
         (ChannelLayout::GrayAlpha, ChannelLayout::Bgra) => {
             // GrayAlpha -> RGBA -> BGRA: expand then swizzle.
@@ -1675,17 +1964,12 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
                 ConvertStep::LinearRgbaToOklaba,
             ]
         }
-        (ChannelLayout::OklabA, ChannelLayout::GrayAlpha) => {
-            // Drop alpha from OklabA→Oklab, convert to RGB, then to GrayAlpha.
-            // Alpha is lost; this is inherently lossy.
-            vec![
-                ConvertStep::OklabaToLinearRgba,
-                ConvertStep::RgbaToGray {
-                    coefficients: LumaCoefficients::Bt709,
-                },
-                ConvertStep::GrayToGrayAlpha,
-            ]
-        }
+        (ChannelLayout::OklabA, ChannelLayout::GrayAlpha) => vec![
+            ConvertStep::OklabaToLinearRgba,
+            ConvertStep::RgbaToGrayAlpha {
+                coefficients: LumaCoefficients::Bt709,
+            },
+        ],
         (ChannelLayout::GrayAlpha, ChannelLayout::Oklab) => {
             vec![ConvertStep::GrayAlphaToRgb, ConvertStep::LinearRgbToOklab]
         }
@@ -2046,6 +2330,40 @@ impl ConvertScratch {
         }
     }
 
+    pub(crate) fn prepare(
+        &mut self,
+        plan: &ConvertPlan,
+        width: u32,
+    ) -> Result<(), At<ConvertError>> {
+        let half = (width as usize)
+            .checked_mul(plan.max_intermediate_bpp())
+            .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
+        let words = half
+            .checked_add(3)
+            .and_then(|n| (n / 4).checked_mul(2))
+            .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
+        if self.buf.len() < words {
+            self.buf
+                .try_reserve(words - self.buf.len())
+                .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
+            self.buf.resize(words, 0);
+        }
+        self.hdr.prepare(width)?;
+        // Warm only the selected kernels/LUTs using one synthetic aligned pixel.
+        // No source image is inspected and no full-image preflight is hidden here.
+        let words = plan.max_intermediate_bpp().div_ceil(4);
+        let src = vec![0u32; words];
+        let mut dst = vec![0u32; words];
+        convert_row_buffered(
+            plan,
+            bytemuck::cast_slice(&src),
+            bytemuck::cast_slice_mut(&mut dst),
+            1,
+            self,
+        );
+        Ok(())
+    }
+
     /// Ensure the buffer is large enough for two halves of the max
     /// intermediate format at the given width.
     fn ensure_capacity(&mut self, plan: &ConvertPlan, width: u32) {
@@ -2091,20 +2409,25 @@ pub(crate) fn convert_row_buffered(
     scratch: &mut ConvertScratch,
 ) {
     if plan.is_identity() {
-        let len = min(src.len(), dst.len());
+        let len = width as usize * plan.to.bytes_per_pixel();
         dst[..len].copy_from_slice(&src[..len]);
         return;
     }
 
     if plan.steps.len() == 1 {
+        let (from, to, scale) = plan.execution.as_ref().map(|e| e[0]).unwrap_or((
+            plan.from,
+            plan.to,
+            plan.pq_anchor_scale,
+        ));
         apply_step_u8(
             &plan.steps[0],
             src,
             dst,
             width,
-            plan.from,
-            plan.to,
-            plan.pq_anchor_scale,
+            from,
+            to,
+            scale,
             &mut scratch.hdr,
         );
         return;
@@ -2124,11 +2447,19 @@ pub(crate) fn convert_row_buffered(
 
     for (i, step) in plan.steps.iter().enumerate() {
         let is_last = i == num_steps - 1;
-        let next_desc = if is_last {
-            plan.to
-        } else {
-            intermediate_desc(current_desc, step)
-        };
+        let (step_from, next_desc, scale) =
+            plan.execution.as_ref().map(|e| e[i]).unwrap_or_else(|| {
+                (
+                    current_desc,
+                    if is_last {
+                        plan.to
+                    } else {
+                        intermediate_desc(current_desc, step)
+                    },
+                    plan.pq_anchor_scale,
+                )
+            });
+        current_desc = step_from;
 
         let next_len = (width as usize) * next_desc.bytes_per_pixel();
         let curr_len = (width as usize) * current_desc.bytes_per_pixel();
@@ -2146,7 +2477,7 @@ pub(crate) fn convert_row_buffered(
                     width,
                     current_desc,
                     next_desc,
-                    plan.pq_anchor_scale,
+                    scale,
                     &mut *hdr,
                 );
             } else {
@@ -2157,7 +2488,7 @@ pub(crate) fn convert_row_buffered(
                     width,
                     current_desc,
                     next_desc,
-                    plan.pq_anchor_scale,
+                    scale,
                     &mut *hdr,
                 );
             }
@@ -2171,7 +2502,7 @@ pub(crate) fn convert_row_buffered(
                     width,
                     current_desc,
                     next_desc,
-                    plan.pq_anchor_scale,
+                    scale,
                     &mut *hdr,
                 );
             } else {
@@ -2182,7 +2513,7 @@ pub(crate) fn convert_row_buffered(
                     width,
                     current_desc,
                     next_desc,
-                    plan.pq_anchor_scale,
+                    scale,
                     &mut *hdr,
                 );
             }
@@ -2276,7 +2607,7 @@ fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
 
 /// Compute the descriptor after applying one step.
 fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescriptor {
-    match step {
+    let mut next = match step {
         ConvertStep::Identity => current,
         ConvertStep::SwizzleBgraRgba => {
             let new_layout = match current.layout() {
@@ -2327,6 +2658,12 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             None,
             current.transfer(),
         ),
+        ConvertStep::RgbaToGrayAlpha { .. } => PixelDescriptor::new(
+            current.channel_type(),
+            ChannelLayout::GrayAlpha,
+            current.alpha(),
+            current.transfer(),
+        ),
         ConvertStep::GrayAlphaToRgba => PixelDescriptor::new(
             current.channel_type(),
             ChannelLayout::Rgba,
@@ -2367,14 +2704,18 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.alpha(),
             TransferFunction::Linear,
         ),
-        ConvertStep::LinearF32ToSrgbU8 | ConvertStep::NaiveF32ToU8 | ConvertStep::U16ToU8 => {
-            PixelDescriptor::new(
-                ChannelType::U8,
-                current.layout(),
-                current.alpha(),
-                TransferFunction::Srgb,
-            )
-        }
+        ConvertStep::NaiveF32ToU8 | ConvertStep::U16ToU8 => PixelDescriptor::new(
+            ChannelType::U8,
+            current.layout(),
+            current.alpha(),
+            current.transfer(),
+        ),
+        ConvertStep::LinearF32ToSrgbU8 => PixelDescriptor::new(
+            ChannelType::U8,
+            current.layout(),
+            current.alpha(),
+            TransferFunction::Srgb,
+        ),
         ConvertStep::SdrU16ToU8 { to } => {
             PixelDescriptor::new(ChannelType::U8, current.layout(), current.alpha(), *to)
         }
@@ -2516,7 +2857,10 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
         ConvertStep::ToneMapBt2446A { .. } => current,
         #[cfg(feature = "hdr-experimental")]
         ConvertStep::SoftCompressOklch { .. } => current,
-    }
+    };
+    next.primaries = current.primaries;
+    next.signal_range = current.signal_range;
+    next
 }
 
 #[path = "convert_kernels.rs"]
@@ -2662,6 +3006,34 @@ mod hdr_plan_tests {
                     diff,
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod composition_anchor_contract {
+    use super::*;
+    #[test]
+    fn unequal_pq_anchors_are_not_cancelled_and_each_stage_keeps_its_units() {
+        let linear = PixelDescriptor::RGBF32_LINEAR;
+        let pq = linear.with_transfer(TransferFunction::Pq);
+        let a = ConvertPlan::new(linear, pq)
+            .unwrap()
+            .with_pq_anchor(zenpixels::hdr::DiffuseWhite::new(100.));
+        let b = ConvertPlan::new(pq, linear)
+            .unwrap()
+            .with_pq_anchor(zenpixels::hdr::DiffuseWhite::new(200.));
+        let composed = a.compose(&b).unwrap();
+        let input = [1f32; 3];
+        let mut output = [0f32; 3];
+        convert_row(
+            &composed,
+            bytemuck::cast_slice(&input),
+            bytemuck::cast_slice_mut(&mut output),
+            1,
+        );
+        for value in output {
+            assert!((value - 0.5).abs() < 0.001, "{value}");
         }
     }
 }

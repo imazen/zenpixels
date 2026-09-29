@@ -129,7 +129,7 @@ fn rgb_to_gray_same_tf_is_one_step() {
 fn rgba_to_gray_same_tf_is_one_step() {
     let src = rgba_u8(TransferFunction::Srgb);
     let dst = gray_u8(TransferFunction::Srgb);
-    let opts = ConvertOptions::permissive();
+    let opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
     let pixel = [200u8, 100, 50, 255];
     let (_, trace) = run_and_trace(src, dst, opts, &pixel, 1, 1);
     assert_eq!(trace, vec!["RgbaToGray"], "got {trace:?}");

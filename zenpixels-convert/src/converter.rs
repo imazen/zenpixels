@@ -32,6 +32,7 @@ use whereat::{At, ResultAtExt};
 pub struct RowConverter {
     plan: ConvertPlan,
     scratch: ConvertScratch,
+    prepared_width: Option<u32>,
     /// External CMS transform that bypasses the plan entirely.
     /// Set by `new_explicit_with_cms` when a plugin accepts the conversion.
     external: Option<ExternalTransform>,
@@ -51,48 +52,118 @@ enum ExternalTransform {
     /// `pluggable_cms_owned_path_survives_clone` test for the regression
     /// gate that caught the drop.
     #[cfg(feature = "std")]
-    Owned(alloc::sync::Arc<std::sync::Mutex<dyn crate::cms::RowTransformMut>>),
-    /// no_std fallback — keep the historical drop-on-clone semantics
-    /// since `std::sync::Mutex` isn't available without `std` and
-    /// `RowTransformMut::transform_row(&mut self)` can't be shared
-    /// behind a bare `Arc` (no interior mutability).
+    Owned(alloc::sync::Arc<std::sync::Mutex<Box<dyn crate::cms::RowTransformMut>>>),
+    /// A prepared worker owns its state without locking or cross-worker sharing.
+    Independent(IndependentWorker),
+    Alpha(Box<AlphaPipeline>),
+}
+
+// Alpha is associated in the source encoding, never inside an ICC transform.
+// Floating point intermediates avoid an extra integer quantization at each stage.
+struct AlphaPipeline {
+    before: RowConverter,
+    color: RowConverter,
+    after: RowConverter,
+    source: alloc::vec::Vec<f32>,
+    target: alloc::vec::Vec<f32>,
+}
+impl AlphaPipeline {
+    fn reserve(&mut self, width: u32) -> Result<(), At<ConvertError>> {
+        for (buffer, desc) in [
+            (&mut self.source, self.before.to_descriptor()),
+            (&mut self.target, self.after.from_descriptor()),
+        ] {
+            let len = (width as usize)
+                .checked_mul(desc.bytes_per_pixel() / 4)
+                .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
+            if len > buffer.len() {
+                buffer
+                    .try_reserve(len - buffer.len())
+                    .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
+                buffer.resize(len, 0.0);
+            }
+        }
+        Ok(())
+    }
+    fn prepare(&mut self, width: u32) -> Result<(), At<ConvertError>> {
+        self.reserve(width)?;
+        self.before.prepare(width)?;
+        self.color.prepare(width)?;
+        self.after.prepare(width)
+    }
+    fn convert(&mut self, src: &[u8], dst: &mut [u8], width: u32) -> Result<(), At<ConvertError>> {
+        self.reserve(width)?;
+        let source = bytemuck::cast_slice_mut(&mut self.source);
+        let target = bytemuck::cast_slice_mut(&mut self.target);
+        self.before.try_convert_row(src, source, width)?;
+        self.color.try_convert_row(source, target, width)?;
+        self.after.try_convert_row(target, dst, width)
+    }
+    fn try_clone(&self) -> Result<Self, At<ConvertError>> {
+        Ok(Self {
+            before: self.before.try_clone()?,
+            color: self.color.try_clone()?,
+            after: self.after.try_clone()?,
+            source: alloc::vec::Vec::new(),
+            target: alloc::vec::Vec::new(),
+        })
+    }
+}
+
+// Keep the published std Sync auto-trait without any execution-time locking.
+// A Mutex<T> can expose T through get_mut when the owner has exclusive access.
+// No reference to this private container is shared and it is never locked.
+struct IndependentWorker {
+    #[cfg(feature = "std")]
+    inner: std::sync::Mutex<Box<dyn crate::cms::RowTransformMut>>,
     #[cfg(not(feature = "std"))]
-    Owned(Box<dyn crate::cms::RowTransformMut>),
+    inner: Box<dyn crate::cms::RowTransformMut>,
+}
+impl IndependentWorker {
+    fn new(worker: Box<dyn crate::cms::RowTransformMut>) -> Self {
+        Self {
+            #[cfg(feature = "std")]
+            inner: std::sync::Mutex::new(worker),
+            #[cfg(not(feature = "std"))]
+            inner: worker,
+        }
+    }
+    fn get_mut(&mut self) -> &mut dyn crate::cms::RowTransformMut {
+        #[cfg(feature = "std")]
+        {
+            self.inner
+                .get_mut()
+                .expect("private worker is never locked")
+                .as_mut()
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            self.inner.as_mut()
+        }
+    }
 }
 
 /// Wrap a freshly-built `Box<dyn RowTransformMut>` into the
 /// `ExternalTransform::Owned` carrier — `Arc<Mutex<_>>` when std is on
-/// (share-on-clone), bare `Box` when not (drop-on-clone).
+/// (share-on-clone), independent `Box` when not (clone refuses).
 #[inline]
 fn owned_external(t: Box<dyn crate::cms::RowTransformMut>) -> ExternalTransform {
     #[cfg(feature = "std")]
     {
-        // We can't directly `Mutex::new(*t)` into a sized field because
-        // the inner type is `dyn`. Wrap the box in a sized newtype that
-        // also impls the trait; the unsize coercion at the `Arc<Mutex<_>>
-        // -> Arc<Mutex<dyn _>>` cast then carries the vtable.
-        struct BoxedMut(Box<dyn crate::cms::RowTransformMut>);
-        impl crate::cms::RowTransformMut for BoxedMut {
-            #[inline]
-            fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
-                self.0.transform_row(src, dst, width);
-            }
-        }
-        let sized: alloc::sync::Arc<std::sync::Mutex<BoxedMut>> =
-            alloc::sync::Arc::new(std::sync::Mutex::new(BoxedMut(t)));
-        // Explicit unsize-coercion to the dyn-typed Arc.
-        let unsized_arc: alloc::sync::Arc<std::sync::Mutex<dyn crate::cms::RowTransformMut>> =
-            sized;
-        ExternalTransform::Owned(unsized_arc)
+        ExternalTransform::Owned(alloc::sync::Arc::new(std::sync::Mutex::new(t)))
     }
     #[cfg(not(feature = "std"))]
     {
-        ExternalTransform::Owned(t)
+        ExternalTransform::Independent(IndependentWorker::new(t))
     }
 }
 
 impl RowConverter {
     /// Create a converter from `from` to `to`.
+    ///
+    /// Alpha removal is unconditional, preserving the legacy constructor's
+    /// behavior. Use `new_explicit` for policy control and `adapt::check_opaque`
+    /// for an explicit opacity preflight.
     ///
     /// Cross-profile conversions (different primaries or transfer) go
     /// through the default CMS dispatch chain — see
@@ -100,7 +171,13 @@ impl RowConverter {
     /// Returns `Err` if no conversion path exists between the formats.
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
-        Self::new_explicit_with_cms(from, to, &crate::policy::ConvertOptions::permissive(), None)
+        Self::new_explicit_with_cms(
+            from,
+            to,
+            &crate::policy::ConvertOptions::permissive()
+                .with_alpha_policy(crate::policy::AlphaPolicy::DiscardUnchecked),
+            None,
+        )
     }
 
     /// Create a converter with explicit policy options.
@@ -142,7 +219,20 @@ impl RowConverter {
 
         // Check before CMS setup: its profile/format interface cannot express
         // the missing narrow-range depth scaling either.
-        crate::convert::validate_signal_range(from, to)?;
+        crate::convert::validate_descriptors(from, to)?;
+        if crate::convert::is_hdr_to_sdr(from.transfer(), to.transfer()) {
+            return Err(whereat::at!(ConvertError::HdrSourceRequiresPeak {
+                from,
+                to
+            }));
+        }
+
+        if from.has_alpha()
+            && !to.has_alpha()
+            && options.alpha_policy == AlphaPolicy::DiscardIfOpaque
+        {
+            return Err(whereat::at!(ConvertError::AlphaCheckRequired));
+        }
 
         // CMS dispatch chain. Fires when:
         //   - primaries differ (cross-gamut RGB↔RGB, where ZenCmsLite or
@@ -168,7 +258,12 @@ impl RowConverter {
         //     different output — surface the failure instead.
         let primaries_differ = from.primaries != to.primaries;
         let needs_cms_dispatch = crate::convert::needs_cms_for_color_model(&from, &to);
-        if primaries_differ || needs_cms_dispatch {
+        if (primaries_differ || needs_cms_dispatch)
+            && from.alpha() != Some(crate::AlphaMode::Premultiplied)
+            && to.alpha() != Some(crate::AlphaMode::Premultiplied)
+            && from.alpha() != Some(crate::AlphaMode::Undefined)
+            && to.alpha() != Some(crate::AlphaMode::Undefined)
+        {
             let src_src = from.color_profile_source();
             let dst_src = to.color_profile_source();
             let src_fmt = from.pixel_format();
@@ -214,8 +309,7 @@ impl RowConverter {
             // At<_> trace frames carry through to At<ConvertError> instead of
             // being dropped by a fresh `at!` frame.
             let plugin_err = |e: whereat::At<crate::cms::CmsPluginError>| {
-                let msg = alloc::format!("{e}");
-                e.map_error(|_| ConvertError::CmsError(msg))
+                e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
             };
 
             let mut external: Option<ExternalTransform> = None;
@@ -236,7 +330,7 @@ impl RowConverter {
 
             if let Some(external) = external {
                 // Policy checks still apply.
-                let drops_alpha = from.alpha().is_some() && to.alpha().is_none();
+                let drops_alpha = from.has_alpha() && !to.has_alpha();
                 if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
                     return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
                 }
@@ -259,6 +353,7 @@ impl RowConverter {
                 return Ok(Self {
                     plan: ConvertPlan::identity(from, to),
                     scratch: ConvertScratch::new(),
+                    prepared_width: None,
                     external: Some(external),
                 });
             }
@@ -269,8 +364,131 @@ impl RowConverter {
         Ok(Self {
             plan,
             scratch: ConvertScratch::new(),
+            prepared_width: None,
             external: None,
         })
+    }
+
+    /// Build from actual current/target profiles, including opaque ICC bytes.
+    pub(crate) fn new_with_sources(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        source: crate::ColorProfileSource<'_>,
+        target: crate::ColorProfileSource<'_>,
+        options: &crate::policy::ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
+        let from = source
+            .resolve()
+            .map(|(p, t)| from.with_primaries(p).with_transfer(t))
+            .unwrap_or(from);
+        let to = target
+            .resolve()
+            .map(|(p, t)| to.with_primaries(p).with_transfer(t))
+            .unwrap_or(to);
+        crate::convert::validate_descriptors(from, to)?;
+        if crate::convert::is_hdr_to_sdr(from.transfer(), to.transfer()) {
+            return Err(whereat::at!(ConvertError::HdrSourceRequiresPeak {
+                from,
+                to
+            }));
+        }
+        // Plugins accept PixelFormat, which cannot express association or range.
+        if (from.alpha() == Some(crate::AlphaMode::Undefined) && to.has_alpha())
+            || (to.alpha() == Some(crate::AlphaMode::Undefined) && from.has_alpha())
+            || from.signal_range != crate::SignalRange::Full
+            || to.signal_range != crate::SignalRange::Full
+        {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        if from.has_alpha() && !to.has_alpha() {
+            match options.alpha_policy {
+                crate::AlphaPolicy::DiscardUnchecked => {}
+                crate::AlphaPolicy::DiscardIfOpaque => {
+                    return Err(whereat::at!(ConvertError::AlphaCheckRequired));
+                }
+                _ => return Err(whereat::at!(ConvertError::AlphaRemovalForbidden)),
+            }
+        }
+        if from.alpha() == Some(crate::AlphaMode::Premultiplied)
+            || to.alpha() == Some(crate::AlphaMode::Premultiplied)
+        {
+            let straight_float =
+                |desc: PixelDescriptor| -> Result<PixelDescriptor, At<ConvertError>> {
+                    let format = match desc.layout() {
+                        ChannelLayout::Rgb => crate::PixelFormat::RgbF32,
+                        ChannelLayout::Rgba | ChannelLayout::Bgra => crate::PixelFormat::RgbaF32,
+                        ChannelLayout::Gray => crate::PixelFormat::GrayF32,
+                        ChannelLayout::GrayAlpha => crate::PixelFormat::GrayAF32,
+                        _ => return Err(whereat::at!(ConvertError::NoPath { from, to })),
+                    };
+                    Ok(format
+                        .descriptor()
+                        .with_primaries(desc.primaries)
+                        .with_transfer(desc.transfer()))
+                };
+            let straight_from = straight_float(from)?;
+            let straight_to = straight_float(to)?;
+            let pipeline = AlphaPipeline {
+                before: Self::new_explicit(from, straight_from, options)?,
+                color: Self::new_with_sources(
+                    straight_from,
+                    straight_to,
+                    source,
+                    target,
+                    options,
+                    cms,
+                )?,
+                after: Self::new_explicit(straight_to, to, options)?,
+                source: alloc::vec::Vec::new(),
+                target: alloc::vec::Vec::new(),
+            };
+            return Ok(Self {
+                plan: ConvertPlan::identity(from, to),
+                scratch: ConvertScratch::new(),
+                prepared_width: None,
+                external: Some(ExternalTransform::Alpha(Box::new(pipeline))),
+            });
+        }
+        for plugin in cms.into_iter().chain(core::iter::once(
+            &crate::cms_lite::ZenCmsLite as &dyn crate::cms::PluggableCms,
+        )) {
+            let map_error = |e: At<crate::cms::CmsPluginError>| {
+                e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
+            };
+            let external = if let Some(result) = plugin.build_shared_source_transform(
+                source.clone(),
+                target.clone(),
+                from.pixel_format(),
+                to.pixel_format(),
+                options,
+            ) {
+                Some(ExternalTransform::Shared(result.map_err(map_error)?))
+            } else if let Some(result) = plugin.build_source_transform(
+                source.clone(),
+                target.clone(),
+                from.pixel_format(),
+                to.pixel_format(),
+                options,
+            ) {
+                Some(owned_external(result.map_err(map_error)?))
+            } else {
+                None
+            };
+            if let Some(external) = external {
+                return Ok(Self {
+                    plan: ConvertPlan::identity(from, to),
+                    scratch: ConvertScratch::new(),
+                    prepared_width: None,
+                    external: Some(external),
+                });
+            }
+        }
+        // An unresolved ICC must never fall through to descriptor-only work.
+        if source.resolve().is_none() || target.resolve().is_none() {
+            return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
+        }
+        Self::new_explicit(from, to, options)
     }
 
     /// Create a converter from a pre-computed plan.
@@ -278,6 +496,7 @@ impl RowConverter {
         Self {
             plan,
             scratch: ConvertScratch::new(),
+            prepared_width: None,
             external: None,
         }
     }
@@ -291,23 +510,144 @@ impl RowConverter {
     /// allocation after the first call at a given width.
     #[inline]
     pub fn convert_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
-        match &mut self.external {
-            Some(ExternalTransform::Shared(arc)) => arc.transform_row(src, dst, width),
-            #[cfg(feature = "std")]
-            Some(ExternalTransform::Owned(arc)) => {
-                // poisoned-lock recovery: a panic in `transform_row` is
-                // CMS-implementation territory — the transform is the lock's
-                // only user. We re-lock through the poison rather than panic
-                // here so the converter remains usable; the underlying state
-                // is whatever the plugin left it in, which is the plugin's
-                // contract to handle.
-                let mut guard = arc.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                guard.transform_row(src, dst, width);
+        self.try_convert_row(src, dst, width)
+            .expect("row conversion failed");
+    }
+
+    /// Allocate scratch and initialize selected LUTs/backend state up front.
+    /// Subsequent execution refuses widths exceeding this capacity. Built-in
+    /// kernels allocate no scratch/LUTs while executing within capacity.
+    /// Stateful CMS clones that share a worker are refused: construct each
+    /// worker independently, then prepare it.
+    pub fn prepare(&mut self, max_width: u32) -> Result<(), At<ConvertError>> {
+        #[cfg(feature = "std")]
+        if let Some(ExternalTransform::Owned(arc)) = &self.external {
+            if alloc::sync::Arc::strong_count(arc) != 1 {
+                return Err(whereat::at!(ConvertError::CmsError(
+                    "prepare requires an independent CMS worker; build a converter per worker"
+                        .into()
+                )));
             }
-            #[cfg(not(feature = "std"))]
-            Some(ExternalTransform::Owned(b)) => b.transform_row(src, dst, width),
-            None => convert_row_buffered(&self.plan, src, dst, width, &mut self.scratch),
+            if let Some(ExternalTransform::Owned(arc)) = self.external.take() {
+                let mutex = alloc::sync::Arc::try_unwrap(arc)
+                    .unwrap_or_else(|_| unreachable!("unique owned worker"));
+                let (worker, poisoned) = match mutex.into_inner() {
+                    Ok(worker) => (worker, false),
+                    Err(error) => (error.into_inner(), true),
+                };
+                self.external = Some(ExternalTransform::Independent(IndependentWorker::new(
+                    worker,
+                )));
+                if poisoned {
+                    return Err(whereat::at!(ConvertError::CmsError(
+                        "CMS worker was poisoned".into()
+                    )));
+                }
+            }
         }
+        let map_error = |e: At<crate::cms::CmsPluginError>| {
+            e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
+        };
+        match &mut self.external {
+            Some(ExternalTransform::Shared(t)) => t.prepare(max_width).map_err(map_error)?,
+            Some(ExternalTransform::Independent(t)) => {
+                t.get_mut().prepare(max_width).map_err(map_error)?
+            }
+            #[cfg(feature = "std")]
+            Some(ExternalTransform::Owned(_)) => unreachable!("moved to independent worker above"),
+            Some(ExternalTransform::Alpha(p)) => p.prepare(max_width)?,
+            None => self.scratch.prepare(&self.plan, max_width)?,
+        }
+        self.prepared_width = Some(max_width);
+        Ok(())
+    }
+
+    /// Validate row capacity, extents and sample alignment, then execute.
+    /// Checks are constant-time and happen before destination writes. Backend
+    /// failures may leave partial output; backend errors are propagated.
+    pub fn try_convert_row(
+        &mut self,
+        src: &[u8],
+        dst: &mut [u8],
+        width: u32,
+    ) -> Result<(), At<ConvertError>> {
+        if self.prepared_width.is_some_and(|capacity| width > capacity) {
+            return Err(whereat::at!(ConvertError::InvalidWidth(width)));
+        }
+        let extent = |desc: PixelDescriptor,
+                      len: usize,
+                      ptr: *const u8|
+         -> Result<usize, At<ConvertError>> {
+            let expected = (width as usize)
+                .checked_mul(desc.bytes_per_pixel())
+                .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
+            if len < expected {
+                return Err(whereat::at!(ConvertError::BufferSize {
+                    expected,
+                    actual: len
+                }));
+            }
+            if expected > 0 && !(ptr as usize).is_multiple_of(desc.min_alignment()) {
+                return Err(whereat::at!(ConvertError::Buffer(
+                    zenpixels::BufferError::AlignmentViolation
+                )));
+            }
+            Ok(expected)
+        };
+        let slen = extent(self.plan.from(), src.len(), src.as_ptr())?;
+        let dlen = extent(self.plan.to(), dst.len(), dst.as_ptr())?;
+        if width == 0 {
+            return Ok(());
+        }
+        let src = &src[..slen];
+        let dst = &mut dst[..dlen];
+        let result = match &mut self.external {
+            Some(ExternalTransform::Alpha(p)) => return p.convert(src, dst, width),
+            Some(ExternalTransform::Shared(t)) => t.try_transform_row(src, dst, width),
+            #[cfg(feature = "std")]
+            Some(ExternalTransform::Owned(t)) => t
+                .lock()
+                .map_err(|_| {
+                    whereat::at!(ConvertError::CmsError("CMS worker was poisoned".into()))
+                })?
+                .try_transform_row(src, dst, width),
+            Some(ExternalTransform::Independent(t)) => {
+                t.get_mut().try_transform_row(src, dst, width)
+            }
+            None => {
+                convert_row_buffered(&self.plan, src, dst, width, &mut self.scratch);
+                return Ok(());
+            }
+        };
+        result.map_err(|e| {
+            e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
+        })
+    }
+
+    /// Fallible clone. Shared transforms and legacy std mutex workers may be
+    /// shared; an independently owned stateful worker cannot be duplicated.
+    /// Construct another converter from the backend to obtain a parallel worker.
+    pub fn try_clone(&self) -> Result<Self, At<ConvertError>> {
+        let external = match &self.external {
+            Some(ExternalTransform::Alpha(p)) => {
+                Some(ExternalTransform::Alpha(Box::new(p.try_clone()?)))
+            }
+            Some(ExternalTransform::Shared(t)) => Some(ExternalTransform::Shared(t.clone())),
+            #[cfg(feature = "std")]
+            Some(ExternalTransform::Owned(t)) => Some(ExternalTransform::Owned(t.clone())),
+            Some(ExternalTransform::Independent(_)) => {
+                return Err(whereat::at!(ConvertError::CmsError(
+                    "stateful worker cannot be cloned; construct another converter".into()
+                )));
+            }
+            None => None,
+        };
+        Ok(Self {
+            plan: self.plan.clone(),
+            scratch: ConvertScratch::new(),
+            prepared_width: None,
+            external,
+        })
     }
 
     /// Convert multiple rows from a strided source buffer to a strided destination.
@@ -323,6 +663,39 @@ impl RowConverter {
         width: u32,
         rows: u32,
     ) -> Result<(), At<ConvertError>> {
+        if width == 0 || rows == 0 {
+            return Ok(());
+        }
+        for (len, stride, desc, ptr) in [
+            (src.len(), src_stride, self.from_descriptor(), src.as_ptr()),
+            (dst.len(), dst_stride, self.to_descriptor(), dst.as_ptr()),
+        ] {
+            let row_bytes = (width as usize)
+                .checked_mul(desc.bytes_per_pixel())
+                .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
+            if stride < row_bytes {
+                return Err(whereat::at!(ConvertError::Buffer(
+                    zenpixels::BufferError::StrideTooSmall
+                )));
+            }
+            let expected = (rows as usize - 1)
+                .checked_mul(stride)
+                .and_then(|v| v.checked_add(row_bytes))
+                .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
+            if expected > len {
+                return Err(whereat::at!(ConvertError::BufferSize {
+                    expected,
+                    actual: len
+                }));
+            }
+            if !(ptr as usize).is_multiple_of(desc.min_alignment())
+                || (rows > 1 && !stride.is_multiple_of(desc.min_alignment()))
+            {
+                return Err(whereat::at!(ConvertError::Buffer(
+                    zenpixels::BufferError::AlignmentViolation
+                )));
+            }
+        }
         for y in 0..rows {
             let src_start = y as usize * src_stride;
             let src_end = src_start + (width as usize * self.plan.from().bytes_per_pixel());
@@ -336,11 +709,11 @@ impl RowConverter {
                 }));
             }
 
-            self.convert_row(
+            self.try_convert_row(
                 &src[src_start..src_end],
                 &mut dst[dst_start..dst_end],
                 width,
-            );
+            )?;
         }
         Ok(())
     }
@@ -384,6 +757,17 @@ impl RowConverter {
         self.plan.compose(&other.plan).map(Self::from_plan)
     }
 
+    /// Compose with intentional intermediate quantization and stage semantics.
+    /// External CMS transforms still require separate converter executions.
+    pub fn compose_preserving(&self, other: &Self) -> Option<Self> {
+        if self.external.is_some() || other.external.is_some() {
+            return None;
+        }
+        self.plan
+            .compose_preserving(&other.plan)
+            .map(Self::from_plan)
+    }
+
     /// Access the underlying conversion plan.
     pub fn plan(&self) -> &ConvertPlan {
         &self.plan
@@ -391,29 +775,11 @@ impl RowConverter {
 }
 
 impl Clone for RowConverter {
+    /// Panics if a stateful worker cannot be cloned. Prefer `try_clone`.
+    /// Never silently discards a transform, including in no_std builds.
     fn clone(&self) -> Self {
-        // Both Shared and Owned external transforms now clone cheaply
-        // via `Arc::clone` — the Shared path shares a `&self`
-        // RowTransform, the Owned path shares an `Arc<Mutex<dyn
-        // RowTransformMut>>` so the same backing impl serializes its
-        // `&mut self` transforms across clones. No silent drop.
-        let external = match &self.external {
-            Some(ExternalTransform::Shared(arc)) => {
-                Some(ExternalTransform::Shared(alloc::sync::Arc::clone(arc)))
-            }
-            #[cfg(feature = "std")]
-            Some(ExternalTransform::Owned(arc)) => {
-                Some(ExternalTransform::Owned(alloc::sync::Arc::clone(arc)))
-            }
-            #[cfg(not(feature = "std"))]
-            Some(ExternalTransform::Owned(_)) => None,
-            None => None,
-        };
-        Self {
-            plan: self.plan.clone(),
-            scratch: ConvertScratch::new(),
-            external,
-        }
+        self.try_clone()
+            .expect("RowConverter clone requires a cloneable worker")
     }
 }
 
@@ -970,7 +1336,10 @@ mod tests {
             .expect("HLG → sRGB without peak must refuse");
             assert!(
                 matches!(*err.error(), ConvertError::HdrSourceRequiresPeak { .. })
-                    || matches!(*err.error(), ConvertError::CmsError(_)),
+                    || matches!(
+                        *err.error(),
+                        ConvertError::CmsError(_) | ConvertError::CmsBackend(_)
+                    ),
                 "expected HdrSourceRequiresPeak or CmsError, got {:?}",
                 err.error()
             );
@@ -1019,8 +1388,7 @@ mod tests {
     #[test]
     #[cfg(feature = "hdr-experimental")]
     fn hdr_u16_to_sdr_u8_hlg_requires_peak() {
-        // Same as the PQ case — HLG → sRGB now refuses without a peak. The
-        // HDR-aware path accepts one and produces a valid SDR pixel.
+        // HLG needs both peak information and an explicit display mapping.
         let hlg_u16 = PixelDescriptor::new(
             ChannelType::U16,
             ChannelLayout::Rgb,
@@ -1034,19 +1402,11 @@ mod tests {
             .clone();
         assert!(matches!(err, ConvertError::HdrSourceRequiresPeak { .. }));
 
-        let plan = ConvertPlan::new_with_hdr_peak(hlg_u16, PixelDescriptor::RGB8_SRGB, 1000.0)
-            .expect("HDR-aware plan should build");
-        let mut conv = RowConverter::from_plan(plan);
-        let src16: [u16; 3] = [32768, 32768, 32768];
-        let src: &[u8] = bytemuck::cast_slice(&src16);
-        let mut dst = [0u8; 3];
-        conv.convert_row(src, &mut dst, 1);
-        assert!(dst[0] > 0 && dst[0] < 255);
+        assert!(
+            ConvertPlan::new_with_hdr_peak(hlg_u16, PixelDescriptor::RGB8_SRGB, 1000.0).is_err(),
+            "a peak alone does not provide HLG's display OOTF"
+        );
     }
-
-    // -----------------------------------------------------------------------
-    // Alpha premultiplication
-    // -----------------------------------------------------------------------
 
     #[test]
     fn straight_to_premul_u8() {
@@ -2036,5 +2396,82 @@ mod tests {
             "expected NeedsCms variant, got: {:?}",
             err.error(),
         );
+    }
+}
+
+#[cfg(test)]
+mod alpha_pipeline_contracts {
+    use super::*;
+    use crate::{
+        AlphaMode, ColorProfileSource, PixelDescriptor, PixelFormat,
+        cms::{CmsPluginError, PluggableCms, RowTransform},
+    };
+    use alloc::sync::Arc;
+    struct Copy;
+    impl RowTransform for Copy {
+        fn transform_row(&self, src: &[u8], dst: &mut [u8], _: u32) {
+            dst.copy_from_slice(src);
+        }
+        fn prepare(&self, _: u32) -> Result<(), At<CmsPluginError>> {
+            Ok(())
+        }
+    }
+    struct Cms;
+    impl PluggableCms for Cms {
+        fn build_source_transform(
+            &self,
+            _: ColorProfileSource<'_>,
+            _: ColorProfileSource<'_>,
+            _: PixelFormat,
+            _: PixelFormat,
+            _: &crate::ConvertOptions,
+        ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, At<CmsPluginError>>> {
+            None
+        }
+        fn build_shared_source_transform(
+            &self,
+            _: ColorProfileSource<'_>,
+            _: ColorProfileSource<'_>,
+            from: PixelFormat,
+            to: PixelFormat,
+            _: &crate::ConvertOptions,
+        ) -> Option<Result<Arc<dyn RowTransform>, At<CmsPluginError>>> {
+            assert_eq!(from, PixelFormat::RgbaF32);
+            assert_eq!(to, PixelFormat::RgbaF32);
+            Some(Ok(Arc::new(Copy)))
+        }
+    }
+    #[test]
+    fn prepared_icc_alpha_is_float_rowwise_and_allocates_nothing() {
+        let from = PixelDescriptor::RGBA8_SRGB.with_alpha(Some(AlphaMode::Premultiplied));
+        let to = PixelDescriptor::RGBA8_SRGB;
+        let mut converter = RowConverter::new_with_sources(
+            from,
+            to,
+            ColorProfileSource::Icc(crate::icc_profiles::ADOBE_RGB),
+            ColorProfileSource::Icc(crate::icc_profiles::ADOBE_RGB),
+            &crate::ConvertOptions::permissive(),
+            Some(&Cms),
+        )
+        .unwrap();
+        converter.prepare(2).unwrap();
+        let mut output = [0; 8];
+        let allocations = allocation_counter::measure(|| {
+            converter
+                .try_convert_row(&[64, 32, 16, 128, 0, 0, 0, 0], &mut output, 2)
+                .unwrap();
+            converter.try_convert_row(&[], &mut [], 0).unwrap();
+        });
+        assert_eq!(allocations.count_total, 0);
+        assert_eq!(output, [128, 64, 32, 128, 0, 0, 0, 0]);
+        let before = output;
+        assert!(converter.try_convert_row(&[0; 12], &mut output, 3).is_err());
+        assert_eq!(before, output);
+        let mut clone = converter.try_clone().unwrap();
+        clone.prepare(2).unwrap();
+        clone
+            .try_convert_row(&[64, 32, 16, 128], &mut output, 1)
+            .unwrap();
+        assert_eq!(&output[..4], &[128, 64, 32, 128]);
     }
 }

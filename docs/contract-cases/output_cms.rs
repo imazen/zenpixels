@@ -8,7 +8,7 @@ mod tests {
     use zenpixels_convert::{RowConverter, finalize_for_output_with, output::OutputProfile};
 
     #[test]
-    fn same_as_origin_can_mistag_current_pixels() {
+    fn same_as_origin_converts_current_pixels() {
         let b = PixelBuffer::from_vec(vec![200, 50, 10], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
         let origin = ColorOrigin::from_cicp(Cicp::DISPLAY_P3);
         let r = finalize_for_output_with(
@@ -20,12 +20,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r.metadata().cicp, Some(Cicp::DISPLAY_P3));
-        assert_eq!(r.pixels().descriptor().primaries, ColorPrimaries::Bt709);
-        assert_eq!(r.pixels().row(0), [200, 50, 10]);
+        assert_eq!(r.pixels().descriptor().primaries, ColorPrimaries::DisplayP3);
+        assert_ne!(r.pixels().row(0), [200, 50, 10]);
     }
 
     #[test]
-    fn output_identity_relabels_premultiplied_as_straight() {
+    fn output_unassociates_premultiplied_alpha() {
         let d = PixelDescriptor::RGBA8_SRGB.with_alpha(Some(AlphaMode::Premultiplied));
         let b = PixelBuffer::from_vec(vec![64, 32, 16, 128], 1, 1, d).unwrap();
         let r = finalize_for_output_with(
@@ -37,24 +37,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r.pixels().descriptor().alpha(), Some(AlphaMode::Straight));
-        assert_eq!(r.pixels().row(0), [64, 32, 16, 128]);
+        assert_eq!(r.pixels().row(0), [128, 64, 32, 128]);
     }
     #[test]
-    fn output_ignores_cicp_signal_range() {
+    fn output_refuses_unimplemented_range_change() {
         let b =
             PixelBuffer::from_vec(vec![255, 255, 255], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
         let narrow = Cicp::new(1, 13, 0, false);
-        let r = finalize_for_output_with(
-            &b,
-            &ColorOrigin::assumed(),
-            OutputProfile::Named(narrow),
-            PixelFormat::Rgb8,
-            None,
-        )
-        .unwrap();
-        assert_eq!(r.metadata().cicp, Some(narrow));
-        assert_eq!(r.pixels().descriptor().signal_range, SignalRange::Full);
-        assert_eq!(r.pixels().row(0), [255, 255, 255]);
+        assert!(finalize_for_output_with(
+            &b, &ColorOrigin::assumed(), OutputProfile::Named(narrow),
+            PixelFormat::Rgb8, None).is_err());
     }
     struct Fill;
     impl RowTransformMut for Fill {
@@ -81,7 +73,7 @@ mod tests {
         }
     }
     #[test]
-    fn output_cms_does_not_receive_icc() {
+    fn output_cms_receives_actual_icc() {
         let cms = Spy::default();
         let icc: std::sync::Arc<[u8]> = zenpixels_convert::icc_profiles::DISPLAY_P3_V4.into();
         let b = PixelBuffer::from_vec(vec![200, 50, 10], 1, 1, PixelDescriptor::RGB8_SRGB)
@@ -90,12 +82,12 @@ mod tests {
         let r = finalize_for_output_with(
             &b,
             &ColorOrigin::from_icc(icc.clone()),
-            OutputProfile::Icc(icc),
+            OutputProfile::Icc(zenpixels_convert::icc_profiles::DISPLAY_P3_V2.into()),
             PixelFormat::Rgb8,
             Some(&cms),
         )
         .unwrap();
-        assert_eq!(*cms.0.lock().unwrap(), vec![(false, false)]);
+        assert_eq!(*cms.0.lock().unwrap(), vec![(true, true)]);
         assert_eq!(r.pixels().row(0), [42, 42, 42]);
     }
     fn custom_converter() -> RowConverter {
@@ -118,18 +110,15 @@ mod tests {
     }
     #[cfg(not(feature = "std"))]
     #[test]
-    fn no_std_clone_discards_external_transform() {
+    fn no_std_clone_refuses_to_discard_external_transform() {
         let mut a = custom_converter();
-        let mut c = a.clone();
+        assert!(a.try_clone().is_err());
         let mut direct = [0; 3];
-        let mut cloned = [0; 3];
         a.convert_row(&[1, 2, 3], &mut direct, 1);
-        c.convert_row(&[1, 2, 3], &mut cloned, 1);
         assert_eq!(direct, [42, 42, 42]);
-        assert_eq!(cloned, [1, 2, 3]);
     }
     #[test]
-    fn reinterpret_accepts_invalid_alignment() {
+    fn reinterpret_rejects_invalid_alignment() {
         let data = [0u8; 8];
         let offset = (0..4)
             .find(|&i| (data.as_ptr() as usize + i) % 4 != 0)
@@ -138,15 +127,13 @@ mod tests {
         let s = PixelSlice::new(bytes, 1, 1, 4, PixelDescriptor::RGBA8_SRGB).unwrap();
         let f = PixelFormat::GrayF32.descriptor();
         assert!(PixelSlice::new(bytes, 1, 1, 4, f).is_err());
-        assert!(s.reinterpret(f).is_ok());
+        assert!(s.reinterpret(f).is_err());
     }
     #[test]
-    fn typed_reinterpret_retains_wrong_type() {
+    fn typed_reinterpret_rejects_wrong_type() {
         let mut data = [1u8, 2, 3, 4];
         let s = PixelSliceMut::<rgb::RGBA<u8>>::new_typed(&mut data, 1, 1, 1).unwrap();
-        let s: PixelSliceMut<'_, rgb::RGBA<u8>> =
-            s.reinterpret(PixelDescriptor::BGRA8_SRGB).unwrap();
-        assert_eq!(s.descriptor().pixel_format(), PixelFormat::Bgra8);
+        assert!(s.reinterpret(PixelDescriptor::BGRA8_SRGB).is_err());
     }
     #[test]
     fn layout_helper_preserves_color_and_alpha() {

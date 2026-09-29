@@ -15,7 +15,8 @@
 //!   target from a codec's supported formats for a given source descriptor.
 //!
 //! - **Row conversion**: [`RowConverter`] pre-computes a conversion plan and
-//!   converts rows with no per-row allocation, using SIMD where available.
+//!   `prepare` moves scratch/table setup out of the row loop; `try_convert_row`
+//!   executes within that capacity, using SIMD where available.
 //!
 //! - **Codec helpers**: [`adapt::adapt_for_encode_cow`] negotiates format and converts
 //!   pixel data in one call, returning [`PixelCow::Borrowed`] when the input
@@ -50,13 +51,13 @@
 //!
 //! 4. **Pixels and metadata travel together.** [`ColorContext`] rides on
 //!    [`PixelBuffer`] via `Arc` so ICC/CICP metadata follows pixel data
-//!    through the pipeline. [`finalize_for_output`] couples converted pixels
+//!    through the pipeline. [`finalize_for_output_with`] couples converted pixels
 //!    with matching encoder metadata atomically.
 //!
-//! 5. **Provenance enables lossless round-trips.** The cost model tracks
-//!    where data came from ([`Provenance`]). A JPEG u8 decoded to f32 for
-//!    resize reports zero loss when converting back to u8, because the
-//!    origin precision was u8 all along.
+//! 5. **Provenance informs negotiation, not exactness.** Origin precision is
+//!    a cost-model hint. Edits can create new values; use
+//!    [`ConvertPlan::new_preserving_samples`] for a metadata-proven exact path
+//!    or an explicitly requested content analysis.
 //!
 //! ## The pixel lifecycle
 //!
@@ -86,8 +87,10 @@
 //!
 //! // Extract color metadata for CMS integration
 //! let color_ctx = match (icc_chunk, cicp_chunk) {
-//!     (Some(icc), Some(cicp)) =>
-//!         Some(Arc::new(ColorContext::from_icc_and_cicp(icc, cicp))),
+//!     // This decoder's container gives ICC precedence. Containers with
+//!     // CICP precedence select from_cicp here instead.
+//!     (Some(icc), Some(_)) =>
+//!         Some(Arc::new(ColorContext::from_icc(icc))),
 //!     (Some(icc), None) =>
 //!         Some(Arc::new(ColorContext::from_icc(icc))),
 //!     (None, Some(cicp)) =>
@@ -182,8 +185,8 @@
 //! - Track provenance when data has been widened. If you decoded a JPEG (u8)
 //!   into f32 for processing, tell the cost model via
 //!   `Provenance::with_origin_depth(ChannelType::U8)`. Otherwise it will
-//!   penalize the f32→u8 conversion as lossy when it's actually a lossless
-//!   round-trip.
+//!   rank depth reduction differently. This is a heuristic: after edits,
+//!   narrowing may lose new values regardless of the original depth.
 //!
 //! - If an operation genuinely expands the data's gamut (e.g., saturation
 //!   boost in BT.2020 that pushes colors outside sRGB), call
@@ -196,20 +199,21 @@
 //! Once a target format is chosen, convert pixel data row-by-row.
 //!
 //! ```rust,ignore
-//! let converter = RowConverter::new(source_desc, target_desc)?;
+//! let mut converter = RowConverter::new(source_desc, target_desc)?;
+//! converter.prepare(width)?;
 //! for y in 0..height {
-//!     converter.convert_row(src_row, dst_row, width);
+//!     converter.try_convert_row(src_row, dst_row, width)?;
 //! }
 //! ```
 //!
 //! Or use the convenience function that combines negotiation and conversion:
 //!
 //! ```rust,ignore
-//! let adapted = adapt_for_encode(
+//! let adapted = adapt::adapt_for_encode_cow(
 //!     raw_bytes, descriptor, width, rows, stride,
 //!     &encoder_supported,
 //! )?;
-//! // adapted.data is Cow::Borrowed if no conversion needed
+//! // adapted is PixelCow::Borrowed on equivalent interpretation.
 //! ```
 //!
 //! **Rules for conversion:**
@@ -217,10 +221,10 @@
 //! - Use [`RowConverter`], not hand-rolled conversion. It handles transfer
 //!   functions, gamut matrices, alpha mode changes, depth scaling, Oklab,
 //!   and byte swizzle correctly. It pre-computes the plan so there is
-//!   zero per-row overhead.
+//!   checked row boundaries and no scratch/table allocation within prepared capacity.
 //!
 //! - For policy-sensitive conversions (when you need to control what lossy
-//!   operations are allowed), use [`adapt_for_encode_explicit`] with
+//!   operations are allowed), use [`adapt::adapt_for_encode_explicit_cow`] with
 //!   [`ConvertOptions`]. This validates policies *before* doing work and
 //!   returns specific errors like [`ConvertError::AlphaNotOpaque`] or
 //!   [`ConvertError::DepthReductionForbidden`].
@@ -229,7 +233,7 @@
 //!   (a) Direct SIMD kernels for common pairs (byte swizzle, depth shift,
 //!   transfer LUTs).
 //!   (b) Composed multi-step plans for less common pairs.
-//!   (c) Hub path through linear sRGB f32 as a universal fallback.
+//!   Unsupported routes fail during setup; there is no universal fallback.
 //!
 //! - **Signal range never converts — it refuses.** There are no
 //!   Narrow↔Full (limited↔full / studio↔full swing) conversion kernels, so
@@ -247,15 +251,15 @@
 //! The encoder receives pixel data in a format it natively supports and
 //! must embed correct color metadata.
 //!
-//! For the atomic path (recommended), use [`finalize_for_output`]:
+//! For the atomic path (recommended), use [`finalize_for_output_with`]:
 //!
 //! ```rust,ignore
-//! let ready = finalize_for_output(
+//! let ready = finalize_for_output_with(
 //!     &buffer,
 //!     &color_origin,
 //!     OutputProfile::SameAsOrigin,
 //!     target_format,
-//!     &cms,
+//!     Some(&cms),
 //! )?;
 //!
 //! // Pixels and metadata are guaranteed to match
@@ -277,7 +281,7 @@
 //!   so negotiation will route f32 data directly to the encoder instead of
 //!   doing a redundant f32→u8 conversion first.
 //!
-//! - Use [`finalize_for_output`] to bundle pixels and metadata atomically.
+//! - Use [`finalize_for_output_with`] to bundle pixels and metadata atomically.
 //!   This prevents the most common color management bug: pixel values that
 //!   don't match the embedded ICC/CICP.
 //!
@@ -292,7 +296,7 @@
 //!   - [`OutputProfile::Named`]: Use a well-known CICP profile (sRGB, P3,
 //!     BT.2020). Uses hardcoded gamut matrices, no CMS needed.
 //!   - [`OutputProfile::Icc`]: Use specific ICC profile bytes. Requires a
-//!     [`ColorManagement`] implementation.
+//!     [`PluggableCms`] implementation.
 //!
 //! ## Format registry
 //!
@@ -342,13 +346,13 @@
 //!
 //! Named profile conversions (sRGB ↔ Display P3 ↔ BT.2020) use hardcoded
 //! 3×3 gamut matrices and need no CMS backend. ICC-to-ICC transforms
-//! require a [`ColorManagement`] implementation, which is a compile-time
-//! feature (e.g., `cms-moxcms`, `cms-lcms2`).
+//! require a [`PluggableCms`] implementation, which is a compile-time
+//! feature (e.g., `cms-moxcms`) or a caller-supplied plugin.
 //!
 //! Codecs that handle ICC profiles must:
 //! 1. Extract ICC bytes on decode and store them on [`ColorContext`].
 //! 2. Record provenance on [`ColorOrigin`].
-//! 3. On encode, let [`finalize_for_output`] handle the ICC transform
+//! 3. On encode, let [`finalize_for_output_with`] handle the ICC transform
 //!    (if the target profile differs from the source) or pass-through
 //!    (if `SameAsOrigin`).
 //!
@@ -366,7 +370,7 @@
 //! - [`ConvertError::DepthReductionForbidden`] — `Forbid` policy prevents
 //!   narrowing (e.g., f32→u8).
 //! - [`ConvertError::AllocationFailed`] — buffer allocation failed (OOM).
-//! - [`ConvertError::CmsError`] — CMS transform failed (invalid ICC profile,
+//! - [`ConvertError::CmsBackend`] — CMS transform failed (invalid ICC profile,
 //!   unsupported color space, etc.).
 //!
 //! Codecs should match on specific variants and return actionable errors
@@ -377,9 +381,9 @@
 //! - [ ] Declare `CodecFormats` with correct `effective_bits` and `can_overshoot`
 //! - [ ] Decode: extract ICC + CICP → [`ColorContext`]
 //! - [ ] Decode: record provenance → [`ColorOrigin`]
-//! - [ ] Encode: negotiate via [`best_match`] or [`adapt::adapt_for_encode`]
+//! - [ ] Encode: negotiate via [`best_match`] or [`adapt::adapt_for_encode_cow`]
 //! - [ ] Encode: convert via [`RowConverter`] (not hand-rolled)
-//! - [ ] Encode: embed metadata via [`finalize_for_output`]
+//! - [ ] Encode: embed metadata via [`finalize_for_output_with`]
 //! - [ ] Encode: embed ICC/CICP when the format supports it
 //! - [ ] Handle [`ConvertError`] variants specifically
 //! - [ ] Test round-trip: native format → encode → decode = lossless
@@ -413,12 +417,9 @@ pub mod error;
 /// `peak_memory_bytes_max`, and its `ImageCharacteristics` tracks
 /// `frame_count`, none of which exist here). A `decode → convert → encode`
 /// pipeline bridging the two currently has to map fields by hand.
-#[cfg_attr(
-    not(feature = "estimation-experimental"),
-    deprecated(
-        since = "0.2.17",
-        note = "enable estimation-experimental; this feature will be required for the estimation API in 0.3.1"
-    )
+#[deprecated(
+    since = "0.2.17",
+    note = "estimation is retired; it will be removed in 0.3.1, including with estimation-experimental enabled"
 )]
 pub mod estimate;
 #[allow(deprecated)] // Preserve the old root imports and their downstream warnings.
@@ -515,7 +516,9 @@ pub use convert::HdrConfig;
 #[allow(deprecated)] // Compatibility export; the definition carries the warning.
 pub use convert::requires_cms;
 pub use convert::{ConvertPlan, convert_row};
+#[doc(inline)]
 pub use converter::RowConverter;
+#[doc(inline)]
 pub use error::ConvertError;
 pub use negotiate::{
     ConversionCost, ConvertIntent, FormatOption, Provenance, best_match, best_match_with,
@@ -532,6 +535,7 @@ pub use pipeline::{
 pub use ext::PixelBufferConvertTypedExt;
 #[cfg(feature = "hdr-experimental")]
 pub use ext::PixelBufferHdrConvertExt;
+#[doc(inline)]
 pub use ext::{ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
 
 // Re-export gamut conversion utilities.
@@ -558,9 +562,7 @@ pub use hdr::exposure_tonemap;
 // consumer or the §3.2 PixelBuffer-level surface lands — see hdr.rs.)
 pub use hdr::quantize_to;
 #[allow(deprecated)]
-pub use hdr::{
-    ContentLightLevel, HdrMetadata, MasteringDisplay, reinhard_inverse, reinhard_tonemap,
-};
+pub use hdr::{HdrMetadata, reinhard_inverse, reinhard_tonemap};
 
 // Re-export CMS traits, enums, and implementations.
 #[allow(deprecated)]

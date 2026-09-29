@@ -40,7 +40,7 @@ let plan = float_to_u8.compose(&u8_to_float);
 // Reuse one caller-owned intermediate row; no whole-image allocation required.
 float_to_u8.convert_row(src, intermediate_u8_row, width);
 u8_to_float.convert_row(intermediate_u8_row, dst, width);
-// A future composition option must preserve the same boundary semantics.
+// Implemented: a.compose_preserving(&b) retains those boundary semantics.
 ```
 
 The earlier wanted `assert_eq!(composed, separately_quantized)` is not universally
@@ -93,55 +93,55 @@ color transform.
 | Wanted item | Implementation status | Cost/risk | Implementation or policy |
 |---|---|---|---|
 | Minimum final-row extent | Done | O(1) span bounds; no extra pass | Already fixed with adoption |
-| Zero-width/empty rows | Partial | Small row-access branch; no sample scan | Early empty return; avoid arithmetic/casts on nonexistent pixels |
+| Zero-width/empty rows | Done for reviewed contract | Small row-access branch; no sample scan | Early empty return; avoid arithmetic/casts on nonexistent pixels |
 | Gamut containment | Done | Constant-size lookup/math | Fix predicate; no image gamut scan |
 | CICP padding/alpha semantics | Done | O(1) metadata selection | Preserve format default alpha |
-| Named/CICP resolution agreement | Pending | O(1) signaling normalization | Preserve matrix/range meaning; don't silently treat YCbCr tags as RGB |
-| Contradictory descriptors | Pending | O(1) acceptance checks | At construction/planning; not per row/pixel |
+| Named/CICP resolution agreement | Done for reviewed contract | O(1) signaling normalization | Preserve matrix/range meaning; don't silently treat YCbCr tags as RGB |
+| Contradictory descriptors | Done for reviewed contract | O(1) acceptance checks | At construction/planning; not per row/pixel |
 | Orientation context retention | Done | One context ownership retain per result | No image pass; preserve already-performed orientation |
 | Known-transfer adapter guard | Done | O(1) guard; previously skipped requested conversion now executes | No added prepass; true identity continues to borrow |
-| Quantization composition | Partial | Can add lossy intermediate passes and scratch | Default optimizes final output; explicit stages preserve intermediate results |
-| RGBA→GrayAlpha | Pending | Actual luminance computation, no false identity | Prefer one existing/fused row kernel; refuse unsupported route at setup |
+| Quantization composition | Done for reviewed contract | Can add lossy intermediate passes and scratch | Default optimizes final output; explicit stages preserve intermediate results |
+| RGBA→GrayAlpha | Done for reviewed contract | Actual luminance computation, no false identity | Prefer one existing/fused row kernel; refuse unsupported route at setup |
 | Scalar Gamma22 | Done | A power-function evaluation replacing wrong identity | Use accurate existing scalar math; no extra image traversal |
 | F16 subnormal rounding | Done | Correct branch/bit arithmetic in existing kernel | No new pass or scratch |
-| DiscardIfOpaque | Pending | Scan or fused check required unless already proven | Owner selected explicit preflight or opt-in fused checks |
-| Composite to gray | Pending | Requested matte arithmetic, possibly current multi-step scratch | Prefer fused matte+luma; don't scan opacity to decide whether to composite |
-| Premultiplied nonlinear transfer | Pending | Unassociate/transfer/reassociate arithmetic where needed | Fuse per-pixel operations where possible; avoid extra full-image passes |
-| Unsupported gamut/layout planning | Pending | O(1) dispatch check | Reject at setup rather than execution panic |
-| CMS cross-depth support | Pending | O(1) capability check, or explicit depth conversion | Refuse unsupported pair; don't silently insert expensive fallback |
-| SameAsOrigin output | Pending | May require a real full image color transform | Explicit output target requests this work; never pretend restoring tags suffices |
-| Output alpha association | Pending | Per-pixel conversion when association differs | Correct identity check, specialized transform; no opacity scan merely to unassociate |
-| Output signal range | Pending | Per-sample range math when range differs | Correct identity check; refuse unavailable route rather than retag |
-| Actual ICC forwarding | Pending | Profile parsing/LUT setup; real transform may replace guessed matrix | Resolve/prepare once, retain profiles/tables, not per row |
+| DiscardIfOpaque | Done for reviewed contract | Scan or fused check required unless already proven | Owner selected explicit preflight or opt-in fused checks |
+| Composite to gray | Done for reviewed contract | Requested matte arithmetic, possibly current multi-step scratch | Prefer fused matte+luma; don't scan opacity to decide whether to composite |
+| Premultiplied nonlinear transfer | Done for reviewed contract | Unassociate/transfer/reassociate arithmetic where needed | Fuse per-pixel operations where possible; avoid extra full-image passes |
+| Unsupported gamut/layout planning | Done for reviewed contract | O(1) dispatch check | Reject at setup rather than execution panic |
+| CMS cross-depth support | Done for reviewed contract | O(1) capability check, or explicit depth conversion | Refuse unsupported pair; don't silently insert expensive fallback |
+| SameAsOrigin output | Done for reviewed contract | May require a real full image color transform | Explicit output target requests this work; never pretend restoring tags suffices |
+| Output alpha association | Done for reviewed contract | Per-pixel conversion when association differs | Correct identity check, specialized transform; no opacity scan merely to unassociate |
+| Output signal range | Done for reviewed contract | Per-sample range math when range differs | Correct identity check; refuse unavailable route rather than retag |
+| Actual ICC forwarding | Done for reviewed contract | Profile parsing/LUT setup; real transform may replace guessed matrix | Resolve/prepare once, retain profiles/tables, not per row |
 | Preserve external CMS during composition | Done | Actual requested backend work and possibly staging scratch | Retain or refuse; never erase work; do not retain unrelated integer quantization by default |
-| Independent CMS workers | Pending | Setup cost per worker; immutable LUTs may share | Avoid mutex serialization; factory/preparation cost visible |
-| Reinterpret sample alignment | Pending | O(1) pointer/stride check | No sample scan |
-| Typed reinterpretation | Pending | O(1) layout/type check plus explicit erasure | No sample scan or runtime type taxonomy |
-| Reorder metadata retention | Partial | O(1) metadata assignment around existing swap loop | No new traversal/Arc clone |
+| Independent CMS workers | Done for reviewed contract | Setup cost per worker; immutable LUTs may share | Avoid mutex serialization; factory/preparation cost visible |
+| Reinterpret sample alignment | Done for reviewed contract | O(1) pointer/stride check | No sample scan |
+| Typed reinterpretation | Done for reviewed contract | O(1) layout/type check plus explicit erasure | No sample scan or runtime type taxonomy |
+| Reorder metadata retention | Done for reviewed swaps | O(1) metadata assignment around existing swap loop | No new traversal/Arc clone |
 | ImgVec stride preservation | Done | Can eliminate current compaction | Move original storage with actual stride; alignment conversion may still copy |
-| Resolve color authority | Pending | O(1) selection plus possible profile validation/parsing | Resolve once per image/plan; unknown/conflict refusal without pixel scans |
-| Prepared width/extent validation | Pending | O(1) per execution call | Row checks outside pixel loop; explicit capacity growth |
-| Fallible CMS row method | Pending | Result branch once per row/call | No per-pixel Result, allocation or backtrace on success |
-| Exact preservation | Pending | Cheap proof/rejection or explicit O(samples) scan | No automatic scan inferred from provenance or heuristic loss |
+| Resolve color authority | Done at conversion/output boundaries | O(1) selection plus possible profile validation/parsing | Resolve once per image/plan; unknown/conflict refusal without pixel scans |
+| Prepared width/extent validation | Done for reviewed contract | O(1) per execution call | Row checks outside pixel loop; explicit capacity growth |
+| Fallible CMS row method | Done for reviewed contract | Result branch once per row/call | No per-pixel Result, allocation or backtrace on success |
+| Exact preservation | Done for reviewed contract | Cheap proof/rejection or explicit O(samples) scan | No automatic scan inferred from provenance or heuristic loss |
 | HDR anchor validation | Done | O(1) finite/positive checks | At parameter construction, already implemented |
-| HDR peak discovery | Pending | O(samples), possibly decoding/linearizing first | Must be explicit measurement or caller-supplied peak; don't hide in generic conversion |
-| Borrowed/consuming identity | Pending | O(1) metadata comparison/ownership | No pixel copies; large ICC equality may cost O(profile bytes), resolve/cache appropriately |
-| Caller-output identity | Pending | Required copy into supplied destination | Document; caller selected independent destination |
-| Strict in-place | Partial | May need preflight, scratch or refusal | No replacement image or hidden rollback buffer; explicit scan policy |
+| HDR peak discovery | Done for reviewed contract | O(samples), possibly decoding/linearizing first | Must be explicit measurement or caller-supplied peak; don't hide in generic conversion |
+| Borrowed/consuming identity | Existing APIs; wrappers deferred | O(1) metadata comparison/ownership | No pixel copies; large ICC equality may cost O(profile bytes), resolve/cache appropriately |
+| Caller-output identity | Existing APIs; wrappers deferred | Required copy into supplied destination | Document; caller selected independent destination |
+| Strict in-place | Done for existing adapter; wider API deferred | May need preflight, scratch or refusal | No replacement image or hidden rollback buffer; explicit scan policy |
 | Parts adoption/error retention | Done | O(1) validation/ownership; error trace allocates only on failure | Implemented; strip image with without_buffer before retaining error |
 | Contiguous export | Done | O(image) moves only if needed | Explicit consuming operation; prefer parts for stride-aware receiver |
-| Typed owned export | Pending | May copy for allocator-layout incompatibility | Preflight alignment/capacity, reuse when legal; never compact then knowingly copy |
-| Streaming source errors | Pending | One Result/EOF check per produced batch | No owned row copy to express errors/lifetimes |
-| CallbackSource scratch | Pending | Reuse one row instead of allocating each time | Check production before append; no invented EOF row |
+| Typed owned export | Done for reviewed contract | May copy for allocator-layout incompatibility | Preflight alignment/capacity, reuse when legal; never compact then knowingly copy |
+| Streaming source errors | Done for reviewed contract | One Result/EOF check per produced batch | No owned row copy to express errors/lifetimes |
+| CallbackSource scratch | Done for reviewed contract | Reuse one row instead of allocating each time | Check production before append; no invented EOF row |
 | Resident row iterator | Deferred | O(1) bookkeeping per row | Optional convenience; no full image buffering |
 | Video plane carrier | Deferred | O(planes) checks, no pixel scan | Deferred; borrow independent storage/strides |
-| Bit-depth sample validation | Pending | O(samples) if actually checking values | Separate explicit scan; metadata checks alone do not validate every sample |
-| YUV→CVVDP RGB | Pending | Real matrix/range/chroma/display conversion and filter halos | Explicit conversion with caller scratch, not hidden carrier coercion |
+| Bit-depth sample validation | Deferred with native video carrier | O(samples) if actually checking values | Separate explicit scan; metadata checks alone do not validate every sample |
+| YUV→CVVDP RGB | Deferred with native video adapters | Real matrix/range/chroma/display conversion and filter halos | Explicit conversion with caller scratch, not hidden carrier coercion |
 | Cosmetic names/trait sealing | Deferred | No runtime benefit | Keep established imports and open traits; optional aliases only with concrete benefit |
-| docs.rs organization | Partial | Build/docs only | No runtime change; keep core dependency boundary |
-| Compile-time cleanup | Pending | Macro/generic expansion costs | Measure; no extra public crates, unsafe POD or type-level policy proliferation by default |
+| docs.rs organization | Done for candidates | Build/docs only | No runtime change; keep core dependency boundary |
+| Compile-time cleanup | Measured; no dependency additions | Macro/generic expansion costs | Measure; no extra public crates, unsafe POD or type-level policy proliferation by default |
 
-Status is audited at `b644ac6`: **Done** only for the listed scope;
+Status updated after PR #75 and the prepared/conversion follow-up: **Done** only for the listed scope;
 **Partial** means related fixes exist but the requested contract is incomplete;
 **Pending** means the requested implementation has not landed; **Deferred**
 means optional or separately scoped work. Policy decisions alone are not
@@ -158,10 +158,10 @@ implementation. See the [complete status ledger](implementation-status-0.2-and-0
   convenience as measuring, or supply explicit known-peak preparation.
 - Rectangular in-place orientation allocates a visited array proportional to
   pixel count. Avoid claiming allocation-free; offer explicit scratch if needed.
-- Legacy free row conversion creates scratch per call; RowConverter can grow
-  scratch lazily. Prepared capacity should remove those hidden allocations.
-- std CMS clones share a mutex-backed executor, serializing use. Independent
-  worker setup may cost more at creation but removes hot-path contention.
+- Legacy free row conversion creates scratch per call; unprepared RowConverter can grow
+  scratch lazily. Explicit prepared capacity now removes those execution allocations.
+- Legacy std CMS clones share a mutex-backed executor. `prepare` requires a uniquely owned
+  worker and uses exclusive `get_mut` without locking; build independent workers before preparation.
 - ImgVec adoption previously compacted but retained the old stride. The current
   fix moves its original storage, preserving geometry and avoiding that pass.
 - Profile setup and synthesized profiles can be expensive even when no image
@@ -181,7 +181,7 @@ kernel under opaque, early-failure and late-failure inputs. Verify no accidental
 second read pass with code inspection and appropriate profiling, not elapsed time
 alone. Include x86 and ARM before universal throughput claims.
 
-No new scan or worker architecture is implemented merely by documenting it here.
+Prepared workers and fused U16 analysis are now implemented and allocation-tested.
 The accompanying code-first review remains the exact-case inventory, with corrected
 quantization policy and implementation statuses updated as work lands.
 

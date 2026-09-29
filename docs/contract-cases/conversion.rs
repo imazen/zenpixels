@@ -42,7 +42,7 @@ mod tests {
         assert_ne!(together, separate);
     }
     #[test]
-    fn rgba_to_grayalpha_is_accepted_as_identity() {
+    fn rgba_to_grayalpha_preserves_alpha() {
         let src = PixelDescriptor::RGBA8_SRGB;
         let dst = PixelDescriptor::new(
             ChannelType::U8,
@@ -53,8 +53,8 @@ mod tests {
         let mut converter = RowConverter::new(src, dst).unwrap();
         let mut out = [0u8; 2];
         converter.convert_row(&[200, 30, 10, 99], &mut out, 1);
-        assert_eq!(out, [200, 30]);
-        assert!(converter.is_identity());
+        assert_eq!(out, [65, 99]);
+        assert!(!converter.is_identity());
     }
     #[test]
     fn gamma22_scalar_matches_adobe_gamma() {
@@ -85,21 +85,14 @@ mod tests {
         );
     }
     #[test]
-    fn opaque_only_policy_not_enforced_by_rowconverter() {
+    fn opaque_only_policy_requires_preflight() {
         let options = policy::ConvertOptions::permissive()
             .with_alpha_policy(policy::AlphaPolicy::DiscardIfOpaque);
-        let mut converter = RowConverter::new_explicit(
-            PixelDescriptor::RGBA8_SRGB,
-            PixelDescriptor::RGB8_SRGB,
-            &options,
-        )
-        .unwrap();
-        let mut out = [0u8; 3];
-        converter.convert_row(&[200, 30, 10, 0], &mut out, 1);
-        assert_eq!(out, [200, 30, 10]);
+        assert!(RowConverter::new_explicit(PixelDescriptor::RGBA8_SRGB,
+            PixelDescriptor::RGB8_SRGB, &options).is_err());
     }
     #[test]
-    fn composite_to_gray_ignores_background() {
+    fn composite_to_gray_includes_background() {
         let options = policy::ConvertOptions::permissive().with_alpha_policy(
             policy::AlphaPolicy::CompositeOnto {
                 r: 255,
@@ -119,12 +112,12 @@ mod tests {
         converter.convert_row(&[0, 0, 0, 0], &mut out, 1);
         assert_eq!(
             out,
-            [0],
-            "transparent black over white should have produced white"
+            [255],
+            "transparent black over white must produce white"
         );
     }
     #[test]
-    fn premul_transfer_changes_values_in_wrong_domain() {
+    fn premul_transfer_unassociates_in_source_domain() {
         let src = PixelDescriptor::RGBAF32_LINEAR
             .with_transfer(TransferFunction::Srgb)
             .with_alpha(Some(AlphaMode::Premultiplied));
@@ -137,11 +130,11 @@ mod tests {
             bytemuck::cast_slice_mut(&mut out),
             1,
         );
-        assert!((out[0] - 0.101752).abs() < 1e-5, "got {}", out[0]);
+        assert!((out[0] - 0.214041).abs() < 1e-5, "got {}", out[0]);
         assert!((TransferFunction::Srgb.linearize(0.5) - 0.214041).abs() < 1e-5);
     }
     #[test]
-    fn adobe_oklab_plan_panics_during_execution() {
+    fn adobe_oklab_plan_refuses_unsupported_primaries() {
         let src = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::AdobeRgb);
         let dst = PixelDescriptor::new(
             ChannelType::F32,
@@ -150,35 +143,14 @@ mod tests {
             TransferFunction::Linear,
         )
         .with_primaries(ColorPrimaries::AdobeRgb);
-        let mut converter = RowConverter::new(src, dst).unwrap();
-        let mut dst = [0f32; 3];
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            converter.convert_row(
-                bytemuck::cast_slice(&[0.5f32; 3]),
-                bytemuck::cast_slice_mut(&mut dst),
-                1,
-            );
-        }));
-        assert!(result.is_err());
+        assert!(RowConverter::new(src, dst).is_err());
     }
     #[cfg(feature = "cms")]
     #[test]
-    fn moxcms_crossdepth_panics_after_successful_build() {
+    fn moxcms_crossdepth_refused_at_planning() {
         let from = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
-        let mut converter = RowConverter::new_explicit_with_cms(
-            from,
-            PixelDescriptor::RGBF32_LINEAR,
-            &policy::ConvertOptions::permissive(),
-            Some(&MoxCms),
-        )
-        .unwrap();
-        let mut dst = [0f32; 3];
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            converter.convert_row(&[128u8; 3], bytemuck::cast_slice_mut(&mut dst), 1);
-        }));
-        assert!(
-            result.is_err(),
-            "cross-depth must not silently write byte output into f32 storage"
-        );
+        assert!(RowConverter::new_explicit_with_cms(
+            from, PixelDescriptor::RGBF32_LINEAR,
+            &policy::ConvertOptions::permissive(), Some(&MoxCms)).is_err());
     }
 }

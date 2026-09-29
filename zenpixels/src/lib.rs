@@ -75,6 +75,7 @@ pub mod orientation;
 )]
 pub mod planar;
 pub mod policy;
+pub mod sample;
 
 pub mod cicp;
 pub mod color;
@@ -90,6 +91,7 @@ pub mod buffer;
 pub use orientation::Orientation;
 
 // Re-export key descriptor types at crate root for ergonomics.
+#[doc(inline)]
 pub use descriptor::{
     AlphaMode, ByteOrder, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, PixelDescriptor,
     PixelFormat, SignalRange, TransferFunction,
@@ -104,6 +106,7 @@ pub use planar::{
 };
 
 // Re-export buffer types at crate root.
+#[doc(inline)]
 pub use buffer::{
     Bgrx, BufferError, FromPartsError, InPlacePixels, Pixel, PixelBuffer, PixelBufferParts,
     PixelCow, PixelSlice, PixelSliceMut, Rgbx,
@@ -111,12 +114,30 @@ pub use buffer::{
 
 // Re-export color types at crate root.
 pub use cicp::Cicp;
+#[doc(inline)]
 pub use color::{
     ColorAuthority, ColorContext, ColorOrigin, ColorProfileSource, ColorProvenance, NamedProfile,
 };
 
 // Re-export HDR metadata types at crate root.
-pub use hdr::{ContentLightLevel, DiffuseWhite, MasteringDisplay};
+/// Compatibility alias; use [`hdr::ContentLightLevel`].
+#[deprecated(
+    since = "0.2.17",
+    note = "use zenpixels::hdr::ContentLightLevel; root HDR aliases are removed in 0.3.1"
+)]
+pub type ContentLightLevel = hdr::ContentLightLevel;
+/// Compatibility alias; use [`hdr::DiffuseWhite`].
+#[deprecated(
+    since = "0.2.17",
+    note = "use zenpixels::hdr::DiffuseWhite; root HDR aliases are removed in 0.3.1"
+)]
+pub type DiffuseWhite = hdr::DiffuseWhite;
+/// Compatibility alias; use [`hdr::MasteringDisplay`].
+#[deprecated(
+    since = "0.2.17",
+    note = "use zenpixels::hdr::MasteringDisplay; root HDR aliases are removed in 0.3.1"
+)]
+pub type MasteringDisplay = hdr::MasteringDisplay;
 
 // Re-export GrayAlpha pixel types at crate root.
 pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};

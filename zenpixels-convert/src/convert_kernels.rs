@@ -38,7 +38,20 @@ pub(super) struct HdrKernelScratch {
     /// gamut-boundary LUT whose construction runs 16 k bisection searches,
     /// so it must not be rebuilt per row. Keyed by the step params.
     #[cfg(feature = "hdr-experimental")]
-    soft_compress: Option<CachedSoftCompress>,
+    soft_compress: alloc::vec::Vec<CachedSoftCompress>,
+}
+
+impl HdrKernelScratch {
+    pub(super) fn prepare(&mut self, _width: u32) -> Result<(), whereat::At<crate::ConvertError>> {
+        #[cfg(feature = "hdr-experimental")]
+        if self.rgb_strip.len() < _width as usize {
+            self.rgb_strip
+                .try_reserve(_width as usize - self.rgb_strip.len())
+                .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
+            self.rgb_strip.resize(_width as usize, [0.; 3]);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(feature = "hdr-experimental")]
@@ -108,6 +121,9 @@ pub(super) fn apply_step_u8(
             rgb_to_gray(src, dst, w, from.channel_type(), *coefficients);
         }
 
+        ConvertStep::RgbaToGrayAlpha { coefficients } => {
+            rgba_to_grayalpha(src, dst, w, from.channel_type(), *coefficients);
+        }
         ConvertStep::RgbaToGray { coefficients } => {
             rgba_to_gray(src, dst, w, from.channel_type(), *coefficients);
         }
@@ -471,26 +487,23 @@ fn soft_compress_oklch_kernel(
     // construction runs 16 k bisection searches, so rebuilding it per row
     // dominated this kernel (and heap-allocated per row, violating the
     // module contract). The cache key is the step params that shape it.
-    let stale = match &scratch.soft_compress {
-        Some(c) => c.primaries != primaries || c.knee_bits != knee.to_bits(),
-        None => true,
-    };
-    if stale {
-        let m1 = crate::oklab::rgb_to_lms_matrix(primaries)
-            .expect("target primaries have a defined LMS matrix");
-        let m1_inv = crate::oklab::lms_to_rgb_matrix(primaries)
-            .expect("target primaries have a defined inverse LMS matrix");
-        scratch.soft_compress = Some(CachedSoftCompress {
-            primaries,
-            knee_bits: knee.to_bits(),
-            compressor: crate::hdr::SoftCompress::from_matrices(&m1, &m1_inv, knee),
-        });
-    }
-    let compressor = &scratch
+    let index = scratch
         .soft_compress
-        .as_ref()
-        .expect("populated above when stale or missing")
-        .compressor;
+        .iter()
+        .position(|c| c.primaries == primaries && c.knee_bits == knee.to_bits())
+        .unwrap_or_else(|| {
+            let m1 = crate::oklab::rgb_to_lms_matrix(primaries)
+                .expect("target primaries have a defined LMS matrix");
+            let m1_inv = crate::oklab::lms_to_rgb_matrix(primaries)
+                .expect("target primaries have a defined inverse LMS matrix");
+            scratch.soft_compress.push(CachedSoftCompress {
+                primaries,
+                knee_bits: knee.to_bits(),
+                compressor: crate::hdr::SoftCompress::from_matrices(&m1, &m1_inv, knee),
+            });
+            scratch.soft_compress.len() - 1
+        });
+    let compressor = &scratch.soft_compress[index].compressor;
 
     let has_alpha = from.layout().has_alpha();
     let channels = if has_alpha { 4 } else { 3 };
@@ -1422,6 +1435,44 @@ fn rgba_to_gray_f16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
         let b = f16_bits_to_f32(src[i * 4 + 2]);
         let y = r * w[0] + g * w[1] + b * w[2];
         dst[i] = f32_to_f16_bits(y);
+    }
+}
+
+/// One row pass: encoded luma plus a byte-exact alpha copy.
+fn rgba_to_grayalpha(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    depth: ChannelType,
+    coefficients: LumaCoefficients,
+) {
+    let weights = coefficients.coefficients();
+    let sample = depth.byte_size();
+    for (s, d) in src[..width * 4 * sample]
+        .chunks_exact(4 * sample)
+        .zip(dst[..width * 2 * sample].chunks_exact_mut(2 * sample))
+    {
+        let read = |i: usize| -> f32 {
+            let b = &s[i * sample..(i + 1) * sample];
+            match depth {
+                ChannelType::U8 => b[0] as f32,
+                ChannelType::U16 => u16::from_ne_bytes(b.try_into().unwrap()) as f32,
+                ChannelType::F16 => f16_bits_to_f32(u16::from_ne_bytes(b.try_into().unwrap())),
+                ChannelType::F32 => f32::from_ne_bytes(b.try_into().unwrap()),
+                _ => unreachable!(),
+            }
+        };
+        let y = read(0) * weights[0] + read(1) * weights[1] + read(2) * weights[2];
+        match depth {
+            ChannelType::U8 => d[0] = (y + 0.5).clamp(0., 255.) as u8,
+            ChannelType::U16 => {
+                d[..2].copy_from_slice(&((y + 0.5).clamp(0., 65535.) as u16).to_ne_bytes())
+            }
+            ChannelType::F16 => d[..2].copy_from_slice(&f32_to_f16_bits(y).to_ne_bytes()),
+            ChannelType::F32 => d[..4].copy_from_slice(&y.to_ne_bytes()),
+            _ => unreachable!(),
+        }
+        d[sample..].copy_from_slice(&s[3 * sample..]);
     }
 }
 

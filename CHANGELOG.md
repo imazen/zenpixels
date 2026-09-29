@@ -1,8 +1,58 @@
+## Release reconciliation — 0.2.17 bridge (2026-09-28)
+
+- Integrate checked native `sample::SampleEncoding` from #76.
+- Finalization attaches matching current color context on identity and converted
+  output; SameAsOrigin lowers original YUV signaling to full-range RGB output.
+- ICC premultiplied conversion uses prepared F32 rows around the CMS, avoiding
+  intermediate integer quantization. CMS paths cannot bypass HDR→SDR peak policy.
+- Add explicit `OutputProfile::normalize_known_icc`, sharing core's normalized
+  hash and recognizing exact bundled fingerprints only. No new dependencies.
+- Estimation always warns, even with `estimation-experimental`; remove it in 0.3.
+- Deprecate root HDR type aliases and core measurement percentile policy; use
+  `zenpixels::hdr` and explicit conversion-crate measurement.
+- Refuse SMPTE 240M TC7 as BT.709; retain unsupported CICP for a capable adapter.
+- Record finalization/release expectations and add a local interactive sample,
+  storage, color-authority and media scenario explorer.
+
 # Changelog
 
 ## [Unreleased]
 
+### Conversion follow-up
+
+- Correct PQ source-peak normalization, honor explicit linear luminance anchors,
+  and retain target luminance after HDR mapping. HLG display mapping refuses
+  until an OOTF is supplied; a peak alone is insufficient.
+- Retain all gamut tables across composed HDR rows after preparation; unassociate
+  premultiplied HDR samples before nonlinear mapping and reassociate afterwards.
+- Reject ambiguous current color signaling; replace stale current metadata after
+  conversion, and retain raw PQ-decoded linear units explicitly.
+- BGRA swaps stay at their U8 endpoints; Oklab remains F32 through model
+  conversion. A 7,744-case format/transfer matrix exercises accepted plans.
+- Initialize real alpha when converting padding formats; enforce alpha-loss
+  policy for RGBX/BGRX targets and reject unproven Opaque declarations.
+- Embedded ICC CICP alone no longer bypasses ICC TRCs/LUTs. Finalization emits
+  only the chosen current/output authority and tags non-sRGB fallback output.
+
+#### Changed (BREAKING, tolerated in 0.2.x)
+
+- `ConvertError` retains original arbitrary CMS backend errors instead of reducing
+  them to strings. Consequently it no longer promises `UnwindSafe` or
+  `RefUnwindSafe`; `Send`, `Sync`, `Clone`, and `PartialEq` remain. This is the
+  sole semver-check failure against post-#75 main, under the documented
+  mechanical auto-trait-loss exception. Primary zenavif/zensim unwind callers
+  already use `AssertUnwindSafe`; no observed caller required those error markers.
+  The ordinary row success path has no added error allocation. `RowConverter`
+  retains its published std `Send + Sync`, including prepared workers.
+
 ### zenpixels — added
+
+- `sample::SampleEncoding` explicitly separates unsigned storage width, current
+  code depth, and low padding bits. Checked constant construction describes
+  native 10/12-bit U16 and shifted words without confusing packing with numerical
+  normalization. It does not change existing RGB/gray U16 descriptors. The
+  `zenmedia` native AV1 mapping is the current consumer; its 48-case lossless
+  corpus covers exact 8/10/12-bit samples, range, chroma layouts and odd sizes.
 
 - `PixelBuffer::into_contiguous()` packs rows in the existing allocation and
   returns the same buffer type, preserving its descriptor and color context.
@@ -30,13 +80,49 @@
 
 ### zenpixels — fixed
 
+- Validate alpha declarations at buffer and conversion acceptance boundaries.
+  Reinterpretation checks destination alignment; typed views require explicit
+  erasure before changing physical layout. Empty views avoid unused offset
+  arithmetic. Typed constructors check stride overflow and preserve alignment.
+- Padded U8 typed exports compact in place and reuse compatible allocations;
+  legacy owned-cow adapters move their storage instead of copying it.
+- Named PQ/HLG RGB profiles emit identity-matrix CICP matching their resolution.
+
 - Preserve ImgVec storage/stride, color semantics through RGB/BGR swaps, and
   format padding semantics through CICP descriptor construction. Empty-width
   crop rows return empty slices. Gamut containment uses actual supported
   containment relationships, not a scalar ranking (including P3 red outside
   BT.2020). Clarify the existing Adobe RGB gamma convention, 563/256.
 
+### zenpixels-convert — added
+
+- `RowConverter::{prepare, try_convert_row, try_clone, compose_preserving}`;
+  `ConvertPlan::{compose_preserving, new_preserving_samples}`; explicit
+  `adapt::check_opaque` preflight. Preparation moves scratch/LUT costs ahead of
+  execution and sets a checked row-width capacity.
+- Additive CMS `prepare` / `try_transform_row` hooks preserve existing trait
+  implementations. Prepared mutable workers own independent state. `CmsBackend`
+  errors preserve the concrete backend error chain, including without std.
+- `convert_to_sdr_measuring_peak` names the extra measurement pass; the ambiguous
+  `convert_to_sdr` spelling is deprecated. `PixelBuffer::into_vec` now warns;
+  use `into_parts().data` for pool reuse or retain the full parts for pixel handoff.
+
 ### zenpixels-convert — fixed
+
+- Correct RGBA→GrayAlpha, matte-to-gray and source-domain unassociation before
+  nonlinear transfer conversion. Preserve per-stage descriptors and PQ anchors
+  through composition; ordinary composition still removes avoidable quantization.
+- Explicit row planning rejects `DiscardIfOpaque` until the caller performs
+  `adapt::check_opaque` and selects `DiscardUnchecked`. Existing whole-image
+  explicit adaptation retains its opacity preflight. Floating opacity rejects
+  NaN/infinity and out-of-range values.
+- Reject missing layout/Oklab matrix routes and unsupported MoxCms cross-depth/F16
+  pairs before execution. HDR→encoded-SDR requires peak policy regardless of features.
+- Finalization converts SameAsOrigin correctly, includes alpha/range in identity,
+  forwards actual ICC profiles, and propagates backend row errors. No_std cloning
+  refuses uncloneable state instead of dropping its transform.
+- Fuse explicit U16 opacity/chroma/replication analysis in a single traversal.
+  The full-range narrowing kernel remains unchanged pending platform measurements.
 
 - Reject narrow-range channel-type changes (including U8↔U16) with
   `ConvertError::NoPath` instead of using incorrect full-range scaling.

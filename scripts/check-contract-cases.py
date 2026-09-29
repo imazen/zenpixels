@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Run current-behavior review evidence, NOT correctness/release acceptance tests.
-
-Most assertions deliberately recognize existing bugs. A failing assertion after
-an implementation fix means its review case should be updated, not the fix undone.
-"""
+"""Run corrected API contract regressions with default/CMS and minimal features."""
 import json
 import os
 from pathlib import Path
@@ -39,7 +35,7 @@ zenpixels = {{ path = {json.dumps(str(root / 'zenpixels'))} }}
         path = root / "docs/contract-cases" / (name + ".rs")
         modules.append(f'#[path = {json.dumps(str(path))}] mod {name};')
     (project / "src/lib.rs").write_text("#![cfg(test)]\n" + "\n".join(modules))
-    env = dict(os.environ, CARGO_TARGET_DIR=str(root / "target/contract-cases"))
+    env = dict(os.environ, CARGO_TARGET_DIR=str(Path(os.environ.get("CARGO_TARGET_DIR", root / "target")) / "contract-cases"))
     for features in ([], ["--no-default-features"]):
         subprocess.run(["cargo", "test", "--offline", "--quiet", *features],
                        cwd=project, env=env, check=True)

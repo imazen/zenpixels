@@ -7,6 +7,13 @@
 > [code-first review](code-review-0.2-and-0.3.md) for executable cases and wanted
 > behavior before approving the remaining guards/contracts.
 
+**Implementation update:** storage validation, checked adoption, typed guards,
+prepared/fallible rows, current-color checks, ICC forwarding, output identity,
+composition policy, explicit HDR measurement and alpha ordering are implemented.
+The [executed bridge contracts](implemented-bridge-contracts.md) supersede the
+provisional spellings below. The remaining output-plan and video carriers remain
+prototypes requiring real adopters, not public APIs promised by this batch.
+
 Reviewed 2026-09-27 against `main@17c78d9` plus the accompanying deprecation
 edits. This annotates the root README, not just its quick start. **The three
 deprecations, estimation opt-in, validation in `DiffuseWhite::new`, and
@@ -61,7 +68,7 @@ let PixelBufferParts {
 // No new pixel allocation, copy, compaction, or Arc clone on extraction.
 ```
 
-`try_from_parts` remains proposed and must return the supplied parts on failure. Keeping a 40–100 MB
+`try_from_parts` now returns the supplied parts on failure. Keeping a 40–100 MB
 allocation is part of the API contract, not an optimization to add later.
 `into_contiguous()` now moves rows within that allocation while retaining the
 buffer and its metadata. It preserves the alignment offset, so packed pixels

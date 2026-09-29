@@ -187,6 +187,10 @@ impl ContentLightLevel {
     /// Explicit callers who want a non-default percentile pass their own
     /// value to `CllMeasure::measure_percentile`.
     #[doc(hidden)]
+    #[deprecated(
+        since = "0.2.17",
+        note = "measurement policy belongs in zenpixels-convert::hdr::measure; use measure_robust or an explicit percentile"
+    )]
     pub const DEFAULT_PERCENTILE: f32 = 0.99999;
 
     /// **Deprecated** — superseded by

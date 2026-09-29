@@ -1,8 +1,7 @@
 //! Resource-estimation primitive for [`ConvertPlan`].
 //!
-//! Enable `estimation-experimental` to opt in. In the 0.2.17 bridge this API
-//! remains available without that feature, with deprecation warnings; the
-//! proposed 0.3.1 release requires the feature with the same signatures.
+//! Deprecated unconditionally in 0.2.17 and removed in 0.3.1.
+//! `estimation-experimental` no longer suppresses migration warnings.
 //!
 //! [`ConvertPlan::estimate`](crate::ConvertPlan::estimate) and
 //! [`ConvertPlan::estimate_in`](crate::ConvertPlan::estimate_in) walk a plan's
@@ -203,7 +202,7 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> f64 {
         ConvertStep::GrayToRgb => bucketed(&[(1, 12.85)], 60.0),
         ConvertStep::GrayToRgba => gib(8.6),
         ConvertStep::RgbToGray { .. } => gib(12.0),
-        ConvertStep::RgbaToGray { .. } => gib(10.0),
+        ConvertStep::RgbaToGray { .. } | ConvertStep::RgbaToGrayAlpha { .. } => gib(10.0),
         ConvertStep::GrayAlphaToRgba => bucketed(&[(2, 95.30), (4, 119.80), (8, 149.72)], 60.0),
         ConvertStep::GrayAlphaToRgb | ConvertStep::GrayAlphaToGray => gib(80.0),
         ConvertStep::GrayToGrayAlpha => gib(100.0),

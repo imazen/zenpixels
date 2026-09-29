@@ -11,21 +11,21 @@
 #   pub modules                                14
 #   pub types (struct/enum/trait/alias)        57
 #   pub consts/statics                         19
-#   free functions                             44
-#   inherent methods                          130
+#   free functions                             45
+#   inherent methods                          150
 #   struct fields                              50
-#   enum variants                              74
-#   re-exports                                  5
-#   trait roster entries (type × trait)        91
-#   auto-trait-complete types                  19
-#   auto-trait exceptions                       2
+#   enum variants                              78
+#   re-exports                                  3
+#   trait roster entries (type × trait)        92
+#   auto-trait-complete types                  18
+#   auto-trait exceptions                       3
 #
 # per-module pub lines:
-#   (root)                          168
-#   adapt                            14
-#   cms                              27
-#   converter                        23
-#   error                            27
+#   (root)                          174
+#   adapt                            15
+#   cms                              31
+#   converter                        31
+#   error                            29
 #   estimate                         47
 #   ext                              13
 #   gamut                             6
@@ -34,14 +34,12 @@
 #   load_bearing                     11
 #   oklab                             9
 #   orient                            3
-#   output                           17
+#   output                           19
 
-## items (358 lines)
+## items (381 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
-pub use ContentLightLevel
-pub use MasteringDisplay
 pub mod adapt
 pub struct adapt::Adapted<'a>
 pub adapt::Adapted::data: alloc::borrow::Cow<'a, [u8]>
@@ -53,6 +51,7 @@ pub fn adapt::adapt_for_encode<'a>(&'a [u8], zenpixels::descriptor::PixelDescrip
 pub fn adapt::adapt_for_encode_cow<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor]) -> core::result::Result<zenpixels::buffer::PixelCow<'a>, whereat::at::At<error::ConvertError>>
 pub fn adapt::adapt_for_encode_with_intent<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], ConvertIntent) -> core::result::Result<adapt::Adapted<'a>, whereat::at::At<error::ConvertError>>
 pub fn adapt::adapt_for_encode_with_intent_cow<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], ConvertIntent) -> core::result::Result<zenpixels::buffer::PixelCow<'a>, whereat::at::At<error::ConvertError>>
+pub fn adapt::check_opaque(zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn adapt::convert_buffer(&[u8], u32, u32, zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<error::ConvertError>>
 pub mod cms
 pub cms::ColorPriority::PreferCicp
@@ -70,10 +69,15 @@ pub fn cms::ColorManagement::build_transform_for_format(&self, &[u8], &[u8], zen
 pub fn cms::ColorManagement::identify_profile(&self, &[u8]) -> core::option::Option<zenpixels::cicp::Cicp>
 pub fn cms::PluggableCms::build_shared_source_transform(&self, zenpixels::color::ColorProfileSource<'_>, zenpixels::color::ColorProfileSource<'_>, zenpixels::descriptor::PixelFormat, zenpixels::descriptor::PixelFormat, &zenpixels::policy::ConvertOptions) -> core::option::Option<core::result::Result<alloc::sync::Arc<dyn cms::RowTransform>, whereat::at::At<cms::CmsPluginError>>>
 pub fn cms::PluggableCms::build_source_transform(&self, zenpixels::color::ColorProfileSource<'_>, zenpixels::color::ColorProfileSource<'_>, zenpixels::descriptor::PixelFormat, zenpixels::descriptor::PixelFormat, &zenpixels::policy::ConvertOptions) -> core::option::Option<core::result::Result<alloc::boxed::Box<dyn cms::RowTransformMut>, whereat::at::At<cms::CmsPluginError>>>
+pub fn cms::RowTransform::prepare(&self, u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
 pub fn cms::RowTransform::transform_row(&self, &[u8], &mut [u8], u32)
+pub fn cms::RowTransform::try_transform_row(&self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
+pub fn cms::RowTransformMut::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
 pub fn cms::RowTransformMut::transform_row(&mut self, &[u8], &mut [u8], u32)
+pub fn cms::RowTransformMut::try_transform_row(&mut self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
 pub mod converter
 pub fn converter::RowConverter::compose(&self, &Self) -> core::option::Option<Self>
+pub fn converter::RowConverter::compose_preserving(&self, &Self) -> core::option::Option<Self>
 pub fn converter::RowConverter::convert_row(&mut self, &[u8], &mut [u8], u32)
 pub fn converter::RowConverter::convert_rows(&mut self, &[u8], usize, &mut [u8], usize, u32, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::from_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
@@ -83,15 +87,20 @@ pub fn converter::RowConverter::new(zenpixels::descriptor::PixelDescriptor, zenp
 pub fn converter::RowConverter::new_explicit(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::new_explicit_with_cms(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::plan(&self) -> &ConvertPlan
+pub fn converter::RowConverter::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::to_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
+pub fn converter::RowConverter::try_clone(&self) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn converter::RowConverter::try_convert_row(&mut self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub mod error
 pub error::ConvertError::AllocationFailed
+pub error::ConvertError::AlphaCheckRequired
 pub error::ConvertError::AlphaNotOpaque
 pub error::ConvertError::AlphaRemovalForbidden
 pub error::ConvertError::Buffer(zenpixels::buffer::BufferError)
 pub error::ConvertError::BufferSize
 pub error::ConvertError::BufferSize::actual: usize
 pub error::ConvertError::BufferSize::expected: usize
+pub error::ConvertError::CmsBackend(alloc::sync::Arc<cms::CmsPluginError>)
 pub error::ConvertError::CmsError(alloc::string::String)
 pub error::ConvertError::DepthReductionForbidden
 pub error::ConvertError::EmptyFormatList
@@ -204,6 +213,7 @@ pub mod output
 pub output::OutputProfile::Icc(alloc::sync::Arc<[u8]>)
 pub output::OutputProfile::Named(zenpixels::cicp::Cicp)
 pub output::OutputProfile::SameAsOrigin
+pub fn output::OutputProfile::normalize_known_icc(self) -> Self
 pub fn output::EncodeReady::into_parts(self) -> (zenpixels::buffer::PixelBuffer, output::OutputMetadata)
 pub fn output::EncodeReady::metadata(&self) -> &output::OutputMetadata
 pub fn output::EncodeReady::pixels(&self) -> zenpixels::buffer::PixelSlice<'_>
@@ -215,12 +225,14 @@ pub ColorPriority::PreferCicp
 pub ColorPriority::PreferIcc
 #[non_exhaustive] pub enum ConvertError [also: error]
 pub ConvertError::AllocationFailed
+pub ConvertError::AlphaCheckRequired
 pub ConvertError::AlphaNotOpaque
 pub ConvertError::AlphaRemovalForbidden
 pub ConvertError::Buffer(zenpixels::buffer::BufferError)
 pub ConvertError::BufferSize
 pub ConvertError::BufferSize::actual: usize
 pub ConvertError::BufferSize::expected: usize
+pub ConvertError::CmsBackend(alloc::sync::Arc<cms::CmsPluginError>)
 pub ConvertError::CmsError(alloc::string::String)
 pub ConvertError::DepthReductionForbidden
 pub ConvertError::EmptyFormatList
@@ -249,6 +261,7 @@ pub ConvertIntent::Perceptual
 pub OutputProfile::Icc(alloc::sync::Arc<[u8]>)
 pub OutputProfile::Named(zenpixels::cicp::Cicp)
 pub OutputProfile::SameAsOrigin
+pub fn output::OutputProfile::normalize_known_icc(self) -> Self
 pub enum RenderingIntent [also: cms]
 pub RenderingIntent::AbsoluteColorimetric
 pub RenderingIntent::Perceptual
@@ -283,12 +296,14 @@ pub const ConversionCost::ZERO: Self
 pub const fn ConversionCost::new(u16, u16) -> Self
 pub struct ConvertPlan
 pub fn ConvertPlan::compose(&self, &Self) -> core::option::Option<Self>
+pub fn ConvertPlan::compose_preserving(&self, &Self) -> core::option::Option<Self>
 pub fn ConvertPlan::estimate(&self, u32, u32) -> estimate::ResourceEstimate
 pub fn ConvertPlan::estimate_in(&self, &estimate::ImageCharacteristics, &estimate::ComputeEnvironment) -> estimate::ResourceEstimate
 pub fn ConvertPlan::from(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn ConvertPlan::is_identity(&self) -> bool
 pub fn ConvertPlan::new(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn ConvertPlan::new_explicit(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn ConvertPlan::new_preserving_samples(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn ConvertPlan::to(&self) -> zenpixels::descriptor::PixelDescriptor
 #[non_exhaustive] pub struct EncodeReady [also: output]
 pub fn output::EncodeReady::into_parts(self) -> (zenpixels::buffer::PixelBuffer, output::OutputMetadata)
@@ -337,6 +352,7 @@ pub fn estimate::ResourceEstimate::wall_ms(&self) -> core::option::Option<u64>
 pub fn estimate::ResourceEstimate::with_intermediate_buffer_count(self, u32) -> Self
 pub struct RowConverter [also: converter]
 pub fn converter::RowConverter::compose(&self, &Self) -> core::option::Option<Self>
+pub fn converter::RowConverter::compose_preserving(&self, &Self) -> core::option::Option<Self>
 pub fn converter::RowConverter::convert_row(&mut self, &[u8], &mut [u8], u32)
 pub fn converter::RowConverter::convert_rows(&mut self, &[u8], usize, &mut [u8], usize, u32, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::from_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
@@ -346,7 +362,10 @@ pub fn converter::RowConverter::new(zenpixels::descriptor::PixelDescriptor, zenp
 pub fn converter::RowConverter::new_explicit(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::new_explicit_with_cms(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::plan(&self) -> &ConvertPlan
+pub fn converter::RowConverter::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::to_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
+pub fn converter::RowConverter::try_clone(&self) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn converter::RowConverter::try_convert_row(&mut self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub trait ColorManagement [also: cms]
 pub type ColorManagement::Error: core::fmt::Debug
 pub fn ColorManagement::build_transform(&self, &[u8], &[u8]) -> core::result::Result<alloc::boxed::Box<dyn cms::RowTransform>, Self::Error>
@@ -371,9 +390,13 @@ pub trait PluggableCms: core::marker::Send + core::marker::Sync [also: cms]
 pub fn PluggableCms::build_shared_source_transform(&self, zenpixels::color::ColorProfileSource<'_>, zenpixels::color::ColorProfileSource<'_>, zenpixels::descriptor::PixelFormat, zenpixels::descriptor::PixelFormat, &zenpixels::policy::ConvertOptions) -> core::option::Option<core::result::Result<alloc::sync::Arc<dyn cms::RowTransform>, whereat::at::At<cms::CmsPluginError>>>
 pub fn PluggableCms::build_source_transform(&self, zenpixels::color::ColorProfileSource<'_>, zenpixels::color::ColorProfileSource<'_>, zenpixels::descriptor::PixelFormat, zenpixels::descriptor::PixelFormat, &zenpixels::policy::ConvertOptions) -> core::option::Option<core::result::Result<alloc::boxed::Box<dyn cms::RowTransformMut>, whereat::at::At<cms::CmsPluginError>>>
 pub trait RowTransform: core::marker::Send + core::marker::Sync [also: cms]
+pub fn RowTransform::prepare(&self, u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
 pub fn RowTransform::transform_row(&self, &[u8], &mut [u8], u32)
+pub fn RowTransform::try_transform_row(&self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
 pub trait RowTransformMut: core::marker::Send [also: cms]
+pub fn RowTransformMut::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
 pub fn RowTransformMut::transform_row(&mut self, &[u8], &mut [u8], u32)
+pub fn RowTransformMut::try_transform_row(&mut self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
 pub trait TransferFunctionExt [also: ext]
 pub fn TransferFunctionExt::delinearize(&self, f32) -> f32
 pub fn TransferFunctionExt::linearize(&self, f32) -> f32
@@ -405,7 +428,7 @@ ConvertPlan: Clone, Debug
 FormatOption: Clone, Copy, Debug, From<zenpixels::descriptor::PixelDescriptor>
 Provenance: Clone, Copy, Debug, Eq, PartialEq
 adapt::Adapted<'a>: Clone, Debug
-cms::CmsPluginError: Debug, Display, Error
+cms::CmsPluginError: Debug, Display, Error, PartialEq
 cms::ColorPriority: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 cms::RenderingIntent: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 converter::RowConverter: Clone
@@ -427,4 +450,5 @@ zenpixels::descriptor::TransferFunction: ext::TransferFunctionExt
 ## auto traits
 
 cms::CmsPluginError: !RefUnwindSafe !UnwindSafe
-converter::RowConverter: !RefUnwindSafe !UnwindSafe
+converter::RowConverter: !Freeze !RefUnwindSafe !UnwindSafe
+error::ConvertError: !RefUnwindSafe !UnwindSafe
