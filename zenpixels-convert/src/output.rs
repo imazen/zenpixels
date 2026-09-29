@@ -37,8 +37,6 @@ use alloc::sync::Arc;
 #[allow(deprecated)]
 use crate::cms::ColorManagement;
 use crate::error::ConvertError;
-#[allow(deprecated)]
-use crate::hdr::HdrMetadata;
 use crate::{
     Cicp, ColorAuthority, ColorOrigin, ColorPrimaries, PixelBuffer, PixelDescriptor, PixelFormat,
     PixelSlice, TransferFunction,
@@ -128,40 +126,11 @@ impl OutputProfile {
 ///   carrier (`zencodec::Metadata`, which already holds all three) instead.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
-// The `hdr` field references the deprecated `HdrMetadata`; suppress the
-// definition-site lint here (external uses still see the field/type
-// deprecation). The field is never wired (see TODO(0.3.0) below).
-#[allow(deprecated)]
 pub struct OutputMetadata {
     /// ICC profile bytes to embed, if any.
     pub icc: Option<Arc<[u8]>>,
     /// CICP code points to embed, if any.
     pub cicp: Option<Cicp>,
-    /// HDR metadata to embed (content light level, mastering display), if any.
-    ///
-    /// **Deprecated and never wired** — `finalize_for_output` always sets it to
-    /// `None`. The bundled [`crate::hdr::HdrMetadata`] carrier is
-    /// being removed at 0.3.0 (it has frozen public fields and bundles
-    /// `transfer`, which the prior art keeps on the descriptor).
-    ///
-    /// **What replaces it: nothing — and that is correct by design, not a
-    /// stub.** Removing this leaves `OutputMetadata { icc, cicp }`, which
-    /// mirrors the *color* plan a codec lowers here (`zencodec::ColorEmitPlan`
-    /// is itself just `{ cicp, icc }`). The HDR content descriptors — content
-    /// light level, mastering display, and the `diffuse_white` /
-    /// `intensity_target` anchor — are **not** color-profile data: they ride
-    /// the codec-boundary metadata carrier instead. `zencodec::Metadata`
-    /// already carries all three as sibling fields (the un-bundled shape this
-    /// `HdrMetadata` bundle should have been), threaded by its metadata policy,
-    /// and the codec embeds them from there. Nothing ever read them off this
-    /// field — `HdrMetadata` had zero consumers across `~/work`, and zencodec
-    /// routed around it from the start. See `CHANGELOG.md`
-    /// "QUEUED BREAKING CHANGES".
-    #[deprecated(
-        since = "0.2.14",
-        note = "unwired bundled HDR carrier; replaced by sibling content_light_level / mastering_display fields when the encoder path that populates them lands (0.3.0)."
-    )]
-    pub hdr: Option<HdrMetadata>,
 }
 
 /// Pixel data bundled with matching metadata, ready for encoding.
@@ -246,7 +215,6 @@ pub fn finalize_for_output<C: ColorManagement>(
             let metadata = OutputMetadata {
                 icc: origin.icc.clone(),
                 cicp: origin.cicp,
-                hdr: None,
             };
             // SameAsOrigin = keep the source color space. No CMS conversion.
             // Pixel format changes (depth, layout) are handled by RowConverter.
@@ -256,7 +224,6 @@ pub fn finalize_for_output<C: ColorManagement>(
             let metadata = OutputMetadata {
                 icc: None,
                 cicp: Some(*cicp),
-                hdr: None,
             };
             (metadata, false)
         }
@@ -264,7 +231,6 @@ pub fn finalize_for_output<C: ColorManagement>(
             let metadata = OutputMetadata {
                 icc: Some(icc.clone()),
                 cicp: None,
-                hdr: None,
             };
             (metadata, true)
         }
@@ -457,12 +423,10 @@ pub fn finalize_for_output_with(
                 _ => Arc::from(*icc),
             }),
             cicp: None,
-            hdr: None,
         },
         crate::ColorProfileSource::Cicp(cicp) => OutputMetadata {
             icc: None,
             cicp: Some(*cicp),
-            hdr: None,
         },
         _ => {
             let (p, t) = target_profile.resolve().ok_or_else(|| {
@@ -475,7 +439,6 @@ pub fn finalize_for_output_with(
                 OutputMetadata {
                     icc: None,
                     cicp: None,
-                    hdr: None,
                 }
             } else if let (Some(p), Some(t)) = (p.to_cicp(), t.to_cicp()) {
                 OutputMetadata {
@@ -486,7 +449,6 @@ pub fn finalize_for_output_with(
                         0,
                         target_desc_full.signal_range == crate::SignalRange::Full,
                     )),
-                    hdr: None,
                 }
             } else {
                 return Err(whereat::at!(ConvertError::NeedsCms {

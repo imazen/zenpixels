@@ -55,9 +55,19 @@ These mandates do not freeze a new multi-plane ownership or video codec API in
 zenpixels. The working prototype lives in the `media/` workspace of the zencodec repository
 (package `zencodec-media`) until its conversions,
 animation, timestamps, I/O and cross-codec behavior have been exercised together.
-The deprecated `planar` module remains available for the 0.2 bridge; migration
-and removal in 0.3 must include zenfilters' public `PlaneMask` consumers.
+The deprecated `planar` module remains available on the 0.2 bridge branch.
+The 0.3 branch removes its API, keeping both feature names as no-ops; zenfilters migrates
+its public channel-access declarations to `zenfilters::access::PlaneMask`.
 
 See the [U16 matrix](u16-contract-matrix.md) for existing normalized RGB/gray
 arithmetic and the [implementation ledger](implementation-status-0.2-and-0.3.md)
 for the broader release work. This change does not complete that entire ledger.
+
+## Transfer-code fidelity
+
+CICP transfer 7 (SMPTE 240M) must remain unresolved by the current built-in
+transfer enum. Its linear segment has slope 4.0, whereas BT.709 and the
+SMPTE 170M alias use 4.5; its breakpoint and nonlinear coefficients also
+differ. Returning `Bt709` silently selected incorrect math. Raw `Cicp` retains
+7 so a supporting CMS/media implementation can interpret it explicitly.
+See [ITU-T H.273 (July 2024), table 3](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-H.273-202407-I%21%21PDF-E&lang=e&type=items).

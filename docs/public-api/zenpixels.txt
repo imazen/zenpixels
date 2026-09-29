@@ -9,10 +9,10 @@
 ## summary
 #
 #   pub modules                                11
-#   pub types (struct/enum/trait/alias)        84
+#   pub types (struct/enum/trait/alias)        81
 #   pub consts/statics                        278
 #   free functions                              4
-#   inherent methods                          254
+#   inherent methods                          250
 #   struct fields                             115
 #   enum variants                             215
 #   re-exports                                  4
@@ -21,10 +21,10 @@
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          405
-#   buffer                          244
+#   (root)                          402
+#   buffer                          242
 #   cicp                             27
-#   color                            64
+#   color                            62
 #   descriptor                      150
 #   hdr                              12
 #   icc                              13
@@ -33,7 +33,7 @@
 #   policy                           25
 #   sample                            5
 
-## items (837 lines)
+## items (830 lines)
 
 pub mod zenpixels
 pub use At
@@ -92,7 +92,6 @@ pub fn buffer::PixelBuffer<P>::has_alpha(&self) -> bool
 pub fn buffer::PixelBuffer<P>::height(&self) -> u32
 pub fn buffer::PixelBuffer<P>::into_contiguous(self) -> Self
 pub fn buffer::PixelBuffer<P>::into_parts(self) -> buffer::PixelBufferParts
-pub fn buffer::PixelBuffer<P>::into_vec(self) -> alloc::vec::Vec<u8>
 pub fn buffer::PixelBuffer<P>::is_grayscale(&self) -> bool
 pub fn buffer::PixelBuffer<P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P>::rows(&self, u32, u32) -> buffer::PixelSlice<'_, P>
@@ -225,7 +224,6 @@ pub color::ColorContext::icc: core::option::Option<alloc::sync::Arc<[u8]>>
 pub fn color::ColorContext::as_profile_source(&self) -> core::option::Option<color::ColorProfileSource<'_>>
 pub fn color::ColorContext::from_cicp(cicp::Cicp) -> Self
 pub fn color::ColorContext::from_icc(impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
-pub fn color::ColorContext::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
 pub fn color::ColorContext::is_srgb(&self) -> bool
 pub fn color::ColorContext::transfer_function(&self) -> descriptor::TransferFunction
 pub fn color::ColorContext::with_cicp(self, cicp::Cicp) -> Self
@@ -671,7 +669,6 @@ pub ColorContext::icc: core::option::Option<alloc::sync::Arc<[u8]>>
 pub fn color::ColorContext::as_profile_source(&self) -> core::option::Option<color::ColorProfileSource<'_>>
 pub fn color::ColorContext::from_cicp(cicp::Cicp) -> Self
 pub fn color::ColorContext::from_icc(impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
-pub fn color::ColorContext::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
 pub fn color::ColorContext::is_srgb(&self) -> bool
 pub fn color::ColorContext::transfer_function(&self) -> descriptor::TransferFunction
 pub fn color::ColorContext::with_cicp(self, cicp::Cicp) -> Self
@@ -739,7 +736,6 @@ pub fn buffer::PixelBuffer<P>::has_alpha(&self) -> bool
 pub fn buffer::PixelBuffer<P>::height(&self) -> u32
 pub fn buffer::PixelBuffer<P>::into_contiguous(self) -> Self
 pub fn buffer::PixelBuffer<P>::into_parts(self) -> buffer::PixelBufferParts
-pub fn buffer::PixelBuffer<P>::into_vec(self) -> alloc::vec::Vec<u8>
 pub fn buffer::PixelBuffer<P>::is_grayscale(&self) -> bool
 pub fn buffer::PixelBuffer<P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P>::rows(&self, u32, u32) -> buffer::PixelSlice<'_, P>
@@ -869,9 +865,6 @@ pub Rgbx::r: u8
 pub Rgbx::x: u8
 pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
-pub type ContentLightLevel = hdr::ContentLightLevel
-pub type DiffuseWhite = hdr::DiffuseWhite
-pub type MasteringDisplay = hdr::MasteringDisplay
 
 ## trait impls (47 types)
 

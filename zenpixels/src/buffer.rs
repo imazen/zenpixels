@@ -2694,15 +2694,6 @@ impl<P> PixelBuffer<P> {
         self.descriptor.is_grayscale()
     }
 
-    /// Consume the buffer and return the backing `Vec<u8>` for pool reuse.
-    #[deprecated(
-        since = "0.2.17",
-        note = "use into_parts().data for pool reuse; keep the parts to retain pixel offset, stride, descriptor and color context"
-    )]
-    pub fn into_vec(self) -> Vec<u8> {
-        self.data
-    }
-
     /// Move out the allocation together with its layout and color metadata.
     ///
     /// Does not allocate, copy or compact pixels, or clone the color context.

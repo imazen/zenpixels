@@ -13,20 +13,20 @@
 #   pub types (struct/enum/trait/alias)        42
 #   pub consts/statics                         12
 #   free functions                             12
-#   inherent methods                           50
+#   inherent methods                           48
 #   struct fields                             108
 #   enum variants                              70
 #   trait roster entries (type × trait)        63
 #   auto-trait-complete types                  16
 #
 # per-module pub lines:
-#   (root)                           90
+#   (root)                           89
 #   cms_moxcms                        5
-#   ext                               9
+#   ext                               8
 #   hdr                              26
 #   pipeline                        170
 
-## items (271 lines)
+## items (269 lines)
 
 pub mod cms_moxcms
 pub struct cms_moxcms::MoxCmsError(pub alloc::string::String)
@@ -37,7 +37,6 @@ pub fn ext::PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::Pi
 pub fn ext::PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_rgba8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>
-pub fn ext::PixelBufferHdrConvertExt::convert_to_sdr(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferHdrConvertExt::convert_to_sdr_measuring_peak(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferHdrConvertExt::convert_to_with_hdr_config(&self, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub mod hdr::measure
@@ -62,7 +61,7 @@ pub fn hdr::SoftCompress::from_matrices(&gamut::GamutMatrix, &gamut::GamutMatrix
 pub fn hdr::SoftCompress::knee(&self) -> f32
 pub fn hdr::SoftCompress::lut(&self) -> &hdr::GamutBoundaryLut
 pub fn hdr::SoftCompress::new(&gamut::GamutMatrix, f32) -> Self
-pub trait hdr::CllMeasure [also: hdr::measure]
+pub trait hdr::CllMeasure: sealed::Sealed [also: hdr::measure]
 pub fn hdr::CllMeasure::measure_max(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
 pub mod pipeline
 pub mod pipeline::op_format
@@ -292,8 +291,7 @@ pub fn PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBu
 pub fn PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
 pub fn PixelBufferConvertTypedExt::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
 pub fn PixelBufferConvertTypedExt::to_rgba8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>
-pub trait PixelBufferHdrConvertExt [also: ext]
-pub fn PixelBufferHdrConvertExt::convert_to_sdr(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub trait PixelBufferHdrConvertExt: sealed::Sealed [also: ext]
 pub fn PixelBufferHdrConvertExt::convert_to_sdr_measuring_peak(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferHdrConvertExt::convert_to_with_hdr_config(&self, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn generate_path_matrix(&[&pipeline::registry::CodecFormats], &[pipeline::op_format::OpCategory], &[&pipeline::registry::CodecFormats], pipeline::path::QualityThreshold) -> alloc::vec::Vec<pipeline::path::PathEntry> [also: pipeline, pipeline::path]

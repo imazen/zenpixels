@@ -134,7 +134,7 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 ## Gamut, HDR, Oklab
 
 - **Gamut matrices** — 3×3 row-major f32 between BT.709, Display P3, BT.2020 via [`conversion_matrix`] / [`GamutMatrix`] and `apply_matrix_*` row kernels. No CMS needed for named-profile conversions.
-- **HDR (`hdr-experimental` feature)** — production HDR→SDR is a native step inside [`ConvertPlan`]: build via [`ConvertPlan::new_with_hdr_peak(from, to, source_peak_nits)`](https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.new_with_hdr_peak) or [`ConvertPlan::new_with_hdr_config(from, to, HdrConfig)`](https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.new_with_hdr_config), then run through the same [`RowConverter`]. The pipeline inserts the ITU-R BT.2446 Method A curve ([`Bt2446A`]) + an OKLch [`SoftCompress`] knee — confirmed best in the 2026-06-22 audited shootout (2-5× lower mean ΔE2000 than channel-independent curves). Source-peak measurement uses [`CllMeasure::measure_max`] (the spec-conformant CTA-861.3 reading, ~2.7 Gpix/s on RGB f32 on a Ryzen 9 7950X / AVX2 — the SOTA spec-conformant CLL reading in the workspace). Plain `ConvertPlan::new` now **refuses** HDR-encoded → SDR-encoded conversions with [`ConvertError::HdrSourceRequiresPeak`] — no more silent saturating routes. Other HDR primitives: [`quantize_to`] (anchor-aware linear→PQ16, reads `DiffuseWhite` from the source's `ColorContext`, BT.2408 default of 203), [`ContentLightLevel`] and [`MasteringDisplay`] metadata. The legacy global Reinhard helpers (`reinhard_tonemap` / `reinhard_inverse` / `exposure_tonemap`) are `#[deprecated]` + `#[doc(hidden)]` since 0.2.15 and queued for removal in 0.3.0.
+- **HDR (`hdr-experimental`)** — explicit `ConvertPlan::new_with_hdr_config` runs BT.2446 Method A tone mapping plus gamut compression with supplied peak/white policy. `convert_to_sdr_measuring_peak` explicitly requests an additional rowwise scan; `hdr::measure::CllMeasure` provides measurements. Plain HDR→SDR conversion refuses missing peak policy. `hdr::quantize_to` converts anchored linear samples to PQ16. Shared metadata types live in `zenpixels::hdr`; core measurement, the old bundle and naive global curves are removed in 0.3.1.
 - **Oklab** — primaries-aware `rgb_to_lms_matrix()` / `lms_to_rgb_matrix()`, scalar `rgb_to_oklab()` / `oklab_to_rgb()`. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
 
 ## CICP / ICC
@@ -200,7 +200,7 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 | `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for the [`rgb`](https://crates.io/crates/rgb) crate's types + typed convenience methods (`to_rgb8()`, `to_rgba8()`, …) |
 | `imgref` | | `ImgRef` / `ImgVec` conversions (implies `rgb`) |
-| `planar` | | Deprecated legacy multi-plane types; video replacement pending |
+| `planar` | | Retained no-op feature; legacy planar API removed |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
 | `hdr-experimental` | | HDR→SDR display mapping (ITU-R BT.2446 Method A curve + OKLch soft compress + CTA-861.3 CLL measurement). API shape may move ahead of 0.3.0 (in particular `measure_robust` → `measure` rename); scan kernels and accuracy contracts are stable. See [HDR section](#gamut-hdr-oklab) above. |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |

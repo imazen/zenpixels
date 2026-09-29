@@ -1,3 +1,18 @@
+## 0.3.1 cleanup — release reconciliation (2026-09-28)
+
+Includes all 0.2.17 behavior fixes and `SampleEncoding`, then removes:
+
+- All estimation APIs and implementation, even with the compatibility feature.
+- Core HDR measurement and its percentile policy; root HDR type aliases.
+- Unwired `OutputMetadata::hdr`, legacy `HdrMetadata`, and naive global
+  Reinhard/exposure helpers. HDR types live under `zenpixels::hdr`.
+- Ambiguous `convert_to_sdr`; use `convert_to_sdr_measuring_peak` or supply a peak.
+- Previously selected planar/packed adaptation/into_vec/requires_cms APIs.
+
+Seal the concrete-type conversion extension traits and `CllMeasure`. Keep
+`Pixel` and CMS plugin traits open. Preserve no-op compatibility feature names.
+See `docs/finalization-release-contract.md` for semantics and release gates.
+
 ## Release reconciliation — 0.2.17 bridge (2026-09-28)
 
 - Integrate checked native `sample::SampleEncoding` from #76.
@@ -16,7 +31,25 @@
 
 # Changelog
 
-## [Unreleased]
+## [0.3.1] — unreleased candidate
+
+Built on the 0.2.17 bridge, with identical migrated signatures and feature names.
+
+- Remove the deprecated legacy `planar` module/re-exports; retain `planar` as a
+  no-op feature. Zenfilters carries its own filter-channel mask.
+- Remove `requires_cms`, `Adapted` and the three packed `adapt_for_encode*`
+  compatibility wrappers; use planning errors and stride-aware `*_cow` adapters.
+- Remove `PixelBuffer::into_vec`; use `into_parts` to retain offset/stride/context.
+- Remove ambiguous `ColorContext::from_icc_and_cicp`; select current authority
+  explicitly. `ColorOrigin` may still retain both original metadata fields.
+- Require `estimation-experimental` for estimation APIs; opted-in signatures
+  stay unchanged. All existing Cargo feature spellings remain accepted.
+- Keep open traits, legacy CMS methods/finalizer and existing conversion imports
+  where migration is not complete. No new trait restrictions or default flips.
+- Both converter versions accept core `>=0.2.17, <0.4.0`; a connected pipeline
+  must resolve one core version. Candidate archives are tested before publishing.
+
+## [0.2.17] — unreleased bridge
 
 ### Conversion follow-up
 

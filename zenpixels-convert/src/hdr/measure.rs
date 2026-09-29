@@ -415,12 +415,12 @@ fn scan_row_max_mean_smoothed<const N: usize>(row: &[f32], method: LightLevelMet
 /// entrypoints. Implemented for `ContentLightLevel` only; users call
 /// these as associated functions just like the (pre-relocation)
 /// inherent impls — `ContentLightLevel::measure_max(px, white,
-/// method)` etc., once `use zenpixels_convert::CllMeasure;` is in
+/// method)` etc., once `use zenpixels_convert::hdr::measure::CllMeasure;` is in
 /// scope.
 ///
 /// MaxFALL is always the arithmetic mean (CTA-861.3 spec-literal),
 /// independent of which entrypoint produces the MaxCLL reading.
-pub trait CllMeasure {
+pub trait CllMeasure: crate::sealed::Sealed {
     /// MaxCLL + MaxFALL measurement for HDR content.
     ///
     /// Spec-conformant CTA-861.3 MaxCLL + MaxFALL — literal max + mean.

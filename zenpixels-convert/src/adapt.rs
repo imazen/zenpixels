@@ -13,8 +13,8 @@
 //! | [`adapt_for_encode_explicit_cow`] | `Fastest` intent | [`ConvertOptions`] | Policy-sensitive encode |
 //! | [`convert_buffer`] | None (caller picks) | Permissive | Direct format→format |
 //!
-//! The corresponding names without `_cow` are deprecated compatibility
-//! wrappers returning the packed [`Adapted`] type published in 0.2.14.
+//! The old packed compatibility wrappers were removed in 0.3.1; use the
+//! stride-aware [`PixelCow`] forms above.
 //!
 //! # Zero-copy fast path
 //!
@@ -38,30 +38,22 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use zenpixels_convert::adapt::adapt_for_encode;
+//! use zenpixels_convert::adapt::adapt_for_encode_cow;
 //!
 //! let supported = &[
 //!     PixelDescriptor::RGB8_SRGB,
 //!     PixelDescriptor::GRAY8_SRGB,
 //! ];
 //!
-//! let adapted = adapt_for_encode(
+//! let adapted = adapt_for_encode_cow(
 //!     raw_bytes, source_desc, width, rows, stride, supported,
 //! )?;
 //!
-//! match &adapted.data {
-//!     Cow::Borrowed(data) => {
-//!         // Fast path: source was already in a supported format.
-//!         encoder.write_direct(data, adapted.descriptor)?;
-//!     }
-//!     Cow::Owned(data) => {
-//!         // Converted: write the new data with the new descriptor.
-//!         encoder.write_converted(data, adapted.descriptor)?;
-//!     }
-//! }
+//! let view = adapted.as_slice();
+//! encoder.write_rows(view)?; // carries stride and descriptor
+
 //! ```
 
-use alloc::borrow::Cow;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -141,67 +133,6 @@ fn checked_byte_alloc(rows: u32, stride: usize) -> Result<usize, At<ConvertError
         .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))
 }
 
-/// Result of format adaptation: the converted data and its descriptor.
-#[deprecated(
-    since = "0.2.15",
-    note = "use PixelCow via adapt_for_encode_cow; this packed compatibility type is retained for 0.2.x callers"
-)]
-#[derive(Clone, Debug)]
-pub struct Adapted<'a> {
-    /// Pixel data — borrowed if no conversion was needed, owned otherwise.
-    pub data: Cow<'a, [u8]>,
-    /// The pixel format of `data`.
-    pub descriptor: PixelDescriptor,
-    /// Width of the pixel data.
-    pub width: u32,
-    /// Number of rows.
-    pub rows: u32,
-}
-
-#[allow(deprecated)]
-impl Adapted<'_> {
-    /// Borrow this compatibility result as a validated packed pixel view.
-    #[deprecated(
-        since = "0.2.17",
-        note = "use a *_cow adapter returning PixelCow, then PixelCow::as_slice"
-    )]
-    pub fn as_pixel_slice(&self) -> Result<PixelSlice<'_>, At<ConvertError>> {
-        let stride = (self.width as usize)
-            .checked_mul(self.descriptor.bytes_per_pixel())
-            .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))?;
-        PixelSlice::new(&self.data, self.width, self.rows, stride, self.descriptor)
-            .map_err(|error| error.map_error(ConvertError::from))
-    }
-}
-
-#[allow(deprecated)]
-fn into_adapted<'a>(pixels: PixelCow<'a>) -> Adapted<'a> {
-    match pixels {
-        PixelCow::Borrowed(slice) => Adapted {
-            data: slice.contiguous_bytes(),
-            descriptor: slice.descriptor(),
-            width: slice.width(),
-            rows: slice.rows(),
-        },
-        PixelCow::Owned(buffer) => {
-            let parts = buffer.into_contiguous().into_parts();
-            let mut data = parts.data;
-            let len =
-                parts.width as usize * parts.height as usize * parts.descriptor.bytes_per_pixel();
-            if parts.offset != 0 {
-                data.copy_within(parts.offset..parts.offset + len, 0);
-            }
-            data.truncate(len);
-            Adapted {
-                data: Cow::Owned(data),
-                descriptor: parts.descriptor,
-                width: parts.width,
-                rows: parts.height,
-            }
-        }
-    }
-}
-
 fn borrow_or_copy<'a>(
     data: &'a [u8],
     width: u32,
@@ -238,41 +169,6 @@ fn borrow_or_copy<'a>(
     Ok(PixelCow::Owned(output))
 }
 
-/// Negotiate format and convert pixel data for encoding.
-///
-/// Uses [`ConvertIntent::Fastest`] — minimizes conversion cost.
-///
-/// If the input already matches one of the `supported` formats, returns
-/// `Cow::Borrowed` (zero-copy). Otherwise, converts to the best match.
-///
-/// A [`SignalRange`](zenpixels::SignalRange) mismatch with every supported
-/// format fails with [`ConvertError::NoPath`]: no Narrow↔Full kernels
-/// exist, and neither the zero-copy paths nor the planner will relabel a
-/// range without rescaling. Offer a same-range target to accept narrow
-/// input verbatim.
-///
-/// # Arguments
-///
-/// * `data` - Raw pixel bytes, `rows * stride` bytes minimum.
-/// * `descriptor` - Format of the input data.
-/// * `width` - Pixels per row.
-/// * `rows` - Number of rows.
-/// * `stride` - Bytes between row starts (use `width * descriptor.bytes_per_pixel()` for packed).
-/// * `supported` - Formats the encoder accepts.
-#[track_caller]
-#[deprecated(since = "0.2.15", note = "use adapt_for_encode_cow")]
-#[allow(deprecated)]
-pub fn adapt_for_encode<'a>(
-    data: &'a [u8],
-    descriptor: PixelDescriptor,
-    width: u32,
-    rows: u32,
-    stride: usize,
-    supported: &[PixelDescriptor],
-) -> Result<Adapted<'a>, At<ConvertError>> {
-    adapt_for_encode_cow(data, descriptor, width, rows, stride, supported).map(into_adapted)
-}
-
 /// Negotiate format and return borrowed-or-owned, stride-aware pixels.
 #[track_caller]
 pub fn adapt_for_encode_cow<'a>(
@@ -292,25 +188,6 @@ pub fn adapt_for_encode_cow<'a>(
         supported,
         ConvertIntent::Fastest,
     )
-}
-
-/// Negotiate format and convert with intent awareness.
-///
-/// Like [`adapt_for_encode`], but lets the caller specify a [`ConvertIntent`].
-#[track_caller]
-#[deprecated(since = "0.2.15", note = "use adapt_for_encode_with_intent_cow")]
-#[allow(deprecated)]
-pub fn adapt_for_encode_with_intent<'a>(
-    data: &'a [u8],
-    descriptor: PixelDescriptor,
-    width: u32,
-    rows: u32,
-    stride: usize,
-    supported: &[PixelDescriptor],
-    intent: ConvertIntent,
-) -> Result<Adapted<'a>, At<ConvertError>> {
-    adapt_for_encode_with_intent_cow(data, descriptor, width, rows, stride, supported, intent)
-        .map(into_adapted)
 }
 
 /// Negotiate format with caller-specified intent and return [`PixelCow`].
@@ -545,7 +422,7 @@ pub(crate) fn convert_into_with_anchor(
 ///   stride already divides evenly rows compact **at their own bases**
 ///   with zero cross-row movement and the freed bytes become row padding.
 ///   Straight or premultiplied alpha returns `Err`: a blind discard would
-///   silently diverge from [`adapt_for_encode`]'s alpha policy (which
+///   silently diverge from [`adapt_for_encode_cow`]'s alpha policy (which
 ///   mattes); for *measured*-opaque alpha use
 ///   [`reduce_to_load_bearing_format_in_place`](crate::PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place),
 ///   which scans and proves it first.
@@ -553,11 +430,11 @@ pub(crate) fn convert_into_with_anchor(
 /// `Err(ConvertError::NoPath)` means the transition needs a real
 /// conversion (bit-depth change, chroma removal, lane addition, live
 /// alpha) — the buffer is **untouched**; fall through to the allocating
-/// [`adapt_for_encode`] / [`convert_buffer`]:
+/// [`adapt_for_encode_cow`] / [`convert_buffer`]:
 ///
 /// ```rust,ignore
 /// if try_adapt_in_place(&mut buf, target).is_err() {
-///     // needs a real conversion — allocate via adapt_for_encode
+///     // needs a real conversion — allocate via adapt_for_encode_cow
 /// }
 /// ```
 pub fn try_adapt_in_place(
@@ -617,7 +494,7 @@ pub fn try_adapt_in_place(
     // Shrinking alpha-lane removal. Allowed only when the source's alpha
     // mode makes the drop value-exact BY CONTRACT (Undefined padding /
     // declared Opaque) — discarding live Straight/Premultiplied alpha
-    // here would silently diverge from adapt_for_encode's matting policy.
+    // here would silently diverge from adapt_for_encode_cow's matting policy.
     if !matches!(
         src.alpha,
         Some(AlphaMode::Undefined) | Some(AlphaMode::Opaque)
@@ -700,27 +577,6 @@ fn rewrap<'a>(
         Some(c) => out.with_color_context(c),
         None => out,
     }
-}
-
-/// Negotiate format and convert with explicit policies.
-///
-/// Like [`adapt_for_encode`], but enforces [`ConvertOptions`] policies
-/// on the conversion. Returns an error if a policy forbids the required
-/// conversion.
-#[track_caller]
-#[deprecated(since = "0.2.15", note = "use adapt_for_encode_explicit_cow")]
-#[allow(deprecated)]
-pub fn adapt_for_encode_explicit<'a>(
-    data: &'a [u8],
-    descriptor: PixelDescriptor,
-    width: u32,
-    rows: u32,
-    stride: usize,
-    supported: &[PixelDescriptor],
-    options: &ConvertOptions,
-) -> Result<Adapted<'a>, At<ConvertError>> {
-    adapt_for_encode_explicit_cow(data, descriptor, width, rows, stride, supported, options)
-        .map(into_adapted)
 }
 
 /// Negotiate with explicit conversion policies and return [`PixelCow`].
@@ -1186,7 +1042,7 @@ mod tests {
     #[test]
     fn in_place_rejects_live_alpha_drop_and_depth_changes_unchanged() {
         // RGBA(Straight) -> RGB would discard live alpha; must leave the
-        // buffer untouched (adapt_for_encode mattes instead).
+        // buffer untouched (adapt_for_encode_cow mattes instead).
         let original = [1u8, 2, 3, 4, 5, 6, 7, 8];
         let mut buf = buf_from(&original, 2, 1, PixelDescriptor::RGBA8_SRGB);
         try_adapt_in_place(&mut buf, PixelDescriptor::RGB8_SRGB)
@@ -1308,13 +1164,13 @@ mod tests {
         let source = PixelDescriptor::RGB8.with_primaries(ColorPrimaries::Bt2020);
         let target = PixelDescriptor::RGB8_SRGB; // BT.709 primaries
 
-        let result = adapt_for_encode(&data, source, 2, 1, 6, &[target]).unwrap();
+        let result = adapt_for_encode_cow(&data, source, 2, 1, 6, &[target]).unwrap();
 
         // Must NOT zero-copy relabel — primaries differ, conversion is needed.
         // Before the fix, this would return Cow::Borrowed (zero-copy) via the
         // transfer-agnostic match, silently relabeling BT.2020 as BT.709.
         assert!(
-            matches!(result.data, Cow::Owned(_)),
+            matches!(result, PixelCow::Owned(_)),
             "different primaries must trigger conversion, not zero-copy relabel"
         );
     }
@@ -1330,7 +1186,7 @@ mod tests {
         let source = PixelDescriptor::RGB8.with_signal_range(SignalRange::Narrow);
         let target = PixelDescriptor::RGB8_SRGB; // Full range
 
-        let err = adapt_for_encode(&data, source, 2, 1, 6, &[target]).unwrap_err();
+        let err = adapt_for_encode_cow(&data, source, 2, 1, 6, &[target]).unwrap_err();
         assert!(
             matches!(*err.error(), ConvertError::NoPath { .. }),
             "range crossing must refuse (no kernels), got: {}",
@@ -1351,12 +1207,15 @@ mod tests {
         let narrow_target = PixelDescriptor::RGB8_SRGB.with_signal_range(SignalRange::Narrow);
 
         let result =
-            adapt_for_encode(&data, source, 2, 1, 6, &[full_target, narrow_target]).unwrap();
+            adapt_for_encode_cow(&data, source, 2, 1, 6, &[full_target, narrow_target]).unwrap();
         assert!(
-            matches!(result.data, Cow::Borrowed(_)),
+            matches!(result, PixelCow::Borrowed(_)),
             "same-range target must zero-copy"
         );
-        assert_eq!(result.descriptor.signal_range, SignalRange::Narrow);
+        assert_eq!(
+            result.as_slice().descriptor().signal_range,
+            SignalRange::Narrow
+        );
     }
 
     #[test]
@@ -1367,14 +1226,14 @@ mod tests {
         // Target: RGB8 sRGB with same primaries and range.
         let target = PixelDescriptor::RGB8_SRGB;
 
-        let result = adapt_for_encode(&data, source, 2, 1, 6, &[target]).unwrap();
+        let result = adapt_for_encode_cow(&data, source, 2, 1, 6, &[target]).unwrap();
 
         // Should zero-copy (only transfer differs, which is the agnostic part).
         assert!(
-            matches!(result.data, Cow::Borrowed(_)),
+            matches!(result, PixelCow::Borrowed(_)),
             "should be zero-copy when only transfer differs"
         );
-        assert_eq!(result.descriptor, target);
+        assert_eq!(result.as_slice().descriptor(), target);
     }
 
     #[test]
@@ -1382,10 +1241,10 @@ mod tests {
         let data = test_rgb8_data();
         let desc = PixelDescriptor::RGB8_SRGB;
 
-        let result = adapt_for_encode(&data, desc, 2, 1, 6, &[desc]).unwrap();
+        let result = adapt_for_encode_cow(&data, desc, 2, 1, 6, &[desc]).unwrap();
 
-        assert!(matches!(result.data, Cow::Borrowed(_)));
-        assert_eq!(result.descriptor, desc);
+        assert!(matches!(result, PixelCow::Borrowed(_)));
+        assert_eq!(result.as_slice().descriptor(), desc);
     }
 
     // Pre-#44 these were `#[should_panic]` tests that pinned the
@@ -1397,7 +1256,7 @@ mod tests {
     #[test]
     fn cmyk_rejected_by_adapt_for_encode() {
         let cmyk_data = vec![0u8; 4 * 4]; // 4 pixels
-        let err = adapt_for_encode(
+        let err = adapt_for_encode_cow(
             &cmyk_data,
             PixelDescriptor::CMYK8,
             2,
@@ -1456,10 +1315,10 @@ mod tests {
             .with_depth_policy(DepthPolicy::Round);
 
         let result =
-            adapt_for_encode_explicit(&data, source, 2, 1, 6, &[target], &options).unwrap();
+            adapt_for_encode_explicit_cow(&data, source, 2, 1, 6, &[target], &options).unwrap();
 
         assert!(
-            matches!(result.data, Cow::Owned(_)),
+            matches!(result, PixelCow::Owned(_)),
             "explicit variant: different primaries must trigger conversion"
         );
     }
@@ -1473,7 +1332,7 @@ mod tests {
         let data = [0u8; 8];
         let cmyk = PixelDescriptor::CMYK8;
         let target = PixelDescriptor::RGB8_SRGB;
-        let err = adapt_for_encode(&data, cmyk, 2, 1, 8, &[target]).unwrap_err();
+        let err = adapt_for_encode_cow(&data, cmyk, 2, 1, 8, &[target]).unwrap_err();
         assert!(
             matches!(
                 *err.error(),
@@ -1532,7 +1391,7 @@ mod tests {
     fn truncated_src_returns_buffer_size_error_from_adapt_for_encode() {
         // Declared 2×2 RGB8 = 12 bytes needed, only provide 6 (one row).
         let data = [255u8, 0, 0, 0, 255, 0];
-        let err = adapt_for_encode(
+        let err = adapt_for_encode_cow(
             &data,
             PixelDescriptor::RGB8_SRGB,
             2,
@@ -1575,7 +1434,7 @@ mod tests {
     fn zero_rows_does_not_trigger_size_check() {
         // Empty inputs are well-defined: rows=0 means no data needed.
         let data: &[u8] = &[];
-        let result = adapt_for_encode(
+        let result = adapt_for_encode_cow(
             data,
             PixelDescriptor::RGB8_SRGB,
             0,
