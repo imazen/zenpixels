@@ -1,12 +1,20 @@
 # Frame interpretation: implementation reference
 
+> **Deferred media design.** The [release scope](frame-interpretation-contract.md)
+> now focuses on zenpixels/zenpixels-convert and existing zencodec boundaries.
+> Reader orchestration belongs in zencodecs; no `Video::open` façade is proposed
+> for zencodec. The remaining media design below is context for later work, not
+> an additional release gate or implemented API. In particular, the current
+> media `frame::to_rgb` must migrate its descriptor projection before adopting
+> core 0.3: preserve unknown raw transfer codes in its context with an explicit
+> output descriptor, rather than blindly unwrapping the strict projection.
+
 Proposal, 2026-09-29. **This PR contains design and acceptance criteria, not
 implemented APIs or passing media integration tests.** Rust snippets below are
 API sketches except those explicitly labeled current code. Names are provisional.
-Start with the [API overview](frame-interpretation-contract.md). It defines the
-two access levels and early-validation policy; this reference supplies the
-implementation details. The implementation must prove these contracts before
-promoting new public types.
+Start with the [release scope](frame-interpretation-contract.md). This reference
+retains the native ownership and metadata edge cases for later implementation.
+The implementation must prove these contracts before promoting new public types.
 
 This supplements the [release contract](finalization-release-contract.md) and
 [sample encoding contract](sample-encoding-contract.md). It replaces the proposed

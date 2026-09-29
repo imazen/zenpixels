@@ -161,8 +161,8 @@ and fallible clone semantics; no unsafe auto-trait implementations.
 The [scenario explorer](color-explorer/index.html) makes assumptions inspectable;
 it is an educational model, not a display calibration or browser CMS emulator.
 
-The proposed [frame interpretation contract](frame-interpretation-contract.md)
-replaces #55's generic matrix hint with a simple reader API and expert access
-using shared early validation and conversion checks. Its implementation reference
-includes AV1-in-MP4, ownership, timing and pending acceptance criteria; it is not
-implemented release scope.
+The [checked color boundary follow-up](frame-interpretation-contract.md) replaces
+#55's generic matrix hint with `Cicp::try_to_descriptor` and precise finalization
+errors. It separates implemented core/converter changes from the pending
+zencodec consumer migration. Reader orchestration belongs in zencodecs; the
+native media reference is deferred design, not a new release requirement.
