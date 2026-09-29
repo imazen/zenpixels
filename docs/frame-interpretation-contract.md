@@ -1,329 +1,195 @@
-# Frame interpretation: replacement for #55
+# Video frames: simple reading, early errors, expert access
 
-Proposal, 2026-09-29. **This PR contains design and acceptance criteria, not
-implemented APIs or passing media integration tests.** Rust snippets below are
-API sketches except those explicitly labeled current code. Names are provisional.
-The implementation must prove the contracts before promoting new public types.
+Design proposal for [PR #81](https://github.com/imazen/zenpixels/pull/81), updated
+2026-09-29. **API sketches, not implemented APIs.** The concrete AV1/MP4 work and
+test inventory are in the [implementation reference](frame-interpretation-details.md).
 
-This supplements the [release contract](finalization-release-contract.md) and
-[sample encoding contract](sample-encoding-contract.md). It replaces the proposed
-`Cicp::resolve_matrix(hint)` approach in [#55](https://github.com/imazen/zenpixels/pull/55).
-It does not mark #55, [#74](https://github.com/imazen/zenpixels/pull/74), or their
-remaining acceptance criteria complete.
+## The default experience
 
-## Decision
+**Choose the output, build the reader, read frames.** The reader applies format
+rules, checks declarations early, prepares conversions, and handles compatible
+changes. Callers should not assemble color claims, mapping guards, and conversion
+plans just to get a correctly described frame.
 
-Preserve declarations we cannot execute. Validate each operation against the
-information it actually needs. Format adapters select interpretation according
-to their format rules; conversion backends determine executable support.
+```rust,ignore
+// Proposed API shape. Existing reader/builder naming should be reused.
+let mut video = Video::open(source)?
+    .output(Output::srgb8())
+    .build()?;
 
-There is no global `ValidCicp` type and no matrix hint on `Cicp`. A recognized
-code does not prove a valid combination, decoder capability, or display policy.
-Constructing `Cicp` remains infallible and retains its raw numeric fields.
-
-Ordinary callers ask for native frames or a named output representation. They
-do not manually reconcile the container and bitstream or learn every CICP code.
-Advanced callers can inspect evidence and make explicit, recorded repairs.
-
-```mermaid
-flowchart LR
-    A[Container sample description] --> C[Format adapter]
-    B[Codec sequence and frame evidence] --> C
-    C --> D[Immutable frame interpretation]
-    E[Backend-owned native samples] --> F[Decoded frame]
-    D --> F
-    F --> G[Native encoder compatibility check]
-    F --> H[Prepared RGB or display conversion]
+while let Some(frame) = video.next_frame()? {
+    // Packed sRGB pixels with their timestamp and matching color description.
+    consume(frame)?;
+}
 ```
 
-## 1. What stays representable
+The proposed `srgb8()` preset requests full-range encoded sRGB RGB8, rounds to
+nearest with ties upward, and clamps finite out-of-range RGB during packing,
+without dithering. Alpha-bearing input requires an RGBA output or an explicit
+discard/composite choice; no opacity pre-scan. It does not silently tone-map HDR.
+If HDR rendering requires a policy the caller has not supplied, return an
+actionable error. Presets fix these choices in documentation; backend defaults
+cannot change them. Expert conversion can instead request clipping refusal.
 
-| Situation | Carrier | When it becomes an error |
+For native processing, change the output request:
+
+```rust,ignore
+let mut video = Video::open(source)?
+    .output(Output::native())
+    .build()?;
+
+while let Some(frame) = video.next_frame()? {
+    encoder.push_frame(frame)?; // Destination checks compatibility.
+}
+```
+
+Native output retains plane storage, sample encoding and color meaning. It does
+not imply an RGB conversion or a full-frame copy. Unknown transfer information
+can remain representable when native decoding does not need it. A destination
+that cannot preserve or interpret it refuses the frame.
+
+The sketch does not dictate a new generic reader or output enum: implement this
+experience through the existing media session/reader first, promoting only the
+public pieces required by its real callers.
+
+## Catch errors at the earliest useful point
+
+Checking some invariants is valuable even when it cannot prove everything.
+The rule is **check what we know now, and check new information when it arrives**.
+
+| When | What we check | What success means |
 |---|---|---|
-| Unknown/reserved CICP code | Raw `Cicp` and source evidence | An operation needs its meaning and cannot implement it |
-| Absent field versus explicit code 2 | Media evidence preserves presence | An operation needs a value with no permitted inference |
-| Unknown range | Media evidence, not a fabricated `Cicp::full_range` bool | Range-dependent reconstruction/encoding needs a resolved range |
-| Container/bitstream conflict | Both claims plus a diagnostic | Strict interpreted output or conforming output cannot reconcile them |
-| Supported matrix with unknown transfer | Native frame, possibly encoded RGB | Display/color conversion needs that transfer |
-| Malformed metadata | Bounded raw payload plus parse diagnostic, if recoverable | Typed parsing or safe sample decoding requires the malformed data |
-| Unsupported HDR payload | Bounded scoped evidence | A requested rendering/preservation guarantee depends on interpreting it |
-| Ten-bit codes in U16 | Native plane + `SampleEncoding` | Never silently become normalized RGB16 |
+| Construct a sample/layout declaration | Depth fits storage, shift fits, dimensions/strides are valid; known impossible combinations with available context | This declaration is internally consistent |
+| Build the reader | Applicable headers, format constraints, conflicting declarations, requirements of the requested output that are already decidable | The known stream configuration can start this operation |
+| Receive changed headers/frame metadata | Recheck affected constraints and update the selected interpretation and conversion | This frame can be produced under the requested contract |
+| Execute conversion | Backend failures and sample-dependent conditions such as clipping refusal | Successful output meets the requested contract |
 
-Native inspection is not permission to ignore malformed codec headers needed for
-safe decoding. Recovery of metadata is separate from decoder conformance.
-Packet copy still requires a valid destination mapping and preservation of
-necessary configuration; unknown color is not permission to drop boxes.
+`build()` can read bounded headers and prepare known transforms. It must not
+decode/scan the whole video to promise that later frames will succeed. On a
+non-seekable input, retain any necessary read-ahead packets under the existing
+buffer limits. `next_frame()` remains fallible because later data can differ.
 
-Keep source payloads at their native field width; narrowing into `Cicp` must be
-checked. Do not wrap an unrepresentable source value with `as u8`. Code zero,
-explicit unspecified, missing, and unsupported are distinct facts.
+For example, conflicting MP4 and AV1 range flags fail when both applicable
+claims are available. They do not wait until somebody asks for RGB. Conversely,
+an unfamiliar transfer code is not a contradiction: native output can preserve
+it, while an sRGB request fails as soon as that requirement becomes decidable.
 
-## 2. Small media API, existing core vocabulary
+Validate the selected track and requested operation. Unknown optional metadata
+or an unselected audio track must not accidentally make video reading fail.
+Do not conflate a format-forbidden combination with a valid one unsupported by
+the chosen backend. Both get useful errors, with different explanations.
 
-Proposed consumer-facing shape in `zencodec_media::frame` (opaque fields,
-constructors controlled by adapters). This is a sketch, not a new core export:
+These checks share code. Constructors, adapters and planners do not maintain
+separate validation tables. Tiny context-free checks stay with the existing
+types; format rules stay with the format adapter; capability checks stay with
+the backend. No universal `ValidCicp` promise is required to check real invariants.
 
-```rust,ignore
-impl DecodedFrame {
-    pub fn timing(&self) -> &FrameTiming;
-    pub fn interpretation(&self) -> &FrameInterpretation;
-    pub fn evidence(&self) -> &FrameEvidence;
-    pub fn map(&self) -> Result<MappedFrame<'_>, MediaError>;
-}
+## Two levels, one implementation
 
-impl MappedFrame<'_> {
-    pub fn native_view(&self) -> NativeFrameView<'_>;
-}
-
-impl FrameInterpretation {
-    // Selected declarations, not proof that a converter implements them.
-    // Individual fields may remain missing or conflicted.
-    pub fn color(&self) -> &ColorInterpretation;
-}
-```
-
-`FrameEvidence` references bounded immutable sample-description/sequence evidence
-and applicable frame metadata. It retains field presence, selected source,
-conflicts, and explicit caller repairs. Accessors return borrowed information;
-formatting strings or building a full audit report happens only when requested.
-Avoid a public generic provenance framework until these two adapters prove it.
-
-`FrameInterpretation` includes component roles, sample encoding, geometry,
-subsampling/siting, range, selected color authority, and applicable HDR meaning.
-Storage description remains available when color cannot be interpreted.
-ICC describes the reconstructed color interpretation; it does not supply the
-YCbCr matrix, range, or chroma location. Selection must preserve that distinction.
-
-Current primitives stay in their existing modules: `sample::SampleEncoding`,
-`Cicp`, `ColorContext`, and small `hdr` carriers. Do not move timestamps, source
-claims, packet data, decoder handles, or metadata-engine types into zenpixels.
-
-## 3. Code that should stop looking safe
-
-### Matrix fallback is not format interpretation
-
-```rust,ignore
-// Proposed by #55; should NOT become the public API.
-let source = Cicp::new(9, 16, 200, false);
-let selected = source.resolve_matrix(Some(9))?;
-// A declared unknown transform has been replaced with a different transform.
-```
-
-Instead the adapter applies a pinned format policy to all available claims.
-Default policy is format-defined inference only. Missing/unspecified can be
-filled where that format permits it; an unsupported specified transform is not
-replaced merely because another one is easier to execute. Repairing malformed
-input requires a separately named policy and preserves the original evidence.
-
-AV1-in-MP4 rules, pinned to
-[AV1 ISOBMFF v1.3.0, section 2.3.4](https://aomediacodec.github.io/av1-isobmff/v1.3.0.html#semantics):
-container primaries, transfer and matrix can fill corresponding absent or
-unspecified bitstream fields; otherwise specified values must agree. The range
-flags must agree. Resolve each field with provenance, then validate the resulting
-combination for the requested operation. A mismatch is a conformance diagnostic,
-not a backend-selection opportunity. Do not reuse this policy for every codec.
-
-### A descriptor projection does not reconstruct samples
-
-```rust,ignore
-// CURRENT CODE: compiles and drops the matrix declaration.
-let yuv = Cicp::new(9, 16, 9, false);
-let descriptor = yuv.to_descriptor(PixelFormat::Rgb16);
-```
-
-```rust,ignore
-// PROPOSED normal path: the session has already attached applicable evidence.
-if let Some(frame) = session.next_frame()? {
-    let mapping = frame.map()?;
-    let source = mapping.native_view();
-    let plan = rgb_converter.prepare(source.interpretation(), output_request)?;
-    plan.write_rows(source, &mut destination)?;
-    // Output descriptor/context come from the plan's resulting interpretation.
-}
-```
-
-`prepare` is operation-specific: encoded RGB reconstruction can accept an unknown
-transfer when its matrix math does not require that transfer; display conversion
-cannot. A native encoder can accept the original samples without an RGB pass
-only after checking layout, sample meaning, and destination signaling support.
-
-Deprecate ambiguous `Cicp::to_descriptor` in the 0.2 bridge after migrating its
-consumers. Add the same checked already-RGB declaration path in both releases,
-then remove the ambiguous helper in 0.3. Exact public spelling is deferred until
-the media and converter callers share one implementation. Its contract must:
-
-- Require RGB/gray component interpretation appropriate to the requested format;
-  identity matrix alone does not establish RGB component meaning or layout.
-- Preserve raw unsupported primaries/transfer in context instead of treating
-  `Unknown` descriptor enums as a complete color description.
-- Preserve declared range; descriptor construction does not expand it.
-- Promise structural declaration checks only, never verification of pixel values.
-
-### A queued frame must not inherit a newer frame's color
-
-```rust,ignore
-// WRONG: the decoder/session has advanced since this frame was queued.
-let plan = prepare_rgb(track.current_color(), request)?;
-plan.convert(&old_frame)?;
-
-// PROPOSED: input and prepared meaning must match, including frame metadata
-// actually used by the requested operation.
-let mapping = old_frame.map()?;
-let view = mapping.native_view();
-let plan = converter.prepare(view.interpretation(), request)?;
-plan.write_rows(view, &mut destination)?;
-```
-
-The converter may reuse an existing plan when its semantic input requirements
-match. An epoch alone, pointer equality alone, or a hash alone is not a proof of
-compatibility. Pixel address/stride validation still occurs for each supplied
-view. Frame-specific HDR parameters used by rendering participate in preparation
-or explicit parameter updates even if the codec configuration is unchanged.
-
-## 4. Ownership, timing, and scope
-
-Keep backend pictures alive through a private storage abstraction supporting
-backend ownership and owned planes. Do not standardize `Vec`-only frame fields
-or expose rav1d/AOM types in the shared API. A mapped view borrows the mapping
-guard, which borrows the frame. Holding an old frame while decoding a new one
-must not copy pixels or invalidate the old mapping.
-
-Mapping may fail or synchronize a backend; it is not universally free. Software
-borrowed planes should map without a pixel allocation. Conversion to owned
-packed RGB explicitly allocates output; a row sink uses bounded scratch instead.
-No `Copy` promise for a mapping guard and no generic public provider trait yet.
-
-The frame is a presentation occurrence, not merely a picture allocation. A
-repeated picture can share storage but have a different timestamp and applicable
-presentation metadata. Format-specific rules determine metadata persistence;
-do not carry every HDR payload forward forever or reset it on every packet.
-
-Associate configuration/evidence with output through decoder reordering. Packet
-ordinal is not a frame number, and the newest input packet does not necessarily
-describe the next returned frame. Seek flushes pending association state and
-restores applicable configuration; already returned frames retain their snapshot.
-
-Maintain separate concepts for codec configuration, container sample-description
-selection, and interpretation changes. A `colr`-only change must not require
-different codec-private bytes to become visible. Do not reset/drop delayed
-decoded frames automatically on every metadata change.
-
-The shared packet/timing layer remains usable for audio. Audio blocks do not
-depend on pixel interpretation or color features.
-
-## 5. Errors and cost model
-
-Use structured, non-exhaustive errors in the media/conversion modules rather
-than one `UnspecifiedMatrixError` in core. Preserve underlying backend errors.
-
-| Error category | Example | Boundary |
-|---|---|---|
-| Missing interpretation | No permitted matrix inference | Preparing an operation that needs a matrix |
-| Conflicting declarations | Specified container and bitstream matrices differ | Format interpretation; prevents strict interpreted output |
-| Invalid combination | Identity components with unsupported subsampling | Operation/layout validation |
-| Unsupported implementation | Recognized matrix 15, backend lacks transform | Conversion preparation |
-| Missing rendering policy | HLG display request without required policy | Display preparation |
-| Input does not match plan | Range/depth changed since preparation | Before writing that frame |
-| Invalid sample/value | Requested clipping refusal encounters an excursion | During processing, unless caller requests explicit preflight |
-
-Diagnostics retain field/code/source and track/configuration/timestamp context
-when available. A raw decoder outside a container need not fabricate a track ID.
-Audit mode may expose conflicted frames for native inspection; it must not turn
-that conflict into a silently selected interpretation for RGB rendering.
-
-Metadata-detectable failures occur before destination writes. Sample-dependent
-failures and backend errors may occur after partial writes to caller output;
-document that explicitly. Guaranteed unchanged-on-error requires an explicit
-preflight where possible or temporary output, not an invisible full-frame pass.
-
-| Work | Cost expectation |
+| Normal reader | Expert access |
 |---|---|
-| Construct sample view | O(planes), no sample scan |
-| Select interpretation | Bounded metadata work when claims change |
-| Share unchanged evidence across frames | Shared ownership, no ICC/pixel copy |
-| Check prepared input | Small descriptor/parameter comparisons per frame |
-| Map software backend picture | Borrow guards, no pixel copy |
-| Reconstruct/render | Explicit pass; compatible stages may fuse |
-| Pixel conformance/peak/opacity audit | Explicit scan or documented fused work |
+| Choose output and read frames | Inspect declarations, map native storage, prepare conversions explicitly |
+| Apply format rules automatically | Inspect which rule/source selected each field |
+| Reject known contradictions early | Retain conflicting evidence for auditing and explicit repair |
+| Cache/rebuild compatible plans internally | Reuse prepared plans, caller buffers and row sinks directly |
 
-No new zenpixels feature, dependency, or media re-export. Keep operation code in
-media/conversion, with dependencies pointing toward core. Container-only reading
-must not pull in AV1 decoding or CMS. Native AV1 decoding must not require a
-display backend. Reuse existing feature boundaries rather than one flag per
-metadata field. Conversion engines use existing runtime services where suitable.
+Inspection is an explicit entry point using the same parser and diagnostics.
+It can retain malformed metadata for analysis when doing so is safe, but it
+does not disable bounds checks or decoder requirements. A repaired interpretation
+must pass normal checks before producing interpreted output; the original claims
+and the repair remain available in the audit report. No blanket `allow_invalid`
+switch and no silent fallback to a matrix our backend happens to support.
 
-## 6. Inventory and implementation sequence
+```rust,ignore
+// Expert conversion of an already obtained frame; proposed shape.
+let mapped = frame.map()?;
+let source = mapped.native_view();
+let plan = converter.prepare(source.interpretation(), output_request)?;
+plan.write_rows(source, &mut row_sink)?;
+```
 
-Inspected immutable snapshots (not a claim about all open PRs or later revisions):
+The high-level reader calls this same conversion machinery. It adds orchestration,
+not different color math or an extra intermediate image. Expert access exists
+for native pipelines, auditing, repairs and memory control; ordinary callers
+should not need it for correct playback or frame extraction.
 
-| Snapshot | Finding / required edit |
+## Keep the public concepts small
+
+The primary docs.rs path should introduce a reader, an output request and a
+frame. A frame owns its samples and the description valid for that presentation
+occurrence, with convenient timing/format access. That description cannot change
+when the decoder advances or seeks.
+
+Put advanced inspection and conversion in their own modules. The earlier
+`FrameEvidence`, `FrameInterpretation`, `ColorInterpretation` decomposition is
+an internal design sketch, not three more things every caller must construct.
+Expose borrowed details only for demonstrated callers; keep storage/backend
+implementations private. Reuse `Cicp`, `SampleEncoding` and `ColorContext`.
+
+The raw `Cicp` carrier remains lossless and permissive. Checked sample/view
+construction and format validation catch problems with sufficient context.
+Deprecate ambiguous `Cicp::to_descriptor` only after both release lines have a
+checked, usable migration for already-RGB declarations and actual conversions.
+The [implementation reference](frame-interpretation-details.md#3-code-that-should-stop-looking-safe)
+shows the old code and required behavior. Do not ship #55's generic matrix hint.
+
+## Make the errors explain the next step
+
+An ordinary error should say, for example:
+
+```text
+Cannot produce sRGB frame at 00:00:12.400:
+the selected transfer characteristic (code 200) is unsupported by this converter.
+Native output can preserve the samples and signaling.
+```
+
+Or:
+
+```text
+Cannot start video track 1:
+MP4 declares full range, but AV1 declares limited range.
+Inspect the source claims before applying an explicit repair.
+```
+
+Errors retain structured field/code/source information for tests and applications;
+they do not require parsing messages. Include frame/track identity only when
+known. Diagnostics are bounded and shared per applicable configuration, without
+formatting a report for every frame. Never suggest retagging as a color conversion.
+
+## Test the contract, including the simple path
+
+| Test | Expected evidence |
 |---|---|
-| zenpixels bridge `591a4eb`, `zenpixels/src/cicp.rs` | Raw preservation exists; `to_descriptor` erases matrix. Migrate converter `output.rs` and media `frame.rs` before deprecation. |
-| zenavif `a7c56be`, `src/cicp_resolve.rs` | Values 15+ enter the reserved/hint arm. Add explicit refusal for recognized unsupported transforms, preserving raw evidence; audit format precedence separately. |
-| [zencodec media `e914874`](https://github.com/imazen/zencodec/tree/e914874a566915b39884c8da78af24558861941f/media), `av1.rs` | Backend ownership/mapping and raw CICP exist. Preserve absent-versus-inferred evidence if the backend exposes it; extend backend extraction if needed, never infer presence from a flattened value. |
-| Same snapshot, `color.rs`, `frame.rs` | Native view and separate reconstruction/display exist. Integrate operation-specific diagnostics and frame interpretation; reuse these converters. |
-| Same snapshot, `session.rs` | `VideoFrame` requires owned Vec planes and one CICP. Replace mandatory copies with opaque storage/mapping; carry immutable interpretation/evidence. |
-| Same snapshot, `track.rs`, `mp4.rs` | Configuration epochs exist, but no color claims. `parse_sample_entry` handles H.264/audio, not `av01`; unknown entries become `Other("unmapped")`. AV1-in-MP4 is not implemented by adding `colr` alone. |
+| Known contradictory initial headers | Reader build fails before pixel conversion or output allocation |
+| Same conflict appears later | Initial valid frames succeed; affected frame fails before conversion writes |
+| Unknown transfer, native versus sRGB request | Native preserves it; sRGB fails at the earliest point with sufficient information |
+| High-level versus explicit low-level conversion | Same samples, resulting metadata, clipping and error categories for the same request |
+| Native ownership across decode/seek | Existing frame pointers and descriptions remain valid; no implicit pixel copy |
+| Repeated unchanged configuration | No repeated profile parsing, full-frame temporary, or unbounded diagnostic accumulation |
+| Unsafe depth/shift/stride declaration | Construction fails without examining pixel values |
+| Value-dependent clipping/backend failure | Explicit partial-write contract for caller buffers; owned-frame API returns no successful frame |
+| Inspection of conflicting claims | Both survive; repair is explicit and revalidated by the same rules |
 
-Stack implementation on the existing
-[zencodec #129](https://github.com/imazen/zencodec/pull/129) media work. Coordinate
-[#130](https://github.com/imazen/zencodec/pull/130) metadata integration against the
-same frame evidence contract; do not create a second resolver or metadata store.
+Use a shared fixture set for parser/selection tests, operation tests and reader
+integration tests. Reference outputs must include actual AV1-in-MP4 files, not
+only hand-built structs. Neither the simple path nor expert path may bypass a
+required check. All these tests remain pending implementation.
 
-1. **Interpretation and diagnostics:** private field-aware selection, source
-   retention, strict operation gates, zenavif regression. Keep the public core
-   resolver out of #55. Update registry names separately where appropriate.
-2. **Frame ownership and scope:** backend-owned/owned-plane storage, mappings,
-   immutable evidence, reorder/seek/repeated-picture tests, plan compatibility.
-3. **AV1-in-MP4 integration:** `av01`/`av1C`, bounded color-box parsing, sample
-   description changes, decoder packet/configuration plumbing, end-to-end corpus.
-   Fragmented MP4 remains explicitly unsupported until its own implementation.
-4. **Core migration:** prove the checked RGB declaration with real callers, add
-   it in #76, propagate to #77, deprecate/remove the old projection on the proper
-   lines. Re-run source-compatibility probes. Do not deprecate before providing
-   a usable common migration destination.
+## Costs and release placement
 
-These are review slices, not promises to publish four new crates. The design PR
-is based on #76 so its migration contract is visible before either release;
-#77 inherits it when updated to the bridge. No release is published by this work.
+Cheap declaration checks are metadata work, generally O(planes). Validation does
+not infer color from pixels, measure peak brightness, or scan for opacity.
+Requested packed output owns an allocation; native output retains backend
+ownership where possible; row sinks use bounded scratch. These costs belong in
+method documentation. Reusing plans must not skip compatibility checks.
 
-## 7. Required acceptance evidence
+The two API levels add no crates or feature flags by themselves. `zenpixels`
+retains small vocabulary; media owns reader/format policy; conversion owns math.
+Container inspection must remain usable without AV1/CMS dependencies. Compare
+minimal and enabled compile graphs as each implementation slice lands.
 
-All entries below are **pending implementation**, not tests passed by this PR.
-
-| Fixture / operation | Expected result |
-|---|---|
-| MP4 matrix 9, AV1 matrix absent/2 | Select 9 with container provenance |
-| MP4 matrix 1, AV1 specified matrix 9 | Conflict retained; strict RGB preparation fails before writes |
-| Container/bitstream range disagree | Conflict; do not reinterpret native sample values |
-| Specified matrix 15/16/17 plus familiar fallback | Preserve code; unsupported backend refuses without substitution |
-| Reserved/unrecognized matrix plus familiar fallback | Native inspection retains it; default conversion refuses |
-| Raw container field exceeds core code width | Retain raw value; checked narrowing fails, no truncation |
-| Fixed supported NCL matrix, unknown transfer | Encoded RGB reconstruction allowed; display conversion refused |
-| Missing chroma location on subsampled input | Preserve unknown; reconstruction requiring siting refuses |
-| Identity/unsupported subsampling combination | Reject reconstruction; never treat planes as ordinary YCbCr |
-| Native 10/12-bit full/narrow frames | Preserve words/pointers; explicit RGB16 output uses normalized domain |
-| Chroma neutral, narrow anchors, excursions, alpha | Correct component-specific arithmetic; explicit clipping/pass policy |
-| Old frame held across sequence/sample-description change | Old samples and interpretation remain unchanged |
-| Color-only sample-description change | Visible without changing codec-private bytes |
-| Reordered output / repeated picture / seek | Correct presentation occurrence, source association and metadata scope |
-| Dynamic HDR changes with stable codec epoch | Relevant rendering parameters update; no stale plan reuse |
-| Crop with odd origin, padded strides | Preserve chroma phase and validate actual extents |
-| Backend frame outlives decoder; mapped guard lifetimes | Runtime retention and compile-fail borrow tests, no frame copy |
-| Prepared output receives incompatible frame | Error before first destination write |
-| Backend or sample-value failure partway through rows | Documented partial-write result, unchanged borrowed input |
-| Native transcode / packet remux | Preserve necessary meaning and configuration or explicitly refuse destination |
-
-Use independently generated AV1-in-MP4 fixtures, including matching/missing/
-conflicting `colr`, rather than only synthetic structs. Verify expected samples
-and metadata against recorded reference tools/versions. Keep malformed and
-contradictory fixtures distinct from conforming files. Retain the existing native
-AV1 corpus as regression evidence, not proof of MP4 integration.
-
-Measure cold `cargo check` and incremental edits before/after each code slice,
-with pinned lockfiles/toolchains and fresh targets; report medians and raw runs.
-Check core without std, converter minimal, media container-only, native AV1, and
-display-enabled graphs separately. Record dependency/feature-tree changes.
-Measure frame allocations and repeated-plan preparation too: unchanged native
-frames must not add full-frame copies or per-frame profile parsing. This docs-only
-PR changes none of those compile graphs and makes no new timing claim.
+Implement on the existing zencodec media stack and coordinate its metadata PR.
+Use #76/#77 for the common core migration, then 0.3 removal. This PR changes
+documentation only. [The detailed inventory and pending acceptance matrix](frame-interpretation-details.md#6-inventory-and-implementation-sequence)
+retain the ownership, timing, color and MP4 edge cases without making them the
+introduction to using the library.

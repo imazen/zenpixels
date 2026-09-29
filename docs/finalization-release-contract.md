@@ -162,6 +162,7 @@ The [scenario explorer](color-explorer/index.html) makes assumptions inspectable
 it is an educational model, not a display calibration or browser CMS emulator.
 
 The proposed [frame interpretation contract](frame-interpretation-contract.md)
-replaces #55's generic matrix hint with format-specific source selection and
-operation-specific validation. It includes AV1-in-MP4, frame ownership, code
-examples, and pending acceptance criteria; it is not implemented release scope.
+replaces #55's generic matrix hint with a simple reader API and expert access
+using shared early validation and conversion checks. Its implementation reference
+includes AV1-in-MP4, ownership, timing and pending acceptance criteria; it is not
+implemented release scope.
