@@ -498,7 +498,7 @@ Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `C
 
 **Gamut matrices** — 3x3 row-major f32 between BT.709, Display P3, BT.2020. No CMS needed for named-profile conversions.
 
-**HDR** — production HDR→SDR display mapping is a native `ConvertPlan` step behind the `hdr-experimental` feature (`ConvertPlan::new_with_hdr_peak` / `new_with_hdr_config` → run through the same `RowConverter`): an ITU-R BT.2446 Method A curve (`Bt2446A`) plus an OKLch soft-compress knee (`SoftCompress`). Source-peak measurement is the `CllMeasure` trait (`measure_max`, a SIMD CTA-861.3 reading). `quantize_to` is the anchor-aware linear→PQ16 quantizer (reads `DiffuseWhite`, BT.2408 default 203); `ContentLightLevel` and `MasteringDisplay` carry the metadata. The older global `reinhard_*` / `exposure_tonemap` helpers are `#[deprecated]` — reach for the [zentone](https://github.com/imazen/zentone) crate for standalone tone-mapping curves.
+**HDR** — `zenpixels::hdr` contains the small luminance and mastering metadata types. Measurement and conversion live in `zenpixels-convert::hdr`. With `hdr-experimental`, construct an explicit `ConvertPlan::new_with_hdr_config` using a supplied peak, or call `convert_to_sdr_measuring_peak` to request a separate rowwise measurement pass. `quantize_to` converts anchored linear samples to PQ16. The legacy core scan, root metadata aliases, bundled `HdrMetadata`, and global Reinhard/exposure helpers are removed in 0.3.1.
 
 **Oklab** — primaries-aware `rgb_to_lms_matrix()` / `lms_to_rgb_matrix()`, scalar `rgb_to_oklab()` / `oklab_to_rgb()`, public LMS/XYZ/Oklab matrices. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
 

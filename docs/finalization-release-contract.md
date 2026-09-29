@@ -130,6 +130,12 @@ absence in our tree is not proof about every registry consumer.
 | `PluggableCms`, `RowTransform`, `RowTransformMut` | Keep open | Runtime CMS injection is essential |
 | Legacy `ColorManagement` | Preserve for now | Existing integrations; don't invent a second migration |
 
+Sealing is an explicit compatibility exception: 0.2 cannot warn on an external
+implementation without also deprecating legitimate trait use. No such external
+implementations were found in the audited sibling tree. Applications with custom
+implementations must move those methods to their own traits before opting into
+0.3; the same-source fixture does not claim otherwise.
+
 0.2 keeps existing implementation permissions. Seal only in the breaking line,
 not as an undocumented tolerated patch break. Keep backend Send/Sync contracts
 and fallible clone semantics; no unsafe auto-trait implementations.
