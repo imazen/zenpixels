@@ -160,3 +160,8 @@ and fallible clone semantics; no unsafe auto-trait implementations.
 
 The [scenario explorer](color-explorer/index.html) makes assumptions inspectable;
 it is an educational model, not a display calibration or browser CMS emulator.
+
+The proposed [frame interpretation contract](frame-interpretation-contract.md)
+replaces #55's generic matrix hint with format-specific source selection and
+operation-specific validation. It includes AV1-in-MP4, frame ownership, code
+examples, and pending acceptance criteria; it is not implemented release scope.
