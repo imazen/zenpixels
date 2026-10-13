@@ -28,6 +28,7 @@
     (0x0e6a_4149_30b0_b278, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] installed-macos-arm64-Apple Virtual-74CC58E0-36CE-
     (0x0f40_cd19_eb99_13cd, CP::Bt709, TF::Srgb, 13, Safe::AnyIntent),               // [CPS] urgb ac46f250
     (0x107b_3faf_46a0_d0a5, CP::DisplayP3, TF::Bt709,  9, Safe::AnyIntent),               // [CPS] cicp bundle:rgb:cp12-tc11
+    (0x11c9_534c_cea8_85a0, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] rgba uhdr
     (0x12aa_1ec5_f4fa_84eb, CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 04166d2d
     (0x12cb_91f5_cd86_9818, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] crayons 355bc1b0
     (0x131e_11c6_471b_dac4, CP::Bt709, TF::Bt709,  3, Safe::AnyIntent),               // [CPS] installed-linux-arm64-Rec709

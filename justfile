@@ -168,3 +168,8 @@ cicp-bundle-update: cicp-bundle-gen
     cargo test -p zenpixels-convert --features cms-moxcms cicp_bundle
     cargo test -p icc-gen --release --bin cicp_bundle_gen
     @echo "CICP bundle regenerated and verified (golden sha256 + moxcms byte-equality)."
+
+# Recheck the Ultra HDR corpus profile using both moxcms and Little CMS.
+icc-hdr-profile-check input output:
+    cargo run -p icc-gen --features lcms2-crosscheck --bin icc-gen -- --report {{input}} {{output}}
+    cargo test -p zenpixels --features icc icc::
