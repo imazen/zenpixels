@@ -141,3 +141,17 @@ creation-date field (bytes 24..36). The generator zeroes that field so the blob
 is **reproducible** — regenerating without changing moxcms produces a
 byte-identical asset (and a stable golden sha256). The field is purely
 informational and carries no colorimetry.
+
+## Ultra HDR corpus profile (2026-10-13)
+
+The profile in `ultrahdr-conformance/valid/jpeg/awesome-gain-maps/rgba_uhdr.jpg`
+was missing from the identification table. Extract it unchanged with
+`exiftool -b -ICC_Profile <corpus-file> > <input-dir>/rgba_uhdr.icc`, then run
+`just icc-hdr-profile-check <input-dir> <output-dir>`. Do not replace the full
+table with this single-input output; copy its sorted entry into the table.
+
+The generator produced normalized hash `0x11c9534ccea885a0`, Display P3 with
+sRGB transfer, maximum u16 reference error 1, and `Safe::AnyIntent`. The run
+used the optional Little CMS cross-check and reported no structural/empirical
+intent disagreements. JPEG's adapter regression exercises the original corpus
+file; no new binary fixture is committed here.

@@ -18,6 +18,12 @@
 
 ## [Unreleased]
 
+### Fixed
+- Recognize the Display P3/sRGB ICC profile carried by the Ultra HDR corpus's
+  `rgba_uhdr.jpg`. The existing ICC generator identifies its normalized hash
+  as `0x11c9534ccea885a0`, with maximum reference error 1 in u16 channel units
+  and all rendering intents admitted. No public signatures change.
+
 ### Conversion follow-up
 
 - Correct PQ source-peak normalization, honor explicit linear luminance anchors,
