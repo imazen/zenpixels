@@ -155,3 +155,13 @@ sRGB transfer, maximum u16 reference error 1, and `Safe::AnyIntent`. The run
 used the optional Little CMS cross-check and reported no structural/empirical
 intent disagreements. JPEG's adapter regression exercises the original corpus
 file; no new binary fixture is committed here.
+
+## Android screenshot profile (2026-10-15)
+
+"Display P3 Gamut with sRGB Transfer" (ICC v4.3, 520 bytes) tags Android phone
+screenshots; five imazen-26 images carry it. Extracted with `exiftool -b
+-ICC_Profile`, put alone in an input directory and run through `icc-gen
+--report` with `lcms2-crosscheck` (as above), it gives normalized hash
+`0x2dc2d3340af4d7c8`, Display P3 with sRGB transfer, maximum u16 reference error
+1, `Safe::AnyIntent`, and no structural/empirical disagreement. Its entry was
+copied into the table by hand; the full-table regeneration is not used.

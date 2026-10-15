@@ -19,6 +19,11 @@
 ## [Unreleased]
 
 ### Fixed
+- Recognize "Display P3 Gamut with sRGB Transfer", the 520-byte v4.3 profile in
+  Android phone screenshots (five in imazen-26). icc-gen's `--report` run gives
+  normalized hash `0x2dc2d3340af4d7c8`: Display P3 with the sRGB curve, maximum
+  u16 reference error 1, all rendering intents admitted, no Little CMS
+  disagreement. No public signatures change.
 - Gamut conversions from Gamma 2.2 (Adobe RGB) and BT.709-transfer U8/U16
   sources now apply the primaries matrix in linear light. The planner labelled
   the output of the naive U8/U16 → F32 depth steps as linear, so it inserted

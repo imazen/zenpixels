@@ -60,6 +60,7 @@
     // (0x2964_3971_16a9_a063, CP::Bt2020, TF::Gamma24,  1, Safe::AnyIntent),               // [CPS] bt 2020  [transfer deferred]
     (0x2ba9_cd75_c09e_648a, CP::Bt2020, TF::Bt709,  9, Safe::AnyIntent),               // [CPS] cicp bundle:rgb:cp9-tc14
     (0x2ce4_ad8c_987f_2efe, CP::DisplayP3, TF::Bt709,  9, Safe::AnyIntent),               // [CPS] cicp bundle:rgb:cp12-tc15
+    (0x2dc2_d334_0af4_d7c8, CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] android display p3 srgb transfer
     // (0x2e95_1342_a3de_0181, CP::Bt470Bg, TF::Bt709,  9, Safe::AnyIntent),               // [CPS] cicp bundle:rgb:cp5-tc6  [primaries deferred]
     // (0x2f8b_0f4e_5213_448f, CP::WideGamut, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] RTv4 Wide 3c4c31b0  [primaries deferred]
     (0x30f1_6600_93c3_8a9c, CP::Bt709, TF::Srgb,  2, Safe::AnyIntent),               // [CPS] compact-icc-sRGB-v2-magic
