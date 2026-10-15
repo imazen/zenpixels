@@ -19,6 +19,12 @@
 ## [Unreleased]
 
 ### Fixed
+- Gamut conversions from Gamma 2.2 (Adobe RGB) and BT.709-transfer U8/U16
+  sources now apply the primaries matrix in linear light. The planner labelled
+  the output of the naive U8/U16 → F32 depth steps as linear, so it inserted
+  the matrix before the linearize step. Adobe RGB `(59, 106, 90)` → sRGB gave
+  red 36 instead of 0; an Adobe RGB photo differed from LittleCMS by up to 36
+  code values. sRGB- and PQ/HLG-encoded sources were unaffected.
 - Recognize the Display P3/sRGB ICC profile carried by the Ultra HDR corpus's
   `rgba_uhdr.jpg`. The existing ICC generator identifies its normalized hash
   as `0x11c9534ccea885a0`, with maximum reference error 1 in u16 channel units
