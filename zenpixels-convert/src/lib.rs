@@ -401,29 +401,15 @@ pub use zenpixels::*;
 
 // Conversion modules.
 pub(crate) mod convert;
+// Only library-owned concrete types implement conversion/measurement extensions.
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for zenpixels::TransferFunction {}
+    impl Sealed for zenpixels::ColorPrimaries {}
+    impl<P> Sealed for zenpixels::PixelBuffer<P> {}
+    impl Sealed for zenpixels::hdr::ContentLightLevel {}
+}
 pub mod error;
-/// Resource estimation — predict peak memory + wall-clock time for a
-/// `ConvertPlan` before running it. See [`ResourceEstimate`],
-/// [`ComputeEnvironment`], [`ImageCharacteristics`],
-/// [`ConvertPlan::estimate`](crate::ConvertPlan::estimate), and
-/// [`ConvertPlan::estimate_in`](crate::ConvertPlan::estimate_in).
-///
-/// These estimate types are defined locally here. `zenpixels-convert`
-/// is a foundation crate and does NOT depend on `zencodec` — the layering
-/// rule keeps codec abstractions strictly above pixel math. There is
-/// currently no `From` conversion to/from the similarly-named
-/// `zencodec::estimate::*` types — the shapes have diverged (for example,
-/// `zencodec`'s `ResourceEstimate` additionally tracks `cpu_ms` and
-/// `peak_memory_bytes_max`, and its `ImageCharacteristics` tracks
-/// `frame_count`, none of which exist here). A `decode → convert → encode`
-/// pipeline bridging the two currently has to map fields by hand.
-#[deprecated(
-    since = "0.2.17",
-    note = "estimation is retired; it will be removed in 0.3.1, including with estimation-experimental enabled"
-)]
-pub mod estimate;
-#[allow(deprecated)] // Preserve the old root imports and their downstream warnings.
-pub use estimate::{ComputeEnvironment, ImageCharacteristics, ResourceEstimate, SimdTier};
 pub(crate) mod f16_scalar;
 pub(crate) mod negotiate;
 
@@ -508,13 +494,9 @@ pub mod pipeline;
 mod scan;
 
 // Re-export key conversion types at crate root.
-#[allow(deprecated)]
-pub use adapt::adapt_for_encode_explicit;
 pub use adapt::{adapt_for_encode_explicit_cow, try_adapt_in_place};
 #[cfg(feature = "hdr-experimental")]
 pub use convert::HdrConfig;
-#[allow(deprecated)] // Compatibility export; the definition carries the warning.
-pub use convert::requires_cms;
 pub use convert::{ConvertPlan, convert_row};
 #[doc(inline)]
 pub use converter::RowConverter;
@@ -548,21 +530,8 @@ pub use gamut::{
 // The scan-level predicates stay crate-internal.
 pub use load_bearing::{LoadBearingReport, PixelBufferLoadBearingExt, PixelSliceLoadBearingExt};
 
-// Re-export HDR types and tone mapping.
-// `exposure_tonemap`, `reinhard_inverse`, `reinhard_tonemap`, and `HdrMetadata`
-// are deprecated (see the `hdr` module). The re-exports themselves name them,
-// hence the per-statement `#[allow(deprecated)]`. For production HDR→SDR tone
-// mapping use the `zentone` crate (`zentone::Bt2446A`, `Bt2408Tonemapper`, …).
-#[allow(deprecated)]
-#[cfg(feature = "std")]
-pub use hdr::exposure_tonemap;
-// Anchor-aware HDR PQ quantizer — reads `DiffuseWhite` from the source's
-// `ColorContext` (default BT.2408 = 203); the canonical linear→PQ16 encoder.
-// (The no-allocation `quantize_into` sibling stays `pub(crate)` until a concrete
-// consumer or the §3.2 PixelBuffer-level surface lands — see hdr.rs.)
+// Anchor-aware quantization; implementation lives in the HDR module.
 pub use hdr::quantize_to;
-#[allow(deprecated)]
-pub use hdr::{HdrMetadata, reinhard_inverse, reinhard_tonemap};
 
 // Re-export CMS traits, enums, and implementations.
 #[allow(deprecated)]

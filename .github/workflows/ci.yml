@@ -54,9 +54,6 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: python3 scripts/check-deprecations.py
 
-      - name: Test legacy estimation behavior (still deprecated)
-        run: cargo test -p zenpixels-convert --features estimation-experimental --test resource_estimate
-
       # Default `cargo test` exercises only the portable scalar transpose tiers.
       # Run the orient suite again with the SIMD kernels enabled so the per-width
       # AVX2 (x64) / NEON (arm64 runners) register transposes are executed and

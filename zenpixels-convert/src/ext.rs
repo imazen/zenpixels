@@ -14,7 +14,7 @@ use crate::gamut::GamutMatrix;
 // ---------------------------------------------------------------------------
 
 /// Adds scalar EOTF/OETF methods to [`TransferFunction`].
-pub trait TransferFunctionExt {
+pub trait TransferFunctionExt: crate::sealed::Sealed {
     /// Scalar EOTF: encoded signal → linear light.
     ///
     /// Canonical reference implementation for testing SIMD paths.
@@ -62,7 +62,7 @@ impl TransferFunctionExt for TransferFunction {
 
 /// Adds XYZ matrix lookups to [`ColorPrimaries`].
 #[allow(clippy::wrong_self_convention)]
-pub trait ColorPrimariesExt {
+pub trait ColorPrimariesExt: crate::sealed::Sealed {
     /// Linear RGB → CIE XYZ (D65 white point).
     ///
     /// Returns `None` for [`Unknown`](ColorPrimaries::Unknown).
@@ -144,7 +144,7 @@ use zenpixels::buffer::PixelBuffer;
 use zenpixels::descriptor::{AlphaMode, ChannelLayout, ChannelType};
 
 /// Adds format conversion methods to type-erased [`PixelBuffer`].
-pub trait PixelBufferConvertExt {
+pub trait PixelBufferConvertExt: crate::sealed::Sealed {
     /// Convert pixel data to a different layout and depth.
     ///
     /// Uses [`RowConverter`](crate::RowConverter) for transfer-function-aware
@@ -373,42 +373,17 @@ impl PixelBufferConvertExt for PixelBuffer {
 /// These methods supply the peak — either explicitly
 /// ([`convert_to_with_hdr_config`](Self::convert_to_with_hdr_config)) or
 /// by measuring MaxCLL from the buffer itself
-/// ([`convert_to_sdr`](Self::convert_to_sdr)).
+/// ([`convert_to_sdr_measuring_peak`](Self::convert_to_sdr_measuring_peak)).
 ///
 /// Gated behind `hdr-experimental`.
 #[cfg(feature = "hdr-experimental")]
-pub trait PixelBufferHdrConvertExt {
-    /// Convert this HDR buffer to `target` (typically an SDR descriptor —
-    /// sRGB / BT.709 / Gamma22), auto-measuring source peak via
-    /// [`CllMeasure::measure_max`](crate::hdr::CllMeasure::measure_max)
-    /// (the production-default per the 2026-06-22 audited shootout —
-    /// wins 3 of 6 ranking criteria including the user-visible
-    /// `pct_above_de5`, see `DEFAULT_PERCENTILE` docs for the alternative
-    /// percentile path).
-    ///
-    /// For non-HDR sources this falls back to
-    /// [`convert_to`](PixelBufferConvertExt::convert_to) (so the call is
-    /// safe to use when the source's HDR-ness isn't known up front).
-    ///
-    /// **Allocates** a new [`PixelBuffer`].
-    #[deprecated(
-        since = "0.2.17",
-        note = "use convert_to_sdr_measuring_peak to make the extra measurement pass explicit, or convert_to_with_hdr_config with a supplied peak"
-    )]
-    fn convert_to_sdr(
-        &self,
-        target: PixelDescriptor,
-    ) -> Result<PixelBuffer, At<crate::ConvertError>>;
-
+pub trait PixelBufferHdrConvertExt: crate::sealed::Sealed {
     /// Explicitly measure peak luminance in a separate rowwise pass, then map
     /// to SDR. Allocates one output image plus reusable row scratch.
-    #[allow(deprecated)] // Default preserves existing external trait impls.
     fn convert_to_sdr_measuring_peak(
         &self,
         target: PixelDescriptor,
-    ) -> Result<PixelBuffer, At<crate::ConvertError>> {
-        self.convert_to_sdr(target)
-    }
+    ) -> Result<PixelBuffer, At<crate::ConvertError>>;
 
     /// Convert this HDR buffer to `target` with explicit HDR knobs.
     ///
@@ -430,14 +405,6 @@ pub trait PixelBufferHdrConvertExt {
 
 #[cfg(feature = "hdr-experimental")]
 impl PixelBufferHdrConvertExt for PixelBuffer {
-    #[track_caller]
-    fn convert_to_sdr(
-        &self,
-        target: PixelDescriptor,
-    ) -> Result<PixelBuffer, At<crate::ConvertError>> {
-        self.convert_to_sdr_measuring_peak(target)
-    }
-
     fn convert_to_sdr_measuring_peak(
         &self,
         target: PixelDescriptor,
