@@ -51,6 +51,11 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
 
 ### zenpixels-convert — fixed
 
+- Refuse primaries-10 (CIE XYZ) RGB synthesis: the generated colorants were
+  singular. Profile BT.709 primaries with BT.709 transfer (1,1) for RGB and
+  gray instead of treating its curve as sRGB. Validate every generated RGB
+  matrix against independent H.273 primaries adapted to D50; retain the
+  valid equal-energy-white gray profiles (#88). (upstream commit: e3fab915)
 - `synthesize_icc_for_cicp` returned a profile with a different tone curve
   for two pairs, and a Display P3 profile that libultrahdr does not
   recognise (#86, #87). (BT.2020, sRGB) got `REC2020_V4`, whose curve is

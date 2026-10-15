@@ -287,7 +287,7 @@ pub enum SynthesizedIcc {
     /// A CMS would be required to produce a profile for this CICP.
     ///
     /// Retained for API stability: [`synthesize_icc_for_cicp`] no longer returns
-    /// this — the bundled full-grid blob serves every assigned H.273 CICP with no
+    /// this — the bundled blob serves supported assigned H.273 pairs with no
     /// CMS, so a no-CMS build reports [`CmsUnsupported`](Self::CmsUnsupported) for an
     /// unassigned / reserved code rather than `NeedsCms`.
     NeedsCms,
@@ -307,8 +307,8 @@ pub enum SynthesizedIcc {
 /// [`CmsUnsupported`](SynthesizedIcc::CmsUnsupported), so you carry the colour via the
 /// CICP carrier or embed nothing — never a profile whose TRC contradicts the pixels.
 ///
-/// Coverage — full, with **no CMS required** (a default `no_std` build serves all of it):
-/// - **The full assigned H.273 grid** (174 primaries×transfer combos, **including HDR
+/// Coverage, with **no CMS required** (a default `no_std` build serves all of it):
+/// - **The supported assigned H.273 grid** (159 RGB primaries×transfer combos, **including HDR
 ///   PQ and HLG**), from a bundled LZ4-compressed blob (`icc-db`, on by default)
 ///   decoded once per transfer group on first use. These bytes are byte-for-byte what
 ///   the `cms-moxcms` CMS generates; every profile carries a `cicp` tag naming its
@@ -318,7 +318,10 @@ pub enum SynthesizedIcc {
 ///   [`ADOBE_RGB`] for Adobe RGB + gamma 2.2); [`NeedsCms`](SynthesizedIcc::NeedsCms)
 ///   for the rest. These carry no `cicp` tag and are not recognised by colorant-matching
 ///   readers such as libultrahdr.
-/// - **sRGB / BT.709 default** → [`NotNeeded`](SynthesizedIcc::NotNeeded).
+/// - **sRGB / unspecified defaults** → [`NotNeeded`](SynthesizedIcc::NotNeeded).
+///
+/// Primaries 10 (CIE XYZ) is refused as RGB in every build: its generated
+/// RGB colorants are singular.
 ///
 /// No CMS is involved — a default `no_std` build serves the full set above. (The
 /// optional `cms-moxcms` feature is the separate `MoxCms` *transform* engine for
@@ -343,7 +346,8 @@ pub enum SynthesizedIcc {
 /// assert_eq!(synthesize_icc_for_cicp(Cicp::SRGB), SynthesizedIcc::NotNeeded);
 /// ```
 pub fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
-    // Genuine sRGB / BT.709 / unspecified default — no embedded ICC needed.
+    // sRGB / unspecified defaults need no embedded ICC. BT.709 transfer
+    // with specified BT.709 primaries (1,1) is a different curve from sRGB.
     //
     // This is gated on the **raw** H.273 code points, NOT the enum mapping:
     // `color_primaries_enum` folds every gamut zenpixels doesn't model (BT.601 = 6,
@@ -351,14 +355,23 @@ pub fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
     // enum-based check would treat those real, non-sRGB gamuts as "sRGB default"
     // and drop their colour — and worse, skip the blob lookup below that actually
     // carries them. Only colour-primaries 1 (BT.709) / 2 (unspecified) with
-    // transfer 1 (BT.709) / 2 (unspecified) / 13 (sRGB) is the assumed default.
-    if matches!(cicp.color_primaries, 1 | 2) && matches!(cicp.transfer_characteristics, 1 | 2 | 13)
+    // transfer 2 (unspecified) / 13 (sRGB) is the assumed default;
+    // (2,1) has no specified gamut to describe.
+    if (matches!(cicp.color_primaries, 1 | 2) && matches!(cicp.transfer_characteristics, 2 | 13))
+        || (cicp.color_primaries == 2 && cicp.transfer_characteristics == 1)
     {
         return SynthesizedIcc::NotNeeded;
     }
 
-    // 1. The bundled, LZ4-compressed blob covering the *full* H.273 grid
-    //    (174 combos) — `icc-db` feature. Keyed on the raw code points —
+    // H.273 primaries 10 denotes CIE XYZ. The generator's RGB model
+    // collapses its colorants to rank 1; never serve those bytes, including
+    // in builds without the database.
+    if cicp.color_primaries == 10 {
+        return SynthesizedIcc::CmsUnsupported;
+    }
+
+    // 1. The bundled, LZ4-compressed blob covering the supported H.273 grid
+    //    (159 RGB combos) — `icc-db` feature. Keyed on the raw code points —
     //    moxcms-equivalent bytes, decoded once per transfer group and cached.
     //    Each profile carries the pair's exact tone curve and a `cicp` tag,
     //    so readers that identify a gamut by `cicp` tag or by colorants
@@ -409,12 +422,14 @@ pub fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
 /// data), and a per-white Bradford white→D50 `chad`. CICP matrix
 /// coefficients are ignored (no chroma to de-correlate).
 ///
-/// Coverage mirrors the RGB variant: the full assigned H.273 grid is served
+/// Gray keeps all 11 assigned primaries, including primaries 10: only its
+/// equal-energy white and transfer are needed, not an RGB gamut matrix.
+/// The 175 non-default pairs are served
 /// from the same bundled, LZ4-compressed asset as the RGB profiles (64
 /// unique gray profiles after white-point dedup, packed gray-first into the
 /// shared per-transfer groups so the duplicated TRC payload compresses away
 /// — the gray side adds ~7.6 KB to the committed blob; no CMS required,
-/// `no_std`-safe); the sRGB / BT.709 default returns
+/// `no_std`-safe); the sRGB / unspecified defaults return
 /// [`NotNeeded`](SynthesizedIcc::NotNeeded) (viewers assume sRGB-gamma gray —
 /// PNG can carry `gAMA`/`sRGB` instead); off-grid code points return
 /// [`CmsUnsupported`](SynthesizedIcc::CmsUnsupported) in every build.
@@ -442,7 +457,8 @@ pub fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
 pub fn synthesize_gray_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
     // Same raw-code-point default gate as the RGB variant (see its comment
     // for why the enum mapping must not be used here).
-    if matches!(cicp.color_primaries, 1 | 2) && matches!(cicp.transfer_characteristics, 1 | 2 | 13)
+    if (matches!(cicp.color_primaries, 1 | 2) && matches!(cicp.transfer_characteristics, 2 | 13))
+        || (cicp.color_primaries == 2 && cicp.transfer_characteristics == 1)
     {
         return SynthesizedIcc::NotNeeded;
     }
@@ -737,7 +753,7 @@ mod tests {
                 checked += 1;
             }
         }
-        assert_eq!(checked, 174);
+        assert_eq!(checked, 159);
     }
 
     #[test]
@@ -846,7 +862,7 @@ mod tests {
     #[test]
     fn synthesize_icc_for_cicp_full_grid_coverage_without_cms() {
         // The headline property: the blob gives a profile for every assigned-grid
-        // combo except the two sRGB-default `NotNeeded` ones — with no dependence
+        // combo except primaries 10 and the sRGB-default `NotNeeded` pair — with no dependence
         // on a CMS. The blob lookup sits *before* the moxcms fallback, so every
         // covered combo comes back as a `Cow::Borrowed` (the blob's zero-copy
         // slice, or one of the 4 `&'static` consts) — never a `Cow::Owned`, which
@@ -858,6 +874,7 @@ mod tests {
             &[1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
         let mut profiles = 0usize;
         let mut not_needed = 0usize;
+        let mut unsupported = 0usize;
         for &p in ASSIGNED_PRIMARIES {
             for &t in ASSIGNED_TRANSFERS {
                 let got = synthesize_icc_for_cicp(Cicp::new(p, t, 0, true));
@@ -873,20 +890,19 @@ mod tests {
                     }
                     SynthesizedIcc::NotNeeded => {
                         // Only the BT.709 sRGB-default pairs.
-                        assert!(
-                            p == 1 && matches!(t, 1 | 13),
-                            "({p}, {t}) unexpectedly NotNeeded"
-                        );
+                        assert!(p == 1 && t == 13, "({p}, {t}) unexpectedly NotNeeded");
                         not_needed += 1;
                     }
+                    SynthesizedIcc::CmsUnsupported if p == 10 => unsupported += 1,
                     other => panic!("({p}, {t}) gave {other:?} — expected full blob coverage"),
                 }
             }
         }
-        assert_eq!(profiles, 174, "expected 174 profile-yielding combos");
+        assert_eq!(profiles, 159, "expected 159 profile-yielding combos");
+        assert_eq!(unsupported, 16, "all primaries-10 RGB pairs refused");
         assert_eq!(
-            not_needed, 2,
-            "expected exactly 2 sRGB-default NotNeeded combos"
+            not_needed, 1,
+            "expected exactly 1 sRGB-default NotNeeded combo"
         );
     }
 }

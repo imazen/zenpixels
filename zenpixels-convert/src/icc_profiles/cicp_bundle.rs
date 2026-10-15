@@ -177,7 +177,10 @@ mod tests {
         assert!(bundled_profile_for_cicp(2, 13).is_none());
         // The sRGB-default pair is handled upstream as NotNeeded and excluded.
         assert!(bundled_profile_for_cicp(1, 13).is_none());
-        assert!(bundled_profile_for_cicp(1, 1).is_none());
+        assert!(bundled_profile_for_cicp(1, 1).is_some());
+        for t in [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18] {
+            assert!(bundled_profile_for_cicp(10, t).is_none());
+        }
     }
 
     #[test]
@@ -239,7 +242,7 @@ mod tests {
     fn gray_miss_returns_none() {
         assert!(bundled_gray_profile_for_cicp(2, 13).is_none());
         assert!(bundled_gray_profile_for_cicp(1, 13).is_none());
-        assert!(bundled_gray_profile_for_cicp(1, 1).is_none());
+        assert!(bundled_gray_profile_for_cicp(1, 1).is_some());
     }
 
     /// ZERO-TOLERANCE roundtrip for the gray side: every GRAY profile
@@ -284,7 +287,7 @@ mod tests {
             );
             checked += 1;
         }
-        assert_eq!(checked, 174, "expected to roundtrip all 174 gray combos");
+        assert_eq!(checked, 175, "expected to roundtrip all 175 gray combos");
     }
 
     /// Round-trip recognition guard for **every** profile this crate
@@ -391,7 +394,7 @@ mod tests {
     #[test]
     fn golden_blob_sha256_is_pinned() {
         use sha2::{Digest, Sha256};
-        const EXPECTED: &str = "b4a8f12c039f8b904844136e09cc37147f3b869f5b52bce56630872d4a9d3264";
+        const EXPECTED: &str = "81abdec5779e3cc4a17e9ae19936ef6f32ce99cc53c2c6980f30bc509d820c23";
         let digest = Sha256::digest(CICP_BUNDLE_LZ4);
         let hex: alloc::string::String = digest.iter().map(|b| alloc::format!("{b:02x}")).collect();
         assert_eq!(
@@ -427,30 +430,46 @@ mod tests {
         }
 
         let mut checked = 0usize;
-        for p in &BUNDLE_PROFILES {
-            let from_blob = bundled_profile_for_cicp(p.primaries, p.transfer)
-                .expect("indexed profile must resolve");
-            let from_moxcms =
-                crate::cms_moxcms::icc_bytes_for_cicp(&Cicp::new(p.primaries, p.transfer, 0, true))
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "moxcms could not regenerate ({}, {}) — index/grid desync",
-                            p.primaries, p.transfer
-                        )
-                    });
-            assert_eq!(
-                from_blob.as_ref(),
-                mask_timestamp(&from_moxcms).as_slice(),
-                "blob bytes for ({}, {}) diverge from a fresh moxcms generation \
+        for primaries in [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 22] {
+            for transfer in [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18] {
+                if primaries == 10 || (primaries == 1 && transfer == 13) {
+                    // XYZ's singular RGB matrix is deliberately excluded;
+                    // sRGB is the sole assigned default without a profile.
+                    assert!(bundled_profile_for_cicp(primaries, transfer).is_none());
+                    continue;
+                }
+                let p = BUNDLE_PROFILES
+                    .iter()
+                    .find(|p| p.primaries == primaries && p.transfer == transfer)
+                    .expect("every non-excluded assigned pair must be indexed");
+                let from_blob = bundled_profile_for_cicp(p.primaries, p.transfer)
+                    .expect("indexed profile must resolve");
+                let from_moxcms = crate::cms_moxcms::icc_bytes_for_cicp(&Cicp::new(
+                    p.primaries,
+                    p.transfer,
+                    0,
+                    true,
+                ))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "moxcms could not regenerate ({}, {}) — index/grid desync",
+                        p.primaries, p.transfer
+                    )
+                });
+                assert_eq!(
+                    from_blob.as_ref(),
+                    mask_timestamp(&from_moxcms).as_slice(),
+                    "blob bytes for ({}, {}) diverge from a fresh moxcms generation \
                  (moxcms version bump or generator drift)",
-                p.primaries,
-                p.transfer
-            );
-            checked += 1;
+                    p.primaries,
+                    p.transfer
+                );
+                checked += 1;
+            }
         }
         assert_eq!(
-            checked, 174,
-            "expected to roundtrip all 174 bundled profiles"
+            checked, 159,
+            "expected to roundtrip all 159 bundled profiles"
         );
     }
 }
