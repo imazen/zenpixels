@@ -49,6 +49,28 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
 - Both converter versions accept core `>=0.2.17, <0.4.0`; a connected pipeline
   must resolve one core version. Candidate archives are tested before publishing.
 
+### zenpixels-convert — fixed
+
+- Refuse primaries-10 (CIE XYZ) RGB synthesis: the generated colorants were
+  singular. Profile BT.709 primaries with BT.709 transfer (1,1) for RGB and
+  gray instead of treating its curve as sRGB. Validate every generated RGB
+  matrix against independent H.273 primaries adapted to D50; retain the
+  valid equal-energy-white gray profiles (#88). (upstream commit: e3fab915)
+- `synthesize_icc_for_cicp` returned a profile with a different tone curve
+  for two pairs, and a Display P3 profile that libultrahdr does not
+  recognise (#86, #87). (BT.2020, sRGB) got `REC2020_V4`, whose curve is
+  BT.709's (13 code values apart at linear 0.18), and (Display P3, BT.709)
+  got the sRGB-curve `DISPLAY_P3_V4`. The curated `DISPLAY_P3_V4` has no
+  `cicp` tag and truncated red/blue Z, so libultrahdr's colorant matcher
+  (0.001 tolerance) reported an unspecified gamut and decoded Display P3
+  Ultra HDR bases as BT.709. With `icc-db` (default) synthesis now serves the
+  generated, `cicp`-tagged profile for every pair; the curated constants are
+  the fallback without `icc-db`, and only for the pair whose curve each
+  carries exactly. The constants themselves are unchanged and still
+  exported. Tests: every synthesized profile's `cicp` tag names the
+  requested pair over the full grid; Display P3 colorants are within
+  libultrahdr's tolerance. No public signatures change.
+
 ## [0.2.17] — unreleased bridge
 
 ### Conversion follow-up
