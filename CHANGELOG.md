@@ -109,6 +109,21 @@
 
 ### zenpixels-convert — fixed
 
+- `synthesize_icc_for_cicp` returned a profile with a different tone curve
+  for two pairs, and a Display P3 profile that libultrahdr does not
+  recognise (#86, #87). (BT.2020, sRGB) got `REC2020_V4`, whose curve is
+  BT.709's (13 code values apart at linear 0.18), and (Display P3, BT.709)
+  got the sRGB-curve `DISPLAY_P3_V4`. The curated `DISPLAY_P3_V4` has no
+  `cicp` tag and truncated red/blue Z, so libultrahdr's colorant matcher
+  (0.001 tolerance) reported an unspecified gamut and decoded Display P3
+  Ultra HDR bases as BT.709. With `icc-db` (default) synthesis now serves the
+  generated, `cicp`-tagged profile for every pair; the curated constants are
+  the fallback without `icc-db`, and only for the pair whose curve each
+  carries exactly. The constants themselves are unchanged and still
+  exported. Tests: every synthesized profile's `cicp` tag names the
+  requested pair over the full grid; Display P3 colorants are within
+  libultrahdr's tolerance. No public signatures change.
+
 - Correct RGBA→GrayAlpha, matte-to-gray and source-domain unassociation before
   nonlinear transfer conversion. Preserve per-stage descriptors and PQ anchors
   through composition; ordinary composition still removes avoidable quantization.
