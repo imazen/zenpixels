@@ -42,6 +42,11 @@ clippy:
 test:
     cargo test --workspace
 
+# Compare production fused scan predicates with forced scalar on macOS ARM64.
+arm-scan-tiers-macos:
+    mkdir -p "$HOME/tmp"
+    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench -p zenpixels-convert --features __bench_scan --bench kernel_tiers -- --cpu-policy=unrestricted --format=llm > "$HOME/tmp/zenpixels-scan-tiers.log" 2>&1
+
 # ── ICC profile table management ──────────────────────────────────────
 
 # Fetch ICC profiles from R2 to local cache using the manifest
