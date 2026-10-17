@@ -13,7 +13,6 @@ use core::fmt;
 
 /// Channel storage type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum ChannelType {
@@ -98,7 +97,6 @@ impl fmt::Display for ChannelType {
 
 /// Channel layout (number and meaning of channels).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum ChannelLayout {
@@ -172,7 +170,6 @@ impl fmt::Display for ChannelLayout {
 /// alpha channel exists, while `Some(AlphaMode::Straight)` etc. describe
 /// the semantics of a present alpha channel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum AlphaMode {
@@ -219,7 +216,6 @@ impl fmt::Display for AlphaMode {
 /// Discriminant values are internal — use [`from_cicp()`](Self::from_cicp) /
 /// [`to_cicp()`](Self::to_cicp) for CICP mapping.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum TransferFunction {
@@ -231,7 +227,7 @@ pub enum TransferFunction {
     Bt709 = 2,
     /// Perceptual Quantizer (SMPTE ST 2084, HDR10).
     Pq = 3,
-    /// Pure power-law gamma 2.2. Used for Adobe RGB (1998).
+    /// Adobe RGB (1998) power-law gamma, nominally 2.2 (exactly 563/256).
     ///
     /// The Adobe RGB 1998 encoding spec (§4.3.4.2) defines pure gamma
     /// 2.19921875 with no linear segment near black. About 85% of real-world
@@ -291,9 +287,9 @@ impl TransferFunction {
     pub const fn from_cicp(tc: u8) -> Option<Self> {
         match tc {
             1 => Some(Self::Bt709),
-            // SMPTE 170M (6) and SMPTE 240M (7) use the BT.709 curve —
-            // per BT.601/SMPTE 170M spec, the OETF is identical to BT.709.
-            6 | 7 => Some(Self::Bt709),
+            // SMPTE 170M (6) uses BT.709. SMPTE 240M (7) differs;
+            // leave it unresolved until a matching kernel exists.
+            6 => Some(Self::Bt709),
             8 => Some(Self::Linear),
             13 => Some(Self::Srgb),
             16 => Some(Self::Pq),
@@ -358,7 +354,6 @@ impl fmt::Display for TransferFunction {
 /// [`from_cicp()`](Self::from_cicp) / [`to_cicp()`](Self::to_cicp) for
 /// CICP mapping. Discriminant values are internal.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum ColorPrimaries {
@@ -523,27 +518,20 @@ impl ColorPrimaries {
 
     /// Whether `self` fully contains the gamut of `other`.
     ///
-    /// Returns `false` when white points differ (cross-adapted containment
-    /// is not defined without a chromatic adaptation transform).
-    /// D65 hierarchy: BT.2020 > Display P3 > Adobe RGB ≈ BT.709.
+    /// Unknown primaries are not provably contained. Display P3 and Adobe RGB
+    /// each contain BT.709, but neither contains the other. BT.2020 does not
+    /// quite contain Display P3: P3 red lies outside its triangle. All currently
+    /// supported known primaries use D65; future white points need a defined
+    /// adaptation contract before claiming containment.
     #[inline]
     pub const fn contains(self, other: Self) -> bool {
-        !self.needs_chromatic_adaptation(other)
-            && self.gamut_width() >= other.gamut_width()
-            && !matches!(self, Self::Unknown)
-            && !matches!(other, Self::Unknown)
-    }
-
-    #[allow(unreachable_patterns)]
-    const fn gamut_width(self) -> u8 {
-        match self {
-            Self::Bt709 => 1,
-            Self::AdobeRgb => 2,
-            Self::DisplayP3 => 3,
-            Self::Bt2020 => 4,
-            Self::Unknown => 0,
-            _ => 0,
-        }
+        matches!(
+            (self, other),
+            (Self::Bt2020, Self::Bt2020 | Self::AdobeRgb | Self::Bt709)
+                | (Self::DisplayP3, Self::DisplayP3 | Self::Bt709)
+                | (Self::AdobeRgb, Self::AdobeRgb | Self::Bt709)
+                | (Self::Bt709, Self::Bt709)
+        )
     }
 }
 
@@ -594,13 +582,11 @@ impl fmt::Display for ColorPrimaries {
 /// **There are no Narrow↔Full conversion kernels yet.** `zenpixels-convert`
 /// refuses range-crossing conversions rather than relabeling (relabeling
 /// without rescaling lifts or crushes blacks); narrow data must be preserved
-/// verbatim end-to-end. Caveat while that holds: cross-*depth* conversion of
-/// narrow data uses full-scale rescaling (×(2^M−1)/(2^N−1)), which maps ITU
-/// anchors only approximately (8-bit 235 widens to 60 395 where the ITU
-/// 16-bit anchor is 235·256 = 60 160, ≈0.36 % of full scale); exact anchor
-/// remapping is the future range kernels' job.
+/// by value-preserving operations. `zenpixels-convert` also refuses narrow-range
+/// channel-type changes (including U8↔U16) until range-aware kernels exist.
+/// Full-range widening by 257 would map narrow U8 white 235 to 60395 rather than
+/// the correct U16 anchor 60160. Full-range U8↔U16 conversions remain supported.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum SignalRange {
@@ -633,7 +619,6 @@ impl fmt::Display for SignalRange {
 /// Combines a [`PixelFormat`] (physical pixel layout) with transfer function,
 /// alpha mode, color primaries, and signal range.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct PixelDescriptor {
     /// Physical pixel format (channel type + layout as a flat enum).
@@ -1259,23 +1244,55 @@ impl PixelDescriptor {
         self.format.channel_type().byte_size()
     }
 
-    /// Tightly-packed byte stride for a given width.
+    /// Tightly-packed byte stride for a given width, in bytes.
+    ///
+    /// **Overflow-safe.** `width * bytes_per_pixel` is computed with
+    /// [`usize::saturating_mul`] so the result never wraps — on 32-bit
+    /// targets (i686, wasm32) a width that would overflow `usize` returns
+    /// `usize::MAX` instead of a silently-truncated small stride.
+    /// Downstream `checked_mul(height)` then surfaces the overflow as
+    /// [`BufferError::InvalidDimensions`](crate::BufferError::InvalidDimensions)
+    /// rather than silently under-allocating; before this guard, a 32-bit
+    /// wrap could pass the height multiply and produce a small buffer
+    /// paired with the full-size `width` field — silent corruption.
     #[inline]
     pub const fn aligned_stride(self, width: u32) -> usize {
-        width as usize * self.bytes_per_pixel()
+        (width as usize).saturating_mul(self.bytes_per_pixel())
     }
 
-    /// SIMD-friendly byte stride for a given width.
+    /// SIMD-friendly byte stride for a given width, in bytes.
     ///
     /// The stride is a multiple of `lcm(bytes_per_pixel, simd_align)`,
     /// ensuring every row start is both pixel-aligned and SIMD-aligned.
     /// `simd_align` must be a power of 2.
+    ///
+    /// **Overflow-safe** (see [`aligned_stride`](Self::aligned_stride)):
+    /// the `width * bpp` multiply saturates, and the align-up step is
+    /// also saturating, so the result stays bounded at `usize::MAX` on
+    /// overflow and downstream allocation surfaces a typed error.
     #[inline]
     pub const fn simd_aligned_stride(self, width: u32, simd_align: usize) -> usize {
         let bpp = self.bytes_per_pixel();
-        let raw = width as usize * bpp;
+        let raw = (width as usize).saturating_mul(bpp);
         let align = lcm(bpp, simd_align);
         align_up_general(raw, align)
+    }
+
+    /// Validate that alpha semantics agree with the physical format.
+    ///
+    /// Descriptors remain freely constructible declarations. Buffer acceptance
+    /// and conversion planning call this before using them; no pixels are read.
+    pub fn validate(self) -> Result<(), crate::BufferError> {
+        let valid = match self.format.default_alpha() {
+            None => self.alpha.is_none(),
+            Some(AlphaMode::Undefined) => self.alpha == Some(AlphaMode::Undefined),
+            Some(_) => self.alpha.is_some(),
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(crate::BufferError::IncompatibleDescriptor)
+        }
     }
 
     /// Whether this descriptor's channel type and layout are compatible with `other`.
@@ -1304,16 +1321,30 @@ const fn lcm(a: usize, b: usize) -> usize {
     if a == 0 || b == 0 {
         0
     } else {
-        a / gcd(a, b) * b
+        (a / gcd(a, b)).saturating_mul(b)
     }
 }
 
+/// Round `value` up to the next multiple of `align`, saturating at
+/// `usize::MAX` on overflow.
+///
+/// Saturation matters when `value` is itself the saturating-mul result of
+/// [`PixelDescriptor::aligned_stride`] / [`PixelDescriptor::simd_aligned_stride`]:
+/// without it, `value + (align - rem)` could wrap from `usize::MAX` back
+/// down to a small number, defeating the saturating-mul guard one layer up.
 const fn align_up_general(value: usize, align: usize) -> usize {
     if align == 0 {
         return value;
     }
     let rem = value % align;
-    if rem == 0 { value } else { value + align - rem }
+    if rem == 0 {
+        value
+    } else {
+        match value.checked_add(align - rem) {
+            Some(v) => v,
+            None => usize::MAX,
+        }
+    }
 }
 
 impl fmt::Display for PixelDescriptor {
@@ -1340,7 +1371,6 @@ impl fmt::Display for PixelDescriptor {
 
 /// What the channels represent, independent of channel count or byte order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum ColorModel {
@@ -1423,7 +1453,6 @@ impl fmt::Display for ByteOrder {
 /// Use this enum when you need exhaustive `match` dispatch over known
 /// pixel layouts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum PixelFormat {
@@ -1843,7 +1872,7 @@ mod tests {
 
     #[test]
     fn color_primaries_containment() {
-        assert!(ColorPrimaries::Bt2020.contains(ColorPrimaries::DisplayP3));
+        assert!(!ColorPrimaries::Bt2020.contains(ColorPrimaries::DisplayP3));
         assert!(ColorPrimaries::Bt2020.contains(ColorPrimaries::Bt709));
         assert!(ColorPrimaries::DisplayP3.contains(ColorPrimaries::Bt709));
         assert!(!ColorPrimaries::Bt709.contains(ColorPrimaries::DisplayP3));
@@ -2127,6 +2156,44 @@ mod tests {
         assert_eq!(PixelDescriptor::RGB8_SRGB.aligned_stride(100), 300);
         assert_eq!(PixelDescriptor::RGBA8_SRGB.aligned_stride(100), 400);
         assert_eq!(PixelDescriptor::RGBF32_LINEAR.aligned_stride(10), 120);
+    }
+
+    #[test]
+    fn aligned_stride_saturates_at_usize_overflow() {
+        // On 32-bit usize, width × bpp can wrap. Saturating-mul keeps the
+        // stride at usize::MAX so downstream `checked_mul(height)` raises
+        // a typed error rather than silently under-allocating. Verified
+        // here on 64-bit too (u32::MAX × bpp doesn't overflow 64-bit usize
+        // but still exercises the wide multiply path).
+        let huge = u32::MAX; // 4 294 967 295
+        // RGBA8 = 4 bytes/pixel.
+        let stride = PixelDescriptor::RGBA8_SRGB.aligned_stride(huge);
+        // On 32-bit (usize == u32): u32::MAX × 4 wraps → saturating returns usize::MAX.
+        // On 64-bit (usize == u64): no wrap (~17 GB), saturating no-op.
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(stride, usize::MAX);
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(stride, huge as usize * 4);
+
+        // RGBF32 = 12 bytes/pixel — overflows usize at 357 913 942 px on 32-bit.
+        let stride = PixelDescriptor::RGBF32_LINEAR.aligned_stride(huge);
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(stride, usize::MAX);
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(stride, huge as usize * 12);
+    }
+
+    #[test]
+    fn simd_aligned_stride_saturates_and_does_not_wrap_via_align_up() {
+        // Even when raw width*bpp saturates to usize::MAX, the align-up
+        // step is now also saturating — without that fix, `value + (align
+        // - rem)` could wrap from MAX back to a small number, defeating
+        // the upstream guard. Verify the saturating path stays at MAX.
+        let stride = PixelDescriptor::RGBA8_SRGB.simd_aligned_stride(u32::MAX, 64);
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(stride, usize::MAX);
+        #[cfg(target_pointer_width = "64")]
+        assert!(stride >= u32::MAX as usize * 4);
     }
 
     #[test]

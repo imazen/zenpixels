@@ -1,0 +1,855 @@
+# zenpixels public API — supported surface (default features)
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+#
+# files: zenpixels.txt 811 lines (supported surface) | zenpixels.features.txt 269 added (features: icc,imgref,planar,rgb,serde,std) | zenpixels.internal.txt 74 lines (74 hidden + 0 excluded-feature)
+
+## summary
+#
+#   pub modules                                10
+#   pub types (struct/enum/trait/alias)        76
+#   pub consts/statics                        276
+#   free functions                              4
+#   inherent methods                          210
+#   struct fields                             107
+#   enum variants                             208
+#   re-exports                                  4
+#   trait roster entries (type × trait)       237
+#   auto-trait-complete types                  34
+#   auto-trait exceptions                       4
+#
+# per-module pub lines:
+#   (root)                          393
+#   buffer                          192
+#   cicp                             27
+#   color                            60
+#   descriptor                      148
+#   hdr                              17
+#   icc                              13
+#   orientation                      11
+#   pixel_types                       9
+#   policy                           25
+
+## items (765 lines)
+
+pub mod zenpixels
+pub use At
+pub use ResultAtExt
+pub use at
+pub use at
+pub mod buffer
+pub buffer::BufferError::AlignmentViolation
+pub buffer::BufferError::AllocationFailed
+pub buffer::BufferError::IncompatibleDescriptor
+pub buffer::BufferError::InsufficientData
+pub buffer::BufferError::InvalidDimensions
+pub buffer::BufferError::StrideNotPixelAligned
+pub buffer::BufferError::StrideTooSmall
+pub buffer::Bgrx::b: u8
+pub buffer::Bgrx::g: u8
+pub buffer::Bgrx::r: u8
+pub buffer::Bgrx::x: u8
+pub buffer::InPlacePixels::bytes: &'a mut [u8]
+pub buffer::InPlacePixels::color: core::option::Option<alloc::sync::Arc<color::ColorContext>>
+pub buffer::InPlacePixels::descriptor: descriptor::PixelDescriptor
+pub buffer::InPlacePixels::rows: u32
+pub buffer::InPlacePixels::stride: usize
+pub buffer::InPlacePixels::width: u32
+pub fn buffer::PixelBuffer::from_vec(alloc::vec::Vec<u8>, u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::new(u32, u32, descriptor::PixelDescriptor) -> Self
+pub fn buffer::PixelBuffer::new_simd_aligned(u32, u32, descriptor::PixelDescriptor, usize) -> Self
+pub fn buffer::PixelBuffer::try_new(u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::try_new_simd_aligned(u32, u32, descriptor::PixelDescriptor, usize) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::transform_in_place<F>(&mut self, F) where F: for<'a> core::ops::function::FnOnce(buffer::InPlacePixels<'a>) -> buffer::PixelSliceMut<'a>
+pub fn buffer::PixelBuffer<P>::new_typed(u32, u32) -> Self
+pub fn buffer::PixelBuffer<P>::try_new_typed(u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<P>::as_contiguous_bytes(&self) -> core::option::Option<&[u8]>
+pub fn buffer::PixelBuffer<P>::as_slice(&self) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelBuffer<P>::as_slice_mut(&mut self) -> buffer::PixelSliceMut<'_, P>
+pub fn buffer::PixelBuffer<P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
+pub fn buffer::PixelBuffer<P>::copy_to_contiguous_bytes(&self) -> alloc::vec::Vec<u8>
+pub fn buffer::PixelBuffer<P>::crop_copy(&self, u32, u32, u32, u32) -> buffer::PixelBuffer<P>
+pub fn buffer::PixelBuffer<P>::crop_view(&self, u32, u32, u32, u32) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelBuffer<P>::descriptor(&self) -> descriptor::PixelDescriptor
+pub fn buffer::PixelBuffer<P>::erase(self) -> buffer::PixelBuffer
+pub fn buffer::PixelBuffer<P>::has_alpha(&self) -> bool
+pub fn buffer::PixelBuffer<P>::height(&self) -> u32
+pub fn buffer::PixelBuffer<P>::into_vec(self) -> alloc::vec::Vec<u8>
+pub fn buffer::PixelBuffer<P>::is_grayscale(&self) -> bool
+pub fn buffer::PixelBuffer<P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<P>::rows(&self, u32, u32) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelBuffer<P>::rows_mut(&mut self, u32, u32) -> buffer::PixelSliceMut<'_, P>
+pub fn buffer::PixelBuffer<P>::stride(&self) -> usize
+pub fn buffer::PixelBuffer<P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelBuffer<Q>>
+pub fn buffer::PixelBuffer<P>::width(&self) -> u32
+pub fn buffer::PixelBuffer<P>::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self
+pub fn buffer::PixelBuffer<P>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
+pub fn buffer::PixelBuffer<P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
+pub fn buffer::PixelBuffer<P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
+pub fn buffer::PixelBuffer<P>::with_signal_range(self, descriptor::SignalRange) -> Self
+pub fn buffer::PixelBuffer<P>::with_transfer(self, descriptor::TransferFunction) -> Self
+pub fn buffer::PixelSlice<'a, P>::new_typed(&'a [u8], u32, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSlice<'a, P>::as_contiguous_bytes(&self) -> core::option::Option<&'a [u8]>
+pub fn buffer::PixelSlice<'a, P>::as_strided_bytes(&self) -> &'a [u8]
+pub fn buffer::PixelSlice<'a, P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
+pub fn buffer::PixelSlice<'a, P>::contiguous_bytes(&self) -> alloc::borrow::Cow<'a, [u8]>
+pub fn buffer::PixelSlice<'a, P>::crop_view(&self, u32, u32, u32, u32) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelSlice<'a, P>::descriptor(&self) -> descriptor::PixelDescriptor
+pub fn buffer::PixelSlice<'a, P>::erase(self) -> buffer::PixelSlice<'a>
+pub fn buffer::PixelSlice<'a, P>::is_contiguous(&self) -> bool
+pub fn buffer::PixelSlice<'a, P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSlice<'a, P>::row(&self, u32) -> &[u8]
+pub fn buffer::PixelSlice<'a, P>::row_with_stride(&self, u32) -> &[u8]
+pub fn buffer::PixelSlice<'a, P>::rows(&self) -> u32
+pub fn buffer::PixelSlice<'a, P>::stride(&self) -> usize
+pub fn buffer::PixelSlice<'a, P>::sub_rows(&self, u32, u32) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelSlice<'a, P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelSlice<'a, Q>>
+pub fn buffer::PixelSlice<'a, P>::width(&self) -> u32
+pub fn buffer::PixelSlice<'a, P>::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
+pub fn buffer::PixelSlice<'a>::new(&'a [u8], u32, u32, usize, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'a, P>::new_typed(&'a mut [u8], u32, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'a, P>::as_pixel_slice(&self) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelSliceMut<'a, P>::as_strided_bytes(&self) -> &[u8]
+pub fn buffer::PixelSliceMut<'a, P>::as_strided_bytes_mut(&mut self) -> &mut [u8]
+pub fn buffer::PixelSliceMut<'a, P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
+pub fn buffer::PixelSliceMut<'a, P>::descriptor(&self) -> descriptor::PixelDescriptor
+pub fn buffer::PixelSliceMut<'a, P>::erase(self) -> buffer::PixelSliceMut<'a>
+pub fn buffer::PixelSliceMut<'a, P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'a, P>::row(&self, u32) -> &[u8]
+pub fn buffer::PixelSliceMut<'a, P>::row_mut(&mut self, u32) -> &mut [u8]
+pub fn buffer::PixelSliceMut<'a, P>::rows(&self) -> u32
+pub fn buffer::PixelSliceMut<'a, P>::stride(&self) -> usize
+pub fn buffer::PixelSliceMut<'a, P>::sub_rows_mut(&mut self, u32, u32) -> buffer::PixelSliceMut<'_, P>
+pub fn buffer::PixelSliceMut<'a, P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelSliceMut<'a, Q>>
+pub fn buffer::PixelSliceMut<'a, P>::width(&self) -> u32
+pub fn buffer::PixelSliceMut<'a, P>::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self
+pub fn buffer::PixelSliceMut<'a, P>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
+pub fn buffer::PixelSliceMut<'a, P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
+pub fn buffer::PixelSliceMut<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
+pub fn buffer::PixelSliceMut<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
+pub fn buffer::PixelSliceMut<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
+pub fn buffer::PixelSliceMut<'a, buffer::Bgrx>::swap_to_rgbx(self) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
+pub fn buffer::PixelSliceMut<'a, buffer::Rgbx>::swap_to_bgrx(self) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
+pub fn buffer::PixelSliceMut<'a>::new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub buffer::Rgbx::b: u8
+pub buffer::Rgbx::g: u8
+pub buffer::Rgbx::r: u8
+pub buffer::Rgbx::x: u8
+pub const buffer::Pixel::DESCRIPTOR: descriptor::PixelDescriptor
+pub mod cicp
+pub cicp::Cicp::color_primaries: u8
+pub cicp::Cicp::full_range: bool
+pub cicp::Cicp::matrix_coefficients: u8
+pub cicp::Cicp::transfer_characteristics: u8
+pub const cicp::Cicp::BT2100_HLG: Self
+pub const cicp::Cicp::BT2100_PQ: Self
+pub const cicp::Cicp::DISPLAY_P3: Self
+pub const cicp::Cicp::SRGB: Self
+pub fn cicp::Cicp::color_primaries_enum(&self) -> descriptor::ColorPrimaries
+pub fn cicp::Cicp::color_primaries_name(u8) -> &'static str
+pub fn cicp::Cicp::from_descriptor(&descriptor::PixelDescriptor) -> core::option::Option<Self>
+pub fn cicp::Cicp::matrix_coefficients_name(u8) -> &'static str
+pub const fn cicp::Cicp::new(u8, u8, u8, bool) -> Self [also: (root)]
+pub fn cicp::Cicp::to_descriptor(&self, descriptor::PixelFormat) -> descriptor::PixelDescriptor
+pub fn cicp::Cicp::transfer_characteristics_name(u8) -> &'static str
+pub fn cicp::Cicp::transfer_function_enum(&self) -> descriptor::TransferFunction
+pub mod color
+pub color::ColorAuthority::Cicp
+pub color::ColorAuthority::Icc
+pub color::ColorProfileSource::Cicp(cicp::Cicp)
+pub color::ColorProfileSource::Icc(&'a [u8])
+pub color::ColorProfileSource::Named(color::NamedProfile)
+pub color::ColorProfileSource::PrimariesTransferPair
+pub color::ColorProfileSource::PrimariesTransferPair::primaries: descriptor::ColorPrimaries
+pub color::ColorProfileSource::PrimariesTransferPair::transfer: descriptor::TransferFunction
+pub const fn color::ColorProfileSource<'a>::from_primaries_transfer(descriptor::ColorPrimaries, descriptor::TransferFunction) -> Self [also: (root)]
+pub const fn color::ColorProfileSource<'a>::primaries_transfer(&self) -> core::option::Option<(descriptor::ColorPrimaries, descriptor::TransferFunction)> [also: (root)]
+pub fn color::ColorProfileSource<'a>::resolve(&self) -> core::option::Option<(descriptor::ColorPrimaries, descriptor::TransferFunction)>
+pub color::ColorProvenance::Assumed
+pub color::ColorProvenance::Cicp
+pub color::ColorProvenance::GamaChrm
+pub color::ColorProvenance::Icc
+pub color::NamedProfile::AdobeRgb
+pub color::NamedProfile::Bt2020
+pub color::NamedProfile::Bt2020Hlg
+pub color::NamedProfile::Bt2020Pq
+pub color::NamedProfile::DisplayP3
+pub color::NamedProfile::LinearSrgb
+pub color::NamedProfile::Srgb
+pub const fn color::NamedProfile::from_cicp(cicp::Cicp) -> core::option::Option<Self> [also: (root)]
+pub const fn color::NamedProfile::from_primaries_transfer(descriptor::ColorPrimaries, descriptor::TransferFunction) -> core::option::Option<Self> [also: (root)]
+pub const fn color::NamedProfile::to_cicp(self) -> core::option::Option<cicp::Cicp> [also: (root)]
+pub const fn color::NamedProfile::to_primaries_transfer(self) -> (descriptor::ColorPrimaries, descriptor::TransferFunction) [also: (root)]
+pub color::ColorContext::cicp: core::option::Option<cicp::Cicp>
+pub color::ColorContext::diffuse_white: core::option::Option<hdr::DiffuseWhite>
+pub color::ColorContext::icc: core::option::Option<alloc::sync::Arc<[u8]>>
+pub fn color::ColorContext::as_profile_source(&self) -> core::option::Option<color::ColorProfileSource<'_>>
+pub fn color::ColorContext::from_cicp(cicp::Cicp) -> Self
+pub fn color::ColorContext::from_icc(impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
+pub fn color::ColorContext::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
+pub fn color::ColorContext::is_srgb(&self) -> bool
+pub fn color::ColorContext::transfer_function(&self) -> descriptor::TransferFunction
+pub fn color::ColorContext::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
+pub color::ColorOrigin::cicp: core::option::Option<cicp::Cicp>
+pub color::ColorOrigin::color_authority: color::ColorAuthority
+pub color::ColorOrigin::icc: core::option::Option<alloc::sync::Arc<[u8]>>
+pub color::ColorOrigin::provenance: color::ColorProvenance
+pub fn color::ColorOrigin::assumed() -> Self
+pub fn color::ColorOrigin::from_cicp(cicp::Cicp) -> Self
+pub fn color::ColorOrigin::from_gama_chrm() -> Self
+pub fn color::ColorOrigin::from_icc(impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
+pub fn color::ColorOrigin::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
+pub fn color::ColorOrigin::with_color_authority(self, color::ColorAuthority) -> Self
+pub mod descriptor
+pub descriptor::AlphaMode::Opaque = 4
+pub descriptor::AlphaMode::Premultiplied = 3
+pub descriptor::AlphaMode::Straight = 2
+pub descriptor::AlphaMode::Undefined = 1
+pub const fn descriptor::AlphaMode::has_alpha(self) -> bool [also: (root)]
+pub descriptor::ByteOrder::Bgr = 1
+pub descriptor::ByteOrder::Native = 0
+pub descriptor::ChannelLayout::Bgra = 5
+pub descriptor::ChannelLayout::Cmyk = 8
+pub descriptor::ChannelLayout::Gray = 1
+pub descriptor::ChannelLayout::GrayAlpha = 2
+pub descriptor::ChannelLayout::Oklab = 6
+pub descriptor::ChannelLayout::OklabA = 7
+pub descriptor::ChannelLayout::Rgb = 3
+pub descriptor::ChannelLayout::Rgba = 4
+pub const fn descriptor::ChannelLayout::channels(self) -> usize [also: (root)]
+pub const fn descriptor::ChannelLayout::has_alpha(self) -> bool [also: (root)]
+pub descriptor::ChannelType::F16 = 5
+pub descriptor::ChannelType::F32 = 4
+pub descriptor::ChannelType::U16 = 2
+pub descriptor::ChannelType::U8 = 1
+pub const fn descriptor::ChannelType::byte_size(self) -> usize [also: (root)]
+pub const fn descriptor::ChannelType::is_f16(self) -> bool [also: (root)]
+pub const fn descriptor::ChannelType::is_f32(self) -> bool [also: (root)]
+pub const fn descriptor::ChannelType::is_float(self) -> bool [also: (root)]
+pub const fn descriptor::ChannelType::is_integer(self) -> bool [also: (root)]
+pub const fn descriptor::ChannelType::is_u16(self) -> bool [also: (root)]
+pub const fn descriptor::ChannelType::is_u8(self) -> bool [also: (root)]
+pub descriptor::ColorModel::Cmyk = 4
+pub descriptor::ColorModel::Gray = 0
+pub descriptor::ColorModel::Oklab = 3
+pub descriptor::ColorModel::Rgb = 1
+pub descriptor::ColorModel::YCbCr = 2
+pub const fn descriptor::ColorModel::color_channels(self) -> u8 [also: (root)]
+pub descriptor::ColorPrimaries::AdobeRgb = 13
+pub descriptor::ColorPrimaries::Bt2020 = 9
+pub descriptor::ColorPrimaries::Bt709 = 1
+pub descriptor::ColorPrimaries::DisplayP3 = 12
+pub descriptor::ColorPrimaries::Unknown = 255
+pub const descriptor::ColorPrimaries::WHITE_D65: (f32, f32)
+pub const fn descriptor::ColorPrimaries::chromaticity(self) -> core::option::Option<((f32, f32), (f32, f32), (f32, f32))> [also: (root)]
+pub const fn descriptor::ColorPrimaries::contains(self, Self) -> bool [also: (root)]
+pub const fn descriptor::ColorPrimaries::from_cicp(u8) -> core::option::Option<Self> [also: (root)]
+pub const fn descriptor::ColorPrimaries::gamut_matrix_to(self, Self) -> core::option::Option<[[f32; 3]; 3]> [also: (root)]
+pub const fn descriptor::ColorPrimaries::to_cicp(self) -> core::option::Option<u8> [also: (root)]
+pub const fn descriptor::ColorPrimaries::white_point(self) -> (f32, f32) [also: (root)]
+pub descriptor::PixelFormat::Bgra8 = 13
+pub descriptor::PixelFormat::Bgrx8 = 15
+pub descriptor::PixelFormat::Cmyk8 = 18
+pub descriptor::PixelFormat::Gray16 = 8
+pub descriptor::PixelFormat::Gray8 = 7
+pub descriptor::PixelFormat::GrayA16 = 11
+pub descriptor::PixelFormat::GrayA8 = 10
+pub descriptor::PixelFormat::GrayAF16 = 22
+pub descriptor::PixelFormat::GrayAF32 = 12
+pub descriptor::PixelFormat::GrayF16 = 21
+pub descriptor::PixelFormat::GrayF32 = 9
+pub descriptor::PixelFormat::OklabF32 = 16
+pub descriptor::PixelFormat::OklabaF32 = 17
+pub descriptor::PixelFormat::Rgb16 = 3
+pub descriptor::PixelFormat::Rgb8 = 1
+pub descriptor::PixelFormat::RgbF16 = 19
+pub descriptor::PixelFormat::RgbF32 = 5
+pub descriptor::PixelFormat::Rgba16 = 4
+pub descriptor::PixelFormat::Rgba8 = 2
+pub descriptor::PixelFormat::RgbaF16 = 20
+pub descriptor::PixelFormat::RgbaF32 = 6
+pub descriptor::PixelFormat::Rgbx8 = 14
+pub const fn descriptor::PixelFormat::byte_order(self) -> descriptor::ByteOrder [also: (root)]
+pub const fn descriptor::PixelFormat::bytes_per_pixel(self) -> usize [also: (root)]
+pub const fn descriptor::PixelFormat::channel_type(self) -> descriptor::ChannelType [also: (root)]
+pub const fn descriptor::PixelFormat::channels(self) -> usize [also: (root)]
+pub const fn descriptor::PixelFormat::color_model(self) -> descriptor::ColorModel [also: (root)]
+pub const fn descriptor::PixelFormat::default_alpha(self) -> core::option::Option<descriptor::AlphaMode> [also: (root)]
+pub const fn descriptor::PixelFormat::descriptor(self) -> descriptor::PixelDescriptor [also: (root)]
+pub const fn descriptor::PixelFormat::from_parts(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>) -> core::option::Option<Self> [also: (root)]
+pub const fn descriptor::PixelFormat::has_alpha_bytes(self) -> bool [also: (root)]
+pub const fn descriptor::PixelFormat::is_grayscale(self) -> bool [also: (root)]
+pub const fn descriptor::PixelFormat::layout(self) -> descriptor::ChannelLayout [also: (root)]
+pub const fn descriptor::PixelFormat::name(self) -> &'static str [also: (root)]
+pub descriptor::SignalRange::Full = 0
+pub descriptor::SignalRange::Narrow = 1
+pub descriptor::TransferFunction::Bt709 = 2
+pub descriptor::TransferFunction::Gamma22 = 5
+pub descriptor::TransferFunction::Hlg = 4
+pub descriptor::TransferFunction::Linear = 0
+pub descriptor::TransferFunction::Pq = 3
+pub descriptor::TransferFunction::Srgb = 1
+pub descriptor::TransferFunction::Unknown = 255
+pub const fn descriptor::TransferFunction::from_cicp(u8) -> core::option::Option<Self> [also: (root)]
+pub fn descriptor::TransferFunction::reference_white_nits(&self) -> f32
+pub const fn descriptor::TransferFunction::to_cicp(self) -> core::option::Option<u8> [also: (root)]
+pub descriptor::PixelDescriptor::alpha: core::option::Option<descriptor::AlphaMode>
+pub descriptor::PixelDescriptor::format: descriptor::PixelFormat
+pub descriptor::PixelDescriptor::primaries: descriptor::ColorPrimaries
+pub descriptor::PixelDescriptor::signal_range: descriptor::SignalRange
+pub descriptor::PixelDescriptor::transfer: descriptor::TransferFunction
+pub const descriptor::PixelDescriptor::BGRA8: Self
+pub const descriptor::PixelDescriptor::BGRA8_SRGB: Self
+pub const descriptor::PixelDescriptor::BGRX8: Self
+pub const descriptor::PixelDescriptor::BGRX8_SRGB: Self
+pub const descriptor::PixelDescriptor::CMYK8: Self
+pub const descriptor::PixelDescriptor::GRAY16: Self
+pub const descriptor::PixelDescriptor::GRAY16_SRGB: Self
+pub const descriptor::PixelDescriptor::GRAY8: Self
+pub const descriptor::PixelDescriptor::GRAY8_SRGB: Self
+pub const descriptor::PixelDescriptor::GRAYA16: Self
+pub const descriptor::PixelDescriptor::GRAYA16_SRGB: Self
+pub const descriptor::PixelDescriptor::GRAYA8: Self
+pub const descriptor::PixelDescriptor::GRAYA8_SRGB: Self
+pub const descriptor::PixelDescriptor::GRAYAF32: Self
+pub const descriptor::PixelDescriptor::GRAYAF32_LINEAR: Self
+pub const descriptor::PixelDescriptor::GRAYF32: Self
+pub const descriptor::PixelDescriptor::GRAYF32_LINEAR: Self
+pub const descriptor::PixelDescriptor::OKLABAF32: Self
+pub const descriptor::PixelDescriptor::OKLABF32: Self
+pub const descriptor::PixelDescriptor::RGB16: Self
+pub const descriptor::PixelDescriptor::RGB16_BT2100_HLG: Self
+pub const descriptor::PixelDescriptor::RGB16_BT2100_PQ: Self
+pub const descriptor::PixelDescriptor::RGB16_SRGB: Self
+pub const descriptor::PixelDescriptor::RGB8: Self
+pub const descriptor::PixelDescriptor::RGB8_SRGB: Self
+pub const descriptor::PixelDescriptor::RGBA16: Self
+pub const descriptor::PixelDescriptor::RGBA16_SRGB: Self
+pub const descriptor::PixelDescriptor::RGBA8: Self
+pub const descriptor::PixelDescriptor::RGBA8_SRGB: Self
+pub const descriptor::PixelDescriptor::RGBAF32: Self
+pub const descriptor::PixelDescriptor::RGBAF32_LINEAR: Self
+pub const descriptor::PixelDescriptor::RGBF32: Self
+pub const descriptor::PixelDescriptor::RGBF32_LINEAR: Self
+pub const descriptor::PixelDescriptor::RGBX8: Self
+pub const descriptor::PixelDescriptor::RGBX8_SRGB: Self
+pub const fn descriptor::PixelDescriptor::aligned_stride(self, u32) -> usize [also: (root)]
+pub const fn descriptor::PixelDescriptor::alpha(&self) -> core::option::Option<descriptor::AlphaMode> [also: (root)]
+pub const fn descriptor::PixelDescriptor::byte_order(&self) -> descriptor::ByteOrder [also: (root)]
+pub const fn descriptor::PixelDescriptor::bytes_per_channel(self) -> usize [also: (root)]
+pub const fn descriptor::PixelDescriptor::bytes_per_pixel(self) -> usize [also: (root)]
+pub const fn descriptor::PixelDescriptor::channel_type(&self) -> descriptor::ChannelType [also: (root)]
+pub const fn descriptor::PixelDescriptor::channels(self) -> usize [also: (root)]
+pub const fn descriptor::PixelDescriptor::color_model(&self) -> descriptor::ColorModel [also: (root)]
+pub const fn descriptor::PixelDescriptor::color_profile_source(&self) -> color::ColorProfileSource<'static> [also: (root)]
+pub const fn descriptor::PixelDescriptor::from_pixel_format(descriptor::PixelFormat) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::has_alpha(self) -> bool [also: (root)]
+pub const fn descriptor::PixelDescriptor::is_bgr(self) -> bool [also: (root)]
+pub const fn descriptor::PixelDescriptor::is_grayscale(self) -> bool [also: (root)]
+pub const fn descriptor::PixelDescriptor::is_linear(self) -> bool [also: (root)]
+pub const fn descriptor::PixelDescriptor::is_opaque(self) -> bool [also: (root)]
+pub const fn descriptor::PixelDescriptor::is_unknown_transfer(self) -> bool [also: (root)]
+pub const fn descriptor::PixelDescriptor::layout(&self) -> descriptor::ChannelLayout [also: (root)]
+pub const fn descriptor::PixelDescriptor::layout_compatible(self, Self) -> bool [also: (root)]
+pub const fn descriptor::PixelDescriptor::may_have_transparency(self) -> bool [also: (root)]
+pub const fn descriptor::PixelDescriptor::min_alignment(self) -> usize [also: (root)]
+pub const fn descriptor::PixelDescriptor::new(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::new_full(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction, descriptor::ColorPrimaries) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::pixel_format(&self) -> descriptor::PixelFormat [also: (root)]
+pub const fn descriptor::PixelDescriptor::simd_aligned_stride(self, u32, usize) -> usize [also: (root)]
+pub const fn descriptor::PixelDescriptor::transfer(&self) -> descriptor::TransferFunction [also: (root)]
+pub const fn descriptor::PixelDescriptor::with_alpha(self, core::option::Option<descriptor::AlphaMode>) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::with_primaries(self, descriptor::ColorPrimaries) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::with_signal_range(self, descriptor::SignalRange) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::with_transfer(self, descriptor::TransferFunction) -> Self [also: (root)]
+pub mod hdr
+pub hdr::ContentLightLevel::max_content_light_level: u16
+pub hdr::ContentLightLevel::max_frame_average_light_level: u16
+pub fn hdr::ContentLightLevel::measure(buffer::PixelSlice<'_>, hdr::DiffuseWhite) -> core::option::Option<Self>
+pub const fn hdr::ContentLightLevel::new(u16, u16) -> Self [also: (root)]
+pub const hdr::DiffuseWhite::BT2408: Self
+pub const fn hdr::DiffuseWhite::new(f32) -> Self [also: (root)]
+pub const fn hdr::DiffuseWhite::nits(self) -> f32 [also: (root)]
+pub hdr::MasteringDisplay::max_luminance: f32
+pub hdr::MasteringDisplay::min_luminance: f32
+pub hdr::MasteringDisplay::primaries_xy: [[f32; 2]; 3]
+pub hdr::MasteringDisplay::white_point_xy: [f32; 2]
+pub const hdr::MasteringDisplay::DISPLAY_P3_1000: Self
+pub const hdr::MasteringDisplay::HDR10_REFERENCE: Self
+pub const fn hdr::MasteringDisplay::new([[f32; 2]; 3], [f32; 2], f32, f32) -> Self [also: (root)]
+pub mod icc
+#[non_exhaustive] pub enum icc::IdentificationUse
+pub icc::IdentificationUse::MatrixTrcSubstitution
+pub icc::IdentificationUse::MetadataOnly
+#[non_exhaustive] pub struct icc::IccIdentification
+pub icc::IccIdentification::primaries: descriptor::ColorPrimaries
+pub icc::IccIdentification::transfer: descriptor::TransferFunction
+pub icc::IccIdentification::valid_use: icc::IdentificationUse
+pub fn icc::IccIdentification::is_srgb(&self) -> bool
+pub fn icc::IccIdentification::to_cicp(&self) -> core::option::Option<cicp::Cicp>
+pub fn icc::extract_cicp(&[u8]) -> core::option::Option<cicp::Cicp>
+pub fn icc::identify_common(&[u8]) -> core::option::Option<icc::IccIdentification>
+pub fn icc::is_common_srgb(&[u8]) -> bool
+pub fn icc::profile_color_space(&[u8]) -> core::option::Option<descriptor::ColorModel>
+pub mod orientation
+pub orientation::Orientation::FlipH = 2
+pub orientation::Orientation::FlipV = 4
+pub orientation::Orientation::Identity = 1
+pub orientation::Orientation::Rotate180 = 3
+pub orientation::Orientation::Rotate270 = 8
+pub orientation::Orientation::Rotate90 = 6
+pub orientation::Orientation::Transpose = 5
+pub orientation::Orientation::Transverse = 7
+pub const orientation::Orientation::ALL: [orientation::Orientation; 8]
+pub const fn orientation::Orientation::compose(self, Self) -> Self [also: (root)]
+pub const fn orientation::Orientation::forward_map(self, u32, u32, u32, u32) -> (u32, u32) [also: (root)]
+pub const fn orientation::Orientation::from_exif(u8) -> core::option::Option<Self> [also: (root)]
+pub const fn orientation::Orientation::inverse(self) -> Self [also: (root)]
+pub const fn orientation::Orientation::is_identity(self) -> bool [also: (root)]
+pub const fn orientation::Orientation::is_row_local(self) -> bool [also: (root)]
+pub const fn orientation::Orientation::output_dimensions(self, u32, u32) -> (u32, u32) [also: (root)]
+pub const fn orientation::Orientation::swaps_axes(self) -> bool [also: (root)]
+pub const fn orientation::Orientation::then(self, Self) -> Self [also: (root)]
+pub const fn orientation::Orientation::to_exif(self) -> u8 [also: (root)]
+pub mod pixel_types
+pub pixel_types::GrayAlpha16::a: u16
+pub pixel_types::GrayAlpha16::v: u16
+pub const fn pixel_types::GrayAlpha16::new(u16, u16) -> Self [also: (root)]
+pub pixel_types::GrayAlpha8::a: u8
+pub pixel_types::GrayAlpha8::v: u8
+pub const fn pixel_types::GrayAlpha8::new(u8, u8) -> Self [also: (root)]
+pub pixel_types::GrayAlphaF32::a: f32
+pub pixel_types::GrayAlphaF32::v: f32
+pub const fn pixel_types::GrayAlphaF32::new(f32, f32) -> Self [also: (root)]
+pub mod policy
+pub policy::AlphaPolicy::CompositeOnto
+pub policy::AlphaPolicy::CompositeOnto::b: u8
+pub policy::AlphaPolicy::CompositeOnto::g: u8
+pub policy::AlphaPolicy::CompositeOnto::r: u8
+pub policy::AlphaPolicy::DiscardIfOpaque
+pub policy::AlphaPolicy::DiscardUnchecked
+pub policy::AlphaPolicy::Forbid
+pub policy::DepthPolicy::Forbid
+pub policy::DepthPolicy::Round
+pub policy::DepthPolicy::Truncate
+pub policy::GrayExpand::Broadcast
+pub policy::LumaCoefficients::Bt2020
+pub policy::LumaCoefficients::Bt601
+pub policy::LumaCoefficients::Bt709
+pub policy::LumaCoefficients::DisplayP3
+pub const fn policy::LumaCoefficients::coefficients(self) -> [f32; 3] [also: (root)]
+pub policy::ConvertOptions::alpha_policy: policy::AlphaPolicy
+pub policy::ConvertOptions::clip_out_of_gamut: bool
+pub policy::ConvertOptions::depth_policy: policy::DepthPolicy
+pub policy::ConvertOptions::gray_expand: policy::GrayExpand
+pub policy::ConvertOptions::luma: core::option::Option<policy::LumaCoefficients>
+pub const fn policy::ConvertOptions::forbid_lossy() -> Self [also: (root)]
+pub const fn policy::ConvertOptions::permissive() -> Self [also: (root)]
+pub const fn policy::ConvertOptions::with_alpha_policy(self, policy::AlphaPolicy) -> Self [also: (root)]
+pub const fn policy::ConvertOptions::with_clip_out_of_gamut(self, bool) -> Self [also: (root)]
+pub const fn policy::ConvertOptions::with_depth_policy(self, policy::DepthPolicy) -> Self [also: (root)]
+pub const fn policy::ConvertOptions::with_gray_expand(self, policy::GrayExpand) -> Self [also: (root)]
+pub const fn policy::ConvertOptions::with_luma(self, core::option::Option<policy::LumaCoefficients>) -> Self [also: (root)]
+#[non_exhaustive] #[repr(u8)] pub enum AlphaMode [also: descriptor]
+pub AlphaMode::Opaque = 4
+pub AlphaMode::Premultiplied = 3
+pub AlphaMode::Straight = 2
+pub AlphaMode::Undefined = 1
+#[non_exhaustive] pub enum AlphaPolicy [also: policy]
+pub AlphaPolicy::CompositeOnto
+pub AlphaPolicy::CompositeOnto::b: u8
+pub AlphaPolicy::CompositeOnto::g: u8
+pub AlphaPolicy::CompositeOnto::r: u8
+pub AlphaPolicy::DiscardIfOpaque
+pub AlphaPolicy::DiscardUnchecked
+pub AlphaPolicy::Forbid
+#[non_exhaustive] pub enum BufferError [also: buffer]
+pub BufferError::AlignmentViolation
+pub BufferError::AllocationFailed
+pub BufferError::IncompatibleDescriptor
+pub BufferError::InsufficientData
+pub BufferError::InvalidDimensions
+pub BufferError::StrideNotPixelAligned
+pub BufferError::StrideTooSmall
+#[non_exhaustive] #[repr(u8)] pub enum ByteOrder [also: descriptor]
+pub ByteOrder::Bgr = 1
+pub ByteOrder::Native = 0
+#[non_exhaustive] #[repr(u8)] pub enum ChannelLayout [also: descriptor]
+pub ChannelLayout::Bgra = 5
+pub ChannelLayout::Cmyk = 8
+pub ChannelLayout::Gray = 1
+pub ChannelLayout::GrayAlpha = 2
+pub ChannelLayout::Oklab = 6
+pub ChannelLayout::OklabA = 7
+pub ChannelLayout::Rgb = 3
+pub ChannelLayout::Rgba = 4
+#[non_exhaustive] #[repr(u8)] pub enum ChannelType [also: descriptor]
+pub ChannelType::F16 = 5
+pub ChannelType::F32 = 4
+pub ChannelType::U16 = 2
+pub ChannelType::U8 = 1
+pub enum ColorAuthority [also: color]
+pub ColorAuthority::Cicp
+pub ColorAuthority::Icc
+#[non_exhaustive] #[repr(u8)] pub enum ColorModel [also: descriptor]
+pub ColorModel::Cmyk = 4
+pub ColorModel::Gray = 0
+pub ColorModel::Oklab = 3
+pub ColorModel::Rgb = 1
+pub ColorModel::YCbCr = 2
+#[non_exhaustive] #[repr(u8)] pub enum ColorPrimaries [also: descriptor]
+pub ColorPrimaries::AdobeRgb = 13
+pub ColorPrimaries::Bt2020 = 9
+pub ColorPrimaries::Bt709 = 1
+pub ColorPrimaries::DisplayP3 = 12
+pub ColorPrimaries::Unknown = 255
+pub const descriptor::ColorPrimaries::WHITE_D65: (f32, f32)
+#[non_exhaustive] pub enum ColorProfileSource<'a> [also: color]
+pub ColorProfileSource::Cicp(cicp::Cicp)
+pub ColorProfileSource::Icc(&'a [u8])
+pub ColorProfileSource::Named(color::NamedProfile)
+pub ColorProfileSource::PrimariesTransferPair
+pub ColorProfileSource::PrimariesTransferPair::primaries: descriptor::ColorPrimaries
+pub ColorProfileSource::PrimariesTransferPair::transfer: descriptor::TransferFunction
+pub fn color::ColorProfileSource<'a>::resolve(&self) -> core::option::Option<(descriptor::ColorPrimaries, descriptor::TransferFunction)>
+#[non_exhaustive] pub enum ColorProvenance [also: color]
+pub ColorProvenance::Assumed
+pub ColorProvenance::Cicp
+pub ColorProvenance::GamaChrm
+pub ColorProvenance::Icc
+#[non_exhaustive] pub enum DepthPolicy [also: policy]
+pub DepthPolicy::Forbid
+pub DepthPolicy::Round
+pub DepthPolicy::Truncate
+#[non_exhaustive] pub enum GrayExpand [also: policy]
+pub GrayExpand::Broadcast
+#[non_exhaustive] pub enum LumaCoefficients [also: policy]
+pub LumaCoefficients::Bt2020
+pub LumaCoefficients::Bt601
+pub LumaCoefficients::Bt709
+pub LumaCoefficients::DisplayP3
+#[non_exhaustive] pub enum NamedProfile [also: color]
+pub NamedProfile::AdobeRgb
+pub NamedProfile::Bt2020
+pub NamedProfile::Bt2020Hlg
+pub NamedProfile::Bt2020Pq
+pub NamedProfile::DisplayP3
+pub NamedProfile::LinearSrgb
+pub NamedProfile::Srgb
+#[non_exhaustive] #[repr(u8)] pub enum Orientation [also: orientation]
+pub Orientation::FlipH = 2
+pub Orientation::FlipV = 4
+pub Orientation::Identity = 1
+pub Orientation::Rotate180 = 3
+pub Orientation::Rotate270 = 8
+pub Orientation::Rotate90 = 6
+pub Orientation::Transpose = 5
+pub Orientation::Transverse = 7
+pub const orientation::Orientation::ALL: [orientation::Orientation; 8]
+#[non_exhaustive] #[repr(u8)] pub enum PixelFormat [also: descriptor]
+pub PixelFormat::Bgra8 = 13
+pub PixelFormat::Bgrx8 = 15
+pub PixelFormat::Cmyk8 = 18
+pub PixelFormat::Gray16 = 8
+pub PixelFormat::Gray8 = 7
+pub PixelFormat::GrayA16 = 11
+pub PixelFormat::GrayA8 = 10
+pub PixelFormat::GrayAF16 = 22
+pub PixelFormat::GrayAF32 = 12
+pub PixelFormat::GrayF16 = 21
+pub PixelFormat::GrayF32 = 9
+pub PixelFormat::OklabF32 = 16
+pub PixelFormat::OklabaF32 = 17
+pub PixelFormat::Rgb16 = 3
+pub PixelFormat::Rgb8 = 1
+pub PixelFormat::RgbF16 = 19
+pub PixelFormat::RgbF32 = 5
+pub PixelFormat::Rgba16 = 4
+pub PixelFormat::Rgba8 = 2
+pub PixelFormat::RgbaF16 = 20
+pub PixelFormat::RgbaF32 = 6
+pub PixelFormat::Rgbx8 = 14
+#[non_exhaustive] #[repr(u8)] pub enum SignalRange [also: descriptor]
+pub SignalRange::Full = 0
+pub SignalRange::Narrow = 1
+#[non_exhaustive] #[repr(u8)] pub enum TransferFunction [also: descriptor]
+pub TransferFunction::Bt709 = 2
+pub TransferFunction::Gamma22 = 5
+pub TransferFunction::Hlg = 4
+pub TransferFunction::Linear = 0
+pub TransferFunction::Pq = 3
+pub TransferFunction::Srgb = 1
+pub TransferFunction::Unknown = 255
+pub fn descriptor::TransferFunction::reference_white_nits(&self) -> f32
+#[repr(C)] pub struct Bgrx [also: buffer]
+pub Bgrx::b: u8
+pub Bgrx::g: u8
+pub Bgrx::r: u8
+pub Bgrx::x: u8
+#[non_exhaustive] pub struct Cicp [also: cicp]
+pub Cicp::color_primaries: u8
+pub Cicp::full_range: bool
+pub Cicp::matrix_coefficients: u8
+pub Cicp::transfer_characteristics: u8
+pub const cicp::Cicp::BT2100_HLG: Self
+pub const cicp::Cicp::BT2100_PQ: Self
+pub const cicp::Cicp::DISPLAY_P3: Self
+pub const cicp::Cicp::SRGB: Self
+pub fn cicp::Cicp::color_primaries_enum(&self) -> descriptor::ColorPrimaries
+pub fn cicp::Cicp::color_primaries_name(u8) -> &'static str
+pub fn cicp::Cicp::from_descriptor(&descriptor::PixelDescriptor) -> core::option::Option<Self>
+pub fn cicp::Cicp::matrix_coefficients_name(u8) -> &'static str
+pub fn cicp::Cicp::to_descriptor(&self, descriptor::PixelFormat) -> descriptor::PixelDescriptor
+pub fn cicp::Cicp::transfer_characteristics_name(u8) -> &'static str
+pub fn cicp::Cicp::transfer_function_enum(&self) -> descriptor::TransferFunction
+#[non_exhaustive] pub struct ColorContext [also: color]
+pub ColorContext::cicp: core::option::Option<cicp::Cicp>
+pub ColorContext::diffuse_white: core::option::Option<hdr::DiffuseWhite>
+pub ColorContext::icc: core::option::Option<alloc::sync::Arc<[u8]>>
+pub fn color::ColorContext::as_profile_source(&self) -> core::option::Option<color::ColorProfileSource<'_>>
+pub fn color::ColorContext::from_cicp(cicp::Cicp) -> Self
+pub fn color::ColorContext::from_icc(impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
+pub fn color::ColorContext::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
+pub fn color::ColorContext::is_srgb(&self) -> bool
+pub fn color::ColorContext::transfer_function(&self) -> descriptor::TransferFunction
+pub fn color::ColorContext::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
+#[non_exhaustive] pub struct ColorOrigin [also: color]
+pub ColorOrigin::cicp: core::option::Option<cicp::Cicp>
+pub ColorOrigin::color_authority: color::ColorAuthority
+pub ColorOrigin::icc: core::option::Option<alloc::sync::Arc<[u8]>>
+pub ColorOrigin::provenance: color::ColorProvenance
+pub fn color::ColorOrigin::assumed() -> Self
+pub fn color::ColorOrigin::from_cicp(cicp::Cicp) -> Self
+pub fn color::ColorOrigin::from_gama_chrm() -> Self
+pub fn color::ColorOrigin::from_icc(impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
+pub fn color::ColorOrigin::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
+pub fn color::ColorOrigin::with_color_authority(self, color::ColorAuthority) -> Self
+pub struct ContentLightLevel [also: hdr]
+pub ContentLightLevel::max_content_light_level: u16
+pub ContentLightLevel::max_frame_average_light_level: u16
+pub fn hdr::ContentLightLevel::measure(buffer::PixelSlice<'_>, hdr::DiffuseWhite) -> core::option::Option<Self>
+#[non_exhaustive] pub struct ConvertOptions [also: policy]
+pub ConvertOptions::alpha_policy: policy::AlphaPolicy
+pub ConvertOptions::clip_out_of_gamut: bool
+pub ConvertOptions::depth_policy: policy::DepthPolicy
+pub ConvertOptions::gray_expand: policy::GrayExpand
+pub ConvertOptions::luma: core::option::Option<policy::LumaCoefficients>
+pub struct DiffuseWhite(_) [also: hdr]
+pub const hdr::DiffuseWhite::BT2408: Self
+#[repr(C)] pub struct GrayAlpha16 [also: pixel_types]
+pub GrayAlpha16::a: u16
+pub GrayAlpha16::v: u16
+#[repr(C)] pub struct GrayAlpha8 [also: pixel_types]
+pub GrayAlpha8::a: u8
+pub GrayAlpha8::v: u8
+#[repr(C)] pub struct GrayAlphaF32 [also: pixel_types]
+pub GrayAlphaF32::a: f32
+pub GrayAlphaF32::v: f32
+pub struct InPlacePixels<'a> [also: buffer]
+pub InPlacePixels::bytes: &'a mut [u8]
+pub InPlacePixels::color: core::option::Option<alloc::sync::Arc<color::ColorContext>>
+pub InPlacePixels::descriptor: descriptor::PixelDescriptor
+pub InPlacePixels::rows: u32
+pub InPlacePixels::stride: usize
+pub InPlacePixels::width: u32
+pub struct MasteringDisplay [also: hdr]
+pub MasteringDisplay::max_luminance: f32
+pub MasteringDisplay::min_luminance: f32
+pub MasteringDisplay::primaries_xy: [[f32; 2]; 3]
+pub MasteringDisplay::white_point_xy: [f32; 2]
+pub const hdr::MasteringDisplay::DISPLAY_P3_1000: Self
+pub const hdr::MasteringDisplay::HDR10_REFERENCE: Self
+#[non_exhaustive] pub struct PixelBuffer<P> [also: buffer]
+pub fn buffer::PixelBuffer::from_vec(alloc::vec::Vec<u8>, u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::new(u32, u32, descriptor::PixelDescriptor) -> Self
+pub fn buffer::PixelBuffer::new_simd_aligned(u32, u32, descriptor::PixelDescriptor, usize) -> Self
+pub fn buffer::PixelBuffer::try_new(u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::try_new_simd_aligned(u32, u32, descriptor::PixelDescriptor, usize) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::transform_in_place<F>(&mut self, F) where F: for<'a> core::ops::function::FnOnce(buffer::InPlacePixels<'a>) -> buffer::PixelSliceMut<'a>
+pub fn buffer::PixelBuffer<P>::new_typed(u32, u32) -> Self
+pub fn buffer::PixelBuffer<P>::try_new_typed(u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<P>::as_contiguous_bytes(&self) -> core::option::Option<&[u8]>
+pub fn buffer::PixelBuffer<P>::as_slice(&self) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelBuffer<P>::as_slice_mut(&mut self) -> buffer::PixelSliceMut<'_, P>
+pub fn buffer::PixelBuffer<P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
+pub fn buffer::PixelBuffer<P>::copy_to_contiguous_bytes(&self) -> alloc::vec::Vec<u8>
+pub fn buffer::PixelBuffer<P>::crop_copy(&self, u32, u32, u32, u32) -> buffer::PixelBuffer<P>
+pub fn buffer::PixelBuffer<P>::crop_view(&self, u32, u32, u32, u32) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelBuffer<P>::descriptor(&self) -> descriptor::PixelDescriptor
+pub fn buffer::PixelBuffer<P>::erase(self) -> buffer::PixelBuffer
+pub fn buffer::PixelBuffer<P>::has_alpha(&self) -> bool
+pub fn buffer::PixelBuffer<P>::height(&self) -> u32
+pub fn buffer::PixelBuffer<P>::into_vec(self) -> alloc::vec::Vec<u8>
+pub fn buffer::PixelBuffer<P>::is_grayscale(&self) -> bool
+pub fn buffer::PixelBuffer<P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<P>::rows(&self, u32, u32) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelBuffer<P>::rows_mut(&mut self, u32, u32) -> buffer::PixelSliceMut<'_, P>
+pub fn buffer::PixelBuffer<P>::stride(&self) -> usize
+pub fn buffer::PixelBuffer<P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelBuffer<Q>>
+pub fn buffer::PixelBuffer<P>::width(&self) -> u32
+pub fn buffer::PixelBuffer<P>::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self
+pub fn buffer::PixelBuffer<P>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
+pub fn buffer::PixelBuffer<P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
+pub fn buffer::PixelBuffer<P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
+pub fn buffer::PixelBuffer<P>::with_signal_range(self, descriptor::SignalRange) -> Self
+pub fn buffer::PixelBuffer<P>::with_transfer(self, descriptor::TransferFunction) -> Self
+#[non_exhaustive] pub struct PixelDescriptor [also: descriptor]
+pub PixelDescriptor::alpha: core::option::Option<descriptor::AlphaMode>
+pub PixelDescriptor::format: descriptor::PixelFormat
+pub PixelDescriptor::primaries: descriptor::ColorPrimaries
+pub PixelDescriptor::signal_range: descriptor::SignalRange
+pub PixelDescriptor::transfer: descriptor::TransferFunction
+pub const descriptor::PixelDescriptor::BGRA8: Self
+pub const descriptor::PixelDescriptor::BGRA8_SRGB: Self
+pub const descriptor::PixelDescriptor::BGRX8: Self
+pub const descriptor::PixelDescriptor::BGRX8_SRGB: Self
+pub const descriptor::PixelDescriptor::CMYK8: Self
+pub const descriptor::PixelDescriptor::GRAY16: Self
+pub const descriptor::PixelDescriptor::GRAY16_SRGB: Self
+pub const descriptor::PixelDescriptor::GRAY8: Self
+pub const descriptor::PixelDescriptor::GRAY8_SRGB: Self
+pub const descriptor::PixelDescriptor::GRAYA16: Self
+pub const descriptor::PixelDescriptor::GRAYA16_SRGB: Self
+pub const descriptor::PixelDescriptor::GRAYA8: Self
+pub const descriptor::PixelDescriptor::GRAYA8_SRGB: Self
+pub const descriptor::PixelDescriptor::GRAYAF32: Self
+pub const descriptor::PixelDescriptor::GRAYAF32_LINEAR: Self
+pub const descriptor::PixelDescriptor::GRAYF32: Self
+pub const descriptor::PixelDescriptor::GRAYF32_LINEAR: Self
+pub const descriptor::PixelDescriptor::OKLABAF32: Self
+pub const descriptor::PixelDescriptor::OKLABF32: Self
+pub const descriptor::PixelDescriptor::RGB16: Self
+pub const descriptor::PixelDescriptor::RGB16_BT2100_HLG: Self
+pub const descriptor::PixelDescriptor::RGB16_BT2100_PQ: Self
+pub const descriptor::PixelDescriptor::RGB16_SRGB: Self
+pub const descriptor::PixelDescriptor::RGB8: Self
+pub const descriptor::PixelDescriptor::RGB8_SRGB: Self
+pub const descriptor::PixelDescriptor::RGBA16: Self
+pub const descriptor::PixelDescriptor::RGBA16_SRGB: Self
+pub const descriptor::PixelDescriptor::RGBA8: Self
+pub const descriptor::PixelDescriptor::RGBA8_SRGB: Self
+pub const descriptor::PixelDescriptor::RGBAF32: Self
+pub const descriptor::PixelDescriptor::RGBAF32_LINEAR: Self
+pub const descriptor::PixelDescriptor::RGBF32: Self
+pub const descriptor::PixelDescriptor::RGBF32_LINEAR: Self
+pub const descriptor::PixelDescriptor::RGBX8: Self
+pub const descriptor::PixelDescriptor::RGBX8_SRGB: Self
+#[non_exhaustive] pub struct PixelSlice<'a, P> [also: buffer]
+pub fn buffer::PixelSlice<'a, P>::new_typed(&'a [u8], u32, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSlice<'a, P>::as_contiguous_bytes(&self) -> core::option::Option<&'a [u8]>
+pub fn buffer::PixelSlice<'a, P>::as_strided_bytes(&self) -> &'a [u8]
+pub fn buffer::PixelSlice<'a, P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
+pub fn buffer::PixelSlice<'a, P>::contiguous_bytes(&self) -> alloc::borrow::Cow<'a, [u8]>
+pub fn buffer::PixelSlice<'a, P>::crop_view(&self, u32, u32, u32, u32) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelSlice<'a, P>::descriptor(&self) -> descriptor::PixelDescriptor
+pub fn buffer::PixelSlice<'a, P>::erase(self) -> buffer::PixelSlice<'a>
+pub fn buffer::PixelSlice<'a, P>::is_contiguous(&self) -> bool
+pub fn buffer::PixelSlice<'a, P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSlice<'a, P>::row(&self, u32) -> &[u8]
+pub fn buffer::PixelSlice<'a, P>::row_with_stride(&self, u32) -> &[u8]
+pub fn buffer::PixelSlice<'a, P>::rows(&self) -> u32
+pub fn buffer::PixelSlice<'a, P>::stride(&self) -> usize
+pub fn buffer::PixelSlice<'a, P>::sub_rows(&self, u32, u32) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelSlice<'a, P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelSlice<'a, Q>>
+pub fn buffer::PixelSlice<'a, P>::width(&self) -> u32
+pub fn buffer::PixelSlice<'a, P>::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
+pub fn buffer::PixelSlice<'a>::new(&'a [u8], u32, u32, usize, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+#[non_exhaustive] pub struct PixelSliceMut<'a, P> [also: buffer]
+pub fn buffer::PixelSliceMut<'a, P>::new_typed(&'a mut [u8], u32, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'a, P>::as_pixel_slice(&self) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelSliceMut<'a, P>::as_strided_bytes(&self) -> &[u8]
+pub fn buffer::PixelSliceMut<'a, P>::as_strided_bytes_mut(&mut self) -> &mut [u8]
+pub fn buffer::PixelSliceMut<'a, P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
+pub fn buffer::PixelSliceMut<'a, P>::descriptor(&self) -> descriptor::PixelDescriptor
+pub fn buffer::PixelSliceMut<'a, P>::erase(self) -> buffer::PixelSliceMut<'a>
+pub fn buffer::PixelSliceMut<'a, P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'a, P>::row(&self, u32) -> &[u8]
+pub fn buffer::PixelSliceMut<'a, P>::row_mut(&mut self, u32) -> &mut [u8]
+pub fn buffer::PixelSliceMut<'a, P>::rows(&self) -> u32
+pub fn buffer::PixelSliceMut<'a, P>::stride(&self) -> usize
+pub fn buffer::PixelSliceMut<'a, P>::sub_rows_mut(&mut self, u32, u32) -> buffer::PixelSliceMut<'_, P>
+pub fn buffer::PixelSliceMut<'a, P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelSliceMut<'a, Q>>
+pub fn buffer::PixelSliceMut<'a, P>::width(&self) -> u32
+pub fn buffer::PixelSliceMut<'a, P>::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self
+pub fn buffer::PixelSliceMut<'a, P>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
+pub fn buffer::PixelSliceMut<'a, P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
+pub fn buffer::PixelSliceMut<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
+pub fn buffer::PixelSliceMut<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
+pub fn buffer::PixelSliceMut<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
+pub fn buffer::PixelSliceMut<'a, buffer::Bgrx>::swap_to_rgbx(self) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
+pub fn buffer::PixelSliceMut<'a, buffer::Rgbx>::swap_to_bgrx(self) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
+pub fn buffer::PixelSliceMut<'a>::new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+#[repr(C)] pub struct Rgbx [also: buffer]
+pub Rgbx::b: u8
+pub Rgbx::g: u8
+pub Rgbx::r: u8
+pub Rgbx::x: u8
+pub trait Pixel: bytemuck::pod::Pod [also: buffer]
+pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
+
+## trait impls (41 types)
+
+buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
+buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+buffer::PixelBuffer: From<buffer::PixelBuffer<P>>
+buffer::PixelBuffer<P>: Debug
+buffer::PixelSlice<'_, P>: Debug
+buffer::PixelSlice<'a, P>: From<buffer::PixelSliceMut<'a, P>>
+buffer::PixelSlice<'a>: From<buffer::PixelSlice<'a, P>>
+buffer::PixelSliceMut<'_, P>: Debug
+buffer::PixelSliceMut<'a>: From<buffer::PixelSliceMut<'a, P>>
+buffer::Rgbx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
+cicp::Cicp: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
+color::ColorAuthority: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+color::ColorContext: Clone, Debug, Default, PartialEq
+color::ColorOrigin: Clone, Debug, Eq, PartialEq
+color::ColorProfileSource<'a>: Clone, Debug, Eq, PartialEq
+color::ColorProvenance: Clone, Copy, Debug, Eq, Hash, PartialEq
+color::NamedProfile: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+descriptor::AlphaMode: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
+descriptor::ByteOrder: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
+descriptor::ChannelLayout: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
+descriptor::ChannelType: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
+descriptor::ColorModel: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
+descriptor::ColorPrimaries: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
+descriptor::PixelDescriptor: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
+descriptor::PixelFormat: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
+descriptor::SignalRange: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
+descriptor::TransferFunction: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
+hdr::ContentLightLevel: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+hdr::DiffuseWhite: Clone, Copy, Debug, Default, PartialEq
+hdr::MasteringDisplay: Clone, Copy, Debug, Default, PartialEq
+icc::IccIdentification: Clone, Copy, Debug, Eq, Hash, PartialEq
+icc::IdentificationUse: Clone, Copy, Debug, Eq, Hash, PartialEq
+orientation::Orientation: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+pixel_types::GrayAlpha16: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
+pixel_types::GrayAlpha8: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
+pixel_types::GrayAlphaF32: Clone, Copy, Debug, Default, PartialEq, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
+policy::AlphaPolicy: Clone, Copy, Debug, Eq, Hash, PartialEq
+policy::ConvertOptions: Clone, Copy, Debug, Eq, Hash, PartialEq
+policy::DepthPolicy: Clone, Copy, Debug, Eq, Hash, PartialEq
+policy::GrayExpand: Clone, Copy, Debug, Eq, Hash, PartialEq
+policy::LumaCoefficients: Clone, Copy, Debug, Eq, Hash, PartialEq
+
+## auto traits
+
+34 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+buffer::InPlacePixels<'a>: !UnwindSafe
+buffer::PixelBuffer<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
+buffer::PixelSlice<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
+buffer::PixelSliceMut<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe

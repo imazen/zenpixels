@@ -55,10 +55,12 @@
 //! | `std` | Standard library (default; currently a no-op, everything is `no_std + alloc`) |
 //! | `rgb` | [`Pixel`] impls for `rgb` crate types, typed `from_pixels()` constructors |
 //! | `imgref` | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
-//! | `planar` | Multi-plane image types (YCbCr, Oklab, gain maps) |
+//! | `planar` | Deprecated legacy multi-plane types |
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
+// The generated test harness references tests inside the deprecated planar module.
+#![cfg_attr(test, allow(deprecated))]
 
 extern crate alloc;
 
@@ -67,8 +69,13 @@ whereat::define_at_crate_info!(path = "zenpixels/");
 pub mod descriptor;
 pub mod orientation;
 #[cfg(feature = "planar")]
+#[deprecated(
+    since = "0.2.17",
+    note = "the legacy planar API is being retired; retain codec-owned planes for now while a video-oriented replacement is designed"
+)]
 pub mod planar;
 pub mod policy;
+pub mod sample;
 
 pub mod cicp;
 pub mod color;
@@ -84,6 +91,7 @@ pub mod buffer;
 pub use orientation::Orientation;
 
 // Re-export key descriptor types at crate root for ergonomics.
+#[doc(inline)]
 pub use descriptor::{
     AlphaMode, ByteOrder, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, PixelDescriptor,
     PixelFormat, SignalRange, TransferFunction,
@@ -91,24 +99,45 @@ pub use descriptor::{
 
 // Re-export planar types when the `planar` feature is enabled.
 #[cfg(feature = "planar")]
+#[allow(deprecated)]
 pub use planar::{
     MultiPlaneImage, Plane, PlaneDescriptor, PlaneLayout, PlaneMask, PlaneRelationship,
     PlaneSemantic, Subsampling, YuvMatrix,
 };
 
 // Re-export buffer types at crate root.
+#[doc(inline)]
 pub use buffer::{
-    Bgrx, BufferError, InPlacePixels, Pixel, PixelBuffer, PixelSlice, PixelSliceMut, Rgbx,
+    Bgrx, BufferError, FromPartsError, InPlacePixels, Pixel, PixelBuffer, PixelBufferParts,
+    PixelCow, PixelSlice, PixelSliceMut, Rgbx,
 };
 
 // Re-export color types at crate root.
 pub use cicp::Cicp;
+#[doc(inline)]
 pub use color::{
     ColorAuthority, ColorContext, ColorOrigin, ColorProfileSource, ColorProvenance, NamedProfile,
 };
 
 // Re-export HDR metadata types at crate root.
-pub use hdr::{ContentLightLevel, DiffuseWhite, MasteringDisplay};
+/// Compatibility alias; use [`hdr::ContentLightLevel`].
+#[deprecated(
+    since = "0.2.17",
+    note = "use zenpixels::hdr::ContentLightLevel; root HDR aliases are removed in 0.3.1"
+)]
+pub type ContentLightLevel = hdr::ContentLightLevel;
+/// Compatibility alias; use [`hdr::DiffuseWhite`].
+#[deprecated(
+    since = "0.2.17",
+    note = "use zenpixels::hdr::DiffuseWhite; root HDR aliases are removed in 0.3.1"
+)]
+pub type DiffuseWhite = hdr::DiffuseWhite;
+/// Compatibility alias; use [`hdr::MasteringDisplay`].
+#[deprecated(
+    since = "0.2.17",
+    note = "use zenpixels::hdr::MasteringDisplay; root HDR aliases are removed in 0.3.1"
+)]
+pub type MasteringDisplay = hdr::MasteringDisplay;
 
 // Re-export GrayAlpha pixel types at crate root.
 pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};

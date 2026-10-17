@@ -1,0 +1,17 @@
+{
+  "manifest_matches": 721,
+  "dependency_declarations": 1176,
+  "direct_reference_files": 3422,
+  "scoped_repos": 202,
+  "matched_repos": 207,
+  "matched_files": 17759,
+  "matched_lines": 168127,
+  "repo_classes": {
+    "primary": 46,
+    "alternate-checkout": 96,
+    "snapshot/research": 60,
+    "archive/reference": 4,
+    "unversioned": 1
+  },
+  "parse_errors": 3
+}

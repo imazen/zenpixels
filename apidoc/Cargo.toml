@@ -9,7 +9,10 @@ edition = "2024"
 publish = false
 
 [dependencies]
-zenutils-apidoc = "0.1.0"
+# Switch back to `version = "0.1.2"` once `zenutils-apidoc 0.1.2` is on
+# crates.io. The path is needed today because `no_file_meta_header()` /
+# `no_autotraits_summary()` (added 2026-06-25) are not yet published.
+zenutils-apidoc = { path = "../../zenutils/zenutils-apidoc" }
 
 # Self-contained: never joins the parent workspace, even if the parent's
 # `exclude` entry goes missing.

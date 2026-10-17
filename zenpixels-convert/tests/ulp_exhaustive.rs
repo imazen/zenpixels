@@ -165,13 +165,72 @@ fn ulp_u16_to_u8_max_error() {
         let mut output = [0u8; 3];
         convert_row(&plan, &input, &mut output, 1);
 
-        // Expected: (v * 255 + 32768) >> 16
-        let expected = ((v * 255 + 32768) >> 16) as u8;
+        // Expected: correctly rounded `v * 255 / 65535` == `v / 257`
+        // (65535 = 255 · 257). Because 257 is odd, `v / 257` can never
+        // land on an exact .5 tie, so `(v + 128) / 257` is the unique
+        // nearest u8 and the rounding rule is unambiguous.
+        //
+        // The previous oracle here was `(v * 255 + 32768) >> 16` — a
+        // 65536-divisor approximation that FLOORS 127 of the 65536
+        // inputs (e.g. v = 33025 → 128, exact = 128.5019… → 129) and
+        // disagreed with the f32 route (`v * 255.0 + 0.5`) by 1 LSB.
+        // See imazen/zenpixels#72.
+        let expected = ((v + 128) / 257) as u8;
         let err = (output[0] as i16 - expected as i16).unsigned_abs();
         max_err = max_err.max(err);
     }
 
     assert_eq!(max_err, 0, "u16 → u8 should match formula exactly");
+}
+
+/// Regression for imazen/zenpixels#72: the integer `U16ToU8` narrowing
+/// step and the f32 route (`U16ToF32` → `NaiveF32ToU8`, `v * 255.0 + 0.5`)
+/// must agree byte-for-byte on every u16 input. Before the fix the integer
+/// step floored on the 127 inputs closest to a rounding boundary, so the
+/// two routes were non-interchangeable.
+#[test]
+fn ulp_u16_to_u8_integer_and_f32_routes_agree() {
+    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
+
+    let src = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    );
+    let mid = PixelDescriptor::new(
+        ChannelType::F32,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Srgb,
+    );
+    let dst = PixelDescriptor::RGB8_SRGB;
+    let plan_int = ConvertPlan::new(src, dst).expect("u16→u8 plan");
+    let plan_f32_a = ConvertPlan::new(src, mid).expect("u16→f32 plan");
+    let plan_f32_b = ConvertPlan::new(mid, dst).expect("f32→u8 plan");
+
+    let mut mismatches = 0u32;
+    let mut first: Option<(u32, u8, u8)> = None;
+    for v in 0u32..=65535 {
+        let v16 = v as u16;
+        let input: [u8; 6] = bytemuck::cast([v16, v16, v16]);
+        let mut out_int = [0u8; 3];
+        convert_row(&plan_int, &input, &mut out_int, 1);
+
+        let mut midbuf = [0u8; 12];
+        let mut out_f32 = [0u8; 3];
+        convert_row(&plan_f32_a, &input, &mut midbuf, 1);
+        convert_row(&plan_f32_b, &midbuf, &mut out_f32, 1);
+
+        if out_int != out_f32 {
+            mismatches += 1;
+            first.get_or_insert((v, out_int[0], out_f32[0]));
+        }
+    }
+    assert_eq!(
+        mismatches, 0,
+        "integer and f32 u16→u8 routes disagree on {mismatches} inputs; first = {first:?}"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -932,6 +991,7 @@ fn ulp_hlg_eotf_monotonic() {
 // ═══════════════════════════════════════════════════════════════════════
 
 #[test]
+#[cfg(feature = "hdr-experimental")]
 fn ulp_pq_to_srgb_basic() {
     use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
@@ -948,7 +1008,10 @@ fn ulp_pq_to_srgb_basic() {
         TransferFunction::Srgb,
     );
 
-    let plan = ConvertPlan::new(pq_u16, srgb_u8).expect("PQ U16 → sRGB U8 plan");
+    // Plain `ConvertPlan::new` refuses HDR→SDR (no source peak); the
+    // HDR-aware constructor builds a tone-mapped plan instead.
+    let plan =
+        ConvertPlan::new_with_hdr_peak(pq_u16, srgb_u8, 1000.0).expect("PQ U16 → sRGB U8 HDR plan");
 
     // PQ code 0 → sRGB 0
     let input_0: [u8; 6] = [0; 6]; // 3 × u16(0)
@@ -961,12 +1024,11 @@ fn ulp_pq_to_srgb_basic() {
     let input_mid: [u8; 6] = bytemuck::cast([mid_val, mid_val, mid_val]);
     let mut out_mid = [0u8; 3];
     convert_row(&plan, &input_mid, &mut out_mid, 1);
-    // The exact value depends on the PQ→linear→sRGB chain
     println!(
         "PQ({mid_val}) → sRGB: [{}, {}, {}]",
         out_mid[0], out_mid[1], out_mid[2]
     );
-    // Should be a reasonable SDR value, not 0 and not 255
+    // Should be a reasonable SDR value, not 0 and not 255.
     assert!(
         out_mid[0] > 10 && out_mid[0] < 255,
         "PQ(33280) → sRGB should be a moderate value, got {}",

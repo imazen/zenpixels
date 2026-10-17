@@ -37,7 +37,9 @@ fn rgba_u8(tf: TransferFunction) -> PixelDescriptor {
 }
 
 fn opts_with_luma(coefficients: LumaCoefficients) -> ConvertOptions {
-    ConvertOptions::permissive().with_luma(Some(coefficients))
+    ConvertOptions::permissive()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked)
+        .with_luma(Some(coefficients))
 }
 
 fn convert_u8(

@@ -40,13 +40,17 @@
 //! ```
 
 use alloc::boxed::Box;
+#[cfg(feature = "std")]
 use alloc::format;
 
+#[cfg(any(feature = "std", test))]
+use crate::Cicp;
+use crate::PixelFormat;
 #[cfg(test)]
 use crate::TransferFunction;
 #[allow(deprecated)]
+#[cfg(feature = "std")]
 use crate::cms::{ColorManagement, RowTransform};
-use crate::{Cicp, PixelFormat};
 
 /// Lightweight CMS using fused SIMD gamut conversion kernels.
 ///
@@ -218,7 +222,7 @@ impl RowTransform for LiteTransform {
     }
 }
 
-/// Mutex-free `RowTransformMut` wrapper for the [`PluggableCms`] path.
+/// Mutex-free `RowTransformMut` wrapper for the [`PluggableCms`](crate::cms::PluggableCms) path.
 ///
 /// Owns a `RowConverter` directly — no interior mutability needed since
 /// `RowTransformMut::transform_row` takes `&mut self`.
@@ -229,6 +233,21 @@ struct LiteTransformMut {
 impl crate::cms::RowTransformMut for LiteTransformMut {
     fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
         self.inner.convert_row(src, dst, width);
+    }
+    fn try_transform_row(
+        &mut self,
+        src: &[u8],
+        dst: &mut [u8],
+        width: u32,
+    ) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        self.inner
+            .try_convert_row(src, dst, width)
+            .map_err(|e| whereat::at!(crate::cms::CmsPluginError::new(e)))
+    }
+    fn prepare(&mut self, max_width: u32) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        self.inner
+            .prepare(max_width)
+            .map_err(|e| whereat::at!(crate::cms::CmsPluginError::new(e)))
     }
 }
 
@@ -250,6 +269,28 @@ impl crate::cms::PluggableCms for ZenCmsLite {
         let (src_p, src_t) = src.resolve()?;
         let (dst_p, dst_t) = dst.resolve()?;
 
+        // Build the descriptors first so we can run the native-model check
+        // against them. Pre-0.2.16 we built these AFTER the same-space
+        // shortcut and called straight into `ConvertPlan::new_explicit`,
+        // which now answers `NeedsCms` for CMYK / Lab / XYZ etc. instead of
+        // panicking. Surfacing that as `Some(Err(...))` would stop the
+        // dispatch chain — but ZenCmsLite recognizes only native RGB-family
+        // gamut/transfer work, so the right answer is `None` (decline) so
+        // the next plugin (e.g. MoxCms) gets a chance.
+        let from = PixelDescriptor::from_pixel_format(src_format)
+            .with_primaries(src_p)
+            .with_transfer(src_t);
+        let to = PixelDescriptor::from_pixel_format(dst_format)
+            .with_primaries(dst_p)
+            .with_transfer(dst_t);
+
+        // Decline non-native color models (CMYK today; Lab / XYZ / spot inks
+        // when they land). We have no kernels for them — let MoxCms or the
+        // user-supplied plugin handle it.
+        if crate::convert::needs_cms_for_color_model(&from, &to) {
+            return None;
+        }
+
         // Same color space and format — decline; let caller use the
         // built-in mechanical plan (byte copy / layout swizzle).
         if src_p as u8 == dst_p as u8
@@ -258,13 +299,6 @@ impl crate::cms::PluggableCms for ZenCmsLite {
         {
             return None;
         }
-
-        let from = PixelDescriptor::from_pixel_format(src_format)
-            .with_primaries(src_p)
-            .with_transfer(src_t);
-        let to = PixelDescriptor::from_pixel_format(dst_format)
-            .with_primaries(dst_p)
-            .with_transfer(dst_t);
 
         // Build directly from a plan to avoid recursing through the
         // RowConverter CMS chain. Plan construction failing here IS a
@@ -391,8 +425,10 @@ mod tests {
     #[test]
     fn cross_trc_conversion() {
         let cms = ZenCmsLite;
-        // BT.2020 PQ → sRGB: different primaries AND different TRC
-        let src = ColorProfileSource::Named(NamedProfile::Bt2020Pq);
+        // BT.2020 BT.1886-gamma → sRGB: different primaries AND different TRC
+        // (was BT.2020 PQ → sRGB pre-0.2.16 — that now errors loudly via the
+        // HDR-requires-peak refusal, since cms_lite has no source-peak input).
+        let src = ColorProfileSource::Named(NamedProfile::Bt2020);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
         let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
         assert!(result.is_some());
@@ -616,7 +652,12 @@ mod accuracy_ground_truth_tests {
         encode: fn(f64) -> f64,
     ) -> Vec<u8> {
         let mut dst = vec![0u8; src.len()];
-        for (s, d) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+        for (s, d) in src
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(dst.as_chunks_mut::<3>().0)
+        {
             let r = linearize(s[0] as f64 / 255.0);
             let g = linearize(s[1] as f64 / 255.0);
             let b = linearize(s[2] as f64 / 255.0);

@@ -1,10 +1,10 @@
 [package]
 name = "zenpixels-convert"
-version = "0.2.15"
+version = "0.2.17"
 edition.workspace = true
 rust-version = "1.89"
 license.workspace = true
-readme = "README.md"
+readme = "README.crates.md"
 repository.workspace = true
 categories.workspace = true
 description = "Transfer-function-aware pixel conversion, gamut mapping, and codec format negotiation for zenpixels"
@@ -12,7 +12,23 @@ keywords = ["image", "pixel", "conversion", "srgb", "codec"]
 include = [
     "/src/**",
     "/benches/*.rs",
-    "/README.md",
+    "/README.crates.md",
+]
+
+# docs.rs builds with the public opt-in features enabled so the gated
+# surfaces (hdr::measure / CllMeasure, the HDR ConvertPlan constructors,
+# cms-moxcms, rgb/imgref/planar interop, fast-transpose) are documented
+# and their intra-doc links resolve. Bench-only `__*` features stay out.
+[package.metadata.docs.rs]
+features = [
+    "hdr-experimental",
+    "estimation-experimental",
+    "pipeline",
+    "cms-moxcms",
+    "rgb",
+    "imgref",
+    "planar",
+    "fast-transpose",
 ]
 
 [features]
@@ -47,8 +63,28 @@ rgb = ["zenpixels/rgb", "dep:rgb"]
 imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]
 pipeline = []
+# Compatibility feature name only. Estimation is always deprecated in 0.2.17
+# and removed in 0.3.1. Enabling this does not silence migration warnings.
+estimation-experimental = []
+# Experimental HDR analysis surface (gates `hdr::measure` — the `CllMeasure`
+# extension trait + `LightLevelHistogram` / `LightLevelMethod` + the SIMD
+# CLL scan kernel). The underlying scan + accuracy contracts are stable —
+# the gate covers expected pre-0.3.0 shape churn (the queued
+# `measure_robust` → `measure` rename when `zenpixels::ContentLightLevel`'s
+# deprecated 2-arg `measure` ships its 0.3.0 removal, plus potential trait-
+# vs-free-fn restructuring). Default-off; opt in with
+# `features = ["hdr-experimental"]` to access measurement until the API
+# locks at 0.3.0.
+hdr-experimental = []
 cms-moxcms = ["std", "dep:moxcms"]
-serde = ["zenpixels/serde"]
+# Soft-removed in 0.2.15. The `serde` feature previously forwarded to
+# `zenpixels/serde` and added a `Serialize`/`Deserialize` derive on
+# `hdr::measure::LightLevelMethod` — a 2-variant enum whose serialization
+# is trivial to handle at the caller side without dragging in a serde
+# dep. Kept as an empty stub so consumers of 0.2.14 that wrote
+# `features = ["serde"]` still build; the feature does nothing and is
+# queued for removal in the next breaking release.
+serde = []
 # Bench-only: exposes `pub mod __bench_u16_hybrids` shims for
 # `bench_u16_hybrids`. Not intended for non-bench use; the production u16
 # RGB gamut path uses `convert_u16_rgb_simd_lutdec_polyenc` directly.
@@ -78,6 +114,11 @@ bytemuck = { version = "1.21", default-features = false, features = ["extern_cra
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 garb = { version = "0.2.8", default-features = false, features = ["experimental"] }
 archmage = { version = "0.9.26", default-features = false }
+# Direct libm dep for the hdr-experimental Bt2446A / HdrToSdr scalar paths
+# (powf, logf, log2f, cosf, sinf). The crate is no_std and already pulled in
+# transitively by magetypes; we depend on it directly so the math calls don't
+# reach across an unstable boundary.
+libm = { version = "0.2", default-features = false }
 # 0.9.25 adds the F16Convert trait: hardware f16<->f32 slice converters with
 # native F16C (x86-64-v3) AND NEON-fp16 (aarch64, rustversion-gated, MSRV-safe)
 # backends + a branchless software fallback — replacing this crate's bespoke
@@ -92,14 +133,31 @@ once_cell = { version = "1.21.4", default-features = false, features = ["race", 
 # (block format only); decodes the standard LZ4 blocks emitted by the icc-gen
 # `cicp_bundle_gen` build tool. The `safe-decode` feature keeps us inside
 # `#![forbid(unsafe_code)]`.
-lz4_flex = { version = "0.13.1", default-features = false, features = ["safe-decode"], optional = true }
+lz4_flex = { version = "0.14.0", default-features = false, features = ["safe-decode"], optional = true }
 whereat = { version = "0.1.5", default-features = false }
+# Verified against both moxcms 0.8.1 and the unreleased 0.9.0 (master): the only
+# API our code touches that changed is the D50 white-point spelling (const
+# `WHITE_POINT_D50` → fn `white_point_d50()`), which the gray test oracle
+# reconstructs version-agnostically (see `cms_moxcms::moxcms_d50_xyz`). `<0.10`
+# excludes the next untested minor.
 moxcms = { version = ">=0.8.1, <0.10", optional = true, features = ["options"] }
 
 [dev-dependencies]
 zenpixels = { workspace = true, features = ["planar", "imgref"] }
+# Self dev-dependency: these features unify into every test/bench build of
+# this crate, so plain `cargo test -p zenpixels-convert` (default features)
+# already compiles the lib WITH `cms-moxcms` and runs the `#[cfg(feature =
+# "cms-moxcms")]` unit tests — including the byte-identical gray-ICC gate
+# `icc_profiles::cicp_bundle::tests::gray_blob_decodes_byte_identical_to_moxcms`
+# (verified: it appears in `cargo test --lib -- --list` under default
+# features, imazen/zenpixels#40). Dropping `cms-moxcms` here would silently
+# remove those gates from CI.
 zenpixels-convert = { path = ".", features = ["pipeline", "imgref", "cms-moxcms"] }
 zenbench = { version = "0.1.2"}
+# DEV-only: lets benches/kernel_tiers.rs disable the baseline SIMD token (NEON
+# on aarch64) so the "scalar" arm is real. Feature unification applies this to
+# test/bench builds only, so consumers are unaffected.
+archmage = { version = "0.9.28", features = ["testable_dispatch"] }
 # Dev-only: cross-validate our local f16 impl (src/f16_scalar.rs) and drive
 # the perceptual-loss test suite, which uses half's f64 conversion paths.
 half = "2.7.1"
@@ -107,6 +165,27 @@ palette = { version = "0.7", default-features = false, features = ["std", "appro
 # Dev-only: pin the committed CICP bundle blob's sha256 (golden test) so an
 # accidental regen is caught. Not part of the shipped crate.
 sha2 = "0.11.0"
+# Dev-only: counts allocations for the HDR→SDR intermediate-buffer regression
+# gate (tests/hdr_sdr_alloc.rs, imazen/zenpixels#69). Only that test binary
+# references the crate, so only it gets the counting global allocator.
+allocation-counter = "0.8.1"
+
+# Allocation gate for `convert_to_sdr`: the peak measurement must stream
+# through a scratch row, never a full-image F32 intermediate (#69). The trait
+# is behind `hdr-experimental`; CI runs it via the dedicated feature step.
+[[test]]
+name = "hdr_sdr_alloc"
+path = "tests/hdr_sdr_alloc.rs"
+required-features = ["hdr-experimental"]
+
+# Parity gate between the deprecated `zenpixels::ContentLightLevel::measure`
+# and its replacement `CllMeasure::measure_max`. The trait is behind
+# `hdr-experimental`, so the target opts in explicitly; CI runs it via the
+# dedicated `--features hdr-experimental` test step.
+[[test]]
+name = "deprecated_measure_parity"
+path = "tests/deprecated_measure_parity.rs"
+required-features = ["hdr-experimental"]
 
 [[bench]]
 name = "bench_cms"
@@ -186,6 +265,18 @@ path = "benches/bench_u16_hybrids.rs"
 harness = false
 required-features = ["__bench_u16_hybrids"]
 
+# u16→u8 narrowing kernel shootout (#72): garb's inexact kernel vs the
+# exact local candidates, every arm exhaustively cross-checked first.
+[[bench]]
+name = "bench_u16_narrow"
+path = "benches/bench_u16_narrow.rs"
+harness = false
+
+[[bench]]
+name = "bench_sdr_u16_lut"
+path = "benches/bench_sdr_u16_lut.rs"
+harness = false
+
 [[bench]]
 name = "bench_orient"
 path = "benches/bench_orient.rs"
@@ -199,3 +290,17 @@ required-features = ["__bench_orient"]
 # harness = false
 # required-features = ["cms-moxcms"]
 
+[[example]]
+name = "mem_probe_convert"
+path = "examples/mem_probe_convert.rs"
+required-features = ["estimation-experimental"]
+
+[[example]]
+name = "measure_histogram_throughput"
+path = "examples/measure_histogram_throughput.rs"
+required-features = ["hdr-experimental"]
+
+[[bench]]
+name = "kernel_tiers"
+harness = false
+required-features = ["__bench_scan"]

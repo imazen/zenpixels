@@ -6,6 +6,70 @@
 //!
 //! The core PQ/HLG EOTF/OETF math is always available through the main
 //! conversion pipeline in [`ConvertPlan`](crate::ConvertPlan).
+//!
+//! # Experimental: `measure` — content-light-level measurement
+//!
+//! Behind the `hdr-experimental` Cargo feature, the `measure` submodule
+//! exposes the `measure::CllMeasure` extension trait (with
+//! `measure_max` / `measure_robust` / `measure_max_smoothed` /
+//! `measure_percentile` / `measure_histogram` on
+//! [`ContentLightLevel`]), the `measure::LightLevelHistogram`
+//! primitive, and the `measure::LightLevelMethod` enum. (Plain code
+//! spans, not intra-doc links — the targets only exist when the feature
+//! is enabled, and this page renders either way.)
+//! The trait + module shape may move or rename ahead of 0.3.0 (in particular
+//! `measure_robust` is queued to become the unqualified `measure` once the
+//! deprecated 2-arg `ContentLightLevel::measure` ships its 0.3.0 removal);
+//! the underlying scan kernels and accuracy contracts are stable.
+
+/// BT.2020 NCL luma coefficients shared by the HDR submodules:
+/// `Y = 0.2627·R + 0.6780·G + 0.0593·B`. Used by [`measure`]'s
+/// `LuminanceBt2020` reduction and by the [`Bt2446A`] curve (both the
+/// SIMD body and the scalar remainder tail of `bt2446a_tier`). Pinned at
+/// the parent-module scope so the call sites stay in lock-step.
+#[cfg(feature = "hdr-experimental")]
+pub(super) const BT2020_LR: f32 = 0.2627;
+#[cfg(feature = "hdr-experimental")]
+pub(super) const BT2020_LG: f32 = 0.6780;
+#[cfg(feature = "hdr-experimental")]
+pub(super) const BT2020_LB: f32 = 0.0593;
+
+/// Content-light-level measurement (experimental).
+///
+/// Gated behind the `hdr-experimental` Cargo feature. See the parent
+/// module docs for stability notes.
+#[cfg(feature = "hdr-experimental")]
+pub mod measure;
+
+/// BT.2446 Method A tone-mapper (experimental).
+///
+/// Linear-light HDR → linear-light SDR curve. Gated behind
+/// `hdr-experimental` while the cross-crate API surface settles.
+#[cfg(feature = "hdr-experimental")]
+mod bt2446a;
+
+/// Soft chroma compression in OKLch with a precomputed gamut boundary LUT.
+/// Gated behind `hdr-experimental`.
+#[cfg(feature = "hdr-experimental")]
+mod gamut_compress;
+
+/// Re-exports of the experimental [`measure`] surface at the [`hdr`](self)
+/// boundary, so callers can write
+/// `use zenpixels_convert::hdr::CllMeasure;` instead of the full
+/// `zenpixels_convert::hdr::measure::CllMeasure` path. Same gating.
+#[cfg(feature = "hdr-experimental")]
+pub use measure::{CllMeasure, LightLevelHistogram, LightLevelMethod};
+
+// HDR → SDR conversion now lives in the main `ConvertPlan` infrastructure:
+// build via [`crate::ConvertPlan::new_with_hdr_peak`] /
+// [`crate::ConvertPlan::new_with_hdr_config`] and run through the standard
+// [`crate::RowConverter`] / [`crate::convert_buffer`] entry points. The
+// underlying `Bt2446A` and `SoftCompress` primitives stay public for advanced
+// callers that want to drive the math directly.
+#[cfg(feature = "hdr-experimental")]
+pub use bt2446a::Bt2446A;
+#[cfg(feature = "hdr-experimental")]
+pub use gamut_compress::{GamutBoundaryLut, SoftCompress};
 
 use crate::adapt::{convert_buffer_with_anchor, convert_into_with_anchor};
 use crate::error::ConvertError;
@@ -32,7 +96,7 @@ use zenpixels::hdr::DiffuseWhite;
 /// `zencodec::Metadata` (which the codecs actually populate, and which also
 /// carries CICP, ICC, EXIF/XMP, and orientation). It bundles `transfer` with
 /// CLL/mastering, which the prior art uniformly keeps separate (transfer
-/// belongs on the [`PixelDescriptor`](crate::PixelDescriptor); CLL and
+/// belongs on the [`crate::PixelDescriptor`]; CLL and
 /// mastering are independent optional metadata). It has frozen public fields
 /// (not `#[non_exhaustive]`), so the absolute-luminance anchor and gain-map
 /// fields HDR needs cannot be added without a break. Scheduled for removal in
@@ -124,13 +188,16 @@ impl HdrMetadata {
 ///
 /// # Deprecated
 ///
-/// Same outlier-driven failure mode that got [`ContentLightLevel::measure`]
-/// deprecated in 0.2.15. Use the `zentone` crate (`zentone::Bt2446A`,
-/// `Bt2408Tonemapper`, etc.) for standardised HDR→SDR display mapping.
-/// Scheduled for removal in 0.3.0.
+/// Naive global Reinhard with no display adaptation or chroma correction.
+/// Confirmed inferior to [`Bt2446A`](crate::hdr::Bt2446A) by the
+/// 2026-06-22 audited HDR→SDR shootout — Bt2446A wins mean ΔE2000 by
+/// 2-5× over every channel-independent curve tested. Use
+/// [`crate::hdr::Bt2446A`] (now lives in this crate after the
+/// `zentone` → `zenpixels-convert::hdr` extraction). Scheduled for
+/// removal in 0.3.0.
 #[deprecated(
     since = "0.2.15",
-    note = "naive global Reinhard, no display adaptation or chroma correction; produces visibly wrong colour on real HDR content. Use the `zentone` crate (zentone::Bt2446A) for production HDR→SDR mapping. Removal queued for 0.3.0."
+    note = "naive global Reinhard — confirmed inferior to Bt2446A by the 2026-06-22 audited shootout (~2-5x mean ΔE2000). Use `zenpixels_convert::hdr::Bt2446A` for production HDR→SDR mapping. Removal queued for 0.3.0."
 )]
 #[doc(hidden)]
 #[inline]
@@ -180,11 +247,12 @@ pub fn reinhard_inverse(v: f32) -> f32 {
 /// # Deprecated
 ///
 /// A bare `v * 2^exposure` clamp — even weaker than [`reinhard_tonemap`].
-/// Removal queued for 0.3.0; use the `zentone` crate (`zentone::Bt2446A`)
-/// for production HDR→SDR mapping.
+/// The 2026-06-22 audited shootout confirmed
+/// [`Bt2446A`](crate::hdr::Bt2446A) wins on every metric by a large
+/// margin. Removal queued for 0.3.0.
 #[deprecated(
     since = "0.2.15",
-    note = "bare v * 2^exposure clamp; no display-aware mapping. Use the `zentone` crate (zentone::Bt2446A) for production HDR→SDR mapping. Removal queued for 0.3.0."
+    note = "bare v * 2^exposure clamp; no display-aware mapping. Use `zenpixels_convert::hdr::Bt2446A` for production HDR→SDR mapping. Removal queued for 0.3.0."
 )]
 #[doc(hidden)]
 #[cfg(feature = "std")]

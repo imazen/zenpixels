@@ -1,0 +1,2 @@
+# Audit tables have meaningful trailing tabs for empty final columns.
+docs/audit-2026-09-27/*.tsv text eol=lf whitespace=-blank-at-eol

@@ -8,7 +8,13 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  # `github.head_ref` is set ONLY on pull_request events. On a push it is
+  # empty, so the group fell through to `github.run_id` — unique per run,
+  # so pushes never collided and nothing was ever cancelled. `github.ref`
+  # is set on both event types (`refs/heads/main` on push,
+  # `refs/pull/N/merge` on a PR), so PR behaviour is unchanged while
+  # consecutive pushes to a branch now supersede each other.
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -44,6 +50,13 @@ jobs:
       - name: Test (workspace)
         run: cargo test --workspace
 
+      - name: Check downstream warnings with compatibility features
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 scripts/check-deprecations.py
+
+      - name: Test legacy estimation behavior (still deprecated)
+        run: cargo test -p zenpixels-convert --features estimation-experimental --test resource_estimate
+
       # Default `cargo test` exercises only the portable scalar transpose tiers.
       # Run the orient suite again with the SIMD kernels enabled so the per-width
       # AVX2 (x64) / NEON (arm64 runners) register transposes are executed and
@@ -54,11 +67,50 @@ jobs:
       - name: Test (zenpixels-convert plan validation, with __trace_ops)
         run: cargo test -p zenpixels-convert --features __trace_ops --test plan_validation
 
+      # The alpha-vs-transfer gate runs under plain `cargo test` too, but only
+      # with __trace_ops does it assert *which* kernel each case dispatched —
+      # that is what makes "every SDR transfer kernel is covered" a checked
+      # claim rather than a comment.
+      - name: Test (zenpixels-convert transfer alpha, with __trace_ops)
+        run: cargo test -p zenpixels-convert --features __trace_ops --test transfer_alpha
+
+      # The CllMeasure surface (and its test targets, including the
+      # deprecated-measure parity gate) is behind the hdr-experimental
+      # feature — run it explicitly so those suites execute in CI.
+      - name: Test (zenpixels-convert HDR measurement, hdr-experimental)
+        run: cargo test -p zenpixels-convert --features hdr-experimental
+
+      # Downstream consumers ship `default-features = false, features = ["rgb"]`
+      # (no `icc-db`, no `std`). Run the whole suite in that exact configuration
+      # so the no-db gray-collapse suppress path and the feature-gated test
+      # helpers stay green — the feature-powerset job below only `check`s
+      # (imazen/zenpixels#40).
+      - name: Test (zenpixels-convert no-default-features + rgb)
+        run: cargo test -p zenpixels-convert --no-default-features --features rgb
+
+      # The `avx512` feature routes the f16 slice path and the AVX-512 SIMD
+      # tiers through magetypes/archmage's w512 kernels. Dispatch is at
+      # runtime, so this compiles and runs on any x86-64 host (it just takes
+      # the narrower tier when the runner lacks AVX-512) — but the feature was
+      # otherwise never built or run in CI. x64-only: the feature gates
+      # x86-specific kernels. (Opt-in SIMD features that only ever get a
+      # feature-powerset `check` compile but never execute — this runs them.)
+      - name: Test (zenpixels-convert avx512 tier, x64 only)
+        if: runner.arch == 'X64'
+        run: cargo test -p zenpixels-convert --features avx512
+
       - name: Check no_std (zenpixels)
         run: cargo check -p zenpixels --no-default-features
 
       - name: Check no_std (zenpixels-convert)
         run: cargo check -p zenpixels-convert --no-default-features
+
+      # hdr-experimental adds transcendental math (Bt2446A / SoftCompress /
+      # gamut compression). It must stay no_std-clean (libm, not the std f32
+      # inherents) — this combination was previously never built in CI, so a
+      # std-only method could regress the no_std path unnoticed.
+      - name: Check no_std + hdr-experimental (zenpixels-convert)
+        run: cargo check -p zenpixels-convert --no-default-features --features hdr-experimental
 
   # ==========================================================================
   # Cross-compiled 32-bit testing (i686 via QEMU)
@@ -130,6 +182,75 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Broken intra-doc links (e.g. `[\`Foo\`]` referring to a renamed/removed
+      # item) are only caught by actually running rustdoc; plain `cargo check`
+      # never sees them. RUSTDOCFLAGS=-D warnings turns those warnings into a
+      # failing step (zenpixels#bug-19: this gate was previously absent).
+      - name: Check docs (broken intra-doc links fail the build)
+        run: cargo doc --workspace --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # ==========================================================================
+  # Public-API surface snapshots (docs/public-api/) — the CI-free `apidoc/`
+  # runner package (see its Cargo.toml), so this is the only job that ever
+  # compiles zenutils-apidoc's dependency tree or invokes rustdoc. Standalone
+  # (not folded into the `clippy` job above) because it needs a nightly
+  # toolchain for rustdoc JSON, distinct from every other job's stable
+  # toolchain (zenpixels#bug-19: this gate was previously absent, so 6 new
+  # public types + a broken doc link slipped in without the committed
+  # snapshots ever being checked against them).
+  #
+  # apidoc/Cargo.toml currently path-depends on the sibling imazen/zenutils
+  # checkout (zenutils-apidoc 0.1.2's `no_file_meta_header`/
+  # `no_autotraits_summary` builders aren't on crates.io yet — see the
+  # comment in apidoc/Cargo.toml), so this job checks that sibling out next
+  # to zenpixels before running the snapshot test, mirroring the
+  # `checkout-siblings` pattern used by zenwebp/zenpipe for their own
+  # path-dependent siblings.
+  api-doc:
+    name: Public API snapshots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Pinned to a specific commit, NOT `ref: main` — an unrelated push to
+      # imazen/zenutils would otherwise be able to break this repo's CI. Bump
+      # this SHA deliberately when adopting a newer zenutils-apidoc (and regen
+      # the docs/public-api snapshots in the same commit). Eliminated entirely
+      # once zenutils-apidoc 0.1.2's builders reach crates.io (then apidoc/
+      # can depend on the published crate and this checkout goes away).
+      - name: Checkout sibling imazen/zenutils
+        uses: actions/checkout@v6
+        with:
+          repository: imazen/zenutils
+          ref: 1921bc23d2834c203e017d89197decf4fd3330d3 # zenutils main @ 2026-07-14
+          path: __siblings/zenutils
+
+      - name: Move sibling to parent of GITHUB_WORKSPACE
+        run: |
+          mv __siblings/zenutils ../zenutils
+          rmdir __siblings || true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # The rustdoc-JSON nightly is PINNED (keep in sync with `apidoc_toolchain`
+      # in the justfile); the harness installs it via rustup itself, so no
+      # tracking-`nightly` toolchain step here. An unpinned nightly churns the
+      # rendered surface with zero repo changes — the 2026-08-26 nightly began
+      # rendering `PixelBuffer<P>`'s unconditional `Freeze` impl as conditional
+      # on this Linux x86_64 runner (and not on macOS aarch64), so the committed
+      # snapshots could not be current on both sides at once. Bump the pin
+      # deliberately, in the same commit as a `just api-doc` regen.
+      - name: Check committed API snapshots are current
+        run: cargo test --manifest-path apidoc/Cargo.toml
+        env:
+          ZEN_API_DOC: check
+          ZEN_API_DOC_TOOLCHAIN: nightly-2026-07-13
 
   # ==========================================================================
   # Format check

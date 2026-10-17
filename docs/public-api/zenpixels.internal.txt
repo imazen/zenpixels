@@ -9,28 +9,36 @@
 
 ## summary
 #
-#   inherent methods                           37
-#   trait roster entries (type × trait)        37
+#   pub types (struct/enum/trait/alias)         2
+#   pub consts/statics                          1
+#   inherent methods                           42
+#   struct fields                               4
+#   trait roster entries (type × trait)        40
 #
 # per-module pub lines:
+#   (root)                            3
 #   buffer                            3
-#   cicp                              1
-#   color                             5
+#   cicp                              2
+#   color                             6
 #   descriptor                       10
-#   hdr                               1
+#   hdr                               3
 #   icc                               2
 #   orientation                       1
 #   pixel_types                       2
-#   planar                            7
+#   planar                           10
 #   policy                            5
+#   sample                            2
 
-## items (37 lines)
+## items (48 lines)
 
+pub const hdr::ContentLightLevel::DEFAULT_PERCENTILE: f32
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
 pub fn buffer::Rgbx::assert_fields_are_eq(&self)
 pub fn cicp::Cicp::assert_fields_are_eq(&self)
+pub fn cicp::CicpDescriptorError::assert_fields_are_eq(&self)
 pub fn color::ColorAuthority::assert_fields_are_eq(&self)
+pub fn color::ColorContext::assert_fields_are_eq(&self)
 pub fn color::ColorOrigin::assert_fields_are_eq(&self)
 pub fn color::ColorProfileSource<'a>::assert_fields_are_eq(&self)
 pub fn color::ColorProvenance::assert_fields_are_eq(&self)
@@ -46,6 +54,7 @@ pub fn descriptor::PixelFormat::assert_fields_are_eq(&self)
 pub fn descriptor::SignalRange::assert_fields_are_eq(&self)
 pub fn descriptor::TransferFunction::assert_fields_are_eq(&self)
 pub fn hdr::ContentLightLevel::assert_fields_are_eq(&self)
+pub fn hdr::ContentLightLevel::measure(buffer::PixelSlice<'_>, hdr::DiffuseWhite) -> core::option::Option<Self>
 pub fn icc::IccIdentification::assert_fields_are_eq(&self)
 pub fn icc::IdentificationUse::assert_fields_are_eq(&self)
 pub fn orientation::Orientation::assert_fields_are_eq(&self)
@@ -63,13 +72,21 @@ pub fn policy::ConvertOptions::assert_fields_are_eq(&self)
 pub fn policy::DepthPolicy::assert_fields_are_eq(&self)
 pub fn policy::GrayExpand::assert_fields_are_eq(&self)
 pub fn policy::LumaCoefficients::assert_fields_are_eq(&self)
+pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
+pub fn sample::SampleEncodingError::assert_fields_are_eq(&self)
+pub struct Plane [also: planar]
+pub Plane::buffer: buffer::PixelBuffer
+pub Plane::semantic: planar::PlaneSemantic
+pub planar::Plane::buffer: buffer::PixelBuffer
+pub planar::Plane::semantic: planar::PlaneSemantic
 
-## trait impls (37 types)
+## trait impls (40 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
 buffer::Rgbx: TrivialClone
 cicp::Cicp: TrivialClone
+cicp::CicpDescriptorError: TrivialClone
 color::ColorAuthority: TrivialClone
 color::ColorProvenance: TrivialClone
 color::NamedProfile: TrivialClone
@@ -103,3 +120,5 @@ policy::ConvertOptions: TrivialClone
 policy::DepthPolicy: TrivialClone
 policy::GrayExpand: TrivialClone
 policy::LumaCoefficients: TrivialClone
+sample::SampleEncoding: TrivialClone
+sample::SampleEncodingError: TrivialClone

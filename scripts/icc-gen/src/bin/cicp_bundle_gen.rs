@@ -15,11 +15,10 @@
 //! primaries) lets the compressor find the long cross-profile matches. The
 //! decompressed group is sliced at runtime to recover each profile.
 //!
-//! Two combinations (`primaries=1` BT.709 with `transfer=1` BT.709, and
-//! `primaries=1` with `transfer=13` sRGB) are the universally-assumed sRGB /
-//! BT.709 default — `synthesize_icc_for_cicp` returns `NotNeeded` for them
-//! before reaching the blob — so they are excluded from the bundle, leaving the
-//! 174 covered combinations.
+//! The sRGB pair (1,13) needs no profile. Primaries 10 (XYZ) is
+//! explicitly excluded from RGB: moxcms emits a rank-1 matrix for it.
+//! This leaves 159 RGB pairs; gray keeps XYZ's valid equal-energy white
+//! and transfer curve, giving 175 gray mappings.
 //!
 //! Usage (run from the repo root so the relative output paths resolve):
 //!   `cargo run -p icc-gen --release --bin cicp_bundle_gen [--no-write] [--out-dir <dir>]`
@@ -33,8 +32,15 @@ use std::path::PathBuf;
 
 use moxcms::{
     CicpColorPrimaries, CicpProfile, ColorProfile, LocalizableString, MatrixCoefficients,
-    ProfileText, TransferCharacteristics, WHITE_POINT_D50, Xyzd, adaption_matrix_d,
+    ProfileText, TransferCharacteristics, Xyzd, adaption_matrix_d, white_point_d50,
 };
+
+include!("cicp_bundle_gen/colourimetry.rs");
+
+// H.273 primaries 10 is CIE XYZ, not an RGB xy/Y gamut. moxcms currently
+// emits three identical colorants. Refuse it until XYZ synthesis is correct;
+// still run the gate and report the failure, never ship the invalid bytes.
+const EXCLUDED_RGB_PRIMARIES: &[u8] = &[10];
 
 /// The assigned H.273 colour-primaries codes (everything that is neither
 /// `Reserved` nor `Unspecified`). 11 entries.
@@ -68,8 +74,8 @@ fn synth_icc(primaries: u8, transfer: u8) -> Option<Vec<u8>> {
         full_range: true,
     });
 
-    // A populated red_trc is moxcms's signal that synthesis was faithful (same
-    // gate as the runtime path). No TRC ⇒ can't represent this CICP.
+    // Require a transfer curve before encoding. The independent colorant
+    // gate in enumerate_grid checks the encoded RGB matrix as well.
     profile.red_trc.as_ref()?;
     let mut bytes = profile.encode().ok()?;
     normalize_creation_timestamp(&mut bytes);
@@ -96,7 +102,7 @@ fn normalize_creation_timestamp(icc: &mut [u8]) {
 /// circuits to `NotNeeded` before the blob is consulted. Excluded from the
 /// bundle so the index never points at bytes that are never requested.
 fn is_srgb_default(primaries: u8, transfer: u8) -> bool {
-    matches!(primaries, 1 | 2) && matches!(transfer, 1 | 2 | 13)
+    (matches!(primaries, 1 | 2) && matches!(transfer, 2 | 13)) || (primaries == 2 && transfer == 1)
 }
 
 /// The white point of an H.273 colour-primaries code, as CIE xy
@@ -143,7 +149,7 @@ fn synth_gray_icc(primaries: u8, transfer: u8) -> Option<Vec<u8>> {
         matrix_coefficients,
         full_range: true,
     });
-    // Same faithful-synthesis gate as the RGB path.
+    // Require the same transfer curve as the RGB path.
     let trc = rgb.red_trc.as_ref()?.clone();
 
     let (white_name, wx, wy) = h273_white_xy(primaries)?;
@@ -159,7 +165,10 @@ fn synth_gray_icc(primaries: u8, transfer: u8) -> Option<Vec<u8>> {
     let mut gray = ColorProfile::new_gray_with_gamma(2.2);
     gray.gray_trc = Some(trc);
     gray.media_white_point = Some(white);
-    gray.chromatic_adaptation = Some(adaption_matrix_d(white.to_xyz(), WHITE_POINT_D50.to_xyz()));
+    gray.chromatic_adaptation = Some(adaption_matrix_d(
+        white.to_xyz(),
+        white_point_d50().to_xyz(),
+    ));
     gray.description = Some(ProfileText::Localizable(vec![LocalizableString::new(
         "en".to_string(),
         "US".to_string(),
@@ -230,17 +239,24 @@ fn enumerate_grid(synth: fn(u8, u8) -> Option<Vec<u8>>, kind: &str) -> (usize, V
                 continue;
             }
             match synth(primaries, transfer) {
-                Some(bytes) => grid.push(GridEntry {
-                    primaries,
-                    transfer,
-                    bytes,
-                }),
+                Some(bytes) => {
+                    if kind == "RGB" {
+                        let validation = validate_rgb_colorimetry(&bytes, primaries);
+                        if EXCLUDED_RGB_PRIMARIES.contains(&primaries) {
+                            eprintln!("  excluded RGB ({primaries}, {transfer}): {validation:?}");
+                            continue;
+                        }
+                        validation.unwrap_or_else(|e| panic!("RGB ({primaries}, {transfer}): {e}"));
+                    }
+                    grid.push(GridEntry {
+                        primaries,
+                        transfer,
+                        bytes,
+                    });
+                }
                 None => {
-                    // moxcms couldn't represent this combo. Record it so the
-                    // summary surfaces any unexpected gaps; it simply isn't in
-                    // the bundle (runtime falls through to CmsUnsupported).
-                    eprintln!(
-                        "  note: {kind} ({primaries}, {transfer}) not representable by moxcms — skipped"
+                    panic!(
+                        "{kind} ({primaries}, {transfer}) unexpectedly not representable by moxcms"
                     );
                 }
             }
@@ -254,10 +270,10 @@ fn enumerate_grid(synth: fn(u8, u8) -> Option<Vec<u8>>, kind: &str) -> (usize, V
 /// ordering throughout.
 ///
 /// RGB and GRAY profiles share one blob and one set of per-transfer
-/// groups: each group's decoded bytes pack the RGB profiles first
-/// (primaries ascending), then the GRAY ones. A gray profile's `kTRC`
+/// groups: each group's decoded bytes pack the GRAY profiles first,
+/// then the RGB ones (primaries ascending within each class). A gray profile's `kTRC`
 /// payload is byte-identical to the `rTRC`/`gTRC`/`bTRC` payload of the
-/// RGB profiles right before it in the group (both come from the same
+/// RGB profiles in the same group (both come from the same
 /// moxcms curve for the transfer), so LZ4's 64 KiB window collapses the
 /// gray section to its novel bytes (header, `wtpt`, `chad`,
 /// description) — shipping the gray coverage costs a fraction of what a
@@ -464,8 +480,8 @@ fn render_index(b: &BuiltBundle) -> String {
     s.push_str(
         "/// GRAY-class profile locator table, sorted by `(primaries, transfer)`\n\
          /// for binary search. Locators point into the same groups as\n\
-         /// [`BUNDLE_PROFILES`] (each group's decoded bytes pack RGB first,\n\
-         /// then GRAY).\n",
+         /// [`BUNDLE_PROFILES`] (each group's decoded bytes pack GRAY first,\n\
+         /// then RGB).\n",
     );
     s.push_str(&format!(
         "pub(crate) static GRAY_BUNDLE_PROFILES: [BundleProfile; {}] = [\n",
@@ -520,9 +536,8 @@ fn report(bundle: &BuiltBundle) {
     eprintln!("CICP→ICC merged RGB+GRAY bundle (transfer-grouped, LZ4 via lz4_flex):");
     eprintln!("  total grid combos:        {}", bundle.total_combos);
     eprintln!(
-        "  RGB profile combos:       {} (excludes {} sRGB-default NotNeeded)",
-        bundle.profile_combos,
-        bundle.total_combos - bundle.profile_combos
+        "  RGB profile combos:       {} (excludes {} sRGB-default NotNeeded and primaries 10)",
+        bundle.profile_combos, 1
     );
     eprintln!("  GRAY profile combos:      {}", bundle.gray_profile_combos);
     eprintln!("  unique profiles:          {}", bundle.unique_profiles);
@@ -769,22 +784,37 @@ mod tests {
         );
     }
 
-    /// The grid enumeration must stay at the measured 176 combos / 174
-    /// profile-yielding / 16 groups. A change here means the H.273 assigned set
-    /// or the sRGB-default exclusion shifted — review before accepting.
-    /// The grid enumeration must stay at 176 combos / 174 RGB-yielding /
-    /// 174 GRAY-yielding / 16 groups. RGB profiles are all unique; gray
-    /// primaries sharing an H.273 white dedup to 16 transfers × 4 whites
-    /// (D65 / C / E / DCI) = 64 unique — 238 combined.
+    #[test]
+    fn gate_rejects_singular_and_wrong_full_rank_colorants() {
+        let xyz = synth_icc(10, 8).expect("moxcms emits the excluded XYZ profile");
+        assert!(
+            validate_rgb_colorimetry(&xyz, 10)
+                .unwrap_err()
+                .contains("singular")
+        );
+        let good = synth_icc(12, 13).expect("P3/sRGB synthesis");
+        validate_rgb_colorimetry(&good, 12).expect("P3 matrix passes");
+        // A different, full-rank gamut must fail the colorimetry gate even
+        // though the TRC and profile structure are valid.
+        assert!(
+            validate_rgb_colorimetry(&good, 9)
+                .unwrap_err()
+                .contains("mismatch")
+        );
+        assert!(validate_rgb_colorimetry(&good[..100], 12).is_err());
+    }
+
+    /// 176 assigned pairs: 159 RGB (XYZ excluded, sRGB implicit), 175 gray.
+    /// Gray retains four whites × 16 transfers = 64 unique profiles.
     #[test]
     fn grid_shape_is_stable() {
         let b = build_bundle();
         assert_eq!(b.total_combos, 176, "expected 11×16 assigned grid");
-        assert_eq!(b.profile_combos, 174, "expected 174 RGB combos");
-        assert_eq!(b.gray_profile_combos, 174, "expected 174 GRAY combos");
+        assert_eq!(b.profile_combos, 159, "expected 159 RGB combos");
+        assert_eq!(b.gray_profile_combos, 175, "expected 175 GRAY combos");
         assert_eq!(
-            b.unique_profiles, 238,
-            "expected 174 RGB + 64 deduped gray uniques"
+            b.unique_profiles, 223,
+            "expected 159 RGB + 64 deduped gray uniques"
         );
         assert_eq!(b.groups.len(), 16, "expected 16 transfer groups");
     }

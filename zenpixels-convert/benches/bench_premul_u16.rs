@@ -11,7 +11,7 @@
 //! Four variants of the same math, same result:
 //!   V0: current match-in-function kernel (scalar for-loop).
 //!   V1: split-per-type function, `#[autoversion]`, plain indexed for-loop.
-//!   V2: split-per-type function, `#[autoversion]`, `chunks_exact(16)` (4 pixels = 256 bits).
+//!   V2: split-per-type function, `#[autoversion]`, `as_chunks::<16>()` (4 pixels = 256 bits).
 //!   V3: split-per-type function, `#[autoversion]`, fixed-size `[u16; 4]` per pixel.
 //!
 //! All four are correctness-verified against each other at a small size before
@@ -59,7 +59,7 @@ fn v1_dispatch(src: &[u8], dst: &mut [u8], width: usize) {
     v1_u16_rgba_plain(src16, dst16, width);
 }
 
-// ── V2: split per-type, autoversion, chunks_exact(16) = 4 pixels/chunk ──────
+// ── V2: split per-type, autoversion, as_chunks::<16>() = 4 pixels/chunk ──────
 
 #[autoversion]
 fn v2_u16_rgba_chunks(src: &[u16], dst: &mut [u16], width: usize) {
@@ -68,12 +68,11 @@ fn v2_u16_rgba_chunks(src: &[u16], dst: &mut [u16], width: usize) {
     let dst = &mut dst[..n];
 
     // Process 4 pixels (16 u16 = 256 bits) at a time.
-    let src_chunks = src.chunks_exact(16);
-    let src_rem = src_chunks.remainder();
-    let dst_chunks = dst.chunks_exact_mut(16);
+    let (src_chunks, src_rem) = src.as_chunks::<16>();
+    let dst_chunks = dst.as_chunks_mut::<16>().0;
     let rem_start = n - src_rem.len();
 
-    for (s, d) in src_chunks.zip(dst_chunks) {
+    for (s, d) in src_chunks.iter().zip(dst_chunks) {
         // Explicit per-pixel unroll so LLVM sees independent lanes.
         for px in 0..4 {
             let base = px * 4;
@@ -88,7 +87,12 @@ fn v2_u16_rgba_chunks(src: &[u16], dst: &mut [u16], width: usize) {
     // Tail: process remaining pixels one at a time.
     let tail_src = &src[rem_start..];
     let tail_dst = &mut dst[rem_start..];
-    for (s, d) in tail_src.chunks_exact(4).zip(tail_dst.chunks_exact_mut(4)) {
+    for (s, d) in tail_src
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(tail_dst.as_chunks_mut::<4>().0)
+    {
         let a = s[3] as u32;
         d[0] = ((s[0] as u32 * a + 32768) / 65535) as u16;
         d[1] = ((s[1] as u32 * a + 32768) / 65535) as u16;
@@ -199,7 +203,7 @@ fn main() {
                 {
                     let s = src.clone();
                     let mut dst = vec![0u8; bytes];
-                    g.bench("V2 split + autoversion + chunks_exact(16)", move |bench| {
+                    g.bench("V2 split + autoversion + as_chunks::<16>()", move |bench| {
                         bench.iter(|| {
                             v2_dispatch(&s, &mut dst, w);
                             black_box(());

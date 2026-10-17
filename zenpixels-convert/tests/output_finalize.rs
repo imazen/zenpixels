@@ -932,7 +932,7 @@ fn pq_source_same_as_origin_pins_cicp_passthrough_and_unwired_hdr() {
     let desc = PixelDescriptor::RGB16_BT2100_PQ;
     let px = vec![0u8; 2 * 2 * desc.bytes_per_pixel()];
     let buffer = PixelBuffer::from_vec(px, 2, 2, desc).unwrap();
-    let origin = ColorOrigin::from_cicp(Cicp::BT2100_PQ);
+    let origin = ColorOrigin::from_cicp(Cicp::new(9, 16, 0, true));
 
     let ready = zenpixels_convert::finalize_for_output_with(
         &buffer,
@@ -944,7 +944,7 @@ fn pq_source_same_as_origin_pins_cicp_passthrough_and_unwired_hdr() {
     .expect("fast-path finalize of an already-PQ buffer");
 
     let meta = ready.metadata();
-    assert_eq!(meta.cicp, Some(Cicp::BT2100_PQ));
+    assert_eq!(meta.cicp, Some(Cicp::new(9, 16, 0, true)));
     assert!(meta.icc.is_none(), "no ICC was supplied at origin");
     assert!(
         meta.hdr.is_none(),

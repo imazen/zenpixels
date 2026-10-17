@@ -1,6 +1,950 @@
+## Release reconciliation — 0.2.17 bridge (2026-09-28)
+
+- Integrate checked native `sample::SampleEncoding` from #76.
+- Finalization attaches matching current color context on identity and converted
+  output; SameAsOrigin lowers original YUV signaling to full-range RGB output.
+- ICC premultiplied conversion uses prepared F32 rows around the CMS, avoiding
+  intermediate integer quantization. CMS paths cannot bypass HDR→SDR peak policy.
+- Add explicit `OutputProfile::normalize_known_icc`, sharing core's normalized
+  hash and recognizing exact bundled fingerprints only. No new dependencies.
+- Estimation always warns, even with `estimation-experimental`; remove it in 0.3.
+- Deprecate root HDR type aliases and core measurement percentile policy; use
+  `zenpixels::hdr` and explicit conversion-crate measurement.
+- Refuse SMPTE 240M TC7 as BT.709; retain unsupported CICP for a capable adapter.
+- Record finalization/release expectations and add a local interactive sample,
+  storage, color-authority and media scenario explorer.
+
 # Changelog
 
 ## [Unreleased]
+
+### Added
+
+- `Cicp::resolve_matrix(hint)` and `UnspecifiedMatrixError`: resolve `matrix_coefficients`
+  per H.273 V4 (07/2024) Table 4. Self-contained codes (0, 1, 4–11, 14–17) resolve as
+  given; 12/13 need primaries with defined chromaticity; 2 and reserved codes take a
+  valid hint or fail. `Cicp::matrix_coefficients_name` now names 15–17 (IPT-C2,
+  YCgCo-Re, YCgCo-Ro). Resolving signalling does not imply the caller implements that
+  matrix (#55).
+
+### Checked CICP declarations
+
+- Add `Cicp::try_to_descriptor` for already-RGB/gray samples. It rejects
+  non-identity matrices, unrepresentable primaries/transfers, and CMYK/Oklab
+  layouts without inspecting pixels or allocating. Raw `Cicp::new` remains
+  permissive. Deprecate the lossy `to_descriptor` projection in 0.2.17.
+- Finalization uses this shared check before conversion/output allocation and
+  preserves `cicp::CicpDescriptorError` as `ConvertError::CicpDescriptor`, replacing
+  generic `NoPath` for these declaration failures. This does not add matrix
+  conversion, format precedence, or a generic CICP resolver.
+
+### Fixed
+- Recognize "Display P3 Gamut with sRGB Transfer", the 520-byte v4.3 profile in
+  Android phone screenshots (five in imazen-26). icc-gen's `--report` run gives
+  normalized hash `0x2dc2d3340af4d7c8`: Display P3 with the sRGB curve, maximum
+  u16 reference error 1, all rendering intents admitted, no Little CMS
+  disagreement. No public signatures change.
+- Gamut conversions from Gamma 2.2 (Adobe RGB) and BT.709-transfer U8/U16
+  sources now apply the primaries matrix in linear light. The planner labelled
+  the output of the naive U8/U16 → F32 depth steps as linear, so it inserted
+  the matrix before the linearize step. Adobe RGB `(59, 106, 90)` → sRGB gave
+  red 36 instead of 0; an Adobe RGB photo differed from LittleCMS by up to 36
+  code values. sRGB- and PQ/HLG-encoded sources were unaffected.
+- Recognize the Display P3/sRGB ICC profile carried by the Ultra HDR corpus's
+  `rgba_uhdr.jpg`. The existing ICC generator identifies its normalized hash
+  as `0x11c9534ccea885a0`, with maximum reference error 1 in u16 channel units
+  and all rendering intents admitted. No public signatures change.
+
+### Conversion follow-up
+
+- Correct PQ source-peak normalization, honor explicit linear luminance anchors,
+  and retain target luminance after HDR mapping. HLG display mapping refuses
+  until an OOTF is supplied; a peak alone is insufficient.
+- Retain all gamut tables across composed HDR rows after preparation; unassociate
+  premultiplied HDR samples before nonlinear mapping and reassociate afterwards.
+- Reject ambiguous current color signaling; replace stale current metadata after
+  conversion, and retain raw PQ-decoded linear units explicitly.
+- BGRA swaps stay at their U8 endpoints; Oklab remains F32 through model
+  conversion. A 7,744-case format/transfer matrix exercises accepted plans.
+- Initialize real alpha when converting padding formats; enforce alpha-loss
+  policy for RGBX/BGRX targets and reject unproven Opaque declarations.
+- Embedded ICC CICP alone no longer bypasses ICC TRCs/LUTs. Finalization emits
+  only the chosen current/output authority and tags non-sRGB fallback output.
+
+#### Changed (BREAKING, tolerated in 0.2.x)
+
+- `ConvertError` retains original arbitrary CMS backend errors instead of reducing
+  them to strings. Consequently it no longer promises `UnwindSafe` or
+  `RefUnwindSafe`; `Send`, `Sync`, `Clone`, and `PartialEq` remain. This is the
+  sole semver-check failure against post-#75 main, under the documented
+  mechanical auto-trait-loss exception. Primary zenavif/zensim unwind callers
+  already use `AssertUnwindSafe`; no observed caller required those error markers.
+  The ordinary row success path has no added error allocation. `RowConverter`
+  retains its published std `Send + Sync`, including prepared workers.
+
+### zenpixels — added
+
+- `sample::SampleEncoding` explicitly separates unsigned storage width, current
+  code depth, and low padding bits. Checked constant construction describes
+  native 10/12-bit U16 and shifted words without confusing packing with numerical
+  normalization. It does not change existing RGB/gray U16 descriptors. The
+  `zenmedia` native AV1 mapping is the current consumer; its 48-case lossless
+  corpus covers exact 8/10/12-bit samples, range, chroma layouts and odd sizes.
+
+- `PixelBuffer::into_contiguous()` packs rows in the existing allocation and
+  returns the same buffer type, preserving its descriptor and color context.
+  It never allocates or clones the context; padded rows move within the Vec,
+  while already packed rows need no pixel moves. Pointer/capacity and the
+  alignment offset are preserved; trailing storage is truncated from the length.
+- `PixelBuffer::into_parts()` moves out a destructurable `PixelBufferParts`
+  containing `data`, `offset`, `stride_bytes`, dimensions, descriptor and color
+  context. It preserves allocation length/capacity without copying or compaction.
+  Use `buffer.into_contiguous().into_parts()` for packed ownership handoff;
+  pixels still begin at `data[offset]`.
+- `PixelBuffer::try_from_parts()` validates and adopts strided storage without
+  copying or allocating, preserving offset, capacity and color context. A failed
+  adoption returns `FromPartsError` with the original parts; use `take_parts()`
+  to recover them, or `.map_err(|e| e.without_buffer())` before boxing/storing
+  the error when recovery is unnecessary.
+
+### zenpixels — deprecated (0.2.17 bridge)
+
+- The entire legacy `planar` module, including root/convert re-exports and inferred
+  methods. Keep the feature and implementations available while a video-oriented
+  replacement is designed. No replacement planar API is introduced in this batch.
+  Zenfilters' current use is the `PlaneMask` type, including public ChannelAccess
+  fields; its image planes use its own OklabPlanes representation.
+
+### zenpixels — fixed
+
+- Validate alpha declarations at buffer and conversion acceptance boundaries.
+  Reinterpretation checks destination alignment; typed views require explicit
+  erasure before changing physical layout. Empty views avoid unused offset
+  arithmetic. Typed constructors check stride overflow and preserve alignment.
+- Padded U8 typed exports compact in place and reuse compatible allocations;
+  legacy owned-cow adapters move their storage instead of copying it.
+- Named PQ/HLG RGB profiles emit identity-matrix CICP matching their resolution.
+
+- Preserve ImgVec storage/stride, color semantics through RGB/BGR swaps, and
+  format padding semantics through CICP descriptor construction. Empty-width
+  crop rows return empty slices. Gamut containment uses actual supported
+  containment relationships, not a scalar ranking (including P3 red outside
+  BT.2020). Clarify the existing Adobe RGB gamma convention, 563/256.
+
+### zenpixels-convert — added
+
+- `RowConverter::{prepare, try_convert_row, try_clone, compose_preserving}`;
+  `ConvertPlan::{compose_preserving, new_preserving_samples}`; explicit
+  `adapt::check_opaque` preflight. Preparation moves scratch/LUT costs ahead of
+  execution and sets a checked row-width capacity.
+- Additive CMS `prepare` / `try_transform_row` hooks preserve existing trait
+  implementations. Prepared mutable workers own independent state. `CmsBackend`
+  errors preserve the concrete backend error chain, including without std.
+- `convert_to_sdr_measuring_peak` names the extra measurement pass; the ambiguous
+  `convert_to_sdr` spelling is deprecated. `PixelBuffer::into_vec` now warns;
+  use `into_parts().data` for pool reuse or retain the full parts for pixel handoff.
+
+### zenpixels-convert — fixed
+
+- Refuse primaries-10 (CIE XYZ) RGB synthesis: the generated colorants were
+  singular. Profile BT.709 primaries with BT.709 transfer (1,1) for RGB and
+  gray instead of treating its curve as sRGB. Validate every generated RGB
+  matrix against independent H.273 primaries adapted to D50; retain the
+  valid equal-energy-white gray profiles (#88). (upstream commit: e3fab915)
+- `synthesize_icc_for_cicp` returned a profile with a different tone curve
+  for two pairs, and a Display P3 profile that libultrahdr does not
+  recognise (#86, #87). (BT.2020, sRGB) got `REC2020_V4`, whose curve is
+  BT.709's (13 code values apart at linear 0.18), and (Display P3, BT.709)
+  got the sRGB-curve `DISPLAY_P3_V4`. The curated `DISPLAY_P3_V4` has no
+  `cicp` tag and truncated red/blue Z, so libultrahdr's colorant matcher
+  (0.001 tolerance) reported an unspecified gamut and decoded Display P3
+  Ultra HDR bases as BT.709. With `icc-db` (default) synthesis now serves the
+  generated, `cicp`-tagged profile for every pair; the curated constants are
+  the fallback without `icc-db`, and only for the pair whose curve each
+  carries exactly. The constants themselves are unchanged and still
+  exported. Tests: every synthesized profile's `cicp` tag names the
+  requested pair over the full grid; Display P3 colorants are within
+  libultrahdr's tolerance. No public signatures change.
+
+- Correct RGBA→GrayAlpha, matte-to-gray and source-domain unassociation before
+  nonlinear transfer conversion. Preserve per-stage descriptors and PQ anchors
+  through composition; ordinary composition still removes avoidable quantization.
+- Explicit row planning rejects `DiscardIfOpaque` until the caller performs
+  `adapt::check_opaque` and selects `DiscardUnchecked`. Existing whole-image
+  explicit adaptation retains its opacity preflight. Floating opacity rejects
+  NaN/infinity and out-of-range values.
+- Reject missing layout/Oklab matrix routes and unsupported MoxCms cross-depth/F16
+  pairs before execution. HDR→encoded-SDR requires peak policy regardless of features.
+- Finalization converts SameAsOrigin correctly, includes alpha/range in identity,
+  forwards actual ICC profiles, and propagates backend row errors. No_std cloning
+  refuses uncloneable state instead of dropping its transform.
+- Fuse explicit U16 opacity/chroma/replication analysis in a single traversal.
+  The full-range narrowing kernel remains unchanged pending platform measurements.
+
+- Reject narrow-range channel-type changes (including U8↔U16) with
+  `ConvertError::NoPath` instead of using incorrect full-range scaling.
+  For example, narrow white 235 must widen to 60160, not 60395; sixteen-bit
+  white 60160 previously narrowed to 234 instead of 235. Validate range/depth
+  before CMS dispatch as well as in ordinary/explicit and HDR plan construction.
+- Keep narrow U16 at its original depth during allocating and in-place
+  load-bearing reduction. `uses_low_bits` still reports byte replication;
+  it cannot authorize narrow-range depth changes. Independently valid alpha
+  and grayscale reductions remain available. Full-range conversion arithmetic
+  is unchanged; these guards add no sample scan or conversion pass.
+
+- Known-transfer encoding adapters execute the requested transfer conversion;
+  strict in-place adaptation refuses unsupported color/range/association retags
+  before mutation. Allocating orientation preserves attached color context.
+- Scalar Gamma22 uses the existing Adobe gamma convention; F16 values below
+  half the minimum subnormal round to signed zero.
+- RowConverter composition refuses external CMS operations it cannot retain.
+  Ordinary composition still optimizes away avoidable intermediate quantization;
+  execute separate converters to retain intentional materialized stages.
+
+### zenpixels — earlier fixes
+
+- Owned buffer views and in-place transforms accept the minimum visible final-row
+  extent instead of indexing nonexistent trailing padding. Existing full padding
+  remains available when present; parts adoption uses the same view validation.
+
+- `DiffuseWhite::new(nits)` now panics for zero (including negative zero),
+  negative, NaN and infinite values, enforcing the finite positive anchor
+  contract. Valid inputs retain their exact value, and the constructor remains
+  `const`. Invalid constant construction fails at compile time. The existing
+  constructor remains supported; no deprecation or new constructor is introduced.
+
+### zenpixels-convert — deprecated (0.2.17 bridge)
+
+- `requires_cms`: plan the conversion and handle `ConvertError::NeedsCms`
+  instead. The old predicate only checks the color-model family and does not
+  establish conversion support. Its signature and behavior are retained.
+- Implicit resource-estimation exposure: enable the new, default-off
+  `estimation-experimental` feature to keep using `estimate`, its four types,
+  and `ConvertPlan::{estimate, estimate_in}` without deprecation warnings.
+  Without the feature, the existing API still compiles and behaves identically
+  in 0.2.x. The proposed 0.3.1 release requires the feature with the same opted-in
+  signatures. The opt-in is not a change to estimator accuracy or semantics.
+- `Adapted::as_pixel_slice` now explicitly warns, including calls on inferred
+  receivers. Use the `*_cow` adapters and `PixelCow::as_slice`; the existing
+  method is retained unchanged. Deprecating its containing type did not warn
+  at these inferred call sites.
+
+The three migrations are checked from an external consumer with default and
+minimal features, with estimation opt-in both enabled and disabled. This batch
+does not implement the broader proposed buffer/conversion contracts; see the
+[README review](docs/readme-contract-review.md).
+
+### Workspace — changed
+
+- **`Cargo.lock` refreshed within the existing requirements — third-party crates only.** 39 registry packages moved (`bytemuck 1.25.0 -> 1.25.2`, `palette 0.7.6 -> 0.7.7`, `imgref 1.12.2 -> 1.12.3`, `lcms2 6.1.1 -> 6.2.0`, `libc 0.2.186 -> 0.2.189`, `serde 1.0.228 -> 1.0.229`, `getrandom 0.3.4 -> 0.4.3` among them). No manifest requirement changed. `magetypes` and `zenbench` both had newer releases available and were deliberately held: zen-family requirements are governed separately, so the lock diff contains no `zenpixels`/`archmage`/`magetypes`/`linear-srgb`/`garb`/`whereat`/`zenbench` line at all. `palette 0.7.7` swaps its sRGB backend from `fast-srgb8` to the new `palette_math` crate, and `palette` is the oracle for the perceptual-loss suite, so it was the change to watch — every test result is byte-for-byte identical to the pre-update baseline across `cargo test --workspace`, and the ICC-bundle goldens (`golden_blob_sha256_is_pinned`, `gray_blob_decodes_byte_identical_to_moxcms`, `every_group_decodes_to_its_declared_length`) still pass. Also verified green: `--features fast-transpose`, `--features __trace_ops --test plan_validation`, `--features __trace_ops --test transfer_alpha`, `--features hdr-experimental`, `--no-default-features --features rgb`, `clippy --workspace --all-targets -D warnings`, and `fmt --check`.
+
+- **`[workspace.dependencies] zenpixels` now spans the published minor AND the
+  next one**: `">=0.2.16, <0.4.0"` (was `"0.2.16"`). This is the requirement
+  `zenpixels-convert` inherits via `workspace = true`, so it is what a *published*
+  `zenpixels-convert` declares against `zenpixels`. For a `0.x` crate Cargo treats
+  the minor as the major, so the plain requirement meant `^0.2.16` =
+  `>=0.2.16, <0.3.0` and a `zenpixels 0.3.0` release would have been invisible to
+  every consumer of a published `zenpixels-convert` until this line was
+  hand-edited. The `path =` binding is unchanged, so in-workspace builds are
+  unaffected and resolution is identical (`cargo metadata --all-features`
+  resolves exactly one `zenpixels` and one `zenpixels-convert`; the tracked
+  `Cargo.lock` is unchanged by this commit).
+
+  This is one line of a workspace-wide sweep (2026-08-29) that widened the same
+  four crates — `zencodec`, `zencodec-testkit`, `zenpixels`,
+  `zenpixels-convert` — across 19 consumer repos in one pass. Widening must be
+  uniform: if some consumers move and others do not, one dependency graph can
+  resolve **two copies** of a `0.x` crate whose types then fail to unify (this
+  workspace's own `[patch]` comments in zenpng and zentone document that exact
+  failure). The standing rule — current-plus-next, re-derived at each release —
+  is documented in the zencodec repo's `CLAUDE.md`.
+
+### Workspace — CI
+
+- **Pushes to `main` now cancel their superseded CI runs.** `ci.yml` keyed its
+  concurrency group on `${{ github.head_ref || github.run_id }}`.
+  `github.head_ref` is populated only for `pull_request` events, so on a push it
+  was empty and the group fell through to `github.run_id` — unique per run, so no
+  two pushes ever shared a group and `cancel-in-progress` could never fire. Every
+  push started a full matrix that ran to completion even when several commits
+  landed seconds apart. Now keyed on `${{ github.ref }}`, which is set for both
+  event types (`refs/heads/main` on push, `refs/pull/N/merge` on a PR), so PR
+  cancellation is unchanged and consecutive pushes supersede each other.
+- CI now runs `cargo test -p zenpixels-convert --no-default-features --features rgb`
+  — the exact configuration downstream no-`icc-db` consumers ship — so the
+  no-db gray-collapse suppress path and the feature-gated test helpers stay
+  green (the powerset job only `check`s). The other half of #40 was already
+  true: the self dev-dependency's `cms-moxcms` feature unifies into default
+  `cargo test` builds, so `gray_blob_decodes_byte_identical_to_moxcms` runs
+  in the existing workspace test step (now documented on the dev-dependency).
+  Fixes #40.
+
+### zenpixels-convert — changed
+
+- **`lz4_flex` 0.13.1 -> 0.14.0** in `zenpixels-convert` (the `icc-db` runtime decoder) and in `scripts/icc-gen` (the `cicp_bundle_gen` encoder), moved together so the compress and decompress sides of the committed CICP->ICC bundle stay one implementation. `lz4_flex` is internal — the only call site is `block::decompress_into` in `icc_profiles/cicp_bundle.rs` — so nothing in the public surface changes, and 0.14.0's MSRV (1.81) is well under this crate's 1.89. The bundle blob is a committed binary asset pinned by a sha256 golden, so the encoder side was verified explicitly rather than assumed: compressing every ICC profile under `zenpixels-convert/src/profiles/` (plus the 35,967-byte bundle blob itself) with both versions produces **byte-identical** output, and each version decodes the other's blocks byte-identically. A future `just`-driven blob regeneration therefore will not spuriously trip `golden_blob_sha256_is_pinned`. All 12 `cicp_bundle` goldens pass unchanged, including `blob_decodes_byte_identical_to_moxcms` and `gray_blob_decodes_byte_identical_to_moxcms`.
+- `PixelBufferHdrConvertExt::convert_to_sdr` no longer materializes a full
+  linear-F32 copy of the source (16 B/pixel — 4× an RGBA8 output) just to
+  measure MaxCLL: the peak is measured row-by-row through one reused scratch
+  row. Output is byte-identical (MaxCLL is a maximum, so per-row `measure_max`
+  composes exactly); peak allocation drops to the output buffer + O(row).
+  Gates: `tests/hdr_sdr_alloc.rs` (allocation ceiling via the dev-only
+  `allocation-counter` crate + parity with the materialize-then-measure
+  sequence it replaced). Partial for #69 — the consuming/borrowing
+  `finalize_for_output_with` / `EncodeReady` design is a public-API addition
+  and stays open; `finalize_for_output_with` now documents (in a new
+  *Allocation* section) that its result always owns one full output buffer,
+  no-conversion path included, so callers can budget for it.
+
+### zenpixels-convert — fixed
+
+- **Transfer functions no longer transform the alpha channel.** Every SDR
+  transfer kernel computed `count = width * channels` and handed that flat
+  span to a channel-agnostic EOTF/OETF, so on RGBA the alpha lane was pushed
+  through the curve along with colour. `PixelBuffer::linearize()` on an
+  `RGBA8_SRGB` buffer turned alpha 128 into 0.2158 instead of 0.502, and the
+  error compounded on the blend path: with `ConvertIntent::Blend`
+  `negotiate::ideal_format` asks for premultiplied, so the plan became
+  `[SrgbU8ToLinearF32, StraightToPremul]` and the colour channels were then
+  multiplied by the corrupted alpha, on top of a wrong stored alpha. The
+  premultiplied colour came out too dark by `(a/255) / srgb_to_linear(a/255)`,
+  which is 2.3× at alpha 128 but grows as alpha falls — 4.9× at alpha 64,
+  12.9× at alpha 1 — so the worst error lands exactly on the soft edges and
+  antialiased content that carry low alpha. `ConvertIntent::LinearLight` —
+  resize and blur — took the same path. Fixed in all 14 affected kernels: sRGB
+  (`u8↔linear f32`, `f32↔linear f32`, and both extended-range variants),
+  BT.709, Gamma 2.2 (Adobe RGB), and HLG (`u16↔linear f32` and
+  `f32↔linear f32`). Alpha is now carried linearly across the depth change
+  (`v/255`, `v/65535`, `clamp(v)*255 + 0.5`, `clamp(v)*65535 + 0.5`) — the
+  same scale factors the TF-free `garb` depth kernels use, so an alpha lane
+  lands on exactly the byte a naive conversion would have produced. The four
+  PQ kernels already restored alpha for RGBA/BGRA and are unchanged there;
+  they now share the one helper, which also fixes them for `GrayAlpha` (see
+  the next entry). Gate:
+  `tests/transfer_alpha.rs` covers **every** transfer kernel, asserting the
+  dispatched kernel by name under `__trace_ops`, at a width that is not a
+  multiple of the vector width (7 px = 28 RGBA lanes, so the SIMD body and
+  its scalar tail are both exercised) and with partially-transparent alpha
+  (0 and 255 are fixed points of every TF and witness nothing — which is why
+  the pre-existing `*_opaque_alpha_preserved` tests passed throughout).
+- **`GrayAlpha` alpha is no longer PQ-transferred either.** The alpha-lane
+  predicate is `ChannelLayout::has_alpha()`, not the PQ kernels' former
+  `channels == 4`, which was imprecise in both directions: `GrayAlpha`
+  carries alpha at index 1 of 2 and so was missed entirely, and `Cmyk` is
+  four channels with *no* alpha, so its K lane would be wrongly skipped.
+  The `GrayAlpha` half is a real behaviour change and is reachable —
+  `f32_tf_pair_steps` picks the transfer step from the transfer function
+  alone and never consults the layout, so `GrayAlphaF32 PQ → GrayAlphaF32
+  Linear` dispatches `PqF32ToLinearF32` with `channels == 2` (pinned by
+  `tests/transfer_alpha.rs::gray_alpha_pq_carries_alpha`). The `Cmyk` half is
+  defensive only: CMYK is a non-native colour model, so `requires_cms`
+  diverts it to the CMS path before the built-in planner runs.
+- Two tests named for this property asserted nothing about it and are now
+  real gates: `tests/transfer.rs::srgb_rgba_to_linear_preserves_alpha_semantics`
+  (whose trailing comment had rationalised the bug as "technically correct
+  for the raw conversion") and `ext.rs::linearize_preserves_alpha` (which
+  checked only that the descriptor still had an alpha channel, never the
+  alpha values).
+
+- `U16ToU8` narrowing is now correctly rounded (`round(v / 257)`, i.e.
+  `(v + 128) / 257`) instead of garb's `(v * 255 + 32768) >> 16`, which
+  divides by 65536 and floored 127 of the 65536 inputs by 1 LSB (e.g.
+  `33025 → 128`, exact `129`). The integer step and the f32 route
+  (`v * 255 + 0.5`) now agree byte-for-byte on every input, so any
+  conversion the planner reroutes between them is output-identical.
+  Exhaustive gate: `tests/ulp_exhaustive.rs::ulp_u16_to_u8_integer_and_f32_routes_agree`.
+  The replacement is a byte-lane formulation (`hi + [lo−hi ≥ 129] − [hi−lo ≥ 129]`)
+  that auto-vectorises 16 lanes wide: measured 4.5× faster than the garb
+  kernel it replaces (Apple M4 Pro, `benches/bench_u16_narrow.rs`,
+  `benchmarks/u16_narrow_2026-08-27.{txt,meta}`). Fixes #72.
+  The original fix is commit `1eb8c9b8`; the RGB16 rounding audit adds an
+  exhaustive public-`RowConverter` regression gate for RGB, RGBA, gray,
+  gray-alpha, straight/premultiplied alpha, three SDR transfers, and strides.
+  Real Linear/BT.709/sRGB u16→u8 transfer changes now compose in f64 before
+  one final quantisation, fixing 9–90 one-code errors per exhaustive pair;
+  the audit and transfer correction are `d019ae98`. The follow-up
+  `bc0e2467` caches each of the six f64 composites as a lazy 65,536-entry
+  u8 table, avoiding per-sample `powf`; the contended four-size A/B and
+  measured 4.0 GiB/s planner estimate are recorded in
+  `benchmarks/rgb16_round_2026-09-23.md`.
+
+## [0.2.16] - 2026-07-24
+
+Publishes `zenpixels` 0.2.16 and `zenpixels-convert` 0.2.16 — the first
+release since 0.2.14. The `[0.2.15] - 2026-06-23` section below documents
+work that was prepared but never actually published to crates.io (Cargo.toml
+was pre-bumped, `cargo publish` never ran); everything from that section and
+everything below it in this 0.2.16 section ships together in this release.
+`cargo semver-checks` against the published 0.2.14 baseline reports zero
+breaking changes for both crates (196 checks, 196 pass).
+
+### Pixel ownership and construction
+
+- Added the generic `PixelCow<'a, P>` borrowed-or-owned pixel container and
+  `adapt_for_encode_cow`, `adapt_for_encode_with_intent_cow`, and
+  `adapt_for_encode_explicit_cow`. The `Adapted` type and original adaptation
+  functions are retained as deprecated, behavior-compatible wrappers because
+  that API is present in the published 0.2.14 crate.
+- Added `InPlacePixels::try_new`, which validates size, stride, and alignment
+  before construction. The existing `new` remains as its panicking convenience
+  wrapper; `transform_in_place` uses a private constructor over its
+  already-validated buffer state.
+- Metadata `with_*` builders continue to replace only their named field and
+  preserve every other descriptor and color-context field.
+
+### zenpixels-convert — fixed (HDR correctness; all behind `hdr-experimental`, unreleased)
+
+- **Tier-consistent NaN/negative fold in the SIMD CLL kernels (eea47c01).**
+  The four `measure_max` / histogram SIMD kernels folded per-channel with a
+  `max`-chain, but platform `max` NaN semantics diverge (x86 `maxps` returns
+  the second operand; NEON/WASM propagate NaN), so a single `NaN` sample
+  violated the documented "Negative/NaN clamps to 0" contract — zeroing
+  MaxFALL and potentially underreporting MaxCLL, with **different results per
+  architecture**. Now folds each channel with an ordered compare + blend
+  (`v > 0`), matching the scalar tail exactly. Also flushes the f32 lane sums
+  into the f64 total every 256 chunks so MaxFALL precision no longer depends
+  on row width. The pre-existing NaN test used 2 pixels (scalar tail only);
+  added wide-row NaN/negative tests across both kernel families × methods ×
+  RGB/RGBA. Fixed the `measure_max` rustdoc (no `simd` feature exists; no
+  `-C target-cpu` flag needed — runtime dispatch).
+- **Reject degenerate `HdrConfig` peaks instead of emitting a black image
+  (6013acc2).** `new_with_hdr_config` / `new_with_hdr_peak` now return
+  `HdrSourceRequiresPeak` when `source_peak_nits` or `target_peak_nits` is
+  non-finite or `<= 0` (including `HdrConfig::default()`'s unset `0.0`).
+  Before, a degenerate peak flowed into the BT.2446-A constants
+  (`1/ln(1) = inf`, `powf` of a negative → NaN) and the kernel's NaN scrub
+  silently produced an **all-black image with no error**.
+
+### zenpixels-convert — changed (API shape, unreleased surfaces)
+
+- **`HdrConfig` is now `#[non_exhaustive]` with builders (6013acc2).**
+  Added `HdrConfig::for_source_peak(nits)` + `with_target_peak_nits` +
+  `with_gamut_knee`; fields stay `pub`. Prevents the frozen-public-fields
+  defect `HdrMetadata` is deprecated for, caught while the surface is still
+  unreleased (`hdr-experimental`, never on crates.io). All in-tree literals
+  migrated to the builder.
+- **`ConvertPlan::estimate(_in)` rounds wall-time up (816b9598).** Sub-
+  millisecond plans (thumbnails) reported `wall_ms = Some(0)`,
+  indistinguishable from zero work; now `ceil`/`div_ceil` so `Some(0)` means
+  genuinely zero work. `SimdTier::Unknown` rustdoc corrected to state it maps
+  to the AVX2 baseline (1.0) — there is no separate cross-tier model yet.
+
+### zenpixels-convert — changed (no_std robustness / internal, unreleased)
+
+- **`hdr/gamut_compress.rs` uses `libm::sqrtf`/`atan2f` explicitly (614a8e15),**
+  consistent with the `bt2446a` / `measure` kernels, instead of the `f32`
+  inherent methods (which resolve in no_std only via a transitive trait — the
+  crate does still compile `--no-default-features --features hdr-experimental`
+  today; this removes the fragile reliance). Output-neutral. Also documented
+  the `SoftCompress::new` singular-matrix panic + `from_matrices`
+  unchecked-pair contract, promoted the `compress_planes` plane-length
+  `debug_assert` to a message-carrying `assert!`, documented the finite-input
+  contract on `Bt2446A::{map_rgb,map_strip_simd}` / `apply_strip`, and removed
+  a no-op `0.1_f32.max(0.0)` in the BT.2446-A scalar tail.
+
+### zenpixels — changed (testing)
+
+- **`tests/dep_guard.rs` now covers `[build-dependencies]` and
+  `[target.'cfg(..)'.…]` dependency tables (556bf31c),** not just
+  `[dependencies]` — a dep added via a build or target-scoped table would
+  otherwise have slipped past the dependency-lean guard. `[dev-dependencies]`
+  stays exempt. Added a synthetic-manifest unit test.
+
+### zenpixels-convert — changed (deps)
+
+- **`moxcms` now builds and tests against both 0.8.1 and 0.9.0; bound stays
+  `">=0.8.1, <0.10"` (db2b0fc).** moxcms 0.9.0 renames the one symbol this crate
+  touches that changed — the D50 white point — from the const `WHITE_POINT_D50`
+  to the fn `white_point_d50()` (identical value:
+  `white_point_from_temperature(5003)`). The `#[cfg(test)]` gray-ICC oracle now
+  reconstructs that white through the stable `moxcms::XyY` API instead of naming
+  either version-specific symbol, so a fresh resolution across the whole range
+  compiles; `moxcms_d50_matches_upstream` pins it bit-identical (exact f32 bits).
+  Verified against moxcms 0.9.0 master — the
+  `gray_blob_decodes_byte_identical_to_moxcms` guard passes on both versions.
+  Supersedes the transient 556bf31c `<0.9` tightening (net bound vs 0.2.14 is
+  unchanged).
+
+### Workspace — CI
+
+- **CI gains a `cargo doc --no-deps` link-check step and a "Public API
+  snapshots" job (zenpixels#bug-19).** Neither existed before, so a broken
+  intra-doc link or a new `pub` item added without a `docs/public-api/`
+  snapshot regen could land on `main` unaudited. The `clippy` job now also
+  runs `cargo doc --workspace --no-deps --all-features` with
+  `RUSTDOCFLAGS=-D warnings` (fails on unresolved intra-doc links), and a new
+  `api-doc` job runs `ZEN_API_DOC=check cargo test --manifest-path
+  apidoc/Cargo.toml` against a checked-out `imazen/zenutils` sibling (needed
+  because `apidoc/Cargo.toml` currently path-depends on the unpublished
+  `zenutils-apidoc` 0.1.2 builders — see that manifest's comment). Both
+  steps pass cleanly against current `main`; this is a gate addition only,
+  no source changes.
+
+### zenpixels-convert — docs
+
+- **Removed a false "trivial `From` conversion" claim from the `estimate`
+  module doc comment.** The doc claimed the four local estimate types
+  (`ResourceEstimate`, `ComputeEnvironment`, `ImageCharacteristics`,
+  `SimdTier`) were "shape-compatible" with `zencodec::estimate::*` and
+  wireable via "a trivial `From` conversion" — but no `From` impls exist
+  (zenpixels-convert does not depend on zencodec, by design) and the shapes
+  have since diverged further: `zencodec`'s `ResourceEstimate` additionally
+  tracks `cpu_ms` / `peak_memory_bytes_max`, and its `ImageCharacteristics`
+  tracks `frame_count`, none of which exist on the zenpixels-convert side.
+  The doc now states plainly that bridging the two currently requires a
+  manual field-by-field mapping. No public API change — comment-only.
+
+### zenpixels — changed (serde soft-removal; tolerated in 0.2.x)
+
+- **`serde` feature soft-removed — now an inert no-op stub.** Dropped the
+  optional `serde` dependency and the 13 `#[cfg_attr(feature = "serde",
+  derive(serde::Serialize, serde::Deserialize))]` attributes across
+  `descriptor.rs` (9), `cicp.rs` (1), and `hdr.rs` (3). A 2026-07-02 sweep of
+  every `Cargo.toml` (direct deps, target-specific deps, workspace deps, and
+  `zenpixels/serde` feature-forwarding), CI workflow, justfile, and Rust
+  source under `~/work` found **zero consumers**: nothing enables the feature
+  and nothing serializes these types — the derives were speculative surface
+  from the original `feat/serde` branch (357971e) with no adopter in the
+  ecosystem (zenwasm, zensquoosh, imageflow, zencodec, zenpipe, zenmetrics,
+  zenanalyze all checked). The feature name is kept as an empty stub so any
+  external `features = ["serde"]` consumer of the published 0.2.14 still
+  builds after updating; hard removal of the stub is queued for 0.3.0 (see
+  QUEUED BREAKING CHANGES). Mirrors the zenpixels-convert 0.2.15 precedent
+  (e5ac694). `tests/dep_guard.rs`'s frozen allowlist drops `serde`
+  accordingly; README feature tables updated in both crates' READMEs.
+
+### Workspace — docs
+
+- **README overhaul + crates.io README split for both crates.** Each crate now
+  ships a generated `README.crates.md` (badge-free, all links absolute) via
+  `readme = "README.crates.md"` (`../README.crates.md` for `zenpixels`, whose
+  README is the repo root); the GitHub `README.md` keeps the full badge row and
+  the rendered crosslink footer. `zenpixels` README: added the `&label=CI` CI
+  badge + an MSRV badge, fixed the license badge to the `#license` anchor,
+  bumped the install snippet to current versions, refreshed the HDR section
+  (native `ConvertPlan` HDR path + `CllMeasure`; legacy `reinhard_*` /
+  `exposure_tonemap` now deprecated → `zentone`), added `fast-transpose` /
+  `hdr-experimental` to the feature table, corrected the `serde` row (no-op stub
+  since 0.2.15), and added a Resource-estimation summary. `zenpixels-convert`
+  README: added an MSRV badge, fixed the license anchor, corrected the `serde`
+  row, and added the crosslink footer.
+- **Rustdoc link hygiene + docs.rs feature metadata** (258e9da8). All doc
+  builds are now warning-free for both crates (default features, the docs.rs
+  feature set, and `--all-features`). The 8 `zenpixels-convert` intra-doc
+  links that pointed at feature-gated items (`ConvertPlan::new_with_hdr_peak`
+  / `new_with_hdr_config`, `hdr::measure` and its `CllMeasure` /
+  `LightLevelHistogram` / `LightLevelMethod`) are now plain code spans so the
+  default-features build renders link-clean; a new
+  `[package.metadata.docs.rs]` features list makes docs.rs document the gated
+  surfaces. Also fixed the unresolved `with_subsampling` link in
+  `zenpixels/src/planar.rs` (`planar` feature only).
+
+### zenpixels — added (testing)
+
+- **`tests/dep_guard.rs` dependency-lean guard** (675ed30b). Std-only test
+  that parses `zenpixels/Cargo.toml` and fails if `[dependencies]` names
+  anything outside the frozen allowlist (`bytemuck`, `rgb`, `imgref`,
+  `whereat` — the published 0.2.14 set minus `serde`, whose optional dep was
+  soft-removed in this unreleased line) — enforcing the rule that `zenpixels`
+  never gains a dependency; measurement/SIMD machinery lives only in
+  `zenpixels-convert`.
+
+### zenpixels-convert — fixed (no-per-row-allocation contract)
+
+- **HDR tone-map kernels no longer heap-allocate per row** (a1d8114c). The
+  `hdr-experimental` BT.2446-A and `SoftCompressOklch` step kernels allocated
+  a fresh `Vec<[f32; 3]>` RGB strip per RGBA row, and the SoftCompress kernel
+  additionally rebuilt its gamut-boundary LUT (16 k bisection searches) every
+  row. Both now use an `HdrKernelScratch` owned by `ConvertScratch`:
+  allocated once per plan/strip run with grow-only strip reuse, and the
+  compressor cached keyed on `(primaries, knee)`. Internal only — no
+  public-surface change; `convert_row`'s one-off path stays allocation-free
+  for identity and single-step plans.
+
+### zenpixels-convert — changed (Tier 1 ablation: drop codec-only fields; add intermediate_buffer_count)
+
+- **Trimmed the estimate-API surface to what `zenpixels-convert` actually
+  models per-frame.** Animation frame counts and codec-flavored variance/CPU-
+  vs-wall splits belong on `zencodec::estimate::*`, not on the per-conversion
+  input/output. Removed 10 public items:
+  - `ImageCharacteristics::frame_count` (field), `with_frame_count(u32) ->
+    Self`, `frame_count() -> u32` — `zenpixels-convert` is per-frame; callers
+    iterating animation invoke the plan once per frame.
+  - `ImageCharacteristics::pixels() -> u64` (trivial `width × height` helper),
+    `input_bytes() -> u64` (trivial `pixels × bytes_per_pixel` helper) —
+    callers can compose these from `width()` / `height()` /
+    `descriptor().bytes_per_pixel()` directly.
+  - `ResourceEstimate::peak_memory_bytes_max` (field), `with_peak_max(u64) ->
+    Self`, `peak_memory_bytes_max() -> Option<u64>` — the est/max split is
+    meaningful for codecs (content-dependent variance) but the conversion
+    plan's calibration is tight; the 1.3× margin was content-blind.
+  - `ResourceEstimate::cpu_ms` (field), `with_cpu_ms(u64) -> Self`,
+    `cpu_ms() -> Option<u64>` — CPU-vs-wall time matters for codec
+    parallelism but not the conversion pipeline (every plan returns the
+    same single-thread work measure as `wall_ms × cores`).
+  - `ResourceEstimate::conservative(&ImageCharacteristics) -> Self` — the
+    codec-blind fallback constructor is unused here; the convert planner
+    always has a calibrated model for every plan it builds.
+- **Added 3 public items on `ResourceEstimate` for paging-pressure-aware
+  scheduling:** `intermediate_buffer_count: Option<u32>` (field),
+  `with_intermediate_buffer_count(u32) -> Self`, `intermediate_buffer_count()
+  -> Option<u32>`. The planner already iterates steps to compute peak memory
+  — picking up the count is free. Reported as `Some(0)` for identity / single-
+  step plans (src → dst direct) and `Some(2)` for multi-step plans (the two
+  ping-pong scratch halves), so a scheduler can distinguish 1-giant-buffer
+  plans from N-medium-buffer plans for paging-pressure / TLB-pressure
+  decisions. `None` is reserved for plans whose buffer model isn't
+  statically known.
+- Net public-surface delta: **−7** items (10 removed, 3 added) on top of the
+  prior ThreadingInformation removal. `cargo semver-checks
+  --baseline-version 0.2.14` PASS 196/196 with `hdr-experimental` +
+  `pipeline` + `cms-moxcms` + `rgb` features — the removed items were
+  unreleased 0.2.15 additions; 0.2.14 never saw them.
+- Tests: `tests/resource_estimate.rs` 12 → 12 (replaced
+  `frame_count_scales_wall_and_peak_linearly` and
+  `peak_max_is_set_and_above_peak_est` with
+  `intermediate_buffer_count_zero_for_identity_plan` and
+  `intermediate_buffer_count_increases_for_multi_step_plan`). README +
+  `convert.rs` docstring + module body docs updated.
+
+### zenpixels-convert — changed (drop ThreadingInformation; factor e2e crate)
+
+- **`ThreadingInformation` removed from the public API; cores-vs-wall scaling
+  is now inlined in `estimate_plan`.** The struct (private fields `parallel`
+  + `max_efficient_threads`), its three constructors
+  (`SERIAL` / `parallel(_)` / `parallel_unknown_knee()`), its three accessors
+  (`is_parallel`, `max_efficient_threads`, `effective_threads`), the
+  `ResourceEstimate::threading` field + `with_threading()` builder +
+  `threading()` accessor, and `ResourceEstimate::at_cores()` are all
+  removed. The wall-time-vs-cores model is unchanged in behavior: per-step
+  parallel knee = `rows / 64` clamped to `[1, 16]`; the smallest knee across
+  parallel steps caps the useful thread count; any SERIAL step disables the
+  scaling — the math just lives inside `estimate_plan`'s `finalize()` now
+  instead of being driven by a carried `ThreadingInformation`. Additive
+  reduction of the unreleased 0.2.15 estimate surface (`cargo semver-checks
+  --baseline-version 0.2.14` PASS 196/196 with `hdr-experimental` +
+  `pipeline` + `cms-moxcms` + `rgb` features) — the four remaining estimate
+  types (`ResourceEstimate`, `ComputeEnvironment`, `ImageCharacteristics`,
+  `SimdTier`) still match the `zencodec::estimate::*` shape for the
+  decode → convert → encode pipeline boundary. README + module docs +
+  `convert.rs` docstring updated.
+- **`zenpixels-convert-e2e` crate dropped entirely.** The single-sample
+  producer-SDR ΔE2000 test (`hdr_producer_sdr_match`) was subsumed by
+  zentone's audited 76-sample shootout (`zentone/examples/
+  hdr_tone_map_shootout_audited.rs` + tracked CSV benchmarks). Plan-shape
+  correctness for the HDR pipeline is covered by `tests/hdr_pipeline.rs`
+  (15 tests) without needing a real decoder dep. Removed: the entire
+  `zenpixels-convert-e2e/` workspace member, the matching member entry
+  in the workspace `[workspace] members`, and the dep-graph-cycle
+  commentary on the workspace `[patch.crates-io]` block — patches still
+  apply when their crates appear in the graph but aren't needed by the
+  workspace's default members anymore. Net workspace shrinks by one
+  crate; the right layering reasserts itself (zenpixels-convert provides
+  primitives; zentone runs the empirical sweeps that gate regressions).
+- The main `zenpixels-convert/Cargo.toml` is now free of test-only
+  optional deps; the only remaining optional deps are the production
+  ones (`rgb`, `lz4_flex`, `moxcms` — `serde` was also on this list until
+  its optional dep was soft-removed later in this unreleased line, e5ac694).
+
+### zenpixels-convert — changed (foundation-crate layering restored)
+
+- **`zencodec` dep dropped; the five estimate types are now defined LOCALLY
+  in `zenpixels-convert::estimate`.** `ResourceEstimate` /
+  `ComputeEnvironment` / `ImageCharacteristics` / `SimdTier` /
+  `ThreadingInformation` are no longer re-exports of `zencodec::estimate::*`
+  — they are local definitions whose shape matches `zencodec::estimate` by
+  design (same field names, same builder method names, same accessor
+  signatures, same `#[non_exhaustive]` discipline). Codec authors using the
+  zencodec contract can wire `decode → convert → encode` estimates through
+  the codec boundary with a trivial `From` conversion (a follow-up commit
+  will add `From<zencodec::estimate::ResourceEstimate>` and siblings behind
+  a feature flag). The architectural layering — `zenpixels` and
+  `zenpixels-convert` are foundation crates and DO NOT depend on codec
+  abstractions — is now restored, and the `no_std + alloc` build path
+  regains the resource-estimate surface (the prior commit had gated it
+  behind `std` because zencodec's manifest transitively pulled
+  `zenpixels/std`; with the dep removed, the estimate module compiles
+  cleanly under `--no-default-features`). The user-facing API on
+  `ConvertPlan::estimate` / `estimate_in` is unchanged (the local types
+  carry the same shape) so the public-API snapshot stays surface-stable
+  modulo the path the types resolve to.
+
+### zenpixels-convert — changed (pre-publish YAGNI cleanup)
+
+- **`ResourceEstimate` / `StepEstimate` / `EstimateConfidence` removed; the
+  `estimate_*` shadow methods on `PixelBufferConvertExt` /
+  `PixelBufferConvertTypedExt` / `PixelBufferHdrConvertExt` removed.**
+  Replaced by a single `ConvertPlan::estimate(w, h) -> (u64, f64)` method
+  returning `(peak_memory_bytes, wall_time_ms)`. Pre-publish YAGNI
+  cleanup — no public consumers existed (the surface was introduced in
+  the 0.2.15 work branch but never shipped to crates.io). Internal
+  calibration tables and the `estimate_plan` walker stay (now
+  `pub(crate)`).
+- **Adopted `zencodec::estimate::{ComputeEnvironment, ImageCharacteristics,
+  ResourceEstimate, ThreadingInformation}` for resource projection.** The
+  brief local `ResourceEstimate { peak_memory_bytes, wall_time_ms }` (the
+  YAGNI-cleanup tuple-replacement that landed earlier in this 0.2.15 work
+  branch) is replaced by the zencodec type so estimates compose with
+  codec-side encode/decode estimates in multi-stage pipelines (every stage
+  of `decode → convert → encode` returns the same `ResourceEstimate`
+  shape). Added `ConvertPlan::estimate_in(&image, &compute) ->
+  ResourceEstimate` for caller-controlled estimation against an
+  `ImageCharacteristics` (now carries `frame_count`) + `ComputeEnvironment`
+  (carries `available_cores`, optional `available_ram_bytes`, optional
+  `SimdTier`). The simple `ConvertPlan::estimate(w, h) -> ResourceEstimate`
+  shortcut stays as a convenience for callers that don't care about the
+  compute environment — it delegates to `estimate_in` with a default-built
+  environment. Wall-time projection now respects:
+    - `compute.cores()` via `ResourceEstimate::at_cores` driven by a
+      bottleneck `ThreadingInformation` (any SERIAL step forces the whole
+      plan SERIAL; otherwise the smallest per-step knee — `rows / 64`
+      clamped to ≤ 16 — wins).
+    - `compute.simd_tier()` via a coarse per-tier multiplier (AVX-512
+      0.85×, AVX2 baseline, scalar 2×, NEON 1×, WASM-128 1.3×, scalar
+      WASM 2×; TODO per-tier calibration tables).
+    - `image.frame_count()` — the per-frame work + per-frame destination
+      buffer scale by the count.
+  `peak_memory_bytes_max` is reported at `1.3 × peak_memory_bytes_est` to
+  capture the ±30 % accuracy contract. The four zencodec types are
+  re-exported at the crate root so users don't need to add `zencodec` as
+  a direct dep. Pulled in along the **`std` feature** axis (zencodec's
+  crates.io manifest depends on `zenpixels = "0.2.14"` with default
+  features, transitively enabling `zenpixels/std`); the `no_std + alloc`
+  build path stays free of the new dependency, but also loses the estimate
+  surface until built with `std`.
+
+### zenpixels — deprecated (removal queued for the next breaking release)
+
+- **`ContentLightLevel::measure(px, white)` is `#[deprecated]` +
+  `#[doc(hidden)]` but stays fully functional through 0.2.x** (6019aeef).
+  The literal-maximum MaxCLL logic now has a maintained (SIMD) home in
+  `zenpixels-convert` behind the `hdr-experimental` feature gate:
+  `zenpixels_convert::hdr::measure::CllMeasure::measure_max` (literal max
+  — the 2026-06-22 shootout winner for `pct_above_de5`) +
+  `measure_percentile` / `measure_robust` for the defect-tolerant readouts.
+  `ContentLightLevel::DEFAULT_PERCENTILE` (the `0.99999` constant) STAYS
+  — it's data, not logic, and external callers building their own
+  percentile policy refer to it.
+  - **History.** An earlier pass on this unreleased line replaced the
+    working 0.2.14 body with an `unimplemented!()` shim and narrated the
+    removal as "shipped in 0.3.0" — but no 0.3.0 was ever released and
+    the manifest queues 0.2.16, so the shim would have been a runtime
+    panic inside the semver-stable 0.2.x line. 6019aeef restored the
+    0.2.14 body verbatim (private `row_max_sum` + `nits_to_u16` helpers),
+    kept the `#[deprecated]` attribute pointing at
+    `CllMeasure::measure_max`, and re-queued the actual removal under
+    QUEUED BREAKING CHANGES below.
+  - **Removing it later still needs the leading-digit bump.** The method
+    is a publicly-callable inherent method, so `cargo semver-checks`
+    reports `inherent_method_missing` as a major-required break
+    (semver-checks doesn't treat `#[doc(hidden)]` as exempt from
+    removal-detection, correctly — downstream code may still depend on
+    doc-hidden APIs at the source level). That's why the removal waits
+    in the 0.3.0 queue instead of shipping in 0.2.16.
+- **Tests.** The five 0.2.14 `ContentLightLevel::measure` behavior tests
+  in `zenpixels/src/hdr.rs` are restored alongside the body, and a new
+  cross-crate parity gate
+  (`zenpixels-convert/tests/deprecated_measure_parity.rs`, 6 tests,
+  `required-features = ["hdr-experimental"]`) pins that the deprecated
+  method returns readings identical to `CllMeasure::measure_max` with
+  `LightLevelMethod::MaxRgb` and rejects the same inputs. CI gained a
+  `--features hdr-experimental` test step so the gated measurement
+  suites (including the previously never-run-in-CI
+  `tests/cll_measure.rs`) actually execute (6019aeef).
+
+### zenpixels-convert — added (testing)
+
+- **`zenpixels-convert/tests/hdr_pipeline.rs`** (new). 15 unconditional
+  tests + 6 `__trace_ops`-gated plan-shape tests covering the
+  `ConvertPlan::new_with_hdr_peak` / `new_with_hdr_config` HDR pipeline
+  (`52fd949` / `e712f84` / `f68b759` / `505d02e8` / `0897f17` / `e1ebf76`).
+  Pins: BT.2446-A monotonicity + zero-input + near-peak behaviour;
+  SoftCompress chroma clamping + LUT-accessor stability + planar
+  `compress_planes` semantics; `HdrConfig::default { source_peak_nits=0,
+  target_peak_nits=100, gamut_knee=0.96 }` invariant; `SoftCompress::DEFAULT_KNEE
+  = 0.96 == HdrConfig::default().gamut_knee`; `new_with_hdr_peak` delegates
+  to `new_with_hdr_config`; end-to-end neutral-gray PQ→sRGB lands mid-SDR.
+  The `plan_shape` submodule (gated on `__trace_ops`) asserts the canonical
+  PQ-BT.2020 → sRGB BT.709 pipeline emits ToneMapBt2446A + SoftCompressOklch
+  in order, that BT.2020 → BT.2020 targets skip SoftCompressOklch
+  (wide-gamut mode), and that HLG + RGBA sources walk the same shape.
+- **`zenpixels-convert/tests/cll_measure.rs`** (new). 11 tests covering
+  the `CllMeasure` extension trait at the published-crate boundary:
+  uniform-buffer correctness, strided-row contract, DiffuseWhite anchor
+  honouring (203 vs 100 cd/m²), the `LightLevelMethod::MaxRgb` /
+  `LuminanceBt2020` discriminants, `DEFAULT_PERCENTILE` pin, and the
+  rejection-path contracts (non-linear transfer + integer pixel formats).
+- **`zenpixels-convert/tests/serde_feature.rs`** (added then removed within
+  this unreleased line). 5 tests gated on `serde,hdr-experimental` pinning
+  JSON round-trip semantics for `LightLevelMethod` / `ContentLightLevel` /
+  `DiffuseWhite`. Deleted together with its `serde_json` dev-dep when the
+  `zenpixels-convert` `serde` feature was soft-removed to an inert stub
+  (e5ac694) — there are no derives left to pin. Never shipped in a release.
+- **`zenpixels-convert/tests/fused_variants.rs`** (new). 7 tests gated on
+  `__trace_ops` covering the `ConvertStep::Fused { kind: FusedKind, matrix:
+  [f32; 9] }` merge (commit `03c63b5c`). Pins the historical per-kind
+  trace-name mapping (`"FusedSrgbU8GamutRgb"`, etc.) via planner traces
+  for the 5 `FusedKind` shapes, and asserts the U8 sRGB gamut path
+  exercises the peephole (no decomposition into the unfused 3-step
+  pair).
+- **`zenpixels-convert/tests/resource_estimate.rs`** (extended then
+  trimmed). The 0.2.15 work originally added 6 tests on top of 23
+  existing for the elaborated `ResourceEstimate` surface; that surface
+  was YAGNI-trimmed pre-publish (see "changed" entry above) and the
+  test file collapsed to 7 tests covering the surviving
+  `ConvertPlan::estimate(w, h) -> (u64, f64)` shape: identity-memcpy
+  sizing, zero-pixel guard, bench-anchored sRGB-encode timing,
+  BT.2446-A HDR pipeline within 30 % of the tone-map cell, peak-memory
+  floor, no-panic sweep across reasonable (w, h), and monotonicity in
+  pixel count.
+
+### zenpixels-convert — added (API)
+
+- **`pub const SoftCompress::DEFAULT_KNEE: f32 = 0.96`.** The empirically
+  calibrated default — matches `HdrConfig::default().gamut_knee`
+  byte-for-byte. Surfaced so test fixtures and external callers can refer
+  to the same anchor as the `HdrConfig` field, instead of carrying a
+  magic-number `0.96` in their own code. Additive — `cargo semver-checks`
+  clean.
+
+### zenpixels-convert — added
+
+- **`ConvertError::NeedsCms { from, to }` variant** for conversions whose
+  `(from, to)` pair has a structurally valid path but needs CMS dispatch
+  (currently CMYK; in the future Lab / XYZ / spot inks). Distinct from
+  `NoPath` (no architecturally possible conversion). Replaces the
+  pre-0.2.16 `assert_not_cmyk` panic the public-API entry points used to
+  fire BEFORE the CMS plugin was consulted — so the documented
+  `RowConverter::new_explicit_with_cms(_, _, _, Some(&MoxCms))` escape
+  hatch is now actually reachable. Additive (`ConvertError` is
+  `#[non_exhaustive]`) — `cargo semver-checks` confirmed clean (196
+  pass, 0 fail).
+- **`pub fn requires_cms(from: &PixelDescriptor, to: &PixelDescriptor) -> bool`**
+  predicate. Schedulers can probe per source/target pair before deciding
+  whether to attach a plugin to a batch. Today returns true iff either
+  side's `ColorModel` is outside the native `{Gray, Rgb, Oklab}` set;
+  future non-native models plug in via the `native_color_model` helper
+  with no API change.
+- **End-to-end CMYK ↔ RGB conversion via `MoxCms`** now works. New
+  `impl PluggableCms for MoxCms` advertises CMYK / Lab / XYZ formats to
+  the dispatch chain in `RowConverter::new_explicit_with_cms` and
+  builds moxcms `TransformExecutor`s at the source's native bit depth.
+  Callers must supply a real CMYK ICC via `ColorProfileSource::Icc(...)`
+  on the CMYK side — moxcms has no synthesizable default for
+  device-dependent ink. A `PrimariesTransferPair` for a CMYK descriptor
+  is declined (`None`) rather than failed, so the caller learns to
+  attach an ICC. New `MoxRowTransformMut` wrapper + tests at
+  `tests/cmyk_cms_roundtrip.rs` (6 cases) + `RowConverter` unit test
+  pin the migration.
+
+### zenpixels-convert — changed
+
+- **Replaced the `assert_not_cmyk` process-aborting guard** (6 entry
+  points × 2 `assert_not_cmyk` calls each = 12 individual call lines
+  across `convert.rs` and `ext.rs`) with graceful
+  `Err(ConvertError::NeedsCms { from, to })` returns. `ConvertPlan::new`,
+  `ConvertPlan::new_explicit`, `ConvertPlan::new_with_hdr_config`,
+  `PixelBufferConvertExt::convert_to`, `PixelBufferHdrConvertExt::convert_to_sdr`,
+  and `convert_to_with_hdr_config` all answer the typed error now. The
+  `assert_not_cmyk` function itself was `pub(crate)` and is removed. The
+  existing `#[should_panic]`-shaped CMYK guard tests in
+  `src/converter.rs`, `src/ext.rs` (and `tests/adapt.rs` via the same
+  migration in #44) migrate to `matches!(*err.error(), NeedsCms { .. })`
+  asserts.
+- **`ZenCmsLite::build_source_transform` now declines (returns `None`)
+  for non-native color models** instead of forwarding to its plan
+  builder (which would synthesize a `Some(Err(NeedsCms))` and stop the
+  dispatch chain). This is what lets a user-supplied `MoxCms` actually
+  get consulted for CMYK conversions.
+- **`RowConverter::new_explicit_with_cms` widens its CMS-dispatch
+  trigger** from `primaries_differ` only to `primaries_differ ||
+  requires_cms(&from, &to)`. CMYK descriptors carry default `Bt709`
+  primaries so the trigger missed them entirely pre-fix.
+
+### zenpixels-convert — refactored (audit dedup)
+
+- **`ConvertStep`'s 5 fused-sRGB-gamut variants collapsed into one
+  `Fused { kind: FusedKind, matrix: [f32; 9] }` variant.** Previously
+  `FusedSrgbU8GamutRgb`, `FusedSrgbU8GamutRgba`, `FusedSrgbU16GamutRgb`,
+  `FusedSrgbU8ToLinearF32Rgb`, and `FusedLinearF32ToSrgbU8Rgb` each
+  carried only `[f32; 9]` — same payload, five tags. The new
+  `FusedKind` enum carries the discriminant separately; dispatch in
+  `convert_kernels.rs` is a small inner match, and the per-variant cost
+  table in `estimate.rs` is a similarly tight inner match. Net: the
+  `intermediate_desc`, fuse-peephole, debug, trace, and cost code
+  paths each shrink by ~4 arms. `ConvertStep` stays `pub(crate)`, so
+  no semver surface motion. Variant `__trace_ops` names preserved
+  (`"FusedSrgbU8GamutRgb"` etc.) via `FusedKind::variant_name` so the
+  trace-format tests still match `s.contains("FusedSrgb")`.
+- **`ConvertStep`'s hand-rolled `Debug` impl replaced with
+  `#[derive(Debug)]`** — the ~93 LOC manual `match` was byte-identical
+  to the derive output for every variant *except* the freshly-merged
+  `Fused` shape (now `Fused { kind: …, matrix: […] }` rather than five
+  per-variant tuple structs). No existing tests assert on the Fused
+  Debug text — verified by grep against `tests/`; the `__trace_ops`
+  recorder uses `variant_name` (not `Debug`).
+- **`estimate::step_name` + `__trace_ops::step_name` now share one
+  source of truth via `ConvertStep::variant_name` (`const fn`).** The
+  three independent 60-arm matches mirroring the enum verbatim
+  (convert.rs Debug, estimate.rs, __trace_ops.rs) collapse to one
+  exhaustive-match definition on `ConvertStep`; the other two sites
+  delegate. ~120 LOC saved with zero new deps — `strum` was an option
+  but the explicit `const fn` is one source of truth without proc-macro
+  weight.
+- **`RowConverter::clone` now preserves `ExternalTransform::Owned`
+  (CMS RowTransformMut)** rather than silently dropping it. Pre-fix:
+  cloning a converter built around a `PluggableCms`'s `Owned`
+  transform fell through to the built-in plan; cloned bytes silently
+  differed from source-converter bytes. Carrier is now
+  `Arc<Mutex<dyn RowTransformMut>>` (std-only — no_std fallback keeps
+  the historical drop-on-clone, since `RowTransformMut::transform_row`
+  is `&mut self` and can't be shared behind a bare `Arc` without
+  interior mutability). New regression test
+  `pluggable_cms_owned_path_survives_clone` pins the share-on-clone
+  contract.
+
+### zenpixels-convert — optimized
+
+- **`GamutMatrixRgbF32` / `GamutMatrixRgbaF32` kernels now dispatch
+  through `archmage::magetypes` + `incant!`** (AVX-512 / AVX2 / NEON /
+  WASM-SIMD128 / Scalar) instead of the prior hand-written scalar
+  loop. The kernel deinterleaves 8 pixels' worth of R/G/B lanes per
+  chunk, applies the 3×3 matrix as three FMA-chained
+  `magetypes::f32x8` rows, and re-interleaves; alpha (RGBA) is copied
+  through unmodified. Tail pixels (1..LANES) go through scalar
+  `mul_add`. Same `magetypes(define(f32x8), v4(cfg(avx512)), v3, neon,
+  wasm128, scalar)` shape as every other SIMD kernel in
+  `convert_kernels.rs`. **Output is bit-identical to the scalar
+  version** (FMA-determined 3×3 matmul). The audit projected a 2–4×
+  AVX2 speedup; on Zen 4 the scalar pattern was already
+  LLVM-autovectorizing well, so the measured uplift at small sizes
+  (256-pixel rows, 15.55 GiB/s vs prior 15.6 GiB/s) is within noise.
+  The architectural value of the change stands: explicit, predictable
+  five-tier dispatch (no LLVM-autovec dependency), per-tier validation
+  via `incant!`, and identical-shape kernels to the rest of the file.
+  On aarch64 NEON and `wasm32-simd128` — where x86_64-specific
+  autovec heuristics don't help — the explicit `f32x8` path is the
+  difference between SIMD and scalar.
+
+### zenpixels-convert — tuned
+
+- **`HdrConfig::default().gamut_knee`** bumped from `0.9` → `0.96` based on an
+  empirical sweep of 76 imazen-26 gain-mapped HDR samples against 13 knee
+  values (0.50–1.00) on 2026-06-23. `0.96` is the largest knee value (i.e.
+  the LEAST chroma compression / desaturation) where the corpus-p90 fraction
+  of pre-clamp pixels overshooting `[0, 1]` in linear BT.709 stays under 0.1 %.
+  Moving from `0.9` → `0.96` reduces the mean OKLch chroma compression by
+  ~26 % (0.22 % → 0.16 %) and the mean Lab D65 ΔE2000 vs. no-rolloff baseline
+  by ~28 % (0.028 → 0.020), while corpus-p90 clipping stays under the safety
+  threshold. The current `0.9` was a hand-picked guess that was never
+  empirically calibrated; `0.96` is data-driven (per-content-class
+  recommendations: nature 0.96, interiors 0.96, general 0.98, food 0.98 — the
+  corpus-wide `0.96` is the tightest constraint, set by saturated nature
+  content). Driver: `zentone/examples/softcompress_knee_sweep.rs`; findings:
+  `zentone/benchmarks/softcompress_knee_findings_2026-06-23.md`. Internal
+  test fixtures pinning `gamut_knee: 0.9` migrate to `0.96` so tests exercise
+  the new production default. Callers who explicitly set `HdrConfig.gamut_knee`
+  to `0.9` are unaffected; callers using `HdrConfig::default()` or
+  `ConvertPlan::new_with_hdr_peak()` pick up the new default automatically.
 
 ### QUEUED BREAKING CHANGES
 
@@ -8,6 +952,70 @@
      0.x) release. Add items here as you discover them. Do NOT ship these
      piecemeal — batch them. -->
 
+#### Complete public-API removal inventory for 0.3.0
+
+**Correction (2026-09-27):** this historical checklist was copied from PR #63,
+which merged into an already-merged base branch rather than main. Resource
+estimation and `requires_cms` **did ship publicly in 0.2.16**, without the
+planned experimental gate/demotion. Several replacement methods named below
+did not ship either. These entries are not evidence of available replacements
+or completed deprecations. See the [published-release review](docs/release-0.2.16-accidental-api-review.md)
+and [current 0.2 bridge → 0.3.1 proposal](docs/api-contract-proposal-0.2-and-0.3.1.md)
+for the corrected disposition. The historical rationale follows.
+
+**`zenpixels`:**
+
+- Delete the inert `serde` Cargo feature name.
+- Remove `ContentLightLevel::measure`; use
+  `zenpixels_convert::hdr::measure::CllMeasure`.
+- Remove `ColorContext::from_icc_and_cicp`; construct from the authoritative
+  ICC or CICP source and retain round-trip metadata in `ColorOrigin`.
+- Demote the unadopted registry lookup API to `pub(crate)`:
+  `KnownColorSpace`, `REGISTRY`, `find_by_cicp`,
+  `find_by_primaries_transfer`, and `find_by_named`.
+- Remove the legacy planar `Plane`; use `PlaneLayout` and the separate
+  `PixelBuffer`s carried by `MultiPlaneImage`.
+
+**`zenpixels-convert`:**
+
+- Delete the inert `serde` Cargo feature name.
+- Remove the packed `Adapted` compatibility type and the deprecated
+  `adapt_for_encode`, `adapt_for_encode_with_intent`, and
+  `adapt_for_encode_explicit` wrappers; use the corresponding `_cow`
+  functions returning `PixelCow`.
+- Remove `adapt::convert_buffer`; use `PixelBuffer` with `convert_to`,
+  `convert_into`, or `convert_in_place`.
+- Remove `RowConverter::convert_rows`; use the slice-typed
+  `convert_slice_into`.
+- Remove `hdr::HdrMetadata` and its root re-export.
+- Remove the deprecated `OutputMetadata::hdr` field; HDR content metadata
+  remains on the codec-boundary metadata carrier rather than this color-output
+  structure.
+- Remove `hdr::reinhard_tonemap`, `hdr::reinhard_inverse`, and
+  `hdr::exposure_tonemap`; use `zentone`.
+- Remove the `ColorManagement` trait; use `PluggableCms`.
+- Remove the generic `finalize_for_output<C: ColorManagement>` overload; use
+  `finalize_for_output_with`.
+- Remove `ZenCmsLite::extended` and `ZenCmsLite::extended()`; control clipping
+  through `ConvertOptions`.
+- Remove `cms_moxcms::lut_transform_opts` and
+  `cms_moxcms::cicp_transform_opts`; use `transform_opts` with explicit
+  priority and rendering intent.
+- Remove `icc_profiles::ADOBE_RGB_V4`; use `ADOBE_RGB`.
+- Remove `icc_profiles::PROPHOTO_V4`; no canonical bundled ProPhoto profile
+  replaces it.
+- Remove `icc_profiles::icc_profile_for_primaries`; use
+  `synthesize_icc_for_cicp` or an explicit bundled profile.
+
+`new_packed` is deliberately absent: the alias was removed before publication
+in favor of the single canonical `new_contiguous` spelling, so it is not a
+future compatibility break.
+
+- **Delete the inert `serde` feature stubs from BOTH crates.** `zenpixels`
+  (soft-removed 0.2.16) and `zenpixels-convert` (soft-removed 0.2.15,
+  e5ac694) each keep an empty `serde = []` feature so consumers who wrote
+  `features = ["serde"]` still build; 0.3.0 removes the stub feature names
+  outright. Workspace-wide sweeps found zero consumers of either.
 - **Remove `zenpixels-convert::hdr::HdrMetadata`** (struct + methods) and its
   re-export — deprecated in 0.2.14; superseded by carrying `ContentLightLevel`
   / `MasteringDisplay` directly (or `zencodec::Metadata` at the codec layer).
@@ -20,11 +1028,32 @@
   `zentone` crate (`zentone::Bt2446A` for ITU-R BT.2446 Method A,
   `Bt2408Tonemapper`, ACES, AgX, filmic-spline, gain-map, plus SIMD strip
   processing).
-- **Remove the deprecated `ContentLightLevel::measure`** — the literal-maximum
-  MaxCLL shipped in 0.2.14 is outlier-sensitive (a single specular/noise pixel
-  inflates it, making displays over-tone-map); `#[deprecated]` + `#[doc(hidden)]`
-  in 0.2.15, to be replaced by a percentile-aware measure (#54). Delete the
-  literal-max method here.
+- **Remove the deprecated `ContentLightLevel::measure`** — still queued;
+  NOT shipped (an earlier pass on this unreleased line mislabeled it
+  "shipped in 0.3.0", but no 0.3.0 exists — main queues 0.2.16, and
+  6019aeef restored the working body; see `### zenpixels — deprecated`
+  above). The literal-maximum MaxCLL is outlier-sensitive; replacement is
+  `zenpixels_convert::hdr::measure::CllMeasure::measure_max` (literal max,
+  spec-strict / sparse-bright) + `measure_percentile` (defect-tolerant
+  via `DEFAULT_PERCENTILE`). Remove the restored body, its five in-crate
+  behavior tests, and the `deprecated_measure_parity.rs` gate together
+  when this ships. **Known migration victim (2026-07-14 sweep):**
+  `zenpipe/zencodecs/src/gainmap.rs:108` calls the deprecated 2-arg form
+  at runtime (resolves against git-`main` `zenpixels` via zenpipe's
+  `[patch.crates-io]`), so it must migrate to `CllMeasure::measure_max`
+  in the same change that removes the body — otherwise gain-map decoding
+  breaks. (This is also why the brief `unimplemented!()` shim on this
+  unreleased line, since reverted in 6019aeef, would have panicked
+  production gain-map code.)
+- **Rename `CllMeasure::measure_robust(px, white, method)` →
+  `CllMeasure::measure(px, white, method)`** in `zenpixels-convert` at the
+  same release that deletes the deprecated 2-arg `zenpixels::ContentLightLevel::measure`.
+  The 0.2.x `measure_robust` slot is defect-tolerant via
+  [`ContentLightLevel::DEFAULT_PERCENTILE`] (0.99999) — the industry-default
+  reading every production HDR tool already uses. Promoting it to the
+  obvious `measure` name in 0.3.0 makes the "I don't know which to pick"
+  entry point give the production-correct answer. Keep `measure_robust`
+  as a `#[deprecated]` alias for one release to ease migration.
 - **Demote the unadopted registry *lookup* surface to `pub(crate)`** —
   `zenpixels::registry::{KnownColorSpace, REGISTRY, find_by_cicp,
   find_by_primaries_transfer, find_by_named}` are `#[allow(dead_code)]`
@@ -60,10 +1089,433 @@
   1.1–4.7× faster transpose, output bit-identical
   (`benchmarks/orient_fast_transpose_2026-06-18.md`). Flipping a default feature
   batches here; size-sensitive builds opt out via `default-features = false`.
+- **`zenpixels-convert::cms::RowTransform` / `RowTransformMut`: make
+  `transform_row` return `Result`.** Both trait methods currently return
+  `()`, so the moxcms wrapper (`MoxRowTransformMut`) has to `.expect()` on a
+  transform failure (buffer-size mismatch, moxcms internal error) — a panic
+  on a public row-conversion path. A `Result<(), CmsError>` return lets the
+  converter surface the failure typed. Signature change on a public trait →
+  breaking; batch here. (Considered but rejected for 0.2.x: a panic on a
+  size mismatch that the plan layer already validates is not reachable in
+  practice, so this is a robustness upgrade, not a live bug fix.)
 
-## [0.2.15] - 2026-06-18
+## [0.2.15] - 2026-06-23 (authored; NOT yet published)
+
+> **Publication status (2026-07-14):** crates.io latest is **0.2.14** for
+> both crates — neither `zenpixels-convert` 0.2.15 nor `zenpixels` 0.2.16 has
+> shipped, and there is no `v0.2.15` / `v0.2.16` tag. The date above is the
+> authoring date, not a release date; the entries here stage the next
+> `zenpixels-convert` publish. `zenpixels` itself goes **0.2.14 → 0.2.16**
+> (the 0.2.15 slot was consumed mid-cycle and renumbered), so the two crates
+> publish at different numbers from the same unreleased `main`. Everything in
+> this section plus the [Unreleased] section above ships together at that
+> publish. Move these under a real dated release header only when the tag and
+> crates.io upload actually happen.
+
+### zenpixels-convert — fixed (publish-prep audit)
+
+- **`serde` feature now compiles with `hdr-experimental`.** The
+  `serde` Cargo feature previously only forwarded to `zenpixels/serde`
+  while `hdr::measure::LightLevelMethod` used
+  `#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]`
+  — building with `--features serde,hdr-experimental` failed with
+  `E0433: cannot find module or crate \`serde\`` because zenpixels-convert
+  itself had no `serde` dep. Added `serde = { version = "1.0",
+  default-features = false, optional = true, features = ["derive"] }` and
+  changed the `serde` feature to `["dep:serde", "zenpixels/serde"]`. Caught
+  by `cargo semver-checks` during the 0.2.15 publish audit.
+- **`PixelBufferConvertExt::estimate_*` family ships with default impls.** The
+  six estimator methods added in 0.2.15 (`estimate_convert_to`,
+  `estimate_try_add_alpha`, `estimate_try_widen_to_u16`,
+  `estimate_try_narrow_to_u8`, `estimate_linearize`, `estimate_delinearize`)
+  were initially trait-required-with-no-default, which `cargo semver-checks`
+  caught as a major break (`trait_method_added`) — downstream impls of the
+  trait predating 0.2.15 would fail to compile. Each method now has a default
+  that returns `ResourceEstimate::zero(EstimateConfidence::Unknown)`; the
+  crate's own `PixelBuffer` impl overrides with the real plan-walking
+  estimator. Downstream code that already implements `PixelBufferConvertExt`
+  for a custom type keeps building unchanged.
+- **Workspace `zenpixels` dep bumped to `0.2.15`.** `zenpixels-convert`'s
+  `hdr-experimental` surface uses `ContentLightLevel::DEFAULT_PERCENTILE`
+  (new in `zenpixels` 0.2.15). The published `zenpixels-convert` 0.2.15
+  thus requires `zenpixels ^0.2.15` — publishing must wait until
+  `zenpixels` 0.2.15 is on crates.io.
+- **All 43 rustdoc warnings cleared.** Escaped `[0,1]` interval notation as
+  code spans (~20 sites), unlinked or redirected references to private items
+  (`ConvertStep::ExternalTransform`, `ToneMapBt2446A`, `SoftCompressOklch`),
+  qualified ambiguous links (`negotiate` was both a function and a module),
+  fixed redundant explicit link targets in `hdr/` and `output.rs`, removed
+  the stale `PixelSliceMutLoadBearingExt` reference in `load_bearing.rs`.
+  `cargo doc --no-deps --document-private-items
+  --features hdr-experimental,pipeline,cms-moxcms,rgb` now reports 0
+  warnings.
+
+### Workspace — deps
+
+- **Migrate to published `zencodec 0.1.24`; drop the git-rev/path patch.**
+  Removed the `[patch.crates-io] zencodec = { path = "../zencodec" }` entry now
+  that `zencodec 0.1.24` is on crates.io. The patch only affected the
+  `__hdr-e2e-test` transitive graph (no zencodec dep in default builds);
+  that graph now resolves zencodec from the registry. `ultrahdr-core` stays
+  patched to the imazen git main (still unpublished). No code changes — no
+  member implements or reads the `estimate` / `ResourceEstimate` API.
 
 ### zenpixels — added
+
+- **`ContentLightLevel::DEFAULT_PERCENTILE = 0.99999`** — public constant for
+  the industry-default percentile used by `CllMeasure::measure_robust` in
+  `zenpixels-convert`. Surfaced on the type itself (not the trait) so any
+  caller — including ones that don't pull `zenpixels-convert` — can refer
+  to the same anchor.
+
+### zenpixels — changed
+
+- **HDR measurement (the `measure_*` API surface, `LightLevelHistogram`,
+  `LightLevelMethod`, and the SIMD scan kernel) moves to `zenpixels-convert`**
+  as the new `measure` module + [`CllMeasure`] extension trait. `zenpixels`
+  is now structural-only HDR: `DiffuseWhite`, `ContentLightLevel` (struct +
+  `new` + `DEFAULT_PERCENTILE` + the deprecated 2-arg `measure(px, white)`),
+  `MasteringDisplay`. Knock-on effects:
+  - **`simd` and `avx512` Cargo features removed** from `zenpixels`. The
+    `archmage` and `magetypes` optional deps are gone. `cargo tree -p
+    zenpixels` shows zero SIMD-runtime dependencies in any configuration.
+  - **Migration**: callers using `ContentLightLevel::measure_max(...)` /
+    `measure_robust(...)` / `measure_max_smoothed(...)` / `measure_percentile(...)`
+    / `measure_histogram(...)` now `use zenpixels_convert::hdr::CllMeasure;` and
+    keep the same call syntax (the extension trait preserves
+    `ContentLightLevel::measure_*(...)` ergonomics). `LightLevelHistogram`
+    and `LightLevelMethod` re-export from `zenpixels_convert::hdr` (also
+    gated on `hdr-experimental`).
+  - **Rationale**: the SIMD kernels (V3 / NEON / WASM128 / scalar tiers via
+    `archmage::magetypes`) and the histogram + percentile logic are pixel-
+    iteration code; that lives in `zenpixels-convert` alongside the gamut /
+    f16 / orientation kernels that already use the same SIMD machinery.
+    `zenpixels` remains a structural interchange crate, which keeps every
+    codec consumer (zenjpeg / zenpng / zenavif / zenjxl / zenwebp /
+    zentiff / zengif / zencodec) free of optional-feature surfaces and
+    SIMD deps for the metadata-pass-through path.
+
+- **`LightLevelHistogram::percentile` interpolates within the bin** (now in
+  `zenpixels-convert::measure`) — previously returned the lower edge of the
+  bin where the cumulative CDF first crossed the threshold (~0.02 stops /
+  ~2 % below the true percentile, ~13 nits at 1015 cd/m²). Now does linear
+  interpolation in log2 space within that bin: `fraction = (threshold −
+  count_before) / count_in_bin`, `value = 2^(log2_lower + fraction ·
+  log2_step)`. Capped at `literal_max_nits` so f32 rounding in the interp
+  can never overshoot the spec-literal max by one u16-nits code. On dense
+  bright content (1 MP solid) the `measure_percentile` readout now lands
+  within ~1 nit of the literal max instead of ~13 nits below.
+
+### zenpixels-convert — added
+
+- **`ConvertPlan::estimate_resources(width, height) -> ResourceEstimate`** —
+  predict peak working-set memory + median wall-clock time for a plan
+  before running it. Returns
+  `ResourceEstimate { peak_memory_bytes, wall_time_ms, breakdown, confidence }`
+  where `breakdown` is per-`ConvertStep` (`StepEstimate { name, memory_bytes,
+  time_ms }`) and `confidence` is `EstimateConfidence::{Calibrated,
+  Heuristic, Unknown}`. Cheap to call (no allocation, no row work — just
+  walks the planned steps). Calibration drives from the
+  `zenpixels/benchmarks/{t1_layout, t2_depth, t3_tf_fused, t4_tf_f32,
+  t5_alpha, t6_oklab, t7_gamut}_2026-04-23_baseline.txt` suite (steady-state
+  4096-pixel-row throughput on AMD Ryzen 9 7950X, AVX2/V3 tier) plus the
+  zentone `bt2446a_throughput_2026-06-20.md` cell for `ToneMapBt2446A`
+  (~250 Mpix/s). Memory model: destination buffer always counted; multi-step
+  plans add two row-sized scratch halves sized to the widest intermediate
+  bpp; identity plans count the memcpy. Documented tolerance is **±30 %**
+  vs the underlying bench numbers — wider on hosts with a different SIMD
+  tier, very small images (per-call overhead dominates), or thermal-
+  throttled environments. Companion shortcut: **`PixelBufferConvertExt::
+  estimate_convert_to(&target) -> ResourceEstimate`** on `PixelBuffer`.
+  Steps with no exact bench (BT.709 / Gamma22 F32 OETF/EOTF, premul on F16,
+  fused gamut variants without a calibration row) flip the plan's
+  `confidence` to `Heuristic` so callers can detect lower-precision cells.
+  New public surface (`estimate` module + `ResourceEstimate` /
+  `StepEstimate` / `EstimateConfidence` re-exported at crate root) gated
+  on neither `hdr-experimental` nor any other feature: ships with default
+  features.
+- **`ConvertPlan::new_with_hdr_peak(from, to, source_peak_nits)` +
+  `ConvertPlan::new_with_hdr_config(from, to, HdrConfig)`** — HDR→SDR
+  conversions are now native steps in the standard `ConvertPlan`
+  infrastructure (new `ConvertStep::ToneMapBt2446A` and
+  `ConvertStep::SoftCompressOklch` variants), composed alongside the
+  existing transfer / depth / gamut steps. The plan still runs through the
+  same `RowConverter` / `convert_row` pipeline as every other conversion
+  in the crate — no parallel API surface. **`HdrConfig { source_peak_nits,
+  target_peak_nits: 100, gamut_knee: 0.9 }`** carries the BT.2446-A and
+  soft-compress knobs. Wide-gamut output mode (target primaries = BT.2020)
+  skips the post-curve gamut matrix and the OKLch compress step
+  automatically. The end-to-end producer-SDR ΔE2000 against the imazen-26
+  UltraHDR sample is **3.16** (matches the deleted `HdrToSdr` pipeline).
+  Gated behind the existing `hdr-experimental` feature.
+- **`PixelBufferHdrConvertExt`** — extension trait on `PixelBuffer` with
+  `convert_to_sdr(target)` (auto-measures source peak via
+  `CllMeasure::measure_robust`) and `convert_to_with_hdr_config(target,
+  HdrConfig)` (explicit knobs). Both route through the new
+  `ConvertPlan::new_with_hdr_config` path. Gated behind `hdr-experimental`.
+- **Eleven new `estimate_*` companions on the convert extension traits.**
+  Each of the previously-allocating public methods now has a non-allocating
+  estimator that returns a [`ResourceEstimate`] sharing the same ±30 %
+  design tolerance and confidence semantics as the
+  [`ConvertPlan::estimate_resources`] primitive shipped in commit
+  `183af66`. On `PixelBufferConvertExt`: `estimate_try_add_alpha`,
+  `estimate_try_widen_to_u16` (same-channel-type → identity-memcpy fast
+  path), `estimate_try_narrow_to_u8` (same fast path), `estimate_linearize`,
+  `estimate_delinearize(transfer)`. On `PixelBufferConvertTypedExt`
+  (`rgb` feature): `estimate_to_rgb8`, `estimate_to_rgba8`,
+  `estimate_to_gray8`, `estimate_to_bgra8` — each estimates the underlying
+  type-erased `convert_to(&PixelDescriptor::*)` call (the typed wrapper
+  itself is a zero-cost cast). On `PixelBufferHdrConvertExt`
+  (`hdr-experimental`): `estimate_convert_to_with_hdr_config` (delegates to
+  [`ConvertPlan::new_with_hdr_config`]) and `estimate_convert_to_sdr` —
+  the latter accounts for **all three legs** of `convert_to_sdr`: source
+  linearization, the
+  [`CllMeasure::measure_max`](crate::hdr::CllMeasure::measure_max) scan
+  (new calibration constant from `benchmarks/measure_max_throughput_2026-06-19.md`,
+  default-build SIMD column at 2048² = **2735 Mpix/s** on Ryzen 9 7950X
+  AVX2), and the downstream HDR plan. The estimator sums wall-clock
+  across legs, takes `max(peak_memory_bytes)` (linear scratch frees
+  before the HDR plan allocates), concatenates breakdowns with a new
+  `"MeasureMaxCll"` step, and reports the most-conservative confidence
+  tier across legs. Non-HDR sources short-circuit to plain
+  `estimate_convert_to(target)`, matching the runtime path. Tests cover
+  delegation equivalence (peak_memory exact, wall_time within 1 %) plus
+  the measure_max-scan accounting on a 4 MP buffer.
+
+### zenpixels-convert — removed
+
+- **`zenpixels_convert::hdr::HdrToSdr`** and its `buffer_dispatch.rs` glue
+  — ~2,400 LOC of parallel API surface folded into the standard
+  `ConvertPlan` infrastructure (above). Net deletion: ~1,300 LOC. The
+  underlying math primitives (`Bt2446A`, `SoftCompress`,
+  `GamutBoundaryLut`) stay public for advanced callers who want to drive
+  the curves directly.
+
+### zenpixels-convert — changed (BREAKING, gated by `hdr-experimental`)
+
+- **`ConvertPlan::new` now refuses HDR-encoded → SDR-encoded conversions**
+  (`Pq` / `Hlg` source → `Srgb` / `Bt709` / `Gamma22` target) with a new
+  `ConvertError::HdrSourceRequiresPeak` variant, and points the caller at
+  `ConvertPlan::new_with_hdr_peak`. Pre-refactor the plain plan silently
+  routed those through a linear intermediate with no tone-mapping,
+  saturating every HDR sample above SDR diffuse-white to peak. HDR→Linear
+  paths (lossless transfer decode) stay allowed via the regular `new`
+  entry. Only fires under `hdr-experimental`; without the feature the
+  historic pass-through behavior is preserved.
+
+- **`HdrToSdr::convert_buffer` / `convert_into`** — buffer-level dispatch
+  wrappers around the existing linear-light `apply_strip` primitive. The
+  buffer methods auto-handle transfer (Linear / sRGB / BT.709 / PQ / HLG /
+  Gamma22), channel format (u8 / u16 / f16 / f32 × RGB | RGBA), alpha mode
+  (Straight / Premultiplied / None with α==0 short-circuited to RGB=0),
+  signal range (Full / Narrow, linear-space approximation), and source
+  diffuse-white anchor (buffer's `ColorContext::diffuse_white` wins over the
+  struct's stored value via the new `HdrToSdr::with_source_diffuse_white_nits`
+  setter). Wraps `RowConverter` for transfer + format + alpha + primaries;
+  signal-range handling is approximate in linear space (no Narrow↔Full
+  kernels exist in zenpixels-convert yet) and will tighten when those land.
+  The strip-level `apply_strip` math is unchanged — only the byte-format
+  dispatch around it is new. End-to-end producer-SDR match against a real
+  UltraHDR sample still lands at ΔE2000 = 3.16 (≤ 5.0 budget). Gated behind
+  the existing `hdr-experimental` feature.
+- **`zenpixels_convert::hdr::Bt2446A`**, **`HdrToSdr`**, **`SoftCompress`**,
+  and **`GamutBoundaryLut`** — gated behind the existing `hdr-experimental`
+  Cargo feature. Extracted into a single home so the canonical HDR → SDR
+  pipeline lives next to the CLL measurement primitives that feed it:
+  `HdrToSdr::new(source_peak_nits)` composes a BT.2020 → BT.709 matrix step,
+  the BT.2446 Method A tone curve, and an OKLch soft chroma-compression
+  knee into one strip API. `Bt2446A` and the SIMD strip kernel `bt2446a_tier`
+  (degree-7 monomial BT.1886 EOTF approximation, Estrin's-method evaluation)
+  moved from `zentone::Bt2446A`. `SoftCompress` and `GamutBoundaryLut` moved
+  from `zenfilters::gamut_lut::GamutBoundaryLut`. Both upstream copies are
+  removed; this crate is the single source of truth.
+  trait, gated behind the new **`hdr-experimental`** Cargo feature (default-
+  off). The new home for HDR content-light-level measurement, with the
+  `LightLevelHistogram` and `LightLevelMethod` types alongside. Implementing
+  `CllMeasure` for `zenpixels::ContentLightLevel` means callers write
+  `use zenpixels_convert::hdr::CllMeasure; ContentLightLevel::measure_robust(...)`
+  — the same call signature the methods had on `ContentLightLevel` directly
+  in pre-publication 0.2.15 main. The feature flag covers expected pre-0.3.0
+  shape churn (the queued `measure_robust` → `measure` rename when the
+  deprecated 2-arg `measure(px, white)` ships its 0.3.0 removal, plus
+  potential trait-vs-free-fn restructuring); the scan kernels and accuracy
+  contracts underneath are stable.
+
+  Full surface ([#54](https://github.com/imazen/zenpixels/issues/54)):
+
+  - **`CllMeasure::measure_max(px, white, method)`** — CTA-861.3 spec-strict
+    (literal MaxCLL + arithmetic mean). The hot path for delivery-mandate
+    HDR metadata; runs at **2.5-3.4 Gpix/s** with the V3 / AVX2 tier of the
+    `archmage::magetypes` SIMD kernel on a Ryzen 9 7950X, **above libplacebo**.
+    Three accuracy tests pin against an independent f64
+    Psychtoolbox-3 / x265 / libplacebo / Dolby Vision L1 / libultrahdr
+    oracle. Reproducer + full table in
+    [`benchmarks/measure_max_throughput_2026-06-19.md`](benchmarks/measure_max_throughput_2026-06-19.md).
+
+  - **`CllMeasure::measure_robust(px, white, method)`** — the recommended-
+    default reader, equivalent to `measure_percentile(_, _,
+    ContentLightLevel::DEFAULT_PERCENTILE, _)` with `DEFAULT_PERCENTILE` =
+    0.99999. Drops the top 0.001 % of pixels as the outlier budget — the
+    production-correct answer for content with possible defect-driven hot
+    pixels (sensor noise, stuck pixels, specular blowouts). Matches what
+    libplacebo (`pl_color_space_infer`), DaVinci Resolve, x265's
+    `--master-display` helpers, and most HDR10+ mastering tools do.
+    Tests cover the alias contract (bit-exact vs explicit
+    `measure_percentile`), the defect-rejection path on 100k pixels with
+    one stuck pixel, and the sparse-bright cliff (1-in-100 bright pixel
+    dropped at small sizes — astrophotography should pick `measure_max`).
+
+  - **`CllMeasure::measure_max_smoothed(px, white, method)`** — MaxCLL via
+    a 3×1 horizontal box-filtered max. Robust against single-pixel defects
+    and math-weird outliers without committing to an explicit percentile;
+    closer in shape to Dolby Vision L1's per-block analysis. A single
+    stuck pixel at 10 000 cd/m² in a 0.005 cd/m² background reads as ~3 333
+    after the box filter; clusters of ≥3 pixels preserve at full magnitude.
+    MaxFALL stays the literal arithmetic mean (linearity of expectation;
+    CTA-861.3 unchanged). Single-pass streaming scan auto-vectorises to
+    ~1.0-1.3 Gpix/s on Zen 4 (2-3× faster than the histogram path).
+    Reproducer + table in
+    [`benchmarks/measure_max_smoothed_throughput_2026-06-19.md`](benchmarks/measure_max_smoothed_throughput_2026-06-19.md).
+
+  - **`CllMeasure::measure_percentile(px, white, percentile, method)`** —
+    explicit-percentile convenience. No default — caller commits per
+    content policy (sparse-bright legitimate content like astrophotography
+    / fireworks / candle-in-dark-room has opposite needs from defect
+    rejection). Issue #54's docstring spells out the trade-off.
+
+  - **`CllMeasure::measure_histogram(px, white, method)`** — builds a
+    [`LightLevelHistogram`] in a single SIMD-friendly pass via a tiered
+    `#[archmage::magetypes]` kernel (V3 / NEON / WASM128 / scalar) with
+    `f32x8::log2_midp` for the per-pixel log2, eight per-lane sub-histograms
+    (32 KiB total L1-resident) to side-step the cross-lane scatter
+    conflict, and SIMD `reduce_max` / `reduce_add` for the running max +
+    f64 sum at end-of-row. ~470-490 Mpix/s on Zen 4. The histogram is the
+    primitive — callers can derive `max()`, `mean()`, `percentile(p)`, and
+    arbitrary CDF readouts after one scan. Reproducer +
+    perf-bottleneck notes in
+    [`benchmarks/measure_histogram_throughput_2026-06-19.md`](benchmarks/measure_histogram_throughput_2026-06-19.md).
+
+  - **[`LightLevelHistogram`]** — log-scale histogram of per-pixel light
+    levels over `[0.005, 10000]` cd/m² across 1024 bins (~0.02 stops/bin,
+    well below the cone JND; 4 KiB cache-resident state). Exposes `max()`,
+    `mean()`, `percentile(p)` (with linear interpolation in log2 space —
+    see the `zenpixels — changed` note above), `method()`, `total_pixels()`,
+    `bins()` for custom CDF walks.
+
+  - **[`LightLevelMethod`]** enum (`MaxRgb` default, `LuminanceBt2020`) —
+    explicit per-pixel reduction choice. CTA-861-G Annex P leaves this
+    normatively open; `MaxRgb` matches x265 / DaVinci / Dolby Vision L1 /
+    Psychtoolbox, `LuminanceBt2020` matches some Netflix / Apple TV+
+    pipelines. `#[non_exhaustive]`.
+
+  Tests cover: defect-spike (lone outlier → p99 drops it, spec-literal
+  keeps it); astrophotography night-stars (1100 px with 100 stars →
+  spec-literal & p99.99 keep them); BT.2020 vs MaxRgb method divergence on
+  saturated red; percentile boundary handling (0, 1, NaN, out-of-range);
+  bin interpolation precision (1 MP solid → within ~1 nit of literal max);
+  bin interpolation cap (no overshoot of literal max under f32 rounding);
+  3×1 box-filter suppression / cluster preservation / mirror-pad edge /
+  degenerate widths; `DEFAULT_PERCENTILE` constant pin; input rejection
+  contract.
+
+### zenpixels — fixed
+
+- **`PlaneDescriptor::plane_width` / `plane_height` no longer panic with
+  divide-by-zero on `h_subsample == 0` / `v_subsample == 0`** (`planar.rs`,
+  [#43](https://github.com/imazen/zenpixels/issues/43) item 1). The
+  subsample fields are public, so any code path that struct-literals a
+  `PlaneDescriptor` or maps an out-of-range codec subsampling code to
+  factor 0 could set them to 0 — the next `plane_width` call then
+  panicked in release. Now `0` is treated as `1` (full resolution) at the
+  use-site, so production servers never see the abort. The
+  [`with_subsampling`](https://docs.rs/zenpixels/0.2/zenpixels/struct.PlaneDescriptor.html#method.with_subsampling)
+  builder's `debug_assert!` still catches the misuse in dev / test.
+  Non-breaking; signature unchanged.
+- **`PixelDescriptor::aligned_stride` / `simd_aligned_stride` overflow-safe
+  on 32-bit targets (i686, wasm32)** (`descriptor.rs`,
+  [#43](https://github.com/imazen/zenpixels/issues/43) item 2). The plain
+  `width as usize * bpp` multiply could wrap silently on 32-bit `usize` —
+  producing a small stride that passed the subsequent `checked_mul(height)`
+  guard and yielded an under-sized allocation paired with the full-size
+  `width` field (silent buffer corruption / deferred OOB, instead of the
+  documented `InvalidDimensions` typed error). Both methods now use
+  `saturating_mul`, and the `align_up_general` helper saturates too so
+  the upstream guard isn't undone by a wrap in `value + (align − rem)`.
+  Strides saturate to `usize::MAX`, which downstream `checked_mul` then
+  surfaces as `InvalidDimensions`. Matches the `PixelBuffer::from_pixels`
+  guard that already had this treatment. Non-breaking.
+
+### zenpixels-convert — fixed
+
+- **`hdr::HdrToSdr` pipeline order — corrected.** The shipped pipeline
+  applied the BT.2020 → BT.709 gamut matrix *before* the BT.2446 Method A
+  tone-map. That was wrong: ITU-R BT.2446-1 specifies the curve in
+  BT.2020 R'G'B' / Y'Cb'Cr', so its luma weights
+  (`0.2627 / 0.6780 / 0.0593`) and YCbCr↔RGB coefficients are BT.2020-
+  specific. Feeding the curve BT.709 RGB produced a systematic hue shift
+  on saturated content. The new order is **`(source → BT.2020 if needed)
+  → Bt2446A → BT.2020 → BT.709 matrix → SoftCompress (BT.709 OKLch)`**:
+  the curve sees the BT.2020 input it was derived against, then the
+  gamut step projects into the BT.709 working space, and soft chroma
+  compression keeps the final pixels hue-preserved in unit cube. Verified
+  on a 12 MP imazen-26 UltraHDR sample: mean ΔE2000 = **3.16** against
+  producer SDR — matches zentone's published BT.2446-A median of 3.17.
+- **`hdr::HdrToSdr` accepts arbitrary source primaries** via the new
+  `with_source_primaries(source_peak_nits, source_primaries)` and
+  `with_params(source_peak_nits, source_primaries, target_peak_nits,
+  gamut_knee)` constructors. When `source_primaries != ColorPrimaries::Bt2020`
+  the pipeline inserts a `source → BT.2020` matrix step (cached at
+  construction) before the BT.2446 curve so the curve still sees the
+  BT.2020 RGB it was designed for. `HdrToSdr::new(...)` keeps the
+  BT.2020-source default. Supports Display P3 HDR (e.g. Apple ProRAW)
+  and BT.709 HDR (UltraHDR JPEG / HEIC gain-map reconstruction outputs)
+  without distorting the curve.
+- **New color-space verification tests in
+  `src/hdr/hdr_to_sdr.rs::tests`** pin the math against the pipeline-
+  order regression: `neutral_grey_stays_neutral`,
+  `hdr_diffuse_white_maps_to_sdr_diffuse_white`,
+  `saturated_bt2020_{red,green,blue}_lands_*_dominant_in_bt709`,
+  `p3_source_pipeline_produces_neutral_grey_from_p3_grey`,
+  `bt709_source_is_identity_matrix_to_bt2020`,
+  `pipeline_order_regression_test` (compares OLD vs NEW order — they
+  must differ measurably), and the SIMD parity property test was
+  extended to run under each of BT.2020 / BT.709 / Display P3 source
+  primaries.
+- **New `__hdr-e2e-test` Cargo feature** gates an end-to-end producer-
+  SDR ΔE2000 regression test
+  (`tests/hdr_producer_sdr_match.rs`) that decodes a known imazen-26
+  UltraHDR sample, runs HDR through the pipeline, and pins mean ΔE2000
+  < 5.0 against the producer's SDR base. The feature pulls `zenjpeg` +
+  `anyhow` as test-only deps via the workspace's `[patch.crates-io]`
+  table (which routes `ultrahdr-core` to the imazen git main; `zencodec`
+  resolves from crates.io now that 0.1.24 is published). The test
+  silently skips when the imazen-26
+  corpus is absent (CI), and MUST be run on `lilith`'s machine before
+  merging any pipeline-touching change. Invocation:
+  `cargo test -p zenpixels-convert@0.2.15 --features __hdr-e2e-test
+  --test hdr_producer_sdr_match -- --nocapture`.
+
+### zenpixels-convert — changed
+
+- **`hdr::HdrToSdr` now takes `PixelDescriptor` for source and target**
+  (replacing the previous `ColorPrimaries` parameters). `PixelDescriptor`
+  carries primaries, transfer function, format, alpha mode, and signal
+  range — the descriptors are the single source of truth for buffer color
+  metadata. Required transfer is `Linear` for both ends (validated at
+  construction); encoding the output to BT.1886/sRGB/PQ/HLG remains the
+  caller's job for now. This is a breaking change inside the
+  `hdr-experimental` gate. New surface:
+  ```
+  HdrToSdr::new(source, target, source_peak_nits)
+  HdrToSdr::with_params(source, target, source_peak_nits, target_peak_nits, gamut_knee)
+  ```
+
+### Earlier 0.2.15 prep (2026-06-18 commit batch)
+
+The items below were the initial cut of 0.2.15 prepared on 2026-06-18; they ship
+in the same 0.2.15 release as the larger blocks above.
+
+#### zenpixels — added
 
 - **Buffer-level colour-relabel builders** on `PixelSlice` / `PixelSliceMut` /
   `PixelBuffer`: `with_diffuse_white(DiffuseWhite)`, `with_cicp(Cicp)`,
@@ -73,7 +1525,7 @@
   so the anchor (and CICP/ICC) is reframed as ergonomically as the transfer.
   Plus `ColorContext::with_cicp` / `with_icc` to match `with_diffuse_white`.
 
-### zenpixels — deprecated
+#### zenpixels — deprecated
 
 - **`ContentLightLevel::measure` is deprecated and `#[doc(hidden)]`.** It computes
   the *literal* CTA-861.3 MaxCLL — the absolute maximum over all pixels of
@@ -85,7 +1537,7 @@
   queued for removal in 0.3.0. MaxFALL (the mean) was never affected, and there
   were no consumers — nothing breaks.
 
-### zenpixels-convert — deprecated
+#### zenpixels-convert — deprecated
 
 - **`hdr::{reinhard_tonemap, reinhard_inverse, exposure_tonemap}` are deprecated
   and `#[doc(hidden)]`.** Naive global Reinhard `v / (1 + v)` and a bare
@@ -97,7 +1549,7 @@
   `Bt2408Tonemapper`, ACES, AgX, filmic-spline, gain-map curves, plus SIMD
   strip processing) for production HDR→SDR work. Removal queued for 0.3.0.
 
-### zenpixels-convert — internal
+#### zenpixels-convert — internal
 
 - **`orient`: fixed public-doc links + corrected the `fast-transpose` comment.**
   The module-level docs linked private `transpose_*` fns (dead links on docs.rs)

@@ -8,20 +8,31 @@ r2_prefix := "icc-profiles/"
 # Run all checks (fmt, clippy, test)
 ci: fmt clippy test
 
+# The rustdoc-JSON nightly for the public-API snapshots is PINNED (keep in
+# sync with the `api-doc` job in .github/workflows/ci.yml). An unpinned
+# tracking nightly churns the rendered surface with zero repo changes: the
+# 2026-08-26 nightly started rendering `PixelBuffer<P>`'s (unconditional,
+# PhantomData-only) `Freeze` impl as conditional on Linux x86_64 while the
+# same nightly on macOS aarch64 did not, so the committed snapshots could
+# not be current on both sides at once. The harness auto-installs the pin
+# via rustup. Bump deliberately, regenerating the snapshots in the same
+# commit.
+apidoc_toolchain := "nightly-2026-07-13"
+
 # Format + regenerate the public-API surface snapshots (docs/public-api/).
 # The snapshot runner lives in the workspace-excluded apidoc/ package, so it
 # is never built or run by plain `cargo test` or any CI job.
 fmt:
     cargo fmt --check
-    cargo test --manifest-path apidoc/Cargo.toml
+    ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
 
 # Regenerate the public-API surface snapshots only
 api-doc:
-    cargo test --manifest-path apidoc/Cargo.toml
+    ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
 
 # Verify the committed snapshots are current
 api-doc-check:
-    ZEN_API_DOC=check cargo test --manifest-path apidoc/Cargo.toml
+    ZEN_API_DOC=check ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
 
 # Clippy
 clippy:
@@ -30,6 +41,11 @@ clippy:
 # Test all packages
 test:
     cargo test --workspace
+
+# Compare production fused scan predicates with forced scalar on macOS ARM64.
+arm-scan-tiers-macos:
+    mkdir -p "$HOME/tmp"
+    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench -p zenpixels-convert --features __bench_scan --bench kernel_tiers -- --cpu-policy=unrestricted --format=llm > "$HOME/tmp/zenpixels-scan-tiers.log" 2>&1
 
 # ── ICC profile table management ──────────────────────────────────────
 
@@ -157,3 +173,8 @@ cicp-bundle-update: cicp-bundle-gen
     cargo test -p zenpixels-convert --features cms-moxcms cicp_bundle
     cargo test -p icc-gen --release --bin cicp_bundle_gen
     @echo "CICP bundle regenerated and verified (golden sha256 + moxcms byte-equality)."
+
+# Recheck the Ultra HDR corpus profile using both moxcms and Little CMS.
+icc-hdr-profile-check input output:
+    cargo run -p icc-gen --features lcms2-crosscheck --bin icc-gen -- --report {{input}} {{output}}
+    cargo test -p zenpixels --features icc icc::
