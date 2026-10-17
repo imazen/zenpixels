@@ -582,6 +582,30 @@ pub(crate) fn current_profile(
             }));
         }
         if let Some(cicp) = context.cicp {
+            // A claim that leaves primaries or transfer unresolved (H.273
+            // code 2, unspecified, or a code zenpixels does not model)
+            // describes no colour space for those fields. It agrees with a
+            // descriptor that says `Unknown` there and matches the rest, and
+            // then offers no profile: the pixels convert as their descriptor
+            // says (layout, depth), and anything that needs the colour still
+            // fails on the Unknown descriptor (`NeedsCms`). A descriptor that
+            // claims more than the context is still a mislabel.
+            let primaries = ColorPrimaries::from_cicp(cicp.color_primaries);
+            let transfer = TransferFunction::from_cicp(cicp.transfer_characteristics);
+            if primaries.is_none() || transfer.is_none() {
+                let range = if cicp.full_range {
+                    crate::SignalRange::Full
+                } else {
+                    crate::SignalRange::Narrow
+                };
+                let agrees = primaries.unwrap_or(ColorPrimaries::Unknown) == desc.primaries
+                    && transfer.unwrap_or(TransferFunction::Unknown) == desc.transfer()
+                    && cicp.matrix_coefficients == 0
+                    && range == desc.signal_range;
+                if agrees {
+                    return Ok(desc.color_profile_source());
+                }
+            }
             let signaled = descriptor_for_profile(
                 desc.pixel_format(),
                 &crate::ColorProfileSource::Cicp(cicp),

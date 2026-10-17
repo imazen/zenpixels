@@ -46,26 +46,27 @@ pub(crate) const NUM_GROUPS: usize = 16;
 
 /// Group table, indexed by group index (also the order in the blob).
 pub(crate) static BUNDLE_GROUPS: [BundleGroup; NUM_GROUPS] = [
-    BundleGroup { transfer: 1, blob_offset: 0, compressed_len: 1084, decompressed_len: 6064 }, // 14 profile(s)
-    BundleGroup { transfer: 4, blob_offset: 1084, compressed_len: 1100, decompressed_len: 5838 }, // 15 profile(s)
-    BundleGroup { transfer: 5, blob_offset: 2184, compressed_len: 1096, decompressed_len: 5838 }, // 15 profile(s)
-    BundleGroup { transfer: 6, blob_offset: 3280, compressed_len: 1116, decompressed_len: 6504 }, // 15 profile(s)
-    BundleGroup { transfer: 7, blob_offset: 4396, compressed_len: 3460, decompressed_len: 81540 }, // 15 profile(s)
-    BundleGroup { transfer: 8, blob_offset: 7856, compressed_len: 1098, decompressed_len: 5838 }, // 15 profile(s)
-    BundleGroup { transfer: 9, blob_offset: 8954, compressed_len: 3456, decompressed_len: 81540 }, // 15 profile(s)
-    BundleGroup { transfer: 10, blob_offset: 12410, compressed_len: 3468, decompressed_len: 81548 }, // 15 profile(s)
-    BundleGroup { transfer: 11, blob_offset: 15878, compressed_len: 3458, decompressed_len: 81548 }, // 15 profile(s)
-    BundleGroup { transfer: 12, blob_offset: 19336, compressed_len: 3448, decompressed_len: 81548 }, // 15 profile(s)
-    BundleGroup { transfer: 13, blob_offset: 22784, compressed_len: 1082, decompressed_len: 6072 }, // 14 profile(s)
-    BundleGroup { transfer: 14, blob_offset: 23866, compressed_len: 1117, decompressed_len: 6512 }, // 15 profile(s)
-    BundleGroup { transfer: 15, blob_offset: 24983, compressed_len: 1115, decompressed_len: 6512 }, // 15 profile(s)
-    BundleGroup { transfer: 16, blob_offset: 26098, compressed_len: 3096, decompressed_len: 81548 }, // 15 profile(s)
-    BundleGroup { transfer: 17, blob_offset: 29194, compressed_len: 3361, decompressed_len: 81548 }, // 15 profile(s)
-    BundleGroup { transfer: 18, blob_offset: 32555, compressed_len: 3412, decompressed_len: 81548 }, // 15 profile(s)
+    BundleGroup { transfer: 1, blob_offset: 0, compressed_len: 1087, decompressed_len: 6064 }, // 14 profile(s)
+    BundleGroup { transfer: 4, blob_offset: 1087, compressed_len: 1068, decompressed_len: 5452 }, // 14 profile(s)
+    BundleGroup { transfer: 5, blob_offset: 2155, compressed_len: 1064, decompressed_len: 5452 }, // 14 profile(s)
+    BundleGroup { transfer: 6, blob_offset: 3219, compressed_len: 1084, decompressed_len: 6064 }, // 14 profile(s)
+    BundleGroup { transfer: 7, blob_offset: 4303, compressed_len: 3404, decompressed_len: 75016 }, // 14 profile(s)
+    BundleGroup { transfer: 8, blob_offset: 7707, compressed_len: 1066, decompressed_len: 5452 }, // 14 profile(s)
+    BundleGroup { transfer: 9, blob_offset: 8773, compressed_len: 3400, decompressed_len: 75016 }, // 14 profile(s)
+    BundleGroup { transfer: 10, blob_offset: 12173, compressed_len: 3412, decompressed_len: 75024 }, // 14 profile(s)
+    BundleGroup { transfer: 11, blob_offset: 15585, compressed_len: 3402, decompressed_len: 75024 }, // 14 profile(s)
+    BundleGroup { transfer: 12, blob_offset: 18987, compressed_len: 3392, decompressed_len: 75024 }, // 14 profile(s)
+    BundleGroup { transfer: 13, blob_offset: 22379, compressed_len: 1050, decompressed_len: 5632 }, // 13 profile(s)
+    BundleGroup { transfer: 14, blob_offset: 23429, compressed_len: 1085, decompressed_len: 6072 }, // 14 profile(s)
+    BundleGroup { transfer: 15, blob_offset: 24514, compressed_len: 1083, decompressed_len: 6072 }, // 14 profile(s)
+    BundleGroup { transfer: 16, blob_offset: 25597, compressed_len: 3040, decompressed_len: 75024 }, // 14 profile(s)
+    BundleGroup { transfer: 17, blob_offset: 28637, compressed_len: 3305, decompressed_len: 75024 }, // 14 profile(s)
+    BundleGroup { transfer: 18, blob_offset: 31942, compressed_len: 3356, decompressed_len: 75024 }, // 14 profile(s)
 ];
 
 /// Profile locator table, sorted by `(primaries, transfer)` for binary search.
-pub(crate) static BUNDLE_PROFILES: [BundleProfile; 174] = [
+pub(crate) static BUNDLE_PROFILES: [BundleProfile; 159] = [
+    BundleProfile { primaries: 1, transfer: 1, group_index: 0, offset_in_group: 1664, len: 440 },
     BundleProfile { primaries: 1, transfer: 4, group_index: 1, offset_in_group: 1592, len: 386 },
     BundleProfile { primaries: 1, transfer: 5, group_index: 2, offset_in_group: 1592, len: 386 },
     BundleProfile { primaries: 1, transfer: 6, group_index: 3, offset_in_group: 1664, len: 440 },
@@ -80,7 +81,7 @@ pub(crate) static BUNDLE_PROFILES: [BundleProfile; 174] = [
     BundleProfile { primaries: 1, transfer: 16, group_index: 13, offset_in_group: 9784, len: 6524 },
     BundleProfile { primaries: 1, transfer: 17, group_index: 14, offset_in_group: 9784, len: 6524 },
     BundleProfile { primaries: 1, transfer: 18, group_index: 15, offset_in_group: 9784, len: 6524 },
-    BundleProfile { primaries: 4, transfer: 1, group_index: 0, offset_in_group: 1664, len: 440 },
+    BundleProfile { primaries: 4, transfer: 1, group_index: 0, offset_in_group: 2104, len: 440 },
     BundleProfile { primaries: 4, transfer: 4, group_index: 1, offset_in_group: 1978, len: 386 },
     BundleProfile { primaries: 4, transfer: 5, group_index: 2, offset_in_group: 1978, len: 386 },
     BundleProfile { primaries: 4, transfer: 6, group_index: 3, offset_in_group: 2104, len: 440 },
@@ -96,7 +97,7 @@ pub(crate) static BUNDLE_PROFILES: [BundleProfile; 174] = [
     BundleProfile { primaries: 4, transfer: 16, group_index: 13, offset_in_group: 16308, len: 6524 },
     BundleProfile { primaries: 4, transfer: 17, group_index: 14, offset_in_group: 16308, len: 6524 },
     BundleProfile { primaries: 4, transfer: 18, group_index: 15, offset_in_group: 16308, len: 6524 },
-    BundleProfile { primaries: 5, transfer: 1, group_index: 0, offset_in_group: 2104, len: 440 },
+    BundleProfile { primaries: 5, transfer: 1, group_index: 0, offset_in_group: 2544, len: 440 },
     BundleProfile { primaries: 5, transfer: 4, group_index: 1, offset_in_group: 2364, len: 386 },
     BundleProfile { primaries: 5, transfer: 5, group_index: 2, offset_in_group: 2364, len: 386 },
     BundleProfile { primaries: 5, transfer: 6, group_index: 3, offset_in_group: 2544, len: 440 },
@@ -112,7 +113,7 @@ pub(crate) static BUNDLE_PROFILES: [BundleProfile; 174] = [
     BundleProfile { primaries: 5, transfer: 16, group_index: 13, offset_in_group: 22832, len: 6524 },
     BundleProfile { primaries: 5, transfer: 17, group_index: 14, offset_in_group: 22832, len: 6524 },
     BundleProfile { primaries: 5, transfer: 18, group_index: 15, offset_in_group: 22832, len: 6524 },
-    BundleProfile { primaries: 6, transfer: 1, group_index: 0, offset_in_group: 2544, len: 440 },
+    BundleProfile { primaries: 6, transfer: 1, group_index: 0, offset_in_group: 2984, len: 440 },
     BundleProfile { primaries: 6, transfer: 4, group_index: 1, offset_in_group: 2750, len: 386 },
     BundleProfile { primaries: 6, transfer: 5, group_index: 2, offset_in_group: 2750, len: 386 },
     BundleProfile { primaries: 6, transfer: 6, group_index: 3, offset_in_group: 2984, len: 440 },
@@ -128,7 +129,7 @@ pub(crate) static BUNDLE_PROFILES: [BundleProfile; 174] = [
     BundleProfile { primaries: 6, transfer: 16, group_index: 13, offset_in_group: 29356, len: 6524 },
     BundleProfile { primaries: 6, transfer: 17, group_index: 14, offset_in_group: 29356, len: 6524 },
     BundleProfile { primaries: 6, transfer: 18, group_index: 15, offset_in_group: 29356, len: 6524 },
-    BundleProfile { primaries: 7, transfer: 1, group_index: 0, offset_in_group: 2984, len: 440 },
+    BundleProfile { primaries: 7, transfer: 1, group_index: 0, offset_in_group: 3424, len: 440 },
     BundleProfile { primaries: 7, transfer: 4, group_index: 1, offset_in_group: 3136, len: 386 },
     BundleProfile { primaries: 7, transfer: 5, group_index: 2, offset_in_group: 3136, len: 386 },
     BundleProfile { primaries: 7, transfer: 6, group_index: 3, offset_in_group: 3424, len: 440 },
@@ -144,7 +145,7 @@ pub(crate) static BUNDLE_PROFILES: [BundleProfile; 174] = [
     BundleProfile { primaries: 7, transfer: 16, group_index: 13, offset_in_group: 35880, len: 6524 },
     BundleProfile { primaries: 7, transfer: 17, group_index: 14, offset_in_group: 35880, len: 6524 },
     BundleProfile { primaries: 7, transfer: 18, group_index: 15, offset_in_group: 35880, len: 6524 },
-    BundleProfile { primaries: 8, transfer: 1, group_index: 0, offset_in_group: 3424, len: 440 },
+    BundleProfile { primaries: 8, transfer: 1, group_index: 0, offset_in_group: 3864, len: 440 },
     BundleProfile { primaries: 8, transfer: 4, group_index: 1, offset_in_group: 3522, len: 386 },
     BundleProfile { primaries: 8, transfer: 5, group_index: 2, offset_in_group: 3522, len: 386 },
     BundleProfile { primaries: 8, transfer: 6, group_index: 3, offset_in_group: 3864, len: 440 },
@@ -160,7 +161,7 @@ pub(crate) static BUNDLE_PROFILES: [BundleProfile; 174] = [
     BundleProfile { primaries: 8, transfer: 16, group_index: 13, offset_in_group: 42404, len: 6524 },
     BundleProfile { primaries: 8, transfer: 17, group_index: 14, offset_in_group: 42404, len: 6524 },
     BundleProfile { primaries: 8, transfer: 18, group_index: 15, offset_in_group: 42404, len: 6524 },
-    BundleProfile { primaries: 9, transfer: 1, group_index: 0, offset_in_group: 3864, len: 440 },
+    BundleProfile { primaries: 9, transfer: 1, group_index: 0, offset_in_group: 4304, len: 440 },
     BundleProfile { primaries: 9, transfer: 4, group_index: 1, offset_in_group: 3908, len: 386 },
     BundleProfile { primaries: 9, transfer: 5, group_index: 2, offset_in_group: 3908, len: 386 },
     BundleProfile { primaries: 9, transfer: 6, group_index: 3, offset_in_group: 4304, len: 440 },
@@ -176,77 +177,62 @@ pub(crate) static BUNDLE_PROFILES: [BundleProfile; 174] = [
     BundleProfile { primaries: 9, transfer: 16, group_index: 13, offset_in_group: 48928, len: 6524 },
     BundleProfile { primaries: 9, transfer: 17, group_index: 14, offset_in_group: 48928, len: 6524 },
     BundleProfile { primaries: 9, transfer: 18, group_index: 15, offset_in_group: 48928, len: 6524 },
-    BundleProfile { primaries: 10, transfer: 1, group_index: 0, offset_in_group: 4304, len: 440 },
-    BundleProfile { primaries: 10, transfer: 4, group_index: 1, offset_in_group: 4294, len: 386 },
-    BundleProfile { primaries: 10, transfer: 5, group_index: 2, offset_in_group: 4294, len: 386 },
-    BundleProfile { primaries: 10, transfer: 6, group_index: 3, offset_in_group: 4744, len: 440 },
-    BundleProfile { primaries: 10, transfer: 7, group_index: 4, offset_in_group: 55444, len: 6524 },
-    BundleProfile { primaries: 10, transfer: 8, group_index: 5, offset_in_group: 4294, len: 386 },
-    BundleProfile { primaries: 10, transfer: 9, group_index: 6, offset_in_group: 55444, len: 6524 },
-    BundleProfile { primaries: 10, transfer: 10, group_index: 7, offset_in_group: 55452, len: 6524 },
-    BundleProfile { primaries: 10, transfer: 11, group_index: 8, offset_in_group: 55452, len: 6524 },
-    BundleProfile { primaries: 10, transfer: 12, group_index: 9, offset_in_group: 55452, len: 6524 },
-    BundleProfile { primaries: 10, transfer: 13, group_index: 10, offset_in_group: 4312, len: 440 },
-    BundleProfile { primaries: 10, transfer: 14, group_index: 11, offset_in_group: 4752, len: 440 },
-    BundleProfile { primaries: 10, transfer: 15, group_index: 12, offset_in_group: 4752, len: 440 },
-    BundleProfile { primaries: 10, transfer: 16, group_index: 13, offset_in_group: 55452, len: 6524 },
-    BundleProfile { primaries: 10, transfer: 17, group_index: 14, offset_in_group: 55452, len: 6524 },
-    BundleProfile { primaries: 10, transfer: 18, group_index: 15, offset_in_group: 55452, len: 6524 },
     BundleProfile { primaries: 11, transfer: 1, group_index: 0, offset_in_group: 4744, len: 440 },
-    BundleProfile { primaries: 11, transfer: 4, group_index: 1, offset_in_group: 4680, len: 386 },
-    BundleProfile { primaries: 11, transfer: 5, group_index: 2, offset_in_group: 4680, len: 386 },
-    BundleProfile { primaries: 11, transfer: 6, group_index: 3, offset_in_group: 5184, len: 440 },
-    BundleProfile { primaries: 11, transfer: 7, group_index: 4, offset_in_group: 61968, len: 6524 },
-    BundleProfile { primaries: 11, transfer: 8, group_index: 5, offset_in_group: 4680, len: 386 },
-    BundleProfile { primaries: 11, transfer: 9, group_index: 6, offset_in_group: 61968, len: 6524 },
-    BundleProfile { primaries: 11, transfer: 10, group_index: 7, offset_in_group: 61976, len: 6524 },
-    BundleProfile { primaries: 11, transfer: 11, group_index: 8, offset_in_group: 61976, len: 6524 },
-    BundleProfile { primaries: 11, transfer: 12, group_index: 9, offset_in_group: 61976, len: 6524 },
-    BundleProfile { primaries: 11, transfer: 13, group_index: 10, offset_in_group: 4752, len: 440 },
-    BundleProfile { primaries: 11, transfer: 14, group_index: 11, offset_in_group: 5192, len: 440 },
-    BundleProfile { primaries: 11, transfer: 15, group_index: 12, offset_in_group: 5192, len: 440 },
-    BundleProfile { primaries: 11, transfer: 16, group_index: 13, offset_in_group: 61976, len: 6524 },
-    BundleProfile { primaries: 11, transfer: 17, group_index: 14, offset_in_group: 61976, len: 6524 },
-    BundleProfile { primaries: 11, transfer: 18, group_index: 15, offset_in_group: 61976, len: 6524 },
+    BundleProfile { primaries: 11, transfer: 4, group_index: 1, offset_in_group: 4294, len: 386 },
+    BundleProfile { primaries: 11, transfer: 5, group_index: 2, offset_in_group: 4294, len: 386 },
+    BundleProfile { primaries: 11, transfer: 6, group_index: 3, offset_in_group: 4744, len: 440 },
+    BundleProfile { primaries: 11, transfer: 7, group_index: 4, offset_in_group: 55444, len: 6524 },
+    BundleProfile { primaries: 11, transfer: 8, group_index: 5, offset_in_group: 4294, len: 386 },
+    BundleProfile { primaries: 11, transfer: 9, group_index: 6, offset_in_group: 55444, len: 6524 },
+    BundleProfile { primaries: 11, transfer: 10, group_index: 7, offset_in_group: 55452, len: 6524 },
+    BundleProfile { primaries: 11, transfer: 11, group_index: 8, offset_in_group: 55452, len: 6524 },
+    BundleProfile { primaries: 11, transfer: 12, group_index: 9, offset_in_group: 55452, len: 6524 },
+    BundleProfile { primaries: 11, transfer: 13, group_index: 10, offset_in_group: 4312, len: 440 },
+    BundleProfile { primaries: 11, transfer: 14, group_index: 11, offset_in_group: 4752, len: 440 },
+    BundleProfile { primaries: 11, transfer: 15, group_index: 12, offset_in_group: 4752, len: 440 },
+    BundleProfile { primaries: 11, transfer: 16, group_index: 13, offset_in_group: 55452, len: 6524 },
+    BundleProfile { primaries: 11, transfer: 17, group_index: 14, offset_in_group: 55452, len: 6524 },
+    BundleProfile { primaries: 11, transfer: 18, group_index: 15, offset_in_group: 55452, len: 6524 },
     BundleProfile { primaries: 12, transfer: 1, group_index: 0, offset_in_group: 5184, len: 440 },
-    BundleProfile { primaries: 12, transfer: 4, group_index: 1, offset_in_group: 5066, len: 386 },
-    BundleProfile { primaries: 12, transfer: 5, group_index: 2, offset_in_group: 5066, len: 386 },
-    BundleProfile { primaries: 12, transfer: 6, group_index: 3, offset_in_group: 5624, len: 440 },
-    BundleProfile { primaries: 12, transfer: 7, group_index: 4, offset_in_group: 68492, len: 6524 },
-    BundleProfile { primaries: 12, transfer: 8, group_index: 5, offset_in_group: 5066, len: 386 },
-    BundleProfile { primaries: 12, transfer: 9, group_index: 6, offset_in_group: 68492, len: 6524 },
-    BundleProfile { primaries: 12, transfer: 10, group_index: 7, offset_in_group: 68500, len: 6524 },
-    BundleProfile { primaries: 12, transfer: 11, group_index: 8, offset_in_group: 68500, len: 6524 },
-    BundleProfile { primaries: 12, transfer: 12, group_index: 9, offset_in_group: 68500, len: 6524 },
-    BundleProfile { primaries: 12, transfer: 13, group_index: 10, offset_in_group: 5192, len: 440 },
-    BundleProfile { primaries: 12, transfer: 14, group_index: 11, offset_in_group: 5632, len: 440 },
-    BundleProfile { primaries: 12, transfer: 15, group_index: 12, offset_in_group: 5632, len: 440 },
-    BundleProfile { primaries: 12, transfer: 16, group_index: 13, offset_in_group: 68500, len: 6524 },
-    BundleProfile { primaries: 12, transfer: 17, group_index: 14, offset_in_group: 68500, len: 6524 },
-    BundleProfile { primaries: 12, transfer: 18, group_index: 15, offset_in_group: 68500, len: 6524 },
+    BundleProfile { primaries: 12, transfer: 4, group_index: 1, offset_in_group: 4680, len: 386 },
+    BundleProfile { primaries: 12, transfer: 5, group_index: 2, offset_in_group: 4680, len: 386 },
+    BundleProfile { primaries: 12, transfer: 6, group_index: 3, offset_in_group: 5184, len: 440 },
+    BundleProfile { primaries: 12, transfer: 7, group_index: 4, offset_in_group: 61968, len: 6524 },
+    BundleProfile { primaries: 12, transfer: 8, group_index: 5, offset_in_group: 4680, len: 386 },
+    BundleProfile { primaries: 12, transfer: 9, group_index: 6, offset_in_group: 61968, len: 6524 },
+    BundleProfile { primaries: 12, transfer: 10, group_index: 7, offset_in_group: 61976, len: 6524 },
+    BundleProfile { primaries: 12, transfer: 11, group_index: 8, offset_in_group: 61976, len: 6524 },
+    BundleProfile { primaries: 12, transfer: 12, group_index: 9, offset_in_group: 61976, len: 6524 },
+    BundleProfile { primaries: 12, transfer: 13, group_index: 10, offset_in_group: 4752, len: 440 },
+    BundleProfile { primaries: 12, transfer: 14, group_index: 11, offset_in_group: 5192, len: 440 },
+    BundleProfile { primaries: 12, transfer: 15, group_index: 12, offset_in_group: 5192, len: 440 },
+    BundleProfile { primaries: 12, transfer: 16, group_index: 13, offset_in_group: 61976, len: 6524 },
+    BundleProfile { primaries: 12, transfer: 17, group_index: 14, offset_in_group: 61976, len: 6524 },
+    BundleProfile { primaries: 12, transfer: 18, group_index: 15, offset_in_group: 61976, len: 6524 },
     BundleProfile { primaries: 22, transfer: 1, group_index: 0, offset_in_group: 5624, len: 440 },
-    BundleProfile { primaries: 22, transfer: 4, group_index: 1, offset_in_group: 5452, len: 386 },
-    BundleProfile { primaries: 22, transfer: 5, group_index: 2, offset_in_group: 5452, len: 386 },
-    BundleProfile { primaries: 22, transfer: 6, group_index: 3, offset_in_group: 6064, len: 440 },
-    BundleProfile { primaries: 22, transfer: 7, group_index: 4, offset_in_group: 75016, len: 6524 },
-    BundleProfile { primaries: 22, transfer: 8, group_index: 5, offset_in_group: 5452, len: 386 },
-    BundleProfile { primaries: 22, transfer: 9, group_index: 6, offset_in_group: 75016, len: 6524 },
-    BundleProfile { primaries: 22, transfer: 10, group_index: 7, offset_in_group: 75024, len: 6524 },
-    BundleProfile { primaries: 22, transfer: 11, group_index: 8, offset_in_group: 75024, len: 6524 },
-    BundleProfile { primaries: 22, transfer: 12, group_index: 9, offset_in_group: 75024, len: 6524 },
-    BundleProfile { primaries: 22, transfer: 13, group_index: 10, offset_in_group: 5632, len: 440 },
-    BundleProfile { primaries: 22, transfer: 14, group_index: 11, offset_in_group: 6072, len: 440 },
-    BundleProfile { primaries: 22, transfer: 15, group_index: 12, offset_in_group: 6072, len: 440 },
-    BundleProfile { primaries: 22, transfer: 16, group_index: 13, offset_in_group: 75024, len: 6524 },
-    BundleProfile { primaries: 22, transfer: 17, group_index: 14, offset_in_group: 75024, len: 6524 },
-    BundleProfile { primaries: 22, transfer: 18, group_index: 15, offset_in_group: 75024, len: 6524 },
+    BundleProfile { primaries: 22, transfer: 4, group_index: 1, offset_in_group: 5066, len: 386 },
+    BundleProfile { primaries: 22, transfer: 5, group_index: 2, offset_in_group: 5066, len: 386 },
+    BundleProfile { primaries: 22, transfer: 6, group_index: 3, offset_in_group: 5624, len: 440 },
+    BundleProfile { primaries: 22, transfer: 7, group_index: 4, offset_in_group: 68492, len: 6524 },
+    BundleProfile { primaries: 22, transfer: 8, group_index: 5, offset_in_group: 5066, len: 386 },
+    BundleProfile { primaries: 22, transfer: 9, group_index: 6, offset_in_group: 68492, len: 6524 },
+    BundleProfile { primaries: 22, transfer: 10, group_index: 7, offset_in_group: 68500, len: 6524 },
+    BundleProfile { primaries: 22, transfer: 11, group_index: 8, offset_in_group: 68500, len: 6524 },
+    BundleProfile { primaries: 22, transfer: 12, group_index: 9, offset_in_group: 68500, len: 6524 },
+    BundleProfile { primaries: 22, transfer: 13, group_index: 10, offset_in_group: 5192, len: 440 },
+    BundleProfile { primaries: 22, transfer: 14, group_index: 11, offset_in_group: 5632, len: 440 },
+    BundleProfile { primaries: 22, transfer: 15, group_index: 12, offset_in_group: 5632, len: 440 },
+    BundleProfile { primaries: 22, transfer: 16, group_index: 13, offset_in_group: 68500, len: 6524 },
+    BundleProfile { primaries: 22, transfer: 17, group_index: 14, offset_in_group: 68500, len: 6524 },
+    BundleProfile { primaries: 22, transfer: 18, group_index: 15, offset_in_group: 68500, len: 6524 },
 ];
 
 /// GRAY-class profile locator table, sorted by `(primaries, transfer)`
 /// for binary search. Locators point into the same groups as
-/// [`BUNDLE_PROFILES`] (each group's decoded bytes pack RGB first,
-/// then GRAY).
-pub(crate) static GRAY_BUNDLE_PROFILES: [BundleProfile; 174] = [
+/// [`BUNDLE_PROFILES`] (each group's decoded bytes pack GRAY first,
+/// then RGB).
+pub(crate) static GRAY_BUNDLE_PROFILES: [BundleProfile; 175] = [
+    BundleProfile { primaries: 1, transfer: 1, group_index: 0, offset_in_group: 0, len: 418 },
     BundleProfile { primaries: 1, transfer: 4, group_index: 1, offset_in_group: 0, len: 400 },
     BundleProfile { primaries: 1, transfer: 5, group_index: 2, offset_in_group: 0, len: 400 },
     BundleProfile { primaries: 1, transfer: 6, group_index: 3, offset_in_group: 0, len: 418 },
@@ -261,7 +247,7 @@ pub(crate) static GRAY_BUNDLE_PROFILES: [BundleProfile; 174] = [
     BundleProfile { primaries: 1, transfer: 16, group_index: 13, offset_in_group: 0, len: 2448 },
     BundleProfile { primaries: 1, transfer: 17, group_index: 14, offset_in_group: 0, len: 2448 },
     BundleProfile { primaries: 1, transfer: 18, group_index: 15, offset_in_group: 0, len: 2448 },
-    BundleProfile { primaries: 4, transfer: 1, group_index: 0, offset_in_group: 0, len: 414 },
+    BundleProfile { primaries: 4, transfer: 1, group_index: 0, offset_in_group: 418, len: 414 },
     BundleProfile { primaries: 4, transfer: 4, group_index: 1, offset_in_group: 400, len: 396 },
     BundleProfile { primaries: 4, transfer: 5, group_index: 2, offset_in_group: 400, len: 396 },
     BundleProfile { primaries: 4, transfer: 6, group_index: 3, offset_in_group: 418, len: 414 },
@@ -277,7 +263,7 @@ pub(crate) static GRAY_BUNDLE_PROFILES: [BundleProfile; 174] = [
     BundleProfile { primaries: 4, transfer: 16, group_index: 13, offset_in_group: 2448, len: 2444 },
     BundleProfile { primaries: 4, transfer: 17, group_index: 14, offset_in_group: 2448, len: 2444 },
     BundleProfile { primaries: 4, transfer: 18, group_index: 15, offset_in_group: 2448, len: 2444 },
-    BundleProfile { primaries: 5, transfer: 1, group_index: 0, offset_in_group: 414, len: 418 },
+    BundleProfile { primaries: 5, transfer: 1, group_index: 0, offset_in_group: 0, len: 418 },
     BundleProfile { primaries: 5, transfer: 4, group_index: 1, offset_in_group: 0, len: 400 },
     BundleProfile { primaries: 5, transfer: 5, group_index: 2, offset_in_group: 0, len: 400 },
     BundleProfile { primaries: 5, transfer: 6, group_index: 3, offset_in_group: 0, len: 418 },
@@ -293,7 +279,7 @@ pub(crate) static GRAY_BUNDLE_PROFILES: [BundleProfile; 174] = [
     BundleProfile { primaries: 5, transfer: 16, group_index: 13, offset_in_group: 0, len: 2448 },
     BundleProfile { primaries: 5, transfer: 17, group_index: 14, offset_in_group: 0, len: 2448 },
     BundleProfile { primaries: 5, transfer: 18, group_index: 15, offset_in_group: 0, len: 2448 },
-    BundleProfile { primaries: 6, transfer: 1, group_index: 0, offset_in_group: 414, len: 418 },
+    BundleProfile { primaries: 6, transfer: 1, group_index: 0, offset_in_group: 0, len: 418 },
     BundleProfile { primaries: 6, transfer: 4, group_index: 1, offset_in_group: 0, len: 400 },
     BundleProfile { primaries: 6, transfer: 5, group_index: 2, offset_in_group: 0, len: 400 },
     BundleProfile { primaries: 6, transfer: 6, group_index: 3, offset_in_group: 0, len: 418 },
@@ -309,7 +295,7 @@ pub(crate) static GRAY_BUNDLE_PROFILES: [BundleProfile; 174] = [
     BundleProfile { primaries: 6, transfer: 16, group_index: 13, offset_in_group: 0, len: 2448 },
     BundleProfile { primaries: 6, transfer: 17, group_index: 14, offset_in_group: 0, len: 2448 },
     BundleProfile { primaries: 6, transfer: 18, group_index: 15, offset_in_group: 0, len: 2448 },
-    BundleProfile { primaries: 7, transfer: 1, group_index: 0, offset_in_group: 414, len: 418 },
+    BundleProfile { primaries: 7, transfer: 1, group_index: 0, offset_in_group: 0, len: 418 },
     BundleProfile { primaries: 7, transfer: 4, group_index: 1, offset_in_group: 0, len: 400 },
     BundleProfile { primaries: 7, transfer: 5, group_index: 2, offset_in_group: 0, len: 400 },
     BundleProfile { primaries: 7, transfer: 6, group_index: 3, offset_in_group: 0, len: 418 },
@@ -325,7 +311,7 @@ pub(crate) static GRAY_BUNDLE_PROFILES: [BundleProfile; 174] = [
     BundleProfile { primaries: 7, transfer: 16, group_index: 13, offset_in_group: 0, len: 2448 },
     BundleProfile { primaries: 7, transfer: 17, group_index: 14, offset_in_group: 0, len: 2448 },
     BundleProfile { primaries: 7, transfer: 18, group_index: 15, offset_in_group: 0, len: 2448 },
-    BundleProfile { primaries: 8, transfer: 1, group_index: 0, offset_in_group: 0, len: 414 },
+    BundleProfile { primaries: 8, transfer: 1, group_index: 0, offset_in_group: 418, len: 414 },
     BundleProfile { primaries: 8, transfer: 4, group_index: 1, offset_in_group: 400, len: 396 },
     BundleProfile { primaries: 8, transfer: 5, group_index: 2, offset_in_group: 400, len: 396 },
     BundleProfile { primaries: 8, transfer: 6, group_index: 3, offset_in_group: 418, len: 414 },
@@ -341,7 +327,7 @@ pub(crate) static GRAY_BUNDLE_PROFILES: [BundleProfile; 174] = [
     BundleProfile { primaries: 8, transfer: 16, group_index: 13, offset_in_group: 2448, len: 2444 },
     BundleProfile { primaries: 8, transfer: 17, group_index: 14, offset_in_group: 2448, len: 2444 },
     BundleProfile { primaries: 8, transfer: 18, group_index: 15, offset_in_group: 2448, len: 2444 },
-    BundleProfile { primaries: 9, transfer: 1, group_index: 0, offset_in_group: 414, len: 418 },
+    BundleProfile { primaries: 9, transfer: 1, group_index: 0, offset_in_group: 0, len: 418 },
     BundleProfile { primaries: 9, transfer: 4, group_index: 1, offset_in_group: 0, len: 400 },
     BundleProfile { primaries: 9, transfer: 5, group_index: 2, offset_in_group: 0, len: 400 },
     BundleProfile { primaries: 9, transfer: 6, group_index: 3, offset_in_group: 0, len: 418 },
@@ -389,7 +375,7 @@ pub(crate) static GRAY_BUNDLE_PROFILES: [BundleProfile; 174] = [
     BundleProfile { primaries: 11, transfer: 16, group_index: 13, offset_in_group: 7336, len: 2448 },
     BundleProfile { primaries: 11, transfer: 17, group_index: 14, offset_in_group: 7336, len: 2448 },
     BundleProfile { primaries: 11, transfer: 18, group_index: 15, offset_in_group: 7336, len: 2448 },
-    BundleProfile { primaries: 12, transfer: 1, group_index: 0, offset_in_group: 414, len: 418 },
+    BundleProfile { primaries: 12, transfer: 1, group_index: 0, offset_in_group: 0, len: 418 },
     BundleProfile { primaries: 12, transfer: 4, group_index: 1, offset_in_group: 0, len: 400 },
     BundleProfile { primaries: 12, transfer: 5, group_index: 2, offset_in_group: 0, len: 400 },
     BundleProfile { primaries: 12, transfer: 6, group_index: 3, offset_in_group: 0, len: 418 },
@@ -405,7 +391,7 @@ pub(crate) static GRAY_BUNDLE_PROFILES: [BundleProfile; 174] = [
     BundleProfile { primaries: 12, transfer: 16, group_index: 13, offset_in_group: 0, len: 2448 },
     BundleProfile { primaries: 12, transfer: 17, group_index: 14, offset_in_group: 0, len: 2448 },
     BundleProfile { primaries: 12, transfer: 18, group_index: 15, offset_in_group: 0, len: 2448 },
-    BundleProfile { primaries: 22, transfer: 1, group_index: 0, offset_in_group: 414, len: 418 },
+    BundleProfile { primaries: 22, transfer: 1, group_index: 0, offset_in_group: 0, len: 418 },
     BundleProfile { primaries: 22, transfer: 4, group_index: 1, offset_in_group: 0, len: 400 },
     BundleProfile { primaries: 22, transfer: 5, group_index: 2, offset_in_group: 0, len: 400 },
     BundleProfile { primaries: 22, transfer: 6, group_index: 3, offset_in_group: 0, len: 418 },

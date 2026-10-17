@@ -42,6 +42,11 @@ clippy:
 test:
     cargo test --workspace
 
+# Compare production fused scan predicates with forced scalar on macOS ARM64.
+arm-scan-tiers-macos:
+    mkdir -p "$HOME/tmp"
+    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench -p zenpixels-convert --features __bench_scan --bench kernel_tiers -- --cpu-policy=unrestricted --format=llm > "$HOME/tmp/zenpixels-scan-tiers.log" 2>&1
+
 # ── ICC profile table management ──────────────────────────────────────
 
 # Fetch ICC profiles from R2 to local cache using the manifest
@@ -168,3 +173,8 @@ cicp-bundle-update: cicp-bundle-gen
     cargo test -p zenpixels-convert --features cms-moxcms cicp_bundle
     cargo test -p icc-gen --release --bin cicp_bundle_gen
     @echo "CICP bundle regenerated and verified (golden sha256 + moxcms byte-equality)."
+
+# Recheck the Ultra HDR corpus profile using both moxcms and Little CMS.
+icc-hdr-profile-check input output:
+    cargo run -p icc-gen --features lcms2-crosscheck --bin icc-gen -- --report {{input}} {{output}}
+    cargo test -p zenpixels --features icc icc::

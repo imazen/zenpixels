@@ -1,3 +1,12 @@
+> **2026-10-15: one 0.2 line.** `release/0.2-bridge` (with PR #85 and the
+> #89 ICC-database backports) was merged into `main` as `1d3ddd21`, so `main`
+> is the 0.2.17 line and the bridge branch is retired. Consumers that pinned
+> the bridge or older main revs (zenavif, zenpng, zenjpeg, ultrahdr, zenpipe)
+> now pin `1d3ddd21`; zenmetrics stays on `e56f626b` until 0.2.17 publishes.
+> `release/0.3.1` (+ #90) still lacks PR #85 and main's newer fixes; rebase it
+> onto `main` before its consumer validation. Publishing 0.2.17 and the 0.3.1
+> rebase are the open steps.
+
 # Release checklist: 0.2.17 and 0.3.1
 
 2026-09-27. Use the [status ledger](implementation-status-0.2-and-0.3.md) for exact

@@ -2688,9 +2688,16 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             None,
             current.transfer(),
         ),
+        // Naive depth steps scale code values; the transfer function is unchanged. Labelling
+        // their output linear made the gamut-matrix insertion put the matrix before the
+        // linearize step for Gamma22/BT.709 sources, i.e. in encoded space.
+        ConvertStep::NaiveU8ToF32 | ConvertStep::U16ToF32 => PixelDescriptor::new(
+            ChannelType::F32,
+            current.layout(),
+            current.alpha(),
+            current.transfer(),
+        ),
         ConvertStep::SrgbU8ToLinearF32
-        | ConvertStep::NaiveU8ToF32
-        | ConvertStep::U16ToF32
         | ConvertStep::PqU16ToLinearF32
         | ConvertStep::HlgU16ToLinearF32
         | ConvertStep::PqF32ToLinearF32

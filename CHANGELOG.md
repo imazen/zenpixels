@@ -29,6 +29,23 @@
   generic `NoPath` for these declaration failures. This does not add matrix
   conversion, format precedence, or a generic CICP resolver.
 
+### Fixed
+- Recognize "Display P3 Gamut with sRGB Transfer", the 520-byte v4.3 profile in
+  Android phone screenshots (five in imazen-26). icc-gen's `--report` run gives
+  normalized hash `0x2dc2d3340af4d7c8`: Display P3 with the sRGB curve, maximum
+  u16 reference error 1, all rendering intents admitted, no Little CMS
+  disagreement. No public signatures change.
+- Gamut conversions from Gamma 2.2 (Adobe RGB) and BT.709-transfer U8/U16
+  sources now apply the primaries matrix in linear light. The planner labelled
+  the output of the naive U8/U16 → F32 depth steps as linear, so it inserted
+  the matrix before the linearize step. Adobe RGB `(59, 106, 90)` → sRGB gave
+  red 36 instead of 0; an Adobe RGB photo differed from LittleCMS by up to 36
+  code values. sRGB- and PQ/HLG-encoded sources were unaffected.
+- Recognize the Display P3/sRGB ICC profile carried by the Ultra HDR corpus's
+  `rgba_uhdr.jpg`. The existing ICC generator identifies its normalized hash
+  as `0x11c9534ccea885a0`, with maximum reference error 1 in u16 channel units
+  and all rendering intents admitted. No public signatures change.
+
 ### Conversion follow-up
 
 - Correct PQ source-peak normalization, honor explicit linear luminance anchors,
@@ -119,6 +136,26 @@
   use `into_parts().data` for pool reuse or retain the full parts for pixel handoff.
 
 ### zenpixels-convert — fixed
+
+- Refuse primaries-10 (CIE XYZ) RGB synthesis: the generated colorants were
+  singular. Profile BT.709 primaries with BT.709 transfer (1,1) for RGB and
+  gray instead of treating its curve as sRGB. Validate every generated RGB
+  matrix against independent H.273 primaries adapted to D50; retain the
+  valid equal-energy-white gray profiles (#88). (upstream commit: e3fab915)
+- `synthesize_icc_for_cicp` returned a profile with a different tone curve
+  for two pairs, and a Display P3 profile that libultrahdr does not
+  recognise (#86, #87). (BT.2020, sRGB) got `REC2020_V4`, whose curve is
+  BT.709's (13 code values apart at linear 0.18), and (Display P3, BT.709)
+  got the sRGB-curve `DISPLAY_P3_V4`. The curated `DISPLAY_P3_V4` has no
+  `cicp` tag and truncated red/blue Z, so libultrahdr's colorant matcher
+  (0.001 tolerance) reported an unspecified gamut and decoded Display P3
+  Ultra HDR bases as BT.709. With `icc-db` (default) synthesis now serves the
+  generated, `cicp`-tagged profile for every pair; the curated constants are
+  the fallback without `icc-db`, and only for the pair whose curve each
+  carries exactly. The constants themselves are unchanged and still
+  exported. Tests: every synthesized profile's `cicp` tag names the
+  requested pair over the full grid; Display P3 colorants are within
+  libultrahdr's tolerance. No public signatures change.
 
 - Correct RGBA→GrayAlpha, matte-to-gray and source-domain unassociation before
   nonlinear transfer conversion. Preserve per-stage descriptors and PQ anchors

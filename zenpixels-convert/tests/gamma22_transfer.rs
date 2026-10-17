@@ -7,7 +7,7 @@
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
 };
-use zenpixels_convert::RowConverter;
+use zenpixels_convert::{ConvertOptions, ConvertPlan, RowConverter, convert_row};
 
 #[allow(clippy::excessive_precision)]
 const ADOBE_GAMMA: f32 = 2.19921875; // 563/256, Adobe RGB 1998 spec (exact in f32).
@@ -232,4 +232,190 @@ fn adobe_rgb_rgba_f32_to_bt709_rgba_f32_opaque_alpha_preserved() {
     // RGB channels should actually change (different primaries + TF).
     let rgb_changed = dst[0] != src[0] || dst[1] != src[1] || dst[2] != src[2];
     assert!(rgb_changed, "RGB channels should be transformed");
+}
+
+// ── Chromatic values against textbook matrices ──────────────────────────────
+//
+// Neutral gray is the same whether the gamut matrix runs before or after the
+// EOTF (the matrix rows sum to 1), so the tests above could not see the planner
+// putting the matrix ahead of the Gamma22 EOTF after a naive depth step. These
+// compare saturated colours with the published Adobe RGB (1998) → sRGB matrix.
+
+/// Adobe RGB (1998) linear → linear sRGB/BT.709, both D65.
+const ADOBE_TO_SRGB: [[f64; 3]; 3] = [
+    [1.398_356, -0.398_356, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, -0.042_929, 1.042_929],
+];
+
+fn adobe_u8_textbook_linear(px: [u8; 3]) -> [f64; 3] {
+    let l = px.map(|v| (f64::from(v) / 255.0).powf(563.0 / 256.0));
+    ADOBE_TO_SRGB.map(|row| row[0] * l[0] + row[1] * l[1] + row[2] * l[2])
+}
+
+fn grid() -> Vec<[u8; 3]> {
+    let mut v = Vec::new();
+    for r in (0..=255u16).step_by(17) {
+        for g in (0..=255u16).step_by(51) {
+            for b in (0..=255u16).step_by(85) {
+                v.push([r as u8, g as u8, b as u8]);
+            }
+        }
+    }
+    v
+}
+
+#[test]
+fn adobe_rgb_u8_to_linear_bt709_matches_textbook_with_gamut_kept() {
+    let src_desc = PixelDescriptor::new(
+        ChannelType::U8,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Gamma22,
+    )
+    .with_primaries(ColorPrimaries::AdobeRgb);
+    let opts = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+    let plan = ConvertPlan::new_explicit(src_desc, PixelDescriptor::RGBF32_LINEAR, &opts).unwrap();
+    let px = grid();
+    let src: Vec<u8> = px.iter().flatten().copied().collect();
+    let mut dst = vec![0f32; src.len()];
+    convert_row(
+        &plan,
+        &src,
+        bytemuck::cast_slice_mut(&mut dst),
+        px.len() as u32,
+    );
+    for (i, p) in px.iter().enumerate() {
+        let want = adobe_u8_textbook_linear(*p);
+        for c in 0..3 {
+            let got = f64::from(dst[i * 3 + c]);
+            assert!(
+                (got - want[c]).abs() < 2e-4,
+                "{p:?} channel {c}: got {got}, want {}",
+                want[c]
+            );
+        }
+    }
+    // (59, 106, 90): red falls outside sRGB and stays negative with clipping off.
+    let mut one = [0f32; 3];
+    convert_row(&plan, &[59, 106, 90], bytemuck::cast_slice_mut(&mut one), 1);
+    assert!(
+        one[0] < 0.0,
+        "out-of-gamut red should stay negative: {one:?}"
+    );
+}
+
+#[test]
+fn adobe_rgb_u8_to_srgb_u8_within_one_code_value() {
+    let src_desc = PixelDescriptor::new(
+        ChannelType::U8,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Gamma22,
+    )
+    .with_primaries(ColorPrimaries::AdobeRgb);
+    let mut conv = RowConverter::new(src_desc, PixelDescriptor::RGB8_SRGB).unwrap();
+    let px = grid();
+    let src: Vec<u8> = px.iter().flatten().copied().collect();
+    let mut dst = vec![0u8; src.len()];
+    conv.convert_row(&src, &mut dst, px.len() as u32);
+    for (i, p) in px.iter().enumerate() {
+        let want = adobe_u8_textbook_linear(*p).map(|l| {
+            let l = l.clamp(0.0, 1.0);
+            let e = if l <= 0.003_130_8 {
+                12.92 * l
+            } else {
+                1.055 * l.powf(1.0 / 2.4) - 0.055
+            };
+            (e * 255.0).round() as i32
+        });
+        for c in 0..3 {
+            let got = i32::from(dst[i * 3 + c]);
+            assert!(
+                (got - want[c]).abs() <= 1,
+                "{p:?} channel {c}: got {got}, want {}",
+                want[c]
+            );
+        }
+    }
+}
+
+#[test]
+fn adobe_rgb_u16_to_linear_bt709_matches_textbook() {
+    let src_desc = PixelDescriptor::new(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Gamma22,
+    )
+    .with_primaries(ColorPrimaries::AdobeRgb);
+    let opts = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+    let plan = ConvertPlan::new_explicit(src_desc, PixelDescriptor::RGBF32_LINEAR, &opts).unwrap();
+    let px = grid();
+    let src: Vec<u16> = px.iter().flatten().map(|&v| u16::from(v) * 257).collect();
+    let mut dst = vec![0f32; src.len()];
+    convert_row(
+        &plan,
+        bytemuck::cast_slice(&src),
+        bytemuck::cast_slice_mut(&mut dst),
+        px.len() as u32,
+    );
+    for (i, p) in px.iter().enumerate() {
+        let want = adobe_u8_textbook_linear(*p);
+        for c in 0..3 {
+            let got = f64::from(dst[i * 3 + c]);
+            assert!(
+                (got - want[c]).abs() < 2e-4,
+                "{p:?} channel {c}: got {got}, want {}",
+                want[c]
+            );
+        }
+    }
+}
+
+/// The same ordering bug for a BT.709-transfer source with Display P3 primaries.
+#[test]
+fn bt709_transfer_p3_u8_to_linear_bt709_matches_textbook() {
+    const P3_TO_SRGB: [[f64; 3]; 3] = [
+        [1.224_940, -0.224_940, 0.0],
+        [-0.042_057, 1.042_057, 0.0],
+        [-0.019_638, -0.078_636, 1.098_274],
+    ];
+    let eotf = |v: f64| {
+        if v < 0.081 {
+            v / 4.5
+        } else {
+            ((v + 0.099) / 1.099).powf(1.0 / 0.45)
+        }
+    };
+    let src_desc = PixelDescriptor::new(
+        ChannelType::U8,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Bt709,
+    )
+    .with_primaries(ColorPrimaries::DisplayP3);
+    let opts = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+    let plan = ConvertPlan::new_explicit(src_desc, PixelDescriptor::RGBF32_LINEAR, &opts).unwrap();
+    let px = grid();
+    let src: Vec<u8> = px.iter().flatten().copied().collect();
+    let mut dst = vec![0f32; src.len()];
+    convert_row(
+        &plan,
+        &src,
+        bytemuck::cast_slice_mut(&mut dst),
+        px.len() as u32,
+    );
+    for (i, p) in px.iter().enumerate() {
+        let l = p.map(|v| eotf(f64::from(v) / 255.0));
+        let want = P3_TO_SRGB.map(|row| row[0] * l[0] + row[1] * l[1] + row[2] * l[2]);
+        for c in 0..3 {
+            let got = f64::from(dst[i * 3 + c]);
+            assert!(
+                (got - want[c]).abs() < 5e-4,
+                "{p:?} channel {c}: got {got}, want {}",
+                want[c]
+            );
+        }
+    }
 }
