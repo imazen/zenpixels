@@ -148,12 +148,12 @@ fn unknown_cicp_codes_return_none() {
 fn cicp_constants_descriptor_roundtrip() {
     for (cicp, name) in [
         (Cicp::SRGB, "SRGB"),
-        (Cicp::BT2100_PQ, "BT2100_PQ"),
-        (Cicp::BT2100_HLG, "BT2100_HLG"),
+        (Cicp::new(9, 16, 0, true), "BT2100_PQ_RGB"),
+        (Cicp::new(9, 18, 0, true), "BT2100_HLG_RGB"),
         (Cicp::DISPLAY_P3, "DISPLAY_P3"),
     ] {
         for format in [PixelFormat::Rgb8, PixelFormat::RgbF32, PixelFormat::Rgba8] {
-            let desc = cicp.to_descriptor(format);
+            let desc = cicp.try_to_descriptor(format).unwrap();
             assert_eq!(desc.format, format, "{name} format");
             assert_eq!(
                 desc.signal_range,
@@ -176,7 +176,7 @@ fn cicp_constants_descriptor_roundtrip() {
                 "{name} TC"
             );
             assert_eq!(back.full_range, cicp.full_range, "{name} full_range");
-            // matrix_coefficients is always 0 when round-tripping through descriptor
+            // This projection accepts already-RGB declarations (identity matrix).
             assert_eq!(back.matrix_coefficients, 0, "{name} MC");
         }
     }
@@ -186,7 +186,7 @@ fn cicp_constants_descriptor_roundtrip() {
 #[test]
 fn cicp_narrow_range_roundtrip() {
     let cicp = Cicp::new(1, 13, 0, false);
-    let desc = cicp.to_descriptor(PixelFormat::Rgb8);
+    let desc = cicp.try_to_descriptor(PixelFormat::Rgb8).unwrap();
     assert_eq!(desc.signal_range, SignalRange::Narrow);
     let back = Cicp::from_descriptor(&desc).unwrap();
     assert!(!back.full_range);
@@ -217,19 +217,19 @@ fn from_descriptor_rejects_unknown() {
 #[test]
 fn cicp_to_descriptor_alpha_handling() {
     // Format without alpha → None
-    let desc = Cicp::SRGB.to_descriptor(PixelFormat::Rgb8);
+    let desc = Cicp::SRGB.try_to_descriptor(PixelFormat::Rgb8).unwrap();
     assert!(desc.alpha().is_none());
 
     // Format with alpha → Some(Straight)
-    let desc = Cicp::SRGB.to_descriptor(PixelFormat::Rgba8);
+    let desc = Cicp::SRGB.try_to_descriptor(PixelFormat::Rgba8).unwrap();
     assert_eq!(desc.alpha(), Some(AlphaMode::Straight));
 
     // Gray format → None
-    let desc = Cicp::SRGB.to_descriptor(PixelFormat::Gray8);
+    let desc = Cicp::SRGB.try_to_descriptor(PixelFormat::Gray8).unwrap();
     assert!(desc.alpha().is_none());
 
     // GrayAlpha format → Some(Straight)
-    let desc = Cicp::SRGB.to_descriptor(PixelFormat::GrayA8);
+    let desc = Cicp::SRGB.try_to_descriptor(PixelFormat::GrayA8).unwrap();
     assert_eq!(desc.alpha(), Some(AlphaMode::Straight));
 }
 

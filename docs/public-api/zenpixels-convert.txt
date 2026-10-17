@@ -14,18 +14,18 @@
 #   free functions                             45
 #   inherent methods                          150
 #   struct fields                              50
-#   enum variants                              78
+#   enum variants                              80
 #   re-exports                                  3
 #   trait roster entries (type × trait)        92
 #   auto-trait-complete types                  18
 #   auto-trait exceptions                       3
 #
 # per-module pub lines:
-#   (root)                          174
+#   (root)                          175
 #   adapt                            15
 #   cms                              31
 #   converter                        31
-#   error                            29
+#   error                            30
 #   estimate                         47
 #   ext                              13
 #   gamut                             6
@@ -36,7 +36,7 @@
 #   orient                            3
 #   output                           19
 
-## items (381 lines)
+## items (383 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -100,6 +100,7 @@ pub error::ConvertError::Buffer(zenpixels::buffer::BufferError)
 pub error::ConvertError::BufferSize
 pub error::ConvertError::BufferSize::actual: usize
 pub error::ConvertError::BufferSize::expected: usize
+pub error::ConvertError::CicpDescriptor(zenpixels::cicp::CicpDescriptorError)
 pub error::ConvertError::CmsBackend(alloc::sync::Arc<cms::CmsPluginError>)
 pub error::ConvertError::CmsError(alloc::string::String)
 pub error::ConvertError::DepthReductionForbidden
@@ -232,6 +233,7 @@ pub ConvertError::Buffer(zenpixels::buffer::BufferError)
 pub ConvertError::BufferSize
 pub ConvertError::BufferSize::actual: usize
 pub ConvertError::BufferSize::expected: usize
+pub ConvertError::CicpDescriptor(zenpixels::cicp::CicpDescriptorError)
 pub ConvertError::CmsBackend(alloc::sync::Arc<cms::CmsPluginError>)
 pub ConvertError::CmsError(alloc::string::String)
 pub ConvertError::DepthReductionForbidden

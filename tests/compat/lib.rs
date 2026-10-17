@@ -11,6 +11,14 @@ pub fn through_conversion_crate(buffer: PixelBuffer) -> zenpixels_convert::Pixel
     buffer
 }
 
+// The migrated declaration API must be identical across both core lines.
+pub fn declare_rgb(
+    cicp: zenpixels::Cicp,
+    format: zenpixels::PixelFormat,
+) -> Result<zenpixels::PixelDescriptor, zenpixels::cicp::CicpDescriptorError> {
+    cicp.try_to_descriptor(format)
+}
+
 #[allow(dead_code)]
 struct Shared;
 impl zenpixels_convert::RowTransform for Shared {

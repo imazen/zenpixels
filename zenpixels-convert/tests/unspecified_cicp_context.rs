@@ -98,7 +98,18 @@ fn a_descriptor_that_claims_more_than_the_context_is_refused() {
     let e = src
         .convert_to(PixelDescriptor::RGBA8_SRGB.with_transfer(TransferFunction::Unknown))
         .unwrap_err();
-    assert!(matches!(e.error(), ConvertError::NoPath { .. }), "{e:?}");
+    // The context's CICP primaries code 2 (unspecified) has no
+    // `ColorPrimaries`; the checked projection (#81) reports that instead
+    // of the generic `NoPath`.
+    assert!(
+        matches!(
+            e.error(),
+            ConvertError::CicpDescriptor(zenpixels::cicp::CicpDescriptorError::UnmappedPrimaries(
+                2
+            ))
+        ),
+        "{e:?}"
+    );
     // And a non-zero matrix on an RGB buffer is a mislabel too.
     let bad = buffer(unknown(PixelDescriptor::RGB8_SRGB))
         .with_color_context(Arc::new(ColorContext::from_cicp(Cicp::new(2, 2, 1, true))));

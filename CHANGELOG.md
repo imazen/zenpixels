@@ -18,6 +18,17 @@
 
 ## [Unreleased]
 
+### Checked CICP declarations
+
+- Add `Cicp::try_to_descriptor` for already-RGB/gray samples. It rejects
+  non-identity matrices, unrepresentable primaries/transfers, and CMYK/Oklab
+  layouts without inspecting pixels or allocating. Raw `Cicp::new` remains
+  permissive. Deprecate the lossy `to_descriptor` projection in 0.2.17.
+- Finalization uses this shared check before conversion/output allocation and
+  preserves `cicp::CicpDescriptorError` as `ConvertError::CicpDescriptor`, replacing
+  generic `NoPath` for these declaration failures. This does not add matrix
+  conversion, format precedence, or a generic CICP resolver.
+
 ### Fixed
 - Recognize "Display P3 Gamut with sRGB Transfer", the 520-byte v4.3 profile in
   Android phone screenshots (five in imazen-26). icc-gen's `--report` run gives

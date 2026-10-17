@@ -9,6 +9,44 @@ use zenpixels_convert::{
     policy::ConvertOptions,
 };
 
+#[test]
+fn invalid_current_or_target_cicp_retains_the_declaration_error() {
+    use std::error::Error;
+    use zenpixels::cicp::CicpDescriptorError;
+    use zenpixels_convert::ConvertError;
+
+    for bad in [Cicp::new(9, 16, 9, true), Cicp::new(1, 7, 0, true)] {
+        let expected = bad.try_to_descriptor(PixelFormat::Rgb8).unwrap_err();
+        for bad_is_current in [false, true] {
+            let mut input =
+                PixelBuffer::from_vec(vec![7, 51, 193], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+            if bad_is_current {
+                input = input.with_color_context(Arc::new(ColorContext::from_cicp(bad)));
+            }
+            let target = OutputProfile::Named(if bad_is_current { Cicp::SRGB } else { bad });
+            let error = finalize_for_output_with(
+                &input,
+                &ColorOrigin::assumed(),
+                target,
+                PixelFormat::Rgb8,
+                None,
+            )
+            .err()
+            .expect("contradictory CICP must not produce an EncodeReady");
+            assert_eq!(error.error(), &ConvertError::CicpDescriptor(expected));
+            assert_eq!(
+                error
+                    .error()
+                    .source()
+                    .unwrap()
+                    .downcast_ref::<CicpDescriptorError>(),
+                Some(&expected)
+            );
+            assert_eq!(input.as_slice().row(0), &[7, 51, 193]);
+        }
+    }
+}
+
 #[derive(Default)]
 struct RecordingCms(Mutex<Vec<(Vec<u8>, Vec<u8>)>>);
 struct Invert;
