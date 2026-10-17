@@ -9,21 +9,21 @@
 ## summary
 #
 #   pub modules                                11
-#   pub types (struct/enum/trait/alias)        85
-#   pub consts/statics                        278
+#   pub types (struct/enum/trait/alias)        86
+#   pub consts/statics                        280
 #   free functions                              4
-#   inherent methods                          256
+#   inherent methods                          259
 #   struct fields                             115
 #   enum variants                             219
 #   re-exports                                  4
-#   trait roster entries (type × trait)       267
-#   auto-trait-complete types                  38
+#   trait roster entries (type × trait)       270
+#   auto-trait-complete types                  39
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          405
+#   (root)                          407
 #   buffer                          244
-#   cicp                             34
+#   cicp                             38
 #   color                            64
 #   descriptor                      150
 #   hdr                              12
@@ -33,7 +33,7 @@
 #   policy                           25
 #   sample                            5
 
-## items (844 lines)
+## items (849 lines)
 
 pub mod zenpixels
 pub use At
@@ -194,10 +194,15 @@ pub fn cicp::Cicp::color_primaries_name(u8) -> &'static str
 pub fn cicp::Cicp::from_descriptor(&descriptor::PixelDescriptor) -> core::option::Option<Self>
 pub fn cicp::Cicp::matrix_coefficients_name(u8) -> &'static str
 pub const fn cicp::Cicp::new(u8, u8, u8, bool) -> Self [also: (root)]
+pub const fn cicp::Cicp::resolve_matrix(self, core::option::Option<u8>) -> core::result::Result<Self, cicp::UnspecifiedMatrixError> [also: (root)]
 pub fn cicp::Cicp::to_descriptor(&self, descriptor::PixelFormat) -> descriptor::PixelDescriptor
 pub fn cicp::Cicp::transfer_characteristics_name(u8) -> &'static str
 pub fn cicp::Cicp::transfer_function_enum(&self) -> descriptor::TransferFunction
 pub fn cicp::Cicp::try_to_descriptor(&self, descriptor::PixelFormat) -> core::result::Result<descriptor::PixelDescriptor, cicp::CicpDescriptorError>
+#[non_exhaustive] pub struct cicp::UnspecifiedMatrixError
+pub fn cicp::UnspecifiedMatrixError::color_primaries(&self) -> u8
+pub fn cicp::UnspecifiedMatrixError::matrix_coefficients(&self) -> u8
+pub fn cicp::UnspecifiedMatrixError::transfer_characteristics(&self) -> u8
 pub mod color
 pub color::ColorAuthority::Cicp
 pub color::ColorAuthority::Icc
@@ -880,7 +885,7 @@ pub type ContentLightLevel = hdr::ContentLightLevel
 pub type DiffuseWhite = hdr::DiffuseWhite
 pub type MasteringDisplay = hdr::MasteringDisplay
 
-## trait impls (48 types)
+## trait impls (49 types)
 
 buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
@@ -898,6 +903,7 @@ buffer::PixelSliceMut<'a>: From<buffer::PixelSliceMut<'a, P>>
 buffer::Rgbx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 cicp::Cicp: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 cicp::CicpDescriptorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+cicp::UnspecifiedMatrixError: Debug, Display, Error
 color::ColorAuthority: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 color::ColorContext: Clone, Debug, Default, Eq, PartialEq
 color::ColorOrigin: Clone, Debug, Eq, PartialEq

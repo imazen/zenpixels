@@ -18,6 +18,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- `Cicp::resolve_matrix(hint)` and `UnspecifiedMatrixError`: resolve `matrix_coefficients`
+  per H.273 V4 (07/2024) Table 4. Self-contained codes (0, 1, 4–11, 14–17) resolve as
+  given; 12/13 need primaries with defined chromaticity; 2 and reserved codes take a
+  valid hint or fail. `Cicp::matrix_coefficients_name` now names 15–17 (IPT-C2,
+  YCgCo-Re, YCgCo-Ro). Resolving signalling does not imply the caller implements that
+  matrix (#55).
+
 ### Checked CICP declarations
 
 - Add `Cicp::try_to_descriptor` for already-RGB/gray samples. It rejects
