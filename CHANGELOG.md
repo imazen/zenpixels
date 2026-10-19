@@ -18,6 +18,10 @@
 
 ## [Unreleased]
 
+### Dependency compatibility
+
+- Admit archmage/magetypes 0.9.31-beta.1 alongside compatible stable versions; explicit-token aliases are used where needed. Formatting, strict library lint and library tests pass (`cdaa3939`).
+
 ### Added
 
 - `Cicp::resolve_matrix(hint)` and `UnspecifiedMatrixError`: resolve `matrix_coefficients`
