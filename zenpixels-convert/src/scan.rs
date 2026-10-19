@@ -106,11 +106,11 @@ pub fn is_opaque_rgba8(rgba: &[u8]) -> bool {
 #[cfg(test)]
 #[magetypes(define(u8x32), v3, neon, wasm128, scalar)]
 fn is_opaque_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
-    let alpha_mask = u8x32::from_array(token, ALPHA_MASK_RGBA8);
-    let opaque = u8x32::splat(token, 0xFF);
-    let (chunks, tail) = u8x32::partition_slice(token, rgba);
+    let alpha_mask = u8x32::from_array_t(token, ALPHA_MASK_RGBA8);
+    let opaque = u8x32::splat_t(token, 0xFF);
+    let (chunks, tail) = u8x32::partition_slice_t(token, rgba);
     for chunk in chunks {
-        let v = u8x32::load(token, chunk);
+        let v = u8x32::load_t(token, chunk);
         // (v != 0xFF) at every byte; mask down to alpha lanes.
         let bad = v.simd_ne(opaque) & alpha_mask;
         if bad.any_true() {
@@ -137,15 +137,15 @@ pub fn is_grayscale_rgba8(rgba: &[u8]) -> bool {
 #[cfg(test)]
 #[magetypes(define(u8x32), v3, neon, wasm128, scalar)]
 fn is_grayscale_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
-    let mask = u8x32::from_array(token, RGB_DELTA_MASK_RGBA8);
+    let mask = u8x32::from_array_t(token, RGB_DELTA_MASK_RGBA8);
     // The shifted-load pattern (chunk i, chunk i+1) doesn't fit
     // `partition_slice`'s non-overlapping chunks; manual stride here.
     let mut i = 0;
     while i + 33 <= rgba.len() {
         let chunk0: &[u8; 32] = (&rgba[i..i + 32]).try_into().unwrap();
         let chunk1: &[u8; 32] = (&rgba[i + 1..i + 33]).try_into().unwrap();
-        let v0 = u8x32::load(token, chunk0);
-        let v1 = u8x32::load(token, chunk1);
+        let v0 = u8x32::load_t(token, chunk0);
+        let v1 = u8x32::load_t(token, chunk1);
         // simd_ne yields 0xFF where bytes differ; mask keeps only the
         // R^G and G^B byte positions that matter.
         let masked = v0.simd_ne(v1) & mask;
@@ -177,9 +177,9 @@ pub fn is_grayscale_rgb8(rgb: &[u8]) -> bool {
 fn is_grayscale_rgb8_impl(token: Token, rgb: &[u8]) -> bool {
     // Within bytes [0..32), [32..64), [64..96) the phase k%3 starts at
     // 0, 2, 1 respectively (because 32 % 3 == 2).
-    let m0 = u8x32::from_array(token, rgb8_phase_mask(0));
-    let m1 = u8x32::from_array(token, rgb8_phase_mask(2));
-    let m2 = u8x32::from_array(token, rgb8_phase_mask(1));
+    let m0 = u8x32::from_array_t(token, rgb8_phase_mask(0));
+    let m1 = u8x32::from_array_t(token, rgb8_phase_mask(2));
+    let m2 = u8x32::from_array_t(token, rgb8_phase_mask(1));
 
     let mut i = 0;
     // Need 193 bytes per super-chunk (64+64+64 plus the final +1 shifted load).
@@ -187,8 +187,8 @@ fn is_grayscale_rgb8_impl(token: Token, rgb: &[u8]) -> bool {
         for (off, mask) in [(0usize, m0), (32, m1), (64, m2)] {
             let c0: &[u8; 32] = (&rgb[i + off..i + off + 32]).try_into().unwrap();
             let c1: &[u8; 32] = (&rgb[i + off + 1..i + off + 33]).try_into().unwrap();
-            let v0 = u8x32::load(token, c0);
-            let v1 = u8x32::load(token, c1);
+            let v0 = u8x32::load_t(token, c0);
+            let v1 = u8x32::load_t(token, c1);
             let masked = v0.simd_ne(v1) & mask;
             if masked.any_true() {
                 return false;
@@ -251,10 +251,10 @@ pub fn bit_replication_lossless_u16(samples: &[u16]) -> bool {
 
 #[magetypes(define(u16x16), v3, neon, wasm128, scalar)]
 fn bit_replication_lossless_u16_impl(token: Token, samples: &[u16]) -> bool {
-    let lo_mask = u16x16::splat(token, 0xFF);
-    let (chunks, tail) = u16x16::partition_slice(token, samples);
+    let lo_mask = u16x16::splat_t(token, 0xFF);
+    let (chunks, tail) = u16x16::partition_slice_t(token, samples);
     for chunk in chunks {
-        let v = u16x16::load(token, chunk);
+        let v = u16x16::load_t(token, chunk);
         let hi = v.shr_logical_const::<8>();
         let lo = v & lo_mask;
         if hi.simd_ne(lo).any_true() {
@@ -332,11 +332,11 @@ pub fn is_opaque_rgba16(rgba: &[u16]) -> bool {
 
 #[magetypes(define(u16x16), v3, neon, wasm128, scalar)]
 fn is_opaque_rgba16_impl(token: Token, rgba: &[u16]) -> bool {
-    let alpha_mask = u16x16::from_array(token, ALPHA_MASK_RGBA16);
-    let opaque = u16x16::splat(token, 0xFFFF);
-    let (chunks, tail) = u16x16::partition_slice(token, rgba);
+    let alpha_mask = u16x16::from_array_t(token, ALPHA_MASK_RGBA16);
+    let opaque = u16x16::splat_t(token, 0xFFFF);
+    let (chunks, tail) = u16x16::partition_slice_t(token, rgba);
     for chunk in chunks {
-        let v = u16x16::load(token, chunk);
+        let v = u16x16::load_t(token, chunk);
         let bad = v.simd_ne(opaque) & alpha_mask;
         if bad.any_true() {
             return false;
@@ -358,14 +358,14 @@ pub fn is_grayscale_rgba16(rgba: &[u16]) -> bool {
 
 #[magetypes(define(u16x16), v3, neon, wasm128, scalar)]
 fn is_grayscale_rgba16_impl(token: Token, rgba: &[u16]) -> bool {
-    let mask = u16x16::from_array(token, RGB_DELTA_MASK_RGBA16);
+    let mask = u16x16::from_array_t(token, RGB_DELTA_MASK_RGBA16);
     // Shifted-load pattern (chunk i, chunk i+1) — manual indexing.
     let mut i = 0;
     while i + 17 <= rgba.len() {
         let c0: &[u16; 16] = (&rgba[i..i + 16]).try_into().unwrap();
         let c1: &[u16; 16] = (&rgba[i + 1..i + 17]).try_into().unwrap();
-        let v0 = u16x16::load(token, c0);
-        let v1 = u16x16::load(token, c1);
+        let v0 = u16x16::load_t(token, c0);
+        let v1 = u16x16::load_t(token, c1);
         let masked = v0.simd_ne(v1) & mask;
         if masked.any_true() {
             return false;
@@ -390,18 +390,18 @@ pub fn is_grayscale_rgb16(rgb: &[u16]) -> bool {
 
 #[magetypes(define(u16x16), v3, neon, wasm128, scalar)]
 fn is_grayscale_rgb16_impl(token: Token, rgb: &[u16]) -> bool {
-    let m0 = u16x16::from_array(token, rgb16_phase_mask(0));
+    let m0 = u16x16::from_array_t(token, rgb16_phase_mask(0));
     // 16 % 3 == 1 — phase shifts by 1 each chunk; after 3 chunks we wrap.
-    let m1 = u16x16::from_array(token, rgb16_phase_mask(1));
-    let m2 = u16x16::from_array(token, rgb16_phase_mask(2));
+    let m1 = u16x16::from_array_t(token, rgb16_phase_mask(1));
+    let m2 = u16x16::from_array_t(token, rgb16_phase_mask(2));
 
     let mut i = 0;
     while i + 49 <= rgb.len() {
         for (off, mask) in [(0usize, m0), (16, m1), (32, m2)] {
             let c0: &[u16; 16] = (&rgb[i + off..i + off + 16]).try_into().unwrap();
             let c1: &[u16; 16] = (&rgb[i + off + 1..i + off + 17]).try_into().unwrap();
-            let v0 = u16x16::load(token, c0);
-            let v1 = u16x16::load(token, c1);
+            let v0 = u16x16::load_t(token, c0);
+            let v1 = u16x16::load_t(token, c1);
             let masked = v0.simd_ne(v1) & mask;
             if masked.any_true() {
                 return false;
@@ -438,11 +438,11 @@ pub fn is_opaque_ga8(ga: &[u8]) -> bool {
 
 #[magetypes(define(u8x32), v3, neon, wasm128, scalar)]
 fn is_opaque_ga8_impl(token: Token, ga: &[u8]) -> bool {
-    let alpha_mask = u8x32::from_array(token, ALPHA_MASK_GA8);
-    let opaque = u8x32::splat(token, 0xFF);
-    let (chunks, tail) = u8x32::partition_slice(token, ga);
+    let alpha_mask = u8x32::from_array_t(token, ALPHA_MASK_GA8);
+    let opaque = u8x32::splat_t(token, 0xFF);
+    let (chunks, tail) = u8x32::partition_slice_t(token, ga);
     for chunk in chunks {
-        let v = u8x32::load(token, chunk);
+        let v = u8x32::load_t(token, chunk);
         let bad = v.simd_ne(opaque) & alpha_mask;
         if bad.any_true() {
             return false;
@@ -465,11 +465,11 @@ pub fn is_opaque_ga16(ga: &[u16]) -> bool {
 
 #[magetypes(define(u16x16), v3, neon, wasm128, scalar)]
 fn is_opaque_ga16_impl(token: Token, ga: &[u16]) -> bool {
-    let alpha_mask = u16x16::from_array(token, ALPHA_MASK_GA16);
-    let opaque = u16x16::splat(token, 0xFFFF);
-    let (chunks, tail) = u16x16::partition_slice(token, ga);
+    let alpha_mask = u16x16::from_array_t(token, ALPHA_MASK_GA16);
+    let opaque = u16x16::splat_t(token, 0xFFFF);
+    let (chunks, tail) = u16x16::partition_slice_t(token, ga);
     for chunk in chunks {
-        let v = u16x16::load(token, chunk);
+        let v = u16x16::load_t(token, chunk);
         let bad = v.simd_ne(opaque) & alpha_mask;
         if bad.any_true() {
             return false;
@@ -547,11 +547,11 @@ pub fn is_opaque_rgba_f32(rgba: &[f32]) -> bool {
 
 #[magetypes(define(f32x8, i32x8), v3, neon, wasm128, scalar)]
 fn is_opaque_rgba_f32_impl(token: Token, rgba: &[f32]) -> bool {
-    let alpha_mask = i32x8::from_array(token, ALPHA_MASK_RGBA_I32);
-    let one = f32x8::splat(token, 1.0);
-    let (chunks, tail) = f32x8::partition_slice(token, rgba);
+    let alpha_mask = i32x8::from_array_t(token, ALPHA_MASK_RGBA_I32);
+    let one = f32x8::splat_t(token, 1.0);
+    let (chunks, tail) = f32x8::partition_slice_t(token, rgba);
     for chunk in chunks {
-        let v = f32x8::load(token, chunk);
+        let v = f32x8::load_t(token, chunk);
         let bad = v.simd_ne(one).bitcast_to_i32() & alpha_mask;
         if bad.any_true() {
             return false;
@@ -576,14 +576,14 @@ pub fn is_grayscale_rgba_f32(rgba: &[f32]) -> bool {
 
 #[magetypes(define(f32x8, i32x8), v3, neon, wasm128, scalar)]
 fn is_grayscale_rgba_f32_impl(token: Token, rgba: &[f32]) -> bool {
-    let mask = i32x8::from_array(token, RGB_DELTA_MASK_RGBA_I32);
+    let mask = i32x8::from_array_t(token, RGB_DELTA_MASK_RGBA_I32);
     // Shifted-load: load at i and at i+1 (one f32 element offset).
     let mut i = 0;
     while i + 9 <= rgba.len() {
         let c0: &[f32; 8] = (&rgba[i..i + 8]).try_into().unwrap();
         let c1: &[f32; 8] = (&rgba[i + 1..i + 9]).try_into().unwrap();
-        let v0 = f32x8::load(token, c0);
-        let v1 = f32x8::load(token, c1);
+        let v0 = f32x8::load_t(token, c0);
+        let v1 = f32x8::load_t(token, c1);
         let masked = v0.simd_ne(v1).bitcast_to_i32() & mask;
         if masked.any_true() {
             return false;
@@ -608,18 +608,18 @@ pub fn is_grayscale_rgb_f32(rgb: &[f32]) -> bool {
 
 #[magetypes(define(f32x8, i32x8), v3, neon, wasm128, scalar)]
 fn is_grayscale_rgb_f32_impl(token: Token, rgb: &[f32]) -> bool {
-    let m0 = i32x8::from_array(token, rgb_phase_mask_i32(0));
+    let m0 = i32x8::from_array_t(token, rgb_phase_mask_i32(0));
     // 8 % 3 == 2 → phase shifts by 2 each chunk.
-    let m1 = i32x8::from_array(token, rgb_phase_mask_i32(2));
-    let m2 = i32x8::from_array(token, rgb_phase_mask_i32(1));
+    let m1 = i32x8::from_array_t(token, rgb_phase_mask_i32(2));
+    let m2 = i32x8::from_array_t(token, rgb_phase_mask_i32(1));
 
     let mut i = 0;
     while i + 25 <= rgb.len() {
         for (off, mask) in [(0usize, m0), (8, m1), (16, m2)] {
             let c0: &[f32; 8] = (&rgb[i + off..i + off + 8]).try_into().unwrap();
             let c1: &[f32; 8] = (&rgb[i + off + 1..i + off + 9]).try_into().unwrap();
-            let v0 = f32x8::load(token, c0);
-            let v1 = f32x8::load(token, c1);
+            let v0 = f32x8::load_t(token, c0);
+            let v1 = f32x8::load_t(token, c1);
             let masked = v0.simd_ne(v1).bitcast_to_i32() & mask;
             if masked.any_true() {
                 return false;
@@ -642,11 +642,11 @@ pub fn is_opaque_ga_f32(ga: &[f32]) -> bool {
 
 #[magetypes(define(f32x8, i32x8), v3, neon, wasm128, scalar)]
 fn is_opaque_ga_f32_impl(token: Token, ga: &[f32]) -> bool {
-    let alpha_mask = i32x8::from_array(token, ALPHA_MASK_GA_I32);
-    let one = f32x8::splat(token, 1.0);
-    let (chunks, tail) = f32x8::partition_slice(token, ga);
+    let alpha_mask = i32x8::from_array_t(token, ALPHA_MASK_GA_I32);
+    let one = f32x8::splat_t(token, 1.0);
+    let (chunks, tail) = f32x8::partition_slice_t(token, ga);
     for chunk in chunks {
-        let v = f32x8::load(token, chunk);
+        let v = f32x8::load_t(token, chunk);
         let bad = v.simd_ne(one).bitcast_to_i32() & alpha_mask;
         if bad.any_true() {
             return false;
@@ -723,9 +723,9 @@ pub fn fused_predicates_rgba8(rgba: &[u8], req: FusedRequest) -> FusedResult {
 #[cfg(test)]
 #[magetypes(define(u8x32), v3, neon, wasm128, scalar)]
 fn fused_predicates_rgba8_impl(token: Token, rgba: &[u8], req: FusedRequest) -> FusedResult {
-    let alpha_mask = u8x32::from_array(token, ALPHA_MASK_RGBA8);
-    let rgb_delta_mask = u8x32::from_array(token, RGB_DELTA_MASK_RGBA8);
-    let opaque = u8x32::splat(token, 0xFF);
+    let alpha_mask = u8x32::from_array_t(token, ALPHA_MASK_RGBA8);
+    let rgb_delta_mask = u8x32::from_array_t(token, RGB_DELTA_MASK_RGBA8);
+    let opaque = u8x32::splat_t(token, 0xFF);
 
     let mut still_o = req.check_opaque;
     let mut still_g = req.check_grayscale;
@@ -743,7 +743,7 @@ fn fused_predicates_rgba8_impl(token: Token, rgba: &[u8], req: FusedRequest) -> 
             break;
         }
         let chunk0: &[u8; 32] = (&rgba[i..i + 32]).try_into().unwrap();
-        let v0 = u8x32::load(token, chunk0);
+        let v0 = u8x32::load_t(token, chunk0);
 
         if still_o {
             let bad = v0.simd_ne(opaque) & alpha_mask;
@@ -753,7 +753,7 @@ fn fused_predicates_rgba8_impl(token: Token, rgba: &[u8], req: FusedRequest) -> 
         }
         if still_g {
             let chunk1: &[u8; 32] = (&rgba[i + 1..i + 33]).try_into().unwrap();
-            let v1 = u8x32::load(token, chunk1);
+            let v1 = u8x32::load_t(token, chunk1);
             let bad = v0.simd_ne(v1) & rgb_delta_mask;
             if bad.any_true() {
                 still_g = false;
@@ -841,9 +841,9 @@ fn fused_cg_impl<const A: bool, const B: bool>(token: Token, rgba: &[u8]) -> Fus
         return FusedResult::default();
     }
 
-    let alpha_mask = u8x32::from_array(token, ALPHA_MASK_RGBA8);
-    let rgb_delta_mask = u8x32::from_array(token, RGB_DELTA_MASK_RGBA8);
-    let opaque = u8x32::splat(token, 0xFF);
+    let alpha_mask = u8x32::from_array_t(token, ALPHA_MASK_RGBA8);
+    let rgb_delta_mask = u8x32::from_array_t(token, RGB_DELTA_MASK_RGBA8);
+    let opaque = u8x32::splat_t(token, 0xFF);
 
     let len = rgba.len();
     let mut i = 0;
@@ -872,17 +872,17 @@ fn fused_cg_impl<const A: bool, const B: bool>(token: Token, rgba: &[u8]) -> Fus
     let chunkable = (if B { len.saturating_sub(1) } else { len }) / 32 * 32;
     while i < chunkable {
         let block_end = (i + BLOCK_BYTES).min(chunkable);
-        let mut acc = u8x32::splat(token, 0);
+        let mut acc = u8x32::splat_t(token, 0);
         let mut j = i;
         while j < block_end {
             let chunk0: &[u8; 32] = (&rgba[j..j + 32]).try_into().unwrap();
-            let v0 = u8x32::load(token, chunk0);
+            let v0 = u8x32::load_t(token, chunk0);
             if A {
                 acc |= v0.simd_ne(opaque) & alpha_mask;
             }
             if B {
                 let chunk1: &[u8; 32] = (&rgba[j + 1..j + 33]).try_into().unwrap();
-                let v1 = u8x32::load(token, chunk1);
+                let v1 = u8x32::load_t(token, chunk1);
                 acc |= v0.simd_ne(v1) & rgb_delta_mask;
             }
             j += 32;
@@ -2147,7 +2147,7 @@ fn fused_u16_impl(
     let mut known = known;
     let phases = [0usize, 16 % channels, 32 % channels];
     let alpha_masks = phases.map(|phase| {
-        u16x16::from_array(
+        u16x16::from_array_t(
             token,
             core::array::from_fn(|i| {
                 if (i + phase) % channels == channels - 1 {
@@ -2159,7 +2159,7 @@ fn fused_u16_impl(
         )
     });
     let chroma_masks = phases.map(|phase| {
-        u16x16::from_array(
+        u16x16::from_array_t(
             token,
             core::array::from_fn(|i| {
                 if (i + phase) % channels < 2 {
@@ -2170,23 +2170,24 @@ fn fused_u16_impl(
             }),
         )
     });
-    let ones = u16x16::splat(token, u16::MAX);
-    let low = u16x16::splat(token, 255);
+    let ones = u16x16::splat_t(token, u16::MAX);
+    let low = u16x16::splat_t(token, 255);
     let complete = |v: [bool; 3]| (!scan_alpha || v[0]) && (!scan_chroma || v[1]) && v[2];
     let mut i = 0;
     // 48 samples is a whole number of pixels for every supported layout.
     while i + 49 <= samples.len() && !complete(known) {
-        let mut alpha_bad = u16x16::splat(token, 0);
-        let mut chroma_bad = u16x16::splat(token, 0);
-        let mut precision_bad = u16x16::splat(token, 0);
+        let mut alpha_bad = u16x16::splat_t(token, 0);
+        let mut chroma_bad = u16x16::splat_t(token, 0);
+        let mut precision_bad = u16x16::splat_t(token, 0);
         for n in 0..3 {
             let at = i + n * 16;
-            let v = u16x16::load(token, (&samples[at..at + 16]).try_into().unwrap());
+            let v = u16x16::load_t(token, (&samples[at..at + 16]).try_into().unwrap());
             if scan_alpha && !known[0] {
                 alpha_bad |= v.simd_ne(ones) & alpha_masks[n];
             }
             if scan_chroma && !known[1] {
-                let shifted = u16x16::load(token, (&samples[at + 1..at + 17]).try_into().unwrap());
+                let shifted =
+                    u16x16::load_t(token, (&samples[at + 1..at + 17]).try_into().unwrap());
                 chroma_bad |= v.simd_ne(shifted) & chroma_masks[n];
             }
             if !known[2] {

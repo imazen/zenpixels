@@ -343,25 +343,25 @@ mod simd {
         let (r_in, g_in, b_in) = garb::deinterleave::rgb24_chunk8_to_planes_tokenless_v3(rgb_in);
 
         // Undo the JPEG level shift (+128) applied during encode.
-        let shift = mt_f32x8::splat(token, super::JPEG_LEVEL_SHIFT);
-        let sx = mt_f32x8::from_array(token, r_in) - shift;
-        let sy = mt_f32x8::from_array(token, g_in) - shift;
-        let sb = mt_f32x8::from_array(token, b_in) - shift;
+        let shift = mt_f32x8::splat_t(token, super::JPEG_LEVEL_SHIFT);
+        let sx = mt_f32x8::from_array_t(token, r_in) - shift;
+        let sy = mt_f32x8::from_array_t(token, g_in) - shift;
+        let sb = mt_f32x8::from_array_t(token, b_in) - shift;
 
         // Step 1: unscale.
-        let inv_scale_x = mt_f32x8::splat(token, 1.0 / SCALED_XYB_SCALE[0]);
-        let inv_scale_y = mt_f32x8::splat(token, 1.0 / SCALED_XYB_SCALE[1]);
-        let inv_scale_b = mt_f32x8::splat(token, 1.0 / SCALED_XYB_SCALE[2]);
-        let off_x = mt_f32x8::splat(token, SCALED_XYB_OFFSET[0]);
+        let inv_scale_x = mt_f32x8::splat_t(token, 1.0 / SCALED_XYB_SCALE[0]);
+        let inv_scale_y = mt_f32x8::splat_t(token, 1.0 / SCALED_XYB_SCALE[1]);
+        let inv_scale_b = mt_f32x8::splat_t(token, 1.0 / SCALED_XYB_SCALE[2]);
+        let off_x = mt_f32x8::splat_t(token, SCALED_XYB_OFFSET[0]);
         // off_y is 0.0, skip.
-        let off_b = mt_f32x8::splat(token, SCALED_XYB_OFFSET[2]);
+        let off_b = mt_f32x8::splat_t(token, SCALED_XYB_OFFSET[2]);
 
         let y = sy * inv_scale_y; // - 0
         let x = sx * inv_scale_x - off_x;
         let b_xyb = sb * inv_scale_b - off_b + y;
 
         // Step 2: recover cbrt_* values.
-        let neg_bias = mt_f32x8::splat(token, NEG_BIAS_CBRT[0]);
+        let neg_bias = mt_f32x8::splat_t(token, NEG_BIAS_CBRT[0]);
         let cbrt_r = y + x - neg_bias;
         let cbrt_g = y - x - neg_bias;
         let cbrt_b = b_xyb - neg_bias;
@@ -374,21 +374,21 @@ mod simd {
         let opsin_g = cube_signed(cbrt_g);
         let opsin_b = cube_signed(cbrt_b);
 
-        let bias = mt_f32x8::splat(token, OPSIN_BIAS[0]);
+        let bias = mt_f32x8::splat_t(token, OPSIN_BIAS[0]);
         let opsin_r = opsin_r - bias;
         let opsin_g = opsin_g - bias;
         let opsin_b = opsin_b - bias;
 
         // Step 4: inverse opsin matrix (3x3).
-        let m00 = mt_f32x8::splat(token, INV_OPSIN[0][0]);
-        let m01 = mt_f32x8::splat(token, INV_OPSIN[0][1]);
-        let m02 = mt_f32x8::splat(token, INV_OPSIN[0][2]);
-        let m10 = mt_f32x8::splat(token, INV_OPSIN[1][0]);
-        let m11 = mt_f32x8::splat(token, INV_OPSIN[1][1]);
-        let m12 = mt_f32x8::splat(token, INV_OPSIN[1][2]);
-        let m20 = mt_f32x8::splat(token, INV_OPSIN[2][0]);
-        let m21 = mt_f32x8::splat(token, INV_OPSIN[2][1]);
-        let m22 = mt_f32x8::splat(token, INV_OPSIN[2][2]);
+        let m00 = mt_f32x8::splat_t(token, INV_OPSIN[0][0]);
+        let m01 = mt_f32x8::splat_t(token, INV_OPSIN[0][1]);
+        let m02 = mt_f32x8::splat_t(token, INV_OPSIN[0][2]);
+        let m10 = mt_f32x8::splat_t(token, INV_OPSIN[1][0]);
+        let m11 = mt_f32x8::splat_t(token, INV_OPSIN[1][1]);
+        let m12 = mt_f32x8::splat_t(token, INV_OPSIN[1][2]);
+        let m20 = mt_f32x8::splat_t(token, INV_OPSIN[2][0]);
+        let m21 = mt_f32x8::splat_t(token, INV_OPSIN[2][1]);
+        let m22 = mt_f32x8::splat_t(token, INV_OPSIN[2][2]);
 
         let lin_r = m00.mul_add(opsin_r, m01.mul_add(opsin_g, m02 * opsin_b));
         let lin_g = m10.mul_add(opsin_r, m11.mul_add(opsin_g, m12 * opsin_b));
@@ -396,8 +396,8 @@ mod simd {
 
         // Step 5: clamp to [0, 1], then OETF via linear-srgb's 8-wide
         // SIMD sRGB encoder.
-        let zero = mt_f32x8::splat(token, 0.0);
-        let one = mt_f32x8::splat(token, 1.0);
+        let zero = mt_f32x8::splat_t(token, 0.0);
+        let one = mt_f32x8::splat_t(token, 1.0);
         let lin_r = lin_r.clamp(zero, one);
         let lin_g = lin_g.clamp(zero, one);
         let lin_b = lin_b.clamp(zero, one);

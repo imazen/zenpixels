@@ -61,17 +61,17 @@ fn mat3x3_x8(
     gl: mt_f32x8,
     bl: mt_f32x8,
 ) -> (mt_f32x8, mt_f32x8, mt_f32x8) {
-    let or = mt_f32x8::splat(token, m[0][0]).mul_add(
+    let or = mt_f32x8::splat_t(token, m[0][0]).mul_add(
         rl,
-        mt_f32x8::splat(token, m[0][1]).mul_add(gl, mt_f32x8::splat(token, m[0][2]) * bl),
+        mt_f32x8::splat_t(token, m[0][1]).mul_add(gl, mt_f32x8::splat_t(token, m[0][2]) * bl),
     );
-    let og = mt_f32x8::splat(token, m[1][0]).mul_add(
+    let og = mt_f32x8::splat_t(token, m[1][0]).mul_add(
         rl,
-        mt_f32x8::splat(token, m[1][1]).mul_add(gl, mt_f32x8::splat(token, m[1][2]) * bl),
+        mt_f32x8::splat_t(token, m[1][1]).mul_add(gl, mt_f32x8::splat_t(token, m[1][2]) * bl),
     );
-    let ob = mt_f32x8::splat(token, m[2][0]).mul_add(
+    let ob = mt_f32x8::splat_t(token, m[2][0]).mul_add(
         rl,
-        mt_f32x8::splat(token, m[2][1]).mul_add(gl, mt_f32x8::splat(token, m[2][2]) * bl),
+        mt_f32x8::splat_t(token, m[2][1]).mul_add(gl, mt_f32x8::splat_t(token, m[2][2]) * bl),
     );
     (or, og, ob)
 }
@@ -105,9 +105,9 @@ macro_rules! stamp_trc_kernels {
                     g[i] = data[i * 3 + 1];
                     b[i] = data[i * 3 + 2];
                 }
-                let rl = mt_f32x8::from_array(token, $simd_lin(token, r));
-                let gl = mt_f32x8::from_array(token, $simd_lin(token, g));
-                let bl = mt_f32x8::from_array(token, $simd_lin(token, b));
+                let rl = mt_f32x8::from_array_t(token, $simd_lin(token, r));
+                let gl = mt_f32x8::from_array_t(token, $simd_lin(token, g));
+                let bl = mt_f32x8::from_array_t(token, $simd_lin(token, b));
                 let (or, og, ob) = mat3x3_x8(token, m, rl, gl, bl);
                 let ro = $simd_enc(token, or.to_array());
                 let go = $simd_enc(token, og.to_array());
@@ -130,9 +130,9 @@ macro_rules! stamp_trc_kernels {
                     g[i] = data[i * 4 + 1];
                     b[i] = data[i * 4 + 2];
                 }
-                let rl = mt_f32x8::from_array(token, $simd_lin(token, r));
-                let gl = mt_f32x8::from_array(token, $simd_lin(token, g));
-                let bl = mt_f32x8::from_array(token, $simd_lin(token, b));
+                let rl = mt_f32x8::from_array_t(token, $simd_lin(token, r));
+                let gl = mt_f32x8::from_array_t(token, $simd_lin(token, g));
+                let bl = mt_f32x8::from_array_t(token, $simd_lin(token, b));
                 let (or, og, ob) = mat3x3_x8(token, m, rl, gl, bl);
                 let ro = $simd_enc(token, or.to_array());
                 let go = $simd_enc(token, og.to_array());
@@ -934,9 +934,9 @@ fn convert_8px_u8_rgb_fused(
         g[i] = lin_lut[src[i * 3 + 1] as usize];
         b[i] = lin_lut[src[i * 3 + 2] as usize];
     }
-    let rv = mt_f32x8::from_array(token, r);
-    let gv = mt_f32x8::from_array(token, g);
-    let bv = mt_f32x8::from_array(token, b);
+    let rv = mt_f32x8::from_array_t(token, r);
+    let gv = mt_f32x8::from_array_t(token, g);
+    let bv = mt_f32x8::from_array_t(token, b);
     let (or, og, ob) = mat3x3_x8(token, m, rv, gv, bv);
     let ro = simd_encode_x8_dispatch(token, dst_trc, or.to_array());
     let go = simd_encode_x8_dispatch(token, dst_trc, og.to_array());
@@ -964,27 +964,27 @@ fn convert_8px_u8_rgb_matlut(
     // Matrix rows pre-laid-out for the packed 2-pixel layout.
     // Each 256-bit vector holds the same 3×f32 row twice (low 128, high 128),
     // with padding in lane 3 and 7.
-    let m0 = mt_f32x8::from_array(
+    let m0 = mt_f32x8::from_array_t(
         token,
         [
             m[0][0], m[1][0], m[2][0], 0.0, m[0][0], m[1][0], m[2][0], 0.0,
         ],
     );
-    let m1 = mt_f32x8::from_array(
+    let m1 = mt_f32x8::from_array_t(
         token,
         [
             m[0][1], m[1][1], m[2][1], 0.0, m[0][1], m[1][1], m[2][1], 0.0,
         ],
     );
-    let m2 = mt_f32x8::from_array(
+    let m2 = mt_f32x8::from_array_t(
         token,
         [
             m[0][2], m[1][2], m[2][2], 0.0, m[0][2], m[1][2], m[2][2], 0.0,
         ],
     );
-    let scale = mt_f32x8::splat(token, 4095.0);
-    let zero = mt_f32x8::zero(token);
-    let one = mt_f32x8::splat(token, 1.0);
+    let scale = mt_f32x8::splat_t(token, 4095.0);
+    let zero = mt_f32x8::zero_t(token);
+    let one = mt_f32x8::splat_t(token, 1.0);
 
     for pair in 0..4 {
         let off = pair * 6;
@@ -996,9 +996,9 @@ fn convert_8px_u8_rgb_matlut(
         let p1b = lin_lut[src[off + 5] as usize];
 
         // Broadcast each channel to fill a 128-bit lane; pack 2 pixels.
-        let r = mt_f32x8::from_array(token, [p0r, p0r, p0r, p0r, p1r, p1r, p1r, p1r]);
-        let g = mt_f32x8::from_array(token, [p0g, p0g, p0g, p0g, p1g, p1g, p1g, p1g]);
-        let b = mt_f32x8::from_array(token, [p0b, p0b, p0b, p0b, p1b, p1b, p1b, p1b]);
+        let r = mt_f32x8::from_array_t(token, [p0r, p0r, p0r, p0r, p1r, p1r, p1r, p1r]);
+        let g = mt_f32x8::from_array_t(token, [p0g, p0g, p0g, p0g, p1g, p1g, p1g, p1g]);
+        let b = mt_f32x8::from_array_t(token, [p0b, p0b, p0b, p0b, p1b, p1b, p1b, p1b]);
 
         // v = r*m0 + g*m1 + b*m2 — each 128-bit lane ends up as [R', G', B', 0].
         let v = r * m0 + g * m1 + b * m2;
@@ -1106,27 +1106,27 @@ fn convert_8px_u16_rgb_matlut(
     lin_lut: &[f32; 65536],
     enc_lut: &[u16; 65536],
 ) {
-    let m0 = mt_f32x8::from_array(
+    let m0 = mt_f32x8::from_array_t(
         token,
         [
             m[0][0], m[1][0], m[2][0], 0.0, m[0][0], m[1][0], m[2][0], 0.0,
         ],
     );
-    let m1 = mt_f32x8::from_array(
+    let m1 = mt_f32x8::from_array_t(
         token,
         [
             m[0][1], m[1][1], m[2][1], 0.0, m[0][1], m[1][1], m[2][1], 0.0,
         ],
     );
-    let m2 = mt_f32x8::from_array(
+    let m2 = mt_f32x8::from_array_t(
         token,
         [
             m[0][2], m[1][2], m[2][2], 0.0, m[0][2], m[1][2], m[2][2], 0.0,
         ],
     );
-    let scale = mt_f32x8::splat(token, 65535.0);
-    let zero = mt_f32x8::zero(token);
-    let one = mt_f32x8::splat(token, 1.0);
+    let scale = mt_f32x8::splat_t(token, 65535.0);
+    let zero = mt_f32x8::zero_t(token);
+    let one = mt_f32x8::splat_t(token, 1.0);
 
     let mut temp = [0i32; 8];
 
@@ -1139,9 +1139,9 @@ fn convert_8px_u16_rgb_matlut(
         let p1g = lin_lut[src[off + 4] as usize];
         let p1b = lin_lut[src[off + 5] as usize];
 
-        let r = mt_f32x8::from_array(token, [p0r, p0r, p0r, p0r, p1r, p1r, p1r, p1r]);
-        let g = mt_f32x8::from_array(token, [p0g, p0g, p0g, p0g, p1g, p1g, p1g, p1g]);
-        let b = mt_f32x8::from_array(token, [p0b, p0b, p0b, p0b, p1b, p1b, p1b, p1b]);
+        let r = mt_f32x8::from_array_t(token, [p0r, p0r, p0r, p0r, p1r, p1r, p1r, p1r]);
+        let g = mt_f32x8::from_array_t(token, [p0g, p0g, p0g, p0g, p1g, p1g, p1g, p1g]);
+        let b = mt_f32x8::from_array_t(token, [p0b, p0b, p0b, p0b, p1b, p1b, p1b, p1b]);
 
         let v = r * m0 + g * m1 + b * m2;
 
@@ -1265,9 +1265,9 @@ mod hybrids {
             gl_arr[i] = lin_lut[src[i * 3 + 1] as usize];
             bl_arr[i] = lin_lut[src[i * 3 + 2] as usize];
         }
-        let rl = mt_f32x8::from_array(token, rl_arr);
-        let gl = mt_f32x8::from_array(token, gl_arr);
-        let bl = mt_f32x8::from_array(token, bl_arr);
+        let rl = mt_f32x8::from_array_t(token, rl_arr);
+        let gl = mt_f32x8::from_array_t(token, gl_arr);
+        let bl = mt_f32x8::from_array_t(token, bl_arr);
         let (or_v, og_v, ob_v) = mat3x3_x8(token, m, rl, gl, bl);
         let ro = trc_x8::linear_to_srgb_u16_v3(token, or_v.to_array());
         let go = trc_x8::linear_to_srgb_u16_v3(token, og_v.to_array());
@@ -1296,13 +1296,13 @@ mod hybrids {
             g_u16[i] = src[i * 3 + 1];
             b_u16[i] = src[i * 3 + 2];
         }
-        let rl = mt_f32x8::from_array(token, trc_x8::srgb_u16_to_linear_v3(token, r_u16));
-        let gl = mt_f32x8::from_array(token, trc_x8::srgb_u16_to_linear_v3(token, g_u16));
-        let bl = mt_f32x8::from_array(token, trc_x8::srgb_u16_to_linear_v3(token, b_u16));
+        let rl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(token, r_u16));
+        let gl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(token, g_u16));
+        let bl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(token, b_u16));
         let (or_v, og_v, ob_v) = mat3x3_x8(token, m, rl, gl, bl);
-        let scale = mt_f32x8::splat(token, 65535.0);
-        let zero = mt_f32x8::zero(token);
-        let one = mt_f32x8::splat(token, 1.0);
+        let scale = mt_f32x8::splat_t(token, 65535.0);
+        let zero = mt_f32x8::zero_t(token);
+        let one = mt_f32x8::splat_t(token, 1.0);
         let r_idx = (or_v.max(zero).min(one) * scale).to_i32_round().to_array();
         let g_idx = (og_v.max(zero).min(one) * scale).to_i32_round().to_array();
         let b_idx = (ob_v.max(zero).min(one) * scale).to_i32_round().to_array();
@@ -1329,9 +1329,9 @@ mod hybrids {
             g_u16[i] = src[i * 3 + 1];
             b_u16[i] = src[i * 3 + 2];
         }
-        let rl = mt_f32x8::from_array(token, trc_x8::srgb_u16_to_linear_v3(token, r_u16));
-        let gl = mt_f32x8::from_array(token, trc_x8::srgb_u16_to_linear_v3(token, g_u16));
-        let bl = mt_f32x8::from_array(token, trc_x8::srgb_u16_to_linear_v3(token, b_u16));
+        let rl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(token, r_u16));
+        let gl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(token, g_u16));
+        let bl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(token, b_u16));
         let (or_v, og_v, ob_v) = mat3x3_x8(token, m, rl, gl, bl);
         let ro = trc_x8::linear_to_srgb_u16_v3(token, or_v.to_array());
         let go = trc_x8::linear_to_srgb_u16_v3(token, og_v.to_array());
@@ -1596,19 +1596,19 @@ fn convert_8px_u8_to_f32_lin(
     dst: &mut [f32; 24],
     lin_lut: &[f32; 256],
 ) {
-    let m0 = mt_f32x8::from_array(
+    let m0 = mt_f32x8::from_array_t(
         token,
         [
             m[0][0], m[1][0], m[2][0], 0.0, m[0][0], m[1][0], m[2][0], 0.0,
         ],
     );
-    let m1 = mt_f32x8::from_array(
+    let m1 = mt_f32x8::from_array_t(
         token,
         [
             m[0][1], m[1][1], m[2][1], 0.0, m[0][1], m[1][1], m[2][1], 0.0,
         ],
     );
-    let m2 = mt_f32x8::from_array(
+    let m2 = mt_f32x8::from_array_t(
         token,
         [
             m[0][2], m[1][2], m[2][2], 0.0, m[0][2], m[1][2], m[2][2], 0.0,
@@ -1623,9 +1623,9 @@ fn convert_8px_u8_to_f32_lin(
         let p1r = lin_lut[src[off + 3] as usize];
         let p1g = lin_lut[src[off + 4] as usize];
         let p1b = lin_lut[src[off + 5] as usize];
-        let r = mt_f32x8::from_array(token, [p0r, p0r, p0r, p0r, p1r, p1r, p1r, p1r]);
-        let g = mt_f32x8::from_array(token, [p0g, p0g, p0g, p0g, p1g, p1g, p1g, p1g]);
-        let b = mt_f32x8::from_array(token, [p0b, p0b, p0b, p0b, p1b, p1b, p1b, p1b]);
+        let r = mt_f32x8::from_array_t(token, [p0r, p0r, p0r, p0r, p1r, p1r, p1r, p1r]);
+        let g = mt_f32x8::from_array_t(token, [p0g, p0g, p0g, p0g, p1g, p1g, p1g, p1g]);
+        let b = mt_f32x8::from_array_t(token, [p0b, p0b, p0b, p0b, p1b, p1b, p1b, p1b]);
         let v = r * m0 + g * m1 + b * m2;
         let out = v.to_array();
         dst[off_out] = out[0];
@@ -1716,31 +1716,31 @@ fn convert_8px_f32_lin_to_u8(
     dst: &mut [u8; 24],
     enc_lut: &[u8; 4096],
 ) {
-    let m0 = mt_f32x8::from_array(
+    let m0 = mt_f32x8::from_array_t(
         token,
         [
             m[0][0], m[1][0], m[2][0], 0.0, m[0][0], m[1][0], m[2][0], 0.0,
         ],
     );
-    let m1 = mt_f32x8::from_array(
+    let m1 = mt_f32x8::from_array_t(
         token,
         [
             m[0][1], m[1][1], m[2][1], 0.0, m[0][1], m[1][1], m[2][1], 0.0,
         ],
     );
-    let m2 = mt_f32x8::from_array(
+    let m2 = mt_f32x8::from_array_t(
         token,
         [
             m[0][2], m[1][2], m[2][2], 0.0, m[0][2], m[1][2], m[2][2], 0.0,
         ],
     );
-    let scale = mt_f32x8::splat(token, 4095.0);
-    let zero = mt_f32x8::zero(token);
-    let one = mt_f32x8::splat(token, 1.0);
+    let scale = mt_f32x8::splat_t(token, 4095.0);
+    let zero = mt_f32x8::zero_t(token);
+    let one = mt_f32x8::splat_t(token, 1.0);
 
     for pair in 0..4 {
         let off = pair * 6;
-        let r = mt_f32x8::from_array(
+        let r = mt_f32x8::from_array_t(
             token,
             [
                 src[off],
@@ -1753,7 +1753,7 @@ fn convert_8px_f32_lin_to_u8(
                 src[off + 3],
             ],
         );
-        let g = mt_f32x8::from_array(
+        let g = mt_f32x8::from_array_t(
             token,
             [
                 src[off + 1],
@@ -1766,7 +1766,7 @@ fn convert_8px_f32_lin_to_u8(
                 src[off + 4],
             ],
         );
-        let b = mt_f32x8::from_array(
+        let b = mt_f32x8::from_array_t(
             token,
             [
                 src[off + 2],
@@ -2029,9 +2029,9 @@ fn convert_8px_u8_rgba_simd(
         g[i] = lin_lut[src[i * 4 + 1] as usize];
         b[i] = lin_lut[src[i * 4 + 2] as usize];
     }
-    let rv = mt_f32x8::from_array(token, r);
-    let gv = mt_f32x8::from_array(token, g);
-    let bv = mt_f32x8::from_array(token, b);
+    let rv = mt_f32x8::from_array_t(token, r);
+    let gv = mt_f32x8::from_array_t(token, g);
+    let bv = mt_f32x8::from_array_t(token, b);
     let (or, og, ob) = mat3x3_x8(token, m, rv, gv, bv);
     let ro = or.to_array();
     let go = og.to_array();

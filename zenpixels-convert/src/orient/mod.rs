@@ -947,10 +947,10 @@ fn transpose4_simd(
             let f3: [f32; 4] =
                 bytemuck::cast::<[u8; 16], _>(src.row(by + 3)[xb..xb + 16].try_into().unwrap());
             let mut rows = [
-                f32x4::load(token, &f0),
-                f32x4::load(token, &f1),
-                f32x4::load(token, &f2),
-                f32x4::load(token, &f3),
+                f32x4::load_t(token, &f0),
+                f32x4::load_t(token, &f1),
+                f32x4::load_t(token, &f2),
+                f32x4::load_t(token, &f3),
             ];
             f32x4::transpose_4x4(&mut rows);
 

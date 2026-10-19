@@ -190,47 +190,47 @@ pub(crate) fn bt2446a_tier(
     rho_sdr: f32,
     inv_rho_sdr_minus_1: f32,
 ) {
-    let zero = f32x16::zero(token);
-    let one = f32x16::splat(token, 1.0);
-    let lr = f32x16::splat(token, LR);
-    let lg = f32x16::splat(token, LG);
-    let lb = f32x16::splat(token, LB);
+    let zero = f32x16::zero_t(token);
+    let one = f32x16::splat_t(token, 1.0);
+    let lr = f32x16::splat_t(token, LR);
+    let lg = f32x16::splat_t(token, LG);
+    let lb = f32x16::splat_t(token, LB);
     let inv_24 = 1.0_f32 / 2.4;
-    let rho_hdr_minus_1 = f32x16::splat(token, rho_hdr - 1.0);
-    let inv_log_rho_hdr_v = f32x16::splat(token, inv_log_rho_hdr);
-    let inv_rho_sdr_m1_v = f32x16::splat(token, inv_rho_sdr_minus_1);
-    let log2_rho_sdr = f32x16::splat(token, libm::log2f(rho_sdr));
-    let pos_eps = f32x16::splat(token, f32::MIN_POSITIVE);
-    let ln2 = f32x16::splat(token, core::f32::consts::LN_2);
+    let rho_hdr_minus_1 = f32x16::splat_t(token, rho_hdr - 1.0);
+    let inv_log_rho_hdr_v = f32x16::splat_t(token, inv_log_rho_hdr);
+    let inv_rho_sdr_m1_v = f32x16::splat_t(token, inv_rho_sdr_minus_1);
+    let log2_rho_sdr = f32x16::splat_t(token, libm::log2f(rho_sdr));
+    let pos_eps = f32x16::splat_t(token, f32::MIN_POSITIVE);
+    let ln2 = f32x16::splat_t(token, core::f32::consts::LN_2);
 
-    let t1 = f32x16::splat(token, 0.7399);
-    let t2 = f32x16::splat(token, 0.9909);
-    let a1 = f32x16::splat(token, 1.0770);
-    let a2_a = f32x16::splat(token, -1.1510);
-    let a2_b = f32x16::splat(token, 2.7811);
-    let a2_c = f32x16::splat(token, -0.6302);
-    let a3_a = f32x16::splat(token, 0.5);
-    let a3_b = f32x16::splat(token, 0.5);
-    let one_p_one = f32x16::splat(token, 1.1);
-    let inv_1_8814 = f32x16::splat(token, 1.0 / 1.8814);
-    let inv_1_4746 = f32x16::splat(token, 1.0 / 1.4746);
+    let t1 = f32x16::splat_t(token, 0.7399);
+    let t2 = f32x16::splat_t(token, 0.9909);
+    let a1 = f32x16::splat_t(token, 1.0770);
+    let a2_a = f32x16::splat_t(token, -1.1510);
+    let a2_b = f32x16::splat_t(token, 2.7811);
+    let a2_c = f32x16::splat_t(token, -0.6302);
+    let a3_a = f32x16::splat_t(token, 0.5);
+    let a3_b = f32x16::splat_t(token, 0.5);
+    let one_p_one = f32x16::splat_t(token, 1.1);
+    let inv_1_8814 = f32x16::splat_t(token, 1.0 / 1.8814);
+    let inv_1_4746 = f32x16::splat_t(token, 1.0 / 1.4746);
     // 0.16455 = 2·Kb·(1-Kb)/Kg, 0.57135 = 2·Kr·(1-Kr)/Kg for BT.2020 (already
     // divided by Kg; do NOT divide again — that was the pre-fix bug).
-    let mat_g_b = f32x16::splat(token, 0.16455);
-    let mat_g_r = f32x16::splat(token, 0.57135);
-    let mat_r_cr = f32x16::splat(token, 1.4746);
-    let mat_b_cb = f32x16::splat(token, 1.8814);
-    let zero_one = f32x16::splat(token, 0.1);
+    let mat_g_b = f32x16::splat_t(token, 0.16455);
+    let mat_g_r = f32x16::splat_t(token, 0.57135);
+    let mat_r_cr = f32x16::splat_t(token, 1.4746);
+    let mat_b_cb = f32x16::splat_t(token, 1.8814);
+    let zero_one = f32x16::splat_t(token, 0.1);
 
     // BT.1886 EOTF polynomial coefficients — see `POW24_*` constants above.
-    let c7 = f32x16::splat(token, POW24_C7);
-    let c6 = f32x16::splat(token, POW24_C6);
-    let c5 = f32x16::splat(token, POW24_C5);
-    let c4 = f32x16::splat(token, POW24_C4);
-    let c3 = f32x16::splat(token, POW24_C3);
-    let c2 = f32x16::splat(token, POW24_C2);
-    let c1 = f32x16::splat(token, POW24_C1);
-    let c0 = f32x16::splat(token, POW24_C0);
+    let c7 = f32x16::splat_t(token, POW24_C7);
+    let c6 = f32x16::splat_t(token, POW24_C6);
+    let c5 = f32x16::splat_t(token, POW24_C5);
+    let c4 = f32x16::splat_t(token, POW24_C4);
+    let c3 = f32x16::splat_t(token, POW24_C3);
+    let c2 = f32x16::splat_t(token, POW24_C2);
+    let c1 = f32x16::splat_t(token, POW24_C1);
+    let c0 = f32x16::splat_t(token, POW24_C0);
 
     let (chunks, remainder) = row.as_chunks_mut::<16>();
     for chunk in chunks {
@@ -246,9 +246,9 @@ pub(crate) fn bt2446a_tier(
         // sees only finite positive inputs. The `valid = y_p > 0` mask at the
         // end still snaps the original-zero pixels back to black, so the tiny
         // `pos_eps^...` placeholders never reach the output buffer.
-        let r = f32x16::load(token, &ra).max(pos_eps);
-        let g = f32x16::load(token, &ga).max(pos_eps);
-        let b = f32x16::load(token, &ba).max(pos_eps);
+        let r = f32x16::load_t(token, &ra).max(pos_eps);
+        let g = f32x16::load_t(token, &ga).max(pos_eps);
+        let b = f32x16::load_t(token, &ba).max(pos_eps);
 
         let r_p = r.pow_midp_unchecked(inv_24);
         let g_p = g.pow_midp_unchecked(inv_24);

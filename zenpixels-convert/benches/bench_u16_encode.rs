@@ -39,11 +39,11 @@ fn explicit_simd_linear_lut_v3(
 ) {
     let (in_chunks, in_rem) = input.as_chunks::<8>();
     let (out_chunks, out_rem) = output.as_chunks_mut::<8>();
-    let zero = mt_f32x8::zero(token);
-    let one = mt_f32x8::splat(token, 1.0);
-    let scale = mt_f32x8::splat(token, 65535.0);
+    let zero = mt_f32x8::zero_t(token);
+    let one = mt_f32x8::splat_t(token, 1.0);
+    let scale = mt_f32x8::splat_t(token, 65535.0);
     for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
-        let v = mt_f32x8::from_array(token, *inp);
+        let v = mt_f32x8::from_array_t(token, *inp);
         let idx = (v.max(zero).min(one) * scale).to_i32_round().to_array();
         for j in 0..8 {
             out[j] = lut[idx[j] as usize & 0xFFFF];
@@ -67,11 +67,11 @@ fn explicit_simd_sqrt_lut_v3(
 ) {
     let (in_chunks, in_rem) = input.as_chunks::<8>();
     let (out_chunks, out_rem) = output.as_chunks_mut::<8>();
-    let zero = mt_f32x8::zero(token);
-    let one = mt_f32x8::splat(token, 1.0);
-    let scale = mt_f32x8::splat(token, 65536.0);
+    let zero = mt_f32x8::zero_t(token);
+    let one = mt_f32x8::splat_t(token, 1.0);
+    let scale = mt_f32x8::splat_t(token, 65536.0);
     for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
-        let v = mt_f32x8::from_array(token, *inp);
+        let v = mt_f32x8::from_array_t(token, *inp);
         let idx = ((v.max(zero).min(one)).sqrt() * scale)
             .to_i32_round()
             .to_array();

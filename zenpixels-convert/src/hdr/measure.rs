@@ -893,12 +893,12 @@ mod simd_kernel {
         sum_nits: &mut f64,
         literal_max_nits: &mut f32,
     ) {
-        let zero = f32x8::zero(token);
-        let wn = f32x8::splat(token, white_nits);
-        let log2_min = f32x8::splat(token, LightLevelHistogram::LOG2_MIN);
-        let inv_step = f32x8::splat(token, LightLevelHistogram::inv_log2_step());
-        let bin_min_nits = f32x8::splat(token, LightLevelHistogram::BIN_MIN_NITS);
-        let num_bins_minus_1 = f32x8::splat(token, (LightLevelHistogram::NUM_BINS - 1) as f32);
+        let zero = f32x8::zero_t(token);
+        let wn = f32x8::splat_t(token, white_nits);
+        let log2_min = f32x8::splat_t(token, LightLevelHistogram::LOG2_MIN);
+        let inv_step = f32x8::splat_t(token, LightLevelHistogram::inv_log2_step());
+        let bin_min_nits = f32x8::splat_t(token, LightLevelHistogram::BIN_MIN_NITS);
+        let num_bins_minus_1 = f32x8::splat_t(token, (LightLevelHistogram::NUM_BINS - 1) as f32);
 
         let mut local_max = zero;
         // Accumulate in f32 lanes, flushing into the f64 running total
@@ -920,9 +920,9 @@ mod simd_kernel {
                 ba[i] = chunk[base + 2];
                 // Alpha (chunk[base + 3] when N==4) is ignored.
             }
-            let r = f32x8::load(token, &ra);
-            let g = f32x8::load(token, &ga);
-            let b = f32x8::load(token, &ba);
+            let r = f32x8::load_t(token, &ra);
+            let g = f32x8::load_t(token, &ga);
+            let b = f32x8::load_t(token, &ba);
 
             // Tier-consistent NaN/negative fold: `v > 0` is an ORDERED
             // compare — false for NaN, for negatives, and for zero on
@@ -1012,15 +1012,15 @@ mod simd_kernel {
         sum_nits: &mut f64,
         literal_max_nits: &mut f32,
     ) {
-        let zero = f32x8::zero(token);
-        let wn = f32x8::splat(token, white_nits);
-        let kr = f32x8::splat(token, KR);
-        let kg = f32x8::splat(token, KG);
-        let kb = f32x8::splat(token, KB);
-        let log2_min = f32x8::splat(token, LightLevelHistogram::LOG2_MIN);
-        let inv_step = f32x8::splat(token, LightLevelHistogram::inv_log2_step());
-        let bin_min_nits = f32x8::splat(token, LightLevelHistogram::BIN_MIN_NITS);
-        let num_bins_minus_1 = f32x8::splat(token, (LightLevelHistogram::NUM_BINS - 1) as f32);
+        let zero = f32x8::zero_t(token);
+        let wn = f32x8::splat_t(token, white_nits);
+        let kr = f32x8::splat_t(token, KR);
+        let kg = f32x8::splat_t(token, KG);
+        let kb = f32x8::splat_t(token, KB);
+        let log2_min = f32x8::splat_t(token, LightLevelHistogram::LOG2_MIN);
+        let inv_step = f32x8::splat_t(token, LightLevelHistogram::inv_log2_step());
+        let bin_min_nits = f32x8::splat_t(token, LightLevelHistogram::BIN_MIN_NITS);
+        let num_bins_minus_1 = f32x8::splat_t(token, (LightLevelHistogram::NUM_BINS - 1) as f32);
 
         let mut local_max = zero;
         // f32 lane sums flushed to f64 every `SUM_FLUSH_CHUNKS` chunks —
@@ -1043,9 +1043,9 @@ mod simd_kernel {
             // `accumulate_strip_max_rgb_tier`. A `.max(zero)` load fold
             // propagated NaN on NEON/WASM (and was order-dependent on
             // x86), poisoning the luminance dot product.
-            let r = f32x8::load(token, &ra);
-            let g = f32x8::load(token, &ga);
-            let b = f32x8::load(token, &ba);
+            let r = f32x8::load_t(token, &ra);
+            let g = f32x8::load_t(token, &ga);
+            let b = f32x8::load_t(token, &ba);
             let r = f32x8::blend(r.simd_gt(zero), r, zero);
             let g = f32x8::blend(g.simd_gt(zero), g, zero);
             let b = f32x8::blend(b.simd_gt(zero), b, zero);
@@ -1198,7 +1198,7 @@ mod simd_kernel {
         row_max_rel: &mut f32,
         row_sum_rel: &mut f64,
     ) {
-        let zero = f32x8::zero(token);
+        let zero = f32x8::zero_t(token);
         let mut local_max = zero;
         // f32 lane sums flushed to f64 every `SUM_FLUSH_CHUNKS` chunks —
         // see `accumulate_strip_max_rgb_tier`.
@@ -1218,9 +1218,9 @@ mod simd_kernel {
             }
             // Tier-consistent NaN/negative fold — see the comment in
             // `accumulate_strip_max_rgb_tier`.
-            let r = f32x8::load(token, &ra);
-            let g = f32x8::load(token, &ga);
-            let b = f32x8::load(token, &ba);
+            let r = f32x8::load_t(token, &ra);
+            let g = f32x8::load_t(token, &ga);
+            let b = f32x8::load_t(token, &ba);
             let r = f32x8::blend(r.simd_gt(zero), r, zero);
             let g = f32x8::blend(g.simd_gt(zero), g, zero);
             let b = f32x8::blend(b.simd_gt(zero), b, zero);
@@ -1256,10 +1256,10 @@ mod simd_kernel {
         row_max_rel: &mut f32,
         row_sum_rel: &mut f64,
     ) {
-        let zero = f32x8::zero(token);
-        let kr = f32x8::splat(token, KR);
-        let kg = f32x8::splat(token, KG);
-        let kb = f32x8::splat(token, KB);
+        let zero = f32x8::zero_t(token);
+        let kr = f32x8::splat_t(token, KR);
+        let kg = f32x8::splat_t(token, KG);
+        let kb = f32x8::splat_t(token, KB);
 
         let mut local_max = zero;
         // f32 lane sums flushed to f64 every `SUM_FLUSH_CHUNKS` chunks —
@@ -1280,9 +1280,9 @@ mod simd_kernel {
             }
             // Tier-consistent NaN/negative fold — see the comment in
             // `accumulate_strip_max_rgb_tier`.
-            let r = f32x8::load(token, &ra);
-            let g = f32x8::load(token, &ga);
-            let b = f32x8::load(token, &ba);
+            let r = f32x8::load_t(token, &ra);
+            let g = f32x8::load_t(token, &ga);
+            let b = f32x8::load_t(token, &ba);
             let r = f32x8::blend(r.simd_gt(zero), r, zero);
             let g = f32x8::blend(g.simd_gt(zero), g, zero);
             let b = f32x8::blend(b.simd_gt(zero), b, zero);

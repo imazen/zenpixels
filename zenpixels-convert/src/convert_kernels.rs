@@ -2082,7 +2082,7 @@ pub(crate) fn pq_oetf(v: f32) -> f32 {
 #[archmage::magetypes(define(f32x16), v4(cfg(avx512)), v3, neon, wasm128, scalar)]
 fn multiply_color_channels_tier(token: Token, buf: &mut [f32], channels: usize, factor: f32) {
     let mul = if channels == 4 {
-        f32x16::from_array(
+        f32x16::from_array_t(
             token,
             [
                 factor, factor, factor, 1.0, factor, factor, factor, 1.0, factor, factor, factor,
@@ -2090,11 +2090,11 @@ fn multiply_color_channels_tier(token: Token, buf: &mut [f32], channels: usize, 
             ],
         )
     } else {
-        f32x16::from_array(token, [factor; 16])
+        f32x16::from_array_t(token, [factor; 16])
     };
     let (chunks, remainder) = buf.as_chunks_mut::<16>();
     for chunk in chunks {
-        let v = f32x16::from_array(token, *chunk);
+        let v = f32x16::from_array_t(token, *chunk);
         *chunk = (v * mul).to_array();
     }
     if channels == 4 {
@@ -2154,13 +2154,13 @@ const PQ_C3: f32 = 18.6875;
 /// PQ EOTF (signal → linear), exact, precise SIMD.
 #[archmage::magetypes(define(f32x16), v4(cfg(avx512)), v3, neon, wasm128, scalar)]
 fn pq_eotf_slice_tier(token: Token, buf: &mut [f32]) {
-    let zero = f32x16::splat(token, 0.0);
-    let c1 = f32x16::splat(token, PQ_C1);
-    let c2 = f32x16::splat(token, PQ_C2);
-    let c3 = f32x16::splat(token, PQ_C3);
+    let zero = f32x16::splat_t(token, 0.0);
+    let c1 = f32x16::splat_t(token, PQ_C1);
+    let c2 = f32x16::splat_t(token, PQ_C2);
+    let c3 = f32x16::splat_t(token, PQ_C3);
     let (chunks, rem) = buf.as_chunks_mut::<16>();
     for chunk in chunks {
-        let v = f32x16::from_array(token, *chunk).max(zero);
+        let v = f32x16::from_array_t(token, *chunk).max(zero);
         let vp = v.pow_midp_precise(1.0 / PQ_M2);
         let num = (vp - c1).max(zero);
         let den = c2 - c3 * vp;
@@ -2175,14 +2175,14 @@ fn pq_eotf_slice_tier(token: Token, buf: &mut [f32]) {
 /// PQ inverse-EOTF / OETF (linear → signal), exact, precise SIMD.
 #[archmage::magetypes(define(f32x16), v4(cfg(avx512)), v3, neon, wasm128, scalar)]
 fn pq_oetf_slice_tier(token: Token, buf: &mut [f32]) {
-    let zero = f32x16::splat(token, 0.0);
-    let one = f32x16::splat(token, 1.0);
-    let c1 = f32x16::splat(token, PQ_C1);
-    let c2 = f32x16::splat(token, PQ_C2);
-    let c3 = f32x16::splat(token, PQ_C3);
+    let zero = f32x16::splat_t(token, 0.0);
+    let one = f32x16::splat_t(token, 1.0);
+    let c1 = f32x16::splat_t(token, PQ_C1);
+    let c2 = f32x16::splat_t(token, PQ_C2);
+    let c3 = f32x16::splat_t(token, PQ_C3);
     let (chunks, rem) = buf.as_chunks_mut::<16>();
     for chunk in chunks {
-        let v = f32x16::from_array(token, *chunk).max(zero);
+        let v = f32x16::from_array_t(token, *chunk).max(zero);
         let vp = v.pow_midp_precise(PQ_M1);
         let sig = ((c1 + c2 * vp) / (one + c3 * vp)).pow_midp_precise(PQ_M2);
         *chunk = f32x16::blend(v.simd_le(zero), zero, sig).to_array();
@@ -3260,15 +3260,15 @@ fn gamut_matrix_f32_tier<const CHANNELS: usize>(
 ) {
     const LANES: usize = 8;
     let m = matrix;
-    let m00 = f32x8::splat(token, m[0]);
-    let m01 = f32x8::splat(token, m[1]);
-    let m02 = f32x8::splat(token, m[2]);
-    let m10 = f32x8::splat(token, m[3]);
-    let m11 = f32x8::splat(token, m[4]);
-    let m12 = f32x8::splat(token, m[5]);
-    let m20 = f32x8::splat(token, m[6]);
-    let m21 = f32x8::splat(token, m[7]);
-    let m22 = f32x8::splat(token, m[8]);
+    let m00 = f32x8::splat_t(token, m[0]);
+    let m01 = f32x8::splat_t(token, m[1]);
+    let m02 = f32x8::splat_t(token, m[2]);
+    let m10 = f32x8::splat_t(token, m[3]);
+    let m11 = f32x8::splat_t(token, m[4]);
+    let m12 = f32x8::splat_t(token, m[5]);
+    let m20 = f32x8::splat_t(token, m[6]);
+    let m21 = f32x8::splat_t(token, m[7]);
+    let m22 = f32x8::splat_t(token, m[8]);
 
     let whole = width / LANES;
     let mut r = [0.0f32; LANES];
@@ -3284,9 +3284,9 @@ fn gamut_matrix_f32_tier<const CHANNELS: usize>(
             g[i] = src[p + 1];
             b[i] = src[p + 2];
         }
-        let rl = f32x8::from_array(token, r);
-        let gl = f32x8::from_array(token, g);
-        let bl = f32x8::from_array(token, b);
+        let rl = f32x8::from_array_t(token, r);
+        let gl = f32x8::from_array_t(token, g);
+        let bl = f32x8::from_array_t(token, b);
 
         // 3×3 matmul as fused-multiply-adds — same shape as
         // fast_gamut::mat3x3_x8 but typed against the generic
