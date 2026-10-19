@@ -35,11 +35,10 @@ jobs:
           - { os: ubuntu-latest, name: Linux x64 }
           - { os: ubuntu-24.04-arm, name: Linux aarch64 }
           - { os: macos-latest, name: macOS arm64 }
-          - { os: macos-26-intel, name: macOS x64 }
           - { os: windows-latest, name: Windows x64 }
           - { os: windows-11-arm, name: Windows arm64 }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -119,7 +118,7 @@ jobs:
     name: Test i686
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -150,7 +149,7 @@ jobs:
     name: WASM (wasm32-wasip1)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -170,7 +169,7 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -213,7 +212,7 @@ jobs:
     name: Public API snapshots
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Pinned to a specific commit, NOT `ref: main` — an unrelated push to
       # imazen/zenutils would otherwise be able to break this repo's CI. Bump
@@ -222,7 +221,7 @@ jobs:
       # once zenutils-apidoc 0.1.2's builders reach crates.io (then apidoc/
       # can depend on the published crate and this checkout goes away).
       - name: Checkout sibling imazen/zenutils
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: imazen/zenutils
           ref: 1921bc23d2834c203e017d89197decf4fd3330d3 # zenutils main @ 2026-07-14
@@ -259,7 +258,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -276,7 +275,7 @@ jobs:
     name: MSRV
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install MSRV toolchains
         run: |
@@ -299,7 +298,7 @@ jobs:
     name: Feature powerset
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -321,7 +320,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -336,7 +335,7 @@ jobs:
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
 
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: lcov.info
           fail_ci_if_error: false
