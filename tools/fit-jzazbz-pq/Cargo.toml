@@ -1,0 +1,13 @@
+# Dev tool, not part of the workspace or any published crate: fits the JzAzBz
+# PQ curve used by zenpixels-convert/benches/bench_jzazbz_vs_xyb.rs.
+# Run: cargo run --release --manifest-path tools/fit-jzazbz-pq/Cargo.toml
+[package]
+name = "fit-jzazbz-pq"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+polyfit = { git = "https://github.com/lilith/polyfit", rev = "4de8e99799915664b1397003a86b58d46c2dc2df", default-features = false }
