@@ -91,6 +91,38 @@ This does not add native 10/12-bit video-code semantics to normalized U16 images
 
 ## Costs and remaining scope
 
+### Output preparation added on the review branch (2026-10-25)
+
+`OutputPlan::new` prepares the transform and matching output signaling from
+the current descriptor/context and requested profile, without an image buffer.
+This is the color stage needed by zencodec's paused transcode adapter: it can
+inspect `metadata()` and `output_descriptor()` before allowing pixel work.
+It must still validate the encoder's carrier support and metadata policy.
+
+`prepare(width)` optionally moves scratch and selected table initialization
+before execution. Without it, execution retains the existing lazy behavior,
+including plugins without a preparation hook. `convert_rows(source, destination)`
+accepts the two pixel views, checks source interpretation, geometry and target
+descriptor before writes, and returns the destination view with matching color
+context. Use that returned view when passing rows onward. Backend failures may
+leave partial destination bytes; discard that batch.
+
+The existing `finalize_for_output_with` now uses this same plan and retains its
+owned full-image result and permissive sample options. New plan callers provide
+explicit `ConvertOptions`; required alpha/depth/luma rules are checked before
+an opaque-profile plugin can accept a transform.
+
+`tests/output_plan.rs` qualifies current-versus-origin ICC authority, unchanged
+padding, source-interpretation checks, sample-policy refusal and native ICC rows
+against a separately built CMS worker. Its prepared authored transform allocates
+no memory during row conversion. This is not an RSS or arbitrary-CMS guarantee.
+The plan inherits the pixel-view constructors' whole-pixel stride restriction;
+[issue 91](https://github.com/imazen/zenpixels/issues/91) tracks the byte-stride
+contract and typed-bridge audit. The output-allocation work also continues
+[issue 69](https://github.com/imazen/zenpixels/issues/69).
+
+### Other bridge scope
+
 Unassociation, matte and multi-stage conversion may require additional row kernels
 and scratch; they are not yet all fused. Exactness checks and descriptor validation
 are metadata-only. U16 content analysis combines opacity, chroma and replication

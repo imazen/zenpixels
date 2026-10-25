@@ -196,3 +196,13 @@ prepared-sync export:
     cp justfile "{{export}}/justfile"
     cp zenpixels-convert/src/convert.rs zenpixels-convert/src/converter.rs zenpixels-convert/src/output.rs zenpixels-convert/src/error.rs zenpixels-convert/src/lib.rs "{{export}}/zenpixels-convert/src/"
     cp zenpixels-convert/tests/prepared_contracts.rs "{{export}}/zenpixels-convert/tests/"
+
+# Output planning, existing atomic conveniences and actual ICC/backend contracts.
+output-plan-check:
+    cargo test -p zenpixels-convert --test output_plan --test output_current_color --test output_contracts --test output_finalize --test unspecified_cicp_context --test prepared_contracts --features std,cms-moxcms,icc-db --locked
+    cargo clippy -p zenpixels-convert --lib --test output_plan --features std,cms-moxcms,icc-db --locked -- -D warnings
+
+output-plan-sync export: (prepared-sync export)
+    mkdir -p "{{export}}/zenpixels-convert/src/output"
+    cp zenpixels-convert/src/output/plan.rs "{{export}}/zenpixels-convert/src/output/"
+    cp zenpixels-convert/tests/output_plan.rs "{{export}}/zenpixels-convert/tests/"

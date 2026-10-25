@@ -24,6 +24,12 @@
 
 ### Added
 
+- `zenpixels-convert::OutputPlan` prepares profile-aware row conversion and its
+  output signaling before pixels arrive. It checks current source interpretation,
+  explicit sample-change policy, geometry and destination descriptor; returned
+  row views carry matching color context. `finalize_for_output_with` reuses the
+  same implementation and retains its owned-output and lazy-backend behavior.
+
 - `Cicp::resolve_matrix(hint)` and `UnspecifiedMatrixError`: resolve `matrix_coefficients`
   per H.273 V4 (07/2024) Table 4. Self-contained codes (0, 1, 4–11, 14–17) resolve as
   given; 12/13 need primaries with defined chromaticity; 2 and reserved codes take a
