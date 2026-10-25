@@ -82,3 +82,7 @@ When preparing to publish:
 - If *any* failure is not tolerated, bump to 0.3.0 and cut a proper breaking release.
 
 See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated breaks for batched release.
+
+## Known Bugs
+
+- Fixed 2026-10-25: `ConvertScratch::prepare` passed alignment padding as pixel data when warming RGB byte gamut kernels. `prepared_contracts::rgb_gamut_preparation_preserves_unprepared_pixels_without_row_allocations` fails before the active-extent correction and compares both gamut directions across row widths.

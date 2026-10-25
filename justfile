@@ -184,3 +184,15 @@ beta-cohort-check:
     cargo fmt --check
     cargo clippy --locked --workspace --lib -- -D warnings
     cargo test --locked --workspace --lib --no-fail-fast
+
+# Prepared execution must preserve ordinary conversion pixels and row allocation contracts.
+prepared-contracts:
+    cargo test -p zenpixels-convert --test prepared_contracts --features std,cms-moxcms,icc-db --locked
+    cargo clippy -p zenpixels-convert --lib --test prepared_contracts --features std,cms-moxcms,icc-db --locked -- -D warnings
+
+prepared-sync export:
+    test ! -e "{{export}}/.git"
+    test ! -e "{{export}}/.jj"
+    cp justfile "{{export}}/justfile"
+    cp zenpixels-convert/src/convert.rs zenpixels-convert/src/converter.rs zenpixels-convert/src/output.rs zenpixels-convert/src/error.rs zenpixels-convert/src/lib.rs "{{export}}/zenpixels-convert/src/"
+    cp zenpixels-convert/tests/prepared_contracts.rs "{{export}}/zenpixels-convert/tests/"

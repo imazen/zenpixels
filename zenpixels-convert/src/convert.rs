@@ -2356,8 +2356,8 @@ impl ConvertScratch {
         let mut dst = vec![0u32; words];
         convert_row_buffered(
             plan,
-            bytemuck::cast_slice(&src),
-            bytemuck::cast_slice_mut(&mut dst),
+            &bytemuck::cast_slice::<u32, u8>(&src)[..plan.from().bytes_per_pixel()],
+            &mut bytemuck::cast_slice_mut::<u32, u8>(&mut dst)[..plan.to().bytes_per_pixel()],
             1,
             self,
         );

@@ -3,6 +3,32 @@ whereat::define_at_crate_info!();
 use zenpixels_convert::{AlphaMode, ConvertPlan, PixelDescriptor, RowConverter, TransferFunction};
 
 #[test]
+fn rgb_gamut_preparation_preserves_unprepared_pixels_without_row_allocations() {
+    let srgb = PixelDescriptor::RGB8_SRGB;
+    let p3 = srgb.with_primaries(zenpixels_convert::ColorPrimaries::DisplayP3);
+    for (from, to) in [(srgb, p3), (p3, srgb)] {
+        let mut ordinary = RowConverter::new(from, to).unwrap();
+        let mut prepared = RowConverter::new(from, to).unwrap();
+        prepared.prepare(257).unwrap();
+        let input: Vec<u8> = (0..257 * 3).map(|n| (n * 73 + 19) as u8).collect();
+        let mut expected = vec![0xa5; input.len()];
+        let mut actual = vec![0xa5; input.len()];
+        for width in [0, 1, 2, 3, 7, 8, 9, 15, 17, 256, 257] {
+            ordinary
+                .try_convert_row(&input, &mut expected, width)
+                .unwrap();
+            let allocations = allocation_counter::measure(|| {
+                prepared
+                    .try_convert_row(&input, &mut actual, width)
+                    .unwrap();
+            });
+            assert_eq!(actual, expected, "width {width}, {from:?} to {to:?}");
+            assert_eq!(allocations.count_total, 0);
+        }
+    }
+}
+
+#[test]
 fn preparation_moves_scratch_and_lut_cost_before_execution() {
     let from = PixelDescriptor::RGBA16_SRGB.with_transfer(TransferFunction::Linear);
     let to = PixelDescriptor::RGBA8_SRGB;

@@ -43,6 +43,8 @@
   conversion, format precedence, or a generic CICP resolver.
 
 ### Fixed
+
+- Prepared RGB gamut conversion warms kernels with one active pixel in each format, excluding alignment padding. Preparation no longer panics on the three-channel byte path; prepared and ordinary rows remain byte-identical with no row allocations in the regression matrix.
 - Recognize "Display P3 Gamut with sRGB Transfer", the 520-byte v4.3 profile in
   Android phone screenshots (five in imazen-26). icc-gen's `--report` run gives
   normalized hash `0x2dc2d3340af4d7c8`: Display P3 with the sRGB curve, maximum
