@@ -42,6 +42,18 @@ clippy:
 test:
     cargo test --workspace
 
+# Native TIFF/IMIJ sample carriage and explicit conversion refusal.
+native-samples-check:
+    cargo test -p zenpixels --test parts
+    cargo test -p zenpixels -p zenpixels-convert --test native_samples --features zenpixels-convert/hdr-experimental,zenpixels-convert/cms-moxcms
+    cargo clippy -p zenpixels -p zenpixels-convert --lib --test native_samples --features zenpixels-convert/hdr-experimental,zenpixels-convert/cms-moxcms -- -D warnings
+
+# Full source coverage after extending the physical format enum.
+native-samples-suite:
+    cargo test -p zenpixels -p zenpixels-convert --lib --tests --features zenpixels-convert/hdr-experimental,zenpixels-convert/cms-moxcms
+    cargo check -p zenpixels --no-default-features --target wasm32-unknown-unknown
+    just api-doc
+
 # Compare production fused scan predicates with forced scalar on macOS ARM64.
 arm-scan-tiers-macos:
     mkdir -p "$HOME/tmp"
@@ -197,10 +209,27 @@ prepared-sync export:
     cp zenpixels-convert/src/convert.rs zenpixels-convert/src/converter.rs zenpixels-convert/src/output.rs zenpixels-convert/src/error.rs zenpixels-convert/src/lib.rs "{{export}}/zenpixels-convert/src/"
     cp zenpixels-convert/tests/prepared_contracts.rs "{{export}}/zenpixels-convert/tests/"
 
+# Combine native sample carriage with the existing profile-aware output planner.
+native-output-sync export:
+    test ! -e "{{export}}/.git"
+    test ! -e "{{export}}/.jj"
+    cp Cargo.toml justfile "{{export}}/"
+    cp zenpixels/Cargo.toml "{{export}}/zenpixels/"
+    cp zenpixels-convert/Cargo.toml "{{export}}/zenpixels-convert/"
+    rsync -a zenpixels/src/ "{{export}}/zenpixels/src/"
+    rsync -a zenpixels/tests/ "{{export}}/zenpixels/tests/"
+    rsync -a zenpixels-convert/src/ "{{export}}/zenpixels-convert/src/"
+    rsync -a zenpixels-convert/tests/ "{{export}}/zenpixels-convert/tests/"
+
+native-output-check:
+    cargo fmt -p zenpixels -p zenpixels-convert --check
+    just output-plan-check
+    just native-samples-check
+
 # Output planning, existing atomic conveniences and actual ICC/backend contracts.
 output-plan-check:
-    cargo test -p zenpixels-convert --test output_plan --test output_current_color --test output_contracts --test output_finalize --test unspecified_cicp_context --test prepared_contracts --features std,cms-moxcms,icc-db --locked
-    cargo clippy -p zenpixels-convert --lib --test output_plan --features std,cms-moxcms,icc-db --locked -- -D warnings
+    cargo test -p zenpixels-convert --test output_native --test output_plan --test output_current_color --test output_contracts --test output_finalize --test unspecified_cicp_context --test prepared_contracts --features std,cms-moxcms,icc-db --locked
+    cargo clippy -p zenpixels-convert --lib --test output_native --test output_plan --features std,cms-moxcms,icc-db --locked -- -D warnings
 
 output-plan-sync export: (prepared-sync export)
     mkdir -p "{{export}}/zenpixels-convert/src/output"

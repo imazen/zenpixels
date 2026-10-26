@@ -123,6 +123,15 @@ contract and typed-bridge audit. The output-allocation work also continues
 
 ### Other bridge scope
 
+The output-plan review now includes the native-sample review revision. This
+puts `OutputPlan` and `CmykF32` / `CmykF32Inverted` in one dependency graph
+without another conversion API. `tests/output_native.rs` checks exact identity
+carriage for both polarities, including signed zero, subnormal and NaN payload
+bits, strided rows, untouched destination padding and unchanged ICC signaling.
+Actual native JXL profile/admitted-destination qualification belongs to the
+zencodec consumer. This does not add a CMYK-to-RGB kernel or an owner-preserving
+identity path: `convert_rows` still writes into a distinct destination.
+
 Unassociation, matte and multi-stage conversion may require additional row kernels
 and scratch; they are not yet all fused. Exactness checks and descriptor validation
 are metadata-only. U16 content analysis combines opacity, chroma and replication
