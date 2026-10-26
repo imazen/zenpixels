@@ -14,18 +14,18 @@
 #   free functions                              4
 #   inherent methods                          259
 #   struct fields                             115
-#   enum variants                             219
+#   enum variants                             289
 #   re-exports                                  4
 #   trait roster entries (type × trait)       270
 #   auto-trait-complete types                  39
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          407
+#   (root)                          442
 #   buffer                          244
 #   cicp                             38
 #   color                            64
-#   descriptor                      150
+#   descriptor                      185
 #   hdr                              12
 #   icc                              13
 #   orientation                      11
@@ -33,7 +33,7 @@
 #   policy                           25
 #   sample                            5
 
-## items (849 lines)
+## items (919 lines)
 
 pub mod zenpixels
 pub use At
@@ -272,7 +272,14 @@ pub const fn descriptor::ChannelLayout::channels(self) -> usize [also: (root)]
 pub const fn descriptor::ChannelLayout::has_alpha(self) -> bool [also: (root)]
 pub descriptor::ChannelType::F16 = 5
 pub descriptor::ChannelType::F32 = 4
+pub descriptor::ChannelType::F64 = 12
+pub descriptor::ChannelType::I16 = 7
+pub descriptor::ChannelType::I32 = 9
+pub descriptor::ChannelType::I64 = 11
+pub descriptor::ChannelType::I8 = 6
 pub descriptor::ChannelType::U16 = 2
+pub descriptor::ChannelType::U32 = 8
+pub descriptor::ChannelType::U64 = 10
 pub descriptor::ChannelType::U8 = 1
 pub const fn descriptor::ChannelType::byte_size(self) -> usize [also: (root)]
 pub const fn descriptor::ChannelType::is_f16(self) -> bool [also: (root)]
@@ -308,18 +315,46 @@ pub descriptor::PixelFormat::GrayA16 = 11
 pub descriptor::PixelFormat::GrayA8 = 10
 pub descriptor::PixelFormat::GrayAF16 = 22
 pub descriptor::PixelFormat::GrayAF32 = 12
+pub descriptor::PixelFormat::GrayAF64 = 50
+pub descriptor::PixelFormat::GrayAI16 = 30
+pub descriptor::PixelFormat::GrayAI32 = 38
+pub descriptor::PixelFormat::GrayAI64 = 46
+pub descriptor::PixelFormat::GrayAI8 = 26
+pub descriptor::PixelFormat::GrayAU32 = 34
+pub descriptor::PixelFormat::GrayAU64 = 42
 pub descriptor::PixelFormat::GrayF16 = 21
 pub descriptor::PixelFormat::GrayF32 = 9
+pub descriptor::PixelFormat::GrayF64 = 49
+pub descriptor::PixelFormat::GrayI16 = 29
+pub descriptor::PixelFormat::GrayI32 = 37
+pub descriptor::PixelFormat::GrayI64 = 45
+pub descriptor::PixelFormat::GrayI8 = 25
+pub descriptor::PixelFormat::GrayU32 = 33
+pub descriptor::PixelFormat::GrayU64 = 41
 pub descriptor::PixelFormat::OklabF32 = 16
 pub descriptor::PixelFormat::OklabaF32 = 17
 pub descriptor::PixelFormat::Rgb16 = 3
 pub descriptor::PixelFormat::Rgb8 = 1
 pub descriptor::PixelFormat::RgbF16 = 19
 pub descriptor::PixelFormat::RgbF32 = 5
+pub descriptor::PixelFormat::RgbF64 = 47
+pub descriptor::PixelFormat::RgbI16 = 27
+pub descriptor::PixelFormat::RgbI32 = 35
+pub descriptor::PixelFormat::RgbI64 = 43
+pub descriptor::PixelFormat::RgbI8 = 23
+pub descriptor::PixelFormat::RgbU32 = 31
+pub descriptor::PixelFormat::RgbU64 = 39
 pub descriptor::PixelFormat::Rgba16 = 4
 pub descriptor::PixelFormat::Rgba8 = 2
 pub descriptor::PixelFormat::RgbaF16 = 20
 pub descriptor::PixelFormat::RgbaF32 = 6
+pub descriptor::PixelFormat::RgbaF64 = 48
+pub descriptor::PixelFormat::RgbaI16 = 28
+pub descriptor::PixelFormat::RgbaI32 = 36
+pub descriptor::PixelFormat::RgbaI64 = 44
+pub descriptor::PixelFormat::RgbaI8 = 24
+pub descriptor::PixelFormat::RgbaU32 = 32
+pub descriptor::PixelFormat::RgbaU64 = 40
 pub descriptor::PixelFormat::Rgbx8 = 14
 pub const fn descriptor::PixelFormat::byte_order(self) -> descriptor::ByteOrder [also: (root)]
 pub const fn descriptor::PixelFormat::bytes_per_pixel(self) -> usize [also: (root)]
@@ -553,7 +588,14 @@ pub ChannelLayout::Rgba = 4
 #[non_exhaustive] #[repr(u8)] pub enum ChannelType [also: descriptor]
 pub ChannelType::F16 = 5
 pub ChannelType::F32 = 4
+pub ChannelType::F64 = 12
+pub ChannelType::I16 = 7
+pub ChannelType::I32 = 9
+pub ChannelType::I64 = 11
+pub ChannelType::I8 = 6
 pub ChannelType::U16 = 2
+pub ChannelType::U32 = 8
+pub ChannelType::U64 = 10
 pub ChannelType::U8 = 1
 pub enum ColorAuthority [also: color]
 pub ColorAuthority::Cicp
@@ -629,18 +671,46 @@ pub PixelFormat::GrayA16 = 11
 pub PixelFormat::GrayA8 = 10
 pub PixelFormat::GrayAF16 = 22
 pub PixelFormat::GrayAF32 = 12
+pub PixelFormat::GrayAF64 = 50
+pub PixelFormat::GrayAI16 = 30
+pub PixelFormat::GrayAI32 = 38
+pub PixelFormat::GrayAI64 = 46
+pub PixelFormat::GrayAI8 = 26
+pub PixelFormat::GrayAU32 = 34
+pub PixelFormat::GrayAU64 = 42
 pub PixelFormat::GrayF16 = 21
 pub PixelFormat::GrayF32 = 9
+pub PixelFormat::GrayF64 = 49
+pub PixelFormat::GrayI16 = 29
+pub PixelFormat::GrayI32 = 37
+pub PixelFormat::GrayI64 = 45
+pub PixelFormat::GrayI8 = 25
+pub PixelFormat::GrayU32 = 33
+pub PixelFormat::GrayU64 = 41
 pub PixelFormat::OklabF32 = 16
 pub PixelFormat::OklabaF32 = 17
 pub PixelFormat::Rgb16 = 3
 pub PixelFormat::Rgb8 = 1
 pub PixelFormat::RgbF16 = 19
 pub PixelFormat::RgbF32 = 5
+pub PixelFormat::RgbF64 = 47
+pub PixelFormat::RgbI16 = 27
+pub PixelFormat::RgbI32 = 35
+pub PixelFormat::RgbI64 = 43
+pub PixelFormat::RgbI8 = 23
+pub PixelFormat::RgbU32 = 31
+pub PixelFormat::RgbU64 = 39
 pub PixelFormat::Rgba16 = 4
 pub PixelFormat::Rgba8 = 2
 pub PixelFormat::RgbaF16 = 20
 pub PixelFormat::RgbaF32 = 6
+pub PixelFormat::RgbaF64 = 48
+pub PixelFormat::RgbaI16 = 28
+pub PixelFormat::RgbaI32 = 36
+pub PixelFormat::RgbaI64 = 44
+pub PixelFormat::RgbaI8 = 24
+pub PixelFormat::RgbaU32 = 32
+pub PixelFormat::RgbaU64 = 40
 pub PixelFormat::Rgbx8 = 14
 #[non_exhaustive] #[repr(u8)] pub enum SignalRange [also: descriptor]
 pub SignalRange::Full = 0

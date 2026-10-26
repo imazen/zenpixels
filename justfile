@@ -42,6 +42,11 @@ clippy:
 test:
     cargo test --workspace
 
+# Native TIFF/IMIJ sample carriage and explicit conversion refusal.
+native-samples-check:
+    cargo test -p zenpixels -p zenpixels-convert --test native_samples --features zenpixels-convert/hdr-experimental,zenpixels-convert/cms-moxcms
+    cargo clippy -p zenpixels -p zenpixels-convert --lib --test native_samples --features zenpixels-convert/hdr-experimental,zenpixels-convert/cms-moxcms -- -D warnings
+
 # Compare production fused scan predicates with forced scalar on macOS ARM64.
 arm-scan-tiers-macos:
     mkdir -p "$HOME/tmp"

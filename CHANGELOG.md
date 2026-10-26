@@ -18,6 +18,20 @@
 
 ## [Unreleased]
 
+### zenpixels — native sample carriage
+
+- Add I8, I16, U32, I32, U64, I64 and F64 channel storage with gray,
+  gray-alpha, RGB and RGBA formats for native TIFF and IMIJ consumers (#83).
+  Existing buffer, stride, crop and owned-handoff APIs preserve sample bytes.
+  Released enum discriminants remain unchanged.
+
+### zenpixels-convert — native sample refusal
+
+- Identity rows preserve signed and wide samples exactly. Built-in conversion,
+  HDR mapping and moxcms refuse unsupported sample arithmetic instead of
+  relabeling values or dispatching them through F32 kernels. The new types do
+  not imply numerical conversion support.
+
 ### Dependency compatibility
 
 - Admit archmage/magetypes 0.9.31-beta.1 alongside compatible stable versions; explicit-token aliases are used where needed. Formatting, strict library lint and library tests pass (`cdaa3939`).

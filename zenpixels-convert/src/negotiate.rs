@@ -740,10 +740,11 @@ fn depth_loss(target_depth: ChannelType, origin_depth: ChannelType) -> u16 {
 #[allow(unreachable_patterns)] // non_exhaustive: future variants
 pub(crate) fn channel_bits(ct: ChannelType) -> u16 {
     match ct {
-        ChannelType::U8 => 8,
+        ChannelType::U8 | ChannelType::I8 => 8,
         ChannelType::F16 => 11, // 10 mantissa + 1 implicit
-        ChannelType::U16 => 16,
-        ChannelType::F32 => 32,
+        ChannelType::U16 | ChannelType::I16 => 16,
+        ChannelType::F32 | ChannelType::U32 | ChannelType::I32 => 32,
+        ChannelType::U64 | ChannelType::I64 | ChannelType::F64 => 64,
         _ => 0,
     }
 }

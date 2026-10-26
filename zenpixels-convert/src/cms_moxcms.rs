@@ -276,7 +276,10 @@ fn build_transform_inner(
     dst_format: PixelFormat,
 ) -> Result<Box<dyn RowTransform>, MoxCmsError> {
     if src_format.channel_type() != dst_format.channel_type()
-        || src_format.channel_type() == ChannelType::F16
+        || !matches!(
+            src_format.channel_type(),
+            ChannelType::U8 | ChannelType::U16 | ChannelType::F32
+        )
     {
         return Err(MoxCmsError(
             "moxcms requires matching U8, U16 or F32 sample types; convert depth separately".into(),
@@ -454,7 +457,10 @@ impl crate::cms::PluggableCms for MoxCms {
     {
         use crate::cms::CmsPluginError;
         if src_format.channel_type() != dst_format.channel_type()
-            || src_format.channel_type() == ChannelType::F16
+            || !matches!(
+                src_format.channel_type(),
+                ChannelType::U8 | ChannelType::U16 | ChannelType::F32
+            )
         {
             return Some(Err(whereat::at!(CmsPluginError::msg(
                 "moxcms requires matching U8, U16 or F32 sample types; convert depth separately"

@@ -15,6 +15,16 @@ use crate::{
 };
 use whereat::{At, ResultAtExt};
 
+/// Built-in numeric kernels cover these types. Other native samples can be
+/// carried and copied exactly, but need qualified kernels before interpretation
+/// changes. In particular, signed integers have no implicit normalized scale.
+fn has_numeric_kernels(channel: ChannelType) -> bool {
+    matches!(
+        channel,
+        ChannelType::U8 | ChannelType::U16 | ChannelType::F16 | ChannelType::F32
+    )
+}
+
 /// Reject range operations for which the planner has no correct kernels.
 /// Shared with CMS dispatch so an external descriptor-only plan cannot bypass
 /// the range contract before a backend is asked to prepare a transform.
@@ -594,6 +604,9 @@ impl ConvertPlan {
         }
         if from == to {
             return Ok(Self::build(from, to, vec![ConvertStep::Identity]));
+        }
+        if !has_numeric_kernels(from.channel_type()) || !has_numeric_kernels(to.channel_type()) {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
 
         // Refuse signal-range crossings: no Narrow↔Full steps exist (no
@@ -1204,6 +1217,9 @@ impl ConvertPlan {
 
         // Same endpoint range/depth restrictions as the ordinary planner.
         validate_descriptors(from, to)?;
+        if !has_numeric_kernels(from.channel_type()) || !has_numeric_kernels(to.channel_type()) {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
 
         // These kernels require RGB triples (optionally followed by alpha),
         // defined gamut matrices and a finite soft-compression knee.

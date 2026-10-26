@@ -61,3 +61,35 @@ and removal in 0.3 must include zenfilters' public `PlaneMask` consumers.
 See the [U16 matrix](u16-contract-matrix.md) for existing normalized RGB/gray
 arithmetic and the [implementation ledger](implementation-status-0.2-and-0.3.md)
 for the broader release work. This change does not complete that entire ledger.
+
+## Native signed and wider samples
+
+TIFF selection and [IMIJ's sample model](https://github.com/imazen/zenpixels/issues/83)
+need I8, I16, U32, I32, U64, I64 and F64 storage. `ChannelType` and
+`PixelFormat` now describe those types in gray, gray-alpha, RGB and RGBA
+layouts. They use the existing type-erased `PixelBuffer` / `PixelSlice`
+interfaces; they do not introduce another buffer owner. Multi-byte samples
+are native-endian, as for the existing U16/F32 storage. A file adapter must
+decode the file byte order first.
+
+These are native sample codes. Signed values have no implicit normalization
+or display range. The new format descriptors default to unknown transfer;
+adapters must retain the actual interpretation separately or attach known
+color information. The existing `SampleEncoding` bridge still accepts only
+unsigned U8/U16 words; this change does not extend it to signed scientific
+scales, per-channel significant bits or arbitrary band layouts.
+
+`just native-samples-check` tests strided buffer creation, owned handoff,
+cropping and identity row copying for all seven new types and four layouts.
+The fixtures include integer extrema, values beyond exact F32/F64 integer
+precision, signed zero, subnormal samples and NaN payload bits. Identity
+carriage preserves bytes. Built-in non-identity conversion, HDR tone mapping
+and the moxcms adapter refuse these types before running unsupported math.
+A separately supplied CMS may accept a format it actually implements.
+
+Format negotiation remains an advisory cost ranking. Selecting a descriptor
+does not prove a conversion exists: constructing the converter is the runtime
+authority. The native TIFF consumer in zencodec's `perf/spatial-validation`
+is the integration gate for using these types in the proposed collection API.
+Typed `Pixel` implementations and signed/wide numerical conversion kernels
+are outside this addition.
