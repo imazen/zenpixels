@@ -85,4 +85,10 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed on the output-plan review (2026-10-26): adding opaque alpha to native
+  ICC-tagged RGB F32 returned `NeedsCms` despite an unchanged current profile.
+  `output_native` covers strided RGB/gray U8/U16/F32, exact float bit patterns,
+  padding, bypass of unnecessary CMS work, and changed-profile/depth refusal.
+  The native JXL reproduction is in zencodec's spatial validation suite.
+
 - Fixed 2026-10-25: `ConvertScratch::prepare` passed alignment padding as pixel data when warming RGB byte gamut kernels. `prepared_contracts::rgb_gamut_preparation_preserves_unprepared_pixels_without_row_allocations` fails before the active-extent correction and compares both gamut directions across row widths.

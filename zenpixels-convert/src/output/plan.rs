@@ -170,8 +170,31 @@ impl OutputPlan {
         let identity = source_desc.layout_compatible(target_desc_full)
             && super::descriptors_match(&source_desc, &target_desc_full)
             && super::profiles_match(&source_profile, &target_profile);
+        // Adding opaque alpha changes storage, not the color coordinates. An
+        // unchanged opaque ICC does not require a CMS round trip for this.
+        // Keep this shortcut narrower than general same-profile conversion:
+        // alpha removal/compositing, depth and color-model changes still use
+        // their existing policy and backend paths.
+        let alpha_addition = super::profiles_match(&source_profile, &target_profile)
+            && source_desc.channel_type() == target_desc_full.channel_type()
+            && source_desc.transfer == target_desc_full.transfer
+            && source_desc.primaries == target_desc_full.primaries
+            && source_desc.signal_range == target_desc_full.signal_range
+            && source_desc.alpha().is_none()
+            && target_desc_full.alpha() == Some(crate::AlphaMode::Straight)
+            && matches!(
+                (source_desc.layout(), target_desc_full.layout()),
+                (crate::ChannelLayout::Rgb, crate::ChannelLayout::Rgba)
+                    | (crate::ChannelLayout::Gray, crate::ChannelLayout::GrayAlpha)
+            );
         let converter = if identity {
             None
+        } else if alpha_addition {
+            Some(crate::RowConverter::new_explicit(
+                source_desc,
+                target_desc_full,
+                options,
+            )?)
         } else {
             let needs_profiles = matches!(source_profile, crate::ColorProfileSource::Icc(_))
                 || matches!(target_profile, crate::ColorProfileSource::Icc(_));

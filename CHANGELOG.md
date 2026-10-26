@@ -20,6 +20,11 @@
 
 ### zenpixels-convert — native output-plan integration
 
+- Preserve exact RGB/gray samples when adding opaque alpha under an unchanged
+  current ICC, without requiring or invoking a CMS. The native JXL consumer
+  exposed an unnecessary `NeedsCms` refusal. Changed profiles, depth policy,
+  compositing and other color-model work retain their existing paths.
+
 - Add `OutputPlan::borrow_rows` for checked identity execution over the original
   strided storage. Return `None` when sample conversion is required, and retain
   source-interpretation and prepared-width errors. This supports the native

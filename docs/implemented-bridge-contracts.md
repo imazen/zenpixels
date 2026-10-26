@@ -133,6 +133,14 @@ The original sample owner and its allocation charge must remain alive. This
 allows the native zencodec image adapter to retain the original color and
 auxiliary planes together when the output request is already satisfied.
 
+Adding opaque alpha under the same current ICC is now a checked format change,
+without a CMS round trip. RGB→RGBA and gray→gray-alpha at unchanged U8/U16/F32
+depth preserve every color bit, including unusual floating-point values. The
+output still needs admitted destination storage; `borrow_rows` returns `None`.
+This does not bypass changed-profile work, authorize depth reduction, or add
+opaque-profile compositing. Those retain their existing policies and backend
+paths. A real native JXL RGB F32 frame exposed the previous `NeedsCms` refusal.
+
 The output-plan review now includes the native-sample review revision. This
 puts `OutputPlan` and `CmykF32` / `CmykF32Inverted` in one dependency graph
 without another conversion API. `tests/output_native.rs` checks exact identity
