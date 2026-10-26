@@ -1654,6 +1654,33 @@ pub struct PixelBufferParts {
     pub color_context: Option<Arc<ColorContext>>,
 }
 
+impl PixelBufferParts {
+    /// Describe a native allocation for checked adoption without copying.
+    ///
+    /// Samples start at byte zero and no color context is attached. Set
+    /// [`offset`](Self::offset) or [`color_context`](Self::color_context) before
+    /// adoption when the native allocation has a prefix or color metadata.
+    /// Construction does not validate or interpret the bytes; pass these parts
+    /// to [`PixelBuffer::try_from_parts`] to check the extent and alignment.
+    pub fn new(
+        data: Vec<u8>,
+        width: u32,
+        height: u32,
+        stride_bytes: usize,
+        descriptor: PixelDescriptor,
+    ) -> Self {
+        Self {
+            data,
+            offset: 0,
+            stride_bytes,
+            width,
+            height,
+            descriptor,
+            color_context: None,
+        }
+    }
+}
+
 /// Failed [`PixelBuffer::try_from_parts`] adoption, retaining the rejected storage.
 ///
 /// Use [`take_parts`](Self::take_parts) to recover the allocation, or

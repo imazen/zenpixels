@@ -24,6 +24,9 @@
   gray-alpha, RGB and RGBA formats for native TIFF and IMIJ consumers (#83).
   Existing buffer, stride, crop and owned-handoff APIs preserve sample bytes.
   Released enum discriminants remain unchanged.
+- Add `PixelBufferParts::new` so external codecs can describe their native
+  strided allocation for checked adoption through `PixelBuffer::try_from_parts`.
+  The TIFF consumer exposed the missing external construction path.
 
 ### zenpixels-convert — native sample refusal
 

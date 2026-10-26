@@ -93,3 +93,10 @@ authority. The native TIFF consumer in zencodec's `perf/spatial-validation`
 is the integration gate for using these types in the proposed collection API.
 Typed `Pixel` implementations and signed/wide numerical conversion kernels
 are outside this addition.
+
+External codecs construct `PixelBufferParts::new(data, width, height, stride,
+descriptor)` and call `PixelBuffer::try_from_parts`. This adopts the original
+allocation after checking geometry and alignment. The constructor was needed
+by the TIFF integration: the non-exhaustive parts structure previously could
+only be obtained from a buffer that zenpixels already owned. Failed adoption
+retains the native allocation for recovery through `FromPartsError`.

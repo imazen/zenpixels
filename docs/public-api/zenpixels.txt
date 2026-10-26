@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)        86
 #   pub consts/statics                        280
 #   free functions                              4
-#   inherent methods                          259
+#   inherent methods                          261
 #   struct fields                             115
 #   enum variants                             289
 #   re-exports                                  4
@@ -22,7 +22,7 @@
 #
 # per-module pub lines:
 #   (root)                          442
-#   buffer                          244
+#   buffer                          246
 #   cicp                             38
 #   color                            64
 #   descriptor                      185
@@ -33,7 +33,7 @@
 #   policy                           25
 #   sample                            5
 
-## items (919 lines)
+## items (921 lines)
 
 pub mod zenpixels
 pub use At
@@ -116,6 +116,7 @@ pub buffer::PixelBufferParts::height: u32
 pub buffer::PixelBufferParts::offset: usize
 pub buffer::PixelBufferParts::stride_bytes: usize
 pub buffer::PixelBufferParts::width: u32
+pub fn buffer::PixelBufferParts::new(alloc::vec::Vec<u8>, u32, u32, usize, descriptor::PixelDescriptor) -> Self
 pub fn buffer::PixelSlice<'a, P>::new_typed(&'a [u8], u32, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSlice<'a, P>::as_contiguous_bytes(&self) -> core::option::Option<&'a [u8]>
 pub fn buffer::PixelSlice<'a, P>::as_strided_bytes(&self) -> &'a [u8]
@@ -846,6 +847,7 @@ pub PixelBufferParts::height: u32
 pub PixelBufferParts::offset: usize
 pub PixelBufferParts::stride_bytes: usize
 pub PixelBufferParts::width: u32
+pub fn buffer::PixelBufferParts::new(alloc::vec::Vec<u8>, u32, u32, usize, descriptor::PixelDescriptor) -> Self
 #[non_exhaustive] pub struct PixelDescriptor [also: descriptor]
 pub PixelDescriptor::alpha: core::option::Option<descriptor::AlphaMode>
 pub PixelDescriptor::format: descriptor::PixelFormat

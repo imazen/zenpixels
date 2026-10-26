@@ -1,5 +1,5 @@
 //! Native TIFF/IMIJ carriage must not normalize, narrow, or canonicalize samples.
-use zenpixels::{ChannelLayout, ChannelType, PixelBuffer, PixelFormat};
+use zenpixels::{ChannelLayout, ChannelType, PixelBuffer, PixelBufferParts, PixelFormat};
 
 fn native_patterns(channel: ChannelType) -> Vec<u8> {
     match channel {
@@ -38,6 +38,29 @@ fn native_patterns(channel: ChannelType) -> Vec<u8> {
         .flat_map(u64::to_ne_bytes)
         .collect(),
         _ => panic!("not a native-sample fixture"),
+    }
+}
+
+#[test]
+fn external_strided_allocation_adopts_exactly_and_is_recoverable_on_refusal() {
+    let descriptor = PixelFormat::RgbU64.descriptor();
+    let stride = 8 * 3 * 5;
+    let bytes: Vec<u8> = (0..stride * 3).map(|i| (i * 73 + 19) as u8).collect();
+    let pointer = bytes.as_ptr();
+    let expected = bytes.clone();
+    let mut parts = PixelBufferParts::new(bytes, 3, 3, stride, descriptor);
+    // Deliberately impossible, then recover and correct the same allocation.
+    parts.stride_bytes = 1;
+    let mut error = PixelBuffer::try_from_parts(parts).unwrap_err();
+    let mut parts = error.take_parts().unwrap();
+    assert_eq!(parts.data.as_ptr(), pointer);
+    assert_eq!(parts.data, expected);
+    parts.stride_bytes = stride;
+    let buffer = PixelBuffer::try_from_parts(parts).unwrap();
+    assert_eq!(buffer.as_slice().as_strided_bytes().as_ptr(), pointer);
+    for y in 0..3 {
+        let at = y as usize * stride;
+        assert_eq!(buffer.as_slice().row(y), &expected[at..at + 8 * 3 * 3]);
     }
 }
 
