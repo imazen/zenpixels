@@ -100,3 +100,40 @@ allocation after checking geometry and alignment. The constructor was needed
 by the TIFF integration: the non-exhaustive parts structure previously could
 only be obtained from a buffer that zenpixels already owned. Failed adoption
 retains the native allocation for recovery through `FromPartsError`.
+
+## Native F32 CMYK layers
+
+The raw JXL consumer in zencodec's `perf/spatial-validation/src/jxl_layers.rs`
+needs four native F32 components. CMY plus separate black cannot be labeled RGB.
+`PixelFormat::CmykF32` is conventional ICC device polarity (zero means no ink).
+`PixelFormat::CmykF32Inverted` is the reversed polarity emitted by native JPEG XL
+(one means no ink), as specified by
+[libjxl's CMS interface](https://github.com/libjxl/libjxl/blob/v0.11.1/lib/include/jxl/cms_interface.h#L119).
+They share channel layout and size, but are distinct formats
+at every dispatch boundary. Physical `from_parts(F32, Cmyk, None)` selects the
+conventional format; the JXL adapter must select the inverted variant explicitly.
+
+This is deliberately carried in the format passed to converters, not in an
+optional provenance extension that a converter can overlook. A general scale
+or polarity field on every descriptor would also need to cross the existing
+CMS interfaces, which receive a `PixelFormat`. That broader sample-domain design
+remains a 0.3 review question; these two formats make the current consumer honest
+without changing buffer ownership or adding per-pixel work.
+
+Both formats have four channels, 16 bytes per pixel and no alpha. Retain the
+source ICC context and any separate alpha plane. The source ICC consumes
+conventional device values; an inverted format requires a qualified conversion
+before applying it. Changing the enum alone does not convert samples. Even
+`1.0 - value` can round away F32 bits, so native carriage must not silently
+perform that operation or claim that it is lossless.
+
+Tests preserve strided rows, padding, allocation identity, ICC context, signed
+zero, subnormals and NaN payload bits in both formats. This is storage support.
+`zenpixels-convert` refuses unqualified built-in CMYK transforms, including a
+polarity change. The moxcms plugin declines both unmapped F32 formats, and its
+legacy entry point explicitly rejects them instead of falling back to
+three-component RGB. No F32 CMYK color conversion is established here.
+
+The integration initially panicked while constructing a descriptor against the
+previous format set. The zencodec adapter also needs a fallible format lookup;
+a missing format must become a runtime requirement error before publication.

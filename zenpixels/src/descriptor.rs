@@ -1571,6 +1571,17 @@ pub enum PixelFormat {
     GrayF64 = 49,
     /// Native F64 GrayAlpha samples; no conversion is implied.
     GrayAF64 = 50,
+    /// Native-endian F32 CMYK device values (16 bytes per pixel), without alpha.
+    /// Zero means no ink and one means full ink, as for ICC device values.
+    /// Retain the source ICC profile; no numeric conversion is implied.
+    CmykF32 = 51,
+    /// Native-endian F32 CMYK with reversed ink polarity, as emitted by JPEG XL.
+    /// One means no ink and zero means full ink for all four components.
+    /// The source ICC profile describes conventional device values, so applying
+    /// it requires an explicit polarity conversion. Merely changing this format
+    /// to [`Self::CmykF32`] mislabels the samples. Subtracting from one can lose
+    /// F32 precision and is not a byte-preserving operation.
+    CmykF32Inverted = 52,
 }
 
 impl PixelFormat {
@@ -1593,7 +1604,9 @@ impl PixelFormat {
             | Self::GrayF32
             | Self::GrayAF32
             | Self::OklabF32
-            | Self::OklabaF32 => ChannelType::F32,
+            | Self::OklabaF32
+            | Self::CmykF32
+            | Self::CmykF32Inverted => ChannelType::F32,
             Self::RgbF16 | Self::RgbaF16 | Self::GrayF16 | Self::GrayAF16 => ChannelType::F16,
             Self::RgbI8 | Self::RgbaI8 | Self::GrayI8 | Self::GrayAI8 => ChannelType::I8,
             Self::RgbI16 | Self::RgbaI16 | Self::GrayI16 | Self::GrayAI16 => ChannelType::I16,
@@ -1622,7 +1635,7 @@ impl PixelFormat {
             Self::Bgra8 | Self::Bgrx8 => ChannelLayout::Bgra,
             Self::OklabF32 => ChannelLayout::Oklab,
             Self::OklabaF32 => ChannelLayout::OklabA,
-            Self::Cmyk8 => ChannelLayout::Cmyk,
+            Self::Cmyk8 | Self::CmykF32 | Self::CmykF32Inverted => ChannelLayout::Cmyk,
             Self::RgbI8
             | Self::RgbI16
             | Self::RgbU32
@@ -1683,7 +1696,7 @@ impl PixelFormat {
             | Self::GrayF64
             | Self::GrayAF64 => ColorModel::Gray,
             Self::OklabF32 | Self::OklabaF32 => ColorModel::Oklab,
-            Self::Cmyk8 => ColorModel::Cmyk,
+            Self::Cmyk8 | Self::CmykF32 | Self::CmykF32Inverted => ColorModel::Cmyk,
             _ => ColorModel::Rgb,
         }
     }
@@ -1741,6 +1754,8 @@ impl PixelFormat {
             | Self::GrayF16
             | Self::OklabF32
             | Self::Cmyk8
+            | Self::CmykF32
+            | Self::CmykF32Inverted
             | Self::RgbI8
             | Self::GrayI8
             | Self::RgbI16
@@ -1783,6 +1798,8 @@ impl PixelFormat {
             Self::OklabF32 => "OklabF32",
             Self::OklabaF32 => "OklabaF32",
             Self::Cmyk8 => "CMYK8",
+            Self::CmykF32 => "CmykF32",
+            Self::CmykF32Inverted => "CmykF32Inverted",
             Self::RgbF16 => "RgbF16",
             Self::RgbaF16 => "RgbaF16",
             Self::GrayF16 => "GrayF16",
@@ -1822,7 +1839,9 @@ impl PixelFormat {
     /// Resolve a format from channel type, layout, and alpha presence.
     ///
     /// Returns `None` for combinations that have no `PixelFormat` variant
-    /// (e.g. `(U16, Bgra, _)`).
+    /// (e.g. `(U16, Bgra, _)`). CMYK resolves to conventional ink polarity;
+    /// reversed F32 ink polarity must be selected explicitly with
+    /// [`Self::CmykF32Inverted`]. Channel layout alone does not retain polarity.
     #[inline]
     pub const fn from_parts(
         channel_type: ChannelType,
@@ -1859,6 +1878,7 @@ impl PixelFormat {
             (ChannelType::F32, ChannelLayout::OklabA, _) => Some(Self::OklabaF32),
 
             (ChannelType::U8, ChannelLayout::Cmyk, _) => Some(Self::Cmyk8),
+            (ChannelType::F32, ChannelLayout::Cmyk, _) => Some(Self::CmykF32),
             (ChannelType::I8, ChannelLayout::Rgb, _) => Some(Self::RgbI8),
             (ChannelType::I8, ChannelLayout::Rgba, _) => Some(Self::RgbaI8),
             (ChannelType::I8, ChannelLayout::Gray, _) => Some(Self::GrayI8),
@@ -1915,6 +1935,7 @@ impl PixelFormat {
             Self::OklabF32 => PixelDescriptor::OKLABF32,
             Self::OklabaF32 => PixelDescriptor::OKLABAF32,
             Self::Cmyk8 => PixelDescriptor::CMYK8,
+            Self::CmykF32 | Self::CmykF32Inverted => PixelDescriptor::from_pixel_format(self),
             Self::RgbF16 => PixelDescriptor::RGBF16,
             Self::RgbaF16 => PixelDescriptor::RGBAF16,
             Self::GrayF16 => PixelDescriptor::GRAYF16,

@@ -275,6 +275,17 @@ fn build_transform_inner(
     src_format: PixelFormat,
     dst_format: PixelFormat,
 ) -> Result<Box<dyn RowTransform>, MoxCmsError> {
+    // Native F32 CMYK carriage is qualified, its color conversion is not.
+    // Never let this unsupported four-channel layout fall back to RGB.
+    if matches!(
+        src_format,
+        PixelFormat::CmykF32 | PixelFormat::CmykF32Inverted
+    ) || matches!(
+        dst_format,
+        PixelFormat::CmykF32 | PixelFormat::CmykF32Inverted
+    ) {
+        return Err(MoxCmsError("F32 CMYK conversion is not qualified".into()));
+    }
     if src_format.channel_type() != dst_format.channel_type()
         || !matches!(
             src_format.channel_type(),
@@ -556,7 +567,7 @@ fn build_moxcms_profile_for_format(
     src: &crate::ColorProfileSource<'_>,
     format: PixelFormat,
 ) -> Result<Option<ColorProfile>, MoxCmsError> {
-    let is_cmyk = matches!(format, PixelFormat::Cmyk8);
+    let is_cmyk = format.color_model() == zenpixels::ColorModel::Cmyk;
     match src {
         // ICC bytes are authoritative for every color model — parse and
         // hand them straight to moxcms. The profile's `data_color_space`

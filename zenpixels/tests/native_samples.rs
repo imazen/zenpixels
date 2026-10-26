@@ -110,3 +110,57 @@ fn native_storage_survives_strides_subviews_and_owned_handoff() {
         }
     }
 }
+
+#[test]
+fn cmyk_f32_carries_strides_profiles_and_every_sample_bit() {
+    use std::sync::Arc;
+    use zenpixels::{ColorContext, ColorModel, ColorPrimaries, PixelDescriptor, TransferFunction};
+    let descriptor = PixelDescriptor::new(
+        ChannelType::F32,
+        ChannelLayout::Cmyk,
+        None,
+        TransferFunction::Unknown,
+    )
+    .with_primaries(ColorPrimaries::Unknown);
+    assert_eq!(descriptor.format, PixelFormat::CmykF32);
+    assert_eq!(descriptor.color_model(), ColorModel::Cmyk);
+    assert_eq!(descriptor.bytes_per_pixel(), 16);
+    assert!(!descriptor.has_alpha());
+    assert_eq!(PixelFormat::CmykF32.default_alpha(), None);
+    assert_eq!(PixelFormat::CmykF32.descriptor().format, descriptor.format);
+    for descriptor in [descriptor, PixelFormat::CmykF32Inverted.descriptor()] {
+        assert_eq!(descriptor.layout(), ChannelLayout::Cmyk);
+        assert_eq!(descriptor.channel_type(), ChannelType::F32);
+        assert_eq!(descriptor.color_model(), ColorModel::Cmyk);
+        assert_eq!(descriptor.bytes_per_pixel(), 16);
+        assert_eq!(descriptor.alpha(), None);
+        let patterns = [0x80000000u32, 0x7fc01234, 1, 0x3f800001];
+        let row: Vec<u8> = patterns
+            .into_iter()
+            .flat_map(u32::to_ne_bytes)
+            .cycle()
+            .take(48)
+            .collect();
+        let mut data = vec![0xa5; 64 * 3];
+        for y in 0..3 {
+            data[y * 64..y * 64 + 48].copy_from_slice(&row);
+        }
+        let address = data.as_ptr();
+        let expected = data.clone();
+        let profile: Arc<[u8]> = Arc::from(&b"opaque-native-CMYK-profile"[..]);
+        let mut parts = PixelBufferParts::new(data, 3, 3, 64, descriptor);
+        parts.color_context = Some(Arc::new(ColorContext::from_icc(profile.clone())));
+        let image = PixelBuffer::try_from_parts(parts).unwrap();
+        assert_eq!(image.as_slice().row(0).as_ptr(), address);
+        for y in 0..3 {
+            assert_eq!(image.as_slice().row(y), row);
+        }
+        let parts = image.into_parts();
+        assert_eq!(parts.data, expected);
+        assert_eq!(parts.data.as_ptr(), address);
+        assert_eq!(
+            parts.color_context.unwrap().icc.as_ref().unwrap().as_ref(),
+            profile.as_ref()
+        );
+    }
+}

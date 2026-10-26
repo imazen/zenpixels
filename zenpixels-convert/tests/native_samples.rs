@@ -144,3 +144,56 @@ fn moxcms_does_not_dispatch_native_samples_as_f32() {
         );
     }
 }
+
+#[test]
+fn cmyk_f32_does_not_gain_unqualified_conversion_routes() {
+    for format in [PixelFormat::CmykF32, PixelFormat::CmykF32Inverted] {
+        let descriptor = format.descriptor();
+        for target in [
+            PixelFormat::CmykF32.descriptor(),
+            PixelFormat::CmykF32Inverted.descriptor(),
+            PixelDescriptor::CMYK8,
+            PixelDescriptor::RGBF32,
+        ] {
+            assert!(ConvertPlan::new(descriptor, target).is_err());
+            assert!(ConvertPlan::new(target, descriptor).is_err());
+            assert!(RowConverter::new(descriptor, target).is_err());
+        }
+    }
+}
+
+#[cfg(feature = "cms-moxcms")]
+#[test]
+#[allow(deprecated)]
+fn cmyk_f32_is_not_dispatched_to_a_three_component_cms_transform() {
+    use zenpixels_convert::{
+        cms::{ColorManagement, PluggableCms},
+        cms_moxcms::MoxCms,
+    };
+    for format in [PixelFormat::CmykF32, PixelFormat::CmykF32Inverted] {
+        let from = format.descriptor().color_profile_source();
+        let to = PixelDescriptor::RGBF32.color_profile_source();
+        assert!(
+            MoxCms
+                .build_source_transform(
+                    from,
+                    to,
+                    format,
+                    PixelFormat::RgbF32,
+                    &ConvertOptions::permissive()
+                )
+                .is_none()
+        );
+        // Valid RGB ICCs demonstrate that the legacy constructor refuses the
+        // unqualified CMYK format instead of treating its four samples as RGB.
+        let profile = moxcms::ColorProfile::new_srgb().encode().unwrap();
+        for (source, destination) in [(format, PixelFormat::RgbF32), (PixelFormat::RgbF32, format)]
+        {
+            assert!(
+                MoxCms
+                    .build_transform_for_format(&profile, &profile, source, destination)
+                    .is_err()
+            );
+        }
+    }
+}

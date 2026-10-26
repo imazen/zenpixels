@@ -14,18 +14,18 @@
 #   free functions                              4
 #   inherent methods                          261
 #   struct fields                             115
-#   enum variants                             289
+#   enum variants                             293
 #   re-exports                                  4
 #   trait roster entries (type × trait)       270
 #   auto-trait-complete types                  39
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          442
+#   (root)                          444
 #   buffer                          246
 #   cicp                             38
 #   color                            64
-#   descriptor                      185
+#   descriptor                      187
 #   hdr                              12
 #   icc                              13
 #   orientation                      11
@@ -33,7 +33,7 @@
 #   policy                           25
 #   sample                            5
 
-## items (921 lines)
+## items (925 lines)
 
 pub mod zenpixels
 pub use At
@@ -310,6 +310,8 @@ pub const fn descriptor::ColorPrimaries::white_point(self) -> (f32, f32) [also: 
 pub descriptor::PixelFormat::Bgra8 = 13
 pub descriptor::PixelFormat::Bgrx8 = 15
 pub descriptor::PixelFormat::Cmyk8 = 18
+pub descriptor::PixelFormat::CmykF32 = 51
+pub descriptor::PixelFormat::CmykF32Inverted = 52
 pub descriptor::PixelFormat::Gray16 = 8
 pub descriptor::PixelFormat::Gray8 = 7
 pub descriptor::PixelFormat::GrayA16 = 11
@@ -666,6 +668,8 @@ pub fn buffer::PixelCow<'_, P>::as_slice(&self) -> buffer::PixelSlice<'_, P>
 pub PixelFormat::Bgra8 = 13
 pub PixelFormat::Bgrx8 = 15
 pub PixelFormat::Cmyk8 = 18
+pub PixelFormat::CmykF32 = 51
+pub PixelFormat::CmykF32Inverted = 52
 pub PixelFormat::Gray16 = 8
 pub PixelFormat::Gray8 = 7
 pub PixelFormat::GrayA16 = 11

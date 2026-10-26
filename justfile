@@ -48,6 +48,12 @@ native-samples-check:
     cargo test -p zenpixels -p zenpixels-convert --test native_samples --features zenpixels-convert/hdr-experimental,zenpixels-convert/cms-moxcms
     cargo clippy -p zenpixels -p zenpixels-convert --lib --test native_samples --features zenpixels-convert/hdr-experimental,zenpixels-convert/cms-moxcms -- -D warnings
 
+# Full source coverage after extending the physical format enum.
+native-samples-suite:
+    cargo test -p zenpixels -p zenpixels-convert --lib --tests --features zenpixels-convert/hdr-experimental,zenpixels-convert/cms-moxcms
+    cargo check -p zenpixels --no-default-features --target wasm32-unknown-unknown
+    just api-doc
+
 # Compare production fused scan predicates with forced scalar on macOS ARM64.
 arm-scan-tiers-macos:
     mkdir -p "$HOME/tmp"

@@ -20,6 +20,11 @@
 
 ### zenpixels — native sample carriage
 
+- Add conventional and explicitly inverted F32 CMYK storage for the selected
+  JXL layer consumer. Existing
+  strided buffers preserve every sample bit and source ICC context; no numeric
+  conversion is implied. Both enum variants are appended after existing codes.
+
 - Add I8, I16, U32, I32, U64, I64 and F64 channel storage with gray,
   gray-alpha, RGB and RGBA formats for native TIFF and IMIJ consumers (#83).
   Existing buffer, stride, crop and owned-handoff APIs preserve sample bytes.
@@ -29,6 +34,10 @@
   The TIFF consumer exposed the missing external construction path.
 
 ### zenpixels-convert — native sample refusal
+
+- Refuse unqualified F32 CMYK in the legacy moxcms constructor before its
+  unsupported-layout fallback can interpret four components as RGB. The
+  pluggable interface continues to decline this unmapped format.
 
 - Identity rows preserve signed and wide samples exactly. Built-in conversion,
   HDR mapping and moxcms refuse unsupported sample arithmetic instead of
