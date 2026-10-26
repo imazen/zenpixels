@@ -85,6 +85,16 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Hardened on the output-plan review (2026-10-26): native JXL F32-to-ICC
+  conversion used bounded integer lookup/fixed-point paths despite requesting
+  unclipped float output. The adapter now selects float/analytic arithmetic
+  and applies requested clipping separately. Explicit ICC overrides embedded
+  CICP even on the extended path. A profile with unequal RGB curves where
+  only red/green or green/blue match now refuses before writes: the backend
+  otherwise shares the wrong curve. A capable per-channel implementation is
+  still needed for those profiles. `just output-float-check` is the local gate;
+  zencodec additionally compares actual native JXL profiles against Little CMS.
+
 - Fixed on the output-plan review (2026-10-26): adding opaque alpha to native
   ICC-tagged RGB F32 returned `NeedsCms` despite an unchanged current profile.
   `output_native` covers strided RGB/gray U8/U16/F32, exact float bit patterns,

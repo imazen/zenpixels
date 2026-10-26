@@ -20,6 +20,13 @@
 
 ### zenpixels-convert — native output-plan integration
 
+- Use float CMS arithmetic and available analytic ICC curves for F32 output.
+  `clip_out_of_gamut` selects bounded versus extended output; bounded execution
+  clamps color around the transform while retaining alpha bits. Explicit ICC
+  requests retain their curve authority over embedded CICP. Refuse the backend's
+  unqualified partially shared RGB curves before writes, preserving a concrete
+  `MoxCmsError` through `whereat`; that error now implements `core::error::Error`.
+
 - Preserve exact RGB/gray samples when adding opaque alpha under an unchanged
   current ICC, without requiring or invoking a CMS. The native JXL consumer
   exposed an unnecessary `NeedsCms` refusal. Changed profiles, depth policy,

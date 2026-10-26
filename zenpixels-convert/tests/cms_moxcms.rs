@@ -273,6 +273,225 @@ fn build_transform_for_format_f32() {
     }
 }
 
+// Exact diagonal matrices and gamma exponents make the expected values
+// independent of any CMS implementation. Native JXL profiles are additionally
+// compared with Little CMS by zencodec's spatial validation harness.
+fn diagonal_profile(scale: [f64; 3], gamma: [u16; 3], contradictory_cicp: bool) -> Vec<u8> {
+    let bytes = make_icc_v2(
+        scale[0], 0.0, 0.0, 0.0, scale[1], 0.0, 0.0, 0.0, scale[2], 1.0,
+    );
+    let mut profile = moxcms::ColorProfile::new_from_slice(&bytes).unwrap();
+    profile.red_trc = Some(moxcms::ToneReprCurve::Lut(vec![gamma[0]]));
+    profile.green_trc = Some(moxcms::ToneReprCurve::Lut(vec![gamma[1]]));
+    profile.blue_trc = Some(moxcms::ToneReprCurve::Lut(vec![gamma[2]]));
+    if contradictory_cicp {
+        profile.cicp = Some(moxcms::CicpProfile {
+            color_primaries: moxcms::CicpColorPrimaries::Bt709,
+            transfer_characteristics: moxcms::TransferCharacteristics::Srgb,
+            matrix_coefficients: moxcms::MatrixCoefficients::Identity,
+            full_range: true,
+        });
+    }
+    profile.encode().unwrap()
+}
+
+fn float_plugin(
+    source: &[u8],
+    target: &[u8],
+    format: PixelFormat,
+    clip: bool,
+) -> Box<dyn zenpixels_convert::cms::RowTransformMut> {
+    use zenpixels_convert::{ColorProfileSource, ConvertOptions, cms::PluggableCms};
+    MoxCms
+        .build_source_transform(
+            ColorProfileSource::Icc(source),
+            ColorProfileSource::Icc(target),
+            format,
+            format,
+            &ConvertOptions::forbid_lossy().with_clip_out_of_gamut(clip),
+        )
+        .unwrap()
+        .unwrap()
+}
+
+#[test]
+fn float_unclipped_matrix_preserves_small_large_and_negative_values_and_alpha() {
+    let source = diagonal_profile([1.0; 3], [256; 3], false);
+    let target = diagonal_profile([0.5, 1.0, 2.0], [256; 3], false);
+    for format in [PixelFormat::RgbF32, PixelFormat::RgbaF32] {
+        for width in [3, 129, 257] {
+            let channels = if format == PixelFormat::RgbaF32 { 4 } else { 3 };
+            let mut input = Vec::new();
+            let mut expected = Vec::new();
+            for [r, g, b, a] in [
+                [
+                    0.000003f32,
+                    0.031791836,
+                    0.06409062,
+                    f32::from_bits(0x7fc12345),
+                ],
+                [-0.125, 4.0, 16.0, -0.0],
+                [0.125, 0.25, 0.5, 0.75],
+            ]
+            .into_iter()
+            .cycle()
+            .take(width)
+            {
+                input.extend_from_slice(&[r, g, b, a][..channels]);
+                expected.extend_from_slice(&[2.0 * r, g, 0.5 * b, a][..channels]);
+            }
+            let mut output = vec![0.0f32; input.len()];
+            float_plugin(&source, &target, format, false)
+                .try_transform_row(
+                    bytemuck::cast_slice(&input),
+                    bytemuck::cast_slice_mut(&mut output),
+                    width as u32,
+                )
+                .unwrap();
+            for (i, (&actual, &expected)) in output.iter().zip(&expected).enumerate() {
+                if channels == 4 && i % channels == 3 {
+                    assert_eq!(actual.to_bits(), expected.to_bits(), "alpha sample {i}");
+                } else {
+                    assert!(
+                        actual.is_finite() && (actual - expected).abs() <= 0.000001,
+                        "{format:?} sample {i}: {actual} != {expected}"
+                    );
+                }
+            }
+            // The existing default remains bounded. Selecting preservation must
+            // not silently change the behavior of a caller that requests clipping.
+            float_plugin(&source, &target, format, true)
+                .try_transform_row(
+                    bytemuck::cast_slice(&input),
+                    bytemuck::cast_slice_mut(&mut output),
+                    width as u32,
+                )
+                .unwrap();
+            for (i, &actual) in output.iter().enumerate() {
+                if channels == 4 && i % channels == 3 {
+                    assert_eq!(actual.to_bits(), input[i].to_bits());
+                } else {
+                    let scale = [2.0f32, 1.0, 0.5][i % channels];
+                    let expected = (input[i].clamp(0.0, 1.0) * scale).clamp(0.0, 1.0);
+                    assert!(
+                        (actual - expected).abs() <= 0.0001,
+                        "clipped {format:?} sample {i}: {actual} != {expected}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn float_explicit_icc_uses_its_curve_despite_conflicting_cicp() {
+    let source = diagonal_profile([1.0; 3], [256; 3], true);
+    let target = diagonal_profile([0.5, 1.0, 2.0], [256; 3], true);
+    let input = [0.25f32, 0.25, 0.25];
+    let mut output = [0.0f32; 3];
+    float_plugin(&source, &target, PixelFormat::RgbF32, false)
+        .try_transform_row(
+            bytemuck::cast_slice(&input),
+            bytemuck::cast_slice_mut(&mut output),
+            1,
+        )
+        .unwrap();
+    for (actual, expected) in output.into_iter().zip([0.5f32, 0.25, 0.125]) {
+        assert!(
+            (actual - expected).abs() <= 0.000001,
+            "{actual} != {expected}"
+        );
+    }
+}
+
+#[test]
+fn float_profile_conversion_adds_opaque_alpha_across_staging_boundary() {
+    use zenpixels_convert::{ColorProfileSource, ConvertOptions, cms::PluggableCms};
+    let source = diagonal_profile([1.0; 3], [256; 3], false);
+    let target = diagonal_profile([0.5, 1.0, 2.0], [256; 3], false);
+    for clip in [false, true] {
+        let mut transform = MoxCms
+            .build_source_transform(
+                ColorProfileSource::Icc(&source),
+                ColorProfileSource::Icc(&target),
+                PixelFormat::RgbF32,
+                PixelFormat::RgbaF32,
+                &ConvertOptions::forbid_lossy().with_clip_out_of_gamut(clip),
+            )
+            .unwrap()
+            .unwrap();
+        let input = [-0.125f32, 0.25, 4.0].repeat(129);
+        let mut output = vec![0.0f32; 129 * 4];
+        transform
+            .try_transform_row(
+                bytemuck::cast_slice(&input),
+                bytemuck::cast_slice_mut(&mut output),
+                129,
+            )
+            .unwrap();
+        let expected = if clip {
+            [0.0f32, 0.25, 0.5, 1.0]
+        } else {
+            [-0.25, 0.25, 2.0, 1.0]
+        };
+        for pixel in output.as_chunks::<4>().0 {
+            assert_eq!(pixel[3].to_bits(), 1.0f32.to_bits());
+            for (&actual, expected) in pixel.iter().zip(expected) {
+                assert!(
+                    (actual - expected).abs() <= 0.000001,
+                    "clip {clip}: {actual} != {expected}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn unequal_shared_channel_curves_refuse_instead_of_using_the_wrong_curve() {
+    use zenpixels_convert::{ColorProfileSource, ConvertOptions, cms::PluggableCms};
+    // The new independent curve control found gamma 2 on blue being treated
+    // as gamma 1: 0.2499466 instead of 0.0625. The backend cannot currently
+    // honor these profiles; both entry points must refuse before pixel work.
+    for gamma in [[256, 256, 512], [512, 256, 256]] {
+        for inverse in [false, true] {
+            let identity = diagonal_profile([1.0; 3], [256; 3], false);
+            let different = diagonal_profile([1.0; 3], gamma, false);
+            let (source, target) = if inverse {
+                (&identity, &different)
+            } else {
+                (&different, &identity)
+            };
+            for format in [PixelFormat::Rgb8, PixelFormat::Rgb16, PixelFormat::RgbF32] {
+                let error = MoxCms
+                    .build_transform_for_format(source, target, format, format)
+                    .err()
+                    .expect("legacy entry must not share an unequal curve");
+                assert!(error.to_string().contains("distinct RGB channel curves"));
+                for clip in [false, true] {
+                    let error = MoxCms
+                        .build_source_transform(
+                            ColorProfileSource::Icc(source),
+                            ColorProfileSource::Icc(target),
+                            format,
+                            format,
+                            &ConvertOptions::forbid_lossy().with_clip_out_of_gamut(clip),
+                        )
+                        .expect("recognized profiles must fail, not decline")
+                        .err()
+                        .expect("plugin must not share an unequal curve");
+                    assert!(error.to_string().contains("distinct RGB channel curves"));
+                    assert!(
+                        error
+                            .error()
+                            .as_inner()
+                            .is::<zenpixels_convert::cms_moxcms::MoxCmsError>()
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn gray_neutral_preserved() {
     let cms = MoxCms;

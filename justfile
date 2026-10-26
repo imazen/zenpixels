@@ -244,6 +244,21 @@ output-alpha-check:
     cargo test -p zenpixels-convert --lib --features std,cms-moxcms,icc-db --locked
     cargo check -p zenpixels-convert --no-default-features --target wasm32-unknown-unknown --locked
 
+# Float ICC precision, selected range behavior and explicit backend refusals.
+output-float-check:
+    cargo fmt -p zenpixels-convert
+    cargo test -p zenpixels-convert --test cms_moxcms --features std,cms-moxcms,icc-db --locked
+    just output-alpha-check
+    cargo clippy -p zenpixels-convert --test cms_moxcms --features std,cms-moxcms,icc-db --locked -- -D warnings
+
+# Run in an isolated export; deliberately changes only its dependency lock.
+output-float-backend-check version:
+    test ! -e .git
+    test ! -e .jj
+    cargo update -p moxcms --precise {{version}}
+    cargo test -p zenpixels-convert --test cms_moxcms --features std,cms-moxcms,icc-db --locked
+    cargo clippy -p zenpixels-convert --lib --test cms_moxcms --features std,cms-moxcms,icc-db --locked -- -D warnings
+
 output-plan-sync export: (prepared-sync export)
     mkdir -p "{{export}}/zenpixels-convert/src/output"
     cp zenpixels-convert/src/output/plan.rs "{{export}}/zenpixels-convert/src/output/"

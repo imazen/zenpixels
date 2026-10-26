@@ -151,6 +151,30 @@ zencodec consumer. This does not add a CMYK-to-RGB kernel. That control exercise
 `convert_rows` into a distinct destination; `borrow_rows` has separate identity,
 source-binding and required-conversion controls.
 
+### Float ICC arithmetic and range selection
+
+`OutputPlan` uses the existing `ConvertOptions` to distinguish clipping from
+extended float conversion. For a native float layer that must retain negative
+and above-one color values, request
+`ConvertOptions::forbid_lossy().with_clip_out_of_gamut(false)`. The preset alone
+still enables clipping; its name must not be interpreted as a blanket promise
+of lossless color conversion.
+
+`MoxCms` selects float arithmetic and available analytic matrix/profile curves.
+The clipped route applies bounds to color before and after that transform and
+retains alpha bits. Its out-of-range input staging is bounded independently of
+row width; ordinary in-range input is passed directly. No speed or whole-operation
+memory claim follows from this implementation. Explicit ICC requests use their
+ICC curves even if embedded CICP disagrees.
+
+The unequal-channel control found a backend case that shares the wrong curve
+when only two adjacent RGB curves agree. Those profiles now fail before any
+pixel write. The `whereat` error retains `MoxCmsError` as its concrete source;
+callers do not have to coordinate capability flags first. Arbitrary LUT-profile
+extended range, all per-channel curves, F32 CMYK conversion and CMS workspace
+admission remain unqualified. The six native JXL profile comparisons live in
+zencodec's spatial harness; they do not establish general ICC conformance.
+
 Unassociation, matte and multi-stage conversion may require additional row kernels
 and scratch; they are not yet all fused. Exactness checks and descriptor validation
 are metadata-only. U16 content analysis combines opacity, chroma and replication

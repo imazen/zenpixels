@@ -140,7 +140,7 @@ whereat = { version = "0.1.5", default-features = false }
 # `WHITE_POINT_D50` → fn `white_point_d50()`), which the gray test oracle
 # reconstructs version-agnostically (see `cms_moxcms::moxcms_d50_xyz`). `<0.10`
 # excludes the next untested minor.
-moxcms = { version = ">=0.8.1, <0.10", optional = true, features = ["options"] }
+moxcms = { version = ">=0.8.1, <0.10", optional = true, features = ["options", "extended_range"] }
 
 [dev-dependencies]
 zenpixels = { workspace = true, features = ["planar", "imgref"] }
