@@ -20,6 +20,9 @@
 
 ### zenpixels-convert — native output-plan integration
 
+- Keep the ICC generator buildable when workspace members enable additional
+  CMS features; its strict comparison options retain bounded evaluation.
+
 - Use float CMS arithmetic and available analytic ICC curves for F32 output.
   `clip_out_of_gamut` selects bounded versus extended output; bounded execution
   clamps color around the transform while retaining alpha bits. Explicit ICC

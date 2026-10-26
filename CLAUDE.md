@@ -85,6 +85,12 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed in the float-ICC integration (2026-10-26): workspace feature
+  unification enabled an extra moxcms option field, breaking the generator's
+  exhaustive initializer. It now supplies backend defaults for added fields;
+  extended evaluation stays disabled in the generator's strict comparisons.
+  `just output-float-workspace-check` also checks standalone generator lint.
+
 - Hardened on the output-plan review (2026-10-26): native JXL F32-to-ICC
   conversion used bounded integer lookup/fixed-point paths despite requesting
   unclipped float output. The adapter now selects float/analytic arithmetic

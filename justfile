@@ -220,6 +220,7 @@ native-output-sync export:
     rsync -a zenpixels/tests/ "{{export}}/zenpixels/tests/"
     rsync -a zenpixels-convert/src/ "{{export}}/zenpixels-convert/src/"
     rsync -a zenpixels-convert/tests/ "{{export}}/zenpixels-convert/tests/"
+    cp scripts/icc-gen/src/main.rs "{{export}}/scripts/icc-gen/src/"
 
 native-output-check:
     cargo fmt -p zenpixels -p zenpixels-convert --check
@@ -258,6 +259,16 @@ output-float-backend-check version:
     cargo update -p moxcms --precise {{version}}
     cargo test -p zenpixels-convert --test cms_moxcms --features std,cms-moxcms,icc-db --locked
     cargo clippy -p zenpixels-convert --lib --test cms_moxcms --features std,cms-moxcms,icc-db --locked -- -D warnings
+
+# Include the ICC generator: workspace feature unification affects its options.
+output-float-workspace-check:
+    cargo fmt -p zenpixels -p zenpixels-convert -p icc-gen
+    cargo test --workspace --locked
+    cargo clippy --workspace --all-targets --locked -- -D warnings
+    just output-float-generator-check
+
+output-float-generator-check:
+    cargo clippy -p icc-gen --all-targets --locked -- -D warnings
 
 output-plan-sync export: (prepared-sync export)
     mkdir -p "{{export}}/zenpixels-convert/src/output"
