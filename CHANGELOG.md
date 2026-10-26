@@ -20,6 +20,12 @@
 
 ### zenpixels-convert — native output-plan integration
 
+- Add `OutputPlan::new_with_descriptor` for required output association and
+  interpretation. Return `OutputInterpretationMismatch` before CMS construction
+  when the descriptor conflicts with the selected profile. Keep the format-only
+  constructor's existing defaults and use one execution path. This addresses
+  the premultiplied native-output request gap in #94.
+
 - Keep the ICC generator buildable when workspace members enable additional
   CMS features; its strict comparison options retain bounded evaluation.
 

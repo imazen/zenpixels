@@ -99,6 +99,24 @@ This is the color stage needed by zencodec's paused transcode adapter: it can
 inspect `metadata()` and `output_descriptor()` before allowing pixel work.
 It must still validate the encoder's carrier support and metadata policy.
 
+`OutputPlan::new_with_descriptor` accepts a required `PixelDescriptor` in place
+of the format. Use it when association and range are requirements. It preserves
+the requested alpha interpretation, validates descriptor/profile agreement
+before invoking a CMS, and returns `OutputInterpretationMismatch` with bounded
+descriptor facts on conflict. Opaque profiles require unknown color fields
+when the crate cannot resolve their primaries/transfer. The format-only
+constructor retains its existing straight-alpha defaults. `SameAsOrigin`
+selects the profile; it does not implicitly preserve alpha association.
+
+Same-profile premultiplied identity now borrows or copies exact sample bits
+without a CMS, including strided rows and unusual F32 payloads. A different
+opaque profile still requires a qualified transform; matching descriptors do
+not authorize relabeling. Required narrow identity remains verbatim, while
+unsupported full/narrow conversion refuses. Explicit linear premultiplication
+uses existing row math and keeps alpha and padding. No new callback or format
+type is added. Native validation is tracked in
+[zenpixels issue 94](https://github.com/imazen/zenpixels/issues/94).
+
 `prepare(width)` optionally moves scratch and selected table initialization
 before execution. Without it, execution retains the existing lazy behavior,
 including plugins without a preparation hook. `convert_rows(source, destination)`

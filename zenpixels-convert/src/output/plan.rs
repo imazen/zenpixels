@@ -47,6 +47,10 @@ pub struct OutputPlan {
     converter: Option<RowConverter>,
     prepared_width: Option<u32>,
 }
+enum TargetLayout {
+    Format(PixelFormat),
+    Required(PixelDescriptor),
+}
 impl core::fmt::Debug for OutputPlan {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("OutputPlan")
@@ -70,6 +74,61 @@ impl OutputPlan {
         options: &ConvertOptions,
         cms: Option<&dyn crate::cms::PluggableCms>,
     ) -> Result<Self, At<ConvertError>> {
+        Self::build(
+            source_desc,
+            current,
+            origin,
+            target,
+            TargetLayout::Format(pixel_format),
+            options,
+            cms,
+        )
+    }
+
+    /// Prepare conversion to an exact output descriptor and selected profile.
+    ///
+    /// This retains an explicitly requested alpha association instead of using
+    /// the pixel format's straight-alpha default. The descriptor's transfer,
+    /// primaries and signal range must agree with the selected profile; a
+    /// conflict returns [`ConvertError::OutputInterpretationMismatch`] before
+    /// invoking a CMS. Opaque ICC profiles require unknown primaries/transfer
+    /// when this crate cannot resolve them. They can still pass through exactly
+    /// under the same current profile, including premultiplied sample bits.
+    ///
+    /// Descriptor acceptance does not add numerical conversion support. Existing
+    /// alpha, depth, range and HDR requirements still return their typed refusal.
+    /// [`Self::new`] remains the format-only convenience, including its existing
+    /// default alpha association. Both constructors use the same execution path.
+    pub fn new_with_descriptor(
+        source_desc: PixelDescriptor,
+        current: Option<Arc<ColorContext>>,
+        origin: &ColorOrigin,
+        target: OutputProfile,
+        output: PixelDescriptor,
+        options: &ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
+        Self::build(
+            source_desc,
+            current,
+            origin,
+            target,
+            TargetLayout::Required(output),
+            options,
+            cms,
+        )
+    }
+
+    #[allow(deprecated)] // OutputMetadata's legacy HDR field remains None.
+    fn build(
+        source_desc: PixelDescriptor,
+        current: Option<Arc<ColorContext>>,
+        origin: &ColorOrigin,
+        target: OutputProfile,
+        layout: TargetLayout,
+        options: &ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
         let source_profile = super::current_profile_for(source_desc, current.as_deref())?;
         let target_profile = match &target {
             OutputProfile::SameAsOrigin => {
@@ -78,7 +137,27 @@ impl OutputPlan {
             OutputProfile::Named(cicp) => crate::ColorProfileSource::Cicp(*cicp),
             OutputProfile::Icc(icc) => crate::ColorProfileSource::Icc(icc),
         };
-        let target_desc_full = super::descriptor_for_profile(pixel_format, &target_profile)?;
+        let pixel_format = match layout {
+            TargetLayout::Format(format) => format,
+            TargetLayout::Required(descriptor) => descriptor.pixel_format(),
+        };
+        let inferred = super::descriptor_for_profile(pixel_format, &target_profile)?;
+        let target_desc_full = match layout {
+            TargetLayout::Format(_) => inferred,
+            TargetLayout::Required(requested) => {
+                requested
+                    .validate()
+                    .map_err(|e| whereat::at!(ConvertError::Buffer(e)))?;
+                let profile = inferred.with_alpha(requested.alpha());
+                if requested != profile {
+                    return Err(whereat::at!(ConvertError::OutputInterpretationMismatch {
+                        requested,
+                        profile,
+                    }));
+                }
+                requested
+            }
+        };
         crate::convert::validate_descriptors(source_desc, target_desc_full)?;
         // The opaque-profile CMS path cannot delegate required sample policy
         // to a plugin: a plugin may accept a transform while ignoring options.
