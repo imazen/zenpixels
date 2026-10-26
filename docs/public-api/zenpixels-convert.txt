@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)        59
 #   pub consts/statics                         19
 #   free functions                             45
-#   inherent methods                          160
+#   inherent methods                          162
 #   struct fields                              50
 #   enum variants                              82
 #   re-exports                                  3
@@ -21,7 +21,7 @@
 #   auto-trait exceptions                       4
 #
 # per-module pub lines:
-#   (root)                          187
+#   (root)                          189
 #   adapt                            15
 #   cms                              31
 #   converter                        31
@@ -36,7 +36,7 @@
 #   orient                            3
 #   output                           20
 
-## items (396 lines)
+## items (398 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -222,6 +222,7 @@ pub fn output::EncodeReady::pixels(&self) -> zenpixels::buffer::PixelSlice<'_>
 pub output::OutputMetadata::cicp: core::option::Option<zenpixels::cicp::Cicp>
 pub output::OutputMetadata::hdr: core::option::Option<hdr::HdrMetadata>
 pub output::OutputMetadata::icc: core::option::Option<alloc::sync::Arc<[u8]>>
+pub fn OutputPlan::borrow_rows<'a>(&self, zenpixels::buffer::PixelSlice<'a>) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelSlice<'a>>, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::convert_rows<'a>(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'a>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::metadata(&self) -> &output::OutputMetadata
 pub fn OutputPlan::new(zenpixels::descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<zenpixels::color::ColorContext>>, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelFormat, &zenpixels::policy::ConvertOptions, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
@@ -345,6 +346,7 @@ pub OutputMetadata::cicp: core::option::Option<zenpixels::cicp::Cicp>
 pub OutputMetadata::hdr: core::option::Option<hdr::HdrMetadata>
 pub OutputMetadata::icc: core::option::Option<alloc::sync::Arc<[u8]>>
 pub struct OutputPlan [also: output]
+pub fn OutputPlan::borrow_rows<'a>(&self, zenpixels::buffer::PixelSlice<'a>) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelSlice<'a>>, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::convert_rows<'a>(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'a>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::metadata(&self) -> &output::OutputMetadata
 pub fn OutputPlan::new(zenpixels::descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<zenpixels::color::ColorContext>>, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelFormat, &zenpixels::policy::ConvertOptions, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>

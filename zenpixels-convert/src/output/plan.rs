@@ -233,19 +233,29 @@ impl OutputPlan {
         Ok(())
     }
 
-    /// Convert a strided batch and return its view with matching current color.
-    /// Use the returned view when handing rows to the encoder: a view cannot
-    /// update metadata on a separately owned backing buffer.
+    /// Borrow matching identity rows without allocating or copying sample data.
     ///
-    /// Source interpretation, dimensions, descriptor and prepared width are
-    /// checked before any write. A backend row failure may leave partial
-    /// destination bytes; the caller must discard that batch. Row padding is
-    /// untouched. This method does not publish bytes to an encoder or sink.
-    pub fn convert_rows<'a>(
-        &mut self,
-        source: PixelSlice<'_>,
-        mut destination: PixelSliceMut<'a>,
-    ) -> Result<PixelSliceMut<'a>, At<ConvertError>> {
+    /// `Some` means the prepared operation requires no sample conversion. The
+    /// returned view carries the plan's output color context; keep its original
+    /// owner alive, including any storage admission charge. `None` means sample
+    /// conversion is required: use [`Self::convert_rows`] with an admitted
+    /// destination. It does not authorize weakening the requested output.
+    ///
+    /// Changed source interpretation or a width beyond prepared capacity is an
+    /// error even when this plan cannot borrow. This is an execution shortcut
+    /// for adapters, not a codec capability promise or metadata privacy check.
+    pub fn borrow_rows<'a>(
+        &self,
+        source: PixelSlice<'a>,
+    ) -> Result<Option<PixelSlice<'a>>, At<ConvertError>> {
+        self.validate_source(&source)?;
+        Ok(self
+            .converter
+            .is_none()
+            .then(|| source.with_color_context(self.context.clone())))
+    }
+
+    fn validate_source(&self, source: &PixelSlice<'_>) -> Result<(), At<ConvertError>> {
         if self
             .prepared_width
             .is_some_and(|width| source.width() > width)
@@ -260,6 +270,23 @@ impl OutputPlan {
         if source.descriptor() != self.source || !context_matches {
             return Err(whereat::at!(ConvertError::SourceInterpretationChanged));
         }
+        Ok(())
+    }
+
+    /// Convert a strided batch and return its view with matching current color.
+    /// Use the returned view when handing rows to the encoder: a view cannot
+    /// update metadata on a separately owned backing buffer.
+    ///
+    /// Source interpretation, dimensions, descriptor and prepared width are
+    /// checked before any write. A backend row failure may leave partial
+    /// destination bytes; the caller must discard that batch. Row padding is
+    /// untouched. This method does not publish bytes to an encoder or sink.
+    pub fn convert_rows<'a>(
+        &mut self,
+        source: PixelSlice<'_>,
+        mut destination: PixelSliceMut<'a>,
+    ) -> Result<PixelSliceMut<'a>, At<ConvertError>> {
+        self.validate_source(&source)?;
         if destination.descriptor() != self.target {
             return Err(whereat::at!(ConvertError::NoPath {
                 from: self.target,

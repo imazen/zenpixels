@@ -1,0 +1,39 @@
+{
+  "kind": "checked borrowed identity execution; no performance claim",
+  "base_commit": "67bc6da7055d23582a7fb94052544b30de070f80",
+  "host": "r7900x",
+  "source_sha256": {
+    "zenpixels-convert/src/output/plan.rs": "89047ededc0f6b12d4363f885349d6e602c30e4438f4ec5c18aac7d7a151eeda",
+    "zenpixels-convert/tests/output_native.rs": "4f75b7b0e56d7f66f49e086def2b31d1157992c4e8d5e2a987b6d1cfa6bc60ae",
+    "docs/public-api/zenpixels-convert.txt": "4e5316cbd279f2ae9a29482fd63bb5a1de2a92276ae0363c2d40ff8b5d272f84"
+  },
+  "commands": [
+    "just native-output-check",
+    "just output-borrow-compat"
+  ],
+  "checks": [
+    "native CMYK both polarities preserve original sample address, exact bits, stride and current ICC",
+    "identity returns matching output context; changed context and prepared-width excess remain typed errors",
+    "required RGB-to-RGBA layout conversion returns None and remains executable into caller storage with exact alpha values",
+    "existing output, source-profile, policy, CMS, native-sample and prepared-worker controls pass with strict lint",
+    "doctests pass with 22 inherited ignores unchanged; no-default-feature convert WASM, strict Rustdoc and regenerated API pass"
+  ],
+  "runs": [
+    {
+      "log": "zenpixels-output-borrow-20261026.log",
+      "result": "run-heavy: done rc=0 4s | peak-RSS 0.28GiB | min-avail 11440MiB | peak-load 0.11",
+      "sha256": "8c72da951a1411acdc60a5769d07558492725e2427a02ef1a18d03b4565517ce"
+    },
+    {
+      "log": "zenpixels-output-borrow-compat-20261026.log",
+      "result": "run-heavy: done rc=0 9s | peak-RSS 0.32GiB | min-avail 11321MiB | peak-load 0.41",
+      "sha256": "96399392cfb79a25aaefab4787825e9ffd0dafc7be199c82f8e6d530b40416a1"
+    }
+  ],
+  "artifact_directory": "/mnt/v/output/zencodec/platform-regions-20261026-run/output-borrow-1",
+  "remaining": [
+    "Native ImageOutput owner-retention consumer is the next downstream qualification.",
+    "A borrowed view does not retain an owner by itself; caller must retain the original storage charge.",
+    "No CMYK arithmetic, metadata privacy or whole-operation resource bound added."
+  ]
+}

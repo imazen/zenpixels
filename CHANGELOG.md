@@ -20,6 +20,11 @@
 
 ### zenpixels-convert — native output-plan integration
 
+- Add `OutputPlan::borrow_rows` for checked identity execution over the original
+  strided storage. Return `None` when sample conversion is required, and retain
+  source-interpretation and prepared-width errors. This supports the native
+  zencodec caller without another output allocation or owner type.
+
 - Combine the output-plan and native sample review revisions. Qualify exact
   profile-aware F32 CMYK identity rows in both polarities, including strided
   padding and unusual float bits. No new conversion abstraction or arithmetic

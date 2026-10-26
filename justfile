@@ -226,6 +226,12 @@ native-output-check:
     just output-plan-check
     just native-samples-check
 
+output-borrow-compat:
+    cargo test -p zenpixels-convert --doc --features std,cms-moxcms,icc-db --locked
+    cargo check -p zenpixels-convert --no-default-features --target wasm32-unknown-unknown --locked
+    RUSTDOCFLAGS="-D warnings" cargo doc -p zenpixels-convert --no-deps --features std,cms-moxcms,icc-db --locked
+    just api-doc
+
 # Output planning, existing atomic conveniences and actual ICC/backend contracts.
 output-plan-check:
     cargo test -p zenpixels-convert --test output_native --test output_plan --test output_current_color --test output_contracts --test output_finalize --test unspecified_cicp_context --test prepared_contracts --features std,cms-moxcms,icc-db --locked

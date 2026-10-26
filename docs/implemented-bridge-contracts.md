@@ -123,14 +123,25 @@ contract and typed-bridge audit. The output-allocation work also continues
 
 ### Other bridge scope
 
+`OutputPlan::borrow_rows` checks the same current interpretation and prepared
+width as `convert_rows`. For an identity plan it returns the original strided
+sample view with matching output context, without a destination allocation or
+sample copy. For a plan requiring math it returns `None`; the adapter can then
+admit destination storage and call `convert_rows` without weakening the request.
+Changed interpretation remains an error, not a signal to try a weaker route.
+The original sample owner and its allocation charge must remain alive. This
+allows the native zencodec image adapter to retain the original color and
+auxiliary planes together when the output request is already satisfied.
+
 The output-plan review now includes the native-sample review revision. This
 puts `OutputPlan` and `CmykF32` / `CmykF32Inverted` in one dependency graph
 without another conversion API. `tests/output_native.rs` checks exact identity
 carriage for both polarities, including signed zero, subnormal and NaN payload
 bits, strided rows, untouched destination padding and unchanged ICC signaling.
 Actual native JXL profile/admitted-destination qualification belongs to the
-zencodec consumer. This does not add a CMYK-to-RGB kernel or an owner-preserving
-identity path: `convert_rows` still writes into a distinct destination.
+zencodec consumer. This does not add a CMYK-to-RGB kernel. That control exercises
+`convert_rows` into a distinct destination; `borrow_rows` has separate identity,
+source-binding and required-conversion controls.
 
 Unassociation, matte and multi-stage conversion may require additional row kernels
 and scratch; they are not yet all fused. Exactness checks and descriptor validation
