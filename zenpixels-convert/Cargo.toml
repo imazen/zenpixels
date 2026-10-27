@@ -273,6 +273,11 @@ path = "benches/bench_u16_narrow.rs"
 harness = false
 
 [[bench]]
+name = "bench_codes"
+path = "benches/bench_codes.rs"
+harness = false
+
+[[bench]]
 name = "bench_sdr_u16_lut"
 path = "benches/bench_sdr_u16_lut.rs"
 harness = false

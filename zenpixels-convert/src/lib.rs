@@ -449,6 +449,7 @@ pub mod cms;
 pub(crate) mod cms_lite;
 #[cfg(feature = "cms-moxcms")]
 pub mod cms_moxcms;
+pub mod codes;
 pub mod converter;
 pub mod ext;
 #[allow(
