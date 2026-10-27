@@ -27,7 +27,8 @@ use whereat::At;
 /// let mut plan = OutputPlan::new_preserving_samples(descriptor, None, &ColorOrigin::assumed(),
 ///     OutputProfile::Named(Cicp::SRGB), descriptor)?;
 /// plan.prepare(2)?;
-/// // The adapter can validate plan.metadata() against its encoder now.
+/// // The adapter can validate plan.metadata() against its encoder now, and
+/// // declare plan.output_color_context() as the rows' interpretation.
 /// let input = [10, 20, 30, 40, 50, 60];
 /// let mut output = [0; 6];
 /// let source = PixelSlice::new(&input, 2, 1, 6, descriptor)?;
@@ -35,6 +36,7 @@ use whereat::At;
 /// let converted = plan.convert_rows(source, destination)?;
 /// assert_eq!(converted.row(0), &input);
 /// assert_eq!(converted.color_context().unwrap().cicp, Some(Cicp::SRGB));
+/// assert!(std::sync::Arc::ptr_eq(converted.color_context().unwrap(), plan.output_color_context()));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct OutputPlan {
@@ -384,6 +386,18 @@ impl OutputPlan {
         &self.metadata
     }
 
+    /// Color context of the rows this plan produces, known before any row.
+    ///
+    /// Declare it to the destination encoder while the decoder is suspended.
+    /// [`Self::convert_rows`] and [`Self::borrow_rows`] attach this same `Arc`
+    /// to every batch. Do not rebuild it from the source's current context:
+    /// after conversion that context describes other samples, and the plan
+    /// can set fields the source lacks (PQ to linear output carries a
+    /// 10,000 cd/m² diffuse white).
+    pub fn output_color_context(&self) -> &Arc<ColorContext> {
+        &self.context
+    }
+
     /// Reserve scratch and initialize selected transform state for this width.
     /// Execution then refuses wider rows. Without this call, conversion may
     /// allocate scratch or initialize tables while running, preserving support
@@ -481,9 +495,5 @@ impl OutputPlan {
 
     pub(super) fn into_metadata(self) -> OutputMetadata {
         self.metadata
-    }
-
-    pub(super) fn output_context(&self) -> Arc<ColorContext> {
-        self.context.clone()
     }
 }

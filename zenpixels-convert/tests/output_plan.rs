@@ -299,3 +299,66 @@ fn native_icc_rows_match_a_separately_built_cms_worker_and_keep_strides() {
     assert_eq!(output, expected);
     assert_ne!(&output[..width as usize * 3], &input[..width as usize * 3]);
 }
+
+#[test]
+fn output_color_context_is_declared_before_rows_and_carried_by_every_batch() {
+    // A converting route declares the target's context, never the source's.
+    let current = Arc::new(ColorContext::from_icc(Arc::<[u8]>::from(&b"current"[..])));
+    let target: Arc<[u8]> = Arc::from(&b"target"[..]);
+    let cms = Spy::default();
+    let mut plan = OutputPlan::new(
+        opaque(),
+        Some(current.clone()),
+        &ColorOrigin::assumed(),
+        OutputProfile::Icc(target.clone()),
+        PixelFormat::Rgb8,
+        &ConvertOptions::retain_channels(),
+        Some(&cms),
+    )
+    .unwrap();
+    let declared = plan.output_color_context().clone();
+    assert_eq!(declared.icc.as_ref(), Some(&target));
+    assert_ne!(*declared, *current);
+    let input = [1, 2, 3, 4, 5, 6];
+    let mut output = [0; 6];
+    let source = PixelSlice::new(&input, 2, 1, 6, opaque())
+        .unwrap()
+        .with_color_context(current.clone());
+    let destination = PixelSliceMut::new(&mut output, 2, 1, 6, plan.output_descriptor()).unwrap();
+    let rows = plan.convert_rows(source, destination).unwrap();
+    assert!(Arc::ptr_eq(rows.color_context().unwrap(), &declared));
+
+    // PQ to linear output gains a luminance anchor the source does not have:
+    // a context rebuilt from the metadata plus the source's anchor is wrong.
+    use zenpixels::hdr::DiffuseWhite;
+    let pq = PixelDescriptor::new_full(
+        zenpixels_convert::ChannelType::F32,
+        zenpixels_convert::ChannelLayout::Rgb,
+        None,
+        TransferFunction::Pq,
+        zenpixels_convert::ColorPrimaries::Bt2020,
+    );
+    let pq_context = Arc::new(
+        ColorContext::from_cicp(Cicp::new(9, 16, 0, true))
+            .with_diffuse_white(DiffuseWhite::new(203.0)),
+    );
+    let linear = OutputPlan::new(
+        pq,
+        Some(pq_context.clone()),
+        &ColorOrigin::assumed(),
+        OutputProfile::Named(Cicp::new(9, 8, 0, true)),
+        PixelFormat::RgbF32,
+        &ConvertOptions::permissive(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        linear.output_descriptor().transfer(),
+        TransferFunction::Linear
+    );
+    let declared = linear.output_color_context();
+    assert_eq!(declared.cicp, linear.metadata().cicp);
+    assert_eq!(declared.icc, linear.metadata().icc);
+    assert_eq!(declared.diffuse_white, Some(DiffuseWhite::new(10_000.0)));
+    assert_ne!(declared.diffuse_white, pq_context.diffuse_white);
+}

@@ -448,7 +448,7 @@ pub fn finalize_for_output_with(
             .map_err_at(ConvertError::from)?;
     plan.convert_rows(buffer.as_slice(), pixels.as_slice_mut())?;
     Ok(EncodeReady {
-        pixels: pixels.with_color_context(plan.output_context()),
+        pixels: pixels.with_color_context(plan.output_color_context().clone()),
         metadata: plan.into_metadata(),
     })
 }
