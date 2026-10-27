@@ -20,6 +20,12 @@
 
 ### zenpixels-convert — native output-plan integration
 
+- Preserve sample bits when an unchanged current ICC supplies the unknown
+  descriptor primaries/transfer. `OutputPlan` borrows or copies the same samples
+  with the resolved output descriptor instead of invoking a same-profile CMS
+  round trip. The native TIFF render integration exposed a one-bit U8 change.
+  No public signature or dependency changes.
+
 - Add `OutputPlan::new_with_descriptor` for required output association and
   interpretation. Return `OutputInterpretationMismatch` before CMS construction
   when the descriptor conflicts with the selected profile. Keep the format-only

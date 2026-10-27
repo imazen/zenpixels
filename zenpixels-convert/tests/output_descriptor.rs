@@ -24,6 +24,96 @@ impl PluggableCms for NoCms {
 }
 
 #[test]
+fn current_icc_resolves_unknown_descriptor_without_changing_same_profile_samples() {
+    let profile: Arc<[u8]> = Arc::from(zenpixels_convert::icc_profiles::display_p3_icc(false));
+    let context = Arc::new(ColorContext::from_icc(profile.clone()));
+    for format in [
+        PixelFormat::Rgb8,
+        PixelFormat::Rgba8,
+        PixelFormat::Rgb16,
+        PixelFormat::Rgba16,
+        PixelFormat::RgbF32,
+        PixelFormat::RgbaF32,
+    ] {
+        for unknown in [1, 2, 3] {
+            let target = format
+                .descriptor()
+                .with_primaries(ColorPrimaries::DisplayP3)
+                .with_transfer(TransferFunction::Srgb);
+            let source = target
+                .with_primaries(if unknown & 1 != 0 {
+                    ColorPrimaries::Unknown
+                } else {
+                    target.primaries
+                })
+                .with_transfer(if unknown & 2 != 0 {
+                    TransferFunction::Unknown
+                } else {
+                    target.transfer()
+                });
+            let mut plan = OutputPlan::new_with_descriptor(
+                source,
+                Some(context.clone()),
+                &ColorOrigin::assumed(),
+                OutputProfile::Icc(profile.clone()),
+                target,
+                &ConvertOptions::forbid_lossy(),
+                Some(&NoCms),
+            )
+            .unwrap();
+            let stride = 4 * source.bytes_per_pixel();
+            let words = [
+                0x7fc01234u32,
+                0x80000000,
+                0x00000001,
+                0x40200000,
+                0xbf800000,
+                0x3e800000,
+            ]
+            .repeat(16);
+            let input = PixelSlice::new(bytemuck::cast_slice(&words), 3, 2, stride, source)
+                .unwrap()
+                .with_color_context(context.clone());
+            plan.prepare(3).unwrap();
+            let borrowed = plan.borrow_rows(input.clone()).unwrap().unwrap();
+            assert_eq!(borrowed.descriptor(), target);
+            assert_eq!(borrowed.color_context(), Some(&context));
+            assert_eq!(
+                borrowed.as_strided_bytes().as_ptr(),
+                input.as_strided_bytes().as_ptr()
+            );
+            assert_eq!(borrowed.as_strided_bytes(), input.as_strided_bytes());
+            let mut destination = vec![0xa5a5a5a5u32; stride * 2 / 4];
+            let output = PixelSliceMut::new(
+                bytemuck::cast_slice_mut(&mut destination),
+                3,
+                2,
+                stride,
+                target,
+            )
+            .unwrap();
+            let converted = plan.convert_rows(input.clone(), output).unwrap();
+            for y in 0..2 {
+                assert_eq!(converted.row(y), input.row(y));
+            }
+            for row in bytemuck::cast_slice::<u32, u8>(&destination).chunks_exact(stride) {
+                assert!(
+                    row[3 * source.bytes_per_pixel()..]
+                        .iter()
+                        .all(|b| *b == 0xa5)
+                );
+            }
+            // Source facts remain bound to the original descriptor/context.
+            let changed = input.with_color_context(Arc::new(ColorContext::default()));
+            assert_eq!(
+                plan.borrow_rows(changed).unwrap_err().error(),
+                &ConvertError::SourceInterpretationChanged
+            );
+        }
+    }
+}
+
+#[test]
 fn required_association_borrows_and_copies_same_opaque_profile_exactly() {
     let profile: Arc<[u8]> = Arc::from(&b"opaque current profile, not interpreted for copying"[..]);
     let context = Arc::new(ColorContext::from_icc(profile.clone()));

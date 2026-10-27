@@ -246,8 +246,27 @@ impl OutputPlan {
         };
         let context = Arc::new(context);
 
+        // A decoder may carry an authoritative ICC while leaving the compact
+        // descriptor's primaries/transfer unknown (native TIFF does this).
+        // Completing only those unknown fields from that exact profile does
+        // not change sample coordinates. Do not send same-profile samples
+        // through a CMS round trip, which can change even U8 values by one bit.
+        // Known descriptor fields, range, alpha and storage are never replaced.
+        // Distinct ICC bytes still require conversion even if they resolve to
+        // the same compact descriptor.
+        let mut described_source = source_desc;
+        if let crate::ColorProfileSource::Icc(_) = source_profile
+            && let Some((primaries, transfer)) = source_profile.resolve()
+        {
+            if described_source.primaries == ColorPrimaries::Unknown {
+                described_source.primaries = primaries;
+            }
+            if described_source.transfer == TransferFunction::Unknown {
+                described_source.transfer = transfer;
+            }
+        }
         let identity = source_desc.layout_compatible(target_desc_full)
-            && super::descriptors_match(&source_desc, &target_desc_full)
+            && super::descriptors_match(&described_source, &target_desc_full)
             && super::profiles_match(&source_profile, &target_profile);
         // Adding opaque alpha changes storage, not the color coordinates. An
         // unchanged opaque ICC does not require a CMS round trip for this.
@@ -346,15 +365,18 @@ impl OutputPlan {
     /// Changed source interpretation or a width beyond prepared capacity is an
     /// error even when this plan cannot borrow. This is an execution shortcut
     /// for adapters, not a codec capability promise or metadata privacy check.
+    /// The returned descriptor also completes unknown primaries/transfer when
+    /// the same authoritative ICC establishes them; sample bits stay unchanged.
     pub fn borrow_rows<'a>(
         &self,
         source: PixelSlice<'a>,
     ) -> Result<Option<PixelSlice<'a>>, At<ConvertError>> {
         self.validate_source(&source)?;
-        Ok(self
-            .converter
-            .is_none()
-            .then(|| source.with_color_context(self.context.clone())))
+        Ok(self.converter.is_none().then(|| {
+            source
+                .with_descriptor(self.target)
+                .with_color_context(self.context.clone())
+        }))
     }
 
     fn validate_source(&self, source: &PixelSlice<'_>) -> Result<(), At<ConvertError>> {

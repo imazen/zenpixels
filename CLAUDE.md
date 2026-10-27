@@ -85,6 +85,14 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed on the output-plan review (2026-10-27): a native TIFF source with an
+  authoritative current ICC and unknown descriptor primaries/transfer took an
+  unnecessary same-profile CMS round trip, changing U8 sample 74 to 73. Identity
+  planning now completes only unknown color fields from that exact ICC and
+  preserves samples. `output_descriptor` tests borrowed and strided copied
+  RGB/RGBA U8/U16/F32, including float bit patterns; different profile bytes and
+  known descriptor fields do not receive this identity shortcut.
+
 - Fixed in the float-ICC integration (2026-10-26): workspace feature
   unification enabled an extra moxcms option field, breaking the generator's
   exhaustive initializer. It now supplies backend defaults for added fields;
