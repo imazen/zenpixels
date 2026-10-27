@@ -140,6 +140,10 @@ a missing format must become a runtime requirement error before publication.
 
 ## Borrowed code planes
 
+Interleaved and semi-planar views, exact code conversion (`zenpixels_convert::codes`) and
+current-sample evidence (`sample::ExactDepth`) are implemented on an unreleased branch; see
+[native codes and current-precision evidence](sample-precision-evidence.md).
+
 The output-plan review adds `sample::CodePlane` for native U8/U16 planes with
 explicit code placement and stride. The converter borrows these views without
 adopting native ownership. See the [executing YCbCr contract](borrowed-ycbcr-contract.md)

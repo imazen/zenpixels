@@ -18,6 +18,31 @@
 
 ## [Unreleased]
 
+### Native codes and current-precision evidence
+
+- Add `CodePlane::from_u8_interleaved` / `from_u16_interleaved`, `step_words` and
+  `read_codes`: one borrowed view type for planar, semi-planar (P010/P012 chroma)
+  and interleaved native codes, with checked geometry and row reads. New
+  `CodePlaneError::{ZeroStep, OutsideActivePlane}` variants (non-exhaustive enum).
+  (dfa3a2cd)
+- Add `zenpixels_convert::codes`: `CodeMap` converts one component between sample
+  encodings with role- and range-specific exact rules (nearest full scale for
+  intensity/alpha, power-of-two anchors for narrow range, full-range chroma depth
+  changes refused); `to_canonical` widens borrowed components into canonical
+  strided U8/U16 rows without allocating; `measure_exact_depth` is the explicit scan.
+  Exhaustive checks show full-range grids nest only when the depth divides (8-bit
+  content at 10 bits changes 252 of 256 levels). (75d2321f)
+- Add `sample::ExactDepth`, bounded evidence that current samples survive
+  re-quantization to a stated depth, carried by `PixelBuffer`/`PixelSlice`. Every
+  mutable accessor, in-place transform, range relabel and parts handoff ends it;
+  views, crops, clones and compaction keep it. (68e463bd) `convert_to` keeps it
+  through identity and sample-preserving conversions and orientation keeps it;
+  other conversions drop it. (22ae2f33) See `docs/sample-precision-evidence.md`.
+- Add `OutputPlan::output_color_context()`: the color context of the rows a plan
+  produces, known before any row and attached as the same `Arc` to every batch.
+  Rebuilding it from `metadata()` and the source's diffuse white is wrong for PQ
+  to linear output. (59c7708e)
+
 ### Unclipped Gamma22 execution
 
 - Honor `clip_out_of_gamut(false)` in F32 Gamma22 transfer steps. Preserve
