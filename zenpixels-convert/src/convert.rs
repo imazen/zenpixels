@@ -341,6 +341,10 @@ pub(crate) enum ConvertStep {
     Gamma22F32ToLinearF32,
     /// Linear f32 → Gamma 2.2 (Adobe RGB 1998) f32 `[0,1]` (OETF, no depth change).
     LinearF32ToGamma22F32,
+    /// Gamma 2.2 F32 to linear, reflected extended range without clipping.
+    Gamma22F32ToLinearF32Extended,
+    /// Linear F32 to Gamma 2.2, reflected extended range without clipping.
+    LinearF32ToGamma22F32Extended,
     /// Straight → Premultiplied alpha.
     StraightToPremul,
     /// Premultiplied → Straight alpha.
@@ -447,6 +451,8 @@ impl ConvertStep {
             Self::LinearF32ToBt709F32 => "LinearF32ToBt709F32",
             Self::Gamma22F32ToLinearF32 => "Gamma22F32ToLinearF32",
             Self::LinearF32ToGamma22F32 => "LinearF32ToGamma22F32",
+            Self::Gamma22F32ToLinearF32Extended => "Gamma22F32ToLinearF32Extended",
+            Self::LinearF32ToGamma22F32Extended => "LinearF32ToGamma22F32Extended",
             Self::StraightToPremul => "StraightToPremul",
             Self::PremulToStraight => "PremulToStraight",
             Self::LinearRgbToOklab => "LinearRgbToOklab",
@@ -1547,7 +1553,7 @@ impl ConvertPlan {
             }
         }
 
-        // When the caller opts out of clipping, swap pure-f32 sRGB transfer
+        // When the caller opts out of clipping, swap qualified pure-f32 transfer
         // steps for their sign-preserving extended-range counterparts.
         // Fused u8/u16 matlut steps are unaffected (integer I/O can't
         // represent extended range anyway).
@@ -1559,6 +1565,12 @@ impl ConvertPlan {
                     }
                     ConvertStep::LinearF32ToSrgbF32 => {
                         *step = ConvertStep::LinearF32ToSrgbF32Extended;
+                    }
+                    ConvertStep::Gamma22F32ToLinearF32 => {
+                        *step = ConvertStep::Gamma22F32ToLinearF32Extended;
+                    }
+                    ConvertStep::LinearF32ToGamma22F32 => {
+                        *step = ConvertStep::LinearF32ToGamma22F32Extended;
                     }
                     _ => {}
                 }
@@ -2721,7 +2733,8 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
         | ConvertStep::SrgbF32ToLinearF32
         | ConvertStep::SrgbF32ToLinearF32Extended
         | ConvertStep::Bt709F32ToLinearF32
-        | ConvertStep::Gamma22F32ToLinearF32 => PixelDescriptor::new(
+        | ConvertStep::Gamma22F32ToLinearF32
+        | ConvertStep::Gamma22F32ToLinearF32Extended => PixelDescriptor::new(
             ChannelType::F32,
             current.layout(),
             current.alpha(),
@@ -2782,12 +2795,14 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.alpha(),
             TransferFunction::Bt709,
         ),
-        ConvertStep::LinearF32ToGamma22F32 => PixelDescriptor::new(
-            ChannelType::F32,
-            current.layout(),
-            current.alpha(),
-            TransferFunction::Gamma22,
-        ),
+        ConvertStep::LinearF32ToGamma22F32 | ConvertStep::LinearF32ToGamma22F32Extended => {
+            PixelDescriptor::new(
+                ChannelType::F32,
+                current.layout(),
+                current.alpha(),
+                TransferFunction::Gamma22,
+            )
+        }
         ConvertStep::StraightToPremul => PixelDescriptor::new(
             current.channel_type(),
             current.layout(),

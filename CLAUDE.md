@@ -85,6 +85,14 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed on the output-plan review (2026-10-27): Gamma22 F32 conversion accepted
+  `clip_out_of_gamut(false)` but clipped negative and above-white samples. The
+  extended steps now reflect the existing Adobe exponent, retain the existing
+  SIMD results for magnitudes in range, and use libm outside that domain. The
+  regression checks default/in-range parity, alpha payloads, signed zero,
+  strided padding, row partitions and unknown retired estimates. This does not
+  qualify every transfer/backend or change the selected numerical model.
+
 - Fixed on the output-plan review (2026-10-27): a native TIFF source with an
   authoritative current ICC and unknown descriptor primaries/transfer took an
   unnecessary same-profile CMS round trip, changing U8 sample 74 to 73. Identity

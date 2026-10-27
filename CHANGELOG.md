@@ -18,6 +18,14 @@
 
 ## [Unreleased]
 
+### Unclipped Gamma22 execution
+
+- Honor `clip_out_of_gamut(false)` in F32 Gamma22 transfer steps. Preserve
+  negative and above-white values using a reflected extension of the existing
+  Adobe exponent. Default clipping and positive in-range results are unchanged;
+  alpha bits and row padding remain exact. No calibration is invented for the
+  new path; the retired estimator returns unknown.
+
 ### Conversion preset migration
 
 - Deprecate `ConvertOptions::forbid_lossy()` immediately. Its replacement,

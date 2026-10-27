@@ -287,3 +287,8 @@ output-plan-sync export: (prepared-sync export)
     mkdir -p "{{export}}/zenpixels-convert/src/output"
     cp zenpixels-convert/src/output/plan.rs "{{export}}/zenpixels-convert/src/output/"
     cp zenpixels-convert/tests/output_plan.rs "{{export}}/zenpixels-convert/tests/"
+
+# Unclipped transfer requests, legacy in-range parity and exact alpha/padding.
+unclipped-transfer-check:
+    cargo test -p zenpixels-convert --test unclipped_transfer_contract --test gamma22_transfer --test transfer_alpha --features __trace_ops --locked
+    cargo clippy -p zenpixels-convert --lib --test unclipped_transfer_contract --features __trace_ops --locked -- -D warnings

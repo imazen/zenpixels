@@ -239,3 +239,21 @@ checks the compatibility alias and every option field. Actual color conversion
 and exact-output tests exercise the replacement. Backend numerical guarantees,
 non-sRGB extended conversions and operation-level policy selection remain
 separate requirements; renaming the preset does not implement them.
+
+## Unclipped Gamma22 execution
+
+A direct executing probe found that Gamma22 F32-to-linear converted
+`[-0.25, 0.5, 1.5]` to `[0.0, 0.21775553, 1.0]` despite an unclipped request.
+`just unclipped-transfer-check` now covers the fix in both directions.
+
+The new internal steps use the existing Adobe exponent `563/256` and its
+inverse, reflected about zero. Magnitudes in `[0,1]` use the existing SIMD
+approximation; magnitudes above one use libm. Positive in-range outputs and the
+historical clipped route retain their bits. Alpha payloads, padding and
+row-partition results remain exact. Independent double-precision power checks
+use a fixed relative-or-absolute bound of `2e-5`; this is a correctness bound,
+not a performance measurement or a claim of literal gamma-2.2 equivalence.
+
+No public API, dependency or feature was added. The retired estimator returns
+unknown for these uncalibrated steps. General HDR/backend range guarantees and
+the choice of transfer-function numerical models remain open.
