@@ -9,19 +9,19 @@
 ## summary
 #
 #   pub modules                                11
-#   pub types (struct/enum/trait/alias)        86
-#   pub consts/statics                        280
+#   pub types (struct/enum/trait/alias)        90
+#   pub consts/statics                        283
 #   free functions                              4
-#   inherent methods                          261
+#   inherent methods                          264
 #   struct fields                             115
-#   enum variants                             293
+#   enum variants                             305
 #   re-exports                                  4
-#   trait roster entries (type × trait)       270
-#   auto-trait-complete types                  39
+#   trait roster entries (type × trait)       290
+#   auto-trait-complete types                  43
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          444
+#   (root)                          447
 #   buffer                          246
 #   cicp                             38
 #   color                            64
@@ -31,9 +31,9 @@
 #   orientation                      11
 #   pixel_types                       9
 #   policy                           25
-#   sample                            5
+#   sample                           24
 
-## items (925 lines)
+## items (947 lines)
 
 pub mod zenpixels
 pub use At
@@ -546,10 +546,32 @@ pub const fn policy::ConvertOptions::with_depth_policy(self, policy::DepthPolicy
 pub const fn policy::ConvertOptions::with_gray_expand(self, policy::GrayExpand) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_luma(self, core::option::Option<policy::LumaCoefficients>) -> Self [also: (root)]
 pub mod sample
+#[non_exhaustive] pub enum sample::ChromaSiting
+pub sample::ChromaSiting::Center
+pub sample::ChromaSiting::Left
+pub sample::ChromaSiting::TopLeft
+pub sample::ChromaSiting::Unknown
+#[non_exhaustive] pub enum sample::ChromaSubsampling
+pub sample::ChromaSubsampling::Yuv420
+pub sample::ChromaSubsampling::Yuv422
+pub sample::ChromaSubsampling::Yuv444
+#[non_exhaustive] pub enum sample::CodePlaneError
+pub sample::CodePlaneError::GeometryOverflow
+pub sample::CodePlaneError::MisalignedStride
+pub sample::CodePlaneError::ShortBuffer
+pub sample::CodePlaneError::ShortStride
+pub sample::CodePlaneError::StorageMismatch
 #[non_exhaustive] pub enum sample::SampleEncodingError
 pub sample::SampleEncodingError::InvalidBitDepth
 pub sample::SampleEncodingError::InvalidBitShift
 pub sample::SampleEncodingError::UnsupportedStorage
+pub struct sample::CodePlane<'a>
+pub fn sample::CodePlane<'a>::code(self, usize, usize) -> core::option::Option<u16>
+pub const fn sample::CodePlane<'a>::encoding(self) -> sample::SampleEncoding
+pub fn sample::CodePlane<'a>::from_u16(&'a [u16], usize, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
+pub fn sample::CodePlane<'a>::from_u8(&'a [u8], usize, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
+pub const fn sample::CodePlane<'a>::height(self) -> usize
+pub const fn sample::CodePlane<'a>::width(self) -> usize
 pub struct sample::SampleEncoding
 pub const fn sample::SampleEncoding::bit_shift(self) -> u8
 pub const fn sample::SampleEncoding::code_bits(self) -> u8
@@ -961,7 +983,7 @@ pub type ContentLightLevel = hdr::ContentLightLevel
 pub type DiffuseWhite = hdr::DiffuseWhite
 pub type MasteringDisplay = hdr::MasteringDisplay
 
-## trait impls (49 types)
+## trait impls (53 types)
 
 buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
@@ -1010,6 +1032,10 @@ policy::ConvertOptions: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::DepthPolicy: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::GrayExpand: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::LumaCoefficients: Clone, Copy, Debug, Eq, Hash, PartialEq
+sample::ChromaSiting: Clone, Copy, Debug, Eq, PartialEq
+sample::ChromaSubsampling: Clone, Copy, Debug, Eq, PartialEq
+sample::CodePlane<'a>: Clone, Copy, Debug
+sample::CodePlaneError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 sample::SampleEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::SampleEncodingError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 

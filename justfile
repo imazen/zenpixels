@@ -42,6 +42,14 @@ clippy:
 test:
     cargo test --workspace
 
+# Native borrowed code-plane conversion, default and freestanding compilation.
+ycbcr-check:
+    cargo test -p zenpixels --test code_planes
+    cargo test -p zenpixels-convert --test ycbcr_borrowed
+    cargo test -p zenpixels-convert --no-default-features --test ycbcr_borrowed
+    cargo clippy -p zenpixels -p zenpixels-convert --lib --test code_planes --test ycbcr_borrowed -- -D warnings
+    cargo check -p zenpixels -p zenpixels-convert --no-default-features --target wasm32-unknown-unknown
+
 # Native TIFF/IMIJ sample carriage and explicit conversion refusal.
 native-samples-check:
     cargo test -p zenpixels --test parts

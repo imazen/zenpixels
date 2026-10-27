@@ -15,6 +15,9 @@
 use crate::ChannelType;
 use core::fmt;
 
+mod plane;
+pub use plane::{ChromaSiting, ChromaSubsampling, CodePlane, CodePlaneError};
+
 /// Checked interpretation of one unsigned integer component in a storage word.
 ///
 /// Extract a code with `(word >> bit_shift) & ((1 << code_bits) - 1)`, using

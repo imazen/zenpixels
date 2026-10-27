@@ -13,9 +13,9 @@
 #   pub types (struct/enum/trait/alias)         4
 #   pub consts/statics                          3
 #   free functions                             17
-#   inherent methods                           42
+#   inherent methods                           43
 #   struct fields                               4
-#   trait roster entries (type × trait)        36
+#   trait roster entries (type × trait)        37
 #   auto-trait-complete types                   2
 #
 # per-module pub lines:
@@ -29,9 +29,10 @@
 #   icc_profiles                      1
 #   orient                            2
 #   pipeline                          2
+#   ycbcr                             1
 #   zenpixels                         4
 
-## items (69 lines)
+## items (70 lines)
 
 #[non_exhaustive] pub struct hdr::LightLevelHistogram [also: hdr::measure]
 pub const hdr::measure::LightLevelHistogram::BIN_MAX_NITS: f32
@@ -93,6 +94,7 @@ pub fn pipeline::op_format::OpCategory::assert_fields_are_eq(&self)
 pub fn pipeline::path::LossBucket::assert_fields_are_eq(&self)
 pub fn reinhard_inverse(f32) -> f32 [also: hdr]
 pub fn reinhard_tonemap(f32) -> f32 [also: hdr]
+pub fn ycbcr::YcbcrError::assert_fields_are_eq(&self)
 pub mod __bench_scan
 pub mod __bench_u16_hybrids
 pub mod __trace_ops
@@ -103,7 +105,7 @@ pub __bench_scan::FusedRequest::check_opaque: bool
 pub __bench_scan::FusedResult::is_grayscale: bool
 pub __bench_scan::FusedResult::is_opaque: bool
 
-## trait impls (23 types)
+## trait impls (24 types)
 
 ConversionCost: TrivialClone
 ConvertIntent: TrivialClone
@@ -128,3 +130,4 @@ pipeline::op_format::OpRequirement: TrivialClone
 pipeline::path::LossBucket: TrivialClone
 pipeline::path::QualityThreshold: TrivialClone
 pipeline::registry::FormatEntry: TrivialClone
+ycbcr::YcbcrError: TrivialClone

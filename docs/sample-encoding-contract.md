@@ -137,3 +137,10 @@ three-component RGB. No F32 CMYK color conversion is established here.
 The integration initially panicked while constructing a descriptor against the
 previous format set. The zencodec adapter also needs a fallible format lookup;
 a missing format must become a runtime requirement error before publication.
+# Borrowed code planes
+
+The output-plan review adds `sample::CodePlane` for native U8/U16 planes with
+explicit code placement and stride. The converter borrows these views without
+adopting native ownership. See the [executing YCbCr contract](borrowed-ycbcr-contract.md)
+for the supported route, refusal behavior and native qualification.
+

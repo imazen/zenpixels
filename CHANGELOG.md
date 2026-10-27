@@ -18,6 +18,15 @@
 
 ## [Unreleased]
 
+### Borrowed native component conversion
+
+- Add `sample::CodePlane`, checked native word/stride borrowing, and explicit
+  chroma sampling/location facts. Add `ycbcr::YcbcrToRgbF32`, retaining those
+  borrows through checked strided region conversion and reporting actual refusal
+  facts. The first qualified route is unclipped BT.709/sRGB at 8/10/12 bits.
+  Native AV1 validates exact crops/batches and independent numerical agreement;
+  no new dependencies or features. See `docs/borrowed-ycbcr-contract.md`.
+
 ### zenpixels-convert — native output-plan integration
 
 - Preserve sample bits when an unchanged current ICC supplies the unknown

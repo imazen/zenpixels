@@ -502,6 +502,7 @@ pub mod orient;
 pub mod output;
 #[cfg(feature = "pipeline")]
 pub mod pipeline;
+pub mod ycbcr;
 // Crate-internal SIMD predicates backing `load_bearing` -- the module
 // stays private so the per-(layout × channel-type) kernel set never
 // becomes public API surface. Consume via `PixelSliceLoadBearingExt`.
