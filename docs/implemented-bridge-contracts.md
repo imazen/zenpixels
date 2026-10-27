@@ -217,3 +217,25 @@ An unclipped color conversion has a different contract from reversible sample
 carriage. Its preset replacement and numerical-model guarantees remain open.
 The native JXL caller is zencodec's `jxl_planned_color_tests`; library controls
 are `zenpixels-convert/tests/output_exact.rs`.
+
+## Conversion preset replacement
+
+`ConvertOptions::forbid_lossy()` is deprecated. `retain_channels()` is its
+behavior-preserving replacement: forbid alpha removal, depth reduction and
+RGB-to-gray; permit gray expansion and requested color arithmetic; retain
+historical enabled clipping. This deliberately avoids promising losslessness.
+The old method remains callable with identical values and a migration warning.
+
+| Caller requirement | API |
+|---|---|
+| Reversible representation change, matching output color | `OutputPlan::new_preserving_samples` |
+| Reversible low-level layout/depth change | `ConvertPlan::new_preserving_samples` |
+| Color conversion retaining channels/depth | `ConvertOptions::retain_channels()` |
+| Extended-range color conversion retaining channels/depth | `retain_channels().with_clip_out_of_gamut(false)`; requires a qualified executing route |
+
+The workspace callers are migrated without changing expectations or samples.
+`policy::tests::old_preset_preserves_behavior_and_does_not_promise_exact_samples`
+checks the compatibility alias and every option field. Actual color conversion
+and exact-output tests exercise the replacement. Backend numerical guarantees,
+non-sRGB extended conversions and operation-level policy selection remain
+separate requirements; renaming the preset does not implement them.

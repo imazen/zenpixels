@@ -57,7 +57,7 @@ fn current_icc_resolves_unknown_descriptor_without_changing_same_profile_samples
                 &ColorOrigin::assumed(),
                 OutputProfile::Icc(profile.clone()),
                 target,
-                &ConvertOptions::forbid_lossy(),
+                &ConvertOptions::retain_channels(),
                 Some(&NoCms),
             )
             .unwrap();
@@ -138,7 +138,7 @@ fn required_association_borrows_and_copies_same_opaque_profile_exactly() {
                 &ColorOrigin::from_icc(profile.clone()),
                 OutputProfile::SameAsOrigin,
                 descriptor,
-                &ConvertOptions::forbid_lossy(),
+                &ConvertOptions::retain_channels(),
                 Some(&NoCms),
             )
             .unwrap();
@@ -219,7 +219,7 @@ fn required_profile_descriptor_conflicts_refuse_before_cms_construction() {
             &ColorOrigin::assumed(),
             OutputProfile::Named(Cicp::SRGB),
             requested,
-            &ConvertOptions::forbid_lossy(),
+            &ConvertOptions::retain_channels(),
             Some(&NoCms),
         )
         .unwrap_err();
@@ -238,7 +238,7 @@ fn required_profile_descriptor_conflicts_refuse_before_cms_construction() {
         &ColorOrigin::assumed(),
         OutputProfile::Icc(private),
         source,
-        &ConvertOptions::forbid_lossy(),
+        &ConvertOptions::retain_channels(),
         Some(&NoCms),
     )
     .unwrap_err();
@@ -253,7 +253,7 @@ fn required_profile_descriptor_conflicts_refuse_before_cms_construction() {
 fn required_association_does_not_change_format_convenience_or_bypass_sample_policy() {
     let source = PixelDescriptor::RGBA8_SRGB.with_alpha(Some(AlphaMode::Premultiplied));
     let profile = OutputProfile::Named(Cicp::SRGB);
-    let options = ConvertOptions::forbid_lossy();
+    let options = ConvertOptions::retain_channels();
     let mut convenience = OutputPlan::new(
         source,
         None,
@@ -331,7 +331,7 @@ fn required_descriptor_retains_range_identity_but_does_not_authorize_rescaling()
         &ColorOrigin::from_cicp(cicp),
         OutputProfile::Named(cicp),
         descriptor,
-        &ConvertOptions::forbid_lossy(),
+        &ConvertOptions::retain_channels(),
         Some(&NoCms),
     )
     .unwrap();
@@ -353,7 +353,7 @@ fn required_descriptor_retains_range_identity_but_does_not_authorize_rescaling()
         &ColorOrigin::assumed(),
         OutputProfile::Named(cicp),
         descriptor,
-        &ConvertOptions::forbid_lossy(),
+        &ConvertOptions::retain_channels(),
         Some(&NoCms),
     )
     .unwrap_err();
@@ -375,7 +375,7 @@ fn matching_required_descriptors_do_not_authorize_relabeling_different_opaque_pr
         &ColorOrigin::from_icc(source),
         OutputProfile::Icc(target),
         descriptor,
-        &ConvertOptions::forbid_lossy(),
+        &ConvertOptions::retain_channels(),
         None,
     )
     .unwrap_err();
@@ -393,7 +393,7 @@ fn required_premultiplication_executes_exact_linear_math_and_rejects_wrong_desti
         &ColorOrigin::from_cicp(cicp),
         OutputProfile::Named(cicp),
         required,
-        &ConvertOptions::forbid_lossy().with_clip_out_of_gamut(false),
+        &ConvertOptions::retain_channels().with_clip_out_of_gamut(false),
         Some(&NoCms),
     )
     .unwrap();

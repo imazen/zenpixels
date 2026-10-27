@@ -308,7 +308,7 @@ fn float_plugin(
             ColorProfileSource::Icc(target),
             format,
             format,
-            &ConvertOptions::forbid_lossy().with_clip_out_of_gamut(clip),
+            &ConvertOptions::retain_channels().with_clip_out_of_gamut(clip),
         )
         .unwrap()
         .unwrap()
@@ -416,7 +416,7 @@ fn float_profile_conversion_adds_opaque_alpha_across_staging_boundary() {
                 ColorProfileSource::Icc(&target),
                 PixelFormat::RgbF32,
                 PixelFormat::RgbaF32,
-                &ConvertOptions::forbid_lossy().with_clip_out_of_gamut(clip),
+                &ConvertOptions::retain_channels().with_clip_out_of_gamut(clip),
             )
             .unwrap()
             .unwrap();
@@ -474,7 +474,7 @@ fn unequal_shared_channel_curves_refuse_instead_of_using_the_wrong_curve() {
                             ColorProfileSource::Icc(target),
                             format,
                             format,
-                            &ConvertOptions::forbid_lossy().with_clip_out_of_gamut(clip),
+                            &ConvertOptions::retain_channels().with_clip_out_of_gamut(clip),
                         )
                         .expect("recognized profiles must fail, not decline")
                         .err()

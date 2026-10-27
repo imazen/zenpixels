@@ -73,7 +73,7 @@ fn transforms_are_prepared_before_rows_and_execute_with_matching_signaling() {
         &origin,
         OutputProfile::Icc(target.clone()),
         PixelFormat::Rgb8,
-        &ConvertOptions::forbid_lossy(),
+        &ConvertOptions::retain_channels(),
         Some(&cms),
     )
     .unwrap();
@@ -124,7 +124,7 @@ fn changed_interpretation_and_geometry_refuse_before_destination_writes() {
         &ColorOrigin::assumed(),
         OutputProfile::Named(Cicp::SRGB),
         PixelFormat::Rgb8,
-        &ConvertOptions::forbid_lossy(),
+        &ConvertOptions::retain_channels(),
         None,
     )
     .unwrap();
@@ -195,7 +195,7 @@ fn required_sample_policies_cannot_be_waived_by_an_opaque_profile_plugin() {
         (
             PixelDescriptor::RGBA8_SRGB,
             PixelFormat::Rgb8,
-            ConvertOptions::forbid_lossy(),
+            ConvertOptions::retain_channels(),
             ConvertError::AlphaRemovalForbidden,
         ),
         (
@@ -207,13 +207,13 @@ fn required_sample_policies_cannot_be_waived_by_an_opaque_profile_plugin() {
         (
             PixelDescriptor::RGB16_SRGB,
             PixelFormat::Rgb8,
-            ConvertOptions::forbid_lossy(),
+            ConvertOptions::retain_channels(),
             ConvertError::DepthReductionForbidden,
         ),
         (
             PixelDescriptor::RGB8_SRGB,
             PixelFormat::Gray8,
-            ConvertOptions::forbid_lossy(),
+            ConvertOptions::retain_channels(),
             ConvertError::RgbToGray,
         ),
     ] {
@@ -239,7 +239,7 @@ fn native_icc_rows_match_a_separately_built_cms_worker_and_keep_strides() {
     use zenpixels_convert::MoxCms;
     let icc: Arc<[u8]> = zenpixels_convert::icc_profiles::DISPLAY_P3_V4.into();
     let current = Arc::new(ColorContext::from_icc(icc.clone()));
-    let options = ConvertOptions::forbid_lossy();
+    let options = ConvertOptions::retain_channels();
     let width = 97;
     let rows = 5;
     let src_stride = width as usize * 3 + 18;

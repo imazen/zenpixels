@@ -1602,7 +1602,7 @@ mod tests {
     fn new_explicit_alpha_forbid() {
         let from = PixelDescriptor::RGBA8_SRGB;
         let to = PixelDescriptor::RGB8_SRGB;
-        let opts = ConvertOptions::forbid_lossy().with_depth_policy(DepthPolicy::Round);
+        let opts = ConvertOptions::retain_channels().with_depth_policy(DepthPolicy::Round);
         let err = ConvertPlan::new_explicit(from, to, &opts).unwrap_err();
         assert_eq!(*err.error(), ConvertError::AlphaRemovalForbidden);
     }
@@ -1645,14 +1645,15 @@ mod tests {
             TransferFunction::Srgb,
         );
         let to = PixelDescriptor::RGB8_SRGB;
-        let opts = ConvertOptions::forbid_lossy().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
+        let opts =
+            ConvertOptions::retain_channels().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
         let err = ConvertPlan::new_explicit(from, to, &opts).unwrap_err();
         assert_eq!(*err.error(), ConvertError::DepthReductionForbidden);
     }
 
     #[test]
     fn new_explicit_rgb_to_gray_requires_luma() {
-        let opts = ConvertOptions::forbid_lossy()
+        let opts = ConvertOptions::retain_channels()
             .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
             .with_depth_policy(DepthPolicy::Round);
         let err = ConvertPlan::new_explicit(

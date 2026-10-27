@@ -157,7 +157,7 @@ impl OutputPlan {
         policy: PlanPolicy<'_>,
     ) -> Result<Self, At<ConvertError>> {
         let exact = matches!(policy, PlanPolicy::PreserveSamples);
-        let conservative = ConvertOptions::forbid_lossy();
+        let conservative = ConvertOptions::retain_channels();
         let (options, cms) = match policy {
             PlanPolicy::Convert(options, cms) => (options, cms),
             PlanPolicy::PreserveSamples => (&conservative, None),

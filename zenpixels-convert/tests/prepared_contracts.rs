@@ -412,7 +412,7 @@ fn padding_is_not_alpha_and_opaque_requires_a_proof() {
     let rgba = PixelDescriptor::RGBA8_SRGB;
     let padding = PixelDescriptor::RGBX8.with_transfer(TransferFunction::Srgb);
     assert!(RowConverter::new(rgba, rgba.with_alpha(Some(AlphaMode::Opaque))).is_err());
-    assert!(RowConverter::new_explicit(rgba, padding, &ConvertOptions::forbid_lossy()).is_err());
+    assert!(RowConverter::new_explicit(rgba, padding, &ConvertOptions::retain_channels()).is_err());
     let options = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
         r: 255,
         g: 255,

@@ -19,7 +19,7 @@ fn native_cmyk_identity_plan_preserves_float_bits_and_strides() {
             &ColorOrigin::from_icc(profile.clone()),
             OutputProfile::SameAsOrigin,
             format,
-            &ConvertOptions::forbid_lossy(),
+            &ConvertOptions::retain_channels(),
             None,
         )
         .unwrap();
@@ -93,7 +93,7 @@ fn borrow_rows_refuses_changed_interpretation_and_keeps_real_conversion_availabl
             &ColorOrigin::assumed(),
             OutputProfile::Named(Cicp::SRGB),
             format,
-            &ConvertOptions::forbid_lossy(),
+            &ConvertOptions::retain_channels(),
             None,
         )
         .unwrap();
@@ -191,7 +191,7 @@ fn unchanged_opaque_profile_alpha_addition_preserves_strided_color_without_a_cms
                 &ColorOrigin::from_icc(profile.clone()),
                 OutputProfile::SameAsOrigin,
                 to,
-                &ConvertOptions::forbid_lossy(),
+                &ConvertOptions::retain_channels(),
                 cms,
             )
             .unwrap();
@@ -275,7 +275,7 @@ fn alpha_addition_does_not_bypass_changed_profile_or_required_depth_policy() {
         &origin,
         OutputProfile::Icc(Arc::from(&b"different target ICC"[..])),
         PixelFormat::RgbaF32,
-        &ConvertOptions::forbid_lossy(),
+        &ConvertOptions::retain_channels(),
         Some(&cms),
     )
     .unwrap_err();
@@ -287,7 +287,7 @@ fn alpha_addition_does_not_bypass_changed_profile_or_required_depth_policy() {
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgba8,
-        &ConvertOptions::forbid_lossy(),
+        &ConvertOptions::retain_channels(),
         Some(&cms),
     )
     .unwrap_err();

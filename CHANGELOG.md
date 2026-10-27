@@ -18,6 +18,14 @@
 
 ## [Unreleased]
 
+### Conversion preset migration
+
+- Deprecate `ConvertOptions::forbid_lossy()` immediately. Its replacement,
+  `retain_channels()`, preserves every existing option value and promises only
+  channel/depth restrictions. It still permits requested color arithmetic and
+  float clipping; use explicit clipping policy for conversion, or the exact
+  `new_preserving_samples` planners for reversible representation changes.
+
 ### Exact output planning
 
 - Add `OutputPlan::new_preserving_samples`: require matching current/target

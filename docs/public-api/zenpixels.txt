@@ -10,7 +10,7 @@
 #
 #   pub modules                                11
 #   pub types (struct/enum/trait/alias)        90
-#   pub consts/statics                        283
+#   pub consts/statics                        285
 #   free functions                              4
 #   inherent methods                          264
 #   struct fields                             115
@@ -21,7 +21,7 @@
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          447
+#   (root)                          449
 #   buffer                          246
 #   cicp                             38
 #   color                            64
@@ -33,7 +33,7 @@
 #   policy                           25
 #   sample                           24
 
-## items (947 lines)
+## items (948 lines)
 
 pub mod zenpixels
 pub use At
@@ -540,6 +540,7 @@ pub policy::ConvertOptions::gray_expand: policy::GrayExpand
 pub policy::ConvertOptions::luma: core::option::Option<policy::LumaCoefficients>
 pub const fn policy::ConvertOptions::forbid_lossy() -> Self [also: (root)]
 pub const fn policy::ConvertOptions::permissive() -> Self [also: (root)]
+pub const fn policy::ConvertOptions::retain_channels() -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_alpha_policy(self, policy::AlphaPolicy) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_clip_out_of_gamut(self, bool) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_depth_policy(self, policy::DepthPolicy) -> Self [also: (root)]
