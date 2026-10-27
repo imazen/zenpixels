@@ -199,3 +199,21 @@ are metadata-only. U16 content analysis combines opacity, chroma and replication
 checks in one traversal. Narrowing's production kernel is unchanged pending ARM
 measurements. Experimental native video carriers and a unified zencodec output plan
 remain separate integration designs; no speculative public wrapper family was added.
+
+## Exact output planning
+
+`OutputPlan::new_preserving_samples` requires matching current/target profiles
+and a metadata-provable reversible representation change. It never consults a
+CMS. Identity can borrow the original storage; channel reorder/expansion and
+U8-to-U16 widening use the existing exact conversion proof. Float payloads,
+including negative zero and NaN bits, survive identity and opaque-alpha addition.
+Different opaque ICC bytes, color arithmetic, reassociation, depth reduction and
+channel removal fail before rows are accepted. Output signaling and strided
+execution use the same source-binding checks as ordinary OutputPlan.
+
+Use this when exact samples are required. `ConvertOptions::forbid_lossy()` is
+not an exactness guarantee: it permits color arithmetic and enables clipping.
+An unclipped color conversion has a different contract from reversible sample
+carriage. Its preset replacement and numerical-model guarantees remain open.
+The native JXL caller is zencodec's `jxl_planned_color_tests`; library controls
+are `zenpixels-convert/tests/output_exact.rs`.

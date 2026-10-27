@@ -21,12 +21,11 @@ use whereat::At;
 /// the supplied `ConvertOptions` controls permitted sample changes.
 ///
 /// ```
-/// use zenpixels_convert::{ColorOrigin, ConvertOptions, OutputPlan, OutputProfile,
-///     Cicp, PixelDescriptor, PixelFormat, PixelSlice, PixelSliceMut};
+/// use zenpixels_convert::{ColorOrigin, OutputPlan, OutputProfile,
+///     Cicp, PixelDescriptor, PixelSlice, PixelSliceMut};
 /// let descriptor = PixelDescriptor::RGB8_SRGB;
-/// let mut plan = OutputPlan::new(descriptor, None, &ColorOrigin::assumed(),
-///     OutputProfile::Named(Cicp::SRGB), PixelFormat::Rgb8,
-///     &ConvertOptions::forbid_lossy(), None)?;
+/// let mut plan = OutputPlan::new_preserving_samples(descriptor, None, &ColorOrigin::assumed(),
+///     OutputProfile::Named(Cicp::SRGB), descriptor)?;
 /// plan.prepare(2)?;
 /// // The adapter can validate plan.metadata() against its encoder now.
 /// let input = [10, 20, 30, 40, 50, 60];
@@ -46,6 +45,10 @@ pub struct OutputPlan {
     metadata: OutputMetadata,
     converter: Option<RowConverter>,
     prepared_width: Option<u32>,
+}
+enum PlanPolicy<'a> {
+    Convert(&'a ConvertOptions, Option<&'a dyn crate::cms::PluggableCms>),
+    PreserveSamples,
 }
 enum TargetLayout {
     Format(PixelFormat),
@@ -80,8 +83,7 @@ impl OutputPlan {
             origin,
             target,
             TargetLayout::Format(pixel_format),
-            options,
-            cms,
+            PlanPolicy::Convert(options, cms),
         )
     }
 
@@ -114,8 +116,34 @@ impl OutputPlan {
             origin,
             target,
             TargetLayout::Required(output),
-            options,
-            cms,
+            PlanPolicy::Convert(options, cms),
+        )
+    }
+
+    /// Require a reversible representation change without color arithmetic.
+    ///
+    /// The current and requested profiles must match; equal compact color tags
+    /// do not make different ICC bytes interchangeable. Exact identity,
+    /// supported channel reorder/expansion and U8-to-U16 widening are accepted.
+    /// Alpha reassociation, transfer/gamut changes, quantization and sample
+    /// removal are refused before execution. No CMS is consulted.
+    ///
+    /// This preserves represented samples, not encoded file bytes or descriptive
+    /// metadata. It does not infer exactness from the source's provenance.
+    pub fn new_preserving_samples(
+        source_desc: PixelDescriptor,
+        current: Option<Arc<ColorContext>>,
+        origin: &ColorOrigin,
+        target: OutputProfile,
+        output: PixelDescriptor,
+    ) -> Result<Self, At<ConvertError>> {
+        Self::build(
+            source_desc,
+            current,
+            origin,
+            target,
+            TargetLayout::Required(output),
+            PlanPolicy::PreserveSamples,
         )
     }
 
@@ -126,9 +154,14 @@ impl OutputPlan {
         origin: &ColorOrigin,
         target: OutputProfile,
         layout: TargetLayout,
-        options: &ConvertOptions,
-        cms: Option<&dyn crate::cms::PluggableCms>,
+        policy: PlanPolicy<'_>,
     ) -> Result<Self, At<ConvertError>> {
+        let exact = matches!(policy, PlanPolicy::PreserveSamples);
+        let conservative = ConvertOptions::forbid_lossy();
+        let (options, cms) = match policy {
+            PlanPolicy::Convert(options, cms) => (options, cms),
+            PlanPolicy::PreserveSamples => (&conservative, None),
+        };
         let source_profile = super::current_profile_for(source_desc, current.as_deref())?;
         let target_profile = match &target {
             OutputProfile::SameAsOrigin => {
@@ -285,7 +318,21 @@ impl OutputPlan {
                 (crate::ChannelLayout::Rgb, crate::ChannelLayout::Rgba)
                     | (crate::ChannelLayout::Gray, crate::ChannelLayout::GrayAlpha)
             );
-        let converter = if identity {
+        let converter = if exact {
+            if !super::profiles_match(&source_profile, &target_profile) {
+                return Err(whereat::at!(ConvertError::NoPath {
+                    from: source_desc,
+                    to: target_desc_full,
+                }));
+            }
+            if identity {
+                None
+            } else {
+                Some(RowConverter::from_plan(
+                    crate::ConvertPlan::new_preserving_samples(described_source, target_desc_full)?,
+                ))
+            }
+        } else if identity {
             None
         } else if alpha_addition {
             Some(crate::RowConverter::new_explicit(

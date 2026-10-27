@@ -18,6 +18,13 @@
 
 ## [Unreleased]
 
+### Exact output planning
+
+- Add `OutputPlan::new_preserving_samples`: require matching current/target
+  profiles and a proven reversible representation change without consulting a
+  CMS. Reuse checked strided execution and output signaling; reject color math,
+  alpha reassociation, sample removal and depth reduction before execution.
+
 ### Borrowed native component conversion
 
 - Add `sample::CodePlane`, checked native word/stride borrowing, and explicit
