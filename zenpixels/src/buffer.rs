@@ -41,6 +41,7 @@ use crate::descriptor::{
 use crate::hdr::DiffuseWhite;
 #[cfg(feature = "rgb")]
 use crate::pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
+use crate::sample::{ExactDepth, ExactDepthError};
 
 // ---------------------------------------------------------------------------
 // Padded pixel types (32-bit SIMD-friendly)
@@ -345,6 +346,7 @@ pub struct PixelSlice<'a, P = ()> {
     stride: usize,
     descriptor: PixelDescriptor,
     color: Option<Arc<ColorContext>>,
+    exact: Option<ExactDepth>,
     _pixel: PhantomData<P>,
 }
 
@@ -357,6 +359,7 @@ impl<P> Clone for PixelSlice<'_, P> {
             stride: self.stride,
             descriptor: self.descriptor,
             color: self.color.clone(),
+            exact: self.exact,
             _pixel: PhantomData,
         }
     }
@@ -406,6 +409,7 @@ impl<'a> PixelSlice<'a> {
             descriptor,
 
             color: None,
+            exact: None,
             _pixel: PhantomData,
         })
     }
@@ -424,6 +428,7 @@ impl<'a, P> PixelSlice<'a, P> {
             descriptor: self.descriptor,
 
             color: self.color,
+            exact: self.exact,
             _pixel: PhantomData,
         }
     }
@@ -448,6 +453,7 @@ impl<'a, P> PixelSlice<'a, P> {
                 descriptor: self.descriptor,
 
                 color: self.color,
+                exact: self.exact,
                 _pixel: PhantomData,
             })
         } else {
@@ -481,6 +487,9 @@ impl<'a, P> PixelSlice<'a, P> {
             descriptor
         );
         descriptor.validate().expect("invalid pixel descriptor");
+        if !exact_survives(self.descriptor, descriptor) {
+            self.exact = None;
+        }
         self.descriptor = descriptor;
         self
     }
@@ -511,6 +520,9 @@ impl<'a, P> PixelSlice<'a, P> {
             &descriptor,
         )
         .map_err(|e| whereat::at!(e))?;
+        if !exact_survives(self.descriptor, descriptor) {
+            self.exact = None;
+        }
         self.descriptor = descriptor;
         Ok(self)
     }
@@ -535,6 +547,9 @@ impl<'a, P> PixelSlice<'a, P> {
     #[inline]
     #[must_use]
     pub fn with_signal_range(mut self, sr: SignalRange) -> Self {
+        if self.descriptor.signal_range != sr {
+            self.exact = None;
+        }
         self.descriptor.signal_range = sr;
         self
     }
@@ -547,6 +562,26 @@ impl<'a, P> PixelSlice<'a, P> {
         descriptor.validate().expect("invalid alpha declaration");
         self.descriptor = descriptor;
         self
+    }
+
+    /// Evidence that the current samples are exact lower-depth codes, if stated.
+    ///
+    /// Borrowed views and clones keep it; a descriptor change that alters storage,
+    /// layout or signal range drops it. See [`ExactDepth`].
+    #[inline]
+    pub fn exact_depth(&self) -> Option<ExactDepth> {
+        self.exact
+    }
+
+    /// Attach exact-depth evidence for these samples.
+    ///
+    /// The statement is the caller's: only storage and range consistency are
+    /// checked, without reading samples. State it where the samples were written
+    /// by an exact widening, or after a scan.
+    pub fn with_exact_depth(mut self, exact: ExactDepth) -> Result<Self, ExactDepthError> {
+        check_exact(self.descriptor, exact)?;
+        self.exact = Some(exact);
+        Ok(self)
     }
 
     /// Image width in pixels.
@@ -758,6 +793,7 @@ impl<'a, P> PixelSlice<'a, P> {
                 descriptor: self.descriptor,
 
                 color: self.color.clone(),
+                exact: self.exact,
                 _pixel: PhantomData,
             };
         }
@@ -772,6 +808,7 @@ impl<'a, P> PixelSlice<'a, P> {
             descriptor: self.descriptor,
 
             color: self.color.clone(),
+            exact: self.exact,
             _pixel: PhantomData,
         }
     }
@@ -802,6 +839,7 @@ impl<'a, P> PixelSlice<'a, P> {
                 descriptor: self.descriptor,
 
                 color: self.color.clone(),
+                exact: self.exact,
                 _pixel: PhantomData,
             };
         }
@@ -816,6 +854,7 @@ impl<'a, P> PixelSlice<'a, P> {
             descriptor: self.descriptor,
 
             color: self.color.clone(),
+            exact: self.exact,
             _pixel: PhantomData,
         }
     }
@@ -862,6 +901,7 @@ impl<'a, P: Pixel> PixelSlice<'a, P> {
             descriptor: P::DESCRIPTOR,
 
             color: None,
+            exact: None,
             _pixel: PhantomData,
         })
     }
@@ -1149,6 +1189,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
             stride: self.stride,
             descriptor: self.descriptor,
             color: self.color.clone(),
+            exact: None,
             _pixel: PhantomData,
         }
     }
@@ -1617,6 +1658,8 @@ pub struct PixelBuffer<P = ()> {
     stride: usize,
     descriptor: PixelDescriptor,
     color: Option<Arc<ColorContext>>,
+    /// Current-sample evidence; cleared by every mutable access.
+    exact: Option<ExactDepth>,
     _pixel: PhantomData<P>,
 }
 
@@ -1877,6 +1920,7 @@ impl PixelBuffer {
             stride: parts.stride_bytes,
             descriptor: parts.descriptor,
             color: parts.color_context,
+            exact: None,
             _pixel: PhantomData,
         })
     }
@@ -1928,6 +1972,7 @@ impl PixelBuffer {
             descriptor,
 
             color: None,
+            exact: None,
             _pixel: PhantomData,
         })
     }
@@ -1997,6 +2042,7 @@ impl PixelBuffer {
             descriptor,
 
             color: None,
+            exact: None,
             _pixel: PhantomData,
         })
     }
@@ -2045,6 +2091,7 @@ impl PixelBuffer {
             descriptor,
 
             color: None,
+            exact: None,
             _pixel: PhantomData,
         })
     }
@@ -2098,6 +2145,7 @@ impl<P: Pixel> PixelBuffer<P> {
             descriptor,
 
             color: None,
+            exact: None,
             _pixel: PhantomData,
         })
     }
@@ -2143,6 +2191,7 @@ impl<P: Pixel> PixelBuffer<P> {
             descriptor,
 
             color: None,
+            exact: None,
             _pixel: PhantomData,
         })
     }
@@ -2185,6 +2234,7 @@ impl<P: Pixel> PixelBuffer<P> {
             descriptor,
 
             color: None,
+            exact: None,
             _pixel: PhantomData,
         }
     }
@@ -2228,6 +2278,8 @@ impl<P: Pixel> PixelBuffer<P> {
     ///
     /// Zero-copy: reinterprets the raw bytes as typed pixels.
     pub fn as_imgref_mut(&mut self) -> imgref::ImgRefMut<'_, P> {
+        // Mutable access can change any sample: end current-sample evidence.
+        self.exact = None;
         let total_bytes = if self.height == 0 || self.width == 0 {
             0
         } else {
@@ -2394,6 +2446,8 @@ impl PixelBuffer {
     ///
     /// Returns `None` if the descriptor is not layout-compatible with `P`.
     pub fn try_as_imgref_mut<P: Pixel>(&mut self) -> Option<imgref::ImgRefMut<'_, P>> {
+        // Mutable access can change any sample: end current-sample evidence.
+        self.exact = None;
         if !self.descriptor.layout_compatible(P::DESCRIPTOR)
             || core::mem::size_of::<P>() != self.descriptor.bytes_per_pixel()
         {
@@ -2551,6 +2605,8 @@ impl PixelBuffer {
     where
         F: for<'a> FnOnce(InPlacePixels<'a>) -> PixelSliceMut<'a>,
     {
+        // The transform rewrites samples in place: end current-sample evidence.
+        self.exact = None;
         let total = self.storage_span_len();
         let offset = self.offset;
         let avail = self.data.len() - offset;
@@ -2604,6 +2660,7 @@ impl<P> PixelBuffer<P> {
             descriptor: self.descriptor,
 
             color: self.color,
+            exact: self.exact,
             _pixel: PhantomData,
         }
     }
@@ -2627,6 +2684,7 @@ impl<P> PixelBuffer<P> {
                 descriptor: self.descriptor,
 
                 color: self.color,
+                exact: self.exact,
                 _pixel: PhantomData,
             })
         } else {
@@ -2648,6 +2706,9 @@ impl<P> PixelBuffer<P> {
             descriptor
         );
         descriptor.validate().expect("invalid pixel descriptor");
+        if !exact_survives(self.descriptor, descriptor) {
+            self.exact = None;
+        }
         self.descriptor = descriptor;
         self
     }
@@ -2671,6 +2732,9 @@ impl<P> PixelBuffer<P> {
             &descriptor,
         )
         .map_err(|e| whereat::at!(e))?;
+        if !exact_survives(self.descriptor, descriptor) {
+            self.exact = None;
+        }
         self.descriptor = descriptor;
         Ok(self)
     }
@@ -2695,6 +2759,9 @@ impl<P> PixelBuffer<P> {
     #[inline]
     #[must_use]
     pub fn with_signal_range(mut self, sr: SignalRange) -> Self {
+        if self.descriptor.signal_range != sr {
+            self.exact = None;
+        }
         self.descriptor.signal_range = sr;
         self
     }
@@ -2893,6 +2960,29 @@ impl<P> PixelBuffer<P> {
         self.descriptor
     }
 
+    /// Evidence that the current samples are exact lower-depth codes, if stated.
+    ///
+    /// Every mutable accessor ([`as_slice_mut`](Self::as_slice_mut),
+    /// [`rows_mut`](Self::rows_mut), in-place transforms, typed mutable views)
+    /// clears it before returning, as do descriptor changes that alter storage,
+    /// layout or signal range. Views, crops and compaction keep it.
+    #[inline]
+    pub fn exact_depth(&self) -> Option<ExactDepth> {
+        self.exact
+    }
+
+    /// State or clear exact-depth evidence for the current samples.
+    ///
+    /// The statement is the caller's: only storage and range consistency are
+    /// checked, without reading samples. On error the evidence is unchanged.
+    pub fn set_exact_depth(&mut self, exact: Option<ExactDepth>) -> Result<(), ExactDepthError> {
+        if let Some(exact) = exact {
+            check_exact(self.descriptor, exact)?;
+        }
+        self.exact = exact;
+        Ok(())
+    }
+
     /// Source color context (ICC/CICP metadata), if set.
     #[inline]
     pub fn color_context(&self) -> Option<&Arc<ColorContext>> {
@@ -2958,6 +3048,7 @@ impl<P> PixelBuffer<P> {
             descriptor: self.descriptor,
 
             color: self.color.clone(),
+            exact: self.exact,
             _pixel: PhantomData,
         }
     }
@@ -2970,6 +3061,8 @@ impl<P> PixelBuffer<P> {
     /// transforms, use [`PixelBuffer::transform_in_place`], which adopts
     /// the new description atomically.
     pub fn as_slice_mut(&mut self) -> PixelSliceMut<'_, P> {
+        // Mutable access can change any sample: end current-sample evidence.
+        self.exact = None;
         let total = self.storage_span_len();
         let offset = self.offset;
         PixelSliceMut {
@@ -3004,6 +3097,7 @@ impl<P> PixelBuffer<P> {
                 descriptor: self.descriptor,
 
                 color: self.color.clone(),
+                exact: self.exact,
                 _pixel: PhantomData,
             };
         }
@@ -3020,6 +3114,7 @@ impl<P> PixelBuffer<P> {
             descriptor: self.descriptor,
 
             color: self.color.clone(),
+            exact: self.exact,
             _pixel: PhantomData,
         }
     }
@@ -3030,6 +3125,8 @@ impl<P> PixelBuffer<P> {
     ///
     /// Panics if `y + count > height`.
     pub fn rows_mut(&mut self, y: u32, count: u32) -> PixelSliceMut<'_, P> {
+        // Mutable access can change any sample: end current-sample evidence.
+        self.exact = None;
         assert!(
             y.checked_add(count).is_some_and(|end| end <= self.height),
             "rows_mut({y}, {count}) out of bounds (height: {})",
@@ -3089,6 +3186,7 @@ impl<P> PixelBuffer<P> {
                 descriptor: self.descriptor,
 
                 color: self.color.clone(),
+                exact: self.exact,
                 _pixel: PhantomData,
             };
         }
@@ -3105,6 +3203,7 @@ impl<P> PixelBuffer<P> {
             descriptor: self.descriptor,
 
             color: self.color.clone(),
+            exact: self.exact,
             _pixel: PhantomData,
         }
     }
@@ -3140,6 +3239,7 @@ impl<P> PixelBuffer<P> {
             descriptor: self.descriptor,
 
             color: self.color.clone(),
+            exact: self.exact,
             _pixel: PhantomData,
         };
         let bpp = self.descriptor.bytes_per_pixel();
@@ -3166,6 +3266,20 @@ impl<P> fmt::Debug for PixelBuffer<P> {
     }
 }
 
+/// Whether exact-depth evidence still describes samples relabeled from `old` to `new`.
+fn exact_survives(old: PixelDescriptor, new: PixelDescriptor) -> bool {
+    old.channel_type() == new.channel_type()
+        && old.layout() == new.layout()
+        && old.signal_range == new.signal_range
+}
+
+fn check_exact(descriptor: PixelDescriptor, exact: ExactDepth) -> Result<(), ExactDepthError> {
+    if exact.storage() != descriptor.channel_type() || exact.range() != descriptor.signal_range {
+        return Err(ExactDepthError::DescriptorMismatch);
+    }
+    Ok(())
+}
+
 fn pixel_slice_to_owned(slice: &PixelSlice<'_>) -> PixelBuffer {
     let mut buffer = PixelBuffer::new(slice.width(), slice.rows(), slice.descriptor());
     {
@@ -3177,6 +3291,8 @@ fn pixel_slice_to_owned(slice: &PixelSlice<'_>) -> PixelBuffer {
     if let Some(color) = slice.color_context() {
         buffer = buffer.with_color_context(color.clone());
     }
+    // An exact copy of the same values keeps their evidence.
+    buffer.exact = slice.exact_depth();
     buffer
 }
 
@@ -3199,6 +3315,7 @@ macro_rules! impl_from_imgref {
                     descriptor: $descriptor,
 
                     color: None,
+                    exact: None,
                     _pixel: PhantomData,
                 }
             }
@@ -3315,6 +3432,7 @@ impl<'a, P> From<PixelSliceMut<'a, P>> for PixelSlice<'a, P> {
             stride: mut_slice.stride,
             descriptor: mut_slice.descriptor,
             color: mut_slice.color,
+            exact: None,
             _pixel: PhantomData,
         }
     }
@@ -3406,6 +3524,7 @@ mod tests {
                                     stride,
                                     descriptor,
                                     color: None,
+                                    exact: None,
                                     _pixel: PhantomData,
                                 };
                                 let packed = buffer.into_contiguous();
