@@ -1,12 +1,14 @@
-//! The exactness rule a codec plan reports (proposed zencodec
-//! `CodedSamples::depth_exact`), checked against actual native narrowing.
+//! `ExactDepth`'s exactness queries checked against canonical `CodeMap` narrowing.
 //!
-//! The rule uses only `ExactDepth`'s public queries. Every level of each evidence
-//! grid, built by an independent integer widening and measured with
-//! `ExactDepth::measure`, is narrowed to each coded depth with the codec-facing
-//! `CodeMap` and widened back. The round trip must be the identity exactly when
-//! the rule calls the coded depth exact. Full-range grids are not ordered by bit
-//! count, and color and alpha evidence are judged separately.
+//! Scope: the canonical mapping only (nearest full-scale rescaling, power-of-two
+//! narrow anchors). Every level of each evidence grid, built by an independent
+//! integer widening and measured with `ExactDepth::measure`, is narrowed to each
+//! coded depth with `CodeMap` and widened back; the round trip must be the identity
+//! exactly when `color_exact_at` / `alpha_exact_at` say so. Full-range grids are not
+//! ordered by bit count, and color and alpha are judged separately. A codec whose
+//! native narrowing or reconstruction differs is not qualified by this file: the
+//! last test shows that a truncate and bit-replicate pair, modeled here only as an
+//! unqualified witness, already differs from the canonical grid at ten bits.
 
 use zenpixels::{
     ChannelType, PixelDescriptor, PixelSlice, SignalRange,
@@ -14,8 +16,8 @@ use zenpixels::{
 };
 use zenpixels_convert::codes::{CodeMap, CodeRole};
 
-/// Proposed `CodedSamples::depth_exact`: coded color and, when coded, alpha.
-fn depth_exact(evidence: ExactDepth, color_bits: u8, alpha_bits: Option<u8>) -> bool {
+/// Canonical exactness at coded depths: color, and alpha when it is coded.
+fn canonical_exact_at(evidence: ExactDepth, color_bits: u8, alpha_bits: Option<u8>) -> bool {
     evidence.color_exact_at(color_bits) && alpha_bits.is_none_or(|a| evidence.alpha_exact_at(a))
 }
 
@@ -119,7 +121,7 @@ fn coded_color_depth_is_exact_exactly_when_native_narrowing_round_trips() {
                     );
                     assert_eq!(
                         moved == 0,
-                        depth_exact(evidence, coded, None),
+                        canonical_exact_at(evidence, coded, None),
                         "{storage:?} {range:?}: {content}-bit content coded at {coded} changes {moved}"
                     );
                 }
@@ -176,7 +178,7 @@ fn more_bits_are_not_more_exact_and_color_and_alpha_decide_separately() {
     let e8 = measured(16, false, &eight, false);
     for (coded, moved) in [(8u8, 0usize), (10, 252), (12, 240), (16, 0)] {
         assert_eq!(intensity(&eight, coded), moved, "8-bit content at {coded}");
-        assert_eq!(depth_exact(e8, coded, None), moved == 0);
+        assert_eq!(canonical_exact_at(e8, coded, None), moved == 0);
     }
     // Ten-bit content is not exact at 12; four-bit content is exact at 8 and 12, not 10.
     assert_eq!(intensity(&u16_full(10), 12), 972);
@@ -184,9 +186,9 @@ fn more_bits_are_not_more_exact_and_color_and_alpha_decide_separately() {
     let e4 = measured(16, false, &four, false);
     for coded in [8u8, 12, 16] {
         assert_eq!(intensity(&four, coded), 0);
-        assert!(depth_exact(e4, coded, None));
+        assert!(canonical_exact_at(e4, coded, None));
     }
-    assert!(intensity(&four, 10) > 0 && !depth_exact(e4, 10, None));
+    assert!(intensity(&four, 10) > 0 && !canonical_exact_at(e4, 10, None));
     // Ten-bit color with eight-bit alpha: one coded depth for both is not exact.
     let ten = u16_full(10);
     let alpha8 = u16_full(8);
@@ -209,10 +211,47 @@ fn more_bits_are_not_more_exact_and_color_and_alpha_decide_separately() {
     };
     assert_eq!(intensity(&ten, 10), 0);
     assert_eq!(alpha_moved(10), 252);
-    assert!(!depth_exact(mixed, 10, Some(10)));
+    assert!(!canonical_exact_at(mixed, 10, Some(10)));
     assert_eq!(alpha_moved(8), 0);
-    assert!(depth_exact(mixed, 10, Some(8)));
-    assert!(depth_exact(mixed, 10, Some(16)));
+    assert!(canonical_exact_at(mixed, 10, Some(8)));
+    assert!(canonical_exact_at(mixed, 10, Some(16)));
     // A plan that does not code alpha is judged on color alone.
-    assert!(depth_exact(mixed, 10, None));
+    assert!(canonical_exact_at(mixed, 10, None));
+}
+
+/// A truncate-then-bit-replicate pair, as some native paths narrow and widen U16.
+/// Unqualified model: it shows why canonical evidence cannot certify such a path;
+/// it does not describe any codec's tested behavior.
+fn truncate(v: u16, bits: u8) -> u16 {
+    v >> (16 - bits)
+}
+fn replicate(q: u16, bits: u8) -> u16 {
+    (q << (16 - bits)) | (q >> (2 * bits - 16))
+}
+
+#[test]
+fn canonical_exactness_does_not_qualify_a_truncate_and_replicate_path() {
+    // Canonical ten-bit code 9 is U16 577; the native pair returns 576.
+    let ten = levels(16, 10, false);
+    assert_eq!(ten[9], 577);
+    assert_eq!(replicate(truncate(577, 10), 10), 576);
+    let evidence = measured(16, false, &ten, false);
+    assert!(canonical_exact_at(evidence, 10, None));
+    let moved = |grid: &[u16], bits| {
+        grid.iter()
+            .filter(|&&v| replicate(truncate(v, bits), bits) != v)
+            .count()
+    };
+    assert_eq!(moved(&ten, 10), 234);
+    assert_eq!(moved(&levels(16, 12, false), 12), 952);
+    // Eight-bit content promoted by 257 and narrowed to ten bits: 257 -> 4 -> 256.
+    assert_eq!(replicate(truncate(257, 10), 10), 256);
+    assert_eq!(moved(&levels(16, 8, false), 10), 252);
+    // 576 survives the native pair but is not on the canonical ten-bit grid.
+    assert_eq!(replicate(truncate(576, 10), 10), 576);
+    let bytes = 576u16.to_ne_bytes();
+    let one = PixelSlice::new(&bytes, 1, 1, 2, PixelDescriptor::GRAY16).unwrap();
+    assert_eq!(evidence.holds_for(&one), Ok(false));
+    // At eight bits the pair is the canonical widening by 257.
+    assert!((0..=255u16).all(|q| replicate(q, 8) == q * 257));
 }

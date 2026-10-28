@@ -217,6 +217,18 @@ fn color_and_alpha_are_checked_against_their_own_grids() {
     assert_eq!(claim(16, true, 10, 8).holds_for(&narrow), Ok(false));
     assert_eq!(claim(16, true, 10, 16).holds_for(&narrow), Ok(true));
     assert_eq!(ExactDepth::measure(&narrow).unwrap().alpha_bits(), 16);
+    // Opaque 65535 is on every full-scale alpha grid; 32768 has its low six bits
+    // clear (a narrow-rule pass) but is not a full-scale ten-bit alpha level.
+    let narrow_graya = PixelDescriptor::GRAYA16.with_signal_range(SignalRange::Narrow);
+    for (alpha, holds) in [(65535u32, true), (32768, false)] {
+        let data = bytes(16, &[64 << 6, alpha]);
+        let view = PixelSlice::new(&data, 1, 1, 4, narrow_graya).unwrap();
+        assert_eq!(
+            claim(16, true, 10, 10).holds_for(&view),
+            Ok(holds),
+            "alpha {alpha}"
+        );
+    }
     // BGRA keeps alpha last.
     let bgra = [17u8, 34, 51, 255, 68, 85, 102, 0];
     let bgra = PixelSlice::new(&bgra, 2, 1, 8, PixelDescriptor::BGRA8).unwrap();
@@ -287,6 +299,15 @@ fn contradictory_samples_and_mismatched_statements_are_refused() {
         assert_eq!(evidence.holds_for(&stale), Ok(false));
         assert!(!ExactDepth::measure(&stale).unwrap().color_exact_at(10));
     }
+    // A structurally valid statement attached without a scan is an assertion:
+    // eight-bit evidence on U16 value 1 is accepted by `with_exact_depth`, and
+    // `holds_for` still rejects it.
+    let one = bytes(16, &[1]);
+    let lie = PixelSlice::new(&one, 1, 1, 2, PixelDescriptor::GRAY16)
+        .unwrap()
+        .with_exact_depth(claim(16, false, 8, 16))
+        .unwrap();
+    assert_eq!(claim(16, false, 8, 16).holds_for(&lie), Ok(false));
     // Storage, range and layout must match what the statement covers.
     assert_eq!(
         claim(8, false, 8, 8).holds_for(&clean_view),
@@ -363,4 +384,79 @@ fn a_row_driver_finds_the_first_strip_that_breaks_a_declaration() {
         })
         .collect();
     assert_eq!(failing, [2]);
+}
+
+#[test]
+fn strided_rows_of_each_layout_skip_padding_and_catch_bad_active_samples() {
+    let layouts = [
+        (8u32, PixelDescriptor::RGB8, None),
+        (8, PixelDescriptor::RGBA8, Some(3usize)),
+        (8, PixelDescriptor::BGRA8, Some(3)),
+        (8, PixelDescriptor::GRAYA8, Some(1)),
+        (16, PixelDescriptor::RGB16, None),
+        (16, PixelDescriptor::RGBA16, Some(3)),
+        (16, PixelDescriptor::GRAYA16, Some(1)),
+    ];
+    for (storage_bits, descriptor, alpha) in layouts {
+        let four = full_grid(storage_bits, 4);
+        let levels: Vec<u32> = (0..1u32 << storage_bits)
+            .filter(|&v| four[v as usize])
+            .collect();
+        let channels = descriptor.channels();
+        let (width, stride_pixels) = (3usize, 5usize);
+        // Row 0 carries two pixels of padding; the last row ends at its last sample.
+        let mut words = vec![1u32; stride_pixels * channels + width * channels];
+        for row in 0..2 {
+            for i in 0..width * channels {
+                words[row * stride_pixels * channels + i] =
+                    levels[(row * 7 + i * 5 + 3) % levels.len()];
+            }
+        }
+        let bpp = channels * storage_bits as usize / 8;
+        let view = |words: &[u32]| {
+            let data = bytes(storage_bits, words);
+            let ok =
+                PixelSlice::new(&data, width as u32, 2, stride_pixels * bpp, descriptor).is_ok();
+            (data, ok)
+        };
+        let (data, ok) = view(&words);
+        assert!(ok, "{descriptor:?}");
+        let pixels =
+            PixelSlice::new(&data, width as u32, 2, stride_pixels * bpp, descriptor).unwrap();
+        let evidence = claim(storage_bits, false, 4, 4);
+        assert_eq!(evidence.holds_for(&pixels), Ok(true), "{descriptor:?}");
+        assert!(ExactDepth::measure(&pixels).unwrap().color_exact_at(4));
+        // One active color sample of the last row off the grid.
+        let last_row = stride_pixels * channels;
+        let color = if alpha == Some(0) { 1 } else { 0 };
+        let mut bad = words.clone();
+        bad[last_row + channels + color] ^= 1;
+        let data = bytes(storage_bits, &bad);
+        let pixels =
+            PixelSlice::new(&data, width as u32, 2, stride_pixels * bpp, descriptor).unwrap();
+        assert_eq!(
+            evidence.holds_for(&pixels),
+            Ok(false),
+            "{descriptor:?} color"
+        );
+        // One active alpha sample off the grid: caught by alpha, not by color.
+        if let Some(a) = alpha {
+            let mut bad = words.clone();
+            bad[last_row + 2 * channels + a] ^= 1;
+            let data = bytes(storage_bits, &bad);
+            let pixels =
+                PixelSlice::new(&data, width as u32, 2, stride_pixels * bpp, descriptor).unwrap();
+            assert_eq!(
+                evidence.holds_for(&pixels),
+                Ok(false),
+                "{descriptor:?} alpha"
+            );
+            let any_alpha = claim(storage_bits, false, 4, storage_bits);
+            assert_eq!(
+                any_alpha.holds_for(&pixels),
+                Ok(true),
+                "{descriptor:?} alpha unconstrained"
+            );
+        }
+    }
 }
