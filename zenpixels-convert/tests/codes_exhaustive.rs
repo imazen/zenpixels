@@ -686,4 +686,11 @@ fn scan_measures_alpha_separately_and_ignores_padding() {
         ExactDepth::measure(&f).unwrap_err(),
         ExactDepthError::UnsupportedStorage
     );
+    // The deprecated convert wrapper forwards and keeps its original refusal.
+    #[allow(deprecated)]
+    let forwarded = zenpixels_convert::codes::measure_exact_depth(&slice).unwrap();
+    assert_eq!(forwarded, ExactDepth::measure(&slice).unwrap());
+    #[allow(deprecated)]
+    let refused = zenpixels_convert::codes::measure_exact_depth(&f).unwrap_err();
+    assert!(matches!(*refused.error(), CodesError::Unmeasurable { .. }));
 }
