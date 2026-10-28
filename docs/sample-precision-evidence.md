@@ -114,7 +114,13 @@ color/alpha samples to those depths reproduces them. It is established only by:
    padding or an RGBX/BGRX padding slot), no allocation, early exit when only the storage depth
    remains. `ExactDepth::holds_for` checks a stated depth against rows written elsewhere and
    stops at the first sample off its grid; both live in zenpixels core, so a row driver needs no
-   zenpixels-convert dependency.
+   zenpixels-convert dependency (`codes::measure_exact_depth` remains as a deprecated wrapper).
+
+A statement made with `ExactDepth::new` and attached with `with_exact_depth` is an assertion:
+the attach checks only storage and range. Exactness is also defined for the canonical mapping
+only. zenavif `a7638f6e` narrows U16 by truncation and widens by bit replication (source-traced,
+not run), so canonical ten-bit level 577 returns as 576 and 234 of 1024 canonical ten-bit levels
+change; that native path is unqualified by canonical evidence and needs its own control.
 3. **An operation that provably keeps the values**, which re-attaches it.
 
 It is never established by the source file's bit depth, `ColorOrigin`, negotiation `Provenance`,
@@ -181,27 +187,31 @@ fn resolve(requirements, preference, pixels: &PixelSlice, capabilities: &[u8])
 - Quantization when not exact: nearest (full range) or round-half-up with top clamp (narrow), never
   dither unless requested. Integer canonical sources never clip at full range.
 
-Where the evidence stops today (read from zencodec `e59b3803`, not built). One-shot encodes
-already see it: the caller's `PixelSlice` carries `exact_depth()`. Planned rows do not:
+Where the evidence stops today (read from zencodec `e59b3803`, not built). One-shot encodes can
+read it: the caller's `PixelSlice` carries `exact_depth()`, which is transport, not proof. Planned
+rows do not:
 `EncodeDeclaration` holds width, height, descriptor, color and access only, and the row driver
 (`zencodec-io` `run_rows`) copies source rows through an evidence-free `PixelSliceMut` into a fresh
 `PixelSlice`, so even a raster holding evidence reaches `push_rows` without it. `EncodePlan` does not
 report the coded depth, so startup drift and admission cannot see exactness. zenavif (`a7638f6e`)
 shows the cost: `Auto` codes any 16-bit input at 10 bits, lossless included, which reproduces the
-input only when it already lies on the 10-bit grid.
+input only when it already lies on the 10-bit grid, and its truncate/replicate mapping differs
+from the canonical grid even then (see section 4).
 
 Proposed contracts (root owns zencodec; nothing applied there):
 
 - `EncodeDeclaration::exact_depth: Option<ExactDepth>` (+ `with_exact_depth`), validated against the
   descriptor; `None` means no depth below storage may be treated as exact.
-- `EncodePlan::samples: Option<CodedSamples { color_bits, alpha_bits, depth_exact }>`, filled through
-  one shared `CodedSamples::for_declaration` so every codec applies the same rule; the existing
-  whole-plan comparison in `validate_started` then catches a startup that codes another depth.
-  `Fidelity::Lossless` refuses in planning when no capable depth is exact.
+- Deferred by root: a public coded-samples report with a `depth_exact` boolean. A grid result
+  proves only that the canonical re-quantization is identity; it says nothing about the codec's
+  own mapping, matrix, subsampling, transfer or alpha handling. A codec accepts
+  `Fidelity::Lossless` only after qualifying its complete actual transform.
 - Row driver: `Description::exact_depth` (a borrowed raster copies its slice's), passed to the
-  declaration; when the plan relies on it, each strip is verified before `push_rows` and pushed with
-  the evidence attached, or the operation fails at that strip. A strip is never quantized to fit, and
-  a source cannot change its claim mid-stream (descriptions are compared every strip).
+  declaration; every claim the driver forwards is verified on the strip before `push_rows`, or the
+  operation fails terminally at that strip (no retry at another depth). A strip is never quantized to
+  fit. Comparing descriptions every strip catches a changed claim, not changed values.
+- Missing evidence means unknown, not inexact: a route that codes at the storage depth (16-bit
+  PNG, U8 routes) needs no evidence.
 - zenpixels: a verifying scan in core beside `ExactDepth`, so the driver needs no zenpixels-convert
   dependency; pipelines declare evidence statically (decoders establish it, preserving nodes keep it,
   resize/filter/blend end it, selection composites take the meet).
@@ -213,19 +223,21 @@ sufficient when it is already true of every row at that moment:
 
 - the writer makes it true by construction for every row, as a decoder does when it widens one
   native depth with `to_canonical` for the whole image;
-- the rows already exist: a complete raster whose evidence no mutable access has cleared, or
-  one scanned with `ExactDepth::measure` before planning;
-- a replay route measures in one pass and encodes in the next.
+- an owned, immutable raster was scanned with `ExactDepth::measure` (or checked with
+  `holds_for`) before planning; a tag on an untouched raster is not proof by itself;
+- a replay route measures in one pass and encodes in the next, over a stable snapshot; a fresh
+  read of a mutable source is not one.
 
 Otherwise it is provisional, a promise about rows not yet produced: a pipeline that derives it
 from its graph (one mis-declared node, or a source whose depth changes, breaks it), a claim from
-container metadata (bit-depth fields, sBIT and `effective_bits` record history), and any rows a
-driver copies through a mutable view. Provisional evidence is checked per strip with `holds_for`
+container metadata (bit-depth fields, sBIT and `effective_bits` record history), asserted
+statements, and any rows a driver copies through a mutable view. Provisional evidence is checked per strip with `holds_for`
 against the coded depths, the grids the header committed to, before the strip is pushed; a strip
 on a coarser grid that divides the coded depth passes. A strip that fails cannot be repaired after
-the header. With output staged until finish, the operation fails before anything is published.
-With live output, the header and earlier strips are already out, so the operation fails and the
-destination must discard the partial file. A route that relies on provisional evidence for a depth
+the header. With output staged until finish, the operation fails before anything reaches the
+destination. With live output, the header can be published before the first strip is read, and
+earlier strips may be out, so the operation fails and the destination must discard the partial
+file. A route that relies on provisional evidence for a depth
 below storage should therefore stage its output or replay; live publication is safe with
 sufficient evidence or with a coded depth at least the storage depth.
 

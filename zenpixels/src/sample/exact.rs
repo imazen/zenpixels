@@ -19,6 +19,13 @@ use core::fmt;
 /// ([`measure`](Self::measure)), or by an operation that provably preserves it.
 /// [`holds_for`](Self::holds_for) checks a statement against rows written
 /// elsewhere, such as strips a row driver copied through a mutable view.
+/// A statement built with [`new`](Self::new) and attached to a view is an
+/// assertion; a consumer that relies on it should check the samples.
+///
+/// Exactness is defined for the canonical mapping only. A codec whose native
+/// narrowing or reconstruction differs does not inherit it: truncating
+/// canonical ten-bit level 577 gives code 9, which bit-replicated widening
+/// returns as 576. Such a path needs its own qualification.
 ///
 /// Higher depth is not automatically exact. Full-range N-bit grids nest only
 /// when N divides the depth: canonical U16 samples holding eight-bit content
@@ -133,6 +140,9 @@ impl ExactDepth {
     }
 
     /// Whether quantizing color to `bits` and widening back reproduces every sample.
+    ///
+    /// Canonical mapping only. A depth at or above the storage depth is
+    /// trivially exact, so validate a coded depth against the codec first.
     pub const fn color_exact_at(self, bits: u8) -> bool {
         grid_nests(
             self.storage_bits(),
@@ -143,6 +153,9 @@ impl ExactDepth {
     }
 
     /// Whether quantizing alpha to `bits` and widening back reproduces every sample.
+    ///
+    /// Alpha is always full scale. `alpha_bits == 1` allows both transparent and
+    /// opaque samples; it does not prove an opaque image.
     pub const fn alpha_exact_at(self, bits: u8) -> bool {
         grid_nests(self.storage_bits(), self.alpha_bits, bits, false)
     }

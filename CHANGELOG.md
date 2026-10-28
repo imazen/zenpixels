@@ -43,7 +43,8 @@
   Rebuilding it from `metadata()` and the source's diffuse white is wrong for PQ
   to linear output. (59c7708e)
 - Add `ExactDepth::measure`, the explicit scan (moved from the unreleased
-  `codes::measure_exact_depth`; it now skips RGBX/BGRX padding slots), and
+  `codes::measure_exact_depth`, kept as a deprecated forwarding wrapper; the scan
+  now skips RGBX/BGRX padding slots), and
   `ExactDepth::holds_for`, which checks stated evidence against rows written
   elsewhere, such as a row driver's strips. Both read only active samples and
   allocate nothing. (9b7e77ee)
