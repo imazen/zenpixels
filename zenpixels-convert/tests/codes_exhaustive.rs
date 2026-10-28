@@ -5,11 +5,9 @@
 
 use zenpixels::{
     ChannelType, PixelDescriptor, PixelSlice, PixelSliceMut, SignalRange,
-    sample::{CodePlane, ExactDepth, SampleEncoding},
+    sample::{CodePlane, ExactDepth, ExactDepthError, SampleEncoding},
 };
-use zenpixels_convert::codes::{
-    CodeMap, CodeMapError, CodeRole, CodesError, measure_exact_depth, to_canonical,
-};
+use zenpixels_convert::codes::{CodeMap, CodeMapError, CodeRole, CodesError, to_canonical};
 
 fn enc(bits: u8, shift: u8) -> SampleEncoding {
     SampleEncoding::new(ChannelType::U16, bits, shift).unwrap()
@@ -335,7 +333,7 @@ fn interleaved_twelve_bit_rgb_widens_exactly_into_strided_rows() {
     .unwrap();
     assert_eq!(exact, full(ChannelType::U16, 12, 16));
     // The scan independently finds the same depth in the written samples.
-    let measured = measure_exact_depth(
+    let measured = ExactDepth::measure(
         &PixelSlice::new(
             bytemuck::cast_slice(&out),
             w as u32,
@@ -614,7 +612,7 @@ fn gray16(words: &[u16], narrow: bool) -> ExactDepth {
         d,
     )
     .unwrap();
-    measure_exact_depth(&slice).unwrap()
+    ExactDepth::measure(&slice).unwrap()
 }
 
 #[test]
@@ -643,7 +641,7 @@ fn scan_finds_the_generating_depth_and_loses_it_after_one_edit() {
     let u8s: Vec<u8> = (0..16u8).map(|q| q * 17).collect();
     let slice = PixelSlice::new(&u8s, 16, 1, 16, PixelDescriptor::GRAY8).unwrap();
     assert_eq!(
-        measure_exact_depth(&slice).unwrap(),
+        ExactDepth::measure(&slice).unwrap(),
         full(ChannelType::U8, 4, 8)
     );
 }
@@ -672,7 +670,7 @@ fn scan_measures_alpha_separately_and_ignores_padding() {
     )
     .unwrap();
     assert_eq!(
-        measure_exact_depth(&slice).unwrap(),
+        ExactDepth::measure(&slice).unwrap(),
         full(ChannelType::U16, 12, 1)
     );
     let floats = [0f32; 3];
@@ -684,8 +682,8 @@ fn scan_measures_alpha_separately_and_ignores_padding() {
         PixelDescriptor::RGBF32_LINEAR,
     )
     .unwrap();
-    assert!(matches!(
-        *measure_exact_depth(&f).unwrap_err().error(),
-        CodesError::Unmeasurable { .. }
-    ));
+    assert_eq!(
+        ExactDepth::measure(&f).unwrap_err(),
+        ExactDepthError::UnsupportedStorage
+    );
 }

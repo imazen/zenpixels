@@ -15,7 +15,7 @@ use zenpixels::{
 };
 use zenpixels_convert::{
     PixelBufferConvertExt,
-    codes::{CodeMap, CodeRole, measure_exact_depth, to_canonical},
+    codes::{CodeMap, CodeRole, to_canonical},
     orient::{apply_orientation, apply_orientation_in_place},
 };
 
@@ -376,7 +376,7 @@ fn every_mutable_access_ends_evidence_even_without_a_write() {
     });
     assert_eq!(b.exact_depth(), None, "transform_in_place");
     // Conservative: an untouched buffer lost evidence; an explicit scan restores it.
-    let measured = measure_exact_depth(&b.as_slice()).unwrap();
+    let measured = ExactDepth::measure(&b.as_slice()).unwrap();
     assert_eq!(Some(measured), e);
     b.set_exact_depth(Some(measured)).unwrap();
     // Ownership handoff through public parts drops evidence: parts are editable.
@@ -481,7 +481,7 @@ fn resize_filters_color_conversion_and_premultiplication_end_evidence() {
         .collect();
     let round_trip = from_samples(PixelDescriptor::RGBA16_SRGB, W, H, &un);
     assert_eq!(round_trip.exact_depth(), None);
-    let measured = measure_exact_depth(&round_trip.as_slice()).unwrap();
+    let measured = ExactDepth::measure(&round_trip.as_slice()).unwrap();
     assert!(
         !measured.color_exact_at(10),
         "premultiplication round trip left the 10-bit grid"
@@ -557,7 +557,7 @@ fn composites_of_mixed_sources_keep_only_what_both_grids_share() {
     assert!(changed_by_roundtrip(&ten_eight.as_slice(), 10) > 0);
     assert!(changed_by_roundtrip(&ten_eight.as_slice(), 8) > 0);
     // The scan agrees with the meet on the selected samples.
-    let m = measure_exact_depth(&ten_eight.as_slice()).unwrap();
+    let m = ExactDepth::measure(&ten_eight.as_slice()).unwrap();
     assert!(!m.color_exact_at(8) && !m.color_exact_at(10));
     // A 50% blend makes new values: no evidence, and the scan confirms 16.
     let (sa, sb) = (samples(&ten.as_slice()), samples(&five.as_slice()));
@@ -647,7 +647,7 @@ fn unknown_evidence_refuses_lossless_when_no_depth_reaches_storage() {
     );
     // An explicit scan is the counted way to prove the depth again.
     let mut proven = unknown;
-    let measured = measure_exact_depth(&proven.as_slice()).unwrap();
+    let measured = ExactDepth::measure(&proven.as_slice()).unwrap();
     proven.set_exact_depth(Some(measured)).unwrap();
     assert_eq!(
         resolve(
@@ -712,7 +712,7 @@ fn requirements_precede_preferences_and_conflicts_name_the_requirement() {
     }
     let mut b = from_samples(PixelDescriptor::RGBA16_SRGB, W, H, &values);
     assert_eq!(
-        measure_exact_depth(&b.as_slice()).unwrap(),
+        ExactDepth::measure(&b.as_slice()).unwrap(),
         ExactDepth::new(ChannelType::U16, SignalRange::Full, 10, 1).unwrap()
     );
     b.set_exact_depth(Some(
@@ -748,7 +748,7 @@ fn serialized_evidence_is_a_claim_that_a_scan_can_refute() {
     stored[7] ^= 1;
     let restored = from_samples(PixelDescriptor::RGB16_SRGB, W, H, &stored);
     let claim = ExactDepth::new(ChannelType::U16, SignalRange::Full, header[0], header[1]).unwrap();
-    let verified = measure_exact_depth(&restored.as_slice()).unwrap();
+    let verified = ExactDepth::measure(&restored.as_slice()).unwrap();
     assert!(
         !verified.color_exact_at(claim.color_bits()),
         "the stale claim is refuted"
@@ -971,7 +971,7 @@ fn narrow_depth_changes_refuse_and_never_carry_full_scale_evidence() {
         .map(|i| 16 + (i * 37 % 220) as u8)
         .collect();
     let mut eight = PixelBuffer::from_vec(bytes, W, H, rgb8).unwrap();
-    let measured = measure_exact_depth(&eight.as_slice()).unwrap();
+    let measured = ExactDepth::measure(&eight.as_slice()).unwrap();
     assert_eq!(
         (measured.range(), measured.color_bits()),
         (SignalRange::Narrow, 8)
@@ -1013,5 +1013,5 @@ fn narrow_depth_changes_refuse_and_never_carry_full_scale_evidence() {
         (carried.range(), carried.color_bits(), carried.alpha_bits()),
         (SignalRange::Narrow, 8, 1)
     );
-    assert_eq!(carried, measure_exact_depth(&rgba.as_slice()).unwrap());
+    assert_eq!(carried, ExactDepth::measure(&rgba.as_slice()).unwrap());
 }

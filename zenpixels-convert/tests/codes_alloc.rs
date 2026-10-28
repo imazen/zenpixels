@@ -1,14 +1,15 @@
-//! Allocation gate: native code conversion, the exact-depth scan, encoder-side
-//! narrowing and evidence carriage perform zero heap allocations on success.
+//! Allocation gate: native code conversion, the exact-depth scan and verifier,
+//! encoder-side narrowing and evidence carriage perform zero heap allocations on
+//! success.
 //!
 //! Links the `allocation-counter` global allocator, so this file is its own
 //! test binary. Error paths are excluded: a `whereat` trace allocates.
 
 use zenpixels::{
     ChannelType, PixelBuffer, PixelDescriptor, PixelSlice, PixelSliceMut, SignalRange,
-    sample::{CodePlane, SampleEncoding},
+    sample::{CodePlane, ExactDepth, SampleEncoding},
 };
-use zenpixels_convert::codes::{CodeMap, CodeRole, measure_exact_depth, to_canonical};
+use zenpixels_convert::codes::{CodeMap, CodeRole, to_canonical};
 
 #[test]
 fn conversion_scan_and_evidence_allocate_nothing() {
@@ -46,8 +47,21 @@ fn conversion_scan_and_evidence_allocate_nothing() {
         .unwrap()
         .with_exact_depth(exact)
         .unwrap();
-        let measured = measure_exact_depth(&slice).unwrap();
+        let measured = ExactDepth::measure(&slice).unwrap();
         assert_eq!(measured, exact);
+        // Verifying a declaration, per strip as a row driver would, and on an
+        // empty strip, reads samples only.
+        for y in (0..h as u32).step_by(2) {
+            let strip = slice.sub_rows(y, 2.min(h as u32 - y));
+            assert!(exact.holds_for(&strip).unwrap());
+        }
+        assert!(exact.holds_for(&slice.sub_rows(0, 0)).unwrap());
+        assert!(
+            !ExactDepth::new(ChannelType::U16, SignalRange::Full, 8, 16)
+                .unwrap()
+                .holds_for(&slice)
+                .unwrap()
+        );
         narrow.map_words(&dst, &mut codes).unwrap();
         // Carriage on an owned buffer: state, read, clear by mutable access.
         let (_, exact) =

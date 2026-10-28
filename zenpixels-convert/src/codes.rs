@@ -52,7 +52,7 @@
 use core::fmt;
 use whereat::At;
 use zenpixels::{
-    ChannelLayout, ChannelType, PixelDescriptor, PixelSlice, PixelSliceMut, SignalRange,
+    ChannelLayout, ChannelType, PixelDescriptor, PixelSliceMut, SignalRange,
     sample::{CodePlane, CodePlaneError, ExactDepth, SampleEncoding},
 };
 
@@ -285,11 +285,6 @@ pub enum CodesError {
     },
     /// A plane read failed after validation; an internal consistency error.
     Read(CodePlaneError),
-    /// Exact depth is defined only for canonical U8/U16 gray, gray-alpha, RGB, RGBA or BGRA.
-    Unmeasurable {
-        /// The measured slice's descriptor.
-        actual: PixelDescriptor,
-    },
 }
 
 impl fmt::Display for CodesError {
@@ -331,9 +326,6 @@ impl fmt::Display for CodesError {
                 "component {component}: region {extent:?} at {origin:?} exceeds plane {plane:?}"
             ),
             Self::Read(error) => write!(f, "code plane read failed: {error}"),
-            Self::Unmeasurable { actual } => {
-                write!(f, "exact depth is not defined for {actual:?}")
-            }
         }
     }
 }
@@ -508,141 +500,4 @@ fn lcm(a: u32, b: u32) -> u32 {
         (x, y) = (y, x % y);
     }
     a / x * b
-}
-
-/// Measure the smallest exact color and alpha depths of a canonical image.
-///
-/// This is the explicit, counted way to establish [`ExactDepth`] for samples
-/// whose producer did not state it: one read of every active sample, no
-/// allocation, stopping early once only the storage depth remains possible.
-/// A narrow-range result is never below eight bits. Padding bytes are not read.
-pub fn measure_exact_depth(pixels: &PixelSlice<'_>) -> Result<ExactDepth, At<CodesError>> {
-    let descriptor = pixels.descriptor();
-    let storage = descriptor.channel_type();
-    let storage_bits: u8 = match storage {
-        ChannelType::U8 => 8,
-        ChannelType::U16 => 16,
-        _ => {
-            return Err(whereat::at!(CodesError::Unmeasurable {
-                actual: descriptor
-            }));
-        }
-    };
-    let alpha_index = match descriptor.layout() {
-        ChannelLayout::Gray | ChannelLayout::Rgb => None,
-        ChannelLayout::GrayAlpha | ChannelLayout::Rgba | ChannelLayout::Bgra => {
-            Some(descriptor.channels() - 1)
-        }
-        _ => {
-            return Err(whereat::at!(CodesError::Unmeasurable {
-                actual: descriptor
-            }));
-        }
-    };
-    let narrow = match descriptor.signal_range {
-        SignalRange::Full => false,
-        SignalRange::Narrow => true,
-        _ => {
-            return Err(whereat::at!(CodesError::Unmeasurable {
-                actual: descriptor
-            }));
-        }
-    };
-    let channels = descriptor.channels();
-    let mut color = GridScan::new(storage_bits, narrow);
-    let mut alpha = GridScan::new(storage_bits, false);
-    'rows: for y in 0..pixels.rows() {
-        let row = pixels.row(y);
-        let sample = |i: usize| -> u16 {
-            if storage_bits == 8 {
-                u16::from(row[i])
-            } else {
-                u16::from_ne_bytes([row[2 * i], row[2 * i + 1]])
-            }
-        };
-        for i in 0..pixels.width() as usize * channels {
-            let v = sample(i);
-            if Some(i % channels) == alpha_index {
-                alpha.push(v);
-            } else {
-                color.push(v);
-            }
-            if color.settled() && (alpha_index.is_none() || alpha.settled()) {
-                break 'rows;
-            }
-        }
-    }
-    let alpha_bits = if alpha_index.is_some() {
-        alpha.bits()
-    } else {
-        storage_bits
-    };
-    ExactDepth::new(storage, descriptor.signal_range, color.bits(), alpha_bits)
-        .map_err(|_| whereat::at!(CodesError::Unmeasurable { actual: descriptor }))
-}
-
-/// Running intersection of the depths whose grid contains every pushed sample.
-struct GridScan {
-    storage_bits: u8,
-    narrow: bool,
-    /// Full range: bit `d - 1` set while every sample lies on the d-bit grid.
-    candidates: u32,
-    /// Narrow range: OR of all samples (trailing zeros give the depth).
-    or: u16,
-}
-
-impl GridScan {
-    fn new(storage_bits: u8, narrow: bool) -> Self {
-        Self {
-            storage_bits,
-            narrow,
-            candidates: (1u32 << (storage_bits - 1)) - 1,
-            or: 0,
-        }
-    }
-
-    fn push(&mut self, v: u16) {
-        if self.narrow {
-            self.or |= v;
-            return;
-        }
-        let storage_max = (1u32 << self.storage_bits) - 1;
-        let mut remaining = self.candidates;
-        while remaining != 0 {
-            let d = remaining.trailing_zeros() + 1;
-            remaining &= remaining - 1;
-            let max = (1u32 << d) - 1;
-            let q = (u32::from(v) * max + storage_max / 2) / storage_max;
-            if (q * storage_max + max / 2) / max != u32::from(v) {
-                self.candidates &= !(1u32 << (d - 1));
-            }
-        }
-    }
-
-    fn settled(&self) -> bool {
-        if self.narrow {
-            // Once the lowest set bit reaches the storage LSB nothing coarser remains.
-            self.or & 1 != 0
-        } else {
-            self.candidates == 0
-        }
-    }
-
-    fn bits(&self) -> u8 {
-        if self.narrow {
-            let zeros = if self.or == 0 {
-                16
-            } else {
-                self.or.trailing_zeros() as u8
-            };
-            // Narrow U16 codes need at least eight bits; U8 storage is only eight.
-            self.storage_bits
-                .saturating_sub(zeros)
-                .clamp(8, self.storage_bits)
-        } else if self.candidates == 0 {
-            self.storage_bits
-        } else {
-            self.candidates.trailing_zeros() as u8 + 1
-        }
-    }
 }

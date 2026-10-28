@@ -14,9 +14,9 @@ use std::time::Duration;
 use zenbench::prelude::*;
 use zenpixels::{
     ChannelType, PixelDescriptor, PixelSlice, PixelSliceMut, SignalRange,
-    sample::{CodePlane, SampleEncoding},
+    sample::{CodePlane, ExactDepth, SampleEncoding},
 };
-use zenpixels_convert::codes::{CodeMap, CodeRole, measure_exact_depth, to_canonical};
+use zenpixels_convert::codes::{CodeMap, CodeRole, to_canonical};
 
 const SIZES: &[(&str, usize, usize)] = &[
     ("64²", 64, 64),
@@ -135,7 +135,7 @@ fn main() {
                             PixelDescriptor::RGB16,
                         )
                         .unwrap();
-                        black_box(measure_exact_depth(&s).unwrap())
+                        black_box(ExactDepth::measure(&s).unwrap())
                     })
                 });
                 g.bench("measure (early exit)", move |b| {
@@ -148,7 +148,7 @@ fn main() {
                             PixelDescriptor::RGB16,
                         )
                         .unwrap();
-                        black_box(measure_exact_depth(&s).unwrap())
+                        black_box(ExactDepth::measure(&s).unwrap())
                     })
                 });
                 let narrow = CodeMap::new(

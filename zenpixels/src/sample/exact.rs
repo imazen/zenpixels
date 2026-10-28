@@ -1,4 +1,4 @@
-use crate::{ChannelType, SignalRange};
+use crate::{ChannelLayout, ChannelType, PixelDescriptor, PixelSlice, SignalRange};
 use core::fmt;
 
 /// Proven exact code depth of the current samples of a canonical U8/U16 image.
@@ -15,8 +15,10 @@ use core::fmt;
 /// not establish ten-bit evidence for RGB samples produced by a YCbCr matrix,
 /// and resizing, filtering, color conversion or any mutable access ends it.
 /// It is established only by the code that wrote the samples (for example an
-/// exact widening of native codes), by an explicit sample scan, or by an
-/// operation that provably preserves it.
+/// exact widening of native codes), by an explicit sample scan
+/// ([`measure`](Self::measure)), or by an operation that provably preserves it.
+/// [`holds_for`](Self::holds_for) checks a statement against rows written
+/// elsewhere, such as strips a row driver copied through a mutable view.
 ///
 /// Higher depth is not automatically exact. Full-range N-bit grids nest only
 /// when N divides the depth: canonical U16 samples holding eight-bit content
@@ -54,6 +56,8 @@ pub enum ExactDepthError {
     NarrowBelowEightBits,
     /// The evidence names a different storage type or signal range than the pixels.
     DescriptorMismatch,
+    /// Scans cover gray, gray-alpha, RGB, RGBA and BGRA layouts only.
+    UnsupportedLayout,
 }
 
 impl fmt::Display for ExactDepthError {
@@ -63,6 +67,7 @@ impl fmt::Display for ExactDepthError {
             Self::InvalidBits => "exact depth must be positive and fit its storage",
             Self::NarrowBelowEightBits => "narrow-range exact depth needs at least 8 bits",
             Self::DescriptorMismatch => "exact-depth evidence disagrees with the pixel descriptor",
+            Self::UnsupportedLayout => "exact-depth scans need gray, gray-alpha, RGB, RGBA or BGRA",
         })
     }
 }
@@ -142,6 +147,80 @@ impl ExactDepth {
         grid_nests(self.storage_bits(), self.alpha_bits, bits, false)
     }
 
+    /// Measure the smallest depths whose grids hold every current sample.
+    ///
+    /// Color and alpha are measured separately; without real alpha,
+    /// `alpha_bits` is the storage depth. Reads only active samples (never row
+    /// padding or an RGBX/BGRX padding slot) and stops once only the storage
+    /// depth remains. Evidence the view already carries is not consulted. An
+    /// empty view is exact at every depth.
+    pub fn measure<P>(pixels: &PixelSlice<'_, P>) -> Result<Self, ExactDepthError> {
+        let descriptor = pixels.descriptor();
+        let roles = Roles::of(descriptor)?;
+        let mut color = GridScan::new(roles.storage_bits, roles.narrow);
+        let mut alpha = GridScan::new(roles.storage_bits, false);
+        let has_alpha = roles.alpha.is_some();
+        roles.for_each(pixels, |is_alpha, v| {
+            if is_alpha {
+                alpha.push(v);
+            } else {
+                color.push(v);
+            }
+            !(color.settled() && (!has_alpha || alpha.settled()))
+        });
+        let alpha_bits = if has_alpha {
+            alpha.bits()
+        } else {
+            roles.storage_bits
+        };
+        Self::new(
+            descriptor.channel_type(),
+            descriptor.signal_range,
+            color.bits(),
+            alpha_bits,
+        )
+    }
+
+    /// Whether every current sample of `rows` lies on this statement's grids.
+    ///
+    /// Color uses the range's rule and alpha the full-scale rule, each at its
+    /// own depth. Returns `Ok(false)` at the first sample off a grid. Reads only
+    /// active samples, ignores evidence the view carries, and holds for an
+    /// empty view. A view with different storage or signal range is an error.
+    ///
+    /// ```
+    /// use zenpixels::{PixelDescriptor, PixelSlice, sample::ExactDepth};
+    /// // Ten-bit codes 0, 1 and 1023 widened to canonical U16.
+    /// let bytes: Vec<u8> = [0u16, 64, 65535].iter().flat_map(|w| w.to_ne_bytes()).collect();
+    /// let rows = PixelSlice::new(&bytes, 3, 1, 6, PixelDescriptor::GRAY16)?;
+    /// let ten = ExactDepth::measure(&rows)?;
+    /// assert_eq!(ten.color_bits(), 10);
+    /// assert!(ten.holds_for(&rows)?);
+    /// // One edited sample leaves every grid below 16 bits.
+    /// let edited: Vec<u8> = [0u16, 65, 65535].iter().flat_map(|w| w.to_ne_bytes()).collect();
+    /// let edited = PixelSlice::new(&edited, 3, 1, 6, PixelDescriptor::GRAY16)?;
+    /// assert!(!ten.holds_for(&edited)?);
+    /// assert_eq!(ExactDepth::measure(&edited)?.color_bits(), 16);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn holds_for<P>(self, rows: &PixelSlice<'_, P>) -> Result<bool, ExactDepthError> {
+        let descriptor = rows.descriptor();
+        let roles = Roles::of(descriptor)?;
+        if self.storage != descriptor.channel_type() || self.range != descriptor.signal_range {
+            return Err(ExactDepthError::DescriptorMismatch);
+        }
+        let storage_bits = roles.storage_bits;
+        Ok(roles.for_each(rows, |is_alpha, v| {
+            if is_alpha {
+                on_full_grid(v, storage_bits, self.alpha_bits)
+            } else if roles.narrow {
+                on_narrow_grid(v, storage_bits, self.color_bits)
+            } else {
+                on_full_grid(v, storage_bits, self.color_bits)
+            }
+        }))
+    }
+
     /// Whether the N-bit color codes survive a `bits`-deep encoding, recoverable
     /// by quantizing the decoded samples back to N bits. Weaker than exactness.
     pub const fn color_codes_recoverable_at(self, bits: u8) -> bool {
@@ -169,5 +248,155 @@ const fn grid_nests(storage_bits: u8, base: u8, depth: u8, narrow: bool) -> bool
         depth >= base
     } else {
         depth % base == 0
+    }
+}
+
+/// Whether `v` lies on the full-scale `bits`-deep grid of `storage_bits`
+/// storage: narrowing it with nearest rounding and widening back returns `v`.
+const fn on_full_grid(v: u32, storage_bits: u8, bits: u8) -> bool {
+    if bits >= storage_bits {
+        return true;
+    }
+    let storage_max = (1u32 << storage_bits) - 1;
+    let max = (1u32 << bits) - 1;
+    let q = (v * max + storage_max / 2) / storage_max;
+    (q * storage_max + max / 2) / max == v
+}
+
+/// Whether `v` lies on the narrow-range `bits`-deep grid of `storage_bits`
+/// storage: narrow codes scale by powers of two, so the low bits are zero.
+const fn on_narrow_grid(v: u32, storage_bits: u8, bits: u8) -> bool {
+    bits >= storage_bits || v & ((1u32 << (storage_bits - bits)) - 1) == 0
+}
+
+/// Which samples of a view are color, which are alpha and which are padding.
+struct Roles {
+    storage_bits: u8,
+    narrow: bool,
+    channels: usize,
+    /// Real alpha channel within a pixel.
+    alpha: Option<usize>,
+    /// Undefined RGBX/BGRX padding slot, never read.
+    padding: Option<usize>,
+}
+
+impl Roles {
+    fn of(descriptor: PixelDescriptor) -> Result<Self, ExactDepthError> {
+        let storage_bits = match descriptor.channel_type() {
+            ChannelType::U8 => 8,
+            ChannelType::U16 => 16,
+            _ => return Err(ExactDepthError::UnsupportedStorage),
+        };
+        let channels = descriptor.channels();
+        let last = match descriptor.layout() {
+            ChannelLayout::Gray | ChannelLayout::Rgb => None,
+            ChannelLayout::GrayAlpha | ChannelLayout::Rgba | ChannelLayout::Bgra => {
+                Some(channels - 1)
+            }
+            _ => return Err(ExactDepthError::UnsupportedLayout),
+        };
+        let (alpha, padding) = match last {
+            Some(index) if descriptor.has_alpha() => (Some(index), None),
+            Some(index) => (None, Some(index)),
+            None => (None, None),
+        };
+        Ok(Self {
+            storage_bits,
+            narrow: matches!(descriptor.signal_range, SignalRange::Narrow),
+            channels,
+            alpha,
+            padding,
+        })
+    }
+
+    /// Visit active samples in order as `(is_alpha, value)` until `visit`
+    /// returns false; returns whether every visited sample was accepted.
+    fn for_each<P>(
+        &self,
+        pixels: &PixelSlice<'_, P>,
+        mut visit: impl FnMut(bool, u32) -> bool,
+    ) -> bool {
+        let samples = pixels.width() as usize * self.channels;
+        for y in 0..pixels.rows() {
+            let row = pixels.row(y);
+            for i in 0..samples {
+                let channel = i % self.channels;
+                if Some(channel) == self.padding {
+                    continue;
+                }
+                let v = if self.storage_bits == 8 {
+                    u32::from(row[i])
+                } else {
+                    u32::from(u16::from_ne_bytes([row[2 * i], row[2 * i + 1]]))
+                };
+                if !visit(Some(channel) == self.alpha, v) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+/// Running intersection of the depths whose grid holds every pushed sample.
+struct GridScan {
+    storage_bits: u8,
+    narrow: bool,
+    /// Full range: bit `d - 1` set while every sample lies on the d-bit grid.
+    candidates: u32,
+    /// Narrow range: OR of all samples (trailing zeros give the depth).
+    or: u32,
+}
+
+impl GridScan {
+    fn new(storage_bits: u8, narrow: bool) -> Self {
+        Self {
+            storage_bits,
+            narrow,
+            candidates: (1u32 << (storage_bits - 1)) - 1,
+            or: 0,
+        }
+    }
+
+    fn push(&mut self, v: u32) {
+        if self.narrow {
+            self.or |= v;
+            return;
+        }
+        let mut remaining = self.candidates;
+        while remaining != 0 {
+            let d = remaining.trailing_zeros() as u8 + 1;
+            remaining &= remaining - 1;
+            if !on_full_grid(v, self.storage_bits, d) {
+                self.candidates &= !(1u32 << (d - 1));
+            }
+        }
+    }
+
+    fn settled(&self) -> bool {
+        if self.narrow {
+            // Once the lowest set bit reaches the storage LSB nothing coarser remains.
+            self.or & 1 != 0
+        } else {
+            self.candidates == 0
+        }
+    }
+
+    fn bits(&self) -> u8 {
+        if self.narrow {
+            let zeros = if self.or == 0 {
+                16
+            } else {
+                self.or.trailing_zeros() as u8
+            };
+            // Narrow U16 codes need at least eight bits; U8 storage is only eight.
+            self.storage_bits
+                .saturating_sub(zeros)
+                .clamp(8, self.storage_bits)
+        } else if self.candidates == 0 {
+            self.storage_bits
+        } else {
+            self.candidates.trailing_zeros() as u8 + 1
+        }
     }
 }
