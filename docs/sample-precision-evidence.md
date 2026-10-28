@@ -110,8 +110,11 @@ samples (`ExactDepth::color_exact_at`) or original codes (`color_codes_recoverab
 color/alpha samples to those depths reproduces them. It is established only by:
 
 1. **The code that wrote the samples**, e.g. `to_canonical` returns it for an exact widening.
-2. **An explicit scan**, `codes::measure_exact_depth`: one read of every active sample, no
-   allocation, early exit when only the storage depth remains.
+2. **An explicit scan**, `ExactDepth::measure`: one read of every active sample (never row
+   padding or an RGBX/BGRX padding slot), no allocation, early exit when only the storage depth
+   remains. `ExactDepth::holds_for` checks a stated depth against rows written elsewhere and
+   stops at the first sample off its grid; both live in zenpixels core, so a row driver needs no
+   zenpixels-convert dependency.
 3. **An operation that provably keeps the values**, which re-attaches it.
 
 It is never established by the source file's bit depth, `ColorOrigin`, negotiation `Provenance`,
@@ -203,15 +206,38 @@ Proposed contracts (root owns zencodec; nothing applied there):
   dependency; pipelines declare evidence statically (decoders establish it, preserving nodes keep it,
   resize/filter/blend end it, selection composites take the meet).
 
+### A declaration made before headers: sufficient or provisional
+
+The coded depth is fixed when the header is written, before most rows exist. A declaration is
+sufficient when it is already true of every row at that moment:
+
+- the writer makes it true by construction for every row, as a decoder does when it widens one
+  native depth with `to_canonical` for the whole image;
+- the rows already exist: a complete raster whose evidence no mutable access has cleared, or
+  one scanned with `ExactDepth::measure` before planning;
+- a replay route measures in one pass and encodes in the next.
+
+Otherwise it is provisional, a promise about rows not yet produced: a pipeline that derives it
+from its graph (one mis-declared node, or a source whose depth changes, breaks it), a claim from
+container metadata (bit-depth fields, sBIT and `effective_bits` record history), and any rows a
+driver copies through a mutable view. Provisional evidence is checked per strip with `holds_for`
+against the coded depths, the grids the header committed to, before the strip is pushed; a strip
+on a coarser grid that divides the coded depth passes. A strip that fails cannot be repaired after
+the header. With output staged until finish, the operation fails before anything is published.
+With live output, the header and earlier strips are already out, so the operation fails and the
+destination must discard the partial file. A route that relies on provisional evidence for a depth
+below storage should therefore stage its output or replay; live publication is safe with
+sufficient evidence or with a coded depth at least the storage depth.
+
 zencodec's duplicate `frame::SampleEncoding` can re-export zenpixels' in the paired release.
 
 ## 6. Public API delta (unreleased)
 
-zenpixels: `sample::{ExactDepth, ExactDepthError}`; `CodePlane::{from_u8_interleaved,
-from_u16_interleaved, step_words, read_codes}`; `CodePlaneError::{ZeroStep, OutsideActivePlane}`;
-`PixelSlice::{exact_depth, with_exact_depth}`; `PixelBuffer::{exact_depth, set_exact_depth}`.
-zenpixels-convert: `codes::{CodeRole, CodeMap, CodeMapError, CodesError, to_canonical,
-measure_exact_depth}` and `OutputPlan::output_color_context`. Everything is additive (new private
+zenpixels: `sample::{ExactDepth, ExactDepthError}` with `ExactDepth::{measure, holds_for}`;
+`CodePlane::{from_u8_interleaved, from_u16_interleaved, step_words, read_codes}`;
+`CodePlaneError::{ZeroStep, OutsideActivePlane}`; `PixelSlice::{exact_depth, with_exact_depth}`;
+`PixelBuffer::{exact_depth, set_exact_depth}`. zenpixels-convert: `codes::{CodeRole, CodeMap,
+CodeMapError, CodesError, to_canonical}` and `OutputPlan::output_color_context`. Everything is additive (new private
 fields on types that already had private fields), so this design needs no break of its own and can
 ship unchanged in the paired breaking release with zencodec.
 

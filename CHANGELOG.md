@@ -29,7 +29,7 @@
   encodings with role- and range-specific exact rules (nearest full scale for
   intensity/alpha, power-of-two anchors for narrow range, full-range chroma depth
   changes refused); `to_canonical` widens borrowed components into canonical
-  strided U8/U16 rows without allocating; `measure_exact_depth` is the explicit scan.
+  strided U8/U16 rows without allocating.
   Exhaustive checks show full-range grids nest only when the depth divides (8-bit
   content at 10 bits changes 252 of 256 levels). (75d2321f)
 - Add `sample::ExactDepth`, bounded evidence that current samples survive
@@ -42,6 +42,11 @@
   produces, known before any row and attached as the same `Arc` to every batch.
   Rebuilding it from `metadata()` and the source's diffuse white is wrong for PQ
   to linear output. (59c7708e)
+- Add `ExactDepth::measure`, the explicit scan (moved from the unreleased
+  `codes::measure_exact_depth`; it now skips RGBX/BGRX padding slots), and
+  `ExactDepth::holds_for`, which checks stated evidence against rows written
+  elsewhere, such as a row driver's strips. Both read only active samples and
+  allocate nothing. (9b7e77ee)
 - `convert_to` never carries `ExactDepth` across a narrow-range depth change or a
   range crossing; both are refused today, and a regression test on narrow
   descriptors pins that. (0d231160)
