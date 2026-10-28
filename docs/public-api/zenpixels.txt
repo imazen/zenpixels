@@ -12,9 +12,9 @@
 #   pub types (struct/enum/trait/alias)        92
 #   pub consts/statics                        294
 #   free functions                              4
-#   inherent methods                          275
+#   inherent methods                          277
 #   struct fields                             115
-#   enum variants                             311
+#   enum variants                             312
 #   re-exports                                  4
 #   trait roster entries (type × trait)       303
 #   auto-trait-complete types                  45
@@ -31,9 +31,9 @@
 #   orientation                      11
 #   pixel_types                       9
 #   policy                           25
-#   sample                           35
+#   sample                           38
 
-## items (976 lines)
+## items (979 lines)
 
 pub mod zenpixels
 pub use At
@@ -572,6 +572,7 @@ pub sample::CodePlaneError::ZeroStep
 pub sample::ExactDepthError::DescriptorMismatch
 pub sample::ExactDepthError::InvalidBits
 pub sample::ExactDepthError::NarrowBelowEightBits
+pub sample::ExactDepthError::UnsupportedLayout
 pub sample::ExactDepthError::UnsupportedStorage
 #[non_exhaustive] pub enum sample::SampleEncodingError
 pub sample::SampleEncodingError::InvalidBitDepth
@@ -594,6 +595,8 @@ pub const fn sample::ExactDepth::alpha_exact_at(self, u8) -> bool
 pub const fn sample::ExactDepth::color_bits(self) -> u8
 pub const fn sample::ExactDepth::color_codes_recoverable_at(self, u8) -> bool
 pub const fn sample::ExactDepth::color_exact_at(self, u8) -> bool
+pub fn sample::ExactDepth::holds_for<P>(self, &buffer::PixelSlice<'_, P>) -> core::result::Result<bool, sample::ExactDepthError>
+pub fn sample::ExactDepth::measure<P>(&buffer::PixelSlice<'_, P>) -> core::result::Result<Self, sample::ExactDepthError>
 pub const fn sample::ExactDepth::new(descriptor::ChannelType, descriptor::SignalRange, u8, u8) -> core::result::Result<Self, sample::ExactDepthError>
 pub const fn sample::ExactDepth::range(self) -> descriptor::SignalRange
 pub const fn sample::ExactDepth::storage(self) -> descriptor::ChannelType
