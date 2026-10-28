@@ -178,12 +178,32 @@ fn resolve(requirements, preference, pixels: &PixelSlice, capabilities: &[u8])
 - Quantization when not exact: nearest (full range) or round-half-up with top clamp (narrow), never
   dither unless requested. Integer canonical sources never clip at full range.
 
-Proposed cross-crate signatures (root owns zencodec): the encoder plan reads
-`PixelSlice::exact_depth()` for one-shot encodes; streaming plans need the same fact before the
-header, so decoders should declare their output `ExactDepth` at plan time (e.g. TIFF BitsPerSample
-12 widened → 12) and pipelines propagate it through preserving nodes; `push_rows` can then verify
-each strip still carries compatible evidence instead of silently quantizing. zencodec's duplicate
-`frame::SampleEncoding` can re-export zenpixels' once the pin moves.
+Where the evidence stops today (read from zencodec `e59b3803`, not built). One-shot encodes
+already see it: the caller's `PixelSlice` carries `exact_depth()`. Planned rows do not:
+`EncodeDeclaration` holds width, height, descriptor, color and access only, and the row driver
+(`zencodec-io` `run_rows`) copies source rows through an evidence-free `PixelSliceMut` into a fresh
+`PixelSlice`, so even a raster holding evidence reaches `push_rows` without it. `EncodePlan` does not
+report the coded depth, so startup drift and admission cannot see exactness. zenavif (`a7638f6e`)
+shows the cost: `Auto` codes any 16-bit input at 10 bits, lossless included, which reproduces the
+input only when it already lies on the 10-bit grid.
+
+Proposed contracts (root owns zencodec; nothing applied there):
+
+- `EncodeDeclaration::exact_depth: Option<ExactDepth>` (+ `with_exact_depth`), validated against the
+  descriptor; `None` means no depth below storage may be treated as exact.
+- `EncodePlan::samples: Option<CodedSamples { color_bits, alpha_bits, depth_exact }>`, filled through
+  one shared `CodedSamples::for_declaration` so every codec applies the same rule; the existing
+  whole-plan comparison in `validate_started` then catches a startup that codes another depth.
+  `Fidelity::Lossless` refuses in planning when no capable depth is exact.
+- Row driver: `Description::exact_depth` (a borrowed raster copies its slice's), passed to the
+  declaration; when the plan relies on it, each strip is verified before `push_rows` and pushed with
+  the evidence attached, or the operation fails at that strip. A strip is never quantized to fit, and
+  a source cannot change its claim mid-stream (descriptions are compared every strip).
+- zenpixels: a verifying scan in core beside `ExactDepth`, so the driver needs no zenpixels-convert
+  dependency; pipelines declare evidence statically (decoders establish it, preserving nodes keep it,
+  resize/filter/blend end it, selection composites take the meet).
+
+zencodec's duplicate `frame::SampleEncoding` can re-export zenpixels' in the paired release.
 
 ## 6. Public API delta (unreleased)
 
