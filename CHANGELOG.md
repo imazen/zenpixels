@@ -42,6 +42,17 @@
   produces, known before any row and attached as the same `Arc` to every batch.
   Rebuilding it from `metadata()` and the source's diffuse white is wrong for PQ
   to linear output. (59c7708e)
+- `convert_to` never carries `ExactDepth` across a narrow-range depth change or a
+  range crossing; both are refused today, and a regression test on narrow
+  descriptors pins that. (0d231160)
+
+### Provenance and effective_bits documentation
+
+- Document `Provenance` as ancestry, not current precision: it scores a return to
+  the origin depth as free, which understates the rounding after a resize or
+  filter. Document `effective_bits` for RGB rebuilt from 10-bit YCbCr as a cost
+  estimate, not a 10-bit grid. Docs and test comments only; no behavior change.
+  (ccf5fce8)
 
 ### Unclipped Gamma22 execution
 

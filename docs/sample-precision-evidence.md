@@ -191,8 +191,18 @@ zenpixels: `sample::{ExactDepth, ExactDepthError}`; `CodePlane::{from_u8_interle
 from_u16_interleaved, step_words, read_codes}`; `CodePlaneError::{ZeroStep, OutsideActivePlane}`;
 `PixelSlice::{exact_depth, with_exact_depth}`; `PixelBuffer::{exact_depth, set_exact_depth}`.
 zenpixels-convert: `codes::{CodeRole, CodeMap, CodeMapError, CodesError, to_canonical,
-measure_exact_depth}`. All additive on the 0.2 line (new private fields on non-exhaustive types),
-so the same source can build against the 0.2 bridge and 0.3.1.
+measure_exact_depth}` and `OutputPlan::output_color_context`. Everything is additive (new private
+fields on types that already had private fields), so this design needs no break of its own and can
+ship unchanged in the paired breaking release with zencodec.
+
+Layout cost, measured with `size_of`/`align_of` on x86_64 (rustc 1.99.1, default features; a
+structural measure, not heap or RSS): `PixelSlice` 48 → 56 bytes and `PixelBuffer` 64 → 72 bytes,
+alignment 8 unchanged; `PixelSliceMut` stays 48 (it carries no evidence); `CodePlane` 56 → 64 for
+`step_words`. `Option<ExactDepth>` is 4 bytes with alignment 1. It costs 8 because the base fields
+sum to 45 and 61 bytes, leaving 3 bytes of tail padding. A 2-byte field holding only the two depths
+(storage and range read from the descriptor) would fit that padding by the same arithmetic; it is
+not implemented or measured. Other targets were not measured. Evidence carriage allocates nothing
+(`tests/codes_alloc.rs`).
 
 Not changed: `negotiate::Provenance` stays a cost-model hint (its `origin_depth` is a
 `ChannelType` and cannot say 10/12); `FormatEntry::effective_bits` likewise. Their docs should state
