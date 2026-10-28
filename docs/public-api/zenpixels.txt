@@ -9,20 +9,20 @@
 ## summary
 #
 #   pub modules                                11
-#   pub types (struct/enum/trait/alias)        90
-#   pub consts/statics                        285
+#   pub types (struct/enum/trait/alias)        92
+#   pub consts/statics                        294
 #   free functions                              4
-#   inherent methods                          264
+#   inherent methods                          275
 #   struct fields                             115
-#   enum variants                             305
+#   enum variants                             311
 #   re-exports                                  4
-#   trait roster entries (type × trait)       290
-#   auto-trait-complete types                  43
+#   trait roster entries (type × trait)       303
+#   auto-trait-complete types                  45
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          449
-#   buffer                          246
+#   (root)                          458
+#   buffer                          254
 #   cicp                             38
 #   color                            64
 #   descriptor                      187
@@ -31,9 +31,9 @@
 #   orientation                      11
 #   pixel_types                       9
 #   policy                           25
-#   sample                           24
+#   sample                           35
 
-## items (948 lines)
+## items (976 lines)
 
 pub mod zenpixels
 pub use At
@@ -88,6 +88,7 @@ pub fn buffer::PixelBuffer<P>::crop_copy(&self, u32, u32, u32, u32) -> buffer::P
 pub fn buffer::PixelBuffer<P>::crop_view(&self, u32, u32, u32, u32) -> buffer::PixelSlice<'_, P>
 pub fn buffer::PixelBuffer<P>::descriptor(&self) -> descriptor::PixelDescriptor
 pub fn buffer::PixelBuffer<P>::erase(self) -> buffer::PixelBuffer
+pub fn buffer::PixelBuffer<P>::exact_depth(&self) -> core::option::Option<sample::ExactDepth>
 pub fn buffer::PixelBuffer<P>::has_alpha(&self) -> bool
 pub fn buffer::PixelBuffer<P>::height(&self) -> u32
 pub fn buffer::PixelBuffer<P>::into_contiguous(self) -> Self
@@ -97,6 +98,7 @@ pub fn buffer::PixelBuffer<P>::is_grayscale(&self) -> bool
 pub fn buffer::PixelBuffer<P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P>::rows(&self, u32, u32) -> buffer::PixelSlice<'_, P>
 pub fn buffer::PixelBuffer<P>::rows_mut(&mut self, u32, u32) -> buffer::PixelSliceMut<'_, P>
+pub fn buffer::PixelBuffer<P>::set_exact_depth(&mut self, core::option::Option<sample::ExactDepth>) -> core::result::Result<(), sample::ExactDepthError>
 pub fn buffer::PixelBuffer<P>::stride(&self) -> usize
 pub fn buffer::PixelBuffer<P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelBuffer<Q>>
 pub fn buffer::PixelBuffer<P>::width(&self) -> u32
@@ -125,6 +127,7 @@ pub fn buffer::PixelSlice<'a, P>::contiguous_bytes(&self) -> alloc::borrow::Cow<
 pub fn buffer::PixelSlice<'a, P>::crop_view(&self, u32, u32, u32, u32) -> buffer::PixelSlice<'_, P>
 pub fn buffer::PixelSlice<'a, P>::descriptor(&self) -> descriptor::PixelDescriptor
 pub fn buffer::PixelSlice<'a, P>::erase(self) -> buffer::PixelSlice<'a>
+pub fn buffer::PixelSlice<'a, P>::exact_depth(&self) -> core::option::Option<sample::ExactDepth>
 pub fn buffer::PixelSlice<'a, P>::is_contiguous(&self) -> bool
 pub fn buffer::PixelSlice<'a, P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSlice<'a, P>::row(&self, u32) -> &[u8]
@@ -139,6 +142,7 @@ pub fn buffer::PixelSlice<'a, P>::with_cicp(self, cicp::Cicp) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_exact_depth(self, sample::ExactDepth) -> core::result::Result<Self, sample::ExactDepthError>
 pub fn buffer::PixelSlice<'a, P>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
@@ -559,9 +563,16 @@ pub sample::ChromaSubsampling::Yuv444
 #[non_exhaustive] pub enum sample::CodePlaneError
 pub sample::CodePlaneError::GeometryOverflow
 pub sample::CodePlaneError::MisalignedStride
+pub sample::CodePlaneError::OutsideActivePlane
 pub sample::CodePlaneError::ShortBuffer
 pub sample::CodePlaneError::ShortStride
 pub sample::CodePlaneError::StorageMismatch
+pub sample::CodePlaneError::ZeroStep
+#[non_exhaustive] pub enum sample::ExactDepthError
+pub sample::ExactDepthError::DescriptorMismatch
+pub sample::ExactDepthError::InvalidBits
+pub sample::ExactDepthError::NarrowBelowEightBits
+pub sample::ExactDepthError::UnsupportedStorage
 #[non_exhaustive] pub enum sample::SampleEncodingError
 pub sample::SampleEncodingError::InvalidBitDepth
 pub sample::SampleEncodingError::InvalidBitShift
@@ -570,9 +581,22 @@ pub struct sample::CodePlane<'a>
 pub fn sample::CodePlane<'a>::code(self, usize, usize) -> core::option::Option<u16>
 pub const fn sample::CodePlane<'a>::encoding(self) -> sample::SampleEncoding
 pub fn sample::CodePlane<'a>::from_u16(&'a [u16], usize, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
+pub fn sample::CodePlane<'a>::from_u16_interleaved(&'a [u16], usize, usize, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
 pub fn sample::CodePlane<'a>::from_u8(&'a [u8], usize, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
+pub fn sample::CodePlane<'a>::from_u8_interleaved(&'a [u8], usize, usize, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
 pub const fn sample::CodePlane<'a>::height(self) -> usize
+pub fn sample::CodePlane<'a>::read_codes(self, usize, usize, &mut [u16]) -> core::result::Result<(), sample::CodePlaneError>
+pub const fn sample::CodePlane<'a>::step_words(self) -> usize
 pub const fn sample::CodePlane<'a>::width(self) -> usize
+pub struct sample::ExactDepth
+pub const fn sample::ExactDepth::alpha_bits(self) -> u8
+pub const fn sample::ExactDepth::alpha_exact_at(self, u8) -> bool
+pub const fn sample::ExactDepth::color_bits(self) -> u8
+pub const fn sample::ExactDepth::color_codes_recoverable_at(self, u8) -> bool
+pub const fn sample::ExactDepth::color_exact_at(self, u8) -> bool
+pub const fn sample::ExactDepth::new(descriptor::ChannelType, descriptor::SignalRange, u8, u8) -> core::result::Result<Self, sample::ExactDepthError>
+pub const fn sample::ExactDepth::range(self) -> descriptor::SignalRange
+pub const fn sample::ExactDepth::storage(self) -> descriptor::ChannelType
 pub struct sample::SampleEncoding
 pub const fn sample::SampleEncoding::bit_shift(self) -> u8
 pub const fn sample::SampleEncoding::code_bits(self) -> u8
@@ -845,6 +869,7 @@ pub fn buffer::PixelBuffer<P>::crop_copy(&self, u32, u32, u32, u32) -> buffer::P
 pub fn buffer::PixelBuffer<P>::crop_view(&self, u32, u32, u32, u32) -> buffer::PixelSlice<'_, P>
 pub fn buffer::PixelBuffer<P>::descriptor(&self) -> descriptor::PixelDescriptor
 pub fn buffer::PixelBuffer<P>::erase(self) -> buffer::PixelBuffer
+pub fn buffer::PixelBuffer<P>::exact_depth(&self) -> core::option::Option<sample::ExactDepth>
 pub fn buffer::PixelBuffer<P>::has_alpha(&self) -> bool
 pub fn buffer::PixelBuffer<P>::height(&self) -> u32
 pub fn buffer::PixelBuffer<P>::into_contiguous(self) -> Self
@@ -854,6 +879,7 @@ pub fn buffer::PixelBuffer<P>::is_grayscale(&self) -> bool
 pub fn buffer::PixelBuffer<P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P>::rows(&self, u32, u32) -> buffer::PixelSlice<'_, P>
 pub fn buffer::PixelBuffer<P>::rows_mut(&mut self, u32, u32) -> buffer::PixelSliceMut<'_, P>
+pub fn buffer::PixelBuffer<P>::set_exact_depth(&mut self, core::option::Option<sample::ExactDepth>) -> core::result::Result<(), sample::ExactDepthError>
 pub fn buffer::PixelBuffer<P>::stride(&self) -> usize
 pub fn buffer::PixelBuffer<P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelBuffer<Q>>
 pub fn buffer::PixelBuffer<P>::width(&self) -> u32
@@ -926,6 +952,7 @@ pub fn buffer::PixelSlice<'a, P>::contiguous_bytes(&self) -> alloc::borrow::Cow<
 pub fn buffer::PixelSlice<'a, P>::crop_view(&self, u32, u32, u32, u32) -> buffer::PixelSlice<'_, P>
 pub fn buffer::PixelSlice<'a, P>::descriptor(&self) -> descriptor::PixelDescriptor
 pub fn buffer::PixelSlice<'a, P>::erase(self) -> buffer::PixelSlice<'a>
+pub fn buffer::PixelSlice<'a, P>::exact_depth(&self) -> core::option::Option<sample::ExactDepth>
 pub fn buffer::PixelSlice<'a, P>::is_contiguous(&self) -> bool
 pub fn buffer::PixelSlice<'a, P>::reinterpret(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSlice<'a, P>::row(&self, u32) -> &[u8]
@@ -940,6 +967,7 @@ pub fn buffer::PixelSlice<'a, P>::with_cicp(self, cicp::Cicp) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_exact_depth(self, sample::ExactDepth) -> core::result::Result<Self, sample::ExactDepthError>
 pub fn buffer::PixelSlice<'a, P>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
@@ -984,7 +1012,7 @@ pub type ContentLightLevel = hdr::ContentLightLevel
 pub type DiffuseWhite = hdr::DiffuseWhite
 pub type MasteringDisplay = hdr::MasteringDisplay
 
-## trait impls (53 types)
+## trait impls (55 types)
 
 buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
@@ -1037,6 +1065,8 @@ sample::ChromaSiting: Clone, Copy, Debug, Eq, PartialEq
 sample::ChromaSubsampling: Clone, Copy, Debug, Eq, PartialEq
 sample::CodePlane<'a>: Clone, Copy, Debug
 sample::CodePlaneError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+sample::ExactDepth: Clone, Copy, Debug, Eq, Hash, PartialEq
+sample::ExactDepthError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 sample::SampleEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::SampleEncodingError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 
