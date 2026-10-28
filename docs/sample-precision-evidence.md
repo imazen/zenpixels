@@ -202,7 +202,7 @@ alignment 8 unchanged; `PixelSliceMut` stays 48 (it carries no evidence); `CodeP
 sum to 45 and 61 bytes, leaving 3 bytes of tail padding. A 2-byte field holding only the two depths
 (storage and range read from the descriptor) would fit that padding by the same arithmetic; it is
 not implemented or measured. Other targets were not measured. Evidence carriage allocates nothing
-(`tests/codes_alloc.rs`).
+(`tests/codes_alloc.rs`). Probe sources, command and results: `benchmarks/layout_2026-10-28.md`.
 
 Not changed: `negotiate::Provenance` stays a cost-model hint (its `origin_depth` is a
 `ChannelType` and cannot say 10/12); `FormatEntry::effective_bits` likewise. Their docs should state
