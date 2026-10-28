@@ -957,3 +957,61 @@ fn orientation_moves_pixels_and_keeps_evidence() {
     assert_eq!(in_place.exact_depth(), e);
     assert_eq!(changed_by_roundtrip(&in_place.as_slice(), 12), 0);
 }
+
+#[test]
+fn narrow_depth_changes_refuse_and_never_carry_full_scale_evidence() {
+    use zenpixels_convert::{ConvertError, ConvertPlan};
+    // Narrow U8 to U16 must scale anchors by 2^8 (16 -> 4096, 235 -> 60160);
+    // the existing depth kernel multiplies by 257 (16 -> 4112). Planning and
+    // convert_to refuse the crossing, so the full-scale carry rule never sees
+    // narrow evidence. Checked on narrow descriptors, not inferred from full range.
+    let narrow = |d: PixelDescriptor| d.with_signal_range(SignalRange::Narrow);
+    let rgb8 = narrow(PixelDescriptor::RGB8_SRGB);
+    let bytes: Vec<u8> = (0..(W * H * 3) as usize)
+        .map(|i| 16 + (i * 37 % 220) as u8)
+        .collect();
+    let mut eight = PixelBuffer::from_vec(bytes, W, H, rgb8).unwrap();
+    let measured = measure_exact_depth(&eight.as_slice()).unwrap();
+    assert_eq!(
+        (measured.range(), measured.color_bits()),
+        (SignalRange::Narrow, 8)
+    );
+    eight.set_exact_depth(Some(measured)).unwrap();
+    for target in [
+        narrow(PixelDescriptor::RGB16_SRGB),
+        PixelDescriptor::RGB16_SRGB,
+        PixelDescriptor::RGB8_SRGB,
+    ] {
+        assert!(
+            matches!(
+                *ConvertPlan::new_preserving_samples(rgb8, target)
+                    .unwrap_err()
+                    .error(),
+                ConvertError::NoPath { .. }
+            ),
+            "{target:?}"
+        );
+        assert!(eight.convert_to(target).is_err(), "{target:?}");
+    }
+    // Full-range samples cannot enter narrow storage either.
+    assert!(
+        ConvertPlan::new_preserving_samples(
+            PixelDescriptor::RGB8_SRGB,
+            narrow(PixelDescriptor::RGB16_SRGB)
+        )
+        .is_err()
+    );
+    // A narrow layout change at the same depth moves values unchanged, and the
+    // evidence it carries equals a fresh scan of the result.
+    let rgba = eight
+        .convert_to(narrow(PixelDescriptor::RGBA8_SRGB))
+        .unwrap();
+    let carried = rgba
+        .exact_depth()
+        .expect("same-depth narrow layout change keeps evidence");
+    assert_eq!(
+        (carried.range(), carried.color_bits(), carried.alpha_bits()),
+        (SignalRange::Narrow, 8, 1)
+    );
+    assert_eq!(carried, measure_exact_depth(&rgba.as_slice()).unwrap());
+}

@@ -248,6 +248,16 @@ fn exact_after_preserving(
     if from.layout().has_alpha() && !from.has_alpha() {
         return None;
     }
+    // The carry rule below models the full-scale U8 to U16 kernel (x257).
+    // Narrow anchors scale by 2^(M-N) instead, and ConvertPlan refuses narrow
+    // depth changes and range crossings. Never carry evidence across either,
+    // even if a later plan accepts one.
+    if from.signal_range != to.signal_range
+        || (from.signal_range != zenpixels::SignalRange::Full
+            && from.channel_type() != to.channel_type())
+    {
+        return None;
+    }
     if crate::ConvertPlan::new_preserving_samples(from, to).is_err() {
         return None;
     }
