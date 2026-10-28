@@ -282,7 +282,8 @@ fn tonemap_op_satisfies() {
 #[test]
 fn u8_origin_roundtrip_is_lossless_passthrough() {
     // JPEG u8 → f32 (for resize) → u8 (for JPEG encode).
-    // With u8 provenance, the f32→u8 step should be lossless.
+    // With u8 provenance the cost model scores the f32→u8 step as lossless;
+    // it does not see that the resize created new values.
     let path = optimal_path(
         PixelDescriptor::RGB8_SRGB,
         Provenance::with_origin_depth(ChannelType::U8),

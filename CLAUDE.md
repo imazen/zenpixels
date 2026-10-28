@@ -85,4 +85,42 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed on the output-plan review (2026-10-27): Gamma22 F32 conversion accepted
+  `clip_out_of_gamut(false)` but clipped negative and above-white samples. The
+  extended steps now reflect the existing Adobe exponent, retain the existing
+  SIMD results for magnitudes in range, and use libm outside that domain. The
+  regression checks default/in-range parity, alpha payloads, signed zero,
+  strided padding, row partitions and unknown retired estimates. This does not
+  qualify every transfer/backend or change the selected numerical model.
+
+- Fixed on the output-plan review (2026-10-27): a native TIFF source with an
+  authoritative current ICC and unknown descriptor primaries/transfer took an
+  unnecessary same-profile CMS round trip, changing U8 sample 74 to 73. Identity
+  planning now completes only unknown color fields from that exact ICC and
+  preserves samples. `output_descriptor` tests borrowed and strided copied
+  RGB/RGBA U8/U16/F32, including float bit patterns; different profile bytes and
+  known descriptor fields do not receive this identity shortcut.
+
+- Fixed in the float-ICC integration (2026-10-26): workspace feature
+  unification enabled an extra moxcms option field, breaking the generator's
+  exhaustive initializer. It now supplies backend defaults for added fields;
+  extended evaluation stays disabled in the generator's strict comparisons.
+  `just output-float-workspace-check` also checks standalone generator lint.
+
+- Hardened on the output-plan review (2026-10-26): native JXL F32-to-ICC
+  conversion used bounded integer lookup/fixed-point paths despite requesting
+  unclipped float output. The adapter now selects float/analytic arithmetic
+  and applies requested clipping separately. Explicit ICC overrides embedded
+  CICP even on the extended path. A profile with unequal RGB curves where
+  only red/green or green/blue match now refuses before writes: the backend
+  otherwise shares the wrong curve. A capable per-channel implementation is
+  still needed for those profiles. `just output-float-check` is the local gate;
+  zencodec additionally compares actual native JXL profiles against Little CMS.
+
+- Fixed on the output-plan review (2026-10-26): adding opaque alpha to native
+  ICC-tagged RGB F32 returned `NeedsCms` despite an unchanged current profile.
+  `output_native` covers strided RGB/gray U8/U16/F32, exact float bit patterns,
+  padding, bypass of unnecessary CMS work, and changed-profile/depth refusal.
+  The native JXL reproduction is in zencodec's spatial validation suite.
+
 - Fixed 2026-10-25: `ConvertScratch::prepare` passed alignment padding as pixel data when warming RGB byte gamut kernels. `prepared_contracts::rgb_gamut_preparation_preserves_unprepared_pixels_without_row_allocations` fails before the active-extent correction and compares both gamut directions across row widths.

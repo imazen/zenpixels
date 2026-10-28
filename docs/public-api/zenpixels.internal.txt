@@ -11,9 +11,9 @@
 #
 #   pub types (struct/enum/trait/alias)         2
 #   pub consts/statics                          1
-#   inherent methods                           42
+#   inherent methods                           47
 #   struct fields                               4
-#   trait roster entries (type × trait)        40
+#   trait roster entries (type × trait)        46
 #
 # per-module pub lines:
 #   (root)                            3
@@ -27,9 +27,9 @@
 #   pixel_types                       2
 #   planar                           10
 #   policy                            5
-#   sample                            2
+#   sample                            7
 
-## items (48 lines)
+## items (53 lines)
 
 pub const hdr::ContentLightLevel::DEFAULT_PERCENTILE: f32
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
@@ -72,6 +72,11 @@ pub fn policy::ConvertOptions::assert_fields_are_eq(&self)
 pub fn policy::DepthPolicy::assert_fields_are_eq(&self)
 pub fn policy::GrayExpand::assert_fields_are_eq(&self)
 pub fn policy::LumaCoefficients::assert_fields_are_eq(&self)
+pub fn sample::ChromaSiting::assert_fields_are_eq(&self)
+pub fn sample::ChromaSubsampling::assert_fields_are_eq(&self)
+pub fn sample::CodePlaneError::assert_fields_are_eq(&self)
+pub fn sample::ExactDepth::assert_fields_are_eq(&self)
+pub fn sample::ExactDepthError::assert_fields_are_eq(&self)
 pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
 pub fn sample::SampleEncodingError::assert_fields_are_eq(&self)
 pub struct Plane [also: planar]
@@ -80,7 +85,7 @@ pub Plane::semantic: planar::PlaneSemantic
 pub planar::Plane::buffer: buffer::PixelBuffer
 pub planar::Plane::semantic: planar::PlaneSemantic
 
-## trait impls (40 types)
+## trait impls (46 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
@@ -120,5 +125,11 @@ policy::ConvertOptions: TrivialClone
 policy::DepthPolicy: TrivialClone
 policy::GrayExpand: TrivialClone
 policy::LumaCoefficients: TrivialClone
+sample::ChromaSiting: TrivialClone
+sample::ChromaSubsampling: TrivialClone
+sample::CodePlane<'a>: TrivialClone
+sample::CodePlaneError: TrivialClone
+sample::ExactDepth: TrivialClone
+sample::ExactDepthError: TrivialClone
 sample::SampleEncoding: TrivialClone
 sample::SampleEncodingError: TrivialClone

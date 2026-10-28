@@ -251,6 +251,13 @@ pub(super) fn apply_step_u8(
             linear_f32_to_gamma22_f32(src, dst, w, from.layout());
         }
 
+        ConvertStep::Gamma22F32ToLinearF32Extended => {
+            gamma22_f32_extended(src, dst, w, from.layout(), false);
+        }
+        ConvertStep::LinearF32ToGamma22F32Extended => {
+            gamma22_f32_extended(src, dst, w, from.layout(), true);
+        }
+
         ConvertStep::StraightToPremul => {
             straight_to_premul(src, dst, w, from.channel_type(), from.layout());
         }
@@ -2581,6 +2588,41 @@ fn linear_f32_to_gamma22_f32(src: &[u8], dst: &mut [u8], width: usize, layout: C
     dstf[..count].copy_from_slice(&srcf[..count]);
     linear_srgb::default::linear_to_gamma_slice(&mut dstf[..count], ADOBE_GAMMA);
     restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
+}
+
+// Keep the existing SIMD approximation for magnitudes in [0,1]. Only values
+// outside that calibrated domain use libm; reflect the result about zero.
+// This changes neither the default clipped route nor positive in-range samples.
+fn gamma22_f32_extended(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    layout: ChannelLayout,
+    inverse: bool,
+) {
+    let count = width * layout.channels();
+    let source: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let output: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    for (s, d) in source.iter().zip(output.iter_mut()) {
+        *d = s.abs();
+    }
+    if inverse {
+        linear_srgb::default::linear_to_gamma_slice(output, ADOBE_GAMMA);
+    } else {
+        linear_srgb::default::gamma_to_linear_slice(output, ADOBE_GAMMA);
+    }
+    let exponent = if inverse {
+        1.0 / ADOBE_GAMMA
+    } else {
+        ADOBE_GAMMA
+    };
+    for (s, d) in source.iter().zip(output.iter_mut()) {
+        if s.abs() > 1.0 || !s.is_finite() {
+            *d = libm::powf(s.abs(), exponent);
+        }
+        *d = d.copysign(*s);
+    }
+    restore_alpha_f32_f32(source, output, layout);
 }
 
 // ---------------------------------------------------------------------------

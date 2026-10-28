@@ -91,9 +91,169 @@ This does not add native 10/12-bit video-code semantics to normalized U16 images
 
 ## Costs and remaining scope
 
+### Output preparation added on the review branch (2026-10-25)
+
+`OutputPlan::new` prepares the transform and matching output signaling from
+the current descriptor/context and requested profile, without an image buffer.
+This is the color stage needed by zencodec's paused transcode adapter: it can
+inspect `metadata()` and `output_descriptor()` before allowing pixel work.
+It must still validate the encoder's carrier support and metadata policy.
+
+`OutputPlan::new_with_descriptor` accepts a required `PixelDescriptor` in place
+of the format. Use it when association and range are requirements. It preserves
+the requested alpha interpretation, validates descriptor/profile agreement
+before invoking a CMS, and returns `OutputInterpretationMismatch` with bounded
+descriptor facts on conflict. Opaque profiles require unknown color fields
+when the crate cannot resolve their primaries/transfer. The format-only
+constructor retains its existing straight-alpha defaults. `SameAsOrigin`
+selects the profile; it does not implicitly preserve alpha association.
+
+Same-profile premultiplied identity now borrows or copies exact sample bits
+without a CMS, including strided rows and unusual F32 payloads. A different
+opaque profile still requires a qualified transform; matching descriptors do
+not authorize relabeling. Required narrow identity remains verbatim, while
+unsupported full/narrow conversion refuses. Explicit linear premultiplication
+uses existing row math and keeps alpha and padding. No new callback or format
+type is added. Native validation is tracked in
+[zenpixels issue 94](https://github.com/imazen/zenpixels/issues/94).
+
+`prepare(width)` optionally moves scratch and selected table initialization
+before execution. Without it, execution retains the existing lazy behavior,
+including plugins without a preparation hook. `convert_rows(source, destination)`
+accepts the two pixel views, checks source interpretation, geometry and target
+descriptor before writes, and returns the destination view with matching color
+context. Use that returned view when passing rows onward. Backend failures may
+leave partial destination bytes; discard that batch.
+
+The existing `finalize_for_output_with` now uses this same plan and retains its
+owned full-image result and permissive sample options. New plan callers provide
+explicit `ConvertOptions`; required alpha/depth/luma rules are checked before
+an opaque-profile plugin can accept a transform.
+
+`tests/output_plan.rs` qualifies current-versus-origin ICC authority, unchanged
+padding, source-interpretation checks, sample-policy refusal and native ICC rows
+against a separately built CMS worker. Its prepared authored transform allocates
+no memory during row conversion. This is not an RSS or arbitrary-CMS guarantee.
+The plan inherits the pixel-view constructors' whole-pixel stride restriction;
+[issue 91](https://github.com/imazen/zenpixels/issues/91) tracks the byte-stride
+contract and typed-bridge audit. The output-allocation work also continues
+[issue 69](https://github.com/imazen/zenpixels/issues/69).
+
+### Other bridge scope
+
+`OutputPlan::borrow_rows` checks the same current interpretation and prepared
+width as `convert_rows`. For an identity plan it returns the original strided
+sample view with matching output context, without a destination allocation or
+sample copy. For a plan requiring math it returns `None`; the adapter can then
+admit destination storage and call `convert_rows` without weakening the request.
+Changed interpretation remains an error, not a signal to try a weaker route.
+The original sample owner and its allocation charge must remain alive. This
+allows the native zencodec image adapter to retain the original color and
+auxiliary planes together when the output request is already satisfied.
+
+Adding opaque alpha under the same current ICC is now a checked format change,
+without a CMS round trip. RGB→RGBA and gray→gray-alpha at unchanged U8/U16/F32
+depth preserve every color bit, including unusual floating-point values. The
+output still needs admitted destination storage; `borrow_rows` returns `None`.
+This does not bypass changed-profile work, authorize depth reduction, or add
+opaque-profile compositing. Those retain their existing policies and backend
+paths. A real native JXL RGB F32 frame exposed the previous `NeedsCms` refusal.
+
+The output-plan review now includes the native-sample review revision. This
+puts `OutputPlan` and `CmykF32` / `CmykF32Inverted` in one dependency graph
+without another conversion API. `tests/output_native.rs` checks exact identity
+carriage for both polarities, including signed zero, subnormal and NaN payload
+bits, strided rows, untouched destination padding and unchanged ICC signaling.
+Actual native JXL profile/admitted-destination qualification belongs to the
+zencodec consumer. This does not add a CMYK-to-RGB kernel. That control exercises
+`convert_rows` into a distinct destination; `borrow_rows` has separate identity,
+source-binding and required-conversion controls.
+
+### Float ICC arithmetic and range selection
+
+`OutputPlan` uses the existing `ConvertOptions` to distinguish clipping from
+extended float conversion. For a native float layer that must retain negative
+and above-one color values, request
+`ConvertOptions::forbid_lossy().with_clip_out_of_gamut(false)`. The preset alone
+still enables clipping; its name must not be interpreted as a blanket promise
+of lossless color conversion.
+
+`MoxCms` selects float arithmetic and available analytic matrix/profile curves.
+The clipped route applies bounds to color before and after that transform and
+retains alpha bits. Its out-of-range input staging is bounded independently of
+row width; ordinary in-range input is passed directly. No speed or whole-operation
+memory claim follows from this implementation. Explicit ICC requests use their
+ICC curves even if embedded CICP disagrees.
+
+The unequal-channel control found a backend case that shares the wrong curve
+when only two adjacent RGB curves agree. Those profiles now fail before any
+pixel write. The `whereat` error retains `MoxCmsError` as its concrete source;
+callers do not have to coordinate capability flags first. Arbitrary LUT-profile
+extended range, all per-channel curves, F32 CMYK conversion and CMS workspace
+admission remain unqualified. The six native JXL profile comparisons live in
+zencodec's spatial harness; they do not establish general ICC conformance.
+
 Unassociation, matte and multi-stage conversion may require additional row kernels
 and scratch; they are not yet all fused. Exactness checks and descriptor validation
 are metadata-only. U16 content analysis combines opacity, chroma and replication
 checks in one traversal. Narrowing's production kernel is unchanged pending ARM
 measurements. Experimental native video carriers and a unified zencodec output plan
 remain separate integration designs; no speculative public wrapper family was added.
+
+## Exact output planning
+
+`OutputPlan::new_preserving_samples` requires matching current/target profiles
+and a metadata-provable reversible representation change. It never consults a
+CMS. Identity can borrow the original storage; channel reorder/expansion and
+U8-to-U16 widening use the existing exact conversion proof. Float payloads,
+including negative zero and NaN bits, survive identity and opaque-alpha addition.
+Different opaque ICC bytes, color arithmetic, reassociation, depth reduction and
+channel removal fail before rows are accepted. Output signaling and strided
+execution use the same source-binding checks as ordinary OutputPlan.
+
+Use this when exact samples are required. `ConvertOptions::forbid_lossy()` is
+not an exactness guarantee: it permits color arithmetic and enables clipping.
+An unclipped color conversion has a different contract from reversible sample
+carriage. Its preset replacement and numerical-model guarantees remain open.
+The native JXL caller is zencodec's `jxl_planned_color_tests`; library controls
+are `zenpixels-convert/tests/output_exact.rs`.
+
+## Conversion preset replacement
+
+`ConvertOptions::forbid_lossy()` is deprecated. `retain_channels()` is its
+behavior-preserving replacement: forbid alpha removal, depth reduction and
+RGB-to-gray; permit gray expansion and requested color arithmetic; retain
+historical enabled clipping. This deliberately avoids promising losslessness.
+The old method remains callable with identical values and a migration warning.
+
+| Caller requirement | API |
+|---|---|
+| Reversible representation change, matching output color | `OutputPlan::new_preserving_samples` |
+| Reversible low-level layout/depth change | `ConvertPlan::new_preserving_samples` |
+| Color conversion retaining channels/depth | `ConvertOptions::retain_channels()` |
+| Extended-range color conversion retaining channels/depth | `retain_channels().with_clip_out_of_gamut(false)`; requires a qualified executing route |
+
+The workspace callers are migrated without changing expectations or samples.
+`policy::tests::old_preset_preserves_behavior_and_does_not_promise_exact_samples`
+checks the compatibility alias and every option field. Actual color conversion
+and exact-output tests exercise the replacement. Backend numerical guarantees,
+non-sRGB extended conversions and operation-level policy selection remain
+separate requirements; renaming the preset does not implement them.
+
+## Unclipped Gamma22 execution
+
+A direct executing probe found that Gamma22 F32-to-linear converted
+`[-0.25, 0.5, 1.5]` to `[0.0, 0.21775553, 1.0]` despite an unclipped request.
+`just unclipped-transfer-check` now covers the fix in both directions.
+
+The new internal steps use the existing Adobe exponent `563/256` and its
+inverse, reflected about zero. Magnitudes in `[0,1]` use the existing SIMD
+approximation; magnitudes above one use libm. Positive in-range outputs and the
+historical clipped route retain their bits. Alpha payloads, padding and
+row-partition results remain exact. Independent double-precision power checks
+use a fixed relative-or-absolute bound of `2e-5`; this is a correctness bound,
+not a performance measurement or a claim of literal gamma-2.2 equivalence.
+
+No public API, dependency or feature was added. The retired estimator returns
+unknown for these uncalibrated steps. General HDR/backend range guarantees and
+the choice of transfer-function numerical models remain open.

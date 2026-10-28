@@ -15,6 +15,16 @@ use crate::{
 };
 use whereat::{At, ResultAtExt};
 
+/// Built-in numeric kernels cover these types. Other native samples can be
+/// carried and copied exactly, but need qualified kernels before interpretation
+/// changes. In particular, signed integers have no implicit normalized scale.
+fn has_numeric_kernels(channel: ChannelType) -> bool {
+    matches!(
+        channel,
+        ChannelType::U8 | ChannelType::U16 | ChannelType::F16 | ChannelType::F32
+    )
+}
+
 /// Reject range operations for which the planner has no correct kernels.
 /// Shared with CMS dispatch so an external descriptor-only plan cannot bypass
 /// the range contract before a backend is asked to prepare a transform.
@@ -331,6 +341,10 @@ pub(crate) enum ConvertStep {
     Gamma22F32ToLinearF32,
     /// Linear f32 → Gamma 2.2 (Adobe RGB 1998) f32 `[0,1]` (OETF, no depth change).
     LinearF32ToGamma22F32,
+    /// Gamma 2.2 F32 to linear, reflected extended range without clipping.
+    Gamma22F32ToLinearF32Extended,
+    /// Linear F32 to Gamma 2.2, reflected extended range without clipping.
+    LinearF32ToGamma22F32Extended,
     /// Straight → Premultiplied alpha.
     StraightToPremul,
     /// Premultiplied → Straight alpha.
@@ -437,6 +451,8 @@ impl ConvertStep {
             Self::LinearF32ToBt709F32 => "LinearF32ToBt709F32",
             Self::Gamma22F32ToLinearF32 => "Gamma22F32ToLinearF32",
             Self::LinearF32ToGamma22F32 => "LinearF32ToGamma22F32",
+            Self::Gamma22F32ToLinearF32Extended => "Gamma22F32ToLinearF32Extended",
+            Self::LinearF32ToGamma22F32Extended => "LinearF32ToGamma22F32Extended",
             Self::StraightToPremul => "StraightToPremul",
             Self::PremulToStraight => "PremulToStraight",
             Self::LinearRgbToOklab => "LinearRgbToOklab",
@@ -594,6 +610,9 @@ impl ConvertPlan {
         }
         if from == to {
             return Ok(Self::build(from, to, vec![ConvertStep::Identity]));
+        }
+        if !has_numeric_kernels(from.channel_type()) || !has_numeric_kernels(to.channel_type()) {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
 
         // Refuse signal-range crossings: no Narrow↔Full steps exist (no
@@ -1204,6 +1223,9 @@ impl ConvertPlan {
 
         // Same endpoint range/depth restrictions as the ordinary planner.
         validate_descriptors(from, to)?;
+        if !has_numeric_kernels(from.channel_type()) || !has_numeric_kernels(to.channel_type()) {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
 
         // These kernels require RGB triples (optionally followed by alpha),
         // defined gamut matrices and a finite soft-compression knee.
@@ -1531,7 +1553,7 @@ impl ConvertPlan {
             }
         }
 
-        // When the caller opts out of clipping, swap pure-f32 sRGB transfer
+        // When the caller opts out of clipping, swap qualified pure-f32 transfer
         // steps for their sign-preserving extended-range counterparts.
         // Fused u8/u16 matlut steps are unaffected (integer I/O can't
         // represent extended range anyway).
@@ -1543,6 +1565,12 @@ impl ConvertPlan {
                     }
                     ConvertStep::LinearF32ToSrgbF32 => {
                         *step = ConvertStep::LinearF32ToSrgbF32Extended;
+                    }
+                    ConvertStep::Gamma22F32ToLinearF32 => {
+                        *step = ConvertStep::Gamma22F32ToLinearF32Extended;
+                    }
+                    ConvertStep::LinearF32ToGamma22F32 => {
+                        *step = ConvertStep::LinearF32ToGamma22F32Extended;
                     }
                     _ => {}
                 }
@@ -2705,7 +2733,8 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
         | ConvertStep::SrgbF32ToLinearF32
         | ConvertStep::SrgbF32ToLinearF32Extended
         | ConvertStep::Bt709F32ToLinearF32
-        | ConvertStep::Gamma22F32ToLinearF32 => PixelDescriptor::new(
+        | ConvertStep::Gamma22F32ToLinearF32
+        | ConvertStep::Gamma22F32ToLinearF32Extended => PixelDescriptor::new(
             ChannelType::F32,
             current.layout(),
             current.alpha(),
@@ -2766,12 +2795,14 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.alpha(),
             TransferFunction::Bt709,
         ),
-        ConvertStep::LinearF32ToGamma22F32 => PixelDescriptor::new(
-            ChannelType::F32,
-            current.layout(),
-            current.alpha(),
-            TransferFunction::Gamma22,
-        ),
+        ConvertStep::LinearF32ToGamma22F32 | ConvertStep::LinearF32ToGamma22F32Extended => {
+            PixelDescriptor::new(
+                ChannelType::F32,
+                current.layout(),
+                current.alpha(),
+                TransferFunction::Gamma22,
+            )
+        }
         ConvertStep::StraightToPremul => PixelDescriptor::new(
             current.channel_type(),
             current.layout(),

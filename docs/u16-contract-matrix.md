@@ -1,5 +1,10 @@
 # U16 contract matrix
 
+> 2026-10-27: the native-code adapter, narrow-range depth rules and exact-depth evidence marked
+> "Proposed" below are implemented on an unreleased branch; see
+> [native codes and current-precision evidence](sample-precision-evidence.md). It also records that
+> full-range grids nest only when the depth divides (8-bit content at 10 bits changes 252/256 levels).
+
 2026-09-27. Base audit at `b644ac6`; updated with narrow-depth refusal guards. **This is a contract and
 implementation matrix, not a claim that all entries are supported.** Start with
 the representation table, then choose the numeric operation. Applying the wrong

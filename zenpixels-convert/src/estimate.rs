@@ -192,6 +192,8 @@ fn step_cost_ns_per_mp(step: &ConvertStep, current_bpp: usize) -> f64 {
         gib(bs.iter().copied().find_map(|(b, g)| (b == current_bpp).then_some(g)).unwrap_or(fallback))
     };
     match step {
+        // These paths have no calibration. Do not reuse the clipped estimate.
+        ConvertStep::Gamma22F32ToLinearF32Extended | ConvertStep::LinearF32ToGamma22F32Extended => f64::NAN,
         ConvertStep::Identity => 0.0,
         // Layout (t1).
         ConvertStep::SwizzleBgraRgba => bucketed(&[(4, 116.42)], 75.0),
@@ -316,7 +318,9 @@ pub(crate) fn estimate_plan(plan: &ConvertPlan, image: &ImageCharacteristics, co
     let knee = (u64::from(height) / 64).clamp(1, 16) as u32;
     let (mut total_time_ms, mut any_serial, mut min_knee) = (0.0_f64, false, u32::MAX);
     for step in plan.steps() {
-        total_time_ms += step_cost_ns_per_mp(step, desc.bytes_per_pixel()) * pixels_mp / 1e6;
+        let cost = step_cost_ns_per_mp(step, desc.bytes_per_pixel());
+        if !cost.is_finite() { return ResourceEstimate::unknown(); }
+        total_time_ms += cost * pixels_mp / 1e6;
         if step_is_parallelizable(step) { min_knee = min_knee.min(knee); } else { any_serial = true; }
         desc = intermediate_after(desc, step);
         max_bpp = max_bpp.max(desc.bytes_per_pixel());

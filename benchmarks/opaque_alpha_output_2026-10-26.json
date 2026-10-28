@@ -1,0 +1,49 @@
+{
+  "kind": "unchanged-profile alpha addition regression; no performance claim",
+  "base_commit": "e44cf05490a37da749beb0b78477a45051ba3777",
+  "host": "r7900x",
+  "source_sha256": {
+    "zenpixels-convert/src/output/plan.rs": "630dfc136939d85addd994ba439ed7933e8fb64e854da080eb5e34ac6bd0c5ce",
+    "zenpixels-convert/tests/output_native.rs": "dd9effd0a48d9c21dae205edce6c8d258652c280880b3dfd223b5136c429ba10"
+  },
+  "commands": [
+    "just output-alpha-check"
+  ],
+  "reproduction": "Native JXL RGB F32 with current ICC refuses RgbaF32 SameAsOrigin without CMS at e44cf054; source location remains converter.rs:489 NeedsCms. Initial probe first needed an Option unwrap correction.",
+  "checks": [
+    "six strided RGB/gray U8/U16/F32 alpha-addition pairs preserve exact color bytes and untouched padding",
+    "F32 keeps signed zero, NaN payloads, subnormals and infinities; added alpha is exactly one",
+    "an attached backend is not invoked for unchanged-profile alpha addition",
+    "changed-profile work still reaches the backend; required depth reduction refuses before it",
+    "all existing output/prepared/color contracts and strict targeted lint pass",
+    "library tests: 464 passed, zero failed, one inherited ignore unchanged; no-default-feature WASM passes"
+  ],
+  "runs": [
+    {
+      "log": "zencodec-native-alpha-layout-1-20261026.log",
+      "sha256": "0ef511b35bf52661e5264e54d0bbc6826180c6cc351c77bad97dcf1e2aded050",
+      "result": "run-heavy: done rc=101 0s | peak-RSS 0.28GiB | min-avail 11625MiB | peak-load 0.33"
+    },
+    {
+      "log": "zencodec-native-alpha-layout-2-20261026.log",
+      "sha256": "520b3f86bdd6248d1e9c8ed97aa1d30d84795f61b3b147c1c9bf144f98abc781",
+      "result": "run-heavy: done rc=101 4s | peak-RSS 0.40GiB | min-avail 11475MiB | peak-load 0.28"
+    },
+    {
+      "log": "zenpixels-native-alpha-layout-1-20261026.log",
+      "sha256": "0db3f3feac518346c0233e25769b927514587ad499c5a3d1f073446a1a97f113",
+      "result": "run-heavy: done rc=0 2s | peak-RSS 0.25GiB | min-avail 11610MiB | peak-load 0.12"
+    },
+    {
+      "log": "zenpixels-native-alpha-layout-2-20261026.log",
+      "sha256": "e8433ae2f71f43e68a9e4f4af08530b28ddf87e1d764a05a34e2421f5059a749",
+      "result": "run-heavy: done rc=0 23s | peak-RSS 2.64GiB | min-avail 8767MiB | peak-load 1.44"
+    }
+  ],
+  "artifact_directory": "/mnt/v/output/zencodec/platform-regions-20261026-run/alpha-output-1",
+  "limits": [
+    "Shortcut covers alpha addition at unchanged depth and color coordinates only. Other layout, depth, compositing and color-model paths are unchanged.",
+    "Native consumer will repin this committed fix and rerun its original exact-color assertion.",
+    "Wrapper RSS describes complete build/test process tree, not codec or CMS memory."
+  ]
+}

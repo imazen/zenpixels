@@ -233,6 +233,50 @@ fn check_needs_cms(
     Ok(())
 }
 
+/// Evidence for samples produced from `exact`-evidenced samples by a
+/// metadata-proven reversible representation change, or `None`.
+///
+/// Swizzles, gray expansion and alpha insertion copy sample values; inserted
+/// alpha is opaque, which lies on every grid. U8→U16 multiplies by 257, which
+/// keeps an N-bit grid only when N divides 8 and otherwise lands on the 8-bit
+/// grid. Anything else, including alpha bytes that are only padding, gets none.
+fn exact_after_preserving(
+    from: PixelDescriptor,
+    to: PixelDescriptor,
+    exact: zenpixels::sample::ExactDepth,
+) -> Option<zenpixels::sample::ExactDepth> {
+    if from.layout().has_alpha() && !from.has_alpha() {
+        return None;
+    }
+    // The carry rule below models the full-scale U8 to U16 kernel (x257).
+    // Narrow anchors scale by 2^(M-N) instead, and ConvertPlan refuses narrow
+    // depth changes and range crossings. Never carry evidence across either,
+    // even if a later plan accepts one.
+    if from.signal_range != to.signal_range
+        || (from.signal_range != zenpixels::SignalRange::Full
+            && from.channel_type() != to.channel_type())
+    {
+        return None;
+    }
+    if crate::ConvertPlan::new_preserving_samples(from, to).is_err() {
+        return None;
+    }
+    let carry = |bits: u8| match (from.channel_type(), to.channel_type()) {
+        (ChannelType::U8, ChannelType::U8) | (ChannelType::U16, ChannelType::U16) => Some(bits),
+        (ChannelType::U8, ChannelType::U16) => {
+            Some(if 8u8.is_multiple_of(bits) { bits } else { 8 })
+        }
+        _ => None,
+    };
+    let color = carry(exact.color_bits())?;
+    let alpha = if from.has_alpha() {
+        carry(exact.alpha_bits())?
+    } else {
+        1
+    };
+    zenpixels::sample::ExactDepth::new(to.channel_type(), to.signal_range, color, alpha).ok()
+}
+
 impl PixelBufferConvertExt for PixelBuffer {
     #[track_caller]
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>> {
@@ -250,6 +294,9 @@ impl PixelBufferConvertExt for PixelBuffer {
             if let Some(ctx) = self.color_context() {
                 buf = buf.with_color_context(Arc::clone(ctx));
             }
+            // The same samples under the same descriptor keep their evidence.
+            buf.set_exact_depth(self.exact_depth())
+                .expect("identical descriptors accept the same evidence");
             return Ok(buf);
         }
 
@@ -289,6 +336,13 @@ impl PixelBufferConvertExt for PixelBuffer {
         }
         if let Some(ctx) = context_after_conversion(self, target) {
             buf = buf.with_color_context(ctx);
+        }
+        if let Some(exact) = self
+            .exact_depth()
+            .and_then(|exact| exact_after_preserving(src_desc, target, exact))
+        {
+            buf.set_exact_depth(Some(exact))
+                .expect("transferred evidence names the target storage and range");
         }
         Ok(buf)
     }

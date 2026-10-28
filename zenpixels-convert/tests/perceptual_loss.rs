@@ -667,7 +667,8 @@ fn depth_roundtrip_scenarios() {
     // 1. u8 sRGB → f32 Linear → u8 sRGB (with u8 provenance: near-lossless)
     {
         let converted: Vec<_> = grid.iter().map(|c| roundtrip_u8_srgb(*c)).collect();
-        // The return leg uses u8 provenance — data was originally u8, so f32→u8 is lossless.
+        // The return leg uses u8 provenance; no operation changed the samples, so
+        // f32→u8 is lossless here.
         let cost_fwd = conversion_cost(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR);
         let cost_back = conversion_cost_with_provenance(
             PixelDescriptor::RGBF32_LINEAR,

@@ -18,6 +18,15 @@ use core::fmt;
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ConvertError {
+    /// Current descriptor or color context changed after output preparation.
+    SourceInterpretationChanged,
+    /// A required output descriptor disagrees with the selected profile.
+    OutputInterpretationMismatch {
+        /// The caller's exact output requirement, never silently substituted.
+        requested: PixelDescriptor,
+        /// Descriptor resolved from the profile with the requested association.
+        profile: PixelDescriptor,
+    },
     /// No supported format could be found for the source descriptor.
     NoMatch { source: PixelDescriptor },
     /// No conversion path exists between the two formats.
@@ -118,6 +127,15 @@ pub enum ConvertError {
 impl fmt::Display for ConvertError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::SourceInterpretationChanged => {
+                f.write_str("source interpretation changed after output preparation")
+            }
+            Self::OutputInterpretationMismatch { requested, profile } => {
+                write!(
+                    f,
+                    "required output {requested:?} disagrees with selected profile {profile:?}"
+                )
+            }
             Self::NoMatch { source } => {
                 write!(
                     f,

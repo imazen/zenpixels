@@ -16,7 +16,7 @@
 #   inherent methods                           50
 #   struct fields                             108
 #   enum variants                              70
-#   trait roster entries (type × trait)        63
+#   trait roster entries (type × trait)        64
 #   auto-trait-complete types                  16
 #
 # per-module pub lines:
@@ -304,7 +304,7 @@ pub fn optimal_path(zenpixels::descriptor::PixelDescriptor, Provenance, pipeline
 
 HdrConfig: Clone, Copy, Debug, Default, PartialEq
 cms_moxcms::MoxCms: Clone, Copy, Debug, Default, cms::ColorManagement, cms::PluggableCms
-cms_moxcms::MoxCmsError: Clone, Debug, Display
+cms_moxcms::MoxCmsError: Clone, Debug, Display, Error
 hdr::Bt2446A: Clone, Copy, Debug
 hdr::GamutBoundaryLut: Clone, Debug
 hdr::SoftCompress: Clone, Debug

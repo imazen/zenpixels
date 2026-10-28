@@ -424,10 +424,10 @@ Both u16. Added with saturation.
 
 ### Provenance
 
-Tracks origin depth and primaries to detect lossless round-trips. Knowing
-pixels originated as u8 means u8 -> f32 -> u8 has zero loss despite the
-apparent depth reduction. Without this, the cost model incorrectly penalizes
-the round-trip.
+Tracks origin depth and primaries so the cost model does not penalize a return
+to the origin: with u8 origin, u8 -> f32 -> u8 scores zero loss. That is exact
+only while no operation has changed the samples; after a resize or filter the
+return rounds new values. Provenance is ancestry, not current precision.
 
 ### Negotiation functions
 
@@ -485,8 +485,9 @@ pub struct CodecFormats {
 }
 ```
 
-`FormatEntry` includes `effective_bits` (AVIF 10-bit in u16 container = 10,
-not 16) and `can_overshoot` (JPEG f32 IDCT ringing exceeds [0,1]).
+`FormatEntry` includes `effective_bits` (10-bit AVIF codes widened into a u16
+container = 10, not 16; for RGB rebuilt from YCbCr this is a cost estimate) and
+`can_overshoot` (JPEG f32 IDCT ringing exceeds [0,1]).
 
 ## CMS integration (compile-time feature)
 

@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-26",
+  "base_commit": "9dad0cb609bbc07ed329696902ed5a1a3d3951b6",
+  "scope": "F32 CMYK carriage in conventional and inverted ink polarity; no numerical conversion or performance claim",
+  "source_sha256": {
+    "zenpixels/src/descriptor.rs": "80977a577804facb9b7090a694f209eb43846def9ff5e515d7ae408ae0426d2b",
+    "zenpixels/tests/native_samples.rs": "24c023405dcc4e498a478dd4e0ccc648669f77868f066fd135fdb773067d5645",
+    "zenpixels-convert/src/cms_moxcms.rs": "22166a51e77b1cf038eee29f782d0cf155913515eacb553f009cafaa7bae4bc2",
+    "zenpixels-convert/tests/native_samples.rs": "22f8ac6db556fa3e108ff5adaee291aca2e00ea34567930d7c461b9e1e7564a1"
+  },
+  "source_convention": "https://github.com/libjxl/libjxl/blob/v0.11.1/lib/include/jxl/cms_interface.h#L119",
+  "gates": [
+    {
+      "command": "just native-samples-check",
+      "log": "zenpixels-cmyk-f32-2-2026-10-26.log",
+      "rc": 0,
+      "run_heavy": "run-heavy: done rc=0 3s | peak-RSS 0.36GiB | min-avail 13500MiB | peak-load 0.14"
+    },
+    {
+      "command": "just native-samples-suite",
+      "log": "zenpixels-cmyk-f32-suite-2-2026-10-26.log",
+      "rc": 0,
+      "run_heavy": "run-heavy: done rc=0 51s | peak-RSS 2.64GiB | min-avail 10723MiB | peak-load 2.33"
+    }
+  ],
+  "coverage": [
+    "strided rows and unchanged padding",
+    "allocation and ICC context handoff",
+    "signed zero, subnormal and NaN payload byte preservation",
+    "built-in conversion and polarity-change refusal",
+    "legacy and pluggable moxcms refusal",
+    "full zenpixels/zenpixels-convert library and integration suite with hdr-experimental and cms-moxcms",
+    "no-default-features wasm32-unknown-unknown check",
+    "source-extracted public API"
+  ],
+  "not_qualified": [
+    "F32 CMYK color conversion",
+    "lossless polarity conversion",
+    "native codec workspace bounds",
+    "timing comparison"
+  ],
+  "existing_ignored_tests": "Inherited ignores unchanged; no new skip or weakened expectation."
+}

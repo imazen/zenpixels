@@ -42,6 +42,30 @@ clippy:
 test:
     cargo test --workspace
 
+# Native borrowed code-plane conversion, default and freestanding compilation.
+ycbcr-check:
+    cargo test -p zenpixels --test code_planes
+    cargo test -p zenpixels-convert --test ycbcr_borrowed
+    cargo test -p zenpixels-convert --no-default-features --test ycbcr_borrowed
+    cargo clippy -p zenpixels -p zenpixels-convert --lib --test code_planes --test ycbcr_borrowed -- -D warnings
+    cargo check -p zenpixels -p zenpixels-convert --no-default-features --target wasm32-unknown-unknown
+
+# Structural size_of/align_of of pixel views at BASE vs this tree (not heap or RSS).
+layout-probe BASE='86d0e2d30406a006bf8332f142029b7f58353086':
+    benchmarks/layout-probe/run.sh {{BASE}}
+
+# Native TIFF/IMIJ sample carriage and explicit conversion refusal.
+native-samples-check:
+    cargo test -p zenpixels --test parts
+    cargo test -p zenpixels -p zenpixels-convert --test native_samples --features zenpixels-convert/hdr-experimental,zenpixels-convert/cms-moxcms
+    cargo clippy -p zenpixels -p zenpixels-convert --lib --test native_samples --features zenpixels-convert/hdr-experimental,zenpixels-convert/cms-moxcms -- -D warnings
+
+# Full source coverage after extending the physical format enum.
+native-samples-suite:
+    cargo test -p zenpixels -p zenpixels-convert --lib --tests --features zenpixels-convert/hdr-experimental,zenpixels-convert/cms-moxcms
+    cargo check -p zenpixels --no-default-features --target wasm32-unknown-unknown
+    just api-doc
+
 # Compare production fused scan predicates with forced scalar on macOS ARM64.
 arm-scan-tiers-macos:
     mkdir -p "$HOME/tmp"
@@ -196,3 +220,79 @@ prepared-sync export:
     cp justfile "{{export}}/justfile"
     cp zenpixels-convert/src/convert.rs zenpixels-convert/src/converter.rs zenpixels-convert/src/output.rs zenpixels-convert/src/error.rs zenpixels-convert/src/lib.rs "{{export}}/zenpixels-convert/src/"
     cp zenpixels-convert/tests/prepared_contracts.rs "{{export}}/zenpixels-convert/tests/"
+
+# Combine native sample carriage with the existing profile-aware output planner.
+native-output-sync export:
+    test ! -e "{{export}}/.git"
+    test ! -e "{{export}}/.jj"
+    cp Cargo.toml justfile "{{export}}/"
+    cp zenpixels/Cargo.toml "{{export}}/zenpixels/"
+    cp zenpixels-convert/Cargo.toml "{{export}}/zenpixels-convert/"
+    rsync -a zenpixels/src/ "{{export}}/zenpixels/src/"
+    rsync -a zenpixels/tests/ "{{export}}/zenpixels/tests/"
+    rsync -a zenpixels-convert/src/ "{{export}}/zenpixels-convert/src/"
+    rsync -a zenpixels-convert/tests/ "{{export}}/zenpixels-convert/tests/"
+    cp scripts/icc-gen/src/main.rs "{{export}}/scripts/icc-gen/src/"
+
+native-output-check:
+    cargo fmt -p zenpixels -p zenpixels-convert --check
+    just output-plan-check
+    just native-samples-check
+
+output-borrow-compat:
+    cargo test -p zenpixels-convert --doc --features std,cms-moxcms,icc-db --locked
+    cargo check -p zenpixels-convert --no-default-features --target wasm32-unknown-unknown --locked
+    RUSTDOCFLAGS="-D warnings" cargo doc -p zenpixels-convert --no-deps --features std,cms-moxcms,icc-db --locked
+    just api-doc
+
+# Output planning, existing atomic conveniences and actual ICC/backend contracts.
+output-plan-check:
+    cargo test -p zenpixels-convert --test output_exact --test output_native --test output_plan --test output_descriptor --test output_current_color --test output_contracts --test output_finalize --test unspecified_cicp_context --test prepared_contracts --features std,cms-moxcms,icc-db --locked
+    cargo clippy -p zenpixels-convert --lib --test output_exact --test output_native --test output_plan --test output_descriptor --features std,cms-moxcms,icc-db --locked -- -D warnings
+
+output-descriptor-check:
+    cargo fmt -p zenpixels-convert
+    just output-plan-check
+    just output-borrow-compat
+
+# Native ICC consumer regression: format-only alpha addition needs no CMS.
+output-alpha-check:
+    cargo fmt -p zenpixels-convert
+    just output-plan-check
+    cargo test -p zenpixels-convert --lib --features std,cms-moxcms,icc-db --locked
+    cargo check -p zenpixels-convert --no-default-features --target wasm32-unknown-unknown --locked
+
+# Float ICC precision, selected range behavior and explicit backend refusals.
+output-float-check:
+    cargo fmt -p zenpixels-convert
+    cargo test -p zenpixels-convert --test cms_moxcms --features std,cms-moxcms,icc-db --locked
+    just output-alpha-check
+    cargo clippy -p zenpixels-convert --test cms_moxcms --features std,cms-moxcms,icc-db --locked -- -D warnings
+
+# Run in an isolated export; deliberately changes only its dependency lock.
+output-float-backend-check version:
+    test ! -e .git
+    test ! -e .jj
+    cargo update -p moxcms --precise {{version}}
+    cargo test -p zenpixels-convert --test cms_moxcms --features std,cms-moxcms,icc-db --locked
+    cargo clippy -p zenpixels-convert --lib --test cms_moxcms --features std,cms-moxcms,icc-db --locked -- -D warnings
+
+# Include the ICC generator: workspace feature unification affects its options.
+output-float-workspace-check:
+    cargo fmt -p zenpixels -p zenpixels-convert -p icc-gen
+    cargo test --workspace --locked
+    cargo clippy --workspace --all-targets --locked -- -D warnings
+    just output-float-generator-check
+
+output-float-generator-check:
+    cargo clippy -p icc-gen --all-targets --locked -- -D warnings
+
+output-plan-sync export: (prepared-sync export)
+    mkdir -p "{{export}}/zenpixels-convert/src/output"
+    cp zenpixels-convert/src/output/plan.rs "{{export}}/zenpixels-convert/src/output/"
+    cp zenpixels-convert/tests/output_plan.rs "{{export}}/zenpixels-convert/tests/"
+
+# Unclipped transfer requests, legacy in-range parity and exact alpha/padding.
+unclipped-transfer-check:
+    cargo test -p zenpixels-convert --test unclipped_transfer_contract --test gamma22_transfer --test transfer_alpha --features __trace_ops --locked
+    cargo clippy -p zenpixels-convert --lib --test unclipped_transfer_contract --features __trace_ops --locked -- -D warnings

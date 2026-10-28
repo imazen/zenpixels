@@ -45,6 +45,9 @@ use crate::{
 };
 use whereat::{At, ResultAtExt};
 
+mod plan;
+pub use plan::OutputPlan;
+
 /// Target output color profile.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -429,141 +432,24 @@ pub fn finalize_for_output_with(
     pixel_format: PixelFormat,
     cms: Option<&dyn crate::cms::PluggableCms>,
 ) -> Result<EncodeReady, At<ConvertError>> {
-    let source_desc = buffer.descriptor();
-    // Origin describes provenance. Only attached context describes current ICC.
-    let source_profile = current_profile(buffer)?;
-    let target_profile = match &target {
-        OutputProfile::SameAsOrigin => {
-            origin_profile(origin).unwrap_or_else(|| source_profile.clone())
-        }
-        OutputProfile::Named(cicp) => crate::ColorProfileSource::Cicp(*cicp),
-        OutputProfile::Icc(icc) => crate::ColorProfileSource::Icc(icc),
-    };
-    let target_desc_full = descriptor_for_profile(pixel_format, &target_profile)?;
-    crate::convert::validate_descriptors(source_desc, target_desc_full)?;
-
-    // Determine output metadata based on target profile.
-    let metadata = match &target_profile {
-        crate::ColorProfileSource::Icc(icc) => OutputMetadata {
-            // Emit only the selected authority; OutputMetadata cannot tell a
-            // destination codec how to prioritize contradictory ICC/CICP tags.
-            icc: Some(match &target {
-                OutputProfile::Icc(bytes) => Arc::clone(bytes),
-                OutputProfile::SameAsOrigin => origin
-                    .icc
-                    .clone()
-                    .or_else(|| buffer.color_context().and_then(|c| c.icc.clone()))
-                    .unwrap_or_else(|| Arc::from(*icc)),
-                _ => Arc::from(*icc),
-            }),
-            cicp: None,
-            hdr: None,
-        },
-        crate::ColorProfileSource::Cicp(cicp) => OutputMetadata {
-            icc: None,
-            cicp: Some(*cicp),
-            hdr: None,
-        },
-        _ => {
-            let (p, t) = target_profile.resolve().ok_or_else(|| {
-                whereat::at!(ConvertError::NeedsCms {
-                    from: source_desc,
-                    to: target_desc_full
-                })
-            })?;
-            if p == ColorPrimaries::Bt709 && t == TransferFunction::Srgb {
-                OutputMetadata {
-                    icc: None,
-                    cicp: None,
-                    hdr: None,
-                }
-            } else if let (Some(p), Some(t)) = (p.to_cicp(), t.to_cicp()) {
-                OutputMetadata {
-                    icc: None,
-                    cicp: Some(Cicp::new(
-                        p,
-                        t,
-                        0,
-                        target_desc_full.signal_range == crate::SignalRange::Full,
-                    )),
-                    hdr: None,
-                }
-            } else {
-                return Err(whereat::at!(ConvertError::NeedsCms {
-                    from: source_desc,
-                    to: target_desc_full
-                }));
-            }
-        }
-    };
-
-    // The current context must describe the returned samples, including identity.
-    let mut context = crate::ColorContext::default();
-    context.icc = metadata.icc.clone();
-    context.cicp = metadata.cicp;
-    context.diffuse_white = if source_desc.transfer() == TransferFunction::Pq
-        && target_desc_full.transfer() == TransferFunction::Linear
-    {
-        Some(zenpixels::hdr::DiffuseWhite::new(10_000.0))
-    } else {
-        buffer.color_context().and_then(|c| c.diffuse_white)
-    };
-    let context = Arc::new(context);
-
-    // Fast path: no conversion needed.
-    if source_desc.layout_compatible(target_desc_full)
-        && descriptors_match(&source_desc, &target_desc_full)
-        && profiles_match(&source_profile, &target_profile)
-    {
-        let src_slice = buffer.as_slice();
-        // Even identity can be a 100 MB allocation: keep it fallible and
-        // copy only active row bytes, without a temporary packed image.
-        let mut out = PixelBuffer::try_new(buffer.width(), buffer.height(), target_desc_full)
-            .map_err_at(ConvertError::from)?;
-        {
-            let mut dst = out.as_slice_mut();
-            for y in 0..buffer.height() {
-                dst.row_mut(y).copy_from_slice(src_slice.row(y));
-            }
-        }
-        return Ok(EncodeReady {
-            pixels: out.with_color_context(context),
-            metadata,
-        });
-    }
-
     let options = crate::policy::ConvertOptions::permissive()
         .with_alpha_policy(crate::AlphaPolicy::DiscardUnchecked);
-    let needs_profiles = matches!(source_profile, crate::ColorProfileSource::Icc(_))
-        || matches!(target_profile, crate::ColorProfileSource::Icc(_));
-    let mut converter = if needs_profiles {
-        crate::RowConverter::new_with_sources(
-            source_desc,
-            target_desc_full,
-            source_profile,
-            target_profile,
-            &options,
-            cms,
-        )?
-    } else {
-        crate::RowConverter::new_explicit_with_cms(source_desc, target_desc_full, &options, cms)?
-    };
-    let src_slice = buffer.as_slice();
-    let mut out = PixelBuffer::try_new(buffer.width(), buffer.height(), target_desc_full)
-        .map_err_at(ConvertError::from)?;
-
-    {
-        let mut dst_slice = out.as_slice_mut();
-        for y in 0..buffer.height() {
-            let src_row = src_slice.row(y);
-            let dst_row = dst_slice.row_mut(y);
-            converter.try_convert_row(src_row, dst_row, buffer.width())?;
-        }
-    }
-
+    let mut plan = OutputPlan::new(
+        buffer.descriptor(),
+        buffer.color_context().cloned(),
+        origin,
+        target,
+        pixel_format,
+        &options,
+        cms,
+    )?;
+    let mut pixels =
+        PixelBuffer::try_new(buffer.width(), buffer.height(), plan.output_descriptor())
+            .map_err_at(ConvertError::from)?;
+    plan.convert_rows(buffer.as_slice(), pixels.as_slice_mut())?;
     Ok(EncodeReady {
-        pixels: out.with_color_context(context),
-        metadata,
+        pixels: pixels.with_color_context(plan.output_color_context().clone()),
+        metadata: plan.into_metadata(),
     })
 }
 
@@ -571,8 +457,14 @@ pub fn finalize_for_output_with(
 pub(crate) fn current_profile(
     buffer: &PixelBuffer,
 ) -> Result<crate::ColorProfileSource<'_>, At<ConvertError>> {
-    let desc = buffer.descriptor();
-    if let Some(context) = buffer.color_context() {
+    current_profile_for(buffer.descriptor(), buffer.color_context().map(Arc::as_ref))
+}
+
+pub(super) fn current_profile_for(
+    desc: PixelDescriptor,
+    current: Option<&crate::ColorContext>,
+) -> Result<crate::ColorProfileSource<'_>, At<ConvertError>> {
+    if let Some(context) = current {
         // Select the authoritative field at decode time. Keeping both here
         // makes current color ambiguous; ColorOrigin is the roundtrip carrier.
         if context.icc.is_some() && context.cicp.is_some() {

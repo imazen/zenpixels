@@ -18,11 +18,156 @@
 
 ## [Unreleased]
 
+### Native codes and current-precision evidence
+
+- Add `CodePlane::from_u8_interleaved` / `from_u16_interleaved`, `step_words` and
+  `read_codes`: one borrowed view type for planar, semi-planar (P010/P012 chroma)
+  and interleaved native codes, with checked geometry and row reads. New
+  `CodePlaneError::{ZeroStep, OutsideActivePlane}` variants (non-exhaustive enum).
+  (dfa3a2cd)
+- Add `zenpixels_convert::codes`: `CodeMap` converts one component between sample
+  encodings with role- and range-specific exact rules (nearest full scale for
+  intensity/alpha, power-of-two anchors for narrow range, full-range chroma depth
+  changes refused); `to_canonical` widens borrowed components into canonical
+  strided U8/U16 rows without allocating.
+  Exhaustive checks show full-range grids nest only when the depth divides (8-bit
+  content at 10 bits changes 252 of 256 levels). (75d2321f)
+- Add `sample::ExactDepth`, bounded evidence that current samples survive
+  re-quantization to a stated depth, carried by `PixelBuffer`/`PixelSlice`. Every
+  mutable accessor, in-place transform, range relabel and parts handoff ends it;
+  views, crops, clones and compaction keep it. (68e463bd) `convert_to` keeps it
+  through identity and sample-preserving conversions and orientation keeps it;
+  other conversions drop it. (22ae2f33) See `docs/sample-precision-evidence.md`.
+- Add `OutputPlan::output_color_context()`: the color context of the rows a plan
+  produces, known before any row and attached as the same `Arc` to every batch.
+  Rebuilding it from `metadata()` and the source's diffuse white is wrong for PQ
+  to linear output. (59c7708e)
+- Add `ExactDepth::measure`, the explicit scan (moved from the unreleased
+  `codes::measure_exact_depth`, kept as a deprecated forwarding wrapper; the scan
+  now skips RGBX/BGRX padding slots), and
+  `ExactDepth::holds_for`, which checks stated evidence against rows written
+  elsewhere, such as a row driver's strips. Both read only active samples and
+  allocate nothing. (9b7e77ee)
+- `convert_to` never carries `ExactDepth` across a narrow-range depth change or a
+  range crossing; both are refused today, and a regression test on narrow
+  descriptors pins that. (0d231160)
+
+### Provenance and effective_bits documentation
+
+- Document `Provenance` as ancestry, not current precision: it scores a return to
+  the origin depth as free, which understates the rounding after a resize or
+  filter. Document `effective_bits` for RGB rebuilt from 10-bit YCbCr as a cost
+  estimate, not a 10-bit grid. Docs and test comments only; no behavior change.
+  (ccf5fce8)
+
+### Unclipped Gamma22 execution
+
+- Honor `clip_out_of_gamut(false)` in F32 Gamma22 transfer steps. Preserve
+  negative and above-white values using a reflected extension of the existing
+  Adobe exponent. Default clipping and positive in-range results are unchanged;
+  alpha bits and row padding remain exact. No calibration is invented for the
+  new path; the retired estimator returns unknown.
+
+### Conversion preset migration
+
+- Deprecate `ConvertOptions::forbid_lossy()` immediately. Its replacement,
+  `retain_channels()`, preserves every existing option value and promises only
+  channel/depth restrictions. It still permits requested color arithmetic and
+  float clipping; use explicit clipping policy for conversion, or the exact
+  `new_preserving_samples` planners for reversible representation changes.
+
+### Exact output planning
+
+- Add `OutputPlan::new_preserving_samples`: require matching current/target
+  profiles and a proven reversible representation change without consulting a
+  CMS. Reuse checked strided execution and output signaling; reject color math,
+  alpha reassociation, sample removal and depth reduction before execution.
+
+### Borrowed native component conversion
+
+- Add `sample::CodePlane`, checked native word/stride borrowing, and explicit
+  chroma sampling/location facts. Add `ycbcr::YcbcrToRgbF32`, retaining those
+  borrows through checked strided region conversion and reporting actual refusal
+  facts. The first qualified route is unclipped BT.709/sRGB at 8/10/12 bits.
+  Native AV1 validates exact crops/batches and independent numerical agreement;
+  no new dependencies or features. See `docs/borrowed-ycbcr-contract.md`.
+
+### zenpixels-convert — native output-plan integration
+
+- Preserve sample bits when an unchanged current ICC supplies the unknown
+  descriptor primaries/transfer. `OutputPlan` borrows or copies the same samples
+  with the resolved output descriptor instead of invoking a same-profile CMS
+  round trip. The native TIFF render integration exposed a one-bit U8 change.
+  No public signature or dependency changes.
+
+- Add `OutputPlan::new_with_descriptor` for required output association and
+  interpretation. Return `OutputInterpretationMismatch` before CMS construction
+  when the descriptor conflicts with the selected profile. Keep the format-only
+  constructor's existing defaults and use one execution path. This addresses
+  the premultiplied native-output request gap in #94.
+
+- Keep the ICC generator buildable when workspace members enable additional
+  CMS features; its strict comparison options retain bounded evaluation.
+
+- Use float CMS arithmetic and available analytic ICC curves for F32 output.
+  `clip_out_of_gamut` selects bounded versus extended output; bounded execution
+  clamps color around the transform while retaining alpha bits. Explicit ICC
+  requests retain their curve authority over embedded CICP. Refuse the backend's
+  unqualified partially shared RGB curves before writes, preserving a concrete
+  `MoxCmsError` through `whereat`; that error now implements `core::error::Error`.
+
+- Preserve exact RGB/gray samples when adding opaque alpha under an unchanged
+  current ICC, without requiring or invoking a CMS. The native JXL consumer
+  exposed an unnecessary `NeedsCms` refusal. Changed profiles, depth policy,
+  compositing and other color-model work retain their existing paths.
+
+- Add `OutputPlan::borrow_rows` for checked identity execution over the original
+  strided storage. Return `None` when sample conversion is required, and retain
+  source-interpretation and prepared-width errors. This supports the native
+  zencodec caller without another output allocation or owner type.
+
+- Combine the output-plan and native sample review revisions. Qualify exact
+  profile-aware F32 CMYK identity rows in both polarities, including strided
+  padding and unusual float bits. No new conversion abstraction or arithmetic
+  route is added; native/admitted destination validation continues in zencodec.
+
+### zenpixels — native sample carriage
+
+- Add conventional and explicitly inverted F32 CMYK storage for the selected
+  JXL layer consumer. Existing
+  strided buffers preserve every sample bit and source ICC context; no numeric
+  conversion is implied. Both enum variants are appended after existing codes.
+
+- Add I8, I16, U32, I32, U64, I64 and F64 channel storage with gray,
+  gray-alpha, RGB and RGBA formats for native TIFF and IMIJ consumers (#83).
+  Existing buffer, stride, crop and owned-handoff APIs preserve sample bytes.
+  Released enum discriminants remain unchanged.
+- Add `PixelBufferParts::new` so external codecs can describe their native
+  strided allocation for checked adoption through `PixelBuffer::try_from_parts`.
+  The TIFF consumer exposed the missing external construction path.
+
+### zenpixels-convert — native sample refusal
+
+- Refuse unqualified F32 CMYK in the legacy moxcms constructor before its
+  unsupported-layout fallback can interpret four components as RGB. The
+  pluggable interface continues to decline this unmapped format.
+
+- Identity rows preserve signed and wide samples exactly. Built-in conversion,
+  HDR mapping and moxcms refuse unsupported sample arithmetic instead of
+  relabeling values or dispatching them through F32 kernels. The new types do
+  not imply numerical conversion support.
+
 ### Dependency compatibility
 
 - Admit archmage/magetypes 0.9.31-beta.1 alongside compatible stable versions; explicit-token aliases are used where needed. Formatting, strict library lint and library tests pass (`cdaa3939`).
 
 ### Added
+
+- `zenpixels-convert::OutputPlan` prepares profile-aware row conversion and its
+  output signaling before pixels arrive. It checks current source interpretation,
+  explicit sample-change policy, geometry and destination descriptor; returned
+  row views carry matching color context. `finalize_for_output_with` reuses the
+  same implementation and retains its owned-output and lazy-backend behavior.
 
 - `Cicp::resolve_matrix(hint)` and `UnspecifiedMatrixError`: resolve `matrix_coefficients`
   per H.273 V4 (07/2024) Table 4. Self-contained codes (0, 1, 4–11, 14–17) resolve as

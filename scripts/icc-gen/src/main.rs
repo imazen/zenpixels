@@ -38,11 +38,16 @@ use moxcms::{
 /// here will also pass at runtime; one that fails here may still fail at
 /// runtime by an even larger margin.
 ///
-/// Critical: we DO NOT enable the `extended_range` feature on moxcms. That
+/// Critical: the generator does not request extended-range evaluation. That
 /// feature's `try_extended_gamma_evaluator` (moxcms src/trc.rs:1293-1523)
 /// detects sRGB / BT.709 parametric curves by 1e-4 parameter tolerance and
 /// silently substitutes hardcoded canonical TRC code, which would mask any
-/// real divergence in profile-encoded curves. See the icc-gen Cargo.toml.
+/// real divergence in profile-encoded curves. The option stays at its false
+/// default even when another workspace member enables the backend feature.
+#[allow(
+    clippy::needless_update,
+    reason = "workspace feature unification can add backend option fields"
+)]
 fn runtime_opts(intent: RenderingIntent) -> TransformOptions {
     TransformOptions {
         rendering_intent: intent,
@@ -50,6 +55,7 @@ fn runtime_opts(intent: RenderingIntent) -> TransformOptions {
         prefer_fixed_point: false,
         barycentric_weight_scale: BarycentricWeightScale::High,
         interpolation_method: InterpolationMethod::Tetrahedral,
+        ..Default::default()
     }
 }
 

@@ -1,0 +1,71 @@
+{
+  "date": "2026-10-26",
+  "scope": "Explicit output descriptor correctness; no performance claim",
+  "base_commit": "d79acec203ad6781b0c85373b7202c512fbbf3c8",
+  "issue": "https://github.com/imazen/zenpixels/issues/94",
+  "source_sha256": {
+    "zenpixels-convert/src/output/plan.rs": "7a089bd90a3c71dcff76c90fce7250ad3a68c64d29161b81c6b282356404b117",
+    "zenpixels-convert/src/error.rs": "2e006f2437bd2d62ffc7317f74d1b5f6322f9b06db45e4aa57d559487166d79f",
+    "zenpixels-convert/tests/output_descriptor.rs": "024754f3f9dcc5b76cf471d7edc8abf3fe7637ce378b14a45a6bea79394ba244"
+  },
+  "commands": [
+    "just output-descriptor-check",
+    "just output-float-workspace-check"
+  ],
+  "controls": {
+    "explicit_descriptor_tests": {
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    "identity_matrix": {
+      "formats": [
+        "Rgba8",
+        "Rgba16",
+        "RgbaF32"
+      ],
+      "association": [
+        "Straight",
+        "Premultiplied",
+        "Undefined"
+      ],
+      "profile": "unchanged opaque ICC",
+      "scope": "exact active rows, float payloads, pointer-preserving borrowing, strided padding, source/context binding and prepared width"
+    },
+    "profile_conflicts": [
+      "primaries",
+      "transfer",
+      "range",
+      "opaque ICC with claimed named descriptor"
+    ],
+    "refusals": [
+      "unqualified opaque-profile change",
+      "alpha removal forbidden",
+      "opaque alpha without proof",
+      "unimplemented range crossing",
+      "wrong destination descriptor before writes"
+    ],
+    "numerical_control": "exact binary linear premultiplication at two strided rows, including negative and above-one input values",
+    "compatibility": "format-only straight-alpha output retained; existing output, profile, finalization and prepared-row tests pass",
+    "workspace": "tests and strict all-target lint pass, including ICC generator under unified and standalone features",
+    "documentation": "doctests, strict Rustdoc, WASM and API snapshots pass; pre-existing ignored tests unchanged"
+  },
+  "native_validation": "pending pin into the real JXL consumer; baseline refusal and exact-owner control recorded in zencodec a16d7f83",
+  "runs": [
+    {
+      "log": "/home/lilith/tmp/zenpixels-output-descriptor-1-20261026.log",
+      "sha256": "9ab474a9528e9ff9f35032523e036952c5c6db57fed34be5a31f27f143b9a2ae",
+      "resource_line": "run-heavy: done rc=0 49s | peak-RSS 0.43GiB | min-avail 10801MiB | peak-load 1.24"
+    },
+    {
+      "log": "/home/lilith/tmp/zenpixels-output-descriptor-2-20261026.log",
+      "sha256": "911dc5cc3e78de3d4416f1372e5e371e697e0fab441fc8421b32b54c643d9ef2",
+      "resource_line": "run-heavy: done rc=0 6s | peak-RSS 0.32GiB | min-avail 11265MiB | peak-load 0.54"
+    },
+    {
+      "log": "/home/lilith/tmp/zenpixels-output-descriptor-workspace-20261026.log",
+      "sha256": "c43e1a800ed267d07285222bf44668649bc582c7c93c861d000e7c31573867b2",
+      "resource_line": "run-heavy: done rc=0 60s | peak-RSS 2.64GiB | min-avail 8851MiB | peak-load 2.09"
+    }
+  ]
+}

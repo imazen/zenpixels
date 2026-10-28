@@ -37,6 +37,11 @@ zenpixels-convert = { version = "0.2.16", default-features = false, features = [
 
 [`best_match`] picks the cheapest target format an encoder supports for a given source descriptor; [`RowConverter`] plans conversion once. On the unreleased bridge, `prepare` reserves scratch and initializes selected tables before fallible execution.
 
+For current ICC/CICP context and matching output signaling, the review branch
+adds `OutputPlan`: prepare from final color facts before pixels arrive, then
+convert into supplied row views. See the
+[output preparation contract](../docs/implemented-bridge-contracts.md#output-preparation-added-on-the-review-branch-2026-10-25).
+
 ```rust
 use zenpixels_convert::{RowConverter, best_match, ConvertIntent};
 

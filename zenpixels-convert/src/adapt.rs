@@ -1451,7 +1451,7 @@ mod tests {
         let data = test_rgb8_data();
         let source = PixelDescriptor::RGB8.with_primaries(ColorPrimaries::Bt2020);
         let target = PixelDescriptor::RGB8_SRGB;
-        let options = ConvertOptions::forbid_lossy()
+        let options = ConvertOptions::retain_channels()
             .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
             .with_depth_policy(DepthPolicy::Round);
 
