@@ -82,7 +82,7 @@ fn main() {
     // Exactness gates before any timing.
     let (w, h) = (97usize, 13usize);
     let src: Vec<u16> = (0..w * h * 3)
-        .map(|i| ((i * 2_654_435_761usize) >> 9) as u16 & 0x0fff)
+        .map(|i| (i.wrapping_mul(2_654_435_761) >> 9) as u16 & 0x0fff)
         .collect();
     let (mut a, mut b) = (vec![0u16; w * h * 3], vec![0u16; w * h * 3]);
     widen_rgb(&src, w, h, &mut a);
@@ -97,7 +97,7 @@ fn main() {
         for &(label, w, h) in SIZES {
             let samples = w * h * 3;
             let src: Vec<u16> = (0..samples)
-                .map(|i| ((i * 2_654_435_761usize) >> 9) as u16 & 0x0fff)
+                .map(|i| (i.wrapping_mul(2_654_435_761) >> 9) as u16 & 0x0fff)
                 .collect();
             let mut canonical = vec![0u16; samples];
             widen_rgb(&src, w, h, &mut canonical);

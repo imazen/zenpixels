@@ -17,7 +17,7 @@ fn conversion_scan_and_evidence_allocate_nothing() {
     let canonical = SampleEncoding::new(ChannelType::U16, 16, 0).unwrap();
     let ten = SampleEncoding::new(ChannelType::U16, 10, 0).unwrap();
     let src: Vec<u16> = (0..w * h * 3)
-        .map(|i| ((i * 2_654_435_761usize) >> 13) as u16 & 0x0fff)
+        .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u16 & 0x0fff)
         .collect();
     let mut dst = vec![0u16; w * h * 3];
     let mut codes = vec![0u16; w * h * 3];
