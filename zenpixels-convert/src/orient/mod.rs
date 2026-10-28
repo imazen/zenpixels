@@ -119,10 +119,14 @@ pub fn apply_orientation(src: PixelSlice<'_>, orientation: Orientation) -> Pixel
     if let Some(context) = src.color_context() {
         out = out.with_color_context(context.clone());
     }
+    // Whole pixels are moved, never changed: the samples keep their evidence.
+    let exact = src.exact_depth();
     // The buffer is constructed to the exact output geometry + descriptor, so
     // the size/format check inside `apply_orientation_into` cannot fail.
     apply_orientation_into(src, orientation, out.as_slice_mut())
         .expect("apply_orientation: freshly allocated buffer matches output geometry");
+    out.set_exact_depth(exact)
+        .expect("apply_orientation: output keeps the source descriptor");
     out
 }
 
@@ -241,7 +245,12 @@ pub fn apply_orientation_in_place(
             actual: 0,
         });
     }
+    // The permutation keeps every sample value, so restore the evidence that
+    // the in-place mutable access had to end.
+    let exact = dst.exact_depth();
     dst.transform_in_place(|px| orient_in_place_impl(px, orientation));
+    dst.set_exact_depth(exact)
+        .expect("apply_orientation_in_place: descriptor is unchanged");
     Ok(())
 }
 

@@ -120,8 +120,10 @@
 //!   not what the pixels are. This is immutable and used only at encode time
 //!   for provenance decisions (e.g., "re-embed the original ICC profile").
 //!
-//! - Set `effective_bits` correctly on `FormatEntry`. A 10-bit AVIF source
-//!   decoded to u16 has `effective_bits = 10`, not 16. A JPEG decoded to f32
+//! - Set `effective_bits` correctly on `FormatEntry`. A 10-bit AVIF decoded
+//!   to 10-bit codes widened into u16 has `effective_bits = 10`, not 16. For
+//!   RGB rebuilt from 10-bit YCbCr, 10 is a cost estimate, not a claim that
+//!   the samples lie on a 10-bit grid. A JPEG decoded to f32
 //!   with debiased dequantization has `effective_bits = 10`. Getting this
 //!   wrong makes the cost model over- or under-value precision.
 //!
@@ -145,10 +147,11 @@
 //!   kernel can advertise `RGBF32_LINEAR` with low consumer cost).
 //!
 //! - **[`negotiate()`](fn@crate::negotiate)**: Full control. Explicit [`Provenance`] (so the cost
-//!   model knows the data's true origin) plus consumer costs. Use this in
+//!   model knows the data's origin) plus consumer costs. Use this in
 //!   processing pipelines where data has been widened from a lower-precision
-//!   source (e.g., JPEG u8 decoded to f32 for resize — provenance says "u8
-//!   origin", so converting back to u8 reports zero loss).
+//!   source (e.g., JPEG u8 decoded to f32: provenance says "u8 origin", so
+//!   converting back to u8 reports zero loss, which understates the rounding
+//!   once a resize or filter has changed the samples).
 //!
 //! ```rust,ignore
 //! // Simple: "what format should I encode to?"
@@ -449,6 +452,7 @@ pub mod cms;
 pub(crate) mod cms_lite;
 #[cfg(feature = "cms-moxcms")]
 pub mod cms_moxcms;
+pub mod codes;
 pub mod converter;
 pub mod ext;
 #[allow(

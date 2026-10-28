@@ -50,6 +50,10 @@ ycbcr-check:
     cargo clippy -p zenpixels -p zenpixels-convert --lib --test code_planes --test ycbcr_borrowed -- -D warnings
     cargo check -p zenpixels -p zenpixels-convert --no-default-features --target wasm32-unknown-unknown
 
+# Structural size_of/align_of of pixel views at BASE vs this tree (not heap or RSS).
+layout-probe BASE='86d0e2d30406a006bf8332f142029b7f58353086':
+    benchmarks/layout-probe/run.sh {{BASE}}
+
 # Native TIFF/IMIJ sample carriage and explicit conversion refusal.
 native-samples-check:
     cargo test -p zenpixels --test parts

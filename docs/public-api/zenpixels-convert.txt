@@ -8,22 +8,23 @@
 
 ## summary
 #
-#   pub modules                                15
-#   pub types (struct/enum/trait/alias)        61
-#   pub consts/statics                         20
-#   free functions                             45
-#   inherent methods                          168
-#   struct fields                              66
-#   enum variants                              90
+#   pub modules                                16
+#   pub types (struct/enum/trait/alias)        65
+#   pub consts/statics                         25
+#   free functions                             47
+#   inherent methods                          171
+#   struct fields                              86
+#   enum variants                             105
 #   re-exports                                  3
-#   trait roster entries (type × trait)       100
-#   auto-trait-complete types                  20
+#   trait roster entries (type × trait)       125
+#   auto-trait-complete types                  24
 #   auto-trait exceptions                       4
 #
 # per-module pub lines:
-#   (root)                          198
+#   (root)                          206
 #   adapt                            15
 #   cms                              31
+#   codes                            42
 #   converter                        31
 #   error                            34
 #   estimate                         47
@@ -37,7 +38,7 @@
 #   output                           20
 #   ycbcr                            22
 
-## items (432 lines)
+## items (482 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -76,6 +77,54 @@ pub fn cms::RowTransform::try_transform_row(&self, &[u8], &mut [u8], u32) -> cor
 pub fn cms::RowTransformMut::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
 pub fn cms::RowTransformMut::transform_row(&mut self, &[u8], &mut [u8], u32)
 pub fn cms::RowTransformMut::try_transform_row(&mut self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
+pub mod codes
+#[non_exhaustive] pub enum codes::CodeMapError
+pub codes::CodeMapError::FullRangeChromaDepth
+pub codes::CodeMapError::FullRangeChromaDepth::from_bits: u8
+pub codes::CodeMapError::FullRangeChromaDepth::to_bits: u8
+pub codes::CodeMapError::LengthMismatch
+pub codes::CodeMapError::LengthMismatch::destination: usize
+pub codes::CodeMapError::LengthMismatch::source: usize
+pub codes::CodeMapError::NarrowBelowEightBits
+pub codes::CodeMapError::NarrowBelowEightBits::bits: u8
+pub codes::CodeMapError::UnsupportedRange(zenpixels::descriptor::SignalRange)
+#[non_exhaustive] pub enum codes::CodeRole
+pub codes::CodeRole::Alpha
+pub codes::CodeRole::Chroma
+pub codes::CodeRole::Intensity
+#[non_exhaustive] pub enum codes::CodesError
+pub codes::CodesError::ComponentCount
+pub codes::CodesError::ComponentCount::actual: usize
+pub codes::CodesError::ComponentCount::expected: usize
+pub codes::CodesError::Destination
+pub codes::CodesError::Destination::actual: zenpixels::descriptor::PixelDescriptor
+pub codes::CodesError::Extent
+pub codes::CodesError::Extent::component: usize
+pub codes::CodesError::Extent::extent: (usize, usize)
+pub codes::CodesError::Extent::origin: (usize, usize)
+pub codes::CodesError::Extent::plane: (usize, usize)
+pub codes::CodesError::Map
+pub codes::CodesError::Map::component: usize
+pub codes::CodesError::Map::error: codes::CodeMapError
+pub codes::CodesError::Narrowing
+pub codes::CodesError::Narrowing::bits: u8
+pub codes::CodesError::Narrowing::component: usize
+pub codes::CodesError::Narrowing::destination_bits: u8
+pub codes::CodesError::RangeMismatch
+pub codes::CodesError::RangeMismatch::destination: zenpixels::descriptor::SignalRange
+pub codes::CodesError::RangeMismatch::source: zenpixels::descriptor::SignalRange
+pub codes::CodesError::Read(zenpixels::sample::plane::CodePlaneError)
+pub codes::CodesError::Unmeasurable
+pub codes::CodesError::Unmeasurable::actual: zenpixels::descriptor::PixelDescriptor
+pub struct codes::CodeMap
+pub const fn codes::CodeMap::code(&self, u16) -> u16
+pub const fn codes::CodeMap::input(&self) -> zenpixels::sample::SampleEncoding
+pub fn codes::CodeMap::map_words(&self, &[u16], &mut [u16]) -> core::result::Result<(), codes::CodeMapError>
+pub const fn codes::CodeMap::new(zenpixels::sample::SampleEncoding, zenpixels::sample::SampleEncoding, codes::CodeRole, zenpixels::descriptor::SignalRange) -> core::result::Result<Self, codes::CodeMapError>
+pub const fn codes::CodeMap::output(&self) -> zenpixels::sample::SampleEncoding
+pub const fn codes::CodeMap::word(&self, u16) -> u16
+pub fn codes::measure_exact_depth(&zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<zenpixels::sample::exact::ExactDepth, whereat::at::At<codes::CodesError>>
+pub fn codes::to_canonical<'b>(&[zenpixels::sample::plane::CodePlane<'_>], zenpixels::descriptor::SignalRange, usize, usize, zenpixels::buffer::PixelSliceMut<'b>) -> core::result::Result<(zenpixels::buffer::PixelSliceMut<'b>, zenpixels::sample::exact::ExactDepth), whereat::at::At<codes::CodesError>>
 pub mod converter
 pub fn converter::RowConverter::compose(&self, &Self) -> core::option::Option<Self>
 pub fn converter::RowConverter::compose_preserving(&self, &Self) -> core::option::Option<Self>
@@ -232,6 +281,7 @@ pub fn OutputPlan::metadata(&self) -> &output::OutputMetadata
 pub fn OutputPlan::new(zenpixels::descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<zenpixels::color::ColorContext>>, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelFormat, &zenpixels::policy::ConvertOptions, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::new_preserving_samples(zenpixels::descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<zenpixels::color::ColorContext>>, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::new_with_descriptor(zenpixels::descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<zenpixels::color::ColorContext>>, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn OutputPlan::output_color_context(&self) -> &alloc::sync::Arc<zenpixels::color::ColorContext>
 pub fn OutputPlan::output_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn OutputPlan::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub mod ycbcr
@@ -385,6 +435,7 @@ pub fn OutputPlan::metadata(&self) -> &output::OutputMetadata
 pub fn OutputPlan::new(zenpixels::descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<zenpixels::color::ColorContext>>, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelFormat, &zenpixels::policy::ConvertOptions, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::new_preserving_samples(zenpixels::descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<zenpixels::color::ColorContext>>, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::new_with_descriptor(zenpixels::descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<zenpixels::color::ColorContext>>, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn OutputPlan::output_color_context(&self) -> &alloc::sync::Arc<zenpixels::color::ColorContext>
 pub fn OutputPlan::output_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn OutputPlan::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 #[non_exhaustive] pub struct Provenance
@@ -472,7 +523,7 @@ pub fn requires_cms(&zenpixels::descriptor::PixelDescriptor, &zenpixels::descrip
 pub fn try_adapt_in_place(&mut zenpixels::buffer::PixelBuffer, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: adapt]
 pub type GamutMatrix = [[f32; 3]; 3] [also: gamut]
 
-## trait impls (26 types)
+## trait impls (30 types)
 
 ConversionCost: Add, Clone, Copy, Debug, Default, Eq, PartialEq
 ConvertIntent: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -484,6 +535,10 @@ adapt::Adapted<'a>: Clone, Debug
 cms::CmsPluginError: Debug, Display, Error, PartialEq
 cms::ColorPriority: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 cms::RenderingIntent: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+codes::CodeMap: Clone, Copy, Debug, Eq, PartialEq
+codes::CodeMapError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+codes::CodeRole: Clone, Copy, Debug, Eq, Hash, PartialEq
+codes::CodesError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 converter::RowConverter: Clone
 error::ConvertError: Clone, Debug, Display, Error, From<zenpixels::buffer::BufferError>, PartialEq
 estimate::ComputeEnvironment: Clone, Copy, Debug, Default, Eq, PartialEq

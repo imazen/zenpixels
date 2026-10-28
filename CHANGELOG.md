@@ -18,6 +18,48 @@
 
 ## [Unreleased]
 
+### Native codes and current-precision evidence
+
+- Add `CodePlane::from_u8_interleaved` / `from_u16_interleaved`, `step_words` and
+  `read_codes`: one borrowed view type for planar, semi-planar (P010/P012 chroma)
+  and interleaved native codes, with checked geometry and row reads. New
+  `CodePlaneError::{ZeroStep, OutsideActivePlane}` variants (non-exhaustive enum).
+  (dfa3a2cd)
+- Add `zenpixels_convert::codes`: `CodeMap` converts one component between sample
+  encodings with role- and range-specific exact rules (nearest full scale for
+  intensity/alpha, power-of-two anchors for narrow range, full-range chroma depth
+  changes refused); `to_canonical` widens borrowed components into canonical
+  strided U8/U16 rows without allocating.
+  Exhaustive checks show full-range grids nest only when the depth divides (8-bit
+  content at 10 bits changes 252 of 256 levels). (75d2321f)
+- Add `sample::ExactDepth`, bounded evidence that current samples survive
+  re-quantization to a stated depth, carried by `PixelBuffer`/`PixelSlice`. Every
+  mutable accessor, in-place transform, range relabel and parts handoff ends it;
+  views, crops, clones and compaction keep it. (68e463bd) `convert_to` keeps it
+  through identity and sample-preserving conversions and orientation keeps it;
+  other conversions drop it. (22ae2f33) See `docs/sample-precision-evidence.md`.
+- Add `OutputPlan::output_color_context()`: the color context of the rows a plan
+  produces, known before any row and attached as the same `Arc` to every batch.
+  Rebuilding it from `metadata()` and the source's diffuse white is wrong for PQ
+  to linear output. (59c7708e)
+- Add `ExactDepth::measure`, the explicit scan (moved from the unreleased
+  `codes::measure_exact_depth`, kept as a deprecated forwarding wrapper; the scan
+  now skips RGBX/BGRX padding slots), and
+  `ExactDepth::holds_for`, which checks stated evidence against rows written
+  elsewhere, such as a row driver's strips. Both read only active samples and
+  allocate nothing. (9b7e77ee)
+- `convert_to` never carries `ExactDepth` across a narrow-range depth change or a
+  range crossing; both are refused today, and a regression test on narrow
+  descriptors pins that. (0d231160)
+
+### Provenance and effective_bits documentation
+
+- Document `Provenance` as ancestry, not current precision: it scores a return to
+  the origin depth as free, which understates the rounding after a resize or
+  filter. Document `effective_bits` for RGB rebuilt from 10-bit YCbCr as a cost
+  estimate, not a 10-bit grid. Docs and test comments only; no behavior change.
+  (ccf5fce8)
+
 ### Unclipped Gamma22 execution
 
 - Honor `clip_out_of_gamut(false)` in F32 Gamma22 transfer steps. Preserve

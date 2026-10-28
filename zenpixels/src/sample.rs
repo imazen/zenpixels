@@ -7,6 +7,10 @@
 //! its storage and obtain component roles, range and color from its enclosing
 //! signal. Original source precision is separate provenance.
 //!
+//! [`ExactDepth`] is different from both: evidence that the *current* samples
+//! of an ordinary U8/U16 image survive re-quantization to a lower depth. Native
+//! codes become canonical samples through `zenpixels_convert::codes`.
+//!
 //! Typed words use native endianness. A byte-backed adapter must decode its
 //! declared byte order before applying the bit placement. Packed words holding
 //! multiple components, signed integers and floating point are not described
@@ -15,7 +19,9 @@
 use crate::ChannelType;
 use core::fmt;
 
+mod exact;
 mod plane;
+pub use exact::{ExactDepth, ExactDepthError};
 pub use plane::{ChromaSiting, ChromaSubsampling, CodePlane, CodePlaneError};
 
 /// Checked interpretation of one unsigned integer component in a storage word.
