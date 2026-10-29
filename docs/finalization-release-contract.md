@@ -202,3 +202,20 @@ GIF package identity changes; no other packages change. These are compile and
 specified runtime controls, not comprehensive codec/application qualification.
 Platform/MSRV checks, additional runtime profiles and publication remain open.
 This record does not authorize publishing either package.
+
+### Backport inventory
+
+PR90 head `ba031ed5`'s ICC generator, colorimetry implementation, profile lookup,
+bundle reader/index/data and independent colorimetry tests are byte-identical
+to this reconciled candidate. Its generator README has additional later
+material in the candidate. This establishes inclusion of that backport's
+implementation; PR90 still targets the older `release/0.3.1` branch and is not
+independent missing implementation work. PR82's checked-CICP tests, output
+current-color tests and compatibility checks are also present unchanged;
+its implementation files have subsequent changes requiring semantic review.
+
+Consumer CI follow-through: zengif `a258e93c` fixes the new test fixture's use
+of a convenience constructor absent from its older pin, and aligns the separate
+fuzz-root pixel patch. All original pixel assertions are retained. Its actual
+pinned graph passes 45 adapter tests, strict lib Clippy and all fuzz-target
+compilation. No runtime codec implementation changed in that follow-up.
