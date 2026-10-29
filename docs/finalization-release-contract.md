@@ -166,3 +166,60 @@ The [checked color boundary follow-up](frame-interpretation-contract.md) replace
 errors. It separates implemented core/converter changes from the pending
 zencodec consumer migration. Reader orchestration belongs in zencodecs; the
 native media reference is deferred design, not a new release requirement.
+
+## Reconciliation with current precision/output plans (2026-10-29)
+
+The release merge retains main `7d28c4b7` (same tree as the qualified precision
+pin `283655c5`) and the retirement stack `4d41ed8a`. Current `OutputPlan`
+execution, native code placement, `ExactDepth` verification and wider sample
+storage remain present. Four obsolete `OutputMetadata::hdr` initializers were
+removed from the newer planner; no color or pixel algorithm was replaced with
+the older finalizer. The retired lossy CICP projection is absent while the
+current checked `try_to_descriptor` remains.
+
+Workspace all-target/all-feature checking, 1,450 tests (49 ignored), and strict
+Clippy pass after the final unused CICP-wrapper removal (rc0, 56 seconds,
+peak RSS 2.64 GiB under the 3 GiB wrapper). The final removal also passes all 192 downstream negative/positive probes across default/no-default
+and compatibility-feature settings. API snapshots were regenerated and checked;
+all-feature Rustdoc passes with warnings denied. Original failures are retained.
+The Gamma22 numerical/stride tests are unchanged; its retired-estimator check
+now requires downstream compilation to fail rather than calling a removed API.
+
+The core consumer trial resolves exactly one `zenpixels 0.3.1` and one
+`zenpixels-convert 0.3.1`, changing only those two packages from its committed
+lock. It exposed one zencodec call to the removed ambiguous color constructor;
+the authority-preserving migration landed in zencodec `012ee3d9`. Full core
+workspace tests and strict Clippy pass on the candidate. The native JPEG policy
+harness passes 55 controls with its pinned JPEG/PNG/UltraHDR/zencodecs stack.
+
+The full zencodecs API profile initially exposed four retired `into_vec` calls
+in GIF. Zengif `67a7e5f3` replaces those with explicit active-pixel packing,
+offset handling and preserved color context; 45 adapter controls and strict
+Clippy pass on both pixel versions. With that fix, the full codec API profile
+and strict Clippy pass, as does zenpipe's Tokio/job/JPEG/PNG/GIF/WebP/filter
+compilation. The lock audit permits exactly the four core, two pixel and one
+GIF package identity changes; no other packages change. These are compile and
+specified runtime controls, not comprehensive codec/application qualification.
+Platform/MSRV checks, additional runtime profiles and publication remain open.
+This record does not authorize publishing either package.
+
+### Backport inventory
+
+PR90 head `ba031ed5`'s ICC generator, colorimetry implementation, profile lookup,
+bundle reader/index/data and independent colorimetry tests are byte-identical
+to this reconciled candidate. Its generator README has additional later
+material in the candidate. This establishes inclusion of that backport's
+implementation; PR90 still targets the older `release/0.3.1` branch and is not
+independent missing implementation work. PR82's checked-CICP tests, output
+current-color tests and compatibility checks are also present unchanged;
+the `CicpDescriptorError` enum, `Cicp::try_to_descriptor` function and finalizer
+`descriptor_for_profile` function are byte-identical to PR82. Other differences
+are later matrix-resolution APIs and output-plan error variants. The deprecated
+lossy projection remains absent. No checked-projection behavior from PR82 is
+missing in this candidate.
+
+Consumer CI follow-through: zengif `a258e93c` fixes the new test fixture's use
+of a convenience constructor absent from its older pin, and aligns the separate
+fuzz-root pixel patch. All original pixel assertions are retained. Its actual
+pinned graph passes 45 adapter tests, strict lib Clippy and all fuzz-target
+compilation. No runtime codec implementation changed in that follow-up.

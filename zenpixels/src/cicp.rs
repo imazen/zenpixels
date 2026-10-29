@@ -279,34 +279,6 @@ impl Cicp {
         }
     }
 
-    /// Convert to a [`PixelDescriptor`] with the given
-    /// [`PixelFormat`].
-    ///
-    /// Maps the CICP code points to the corresponding enum variants.
-    /// Unmapped codes become `Unknown`.
-    #[deprecated(
-        since = "0.2.17",
-        note = "use try_to_descriptor for already-RGB/gray samples; reconstruct native components before declaring their RGB output"
-    )]
-    pub fn to_descriptor(&self, format: crate::PixelFormat) -> crate::PixelDescriptor {
-        let transfer = self.transfer_function_enum();
-        let primaries = self.color_primaries_enum();
-        let signal_range = if self.full_range {
-            crate::SignalRange::Full
-        } else {
-            crate::SignalRange::Narrow
-        };
-        // RGBX/BGRX carry an undefined padding lane, not straight alpha.
-        let alpha = format.default_alpha();
-        crate::PixelDescriptor {
-            format,
-            transfer,
-            alpha,
-            primaries,
-            signal_range,
-        }
-    }
-
     /// Describe already-RGB/gray samples without discarding CICP meaning.
     ///
     /// Requires identity matrix, an RGB/gray format, and primaries/transfer

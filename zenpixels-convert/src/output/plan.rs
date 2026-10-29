@@ -228,12 +228,10 @@ impl OutputPlan {
                     _ => Arc::from(*icc),
                 }),
                 cicp: None,
-                hdr: None,
             },
             crate::ColorProfileSource::Cicp(cicp) => OutputMetadata {
                 icc: None,
                 cicp: Some(*cicp),
-                hdr: None,
             },
             _ => {
                 let (p, t) = target_profile.resolve().ok_or_else(|| {
@@ -246,7 +244,6 @@ impl OutputPlan {
                     OutputMetadata {
                         icc: None,
                         cicp: None,
-                        hdr: None,
                     }
                 } else if let (Some(p), Some(t)) = (p.to_cicp(), t.to_cicp()) {
                     OutputMetadata {
@@ -257,7 +254,6 @@ impl OutputPlan {
                             0,
                             target_desc_full.signal_range == crate::SignalRange::Full,
                         )),
-                        hdr: None,
                     }
                 } else {
                     return Err(whereat::at!(ConvertError::NeedsCms {
