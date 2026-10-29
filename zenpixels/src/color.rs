@@ -368,23 +368,6 @@ impl ColorContext {
         self
     }
 
-    /// Create from both ICC and CICP.
-    ///
-    /// **Deprecated:** Codecs should populate only the authoritative field —
-    /// use [`from_icc()`](Self::from_icc) or [`from_cicp()`](Self::from_cicp).
-    /// Roundtrip metadata belongs on [`ColorOrigin`], not `ColorContext`.
-    #[deprecated(
-        since = "0.2.6",
-        note = "use from_icc() or from_cicp(); roundtrip metadata belongs on ColorOrigin"
-    )]
-    pub fn from_icc_and_cicp(icc: impl Into<Arc<[u8]>>, cicp: Cicp) -> Self {
-        Self {
-            icc: Some(icc.into()),
-            cicp: Some(cicp),
-            diffuse_white: None,
-        }
-    }
-
     /// Get a [`ColorProfileSource`] reference for CMS integration.
     ///
     /// Returns ICC if present, otherwise CICP. Returns `None` when neither
@@ -592,7 +575,7 @@ mod tests {
     #[allow(deprecated)]
     fn color_context_profile_source_prefers_icc() {
         // When both are present, ICC wins (codecs should avoid this case)
-        let ctx = ColorContext::from_icc_and_cicp(vec![1, 2, 3], Cicp::SRGB);
+        let ctx = ColorContext::from_icc(vec![1, 2, 3]).with_cicp(Cicp::SRGB);
         let src = ctx.as_profile_source().unwrap();
         assert_eq!(src, ColorProfileSource::Icc(&[1, 2, 3]));
     }
@@ -628,7 +611,7 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn color_context_from_icc_and_cicp() {
-        let ctx = ColorContext::from_icc_and_cicp(vec![1, 2], Cicp::BT2100_PQ);
+        let ctx = ColorContext::from_icc(vec![1, 2]).with_cicp(Cicp::BT2100_PQ);
         assert!(ctx.icc.is_some());
         assert_eq!(ctx.cicp, Some(Cicp::BT2100_PQ));
     }

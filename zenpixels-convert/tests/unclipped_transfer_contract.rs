@@ -123,18 +123,5 @@ fn extended_gamma_preserves_in_range_results_alpha_padding_and_row_partitions() 
     }
 }
 
-#[test]
-#[allow(deprecated)] // New uncalibrated paths must not invent retired timing estimates.
-fn extended_gamma_has_no_fabricated_resource_estimate() {
-    let from = PixelDescriptor::RGBF32_LINEAR;
-    let to = from.with_transfer(TransferFunction::Gamma22);
-    let plan = zenpixels_convert::ConvertPlan::new_explicit(
-        from,
-        to,
-        &ConvertOptions::retain_channels().with_clip_out_of_gamut(false),
-    )
-    .unwrap();
-    let estimate = plan.estimate(5, 3);
-    assert_eq!(estimate.wall_ms(), None);
-    assert_eq!(estimate.peak_memory_bytes_est(), None);
-}
+// Retired estimation is checked by the downstream extended_gamma_estimate
+// compile-failure probe; pixel and stride assertions above remain unchanged.

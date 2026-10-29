@@ -296,3 +296,9 @@ output-plan-sync export: (prepared-sync export)
 unclipped-transfer-check:
     cargo test -p zenpixels-convert --test unclipped_transfer_contract --test gamma22_transfer --test transfer_alpha --features __trace_ops --locked
     cargo clippy -p zenpixels-convert --lib --test unclipped_transfer_contract --features __trace_ops --locked -- -D warnings
+
+# Qualify the 0.3 retirement merged with current output and precision contracts.
+release-reconcile-check:
+    cargo check --workspace --all-targets --all-features --locked
+    cargo test --workspace --all-features --locked
+    cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
