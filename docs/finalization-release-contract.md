@@ -212,7 +212,11 @@ material in the candidate. This establishes inclusion of that backport's
 implementation; PR90 still targets the older `release/0.3.1` branch and is not
 independent missing implementation work. PR82's checked-CICP tests, output
 current-color tests and compatibility checks are also present unchanged;
-its implementation files have subsequent changes requiring semantic review.
+the `CicpDescriptorError` enum, `Cicp::try_to_descriptor` function and finalizer
+`descriptor_for_profile` function are byte-identical to PR82. Other differences
+are later matrix-resolution APIs and output-plan error variants. The deprecated
+lossy projection remains absent. No checked-projection behavior from PR82 is
+missing in this candidate.
 
 Consumer CI follow-through: zengif `a258e93c` fixes the new test fixture's use
 of a convenience constructor absent from its older pin, and aligns the separate
