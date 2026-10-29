@@ -442,7 +442,7 @@ Warnings require working replacements; 0.3 removals require tested migrations.
 | Surface | 0.2 action | 0.3 disposition |
 |---|---|---|
 | `requires_cms` | **Done:** deprecate | Private internal predicate only |
-| `estimate`, estimator root types, plan methods | **Done:** conditional warnings / opt-in | Require `estimation-experimental`; opted-in source unchanged |
+| `estimate`, estimator root types, plan methods | **Done:** conditional warnings / opt-in | Remove estimation APIs; retain `estimation-experimental` as a no-op compatibility feature |
 | `Adapted`, its methods, three non-cow adapters | Keep warnings; complete cow semantic parity | Remove deprecated family after parity |
 | `into_vec` | Complete ownership replacement, then warn | Remove if migrated |
 | Typed-preserving `reinterpret` | Add checked erased/retyped route, then warn | Remove old contradictory contract |

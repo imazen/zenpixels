@@ -42,10 +42,11 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
 - Remove `PixelBuffer::into_vec`; use `into_parts` to retain offset/stride/context.
 - Remove ambiguous `ColorContext::from_icc_and_cicp`; select current authority
   explicitly. `ColorOrigin` may still retain both original metadata fields.
-- Require `estimation-experimental` for estimation APIs; opted-in signatures
-  stay unchanged. All existing Cargo feature spellings remain accepted.
-- Keep open traits, legacy CMS methods/finalizer and existing conversion imports
-  where migration is not complete. No new trait restrictions or default flips.
+- Remove estimation APIs, including with `estimation-experimental` enabled;
+  retain that feature name as a no-op compatibility flag.
+- Seal concrete-type conversion extension traits and `CllMeasure`; keep `Pixel`
+  and CMS plugin traits open. Legacy CMS methods/finalizer remain where migration
+  is incomplete.
 - Both converter versions accept core `>=0.2.17, <0.4.0`; a connected pipeline
   must resolve one core version. Candidate archives are tested before publishing.
 

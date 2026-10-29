@@ -4,8 +4,9 @@
 
 > **0.3.1 candidate:** migrated source uses the same APIs as the 0.2.17 bridge.
 > The deprecated packed adapters, planar API, `requires_cms`, `into_vec`, and
-> ambiguous context constructor are removed; estimation now requires its feature.
-> Feature spellings and established open traits remain available.
+> ambiguous context constructor and estimation APIs are removed. Compatibility
+> feature names remain accepted as no-ops. Concrete-type conversion extension
+> traits and `CllMeasure` are sealed; `Pixel` and CMS plugin traits remain open.
 
 Pixel format types and transfer-function-aware conversion for Rust image codecs.
 
@@ -16,6 +17,14 @@ Pixel format types and transfer-function-aware conversion for Rust image codecs.
 > [status ledger](docs/implementation-status-0.2-and-0.3.md) for exact scope and
 > release gates. The install versions below remain the published versions.
 
+See the [finalization/release contract](docs/finalization-release-contract.md)
+and the [interactive color & sample explorer](docs/color-explorer/index.html).
+Estimation is retired in both release plans; the 0.2 feature no longer suppresses warnings.
+
+Native codec planes can now carry a checked
+[`sample::SampleEncoding`](docs/sample-encoding-contract.md): storage width,
+code depth and bit placement remain explicit. This additive bridge preserves
+the existing RGB/gray U16 domain while the media APIs are validated in zenmedia.
 
 A JPEG decoder might produce `RGB8` in sRGB; an AVIF decoder might produce full-range `RGBA16` in BT.2020 PQ. Other profiles and native 10/12-bit video codes need their actual signaling. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
 

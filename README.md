@@ -2,8 +2,9 @@
 
 > **0.3.1 candidate:** migrated source uses the same APIs as the 0.2.17 bridge.
 > The deprecated packed adapters, planar API, `requires_cms`, `into_vec`, and
-> ambiguous context constructor are removed; estimation now requires its feature.
-> Feature spellings and established open traits remain available.
+> ambiguous context constructor and estimation APIs are removed. Compatibility
+> feature names remain accepted as no-ops. Concrete-type conversion extension
+> traits and `CllMeasure` are sealed; `Pixel` and CMS plugin traits remain open.
 
 Pixel format types and transfer-function-aware conversion for Rust image codecs.
 

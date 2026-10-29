@@ -9,7 +9,7 @@ pushing or publishing still follows the user's instructions for that action.
 
 **Every public item in zenpixels is forever. Treat each `pub` as a load-bearing external commitment.**
 
-zenpixels is the foundational crate of the zen ecosystem — zencodec, zenpipe, imageflow, and every codec depend on it directly or transitively. Once a type, function, method, field, enum variant, trait method, or feature flag is `pub`, removing or renaming it requires a 0.3.0 bump (see below), and that break ripples through every downstream. We have deliberately chosen to avoid 0.3.0 indefinitely. The practical consequence: **public items added speculatively cannot be taken back.**
+zenpixels is the foundational crate of the zen ecosystem — zencodec, zenpipe, imageflow, and every codec depend on it directly or transitively. Once a type, function, method, field, enum variant, trait method, or feature flag is `pub`, removing or renaming it requires a 0.3.0 bump (see below), and that break ripples through every downstream. The owner approved the paired 0.3.1 breaking release; see `docs/release-plan-0.2.17-and-0.3.1.md`. The older indefinite 0.3 avoidance policy no longer applies. The practical consequence: **public items added speculatively cannot be taken back.**
 
 ### Rules for new public API
 
