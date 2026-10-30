@@ -29,6 +29,8 @@ bytemuck = { version = "1.18.0", optional = true }
 # fine here (this is a host build tool); `safe-encode`/`safe-decode` keep it
 # unsafe-free.
 lz4_flex = { version = "0.14.0", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
+# Pull the HDR-ICC synthesizer under test (hdr_roundtrip) from zenpixels-convert.
+zenpixels-convert = { path = "../../zenpixels-convert", features = ["cms-moxcms"] }
 
 # Default binary: the ICC hash-table generator (src/main.rs).
 [[bin]]
@@ -39,3 +41,11 @@ path = "src/main.rs"
 [[bin]]
 name = "cicp_bundle_gen"
 path = "src/bin/cicp_bundle_gen.rs"
+
+# Validation tool: does moxcms-synthesized HDR (PQ/HLG) ICC round-trip
+# through lcms2 to acceptable precision? Reuses the lcms2 build graph
+# (gated on `lcms2-crosscheck`, default-on). Run with `--bin hdr_roundtrip`.
+[[bin]]
+name = "hdr_roundtrip"
+path = "src/bin/hdr_roundtrip.rs"
+required-features = ["lcms2-crosscheck"]
