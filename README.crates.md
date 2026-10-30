@@ -13,16 +13,18 @@ Pixel format types and transfer-function-aware conversion for Rust image codecs.
 > **Unreleased bridge work (2026-09-27):** checked storage/ownership,
 > prepared and fallible conversion, alpha/output fixes, explicit preserved-stage
 > composition and fused U16 analysis are implemented. See the
-> [migration examples](docs/implemented-bridge-contracts.md) and
-> [status ledger](docs/implementation-status-0.2-and-0.3.md) for exact scope and
-> release gates. The install versions below remain the published versions.
+> [migration examples](https://github.com/imazen/zenpixels/blob/main/docs/implemented-bridge-contracts.md) and
+> [status ledger](https://github.com/imazen/zenpixels/blob/main/docs/implementation-status-0.2-and-0.3.md) for exact scope and
+> release gates. The install snippets target this 0.3.1 candidate; publication still requires
+> release approval. For the currently published API, use the
+> [0.2.16 reference](https://docs.rs/zenpixels/0.2.16/zenpixels/).
 
-See the [finalization/release contract](docs/finalization-release-contract.md)
-and the [interactive color & sample explorer](docs/color-explorer/index.html).
+See the [finalization/release contract](https://github.com/imazen/zenpixels/blob/main/docs/finalization-release-contract.md)
+and the [interactive color & sample explorer](https://github.com/imazen/zenpixels/blob/main/docs/color-explorer/index.html).
 Estimation is retired in both release plans; the 0.2 feature no longer suppresses warnings.
 
 Native codec planes can now carry a checked
-[`sample::SampleEncoding`](docs/sample-encoding-contract.md): storage width,
+[`sample::SampleEncoding`](https://github.com/imazen/zenpixels/blob/main/docs/sample-encoding-contract.md): storage width,
 code depth and bit placement remain explicit. This additive bridge preserves
 the existing RGB/gray U16 domain while the media APIs are validated in zenmedia.
 
@@ -34,10 +36,10 @@ Two crates: **zenpixels** (types, buffers, metadata) and **zenpixels-convert** (
 
 ```toml
 # Types only — for codec crates
-zenpixels = "0.2.16"
+zenpixels = "0.3.1"
 
 # Types + conversion — for processing pipelines
-zenpixels-convert = "0.2.16"
+zenpixels-convert = "0.3.1"
 ```
 
 Full-range U8↔U16 conversion uses exact endpoint scaling and nearest narrowing.
@@ -49,9 +51,9 @@ introduced by this refusal guard.
 ## Quick start
 
 > **Review:** Typed layout does not establish color interpretation.
-> `with_descriptor` declares semantics without converting samples; `into_vec`
+> `with_descriptor` declares semantics without converting samples; the retired `into_vec`
 > loses layout/context. Use destructurable, zero-copy `into_parts()` for ownership
-> handoff. [Details](docs/readme-contract-review.md#introduction-and-quick-start).
+> handoff. [Details](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#introduction-and-quick-start).
 
 `zenpixels` gives you a [`PixelBuffer`] that carries its [`PixelDescriptor`]
 (format + color semantics) so the bytes never travel without a description of
@@ -167,7 +169,7 @@ returning `At<BufferError>` (`InsufficientData` / `StrideTooSmall` /
 > **Review:** This descriptor-only example does not resolve attached ICC/context.
 > The unreleased bridge now prepares a fallible worker once, with explicit policy and
 > checked execution capacity. The custom-ICC example below does
-> not itself supply ICC bytes. [Conversion/CMS review](docs/readme-contract-review.md#conversion-examples-and-cms).
+> not itself supply ICC bytes. [Conversion/CMS review](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#conversion-examples-and-cms).
 
 ```rust
 use zenpixels::PixelBuffer;
@@ -302,7 +304,7 @@ Every buffer carries one. Every codec declares which ones it produces and consum
 > **Review:** Current encoding, attached profiles and source provenance need an
 > explicit authority rule. Re-embedding an original profile may require converting
 > pixels back to it. ICC synthesis alone does not perform YCbCr conversion.
-> [Descriptor/context review](docs/readme-contract-review.md#descriptors-icc-cicp-and-provenance).
+> [Descriptor/context review](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#descriptors-icc-cicp-and-provenance).
 
 `Cicp` carries ITU-T H.273 code points (used by AVIF, HEIF, JPEG XL, AV1). Named constants for `SRGB`, `DISPLAY_P3`, `BT2100_PQ`, `BT2100_HLG`. Human-readable name lookups via `color_primaries_name()` etc.
 
@@ -412,7 +414,7 @@ the descriptor is a small `Copy` struct, so read its fields freely
 ### Allocation
 
 > **Review:** Constructor checks need the geometry/empty-view repairs described in
-> the [buffer review](docs/readme-contract-review.md#wrapping-borrowing-and-buffer-access).
+> the [buffer review](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#wrapping-borrowing-and-buffer-access).
 > Parts extraction and checked strided ownership adoption are implemented.
 
 `PixelBuffer::new(w, h, desc)` / `try_new()` allocate a zero-filled buffer with
@@ -432,7 +434,7 @@ allocation for pool reuse and discards layout/color information.
 > **Review:** The guarantees in this section need narrowing: arbitrary transforms
 > are not transactional; known color changes cannot be mere retags; rectangular
 > in-place transpose allocates a visited array. Avoiding a second pixel buffer is
-> not allocation-free. [In-place review](docs/readme-contract-review.md#orientation-and-in-place-operations).
+> not allocation-free. [In-place review](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#orientation-and-in-place-operations).
 
 Layout-changing in-place work goes through one atomic primitive:
 `PixelBuffer::transform_in_place` runs a transform over the buffer's own
@@ -489,7 +491,7 @@ Three entry points: `best_match()` (simple), `best_match_with()` (with consumer 
 > **Review:** This is an intended guarantee, not fully enforced today.
 > `forbid_lossy` still allows clipping, provenance alone cannot prove sample
 > preservation, and output metadata can disagree with converted pixels.
-> [Preservation/output/HDR changes](docs/readme-contract-review.md#negotiation-preservation-output-and-hdr).
+> [Preservation/output/HDR changes](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#negotiation-preservation-output-and-hdr).
 
 Every operation that destroys information requires an explicit policy via `ConvertOptions`:
 
@@ -534,13 +536,13 @@ consumers can retain their feature lists across versions. No replacement video
 carrier is published in this release.
 
 Zenfilters uses its own `PlaneMask` and `OklabPlanes` on the companion migration
-branch. See the [code review](docs/code-review-0.2-and-0.3.md) for video requirements.
+branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs/code-review-0.2-and-0.3.md) for video requirements.
 
 ## Features
 
 > **Review:** Historical removal queues below do not supersede the proposed
 > common-source contract. Preserve recognized feature names/stubs and test both
-> release lines. [Features, docs.rs and compilation review](docs/readme-contract-review.md#features-docsrs-build-time-and-remaining-sections).
+> release lines. [Features, docs.rs and compilation review](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#features-docsrs-build-time-and-remaining-sections).
 
 ### zenpixels
 

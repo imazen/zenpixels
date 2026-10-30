@@ -4,7 +4,7 @@
 
 Transfer-function-aware pixel conversion, gamut mapping, and codec format negotiation for Rust image pipelines.
 
-A JPEG decoder gives you `RGB8` in sRGB. An AVIF decoder gives you `RGBA16` in BT.2020 PQ. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
+A JPEG decoder may produce `RGB8` in sRGB; an AVIF decoder may produce full-range `RGBA16` in BT.2020 PQ. Other native code depths and color signaling remain explicit. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
 
 `zenpixels-convert` is the math half of the [`zenpixels`](https://crates.io/crates/zenpixels) ecosystem. `zenpixels` carries the format/color types ([`PixelBuffer`], [`PixelDescriptor`], [`PixelFormat`], `TransferFunction`, `ColorPrimaries`, `ColorContext`); this crate handles transfer functions, gamut matrices, depth scaling, alpha compositing, format negotiation, and HDR tone mapping so codecs don't have to. It **re-exports everything from `zenpixels`** at its crate root, so downstream pipelines can depend on `zenpixels-convert` alone.
 
@@ -12,25 +12,28 @@ A JPEG decoder gives you `RGB8` in sRGB. An AVIF decoder gives you `RGBA16` in B
 
 ## Install
 
+These snippets target the unpublished 0.3.1 candidate described here. For the
+currently published API, see the [0.2.16 reference](https://docs.rs/zenpixels-convert/0.2.16/zenpixels_convert/).
+
 ```toml
 [dependencies]
-zenpixels-convert = "0.2.16"
+zenpixels-convert = "0.3.1"
 ```
 
 Common feature combinations:
 
 ```toml
 # Plus the rgb crate's typed buffers and convenience methods
-zenpixels-convert = { version = "0.2.16", features = ["rgb"] }
+zenpixels-convert = { version = "0.3.1", features = ["rgb"] }
 
 # Plus a pluggable CMS backend (moxcms) for arbitrary ICC profiles
-zenpixels-convert = { version = "0.2.16", features = ["cms-moxcms"] }
+zenpixels-convert = { version = "0.3.1", features = ["cms-moxcms"] }
 
 # Plus the experimental HDR→SDR display-mapping surface
-zenpixels-convert = { version = "0.2.16", features = ["hdr-experimental"] }
+zenpixels-convert = { version = "0.3.1", features = ["hdr-experimental"] }
 
 # Size-sensitive / wasm builds (drops the bundled CICP->ICC database)
-zenpixels-convert = { version = "0.2.16", default-features = false, features = ["std"] }
+zenpixels-convert = { version = "0.3.1", default-features = false, features = ["std"] }
 ```
 
 ## Quick start
@@ -38,6 +41,11 @@ zenpixels-convert = { version = "0.2.16", default-features = false, features = [
 ### Negotiate a format, then convert row by row
 
 [`best_match`] picks the cheapest target format an encoder supports for a given source descriptor; [`RowConverter`] plans conversion once. On the unreleased bridge, `prepare` reserves scratch and initializes selected tables before fallible execution.
+
+For current ICC/CICP context and matching output signaling, the review branch
+adds `OutputPlan`: prepare from final color facts before pixels arrive, then
+convert into supplied row views. See the
+[output preparation contract](https://github.com/imazen/zenpixels/blob/main/docs/implemented-bridge-contracts.md#output-preparation-added-on-the-review-branch-2026-10-25).
 
 ```rust
 use zenpixels_convert::{RowConverter, best_match, ConvertIntent};
@@ -66,7 +74,7 @@ is required; ordinary row planning refuses `DiscardIfOpaque` without inspecting
 pixels. `ConvertPlan::new_preserving_samples` proves supported exact changes or
 refuses without scanning.
 
-These additions are unreleased. See the [tested bridge examples](../docs/implemented-bridge-contracts.md).
+These additions are unreleased. See the [tested bridge examples](https://github.com/imazen/zenpixels/blob/main/docs/implemented-bridge-contracts.md).
 
 ### Color profile conversion (no CMS needed for named profiles)
 
@@ -211,7 +219,7 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 `zenpixels-convert` is `no_std + alloc` by default-construction (`std` is on by default but everything works without it). For `no_std`, set `default-features = false` and re-enable only what you need (note that `cms-moxcms` requires `std`):
 
 ```toml
-zenpixels-convert = { version = "0.2.16", default-features = false }
+zenpixels-convert = { version = "0.3.1", default-features = false }
 ```
 
 ## MSRV
