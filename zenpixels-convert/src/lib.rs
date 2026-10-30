@@ -524,6 +524,8 @@ pub use ext::PixelBufferConvertTypedExt;
 pub use ext::PixelBufferHdrConvertExt;
 #[doc(inline)]
 pub use ext::{ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
+#[cfg(feature = "image")]
+pub use ext::{DynamicImageExt, ImageBufferExt, PixelBufferImageExt};
 
 // Re-export gamut conversion utilities.
 pub use gamut::{

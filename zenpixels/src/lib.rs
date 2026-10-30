@@ -54,7 +54,7 @@
 //! |---------|----------------|
 //! | `std` | Standard library (default; currently a no-op, everything is `no_std + alloc`) |
 //! | `rgb` | [`Pixel`] impls for `rgb` crate types, typed `from_pixels()` constructors |
-//! | `imgref` | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
+//! | `imgref` | `From<ImgRef>` / `From<ImgVec>` conversions, `to_imgvec()` (implies `rgb`) |
 //! | `planar` | Retained no-op feature spelling; legacy planar API removed |
 
 #![cfg_attr(not(feature = "std"), no_std)]

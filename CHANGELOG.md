@@ -31,6 +31,30 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 # Changelog
 
+## [Unreleased] — after 0.3.1
+
+Additive; intended for a 0.3.x release after 0.3.1 publishes.
+
+### zenpixels — added
+
+- Add `PixelBuffer::to_imgvec` as the owned, de-striding counterpart to
+  `try_as_imgref`.
+
+### zenpixels-convert — added (`image` interop)
+
+- Add the opt-in `image` feature with `ImageBufferExt`, `DynamicImageExt`, and
+  `PixelBufferImageExt`. The bridge stays here so `zenpixels` gains no
+  dependency. Eight-bit owned inputs reuse their allocation, borrowed inputs
+  remain zero-copy, and wide-channel paths copy directly into one correctly
+  aligned final allocation. `to_dynamic_image` preserves supported formats;
+  `to_image_rgb8` / `to_image_rgba8` perform color and format conversion. Their
+  output reuses the converted allocation (rows packed in place); no second
+  allocation.
+
+### Workspace — CI
+
+- Run the opt-in image interoperability suite explicitly.
+
 ## [0.3.1] — unreleased candidate
 
 Built on the 0.2.17 bridge, with identical migrated signatures and feature names.

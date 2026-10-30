@@ -457,7 +457,14 @@ scan) so encoders can route formats without rewriting anything.
 
 ### Interop
 
-With `imgref` feature: `From<ImgRef<P>>`, `From<ImgVec<P>>`, `as_imgref()`, `try_as_imgref::<P>()` and mutable counterparts. With `rgb` feature: `Pixel` impls for `Rgb<u8>`, `Rgba<u8>`, `Gray<u8>`, `BGRA<u8>`, and their `u16`/`f32` variants.
+With `rgb` feature: `Pixel` impls for `Rgb<u8>`, `Rgba<u8>`, `Gray<u8>`, `BGRA<u8>`, and their `u16`/`f32` variants.
+
+With `imgref` feature: `From<ImgRef<P>>`, `From<ImgVec<P>>`, `as_imgref()`, `try_as_imgref::<P>()`, `to_imgvec::<P>()` and mutable counterparts.
+
+`image`-crate interop lives in `zenpixels-convert` so the dependency does not
+enter this foundation crate. Its opt-in `image` feature provides fallible
+owned/borrowed adapters, format-preserving `to_dynamic_image`, and converting
+`to_image_rgb8` / `to_image_rgba8` helpers.
 
 ## Conversion
 
@@ -551,7 +558,7 @@ branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs
 | `std` | yes | Standard library (currently a no-op; everything is `no_std + alloc`) |
 | `icc` | yes | `icc` module — hash-based ICC profile identification (~100ns) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed `from_pixels()` constructors |
-| `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
+| `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions, `to_imgvec()` (implies `rgb`) |
 | `planar` | | Retained no-op feature; legacy planar API removed |
 | `serde` | | No-op stub (soft-removed in 0.2.16, queued for removal); previously added `Serialize`/`Deserialize` derives on the core types — a workspace-wide sweep found zero consumers |
 
@@ -565,6 +572,7 @@ branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs
 | `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed convenience methods (`to_rgb8()`, `to_rgba8()`, etc.) |
 | `imgref` | | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
+| `image` | | `PixelBufferImageExt` (`to_image_rgb8()`/`to_image_rgba8()`) converting helpers to the [`image`](https://crates.io/crates/image) crate (implies `std`) |
 | `planar` | | Retained no-op feature; legacy planar API removed |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
 | `estimation-experimental` | | Compatibility feature only; estimation is deprecated in 0.2 and absent in 0.3 |

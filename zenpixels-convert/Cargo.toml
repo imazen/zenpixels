@@ -49,6 +49,11 @@ std = ["zenpixels/std", "linear-srgb/std", "garb/std"]
 # memory-bound by 12MP). Output is bit-identical. Default-on is queued for 0.3.0;
 # see benchmarks/orient_fast_transpose_2026-06-18.md + orient/{pxn_x86,pxn_neon,rgb3_x86}.rs.
 fast-transpose = []
+# `image`-crate interop: owned/borrowed input adapters plus
+# `PixelBufferImageExt` output helpers.
+# Implies `std` (the `image` crate is std-only). MSRV for this feature is the
+# `image` crate's 1.88, which is below this crate's own 1.89 MSRV.
+image = ["dep:image", "std"]
 # Unlocks the f16 16-wide AVX-512F summon-up inside the V3 `F16Convert` slice
 # entry (magetypes' `avx512` kernels are cfg-gated on this; it transitively
 # brings `archmage/avx512` for the V4 token tier). The f16 forwarders in
@@ -139,6 +144,8 @@ whereat = { version = "0.1.5", default-features = false }
 # reconstructs version-agnostically (see `cms_moxcms::moxcms_d50_xyz`). `<0.10`
 # excludes the next untested minor.
 moxcms = { version = ">=0.8.1, <0.10", optional = true, features = ["options", "extended_range"] }
+# Core types only — codecs and I/O remain disabled.
+image = { version = "0.25.10", default-features = false, optional = true }
 
 [dev-dependencies]
 zenpixels = { workspace = true, features = ["planar", "imgref"] }
@@ -159,6 +166,8 @@ archmage = { version = ">=0.9.28, <=0.9.31-beta.1", features = ["testable_dispat
 # Dev-only: cross-validate our local f16 impl (src/f16_scalar.rs) and drive
 # the perceptual-loss test suite, which uses half's f64 conversion paths.
 half = "2.7.1"
+# Dev-only: core types for the `PixelBufferImageExt` round-trip tests.
+image = { version = "0.25.10", default-features = false }
 palette = { version = "0.7", default-features = false, features = ["std", "approx"] }
 # Dev-only: pin the committed CICP bundle blob's sha256 (golden test) so an
 # accidental regen is caught. Not part of the shipped crate.
