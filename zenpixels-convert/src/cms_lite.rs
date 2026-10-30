@@ -40,13 +40,17 @@
 //! ```
 
 use alloc::boxed::Box;
+#[cfg(feature = "std")]
 use alloc::format;
 
+#[cfg(any(feature = "std", test))]
+use crate::Cicp;
+use crate::PixelFormat;
 #[cfg(test)]
 use crate::TransferFunction;
 #[allow(deprecated)]
+#[cfg(feature = "std")]
 use crate::cms::{ColorManagement, RowTransform};
-use crate::{Cicp, PixelFormat};
 
 /// Lightweight CMS using fused SIMD gamut conversion kernels.
 ///
@@ -230,6 +234,21 @@ impl crate::cms::RowTransformMut for LiteTransformMut {
     fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
         self.inner.convert_row(src, dst, width);
     }
+    fn try_transform_row(
+        &mut self,
+        src: &[u8],
+        dst: &mut [u8],
+        width: u32,
+    ) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        self.inner
+            .try_convert_row(src, dst, width)
+            .map_err(|e| whereat::at!(crate::cms::CmsPluginError::new(e)))
+    }
+    fn prepare(&mut self, max_width: u32) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        self.inner
+            .prepare(max_width)
+            .map_err(|e| whereat::at!(crate::cms::CmsPluginError::new(e)))
+    }
 }
 
 impl crate::cms::PluggableCms for ZenCmsLite {
@@ -268,7 +287,7 @@ impl crate::cms::PluggableCms for ZenCmsLite {
         // Decline non-native color models (CMYK today; Lab / XYZ / spot inks
         // when they land). We have no kernels for them — let MoxCms or the
         // user-supplied plugin handle it.
-        if crate::convert::requires_cms(&from, &to) {
+        if crate::convert::needs_cms_for_color_model(&from, &to) {
             return None;
         }
 
@@ -633,7 +652,12 @@ mod accuracy_ground_truth_tests {
         encode: fn(f64) -> f64,
     ) -> Vec<u8> {
         let mut dst = vec![0u8; src.len()];
-        for (s, d) in src.chunks_exact(3).zip(dst.chunks_exact_mut(3)) {
+        for (s, d) in src
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(dst.as_chunks_mut::<3>().0)
+        {
             let r = linearize(s[0] as f64 / 255.0);
             let g = linearize(s[1] as f64 / 255.0);
             let b = linearize(s[2] as f64 / 255.0);

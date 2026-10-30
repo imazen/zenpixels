@@ -15,10 +15,11 @@
 //!   target from a codec's supported formats for a given source descriptor.
 //!
 //! - **Row conversion**: [`RowConverter`] pre-computes a conversion plan and
-//!   converts rows with no per-row allocation, using SIMD where available.
+//!   `prepare` moves scratch/table setup out of the row loop; `try_convert_row`
+//!   executes within that capacity, using SIMD where available.
 //!
-//! - **Codec helpers**: [`adapt::adapt_for_encode`] negotiates format and converts
-//!   pixel data in one call, returning `Cow::Borrowed` when the input
+//! - **Codec helpers**: [`adapt::adapt_for_encode_cow`] negotiates format and converts
+//!   pixel data in one call, returning [`PixelCow::Borrowed`] when the input
 //!   already matches a supported format.
 //!
 //! - **Extension traits**: [`TransferFunctionExt`], [`ColorPrimariesExt`],
@@ -50,13 +51,13 @@
 //!
 //! 4. **Pixels and metadata travel together.** [`ColorContext`] rides on
 //!    [`PixelBuffer`] via `Arc` so ICC/CICP metadata follows pixel data
-//!    through the pipeline. [`finalize_for_output`] couples converted pixels
+//!    through the pipeline. [`finalize_for_output_with`] couples converted pixels
 //!    with matching encoder metadata atomically.
 //!
-//! 5. **Provenance enables lossless round-trips.** The cost model tracks
-//!    where data came from ([`Provenance`]). A JPEG u8 decoded to f32 for
-//!    resize reports zero loss when converting back to u8, because the
-//!    origin precision was u8 all along.
+//! 5. **Provenance informs negotiation, not exactness.** Origin precision is
+//!    a cost-model hint. Edits can create new values; use
+//!    [`ConvertPlan::new_preserving_samples`] for a metadata-proven exact path
+//!    or an explicitly requested content analysis.
 //!
 //! ## The pixel lifecycle
 //!
@@ -86,8 +87,10 @@
 //!
 //! // Extract color metadata for CMS integration
 //! let color_ctx = match (icc_chunk, cicp_chunk) {
-//!     (Some(icc), Some(cicp)) =>
-//!         Some(Arc::new(ColorContext::from_icc_and_cicp(icc, cicp))),
+//!     // This decoder's container gives ICC precedence. Containers with
+//!     // CICP precedence select from_cicp here instead.
+//!     (Some(icc), Some(_)) =>
+//!         Some(Arc::new(ColorContext::from_icc(icc))),
 //!     (Some(icc), None) =>
 //!         Some(Arc::new(ColorContext::from_icc(icc))),
 //!     (None, Some(cicp)) =>
@@ -117,8 +120,10 @@
 //!   not what the pixels are. This is immutable and used only at encode time
 //!   for provenance decisions (e.g., "re-embed the original ICC profile").
 //!
-//! - Set `effective_bits` correctly on `FormatEntry`. A 10-bit AVIF source
-//!   decoded to u16 has `effective_bits = 10`, not 16. A JPEG decoded to f32
+//! - Set `effective_bits` correctly on `FormatEntry`. A 10-bit AVIF decoded
+//!   to 10-bit codes widened into u16 has `effective_bits = 10`, not 16. For
+//!   RGB rebuilt from 10-bit YCbCr, 10 is a cost estimate, not a claim that
+//!   the samples lie on a 10-bit grid. A JPEG decoded to f32
 //!   with debiased dequantization has `effective_bits = 10`. Getting this
 //!   wrong makes the cost model over- or under-value precision.
 //!
@@ -142,10 +147,11 @@
 //!   kernel can advertise `RGBF32_LINEAR` with low consumer cost).
 //!
 //! - **[`negotiate()`](fn@crate::negotiate)**: Full control. Explicit [`Provenance`] (so the cost
-//!   model knows the data's true origin) plus consumer costs. Use this in
+//!   model knows the data's origin) plus consumer costs. Use this in
 //!   processing pipelines where data has been widened from a lower-precision
-//!   source (e.g., JPEG u8 decoded to f32 for resize — provenance says "u8
-//!   origin", so converting back to u8 reports zero loss).
+//!   source (e.g., JPEG u8 decoded to f32: provenance says "u8 origin", so
+//!   converting back to u8 reports zero loss, which understates the rounding
+//!   once a resize or filter has changed the samples).
 //!
 //! ```rust,ignore
 //! // Simple: "what format should I encode to?"
@@ -182,8 +188,8 @@
 //! - Track provenance when data has been widened. If you decoded a JPEG (u8)
 //!   into f32 for processing, tell the cost model via
 //!   `Provenance::with_origin_depth(ChannelType::U8)`. Otherwise it will
-//!   penalize the f32→u8 conversion as lossy when it's actually a lossless
-//!   round-trip.
+//!   rank depth reduction differently. This is a heuristic: after edits,
+//!   narrowing may lose new values regardless of the original depth.
 //!
 //! - If an operation genuinely expands the data's gamut (e.g., saturation
 //!   boost in BT.2020 that pushes colors outside sRGB), call
@@ -196,20 +202,21 @@
 //! Once a target format is chosen, convert pixel data row-by-row.
 //!
 //! ```rust,ignore
-//! let converter = RowConverter::new(source_desc, target_desc)?;
+//! let mut converter = RowConverter::new(source_desc, target_desc)?;
+//! converter.prepare(width)?;
 //! for y in 0..height {
-//!     converter.convert_row(src_row, dst_row, width);
+//!     converter.try_convert_row(src_row, dst_row, width)?;
 //! }
 //! ```
 //!
 //! Or use the convenience function that combines negotiation and conversion:
 //!
 //! ```rust,ignore
-//! let adapted = adapt_for_encode(
+//! let adapted = adapt::adapt_for_encode_cow(
 //!     raw_bytes, descriptor, width, rows, stride,
 //!     &encoder_supported,
 //! )?;
-//! // adapted.data is Cow::Borrowed if no conversion needed
+//! // adapted is PixelCow::Borrowed on equivalent interpretation.
 //! ```
 //!
 //! **Rules for conversion:**
@@ -217,10 +224,10 @@
 //! - Use [`RowConverter`], not hand-rolled conversion. It handles transfer
 //!   functions, gamut matrices, alpha mode changes, depth scaling, Oklab,
 //!   and byte swizzle correctly. It pre-computes the plan so there is
-//!   zero per-row overhead.
+//!   checked row boundaries and no scratch/table allocation within prepared capacity.
 //!
 //! - For policy-sensitive conversions (when you need to control what lossy
-//!   operations are allowed), use [`adapt_for_encode_explicit`] with
+//!   operations are allowed), use [`adapt::adapt_for_encode_explicit_cow`] with
 //!   [`ConvertOptions`]. This validates policies *before* doing work and
 //!   returns specific errors like [`ConvertError::AlphaNotOpaque`] or
 //!   [`ConvertError::DepthReductionForbidden`].
@@ -229,32 +236,33 @@
 //!   (a) Direct SIMD kernels for common pairs (byte swizzle, depth shift,
 //!   transfer LUTs).
 //!   (b) Composed multi-step plans for less common pairs.
-//!   (c) Hub path through linear sRGB f32 as a universal fallback.
+//!   Unsupported routes fail during setup; there is no universal fallback.
 //!
 //! - **Signal range never converts — it refuses.** There are no
 //!   Narrow↔Full (limited↔full / studio↔full swing) conversion kernels, so
 //!   any plan whose endpoints differ in [`SignalRange`] fails with
 //!   [`ConvertError::NoPath`] instead of relabeling unscaled values
-//!   (which would lift or crush blacks). Narrow data passes through only
-//!   verbatim — same range on both sides (value-preserving steps like
-//!   swizzles are fine). If you hit the refusal, either present a
-//!   same-range target or expand the data upstream where the semantics
-//!   are known.
+//!   (which would lift or crush blacks). Narrow-range channel-type changes
+//!   (including U8↔U16) also refuse because existing depth kernels scale the
+//!   full range instead of preserving narrow anchors. These checks run before
+//!   CMS setup too. Same-depth identity and value-preserving layout changes
+//!   remain supported. Use a same-range, same-depth target or explicitly
+//!   convert the signal upstream with a range-aware implementation.
 //!
 //! ### Step 4: Encode
 //!
 //! The encoder receives pixel data in a format it natively supports and
 //! must embed correct color metadata.
 //!
-//! For the atomic path (recommended), use [`finalize_for_output`]:
+//! For the atomic path (recommended), use [`finalize_for_output_with`]:
 //!
 //! ```rust,ignore
-//! let ready = finalize_for_output(
+//! let ready = finalize_for_output_with(
 //!     &buffer,
 //!     &color_origin,
 //!     OutputProfile::SameAsOrigin,
 //!     target_format,
-//!     &cms,
+//!     Some(&cms),
 //! )?;
 //!
 //! // Pixels and metadata are guaranteed to match
@@ -276,7 +284,7 @@
 //!   so negotiation will route f32 data directly to the encoder instead of
 //!   doing a redundant f32→u8 conversion first.
 //!
-//! - Use [`finalize_for_output`] to bundle pixels and metadata atomically.
+//! - Use [`finalize_for_output_with`] to bundle pixels and metadata atomically.
 //!   This prevents the most common color management bug: pixel values that
 //!   don't match the embedded ICC/CICP.
 //!
@@ -291,7 +299,7 @@
 //!   - [`OutputProfile::Named`]: Use a well-known CICP profile (sRGB, P3,
 //!     BT.2020). Uses hardcoded gamut matrices, no CMS needed.
 //!   - [`OutputProfile::Icc`]: Use specific ICC profile bytes. Requires a
-//!     [`ColorManagement`] implementation.
+//!     [`PluggableCms`] implementation.
 //!
 //! ## Format registry
 //!
@@ -341,13 +349,13 @@
 //!
 //! Named profile conversions (sRGB ↔ Display P3 ↔ BT.2020) use hardcoded
 //! 3×3 gamut matrices and need no CMS backend. ICC-to-ICC transforms
-//! require a [`ColorManagement`] implementation, which is a compile-time
-//! feature (e.g., `cms-moxcms`, `cms-lcms2`).
+//! require a [`PluggableCms`] implementation, which is a compile-time
+//! feature (e.g., `cms-moxcms`) or a caller-supplied plugin.
 //!
 //! Codecs that handle ICC profiles must:
 //! 1. Extract ICC bytes on decode and store them on [`ColorContext`].
 //! 2. Record provenance on [`ColorOrigin`].
-//! 3. On encode, let [`finalize_for_output`] handle the ICC transform
+//! 3. On encode, let [`finalize_for_output_with`] handle the ICC transform
 //!    (if the target profile differs from the source) or pass-through
 //!    (if `SameAsOrigin`).
 //!
@@ -365,7 +373,7 @@
 //! - [`ConvertError::DepthReductionForbidden`] — `Forbid` policy prevents
 //!   narrowing (e.g., f32→u8).
 //! - [`ConvertError::AllocationFailed`] — buffer allocation failed (OOM).
-//! - [`ConvertError::CmsError`] — CMS transform failed (invalid ICC profile,
+//! - [`ConvertError::CmsBackend`] — CMS transform failed (invalid ICC profile,
 //!   unsupported color space, etc.).
 //!
 //! Codecs should match on specific variants and return actionable errors
@@ -376,9 +384,9 @@
 //! - [ ] Declare `CodecFormats` with correct `effective_bits` and `can_overshoot`
 //! - [ ] Decode: extract ICC + CICP → [`ColorContext`]
 //! - [ ] Decode: record provenance → [`ColorOrigin`]
-//! - [ ] Encode: negotiate via [`best_match`] or [`adapt::adapt_for_encode`]
+//! - [ ] Encode: negotiate via [`best_match`] or [`adapt::adapt_for_encode_cow`]
 //! - [ ] Encode: convert via [`RowConverter`] (not hand-rolled)
-//! - [ ] Encode: embed metadata via [`finalize_for_output`]
+//! - [ ] Encode: embed metadata via [`finalize_for_output_with`]
 //! - [ ] Encode: embed ICC/CICP when the format supports it
 //! - [ ] Handle [`ConvertError`] variants specifically
 //! - [ ] Test round-trip: native format → encode → decode = lossless
@@ -396,24 +404,15 @@ pub use zenpixels::*;
 
 // Conversion modules.
 pub(crate) mod convert;
+// Only library-owned concrete types implement conversion/measurement extensions.
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for zenpixels::TransferFunction {}
+    impl Sealed for zenpixels::ColorPrimaries {}
+    impl<P> Sealed for zenpixels::PixelBuffer<P> {}
+    impl Sealed for zenpixels::hdr::ContentLightLevel {}
+}
 pub mod error;
-/// Resource estimation — predict peak memory + wall-clock time for a
-/// `ConvertPlan` before running it. See [`ResourceEstimate`],
-/// [`ComputeEnvironment`], [`ImageCharacteristics`],
-/// [`ConvertPlan::estimate`](crate::ConvertPlan::estimate), and
-/// [`ConvertPlan::estimate_in`](crate::ConvertPlan::estimate_in).
-///
-/// These estimate types are defined locally here. `zenpixels-convert`
-/// is a foundation crate and does NOT depend on `zencodec` — the layering
-/// rule keeps codec abstractions strictly above pixel math. There is
-/// currently no `From` conversion to/from the similarly-named
-/// `zencodec::estimate::*` types — the shapes have diverged (for example,
-/// `zencodec`'s `ResourceEstimate` additionally tracks `cpu_ms` and
-/// `peak_memory_bytes_max`, and its `ImageCharacteristics` tracks
-/// `frame_count`, none of which exist here). A `decode → convert → encode`
-/// pipeline bridging the two currently has to map fields by hand.
-pub mod estimate;
-pub use estimate::{ComputeEnvironment, ImageCharacteristics, ResourceEstimate, SimdTier};
 pub(crate) mod f16_scalar;
 pub(crate) mod negotiate;
 
@@ -439,6 +438,7 @@ pub mod cms;
 pub(crate) mod cms_lite;
 #[cfg(feature = "cms-moxcms")]
 pub mod cms_moxcms;
+pub mod codes;
 pub mod converter;
 pub mod ext;
 #[allow(
@@ -479,6 +479,8 @@ pub mod __bench_u16_hybrids {
 #[cfg(feature = "__bench_scan")]
 #[doc(hidden)]
 pub mod __bench_scan {
+    /// The identity-TRC gamut path — no dispatch today, hence measured.
+    pub use crate::fast_gamut::{convert_linear_rgb, convert_linear_rgba};
     pub use crate::scan::{FusedRequest, FusedResult, fused_predicates_rgba8_cg};
 }
 pub mod gamut;
@@ -490,17 +492,20 @@ pub mod orient;
 pub mod output;
 #[cfg(feature = "pipeline")]
 pub mod pipeline;
+pub mod ycbcr;
 // Crate-internal SIMD predicates backing `load_bearing` -- the module
 // stays private so the per-(layout × channel-type) kernel set never
 // becomes public API surface. Consume via `PixelSliceLoadBearingExt`.
 mod scan;
 
 // Re-export key conversion types at crate root.
-pub use adapt::{adapt_for_encode_explicit, try_adapt_in_place};
+pub use adapt::{adapt_for_encode_explicit_cow, try_adapt_in_place};
 #[cfg(feature = "hdr-experimental")]
 pub use convert::HdrConfig;
-pub use convert::{ConvertPlan, convert_row, requires_cms};
+pub use convert::{ConvertPlan, convert_row};
+#[doc(inline)]
 pub use converter::RowConverter;
+#[doc(inline)]
 pub use error::ConvertError;
 pub use negotiate::{
     ConversionCost, ConvertIntent, FormatOption, Provenance, best_match, best_match_with,
@@ -517,6 +522,7 @@ pub use pipeline::{
 pub use ext::PixelBufferConvertTypedExt;
 #[cfg(feature = "hdr-experimental")]
 pub use ext::PixelBufferHdrConvertExt;
+#[doc(inline)]
 pub use ext::{ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
 #[cfg(feature = "image")]
 pub use ext::{DynamicImageExt, ImageBufferExt, PixelBufferImageExt};
@@ -531,23 +537,8 @@ pub use gamut::{
 // The scan-level predicates stay crate-internal.
 pub use load_bearing::{LoadBearingReport, PixelBufferLoadBearingExt, PixelSliceLoadBearingExt};
 
-// Re-export HDR types and tone mapping.
-// `exposure_tonemap`, `reinhard_inverse`, `reinhard_tonemap`, and `HdrMetadata`
-// are deprecated (see the `hdr` module). The re-exports themselves name them,
-// hence the per-statement `#[allow(deprecated)]`. For production HDR→SDR tone
-// mapping use the `zentone` crate (`zentone::Bt2446A`, `Bt2408Tonemapper`, …).
-#[allow(deprecated)]
-#[cfg(feature = "std")]
-pub use hdr::exposure_tonemap;
-// Anchor-aware HDR PQ quantizer — reads `DiffuseWhite` from the source's
-// `ColorContext` (default BT.2408 = 203); the canonical linear→PQ16 encoder.
-// (The no-allocation `quantize_into` sibling stays `pub(crate)` until a concrete
-// consumer or the §3.2 PixelBuffer-level surface lands — see hdr.rs.)
+// Anchor-aware quantization; implementation lives in the HDR module.
 pub use hdr::quantize_to;
-#[allow(deprecated)]
-pub use hdr::{
-    ContentLightLevel, HdrMetadata, MasteringDisplay, reinhard_inverse, reinhard_tonemap,
-};
 
 // Re-export CMS traits, enums, and implementations.
 #[allow(deprecated)]
@@ -560,6 +551,6 @@ pub use cms::{
 pub use cms_moxcms::MoxCms;
 
 // Re-export output types.
-pub use output::finalize_for_output_with;
 #[allow(deprecated)]
 pub use output::{EncodeReady, OutputMetadata, OutputProfile, finalize_for_output};
+pub use output::{OutputPlan, finalize_for_output_with};

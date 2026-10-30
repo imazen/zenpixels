@@ -116,10 +116,17 @@ pub fn apply_orientation(src: PixelSlice<'_>, orientation: Orientation) -> Pixel
     let (ow, oh) = orientation.output_dimensions(src.width(), src.rows());
     let desc = src.descriptor();
     let mut out = PixelBuffer::new(ow, oh, desc);
+    if let Some(context) = src.color_context() {
+        out = out.with_color_context(context.clone());
+    }
+    // Whole pixels are moved, never changed: the samples keep their evidence.
+    let exact = src.exact_depth();
     // The buffer is constructed to the exact output geometry + descriptor, so
     // the size/format check inside `apply_orientation_into` cannot fail.
     apply_orientation_into(src, orientation, out.as_slice_mut())
         .expect("apply_orientation: freshly allocated buffer matches output geometry");
+    out.set_exact_depth(exact)
+        .expect("apply_orientation: output keeps the source descriptor");
     out
 }
 
@@ -238,7 +245,12 @@ pub fn apply_orientation_in_place(
             actual: 0,
         });
     }
+    // The permutation keeps every sample value, so restore the evidence that
+    // the in-place mutable access had to end.
+    let exact = dst.exact_depth();
     dst.transform_in_place(|px| orient_in_place_impl(px, orientation));
+    dst.set_exact_depth(exact)
+        .expect("apply_orientation_in_place: descriptor is unchanged");
     Ok(())
 }
 
@@ -651,10 +663,9 @@ fn transpose_tiled<const BPP: usize>(
                 let sx = (if flip_sx { w - 1 - dy } else { dy }) as usize;
                 let mut soff = (sy0 * sstride + sx * BPP) as isize;
                 let drow = &mut dst.row_mut(dy)[tx as usize * BPP..tx_end as usize * BPP];
-                for dpx in drow.chunks_exact_mut(BPP) {
+                for dpx in drow.as_chunks_mut::<BPP>().0 {
                     let s = soff as usize;
-                    let px: [u8; BPP] = sbytes[s..s + BPP].try_into().unwrap();
-                    dpx.copy_from_slice(&px);
+                    *dpx = sbytes[s..s + BPP].try_into().unwrap();
                     soff += sstep;
                 }
             }
@@ -945,10 +956,10 @@ fn transpose4_simd(
             let f3: [f32; 4] =
                 bytemuck::cast::<[u8; 16], _>(src.row(by + 3)[xb..xb + 16].try_into().unwrap());
             let mut rows = [
-                f32x4::load(token, &f0),
-                f32x4::load(token, &f1),
-                f32x4::load(token, &f2),
-                f32x4::load(token, &f3),
+                f32x4::load_t(token, &f0),
+                f32x4::load_t(token, &f1),
+                f32x4::load_t(token, &f2),
+                f32x4::load_t(token, &f3),
             ];
             f32x4::transpose_4x4(&mut rows);
 
@@ -1044,7 +1055,7 @@ fn transpose16_deep(
                     tx + c
                 };
                 let drow = &mut dbytes[dy * dstride + dx * 16..dy * dstride + (dx + T) * 16];
-                for (k, chunk) in drow.chunks_exact_mut(16).enumerate() {
+                for (k, chunk) in drow.as_chunks_mut::<16>().0.iter_mut().enumerate() {
                     let r = if flip_sy { T - 1 - k } else { k };
                     chunk.copy_from_slice(&srows[r][c * 16..c * 16 + 16]);
                 }

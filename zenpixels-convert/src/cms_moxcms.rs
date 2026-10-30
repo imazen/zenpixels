@@ -179,6 +179,55 @@ fn pixel_format_to_layout(format: PixelFormat) -> Option<Layout> {
     }
 }
 
+fn options_for_profiles(
+    format: PixelFormat,
+    source: &ColorProfile,
+    target: &ColorProfile,
+) -> TransformOptions {
+    let mut options = transform_opts(ColorPriority::PreferIcc, RenderingIntent::default());
+    // Native F32 ICC-to-P3 comparisons exposed quantization near black and
+    // clipping of layer samples outside 0..1. Keep float arithmetic and use
+    // analytic curves when available. This does not qualify arbitrary LUTs.
+    if format.channel_type() == ChannelType::F32 {
+        options.prefer_fixed_point = false;
+        // The backend's extended RGB evaluator shares one curve among all
+        // channels. Require equality of ALL three, not merely a matching pair.
+        let shared_curve = |p: &ColorProfile| {
+            p.color_space != moxcms::DataColorSpace::Rgb
+                || (p.red_trc.is_some() && p.red_trc == p.green_trc && p.red_trc == p.blue_trc)
+        };
+        options.allow_extended_range_rgb_xyz = shared_curve(source) && shared_curve(target);
+    }
+    options
+}
+
+fn prefer_icc_for_float(profile: &mut ColorProfile, format: PixelFormat) {
+    if format.channel_type() == ChannelType::F32 {
+        // The extended evaluator checks CICP independently of
+        // allow_use_cicp_transfer. An explicit ICC request still selects its
+        // actual curves. Only this private parsed copy loses the hint.
+        profile.cicp = None;
+    }
+}
+
+fn validate_channel_curves(profile: &ColorProfile) -> Result<(), MoxCmsError> {
+    if profile.color_space == moxcms::DataColorSpace::Rgb
+        && let (Some(red), Some(green), Some(blue)) =
+            (&profile.red_trc, &profile.green_trc, &profile.blue_trc)
+        && (red == green || green == blue)
+        && red != blue
+    {
+        // Both bounded and extended backend paths can share a curve when
+        // only one adjacent pair agrees. Refuse before creating an executor;
+        // selecting a different curve would change the requested ICC math.
+        return Err(MoxCmsError(
+            "distinct RGB channel curves with only two adjacent curves equal are not qualified"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // RowTransform wrapper
 // ---------------------------------------------------------------------------
@@ -188,6 +237,102 @@ enum MoxTransformInner {
     U8(Arc<dyn TransformExecutor<u8> + Send + Sync>),
     U16(Arc<dyn TransformExecutor<u16> + Send + Sync>),
     F32(Arc<dyn TransformExecutor<f32> + Send + Sync>),
+}
+
+/// Preserve the requested bounded input/output behavior around the analytic
+/// F32 executor. Integer lookup tables otherwise quantize even float samples.
+/// Alpha is storage, not a color coordinate, and must never be clamped.
+struct BoundedFloatTransform {
+    transform: Arc<dyn TransformExecutor<f32> + Send + Sync>,
+    source_channels: usize,
+    target_channels: usize,
+}
+
+impl TransformExecutor<f32> for BoundedFloatTransform {
+    fn transform(&self, source: &[f32], target: &mut [f32]) -> Result<(), moxcms::CmsError> {
+        let sc = self.source_channels;
+        let tc = self.target_channels;
+        if !source.len().is_multiple_of(sc) || !target.len().is_multiple_of(tc) {
+            return Err(moxcms::CmsError::LaneMultipleOfChannels);
+        }
+        if source.len() / sc != target.len() / tc {
+            return Err(moxcms::CmsError::LaneSizeMismatch);
+        }
+        let source_colors = if sc <= 2 { 1 } else { 3 };
+        let target_colors = if tc <= 2 { 1 } else { 3 };
+        if source.chunks_exact(sc).all(|pixel| {
+            pixel[..source_colors]
+                .iter()
+                .all(|v| (0.0..=1.0).contains(v))
+        }) {
+            self.transform.transform(source, target)?;
+        } else {
+            // Bounded stack staging, independent of row width. The ordinary
+            // in-range path above uses the caller's source directly.
+            let mut scratch = [0.0f32; 128 * 4];
+            for (input, output) in source.chunks(128 * sc).zip(target.chunks_mut(128 * tc)) {
+                let stage = &mut scratch[..input.len()];
+                stage.copy_from_slice(input);
+                for pixel in stage.chunks_exact_mut(sc) {
+                    for value in &mut pixel[..source_colors] {
+                        *value = value.clamp(0.0, 1.0);
+                    }
+                }
+                self.transform.transform(stage, output)?;
+            }
+        }
+        for pixel in target.chunks_exact_mut(tc) {
+            for value in &mut pixel[..target_colors] {
+                *value = value.clamp(0.0, 1.0);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn float_transform(
+    transform: Arc<dyn TransformExecutor<f32> + Send + Sync>,
+    source: Layout,
+    target: Layout,
+    clip: bool,
+) -> MoxTransformInner {
+    if clip {
+        MoxTransformInner::F32(Arc::new(BoundedFloatTransform {
+            transform,
+            source_channels: source.channels(),
+            target_channels: target.channels(),
+        }))
+    } else {
+        MoxTransformInner::F32(transform)
+    }
+}
+
+fn try_mox_row(
+    inner: &MoxTransformInner,
+    src: &[u8],
+    dst: &mut [u8],
+) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+    let cast_error = |_| {
+        whereat::at!(crate::cms::CmsPluginError::msg(
+            "CMS sample alignment or extent mismatch"
+        ))
+    };
+    let result = match inner {
+        MoxTransformInner::U8(t) => t.transform(src, dst),
+        MoxTransformInner::U16(t) => t.transform(
+            bytemuck::try_cast_slice(src).map_err(cast_error)?,
+            bytemuck::try_cast_slice_mut(dst).map_err(cast_error)?,
+        ),
+        MoxTransformInner::F32(t) => t.transform(
+            bytemuck::try_cast_slice(src).map_err(cast_error)?,
+            bytemuck::try_cast_slice_mut(dst).map_err(cast_error)?,
+        ),
+    };
+    result.map_err(|e| {
+        whereat::at!(crate::cms::CmsPluginError::msg(format!(
+            "moxcms row failed: {e}"
+        )))
+    })
 }
 
 struct MoxRowTransform {
@@ -219,6 +364,17 @@ impl RowTransform for MoxRowTransform {
             }
         }
     }
+    fn try_transform_row(
+        &self,
+        src: &[u8],
+        dst: &mut [u8],
+        _width: u32,
+    ) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        try_mox_row(&self.inner, src, dst)
+    }
+    fn prepare(&self, _max_width: u32) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -236,9 +392,32 @@ fn build_transform_inner(
     src_format: PixelFormat,
     dst_format: PixelFormat,
 ) -> Result<Box<dyn RowTransform>, MoxCmsError> {
+    // Native F32 CMYK carriage is qualified, its color conversion is not.
+    // Never let this unsupported four-channel layout fall back to RGB.
+    if matches!(
+        src_format,
+        PixelFormat::CmykF32 | PixelFormat::CmykF32Inverted
+    ) || matches!(
+        dst_format,
+        PixelFormat::CmykF32 | PixelFormat::CmykF32Inverted
+    ) {
+        return Err(MoxCmsError("F32 CMYK conversion is not qualified".into()));
+    }
+    if src_format.channel_type() != dst_format.channel_type()
+        || !matches!(
+            src_format.channel_type(),
+            ChannelType::U8 | ChannelType::U16 | ChannelType::F32
+        )
+    {
+        return Err(MoxCmsError(
+            "moxcms requires matching U8, U16 or F32 sample types; convert depth separately".into(),
+        ));
+    }
     let src_layout = pixel_format_to_layout(src_format).unwrap_or(Layout::Rgb);
     let dst_layout = pixel_format_to_layout(dst_format).unwrap_or(Layout::Rgb);
-    let opts = transform_opts(ColorPriority::PreferIcc, RenderingIntent::default());
+    validate_channel_curves(src_profile)?;
+    validate_channel_curves(dst_profile)?;
+    let opts = options_for_profiles(src_format, src_profile, dst_profile);
 
     let depth = src_format.channel_type();
 
@@ -262,7 +441,7 @@ fn build_transform_inner(
             let xform = src_profile
                 .create_transform_f32(src_layout, dst_profile, dst_layout, opts)
                 .map_err(|e| MoxCmsError(format!("failed to create f32 transform: {e}")))?;
-            MoxTransformInner::F32(xform)
+            float_transform(xform, src_layout, dst_layout, true)
         }
     };
 
@@ -288,11 +467,13 @@ impl ColorManagement for MoxCms {
         src_format: PixelFormat,
         dst_format: PixelFormat,
     ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        let src_profile = ColorProfile::new_from_slice(src_icc)
+        let mut src_profile = ColorProfile::new_from_slice(src_icc)
             .map_err(|e| MoxCmsError(format!("failed to parse source ICC profile: {e}")))?;
-        let dst_profile = ColorProfile::new_from_slice(dst_icc)
+        let mut dst_profile = ColorProfile::new_from_slice(dst_icc)
             .map_err(|e| MoxCmsError(format!("failed to parse destination ICC profile: {e}")))?;
 
+        prefer_icc_for_float(&mut src_profile, src_format);
+        prefer_icc_for_float(&mut dst_profile, dst_format);
         build_transform_inner(&src_profile, &dst_profile, src_format, dst_format)
     }
 
@@ -359,6 +540,17 @@ impl crate::cms::RowTransformMut for MoxRowTransformMut {
             }
         }
     }
+    fn try_transform_row(
+        &mut self,
+        src: &[u8],
+        dst: &mut [u8],
+        _width: u32,
+    ) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        try_mox_row(&self.inner, src, dst)
+    }
+    fn prepare(&mut self, _max_width: u32) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        Ok(())
+    }
 }
 
 impl crate::cms::PluggableCms for MoxCms {
@@ -392,10 +584,20 @@ impl crate::cms::PluggableCms for MoxCms {
         dst: crate::ColorProfileSource<'_>,
         src_format: PixelFormat,
         dst_format: PixelFormat,
-        _options: &crate::policy::ConvertOptions,
+        options: &crate::policy::ConvertOptions,
     ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
     {
         use crate::cms::CmsPluginError;
+        if src_format.channel_type() != dst_format.channel_type()
+            || !matches!(
+                src_format.channel_type(),
+                ChannelType::U8 | ChannelType::U16 | ChannelType::F32
+            )
+        {
+            return Some(Err(whereat::at!(CmsPluginError::msg(
+                "moxcms requires matching U8, U16 or F32 sample types; convert depth separately"
+            ))));
+        }
         // Decline when the format pair has no `Layout` mapping (e.g. Bgra
         // swizzles, Rgbx alpha-padding, Oklab variants). moxcms can't
         // describe those; let the built-in pipeline handle layout
@@ -436,7 +638,12 @@ impl crate::cms::PluggableCms for MoxCms {
         // the transform; moxcms returns Ok with a no-op LUT when the
         // device→PCS→device round-trip is identity.
 
-        let opts = transform_opts(ColorPriority::PreferIcc, RenderingIntent::default());
+        if let Err(error) = validate_channel_curves(&src_profile)
+            .and_then(|()| validate_channel_curves(&dst_profile))
+        {
+            return Some(Err(whereat::at!(CmsPluginError::new(error))));
+        }
+        let opts = options_for_profiles(src_format, &src_profile, &dst_profile);
 
         // Dispatch on the source `ChannelType`. F16 is widened to f32
         // before the CMS step in this crate, so we route F16 to the f32
@@ -454,7 +661,9 @@ impl crate::cms::PluggableCms for MoxCms {
                 .map(MoxTransformInner::U16),
             ChannelType::F16 | ChannelType::F32 | _ => src_profile
                 .create_transform_f32(src_layout, &dst_profile, dst_layout, opts)
-                .map(MoxTransformInner::F32),
+                .map(|transform| {
+                    float_transform(transform, src_layout, dst_layout, options.clip_out_of_gamut)
+                }),
         };
 
         let inner = match inner_result {
@@ -486,14 +695,17 @@ fn build_moxcms_profile_for_format(
     src: &crate::ColorProfileSource<'_>,
     format: PixelFormat,
 ) -> Result<Option<ColorProfile>, MoxCmsError> {
-    let is_cmyk = matches!(format, PixelFormat::Cmyk8);
+    let is_cmyk = format.color_model() == zenpixels::ColorModel::Cmyk;
     match src {
         // ICC bytes are authoritative for every color model — parse and
         // hand them straight to moxcms. The profile's `data_color_space`
         // will validate against the layout downstream
         // (`check_layout`).
         crate::ColorProfileSource::Icc(icc) => ColorProfile::new_from_slice(icc)
-            .map(Some)
+            .map(|mut profile| {
+                prefer_icc_for_float(&mut profile, format);
+                Some(profile)
+            })
             .map_err(|e| MoxCmsError(format!("failed to parse ICC: {e}"))),
         // CICP describes RGB colorimetry; CMYK descriptors with CICP
         // (which is unusual — CICP rarely tags CMYK) decline so the
@@ -816,6 +1028,8 @@ fn identify_by_colorants(profile: &ColorProfile) -> Option<Cicp> {
 /// Error from the moxcms CMS backend.
 #[derive(Debug, Clone)]
 pub struct MoxCmsError(pub String);
+
+impl core::error::Error for MoxCmsError {}
 
 impl core::fmt::Display for MoxCmsError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

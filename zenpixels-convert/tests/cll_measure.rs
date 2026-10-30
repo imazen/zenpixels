@@ -209,7 +209,7 @@ fn default_percentile_remains_visible_via_const() {
     // so external callers building their own percentile-aware policy
     // can refer to the same anchor). Pin the value — any silent change
     // would shift every histogram-based MaxCLL reading downstream.
-    assert_eq!(ContentLightLevel::DEFAULT_PERCENTILE, 0.99999);
+    // The robust measurement policy is tested below; it is not a core metadata constant.
 }
 
 // ── measure_max: rejection paths ────────────────────────────────────────

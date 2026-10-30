@@ -1,0 +1,181 @@
+{
+  "audit_date": "2026-09-27",
+  "main_baseline": "07f45ea006465f98ed07632c0500d9f7f17b9034",
+  "pr_url": "https://github.com/imazen/zenpixels/pull/63",
+  "pr_base_ref": "hdr-fixes-2026-07-14",
+  "pr_base_sha": "63d5b2a49bcdd5a26c558fd8bd4fe76e64765e49",
+  "pr_head_sha": "1126d054a98ac9420da0d1c28b2251f5cdbd31ff",
+  "pr_merge_sha": "44f771659df2de060dba11bbc23d046f8bfb2c2d",
+  "merged_at": "2026-07-24T10:19:02Z",
+  "note": "No ancestry or exact patch equivalence does not imply functionality is absent. See ../pr63-commit-inventory.md for source-level dispositions.",
+  "commits": [
+    {
+      "index": 1,
+      "sha": "d672211d1cd71a79647f4e6e712aa5b1b3f760d3",
+      "subject": "docs(examples): add tested usage galleries + CI --examples gate",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "adapt examples and CI to accepted API"
+    },
+    {
+      "index": 2,
+      "sha": "e2463f879e31c42e1a18c082c8b86dbb7eccc190",
+      "subject": "docs: API ergonomics findings report (2026-07-14)",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "historical report superseded"
+    },
+    {
+      "index": 3,
+      "sha": "2e1a4fbe6e218d4d0943c178077e471375a1c688",
+      "subject": "feat(zenpixels,zenpixels-convert): additive ergonomic helpers for the top boilerplate sites",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "partly copied; defer conveniences; redesign conversion contract"
+    },
+    {
+      "index": 4,
+      "sha": "7a7614e29714259eaa45b74898e74bf292edf7ff",
+      "subject": "docs(examples,changelog): demonstrate the landed helpers; record them",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "rewrite examples and changelog for retained API"
+    },
+    {
+      "index": 5,
+      "sha": "649e5f7ea76680909c67700a22d41f02b0c8e629",
+      "subject": "refactor(zenpixels): rename new_tight -> new_contiguous to match is_contiguous()",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "defer redundant contiguous-view constructors"
+    },
+    {
+      "index": 6,
+      "sha": "fefd0d7fa21802dbaa49eb79ec37b19070264a0d",
+      "subject": "feat(zenpixels): add new_packed as an alias for new_contiguous",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "skip alias canceled later in PR"
+    },
+    {
+      "index": 7,
+      "sha": "9df4db665e903efe7666c6700c630c9dfbb2de12",
+      "subject": "docs: correct ergonomics finding 7 \u2014 finalize_for_output_with is the atomic encode contract, not a demote candidate",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "retain finalization direction; correct guarantees"
+    },
+    {
+      "index": 8,
+      "sha": "bc14c042bea3d625b2b91c806ea07c986d1a67fb",
+      "subject": "docs(zenpixels-convert): point module docs at finalize_for_output_with (not the deprecated overload)",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "adapt deprecated finalizer documentation links"
+    },
+    {
+      "index": 9,
+      "sha": "b101c4be2a1c0d54cee785cde024c52a0e6ff298",
+      "subject": "docs(ergonomics): correct finding-4 citations; mark landed snippets",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "historical corrections superseded"
+    },
+    {
+      "index": 10,
+      "sha": "5e959def21466a618d0cd005bab4dd825cdef151",
+      "subject": "feat(zenpixels-convert)!: gate resource estimation behind estimation-experimental",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "0.2 warning bridge implemented; hard gate only in 0.3.1"
+    },
+    {
+      "index": 11,
+      "sha": "a41332acbdc645e27a142b20cf11e497aba96761",
+      "subject": "feat(convert): convert_slice_into \u2014 the no-alloc primitive; convert_slice is sugar",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "adapt caller-output conversion with prepared fallible contract"
+    },
+    {
+      "index": 12,
+      "sha": "230a980919e0712d7faaee7712ae0ba0399c4f3e",
+      "subject": "docs: correct three sites claiming SIMD-aligned allocation; it is packed",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "apply surviving packed-versus-SIMD doc corrections"
+    },
+    {
+      "index": 13,
+      "sha": "bc9f8b836ec99a4627bdab43a066e7dd8f555b88",
+      "subject": "feat(convert)!: convert_into no-alloc primitive; seal the ext traits; deprecate convert_rows",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "redesign caller-output API; reject sealing existing open traits"
+    },
+    {
+      "index": 14,
+      "sha": "2f5169327f400fc08ac07e91768b93bc50e01dc5",
+      "subject": "feat(convert): convert_in_place (move/reuse) + fallible try_to_* decode helpers",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "redesign in-place semantics; consider compatible fallible typed helpers"
+    },
+    {
+      "index": 15,
+      "sha": "008a1a8bcbdc16f7ed593c2ea8c8f519d0a3a079",
+      "subject": "refactor(convert)!: footgun batch \u2014 Adapted non_exhaustive, demote requires_cms, deprecate convert_buffer, doc into_contiguous",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "requires_cms warning implemented; defer conversion warnings; do not restore canceled restriction"
+    },
+    {
+      "index": 16,
+      "sha": "fcf78edbdda613ca4aa300c9fce1d17e6e4ad53c",
+      "subject": "refactor(zenpixels): remove unreleased new_packed aliases",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "skip removal of aliases already absent on main"
+    },
+    {
+      "index": 17,
+      "sha": "4114e1b9fd2b796e9f0c93c72f6923dad11750f6",
+      "subject": "docs(changelog): inventory queued 0.3 API removals",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "copied release inventory superseded by current bridge checklist"
+    },
+    {
+      "index": 18,
+      "sha": "ede5e8a9d82c14b843d4cb0d1f848320288e6429",
+      "subject": "feat: add consuming allocation-reuse conveniences",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "bytes export superseded; adapt final typed optimization; defer remaining conveniences"
+    },
+    {
+      "index": 19,
+      "sha": "8d67345b51cf7cb05bdb6b15e33944a003aadf9c",
+      "subject": "feat(zenpixels): add zero-copy PixelBuffer parts roundtrip",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "extraction superseded; rewrite checked adoption preserving error ownership"
+    },
+    {
+      "index": 20,
+      "sha": "040f2601d0ddf397d7bfffe19e2926f0e12fed67",
+      "subject": "feat: integrate PixelCow and deprecate raw into_vec",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "cow surface already copied; defer into_vec deprecation until migration ready"
+    },
+    {
+      "index": 21,
+      "sha": "1126d054a98ac9420da0d1c28b2251f5cdbd31ff",
+      "subject": "refine pixel ownership and conversion APIs",
+      "ancestor_of_main_baseline": false,
+      "exact_patch_equivalent_on_main": false,
+      "disposition": "split: port transfer guards; adapt allocation improvements and tests; reject cosmetic API churn"
+    }
+  ]
+}

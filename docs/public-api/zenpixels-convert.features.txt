@@ -1,5 +1,5 @@
 # zenpixels-convert public API — additions from non-default features
-# features: avx512,cms-moxcms,fast-transpose,hdr-experimental,icc-db,image,imgref,pipeline,planar,rgb,serde,std
+# features: avx512,cms-moxcms,estimation-experimental,fast-transpose,hdr-experimental,icc-db,image,imgref,pipeline,planar,rgb,serde,std
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -16,7 +16,7 @@
 #   inherent methods                           60
 #   struct fields                             108
 #   enum variants                              70
-#   trait roster entries (type × trait)        75
+#   trait roster entries (type × trait)        76
 #   auto-trait-complete types                  16
 #
 # per-module pub lines:
@@ -40,7 +40,7 @@ pub fn ext::PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::Pi
 pub fn ext::PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_rgba8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>
-pub fn ext::PixelBufferHdrConvertExt::convert_to_sdr(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn ext::PixelBufferHdrConvertExt::convert_to_sdr_measuring_peak(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferHdrConvertExt::convert_to_with_hdr_config(&self, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferImageExt::to_dynamic_image(&self) -> core::option::Option<image::images::dynimage::DynamicImage>
 pub fn ext::PixelBufferImageExt::to_image_rgb8(&self) -> core::result::Result<image::images::buffer::RgbImage, whereat::at::At<error::ConvertError>>
@@ -67,7 +67,7 @@ pub fn hdr::SoftCompress::from_matrices(&gamut::GamutMatrix, &gamut::GamutMatrix
 pub fn hdr::SoftCompress::knee(&self) -> f32
 pub fn hdr::SoftCompress::lut(&self) -> &hdr::GamutBoundaryLut
 pub fn hdr::SoftCompress::new(&gamut::GamutMatrix, f32) -> Self
-pub trait hdr::CllMeasure [also: hdr::measure]
+pub trait hdr::CllMeasure: sealed::Sealed [also: hdr::measure]
 pub fn hdr::CllMeasure::measure_max(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
 pub mod pipeline
 pub mod pipeline::op_format
@@ -302,8 +302,8 @@ pub fn PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBu
 pub fn PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
 pub fn PixelBufferConvertTypedExt::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
 pub fn PixelBufferConvertTypedExt::to_rgba8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>
-pub trait PixelBufferHdrConvertExt [also: ext]
-pub fn PixelBufferHdrConvertExt::convert_to_sdr(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub trait PixelBufferHdrConvertExt: sealed::Sealed [also: ext]
+pub fn PixelBufferHdrConvertExt::convert_to_sdr_measuring_peak(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferHdrConvertExt::convert_to_with_hdr_config(&self, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub trait PixelBufferImageExt: ext::image_private::Sealed [also: ext]
 pub fn PixelBufferImageExt::to_dynamic_image(&self) -> core::option::Option<image::images::dynimage::DynamicImage>
@@ -317,7 +317,7 @@ pub fn optimal_path(zenpixels::descriptor::PixelDescriptor, Provenance, pipeline
 
 HdrConfig: Clone, Copy, Debug, Default, PartialEq
 cms_moxcms::MoxCms: Clone, Copy, Debug, Default, cms::ColorManagement, cms::PluggableCms
-cms_moxcms::MoxCmsError: Clone, Debug, Display
+cms_moxcms::MoxCmsError: Clone, Debug, Display, Error
 hdr::Bt2446A: Clone, Copy, Debug
 hdr::GamutBoundaryLut: Clone, Debug
 hdr::SoftCompress: Clone, Debug

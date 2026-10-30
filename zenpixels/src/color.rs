@@ -99,8 +99,8 @@ impl NamedProfile {
                 matrix_coefficients: 0,
                 full_range: true,
             }),
-            Self::Bt2020Pq => Some(Cicp::BT2100_PQ),
-            Self::Bt2020Hlg => Some(Cicp::BT2100_HLG),
+            Self::Bt2020Pq => Some(Cicp::new(9, 16, 0, true)),
+            Self::Bt2020Hlg => Some(Cicp::new(9, 18, 0, true)),
             Self::LinearSrgb => Some(Cicp {
                 color_primaries: 1,
                 transfer_characteristics: 8,
@@ -191,8 +191,8 @@ impl<'a> ColorProfileSource<'a> {
     /// - `Cicp` — maps via `from_cicp`, but returns `None` if `matrix_coefficients`
     ///   is non-zero (YCbCr data requires matrix conversion first) or `full_range`
     ///   is false (narrow-range data needs range expansion first)
-    /// - `Icc` — hash-based identification (~100ns, 135 known profiles) + CICP-in-ICC
-    ///   extraction. Returns `None` for unknown custom profiles.
+    /// - `Icc` — validated common-profile identification permitting matrix/TRC
+    ///   substitution. Embedded CICP alone is insufficient; other ICCs need a CMS.
     ///
     /// Returns `None` when the profile is unknown or when reducing to
     /// (primaries, transfer) would discard significant information
@@ -229,15 +229,9 @@ impl<'a> ColorProfileSource<'a> {
                         return Some((id.primaries, id.transfer));
                     }
                 }
-                // CICP-in-ICC tag (ICC v4.4+) is authoritative — accept it.
-                if let Some(cicp) = crate::icc::extract_cicp(icc_bytes) {
-                    if cicp.matrix_coefficients != 0 || !cicp.full_range {
-                        return None;
-                    }
-                    let p = ColorPrimaries::from_cicp(cicp.color_primaries)?;
-                    let t = TransferFunction::from_cicp(cicp.transfer_characteristics)?;
-                    return Some((p, t));
-                }
+                // An embedded CICP tag does not prove the profile's TRCs,
+                // LUTs or adaptation can be replaced. Preserve ICC authority;
+                // callers choosing CICP explicitly pass ColorProfileSource::Cicp.
                 None
             }
             _ => None,
@@ -372,23 +366,6 @@ impl ColorContext {
     pub fn with_icc(mut self, icc: impl Into<Arc<[u8]>>) -> Self {
         self.icc = Some(icc.into());
         self
-    }
-
-    /// Create from both ICC and CICP.
-    ///
-    /// **Deprecated:** Codecs should populate only the authoritative field —
-    /// use [`from_icc()`](Self::from_icc) or [`from_cicp()`](Self::from_cicp).
-    /// Roundtrip metadata belongs on [`ColorOrigin`], not `ColorContext`.
-    #[deprecated(
-        since = "0.2.6",
-        note = "use from_icc() or from_cicp(); roundtrip metadata belongs on ColorOrigin"
-    )]
-    pub fn from_icc_and_cicp(icc: impl Into<Arc<[u8]>>, cicp: Cicp) -> Self {
-        Self {
-            icc: Some(icc.into()),
-            cicp: Some(cicp),
-            diffuse_white: None,
-        }
     }
 
     /// Get a [`ColorProfileSource`] reference for CMS integration.
@@ -534,7 +511,10 @@ mod tests {
     #[test]
     fn named_profile_to_cicp() {
         assert_eq!(NamedProfile::Srgb.to_cicp(), Some(Cicp::SRGB));
-        assert_eq!(NamedProfile::Bt2020Pq.to_cicp(), Some(Cicp::BT2100_PQ));
+        assert_eq!(
+            NamedProfile::Bt2020Pq.to_cicp(),
+            Some(Cicp::new(9, 16, 0, true))
+        );
         assert!(NamedProfile::AdobeRgb.to_cicp().is_none());
     }
 
@@ -595,7 +575,7 @@ mod tests {
     #[allow(deprecated)]
     fn color_context_profile_source_prefers_icc() {
         // When both are present, ICC wins (codecs should avoid this case)
-        let ctx = ColorContext::from_icc_and_cicp(vec![1, 2, 3], Cicp::SRGB);
+        let ctx = ColorContext::from_icc(vec![1, 2, 3]).with_cicp(Cicp::SRGB);
         let src = ctx.as_profile_source().unwrap();
         assert_eq!(src, ColorProfileSource::Icc(&[1, 2, 3]));
     }
@@ -631,7 +611,7 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn color_context_from_icc_and_cicp() {
-        let ctx = ColorContext::from_icc_and_cicp(vec![1, 2], Cicp::BT2100_PQ);
+        let ctx = ColorContext::from_icc(vec![1, 2]).with_cicp(Cicp::BT2100_PQ);
         assert!(ctx.icc.is_some());
         assert_eq!(ctx.cicp, Some(Cicp::BT2100_PQ));
     }

@@ -1,6 +1,6 @@
 [package]
 name = "zenpixels-convert"
-version = "0.2.15"
+version = "0.3.1"
 edition.workspace = true
 rust-version = "1.89"
 license.workspace = true
@@ -49,6 +49,11 @@ std = ["zenpixels/std", "linear-srgb/std", "garb/std"]
 # memory-bound by 12MP). Output is bit-identical. Default-on is queued for 0.3.0;
 # see benchmarks/orient_fast_transpose_2026-06-18.md + orient/{pxn_x86,pxn_neon,rgb3_x86}.rs.
 fast-transpose = []
+# `image`-crate interop: owned/borrowed input adapters plus
+# `PixelBufferImageExt` output helpers.
+# Implies `std` (the `image` crate is std-only). MSRV for this feature is the
+# `image` crate's 1.88, which is below this crate's own 1.89 MSRV.
+image = ["dep:image", "std"]
 # Unlocks the f16 16-wide AVX-512F summon-up inside the V3 `F16Convert` slice
 # entry (magetypes' `avx512` kernels are cfg-gated on this; it transitively
 # brings `archmage/avx512` for the V4 token tier). The f16 forwarders in
@@ -60,13 +65,10 @@ fast-transpose = []
 avx512 = ["magetypes/avx512", "archmage/avx512"]
 rgb = ["zenpixels/rgb", "dep:rgb"]
 imgref = ["zenpixels/imgref", "rgb"]
-# `image`-crate interop: owned/borrowed input adapters plus
-# `PixelBufferImageExt` output helpers.
-# Implies `std` (the `image` crate is std-only). MSRV for this feature is the
-# `image` crate's 1.88, which is below this crate's own 1.89 MSRV.
-image = ["dep:image", "std"]
 planar = ["zenpixels/planar"]
 pipeline = []
+# Compatibility feature name only. Estimation is removed.
+estimation-experimental = []
 # Experimental HDR analysis surface (gates `hdr::measure` — the `CllMeasure`
 # extension trait + `LightLevelHistogram` / `LightLevelMethod` + the SIMD
 # CLL scan kernel). The underlying scan + accuracy contracts are stable —
@@ -114,7 +116,7 @@ linear-srgb = { version = "0.6.12", default-features = false, features = ["trans
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 garb = { version = "0.2.8", default-features = false, features = ["experimental"] }
-archmage = { version = "0.9.26", default-features = false }
+archmage = { version = ">=0.9.26, <=0.9.31-beta.1", default-features = false }
 # Direct libm dep for the hdr-experimental Bt2446A / HdrToSdr scalar paths
 # (powf, logf, log2f, cosf, sinf). The crate is no_std and already pulled in
 # transitively by magetypes; we depend on it directly so the math calls don't
@@ -127,28 +129,40 @@ libm = { version = "0.2", default-features = false }
 # Deliberately no `w512`: the `scan` predicates use 256-bit types (native
 # on AVX2, 2×128 polyfill below), and the 512-bit type set isn't worth its
 # compile-time cost without a stronger AVX-512 use case in this crate.
-magetypes = { version = "0.9.26", default-features = false }
+magetypes = { version = ">=0.9.30, <=0.9.31-beta.1", default-features = false }
 paste = "1.0.15"
 once_cell = { version = "1.21.4", default-features = false, features = ["race", "alloc"] }
 # Pure-Rust LZ4 safe-decode for the bundled CICP->ICC profile blob. no_std
 # (block format only); decodes the standard LZ4 blocks emitted by the icc-gen
 # `cicp_bundle_gen` build tool. The `safe-decode` feature keeps us inside
 # `#![forbid(unsafe_code)]`.
-lz4_flex = { version = "0.13.1", default-features = false, features = ["safe-decode"], optional = true }
+lz4_flex = { version = "0.14.0", default-features = false, features = ["safe-decode"], optional = true }
 whereat = { version = "0.1.5", default-features = false }
 # Verified against both moxcms 0.8.1 and the unreleased 0.9.0 (master): the only
 # API our code touches that changed is the D50 white-point spelling (const
 # `WHITE_POINT_D50` → fn `white_point_d50()`), which the gray test oracle
 # reconstructs version-agnostically (see `cms_moxcms::moxcms_d50_xyz`). `<0.10`
 # excludes the next untested minor.
-moxcms = { version = ">=0.8.1, <0.10", optional = true, features = ["options"] }
+moxcms = { version = ">=0.8.1, <0.10", optional = true, features = ["options", "extended_range"] }
 # Core types only — codecs and I/O remain disabled.
 image = { version = "0.25.10", default-features = false, optional = true }
 
 [dev-dependencies]
 zenpixels = { workspace = true, features = ["planar", "imgref"] }
+# Self dev-dependency: these features unify into every test/bench build of
+# this crate, so plain `cargo test -p zenpixels-convert` (default features)
+# already compiles the lib WITH `cms-moxcms` and runs the `#[cfg(feature =
+# "cms-moxcms")]` unit tests — including the byte-identical gray-ICC gate
+# `icc_profiles::cicp_bundle::tests::gray_blob_decodes_byte_identical_to_moxcms`
+# (verified: it appears in `cargo test --lib -- --list` under default
+# features, imazen/zenpixels#40). Dropping `cms-moxcms` here would silently
+# remove those gates from CI.
 zenpixels-convert = { path = ".", features = ["pipeline", "imgref", "cms-moxcms"] }
 zenbench = { version = "0.1.2"}
+# DEV-only: lets benches/kernel_tiers.rs disable the baseline SIMD token (NEON
+# on aarch64) so the "scalar" arm is real. Feature unification applies this to
+# test/bench builds only, so consumers are unaffected.
+archmage = { version = ">=0.9.28, <=0.9.31-beta.1", features = ["testable_dispatch"] }
 # Dev-only: cross-validate our local f16 impl (src/f16_scalar.rs) and drive
 # the perceptual-loss test suite, which uses half's f64 conversion paths.
 half = "2.7.1"
@@ -158,14 +172,17 @@ palette = { version = "0.7", default-features = false, features = ["std", "appro
 # Dev-only: pin the committed CICP bundle blob's sha256 (golden test) so an
 # accidental regen is caught. Not part of the shipped crate.
 sha2 = "0.11.0"
+# Dev-only: counts allocations for the HDR→SDR intermediate-buffer regression
+# gate (tests/hdr_sdr_alloc.rs, imazen/zenpixels#69). Only that test binary
+# references the crate, so only it gets the counting global allocator.
+allocation-counter = "0.8.1"
 
-# Parity gate between the deprecated `zenpixels::ContentLightLevel::measure`
-# and its replacement `CllMeasure::measure_max`. The trait is behind
-# `hdr-experimental`, so the target opts in explicitly; CI runs it via the
-# dedicated `--features hdr-experimental` test step.
+# Allocation gate for `convert_to_sdr_measuring_peak`: the peak measurement must stream
+# through a scratch row, never a full-image F32 intermediate (#69). The trait
+# is behind `hdr-experimental`; CI runs it via the dedicated feature step.
 [[test]]
-name = "deprecated_measure_parity"
-path = "tests/deprecated_measure_parity.rs"
+name = "hdr_sdr_alloc"
+path = "tests/hdr_sdr_alloc.rs"
 required-features = ["hdr-experimental"]
 
 [[bench]]
@@ -246,6 +263,23 @@ path = "benches/bench_u16_hybrids.rs"
 harness = false
 required-features = ["__bench_u16_hybrids"]
 
+# u16→u8 narrowing kernel shootout (#72): garb's inexact kernel vs the
+# exact local candidates, every arm exhaustively cross-checked first.
+[[bench]]
+name = "bench_u16_narrow"
+path = "benches/bench_u16_narrow.rs"
+harness = false
+
+[[bench]]
+name = "bench_codes"
+path = "benches/bench_codes.rs"
+harness = false
+
+[[bench]]
+name = "bench_sdr_u16_lut"
+path = "benches/bench_sdr_u16_lut.rs"
+harness = false
+
 [[bench]]
 name = "bench_orient"
 path = "benches/bench_orient.rs"
@@ -263,3 +297,8 @@ required-features = ["__bench_orient"]
 name = "measure_histogram_throughput"
 path = "examples/measure_histogram_throughput.rs"
 required-features = ["hdr-experimental"]
+
+[[bench]]
+name = "kernel_tiers"
+harness = false
+required-features = ["__bench_scan"]

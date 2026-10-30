@@ -1,8 +1,15 @@
+## Commit completed work
+
+The owner requests commits by default: commit completed changes before ending a
+work chunk, rather than leaving them uncommitted. Preserve unrelated user work;
+do not discard it or silently include it in a different task. Commit locally;
+pushing or publishing still follows the user's instructions for that action.
+
 ## Public API surface — YAGNI is the rule, not a suggestion
 
 **Every public item in zenpixels is forever. Treat each `pub` as a load-bearing external commitment.**
 
-zenpixels is the foundational crate of the zen ecosystem — zencodec, zenpipe, imageflow, and every codec depend on it directly or transitively. Once a type, function, method, field, enum variant, trait method, or feature flag is `pub`, removing or renaming it requires a 0.3.0 bump (see below), and that break ripples through every downstream. We have deliberately chosen to avoid 0.3.0 indefinitely. The practical consequence: **public items added speculatively cannot be taken back.**
+zenpixels is the foundational crate of the zen ecosystem — zencodec, zenpipe, imageflow, and every codec depend on it directly or transitively. Once a type, function, method, field, enum variant, trait method, or feature flag is `pub`, removing or renaming it requires a 0.3.0 bump (see below), and that break ripples through every downstream. The owner approved the paired 0.3.1 breaking release; see `docs/release-plan-0.2.17-and-0.3.1.md`. The older indefinite 0.3 avoidance policy no longer applies. The practical consequence: **public items added speculatively cannot be taken back.**
 
 ### Rules for new public API
 
@@ -75,3 +82,65 @@ When preparing to publish:
 - If *any* failure is not tolerated, bump to 0.3.0 and cut a proper breaking release.
 
 See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated breaks for batched release.
+
+## Known Bugs
+
+- Fixed on the output-plan review (2026-10-27): Gamma22 F32 conversion accepted
+  `clip_out_of_gamut(false)` but clipped negative and above-white samples. The
+  extended steps now reflect the existing Adobe exponent, retain the existing
+  SIMD results for magnitudes in range, and use libm outside that domain. The
+  regression checks default/in-range parity, alpha payloads, signed zero,
+  strided padding, row partitions and unknown retired estimates. This does not
+  qualify every transfer/backend or change the selected numerical model.
+
+- Fixed on the output-plan review (2026-10-27): a native TIFF source with an
+  authoritative current ICC and unknown descriptor primaries/transfer took an
+  unnecessary same-profile CMS round trip, changing U8 sample 74 to 73. Identity
+  planning now completes only unknown color fields from that exact ICC and
+  preserves samples. `output_descriptor` tests borrowed and strided copied
+  RGB/RGBA U8/U16/F32, including float bit patterns; different profile bytes and
+  known descriptor fields do not receive this identity shortcut.
+
+- Fixed in the float-ICC integration (2026-10-26): workspace feature
+  unification enabled an extra moxcms option field, breaking the generator's
+  exhaustive initializer. It now supplies backend defaults for added fields;
+  extended evaluation stays disabled in the generator's strict comparisons.
+  `just output-float-workspace-check` also checks standalone generator lint.
+
+- Hardened on the output-plan review (2026-10-26): native JXL F32-to-ICC
+  conversion used bounded integer lookup/fixed-point paths despite requesting
+  unclipped float output. The adapter now selects float/analytic arithmetic
+  and applies requested clipping separately. Explicit ICC overrides embedded
+  CICP even on the extended path. A profile with unequal RGB curves where
+  only red/green or green/blue match now refuses before writes: the backend
+  otherwise shares the wrong curve. A capable per-channel implementation is
+  still needed for those profiles. `just output-float-check` is the local gate;
+  zencodec additionally compares actual native JXL profiles against Little CMS.
+
+- Fixed on the output-plan review (2026-10-26): adding opaque alpha to native
+  ICC-tagged RGB F32 returned `NeedsCms` despite an unchanged current profile.
+  `output_native` covers strided RGB/gray U8/U16/F32, exact float bit patterns,
+  padding, bypass of unnecessary CMS work, and changed-profile/depth refusal.
+  The native JXL reproduction is in zencodec's spatial validation suite.
+
+- Fixed 2026-10-25: `ConvertScratch::prepare` passed alignment padding as pixel data when warming RGB byte gamut kernels. `prepared_contracts::rgb_gamut_preparation_preserves_unprepared_pixels_without_row_allocations` fails before the active-extent correction and compares both gamut directions across row widths.
+
+## Authorized breaking media foundation — 2026-09-28
+
+The user explicitly authorized a coordinated breaking release. Branch
+`feat/0.3-retire-planar` stages both packages at 0.3.1 and removes the legacy
+planar module/re-exports after migrating zenfilters' filter mask. Compatibility
+feature names remain no-ops.
+The final 0.2 bridge is retained on `feat/explicit-sample-encoding`. Do not
+publish either branch as part of this PR workflow. No generic video frame owner
+is added here: concrete native sample views are exercised in zencodec's
+`media/` workspace, using `sample::SampleEncoding`. Other historical breaking
+queues are not implicitly completed by this change. CICP TC7 now remains
+unresolved, per H.273 table 3, instead of incorrectly aliasing BT.709.
+
+The consolidated release candidates are `release/0.2-bridge` (#76) and
+`release/0.3.1` (#77). Follow `docs/finalization-release-contract.md`: estimation
+is unconditionally deprecated in 0.2 and removed in 0.3; core HDR computation
+and root aliases are removed in 0.3. Concrete-type conversion extensions are
+sealed there, while Pixel and CMS plugins remain open. No crate publication
+is authorized by release-branch preparation.

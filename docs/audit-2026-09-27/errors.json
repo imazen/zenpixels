@@ -1,0 +1,14 @@
+[
+  {
+    "file": "/home/lilith/work/zen/zensim--gmsbank/zensim-bench/Cargo.toml",
+    "error": "Cannot overwrite a value (at line 115, column 66)"
+  },
+  {
+    "file": "/home/lilith/work/zen/zensim--gmsd-chroma/zensim-bench/Cargo.toml",
+    "error": "Cannot overwrite a value (at line 115, column 66)"
+  },
+  {
+    "file": "/home/lilith/work/zen/zensim--land/zensim-bench/Cargo.toml",
+    "error": "Cannot overwrite a value (at line 121, column 66)"
+  }
+]

@@ -194,8 +194,17 @@ fn srgb_rgba_to_linear_preserves_alpha_semantics() {
         f32_vals[0]
     );
 
-    // Note: linear-srgb applies EOTF to ALL channels including alpha.
-    // This is technically correct for the raw conversion — alpha handling
-    // is a separate concern that happens at the compositing level.
-    // The key thing is that the *conversion path* works correctly.
+    // Alpha is a coverage fraction, not light: it is carried linearly
+    // (128/255), never pushed through the EOTF. Exact equality — a restored
+    // alpha is a plain rescale, not the output of a curve.
+    assert_eq!(
+        f32_vals[3].to_bits(),
+        (128.0f32 / 255.0).to_bits(),
+        "alpha must be carried linearly (~0.502), not EOTF'd (~0.2158): {}",
+        f32_vals[3]
+    );
+
+    // Broader coverage of this property across every transfer kernel —
+    // including the layouts and non-vector-multiple widths this single
+    // opaque-free pixel can't reach — lives in `tests/transfer_alpha.rs`.
 }

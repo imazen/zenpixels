@@ -1,0 +1,208 @@
+repo	class	files	matched_lines	type_reference	public_boundary_candidate	conversion	storage_candidate	color	cms	hdr	planar	streaming_candidate	policy_cleanup	composition_candidate
+archmage	primary	25	89											89
+archmage-artisan	primary	20	83											83
+archmage-isa-docs	alternate-checkout	28	96											96
+archmage-stack	alternate-checkout	27	95											95
+archmage-suppress	alternate-checkout	24	87											87
+archmage-suppress-backends	alternate-checkout	24	90											90
+cargo-superwork	primary	18	122	1										121
+cms-bench	primary	4	21	2										19
+codec-artifacts/margarine/zensim-edge-tail-diagnostic-2026-09-26/current-source/zensim	snapshot/research	52	358	82	2		2	4				30		247
+codec-artifacts/margarine/zensim-edge-tail-diagnostic-2026-09-26/source/zensim	snapshot/research	26	168	75	2		2	4				8		86
+coefficient	primary	153	1017	89	6			2				7		919
+dvifmish	primary	20	124	9		3						81		33
+hdr-corpus-convert	primary	1	17	12	2	2		2		6				1
+imageflow	primary	73	369	94	7		12	36				50	2	201
+imageflow-zencodecs-v2	alternate-checkout	81	382	72	9		12	43				49	6	233
+imageflow/.claude/worktrees/focus-rects-smart-crop	alternate-checkout	74	372	91	7		12	36				50	2	207
+imageflow/bindings/imageflow-node	primary	1	1											1
+imageflow/external/utoipa	primary	41	131											131
+oxcms	primary	26	113	6		5	2							100
+pre-filter/zenavif	snapshot/research	23	415	294	17		2	74		5		30		56
+pre-filter/zenpixels	snapshot/research	42	2178	1671	145	432	35	206	67	14	90	59	13	74
+pre-filter/zenpng	snapshot/research	33	479	258	4	1	2	15		12		54		159
+squintly	primary	23	129	5			2							122
+squintly--chroma-study	alternate-checkout	23	129	5			2							122
+webpx	primary	9	129	69			8	2				15		38
+zen-arm-src/zenanalyze	snapshot/research	20	286	260	12	38		18				8		6
+zen-arm-src/zenanalyze/zenpicker-train	snapshot/research	10	53											53
+zen-arm-src/zenanalyze/zenpredict-bake	snapshot/research	4	22											22
+zen-arm-src/zenanalyze/zenpredict-viz	snapshot/research	4	16											16
+zen-arm-src/zenavif	snapshot/research	28	493	345	18		3	76		5		35		77
+zen-arm-src/zengif	snapshot/research	22	205	80			27					6		115
+zen-arm-src/zengif/fuzz	snapshot/research	1	4											4
+zen-arm-src/zenjpeg/internal/jpegli-internals-sys	snapshot/research	1	5											5
+zen-arm-src/zenjpeg/zenjpeg	snapshot/research	130	704	219	14	1	4	11				80		402
+zen-arm-src/zenjpeg/zenjpeg-bench-utils	snapshot/research	3	9											9
+zen-arm-src/zenjpeg/zenjpeg/fuzz	snapshot/research	1	1											1
+zen-arm-src/zenjpeg/zenyuv	snapshot/research	1	1											1
+zen-arm-src/zenjpeg/zjpeg	snapshot/research	6	15	4										11
+zen-arm-src/zenjxl	snapshot/research	6	151	119	6		4	6		2		7		18
+zen-arm-src/zenpng	snapshot/research	39	530	276	4	1	2	19		12		54		188
+zen-arm-src/zensim	snapshot/research	1	3											3
+zen-arm-src/zensim/zensim	snapshot/research	14	99	65	2		2	4						35
+zen-arm-src/zensim/zensim-bench	snapshot/research	6	26	7										19
+zen-arm-src/zensim/zensim-picker-prep	snapshot/research	3	45	24		6	4							15
+zen-arm-src/zensim/zensim-regress	snapshot/research	29	134	21				1		2		18		93
+zen-arm-src/zensim/zensim-target	snapshot/research	2	14	11			1							2
+zen-arm-src/zensim/zensim-train-core	snapshot/research	3	14											14
+zen-arm-src/zensim/zensim-train-gpu	snapshot/research	2	133											133
+zen-arm-src/zensim/zensim-validate	snapshot/research	35	324											324
+zen-arm-src/zenwebp	snapshot/research	63	437	192	3		10	2				45	2	195
+zen-arm-src/zenwebp/zenwebp-recompress	snapshot/research	2	4											4
+zen/_dbg	archive/reference	1	2	2										
+zen/_dbg/zenjpeg-head-test	archive/reference	159	835	251	14	1	10	20		1		81	5	488
+zen/_flatten_runner	unversioned	1	2	2			1							1
+zen/_zensim-pu-panel	primary	99	804	130	2	6	7	5		2		18		648
+zen/hdr-anchor-vis	primary	1	19	12		9	1	4		8				
+zen/heic	primary	23	292	142			6	15		7		35	25	70
+zen/imagers-research/extracted/webpx	snapshot/research	4	87	54			2	2				13		19
+zen/imagers-research/extracted/zenanalyze	snapshot/research	10	246	225	11	38		18				8		1
+zen/imagers-research/extracted/zenavif	snapshot/research	24	465	332	18		2	76		5		31		66
+zen/imagers-research/extracted/zenfilters	snapshot/research	83	456	210	9	20	22	8				8		228
+zen/imagers-research/extracted/zenjpeg	snapshot/research	45	349	139	1		2	9				59		149
+zen/imagers-research/extracted/zenquant	snapshot/research	5	23	1										22
+zen/imagers-research/extracted/zenraw	snapshot/research	14	168	88	1		12	12				2	59	17
+zen/imagers-research/extracted/zenresize	snapshot/research	33	456	309	12		11	13				11		125
+zen/imagers-research/extracted/zensim	snapshot/research	5	44	35	2			3						9
+zen/imagers-research/extracted/zensim-regress	snapshot/research	14	91	3										88
+zen/imagers-research/extracted/zentone	snapshot/research	11	68	1										67
+zen/imagers-research/prototype/zenimage	snapshot/research	2	35	22	4	6	7	1						7
+zen/imazen-26	primary	4	31	22		6		6						3
+zen/jxl-encoder	primary	312	1061	10				4				185		864
+zen/linear-srgb	primary	13	113	1										112
+zen/mozjpeg-rs	primary	15	100	39				3				8		51
+zen/retired/zeneditor	archive/reference	9	59	11		8	1							45
+zen/retired/zenimage	archive/reference	112	557	104	14	23	14	45			30	32	26	372
+zen/ultrahdr	primary	22	232	182	49		3	11		23		4		26
+zen/ultrahdr/.claude/worktrees/agent-a59547161374af812	alternate-checkout	21	174	147	39		3	3				4		20
+zen/zenanalyze	primary	73	650	450	17	48		67		6		17		141
+zen/zenanalyze/.claude/worktrees/agent-a6848b95609bb1045	alternate-checkout	20	290	248	12	38		18				8		22
+zen/zenanalyze/.claude/worktrees/agent-a73cf35e086642d83	alternate-checkout	20	288	248	12	38		18				8		20
+zen/zenanalyze/.claude/worktrees/agent-a7f70280a5fc27a04	alternate-checkout	20	288	248	12	38		18				8		20
+zen/zenanalyze/.claude/worktrees/agent-a89f0d70e6f69af83	alternate-checkout	22	298	255	12	38		18				8		23
+zen/zenanalyze/.claude/worktrees/agent-ac31aacd1f71d130d	alternate-checkout	20	288	248	12	38		18				8		20
+zen/zenanalyze/.claude/worktrees/i8-quant-study	alternate-checkout	14	258	237	11	38		18				8		1
+zen/zenavif	primary	126	1236	670	76	14	5	121		26		118	2	365
+zen/zenavif--caterr	alternate-checkout	39	707	483	18		4	116		7		49	2	108
+zen/zenavif--chromaq	alternate-checkout	126	1237	670	76	14	5	121		26		118	2	366
+zen/zenavif--gainmap	alternate-checkout	49	743	487	18	5	4	116		7		48	2	140
+zen/zenavif--goalqueue	alternate-checkout	51	749	487	18	5	4	116		7		48	2	146
+zen/zenavif-serialize	primary	3	16	1										15
+zen/zenbitmaps	primary	13	291	216	5		1	8				57		25
+zen/zencodec	primary	44	1058	514	44	6	41	170		24		226	64	82
+zen/zencodec--gainmap	alternate-checkout	40	999	481	36	2	41	165		24		216	64	73
+zen/zencodec--metadata-fixes	alternate-checkout	41	1166	537	39	1	47	245		30		231	66	110
+zen/zencodec--taxonomy	alternate-checkout	40	999	481	36	2	41	165		24		216	64	73
+zen/zenextras	primary	30	403	342	7		37	14				12	7	32
+zen/zengif	primary	33	244	83			27	3				6		148
+zen/zenjpeg	primary	174	914	303	20	1	12	22		7		89	8	503
+zen/zenjpeg--caterr	alternate-checkout	162	854	255	14	1	10	20		1		84	6	500
+zen/zenjpeg--gainmap	alternate-checkout	162	855	257	14	1	11	20		1		84	6	499
+zen/zenjpeg--metadata-fixes	alternate-checkout	176	919	303	20	1	12	22		7		90	8	507
+zen/zenjpeg--qtable-detect	alternate-checkout	168	873	269	19	1	11	20		1		88	6	500
+zen/zenjpeg--zensim-diffmap-rd	alternate-checkout	169	872	265	19	1	11	20		1		88	6	503
+zen/zenjpeg-perm-corpus/zenjpeg--ablate-overnight-2026-05-02	alternate-checkout	140	729	223	14	1	4	11				80		423
+zen/zenjpeg/internal/jpegli-cpp	alternate-checkout	26	97									34		63
+zen/zenjpegai	primary	47	217	40			1	1				6		171
+zen/zenjpegai--d4base	alternate-checkout	47	216	40			1	1				6		170
+zen/zenjxl	primary	16	273	164	7	1	11	13		4		11	5	72
+zen/zenjxl--gainmap	alternate-checkout	12	245	154	7	1	7	13		4		11	5	58
+zen/zenjxl--task1	alternate-checkout	10	231	144	7	1	6	13		4		11	5	55
+zen/zenmetrics	primary	289	3007	339	55	25	5	5		9		8		2644
+zen/zenmetrics--avifgen	alternate-checkout	258	2757	298	48	16	4	4		9		4		2441
+zen/zenmetrics--chromasplit	alternate-checkout	277	2951	312	52	18	4	4		9		4		2621
+zen/zenmetrics--cifix	alternate-checkout	255	2706	287	47	16	4	4				4		2402
+zen/zenmetrics--cvvdpfix	alternate-checkout	282	2980	324	52	21	5	5		9		4		2636
+zen/zenmetrics--cvvdpmodeb	alternate-checkout	317	3106	355	55	25	7	10		9		8		2723
+zen/zenmetrics--cvvdpstrip	alternate-checkout	316	3109	355	55	25	7	10		9		8		2726
+zen/zenmetrics--fleet-fits	alternate-checkout	295	3035	339	55	25	5	5		9		8		2672
+zen/zenmetrics--fleetfits-land	alternate-checkout	314	3103	355	55	25	7	10		9		8		2720
+zen/zenmetrics--fleetfits-ops2	alternate-checkout	316	3109	355	55	25	7	10		9		8		2726
+zen/zenmetrics--isoland	alternate-checkout	304	3041	339	55	25	5	5		9		8		2678
+zen/zenmetrics--isoland-b714	alternate-checkout	286	2997	326	52	22	5	5		9		4		2651
+zen/zenmetrics--paper-corruption	alternate-checkout	282	2980	324	52	21	5	5		9		4		2636
+zen/zenmetrics--paper-cvvdp	alternate-checkout	282	2980	324	52	21	5	5		9		4		2636
+zen/zenmetrics--paper-memory	alternate-checkout	287	3002	340	55	27	5	5		9		8		2637
+zen/zenmetrics/.claude/worktrees/agent-a5ee6fc3706091d33	alternate-checkout	184	2190	166	26	25	2					7		2007
+zen/zennode	primary	7	26	1										25
+zen/zenpipe	primary	257	1543	617	44	62	100	54	21	4	6	134	7	667
+zen/zenpixels	primary	103	5121	3600	249	993	100	635	227	490	95	165	122	172
+zen/zenpixels--image-interop	alternate-checkout	98	4957	3484	233	930	105	630	227	477	95	161	122	167
+zen/zenpixels--u16narrow	alternate-checkout	103	5132	3605	249	996	100	635	227	490	95	165	122	177
+zen/zenpng	primary	44	619	330	4	3	3	35		21		60		192
+zen/zenpng--tracefix2	alternate-checkout	39	566	293	4	1	2	33		18		54		190
+zen/zenquant	primary	15	63	1										62
+zen/zenraw	primary	17	222	95	1		15	12				3	100	22
+zen/zenresize	primary	39	493	323	12		11	13				12		147
+zen/zensim	primary	182	1504	239	3	25	10	29	7	2		55		1175
+zen/zensim--avifgen	alternate-checkout	133	1017	147	2	6	7	5	4	2		27		831
+zen/zensim--boardfix	alternate-checkout	192	1563	253	3	32	10	32	7	2		57	4	1209
+zen/zensim--cellprofile	alternate-checkout	188	1547	253	3	32	10	32	7	2		57	4	1193
+zen/zensim--cifix	alternate-checkout	179	1475	235	3	25	10	29	7	2		55		1150
+zen/zensim--cvvdp-safesyn	alternate-checkout	182	1504	239	3	25	10	29	7	2		55		1175
+zen/zensim--cvvdpfix	alternate-checkout	182	1504	239	3	25	10	29	7	2		55		1175
+zen/zensim--datasets	alternate-checkout	182	1504	239	3	25	10	29	7	2		55		1175
+zen/zensim--dvifm3	alternate-checkout	181	1491	239	3	25	10	29	7	2		61		1156
+zen/zensim--dvifm3base	alternate-checkout	181	1487	239	3	25	10	29	7	2		55		1158
+zen/zensim--era2-flip	alternate-checkout	136	1060	151	2	10	7	5	4	2		28		868
+zen/zensim--featacc	alternate-checkout	193	1563	253	3	32	10	32	7	2		57	4	1209
+zen/zensim--featbank-extract	alternate-checkout	185	1531	252	3	32	10	32	7	2		56	4	1179
+zen/zensim--featbank-potential	alternate-checkout	182	1504	239	3	25	10	29	7	2		55		1175
+zen/zensim--featcanon	alternate-checkout	192	1553	253	3	32	10	32	7	2		57	4	1199
+zen/zensim--featcanon-fix	alternate-checkout	193	1565	253	3	32	10	32	7	2		57	4	1211
+zen/zensim--fleet-fits	alternate-checkout	188	1543	253	3	32	10	32	7	2		57	4	1189
+zen/zensim--freefeats	alternate-checkout	137	1086	151	2	10	7	5	4	2		28		894
+zen/zensim--gaddrinst	alternate-checkout	143	1145	172	2	14	10	5	4	2		28		928
+zen/zensim--geometry	alternate-checkout	185	1560	239	3	25	10	29	7	2		84		1202
+zen/zensim--gmsbank	alternate-checkout	187	1540	252	3	32	10	32	7	2		56	4	1188
+zen/zensim--gmsd	alternate-checkout	186	1538	252	3	32	10	32	7	2		56	4	1186
+zen/zensim--gmsd-chroma	alternate-checkout	188	1543	253	3	32	10	32	7	2		57	4	1189
+zen/zensim--isoland	alternate-checkout	192	1563	253	3	32	10	32	7	2		57	4	1209
+zen/zensim--isoland-e	alternate-checkout	192	1563	253	3	32	10	32	7	2		57	4	1209
+zen/zensim--isoland-e2	alternate-checkout	192	1563	253	3	32	10	32	7	2		57	4	1209
+zen/zensim--land	alternate-checkout	188	1543	253	3	32	10	32	7	2		57	4	1189
+zen/zensim--optadam	alternate-checkout	189	1549	253	3	32	10	32	7	2		57	4	1195
+zen/zensim--optmlp	alternate-checkout	188	1547	253	3	32	10	32	7	2		57	4	1193
+zen/zensim--paper-corruption	alternate-checkout	182	1504	239	3	25	10	29	7	2		55		1175
+zen/zensim--paper-cvvdp	alternate-checkout	182	1504	239	3	25	10	29	7	2		55		1175
+zen/zensim--paper-gates	alternate-checkout	182	1506	239	3	25	10	29	7	2		55		1177
+zen/zensim--paper-holdout	alternate-checkout	182	1504	239	3	25	10	29	7	2		55		1175
+zen/zensim--paper-memory	alternate-checkout	182	1504	239	3	25	10	29	7	2		55		1175
+zen/zensim--paper-target	alternate-checkout	182	1504	239	3	25	10	29	7	2		55		1175
+zen/zensim--sparsehf	alternate-checkout	132	1011	147	2	6	7	5	4	2		27		825
+zen/zensim--tierparity	alternate-checkout	190	1558	253	3	32	10	32	7	2		57	4	1204
+zen/zensim--transplant	alternate-checkout	184	1505	239	3	25	10	29	7	2		61		1170
+zen/zensim--v47pin	alternate-checkout	95	782	126	2	6	7	5		2		18		630
+zen/zensim--waver4	alternate-checkout	137	1085	151	2	10	7	5	4	2		28		893
+zen/zensim-featcompress	primary	179	1475	235	3	25	10	29	7	2		55		1150
+zen/zensim/.claude/worktrees/agent-a12718460b8c7689d	alternate-checkout	88	763	126	2	6	7	5		2		18		611
+zen/zensim/.claude/worktrees/agent-a21718cdcd42f8d9d	alternate-checkout	88	763	126	2	6	7	5		2		18		611
+zen/zensim/.claude/worktrees/agent-a353d2b720897a396	alternate-checkout	63	425	86	2		2	5		2		18		320
+zen/zensim/.claude/worktrees/agent-a9b035ce345983993	alternate-checkout	61	412	86	2		2	5		2		18		307
+zen/zensim/.claude/worktrees/agent-adc5734477705d6e8	alternate-checkout	56	318	86	2		2	5		2		18		213
+zen/zensim/.claude/worktrees/agent-ae90278dada8cb4f6	alternate-checkout	94	777	128	2	6	7	5		2		18		623
+zen/zensim/.claude/worktrees/agent-aeda5011f5339da07	alternate-checkout	56	318	86	2		2	5		2		18		213
+zen/zensquoosh	primary	1	18	15	2	2	1	1						
+zen/zensr	primary	23	76	19	3							8		49
+zen/zensysbench	primary	10	66	5	1		1							60
+zen/zentone	primary	31	393	187	2	10	20			105				126
+zen/zenwebp	primary	79	528	223	3		12	16				46	7	236
+zen/zenwebp--caterr	alternate-checkout	71	500	209	3		11	16				46	7	223
+zensim-validation-2026-09-08/extraction-profile/source/zensim	snapshot/research	1	9											9
+zensim-validation-2026-09-08/jxl-decode-contract/source-rebased/jxl-encoder/jxl-encoder	snapshot/research	3	12	1										11
+zensim-validation-2026-09-08/jxl-decode-contract/source/jxl-encoder/jxl-encoder	snapshot/research	3	16	1										15
+zensim-validation-2026-09-08/model-blend/source/zensim-bench	snapshot/research	2	7											7
+zensim-validation-2026-09-08/pool-profile/source-final/zensim	snapshot/research	2	48											48
+zensim-validation-2026-09-13/sampling/source-final/zensim	snapshot/research	12	99	15										84
+zensim-validation-2026-09-13/sampling/source-reviewed/zensim	snapshot/research	12	100	15										85
+zensim-validation-2026-09-14/complete-feature-audit/site/source/zensim-bench	snapshot/research	5	83	45	1	11	3	17	3			3		15
+zensim-validation-2026-09-14/native-color-admission/site/source/zensim-bench/examples	snapshot/research	1	14	11		4								2
+zensim-validation-2026-09-14/native-color-admission/site/source/zensim-bench/examples/shared	snapshot/research	1	13	11	1	4								1
+zensim-validation-2026-09-14/native-color-admission/site/source/zensim-bench/examples/verify_bitstream_decode	snapshot/research	1	4	2				1						1
+zensim-validation-2026-09-14/native-color-admission/site/source/zensim-bench/tests	snapshot/research	1	13	8			3	2						
+zensim-validation-2026-09-14/native-integrity-admission/site/source/zensim-bench	snapshot/research	5	83	45	1	11	3	17	3			3		15
+zensim-validation-2026-09-14/native-map-replay	snapshot/research	3	20	4								4		12
+zensim-validation-2026-09-14/native-sdr-contract/initial-publication/site/source/zensim-bench	snapshot/research	5	80	44	1	11	3	16	3			3		13
+zensim-validation-2026-09-14/native-sdr-contract/site/source/zensim-bench	snapshot/research	5	81	45	1	11	3	17	3			3		13
+zensim-validation-2026-09-14/rev3-targeting/site/source/zensim-target/examples	snapshot/research	1	2	2										

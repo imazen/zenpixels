@@ -23,6 +23,13 @@
 //! 0.2.14 release line). This module is the post-0.2.14 home for
 //! everything richer.
 
+// SIMD macro bodies use LANES * N; stable Rust cannot express this generic
+// const product as an as_chunks array length. Keep chunk/remainder iteration.
+#![allow(clippy::chunks_exact_to_as_chunks)]
+
+// Policy belongs with measurement, not the shared metadata carrier.
+const DEFAULT_PERCENTILE: f32 = 0.99999;
+
 use alloc::boxed::Box;
 use alloc::vec;
 
@@ -408,12 +415,12 @@ fn scan_row_max_mean_smoothed<const N: usize>(row: &[f32], method: LightLevelMet
 /// entrypoints. Implemented for `ContentLightLevel` only; users call
 /// these as associated functions just like the (pre-relocation)
 /// inherent impls — `ContentLightLevel::measure_max(px, white,
-/// method)` etc., once `use zenpixels_convert::CllMeasure;` is in
+/// method)` etc., once `use zenpixels_convert::hdr::measure::CllMeasure;` is in
 /// scope.
 ///
 /// MaxFALL is always the arithmetic mean (CTA-861.3 spec-literal),
 /// independent of which entrypoint produces the MaxCLL reading.
-pub trait CllMeasure {
+pub trait CllMeasure: crate::sealed::Sealed {
     /// MaxCLL + MaxFALL measurement for HDR content.
     ///
     /// Spec-conformant CTA-861.3 MaxCLL + MaxFALL — literal max + mean.
@@ -481,7 +488,7 @@ pub trait CllMeasure {
 
     /// **Internal / experimental.** Convenience wrapper around
     /// [`measure_percentile`](Self::measure_percentile) at
-    /// [`DEFAULT_PERCENTILE`](ContentLightLevel::DEFAULT_PERCENTILE).
+    /// `0.99999`.
     ///
     /// **Kept on the trait but doc-hidden** because the 2026-06-22
     /// audited shootout showed it splits 3-3 against
@@ -515,7 +522,7 @@ pub trait CllMeasure {
     /// caller commits to a percentile value explicitly per content
     /// policy. `1.0` is the spec-literal max (use
     /// [`measure_max`](Self::measure_max) directly if that's the goal).
-    /// `0.99999` ([`DEFAULT_PERCENTILE`](ContentLightLevel::DEFAULT_PERCENTILE))
+    /// `0.99999` (`0.99999`)
     /// is the tail-tightest tested value in the 2026-06-22 audited
     /// shootout — trades ~11 % more clearly-different pixels overall
     /// for ~1.5 % tighter worst-1-5 % tail.
@@ -654,12 +661,7 @@ impl CllMeasure for ContentLightLevel {
         white: DiffuseWhite,
         method: LightLevelMethod,
     ) -> Option<ContentLightLevel> {
-        <ContentLightLevel as CllMeasure>::measure_percentile(
-            px,
-            white,
-            ContentLightLevel::DEFAULT_PERCENTILE,
-            method,
-        )
+        <ContentLightLevel as CllMeasure>::measure_percentile(px, white, DEFAULT_PERCENTILE, method)
     }
 
     fn measure_percentile(
@@ -891,12 +893,12 @@ mod simd_kernel {
         sum_nits: &mut f64,
         literal_max_nits: &mut f32,
     ) {
-        let zero = f32x8::zero(token);
-        let wn = f32x8::splat(token, white_nits);
-        let log2_min = f32x8::splat(token, LightLevelHistogram::LOG2_MIN);
-        let inv_step = f32x8::splat(token, LightLevelHistogram::inv_log2_step());
-        let bin_min_nits = f32x8::splat(token, LightLevelHistogram::BIN_MIN_NITS);
-        let num_bins_minus_1 = f32x8::splat(token, (LightLevelHistogram::NUM_BINS - 1) as f32);
+        let zero = f32x8::zero_t(token);
+        let wn = f32x8::splat_t(token, white_nits);
+        let log2_min = f32x8::splat_t(token, LightLevelHistogram::LOG2_MIN);
+        let inv_step = f32x8::splat_t(token, LightLevelHistogram::inv_log2_step());
+        let bin_min_nits = f32x8::splat_t(token, LightLevelHistogram::BIN_MIN_NITS);
+        let num_bins_minus_1 = f32x8::splat_t(token, (LightLevelHistogram::NUM_BINS - 1) as f32);
 
         let mut local_max = zero;
         // Accumulate in f32 lanes, flushing into the f64 running total
@@ -918,9 +920,9 @@ mod simd_kernel {
                 ba[i] = chunk[base + 2];
                 // Alpha (chunk[base + 3] when N==4) is ignored.
             }
-            let r = f32x8::load(token, &ra);
-            let g = f32x8::load(token, &ga);
-            let b = f32x8::load(token, &ba);
+            let r = f32x8::load_t(token, &ra);
+            let g = f32x8::load_t(token, &ga);
+            let b = f32x8::load_t(token, &ba);
 
             // Tier-consistent NaN/negative fold: `v > 0` is an ORDERED
             // compare — false for NaN, for negatives, and for zero on
@@ -1010,15 +1012,15 @@ mod simd_kernel {
         sum_nits: &mut f64,
         literal_max_nits: &mut f32,
     ) {
-        let zero = f32x8::zero(token);
-        let wn = f32x8::splat(token, white_nits);
-        let kr = f32x8::splat(token, KR);
-        let kg = f32x8::splat(token, KG);
-        let kb = f32x8::splat(token, KB);
-        let log2_min = f32x8::splat(token, LightLevelHistogram::LOG2_MIN);
-        let inv_step = f32x8::splat(token, LightLevelHistogram::inv_log2_step());
-        let bin_min_nits = f32x8::splat(token, LightLevelHistogram::BIN_MIN_NITS);
-        let num_bins_minus_1 = f32x8::splat(token, (LightLevelHistogram::NUM_BINS - 1) as f32);
+        let zero = f32x8::zero_t(token);
+        let wn = f32x8::splat_t(token, white_nits);
+        let kr = f32x8::splat_t(token, KR);
+        let kg = f32x8::splat_t(token, KG);
+        let kb = f32x8::splat_t(token, KB);
+        let log2_min = f32x8::splat_t(token, LightLevelHistogram::LOG2_MIN);
+        let inv_step = f32x8::splat_t(token, LightLevelHistogram::inv_log2_step());
+        let bin_min_nits = f32x8::splat_t(token, LightLevelHistogram::BIN_MIN_NITS);
+        let num_bins_minus_1 = f32x8::splat_t(token, (LightLevelHistogram::NUM_BINS - 1) as f32);
 
         let mut local_max = zero;
         // f32 lane sums flushed to f64 every `SUM_FLUSH_CHUNKS` chunks —
@@ -1041,9 +1043,9 @@ mod simd_kernel {
             // `accumulate_strip_max_rgb_tier`. A `.max(zero)` load fold
             // propagated NaN on NEON/WASM (and was order-dependent on
             // x86), poisoning the luminance dot product.
-            let r = f32x8::load(token, &ra);
-            let g = f32x8::load(token, &ga);
-            let b = f32x8::load(token, &ba);
+            let r = f32x8::load_t(token, &ra);
+            let g = f32x8::load_t(token, &ga);
+            let b = f32x8::load_t(token, &ba);
             let r = f32x8::blend(r.simd_gt(zero), r, zero);
             let g = f32x8::blend(g.simd_gt(zero), g, zero);
             let b = f32x8::blend(b.simd_gt(zero), b, zero);
@@ -1126,7 +1128,6 @@ mod simd_kernel {
 
     /// Top-level dispatcher for the fast measure_max path.
     /// Loops rows and calls the right per-method tier kernel.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn scan_max_mean_simd(
         bytes: &[u8],
         h: usize,
@@ -1197,7 +1198,7 @@ mod simd_kernel {
         row_max_rel: &mut f32,
         row_sum_rel: &mut f64,
     ) {
-        let zero = f32x8::zero(token);
+        let zero = f32x8::zero_t(token);
         let mut local_max = zero;
         // f32 lane sums flushed to f64 every `SUM_FLUSH_CHUNKS` chunks —
         // see `accumulate_strip_max_rgb_tier`.
@@ -1217,9 +1218,9 @@ mod simd_kernel {
             }
             // Tier-consistent NaN/negative fold — see the comment in
             // `accumulate_strip_max_rgb_tier`.
-            let r = f32x8::load(token, &ra);
-            let g = f32x8::load(token, &ga);
-            let b = f32x8::load(token, &ba);
+            let r = f32x8::load_t(token, &ra);
+            let g = f32x8::load_t(token, &ga);
+            let b = f32x8::load_t(token, &ba);
             let r = f32x8::blend(r.simd_gt(zero), r, zero);
             let g = f32x8::blend(g.simd_gt(zero), g, zero);
             let b = f32x8::blend(b.simd_gt(zero), b, zero);
@@ -1255,10 +1256,10 @@ mod simd_kernel {
         row_max_rel: &mut f32,
         row_sum_rel: &mut f64,
     ) {
-        let zero = f32x8::zero(token);
-        let kr = f32x8::splat(token, KR);
-        let kg = f32x8::splat(token, KG);
-        let kb = f32x8::splat(token, KB);
+        let zero = f32x8::zero_t(token);
+        let kr = f32x8::splat_t(token, KR);
+        let kg = f32x8::splat_t(token, KG);
+        let kb = f32x8::splat_t(token, KB);
 
         let mut local_max = zero;
         // f32 lane sums flushed to f64 every `SUM_FLUSH_CHUNKS` chunks —
@@ -1279,9 +1280,9 @@ mod simd_kernel {
             }
             // Tier-consistent NaN/negative fold — see the comment in
             // `accumulate_strip_max_rgb_tier`.
-            let r = f32x8::load(token, &ra);
-            let g = f32x8::load(token, &ga);
-            let b = f32x8::load(token, &ba);
+            let r = f32x8::load_t(token, &ra);
+            let g = f32x8::load_t(token, &ga);
+            let b = f32x8::load_t(token, &ba);
             let r = f32x8::blend(r.simd_gt(zero), r, zero);
             let g = f32x8::blend(g.simd_gt(zero), g, zero);
             let b = f32x8::blend(b.simd_gt(zero), b, zero);
@@ -2118,7 +2119,7 @@ mod tests {
         // explicitly opt into percentile-based defect rejection via
         // `measure_percentile`. See
         // `zen/zentone/benchmarks/shootout_2026-06-22_findings_v2.md`.
-        assert_eq!(ContentLightLevel::DEFAULT_PERCENTILE, 0.99999);
+        assert_eq!(DEFAULT_PERCENTILE, 0.99999);
     }
 
     #[test]
@@ -2147,7 +2148,7 @@ mod tests {
             let pct = <ContentLightLevel as CllMeasure>::measure_percentile(
                 buf.as_slice(),
                 DiffuseWhite::BT2408,
-                ContentLightLevel::DEFAULT_PERCENTILE,
+                DEFAULT_PERCENTILE,
                 method,
             )
             .unwrap();

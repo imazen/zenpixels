@@ -193,17 +193,14 @@ mod plan_shape {
     }
 
     #[test]
-    fn hdr_pipeline_hlg_source_uses_same_chain_shape() {
-        // HLG U16 BT.2020 → sRGB U8 BT.709: same pipeline shape as PQ;
-        // tone-map still fires (HLG is HDR-source).
-        let src = hlg_u16_bt2020_rgb();
-        let dst = PixelDescriptor::RGB8_SRGB;
-        let src_pixel: [u16; 3] = [30_000, 30_000, 30_000];
-        let src_bytes: [u8; 6] = bytemuck::cast(src_pixel);
-        let trace = trace_hdr_plan(src, dst, default_hdr(1000.0), &src_bytes, 1);
+    fn hdr_pipeline_hlg_requires_an_explicit_display_mapping() {
         assert!(
-            trace.contains(&"ToneMapBt2446A"),
-            "HLG → sRGB pipeline must include ToneMapBt2446A, got {trace:?}"
+            ConvertPlan::new_with_hdr_config(
+                hlg_u16_bt2020_rgb(),
+                PixelDescriptor::RGB8_SRGB,
+                HdrConfig::for_source_peak(1000.)
+            )
+            .is_err()
         );
     }
 
@@ -534,21 +531,24 @@ fn hdr_pipeline_e2e_neutral_gray_lands_in_sdr_range() {
 fn new_with_hdr_peak_delegates_to_config_with_defaults() {
     // `ConvertPlan::new_with_hdr_peak(_, _, peak)` is documented as
     // `new_with_hdr_config(_, _, HdrConfig::for_source_peak(peak))`. Pin
-    // that contract by building both and comparing the resource
-    // estimates — identical plans produce identical tuple estimates.
+    // that contract by comparing converted samples across the PQ code range.
     let src = pq_u16_bt2020_rgb();
     let dst = PixelDescriptor::RGB8_SRGB;
     let plan_peak = ConvertPlan::new_with_hdr_peak(src, dst, 1000.0).expect("peak plan");
     let plan_config =
         ConvertPlan::new_with_hdr_config(src, dst, HdrConfig::for_source_peak(1000.0))
             .expect("config plan");
-    // Same input/output descriptors → same estimated work + memory.
-    let est_peak = plan_peak.estimate(1024, 1024);
-    let est_config = plan_config.estimate(1024, 1024);
-    assert_eq!(
-        est_peak, est_config,
-        "peak-vs-config plan tuple estimates diverge: {est_peak:?} vs {est_config:?}",
+    let input: Vec<u16> = (0..=u16::MAX).flat_map(|v| [v; 3]).collect();
+    let mut peak = vec![0u8; input.len()];
+    let mut config = vec![0u8; input.len()];
+    zenpixels_convert::convert_row(&plan_peak, bytemuck::cast_slice(&input), &mut peak, 65536);
+    zenpixels_convert::convert_row(
+        &plan_config,
+        bytemuck::cast_slice(&input),
+        &mut config,
+        65536,
     );
+    assert_eq!(peak, config);
 }
 
 // ════════════════════════════════════════════════════════════════════════

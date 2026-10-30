@@ -18,8 +18,9 @@
 //! 1. **Transfer cost**: Effort of applying/removing EOTF (sRGB→linear,
 //!    PQ→linear, etc.). Unknown↔anything is free (relabeling).
 //! 2. **Depth cost**: Effort of depth conversion (u8→f32, u16→u8). Loss
-//!    considers provenance — if the data was originally u8 and was widened
-//!    to f32 for processing, converting back to u8 has zero loss.
+//!    considers provenance: data widened from u8 to f32 scores zero loss on
+//!    the way back to u8. That holds only while the samples are still u8
+//!    levels; after a resize or filter the score understates the rounding.
 //! 3. **Layout cost**: Effort of adding/removing/swizzling channels.
 //!    RGB→Gray is very lossy (500); BGRA→RGBA is cheap (5, swizzle only).
 //! 4. **Alpha cost**: Effort of alpha mode conversion. Straight→premul is
@@ -36,21 +37,26 @@
 //!
 //! # Provenance
 //!
-//! [`Provenance`] is the key to avoiding unnecessary quality loss. Without
-//! it, converting f32→u8 always reports high loss. With it, the cost model
-//! knows the data was originally u8 (e.g., from JPEG) and the round-trip
-//! is lossless.
+//! [`Provenance`] is a cost hint: it keeps the cost model from penalizing a
+//! return to the source's depth. Without it, converting f32→u8 always
+//! reports high loss. With it, the cost model knows the data came from u8
+//! (e.g., JPEG) and scores the return to u8 as free. It records ancestry,
+//! not what the current samples hold.
 //!
 //! Update provenance when operations change the data's effective precision
 //! or gamut:
 //!
-//! - JPEG u8 → f32 for resize → back to u8: **No update needed.** Origin
-//!   is still u8.
+//! - JPEG u8 → f32 → back to u8 with no sample-changing step: **No update
+//!   needed.** The values are still u8 levels.
+//! - JPEG u8 → f32 → resize or filter → back to u8: the resize created values
+//!   between u8 levels, and the return to u8 rounds them. u8 provenance
+//!   scores that rounding as free; use [`Provenance::from_source`] when the
+//!   loss should count.
 //! - sRGB data → convert to BT.2020 → saturation boost → back to sRGB:
 //!   **Call `invalidate_primaries(Bt2020)`** because the data now genuinely
 //!   uses the wider gamut.
-//! - 16-bit PNG → process in f32 → back to u16: **No update needed.**
-//!   Origin is still u16.
+//! - 16-bit PNG → process in f32 → back to u16: as for JPEG; only an
+//!   unchanged round trip is free.
 //!
 //! # Consumer cost overrides
 //!
@@ -93,12 +99,13 @@ use crate::{
 // ---------------------------------------------------------------------------
 
 /// Tracks where pixel data came from, so the cost model can distinguish
-/// "f32 that was widened from u8 JPEG" (lossless round-trip back to u8)
+/// "f32 that was widened from u8 JPEG" (a return to u8 scores as free)
 /// from "f32 that was decoded from a 16-bit EXR" (lossy truncation to u8).
 ///
 /// Without provenance, `depth_cost(f32 → u8)` always reports high loss.
-/// With provenance, it can see that the data's *true* precision is u8,
-/// so the round-trip is lossless.
+/// With provenance, it scores the return to u8 as free. That is right only
+/// while the samples are still u8 levels; after a resize or filter it
+/// understates the loss.
 ///
 /// # Gamut provenance
 ///
@@ -115,7 +122,9 @@ use crate::{
 pub struct Provenance {
     /// The channel depth of the original source data.
     ///
-    /// For a JPEG (u8 sRGB) decoded into f32 for resize, this is `U8`.
+    /// For a JPEG (u8 sRGB) decoded into f32, this is `U8`. After a resize or
+    /// filter it still names the ancestry, but the samples are no longer u8
+    /// levels.
     /// For an EXR (f32) loaded directly, this is `F32`.
     /// For a 16-bit PNG, this is `U16`.
     pub origin_depth: ChannelType,
@@ -150,7 +159,7 @@ impl Provenance {
     /// Create provenance with an explicit origin depth. Primaries default to BT.709.
     ///
     /// Use this when the data has been widened from a known source depth.
-    /// For example, a JPEG (u8) decoded into f32 for resize:
+    /// For example, a JPEG (u8) decoded into f32:
     ///
     /// ```rust,ignore
     /// let provenance = Provenance::with_origin_depth(ChannelType::U8);
@@ -360,16 +369,17 @@ pub fn best_match_with(
 /// Fully-parameterized format negotiation.
 ///
 /// This is the most flexible entry point: it takes explicit provenance
-/// (so the cost model knows the data's true origin precision) and
+/// (so the cost model knows the data's origin precision) and
 /// consumer cost overrides (so fused conversion paths are accounted for).
 ///
 /// # When to use
 ///
-/// Use this when the current pixel format doesn't represent the data's
-/// true precision. For example, a JPEG image (u8 sRGB) decoded into f32
-/// for gamma-correct resize: the data is *currently* f32, but its origin
-/// precision is u8. Converting back to u8 for JPEG encoding is lossless
-/// (within ±1 LSB), and the cost model should reflect that.
+/// Use this when the data came from a lower precision than its current
+/// format. For example, a JPEG image (u8 sRGB) decoded into f32: the data is
+/// *currently* f32, but its origin precision is u8, and the cost model
+/// scores the return to u8 as free. After a gamma-correct resize the samples
+/// are new values and the return to u8 rounds them; use
+/// [`Provenance::from_source`] when that loss should count.
 ///
 /// ```rust,ignore
 /// let provenance = Provenance::with_origin_depth(ChannelType::U8);
@@ -487,8 +497,9 @@ pub fn conversion_cost(from: PixelDescriptor, to: PixelDescriptor) -> Conversion
 ///
 /// Like [`conversion_cost`], but uses the provided [`Provenance`] to
 /// determine whether a depth narrowing is actually lossy. For example,
-/// `f32 → u8` reports zero loss when `provenance.origin_depth == U8`,
-/// because the data was originally u8 and the round-trip is lossless.
+/// `f32 → u8` reports zero loss when `provenance.origin_depth == U8`. That
+/// models an unchanged round trip; it does not check that the samples are
+/// still u8 levels.
 #[must_use]
 pub fn conversion_cost_with_provenance(
     from: PixelDescriptor,
@@ -740,10 +751,11 @@ fn depth_loss(target_depth: ChannelType, origin_depth: ChannelType) -> u16 {
 #[allow(unreachable_patterns)] // non_exhaustive: future variants
 pub(crate) fn channel_bits(ct: ChannelType) -> u16 {
     match ct {
-        ChannelType::U8 => 8,
+        ChannelType::U8 | ChannelType::I8 => 8,
         ChannelType::F16 => 11, // 10 mantissa + 1 implicit
-        ChannelType::U16 => 16,
-        ChannelType::F32 => 32,
+        ChannelType::U16 | ChannelType::I16 => 16,
+        ChannelType::F32 | ChannelType::U32 | ChannelType::I32 => 32,
+        ChannelType::U64 | ChannelType::I64 | ChannelType::F64 => 64,
         _ => 0,
     }
 }

@@ -552,8 +552,8 @@ fn ideal_format_perceptual_hdr() {
 
 #[test]
 fn u8_origin_f32_to_u8_reports_zero_loss() {
-    // JPEG (u8 sRGB) → decoded to f32 for resize → encode back to u8.
-    // The data's true precision is u8, so f32→u8 is lossless.
+    // JPEG (u8 sRGB) → decoded to f32 → encode back to u8. With u8 provenance
+    // the cost model scores f32→u8 as lossless: an unchanged round trip.
     let provenance = Provenance::with_origin_depth(ChannelType::U8);
     let cost = conversion_cost_with_provenance(
         PixelDescriptor::RGBF32_LINEAR,
@@ -693,6 +693,6 @@ fn provenance_shifts_negotiate_preference() {
             ConvertIntent::Fastest
         ),
         Some(PixelDescriptor::RGB8_SRGB),
-        "with u8 provenance, u8 should win since round-trip is lossless"
+        "with u8 provenance, u8 should win: the cost model scores the return as lossless"
     );
 }

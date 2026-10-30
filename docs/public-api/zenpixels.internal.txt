@@ -9,32 +9,28 @@
 
 ## summary
 #
-#   pub types (struct/enum/trait/alias)         2
-#   pub consts/statics                          1
 #   inherent methods                           39
-#   struct fields                               4
-#   trait roster entries (type × trait)        37
+#   trait roster entries (type × trait)        40
 #
 # per-module pub lines:
-#   (root)                            3
 #   buffer                            3
-#   cicp                              1
+#   cicp                              2
 #   color                             6
 #   descriptor                       10
-#   hdr                               3
+#   hdr                               1
 #   icc                               2
 #   orientation                       1
 #   pixel_types                       2
-#   planar                           10
 #   policy                            5
+#   sample                            7
 
-## items (45 lines)
+## items (39 lines)
 
-pub const hdr::ContentLightLevel::DEFAULT_PERCENTILE: f32
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
 pub fn buffer::Rgbx::assert_fields_are_eq(&self)
 pub fn cicp::Cicp::assert_fields_are_eq(&self)
+pub fn cicp::CicpDescriptorError::assert_fields_are_eq(&self)
 pub fn color::ColorAuthority::assert_fields_are_eq(&self)
 pub fn color::ColorContext::assert_fields_are_eq(&self)
 pub fn color::ColorOrigin::assert_fields_are_eq(&self)
@@ -52,36 +48,31 @@ pub fn descriptor::PixelFormat::assert_fields_are_eq(&self)
 pub fn descriptor::SignalRange::assert_fields_are_eq(&self)
 pub fn descriptor::TransferFunction::assert_fields_are_eq(&self)
 pub fn hdr::ContentLightLevel::assert_fields_are_eq(&self)
-pub fn hdr::ContentLightLevel::measure(buffer::PixelSlice<'_>, hdr::DiffuseWhite) -> core::option::Option<Self>
 pub fn icc::IccIdentification::assert_fields_are_eq(&self)
 pub fn icc::IdentificationUse::assert_fields_are_eq(&self)
 pub fn orientation::Orientation::assert_fields_are_eq(&self)
 pub fn pixel_types::GrayAlpha16::assert_fields_are_eq(&self)
 pub fn pixel_types::GrayAlpha8::assert_fields_are_eq(&self)
-pub fn planar::PlaneDescriptor::assert_fields_are_eq(&self)
-pub fn planar::PlaneLayout::assert_fields_are_eq(&self)
-pub fn planar::PlaneMask::assert_fields_are_eq(&self)
-pub fn planar::PlaneRelationship::assert_fields_are_eq(&self)
-pub fn planar::PlaneSemantic::assert_fields_are_eq(&self)
-pub fn planar::Subsampling::assert_fields_are_eq(&self)
-pub fn planar::YuvMatrix::assert_fields_are_eq(&self)
 pub fn policy::AlphaPolicy::assert_fields_are_eq(&self)
 pub fn policy::ConvertOptions::assert_fields_are_eq(&self)
 pub fn policy::DepthPolicy::assert_fields_are_eq(&self)
 pub fn policy::GrayExpand::assert_fields_are_eq(&self)
 pub fn policy::LumaCoefficients::assert_fields_are_eq(&self)
-pub struct Plane [also: planar]
-pub Plane::buffer: buffer::PixelBuffer
-pub Plane::semantic: planar::PlaneSemantic
-pub planar::Plane::buffer: buffer::PixelBuffer
-pub planar::Plane::semantic: planar::PlaneSemantic
+pub fn sample::ChromaSiting::assert_fields_are_eq(&self)
+pub fn sample::ChromaSubsampling::assert_fields_are_eq(&self)
+pub fn sample::CodePlaneError::assert_fields_are_eq(&self)
+pub fn sample::ExactDepth::assert_fields_are_eq(&self)
+pub fn sample::ExactDepthError::assert_fields_are_eq(&self)
+pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
+pub fn sample::SampleEncodingError::assert_fields_are_eq(&self)
 
-## trait impls (37 types)
+## trait impls (40 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
 buffer::Rgbx: TrivialClone
 cicp::Cicp: TrivialClone
+cicp::CicpDescriptorError: TrivialClone
 color::ColorAuthority: TrivialClone
 color::ColorProvenance: TrivialClone
 color::NamedProfile: TrivialClone
@@ -104,14 +95,16 @@ orientation::Orientation: TrivialClone
 pixel_types::GrayAlpha16: TrivialClone
 pixel_types::GrayAlpha8: TrivialClone
 pixel_types::GrayAlphaF32: TrivialClone
-planar::PlaneDescriptor: TrivialClone
-planar::PlaneMask: TrivialClone
-planar::PlaneRelationship: TrivialClone
-planar::PlaneSemantic: TrivialClone
-planar::Subsampling: TrivialClone
-planar::YuvMatrix: TrivialClone
 policy::AlphaPolicy: TrivialClone
 policy::ConvertOptions: TrivialClone
 policy::DepthPolicy: TrivialClone
 policy::GrayExpand: TrivialClone
 policy::LumaCoefficients: TrivialClone
+sample::ChromaSiting: TrivialClone
+sample::ChromaSubsampling: TrivialClone
+sample::CodePlane<'a>: TrivialClone
+sample::CodePlaneError: TrivialClone
+sample::ExactDepth: TrivialClone
+sample::ExactDepthError: TrivialClone
+sample::SampleEncoding: TrivialClone
+sample::SampleEncodingError: TrivialClone

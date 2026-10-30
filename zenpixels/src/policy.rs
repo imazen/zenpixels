@@ -1,7 +1,7 @@
 //! Conversion policy types for explicit control over lossy operations.
 //!
-//! All lossy pixel format conversions (alpha removal, depth reduction, etc.)
-//! require an explicit policy choice — there are no silent defaults.
+//! Alpha removal, depth reduction, grayscale conversion and clipping have
+//! explicit permissions. These options do not prove sample-exact conversion.
 
 /// How to expand grayscale channels to RGB.
 ///
@@ -97,8 +97,8 @@ impl LumaCoefficients {
     }
 }
 
-/// Explicit options for pixel format conversion. All lossy
-/// operations require a policy choice — no silent defaults.
+/// Explicit permissions for pixel format conversion. Presets select channel,
+/// depth and clipping behavior; they do not prove reversible color arithmetic.
 ///
 /// Construct via struct literal for full control, or use the convenience
 /// constructors and `with_*` builders for common patterns:
@@ -106,8 +106,8 @@ impl LumaCoefficients {
 /// ```
 /// use zenpixels::{ConvertOptions, AlphaPolicy, DepthPolicy};
 ///
-/// // Forbid all lossy operations (safe default)
-/// let strict = ConvertOptions::forbid_lossy();
+/// // Retain channels and depth; requested color conversion may change samples.
+/// let retained = ConvertOptions::retain_channels();
 ///
 /// // Allow common lossy operations with sensible defaults
 /// let permissive = ConvertOptions::permissive();
@@ -145,16 +145,19 @@ pub struct ConvertOptions {
 }
 
 impl ConvertOptions {
-    /// Forbid all lossy operations.
+    /// Retain alpha and color channels and forbid depth reduction.
     ///
-    /// - Alpha removal: forbidden (returns error)
-    /// - Depth reduction: forbidden (returns error)
-    /// - RGB→Gray: forbidden (returns error)
-    /// - Gray→RGB: broadcast (lossless)
+    /// Alpha removal, RGB-to-gray conversion and depth reduction return errors.
+    /// Gray-to-RGB expansion remains permitted. Requested color and alpha
+    /// association conversions may still change sample values; this is not an
+    /// exactness guarantee. Float transfer clipping remains enabled, matching
+    /// the historical preset. Select `with_clip_out_of_gamut(false)` explicitly
+    /// when an extended-range conversion is required.
     ///
-    /// Use this as a starting point when you want to ensure no data loss,
-    /// then selectively relax with `with_*` methods.
-    pub const fn forbid_lossy() -> Self {
+    /// For reversible representation changes only, use
+    /// `zenpixels_convert::OutputPlan::new_preserving_samples` or
+    /// `zenpixels_convert::ConvertPlan::new_preserving_samples`.
+    pub const fn retain_channels() -> Self {
         Self {
             gray_expand: GrayExpand::Broadcast,
             alpha_policy: AlphaPolicy::Forbid,
@@ -162,6 +165,18 @@ impl ConvertOptions {
             luma: None,
             clip_out_of_gamut: true,
         }
+    }
+
+    /// Historical channel/depth restrictions, including enabled float clipping.
+    ///
+    /// The name does not describe its behavior: color conversion, reassociation
+    /// and clipping can change or discard information. This is a compatibility
+    /// alias of [`Self::retain_channels`]; its behavior has not changed.
+    #[deprecated(
+        note = "use retain_channels() for channel/depth restrictions; use zenpixels_convert::OutputPlan::new_preserving_samples for exact samples. This preset permits clipping and color arithmetic"
+    )]
+    pub const fn forbid_lossy() -> Self {
+        Self::retain_channels()
     }
 
     /// Allow common lossy operations with sensible defaults.
@@ -219,6 +234,19 @@ impl ConvertOptions {
 mod tests {
     use super::*;
     use alloc::format;
+
+    #[test]
+    #[allow(deprecated)] // The compatibility alias must retain every policy value.
+    fn old_preset_preserves_behavior_and_does_not_promise_exact_samples() {
+        let old = ConvertOptions::forbid_lossy();
+        let replacement = ConvertOptions::retain_channels();
+        assert_eq!(old, replacement);
+        assert_eq!(old.alpha_policy, AlphaPolicy::Forbid);
+        assert_eq!(old.depth_policy, DepthPolicy::Forbid);
+        assert_eq!(old.luma, None);
+        assert_eq!(old.gray_expand, GrayExpand::Broadcast);
+        assert!(old.clip_out_of_gamut);
+    }
 
     #[test]
     fn gray_expand_derive_traits() {

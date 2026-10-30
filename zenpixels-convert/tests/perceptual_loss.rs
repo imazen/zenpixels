@@ -576,14 +576,18 @@ fn to_u8_srgb_packed(pixels: &[[f64; 3]]) -> Vec<u8> {
 
 /// Unpack zenresize f32 linear output to f64 triples.
 fn from_f32_linear_packed(data: &[f32]) -> Vec<[f64; 3]> {
-    data.chunks_exact(3)
+    data.as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| [c[0] as f64, c[1] as f64, c[2] as f64])
         .collect()
 }
 
 /// Unpack zenresize u8 sRGB output to f64 linear triples.
 fn from_u8_srgb_packed(data: &[u8]) -> Vec<[f64; 3]> {
-    data.chunks_exact(3)
+    data.as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| {
             [
                 srgb_eotf(c[0] as f64 / 255.0),
@@ -663,7 +667,8 @@ fn depth_roundtrip_scenarios() {
     // 1. u8 sRGB → f32 Linear → u8 sRGB (with u8 provenance: near-lossless)
     {
         let converted: Vec<_> = grid.iter().map(|c| roundtrip_u8_srgb(*c)).collect();
-        // The return leg uses u8 provenance — data was originally u8, so f32→u8 is lossless.
+        // The return leg uses u8 provenance; no operation changed the samples, so
+        // f32→u8 is lossless here.
         let cost_fwd = conversion_cost(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR);
         let cost_back = conversion_cost_with_provenance(
             PixelDescriptor::RGBF32_LINEAR,

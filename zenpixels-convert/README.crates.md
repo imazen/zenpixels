@@ -4,7 +4,7 @@
 
 Transfer-function-aware pixel conversion, gamut mapping, and codec format negotiation for Rust image pipelines.
 
-A JPEG decoder gives you `RGB8` in sRGB. An AVIF decoder gives you `RGBA16` in BT.2020 PQ. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
+A JPEG decoder may produce `RGB8` in sRGB; an AVIF decoder may produce full-range `RGBA16` in BT.2020 PQ. Other native code depths and color signaling remain explicit. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
 
 `zenpixels-convert` is the math half of the [`zenpixels`](https://crates.io/crates/zenpixels) ecosystem. `zenpixels` carries the format/color types ([`PixelBuffer`], [`PixelDescriptor`], [`PixelFormat`], `TransferFunction`, `ColorPrimaries`, `ColorContext`); this crate handles transfer functions, gamut matrices, depth scaling, alpha compositing, format negotiation, and HDR tone mapping so codecs don't have to. It **re-exports everything from `zenpixels`** at its crate root, so downstream pipelines can depend on `zenpixels-convert` alone.
 
@@ -12,32 +12,40 @@ A JPEG decoder gives you `RGB8` in sRGB. An AVIF decoder gives you `RGBA16` in B
 
 ## Install
 
+These snippets target the unpublished 0.3.1 candidate described here. For the
+currently published API, see the [0.2.16 reference](https://docs.rs/zenpixels-convert/0.2.16/zenpixels_convert/).
+
 ```toml
 [dependencies]
-zenpixels-convert = "0.2.15"
+zenpixels-convert = "0.3.1"
 ```
 
 Common feature combinations:
 
 ```toml
 # Plus the rgb crate's typed buffers and convenience methods
-zenpixels-convert = { version = "0.2.15", features = ["rgb"] }
+zenpixels-convert = { version = "0.3.1", features = ["rgb"] }
 
 # Plus a pluggable CMS backend (moxcms) for arbitrary ICC profiles
-zenpixels-convert = { version = "0.2.15", features = ["cms-moxcms"] }
+zenpixels-convert = { version = "0.3.1", features = ["cms-moxcms"] }
 
 # Plus the experimental HDR→SDR display-mapping surface
-zenpixels-convert = { version = "0.2.15", features = ["hdr-experimental"] }
+zenpixels-convert = { version = "0.3.1", features = ["hdr-experimental"] }
 
 # Size-sensitive / wasm builds (drops the bundled CICP->ICC database)
-zenpixels-convert = { version = "0.2.15", default-features = false, features = ["std"] }
+zenpixels-convert = { version = "0.3.1", default-features = false, features = ["std"] }
 ```
 
 ## Quick start
 
 ### Negotiate a format, then convert row by row
 
-[`best_match`] picks the cheapest target format an encoder supports for a given source descriptor; [`RowConverter`] pre-computes the conversion plan once and converts rows with no per-row allocation.
+[`best_match`] picks the cheapest target format an encoder supports for a given source descriptor; [`RowConverter`] plans conversion once. On the unreleased bridge, `prepare` reserves scratch and initializes selected tables before fallible execution.
+
+For current ICC/CICP context and matching output signaling, the review branch
+adds `OutputPlan`: prepare from final color facts before pixels arrive, then
+convert into supplied row views. See the
+[output preparation contract](https://github.com/imazen/zenpixels/blob/main/docs/implemented-bridge-contracts.md#output-preparation-added-on-the-review-branch-2026-10-25).
 
 ```rust
 use zenpixels_convert::{RowConverter, best_match, ConvertIntent};
@@ -46,12 +54,27 @@ use zenpixels_convert::{RowConverter, best_match, ConvertIntent};
 let target = best_match(source_desc, &encoder_formats, ConvertIntent::Fastest)
     .ok_or("no compatible format")?;
 
-// Pre-compute the plan, then convert row by row — no per-row allocation.
+// Unreleased bridge: setup costs occur before the row loop.
 let mut converter = RowConverter::new(source_desc, target)?;
+converter.prepare(width)?;
 for y in 0..height {
-    converter.convert_row(src_row, dst_row, width);
+    converter.try_convert_row(src_row, dst_row, width)?;
 }
 ```
+
+Within prepared capacity, built-in execution does not allocate. Each stateful
+CMS worker must be built independently and support preparation; cloning a shared
+mutable worker does not create an independent worker. Row extent/alignment errors
+precede writes. A backend error can leave partial destination data.
+
+`compose` optimizes the final output and may remove incidental quantization.
+Use `compose_preserving` for intentional integer boundaries. Use
+`adapt::check_opaque` explicitly before requesting `DiscardUnchecked` if opacity
+is required; ordinary row planning refuses `DiscardIfOpaque` without inspecting
+pixels. `ConvertPlan::new_preserving_samples` proves supported exact changes or
+refuses without scanning.
+
+These additions are unreleased. See the [tested bridge examples](https://github.com/imazen/zenpixels/blob/main/docs/implemented-bridge-contracts.md).
 
 ### Color profile conversion (no CMS needed for named profiles)
 
@@ -106,7 +129,7 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 | `Blend` | 1× | 4× | Compositing — premultiplied alpha |
 | `Perceptual` | 1× | 3× | Color grading, sharpening |
 
-[`Provenance`] tracking lets the cost model know that f32 data decoded from a u8 JPEG has zero loss converting back to u8. Three entry points: [`best_match`] (simple), [`best_match_with`] (with consumer costs), [`negotiate`] (full control with provenance).
+[`Provenance`] guides cost-model ranking, not exactness after edits. Use `ConvertPlan::new_preserving_samples` for proven representation changes or explicitly request value analysis. Three entry points: [`best_match`] (simple), [`best_match_with`] (with consumer costs), [`negotiate`] (full control with provenance).
 
 ## Row conversion tiers
 
@@ -119,7 +142,7 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 ## Gamut, HDR, Oklab
 
 - **Gamut matrices** — 3×3 row-major f32 between BT.709, Display P3, BT.2020 via [`conversion_matrix`] / [`GamutMatrix`] and `apply_matrix_*` row kernels. No CMS needed for named-profile conversions.
-- **HDR (`hdr-experimental` feature)** — production HDR→SDR is a native step inside [`ConvertPlan`]: build via [`ConvertPlan::new_with_hdr_peak(from, to, source_peak_nits)`](https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.new_with_hdr_peak) or [`ConvertPlan::new_with_hdr_config(from, to, HdrConfig)`](https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.new_with_hdr_config), then run through the same [`RowConverter`]. The pipeline inserts the ITU-R BT.2446 Method A curve ([`Bt2446A`]) + an OKLch [`SoftCompress`] knee — confirmed best in the 2026-06-22 audited shootout (2-5× lower mean ΔE2000 than channel-independent curves). Source-peak measurement uses [`CllMeasure::measure_max`] (the spec-conformant CTA-861.3 reading, ~2.7 Gpix/s on RGB f32 on a Ryzen 9 7950X / AVX2 — the SOTA spec-conformant CLL reading in the workspace). Plain `ConvertPlan::new` now **refuses** HDR-encoded → SDR-encoded conversions with [`ConvertError::HdrSourceRequiresPeak`] — no more silent saturating routes. Other HDR primitives: [`quantize_to`] (anchor-aware linear→PQ16, reads `DiffuseWhite` from the source's `ColorContext`, BT.2408 default of 203), [`ContentLightLevel`] and [`MasteringDisplay`] metadata. The legacy global Reinhard helpers (`reinhard_tonemap` / `reinhard_inverse` / `exposure_tonemap`) are `#[deprecated]` + `#[doc(hidden)]` since 0.2.15 and queued for removal in 0.3.0.
+- **HDR (`hdr-experimental`)** — explicit `ConvertPlan::new_with_hdr_config` runs BT.2446 Method A tone mapping plus gamut compression with supplied peak/white policy. `convert_to_sdr_measuring_peak` explicitly requests an additional rowwise scan; `hdr::measure::CllMeasure` provides measurements. Plain HDR→SDR conversion refuses missing peak policy. `hdr::quantize_to` converts anchored linear samples to PQ16. Shared metadata types live in `zenpixels::hdr`; core measurement, the old bundle and naive global curves are removed in 0.3.1.
 - **Oklab** — primaries-aware `rgb_to_lms_matrix()` / `lms_to_rgb_matrix()`, scalar `rgb_to_oklab()` / `oklab_to_rgb()`. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
 
 ## CICP / ICC
@@ -137,36 +160,14 @@ The buffer-baking half of the zen orientation story lives here (the `Orientation
 
 ## Atomic output assembly
 
-[`finalize_for_output`] couples converted pixels with matching encoder metadata in one step, preventing the bug where pixel values don't match the embedded ICC/CICP profile. Returns an [`EncodeReady`] bundle.
+[`finalize_for_output_with`] couples converted pixels with matching encoder metadata in one step, preventing the bug where pixel values don't match the embedded ICC/CICP profile. Returns an [`EncodeReady`] bundle.
 
 ## Resource estimation
 
-For schedulers / throttlers / SLA-bound pipelines that need to know cost *before* running an op, [`ConvertPlan::estimate_in`] (and the [`ConvertPlan::estimate`] shortcut) returns a [`ResourceEstimate`] for a `width × height` image under a given [`ComputeEnvironment`] (core count + optional SIMD tier + optional RAM budget). The estimate reports `peak_memory_bytes_est`, `wall_ms` (already scaled to `cores()`), and `intermediate_buffer_count` (so schedulers can distinguish 1-giant-buffer plans from N-medium-buffer plans for paging-pressure decisions). Cheap to call — walks the planned steps, no row work, no allocation. Calibrated against the `bench_t1`–`bench_t7` series (Ryzen 9 7950X, AVX2/V3), ±30 % design tolerance.
-
-The four estimate types — [`ResourceEstimate`], [`ComputeEnvironment`], [`ImageCharacteristics`], [`SimdTier`] — are defined locally and are **shape-compatible** with the corresponding `zencodec::estimate::*` types (same field names, same builders, same accessors, same `#[non_exhaustive]` discipline). `zenpixels-convert` is a **foundation crate** and does NOT depend on `zencodec` — keeping codec abstractions strictly above pixel math. Codec authors whose stack uses the zencodec contract can wire `decode → convert → encode` estimates through the boundary with a trivial `From` conversion. The full type contract: sealed, growable, every field `Option`. Wall-time scaling across cores is handled internally by `ConvertPlan::estimate_in` — the resulting `wall_ms` is already divided by the effective parallel thread count.
-
-```rust
-use zenpixels::PixelDescriptor;
-use zenpixels_convert::{ComputeEnvironment, ConvertPlan, ImageCharacteristics};
-
-let plan = ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
-
-// Quick path: assumes a single core, unknown SIMD tier (the conservative default).
-let est = plan.estimate(1920, 1080);
-
-// Caller-controlled environment — populate from `std::thread::available_parallelism()`
-// and (optionally) an `archmage` tier detection.
-let image = ImageCharacteristics::new(1920, 1080, PixelDescriptor::RGB8_SRGB);
-let compute = ComputeEnvironment::new().with_cores(8);
-let est_8 = plan.estimate_in(&image, &compute);
-
-println!(
-    "peak ~{} MiB, wall ~{} ms, intermediates {}",
-    est_8.peak_memory_bytes_est().unwrap_or(0) / (1 << 20),
-    est_8.wall_ms().unwrap_or(0),
-    est_8.intermediate_buffer_count().map_or("?".to_string(), |n| n.to_string()),
-);
-```
+Retired: all estimation APIs warn in 0.2.17 and are removed in 0.3.1.
+`estimation-experimental` is a compatibility feature only; it does not suppress
+warnings or restore removed APIs. No replacement cost predictor is promised.
+Use measured workload costs and explicit buffer/stride arithmetic.
 
 ## Pipeline planner (`pipeline` feature)
 
@@ -192,8 +193,7 @@ println!(
 | [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`hdr-experimental` feature) |
 | [`Bt2446A`] / [`SoftCompress`] / [`CllMeasure`] | ITU-R BT.2446 Method A curve + OKLch knee + CTA-861.3 CLL measurement (`hdr-experimental` feature) |
 | [`quantize_to`] | Anchor-aware linear→PQ16 quantizer |
-| [`finalize_for_output`] / [`EncodeReady`] / [`OutputMetadata`] | Atomic pixels-plus-metadata output assembly |
-| [`ConvertPlan::estimate`] / [`ConvertPlan::estimate_in`] / [`ResourceEstimate`] / [`ComputeEnvironment`] / [`ImageCharacteristics`] | Predict peak memory + wall-clock + core-scaling before running an op (shape-compatible with `zencodec::estimate`, foundation-crate layering) |
+| [`finalize_for_output_with`] / [`EncodeReady`] / [`OutputMetadata`] | Atomic pixels-plus-metadata output assembly |
 | [`TransferFunctionExt`] / [`ColorPrimariesExt`] / [`PixelBufferConvertExt`] | Conversion methods bolted onto interchange types |
 | [`LoadBearingReport`] / [`PixelSliceLoadBearingExt`] | Channel-information analysis |
 | [`ConvertError`] | Conversion error type |
@@ -209,7 +209,7 @@ println!(
 | `rgb` | | `Pixel` impls for the [`rgb`](https://crates.io/crates/rgb) crate's types + typed convenience methods (`to_rgb8()`, `to_rgba8()`, …) |
 | `imgref` | | `ImgRef` / `ImgVec` conversions (implies `rgb`) |
 | `image` | | `ImageBufferExt`, `DynamicImageExt`, and `PixelBufferImageExt` bridges to the [`image`](https://crates.io/crates/image) crate (implies `std`) |
-| `planar` | | Multi-plane image types (YCbCr, Oklab planes, gain maps) |
+| `planar` | | Retained no-op feature; legacy planar API removed |
 | `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
 | `hdr-experimental` | | HDR→SDR display mapping (ITU-R BT.2446 Method A curve + OKLch soft compress + CTA-861.3 CLL measurement). API shape may move ahead of 0.3.0 (in particular `measure_robust` → `measure` rename); scan kernels and accuracy contracts are stable. See [HDR section](#gamut-hdr-oklab) above. |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
@@ -220,7 +220,7 @@ println!(
 `zenpixels-convert` is `no_std + alloc` by default-construction (`std` is on by default but everything works without it). For `no_std`, set `default-features = false` and re-enable only what you need (note that `cms-moxcms` requires `std`):
 
 ```toml
-zenpixels-convert = { version = "0.2.15", default-features = false }
+zenpixels-convert = { version = "0.3.1", default-features = false }
 ```
 
 ## MSRV
@@ -240,21 +240,22 @@ Apache-2.0 OR MIT.
 
 | | |
 |:--|:--|
-| **Codecs** ¹ | [zenjpeg] · [zenpng] · [zenwebp] · [zengif] · [zenavif] · [zenjxl] · [zenbitmaps] · [heic] · [zentiff] · [zenpdf] · [zensvg] · [zenjp2] · [zenraw] · [ultrahdr] |
-| Codec internals | [zenjxl-decoder] · [jxl-encoder] · [zenrav1e] · [rav1d-safe] · [zenavif-parse] · [zenavif-serialize] |
+| **Codecs** ¹ | [zenjpeg] · [zenpng] · [zenwebp] · [zengif] · [zenavif] · [zenjxl] · [zenjxl-decoder] · [jxl-encoder] · [zenbitmaps] · [heic] · [zentiff] · [zenpdf] · [zensvg] · [zenjp2] · [zenraw] · [ultrahdr] |
+| Codec internals | [zenrav1e] · [rav1d-safe] · [zenravif] · [zenavif-parse] · [zenavif-serialize] |
 | Compression | [zenflate] · [zenzop] · [zenzstd] |
 | Processing | [zenresize] · [zenquant] · [zenblend] · [zenfilters] · [zensally] · [zentone] |
-| Pixels & color | [zenpixels] · **zenpixels-convert** · [linear-srgb] · [garb] |
+| Pixels & color | [zenpixels] · **zenpixels-convert** · [linear-srgb] · [garb] · [zenyuv] |
 | Pipeline & framework | [zenpipe] · [zencodec] · [zencodecs] · [zenlayout] · [zennode] · [zenwasm] · [zentract] |
 | Metrics | [zensim] · [fast-ssim2] · [butteraugli] · [zenmetrics] · [resamplescope-rs] |
-| Pickers & ML | [zenanalyze] · [zenpredict] · [zenpicker] |
+| Pickers & ML | [zenanalyze] · [zenpredict] · [zenpicker] · [zenanalyze-api] |
+| Test corpora | [codec-corpus] · [imazen-26] |
 | Products | [Imageflow] image engine ([.NET][imageflow-dotnet] · [Node][imageflow-node] · [Go][imageflow-go]) · [Imageflow Server] · [ImageResizer] (C#) |
 
 <sub>¹ pure-Rust, `#![forbid(unsafe_code)]` codecs, as of 2026</sub>
 
 ### General Rust awesomeness
 
-[zenbench] · [archmage] · [magetypes] · [enough] · [whereat] · [cargo-copter]
+[zenbench] · [archmage] · [magetypes] · [enough] · [whereat] · [cargo-copter] · [zenutils]
 
 [Open source](https://www.imazen.io/open-source) · [@imazen](https://github.com/imazen) · [@lilith](https://github.com/lilith) · [lib.rs/~lilith](https://lib.rs/~lilith)
 
@@ -264,36 +265,38 @@ Apache-2.0 OR MIT.
 [zengif]: https://github.com/imazen/zengif
 [zenavif]: https://github.com/imazen/zenavif
 [zenjxl]: https://github.com/imazen/zenjxl
+[zenjxl-decoder]: https://github.com/imazen/zenjxl-decoder
+[jxl-encoder]: https://github.com/imazen/jxl-encoder
 [zenbitmaps]: https://github.com/imazen/zenbitmaps
 [heic]: https://github.com/imazen/heic
-[zentiff]: https://github.com/imazen/zentiff
-[zenpdf]: https://github.com/imazen/zenpdf
+[zentiff]: https://github.com/imazen/zenextras
+[zenpdf]: https://github.com/imazen/zenextras
 [zensvg]: https://github.com/imazen/zenextras
 [zenjp2]: https://github.com/imazen/zenextras
 [zenraw]: https://github.com/imazen/zenraw
 [ultrahdr]: https://github.com/imazen/ultrahdr
-[zenjxl-decoder]: https://github.com/imazen/zenjxl-decoder
-[jxl-encoder]: https://github.com/imazen/jxl-encoder
 [zenrav1e]: https://github.com/imazen/zenrav1e
 [rav1d-safe]: https://github.com/imazen/rav1d-safe
-[zenavif-parse]: https://github.com/imazen/zenavif-parse
-[zenavif-serialize]: https://github.com/imazen/zenavif-serialize
+[zenravif]: https://github.com/imazen/cavif-rs
+[zenavif-parse]: https://github.com/imazen/zenavif
+[zenavif-serialize]: https://github.com/imazen/zenavif
 [zenflate]: https://github.com/imazen/zenflate
 [zenzop]: https://github.com/imazen/zenzop
 [zenzstd]: https://github.com/imazen/zenzstd
 [zenresize]: https://github.com/imazen/zenresize
 [zenquant]: https://github.com/imazen/zenquant
 [zenblend]: https://github.com/imazen/zenblend
-[zenfilters]: https://github.com/imazen/zenfilters
+[zenfilters]: https://github.com/imazen/zenpipe
 [zensally]: https://github.com/imazen/zensally
 [zentone]: https://github.com/imazen/zentone
 [zenpixels]: https://github.com/imazen/zenpixels
 [linear-srgb]: https://github.com/imazen/linear-srgb
 [garb]: https://github.com/imazen/garb
+[zenyuv]: https://github.com/imazen/zenjpeg
 [zenpipe]: https://github.com/imazen/zenpipe
 [zencodec]: https://github.com/imazen/zencodec
-[zencodecs]: https://github.com/imazen/zencodecs
-[zenlayout]: https://github.com/imazen/zenlayout
+[zencodecs]: https://github.com/imazen/zenpipe
+[zenlayout]: https://github.com/imazen/zenpipe
 [zennode]: https://github.com/imazen/zennode
 [zenwasm]: https://github.com/imazen/zenwasm
 [zentract]: https://github.com/imazen/zentract
@@ -305,72 +308,19 @@ Apache-2.0 OR MIT.
 [zenanalyze]: https://github.com/imazen/zenanalyze
 [zenpredict]: https://github.com/imazen/zenanalyze
 [zenpicker]: https://github.com/imazen/zenanalyze
+[zenanalyze-api]: https://github.com/imazen/zenanalyze
+[codec-corpus]: https://github.com/imazen/codec-corpus
+[imazen-26]: https://github.com/imazen/imazen-26
 [zenbench]: https://github.com/imazen/zenbench
 [archmage]: https://github.com/imazen/archmage
 [magetypes]: https://github.com/imazen/archmage
 [enough]: https://github.com/imazen/enough
 [whereat]: https://github.com/lilith/whereat
 [cargo-copter]: https://github.com/imazen/cargo-copter
+[zenutils]: https://github.com/imazen/zenutils
 [Imageflow]: https://github.com/imazen/imageflow
 [Imageflow Server]: https://github.com/imazen/imageflow-dotnet-server
 [ImageResizer]: https://github.com/imazen/resizer
 [imageflow-dotnet]: https://github.com/imazen/imageflow-dotnet
 [imageflow-node]: https://github.com/imazen/imageflow-node
 [imageflow-go]: https://github.com/imazen/imageflow-go
-
-[`PixelBuffer`]: https://docs.rs/zenpixels/latest/zenpixels/struct.PixelBuffer.html
-[`PixelDescriptor`]: https://docs.rs/zenpixels/latest/zenpixels/struct.PixelDescriptor.html
-[`PixelFormat`]: https://docs.rs/zenpixels/latest/zenpixels/enum.PixelFormat.html
-[`RowConverter`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.RowConverter.html
-[`best_match`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.best_match.html
-[`best_match_with`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.best_match_with.html
-[`negotiate`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.negotiate.html
-[`ConvertIntent`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/enum.ConvertIntent.html
-[`Provenance`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/enum.Provenance.html
-[`ConversionCost`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConversionCost.html
-[`FormatOption`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.FormatOption.html
-[`ConvertOptions`]: https://docs.rs/zenpixels/latest/zenpixels/struct.ConvertOptions.html
-[`ConvertPlan`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html
-[`convert_row`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.convert_row.html
-[`adapt::adapt_for_encode`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/adapt/fn.adapt_for_encode.html
-[`adapt_for_encode_explicit`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.adapt_for_encode_explicit.html
-[`try_adapt_in_place`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.try_adapt_in_place.html
-[`PluggableCms`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/cms/trait.PluggableCms.html
-[`RowTransformMut`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/cms/trait.RowTransformMut.html
-[`MoxCms`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.MoxCms.html
-[`GamutMatrix`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/gamut/type.GamutMatrix.html
-[`conversion_matrix`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/gamut/fn.conversion_matrix.html
-[`quantize_to`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/fn.quantize_to.html
-[`Bt2446A`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/struct.Bt2446A.html
-[`SoftCompress`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/struct.SoftCompress.html
-[`CllMeasure`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/trait.CllMeasure.html
-[`CllMeasure::measure_max`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/trait.CllMeasure.html#tymethod.measure_max
-[`ConvertPlan`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html
-[`ConvertPlan::new_with_hdr_peak`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.new_with_hdr_peak
-[`ConvertPlan::new_with_hdr_config`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.new_with_hdr_config
-[`ConvertError::HdrSourceRequiresPeak`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/enum.ConvertError.html#variant.HdrSourceRequiresPeak
-[`ContentLightLevel`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/struct.ContentLightLevel.html
-[`MasteringDisplay`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/struct.MasteringDisplay.html
-[`finalize_for_output`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/fn.finalize_for_output.html
-[`EncodeReady`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/output/struct.EncodeReady.html
-[`OutputMetadata`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/output/struct.OutputMetadata.html
-[`TransferFunctionExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.TransferFunctionExt.html
-[`ColorPrimariesExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.ColorPrimariesExt.html
-[`PixelBufferConvertExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.PixelBufferConvertExt.html
-[`LoadBearingReport`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.LoadBearingReport.html
-[`PixelSliceLoadBearingExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.PixelSliceLoadBearingExt.html
-[`PixelBufferLoadBearingExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.PixelBufferLoadBearingExt.html
-[`orient::apply_orientation`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/orient/fn.apply_orientation.html
-[`orient::apply_orientation_into`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/orient/fn.apply_orientation_into.html
-[`orient::apply_orientation_in_place`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/orient/fn.apply_orientation_in_place.html
-[`CodecFormats`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/pipeline/struct.CodecFormats.html
-[`optimal_path`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/pipeline/fn.optimal_path.html
-[`generate_path_matrix`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/pipeline/fn.generate_path_matrix.html
-[`ConvertError`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/enum.ConvertError.html
-[`ResourceEstimate`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ResourceEstimate.html
-[`ComputeEnvironment`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ComputeEnvironment.html
-[`ImageCharacteristics`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ImageCharacteristics.html
-[`SimdTier`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/enum.SimdTier.html
-[`ConvertPlan::estimate`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.estimate
-[`ConvertPlan::estimate_in`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/struct.ConvertPlan.html#method.estimate_in
-[`PixelBufferConvertTypedExt`]: https://docs.rs/zenpixels-convert/latest/zenpixels_convert/trait.PixelBufferConvertTypedExt.html

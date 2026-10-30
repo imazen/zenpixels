@@ -16,11 +16,13 @@
 //! Together these determine whether a fused polynomial u16 RGB gamut
 //! kernel would beat matlut's current LUT-pair pipeline.
 
+#[cfg(target_arch = "x86_64")]
 use archmage::prelude::*;
 use linear_srgb::default::{
     linear_to_srgb_u16, linear_to_srgb_u16_slice, linear_to_srgb_u16_slice_fast,
     srgb_u16_to_linear, srgb_u16_to_linear_slice,
 };
+#[cfg(target_arch = "x86_64")]
 use magetypes::simd::f32x8 as mt_f32x8;
 use zenbench::prelude::*;
 
@@ -37,11 +39,11 @@ fn explicit_simd_linear_lut_v3(
 ) {
     let (in_chunks, in_rem) = input.as_chunks::<8>();
     let (out_chunks, out_rem) = output.as_chunks_mut::<8>();
-    let zero = mt_f32x8::zero(token);
-    let one = mt_f32x8::splat(token, 1.0);
-    let scale = mt_f32x8::splat(token, 65535.0);
+    let zero = mt_f32x8::zero_t(token);
+    let one = mt_f32x8::splat_t(token, 1.0);
+    let scale = mt_f32x8::splat_t(token, 65535.0);
     for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
-        let v = mt_f32x8::from_array(token, *inp);
+        let v = mt_f32x8::from_array_t(token, *inp);
         let idx = (v.max(zero).min(one) * scale).to_i32_round().to_array();
         for j in 0..8 {
             out[j] = lut[idx[j] as usize & 0xFFFF];
@@ -65,11 +67,11 @@ fn explicit_simd_sqrt_lut_v3(
 ) {
     let (in_chunks, in_rem) = input.as_chunks::<8>();
     let (out_chunks, out_rem) = output.as_chunks_mut::<8>();
-    let zero = mt_f32x8::zero(token);
-    let one = mt_f32x8::splat(token, 1.0);
-    let scale = mt_f32x8::splat(token, 65536.0);
+    let zero = mt_f32x8::zero_t(token);
+    let one = mt_f32x8::splat_t(token, 1.0);
+    let scale = mt_f32x8::splat_t(token, 65536.0);
     for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
-        let v = mt_f32x8::from_array(token, *inp);
+        let v = mt_f32x8::from_array_t(token, *inp);
         let idx = ((v.max(zero).min(one)).sqrt() * scale)
             .to_i32_round()
             .to_array();
@@ -117,7 +119,10 @@ fn explicit_simd_sqrt_encode(input: &[f32], output: &mut [u16], lut: &[u16; 6553
     }
 }
 
-// Scalar fallbacks to satisfy incant! dispatch.
+// Scalar fallbacks to satisfy incant! dispatch (x86_64-only, like the
+// `incant!` call sites above; on other arches the plain-loop encode fns are
+// used directly).
+#[cfg(target_arch = "x86_64")]
 fn explicit_simd_linear_lut_scalar(
     _token: ScalarToken,
     input: &[f32],
@@ -130,6 +135,7 @@ fn explicit_simd_linear_lut_scalar(
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 fn explicit_simd_sqrt_lut_scalar(
     _token: ScalarToken,
     input: &[f32],

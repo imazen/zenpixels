@@ -11,7 +11,7 @@ Three binaries:
 | Binary | Regenerates | Recipe |
 |--------|-------------|--------|
 | `icc-gen` (default) | `zenpixels/src/icc/icc_table_{rgb,gray}.inc` — the ICC *identification* hash tables, from a corpus of ICC profiles | `just icc-gen` |
-| `cicp_bundle_gen` | `zenpixels-convert/src/profiles/cicp_bundle.lz4` + `src/icc_profiles/cicp_bundle_index.rs` — the bundled, full-coverage CICP→ICC blob | `just cicp-bundle-gen` |
+| `cicp_bundle_gen` | `zenpixels-convert/src/profiles/cicp_bundle.lz4` + `src/icc_profiles/cicp_bundle_index.rs` — the bundled CICP→ICC blob | `just cicp-bundle-gen` |
 | `probe42` | nothing — diagnostic. Measures a profile's →sRGB identity error (moxcms RGB lattice, per rendering intent): the ground truth for "should `is_common_srgb` recognize this?" (zenpipe#42) | `cargo run -p icc-gen --release --bin probe42 -- <profile.icc>...` |
 
 ---
@@ -63,14 +63,36 @@ are defined in `zenpixels::icc` (`INTENT_COLORIMETRIC_SAFE`,
 
 ---
 
-# `cicp_bundle_gen` — full-coverage CICP→ICC bundle
+# `cicp_bundle_gen` — validated CICP→ICC bundle
 
-Generates the bundled ICC profile blob that backs
-`zenpixels_convert::icc_profiles::synthesize_icc_for_cicp`, giving it a profile
-for the **entire** assigned ITU-T H.273 grid (11 colour-primaries × 16
-transfer-characteristics) **with no CMS at runtime**. This is what makes moxcms
-a build-time generator only — a default (no-feature) build of `zenpixels-convert`
-resolves any in-grid CICP from the committed blob, not from a CMS.
+Generates the bundled ICC profile blob used by
+`zenpixels_convert::icc_profiles::{synthesize_icc_for_cicp, synthesize_gray_icc_for_cicp}`.
+The assigned H.273 grid has 176 pairs: 159 yield RGB profiles, 16 XYZ-primary
+pairs are refused for RGB, and sRGB (1,13) needs no profile. BT.709 (1,1)
+has its own BT.709 curve. Gray has 175 mappings to 64 unique profiles,
+including primaries 10: its equal-energy white and transfer are valid without
+an RGB gamut matrix. Runtime lookup needs no CMS.
+
+Before packing an RGB profile, the generator parses its rXYZ/gXYZ/bXYZ tags
+and requires |determinant| > 0.01 and every colorant value within 0.001 of
+an independent [H.273](https://www.itu.int/rec/T-REC-H.273) Table 2 computation,
+Bradford-adapted to ICC D50. This computation does not call moxcms primaries
+or adaptation helpers. Any failure aborts generation, except the explicitly
+commented primaries-10 exclusion: its rank-1 matrix is reported and omitted.
+Unexpected synthesis failures also abort rather than silently reducing coverage.
+
+The separate `zenpixels-convert/tests/icc_colourimetry.rs` oracle parses the
+shipped ICC bytes, independently solves the primaries/white equations, and
+checks every RGB colorant and RGB/gray TRC. Transfer tolerances are absolute
+linear-light errors: 0.0005 for SDR, 0.001 for PQ/HLG. At encoded zero,
+logarithmic TC9/TC10 curves are checked against their valid inverse interval;
+the pointwise tolerance still applies at every other sampled value. Gray
+source whites are checked within 0.00002; their adaptation to the generator's
+5003 K D50 approximation is checked within 0.001 of ICC D50.
+These transfer tolerances do not promise relative precision in PQ's deep toe. HLG uses the encoded BT.2100 neutral
+reference-display EOTF, with system gamma 1.2 (1000 cd/m²); it is not merely
+the inverse scene OETF. ST 428's nominal 52.37/48 endpoint saturates at 1 in
+the u16 `curv` LUT; CICP-native signaling avoids this ICC limitation.
 
 ## Usage
 
@@ -102,7 +124,7 @@ sha256sum zenpixels-convert/src/profiles/cicp_bundle.lz4
 
 - **`zenpixels-convert/src/profiles/cicp_bundle.lz4`** — 16 LZ4 blocks (pure-Rust
   `lz4_flex`, one per transfer that yields profiles) concatenated into one asset
-  (~28 KB). Grouping by transfer is load-bearing: LZ4's match window is 64 KiB, so
+  (35,298 bytes with the pinned generator dependencies). Grouping by transfer is load-bearing: LZ4's match window is 64 KiB, so
   clustering the identical TRC/LUT payload (same transfer, varying primaries)
   is what lets the compressor collapse it.
 - **`src/icc_profiles/cicp_bundle_index.rs`** — a generated module with the
@@ -119,3 +141,27 @@ creation-date field (bytes 24..36). The generator zeroes that field so the blob
 is **reproducible** — regenerating without changing moxcms produces a
 byte-identical asset (and a stable golden sha256). The field is purely
 informational and carries no colorimetry.
+
+## Ultra HDR corpus profile (2026-10-13)
+
+The profile in `ultrahdr-conformance/valid/jpeg/awesome-gain-maps/rgba_uhdr.jpg`
+was missing from the identification table. Extract it unchanged with
+`exiftool -b -ICC_Profile <corpus-file> > <input-dir>/rgba_uhdr.icc`, then run
+`just icc-hdr-profile-check <input-dir> <output-dir>`. Do not replace the full
+table with this single-input output; copy its sorted entry into the table.
+
+The generator produced normalized hash `0x11c9534ccea885a0`, Display P3 with
+sRGB transfer, maximum u16 reference error 1, and `Safe::AnyIntent`. The run
+used the optional Little CMS cross-check and reported no structural/empirical
+intent disagreements. JPEG's adapter regression exercises the original corpus
+file; no new binary fixture is committed here.
+
+## Android screenshot profile (2026-10-15)
+
+"Display P3 Gamut with sRGB Transfer" (ICC v4.3, 520 bytes) tags Android phone
+screenshots; five imazen-26 images carry it. Extracted with `exiftool -b
+-ICC_Profile`, put alone in an input directory and run through `icc-gen
+--report` with `lcms2-crosscheck` (as above), it gives normalized hash
+`0x2dc2d3340af4d7c8`, Display P3 with sRGB transfer, maximum u16 reference error
+1, `Safe::AnyIntent`, and no structural/empirical disagreement. Its entry was
+copied into the table by hand; the full-table regeneration is not used.

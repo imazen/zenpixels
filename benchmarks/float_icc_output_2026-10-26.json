@@ -1,0 +1,215 @@
+{
+  "date": "2026-10-26",
+  "kind": "correctness validation; not a performance benchmark",
+  "base_commit": "8b68ef07621b93bcafeac4fafdfcaf59bbd23208",
+  "source_sha256": {
+    "zenpixels-convert/src/cms_moxcms.rs": "9c8229daa7df864924e4e1ffc786d3a42d98408703d67dbf78ce805887b14c32",
+    "zenpixels-convert/tests/cms_moxcms.rs": "9dee613aae5e90141d55b8c27c66e9e27f61ee9a0740d6bc5712b47512b9a2f3"
+  },
+  "commands": [
+    "just output-float-check",
+    "just output-float-backend-check 0.8.1",
+    "just output-float-backend-check 0.9.1",
+    "just api-doc"
+  ],
+  "resource_wrapper": "run-heavy --mem 12G --jobs 2; outer command timeouts 180/240/300 seconds",
+  "numeric_contracts": {
+    "unclipped_closed_form_absolute_error": 1e-06,
+    "clipped_closed_form_absolute_error": 0.0001,
+    "changed_profile_added_alpha_absolute_error": 1e-06,
+    "alpha": "exact bits, including NaN payload and negative zero",
+    "widths": [
+      3,
+      129,
+      257
+    ]
+  },
+  "findings": [
+    "Integer lookup/fixed-point paths lose float precision; native JXL P3 comparison first failed its frozen 0.0001 limit.",
+    "Merely disabling fixed-point did not pass the native limit; analytic float curves are used when available.",
+    "Bounded execution retains source and destination color clipping without clamping alpha; a bounded staging buffer covers out-of-range rows.",
+    "Embedded CICP must not override explicitly selected ICC curves.",
+    "A gamma-2 blue channel with matching gamma-1 red/green produced 0.2499466 instead of 0.0625. Profiles affected by partial curve sharing now refuse before executor construction.",
+    "MoxCmsError implements core::error::Error and remains inspectable through whereat and CmsPluginError.",
+    "forbid_lossy() still sets clip_out_of_gamut=true; request false explicitly for extended float layers."
+  ],
+  "validation": [
+    "Existing output planning/finalization/current-profile/policy/prepared tests pass.",
+    "Convert library: 464 passed, 0 failed, 1 inherited ignored test unchanged.",
+    "New and existing CMS integration controls: 19 passed on moxcms 0.8.1 and 0.9.1; 18 passed on 0.9.0 before the final added-alpha control.",
+    "Strict lint, no-default-features WASM check and public API snapshot generation pass."
+  ],
+  "failures_retained": [
+    "Initial unequal-curve control exposed wrong arithmetic; corrected behavior is explicit typed refusal, not pretending conversion support.",
+    "Typed error preservation initially failed to compile because MoxCmsError lacked Error; the trait implementation is now included.",
+    "Clipped closed-form control failed at 0.24988556 versus 0.25; bounded float execution was corrected without relaxing its tolerance."
+  ],
+  "limits": [
+    "Not general ICC conformance. Arbitrary LUT extended range and all distinct per-channel curves remain unqualified.",
+    "F32 CMYK arithmetic remains refused.",
+    "No isolated speed, allocation-count or CMS-workspace memory measurement. run-heavy RSS is for the complete command tree.",
+    "Native JXL independent Little CMS receipts and pinned full-matrix validation belong to the zencodec consumer."
+  ],
+  "runs": [
+    {
+      "log_name": "zenpixels-float-cms-1-20261026.log",
+      "results": [
+        "run-heavy: mem-cap=12G (cgroup, hard) jobs=2/24 avail=11594MiB :: bash -c timeout 20s cargo fmt -p zenpixels-convert && timeout 150s cargo test -p zenpixels-convert --test cms_moxcms --features std,cms-moxcms,icc-db --locked float_ -- --nocapture",
+        "test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s",
+        "run-heavy: done rc=101 5s | peak-RSS 0.42GiB | min-avail 11201MiB | peak-load 0.16"
+      ]
+    },
+    {
+      "log_name": "zenpixels-float-cms-2-20261026.log",
+      "results": [
+        "run-heavy: mem-cap=12G (cgroup, hard) jobs=2/24 avail=11614MiB :: just output-float-check",
+        "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 464 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 18.02s",
+        "run-heavy: done rc=0 25s | peak-RSS 2.64GiB | min-avail 8761MiB | peak-load 1.18"
+      ]
+    },
+    {
+      "log_name": "zenpixels-float-cms-3-20261026.log",
+      "results": [
+        "run-heavy: mem-cap=12G (cgroup, hard) jobs=2/24 avail=11620MiB :: just output-float-check",
+        "run-heavy: done rc=101 1s | peak-RSS 0.21GiB | min-avail 11618MiB | peak-load 0.74"
+      ]
+    },
+    {
+      "log_name": "zenpixels-float-cms-4-20261026.log",
+      "results": [
+        "run-heavy: mem-cap=12G (cgroup, hard) jobs=2/24 avail=11618MiB :: just output-float-check",
+        "test result: FAILED. 17 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "run-heavy: done rc=101 2s | peak-RSS 0.33GiB | min-avail 11616MiB | peak-load 0.57"
+      ]
+    },
+    {
+      "log_name": "zenpixels-float-cms-5-20261026.log",
+      "results": [
+        "run-heavy: mem-cap=12G (cgroup, hard) jobs=2/24 avail=11599MiB :: just output-float-check",
+        "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 464 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 18.11s",
+        "run-heavy: done rc=0 23s | peak-RSS 2.64GiB | min-avail 8826MiB | peak-load 1.85"
+      ]
+    },
+    {
+      "log_name": "zenpixels-float-cms-floor-20261026.log",
+      "results": [
+        "run-heavy: mem-cap=12G (cgroup, hard) jobs=2/24 avail=11650MiB :: just output-float-backend-check 0.8.1",
+        "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "run-heavy: done rc=0 7s | peak-RSS 0.42GiB | min-avail 11181MiB | peak-load 0.75"
+      ]
+    },
+    {
+      "log_name": "zenpixels-float-cms-floor-api-20261026.log",
+      "results": [
+        "run-heavy: mem-cap=12G (cgroup, hard) jobs=2/24 avail=11630MiB :: bash -c timeout 20s cargo fmt -p zenpixels-convert && timeout 120s just output-float-backend-check 0.8.1 && timeout 150s just api-doc",
+        "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.08s",
+        "run-heavy: done rc=0 7s | peak-RSS 0.32GiB | min-avail 11328MiB | peak-load 0.65"
+      ]
+    },
+    {
+      "log_name": "zenpixels-float-cms-latest-20261026.log",
+      "results": [
+        "run-heavy: mem-cap=12G (cgroup, hard) jobs=2/24 avail=11643MiB :: just output-float-backend-check 0.9.1",
+        "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "run-heavy: done rc=0 6s | peak-RSS 0.48GiB | min-avail 11263MiB | peak-load 0.41"
+      ]
+    }
+  ],
+  "ci_followup": {
+    "first_run": "https://github.com/imazen/zenpixels/actions/runs/40407360982",
+    "failure": "icc-gen exhaustive TransformOptions initializer did not compile after workspace feature unification",
+    "fix": "retain explicit strict options and fill additional backend fields from Default; extended evaluation stays false for the generator",
+    "validation": [
+      {
+        "log_name": "zenpixels-float-cms-workspace-20261026.log",
+        "results": [
+          "run-heavy: mem-cap=12G (cgroup, hard) jobs=2/24 avail=11630MiB :: just output-float-workspace-check",
+          "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+          "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 318 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+          "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 464 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 17.92s",
+          "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s",
+          "test result: ok. 1 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 9.05s",
+          "test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 0 passed; 0 failed; 13 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 0 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s",
+          "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+          "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+          "test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+          "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+          "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+          "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 54 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.07s",
+          "test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.94s",
+          "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+          "test result: ok. 6 passed; 0 failed; 22 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "run-heavy: done rc=0 58s | peak-RSS 2.64GiB | min-avail 8751MiB | peak-load 1.82"
+        ]
+      },
+      {
+        "log_name": "zenpixels-float-cms-generator-20261026.log",
+        "results": [
+          "run-heavy: mem-cap=12G (cgroup, hard) jobs=2/24 avail=11625MiB :: just output-float-generator-check",
+          "run-heavy: done rc=0 2s | peak-RSS 0.27GiB | min-avail 11625MiB | peak-load 0.57"
+        ]
+      }
+    ]
+  }
+}
