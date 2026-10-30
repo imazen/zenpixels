@@ -90,3 +90,10 @@ rule, the conservative call is:
 The toe softness is a property of representing PQ as a finite u16 `curv` LUT, which is
 the only option an ICC v4 `curv` tag offers for a non-parametric transfer — not a bug
 in moxcms or lcms2.
+
+## Rerun 2026-10-30 (main 873f1e73, 0.3.1 candidate)
+
+`cargo run -p icc-gen --release --bin hdr_roundtrip` on r7900x (moxcms 0.9,
+lcms2 crate 6.1.1) reproduces every number above: lcms2 max_rel above 1e-3 is
+0.93% for all three profiles, PQ toe 7.76% at x=0.10 and 1.71% at x=0.25,
+HLG 3.11% at x=0.05, moxcms self-readback 0.287 abs. The verdict stands.
