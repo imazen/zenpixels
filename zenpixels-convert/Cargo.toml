@@ -111,7 +111,10 @@ linear-srgb = { version = "0.6.12", default-features = false, features = ["trans
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 garb = { version = "0.2.8", default-features = false, features = ["experimental"] }
-archmage = { version = ">=0.9.26, <=0.9.31-beta.1", default-features = false }
+# No upper bound on archmage/magetypes: a graph holds one 0.9.x, so a capped
+# range would refuse every crate that needs a later 0.9 release. Neither crate
+# appears in this crate's public API.
+archmage = { version = "0.9.30", default-features = false }
 # Direct libm dep for the hdr-experimental Bt2446A / HdrToSdr scalar paths
 # (powf, logf, log2f, cosf, sinf). The crate is no_std and already pulled in
 # transitively by magetypes; we depend on it directly so the math calls don't
@@ -124,7 +127,7 @@ libm = { version = "0.2", default-features = false }
 # Deliberately no `w512`: the `scan` predicates use 256-bit types (native
 # on AVX2, 2×128 polyfill below), and the 512-bit type set isn't worth its
 # compile-time cost without a stronger AVX-512 use case in this crate.
-magetypes = { version = ">=0.9.30, <=0.9.31-beta.1", default-features = false }
+magetypes = { version = "0.9.30", default-features = false }
 paste = "1.0.15"
 once_cell = { version = "1.21.4", default-features = false, features = ["race", "alloc"] }
 # Pure-Rust LZ4 safe-decode for the bundled CICP->ICC profile blob. no_std
@@ -155,7 +158,7 @@ zenbench = { version = "0.1.2"}
 # DEV-only: lets benches/kernel_tiers.rs disable the baseline SIMD token (NEON
 # on aarch64) so the "scalar" arm is real. Feature unification applies this to
 # test/bench builds only, so consumers are unaffected.
-archmage = { version = ">=0.9.28, <=0.9.31-beta.1", features = ["testable_dispatch"] }
+archmage = { version = "0.9.30", features = ["testable_dispatch"] }
 # Dev-only: cross-validate our local f16 impl (src/f16_scalar.rs) and drive
 # the perceptual-loss test suite, which uses half's f64 conversion paths.
 half = "2.7.1"
