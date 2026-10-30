@@ -223,3 +223,10 @@ of a convenience constructor absent from its older pin, and aligns the separate
 fuzz-root pixel patch. All original pixel assertions are retained. Its actual
 pinned graph passes 45 adapter tests, strict lib Clippy and all fuzz-target
 compilation. No runtime codec implementation changed in that follow-up.
+
+## Fresh paired source gate (2026-10-30)
+
+The [release source receipt](../benchmarks/release_source_2026-10-30.md) records
+the successful all-target, doctest, all-feature, strict Clippy and Rustdoc gates
+for the 0.3.1 pair. Package creation also passed with verification disabled;
+registry availability and extracted-package checks are not implied.
