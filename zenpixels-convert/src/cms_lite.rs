@@ -172,10 +172,7 @@ impl ZenCmsLite {
         let (dst_p, dst_t) = dst.resolve()?;
 
         // Same color space and format — no transform needed.
-        if src_p as u8 == dst_p as u8
-            && src_t as u8 == dst_t as u8
-            && src_format as u8 == dst_format as u8
-        {
+        if src_p as u8 == dst_p as u8 && src_t as u8 == dst_t as u8 && src_format == dst_format {
             return None;
         }
 
@@ -293,10 +290,7 @@ impl crate::cms::PluggableCms for ZenCmsLite {
 
         // Same color space and format — decline; let caller use the
         // built-in mechanical plan (byte copy / layout swizzle).
-        if src_p as u8 == dst_p as u8
-            && src_t as u8 == dst_t as u8
-            && src_format as u8 == dst_format as u8
-        {
+        if src_p as u8 == dst_p as u8 && src_t as u8 == dst_t as u8 && src_format == dst_format {
             return None;
         }
 

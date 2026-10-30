@@ -7,37 +7,52 @@
 
 use core::fmt;
 
+mod reserved {
+    /// Uninhabited payload of the hidden `__Reserved` enum variants.
+    ///
+    /// No value of this type exists, so the variants can never be
+    /// constructed or observed. Their presence keeps each enum open to
+    /// data-carrying variants in a later minor release: integer casts are
+    /// unavailable and discriminant values are not part of the API.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub enum Reserved {}
+}
+
 // ---------------------------------------------------------------------------
 // Channel type
 // ---------------------------------------------------------------------------
 
 /// Channel storage type.
+///
+/// Variants have no stable integer value; match on them or use the
+/// accessors. The type may gain data-carrying variants in a minor release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-#[repr(u8)]
 pub enum ChannelType {
     /// 8-bit unsigned integer (1 byte per channel).
-    U8 = 1,
+    U8,
     /// 16-bit unsigned integer (2 bytes per channel).
-    U16 = 2,
+    U16,
     /// 32-bit floating point (4 bytes per channel).
-    F32 = 4,
+    F32,
     /// IEEE 754 half-precision float (2 bytes per channel).
-    F16 = 5,
+    F16,
     /// 8-bit signed integer, preserved as native sample codes.
-    I8 = 6,
+    I8,
     /// 16-bit signed integer, preserved as native sample codes.
-    I16 = 7,
+    I16,
     /// 32-bit unsigned integer, preserved without narrowing.
-    U32 = 8,
+    U32,
     /// 32-bit signed integer, preserved as native sample codes.
-    I32 = 9,
+    I32,
     /// 64-bit unsigned integer, preserved without narrowing.
-    U64 = 10,
+    U64,
     /// 64-bit signed integer, preserved as native sample codes.
-    I64 = 11,
+    I64,
     /// IEEE 754 double precision; sample carriage preserves every bit.
-    F64 = 12,
+    F64,
+    #[doc(hidden)]
+    __Reserved(reserved::Reserved),
 }
 
 impl ChannelType {
@@ -101,6 +116,25 @@ impl ChannelType {
     pub const fn is_float(self) -> bool {
         matches!(self, Self::F32 | Self::F16 | Self::F64)
     }
+
+    /// Const equality; `PartialEq` is not callable in const contexts.
+    #[allow(unreachable_patterns)]
+    pub(crate) const fn same(self, other: Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::U8, Self::U8)
+                | (Self::U16, Self::U16)
+                | (Self::F32, Self::F32)
+                | (Self::F16, Self::F16)
+                | (Self::I8, Self::I8)
+                | (Self::I16, Self::I16)
+                | (Self::U32, Self::U32)
+                | (Self::I32, Self::I32)
+                | (Self::U64, Self::U64)
+                | (Self::I64, Self::I64)
+                | (Self::F64, Self::F64)
+        )
+    }
 }
 
 impl fmt::Display for ChannelType {
@@ -118,7 +152,7 @@ impl fmt::Display for ChannelType {
             Self::U64 => f.write_str("U64"),
             Self::I64 => f.write_str("I64"),
             Self::F64 => f.write_str("F64"),
-            _ => write!(f, "ChannelType({})", *self as u8),
+            Self::__Reserved(never) => match *never {},
         }
     }
 }
@@ -128,26 +162,31 @@ impl fmt::Display for ChannelType {
 // ---------------------------------------------------------------------------
 
 /// Channel layout (number and meaning of channels).
+///
+/// Variants have no stable integer value. The type may gain data-carrying
+/// variants (for example an arbitrary channel count with per-channel roles)
+/// in a minor release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-#[repr(u8)]
 pub enum ChannelLayout {
     /// Single luminance channel.
-    Gray = 1,
+    Gray,
     /// Luminance + alpha.
-    GrayAlpha = 2,
+    GrayAlpha,
     /// Red, green, blue.
-    Rgb = 3,
+    Rgb,
     /// Red, green, blue, alpha.
-    Rgba = 4,
+    Rgba,
     /// Blue, green, red, alpha (Windows/DirectX byte order).
-    Bgra = 5,
+    Bgra,
     /// Oklab perceptual color: L, a, b.
-    Oklab = 6,
+    Oklab,
     /// Oklab perceptual color with alpha: L, a, b, alpha.
-    OklabA = 7,
+    OklabA,
     /// C, M, Y, K channel order.
-    Cmyk = 8,
+    Cmyk,
+    #[doc(hidden)]
+    __Reserved(reserved::Reserved),
 }
 
 impl ChannelLayout {
@@ -173,6 +212,22 @@ impl ChannelLayout {
             Self::GrayAlpha | Self::Rgba | Self::Bgra | Self::OklabA
         )
     }
+
+    /// Const equality; `PartialEq` is not callable in const contexts.
+    #[allow(unreachable_patterns)]
+    pub(crate) const fn same(self, other: Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::Gray, Self::Gray)
+                | (Self::GrayAlpha, Self::GrayAlpha)
+                | (Self::Rgb, Self::Rgb)
+                | (Self::Rgba, Self::Rgba)
+                | (Self::Bgra, Self::Bgra)
+                | (Self::Oklab, Self::Oklab)
+                | (Self::OklabA, Self::OklabA)
+                | (Self::Cmyk, Self::Cmyk)
+        )
+    }
 }
 
 impl fmt::Display for ChannelLayout {
@@ -187,7 +242,7 @@ impl fmt::Display for ChannelLayout {
             Self::Oklab => f.write_str("Oklab"),
             Self::OklabA => f.write_str("OklabA"),
             Self::Cmyk => f.write_str("CMYK"),
-            _ => write!(f, "ChannelLayout({})", *self as u8),
+            Self::__Reserved(never) => match *never {},
         }
     }
 }
@@ -203,7 +258,6 @@ impl fmt::Display for ChannelLayout {
 /// the semantics of a present alpha channel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-#[repr(u8)]
 pub enum AlphaMode {
     /// Alpha bytes exist but values are undefined padding (RGBX, BGRX).
     Undefined = 1,
@@ -249,7 +303,6 @@ impl fmt::Display for AlphaMode {
 /// [`to_cicp()`](Self::to_cicp) for CICP mapping.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-#[repr(u8)]
 pub enum TransferFunction {
     /// Linear light (gamma 1.0).
     Linear = 0,
@@ -387,7 +440,6 @@ impl fmt::Display for TransferFunction {
 /// CICP mapping. Discriminant values are internal.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-#[repr(u8)]
 pub enum ColorPrimaries {
     /// BT.709 / sRGB (CICP 1). White point: D65.
     #[default]
@@ -620,7 +672,6 @@ impl fmt::Display for ColorPrimaries {
 /// the correct U16 anchor 60160. Full-range U8↔U16 conversions remain supported.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-#[repr(u8)]
 pub enum SignalRange {
     /// Full range: 0 – 2^N−1 (0–255 for 8-bit, 0–65535 for 16-bit).
     #[default]
@@ -1333,8 +1384,8 @@ impl PixelDescriptor {
     /// without any pixel transformation — same channel type, same layout.
     #[inline]
     pub const fn layout_compatible(self, other: Self) -> bool {
-        self.format.channel_type() as u8 == other.format.channel_type() as u8
-            && self.layout() as u8 == other.layout() as u8
+        self.format.channel_type().same(other.format.channel_type())
+            && self.layout().same(other.layout())
     }
 }
 
@@ -1404,7 +1455,6 @@ impl fmt::Display for PixelDescriptor {
 /// What the channels represent, independent of channel count or byte order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-#[repr(u8)]
 pub enum ColorModel {
     /// Single grayscale channel.
     Gray = 0,
@@ -1454,7 +1504,6 @@ impl fmt::Display for ColorModel {
 /// RGB-family byte order. Only meaningful when color model is RGB.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-#[repr(u8)]
 pub enum ByteOrder {
     /// Standard order: R, G, B (+ A if present).
     #[default]
@@ -1478,110 +1527,135 @@ impl fmt::Display for ByteOrder {
 
 /// Physical pixel layout for match-based format dispatch.
 ///
-/// Each variant encodes the channel type (U8/U16/F32) and layout (RGB/RGBA/
-/// Gray/etc.) in one discriminant. Transfer function and alpha mode live on
+/// Named variants are the canonical formats that processing code is
+/// expected to consider. Other interleaved sample-type and layout
+/// combinations are carried by [`Self::Generic`] instead of adding a named
+/// variant per combination. Transfer function and alpha mode live on
 /// [`PixelDescriptor`], not here.
 ///
-/// Use this enum when you need exhaustive `match` dispatch over known
-/// pixel layouts.
+/// Every format has exactly one representation:
+/// [`from_parts`](Self::from_parts) returns the named variant whenever one
+/// exists, and a [`GenericFormat`] cannot be constructed directly. Variants
+/// have no integer value; more variants may be added in a minor release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-#[repr(u8)]
 pub enum PixelFormat {
-    Rgb8 = 1,
-    Rgba8 = 2,
-    Rgb16 = 3,
-    Rgba16 = 4,
-    RgbF32 = 5,
-    RgbaF32 = 6,
-    Gray8 = 7,
-    Gray16 = 8,
-    GrayF32 = 9,
-    GrayA8 = 10,
-    GrayA16 = 11,
-    GrayAF32 = 12,
-    Bgra8 = 13,
-    Rgbx8 = 14,
-    Bgrx8 = 15,
-    OklabF32 = 16,
-    OklabaF32 = 17,
+    Rgb8,
+    Rgba8,
+    Rgb16,
+    Rgba16,
+    RgbF32,
+    RgbaF32,
+    Gray8,
+    Gray16,
+    GrayF32,
+    GrayA8,
+    GrayA16,
+    GrayAF32,
+    Bgra8,
+    Rgbx8,
+    Bgrx8,
+    OklabF32,
+    OklabaF32,
     /// 8-bit CMYK (4 bytes per pixel, no transfer function).
-    Cmyk8 = 18,
+    Cmyk8,
     /// f16 (IEEE 754 half-precision) RGB.
-    RgbF16 = 19,
+    RgbF16,
     /// f16 (IEEE 754 half-precision) RGBA.
-    RgbaF16 = 20,
+    RgbaF16,
     /// f16 (IEEE 754 half-precision) grayscale.
-    GrayF16 = 21,
+    GrayF16,
     /// f16 (IEEE 754 half-precision) grayscale with alpha.
-    GrayAF16 = 22,
-    /// Native I8 Rgb samples; no conversion is implied.
-    RgbI8 = 23,
-    /// Native I8 Rgba samples; no conversion is implied.
-    RgbaI8 = 24,
-    /// Native I8 Gray samples; no conversion is implied.
-    GrayI8 = 25,
-    /// Native I8 GrayAlpha samples; no conversion is implied.
-    GrayAI8 = 26,
-    /// Native I16 Rgb samples; no conversion is implied.
-    RgbI16 = 27,
-    /// Native I16 Rgba samples; no conversion is implied.
-    RgbaI16 = 28,
-    /// Native I16 Gray samples; no conversion is implied.
-    GrayI16 = 29,
-    /// Native I16 GrayAlpha samples; no conversion is implied.
-    GrayAI16 = 30,
-    /// Native U32 Rgb samples; no conversion is implied.
-    RgbU32 = 31,
-    /// Native U32 Rgba samples; no conversion is implied.
-    RgbaU32 = 32,
-    /// Native U32 Gray samples; no conversion is implied.
-    GrayU32 = 33,
-    /// Native U32 GrayAlpha samples; no conversion is implied.
-    GrayAU32 = 34,
-    /// Native I32 Rgb samples; no conversion is implied.
-    RgbI32 = 35,
-    /// Native I32 Rgba samples; no conversion is implied.
-    RgbaI32 = 36,
-    /// Native I32 Gray samples; no conversion is implied.
-    GrayI32 = 37,
-    /// Native I32 GrayAlpha samples; no conversion is implied.
-    GrayAI32 = 38,
-    /// Native U64 Rgb samples; no conversion is implied.
-    RgbU64 = 39,
-    /// Native U64 Rgba samples; no conversion is implied.
-    RgbaU64 = 40,
-    /// Native U64 Gray samples; no conversion is implied.
-    GrayU64 = 41,
-    /// Native U64 GrayAlpha samples; no conversion is implied.
-    GrayAU64 = 42,
-    /// Native I64 Rgb samples; no conversion is implied.
-    RgbI64 = 43,
-    /// Native I64 Rgba samples; no conversion is implied.
-    RgbaI64 = 44,
-    /// Native I64 Gray samples; no conversion is implied.
-    GrayI64 = 45,
-    /// Native I64 GrayAlpha samples; no conversion is implied.
-    GrayAI64 = 46,
-    /// Native F64 Rgb samples; no conversion is implied.
-    RgbF64 = 47,
-    /// Native F64 Rgba samples; no conversion is implied.
-    RgbaF64 = 48,
-    /// Native F64 Gray samples; no conversion is implied.
-    GrayF64 = 49,
-    /// Native F64 GrayAlpha samples; no conversion is implied.
-    GrayAF64 = 50,
+    GrayAF16,
     /// Native-endian F32 CMYK device values (16 bytes per pixel), without alpha.
     /// Zero means no ink and one means full ink, as for ICC device values.
     /// Retain the source ICC profile; no numeric conversion is implied.
-    CmykF32 = 51,
+    CmykF32,
     /// Native-endian F32 CMYK with reversed ink polarity, as emitted by JPEG XL.
     /// One means no ink and zero means full ink for all four components.
     /// The source ICC profile describes conventional device values, so applying
     /// it requires an explicit polarity conversion. Merely changing this format
     /// to [`Self::CmykF32`] mislabels the samples. Subtracting from one can lose
     /// F32 precision and is not a byte-preserving operation.
-    CmykF32Inverted = 52,
+    CmykF32Inverted,
+    /// Native interleaved samples without a named variant: signed integer,
+    /// 32/64-bit integer or F64 samples in a Gray, GrayAlpha, Rgb or Rgba
+    /// layout. Views and owned buffers carry them exactly; no conversion is
+    /// implied. Query the parts with [`PixelFormat::channel_type`] and
+    /// [`PixelFormat::layout`].
+    Generic(GenericFormat),
+}
+
+/// Interleaved sample type and layout without a named [`PixelFormat`] variant.
+///
+/// Obtain one from [`PixelFormat::from_parts`] or by matching
+/// [`PixelFormat::Generic`]. It has no public constructor, so a combination
+/// that has a named variant is never represented generically. It may record
+/// more of the format (such as a channel count and per-channel roles) in a
+/// minor release.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GenericFormat {
+    channel_type: ChannelType,
+    layout: ChannelLayout,
+}
+
+impl GenericFormat {
+    /// The combination when it is representable and has no named variant.
+    #[allow(unreachable_patterns)]
+    const fn new(channel_type: ChannelType, layout: ChannelLayout) -> Option<Self> {
+        let generic_type = matches!(
+            channel_type,
+            ChannelType::I8
+                | ChannelType::I16
+                | ChannelType::U32
+                | ChannelType::I32
+                | ChannelType::U64
+                | ChannelType::I64
+                | ChannelType::F64
+        );
+        let generic_layout = matches!(
+            layout,
+            ChannelLayout::Gray
+                | ChannelLayout::GrayAlpha
+                | ChannelLayout::Rgb
+                | ChannelLayout::Rgba
+        );
+        if generic_type && generic_layout {
+            Some(Self {
+                channel_type,
+                layout,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Static display name, matching the former named variants.
+    #[allow(unreachable_patterns)]
+    const fn name(self) -> &'static str {
+        macro_rules! names {
+            ($($ty:ident => [$g:literal, $ga:literal, $rgb:literal, $rgba:literal]),* $(,)?) => {
+                match (self.channel_type, self.layout) {
+                    $(
+                        (ChannelType::$ty, ChannelLayout::Gray) => $g,
+                        (ChannelType::$ty, ChannelLayout::GrayAlpha) => $ga,
+                        (ChannelType::$ty, ChannelLayout::Rgb) => $rgb,
+                        (ChannelType::$ty, ChannelLayout::Rgba) => $rgba,
+                    )*
+                    _ => "Generic",
+                }
+            };
+        }
+        names!(
+            I8 => ["GrayI8", "GrayAI8", "RgbI8", "RgbaI8"],
+            I16 => ["GrayI16", "GrayAI16", "RgbI16", "RgbaI16"],
+            U32 => ["GrayU32", "GrayAU32", "RgbU32", "RgbaU32"],
+            I32 => ["GrayI32", "GrayAI32", "RgbI32", "RgbaI32"],
+            U64 => ["GrayU64", "GrayAU64", "RgbU64", "RgbaU64"],
+            I64 => ["GrayI64", "GrayAI64", "RgbI64", "RgbaI64"],
+            F64 => ["GrayF64", "GrayAF64", "RgbF64", "RgbaF64"],
+        )
+    }
 }
 
 impl PixelFormat {
@@ -1608,13 +1682,7 @@ impl PixelFormat {
             | Self::CmykF32
             | Self::CmykF32Inverted => ChannelType::F32,
             Self::RgbF16 | Self::RgbaF16 | Self::GrayF16 | Self::GrayAF16 => ChannelType::F16,
-            Self::RgbI8 | Self::RgbaI8 | Self::GrayI8 | Self::GrayAI8 => ChannelType::I8,
-            Self::RgbI16 | Self::RgbaI16 | Self::GrayI16 | Self::GrayAI16 => ChannelType::I16,
-            Self::RgbU32 | Self::RgbaU32 | Self::GrayU32 | Self::GrayAU32 => ChannelType::U32,
-            Self::RgbI32 | Self::RgbaI32 | Self::GrayI32 | Self::GrayAI32 => ChannelType::I32,
-            Self::RgbU64 | Self::RgbaU64 | Self::GrayU64 | Self::GrayAU64 => ChannelType::U64,
-            Self::RgbI64 | Self::RgbaI64 | Self::GrayI64 | Self::GrayAI64 => ChannelType::I64,
-            Self::RgbF64 | Self::RgbaF64 | Self::GrayF64 | Self::GrayAF64 => ChannelType::F64,
+            Self::Generic(generic) => generic.channel_type,
             _ => ChannelType::U8,
         }
     }
@@ -1636,34 +1704,7 @@ impl PixelFormat {
             Self::OklabF32 => ChannelLayout::Oklab,
             Self::OklabaF32 => ChannelLayout::OklabA,
             Self::Cmyk8 | Self::CmykF32 | Self::CmykF32Inverted => ChannelLayout::Cmyk,
-            Self::RgbI8
-            | Self::RgbI16
-            | Self::RgbU32
-            | Self::RgbI32
-            | Self::RgbU64
-            | Self::RgbI64
-            | Self::RgbF64 => ChannelLayout::Rgb,
-            Self::RgbaI8
-            | Self::RgbaI16
-            | Self::RgbaU32
-            | Self::RgbaI32
-            | Self::RgbaU64
-            | Self::RgbaI64
-            | Self::RgbaF64 => ChannelLayout::Rgba,
-            Self::GrayI8
-            | Self::GrayI16
-            | Self::GrayU32
-            | Self::GrayI32
-            | Self::GrayU64
-            | Self::GrayI64
-            | Self::GrayF64 => ChannelLayout::Gray,
-            Self::GrayAI8
-            | Self::GrayAI16
-            | Self::GrayAU32
-            | Self::GrayAI32
-            | Self::GrayAU64
-            | Self::GrayAI64
-            | Self::GrayAF64 => ChannelLayout::GrayAlpha,
+            Self::Generic(generic) => generic.layout,
             _ => ChannelLayout::Rgb,
         }
     }
@@ -1680,21 +1721,15 @@ impl PixelFormat {
             | Self::GrayA8
             | Self::GrayA16
             | Self::GrayAF32
-            | Self::GrayAF16
-            | Self::GrayI8
-            | Self::GrayAI8
-            | Self::GrayI16
-            | Self::GrayAI16
-            | Self::GrayU32
-            | Self::GrayAU32
-            | Self::GrayI32
-            | Self::GrayAI32
-            | Self::GrayU64
-            | Self::GrayAU64
-            | Self::GrayI64
-            | Self::GrayAI64
-            | Self::GrayF64
-            | Self::GrayAF64 => ColorModel::Gray,
+            | Self::GrayAF16 => ColorModel::Gray,
+            Self::Generic(generic)
+                if matches!(
+                    generic.layout,
+                    ChannelLayout::Gray | ChannelLayout::GrayAlpha
+                ) =>
+            {
+                ColorModel::Gray
+            }
             Self::OklabF32 | Self::OklabaF32 => ColorModel::Oklab,
             Self::Cmyk8 | Self::CmykF32 | Self::CmykF32Inverted => ColorModel::Cmyk,
             _ => ColorModel::Rgb,
@@ -1755,21 +1790,8 @@ impl PixelFormat {
             | Self::OklabF32
             | Self::Cmyk8
             | Self::CmykF32
-            | Self::CmykF32Inverted
-            | Self::RgbI8
-            | Self::GrayI8
-            | Self::RgbI16
-            | Self::GrayI16
-            | Self::RgbU32
-            | Self::GrayU32
-            | Self::RgbI32
-            | Self::GrayI32
-            | Self::RgbU64
-            | Self::GrayU64
-            | Self::RgbI64
-            | Self::GrayI64
-            | Self::RgbF64
-            | Self::GrayF64 => None,
+            | Self::CmykF32Inverted => None,
+            Self::Generic(generic) if !generic.layout.has_alpha() => None,
             Self::Rgbx8 | Self::Bgrx8 => Some(AlphaMode::Undefined),
             _ => Some(AlphaMode::Straight),
         }
@@ -1804,34 +1826,7 @@ impl PixelFormat {
             Self::RgbaF16 => "RgbaF16",
             Self::GrayF16 => "GrayF16",
             Self::GrayAF16 => "GrayAF16",
-            Self::RgbI8 => "RgbI8",
-            Self::RgbaI8 => "RgbaI8",
-            Self::GrayI8 => "GrayI8",
-            Self::GrayAI8 => "GrayAI8",
-            Self::RgbI16 => "RgbI16",
-            Self::RgbaI16 => "RgbaI16",
-            Self::GrayI16 => "GrayI16",
-            Self::GrayAI16 => "GrayAI16",
-            Self::RgbU32 => "RgbU32",
-            Self::RgbaU32 => "RgbaU32",
-            Self::GrayU32 => "GrayU32",
-            Self::GrayAU32 => "GrayAU32",
-            Self::RgbI32 => "RgbI32",
-            Self::RgbaI32 => "RgbaI32",
-            Self::GrayI32 => "GrayI32",
-            Self::GrayAI32 => "GrayAI32",
-            Self::RgbU64 => "RgbU64",
-            Self::RgbaU64 => "RgbaU64",
-            Self::GrayU64 => "GrayU64",
-            Self::GrayAU64 => "GrayAU64",
-            Self::RgbI64 => "RgbI64",
-            Self::RgbaI64 => "RgbaI64",
-            Self::GrayI64 => "GrayI64",
-            Self::GrayAI64 => "GrayAI64",
-            Self::RgbF64 => "RgbF64",
-            Self::RgbaF64 => "RgbaF64",
-            Self::GrayF64 => "GrayF64",
-            Self::GrayAF64 => "GrayAF64",
+            Self::Generic(generic) => generic.name(),
             _ => "Unknown",
         }
     }
@@ -1879,36 +1874,11 @@ impl PixelFormat {
 
             (ChannelType::U8, ChannelLayout::Cmyk, _) => Some(Self::Cmyk8),
             (ChannelType::F32, ChannelLayout::Cmyk, _) => Some(Self::CmykF32),
-            (ChannelType::I8, ChannelLayout::Rgb, _) => Some(Self::RgbI8),
-            (ChannelType::I8, ChannelLayout::Rgba, _) => Some(Self::RgbaI8),
-            (ChannelType::I8, ChannelLayout::Gray, _) => Some(Self::GrayI8),
-            (ChannelType::I8, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAI8),
-            (ChannelType::I16, ChannelLayout::Rgb, _) => Some(Self::RgbI16),
-            (ChannelType::I16, ChannelLayout::Rgba, _) => Some(Self::RgbaI16),
-            (ChannelType::I16, ChannelLayout::Gray, _) => Some(Self::GrayI16),
-            (ChannelType::I16, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAI16),
-            (ChannelType::U32, ChannelLayout::Rgb, _) => Some(Self::RgbU32),
-            (ChannelType::U32, ChannelLayout::Rgba, _) => Some(Self::RgbaU32),
-            (ChannelType::U32, ChannelLayout::Gray, _) => Some(Self::GrayU32),
-            (ChannelType::U32, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAU32),
-            (ChannelType::I32, ChannelLayout::Rgb, _) => Some(Self::RgbI32),
-            (ChannelType::I32, ChannelLayout::Rgba, _) => Some(Self::RgbaI32),
-            (ChannelType::I32, ChannelLayout::Gray, _) => Some(Self::GrayI32),
-            (ChannelType::I32, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAI32),
-            (ChannelType::U64, ChannelLayout::Rgb, _) => Some(Self::RgbU64),
-            (ChannelType::U64, ChannelLayout::Rgba, _) => Some(Self::RgbaU64),
-            (ChannelType::U64, ChannelLayout::Gray, _) => Some(Self::GrayU64),
-            (ChannelType::U64, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAU64),
-            (ChannelType::I64, ChannelLayout::Rgb, _) => Some(Self::RgbI64),
-            (ChannelType::I64, ChannelLayout::Rgba, _) => Some(Self::RgbaI64),
-            (ChannelType::I64, ChannelLayout::Gray, _) => Some(Self::GrayI64),
-            (ChannelType::I64, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAI64),
-            (ChannelType::F64, ChannelLayout::Rgb, _) => Some(Self::RgbF64),
-            (ChannelType::F64, ChannelLayout::Rgba, _) => Some(Self::RgbaF64),
-            (ChannelType::F64, ChannelLayout::Gray, _) => Some(Self::GrayF64),
-            (ChannelType::F64, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAF64),
 
-            _ => None,
+            _ => match GenericFormat::new(channel_type, layout) {
+                Some(generic) => Some(Self::Generic(generic)),
+                None => None,
+            },
         }
     }
 
@@ -1940,34 +1910,7 @@ impl PixelFormat {
             Self::RgbaF16 => PixelDescriptor::RGBAF16,
             Self::GrayF16 => PixelDescriptor::GRAYF16,
             Self::GrayAF16 => PixelDescriptor::GRAYAF16,
-            Self::RgbI8
-            | Self::RgbaI8
-            | Self::GrayI8
-            | Self::GrayAI8
-            | Self::RgbI16
-            | Self::RgbaI16
-            | Self::GrayI16
-            | Self::GrayAI16
-            | Self::RgbU32
-            | Self::RgbaU32
-            | Self::GrayU32
-            | Self::GrayAU32
-            | Self::RgbI32
-            | Self::RgbaI32
-            | Self::GrayI32
-            | Self::GrayAI32
-            | Self::RgbU64
-            | Self::RgbaU64
-            | Self::GrayU64
-            | Self::GrayAU64
-            | Self::RgbI64
-            | Self::RgbaI64
-            | Self::GrayI64
-            | Self::GrayAI64
-            | Self::RgbF64
-            | Self::RgbaF64
-            | Self::GrayF64
-            | Self::GrayAF64 => PixelDescriptor::new(
+            Self::Generic(_) => PixelDescriptor::new(
                 self.channel_type(),
                 self.layout(),
                 self.default_alpha(),
