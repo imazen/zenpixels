@@ -9,14 +9,16 @@
 
 ## summary
 #
-#   inherent methods                           39
-#   trait roster entries (type × trait)        40
+#   inherent methods                           40
+#   enum variants                               4
+#   trait roster entries (type × trait)        41
 #
 # per-module pub lines:
+#   (root)                            2
 #   buffer                            3
 #   cicp                              2
 #   color                             6
-#   descriptor                       10
+#   descriptor                       13
 #   hdr                               1
 #   icc                               2
 #   orientation                       1
@@ -24,7 +26,7 @@
 #   policy                            5
 #   sample                            7
 
-## items (39 lines)
+## items (44 lines)
 
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
@@ -43,6 +45,7 @@ pub fn descriptor::ChannelLayout::assert_fields_are_eq(&self)
 pub fn descriptor::ChannelType::assert_fields_are_eq(&self)
 pub fn descriptor::ColorModel::assert_fields_are_eq(&self)
 pub fn descriptor::ColorPrimaries::assert_fields_are_eq(&self)
+pub fn descriptor::GenericFormat::assert_fields_are_eq(&self)
 pub fn descriptor::PixelDescriptor::assert_fields_are_eq(&self)
 pub fn descriptor::PixelFormat::assert_fields_are_eq(&self)
 pub fn descriptor::SignalRange::assert_fields_are_eq(&self)
@@ -65,8 +68,12 @@ pub fn sample::ExactDepth::assert_fields_are_eq(&self)
 pub fn sample::ExactDepthError::assert_fields_are_eq(&self)
 pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
 pub fn sample::SampleEncodingError::assert_fields_are_eq(&self)
+pub ChannelLayout::__Reserved(descriptor::reserved::Reserved)
+pub ChannelType::__Reserved(descriptor::reserved::Reserved)
+pub descriptor::ChannelLayout::__Reserved(descriptor::reserved::Reserved)
+pub descriptor::ChannelType::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (40 types)
+## trait impls (41 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
@@ -82,6 +89,7 @@ descriptor::ChannelLayout: TrivialClone
 descriptor::ChannelType: TrivialClone
 descriptor::ColorModel: TrivialClone
 descriptor::ColorPrimaries: TrivialClone
+descriptor::GenericFormat: TrivialClone
 descriptor::PixelDescriptor: TrivialClone
 descriptor::PixelFormat: TrivialClone
 descriptor::SignalRange: TrivialClone

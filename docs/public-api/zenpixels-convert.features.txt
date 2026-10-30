@@ -12,7 +12,7 @@
 #   pub modules                                 6
 #   pub types (struct/enum/trait/alias)        42
 #   pub consts/statics                         12
-#   free functions                             12
+#   free functions                              9
 #   inherent methods                           48
 #   struct fields                             108
 #   enum variants                              70
@@ -21,18 +21,15 @@
 #
 # per-module pub lines:
 #   (root)                           89
-#   cms_moxcms                        5
+#   cms_moxcms                        2
 #   ext                               8
 #   hdr                              26
 #   pipeline                        170
 
-## items (269 lines)
+## items (266 lines)
 
 pub mod cms_moxcms
-pub struct cms_moxcms::MoxCmsError(pub alloc::string::String)
-pub fn cms_moxcms::cicp_transform_opts() -> moxcms::transform::TransformOptions
-pub fn cms_moxcms::lut_transform_opts() -> moxcms::transform::TransformOptions
-pub fn cms_moxcms::transform_opts(cms::ColorPriority, cms::RenderingIntent) -> moxcms::transform::TransformOptions
+pub struct cms_moxcms::MoxCmsError(_)
 pub fn ext::PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
@@ -204,7 +201,7 @@ pub pipeline::PathEntry::path: core::option::Option<pipeline::path::ConversionPa
 pub pipeline::PathEntry::source_codec: &'static str
 pub pipeline::PathEntry::source_effective_bits: u8
 pub pipeline::PathEntry::source_format: zenpixels::descriptor::PixelDescriptor
-pub enum LossBucket [also: pipeline, pipeline::path]
+#[non_exhaustive] pub enum LossBucket [also: pipeline, pipeline::path]
 pub LossBucket::High
 pub LossBucket::Lossless
 pub LossBucket::LowLoss
@@ -212,7 +209,7 @@ pub LossBucket::Moderate
 pub LossBucket::NearLossless
 pub fn pipeline::path::LossBucket::from_model_loss(u16) -> Self
 pub fn pipeline::path::LossBucket::max_loss(self) -> u16
-pub enum OpCategory [also: pipeline, pipeline::op_format]
+#[non_exhaustive] pub enum OpCategory [also: pipeline, pipeline::op_format]
 pub OpCategory::Arithmetic
 pub OpCategory::Blur
 pub OpCategory::ColorMatrix
@@ -229,7 +226,7 @@ pub OpCategory::Tonemap
 pub fn pipeline::op_format::OpCategory::candidate_working_formats(self, zenpixels::descriptor::PixelDescriptor) -> alloc::vec::Vec<zenpixels::descriptor::PixelDescriptor>
 pub fn pipeline::op_format::OpCategory::requirement(self) -> pipeline::op_format::OpRequirement
 pub fn pipeline::op_format::OpCategory::to_intent(self) -> ConvertIntent
-pub enum QualityThreshold [also: pipeline, pipeline::path]
+#[non_exhaustive] pub enum QualityThreshold [also: pipeline, pipeline::path]
 pub QualityThreshold::Lossless
 pub QualityThreshold::MaxBucket(pipeline::path::LossBucket)
 pub QualityThreshold::NearLossless
