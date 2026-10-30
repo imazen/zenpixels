@@ -1,12 +1,19 @@
 [workspace]
 members = ["zenpixels", "zenpixels-convert", "scripts/icc-gen"]
+# `apidoc/` is the CI-free public-API snapshot runner: excluded so plain
+# `cargo test` and CI never compile its zenutils-apidoc dependency tree.
+# Regenerate snapshots via `just api-doc`.
+# `benchmarks/transpose-shootout/` is dev-box-only measurement equipment
+# (external transpose crates + optional C++ Simd FFI) — never built by CI/tests.
+exclude = ["apidoc", "benchmarks/transpose-shootout"]
 resolver = "2"
 
 [workspace.dependencies]
-zenpixels = { path = "zenpixels", version = "0.2.11", default-features = false }
+zenpixels = { path = "zenpixels", version = ">=0.2.17, <0.4.0", default-features = false }
 
+# NOTE: no shared `version` here on purpose — each member declares its own
+# version (they release independently), so a workspace-level one only rots.
 [workspace.package]
-version = "0.2.11"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0 OR MIT"

@@ -8,7 +8,7 @@
 //!
 //! Every codec declares a [`CodecFormats`] constant that lists every pixel
 //! format the decoder can produce and the encoder can accept. The format
-//! negotiation system ([`crate::best_match`], [`crate::negotiate`]) uses
+//! negotiation system ([`crate::best_match`], [`negotiate()`](fn@crate::negotiate)) uses
 //! these tables to pick the cheapest conversion path.
 //!
 //! ```rust,ignore
@@ -50,7 +50,9 @@
 //! The `effective_bits` field tracks the actual precision of data within its
 //! container type. Two u16 values may have different effective precision:
 //! - PNG 16-bit: u16 with 16 effective bits (full range)
-//! - AVIF 10-bit decoded to u16: 10 effective bits (top bits are replicated)
+//! - AVIF 10-bit codes widened to u16: 10 effective bits. For RGB rebuilt
+//!   from 10-bit YCbCr, 10 is a cost estimate: those samples do not lie on a
+//!   10-bit grid.
 //! - Farbfeld: u16 with 16 effective bits
 //!
 //! This matters for provenance: converting a 10-bit-effective u16 to u8 loses

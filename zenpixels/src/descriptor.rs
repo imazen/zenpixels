@@ -13,7 +13,6 @@ use core::fmt;
 
 /// Channel storage type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum ChannelType {
@@ -25,6 +24,20 @@ pub enum ChannelType {
     F32 = 4,
     /// IEEE 754 half-precision float (2 bytes per channel).
     F16 = 5,
+    /// 8-bit signed integer, preserved as native sample codes.
+    I8 = 6,
+    /// 16-bit signed integer, preserved as native sample codes.
+    I16 = 7,
+    /// 32-bit unsigned integer, preserved without narrowing.
+    U32 = 8,
+    /// 32-bit signed integer, preserved as native sample codes.
+    I32 = 9,
+    /// 64-bit unsigned integer, preserved without narrowing.
+    U64 = 10,
+    /// 64-bit signed integer, preserved as native sample codes.
+    I64 = 11,
+    /// IEEE 754 double precision; sample carriage preserves every bit.
+    F64 = 12,
 }
 
 impl ChannelType {
@@ -33,9 +46,10 @@ impl ChannelType {
     #[allow(unreachable_patterns)]
     pub const fn byte_size(self) -> usize {
         match self {
-            Self::U8 => 1,
-            Self::U16 | Self::F16 => 2,
-            Self::F32 => 4,
+            Self::U8 | Self::I8 => 1,
+            Self::U16 | Self::F16 | Self::I16 => 2,
+            Self::F32 | Self::U32 | Self::I32 => 4,
+            Self::F64 | Self::U64 | Self::I64 => 8,
             _ => 0,
         }
     }
@@ -68,14 +82,24 @@ impl ChannelType {
     #[inline]
     #[allow(unreachable_patterns)]
     pub const fn is_integer(self) -> bool {
-        matches!(self, Self::U8 | Self::U16)
+        matches!(
+            self,
+            Self::U8
+                | Self::U16
+                | Self::I8
+                | Self::I16
+                | Self::U32
+                | Self::I32
+                | Self::U64
+                | Self::I64
+        )
     }
 
     /// Whether this is a floating-point type.
     #[inline]
     #[allow(unreachable_patterns)]
     pub const fn is_float(self) -> bool {
-        matches!(self, Self::F32 | Self::F16)
+        matches!(self, Self::F32 | Self::F16 | Self::F64)
     }
 }
 
@@ -87,6 +111,13 @@ impl fmt::Display for ChannelType {
             Self::U16 => f.write_str("U16"),
             Self::F32 => f.write_str("F32"),
             Self::F16 => f.write_str("F16"),
+            Self::I8 => f.write_str("I8"),
+            Self::I16 => f.write_str("I16"),
+            Self::U32 => f.write_str("U32"),
+            Self::I32 => f.write_str("I32"),
+            Self::U64 => f.write_str("U64"),
+            Self::I64 => f.write_str("I64"),
+            Self::F64 => f.write_str("F64"),
             _ => write!(f, "ChannelType({})", *self as u8),
         }
     }
@@ -98,7 +129,6 @@ impl fmt::Display for ChannelType {
 
 /// Channel layout (number and meaning of channels).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum ChannelLayout {
@@ -172,7 +202,6 @@ impl fmt::Display for ChannelLayout {
 /// alpha channel exists, while `Some(AlphaMode::Straight)` etc. describe
 /// the semantics of a present alpha channel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum AlphaMode {
@@ -219,7 +248,6 @@ impl fmt::Display for AlphaMode {
 /// Discriminant values are internal — use [`from_cicp()`](Self::from_cicp) /
 /// [`to_cicp()`](Self::to_cicp) for CICP mapping.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum TransferFunction {
@@ -231,7 +259,7 @@ pub enum TransferFunction {
     Bt709 = 2,
     /// Perceptual Quantizer (SMPTE ST 2084, HDR10).
     Pq = 3,
-    /// Pure power-law gamma 2.2. Used for Adobe RGB (1998).
+    /// Adobe RGB (1998) power-law gamma, nominally 2.2 (exactly 563/256).
     ///
     /// The Adobe RGB 1998 encoding spec (§4.3.4.2) defines pure gamma
     /// 2.19921875 with no linear segment near black. About 85% of real-world
@@ -291,9 +319,9 @@ impl TransferFunction {
     pub const fn from_cicp(tc: u8) -> Option<Self> {
         match tc {
             1 => Some(Self::Bt709),
-            // SMPTE 170M (6) and SMPTE 240M (7) use the BT.709 curve —
-            // per BT.601/SMPTE 170M spec, the OETF is identical to BT.709.
-            6 | 7 => Some(Self::Bt709),
+            // SMPTE 170M (6) uses BT.709. SMPTE 240M (7) differs;
+            // leave it unresolved until a matching kernel exists.
+            6 => Some(Self::Bt709),
             8 => Some(Self::Linear),
             13 => Some(Self::Srgb),
             16 => Some(Self::Pq),
@@ -358,7 +386,6 @@ impl fmt::Display for TransferFunction {
 /// [`from_cicp()`](Self::from_cicp) / [`to_cicp()`](Self::to_cicp) for
 /// CICP mapping. Discriminant values are internal.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum ColorPrimaries {
@@ -523,27 +550,20 @@ impl ColorPrimaries {
 
     /// Whether `self` fully contains the gamut of `other`.
     ///
-    /// Returns `false` when white points differ (cross-adapted containment
-    /// is not defined without a chromatic adaptation transform).
-    /// D65 hierarchy: BT.2020 > Display P3 > Adobe RGB ≈ BT.709.
+    /// Unknown primaries are not provably contained. Display P3 and Adobe RGB
+    /// each contain BT.709, but neither contains the other. BT.2020 does not
+    /// quite contain Display P3: P3 red lies outside its triangle. All currently
+    /// supported known primaries use D65; future white points need a defined
+    /// adaptation contract before claiming containment.
     #[inline]
     pub const fn contains(self, other: Self) -> bool {
-        !self.needs_chromatic_adaptation(other)
-            && self.gamut_width() >= other.gamut_width()
-            && !matches!(self, Self::Unknown)
-            && !matches!(other, Self::Unknown)
-    }
-
-    #[allow(unreachable_patterns)]
-    const fn gamut_width(self) -> u8 {
-        match self {
-            Self::Bt709 => 1,
-            Self::AdobeRgb => 2,
-            Self::DisplayP3 => 3,
-            Self::Bt2020 => 4,
-            Self::Unknown => 0,
-            _ => 0,
-        }
+        matches!(
+            (self, other),
+            (Self::Bt2020, Self::Bt2020 | Self::AdobeRgb | Self::Bt709)
+                | (Self::DisplayP3, Self::DisplayP3 | Self::Bt709)
+                | (Self::AdobeRgb, Self::AdobeRgb | Self::Bt709)
+                | (Self::Bt709, Self::Bt709)
+        )
     }
 }
 
@@ -565,16 +585,49 @@ impl fmt::Display for ColorPrimaries {
 // Signal range
 // ---------------------------------------------------------------------------
 
-/// Signal range for pixel values.
+/// Signal (quantization) range of the encoded channel values.
+///
+/// `Narrow` is the single ITU convention variously called *limited*, *video*,
+/// *studio swing*, *MPEG*, or *TV* range (BT.601 / BT.709 / BT.2100 — the
+/// aliases do not differ in meaning). Its anchor values scale with bit depth
+/// as `anchor × 2^(N−8)` — a bit shift, **not** a full-scale stretch:
+///
+/// | depth  | luma / R'G'B'  | chroma (Cb/Cr) |
+/// |--------|----------------|----------------|
+/// | 8-bit  | 16–235         | 16–240         |
+/// | 10-bit | 64–940         | 64–960         |
+/// | 12-bit | 256–3760       | 256–3840       |
+///
+/// For the RGB and gray layouts this crate describes, narrow means
+/// studio-swing R'G'B' / Y′: the **luma** span applies to every channel. The
+/// wider chroma span would matter only for YCbCr layouts (none exist here).
+///
+/// Values outside the anchors are *legal* in a narrow signal — sub-blacks
+/// (1–15·2^(N−8)), super-whites (236–254·2^(N−8)), and xvYCC's deliberate
+/// gamut excursions. Any future expand-to-full conversion must choose
+/// clamp-vs-preserve for them explicitly.
+///
+/// Maps 1:1 to CICP's `video_full_range_flag` and AV1's `color_range`
+/// ([`Full`](Self::Full) = full-range flag set, [`Narrow`](Self::Narrow) =
+/// limited).
+///
+/// **There are no Narrow↔Full conversion kernels yet.** `zenpixels-convert`
+/// refuses range-crossing conversions rather than relabeling (relabeling
+/// without rescaling lifts or crushes blacks); narrow data must be preserved
+/// by value-preserving operations. `zenpixels-convert` also refuses narrow-range
+/// channel-type changes (including U8↔U16) until range-aware kernels exist.
+/// Full-range widening by 257 would map narrow U8 white 235 to 60395 rather than
+/// the correct U16 anchor 60160. Full-range U8↔U16 conversions remain supported.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum SignalRange {
-    /// Full range: 0-2^N-1 (e.g. 0-255 for 8-bit).
+    /// Full range: 0 – 2^N−1 (0–255 for 8-bit, 0–65535 for 16-bit).
     #[default]
     Full = 0,
-    /// Narrow (limited/studio) range: 16-235 luma, 16-240 chroma (for 8-bit).
+    /// Narrow (limited/studio) range: 16–235 luma applied to all RGB/gray
+    /// channels, scaled by 2^(N−8) at higher depths — see the type-level
+    /// docs for the full table, excursion semantics, and conversion rules.
     Narrow = 1,
 }
 
@@ -598,7 +651,6 @@ impl fmt::Display for SignalRange {
 /// Combines a [`PixelFormat`] (physical pixel layout) with transfer function,
 /// alpha mode, color primaries, and signal range.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct PixelDescriptor {
     /// Physical pixel format (channel type + layout as a flat enum).
@@ -609,7 +661,9 @@ pub struct PixelDescriptor {
     pub alpha: Option<AlphaMode>,
     /// Color primaries (gamut). Defaults to BT.709/sRGB.
     pub primaries: ColorPrimaries,
-    /// Signal range (full vs narrow/limited).
+    /// Signal range (full vs narrow/limited). See [`SignalRange`] for the
+    /// exact ITU anchor definition, bit-depth scaling, and the
+    /// no-relabeling conversion rule.
     pub signal_range: SignalRange,
 }
 
@@ -671,6 +725,15 @@ impl PixelDescriptor {
 
     /// Create a descriptor with default primaries (BT.709) and full range.
     ///
+    /// # See also
+    ///
+    /// * [`new_full`](Self::new_full) — same constructor with an explicit
+    ///   [`ColorPrimaries`] argument, for anything that isn't BT.709/sRGB
+    ///   gamut (BT.2020 HDR, Display P3, …).
+    /// * The HDR presets [`RGB16_BT2100_PQ`](Self::RGB16_BT2100_PQ) /
+    ///   [`RGB16_BT2100_HLG`](Self::RGB16_BT2100_HLG) — common BT.2100
+    ///   combinations without spelling out the enums.
+    ///
     /// # Panics
     ///
     /// Panics if the `(channel_type, layout, alpha)` combination has no
@@ -696,6 +759,14 @@ impl PixelDescriptor {
     }
 
     /// Create a descriptor with explicit primaries.
+    ///
+    /// # See also
+    ///
+    /// * [`new`](Self::new) — the four-argument form when BT.709/sRGB
+    ///   primaries (the default) are what you want.
+    /// * [`RGB16_BT2100_PQ`](Self::RGB16_BT2100_PQ) /
+    ///   [`RGB16_BT2100_HLG`](Self::RGB16_BT2100_HLG) — ready-made BT.2100
+    ///   HDR presets built on this constructor.
     ///
     /// # Panics
     ///
@@ -841,6 +912,34 @@ impl PixelDescriptor {
         ChannelLayout::Bgra,
         Some(AlphaMode::Undefined),
         TransferFunction::Srgb,
+    );
+
+    // -- HDR (BT.2100) constants ------------------------------------------------
+
+    /// 16-bit BT.2100 PQ RGB (BT.2020 primaries, PQ transfer, full range) —
+    /// CICP `(9, 16, 0, full)`. The common interchange form for HDR10-style
+    /// stills decoded to u16.
+    ///
+    /// Use [`new_full`](Self::new_full) for other channel types or layouts in
+    /// this color space.
+    pub const RGB16_BT2100_PQ: Self = Self::new_full(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Pq,
+        ColorPrimaries::Bt2020,
+    );
+    /// 16-bit BT.2100 HLG RGB (BT.2020 primaries, HLG transfer, full range) —
+    /// CICP `(9, 18, 0, full)`.
+    ///
+    /// Use [`new_full`](Self::new_full) for other channel types or layouts in
+    /// this color space.
+    pub const RGB16_BT2100_HLG: Self = Self::new_full(
+        ChannelType::U16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Hlg,
+        ColorPrimaries::Bt2020,
     );
 
     // -- Transfer-agnostic constants ------------------------------------------
@@ -1019,6 +1118,17 @@ impl PixelDescriptor {
         self.format.bytes_per_pixel()
     }
 
+    /// Bytes per channel (1 for U8, 2 for U16/F16, 4 for F32).
+    ///
+    /// Shorthand for `self.channel_type().byte_size()` — the per-sample
+    /// width, as opposed to [`bytes_per_pixel`](Self::bytes_per_pixel)
+    /// (all channels of one pixel). The usual "do I need a
+    /// high-bit-depth path?" check is `bytes_per_channel() > 1`.
+    #[inline]
+    pub const fn bytes_per_channel(self) -> usize {
+        self.channel_type().byte_size()
+    }
+
     /// Whether this descriptor has meaningful alpha data.
     #[inline]
     pub const fn has_alpha(self) -> bool {
@@ -1108,6 +1218,12 @@ impl PixelDescriptor {
     }
 
     /// Return a copy with a different signal range.
+    ///
+    /// This **relabels** the descriptor — it does not rescale any pixel
+    /// values. Only use it to describe what the data already is (e.g.
+    /// tagging broadcast HDR that is genuinely studio-swing as
+    /// [`SignalRange::Narrow`]). Mislabeling lifts or crushes blacks; see
+    /// [`SignalRange`] for the anchor definition and conversion rules.
     #[inline]
     #[must_use]
     pub const fn with_signal_range(self, signal_range: SignalRange) -> Self {
@@ -1160,23 +1276,55 @@ impl PixelDescriptor {
         self.format.channel_type().byte_size()
     }
 
-    /// Tightly-packed byte stride for a given width.
+    /// Tightly-packed byte stride for a given width, in bytes.
+    ///
+    /// **Overflow-safe.** `width * bytes_per_pixel` is computed with
+    /// [`usize::saturating_mul`] so the result never wraps — on 32-bit
+    /// targets (i686, wasm32) a width that would overflow `usize` returns
+    /// `usize::MAX` instead of a silently-truncated small stride.
+    /// Downstream `checked_mul(height)` then surfaces the overflow as
+    /// [`BufferError::InvalidDimensions`](crate::BufferError::InvalidDimensions)
+    /// rather than silently under-allocating; before this guard, a 32-bit
+    /// wrap could pass the height multiply and produce a small buffer
+    /// paired with the full-size `width` field — silent corruption.
     #[inline]
     pub const fn aligned_stride(self, width: u32) -> usize {
-        width as usize * self.bytes_per_pixel()
+        (width as usize).saturating_mul(self.bytes_per_pixel())
     }
 
-    /// SIMD-friendly byte stride for a given width.
+    /// SIMD-friendly byte stride for a given width, in bytes.
     ///
     /// The stride is a multiple of `lcm(bytes_per_pixel, simd_align)`,
     /// ensuring every row start is both pixel-aligned and SIMD-aligned.
     /// `simd_align` must be a power of 2.
+    ///
+    /// **Overflow-safe** (see [`aligned_stride`](Self::aligned_stride)):
+    /// the `width * bpp` multiply saturates, and the align-up step is
+    /// also saturating, so the result stays bounded at `usize::MAX` on
+    /// overflow and downstream allocation surfaces a typed error.
     #[inline]
     pub const fn simd_aligned_stride(self, width: u32, simd_align: usize) -> usize {
         let bpp = self.bytes_per_pixel();
-        let raw = width as usize * bpp;
+        let raw = (width as usize).saturating_mul(bpp);
         let align = lcm(bpp, simd_align);
         align_up_general(raw, align)
+    }
+
+    /// Validate that alpha semantics agree with the physical format.
+    ///
+    /// Descriptors remain freely constructible declarations. Buffer acceptance
+    /// and conversion planning call this before using them; no pixels are read.
+    pub fn validate(self) -> Result<(), crate::BufferError> {
+        let valid = match self.format.default_alpha() {
+            None => self.alpha.is_none(),
+            Some(AlphaMode::Undefined) => self.alpha == Some(AlphaMode::Undefined),
+            Some(_) => self.alpha.is_some(),
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(crate::BufferError::IncompatibleDescriptor)
+        }
     }
 
     /// Whether this descriptor's channel type and layout are compatible with `other`.
@@ -1205,16 +1353,30 @@ const fn lcm(a: usize, b: usize) -> usize {
     if a == 0 || b == 0 {
         0
     } else {
-        a / gcd(a, b) * b
+        (a / gcd(a, b)).saturating_mul(b)
     }
 }
 
+/// Round `value` up to the next multiple of `align`, saturating at
+/// `usize::MAX` on overflow.
+///
+/// Saturation matters when `value` is itself the saturating-mul result of
+/// [`PixelDescriptor::aligned_stride`] / [`PixelDescriptor::simd_aligned_stride`]:
+/// without it, `value + (align - rem)` could wrap from `usize::MAX` back
+/// down to a small number, defeating the saturating-mul guard one layer up.
 const fn align_up_general(value: usize, align: usize) -> usize {
     if align == 0 {
         return value;
     }
     let rem = value % align;
-    if rem == 0 { value } else { value + align - rem }
+    if rem == 0 {
+        value
+    } else {
+        match value.checked_add(align - rem) {
+            Some(v) => v,
+            None => usize::MAX,
+        }
+    }
 }
 
 impl fmt::Display for PixelDescriptor {
@@ -1241,7 +1403,6 @@ impl fmt::Display for PixelDescriptor {
 
 /// What the channels represent, independent of channel count or byte order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum ColorModel {
@@ -1324,7 +1485,6 @@ impl fmt::Display for ByteOrder {
 /// Use this enum when you need exhaustive `match` dispatch over known
 /// pixel layouts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum PixelFormat {
@@ -1355,6 +1515,73 @@ pub enum PixelFormat {
     GrayF16 = 21,
     /// f16 (IEEE 754 half-precision) grayscale with alpha.
     GrayAF16 = 22,
+    /// Native I8 Rgb samples; no conversion is implied.
+    RgbI8 = 23,
+    /// Native I8 Rgba samples; no conversion is implied.
+    RgbaI8 = 24,
+    /// Native I8 Gray samples; no conversion is implied.
+    GrayI8 = 25,
+    /// Native I8 GrayAlpha samples; no conversion is implied.
+    GrayAI8 = 26,
+    /// Native I16 Rgb samples; no conversion is implied.
+    RgbI16 = 27,
+    /// Native I16 Rgba samples; no conversion is implied.
+    RgbaI16 = 28,
+    /// Native I16 Gray samples; no conversion is implied.
+    GrayI16 = 29,
+    /// Native I16 GrayAlpha samples; no conversion is implied.
+    GrayAI16 = 30,
+    /// Native U32 Rgb samples; no conversion is implied.
+    RgbU32 = 31,
+    /// Native U32 Rgba samples; no conversion is implied.
+    RgbaU32 = 32,
+    /// Native U32 Gray samples; no conversion is implied.
+    GrayU32 = 33,
+    /// Native U32 GrayAlpha samples; no conversion is implied.
+    GrayAU32 = 34,
+    /// Native I32 Rgb samples; no conversion is implied.
+    RgbI32 = 35,
+    /// Native I32 Rgba samples; no conversion is implied.
+    RgbaI32 = 36,
+    /// Native I32 Gray samples; no conversion is implied.
+    GrayI32 = 37,
+    /// Native I32 GrayAlpha samples; no conversion is implied.
+    GrayAI32 = 38,
+    /// Native U64 Rgb samples; no conversion is implied.
+    RgbU64 = 39,
+    /// Native U64 Rgba samples; no conversion is implied.
+    RgbaU64 = 40,
+    /// Native U64 Gray samples; no conversion is implied.
+    GrayU64 = 41,
+    /// Native U64 GrayAlpha samples; no conversion is implied.
+    GrayAU64 = 42,
+    /// Native I64 Rgb samples; no conversion is implied.
+    RgbI64 = 43,
+    /// Native I64 Rgba samples; no conversion is implied.
+    RgbaI64 = 44,
+    /// Native I64 Gray samples; no conversion is implied.
+    GrayI64 = 45,
+    /// Native I64 GrayAlpha samples; no conversion is implied.
+    GrayAI64 = 46,
+    /// Native F64 Rgb samples; no conversion is implied.
+    RgbF64 = 47,
+    /// Native F64 Rgba samples; no conversion is implied.
+    RgbaF64 = 48,
+    /// Native F64 Gray samples; no conversion is implied.
+    GrayF64 = 49,
+    /// Native F64 GrayAlpha samples; no conversion is implied.
+    GrayAF64 = 50,
+    /// Native-endian F32 CMYK device values (16 bytes per pixel), without alpha.
+    /// Zero means no ink and one means full ink, as for ICC device values.
+    /// Retain the source ICC profile; no numeric conversion is implied.
+    CmykF32 = 51,
+    /// Native-endian F32 CMYK with reversed ink polarity, as emitted by JPEG XL.
+    /// One means no ink and zero means full ink for all four components.
+    /// The source ICC profile describes conventional device values, so applying
+    /// it requires an explicit polarity conversion. Merely changing this format
+    /// to [`Self::CmykF32`] mislabels the samples. Subtracting from one can lose
+    /// F32 precision and is not a byte-preserving operation.
+    CmykF32Inverted = 52,
 }
 
 impl PixelFormat {
@@ -1377,8 +1604,17 @@ impl PixelFormat {
             | Self::GrayF32
             | Self::GrayAF32
             | Self::OklabF32
-            | Self::OklabaF32 => ChannelType::F32,
+            | Self::OklabaF32
+            | Self::CmykF32
+            | Self::CmykF32Inverted => ChannelType::F32,
             Self::RgbF16 | Self::RgbaF16 | Self::GrayF16 | Self::GrayAF16 => ChannelType::F16,
+            Self::RgbI8 | Self::RgbaI8 | Self::GrayI8 | Self::GrayAI8 => ChannelType::I8,
+            Self::RgbI16 | Self::RgbaI16 | Self::GrayI16 | Self::GrayAI16 => ChannelType::I16,
+            Self::RgbU32 | Self::RgbaU32 | Self::GrayU32 | Self::GrayAU32 => ChannelType::U32,
+            Self::RgbI32 | Self::RgbaI32 | Self::GrayI32 | Self::GrayAI32 => ChannelType::I32,
+            Self::RgbU64 | Self::RgbaU64 | Self::GrayU64 | Self::GrayAU64 => ChannelType::U64,
+            Self::RgbI64 | Self::RgbaI64 | Self::GrayI64 | Self::GrayAI64 => ChannelType::I64,
+            Self::RgbF64 | Self::RgbaF64 | Self::GrayF64 | Self::GrayAF64 => ChannelType::F64,
             _ => ChannelType::U8,
         }
     }
@@ -1399,7 +1635,35 @@ impl PixelFormat {
             Self::Bgra8 | Self::Bgrx8 => ChannelLayout::Bgra,
             Self::OklabF32 => ChannelLayout::Oklab,
             Self::OklabaF32 => ChannelLayout::OklabA,
-            Self::Cmyk8 => ChannelLayout::Cmyk,
+            Self::Cmyk8 | Self::CmykF32 | Self::CmykF32Inverted => ChannelLayout::Cmyk,
+            Self::RgbI8
+            | Self::RgbI16
+            | Self::RgbU32
+            | Self::RgbI32
+            | Self::RgbU64
+            | Self::RgbI64
+            | Self::RgbF64 => ChannelLayout::Rgb,
+            Self::RgbaI8
+            | Self::RgbaI16
+            | Self::RgbaU32
+            | Self::RgbaI32
+            | Self::RgbaU64
+            | Self::RgbaI64
+            | Self::RgbaF64 => ChannelLayout::Rgba,
+            Self::GrayI8
+            | Self::GrayI16
+            | Self::GrayU32
+            | Self::GrayI32
+            | Self::GrayU64
+            | Self::GrayI64
+            | Self::GrayF64 => ChannelLayout::Gray,
+            Self::GrayAI8
+            | Self::GrayAI16
+            | Self::GrayAU32
+            | Self::GrayAI32
+            | Self::GrayAU64
+            | Self::GrayAI64
+            | Self::GrayAF64 => ChannelLayout::GrayAlpha,
             _ => ChannelLayout::Rgb,
         }
     }
@@ -1416,9 +1680,23 @@ impl PixelFormat {
             | Self::GrayA8
             | Self::GrayA16
             | Self::GrayAF32
-            | Self::GrayAF16 => ColorModel::Gray,
+            | Self::GrayAF16
+            | Self::GrayI8
+            | Self::GrayAI8
+            | Self::GrayI16
+            | Self::GrayAI16
+            | Self::GrayU32
+            | Self::GrayAU32
+            | Self::GrayI32
+            | Self::GrayAI32
+            | Self::GrayU64
+            | Self::GrayAU64
+            | Self::GrayI64
+            | Self::GrayAI64
+            | Self::GrayF64
+            | Self::GrayAF64 => ColorModel::Gray,
             Self::OklabF32 | Self::OklabaF32 => ColorModel::Oklab,
-            Self::Cmyk8 => ColorModel::Cmyk,
+            Self::Cmyk8 | Self::CmykF32 | Self::CmykF32Inverted => ColorModel::Cmyk,
             _ => ColorModel::Rgb,
         }
     }
@@ -1475,7 +1753,23 @@ impl PixelFormat {
             | Self::GrayF32
             | Self::GrayF16
             | Self::OklabF32
-            | Self::Cmyk8 => None,
+            | Self::Cmyk8
+            | Self::CmykF32
+            | Self::CmykF32Inverted
+            | Self::RgbI8
+            | Self::GrayI8
+            | Self::RgbI16
+            | Self::GrayI16
+            | Self::RgbU32
+            | Self::GrayU32
+            | Self::RgbI32
+            | Self::GrayI32
+            | Self::RgbU64
+            | Self::GrayU64
+            | Self::RgbI64
+            | Self::GrayI64
+            | Self::RgbF64
+            | Self::GrayF64 => None,
             Self::Rgbx8 | Self::Bgrx8 => Some(AlphaMode::Undefined),
             _ => Some(AlphaMode::Straight),
         }
@@ -1504,10 +1798,40 @@ impl PixelFormat {
             Self::OklabF32 => "OklabF32",
             Self::OklabaF32 => "OklabaF32",
             Self::Cmyk8 => "CMYK8",
+            Self::CmykF32 => "CmykF32",
+            Self::CmykF32Inverted => "CmykF32Inverted",
             Self::RgbF16 => "RgbF16",
             Self::RgbaF16 => "RgbaF16",
             Self::GrayF16 => "GrayF16",
             Self::GrayAF16 => "GrayAF16",
+            Self::RgbI8 => "RgbI8",
+            Self::RgbaI8 => "RgbaI8",
+            Self::GrayI8 => "GrayI8",
+            Self::GrayAI8 => "GrayAI8",
+            Self::RgbI16 => "RgbI16",
+            Self::RgbaI16 => "RgbaI16",
+            Self::GrayI16 => "GrayI16",
+            Self::GrayAI16 => "GrayAI16",
+            Self::RgbU32 => "RgbU32",
+            Self::RgbaU32 => "RgbaU32",
+            Self::GrayU32 => "GrayU32",
+            Self::GrayAU32 => "GrayAU32",
+            Self::RgbI32 => "RgbI32",
+            Self::RgbaI32 => "RgbaI32",
+            Self::GrayI32 => "GrayI32",
+            Self::GrayAI32 => "GrayAI32",
+            Self::RgbU64 => "RgbU64",
+            Self::RgbaU64 => "RgbaU64",
+            Self::GrayU64 => "GrayU64",
+            Self::GrayAU64 => "GrayAU64",
+            Self::RgbI64 => "RgbI64",
+            Self::RgbaI64 => "RgbaI64",
+            Self::GrayI64 => "GrayI64",
+            Self::GrayAI64 => "GrayAI64",
+            Self::RgbF64 => "RgbF64",
+            Self::RgbaF64 => "RgbaF64",
+            Self::GrayF64 => "GrayF64",
+            Self::GrayAF64 => "GrayAF64",
             _ => "Unknown",
         }
     }
@@ -1515,7 +1839,9 @@ impl PixelFormat {
     /// Resolve a format from channel type, layout, and alpha presence.
     ///
     /// Returns `None` for combinations that have no `PixelFormat` variant
-    /// (e.g. `(U16, Bgra, _)`).
+    /// (e.g. `(U16, Bgra, _)`). CMYK resolves to conventional ink polarity;
+    /// reversed F32 ink polarity must be selected explicitly with
+    /// [`Self::CmykF32Inverted`]. Channel layout alone does not retain polarity.
     #[inline]
     pub const fn from_parts(
         channel_type: ChannelType,
@@ -1552,6 +1878,35 @@ impl PixelFormat {
             (ChannelType::F32, ChannelLayout::OklabA, _) => Some(Self::OklabaF32),
 
             (ChannelType::U8, ChannelLayout::Cmyk, _) => Some(Self::Cmyk8),
+            (ChannelType::F32, ChannelLayout::Cmyk, _) => Some(Self::CmykF32),
+            (ChannelType::I8, ChannelLayout::Rgb, _) => Some(Self::RgbI8),
+            (ChannelType::I8, ChannelLayout::Rgba, _) => Some(Self::RgbaI8),
+            (ChannelType::I8, ChannelLayout::Gray, _) => Some(Self::GrayI8),
+            (ChannelType::I8, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAI8),
+            (ChannelType::I16, ChannelLayout::Rgb, _) => Some(Self::RgbI16),
+            (ChannelType::I16, ChannelLayout::Rgba, _) => Some(Self::RgbaI16),
+            (ChannelType::I16, ChannelLayout::Gray, _) => Some(Self::GrayI16),
+            (ChannelType::I16, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAI16),
+            (ChannelType::U32, ChannelLayout::Rgb, _) => Some(Self::RgbU32),
+            (ChannelType::U32, ChannelLayout::Rgba, _) => Some(Self::RgbaU32),
+            (ChannelType::U32, ChannelLayout::Gray, _) => Some(Self::GrayU32),
+            (ChannelType::U32, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAU32),
+            (ChannelType::I32, ChannelLayout::Rgb, _) => Some(Self::RgbI32),
+            (ChannelType::I32, ChannelLayout::Rgba, _) => Some(Self::RgbaI32),
+            (ChannelType::I32, ChannelLayout::Gray, _) => Some(Self::GrayI32),
+            (ChannelType::I32, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAI32),
+            (ChannelType::U64, ChannelLayout::Rgb, _) => Some(Self::RgbU64),
+            (ChannelType::U64, ChannelLayout::Rgba, _) => Some(Self::RgbaU64),
+            (ChannelType::U64, ChannelLayout::Gray, _) => Some(Self::GrayU64),
+            (ChannelType::U64, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAU64),
+            (ChannelType::I64, ChannelLayout::Rgb, _) => Some(Self::RgbI64),
+            (ChannelType::I64, ChannelLayout::Rgba, _) => Some(Self::RgbaI64),
+            (ChannelType::I64, ChannelLayout::Gray, _) => Some(Self::GrayI64),
+            (ChannelType::I64, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAI64),
+            (ChannelType::F64, ChannelLayout::Rgb, _) => Some(Self::RgbF64),
+            (ChannelType::F64, ChannelLayout::Rgba, _) => Some(Self::RgbaF64),
+            (ChannelType::F64, ChannelLayout::Gray, _) => Some(Self::GrayF64),
+            (ChannelType::F64, ChannelLayout::GrayAlpha, _) => Some(Self::GrayAF64),
 
             _ => None,
         }
@@ -1580,10 +1935,44 @@ impl PixelFormat {
             Self::OklabF32 => PixelDescriptor::OKLABF32,
             Self::OklabaF32 => PixelDescriptor::OKLABAF32,
             Self::Cmyk8 => PixelDescriptor::CMYK8,
+            Self::CmykF32 | Self::CmykF32Inverted => PixelDescriptor::from_pixel_format(self),
             Self::RgbF16 => PixelDescriptor::RGBF16,
             Self::RgbaF16 => PixelDescriptor::RGBAF16,
             Self::GrayF16 => PixelDescriptor::GRAYF16,
             Self::GrayAF16 => PixelDescriptor::GRAYAF16,
+            Self::RgbI8
+            | Self::RgbaI8
+            | Self::GrayI8
+            | Self::GrayAI8
+            | Self::RgbI16
+            | Self::RgbaI16
+            | Self::GrayI16
+            | Self::GrayAI16
+            | Self::RgbU32
+            | Self::RgbaU32
+            | Self::GrayU32
+            | Self::GrayAU32
+            | Self::RgbI32
+            | Self::RgbaI32
+            | Self::GrayI32
+            | Self::GrayAI32
+            | Self::RgbU64
+            | Self::RgbaU64
+            | Self::GrayU64
+            | Self::GrayAU64
+            | Self::RgbI64
+            | Self::RgbaI64
+            | Self::GrayI64
+            | Self::GrayAI64
+            | Self::RgbF64
+            | Self::RgbaF64
+            | Self::GrayF64
+            | Self::GrayAF64 => PixelDescriptor::new(
+                self.channel_type(),
+                self.layout(),
+                self.default_alpha(),
+                TransferFunction::Unknown,
+            ),
             _ => PixelDescriptor::RGB8,
         }
     }
@@ -1621,6 +2010,46 @@ mod tests {
         assert_eq!(PixelDescriptor::GRAY8.bytes_per_pixel(), 1);
         assert_eq!(PixelDescriptor::RGBAF32.bytes_per_pixel(), 16);
         assert_eq!(PixelDescriptor::GRAYA8.bytes_per_pixel(), 2);
+    }
+
+    #[test]
+    fn descriptor_bytes_per_channel() {
+        assert_eq!(PixelDescriptor::RGB8.bytes_per_channel(), 1);
+        assert_eq!(PixelDescriptor::RGB16_SRGB.bytes_per_channel(), 2);
+        assert_eq!(PixelDescriptor::RGBAF32.bytes_per_channel(), 4);
+        // The distinction this accessor exists for: per-sample width vs
+        // all channels of a pixel.
+        assert_ne!(
+            PixelDescriptor::RGBA8.bytes_per_channel(),
+            PixelDescriptor::RGBA8.bytes_per_pixel()
+        );
+    }
+
+    #[test]
+    fn bt2100_presets_carry_hdr_signaling() {
+        let pq = PixelDescriptor::RGB16_BT2100_PQ;
+        assert_eq!(pq.format, PixelFormat::Rgb16);
+        assert_eq!(pq.transfer, TransferFunction::Pq);
+        assert_eq!(pq.primaries, ColorPrimaries::Bt2020);
+        assert_eq!(pq.signal_range, SignalRange::Full);
+
+        let hlg = PixelDescriptor::RGB16_BT2100_HLG;
+        assert_eq!(hlg.format, PixelFormat::Rgb16);
+        assert_eq!(hlg.transfer, TransferFunction::Hlg);
+        assert_eq!(hlg.primaries, ColorPrimaries::Bt2020);
+        assert_eq!(hlg.signal_range, SignalRange::Full);
+
+        // The presets must agree with spelling it out via new_full.
+        assert_eq!(
+            pq,
+            PixelDescriptor::new_full(
+                ChannelType::U16,
+                ChannelLayout::Rgb,
+                None,
+                TransferFunction::Pq,
+                ColorPrimaries::Bt2020,
+            )
+        );
     }
 
     #[test]
@@ -1704,7 +2133,7 @@ mod tests {
 
     #[test]
     fn color_primaries_containment() {
-        assert!(ColorPrimaries::Bt2020.contains(ColorPrimaries::DisplayP3));
+        assert!(!ColorPrimaries::Bt2020.contains(ColorPrimaries::DisplayP3));
         assert!(ColorPrimaries::Bt2020.contains(ColorPrimaries::Bt709));
         assert!(ColorPrimaries::DisplayP3.contains(ColorPrimaries::Bt709));
         assert!(!ColorPrimaries::Bt709.contains(ColorPrimaries::DisplayP3));
@@ -1988,6 +2417,44 @@ mod tests {
         assert_eq!(PixelDescriptor::RGB8_SRGB.aligned_stride(100), 300);
         assert_eq!(PixelDescriptor::RGBA8_SRGB.aligned_stride(100), 400);
         assert_eq!(PixelDescriptor::RGBF32_LINEAR.aligned_stride(10), 120);
+    }
+
+    #[test]
+    fn aligned_stride_saturates_at_usize_overflow() {
+        // On 32-bit usize, width × bpp can wrap. Saturating-mul keeps the
+        // stride at usize::MAX so downstream `checked_mul(height)` raises
+        // a typed error rather than silently under-allocating. Verified
+        // here on 64-bit too (u32::MAX × bpp doesn't overflow 64-bit usize
+        // but still exercises the wide multiply path).
+        let huge = u32::MAX; // 4 294 967 295
+        // RGBA8 = 4 bytes/pixel.
+        let stride = PixelDescriptor::RGBA8_SRGB.aligned_stride(huge);
+        // On 32-bit (usize == u32): u32::MAX × 4 wraps → saturating returns usize::MAX.
+        // On 64-bit (usize == u64): no wrap (~17 GB), saturating no-op.
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(stride, usize::MAX);
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(stride, huge as usize * 4);
+
+        // RGBF32 = 12 bytes/pixel — overflows usize at 357 913 942 px on 32-bit.
+        let stride = PixelDescriptor::RGBF32_LINEAR.aligned_stride(huge);
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(stride, usize::MAX);
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(stride, huge as usize * 12);
+    }
+
+    #[test]
+    fn simd_aligned_stride_saturates_and_does_not_wrap_via_align_up() {
+        // Even when raw width*bpp saturates to usize::MAX, the align-up
+        // step is now also saturating — without that fix, `value + (align
+        // - rem)` could wrap from MAX back to a small number, defeating
+        // the upstream guard. Verify the saturating path stays at MAX.
+        let stride = PixelDescriptor::RGBA8_SRGB.simd_aligned_stride(u32::MAX, 64);
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(stride, usize::MAX);
+        #[cfg(target_pointer_width = "64")]
+        assert!(stride >= u32::MAX as usize * 4);
     }
 
     #[test]

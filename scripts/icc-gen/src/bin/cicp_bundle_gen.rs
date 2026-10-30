@@ -1,0 +1,821 @@
+//! Generate the bundled transfer-grouped ICC blob for full CICP coverage.
+//!
+//! Enumerates the full ITU-T H.273 assigned grid (11 colour-primaries × 16
+//! transfer-characteristics = 176 combinations), synthesizes each profile via
+//! moxcms exactly as `zenpixels_convert::cms_moxcms::icc_bytes_for_cicp` does at
+//! runtime, deduplicates the resulting bytes, groups the unique profiles by
+//! transfer code, LZ4 (`lz4_flex`) compresses each group, and writes:
+//!
+//! * a concatenated blob → `zenpixels-convert/src/profiles/cicp_bundle.lz4`
+//! * a generated Rust index module →
+//!   `zenpixels-convert/src/icc_profiles/cicp_bundle_index.rs`
+//!
+//! The grouping is essential: LZ4's match window is 64 KiB, so clustering the
+//! profiles that share an identical TRC/LUT payload (same transfer, varying
+//! primaries) lets the compressor find the long cross-profile matches. The
+//! decompressed group is sliced at runtime to recover each profile.
+//!
+//! The sRGB pair (1,13) needs no profile. Primaries 10 (XYZ) is
+//! explicitly excluded from RGB: moxcms emits a rank-1 matrix for it.
+//! This leaves 159 RGB pairs; gray keeps XYZ's valid equal-energy white
+//! and transfer curve, giving 175 gray mappings.
+//!
+//! Usage (run from the repo root so the relative output paths resolve):
+//!   `cargo run -p icc-gen --release --bin cicp_bundle_gen [--no-write] [--out-dir <dir>]`
+//!
+//! `--no-write` prints the analysis (counts, sizes) without touching any files;
+//! used by the byte-equality test to recompute the blob in memory and diff it
+//! against the committed asset.
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use moxcms::{
+    CicpColorPrimaries, CicpProfile, ColorProfile, LocalizableString, MatrixCoefficients,
+    ProfileText, TransferCharacteristics, Xyzd, adaption_matrix_d, white_point_d50,
+};
+
+include!("cicp_bundle_gen/colourimetry.rs");
+
+// H.273 primaries 10 is CIE XYZ, not an RGB xy/Y gamut. moxcms currently
+// emits three identical colorants. Refuse it until XYZ synthesis is correct;
+// still run the gate and report the failure, never ship the invalid bytes.
+const EXCLUDED_RGB_PRIMARIES: &[u8] = &[10];
+
+/// The assigned H.273 colour-primaries codes (everything that is neither
+/// `Reserved` nor `Unspecified`). 11 entries.
+const ASSIGNED_PRIMARIES: &[u8] = &[1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 22];
+
+/// The assigned H.273 transfer-characteristics codes (everything that is
+/// neither `Reserved` nor `Unspecified`). 16 entries.
+const ASSIGNED_TRANSFERS: &[u8] = &[1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+
+/// Synthesize ICC bytes for a raw CICP `(primaries, transfer)` exactly as the
+/// runtime `icc_bytes_for_cicp` does, so the committed bytes match what a
+/// `cms-moxcms` build would generate.
+///
+/// Returns `None` when moxcms cannot represent the combination (no populated
+/// `red_trc`), mirroring the runtime `CmsUnsupported` outcome.
+fn synth_icc(primaries: u8, transfer: u8) -> Option<Vec<u8>> {
+    let color_primaries = CicpColorPrimaries::try_from(primaries).ok()?;
+    let transfer_characteristics = TransferCharacteristics::try_from(transfer).ok()?;
+    // Matrix coefficients don't affect an RGB ICC's colorimetry; default to
+    // Identity exactly as the runtime path does.
+    let matrix_coefficients =
+        MatrixCoefficients::try_from(0u8).unwrap_or(MatrixCoefficients::Identity);
+
+    let profile = ColorProfile::new_from_cicp(CicpProfile {
+        color_primaries,
+        transfer_characteristics,
+        matrix_coefficients,
+        // Range never changes an RGB ICC's bytes; fix it to full range so the
+        // generated profile is deterministic and matches the runtime default
+        // for CICP synthesis.
+        full_range: true,
+    });
+
+    // Require a transfer curve before encoding. The independent colorant
+    // gate in enumerate_grid checks the encoded RGB matrix as well.
+    profile.red_trc.as_ref()?;
+    let mut bytes = profile.encode().ok()?;
+    normalize_creation_timestamp(&mut bytes);
+    Some(bytes)
+}
+
+/// Zero the ICC header's creation date/time field (bytes 24..36).
+///
+/// moxcms's `encode()` stamps `ColorDateTime::now()` — the current wall-clock
+/// time — into every generated profile (moxcms `writer.rs`). That makes the
+/// bytes non-deterministic across regenerations and would make the committed
+/// blob (and its golden sha256) unstable. The field is purely informational and
+/// carries no colorimetry; zenpixels' own normalized ICC hash already treats
+/// bytes 24..36 as metadata-to-ignore. Zeroing it yields a reproducible,
+/// deterministic profile. The runtime roundtrip test masks the same field when
+/// comparing against a fresh moxcms run.
+fn normalize_creation_timestamp(icc: &mut [u8]) {
+    if icc.len() >= 36 {
+        icc[24..36].fill(0);
+    }
+}
+
+/// The sRGB / BT.709 default combinations that `synthesize_icc_for_cicp` short
+/// circuits to `NotNeeded` before the blob is consulted. Excluded from the
+/// bundle so the index never points at bytes that are never requested.
+fn is_srgb_default(primaries: u8, transfer: u8) -> bool {
+    (matches!(primaries, 1 | 2) && matches!(transfer, 2 | 13)) || (primaries == 2 && transfer == 1)
+}
+
+/// The white point of an H.273 colour-primaries code, as CIE xy
+/// (Rec. ITU-T H.273 Table 2 — each primaries row carries its own white).
+///
+/// This is the only thing primaries contribute to a *gray* profile: a
+/// single-channel image has no gamut, but its neutral axis still lands at
+/// the source space's white chromaticity, so the GRAY profile's `wtpt`
+/// (and chad) must carry it.
+fn h273_white_xy(primaries: u8) -> Option<(&'static str, f64, f64)> {
+    Some(match primaries {
+        // D65: BT.709, BT.470BG, SMPTE 170M, SMPTE 240M, BT.2020,
+        // P3-D65 (SMPTE EG 432-1), EBU Tech 3213-E.
+        1 | 5 | 6 | 7 | 9 | 12 | 22 => ("D65", 0.3127, 0.3290),
+        // Illuminant C: BT.470M, generic film.
+        4 | 8 => ("C", 0.310, 0.316),
+        // Illuminant E: SMPTE ST 428-1 (CIE XYZ).
+        10 => ("E", 1.0 / 3.0, 1.0 / 3.0),
+        // DCI white: SMPTE RP 431-2 (P3-DCI theater white).
+        11 => ("DCI", 0.314, 0.351),
+        _ => return None,
+    })
+}
+
+/// Synthesize a **GRAY-class** ICC profile for a CICP `(primaries, transfer)`:
+/// `kTRC` = the transfer's tone curve (identical to the curve the RGB
+/// synthesis uses, including the PQ/HLG `curv`-LUT encodings), media white
+/// point = the primaries' H.273 white, and a correct Bradford
+/// white→D50 `chad` (computed per white — NOT moxcms's scaffold default,
+/// which stores the raw Bradford cone matrix).
+///
+/// The TRC is taken from a throwaway RGB synthesis of the same CICP so the
+/// gray and RGB bundles can never disagree about a transfer's curve, and so
+/// the same `red_trc` gate rejects combos moxcms can't represent.
+fn synth_gray_icc(primaries: u8, transfer: u8) -> Option<Vec<u8>> {
+    let color_primaries = CicpColorPrimaries::try_from(primaries).ok()?;
+    let transfer_characteristics = TransferCharacteristics::try_from(transfer).ok()?;
+    let matrix_coefficients =
+        MatrixCoefficients::try_from(0u8).unwrap_or(MatrixCoefficients::Identity);
+
+    let rgb = ColorProfile::new_from_cicp(CicpProfile {
+        color_primaries,
+        transfer_characteristics,
+        matrix_coefficients,
+        full_range: true,
+    });
+    // Require the same transfer curve as the RGB path.
+    let trc = rgb.red_trc.as_ref()?.clone();
+
+    let (white_name, wx, wy) = h273_white_xy(primaries)?;
+    let white = Xyzd {
+        x: wx / wy,
+        y: 1.0,
+        z: (1.0 - wx - wy) / wy,
+    };
+
+    // Scaffold carries the GRAY essentials (DisplayDevice class, Gray data
+    // colour space, D50 PCS illuminant, public-domain copyright); the gamma
+    // argument is immediately replaced by the real transfer curve.
+    let mut gray = ColorProfile::new_gray_with_gamma(2.2);
+    gray.gray_trc = Some(trc);
+    gray.media_white_point = Some(white);
+    gray.chromatic_adaptation = Some(adaption_matrix_d(
+        white.to_xyz(),
+        white_point_d50().to_xyz(),
+    ));
+    gray.description = Some(ProfileText::Localizable(vec![LocalizableString::new(
+        "en".to_string(),
+        "US".to_string(),
+        format!("Gray H.273 TC{transfer} {white_name} white"),
+    )]));
+
+    let mut bytes = gray.encode().ok()?;
+    normalize_creation_timestamp(&mut bytes);
+    Some(bytes)
+}
+
+/// One profile occurrence in the grid, before dedup.
+struct GridEntry {
+    primaries: u8,
+    transfer: u8,
+    bytes: Vec<u8>,
+}
+
+/// A built, transfer-grouped, compressed bundle plus its index metadata.
+struct BuiltBundle {
+    /// The concatenated LZ4 blocks (one per group), in group order.
+    blob: Vec<u8>,
+    /// Per-group records, in the order they appear in `blob`.
+    groups: Vec<GroupRecord>,
+    /// Per-`(primaries, transfer)` RGB profile locator, sorted for determinism.
+    profiles: Vec<ProfileRecord>,
+    /// Per-`(primaries, transfer)` GRAY profile locator, sorted for
+    /// determinism. Points into the *same* groups as `profiles` — each
+    /// group's decoded bytes pack the RGB profiles first, then the gray
+    /// ones, so the gray `kTRC` payload LZ4-matches the identical TRC
+    /// bytes of the RGB profiles just before it.
+    gray_profiles: Vec<ProfileRecord>,
+    /// Diagnostics.
+    total_combos: usize,
+    profile_combos: usize,
+    gray_profile_combos: usize,
+    unique_profiles: usize,
+    raw_unique_bytes: usize,
+}
+
+struct GroupRecord {
+    transfer: u8,
+    blob_offset: usize,
+    compressed_len: usize,
+    decompressed_len: usize,
+    /// Number of distinct profiles packed into this group's decoded bytes.
+    profile_count: usize,
+}
+
+struct ProfileRecord {
+    primaries: u8,
+    transfer: u8,
+    group_index: usize,
+    offset_in_group: usize,
+    len: usize,
+}
+
+/// Enumerate the assigned grid through `synth`. Deterministic order:
+/// primaries ascending, then transfer ascending. Returns the total combo
+/// count and the synthesized entries (sRGB defaults excluded).
+fn enumerate_grid(synth: fn(u8, u8) -> Option<Vec<u8>>, kind: &str) -> (usize, Vec<GridEntry>) {
+    let mut total_combos = 0usize;
+    let mut grid: Vec<GridEntry> = Vec::new();
+    for &primaries in ASSIGNED_PRIMARIES {
+        for &transfer in ASSIGNED_TRANSFERS {
+            total_combos += 1;
+            if is_srgb_default(primaries, transfer) {
+                continue;
+            }
+            match synth(primaries, transfer) {
+                Some(bytes) => {
+                    if kind == "RGB" {
+                        let validation = validate_rgb_colorimetry(&bytes, primaries);
+                        if EXCLUDED_RGB_PRIMARIES.contains(&primaries) {
+                            eprintln!("  excluded RGB ({primaries}, {transfer}): {validation:?}");
+                            continue;
+                        }
+                        validation.unwrap_or_else(|e| panic!("RGB ({primaries}, {transfer}): {e}"));
+                    }
+                    grid.push(GridEntry {
+                        primaries,
+                        transfer,
+                        bytes,
+                    });
+                }
+                None => {
+                    panic!(
+                        "{kind} ({primaries}, {transfer}) unexpectedly not representable by moxcms"
+                    );
+                }
+            }
+        }
+    }
+    (total_combos, grid)
+}
+
+/// Build the merged bundle in memory: enumerate both the RGB and GRAY
+/// grids, dedup, group by transfer, compress each group. Deterministic
+/// ordering throughout.
+///
+/// RGB and GRAY profiles share one blob and one set of per-transfer
+/// groups: each group's decoded bytes pack the GRAY profiles first,
+/// then the RGB ones (primaries ascending within each class). A gray profile's `kTRC`
+/// payload is byte-identical to the `rTRC`/`gTRC`/`bTRC` payload of the
+/// RGB profiles in the same group (both come from the same
+/// moxcms curve for the transfer), so LZ4's 64 KiB window collapses the
+/// gray section to its novel bytes (header, `wtpt`, `chad`,
+/// description) — shipping the gray coverage costs a fraction of what a
+/// separately-compressed gray blob would.
+fn build_bundle() -> BuiltBundle {
+    // 1. Enumerate both grids.
+    let (total_combos, rgb_grid) = enumerate_grid(synth_icc, "RGB");
+    let (_, gray_grid) = enumerate_grid(synth_gray_icc, "GRAY");
+    let profile_combos = rgb_grid.len();
+    let gray_profile_combos = gray_grid.len();
+
+    // 2. Group by transfer, preserving primaries-ascending order within each
+    //    class. Within a group the identical TRC/LUT payload clusters, which
+    //    is what makes LZ4 (64 KiB window) collapse it.
+    //
+    //    Dedup is content-addressed *within* a group: if two primaries under
+    //    the same transfer produce byte-identical profiles, they share one copy
+    //    and both ProfileRecords point at the same offset/len. (RGB and GRAY
+    //    bytes never collide — the header class differs — but they share the
+    //    one map harmlessly. Cross-group dedup isn't attempted — different
+    //    transfers virtually never collide, and keeping groups self-contained
+    //    keeps the runtime slice trivial.)
+    let mut transfers_in_order: Vec<u8> = rgb_grid
+        .iter()
+        .chain(gray_grid.iter())
+        .map(|e| e.transfer)
+        .collect();
+    transfers_in_order.sort_unstable();
+    transfers_in_order.dedup();
+
+    let mut blob: Vec<u8> = Vec::new();
+    let mut groups: Vec<GroupRecord> = Vec::new();
+    let mut profiles: Vec<ProfileRecord> = Vec::new();
+    let mut gray_profiles: Vec<ProfileRecord> = Vec::new();
+    let mut unique_profiles = 0usize;
+    let mut raw_unique_bytes = 0usize;
+
+    for (group_index, &transfer) in transfers_in_order.iter().enumerate() {
+        // Pack the group's decoded bytes, deduping identical profiles.
+        let mut decoded: Vec<u8> = Vec::new();
+        // Map profile bytes → offset within `decoded` (content-addressed dedup).
+        let mut seen: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
+        let mut group_profile_count = 0usize;
+
+        // GRAY section first, then RGB. Order matters for lz4_flex's
+        // fast-mode match finder: its hash table only remembers recent
+        // positions, so the shared TRC/LUT payload must sit *near* its
+        // first reuse. Gray-first keeps the distance from the first RGB
+        // profile's rTRC back to the gray kTRC copy at ~2.5 KB (always
+        // found); RGB-first puts ~60 KB of profiles in between on the
+        // LUT-heavy transfers and the matches evaporate (measured: the
+        // gray section then compresses at standalone ratio).
+        for (grid, table) in [(&gray_grid, &mut gray_profiles), (&rgb_grid, &mut profiles)] {
+            let mut entries: Vec<&GridEntry> =
+                grid.iter().filter(|e| e.transfer == transfer).collect();
+            entries.sort_by_key(|e| e.primaries);
+
+            for e in &entries {
+                let offset_in_group = if let Some(&off) = seen.get(&e.bytes) {
+                    off
+                } else {
+                    let off = decoded.len();
+                    decoded.extend_from_slice(&e.bytes);
+                    seen.insert(e.bytes.clone(), off);
+                    unique_profiles += 1;
+                    raw_unique_bytes += e.bytes.len();
+                    group_profile_count += 1;
+                    off
+                };
+                table.push(ProfileRecord {
+                    primaries: e.primaries,
+                    transfer: e.transfer,
+                    group_index,
+                    offset_in_group,
+                    len: e.bytes.len(),
+                });
+            }
+        }
+
+        // Compress the group as one raw LZ4 block (no size prefix; the
+        // decompressed length lives in the index). Same pure-Rust `lz4_flex`
+        // used at runtime — keeps the whole pipeline on one safe LZ4 impl and
+        // off any C dependency. The raw block (no size prefix) is what
+        // `lz4_flex::block::decompress_into` reads against the index length.
+        let compressed = lz4_flex::block::compress(&decoded);
+
+        let blob_offset = blob.len();
+        let compressed_len = compressed.len();
+        let decompressed_len = decoded.len();
+        blob.extend_from_slice(&compressed);
+
+        groups.push(GroupRecord {
+            transfer,
+            blob_offset,
+            compressed_len,
+            decompressed_len,
+            profile_count: group_profile_count,
+        });
+    }
+
+    // Sort both profile locators by (primaries, transfer) for deterministic,
+    // binary-searchable tables.
+    profiles.sort_by_key(|p| (p.primaries, p.transfer));
+    gray_profiles.sort_by_key(|p| (p.primaries, p.transfer));
+
+    BuiltBundle {
+        blob,
+        groups,
+        profiles,
+        gray_profiles,
+        total_combos,
+        profile_combos,
+        gray_profile_combos,
+        unique_profiles,
+        raw_unique_bytes,
+    }
+}
+
+/// Render the generated Rust index module.
+fn render_index(b: &BuiltBundle) -> String {
+    let mut s = String::new();
+    s.push_str(
+        "// @generated by `cargo run -p icc-gen --bin cicp_bundle_gen` — do not edit by hand.\n\
+         //\n\
+         // Index for the transfer-grouped, LZ4-compressed CICP ICC bundle\n\
+         // (`../profiles/cicp_bundle.lz4`). Each group packs the RGB profiles\n\
+         // for one transfer code first, then the GRAY-class ones (whose kTRC\n\
+         // payload LZ4-matches the RGB TRC bytes before it). Regenerate with\n\
+         // the generator above after a moxcms version bump; the golden sha256\n\
+         // test will flag drift.\n\n",
+    );
+
+    // Group table.
+    s.push_str("/// One LZ4-compressed group inside the bundle blob, keyed by\n");
+    s.push_str("/// transfer-characteristics code. Each group's decoded bytes pack every\n");
+    s.push_str("/// unique profile that shares that transfer.\n");
+    s.push_str("#[derive(Clone, Copy)]\n");
+    s.push_str("pub(crate) struct BundleGroup {\n");
+    s.push_str("    /// H.273 transfer-characteristics code this group covers.\n");
+    s.push_str("    pub transfer: u8,\n");
+    s.push_str("    /// Byte offset of the group's LZ4 block within `CICP_BUNDLE_LZ4`.\n");
+    s.push_str("    pub blob_offset: usize,\n");
+    s.push_str("    /// Length of the group's LZ4 block.\n");
+    s.push_str("    pub compressed_len: usize,\n");
+    s.push_str("    /// Exact size of the group's decoded bytes (the `decompress_into` buffer).\n");
+    s.push_str("    pub decompressed_len: usize,\n");
+    s.push_str("}\n\n");
+
+    // Profile table.
+    s.push_str("/// Locator for one synthesized profile: which group holds it, and the\n");
+    s.push_str("/// `[offset, offset + len)` slice of that group's *decoded* bytes.\n");
+    s.push_str("#[derive(Clone, Copy)]\n");
+    s.push_str("pub(crate) struct BundleProfile {\n");
+    s.push_str("    /// H.273 colour-primaries code.\n");
+    s.push_str("    pub primaries: u8,\n");
+    s.push_str("    /// H.273 transfer-characteristics code.\n");
+    s.push_str("    pub transfer: u8,\n");
+    s.push_str("    /// Index into [`BUNDLE_GROUPS`].\n");
+    s.push_str("    pub group_index: usize,\n");
+    s.push_str("    /// Byte offset of this profile within the group's decoded bytes.\n");
+    s.push_str("    pub offset_in_group: usize,\n");
+    s.push_str("    /// Length of this profile in bytes.\n");
+    s.push_str("    pub len: usize,\n");
+    s.push_str("}\n\n");
+
+    // The compressed blob, embedded via include_bytes.
+    s.push_str("/// The concatenated LZ4-compressed groups. Embedded at compile time.\n");
+    s.push_str(
+        "pub(crate) static CICP_BUNDLE_LZ4: &[u8] = include_bytes!(\"../profiles/cicp_bundle.lz4\");\n\n",
+    );
+
+    s.push_str(&format!(
+        "/// Number of transfer groups in the bundle.\n\
+         pub(crate) const NUM_GROUPS: usize = {};\n\n",
+        b.groups.len()
+    ));
+
+    // Group array.
+    s.push_str("/// Group table, indexed by group index (also the order in the blob).\n");
+    s.push_str("pub(crate) static BUNDLE_GROUPS: [BundleGroup; NUM_GROUPS] = [\n");
+    for g in &b.groups {
+        s.push_str(&format!(
+            "    BundleGroup {{ transfer: {}, blob_offset: {}, compressed_len: {}, decompressed_len: {} }}, // {} profile(s)\n",
+            g.transfer, g.blob_offset, g.compressed_len, g.decompressed_len, g.profile_count
+        ));
+    }
+    s.push_str("];\n\n");
+
+    // Profile array.
+    s.push_str("/// Profile locator table, sorted by `(primaries, transfer)` for binary search.\n");
+    s.push_str(&format!(
+        "pub(crate) static BUNDLE_PROFILES: [BundleProfile; {}] = [\n",
+        b.profiles.len()
+    ));
+    for p in &b.profiles {
+        s.push_str(&format!(
+            "    BundleProfile {{ primaries: {}, transfer: {}, group_index: {}, offset_in_group: {}, len: {} }},\n",
+            p.primaries, p.transfer, p.group_index, p.offset_in_group, p.len
+        ));
+    }
+    s.push_str("];\n\n");
+
+    // Gray profile array — same groups, GRAY-class bytes.
+    s.push_str(
+        "/// GRAY-class profile locator table, sorted by `(primaries, transfer)`\n\
+         /// for binary search. Locators point into the same groups as\n\
+         /// [`BUNDLE_PROFILES`] (each group's decoded bytes pack GRAY first,\n\
+         /// then RGB).\n",
+    );
+    s.push_str(&format!(
+        "pub(crate) static GRAY_BUNDLE_PROFILES: [BundleProfile; {}] = [\n",
+        b.gray_profiles.len()
+    ));
+    for p in &b.gray_profiles {
+        s.push_str(&format!(
+            "    BundleProfile {{ primaries: {}, transfer: {}, group_index: {}, offset_in_group: {}, len: {} }},\n",
+            p.primaries, p.transfer, p.group_index, p.offset_in_group, p.len
+        ));
+    }
+    s.push_str("];\n");
+
+    s
+}
+
+struct Args {
+    write: bool,
+    out_convert_dir: PathBuf,
+}
+
+fn parse_args() -> Args {
+    let mut write = true;
+    // Default assumes the generator is run from the repo root.
+    let mut out_convert_dir = PathBuf::from("zenpixels-convert");
+    let mut it = std::env::args().skip(1);
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--no-write" => write = false,
+            "--out-dir" => {
+                out_convert_dir = PathBuf::from(
+                    it.next()
+                        .expect("--out-dir requires a path to the zenpixels-convert crate"),
+                );
+            }
+            other => {
+                eprintln!("unknown argument: {other}");
+                eprintln!(
+                    "usage: cargo run -p icc-gen --bin cicp_bundle_gen [--no-write] [--out-dir <zenpixels-convert dir>]"
+                );
+                std::process::exit(2);
+            }
+        }
+    }
+    Args {
+        write,
+        out_convert_dir,
+    }
+}
+
+fn report(bundle: &BuiltBundle) {
+    eprintln!("CICP→ICC merged RGB+GRAY bundle (transfer-grouped, LZ4 via lz4_flex):");
+    eprintln!("  total grid combos:        {}", bundle.total_combos);
+    eprintln!(
+        "  RGB profile combos:       {} (excludes {} sRGB-default NotNeeded and primaries 10)",
+        bundle.profile_combos, 1
+    );
+    eprintln!("  GRAY profile combos:      {}", bundle.gray_profile_combos);
+    eprintln!("  unique profiles:          {}", bundle.unique_profiles);
+    eprintln!("  groups (by transfer):     {}", bundle.groups.len());
+    eprintln!(
+        "  raw unique bytes:         {} ({:.1} KiB)",
+        bundle.raw_unique_bytes,
+        bundle.raw_unique_bytes as f64 / 1024.0
+    );
+    eprintln!(
+        "  compressed blob:          {} ({:.1} KiB)",
+        bundle.blob.len(),
+        bundle.blob.len() as f64 / 1024.0
+    );
+    eprintln!(
+        "  compression ratio:        {:.2}x",
+        bundle.raw_unique_bytes as f64 / bundle.blob.len() as f64
+    );
+}
+
+fn write_bundle(args: &Args, bundle: &BuiltBundle) {
+    let blob_path = args.out_convert_dir.join("src/profiles/cicp_bundle.lz4");
+    let index_path = args
+        .out_convert_dir
+        .join("src/icc_profiles/cicp_bundle_index.rs");
+
+    if let Some(parent) = blob_path.parent() {
+        std::fs::create_dir_all(parent).expect("create profiles dir");
+    }
+    if let Some(parent) = index_path.parent() {
+        std::fs::create_dir_all(parent).expect("create icc_profiles dir");
+    }
+
+    std::fs::write(&blob_path, &bundle.blob).expect("write blob");
+    std::fs::write(&index_path, render_index(bundle)).expect("write index");
+
+    eprintln!("\nwrote:");
+    eprintln!("  {} ({} bytes)", blob_path.display(), bundle.blob.len());
+    eprintln!("  {}", index_path.display());
+}
+
+fn main() {
+    let args = parse_args();
+
+    let bundle = build_bundle();
+    report(&bundle);
+
+    if !args.write {
+        eprintln!("(--no-write: not touching any files)");
+        return;
+    }
+
+    write_bundle(&args, &bundle);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The committed blob (`zenpixels-convert/src/profiles/cicp_bundle.lz4`)
+    /// must be byte-identical to a fresh in-memory regeneration. This is the
+    /// `cms-moxcms`-side guard the runtime crate can't do (it recomputes the
+    /// encoder): if a moxcms version bump silently shifts the synthesized bytes,
+    /// the recompressed blob diverges from the committed asset and this fails,
+    /// forcing a deliberate regen + golden-hash update.
+    ///
+    /// x86_64-only: LZ4 compressed output is not arch-stable — `lz4_flex`'s
+    /// match-finder emits different (equally valid) encodings on 32-bit
+    /// targets (measured 2026-06-11: byte-identical 610,170-byte raw profile
+    /// content on i686 and x86_64, but a 28,327-byte blob on i686 vs the
+    /// committed x86_64 28,399). x86_64 is the canonical regen arch; every
+    /// arch still pins the *decoded content* via
+    /// [`bundled_profiles_match_fresh_synthesis`], which is the property the
+    /// runtime actually relies on.
+    /// Shared body of the x86_64-only byte pin: the committed blob at
+    /// `zenpixels-convert/src/profiles/<blob_file>` must be byte-identical
+    /// to the fresh in-memory regeneration.
+    #[cfg(target_arch = "x86_64")]
+    fn assert_blob_byte_identical(fresh: &BuiltBundle, blob_file: &str) {
+        let committed = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../zenpixels-convert/src/profiles")
+            .join(blob_file);
+        let on_disk = std::fs::read(&committed)
+            .unwrap_or_else(|e| panic!("cannot read committed blob {}: {e}", committed.display()));
+        assert_eq!(
+            fresh.blob.len(),
+            on_disk.len(),
+            "regenerated {blob_file} length ({}) != committed ({}) — regenerate and update the golden sha256",
+            fresh.blob.len(),
+            on_disk.len()
+        );
+        assert!(
+            fresh.blob == on_disk,
+            "regenerated {blob_file} bytes differ from the committed asset — \
+             moxcms drift or generator change; regenerate and update the golden sha256"
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn regenerated_blob_matches_committed() {
+        assert_blob_byte_identical(&build_bundle(), "cicp_bundle.lz4");
+    }
+
+    /// Cross-arch content guard: the committed blob, decoded through the
+    /// committed index, must yield byte-identical group content (and
+    /// identical profile locators) to a fresh moxcms generation. Compressed
+    /// bytes may legitimately differ per arch (see
+    /// [`regenerated_blob_matches_committed`]); decoded content may not —
+    /// that is the invariant the runtime depends on, and it runs on every
+    /// target including 32-bit.
+    /// Shared body of the cross-arch content guard. The committed index's
+    /// tables arrive as plain tuples because each `include!`d index module
+    /// defines its own (identical-shape) struct types.
+    fn assert_committed_content_matches(
+        fresh: &BuiltBundle,
+        committed_blob: &[u8],
+        committed_groups: &[(u8, usize, usize, usize)], // (transfer, blob_offset, compressed_len, decompressed_len)
+        committed_profiles: &[(u8, u8, usize, usize, usize)], // (primaries, transfer, group_index, offset_in_group, len)
+        committed_gray_profiles: &[(u8, u8, usize, usize, usize)],
+    ) {
+        assert_eq!(
+            committed_groups.len(),
+            fresh.groups.len(),
+            "group count drift"
+        );
+        assert_eq!(
+            committed_profiles.len(),
+            fresh.profiles.len(),
+            "profile count drift"
+        );
+        assert_eq!(
+            committed_gray_profiles.len(),
+            fresh.gray_profiles.len(),
+            "gray profile count drift"
+        );
+
+        for (gi, (&(c_transfer, c_off, c_clen, c_dlen), fg)) in
+            committed_groups.iter().zip(&fresh.groups).enumerate()
+        {
+            assert_eq!(c_transfer, fg.transfer, "group {gi} transfer drift");
+            let c_block = &committed_blob[c_off..c_off + c_clen];
+            let f_block = &fresh.blob[fg.blob_offset..fg.blob_offset + fg.compressed_len];
+            let c_raw =
+                lz4_flex::block::decompress(c_block, c_dlen).expect("committed group decompresses");
+            let f_raw = lz4_flex::block::decompress(f_block, fg.decompressed_len)
+                .expect("fresh group decompresses");
+            assert!(
+                c_raw == f_raw,
+                "group {gi} (transfer {c_transfer}): committed decoded content != fresh \
+                 synthesis — moxcms drift or generator change; regenerate the bundle"
+            );
+        }
+
+        for (table, fresh_table, what) in [
+            (committed_profiles, &fresh.profiles, "RGB"),
+            (committed_gray_profiles, &fresh.gray_profiles, "GRAY"),
+        ] {
+            for (&committed, fp) in table.iter().zip(fresh_table.iter()) {
+                assert_eq!(
+                    committed,
+                    (
+                        fp.primaries,
+                        fp.transfer,
+                        fp.group_index,
+                        fp.offset_in_group,
+                        fp.len
+                    ),
+                    "{what} profile locator drift"
+                );
+            }
+        }
+    }
+
+    /// Map an included committed index's tables to plain tuples.
+    macro_rules! committed_tuples {
+        ($module:ident) => {{
+            let groups: Vec<(u8, usize, usize, usize)> = $module::BUNDLE_GROUPS
+                .iter()
+                .map(|g| {
+                    (
+                        g.transfer,
+                        g.blob_offset,
+                        g.compressed_len,
+                        g.decompressed_len,
+                    )
+                })
+                .collect();
+            let profiles: Vec<(u8, u8, usize, usize, usize)> = $module::BUNDLE_PROFILES
+                .iter()
+                .map(|p| {
+                    (
+                        p.primaries,
+                        p.transfer,
+                        p.group_index,
+                        p.offset_in_group,
+                        p.len,
+                    )
+                })
+                .collect();
+            let gray: Vec<(u8, u8, usize, usize, usize)> = $module::GRAY_BUNDLE_PROFILES
+                .iter()
+                .map(|p| {
+                    (
+                        p.primaries,
+                        p.transfer,
+                        p.group_index,
+                        p.offset_in_group,
+                        p.len,
+                    )
+                })
+                .collect();
+            (groups, profiles, gray)
+        }};
+    }
+
+    /// Cross-arch content guard: the committed blob, decoded through the
+    /// committed index, must yield byte-identical group content (and
+    /// identical profile locators) to a fresh moxcms generation. Compressed
+    /// bytes may legitimately differ per arch (see
+    /// [`regenerated_blob_matches_committed`]); decoded content may not —
+    /// that is the invariant the runtime depends on, and it runs on every
+    /// target including 32-bit.
+    #[test]
+    fn committed_bundle_content_matches_fresh_synthesis() {
+        // The generated runtime index is self-contained (struct defs,
+        // group/profile tables, `include_bytes!` of the committed blob —
+        // nested `include_bytes!` resolves relative to the included file,
+        // so the committed asset loads exactly as shipped). Including it
+        // here decodes the committed bundle without going through the
+        // runtime crate's bundled-const priority ladder.
+        mod committed {
+            #![allow(dead_code)]
+            include!("../../../../zenpixels-convert/src/icc_profiles/cicp_bundle_index.rs");
+        }
+
+        let (groups, profiles, gray) = committed_tuples!(committed);
+        assert_committed_content_matches(
+            &build_bundle(),
+            committed::CICP_BUNDLE_LZ4,
+            &groups,
+            &profiles,
+            &gray,
+        );
+    }
+
+    #[test]
+    fn gate_rejects_singular_and_wrong_full_rank_colorants() {
+        let xyz = synth_icc(10, 8).expect("moxcms emits the excluded XYZ profile");
+        assert!(
+            validate_rgb_colorimetry(&xyz, 10)
+                .unwrap_err()
+                .contains("singular")
+        );
+        let good = synth_icc(12, 13).expect("P3/sRGB synthesis");
+        validate_rgb_colorimetry(&good, 12).expect("P3 matrix passes");
+        // A different, full-rank gamut must fail the colorimetry gate even
+        // though the TRC and profile structure are valid.
+        assert!(
+            validate_rgb_colorimetry(&good, 9)
+                .unwrap_err()
+                .contains("mismatch")
+        );
+        assert!(validate_rgb_colorimetry(&good[..100], 12).is_err());
+    }
+
+    /// 176 assigned pairs: 159 RGB (XYZ excluded, sRGB implicit), 175 gray.
+    /// Gray retains four whites × 16 transfers = 64 unique profiles.
+    #[test]
+    fn grid_shape_is_stable() {
+        let b = build_bundle();
+        assert_eq!(b.total_combos, 176, "expected 11×16 assigned grid");
+        assert_eq!(b.profile_combos, 159, "expected 159 RGB combos");
+        assert_eq!(b.gray_profile_combos, 175, "expected 175 GRAY combos");
+        assert_eq!(
+            b.unique_profiles, 223,
+            "expected 159 RGB + 64 deduped gray uniques"
+        );
+        assert_eq!(b.groups.len(), 16, "expected 16 transfer groups");
+    }
+}

@@ -1,0 +1,9 @@
+# transpose_shootout_x86_final_2026-06-12
+
+Full 64-group grid (8 widths x 2 ops x 4 sizes), Zen4 7950X WSL2,
+commit state = round D (0d33b89f tree: AVX2 gray8/2bpp ports + first-pass
+6/8/12/16 kernels). The later 12/16bpp max-opt cells were measured in
+targeted runs (commit 62391544): 12bpp T 12MP 29.1ms vs ft 39.0 (+34%);
+16bpp T 12MP 32.5 vs ft 30.2 (-7%, MACRO=256 best of 64/256/row-band).
+C++ Simd dispatches its AVX-512BW tier on this CPU (SimdLib.cpp:7348).
+Config as r2 meta; single-round 12MP cells, +/-20% swing, <15% = tie.

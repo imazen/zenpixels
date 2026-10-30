@@ -1,7 +1,8 @@
 //! Tests for the adapt module (codec helper functions).
+#![allow(deprecated)]
 
 use zenpixels_convert::PixelDescriptor;
-use zenpixels_convert::adapt::{adapt_for_encode, convert_buffer};
+use zenpixels_convert::adapt::{adapt_for_encode_cow, convert_buffer};
 
 /// When input matches a supported format, should return borrowed data.
 #[test]
@@ -14,12 +15,30 @@ fn adapt_exact_match_is_borrowed() {
     let desc = PixelDescriptor::RGB8_SRGB;
     let supported = &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB];
 
-    let result = adapt_for_encode(&data, desc, width, rows, stride, supported).unwrap();
-    assert_eq!(result.descriptor, PixelDescriptor::RGB8_SRGB);
+    let result = adapt_for_encode_cow(&data, desc, width, rows, stride, supported).unwrap();
+    assert_eq!(result.as_slice().descriptor(), PixelDescriptor::RGB8_SRGB);
     assert!(
-        matches!(result.data, std::borrow::Cow::Borrowed(_)),
+        matches!(result, zenpixels::PixelCow::Borrowed(_)),
         "exact match should be zero-copy"
     );
+}
+
+#[test]
+fn pixel_cow_preserves_valid_source_stride() {
+    let data = [1u8, 2, 3, 0, 0, 0, 4, 5, 6, 0, 0, 0];
+    let result = adapt_for_encode_cow(
+        &data,
+        PixelDescriptor::RGB8_SRGB,
+        1,
+        2,
+        6,
+        &[PixelDescriptor::RGB8_SRGB],
+    )
+    .unwrap();
+
+    assert!(result.is_borrowed());
+    assert_eq!(result.as_slice().stride(), 6);
+    assert_eq!(result.as_slice().row(1), &[4, 5, 6]);
 }
 
 /// When input doesn't match, should convert and return owned data.
@@ -38,18 +57,18 @@ fn adapt_converts_when_needed() {
     // Only supports RGBA8.
     let supported = &[PixelDescriptor::RGBA8_SRGB];
 
-    let result = adapt_for_encode(&data, desc, width, rows, stride, supported).unwrap();
-    assert_eq!(result.descriptor, PixelDescriptor::RGBA8_SRGB);
+    let result = adapt_for_encode_cow(&data, desc, width, rows, stride, supported).unwrap();
+    assert_eq!(result.as_slice().descriptor(), PixelDescriptor::RGBA8_SRGB);
     assert!(
-        matches!(result.data, std::borrow::Cow::Owned(_)),
+        matches!(result, zenpixels::PixelCow::Owned(_)),
         "conversion should produce owned data"
     );
 
     // Verify swizzle: BGRA(10,20,30,255) → RGBA(30,20,10,255).
-    assert_eq!(result.data[0], 30, "R");
-    assert_eq!(result.data[1], 20, "G");
-    assert_eq!(result.data[2], 10, "B");
-    assert_eq!(result.data[3], 255, "A");
+    assert_eq!(result.as_slice().contiguous_bytes()[0], 30, "R");
+    assert_eq!(result.as_slice().contiguous_bytes()[1], 20, "G");
+    assert_eq!(result.as_slice().contiguous_bytes()[2], 10, "B");
+    assert_eq!(result.as_slice().contiguous_bytes()[3], 255, "A");
 }
 
 /// Empty format list should return error.
@@ -58,7 +77,7 @@ fn adapt_empty_list_errors() {
     let data = vec![0u8; 3];
     let desc = PixelDescriptor::RGB8_SRGB;
 
-    let result = adapt_for_encode(&data, desc, 1, 1, 3, &[]);
+    let result = adapt_for_encode_cow(&data, desc, 1, 1, 3, &[]);
     assert!(result.is_err());
 }
 
@@ -72,10 +91,10 @@ fn adapt_transfer_agnostic_match() {
     let desc = PixelDescriptor::RGB8; // Unknown transfer
     let supported = &[PixelDescriptor::RGB8_SRGB];
 
-    let result = adapt_for_encode(&data, desc, width, rows, 6, supported).unwrap();
-    assert_eq!(result.descriptor, PixelDescriptor::RGB8_SRGB);
+    let result = adapt_for_encode_cow(&data, desc, width, rows, 6, supported).unwrap();
+    assert_eq!(result.as_slice().descriptor(), PixelDescriptor::RGB8_SRGB);
     assert!(
-        matches!(result.data, std::borrow::Cow::Borrowed(_)),
+        matches!(result, zenpixels::PixelCow::Borrowed(_)),
         "transfer-only diff should be zero-copy"
     );
 }

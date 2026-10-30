@@ -1,0 +1,202 @@
+{
+  "date": "2026-09-28",
+  "runs": [
+    {
+      "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+      "jobs": 4,
+      "revisions": {
+        "baseline": {
+          "revision": "197a38ba7e42989a69d8f32938fb02293d056aeb",
+          "seconds": {
+            "zenpixels/cold": 1.3607,
+            "zenpixels/warm": 0.0208,
+            "zenpixels/edited": 0.0678,
+            "zenpixels-convert/cold": 3.3498,
+            "zenpixels-convert/warm": 0.024,
+            "zenpixels-convert/edited": 0.2686
+          }
+        },
+        "current": {
+          "revision": "0d74f5eb91d985b877d92210020bb96f233fcc0b",
+          "seconds": {
+            "zenpixels/cold": 1.3601,
+            "zenpixels/warm": 0.0198,
+            "zenpixels/edited": 0.0679,
+            "zenpixels-convert/cold": 3.3775,
+            "zenpixels-convert/warm": 0.0235,
+            "zenpixels-convert/edited": 0.2807
+          }
+        }
+      }
+    },
+    {
+      "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+      "jobs": 4,
+      "revisions": {
+        "baseline": {
+          "revision": "197a38ba7e42989a69d8f32938fb02293d056aeb",
+          "seconds": {
+            "zenpixels/cold": 1.3507,
+            "zenpixels/warm": 0.0204,
+            "zenpixels/edited": 0.0678,
+            "zenpixels-convert/cold": 3.2343,
+            "zenpixels-convert/warm": 0.0234,
+            "zenpixels-convert/edited": 0.2611
+          }
+        },
+        "current": {
+          "revision": "aeb69d97e66377bb2c670d599abe903e83166177",
+          "seconds": {
+            "zenpixels/cold": 1.351,
+            "zenpixels/warm": 0.0198,
+            "zenpixels/edited": 0.0704,
+            "zenpixels-convert/cold": 3.2896,
+            "zenpixels-convert/warm": 0.023,
+            "zenpixels-convert/edited": 0.2578
+          }
+        }
+      }
+    },
+    {
+      "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+      "jobs": 4,
+      "revisions": {
+        "baseline": {
+          "revision": "197a38ba7e42989a69d8f32938fb02293d056aeb",
+          "seconds": {
+            "zenpixels/cold": 1.3152,
+            "zenpixels/warm": 0.0206,
+            "zenpixels/edited": 0.0734,
+            "zenpixels-convert/cold": 3.2379,
+            "zenpixels-convert/warm": 0.0234,
+            "zenpixels-convert/edited": 0.2608
+          }
+        },
+        "current": {
+          "revision": "0d74f5eb91d985b877d92210020bb96f233fcc0b",
+          "seconds": {
+            "zenpixels/cold": 1.3604,
+            "zenpixels/warm": 0.0204,
+            "zenpixels/edited": 0.0706,
+            "zenpixels-convert/cold": 3.3395,
+            "zenpixels-convert/warm": 0.0242,
+            "zenpixels-convert/edited": 0.2815
+          }
+        }
+      }
+    },
+    {
+      "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+      "jobs": 4,
+      "revisions": {
+        "baseline": {
+          "revision": "197a38ba7e42989a69d8f32938fb02293d056aeb",
+          "seconds": {
+            "zenpixels/cold": 1.3531,
+            "zenpixels/warm": 0.0199,
+            "zenpixels/edited": 0.0698,
+            "zenpixels-convert/cold": 3.3146,
+            "zenpixels-convert/warm": 0.0247,
+            "zenpixels-convert/edited": 0.2662
+          }
+        },
+        "current": {
+          "revision": "aeb69d97e66377bb2c670d599abe903e83166177",
+          "seconds": {
+            "zenpixels/cold": 1.4146,
+            "zenpixels/warm": 0.0195,
+            "zenpixels/edited": 0.0787,
+            "zenpixels-convert/cold": 3.2914,
+            "zenpixels-convert/warm": 0.0244,
+            "zenpixels-convert/edited": 0.2728
+          }
+        }
+      }
+    },
+    {
+      "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+      "jobs": 4,
+      "revisions": {
+        "baseline": {
+          "revision": "197a38ba7e42989a69d8f32938fb02293d056aeb",
+          "seconds": {
+            "zenpixels/cold": 1.399,
+            "zenpixels/warm": 0.0198,
+            "zenpixels/edited": 0.0692,
+            "zenpixels-convert/cold": 3.2576,
+            "zenpixels-convert/warm": 0.0237,
+            "zenpixels-convert/edited": 0.2583
+          }
+        },
+        "current": {
+          "revision": "0d74f5eb91d985b877d92210020bb96f233fcc0b",
+          "seconds": {
+            "zenpixels/cold": 1.354,
+            "zenpixels/warm": 0.0213,
+            "zenpixels/edited": 0.0704,
+            "zenpixels-convert/cold": 3.3152,
+            "zenpixels-convert/warm": 0.0244,
+            "zenpixels-convert/edited": 0.271
+          }
+        }
+      }
+    },
+    {
+      "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+      "jobs": 4,
+      "revisions": {
+        "baseline": {
+          "revision": "197a38ba7e42989a69d8f32938fb02293d056aeb",
+          "seconds": {
+            "zenpixels/cold": 1.398,
+            "zenpixels/warm": 0.0204,
+            "zenpixels/edited": 0.0852,
+            "zenpixels-convert/cold": 3.8718,
+            "zenpixels-convert/warm": 0.0266,
+            "zenpixels-convert/edited": 0.3068
+          }
+        },
+        "current": {
+          "revision": "aeb69d97e66377bb2c670d599abe903e83166177",
+          "seconds": {
+            "zenpixels/cold": 1.4414,
+            "zenpixels/warm": 0.02,
+            "zenpixels/edited": 0.0698,
+            "zenpixels-convert/cold": 3.4416,
+            "zenpixels-convert/warm": 0.0357,
+            "zenpixels-convert/edited": 0.2785
+          }
+        }
+      },
+      "excluded": "Overlapped integration test compilation; replaced by another serial run."
+    },
+    {
+      "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+      "jobs": 4,
+      "revisions": {
+        "baseline": {
+          "revision": "197a38ba7e42989a69d8f32938fb02293d056aeb",
+          "seconds": {
+            "zenpixels/cold": 1.3862,
+            "zenpixels/warm": 0.0209,
+            "zenpixels/edited": 0.0732,
+            "zenpixels-convert/cold": 3.2541,
+            "zenpixels-convert/warm": 0.0231,
+            "zenpixels-convert/edited": 0.2667
+          }
+        },
+        "current": {
+          "revision": "aeb69d97e66377bb2c670d599abe903e83166177",
+          "seconds": {
+            "zenpixels/cold": 1.4277,
+            "zenpixels/warm": 0.02,
+            "zenpixels/edited": 0.0709,
+            "zenpixels-convert/cold": 3.3923,
+            "zenpixels-convert/warm": 0.0234,
+            "zenpixels-convert/edited": 0.2798
+          }
+        }
+      }
+    }
+  ]
+}

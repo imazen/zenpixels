@@ -395,10 +395,17 @@ fn hlg_f32_linear_f32_roundtrip() {
 }
 
 /// PQ U16 → sRGB U8 cross-TF conversion (HDR to SDR tone mapping path).
+///
+/// Post-0.2.16 the plain `ConvertPlan::new` refuses this combination
+/// (`HdrSourceRequiresPeak`) — the historic silent pass-through saturated
+/// every above-diffuse-white PQ sample to sRGB 255. The HDR-aware
+/// constructor `ConvertPlan::new_with_hdr_peak` accepts a source peak
+/// and inserts the BT.2446-A tone curve; that path is tested here.
 #[test]
+#[cfg(feature = "hdr-experimental")]
 fn pq_u16_to_srgb_u8() {
+    use zenpixels_convert::ConvertPlan;
     let width = 4u32;
-    // Hand-craft known PQ values.
     let pq_u16 = PixelDescriptor::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
@@ -407,56 +414,55 @@ fn pq_u16_to_srgb_u8() {
     );
     let srgb_u8 = PixelDescriptor::RGB8_SRGB;
 
-    let mut conv = RowConverter::new(pq_u16, srgb_u8).unwrap();
+    let plan = ConvertPlan::new_with_hdr_peak(pq_u16, srgb_u8, 1000.0).unwrap();
+    let mut conv = RowConverter::from_plan(plan);
 
-    // PQ 0 → linear 0 → sRGB 0
-    // PQ 65535 → linear 1.0 → sRGB 255
-    let mut src = vec![0u8; 4 * 6]; // 4 pixels × 3 channels × 2 bytes
-    // Pixel 0: all zero (PQ black)
-    // Pixel 1: all 65535 (PQ white = 10000 nits, clips to sRGB white)
+    let mut src = vec![0u8; 4 * 6];
     for j in 0..3 {
         let base = 6 + j * 2;
         src[base..base + 2].copy_from_slice(&65535u16.to_ne_bytes());
     }
-    // Pixel 2: mid value ~32768
     for j in 0..3 {
         let base = 2 * 6 + j * 2;
         src[base..base + 2].copy_from_slice(&32768u16.to_ne_bytes());
     }
-    // Pixel 3: moderate-low value ~20000 (above PQ black threshold)
     for j in 0..3 {
         let base = 3 * 6 + j * 2;
         src[base..base + 2].copy_from_slice(&20000u16.to_ne_bytes());
     }
 
-    let mut dst = vec![0u8; 4 * 3]; // 4 pixels × 3 channels × 1 byte
+    let mut dst = vec![0u8; 4 * 3];
     conv.convert_row(&src, &mut dst, width);
 
-    // Black stays black
+    // Black stays black.
     assert_eq!(dst[0], 0);
     assert_eq!(dst[1], 0);
     assert_eq!(dst[2], 0);
 
-    // Full PQ → sRGB white
-    assert_eq!(dst[3], 255);
-    assert_eq!(dst[4], 255);
-    assert_eq!(dst[5], 255);
+    // Full PQ (10000 cd/m² code) tone-maps near SDR peak — not necessarily
+    // 255 because BT.2446-A targets target_peak_nits = 100 cd/m² and the
+    // input peak is 1000 cd/m², so the saturated code falls off the
+    // curve's working range and clamps to the upper segment.
+    assert!(
+        dst[3] > 200,
+        "full PQ should land near SDR peak, got {}",
+        dst[3]
+    );
 
-    // Mid PQ → some sRGB value > 0 and < 255
+    // Mid PQ → non-zero sRGB (the tone curve may saturate to 255 at the
+    // mid-PQ code under 1000-nit peak, so we only assert non-zero).
     assert!(dst[6] > 0, "mid PQ should produce non-zero sRGB");
-    assert!(dst[6] < 255, "mid PQ should be below sRGB max");
 
-    // Low PQ → low sRGB
+    // Low PQ → low sRGB; monotonicity holds.
     assert!(dst[9] > 0, "low PQ should produce non-zero sRGB");
-    assert!(dst[9] < dst[6], "low PQ should be less than mid PQ");
+    assert!(dst[9] <= dst[6], "low PQ should be ≤ mid PQ");
 }
 
-/// PQ ↔ HLG cross-TF conversion via F32 linear intermediary.
+/// PQ ↔ HLG cross-TF conversion is **refused** (scene-referred HLG vs absolute
+/// PQ, no OOTF — #45 S2) rather than silently converting through the conflated
+/// linear intermediary and emitting wrong brightness.
 #[test]
-fn pq_hlg_cross_conversion() {
-    let width = 32u32;
-    let src = make_rgb_f32_row(width as usize);
-
+fn pq_hlg_cross_conversion_refuses() {
     let pq_f32 = PixelDescriptor::new(
         ChannelType::F32,
         ChannelLayout::Rgb,
@@ -469,26 +475,8 @@ fn pq_hlg_cross_conversion() {
         None,
         TransferFunction::Hlg,
     );
-
-    let mut pq_to_hlg = RowConverter::new(pq_f32, hlg_f32).unwrap();
-    let mut hlg_to_pq = RowConverter::new(hlg_f32, pq_f32).unwrap();
-
-    let mut hlg_buf = vec![0u8; width as usize * 3 * 4];
-    let mut back = vec![0u8; width as usize * 3 * 4];
-
-    pq_to_hlg.convert_row(&src, &mut hlg_buf, width);
-    hlg_to_pq.convert_row(&hlg_buf, &mut back, width);
-
-    for i in 0..width as usize * 3 {
-        let base = i * 4;
-        let orig = f32::from_ne_bytes([src[base], src[base + 1], src[base + 2], src[base + 3]]);
-        let result =
-            f32::from_ne_bytes([back[base], back[base + 1], back[base + 2], back[base + 3]]);
-        assert!(
-            (orig - result).abs() < 1e-3,
-            "PQ→HLG→PQ roundtrip error at sample {i}: {orig:.6} vs {result:.6}",
-        );
-    }
+    assert!(RowConverter::new(pq_f32, hlg_f32).is_err());
+    assert!(RowConverter::new(hlg_f32, pq_f32).is_err());
 }
 
 /// Verify that different primaries with same depth triggers gamut conversion.
@@ -571,7 +559,9 @@ fn f32s_to_f16_bytes(values: &[f32]) -> Vec<u8> {
 /// Helper: read f16 pixel bytes into f32 values.
 fn f16_bytes_to_f32s(bytes: &[u8]) -> Vec<f32> {
     bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| half::f16::from_le_bytes([c[0], c[1]]).to_f32())
         .collect()
 }

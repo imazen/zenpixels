@@ -1,0 +1,18 @@
+# u16 → u8 narrowing kernel shootout (imazen/zenpixels#72)
+# Date: 2026-08-27  |  Commit: 3dbf246 + kernel fix (this change)  |  Hardware: Apple M4 Pro (aarch64, 12-core laptop shared with other agents)
+# Command: nice -n 19 cargo bench -j 4 -p zenpixels-convert --bench bench_u16_narrow
+#
+# Every arm is exhaustively cross-checked against round(v/257) = (v+128)/257
+# before timing. garb 0.2.8's kernel is NOT exact (127 / 65536 inputs floor
+# by 1 LSB); the two local candidates are exact.
+#
+# Throughput (bytes/sec = src + dst bytes / wall clock), 256px / 4096px / 1080p rows, RGB:
+#
+#   garb (inexact)   (v*255+32768)>>16, u32 lanes        8.29 /  8.29 / 14.3 GiB/s   (previous kernel; garb has no NEON path for this op, so this is its auto-vectorised scalar)
+#   shift u32        z=(v+128)*255; (z+(z>>16)+1)>>16    11.7 / 11.6  / 21.1 GiB/s   exact, 1.4× garb (an earlier chunks_exact(2) form of it was 25 % slower than garb; as_chunks::<2> vectorises better)
+#   byte lanes       hi + [lo-hi>=129] - [hi-lo>=129]    38.5 / 38.0  / 66.0 GiB/s   exact, 4.6× garb — SHIPPED as ConvertStep::U16ToU8
+#   shipped          RowConverter U16→U8 (byte lanes)    31.3 / 36.9  / 66.1 GiB/s   (RowConverter overhead visible only at 256px)
+#
+# estimate.rs still carries the 7950X-measured 34.39 GiB/s for U16ToU8 from
+# 2026-04-23 (garb kernel). Not updated here: that table is calibrated on
+# the 7950X and this run is on an M4 Pro — re-measure there before editing.

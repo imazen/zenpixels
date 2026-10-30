@@ -1,0 +1,89 @@
+# zenpixels public API — additions from non-default features
+# features: icc,imgref,planar,rgb,serde,std
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   inherent methods                           34
+#   trait roster entries (type × trait)        33
+#
+# per-module pub lines:
+#   buffer                           34
+
+## items (34 lines)
+
+pub fn buffer::PixelBuffer::as_contiguous_pixels<P: buffer::Pixel>(&self) -> core::option::Option<&[P]>
+pub fn buffer::PixelBuffer::from_pixels_erased<P: buffer::Pixel>(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::into_contiguous_pixels<P: buffer::Pixel>(self) -> core::option::Option<alloc::vec::Vec<P>>
+pub fn buffer::PixelBuffer::try_as_imgref<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
+pub fn buffer::PixelBuffer::try_as_imgref_mut<P: buffer::Pixel>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
+pub fn buffer::PixelBuffer<P>::as_imgref(&self) -> imgref::ImgRef<'_, P>
+pub fn buffer::PixelBuffer<P>::as_imgref_mut(&mut self) -> imgref::ImgRefMut<'_, P>
+pub fn buffer::PixelBuffer<P>::from_imgvec(imgref::ImgVec<P>) -> Self
+pub fn buffer::PixelBuffer<P>::from_pixels(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::matte_to_bgrx(self, rgb::formats::rgb::Rgb<u8>) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::strip_alpha_to_bgrx(self) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::swap_to_rgba(self) -> buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::matte_to_rgbx(self, rgb::formats::rgb::Rgb<u8>) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::strip_alpha_to_rgbx(self) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::swap_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
+pub fn buffer::PixelSliceMut<'a, buffer::Bgrx>::upgrade_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
+pub fn buffer::PixelSliceMut<'a, buffer::Rgbx>::upgrade_to_rgba(self) -> buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>
+pub fn buffer::PixelBuffer::as_contiguous_pixels<P: buffer::Pixel>(&self) -> core::option::Option<&[P]>
+pub fn buffer::PixelBuffer::from_pixels_erased<P: buffer::Pixel>(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::into_contiguous_pixels<P: buffer::Pixel>(self) -> core::option::Option<alloc::vec::Vec<P>>
+pub fn buffer::PixelBuffer::try_as_imgref<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
+pub fn buffer::PixelBuffer::try_as_imgref_mut<P: buffer::Pixel>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
+pub fn buffer::PixelBuffer<P>::as_imgref(&self) -> imgref::ImgRef<'_, P>
+pub fn buffer::PixelBuffer<P>::as_imgref_mut(&mut self) -> imgref::ImgRefMut<'_, P>
+pub fn buffer::PixelBuffer<P>::from_imgvec(imgref::ImgVec<P>) -> Self
+pub fn buffer::PixelBuffer<P>::from_pixels(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::matte_to_bgrx(self, rgb::formats::rgb::Rgb<u8>) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::strip_alpha_to_bgrx(self) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::swap_to_rgba(self) -> buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::matte_to_rgbx(self, rgb::formats::rgb::Rgb<u8>) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::strip_alpha_to_rgbx(self) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
+pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::swap_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
+pub fn buffer::PixelSliceMut<'a, buffer::Bgrx>::upgrade_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
+pub fn buffer::PixelSliceMut<'a, buffer::Rgbx>::upgrade_to_rgba(self) -> buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>
+
+## trait impls (33 types)
+
+buffer::PixelSlice<'a, rgb::formats::bgra::Bgra<u8>>: From<imgref::Img<&'a [rgb::formats::bgra::Bgra<u8>]>>
+buffer::PixelSlice<'a, rgb::formats::gray::Gray_v08<f32>>: From<imgref::Img<&'a [rgb::formats::gray::Gray_v08<f32>]>>
+buffer::PixelSlice<'a, rgb::formats::gray::Gray_v08<u16>>: From<imgref::Img<&'a [rgb::formats::gray::Gray_v08<u16>]>>
+buffer::PixelSlice<'a, rgb::formats::gray::Gray_v08<u8>>: From<imgref::Img<&'a [rgb::formats::gray::Gray_v08<u8>]>>
+buffer::PixelSlice<'a, rgb::formats::rgb::Rgb<f32>>: From<imgref::Img<&'a [rgb::formats::rgb::Rgb<f32>]>>
+buffer::PixelSlice<'a, rgb::formats::rgb::Rgb<u16>>: From<imgref::Img<&'a [rgb::formats::rgb::Rgb<u16>]>>
+buffer::PixelSlice<'a, rgb::formats::rgb::Rgb<u8>>: From<imgref::Img<&'a [rgb::formats::rgb::Rgb<u8>]>>
+buffer::PixelSlice<'a, rgb::formats::rgba::Rgba<f32>>: From<imgref::Img<&'a [rgb::formats::rgba::Rgba<f32>]>>
+buffer::PixelSlice<'a, rgb::formats::rgba::Rgba<u16>>: From<imgref::Img<&'a [rgb::formats::rgba::Rgba<u16>]>>
+buffer::PixelSlice<'a, rgb::formats::rgba::Rgba<u8>>: From<imgref::Img<&'a [rgb::formats::rgba::Rgba<u8>]>>
+buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>: From<imgref::Img<&'a mut [rgb::formats::bgra::Bgra<u8>]>>
+buffer::PixelSliceMut<'a, rgb::formats::gray::Gray_v08<f32>>: From<imgref::Img<&'a mut [rgb::formats::gray::Gray_v08<f32>]>>
+buffer::PixelSliceMut<'a, rgb::formats::gray::Gray_v08<u16>>: From<imgref::Img<&'a mut [rgb::formats::gray::Gray_v08<u16>]>>
+buffer::PixelSliceMut<'a, rgb::formats::gray::Gray_v08<u8>>: From<imgref::Img<&'a mut [rgb::formats::gray::Gray_v08<u8>]>>
+buffer::PixelSliceMut<'a, rgb::formats::rgb::Rgb<f32>>: From<imgref::Img<&'a mut [rgb::formats::rgb::Rgb<f32>]>>
+buffer::PixelSliceMut<'a, rgb::formats::rgb::Rgb<u16>>: From<imgref::Img<&'a mut [rgb::formats::rgb::Rgb<u16>]>>
+buffer::PixelSliceMut<'a, rgb::formats::rgb::Rgb<u8>>: From<imgref::Img<&'a mut [rgb::formats::rgb::Rgb<u8>]>>
+buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<f32>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<f32>]>>
+buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u16>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<u16>]>>
+buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<u8>]>>
+pixel_types::GrayAlpha16: buffer::Pixel
+pixel_types::GrayAlpha8: buffer::Pixel
+pixel_types::GrayAlphaF32: buffer::Pixel
+rgb::formats::bgra::Bgra<u8>: buffer::Pixel
+rgb::formats::gray::Gray_v08<f32>: buffer::Pixel
+rgb::formats::gray::Gray_v08<u16>: buffer::Pixel
+rgb::formats::gray::Gray_v08<u8>: buffer::Pixel
+rgb::formats::rgb::Rgb<f32>: buffer::Pixel
+rgb::formats::rgb::Rgb<u16>: buffer::Pixel
+rgb::formats::rgb::Rgb<u8>: buffer::Pixel
+rgb::formats::rgba::Rgba<f32>: buffer::Pixel
+rgb::formats::rgba::Rgba<u16>: buffer::Pixel
+rgb::formats::rgba::Rgba<u8>: buffer::Pixel

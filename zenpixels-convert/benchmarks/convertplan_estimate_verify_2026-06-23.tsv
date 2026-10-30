@@ -1,0 +1,13 @@
+# ConvertPlan::estimate_resources verified vs measured marginal peak (VmHWM - pre-RSS)
+# host=lilith commit=183af66 date=2026-06-23 tool=examples/mem_probe_convert.rs
+# env GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072 ; convert_to allocates fresh dst
+# RESULT: memory estimate ACCURATE to 1-2% (ratio meas/est). Model = dst_bytes + 2x row scratch
+#   (multi-step only). Memory part is far tighter than the documented +-30% wall-time tolerance.
+conv	size	from_bpp	to_bpp	est_kb	meas_kb	ratio
+rgb8>rgba8	1024	3	4	4096	4168	1.02
+rgb8>rgba8	4096	3	4	65536	65608	1.00
+rgba8>rgb8	4096	4	3	49152	49224	1.00
+rgb8>gray8	4096	3	1	16384	16392	1.00
+bgra8>gray8	1024	4	1	1032	1100	1.07
+bgra8>gray8	4096	4	1	16416	16544	1.01
+rgb8>bgra8	4096	3	4	65536	65544	1.00

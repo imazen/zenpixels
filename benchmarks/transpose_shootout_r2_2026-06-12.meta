@@ -1,0 +1,25 @@
+# transpose_shootout_r2_2026-06-12
+
+Harness: transpose-shootout/ (workspace-excluded), commit dcacbb1a tree.
+Command: GITHUB_ACTIONS=true nice -n 19 ionice -c 3 ./target/release/transpose-shootout
+Features: cpp-simd (ermig1979/Simd @ 9ec9c58816fcd244bea34ac0a1945fc04aeabefb, cmake Release)
+Host: Ryzen 9 7950X (Zen4) WSL2, no target-cpu=native, single-threaded.
+Config: warmup 100ms, max_time 1.5s, max_rounds 8, precision 0.10,
+max_wall_time 10s/group (zenbench resource gate counts ambient session
+activity as heavy processes on this box; the wall cap bounds gate waits —
+some groups kept only 1 round, deltas are the signal, single-round CIs are
+degenerate).
+
+State under test: zpc = apply_orientation_into with the NEW SSSE3 RGB8
+kernel (dcacbb1a) for 3ch; f32x4 4x4 SIMD for 4ch; tiled gather 1/2ch.
+zpc-st = staged 16x16 experiment. Contestants: ft 0.2.7, ejm 0.2.3,
+zune 0.5.1, simd++ (C++).
+
+Headlines: 3ch zpc wins all Rust impls every size (256^2 13.4G vs ejm
+10.0/ft 8.9; 12MP R90 13.9ms vs ft 16.1) but simd++ leads ~2x (33.6G /
+7.3ms). 4ch zpc is slowest Rust at 256^2 (7.95G vs ejm 23.3) -> kernel
+rewrite queued. 1ch/2ch zpc loses to zune/ft SIMD kernels 3-5x.
+
+Companion: transpose_shootout_before_partial_2026-06-12.txt — 10 groups
+measured pre-kernel (old tiled 3ch path) from the aborted slow-config run;
+plus benchmarks/orient_tiled_gather_2026-06-11.txt for the 0361f324 state.

@@ -168,6 +168,7 @@ const U8_TOL: i32 = 1;
 const U16_TOL: i32 = 64;
 const F32_TOL_NORMAL: f32 = 5e-4;
 const F32_TOL_LOOSE: f32 = 5e-3; // PQ/HLG mid-range
+#[allow(dead_code)] // Used only in the non-hdr-experimental branch of u16_pq_to_u8_srgb_fused_path.
 const HDR_U8_TOL: i32 = 2;
 
 // =========================================================================
@@ -234,14 +235,48 @@ fn u8_same_depth_gamma22_to_srgb_at_highlight() {
 #[test]
 fn u8_same_depth_pq_to_srgb_diverges_wildly() {
     // PQ at U8 is an ill-defined bit depth (PQ needs 10+ bits for its
-    // dynamic range) but must not silently pass-through.
+    // dynamic range) but must not silently pass-through. Under
+    // `hdr-experimental` the plain plan REFUSES this combination
+    // (HDR→SDR-encoded requires a peak); the HDR-aware constructor
+    // accepts it and produces a tone-mapped result that's not identity.
+    // Without the feature, HDR→SDR still refuses; it cannot silently skip mapping.
     let src_d = rgb(ChannelType::U8, TransferFunction::Pq);
     let dst_d = rgb(ChannelType::U8, TransferFunction::Srgb);
-    let mut c = RowConverter::new(src_d, dst_d).unwrap();
-    let src = [128u8, 128, 128];
-    let mut dst = [0u8; 3];
-    c.convert_row(&src, &mut dst, 1);
-    assert_ne!(dst[0], 128, "PQ→sRGB at U8 128 must re-encode");
+    #[cfg(feature = "hdr-experimental")]
+    {
+        use zenpixels_convert::{ConvertError, ConvertPlan};
+        let err = RowConverter::new(src_d, dst_d).err().expect("must refuse");
+        assert!(matches!(
+            *err.error(),
+            ConvertError::HdrSourceRequiresPeak { .. }
+        ));
+        let plan = ConvertPlan::new_with_hdr_peak(src_d, dst_d, 1000.0).unwrap();
+        let mut c = RowConverter::from_plan(plan);
+        let src: Vec<u8> = (0..=255u8).flat_map(|value| [value; 3]).collect();
+        let mut dst = vec![0u8; src.len()];
+        c.convert_row(&src, &mut dst, 256);
+        // An individual code can coincide after rounding (128 does). The
+        // whole transfer curve must change, with monotone neutral output.
+        assert_ne!(dst, src);
+        assert_eq!(dst[0], 0);
+        assert!(
+            dst.as_chunks::<3>()
+                .0
+                .iter()
+                .map(|p| p[0])
+                .collect::<Vec<_>>()
+                .windows(2)
+                .all(|p| p[0] <= p[1])
+        );
+    }
+    #[cfg(not(feature = "hdr-experimental"))]
+    assert!(matches!(
+        *RowConverter::new(src_d, dst_d)
+            .err()
+            .expect("HDR mapping requires a supplied peak even without the feature")
+            .error(),
+        zenpixels_convert::ConvertError::HdrSourceRequiresPeak { .. }
+    ));
 }
 
 #[test]
@@ -499,21 +534,41 @@ fn u8_srgb_to_u16_bt709() {
 
 #[test]
 fn u16_pq_to_u8_srgb_fused_path() {
-    // Existing fused PQ-U16→sRGB-U8 kernel must still fire.
+    // Under `hdr-experimental` the plain plan refuses HDR→SDR-encoded
+    // (no source peak), and the HDR-aware constructor inserts a
+    // BT.2446-A tone curve. Without `hdr-experimental` the historic
+    // 2-step linear-intermediate chain still runs (no tone-map; every
+    // above-diffuse-white PQ sample saturates) — the original test
+    // pinned the fused-kernel output of that chain.
     let src_d = rgb(ChannelType::U16, TransferFunction::Pq);
     let dst_d = rgb(ChannelType::U8, TransferFunction::Srgb);
-    let mut c = RowConverter::new(src_d, dst_d).unwrap();
-    let src = [32768u16; 3];
-    let mut dst = [0u8; 3];
-    c.convert_row(bytemuck::cast_slice(&src), &mut dst, 1);
-    let expected = u8_of(srgb_oetf(pq_eotf(u16_to_f32(32768))));
-    for ch in dst {
-        let diff = (ch as i32 - expected as i32).abs();
+    #[cfg(feature = "hdr-experimental")]
+    {
+        use zenpixels_convert::{ConvertError, ConvertPlan};
+        let err = RowConverter::new(src_d, dst_d).err().expect("must refuse");
+        assert!(matches!(
+            *err.error(),
+            ConvertError::HdrSourceRequiresPeak { .. }
+        ));
+        let plan = ConvertPlan::new_with_hdr_peak(src_d, dst_d, 1000.0).unwrap();
+        let mut c = RowConverter::from_plan(plan);
+        let src = [32768u16; 3];
+        let mut dst = [0u8; 3];
+        c.convert_row(bytemuck::cast_slice(&src), &mut dst, 1);
         assert!(
-            diff <= HDR_U8_TOL,
-            "U16 PQ → U8 Srgb (fused): got {ch}, expected {expected}"
+            dst[0] > 0 && dst[0] < 255,
+            "PQ U16 → sRGB U8 tone-mapped: got {}",
+            dst[0]
         );
     }
+    #[cfg(not(feature = "hdr-experimental"))]
+    assert!(matches!(
+        *RowConverter::new(src_d, dst_d)
+            .err()
+            .expect("HDR mapping requires a supplied peak even without the feature")
+            .error(),
+        zenpixels_convert::ConvertError::HdrSourceRequiresPeak { .. }
+    ));
 }
 
 // =========================================================================
@@ -580,44 +635,22 @@ fn hlg_f32_roundtrip_via_linear() {
 
 #[test]
 fn pq_to_hlg_f32_via_linear() {
+    // PQ↔HLG is now **refused** (absolute PQ vs scene-referred HLG, no OOTF —
+    // #45 S2) rather than silently converting through the conflated linear
+    // intermediate and emitting wrong brightness.
     let pq_d = rgb(ChannelType::F32, TransferFunction::Pq);
     let hlg_d = rgb(ChannelType::F32, TransferFunction::Hlg);
-    let mut c = RowConverter::new(pq_d, hlg_d).unwrap();
-    let src = [0.5f32; 3];
-    let mut dst = [0f32; 3];
-    c.convert_row(
-        bytemuck::cast_slice(&src),
-        bytemuck::cast_slice_mut(&mut dst),
-        1,
-    );
-    let expected = hlg_oetf(pq_eotf(0.5));
-    for ch in dst {
-        assert!(
-            (ch - expected).abs() < F32_TOL_LOOSE,
-            "PQ→HLG F32 @ 0.5: got {ch}, expected {expected}"
-        );
-    }
+    assert!(RowConverter::new(pq_d, hlg_d).is_err());
 }
 
 #[test]
 fn hlg_to_pq_f32_via_linear() {
+    // HLG↔PQ is now **refused** (scene-referred HLG vs absolute PQ, no OOTF —
+    // #45 S2) rather than silently converting through the conflated linear
+    // intermediate and emitting wrong brightness.
     let hlg_d = rgb(ChannelType::F32, TransferFunction::Hlg);
     let pq_d = rgb(ChannelType::F32, TransferFunction::Pq);
-    let mut c = RowConverter::new(hlg_d, pq_d).unwrap();
-    let src = [0.5f32; 3];
-    let mut dst = [0f32; 3];
-    c.convert_row(
-        bytemuck::cast_slice(&src),
-        bytemuck::cast_slice_mut(&mut dst),
-        1,
-    );
-    let expected = pq_oetf(hlg_eotf(0.5));
-    for ch in dst {
-        assert!(
-            (ch - expected).abs() < F32_TOL_LOOSE,
-            "HLG→PQ F32 @ 0.5: got {ch}, expected {expected}"
-        );
-    }
+    assert!(RowConverter::new(hlg_d, pq_d).is_err());
 }
 
 // =========================================================================

@@ -1,0 +1,35 @@
+# transpose_shootout_final_2026-06-12
+
+Final validated grid after the full kernel iteration (rounds 1-6).
+Command: GITHUB_ACTIONS=true nice -n 19 ionice -c 3 ./target/release/transpose-shootout
+Harness: transpose-shootout/ at this commit; Simd C++ @ 9ec9c58816fc.
+Host: Ryzen 9 7950X (Zen4) WSL2, single-thread, no target-cpu=native.
+Config: warmup 100ms, max_time 1.5s, max_rounds 20 effective 1-4 (zenbench
+resource gate vs ambient load; 30s wall cap/group). Cells are 1-round at
+12MP — observed run-to-run swing +/-20%; treat <15% deltas as ties.
+
+State under test (zpc): orient.rs x86 kernels — gray8 16x16 SSSE3 cascade
+(row-band sweep), 2-byte 8x8 (stripe-blocked, flip_sy band reversal),
+RGB8 AVX2 8-row expand/transpose/compress 24B stores (stripe-blocked),
+4-byte AVX2 8x8 (stripe-blocked). All forbid(unsafe_code) via archmage
+value-mode + safe_unaligned_simd wrappers.
+
+12MP scorecard (ms, lower better; "tie" = within run noise):
+  op  ch | zpc  | best Rust crate | C++ Simd | verdict vs C++
+  T   1  | 4.4  | zune 4.5        | 2.2      | -2x (their AVX2 16x16)
+  T   2  | 5.0  | ft 6.6          | ~5.7(r4) | tie/win
+  T   3  | 7.7  | ft 17.2         | 7.4      | tie (-3%)
+  T   4  | 14.8 | ft 13.2         | 12.9     | tie band (r4: zpc 11.2 vs 12.1 win)
+  R90 1  | 4.5  | ft 12.1         | 2.8      | -37%
+  R90 2  | 5.8  | ft 7.8          | 5.0      | -14%
+  R90 3  | 9.2  | ft 17.7         | 7.9      | -14%
+  R90 4  | 12.6 | ft 13.2         | 12.2     | tie (-3%)
+At 256^2 (L2-resident) C++ Simd leads ~2x everywhere (lower per-tile
+overhead); zpc leads every Rust crate at every 12MP cell (1ch = tie zune).
+
+vs session start (old forward_map/tiled paths, same harness basis):
+  3ch R90 87.2 -> 9.2 (9.5x), 3ch T 72.7 -> 7.7, 2ch T 14.6 -> 5.0,
+  1ch T ~9.2 -> 4.4, 4ch T 16.3 -> ~13.
+
+Iteration logs: r2 (committed earlier), r3/r4/3ch-avx2/r90-fix in
+/tmp (ephemeral; key numbers quoted in commit messages).

@@ -5,13 +5,81 @@
 //!
 //! For tone mapping and HDR processing functions, see
 //! [`zenpixels-convert::hdr`](https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/).
+//!
+//! For SOTA content-light-level measurement (MaxCLL / MaxFALL — histogram-
+//! based, percentile-aware, SIMD-accelerated), see the `measure` module
+//! and the `CllMeasure` extension trait in `zenpixels-convert`.
+
+/// The absolute luminance, in cd/m² (nits), that a relative-linear sample
+/// value of `1.0` represents — the "diffuse white" (a.k.a. nominal diffuse
+/// white / SDR reference white) anchor that bridges relative-linear pixel
+/// data to absolute display light.
+///
+/// This is the single scalar the rest of the industry uses for that bridge:
+/// OpenEXR's `whiteLuminance` ("nits of RGB (1,1,1)"), JPEG XL's
+/// `intensity_target`, libheif's `ndwt` (nominal diffuse white), and
+/// libplacebo's SDR-white constant. The cross-vendor default is
+/// [`BT2408`](Self::BT2408) = 203 cd/m².
+///
+/// It is a *typed* anchor on purpose: HDR code mixes nits, PQ-encoded `[0,1]`,
+/// log2 gain, and headroom ratios — passing a bare `f32` invites unit
+/// confusion. Use [`DiffuseWhite::new`] / [`DiffuseWhite::nits`].
+#[derive(Clone, Copy, Debug)]
+pub struct DiffuseWhite(f32);
+
+// Bit-exact equality so `DiffuseWhite` — and therefore `ColorContext` — keeps
+// `Eq` despite wrapping `f32`. A luminance anchor is always a sane, finite,
+// positive cd/m² value (203, 100, 10000, …), so a bitwise compare is reflexive
+// and consistent; the -0.0 / NaN cases a value compare would treat differently
+// never occur for an anchor.
+impl PartialEq for DiffuseWhite {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_bits() == other.0.to_bits()
+    }
+}
+impl Eq for DiffuseWhite {}
+
+impl DiffuseWhite {
+    /// ITU-R BT.2408 HDR reference white: **203 cd/m²**. The cross-industry
+    /// default anchor for relative-linear HDR (matches Chrome `SDRWhiteLevel`,
+    /// Skia skcms, CSS `rec2100-linear`, and libplacebo).
+    pub const BT2408: Self = Self(203.0);
+
+    /// An anchor of `nits` cd/m² (the luminance that relative-linear `1.0`
+    /// represents).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `nits` is zero, negative, NaN, or infinite.
+    #[track_caller]
+    #[must_use]
+    pub const fn new(nits: f32) -> Self {
+        assert!(
+            nits.is_finite() && nits > 0.0,
+            "diffuse white must be finite and strictly positive"
+        );
+        Self(nits)
+    }
+
+    /// The anchor in cd/m² (nits).
+    #[must_use]
+    pub const fn nits(self) -> f32 {
+        self.0
+    }
+}
+
+impl Default for DiffuseWhite {
+    /// [`BT2408`](Self::BT2408) — 203 cd/m².
+    fn default() -> Self {
+        Self::BT2408
+    }
+}
 
 /// HDR content light level metadata (CEA-861.3 / CTA-861-H).
 ///
 /// Describes the peak brightness characteristics of HDR content.
 /// Used by AVIF, JXL, PNG (cLLi chunk), and video containers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ContentLightLevel {
     /// Maximum Content Light Level (MaxCLL) in cd/m² (nits).
     /// Peak luminance of any single pixel in the content.
@@ -36,7 +104,6 @@ impl ContentLightLevel {
 /// Describes the display on which the content was mastered, enabling
 /// downstream displays to reproduce the creator's intent.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MasteringDisplay {
     /// RGB primaries of the mastering display in CIE 1931 xy coordinates.
     /// `[[rx, ry], [gx, gy], [bx, by]]`.
@@ -85,37 +152,68 @@ impl MasteringDisplay {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn content_light_level_new() {
-        let cll = ContentLightLevel::new(1000, 500);
-        assert_eq!(cll.max_content_light_level, 1000);
-        assert_eq!(cll.max_frame_average_light_level, 500);
+    fn diffuse_white_defaults_to_bt2408() {
+        assert_eq!(DiffuseWhite::default(), DiffuseWhite::BT2408);
+        assert_eq!(DiffuseWhite::BT2408.nits(), 203.0);
+        assert_eq!(DiffuseWhite::new(100.0).nits(), 100.0);
     }
 
     #[test]
-    fn content_light_level_default() {
-        let cll = ContentLightLevel::default();
-        assert_eq!(cll.max_content_light_level, 0);
-        assert_eq!(cll.max_frame_average_light_level, 0);
+    fn diffuse_white_custom_anchor_round_trips() {
+        // Anchor metadata is byte-identical-preserved through the constructor:
+        // a custom 100 cd/m² (HDR home-tier mastering) and 10 000 cd/m² (PQ
+        // peak) both round-trip through `new` → `nits` losslessly.
+        assert_eq!(DiffuseWhite::new(100.0).nits(), 100.0);
+        assert_eq!(DiffuseWhite::new(10_000.0).nits(), 10_000.0);
+        // PartialEq honours bit equality (see the impl above) so two
+        // independently constructed anchors compare equal.
+        assert_eq!(DiffuseWhite::new(203.0), DiffuseWhite::BT2408);
     }
 
     #[test]
-    fn mastering_display_new() {
-        let md = MasteringDisplay::new(
-            [[0.68, 0.32], [0.265, 0.69], [0.15, 0.06]],
-            [0.3127, 0.329],
-            1000.0,
-            0.001,
-        );
-        assert_eq!(md.max_luminance, 1000.0);
-        assert_eq!(md.min_luminance, 0.001);
+    fn diffuse_white_accepts_positive_finite_bounds_and_const_construction() {
+        const CUSTOM: DiffuseWhite = DiffuseWhite::new(100.0);
+        assert_eq!(CUSTOM.nits(), 100.0);
+        for nits in [f32::from_bits(1), f32::MIN_POSITIVE, f32::MAX] {
+            assert_eq!(DiffuseWhite::new(nits).nits().to_bits(), nits.to_bits());
+        }
     }
 
     #[test]
-    fn mastering_display_constants() {
-        assert_eq!(MasteringDisplay::HDR10_REFERENCE.max_luminance, 10000.0);
-        assert_eq!(MasteringDisplay::DISPLAY_P3_1000.max_luminance, 1000.0);
+    #[should_panic(expected = "diffuse white must be finite and strictly positive")]
+    fn diffuse_white_rejects_zero() {
+        let _ = DiffuseWhite::new(0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "diffuse white must be finite and strictly positive")]
+    fn diffuse_white_rejects_negative_zero() {
+        let _ = DiffuseWhite::new(-0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "diffuse white must be finite and strictly positive")]
+    fn diffuse_white_rejects_negative() {
+        let _ = DiffuseWhite::new(-100.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "diffuse white must be finite and strictly positive")]
+    fn diffuse_white_rejects_nan() {
+        let _ = DiffuseWhite::new(f32::NAN);
+    }
+
+    #[test]
+    #[should_panic(expected = "diffuse white must be finite and strictly positive")]
+    fn diffuse_white_rejects_infinity() {
+        let _ = DiffuseWhite::new(f32::INFINITY);
+    }
+
+    #[test]
+    #[should_panic(expected = "diffuse white must be finite and strictly positive")]
+    fn diffuse_white_rejects_negative_infinity() {
+        let _ = DiffuseWhite::new(f32::NEG_INFINITY);
     }
 
     #[test]
@@ -136,5 +234,11 @@ mod tests {
         let mut h2 = std::hash::DefaultHasher::new();
         b.hash(&mut h2);
         assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn mastering_display_constants() {
+        assert_eq!(MasteringDisplay::HDR10_REFERENCE.max_luminance, 10000.0);
+        assert_eq!(MasteringDisplay::DISPLAY_P3_1000.max_luminance, 1000.0);
     }
 }

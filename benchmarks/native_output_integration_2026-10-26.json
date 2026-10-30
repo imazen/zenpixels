@@ -1,0 +1,59 @@
+{
+  "kind": "integration of existing output planning and native sample APIs; no performance claim",
+  "parents": [
+    "f8596aae7a16aec7875b6fe2ef39b501c11a0e82",
+    "284a0598abf441dc886755b1e65c34dbdf6ce94d"
+  ],
+  "host": "r7900x",
+  "source_sha256": {
+    "zenpixels-convert/src/output/plan.rs": "4fa22e47c3f032455c403bba7533b2f5f5800131c4f27a55f0cedd543f46c590",
+    "zenpixels-convert/src/output.rs": "8439c7f0dfb90414c0ac100a4f5caee96fe0eb3609ac2e3c0c82f92d15db72ad",
+    "zenpixels/src/descriptor.rs": "80977a577804facb9b7090a694f209eb43846def9ff5e515d7ae408ae0426d2b",
+    "zenpixels-convert/tests/output_native.rs": "1b9d6b24ec78b4ccfb10a1ff26e5b7f250d70b3266838844f0afc9f3a4b391c4"
+  },
+  "commands": [
+    "just native-output-check",
+    "just native-samples-suite"
+  ],
+  "checks": [
+    "existing output/current-color/CMS/required-policy/prepared-worker contracts",
+    "conventional and inverted native F32 CMYK exact identity rows, including signed zero, subnormal and NaN payload bits",
+    "strided source and destination, untouched padding, matching ICC",
+    "full zenpixels and zenpixels-convert library/integration suites with HDR and moxcms",
+    "strict targeted lint, format, no-default-feature zenpixels WASM and regenerated API snapshots"
+  ],
+  "initial_failures": [
+    "New test borrowed a moved PixelSlice; retain a cloned view for comparison, sharing only its metadata Arc.",
+    "The test used base-format BT.709 primaries for opaque ICC samples; use Unknown primaries as the native JXL adapter does. The planner correctly refused the inconsistent identity."
+  ],
+  "runs": [
+    {
+      "log": "zenpixels-native-output-1-20261026.log",
+      "sha256": "9548d7c2c5e0950a2931493f381e0bf2a29e4e4981286e738e3196676ef298bb",
+      "result": "run-heavy: done rc=0 9s | peak-RSS 0.37GiB | min-avail 11487MiB | peak-load 0.19"
+    },
+    {
+      "log": "zenpixels-native-output-suite-20261026.log",
+      "sha256": "d39d356683527d65208163a304b06fa754c6678172702085e44c813176954b8e",
+      "result": "run-heavy: done rc=101 1s | peak-RSS 0.12GiB | min-avail 11745MiB | peak-load 0.16"
+    },
+    {
+      "log": "zenpixels-native-output-suite-2-20261026.log",
+      "sha256": "69b965a3c7321604d2fce429c6846d08a95016d30e7bf242c6f9a6a5162df8a9",
+      "result": "run-heavy: done rc=101 0s | peak-RSS 0.18GiB | min-avail 11757MiB | peak-load 0.12"
+    },
+    {
+      "log": "zenpixels-native-output-suite-3-20261026.log",
+      "sha256": "c2f7376b5796effcf1e091753cad7f7e683f54917c90eaa942b85c87cf9c782c",
+      "result": "run-heavy: done rc=0 58s | peak-RSS 2.64GiB | min-avail 9020MiB | peak-load 2.00"
+    }
+  ],
+  "artifact_directory": "/mnt/v/output/zencodec/platform-regions-20261026-run/native-output-plan-1",
+  "remaining": [
+    "Real native admitted destination is a downstream zencodec gate, not claimed here.",
+    "No CMYK color arithmetic or polarity conversion added.",
+    "Identity still writes to a destination; no owner-preserving borrow helper added.",
+    "CMS setup/scratch and metadata are outside caller-owned pixel admission."
+  ],
+  "existing_ignored_tests": "Inherited ignores unchanged; no expectation weakened."
+}

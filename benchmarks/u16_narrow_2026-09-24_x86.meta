@@ -1,0 +1,21 @@
+# U16 -> U8 narrowing review follow-up
+# Date: 2026-09-24
+# Source: e56f626b14e6f0211e020159d30b3a48616e88e0
+# CPU: AMD Ryzen 9 9950X3D, x86_64
+# Compiler: rustc 1.98.1 (48a229cea 2026-09-01), LLVM 22.1.8
+# RUSTFLAGS / CARGO_ENCODED_RUSTFLAGS: unset; default x86_64 target
+# Command: ZENBENCH_NO_SAVE=1 cargo bench --offline -j 4 -p zenpixels-convert --bench bench_u16_narrow
+# Harness: zenbench 0.1.8; standard gates, no benchmark source changes.
+# This is a shared, busy host. Inspect the raw report's round-count,
+# coefficient-of-variation and drift warnings. These are diagnostic
+# comparisons, not replacement throughput calibration constants.
+#
+# The old garb 0.2.8 path runtime-dispatches to AVX2 on this machine.
+# Current byte-lane narrowing is compiled for the default target.
+# The recorded M4 Pro improvement from August does not generalize to x86:
+# garb lacks a NEON implementation of this operation, while it has AVX2.
+#
+# The old garb arithmetic is incorrect for 127 of 65536 u16 values.
+# Restore performance while retaining exact round(v / 257); do not revert
+# the rounding fix. The benchmark checks candidate arithmetic exhaustively;
+# the repository's ulp_exhaustive tests cover the shipped conversion route.

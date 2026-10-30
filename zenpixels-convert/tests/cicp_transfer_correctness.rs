@@ -12,6 +12,22 @@ use zenpixels::{
 use zenpixels_convert::RowConverter;
 use zenpixels_convert::ext::{PixelBufferConvertExt, TransferFunctionExt};
 
+/// True when `(src, dst)` is an HDR-encoded source paired with an
+/// SDR-encoded destination. Such a transition now refuses through the
+/// plain plan path (`HdrSourceRequiresPeak`); the HDR-aware constructors
+/// (`ConvertPlan::new_with_hdr_peak` etc.) accept a source-peak luminance
+/// and emit a tone-mapped chain. The transfer-function correctness tests
+/// in this file only exercise straight TF math (no tone curve) — skip
+/// these pairs because the new semantics are intentionally lossy.
+fn skip_hdr_to_sdr_encoded(src: TransferFunction, dst: TransferFunction) -> bool {
+    let src_is_hdr = matches!(src, TransferFunction::Pq | TransferFunction::Hlg);
+    let dst_is_sdr_encoded = matches!(
+        dst,
+        TransferFunction::Srgb | TransferFunction::Bt709 | TransferFunction::Gamma22
+    );
+    src_is_hdr && dst_is_sdr_encoded
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Section 1: CICP Code Point Mapping Exhaustiveness
 // ═══════════════════════════════════════════════════════════════════════════
@@ -56,7 +72,7 @@ fn all_color_primaries_have_cicp_code() {
     assert_eq!(ColorPrimaries::Unknown.to_cicp(), None);
 }
 
-/// from_cicp and to_cicp round-trip for primary codes (aliases like 6↔7 may collapse).
+/// from_cicp and to_cicp round-trip for primary codes (SMPTE 170M aliases BT.709).
 #[test]
 fn transfer_function_cicp_bijection() {
     // Primary codes that must round-trip exactly
@@ -64,15 +80,13 @@ fn transfer_function_cicp_bijection() {
         let tf = TransferFunction::from_cicp(code).unwrap();
         assert_eq!(tf.to_cicp(), Some(code));
     }
-    // Aliases that map to another primary code (SMPTE 170M/240M → BT.709 curve)
+    // Aliases that map to another primary code (SMPTE 170M → BT.709 curve)
     assert_eq!(
         TransferFunction::from_cicp(6),
         Some(TransferFunction::Bt709)
     );
-    assert_eq!(
-        TransferFunction::from_cicp(7),
-        Some(TransferFunction::Bt709)
-    );
+    // SMPTE 240M is not BT.709; keep raw CICP and use a capable CMS.
+    assert_eq!(TransferFunction::from_cicp(7), None);
     // Reverse: every non-Unknown enum maps to its primary code
     for tf in [
         TransferFunction::Linear,
@@ -134,12 +148,12 @@ fn unknown_cicp_codes_return_none() {
 fn cicp_constants_descriptor_roundtrip() {
     for (cicp, name) in [
         (Cicp::SRGB, "SRGB"),
-        (Cicp::BT2100_PQ, "BT2100_PQ"),
-        (Cicp::BT2100_HLG, "BT2100_HLG"),
+        (Cicp::new(9, 16, 0, true), "BT2100_PQ_RGB"),
+        (Cicp::new(9, 18, 0, true), "BT2100_HLG_RGB"),
         (Cicp::DISPLAY_P3, "DISPLAY_P3"),
     ] {
         for format in [PixelFormat::Rgb8, PixelFormat::RgbF32, PixelFormat::Rgba8] {
-            let desc = cicp.to_descriptor(format);
+            let desc = cicp.try_to_descriptor(format).unwrap();
             assert_eq!(desc.format, format, "{name} format");
             assert_eq!(
                 desc.signal_range,
@@ -162,7 +176,7 @@ fn cicp_constants_descriptor_roundtrip() {
                 "{name} TC"
             );
             assert_eq!(back.full_range, cicp.full_range, "{name} full_range");
-            // matrix_coefficients is always 0 when round-tripping through descriptor
+            // This projection accepts already-RGB declarations (identity matrix).
             assert_eq!(back.matrix_coefficients, 0, "{name} MC");
         }
     }
@@ -172,7 +186,7 @@ fn cicp_constants_descriptor_roundtrip() {
 #[test]
 fn cicp_narrow_range_roundtrip() {
     let cicp = Cicp::new(1, 13, 0, false);
-    let desc = cicp.to_descriptor(PixelFormat::Rgb8);
+    let desc = cicp.try_to_descriptor(PixelFormat::Rgb8).unwrap();
     assert_eq!(desc.signal_range, SignalRange::Narrow);
     let back = Cicp::from_descriptor(&desc).unwrap();
     assert!(!back.full_range);
@@ -203,19 +217,19 @@ fn from_descriptor_rejects_unknown() {
 #[test]
 fn cicp_to_descriptor_alpha_handling() {
     // Format without alpha → None
-    let desc = Cicp::SRGB.to_descriptor(PixelFormat::Rgb8);
+    let desc = Cicp::SRGB.try_to_descriptor(PixelFormat::Rgb8).unwrap();
     assert!(desc.alpha().is_none());
 
     // Format with alpha → Some(Straight)
-    let desc = Cicp::SRGB.to_descriptor(PixelFormat::Rgba8);
+    let desc = Cicp::SRGB.try_to_descriptor(PixelFormat::Rgba8).unwrap();
     assert_eq!(desc.alpha(), Some(AlphaMode::Straight));
 
     // Gray format → None
-    let desc = Cicp::SRGB.to_descriptor(PixelFormat::Gray8);
+    let desc = Cicp::SRGB.try_to_descriptor(PixelFormat::Gray8).unwrap();
     assert!(desc.alpha().is_none());
 
     // GrayAlpha format → Some(Straight)
-    let desc = Cicp::SRGB.to_descriptor(PixelFormat::GrayA8);
+    let desc = Cicp::SRGB.try_to_descriptor(PixelFormat::GrayA8).unwrap();
     assert_eq!(desc.alpha(), Some(AlphaMode::Straight));
 }
 
@@ -293,14 +307,17 @@ fn cicp_name_functions_cover_all_listed_codes() {
     assert_eq!(Cicp::transfer_characteristics_name(3), "Unknown");
     assert_eq!(Cicp::transfer_characteristics_name(19), "Unknown");
 
-    // Matrix coefficients: all codes in the match
-    let mc_codes = [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+    // Matrix coefficients: all codes in the match. 15 (IPT-C2),
+    // 16 (YCgCo-Re), and 17 (YCgCo-Ro) are defined since H.273 (09/2023);
+    // an earlier revision of this test pinned 15 as a gap per the
+    // pre-2023 table.
+    let mc_codes = [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
     for code in mc_codes {
         let name = Cicp::matrix_coefficients_name(code);
         assert_ne!(name, "Unknown", "MC code {code} should have a name");
     }
     assert_eq!(Cicp::matrix_coefficients_name(3), "Unknown");
-    assert_eq!(Cicp::matrix_coefficients_name(15), "Unknown");
+    assert_eq!(Cicp::matrix_coefficients_name(18), "Unknown");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -501,6 +518,20 @@ fn all_f32_tf_pairs_create_converters() {
             if from_tf == to_tf {
                 continue;
             }
+            // HLG↔PQ is refused (scene-vs-absolute, no OOTF — #45 S2); skip it.
+            if matches!(
+                (from_tf, to_tf),
+                (TransferFunction::Hlg, TransferFunction::Pq)
+                    | (TransferFunction::Pq, TransferFunction::Hlg)
+            ) {
+                continue;
+            }
+            // HDR→SDR-encoded refuses without a peak (use the HDR-aware
+            // constructors); skip — these are tone-mapping tests, not TF
+            // math tests.
+            if skip_hdr_to_sdr_encoded(from_tf, to_tf) {
+                continue;
+            }
             let from = PixelDescriptor::new(ChannelType::F32, ChannelLayout::Rgb, None, from_tf);
             let to = PixelDescriptor::new(ChannelType::F32, ChannelLayout::Rgb, None, to_tf);
             assert!(
@@ -533,6 +564,21 @@ fn all_f32_tf_pairs_roundtrip() {
     for &from_tf in &tfs {
         for &to_tf in &tfs {
             if from_tf == to_tf {
+                continue;
+            }
+            // HLG↔PQ is refused (scene-vs-absolute, no OOTF — #45 S2); skip it.
+            if matches!(
+                (from_tf, to_tf),
+                (TransferFunction::Hlg, TransferFunction::Pq)
+                    | (TransferFunction::Pq, TransferFunction::Hlg)
+            ) {
+                continue;
+            }
+            // HDR→SDR-encoded refuses without a peak; the reverse SDR→HDR
+            // pair (which `f32_converter(to_tf, from_tf)` would build for
+            // the roundtrip) also gets skipped because the roundtrip needs
+            // both legs to succeed.
+            if skip_hdr_to_sdr_encoded(from_tf, to_tf) || skip_hdr_to_sdr_encoded(to_tf, from_tf) {
                 continue;
             }
             let mut fwd = f32_converter(from_tf, to_tf);
@@ -578,6 +624,22 @@ fn cross_tf_via_linear_matches_direct() {
     for &src_tf in sdrs.iter().chain(hdrs.iter()) {
         for &dst_tf in sdrs.iter().chain(hdrs.iter()) {
             if src_tf == dst_tf {
+                continue;
+            }
+            // HLG↔PQ refuses directly (scene-vs-absolute, no OOTF — #45 S2), so
+            // there's no "direct" to compare against; skip the cross.
+            if matches!(
+                (src_tf, dst_tf),
+                (TransferFunction::Hlg, TransferFunction::Pq)
+                    | (TransferFunction::Pq, TransferFunction::Hlg)
+            ) {
+                continue;
+            }
+            // HDR→SDR-encoded refuses without a peak; the via-linear path
+            // also goes through `from_lin = Linear → dst_tf` which would
+            // be SDR→SDR (fine) or Linear→HDR (fine). Skip the HDR→SDR
+            // direct comparison entirely.
+            if skip_hdr_to_sdr_encoded(src_tf, dst_tf) {
                 continue;
             }
             let mut direct = f32_converter(src_tf, dst_tf);
@@ -627,6 +689,17 @@ fn black_preserved_all_tf_pairs() {
             if from_tf == to_tf {
                 continue;
             }
+            // HLG↔PQ is refused (scene-vs-absolute, no OOTF — #45 S2); skip it.
+            if matches!(
+                (from_tf, to_tf),
+                (TransferFunction::Hlg, TransferFunction::Pq)
+                    | (TransferFunction::Pq, TransferFunction::Hlg)
+            ) {
+                continue;
+            }
+            if skip_hdr_to_sdr_encoded(from_tf, to_tf) {
+                continue;
+            }
             let mut conv = f32_converter(from_tf, to_tf);
             let result = convert_f32_pixel(&mut conv, 0.0, 0.0, 0.0);
             for (ch, &v) in result.iter().enumerate() {
@@ -649,6 +722,17 @@ fn white_preserved_all_tf_pairs() {
     for &from_tf in &tfs {
         for &to_tf in &tfs {
             if from_tf == to_tf {
+                continue;
+            }
+            // HLG↔PQ is refused (scene-vs-absolute, no OOTF — #45 S2); skip it.
+            if matches!(
+                (from_tf, to_tf),
+                (TransferFunction::Hlg, TransferFunction::Pq)
+                    | (TransferFunction::Pq, TransferFunction::Hlg)
+            ) {
+                continue;
+            }
+            if skip_hdr_to_sdr_encoded(from_tf, to_tf) {
                 continue;
             }
             let mut conv = f32_converter(from_tf, to_tf);
@@ -1089,8 +1173,17 @@ fn hlg_u16_f32_u16_roundtrip_wide_range() {
 }
 
 /// PQ U16 → sRGB U8: HDR to SDR path produces reasonable output.
+///
+/// Pre-0.2.16 the plain `ConvertPlan::new` silently routed PQ→sRGB
+/// through a linear intermediate with no tone-mapping (all near-peak
+/// samples saturated to 255). The new HDR-aware constructor
+/// (`ConvertPlan::new_with_hdr_peak`) inserts a BT.2446 Method A tone
+/// curve — black stays black, mid-grey rises with luminance, and peak
+/// HDR maps near SDR peak.
 #[test]
+#[cfg(feature = "hdr-experimental")]
 fn pq_u16_to_srgb_u8_correctness() {
+    use zenpixels_convert::ConvertPlan;
     let pq_u16 = PixelDescriptor::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
@@ -1098,7 +1191,8 @@ fn pq_u16_to_srgb_u8_correctness() {
         TransferFunction::Pq,
     );
     let srgb_u8 = PixelDescriptor::RGB8_SRGB;
-    let mut conv = RowConverter::new(pq_u16, srgb_u8).unwrap();
+    let plan = ConvertPlan::new_with_hdr_peak(pq_u16, srgb_u8, 1000.0).unwrap();
+    let mut conv = RowConverter::from_plan(plan);
 
     // Build test data: 5 pixels at different PQ levels.
     let width = 5u32;
@@ -1114,10 +1208,10 @@ fn pq_u16_to_srgb_u8_correctness() {
     let mut dst = vec![0u8; 5 * 3];
     conv.convert_row(&src, &mut dst, width);
 
-    // Black stays black
+    // Black stays black.
     assert_eq!(dst[0], 0);
 
-    // Values should be monotonically increasing
+    // Values should be monotonically increasing.
     for i in 1..5 {
         assert!(
             dst[i * 3] >= dst[(i - 1) * 3],
@@ -1128,42 +1222,23 @@ fn pq_u16_to_srgb_u8_correctness() {
         );
     }
 
-    // Full PQ → sRGB white
-    assert_eq!(dst[4 * 3], 255);
+    // Full PQ (10000 cd/m² code) tone-maps near SDR peak.
+    assert!(
+        dst[4 * 3] > 200,
+        "peak PQ should land near SDR peak, got {}",
+        dst[4 * 3]
+    );
 }
 
-/// HLG U16 → sRGB U8 path produces reasonable output.
+/// A peak alone cannot map scene-referred HLG to display-referred SDR.
 #[test]
-fn hlg_u16_to_srgb_u8_correctness() {
-    let hlg_u16 = PixelDescriptor::new(
-        ChannelType::U16,
-        ChannelLayout::Rgb,
-        None,
-        TransferFunction::Hlg,
+#[cfg(feature = "hdr-experimental")]
+fn hlg_u16_to_srgb_u8_requires_display_mapping() {
+    let hlg = PixelDescriptor::RGB16_SRGB.with_transfer(TransferFunction::Hlg);
+    assert!(
+        zenpixels_convert::ConvertPlan::new_with_hdr_peak(hlg, PixelDescriptor::RGB8_SRGB, 1000.)
+            .is_err()
     );
-    let srgb_u8 = PixelDescriptor::RGB8_SRGB;
-    let mut conv = RowConverter::new(hlg_u16, srgb_u8).unwrap();
-
-    let width = 3u32;
-    let hlg_values: [u16; 3] = [0, 32768, 65535];
-    let mut src = vec![0u8; 3 * 3 * 2];
-    for (i, &v) in hlg_values.iter().enumerate() {
-        for ch in 0..3 {
-            let base = (i * 3 + ch) * 2;
-            src[base..base + 2].copy_from_slice(&v.to_ne_bytes());
-        }
-    }
-
-    let mut dst = vec![0u8; 3 * 3];
-    conv.convert_row(&src, &mut dst, width);
-
-    // Black stays black
-    assert_eq!(dst[0], 0);
-    // Monotonically increasing
-    assert!(dst[3] > dst[0]);
-    assert!(dst[6] > dst[3]);
-    // Full HLG → sRGB white
-    assert_eq!(dst[6], 255);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

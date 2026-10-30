@@ -1,0 +1,31 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zen color & sample explorer</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#e7edf4;background:#111722;color-scheme:dark}body{max-width:1250px;margin:auto;padding:26px}h1{font-size:2rem;margin-bottom:8px}h2{font-size:1.15rem;color:#85ddd2}p{line-height:1.6}.muted{color:#adbace}a{color:#99cfff}.grid{display:grid;grid-template-columns:minmax(260px,1fr) 2fr;gap:24px}.card{background:#1a2433;border:1px solid #34435a;border-radius:12px;padding:20px;margin:16px 0}label{display:block;margin:12px 0}select,input{width:100%;box-sizing:border-box;padding:8px;margin-top:5px;border:1px solid #58708e;border-radius:5px;background:#101a28}input[type=checkbox]{width:auto}table{width:100%;border-collapse:collapse;font-size:.9rem}th,td{text-align:left;border-bottom:1px solid #34435a;padding:9px}code{color:#f8d591}.flow{display:flex;gap:12px;flex-wrap:wrap}.flow div{flex:1;min-width:140px;border-left:3px solid #85ddd2;padding:12px;background:#121d2a}.note{padding:10px 14px;border-left:3px solid #e6b867;background:#2c2924;margin:8px 0}svg{width:100%;height:82px}footer{margin:30px 0} @media(max-width:750px){.grid{grid-template-columns:1fr}body{padding:14px}}
+main,.card{min-width:0}#storage{overflow-x:auto}footer code{overflow-wrap:anywhere}
+</style>
+<h1>Color & samples, one decision at a time</h1>
+<p class="muted">An inspectable teaching model for zenpixels release review. Change a scenario to see storage arithmetic and required decisions. This does not encode pixels, render calibrated HDR, or simulate an OS color manager.</p>
+<div class="grid"><form class="card" id="controls"><h2>Scenario</h2>
+<label>Start with <select id="preset"></select></label>
+<label>Media <select id="media"><option value="image">Still image</option><option value="video">Video</option><option value="animation">Animation</option></select></label>
+<label>Storage <select id="layout"><option value="rgb">Interleaved RGB</option><option value="rgba">Interleaved RGBA</option><option value="planar">Planar YCbCr 4:2:0</option><option value="semiplanar">Semiplanar Y + CbCr 4:2:0</option></select></label>
+<label>Code bits <select id="bits"><option>8</option><option>10</option><option>12</option><option>16</option></select></label>
+<label>U16 bit placement <select id="placement"><option value="lsb">Least significant bits</option><option value="msb">Most significant bits (zero padding)</option></select></label>
+<label>Signal range <select id="range"><option value="full">Full</option><option value="limited">Limited (luma 16–235 scaled)</option></select></label>
+<label>Current transfer <select id="transfer"><option value="srgb">sRGB</option><option value="linear">Linear</option><option value="pq">PQ</option><option value="hlg">HLG</option></select></label>
+<label>Current authority <select id="authority"><option value="icc">ICC</option><option value="cicp">CICP</option><option value="both">Both (ambiguous)</option></select></label>
+<label>Operation <select id="action"><option value="transcode">Decode → convert → encode</option><option value="rewrite">Metadata-only rewrite</option><option value="display">Decode → display</option></select></label>
+<label>Target transfer <select id="target"><option value="srgb">sRGB</option><option value="linear">Linear</option><option value="pq">PQ</option><option value="hlg">HLG</option></select></label>
+<label><input type="checkbox" id="gainmap"> Display-relevant gain map</label>
+<label>Width <input id="width" type="number" min="1" max="16384" value="3840"></label>
+<label>Height <input id="height" type="number" min="1" max="16384" value="2160"></label>
+<label>Row padding (bytes, rounded to sample boundary) <input id="padding" type="number" min="0" max="4096" value="0"></label>
+</form><main>
+<section class="card"><h2>Three different truths</h2><div class="flow"><div><b>Origin</b><p>What the file said. Preserve raw ICC/CICP and coding details as provenance.</p></div><div><b>Current</b><p id="current"></p></div><div><b>Output</b><p id="output"></p></div></div></section>
+<section class="card"><h2>One sample, several meanings</h2><label>Native code <input id="code" type="range" min="0" max="255" value="128"></label><div id="sample"></div><svg role="img" aria-label="Normalized luma, with nominal black and white endpoints" viewBox="0 0 600 80"><line x1="20" y1="30" x2="580" y2="30" stroke="#6e829a" stroke-width="8"/><circle id="marker" cy="30" r="10" fill="#85ddd2"/><text x="20" y="65" fill="#adbace">nominal black</text><text x="465" y="65" fill="#adbace">nominal white</text></svg><p class="muted">The marker clips to the drawing bounds; the numeric value does not. This is a code-value diagram, not a color swatch. Limited-range chroma uses a different neutral point and nominal upper bound.</p></section>
+<section class="card"><h2>Where the bytes go</h2><div id="storage"></div></section>
+<section class="card" aria-live="polite"><h2>Decisions & assumptions</h2><div id="decisions"></div><div id="notes"></div></section>
+<section class="card"><h2>Cross-platform reality</h2><p>Working-space white, display white and HDR peak are different values. Windows scRGB's nominal 1.0 is 80 nits; the CSS HDR draft uses 203 nits for SDR reference-white anchoring. Neither is a universal image default. Apple's EDR pipeline introduces its own display/headroom context.</p><p>PNG defines color-chunk precedence; carrying two blocks does not mean both are equally authoritative. Destination encoders must follow their format's rules. This model marks platform support unknown rather than guessing from a file extension.</p><p><a href="https://www.w3.org/TR/png-3/">PNG specification</a> · <a href="https://www.w3.org/TR/css-color-hdr-1/">CSS HDR working draft</a> · <a href="https://learn.microsoft.com/en-us/windows/win32/direct3darticles/high-dynamic-range">Windows Advanced Color</a> · <a href="https://developer.apple.com/videos/play/wwdc2022/10114/">Apple EDR</a></p></section>
+</main></div><footer><a href="../finalization-release-contract.md">Finalization and release contract</a> · Source arithmetic in model.js; tests: <code>node --test docs/color-explorer/model.test.cjs</code></footer>
+<script src="model.js"></script><script src="view.js"></script></html>
