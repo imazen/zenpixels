@@ -227,6 +227,7 @@ pub enum RenderingIntent {
 ///   `PreferIcc` follows this interpretation. `PreferCicp` overrides it
 ///   for formats where the container's CICP is known to be authoritative.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+#[non_exhaustive]
 pub enum ColorPriority {
     /// Prefer the ICC profile's own `curv`/`para` TRC curves. Ignore any
     /// embedded CICP transfer characteristics.

@@ -338,22 +338,12 @@ fn build_cms_transform<C: ColorManagement>(
         Ok(Some(transform))
     };
 
-    match origin.color_authority {
-        ColorAuthority::Icc => {
-            if let Some(ref src_icc) = origin.icc {
-                return try_icc(src_icc);
-            }
-            // Fallback: ICC authority but no ICC bytes — can't build transform.
-            Ok(None)
-        }
-        ColorAuthority::Cicp => {
-            // CICP authority — but build_transform_from_cicp needs ICC bytes
-            // on the dst side, so we still need ICC. Try src ICC if available.
-            if let Some(ref src_icc) = origin.icc {
-                return try_icc(src_icc);
-            }
-            Ok(None)
-        }
+    // Every authority builds from the source ICC: with ICC authority it is
+    // the profile, and CICP authority still needs ICC bytes for this legacy
+    // transform. Without source ICC bytes no transform can be built.
+    match origin.icc {
+        Some(ref src_icc) => try_icc(src_icc),
+        None => Ok(None),
     }
 }
 
@@ -498,6 +488,9 @@ fn origin_profile(origin: &ColorOrigin) -> Option<crate::ColorProfileSource<'_>>
     match origin.color_authority {
         ColorAuthority::Icc => icc.or(cicp),
         ColorAuthority::Cicp => cicp.or(icc),
+        // An authority this crate does not know cannot select between the
+        // fields; callers fall back to the current pixel profile.
+        _ => None,
     }
 }
 
