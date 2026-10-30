@@ -2,7 +2,22 @@
 #![allow(deprecated)]
 
 use zenpixels_convert::PixelDescriptor;
-use zenpixels_convert::adapt::{adapt_for_encode_cow, convert_buffer};
+use zenpixels_convert::adapt::adapt_for_encode_cow;
+
+/// The packed rows of `data` converted from `from` to `to` through the
+/// owned-buffer path (formerly checked through the raw `convert_buffer`).
+fn convert_packed(
+    data: &[u8],
+    width: u32,
+    rows: u32,
+    from: PixelDescriptor,
+    to: PixelDescriptor,
+) -> Result<Vec<u8>, whereat::At<zenpixels_convert::ConvertError>> {
+    use zenpixels_convert::PixelBufferConvertExt;
+    let source = zenpixels::PixelBuffer::from_vec(data.to_vec(), width, rows, from).unwrap();
+    let converted = source.convert_to(to)?;
+    Ok(converted.as_slice().contiguous_bytes().into_owned())
+}
 
 /// When input matches a supported format, should return borrowed data.
 #[test]
@@ -99,11 +114,11 @@ fn adapt_transfer_agnostic_match() {
     );
 }
 
-/// convert_buffer with identity should just copy.
+/// Packed conversion with identity should just copy.
 #[test]
 fn convert_buffer_identity() {
     let src = vec![1u8, 2, 3, 4, 5, 6];
-    let result = convert_buffer(
+    let result = convert_packed(
         &src,
         2,
         1,
@@ -114,11 +129,11 @@ fn convert_buffer_identity() {
     assert_eq!(result, src);
 }
 
-/// convert_buffer RGB8→RGBA8.
+/// Packed conversion RGB8→RGBA8.
 #[test]
 fn convert_buffer_rgb_to_rgba() {
     let src = vec![10, 20, 30, 40, 50, 60];
-    let result = convert_buffer(
+    let result = convert_packed(
         &src,
         2,
         1,

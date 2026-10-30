@@ -76,22 +76,10 @@ use crate::cms::{ColorPriority, RenderingIntent};
 /// Most display profiles only ship one LUT. See [`RenderingIntent`] docs for
 /// details on which profiles actually honor which intents.
 ///
-/// # Examples
 ///
-/// ```rust,ignore
-/// use zenpixels_convert::cms::{ColorPriority, RenderingIntent};
-/// use zenpixels_convert::cms_moxcms::transform_opts;
-///
-/// // Standard ICC workflow (JPEG, PNG, etc.)
-/// let opts = transform_opts(ColorPriority::PreferIcc, RenderingIntent::RelativeColorimetric);
-///
-/// // JPEG XL decode — trust CICP transfer characteristics
-/// let opts = transform_opts(ColorPriority::PreferCicp, RenderingIntent::RelativeColorimetric);
-///
-/// // Soft-proofing: simulate print appearance on screen
-/// let opts = transform_opts(ColorPriority::PreferIcc, RenderingIntent::AbsoluteColorimetric);
-/// ```
-pub fn transform_opts(priority: ColorPriority, intent: RenderingIntent) -> TransformOptions {
+/// Crate-internal: moxcms types stay out of the public API so the moxcms
+/// version range can change without a zenpixels-convert release.
+pub(crate) fn transform_opts(priority: ColorPriority, intent: RenderingIntent) -> TransformOptions {
     TransformOptions {
         rendering_intent: match intent {
             RenderingIntent::Perceptual => moxcms::RenderingIntent::Perceptual,
@@ -104,42 +92,6 @@ pub fn transform_opts(priority: ColorPriority, intent: RenderingIntent) -> Trans
         interpolation_method: InterpolationMethod::Tetrahedral,
         ..Default::default()
     }
-}
-
-/// Standard moxcms transform options for ICC LUT transforms.
-///
-/// # Deprecated
-///
-/// Use [`transform_opts`]`(`[`ColorPriority::PreferIcc`]`,
-/// `[`RenderingIntent::RelativeColorimetric`]`)` instead, which lets you
-/// specify the rendering intent explicitly.
-#[deprecated(
-    since = "0.2.3",
-    note = "use transform_opts(ColorPriority::PreferIcc, RenderingIntent::RelativeColorimetric) instead"
-)]
-pub fn lut_transform_opts() -> TransformOptions {
-    transform_opts(
-        ColorPriority::PreferIcc,
-        RenderingIntent::RelativeColorimetric,
-    )
-}
-
-/// Standard moxcms transform options for CICP-native formats (e.g. JXL, HEIF).
-///
-/// # Deprecated
-///
-/// Use [`transform_opts`]`(`[`ColorPriority::PreferCicp`]`,
-/// `[`RenderingIntent::RelativeColorimetric`]`)` instead, which lets you
-/// specify the rendering intent explicitly.
-#[deprecated(
-    since = "0.2.3",
-    note = "use transform_opts(ColorPriority::PreferCicp, RenderingIntent::RelativeColorimetric) instead"
-)]
-pub fn cicp_transform_opts() -> TransformOptions {
-    transform_opts(
-        ColorPriority::PreferCicp,
-        RenderingIntent::RelativeColorimetric,
-    )
 }
 
 #[allow(deprecated)]
@@ -1027,7 +979,7 @@ fn identify_by_colorants(profile: &ColorProfile) -> Option<Cicp> {
 
 /// Error from the moxcms CMS backend.
 #[derive(Debug, Clone)]
-pub struct MoxCmsError(pub String);
+pub struct MoxCmsError(String);
 
 impl core::error::Error for MoxCmsError {}
 
