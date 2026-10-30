@@ -109,7 +109,7 @@ fn build_lut(tf: Transfer, n: usize) -> Vec<u16> {
 
 /// Reconstruct a value from a `curv` LUT the way an ICC CMS does: piecewise
 /// **linear interpolation** between the two nearest u16 samples in code space,
-/// output renormalized to [0,1]. This is the analytic model of what lcms2 must
+/// output renormalized to \[0, 1\]. This is the analytic model of what lcms2 must
 /// do internally — if it predicts lcms2's measured error, the error source is
 /// the 1024-entry LUT approximation itself (inherent), not a CMS artifact.
 fn lut_reconstruct(lut: &[u16], x: f64) -> f64 {
@@ -294,13 +294,20 @@ fn region(x: f64) -> &'static str {
 
 fn run_case(name: &str, cicp: Cicp, tf: Transfer) {
     println!("\n================ {name} ================");
-    println!("  CICP: primaries={} transfer={} matrix={} full_range={}",
-        cicp.color_primaries, cicp.transfer_characteristics,
-        cicp.matrix_coefficients, cicp.full_range);
+    println!(
+        "  CICP: primaries={} transfer={} matrix={} full_range={}",
+        cicp.color_primaries,
+        cicp.transfer_characteristics,
+        cicp.matrix_coefficients,
+        cicp.full_range
+    );
 
     let icc = match synthesize_icc_for_cicp(cicp) {
         SynthesizedIcc::Profile(bytes) => {
-            println!("  synthesize_icc_for_cicp -> Profile ({} bytes)", bytes.len());
+            println!(
+                "  synthesize_icc_for_cicp -> Profile ({} bytes)",
+                bytes.len()
+            );
             bytes.into_owned()
         }
         other => {
@@ -339,7 +346,11 @@ fn run_case(name: &str, cicp: Cicp, tf: Transfer) {
                 }
                 let refv = tf.eval(ramp[bi] as f64);
                 let dec = y[bi] / white;
-                let rel = if refv > 1e-12 { (dec - refv).abs() / refv } else { 0.0 };
+                let rel = if refv > 1e-12 {
+                    (dec - refv).abs() / refv
+                } else {
+                    0.0
+                };
                 print!(" x={:.3}:{:.2}%", ramp[bi], rel * 100.0);
             }
             println!();
@@ -364,12 +375,19 @@ fn run_case(name: &str, cicp: Cicp, tf: Transfer) {
     // denser LUT is the lever). Also show 2048/4096 to size that lever.
     for n in [1024usize, 2048, 4096] {
         let lut = build_lut(tf, n);
-        let recon: Vec<f64> = ramp.iter().map(|&x| lut_reconstruct(&lut, x as f64)).collect();
+        let recon: Vec<f64> = ramp
+            .iter()
+            .map(|&x| lut_reconstruct(&lut, x as f64))
+            .collect();
         let s = compare(&ramp, &recon, tf, 1.0);
         println!(
             "  [analytic curv-LUT, {n} entries] max_abs={:.3e} @x={:.4} ({}) | max_rel(ref>=1e-3)={:.3e} @x={:.4} ({})",
-            s.max_abs, s.max_abs_x, region(s.max_abs_x),
-            s.max_rel_above_1e3, s.max_rel_above_1e3_x, region(s.max_rel_above_1e3_x),
+            s.max_abs,
+            s.max_abs_x,
+            region(s.max_abs_x),
+            s.max_rel_above_1e3,
+            s.max_rel_above_1e3_x,
+            region(s.max_rel_above_1e3_x),
         );
     }
 }
@@ -377,9 +395,16 @@ fn run_case(name: &str, cicp: Cicp, tf: Transfer) {
 fn print_stats(label: &str, s: &ErrStats) {
     println!(
         "  [{label}] max_abs={:.3e} @x={:.4} ({}) | max_rel={:.3e} @x={:.4} ({}, ref_lin={:.3e}) | max_rel(ref>=1e-3)={:.3e} @x={:.4} ({})",
-        s.max_abs, s.max_abs_x, region(s.max_abs_x),
-        s.max_rel, s.max_rel_x, region(s.max_rel_x), s.max_rel_ref,
-        s.max_rel_above_1e3, s.max_rel_above_1e3_x, region(s.max_rel_above_1e3_x),
+        s.max_abs,
+        s.max_abs_x,
+        region(s.max_abs_x),
+        s.max_rel,
+        s.max_rel_x,
+        region(s.max_rel_x),
+        s.max_rel_ref,
+        s.max_rel_above_1e3,
+        s.max_rel_above_1e3_x,
+        region(s.max_rel_above_1e3_x),
     );
 }
 
@@ -391,9 +416,8 @@ fn report_trc_kind(icc: &[u8]) {
         println!("  [trc] profile too small to inspect");
         return;
     }
-    let rd_u32 = |o: usize| -> u32 {
-        u32::from_be_bytes([icc[o], icc[o + 1], icc[o + 2], icc[o + 3]])
-    };
+    let rd_u32 =
+        |o: usize| -> u32 { u32::from_be_bytes([icc[o], icc[o + 1], icc[o + 2], icc[o + 3]]) };
     let count = rd_u32(128) as usize;
     let mut found = None;
     for i in 0..count {
@@ -413,11 +437,16 @@ fn report_trc_kind(icc: &[u8]) {
             let typ = &icc[off..off + 4];
             if typ == b"curv" {
                 let n = rd_u32(off + 8) as usize;
-                println!("  [trc] rTRC = curv LUT, {n} entries, tag {size} bytes  (the baked EOTF)");
+                println!(
+                    "  [trc] rTRC = curv LUT, {n} entries, tag {size} bytes  (the baked EOTF)"
+                );
             } else if typ == b"para" {
                 println!("  [trc] rTRC = parametric (para) — not a LUT");
             } else {
-                println!("  [trc] rTRC = type {:?}", core::str::from_utf8(typ).unwrap_or("????"));
+                println!(
+                    "  [trc] rTRC = type {:?}",
+                    core::str::from_utf8(typ).unwrap_or("????")
+                );
             }
         }
         _ => println!("  [trc] rTRC tag not located (diagnostic only)"),
@@ -431,9 +460,21 @@ fn main() {
     println!("expected from 16-bit LUT output quantization and reported separately.");
 
     // PQ / BT.2020 (HDR10): primaries=9, transfer=16, matrix=0, narrow=false.
-    run_case("PQ  (BT.2020/SMPTE2084, HDR10)", Cicp::new(9, 16, 0, false), Transfer::Pq);
+    run_case(
+        "PQ  (BT.2020/SMPTE2084, HDR10)",
+        Cicp::new(9, 16, 0, false),
+        Transfer::Pq,
+    );
     // HLG / BT.2020: transfer=18.
-    run_case("HLG (BT.2020/ARIB-STD-B67)", Cicp::new(9, 18, 0, false), Transfer::Hlg);
+    run_case(
+        "HLG (BT.2020/ARIB-STD-B67)",
+        Cicp::new(9, 18, 0, false),
+        Transfer::Hlg,
+    );
     // P3-PQ: primaries=12 (SMPTE RP431-2 / DCI-P3-D65), transfer=16.
-    run_case("P3-PQ (DisplayP3/SMPTE2084)", Cicp::new(12, 16, 0, false), Transfer::Pq);
+    run_case(
+        "P3-PQ (DisplayP3/SMPTE2084)",
+        Cicp::new(12, 16, 0, false),
+        Transfer::Pq,
+    );
 }
