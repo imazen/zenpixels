@@ -116,7 +116,7 @@ pub fn apply_matrix_row_rgba_f32(data: &mut [f32], width: usize, m: &GamutMatrix
 /// from chromaticity coordinates with Bradford chromatic adaptation when needed.
 /// Returns `None` if the primaries are the same or if either is `Unknown`.
 pub fn conversion_matrix(from: ColorPrimaries, to: ColorPrimaries) -> Option<GamutMatrix> {
-    if from as u8 == to as u8 {
+    if from == to {
         return None;
     }
     from.gamut_matrix_to(to)

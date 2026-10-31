@@ -111,9 +111,11 @@ linear-srgb = { version = "0.6.12", default-features = false, features = ["trans
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 garb = { version = "0.2.8", default-features = false, features = ["experimental"] }
-# No upper bound on archmage/magetypes: a graph holds one 0.9.x, so a capped
-# range would refuse every crate that needs a later 0.9 release. Neither crate
-# appears in this crate's public API.
+# Plain caret requirements for archmage/magetypes: `0.9.30` means
+# >=0.9.30, <0.10.0, and matches no prerelease. Cargo resolves one 0.9.x per
+# graph, so an extra cap inside 0.9 (such as `<=0.9.31-beta.1`) would refuse
+# every crate that needs a later 0.9 release. Neither crate appears in this
+# crate's public API.
 archmage = { version = "0.9.30", default-features = false }
 # Direct libm dep for the hdr-experimental Bt2446A / HdrToSdr scalar paths
 # (powf, logf, log2f, cosf, sinf). The crate is no_std and already pulled in

@@ -132,9 +132,7 @@ pub const fn find_by_primaries_transfer(
 ) -> Option<&'static KnownColorSpace> {
     let mut i = 0;
     while i < REGISTRY.len() {
-        if REGISTRY[i].primaries as u8 == primaries as u8
-            && REGISTRY[i].transfer as u8 == transfer as u8
-        {
+        if REGISTRY[i].primaries.same(primaries) && REGISTRY[i].transfer.same(transfer) {
             return Some(&REGISTRY[i]);
         }
         i += 1;
@@ -363,7 +361,7 @@ mod tests {
                 let a = &REGISTRY[i];
                 let b = &REGISTRY[j];
                 assert!(
-                    a.primaries as u8 != b.primaries as u8 || a.transfer as u8 != b.transfer as u8,
+                    a.primaries != b.primaries || a.transfer != b.transfer,
                     "duplicate registry entry: {:?} and {:?}",
                     a,
                     b
@@ -377,8 +375,8 @@ mod tests {
         for entry in REGISTRY {
             if let Some((cp, tc)) = entry.cicp {
                 let found = find_by_cicp(cp, tc).unwrap();
-                assert_eq!(found.primaries as u8, entry.primaries as u8);
-                assert_eq!(found.transfer as u8, entry.transfer as u8);
+                assert_eq!(found.primaries, entry.primaries);
+                assert_eq!(found.transfer, entry.transfer);
             }
         }
     }
@@ -388,8 +386,8 @@ mod tests {
         for entry in REGISTRY {
             if let Some(named) = entry.named {
                 let found = find_by_named(named).unwrap();
-                assert_eq!(found.primaries as u8, entry.primaries as u8);
-                assert_eq!(found.transfer as u8, entry.transfer as u8);
+                assert_eq!(found.primaries, entry.primaries);
+                assert_eq!(found.transfer, entry.transfer);
             }
         }
     }
@@ -398,8 +396,8 @@ mod tests {
     fn primaries_transfer_lookup_roundtrips() {
         for entry in REGISTRY {
             let found = find_by_primaries_transfer(entry.primaries, entry.transfer).unwrap();
-            assert_eq!(found.primaries as u8, entry.primaries as u8);
-            assert_eq!(found.transfer as u8, entry.transfer as u8);
+            assert_eq!(found.primaries, entry.primaries);
+            assert_eq!(found.transfer, entry.transfer);
         }
     }
 

@@ -55,9 +55,12 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
 - `ChannelType`, `ChannelLayout` and `PixelFormat` have no integer values: no
   `repr`, no explicit discriminants, and `as` casts no longer compile (a hidden
   uninhabited variant on the first two; `PixelFormat::Generic` on the third).
-  Later minor releases can add data-carrying variants. The other descriptor
-  enums drop `repr(u8)` but keep their values; `Orientation` keeps its EXIF
-  `repr(u8)`. (2ab68259)
+  Later minor releases can add data-carrying variants. `AlphaMode`,
+  `TransferFunction`, `ColorPrimaries`, `SignalRange` and `ColorModel` get the
+  same hidden variant, so casts on them stop compiling too; use
+  `to_cicp`/`from_cicp` for numeric transfer and primaries codes, or a mapping
+  of your own for stored values. Only `Orientation` keeps numeric values
+  (`repr(u8)`, the EXIF codes). (2ab68259)
 - Remove `ByteOrder` and `PixelFormat::byte_order` /
   `PixelDescriptor::byte_order`. They described RGB/BGR channel order, not
   sample endianness, and duplicated `ChannelLayout::Bgra`. Use
@@ -78,8 +81,9 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   conversion methods), `icc_profiles::{ADOBE_RGB_V4, PROPHOTO_V4}`, and every
   public moxcms type: `cms_moxcms::{transform_opts, lut_transform_opts,
   cicp_transform_opts}`. `MoxCmsError`'s field is private. (6e4c7ede)
-- archmage/magetypes requirements are `0.9.30` without an upper bound; the
-  previous `<=0.9.31-beta.1` cap excluded later 0.9 releases. (e5112d5f)
+- archmage/magetypes requirements are plain caret `0.9.30` (>=0.9.30,
+  <0.10.0, no prereleases); the previous `<=0.9.31-beta.1` cap excluded later
+  0.9 releases. (e5112d5f)
 
 ## [0.2.17] — unreleased bridge
 

@@ -420,7 +420,39 @@ that it consumes these zenpixels types.
 | Existing `Pixel`, extension traits, errors | Same implementation/match/result contract | No sealing, supertrait changes or cosmetic error consolidation |
 
 ByteOrder matches in zencodec EXIF and zentiff are unrelated byte-order enums;
-they should not be changed. New extension methods on open traits need provided
+they should not be changed.
+
+Descriptor enums no longer cast to integers in 0.3.1. Code that stored or
+hashed `as u8` values must spell out the 0.2 values it relied on, so persisted
+data keeps its meaning:
+
+| Enum | 0.2 values |
+|---|---|
+| `TransferFunction` | Linear 0, Srgb 1, Bt709 2, Pq 3, Hlg 4, Gamma22 5, Unknown 255 |
+| `ColorPrimaries` | Bt709 1, Bt2020 9, DisplayP3 12, AdobeRgb 13, Unknown 255 |
+| `AlphaMode` | Undefined 1, Straight 2, Premultiplied 3, Opaque 4 |
+| `SignalRange` | Full 0, Narrow 1 (the inverse of CICP's `video_full_range_flag`) |
+| `ColorModel` | Gray 0, Rgb 1, YCbCr 2, Oklab 3, Cmyk 4 |
+| `ChannelLayout` | Gray 1, GrayAlpha 2, Rgb 3, Rgba 4, Bgra 5, Oklab 6, OklabA 7, Cmyk 8 |
+| `ChannelType` | U8 1, U16 2, F32 4, F16 5, I8 6, I16 7, U32 8, I32 9, U64 10, I64 11, F64 12 |
+
+```rust
+// `_` is required (the enum is non_exhaustive). It folds any later variant
+// into Unknown's code; give a new variant its own code when one appears.
+const fn transfer_code(t: TransferFunction) -> u8 {
+    match t {
+        TransferFunction::Linear => 0,
+        TransferFunction::Srgb => 1,
+        TransferFunction::Bt709 => 2,
+        TransferFunction::Pq => 3,
+        TransferFunction::Hlg => 4,
+        TransferFunction::Gamma22 => 5,
+        _ => 255,
+    }
+}
+```
+
+`Orientation` still casts: its values are the EXIF codes. New extension methods on open traits need provided
 implementations or a separately introduced interface. Hide compatibility modules
 from the main docs tree only where canonical items remain easy to find.
 
@@ -488,6 +520,10 @@ been certified. The [inventory snapshot](audit-2026-09-27/README.md) and
 | `zen/zencodec/src/traits/decoder.rs:54`, `dyn_decoding.rs:165` | Existing fallible lending batches; keep/adapt rather than duplicate |
 | `zen/zencodec/src/traits/encoder.rs:131`, `dyn_encoding.rs:75`, `sink.rs:81` | Add source-error-preserving pull encoding on both static/dynamic surfaces; preserve frame color in sink path |
 | `zen/hdr-anchor-vis/src/main.rs:114,125` | Checked white, raw convert_buffer → views/prepared conversion |
+| `zen/zenanalyze/src/versioning.rs:235–237` | `descriptor_hash_of` hashes `transfer`, `primaries` and `alpha` cast to `u8`; replace the casts with explicit maps of the 0.2 values above, or every persisted descriptor digest changes |
+| `zen/zqi/tools/imij-wasm/src/main.rs:178,185`, `fixtures.rs:326` | `layout() as u8` / `channel_type() as u8` compared against local copies of the values; match on the enums |
+| `zen/zqi/imij/src/codec/decode.rs:581` | `MasteringDisplay { .. }` literal → `MasteringDisplay::new` (now `#[non_exhaustive]`) |
+| `zen/zencodec/zencodec-testkit/src/lib.rs` | `ColorAuthority` match needs a `_` arm (now `#[non_exhaustive]`) |
 | `hdr-corpus-convert/src/codec.rs:145–150` | Remove allow(deprecated); existing CllMeasure::measure_max; verify anchor metadata |
 | `zen/imazen-26/tools/corpus-thumbs/src/main.rs:133`, `tools/resave-colour-check/src/main.rs:94` | Prepared row worker |
 | `coefficient/src/analysis/feature_extract.rs:804,810`, `src/auto_encode/dispatch.rs:63,115`, `encoders.rs:22` | Keep actual zenpixels slice boundaries; test source color reaching analysis/encode |

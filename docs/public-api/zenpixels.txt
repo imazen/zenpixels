@@ -255,10 +255,10 @@ pub fn color::ColorOrigin::from_icc(impl core::convert::Into<alloc::sync::Arc<[u
 pub fn color::ColorOrigin::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
 pub fn color::ColorOrigin::with_color_authority(self, color::ColorAuthority) -> Self
 pub mod descriptor
-pub descriptor::AlphaMode::Opaque = 4
-pub descriptor::AlphaMode::Premultiplied = 3
-pub descriptor::AlphaMode::Straight = 2
-pub descriptor::AlphaMode::Undefined = 1
+pub descriptor::AlphaMode::Opaque
+pub descriptor::AlphaMode::Premultiplied
+pub descriptor::AlphaMode::Straight
+pub descriptor::AlphaMode::Undefined
 pub const fn descriptor::AlphaMode::has_alpha(self) -> bool [also: (root)]
 pub descriptor::ChannelLayout::Bgra
 pub descriptor::ChannelLayout::Cmyk
@@ -288,17 +288,17 @@ pub const fn descriptor::ChannelType::is_float(self) -> bool [also: (root)]
 pub const fn descriptor::ChannelType::is_integer(self) -> bool [also: (root)]
 pub const fn descriptor::ChannelType::is_u16(self) -> bool [also: (root)]
 pub const fn descriptor::ChannelType::is_u8(self) -> bool [also: (root)]
-pub descriptor::ColorModel::Cmyk = 4
-pub descriptor::ColorModel::Gray = 0
-pub descriptor::ColorModel::Oklab = 3
-pub descriptor::ColorModel::Rgb = 1
-pub descriptor::ColorModel::YCbCr = 2
+pub descriptor::ColorModel::Cmyk
+pub descriptor::ColorModel::Gray
+pub descriptor::ColorModel::Oklab
+pub descriptor::ColorModel::Rgb
+pub descriptor::ColorModel::YCbCr
 pub const fn descriptor::ColorModel::color_channels(self) -> u8 [also: (root)]
-pub descriptor::ColorPrimaries::AdobeRgb = 13
-pub descriptor::ColorPrimaries::Bt2020 = 9
-pub descriptor::ColorPrimaries::Bt709 = 1
-pub descriptor::ColorPrimaries::DisplayP3 = 12
-pub descriptor::ColorPrimaries::Unknown = 255
+pub descriptor::ColorPrimaries::AdobeRgb
+pub descriptor::ColorPrimaries::Bt2020
+pub descriptor::ColorPrimaries::Bt709
+pub descriptor::ColorPrimaries::DisplayP3
+pub descriptor::ColorPrimaries::Unknown
 pub const descriptor::ColorPrimaries::WHITE_D65: (f32, f32)
 pub const fn descriptor::ColorPrimaries::chromaticity(self) -> core::option::Option<((f32, f32), (f32, f32), (f32, f32))> [also: (root)]
 pub const fn descriptor::ColorPrimaries::contains(self, Self) -> bool [also: (root)]
@@ -342,15 +342,15 @@ pub const fn descriptor::PixelFormat::has_alpha_bytes(self) -> bool [also: (root
 pub const fn descriptor::PixelFormat::is_grayscale(self) -> bool [also: (root)]
 pub const fn descriptor::PixelFormat::layout(self) -> descriptor::ChannelLayout [also: (root)]
 pub const fn descriptor::PixelFormat::name(self) -> &'static str [also: (root)]
-pub descriptor::SignalRange::Full = 0
-pub descriptor::SignalRange::Narrow = 1
-pub descriptor::TransferFunction::Bt709 = 2
-pub descriptor::TransferFunction::Gamma22 = 5
-pub descriptor::TransferFunction::Hlg = 4
-pub descriptor::TransferFunction::Linear = 0
-pub descriptor::TransferFunction::Pq = 3
-pub descriptor::TransferFunction::Srgb = 1
-pub descriptor::TransferFunction::Unknown = 255
+pub descriptor::SignalRange::Full
+pub descriptor::SignalRange::Narrow
+pub descriptor::TransferFunction::Bt709
+pub descriptor::TransferFunction::Gamma22
+pub descriptor::TransferFunction::Hlg
+pub descriptor::TransferFunction::Linear
+pub descriptor::TransferFunction::Pq
+pub descriptor::TransferFunction::Srgb
+pub descriptor::TransferFunction::Unknown
 pub const fn descriptor::TransferFunction::from_cicp(u8) -> core::option::Option<Self> [also: (root)]
 pub fn descriptor::TransferFunction::reference_white_nits(&self) -> f32
 pub const fn descriptor::TransferFunction::to_cicp(self) -> core::option::Option<u8> [also: (root)]
@@ -573,10 +573,10 @@ pub const fn sample::SampleEncoding::code_bits(self) -> u8
 pub const fn sample::SampleEncoding::new(descriptor::ChannelType, u8, u8) -> core::result::Result<Self, sample::SampleEncodingError>
 pub const fn sample::SampleEncoding::storage(self) -> descriptor::ChannelType
 #[non_exhaustive] pub enum AlphaMode [also: descriptor]
-pub AlphaMode::Opaque = 4
-pub AlphaMode::Premultiplied = 3
-pub AlphaMode::Straight = 2
-pub AlphaMode::Undefined = 1
+pub AlphaMode::Opaque
+pub AlphaMode::Premultiplied
+pub AlphaMode::Straight
+pub AlphaMode::Undefined
 #[non_exhaustive] pub enum AlphaPolicy [also: policy]
 pub AlphaPolicy::CompositeOnto
 pub AlphaPolicy::CompositeOnto::b: u8
@@ -618,17 +618,17 @@ pub ChannelType::U8
 pub ColorAuthority::Cicp
 pub ColorAuthority::Icc
 #[non_exhaustive] pub enum ColorModel [also: descriptor]
-pub ColorModel::Cmyk = 4
-pub ColorModel::Gray = 0
-pub ColorModel::Oklab = 3
-pub ColorModel::Rgb = 1
-pub ColorModel::YCbCr = 2
+pub ColorModel::Cmyk
+pub ColorModel::Gray
+pub ColorModel::Oklab
+pub ColorModel::Rgb
+pub ColorModel::YCbCr
 #[non_exhaustive] pub enum ColorPrimaries [also: descriptor]
-pub ColorPrimaries::AdobeRgb = 13
-pub ColorPrimaries::Bt2020 = 9
-pub ColorPrimaries::Bt709 = 1
-pub ColorPrimaries::DisplayP3 = 12
-pub ColorPrimaries::Unknown = 255
+pub ColorPrimaries::AdobeRgb
+pub ColorPrimaries::Bt2020
+pub ColorPrimaries::Bt709
+pub ColorPrimaries::DisplayP3
+pub ColorPrimaries::Unknown
 pub const descriptor::ColorPrimaries::WHITE_D65: (f32, f32)
 #[non_exhaustive] pub enum ColorProfileSource<'a> [also: color]
 pub ColorProfileSource::Cicp(cicp::Cicp)
@@ -705,16 +705,16 @@ pub PixelFormat::RgbaF16
 pub PixelFormat::RgbaF32
 pub PixelFormat::Rgbx8
 #[non_exhaustive] pub enum SignalRange [also: descriptor]
-pub SignalRange::Full = 0
-pub SignalRange::Narrow = 1
+pub SignalRange::Full
+pub SignalRange::Narrow
 #[non_exhaustive] pub enum TransferFunction [also: descriptor]
-pub TransferFunction::Bt709 = 2
-pub TransferFunction::Gamma22 = 5
-pub TransferFunction::Hlg = 4
-pub TransferFunction::Linear = 0
-pub TransferFunction::Pq = 3
-pub TransferFunction::Srgb = 1
-pub TransferFunction::Unknown = 255
+pub TransferFunction::Bt709
+pub TransferFunction::Gamma22
+pub TransferFunction::Hlg
+pub TransferFunction::Linear
+pub TransferFunction::Pq
+pub TransferFunction::Srgb
+pub TransferFunction::Unknown
 pub fn descriptor::TransferFunction::reference_white_nits(&self) -> f32
 #[repr(C)] pub struct Bgrx [also: buffer]
 pub Bgrx::b: u8

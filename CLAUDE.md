@@ -25,14 +25,15 @@ zenpixels is the foundational crate of the zen ecosystem — zencodec, zenpipe, 
 ### Keeping 0.3 extensible without a breaking release
 
 - **Descriptor-family enums have no integer values.** `ChannelType`,
-  `ChannelLayout` and `PixelFormat` carry no `repr` and no explicit
-  discriminants. The first two have a hidden uninhabited `__Reserved` variant
-  and `PixelFormat` has the data-carrying `Generic`, so `as` casts do not
-  compile and data-carrying variants stay additive. Never add a `repr`,
-  explicit discriminants or a cast-based table index to them. Other
-  descriptor enums dropped `repr(u8)` but keep their values, because removing
-  values would silently change existing casts. `Orientation` keeps
-  `repr(u8)`: its values are the EXIF codes.
+  `ChannelLayout`, `AlphaMode`, `TransferFunction`, `ColorPrimaries`,
+  `SignalRange` and `ColorModel` carry a hidden uninhabited `__Reserved`
+  variant, and `PixelFormat` has the data-carrying `Generic`. None has a
+  `repr` or explicit discriminants, so `as` casts do not compile and
+  data-carrying variants stay additive. Dropping `repr` alone is not enough:
+  a fieldless enum still casts. Never add a `repr`, explicit discriminants or
+  a cast-based table index to them; numeric codes go through explicit
+  functions such as `to_cicp`. `Orientation` alone keeps `repr(u8)`: its
+  values are the EXIF codes, a standard that will not gain payloads.
 - **Named `PixelFormat` variants are the canonical processing set.** Native
   or rarely used sample-type × layout combinations go through
   `PixelFormat::Generic(GenericFormat)`, never a new named variant per
@@ -47,8 +48,9 @@ zenpixels is the foundational crate of the zen ecosystem — zencodec, zenpipe, 
   appears throughout the public API, so whereat stays on 0.1.x for the life
   of 0.3. moxcms types never appear in the public API; keep the moxcms
   adapter's options and errors crate-owned. A dependency that is not in the
-  public API (archmage, magetypes) gets no upper bound, since one capped
-  0.9.x range refuses every crate that needs a later 0.9 release.
+  public API (archmage, magetypes) gets a plain caret requirement such as
+  `0.9.30` (>=0.9.30, <0.10.0) and no extra cap inside 0.9, since one capped
+  range refuses every crate that needs a later 0.9 release.
 - **The converter's core floor moves with its use of new core API.** A
   zenpixels-convert 0.3.x release that calls a core item added after 0.3.1
   raises its `zenpixels` lower bound in the same release.

@@ -18,6 +18,41 @@ mod reserved {
     pub enum Reserved {}
 }
 
+/// Descriptor enums have no integer values, so `as` casts must not compile.
+///
+/// ```compile_fail,E0605
+/// let _ = zenpixels::ChannelType::U8 as u8;
+/// ```
+/// ```compile_fail,E0605
+/// let _ = zenpixels::ChannelLayout::Rgb as u8;
+/// ```
+/// ```compile_fail,E0605
+/// let _ = zenpixels::AlphaMode::Straight as u8;
+/// ```
+/// ```compile_fail,E0605
+/// let _ = zenpixels::TransferFunction::Srgb as u8;
+/// ```
+/// ```compile_fail,E0605
+/// let _ = zenpixels::ColorPrimaries::Bt709 as u8;
+/// ```
+/// ```compile_fail,E0605
+/// let _ = zenpixels::SignalRange::Full as u8;
+/// ```
+/// ```compile_fail,E0605
+/// let _ = zenpixels::ColorModel::Rgb as u8;
+/// ```
+/// ```compile_fail,E0605
+/// let _ = zenpixels::PixelFormat::Rgb8 as u8;
+/// ```
+///
+/// `Orientation` is the exception: its values are the EXIF codes.
+///
+/// ```
+/// assert_eq!(zenpixels::Orientation::Rotate90 as u8, 6);
+/// ```
+#[cfg(doctest)]
+struct DescriptorEnumsDoNotCast;
+
 // ---------------------------------------------------------------------------
 // Channel type
 // ---------------------------------------------------------------------------
@@ -256,17 +291,22 @@ impl fmt::Display for ChannelLayout {
 /// Wrapped in `Option<AlphaMode>` on [`PixelDescriptor`]: `None` means no
 /// alpha channel exists, while `Some(AlphaMode::Straight)` etc. describe
 /// the semantics of a present alpha channel.
+///
+/// Variants have no stable integer value; match on them or use the
+/// accessors. The type may gain data-carrying variants in a minor release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AlphaMode {
     /// Alpha bytes exist but values are undefined padding (RGBX, BGRX).
-    Undefined = 1,
+    Undefined,
     /// Straight (unassociated) alpha.
-    Straight = 2,
+    Straight,
     /// Premultiplied (associated) alpha.
-    Premultiplied = 3,
+    Premultiplied,
     /// Alpha channel present, all values fully opaque.
-    Opaque = 4,
+    Opaque,
+    #[doc(hidden)]
+    __Reserved(reserved::Reserved),
 }
 
 impl AlphaMode {
@@ -284,6 +324,7 @@ impl fmt::Display for AlphaMode {
             Self::Straight => f.write_str("straight"),
             Self::Premultiplied => f.write_str("premultiplied"),
             Self::Opaque => f.write_str("opaque"),
+            Self::__Reserved(never) => match *never {},
         }
     }
 }
@@ -301,17 +342,20 @@ impl fmt::Display for AlphaMode {
 ///
 /// Discriminant values are internal — use [`from_cicp()`](Self::from_cicp) /
 /// [`to_cicp()`](Self::to_cicp) for CICP mapping.
+///
+/// Variants have no stable integer value; match on them or use the
+/// accessors. The type may gain data-carrying variants in a minor release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TransferFunction {
     /// Linear light (gamma 1.0).
-    Linear = 0,
+    Linear,
     /// sRGB transfer curve (IEC 61966-2-1).
-    Srgb = 1,
+    Srgb,
     /// BT.709 transfer curve.
-    Bt709 = 2,
+    Bt709,
     /// Perceptual Quantizer (SMPTE ST 2084, HDR10).
-    Pq = 3,
+    Pq,
     /// Adobe RGB (1998) power-law gamma, nominally 2.2 (exactly 563/256).
     ///
     /// The Adobe RGB 1998 encoding spec (§4.3.4.2) defines pure gamma
@@ -327,9 +371,9 @@ pub enum TransferFunction {
     /// deliberately NOT normalized to this variant — they fall through to
     /// full CMS so their exact encoded curve is honored. See
     /// `scripts/icc-gen/src/main.rs` for the identification policy.
-    Gamma22 = 5,
+    Gamma22,
     /// Hybrid Log-Gamma (CICP 18, ARIB STD-B67). BT.2100 HDR.
-    Hlg = 4,
+    Hlg,
     // ── DO NOT REMOVE THESE COMMENTS ────────────────────────────────
     // Deferred / removed transfer functions — not yet added or
     // deliberately excluded. Profiles using these fall through to a
@@ -363,10 +407,26 @@ pub enum TransferFunction {
     // than Unknown — it gives callers false confidence.
     // ────────────────────────────────────────────────────────────────
     /// Transfer function is not known.
-    Unknown = 255,
+    Unknown,
+    #[doc(hidden)]
+    __Reserved(reserved::Reserved),
 }
 
 impl TransferFunction {
+    /// Variant equality usable in `const fn`, where `==` is unavailable.
+    pub(crate) const fn same(self, other: Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::Linear, Self::Linear)
+                | (Self::Srgb, Self::Srgb)
+                | (Self::Bt709, Self::Bt709)
+                | (Self::Pq, Self::Pq)
+                | (Self::Gamma22, Self::Gamma22)
+                | (Self::Hlg, Self::Hlg)
+                | (Self::Unknown, Self::Unknown)
+        )
+    }
+
     /// Map CICP `transfer_characteristics` code to a [`TransferFunction`].
     #[inline]
     pub const fn from_cicp(tc: u8) -> Option<Self> {
@@ -437,20 +497,23 @@ impl fmt::Display for TransferFunction {
 /// Each variant is a complete "named recipe" — primaries and white point
 /// are an inseparable pair (following CICP convention). Use
 /// [`from_cicp()`](Self::from_cicp) / [`to_cicp()`](Self::to_cicp) for
-/// CICP mapping. Discriminant values are internal.
+/// CICP mapping.
+///
+/// Variants have no stable integer value; match on them or use the
+/// accessors. The type may gain data-carrying variants in a minor release.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ColorPrimaries {
     /// BT.709 / sRGB (CICP 1). White point: D65.
     #[default]
-    Bt709 = 1,
+    Bt709,
     /// BT.2020 / BT.2100 (CICP 9). Wide gamut for HDR. White point: D65.
-    Bt2020 = 9,
+    Bt2020,
     /// Display P3 (CICP 12, SMPTE EG 432-1). Apple ecosystem.
     /// Same RGB primaries as DCI-P3, white point: D65.
-    DisplayP3 = 12,
+    DisplayP3,
     /// Adobe RGB (1998). Wide gamut. White point: D65.
-    AdobeRgb = 13,
+    AdobeRgb,
     // ── DO NOT REMOVE THESE COMMENTS ────────────────────────────────
     // Deferred / removed primaries — not yet added or deliberately
     // excluded. ICC profiles using these fall through to a full CMS.
@@ -507,10 +570,24 @@ pub enum ColorPrimaries {
     // than Unknown — it gives callers false confidence.
     // ────────────────────────────────────────────────────────────────
     /// Primaries not known.
-    Unknown = 255,
+    Unknown,
+    #[doc(hidden)]
+    __Reserved(reserved::Reserved),
 }
 
 impl ColorPrimaries {
+    /// Variant equality usable in `const fn`, where `==` is unavailable.
+    pub(crate) const fn same(self, other: Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::Bt709, Self::Bt709)
+                | (Self::Bt2020, Self::Bt2020)
+                | (Self::DisplayP3, Self::DisplayP3)
+                | (Self::AdobeRgb, Self::AdobeRgb)
+                | (Self::Unknown, Self::Unknown)
+        )
+    }
+
     /// D65 white point (BT.709, BT.2020, Display P3, Adobe RGB).
     pub const WHITE_D65: (f32, f32) = (0.3127, 0.3290);
     // D50 white point value preserved for reference: (0.3457, 0.3585).
@@ -670,16 +747,21 @@ impl fmt::Display for ColorPrimaries {
 /// channel-type changes (including U8↔U16) until range-aware kernels exist.
 /// Full-range widening by 257 would map narrow U8 white 235 to 60395 rather than
 /// the correct U16 anchor 60160. Full-range U8↔U16 conversions remain supported.
+///
+/// Variants have no stable integer value; match on them or use the
+/// accessors. The type may gain data-carrying variants in a minor release.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SignalRange {
     /// Full range: 0 – 2^N−1 (0–255 for 8-bit, 0–65535 for 16-bit).
     #[default]
-    Full = 0,
+    Full,
     /// Narrow (limited/studio) range: 16–235 luma applied to all RGB/gray
     /// channels, scaled by 2^(N−8) at higher depths — see the type-level
     /// docs for the full table, excursion semantics, and conversion rules.
-    Narrow = 1,
+    Narrow,
+    #[doc(hidden)]
+    __Reserved(reserved::Reserved),
 }
 
 impl fmt::Display for SignalRange {
@@ -688,7 +770,7 @@ impl fmt::Display for SignalRange {
         match self {
             Self::Full => f.write_str("full"),
             Self::Narrow => f.write_str("narrow"),
-            _ => write!(f, "SignalRange({})", *self as u8),
+            Self::__Reserved(never) => match *never {},
         }
     }
 }
@@ -1450,21 +1532,26 @@ impl fmt::Display for PixelDescriptor {
 // ---------------------------------------------------------------------------
 
 /// What the channels represent, independent of channel count or channel order.
+///
+/// Variants have no stable integer value; match on them or use the
+/// accessors. The type may gain data-carrying variants in a minor release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ColorModel {
     /// Single grayscale channel.
-    Gray = 0,
+    Gray,
     /// Red, green, blue (stored blue first for [`ChannelLayout::Bgra`]).
-    Rgb = 1,
+    Rgb,
     /// Luma + chroma (Y, Cb, Cr).
-    YCbCr = 2,
+    YCbCr,
     /// Oklab perceptual color space (L, a, b).
-    Oklab = 3,
+    Oklab,
     /// Cyan, magenta, yellow, key (black). Device-dependent printing color space.
     /// RGB primaries and transfer functions do not apply to CMYK data.
     /// Use a CMS with an ICC profile for CMYK↔RGB conversion.
-    Cmyk = 4,
+    Cmyk,
+    #[doc(hidden)]
+    __Reserved(reserved::Reserved),
 }
 
 impl ColorModel {
@@ -1489,7 +1576,7 @@ impl fmt::Display for ColorModel {
             Self::YCbCr => f.write_str("YCbCr"),
             Self::Oklab => f.write_str("Oklab"),
             Self::Cmyk => f.write_str("CMYK"),
-            _ => write!(f, "ColorModel({})", *self as u8),
+            Self::__Reserved(never) => match *never {},
         }
     }
 }
