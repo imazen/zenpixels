@@ -151,7 +151,7 @@ zenpixels = { workspace = true, features = ["planar", "imgref"] }
 # features, imazen/zenpixels#40). Dropping `cms-moxcms` here would silently
 # remove those gates from CI.
 zenpixels-convert = { path = ".", features = ["pipeline", "imgref", "cms-moxcms"] }
-zenbench = { version = "0.1.2"}
+zenbench = { version = "0.1.11" }
 # DEV-only: lets benches/kernel_tiers.rs disable the baseline SIMD token (NEON
 # on aarch64) so the "scalar" arm is real. Feature unification applies this to
 # test/bench builds only, so consumers are unaffected.
@@ -185,6 +185,11 @@ required-features = ["cms-moxcms"]
 [[bench]]
 name = "bench_premul_u16"
 path = "benches/bench_premul_u16.rs"
+harness = false
+
+[[bench]]
+name = "bench_row_alignment"
+path = "benches/bench_row_alignment.rs"
 harness = false
 
 [[bench]]
