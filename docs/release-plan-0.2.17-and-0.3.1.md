@@ -331,6 +331,7 @@ the `measure_robust` → `measure` rename with the deprecated alias.
 | zenpipe/zencodecs | five `adapt_for_encode*` → `*_cow`; `gainmap.rs:108` → `CllMeasure::measure_max` + `hdr-experimental` on its zenpixels-convert dep |
 | zencodec | `info.rs:374` `from_icc_and_cicp` → `from_icc`/`from_cicp` per authority (the review notes this call is also where the ICC/CICP authority conflict lives) |
 | zenmetrics | free `convert_row` ×5 → `plan.convert_row`; `zenmetrics-cli/decode.rs:344` `convert_rows` → `convert_slice_into` |
+| zenmetrics (planar, found 2026-10-31) | `PlaneLayout` from the removed `planar` module in zenmetrics-abstractions `input.rs` (public `Planes`/`PlanarFormat`), zenmetrics-browser and vmaf `metric.rs`; its `>=0.2.11, <0.4.0` requirement admits 0.3.1, so cap it at `<0.3` or port before 0.3.1 publishes (`planar-inventory.md` §3) |
 | zensim (picker-prep bins) | `convert_rows` ×2 → `convert_slice_into` |
 | zenavif | `examples/drift_reencode.rs:297` → `convert_slice_into` |
 | hdr-anchor-vis | `convert_buffer` → `PixelBuffer::convert_to`/`convert_into` |

@@ -53,6 +53,84 @@ Gaps and proposals:
   with a measured caller that pays for the copy.
 - Fix the stale `min_alignment` doc comment.
 
+### Stride across every SIMD target
+
+Checked 2026-10-31 against archmage's `token-registry.toml`, magetypes'
+backends, and the hosts named below.
+
+| Tier (archmage token) | Vector bytes | Where |
+|---|---|---|
+| x86-64 v1 / v2 (SSE2, SSE4.2) | 16 | every x86-64 |
+| x86-64 v3 (AVX2 + FMA) | 32 | Haswell+, Zen 1+ |
+| x86-64 v4 / v4x / AVX512-FP16 | 64 | Skylake-X+, Zen 4+ (Zen 4 double-pumps; dev's Zen 5 is full width) |
+| NEON / Arm64 v2 / v3 | 16 | every AArch64 we run (Neoverse-N1 on the Hetzner boxes has no SVE: `/proc/cpuinfo`, checked) |
+| wasm128 (+ relaxed) | 16 | browsers, zenwasm |
+| scalar | — | fallback |
+
+archmage has no SVE or RISC-V V tokens, so no scalable vectors are in play.
+
+Facts that settle the design:
+
+1. **Alignment is never a correctness requirement on any tier.** Every
+   magetypes backend loads and stores through `simd_storage::copy` from a
+   `&[T; N]` (`magetypes/src/simd/impls/x86_v3.rs:352`, `x86_v4.rs:51`,
+   `arm_neon.rs:37`, `wasm128.rs:30`): unaligned instructions on every ISA.
+   `forbid(unsafe_code)` crates cannot reach aligned-only intrinsics anyway.
+   Alignment only changes speed.
+2. **The cost is cache-line splits, and it grows with vector width.** Lines are
+   64 bytes on dev (Zen 5) and on Neoverse-N1 (`getconf LEVEL1_DCACHE_LINESIZE`,
+   both measured). macOS reports 128 bytes on Apple silicon (`hw.cachelinesize`;
+   Go's `x/sys/cpu` hard-codes 128 for darwin/arm64); not measured here, since
+   the mac host was unreachable. When a row starts at an offset that is not a
+   multiple of the vector width, 1 load in 4 straddles a 64-byte line for
+   16-byte vectors, 1 in 2 for 32-byte vectors, and every load for 64-byte
+   vectors (arithmetic, not a measurement; the cost per split has not been measured on
+   our hosts). So AVX-512 is the tier that needs aligned rows; NEON and wasm
+   barely care.
+3. **One number covers every tier: 64 bytes.** 16 and 32 divide it, so a
+   64-byte-aligned row start is aligned for every vector width above, and it
+   matches the x86 and Neoverse line size. 128 matters only for false sharing
+   between threads writing adjacent rows on Apple silicon, not for SIMD.
+4. **Power-of-two strides alias.** Rows whose stride is a large power of two
+   map to the same cache sets, and on x86 a load 4096 bytes away from a
+   pending store can falsely depend on it. rav1d rounds width up to 128 pixels
+   and then adds 64 bytes whenever the stride is a multiple of 1024
+   (`rav1d-safe/src/picture.rs:147-157`). RGBA8 at widths 256, 512, 1024, 2048
+   and 4096 gives exactly such strides.
+5. **GPU uploads need 256.** wgpu's `COPY_BYTES_PER_ROW_ALIGNMENT` is 256
+   (`wgpu-types` 30.0.1, `src/lib.rs:116`); buffers meant for texture copies
+   need that row pitch or a repack.
+
+What zenpixels does today: `new_simd_aligned(.., simd_align)` takes any power
+of two from the caller and uses stride `lcm(bpp, simd_align)`
+(`descriptor.rs:1306`). No crate outside zenpixels calls it (searched
+2026-10-31); codecs use `aligned_stride` (whole pixels, no SIMD padding). The
+lcm rule wastes space whenever bpp is not a power of two (computed as
+`round_up(width × bpp, lcm(bpp, 64))` against `round_up(width × bpp, 64)`):
+
+| Format, width, align 64 | Row bytes | lcm rule | Multiple of 64 only |
+|---|---|---|---|
+| RGB8, 100 px | 300 | 384 (22% padding) | 320 (6%) |
+| RGB16, 100 px | 600 | 768 (22%) | 640 (6%) |
+| RGB F32, 100 px | 1,200 | 1,344 (11%) | 1,216 (1%) |
+| RGB8, 1 px | 3 | 192 | 64 |
+| RGB8, 1920 px | 5,760 | 5,760 | 5,760 |
+
+Proposal, extending the stride relaxation above (stride a multiple of
+`min_alignment()` rather than of bpp):
+
+- SIMD-aligned rows use stride `round_up(row_bytes, 64)`, plus 64 when that is
+  a multiple of 4096 (rav1d's rule, at the page-aliasing size; a
+  1024 threshold would need measurement to justify). Because 64 is a multiple
+  of every channel size, the relaxed rule accepts it; the lcm goes away.
+- Keep the `simd_align` argument for GPU staging (256) and for callers with a
+  measured reason; document 64 as the value for CPU SIMD on every tier.
+- Do not pad rows so kernels can run past `width`: row accessors return exactly
+  `width` pixels, so padding cannot replace a tail loop without new API.
+- Measure before changing defaults: a zenbench pair (aligned vs offset-by-4
+  rows) for one load-bound kernel on v3, v4 (not on dev, per host rules), NEON
+  (zen-arm-xl) and wasm128, so the split cost per tier is known.
+
 ## 2. F16 CMYK
 
 Today `PixelFormat::from_parts(F16, Cmyk, None)` returns `None`: F16 CMYK
@@ -155,9 +233,12 @@ move the exact kernel into garb and have zenpixels-convert call it.
 ## 6. Planar
 
 State on the 0.3.1 branch: the owned `planar` module
-(`MultiPlaneImage`, `PlaneDescriptor`) is removed; a sweep on 2026-10-31
-found no remaining users in sibling crates (zenfilters' `PlaneSemantics` is
-its own type). What exists instead:
+(`MultiPlaneImage`, `PlaneDescriptor`, `PlaneLayout`) is removed. An earlier
+version of this section said no sibling crate still used it; that was wrong.
+zenmetrics `master` uses `PlaneLayout` in zenmetrics-abstractions (public
+`Planes`/`PlanarFormat`), zenmetrics-browser and vmaf, with a requirement
+(`>=0.2.11, <0.4.0`) that admits 0.3.1 (`planar-inventory.md` §3). What exists
+instead:
 
 - `sample::CodePlane`: a borrowed U8/U16 plane with storage, code depth, bit
   placement, byte stride and element step, so it covers planar, semi-planar
