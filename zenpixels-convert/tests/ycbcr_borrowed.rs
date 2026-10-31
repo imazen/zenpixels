@@ -123,6 +123,16 @@ fn bad_interpretation_and_output_fail_before_writes() {
     let p = CodePlane::from_u8(&samples, 2, 2, 2, enc).unwrap();
     let c = CodePlane::from_u8(&samples, 1, 1, 1, enc).unwrap();
     let color = Cicp::new(1, 13, 1, true);
+    assert_eq!(
+        *YcbcrToRgbF32::new([p, p, p], Sub::Mono, Site::Unknown, color)
+            .err()
+            .unwrap()
+            .error(),
+        YcbcrError::UnsupportedChroma {
+            subsampling: Sub::Mono,
+            siting: Site::Unknown
+        }
+    );
     for site in [Site::Unknown, Site::Left, Site::TopLeft] {
         assert_eq!(
             *YcbcrToRgbF32::new([p, c, c], Sub::Yuv420, site, color)

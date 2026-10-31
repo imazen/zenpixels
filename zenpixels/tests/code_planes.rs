@@ -1,6 +1,6 @@
 use zenpixels::{
     ChannelType,
-    sample::{CodePlane, CodePlaneError, SampleEncoding},
+    sample::{ChromaSiting, ChromaSubsampling, CodePlane, CodePlaneError, SampleEncoding},
 };
 
 #[test]
@@ -138,4 +138,19 @@ fn row_reads_match_single_codes_and_refuse_outside_the_plane() {
     let mut codes = [0u16; 2];
     u8_plane.read_codes(0, 0, &mut codes).unwrap();
     assert_eq!(codes, [0xab, 0xcd]);
+}
+
+#[test]
+fn chroma_size_rounds_up_and_mono_has_no_chroma() {
+    use ChromaSubsampling as S;
+    assert_eq!(S::Mono.chroma_size(5, 3), None);
+    assert_eq!(S::Yuv444.chroma_size(5, 3), Some((5, 3)));
+    assert_eq!(S::Yuv422.chroma_size(5, 3), Some((3, 3)));
+    assert_eq!(S::Yuv420.chroma_size(5, 3), Some((3, 2)));
+    assert_eq!(
+        S::Yuv420.chroma_size(u32::MAX, 1),
+        Some((u32::MAX / 2 + 1, 1))
+    );
+    assert_eq!(S::Yuv420.chroma_size(0, 0), Some((0, 0)));
+    assert_eq!(ChromaSiting::default(), ChromaSiting::Unknown);
 }

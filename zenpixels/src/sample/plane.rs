@@ -3,9 +3,14 @@ use crate::ChannelType;
 use core::fmt;
 
 /// Chroma resolution relative to the complete luma plane.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// This is the one definition for the zen crates: `zencodec::frame`
+/// re-exports it instead of defining its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ChromaSubsampling {
+    /// One luma plane and no chroma planes (AV1 `I400`, HEVC 4:0:0).
+    Mono,
     /// Equal horizontal and vertical resolution.
     Yuv444,
     /// Half horizontal resolution, rounded up at an odd edge.
@@ -14,15 +19,33 @@ pub enum ChromaSubsampling {
     Yuv420,
 }
 
-/// Declared chroma sample location. This is a fact, not a fallback policy.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+impl ChromaSubsampling {
+    /// Chroma plane size for a luma size, rounded up at odd edges; `None`
+    /// for [`Mono`](Self::Mono).
+    pub const fn chroma_size(self, width: u32, height: u32) -> Option<(u32, u32)> {
+        match self {
+            Self::Mono => None,
+            Self::Yuv444 => Some((width, height)),
+            Self::Yuv422 => Some((width.div_ceil(2), height)),
+            Self::Yuv420 => Some((width.div_ceil(2), height.div_ceil(2))),
+        }
+    }
+}
+
+/// Declared chroma sample location. This is a fact, not a fallback policy:
+/// `Unknown` is kept, never defaulted to `Center`. A conversion that needs
+/// siting refuses `Unknown` on a subsampled axis or takes it from the caller.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum ChromaSiting {
     /// The source did not establish a location.
+    #[default]
     Unknown,
-    /// Centered horizontally and vertically in the subsampled luma cell.
+    /// Centered horizontally and vertically in the subsampled luma cell
+    /// (JPEG style).
     Center,
-    /// Horizontally co-sited, vertically centered.
+    /// Horizontally co-sited with the left luma sample, vertically centered
+    /// between rows (MPEG-2 style 4:2:0).
     Left,
     /// Co-sited with the top-left luma sample.
     TopLeft,
