@@ -66,10 +66,18 @@ for the broader release work. This change does not complete that entire ledger.
 ## Native signed and wider samples
 
 TIFF selection and [IMIJ's sample model](https://github.com/imazen/zenpixels/issues/83)
-need I8, I16, U32, I32, U64, I64 and F64 storage. `ChannelType` and
-`PixelFormat` now describe those types in gray, gray-alpha, RGB and RGBA
-layouts. They use the existing type-erased `PixelBuffer` / `PixelSlice`
-interfaces; they do not introduce another buffer owner. Multi-byte samples
+need I8, I16, U32, I32, U64, I64 and F64 storage. `ChannelType` names
+those types. In gray, gray-alpha, RGB and RGBA layouts they form one
+`PixelFormat::Generic(GenericFormat)` variant rather than a named variant per
+combination: `PixelFormat::from_parts` returns it, the payload has private
+fields and no public constructor, and a combination with a named variant
+never resolves generically, so equality and hashing see one representation.
+`ChannelType`, `ChannelLayout` and `PixelFormat` have no integer values
+(a hidden uninhabited variant on the first two makes `as` casts a compile
+error), so a later minor release can add a channel count, per-channel roles
+or other data-carrying variants without a break. They use the existing
+type-erased `PixelBuffer` / `PixelSlice` interfaces; they do not introduce
+another buffer owner. Multi-byte samples
 are native-endian, as for the existing U16/F32 storage. A file adapter must
 decode the file byte order first.
 

@@ -61,7 +61,7 @@ pub use measure::{CllMeasure, LightLevelHistogram, LightLevelMethod};
 // HDR → SDR conversion now lives in the main `ConvertPlan` infrastructure:
 // build via [`crate::ConvertPlan::new_with_hdr_peak`] /
 // [`crate::ConvertPlan::new_with_hdr_config`] and run through the standard
-// [`crate::RowConverter`] / [`crate::convert_buffer`] entry points. The
+// [`crate::RowConverter`] / `PixelBuffer` conversion entry points. The
 // underlying `Bt2446A` and `SoftCompress` primitives stay public for advanced
 // callers that want to drive the math directly.
 #[cfg(feature = "hdr-experimental")]

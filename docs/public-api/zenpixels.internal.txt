@@ -10,13 +10,15 @@
 ## summary
 #
 #   inherent methods                           39
+#   enum variants                              14
 #   trait roster entries (type × trait)        40
 #
 # per-module pub lines:
+#   (root)                            7
 #   buffer                            3
 #   cicp                              2
 #   color                             6
-#   descriptor                       10
+#   descriptor                       17
 #   hdr                               1
 #   icc                               2
 #   orientation                       1
@@ -24,7 +26,7 @@
 #   policy                            5
 #   sample                            7
 
-## items (39 lines)
+## items (53 lines)
 
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
@@ -38,11 +40,11 @@ pub fn color::ColorProfileSource<'a>::assert_fields_are_eq(&self)
 pub fn color::ColorProvenance::assert_fields_are_eq(&self)
 pub fn color::NamedProfile::assert_fields_are_eq(&self)
 pub fn descriptor::AlphaMode::assert_fields_are_eq(&self)
-pub fn descriptor::ByteOrder::assert_fields_are_eq(&self)
 pub fn descriptor::ChannelLayout::assert_fields_are_eq(&self)
 pub fn descriptor::ChannelType::assert_fields_are_eq(&self)
 pub fn descriptor::ColorModel::assert_fields_are_eq(&self)
 pub fn descriptor::ColorPrimaries::assert_fields_are_eq(&self)
+pub fn descriptor::GenericFormat::assert_fields_are_eq(&self)
 pub fn descriptor::PixelDescriptor::assert_fields_are_eq(&self)
 pub fn descriptor::PixelFormat::assert_fields_are_eq(&self)
 pub fn descriptor::SignalRange::assert_fields_are_eq(&self)
@@ -65,6 +67,20 @@ pub fn sample::ExactDepth::assert_fields_are_eq(&self)
 pub fn sample::ExactDepthError::assert_fields_are_eq(&self)
 pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
 pub fn sample::SampleEncodingError::assert_fields_are_eq(&self)
+pub AlphaMode::__Reserved(descriptor::reserved::Reserved)
+pub ChannelLayout::__Reserved(descriptor::reserved::Reserved)
+pub ChannelType::__Reserved(descriptor::reserved::Reserved)
+pub ColorModel::__Reserved(descriptor::reserved::Reserved)
+pub ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
+pub SignalRange::__Reserved(descriptor::reserved::Reserved)
+pub TransferFunction::__Reserved(descriptor::reserved::Reserved)
+pub descriptor::AlphaMode::__Reserved(descriptor::reserved::Reserved)
+pub descriptor::ChannelLayout::__Reserved(descriptor::reserved::Reserved)
+pub descriptor::ChannelType::__Reserved(descriptor::reserved::Reserved)
+pub descriptor::ColorModel::__Reserved(descriptor::reserved::Reserved)
+pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
+pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
+pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
 ## trait impls (40 types)
 
@@ -77,11 +93,11 @@ color::ColorAuthority: TrivialClone
 color::ColorProvenance: TrivialClone
 color::NamedProfile: TrivialClone
 descriptor::AlphaMode: TrivialClone
-descriptor::ByteOrder: TrivialClone
 descriptor::ChannelLayout: TrivialClone
 descriptor::ChannelType: TrivialClone
 descriptor::ColorModel: TrivialClone
 descriptor::ColorPrimaries: TrivialClone
+descriptor::GenericFormat: TrivialClone
 descriptor::PixelDescriptor: TrivialClone
 descriptor::PixelFormat: TrivialClone
 descriptor::SignalRange: TrivialClone

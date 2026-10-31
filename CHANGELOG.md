@@ -50,6 +50,41 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
 - Both converter versions accept core `>=0.2.17, <0.4.0`; a connected pipeline
   must resolve one core version. Candidate archives are tested before publishing.
 
+### Extensibility before the 0.3 freeze
+
+- `ChannelType`, `ChannelLayout` and `PixelFormat` have no integer values: no
+  `repr`, no explicit discriminants, and `as` casts no longer compile (a hidden
+  uninhabited variant on the first two; `PixelFormat::Generic` on the third).
+  Later minor releases can add data-carrying variants. `AlphaMode`,
+  `TransferFunction`, `ColorPrimaries`, `SignalRange` and `ColorModel` get the
+  same hidden variant, so casts on them stop compiling too; use
+  `to_cicp`/`from_cicp` for numeric transfer and primaries codes, or a mapping
+  of your own for stored values. Only `Orientation` keeps numeric values
+  (`repr(u8)`, the EXIF codes). (2ab68259, df9a8ebd)
+- Remove `ByteOrder` and `PixelFormat::byte_order` /
+  `PixelDescriptor::byte_order`. They described RGB/BGR channel order, not
+  sample endianness, and duplicated `ChannelLayout::Bgra`. Use
+  `layout() == ChannelLayout::Bgra` or `PixelDescriptor::is_bgr()`; samples are
+  always host-endian. No zen crate outside zenpixels used them. (5f626fb0)
+- The 28 named native-sample formats (`RgbI8` … `GrayAF64`) become one
+  `PixelFormat::Generic(GenericFormat)`, returned by `PixelFormat::from_parts`.
+  `GenericFormat` has private fields and no constructor; a combination with a
+  named variant never resolves generically. Names, sizes, alpha defaults,
+  carriage and conversion refusal are unchanged. Migrate
+  `PixelFormat::RgbI16` to `PixelFormat::from_parts(ChannelType::I16,
+  ChannelLayout::Rgb, None)`. (2ab68259)
+- `#[non_exhaustive]`: `ColorAuthority`, `ColorPriority`, `OpCategory`,
+  `LossBucket`, `QualityThreshold`, `MasteringDisplay`, `ConversionCost`,
+  `FormatOption`. Build the structs with their constructors. (2ab68259,
+  bd6b75b5)
+- Remove `adapt::convert_buffer` from the public API (use the `PixelBuffer`
+  conversion methods), `icc_profiles::{ADOBE_RGB_V4, PROPHOTO_V4}`, and every
+  public moxcms type: `cms_moxcms::{transform_opts, lut_transform_opts,
+  cicp_transform_opts}`. `MoxCmsError`'s field is private. (6e4c7ede)
+- archmage/magetypes requirements are plain caret `0.9.30` (>=0.9.30,
+  <0.10.0, no prereleases); the previous `<=0.9.31-beta.1` cap excluded later
+  0.9 releases. (e5112d5f)
+
 ## [0.2.17] — unreleased bridge
 
 ### Native codes and current-precision evidence

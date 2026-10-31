@@ -23,6 +23,7 @@ use crate::{AlphaMode, ChannelType, ConvertIntent, PixelDescriptor, TransferFunc
 /// 13 categories vs 4 intents. `ConvertIntent` remains the public API;
 /// `OpCategory` is used by the path solver internally.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum OpCategory {
     /// No pixel modification: crop, flip, rotate, transpose.
     /// Any format works — identity conversion preferred.

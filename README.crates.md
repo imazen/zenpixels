@@ -244,8 +244,15 @@ The core split: *what the bytes are* vs. *what the bytes mean*.
 ```
 Rgb8, Rgba8, Rgb16, Rgba16, RgbF16, RgbaF16, RgbF32, RgbaF32,
 Gray8, Gray16, GrayF16, GrayAF16, GrayF32, GrayA8, GrayA16, GrayAF32,
-Bgra8, Rgbx8, Bgrx8, Cmyk8, OklabF32, OklabaF32
+Bgra8, Rgbx8, Bgrx8, Cmyk8, CmykF32, CmykF32Inverted, OklabF32, OklabaF32
 ```
+
+The named variants are the canonical formats processing code considers.
+Native signed, 32/64-bit integer and F64 samples in gray, gray-alpha, RGB
+and RGBA layouts are carried as `PixelFormat::Generic`, which
+`PixelFormat::from_parts` returns; views and owned buffers keep them
+bit-exact, and conversion refuses them. The enum has no integer values and
+may gain variants in a minor release.
 
 F16 variants are descriptor-only today — typed `Pixel` impls land when Rust
 stable ships native `f16`.

@@ -9,23 +9,23 @@
 ## summary
 #
 #   pub modules                                11
-#   pub types (struct/enum/trait/alias)        89
-#   pub consts/statics                        294
+#   pub types (struct/enum/trait/alias)        88
+#   pub consts/statics                        290
 #   free functions                              4
 #   inherent methods                          271
 #   struct fields                             115
-#   enum variants                             312
+#   enum variants                             254
 #   re-exports                                  4
-#   trait roster entries (type × trait)       303
+#   trait roster entries (type × trait)       301
 #   auto-trait-complete types                  45
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          455
+#   (root)                          421
 #   buffer                          252
 #   cicp                             36
 #   color                            62
-#   descriptor                      187
+#   descriptor                      158
 #   hdr                              12
 #   icc                              13
 #   orientation                      11
@@ -33,7 +33,7 @@
 #   policy                           25
 #   sample                           38
 
-## items (970 lines)
+## items (910 lines)
 
 pub mod zenpixels
 pub use At
@@ -255,34 +255,32 @@ pub fn color::ColorOrigin::from_icc(impl core::convert::Into<alloc::sync::Arc<[u
 pub fn color::ColorOrigin::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
 pub fn color::ColorOrigin::with_color_authority(self, color::ColorAuthority) -> Self
 pub mod descriptor
-pub descriptor::AlphaMode::Opaque = 4
-pub descriptor::AlphaMode::Premultiplied = 3
-pub descriptor::AlphaMode::Straight = 2
-pub descriptor::AlphaMode::Undefined = 1
+pub descriptor::AlphaMode::Opaque
+pub descriptor::AlphaMode::Premultiplied
+pub descriptor::AlphaMode::Straight
+pub descriptor::AlphaMode::Undefined
 pub const fn descriptor::AlphaMode::has_alpha(self) -> bool [also: (root)]
-pub descriptor::ByteOrder::Bgr = 1
-pub descriptor::ByteOrder::Native = 0
-pub descriptor::ChannelLayout::Bgra = 5
-pub descriptor::ChannelLayout::Cmyk = 8
-pub descriptor::ChannelLayout::Gray = 1
-pub descriptor::ChannelLayout::GrayAlpha = 2
-pub descriptor::ChannelLayout::Oklab = 6
-pub descriptor::ChannelLayout::OklabA = 7
-pub descriptor::ChannelLayout::Rgb = 3
-pub descriptor::ChannelLayout::Rgba = 4
+pub descriptor::ChannelLayout::Bgra
+pub descriptor::ChannelLayout::Cmyk
+pub descriptor::ChannelLayout::Gray
+pub descriptor::ChannelLayout::GrayAlpha
+pub descriptor::ChannelLayout::Oklab
+pub descriptor::ChannelLayout::OklabA
+pub descriptor::ChannelLayout::Rgb
+pub descriptor::ChannelLayout::Rgba
 pub const fn descriptor::ChannelLayout::channels(self) -> usize [also: (root)]
 pub const fn descriptor::ChannelLayout::has_alpha(self) -> bool [also: (root)]
-pub descriptor::ChannelType::F16 = 5
-pub descriptor::ChannelType::F32 = 4
-pub descriptor::ChannelType::F64 = 12
-pub descriptor::ChannelType::I16 = 7
-pub descriptor::ChannelType::I32 = 9
-pub descriptor::ChannelType::I64 = 11
-pub descriptor::ChannelType::I8 = 6
-pub descriptor::ChannelType::U16 = 2
-pub descriptor::ChannelType::U32 = 8
-pub descriptor::ChannelType::U64 = 10
-pub descriptor::ChannelType::U8 = 1
+pub descriptor::ChannelType::F16
+pub descriptor::ChannelType::F32
+pub descriptor::ChannelType::F64
+pub descriptor::ChannelType::I16
+pub descriptor::ChannelType::I32
+pub descriptor::ChannelType::I64
+pub descriptor::ChannelType::I8
+pub descriptor::ChannelType::U16
+pub descriptor::ChannelType::U32
+pub descriptor::ChannelType::U64
+pub descriptor::ChannelType::U8
 pub const fn descriptor::ChannelType::byte_size(self) -> usize [also: (root)]
 pub const fn descriptor::ChannelType::is_f16(self) -> bool [also: (root)]
 pub const fn descriptor::ChannelType::is_f32(self) -> bool [also: (root)]
@@ -290,17 +288,17 @@ pub const fn descriptor::ChannelType::is_float(self) -> bool [also: (root)]
 pub const fn descriptor::ChannelType::is_integer(self) -> bool [also: (root)]
 pub const fn descriptor::ChannelType::is_u16(self) -> bool [also: (root)]
 pub const fn descriptor::ChannelType::is_u8(self) -> bool [also: (root)]
-pub descriptor::ColorModel::Cmyk = 4
-pub descriptor::ColorModel::Gray = 0
-pub descriptor::ColorModel::Oklab = 3
-pub descriptor::ColorModel::Rgb = 1
-pub descriptor::ColorModel::YCbCr = 2
+pub descriptor::ColorModel::Cmyk
+pub descriptor::ColorModel::Gray
+pub descriptor::ColorModel::Oklab
+pub descriptor::ColorModel::Rgb
+pub descriptor::ColorModel::YCbCr
 pub const fn descriptor::ColorModel::color_channels(self) -> u8 [also: (root)]
-pub descriptor::ColorPrimaries::AdobeRgb = 13
-pub descriptor::ColorPrimaries::Bt2020 = 9
-pub descriptor::ColorPrimaries::Bt709 = 1
-pub descriptor::ColorPrimaries::DisplayP3 = 12
-pub descriptor::ColorPrimaries::Unknown = 255
+pub descriptor::ColorPrimaries::AdobeRgb
+pub descriptor::ColorPrimaries::Bt2020
+pub descriptor::ColorPrimaries::Bt709
+pub descriptor::ColorPrimaries::DisplayP3
+pub descriptor::ColorPrimaries::Unknown
 pub const descriptor::ColorPrimaries::WHITE_D65: (f32, f32)
 pub const fn descriptor::ColorPrimaries::chromaticity(self) -> core::option::Option<((f32, f32), (f32, f32), (f32, f32))> [also: (root)]
 pub const fn descriptor::ColorPrimaries::contains(self, Self) -> bool [also: (root)]
@@ -308,59 +306,31 @@ pub const fn descriptor::ColorPrimaries::from_cicp(u8) -> core::option::Option<S
 pub const fn descriptor::ColorPrimaries::gamut_matrix_to(self, Self) -> core::option::Option<[[f32; 3]; 3]> [also: (root)]
 pub const fn descriptor::ColorPrimaries::to_cicp(self) -> core::option::Option<u8> [also: (root)]
 pub const fn descriptor::ColorPrimaries::white_point(self) -> (f32, f32) [also: (root)]
-pub descriptor::PixelFormat::Bgra8 = 13
-pub descriptor::PixelFormat::Bgrx8 = 15
-pub descriptor::PixelFormat::Cmyk8 = 18
-pub descriptor::PixelFormat::CmykF32 = 51
-pub descriptor::PixelFormat::CmykF32Inverted = 52
-pub descriptor::PixelFormat::Gray16 = 8
-pub descriptor::PixelFormat::Gray8 = 7
-pub descriptor::PixelFormat::GrayA16 = 11
-pub descriptor::PixelFormat::GrayA8 = 10
-pub descriptor::PixelFormat::GrayAF16 = 22
-pub descriptor::PixelFormat::GrayAF32 = 12
-pub descriptor::PixelFormat::GrayAF64 = 50
-pub descriptor::PixelFormat::GrayAI16 = 30
-pub descriptor::PixelFormat::GrayAI32 = 38
-pub descriptor::PixelFormat::GrayAI64 = 46
-pub descriptor::PixelFormat::GrayAI8 = 26
-pub descriptor::PixelFormat::GrayAU32 = 34
-pub descriptor::PixelFormat::GrayAU64 = 42
-pub descriptor::PixelFormat::GrayF16 = 21
-pub descriptor::PixelFormat::GrayF32 = 9
-pub descriptor::PixelFormat::GrayF64 = 49
-pub descriptor::PixelFormat::GrayI16 = 29
-pub descriptor::PixelFormat::GrayI32 = 37
-pub descriptor::PixelFormat::GrayI64 = 45
-pub descriptor::PixelFormat::GrayI8 = 25
-pub descriptor::PixelFormat::GrayU32 = 33
-pub descriptor::PixelFormat::GrayU64 = 41
-pub descriptor::PixelFormat::OklabF32 = 16
-pub descriptor::PixelFormat::OklabaF32 = 17
-pub descriptor::PixelFormat::Rgb16 = 3
-pub descriptor::PixelFormat::Rgb8 = 1
-pub descriptor::PixelFormat::RgbF16 = 19
-pub descriptor::PixelFormat::RgbF32 = 5
-pub descriptor::PixelFormat::RgbF64 = 47
-pub descriptor::PixelFormat::RgbI16 = 27
-pub descriptor::PixelFormat::RgbI32 = 35
-pub descriptor::PixelFormat::RgbI64 = 43
-pub descriptor::PixelFormat::RgbI8 = 23
-pub descriptor::PixelFormat::RgbU32 = 31
-pub descriptor::PixelFormat::RgbU64 = 39
-pub descriptor::PixelFormat::Rgba16 = 4
-pub descriptor::PixelFormat::Rgba8 = 2
-pub descriptor::PixelFormat::RgbaF16 = 20
-pub descriptor::PixelFormat::RgbaF32 = 6
-pub descriptor::PixelFormat::RgbaF64 = 48
-pub descriptor::PixelFormat::RgbaI16 = 28
-pub descriptor::PixelFormat::RgbaI32 = 36
-pub descriptor::PixelFormat::RgbaI64 = 44
-pub descriptor::PixelFormat::RgbaI8 = 24
-pub descriptor::PixelFormat::RgbaU32 = 32
-pub descriptor::PixelFormat::RgbaU64 = 40
-pub descriptor::PixelFormat::Rgbx8 = 14
-pub const fn descriptor::PixelFormat::byte_order(self) -> descriptor::ByteOrder [also: (root)]
+pub descriptor::PixelFormat::Bgra8
+pub descriptor::PixelFormat::Bgrx8
+pub descriptor::PixelFormat::Cmyk8
+pub descriptor::PixelFormat::CmykF32
+pub descriptor::PixelFormat::CmykF32Inverted
+pub descriptor::PixelFormat::Generic(descriptor::GenericFormat)
+pub descriptor::PixelFormat::Gray16
+pub descriptor::PixelFormat::Gray8
+pub descriptor::PixelFormat::GrayA16
+pub descriptor::PixelFormat::GrayA8
+pub descriptor::PixelFormat::GrayAF16
+pub descriptor::PixelFormat::GrayAF32
+pub descriptor::PixelFormat::GrayF16
+pub descriptor::PixelFormat::GrayF32
+pub descriptor::PixelFormat::OklabF32
+pub descriptor::PixelFormat::OklabaF32
+pub descriptor::PixelFormat::Rgb16
+pub descriptor::PixelFormat::Rgb8
+pub descriptor::PixelFormat::RgbF16
+pub descriptor::PixelFormat::RgbF32
+pub descriptor::PixelFormat::Rgba16
+pub descriptor::PixelFormat::Rgba8
+pub descriptor::PixelFormat::RgbaF16
+pub descriptor::PixelFormat::RgbaF32
+pub descriptor::PixelFormat::Rgbx8
 pub const fn descriptor::PixelFormat::bytes_per_pixel(self) -> usize [also: (root)]
 pub const fn descriptor::PixelFormat::channel_type(self) -> descriptor::ChannelType [also: (root)]
 pub const fn descriptor::PixelFormat::channels(self) -> usize [also: (root)]
@@ -372,18 +342,19 @@ pub const fn descriptor::PixelFormat::has_alpha_bytes(self) -> bool [also: (root
 pub const fn descriptor::PixelFormat::is_grayscale(self) -> bool [also: (root)]
 pub const fn descriptor::PixelFormat::layout(self) -> descriptor::ChannelLayout [also: (root)]
 pub const fn descriptor::PixelFormat::name(self) -> &'static str [also: (root)]
-pub descriptor::SignalRange::Full = 0
-pub descriptor::SignalRange::Narrow = 1
-pub descriptor::TransferFunction::Bt709 = 2
-pub descriptor::TransferFunction::Gamma22 = 5
-pub descriptor::TransferFunction::Hlg = 4
-pub descriptor::TransferFunction::Linear = 0
-pub descriptor::TransferFunction::Pq = 3
-pub descriptor::TransferFunction::Srgb = 1
-pub descriptor::TransferFunction::Unknown = 255
+pub descriptor::SignalRange::Full
+pub descriptor::SignalRange::Narrow
+pub descriptor::TransferFunction::Bt709
+pub descriptor::TransferFunction::Gamma22
+pub descriptor::TransferFunction::Hlg
+pub descriptor::TransferFunction::Linear
+pub descriptor::TransferFunction::Pq
+pub descriptor::TransferFunction::Srgb
+pub descriptor::TransferFunction::Unknown
 pub const fn descriptor::TransferFunction::from_cicp(u8) -> core::option::Option<Self> [also: (root)]
 pub fn descriptor::TransferFunction::reference_white_nits(&self) -> f32
 pub const fn descriptor::TransferFunction::to_cicp(self) -> core::option::Option<u8> [also: (root)]
+pub struct descriptor::GenericFormat
 pub descriptor::PixelDescriptor::alpha: core::option::Option<descriptor::AlphaMode>
 pub descriptor::PixelDescriptor::format: descriptor::PixelFormat
 pub descriptor::PixelDescriptor::primaries: descriptor::ColorPrimaries
@@ -426,7 +397,6 @@ pub const descriptor::PixelDescriptor::RGBX8: Self
 pub const descriptor::PixelDescriptor::RGBX8_SRGB: Self
 pub const fn descriptor::PixelDescriptor::aligned_stride(self, u32) -> usize [also: (root)]
 pub const fn descriptor::PixelDescriptor::alpha(&self) -> core::option::Option<descriptor::AlphaMode> [also: (root)]
-pub const fn descriptor::PixelDescriptor::byte_order(&self) -> descriptor::ByteOrder [also: (root)]
 pub const fn descriptor::PixelDescriptor::bytes_per_channel(self) -> usize [also: (root)]
 pub const fn descriptor::PixelDescriptor::bytes_per_pixel(self) -> usize [also: (root)]
 pub const fn descriptor::PixelDescriptor::channel_type(&self) -> descriptor::ChannelType [also: (root)]
@@ -464,7 +434,7 @@ pub struct hdr::DiffuseWhite(_)
 pub const hdr::DiffuseWhite::BT2408: Self
 pub const fn hdr::DiffuseWhite::new(f32) -> Self
 pub const fn hdr::DiffuseWhite::nits(self) -> f32
-pub struct hdr::MasteringDisplay
+#[non_exhaustive] pub struct hdr::MasteringDisplay
 pub hdr::MasteringDisplay::max_luminance: f32
 pub hdr::MasteringDisplay::min_luminance: f32
 pub hdr::MasteringDisplay::primaries_xy: [[f32; 2]; 3]
@@ -602,11 +572,11 @@ pub const fn sample::SampleEncoding::bit_shift(self) -> u8
 pub const fn sample::SampleEncoding::code_bits(self) -> u8
 pub const fn sample::SampleEncoding::new(descriptor::ChannelType, u8, u8) -> core::result::Result<Self, sample::SampleEncodingError>
 pub const fn sample::SampleEncoding::storage(self) -> descriptor::ChannelType
-#[non_exhaustive] #[repr(u8)] pub enum AlphaMode [also: descriptor]
-pub AlphaMode::Opaque = 4
-pub AlphaMode::Premultiplied = 3
-pub AlphaMode::Straight = 2
-pub AlphaMode::Undefined = 1
+#[non_exhaustive] pub enum AlphaMode [also: descriptor]
+pub AlphaMode::Opaque
+pub AlphaMode::Premultiplied
+pub AlphaMode::Straight
+pub AlphaMode::Undefined
 #[non_exhaustive] pub enum AlphaPolicy [also: policy]
 pub AlphaPolicy::CompositeOnto
 pub AlphaPolicy::CompositeOnto::b: u8
@@ -623,45 +593,42 @@ pub BufferError::InsufficientData
 pub BufferError::InvalidDimensions
 pub BufferError::StrideNotPixelAligned
 pub BufferError::StrideTooSmall
-#[non_exhaustive] #[repr(u8)] pub enum ByteOrder [also: descriptor]
-pub ByteOrder::Bgr = 1
-pub ByteOrder::Native = 0
-#[non_exhaustive] #[repr(u8)] pub enum ChannelLayout [also: descriptor]
-pub ChannelLayout::Bgra = 5
-pub ChannelLayout::Cmyk = 8
-pub ChannelLayout::Gray = 1
-pub ChannelLayout::GrayAlpha = 2
-pub ChannelLayout::Oklab = 6
-pub ChannelLayout::OklabA = 7
-pub ChannelLayout::Rgb = 3
-pub ChannelLayout::Rgba = 4
-#[non_exhaustive] #[repr(u8)] pub enum ChannelType [also: descriptor]
-pub ChannelType::F16 = 5
-pub ChannelType::F32 = 4
-pub ChannelType::F64 = 12
-pub ChannelType::I16 = 7
-pub ChannelType::I32 = 9
-pub ChannelType::I64 = 11
-pub ChannelType::I8 = 6
-pub ChannelType::U16 = 2
-pub ChannelType::U32 = 8
-pub ChannelType::U64 = 10
-pub ChannelType::U8 = 1
-pub enum ColorAuthority [also: color]
+#[non_exhaustive] pub enum ChannelLayout [also: descriptor]
+pub ChannelLayout::Bgra
+pub ChannelLayout::Cmyk
+pub ChannelLayout::Gray
+pub ChannelLayout::GrayAlpha
+pub ChannelLayout::Oklab
+pub ChannelLayout::OklabA
+pub ChannelLayout::Rgb
+pub ChannelLayout::Rgba
+#[non_exhaustive] pub enum ChannelType [also: descriptor]
+pub ChannelType::F16
+pub ChannelType::F32
+pub ChannelType::F64
+pub ChannelType::I16
+pub ChannelType::I32
+pub ChannelType::I64
+pub ChannelType::I8
+pub ChannelType::U16
+pub ChannelType::U32
+pub ChannelType::U64
+pub ChannelType::U8
+#[non_exhaustive] pub enum ColorAuthority [also: color]
 pub ColorAuthority::Cicp
 pub ColorAuthority::Icc
-#[non_exhaustive] #[repr(u8)] pub enum ColorModel [also: descriptor]
-pub ColorModel::Cmyk = 4
-pub ColorModel::Gray = 0
-pub ColorModel::Oklab = 3
-pub ColorModel::Rgb = 1
-pub ColorModel::YCbCr = 2
-#[non_exhaustive] #[repr(u8)] pub enum ColorPrimaries [also: descriptor]
-pub ColorPrimaries::AdobeRgb = 13
-pub ColorPrimaries::Bt2020 = 9
-pub ColorPrimaries::Bt709 = 1
-pub ColorPrimaries::DisplayP3 = 12
-pub ColorPrimaries::Unknown = 255
+#[non_exhaustive] pub enum ColorModel [also: descriptor]
+pub ColorModel::Cmyk
+pub ColorModel::Gray
+pub ColorModel::Oklab
+pub ColorModel::Rgb
+pub ColorModel::YCbCr
+#[non_exhaustive] pub enum ColorPrimaries [also: descriptor]
+pub ColorPrimaries::AdobeRgb
+pub ColorPrimaries::Bt2020
+pub ColorPrimaries::Bt709
+pub ColorPrimaries::DisplayP3
+pub ColorPrimaries::Unknown
 pub const descriptor::ColorPrimaries::WHITE_D65: (f32, f32)
 #[non_exhaustive] pub enum ColorProfileSource<'a> [also: color]
 pub ColorProfileSource::Cicp(cicp::Cicp)
@@ -711,70 +678,43 @@ pub PixelCow::Owned(buffer::PixelBuffer<P>)
 pub fn buffer::PixelCow<'a>::into_owned(self) -> buffer::PixelBuffer
 pub fn buffer::PixelCow<'a>::to_mut(&mut self) -> &mut buffer::PixelBuffer
 pub fn buffer::PixelCow<'_, P>::as_slice(&self) -> buffer::PixelSlice<'_, P>
-#[non_exhaustive] #[repr(u8)] pub enum PixelFormat [also: descriptor]
-pub PixelFormat::Bgra8 = 13
-pub PixelFormat::Bgrx8 = 15
-pub PixelFormat::Cmyk8 = 18
-pub PixelFormat::CmykF32 = 51
-pub PixelFormat::CmykF32Inverted = 52
-pub PixelFormat::Gray16 = 8
-pub PixelFormat::Gray8 = 7
-pub PixelFormat::GrayA16 = 11
-pub PixelFormat::GrayA8 = 10
-pub PixelFormat::GrayAF16 = 22
-pub PixelFormat::GrayAF32 = 12
-pub PixelFormat::GrayAF64 = 50
-pub PixelFormat::GrayAI16 = 30
-pub PixelFormat::GrayAI32 = 38
-pub PixelFormat::GrayAI64 = 46
-pub PixelFormat::GrayAI8 = 26
-pub PixelFormat::GrayAU32 = 34
-pub PixelFormat::GrayAU64 = 42
-pub PixelFormat::GrayF16 = 21
-pub PixelFormat::GrayF32 = 9
-pub PixelFormat::GrayF64 = 49
-pub PixelFormat::GrayI16 = 29
-pub PixelFormat::GrayI32 = 37
-pub PixelFormat::GrayI64 = 45
-pub PixelFormat::GrayI8 = 25
-pub PixelFormat::GrayU32 = 33
-pub PixelFormat::GrayU64 = 41
-pub PixelFormat::OklabF32 = 16
-pub PixelFormat::OklabaF32 = 17
-pub PixelFormat::Rgb16 = 3
-pub PixelFormat::Rgb8 = 1
-pub PixelFormat::RgbF16 = 19
-pub PixelFormat::RgbF32 = 5
-pub PixelFormat::RgbF64 = 47
-pub PixelFormat::RgbI16 = 27
-pub PixelFormat::RgbI32 = 35
-pub PixelFormat::RgbI64 = 43
-pub PixelFormat::RgbI8 = 23
-pub PixelFormat::RgbU32 = 31
-pub PixelFormat::RgbU64 = 39
-pub PixelFormat::Rgba16 = 4
-pub PixelFormat::Rgba8 = 2
-pub PixelFormat::RgbaF16 = 20
-pub PixelFormat::RgbaF32 = 6
-pub PixelFormat::RgbaF64 = 48
-pub PixelFormat::RgbaI16 = 28
-pub PixelFormat::RgbaI32 = 36
-pub PixelFormat::RgbaI64 = 44
-pub PixelFormat::RgbaI8 = 24
-pub PixelFormat::RgbaU32 = 32
-pub PixelFormat::RgbaU64 = 40
-pub PixelFormat::Rgbx8 = 14
-#[non_exhaustive] #[repr(u8)] pub enum SignalRange [also: descriptor]
-pub SignalRange::Full = 0
-pub SignalRange::Narrow = 1
-#[non_exhaustive] #[repr(u8)] pub enum TransferFunction [also: descriptor]
-pub TransferFunction::Bt709 = 2
-pub TransferFunction::Gamma22 = 5
-pub TransferFunction::Hlg = 4
-pub TransferFunction::Linear = 0
-pub TransferFunction::Pq = 3
-pub TransferFunction::Srgb = 1
-pub TransferFunction::Unknown = 255
+#[non_exhaustive] pub enum PixelFormat [also: descriptor]
+pub PixelFormat::Bgra8
+pub PixelFormat::Bgrx8
+pub PixelFormat::Cmyk8
+pub PixelFormat::CmykF32
+pub PixelFormat::CmykF32Inverted
+pub PixelFormat::Generic(descriptor::GenericFormat)
+pub PixelFormat::Gray16
+pub PixelFormat::Gray8
+pub PixelFormat::GrayA16
+pub PixelFormat::GrayA8
+pub PixelFormat::GrayAF16
+pub PixelFormat::GrayAF32
+pub PixelFormat::GrayF16
+pub PixelFormat::GrayF32
+pub PixelFormat::OklabF32
+pub PixelFormat::OklabaF32
+pub PixelFormat::Rgb16
+pub PixelFormat::Rgb8
+pub PixelFormat::RgbF16
+pub PixelFormat::RgbF32
+pub PixelFormat::Rgba16
+pub PixelFormat::Rgba8
+pub PixelFormat::RgbaF16
+pub PixelFormat::RgbaF32
+pub PixelFormat::Rgbx8
+#[non_exhaustive] pub enum SignalRange [also: descriptor]
+pub SignalRange::Full
+pub SignalRange::Narrow
+#[non_exhaustive] pub enum TransferFunction [also: descriptor]
+pub TransferFunction::Bt709
+pub TransferFunction::Gamma22
+pub TransferFunction::Hlg
+pub TransferFunction::Linear
+pub TransferFunction::Pq
+pub TransferFunction::Srgb
+pub TransferFunction::Unknown
 pub fn descriptor::TransferFunction::reference_white_nits(&self) -> f32
 #[repr(C)] pub struct Bgrx [also: buffer]
 pub Bgrx::b: u8
@@ -1032,11 +972,11 @@ color::ColorProfileSource<'a>: Clone, Debug, Eq, PartialEq
 color::ColorProvenance: Clone, Copy, Debug, Eq, Hash, PartialEq
 color::NamedProfile: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 descriptor::AlphaMode: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
-descriptor::ByteOrder: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
 descriptor::ChannelLayout: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::ChannelType: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::ColorModel: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::ColorPrimaries: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
+descriptor::GenericFormat: Clone, Copy, Debug, Eq, Hash, PartialEq
 descriptor::PixelDescriptor: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::PixelFormat: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::SignalRange: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq

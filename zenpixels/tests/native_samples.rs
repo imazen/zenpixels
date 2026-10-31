@@ -43,7 +43,9 @@ fn native_patterns(channel: ChannelType) -> Vec<u8> {
 
 #[test]
 fn external_strided_allocation_adopts_exactly_and_is_recoverable_on_refusal() {
-    let descriptor = PixelFormat::RgbU64.descriptor();
+    let descriptor = PixelFormat::from_parts(ChannelType::U64, ChannelLayout::Rgb, None)
+        .unwrap()
+        .descriptor();
     let stride = 8 * 3 * 5;
     let bytes: Vec<u8> = (0..stride * 3).map(|i| (i * 73 + 19) as u8).collect();
     let pointer = bytes.as_ptr();
@@ -162,5 +164,76 @@ fn cmyk_f32_carries_strides_profiles_and_every_sample_bit() {
             parts.color_context.unwrap().icc.as_ref().unwrap().as_ref(),
             profile.as_ref()
         );
+    }
+}
+
+#[test]
+fn native_combinations_have_one_generic_representation() {
+    use zenpixels::AlphaMode;
+    const NATIVE: [ChannelType; 7] = [
+        ChannelType::I8,
+        ChannelType::I16,
+        ChannelType::U32,
+        ChannelType::I32,
+        ChannelType::U64,
+        ChannelType::I64,
+        ChannelType::F64,
+    ];
+    const LAYOUTS: [(ChannelLayout, &str); 4] = [
+        (ChannelLayout::Gray, "Gray"),
+        (ChannelLayout::GrayAlpha, "GrayA"),
+        (ChannelLayout::Rgb, "Rgb"),
+        (ChannelLayout::Rgba, "Rgba"),
+    ];
+    let mut seen = Vec::new();
+    for channel in NATIVE {
+        for (layout, prefix) in LAYOUTS {
+            for alpha in [None, Some(AlphaMode::Straight), Some(AlphaMode::Undefined)] {
+                let format = PixelFormat::from_parts(channel, layout, alpha).unwrap();
+                assert!(matches!(format, PixelFormat::Generic(_)), "{format:?}");
+                assert_eq!(format.channel_type(), channel);
+                assert_eq!(format.layout(), layout);
+                assert_eq!(format.name(), format!("{prefix}{channel}"));
+                assert_eq!(format.to_string(), format.name());
+                assert_eq!(
+                    format.bytes_per_pixel(),
+                    layout.channels() * channel.byte_size()
+                );
+                assert_eq!(
+                    format.default_alpha(),
+                    layout.has_alpha().then_some(AlphaMode::Straight)
+                );
+                let descriptor = format.descriptor();
+                assert_eq!(descriptor.format, format);
+                assert!(descriptor.layout_compatible(format.descriptor()));
+                if alpha.is_none() {
+                    assert!(!seen.contains(&format));
+                    seen.push(format);
+                }
+            }
+        }
+    }
+    assert_eq!(seen.len(), 28);
+    // Combinations with a named variant never resolve generically.
+    for channel in [
+        ChannelType::U8,
+        ChannelType::U16,
+        ChannelType::F16,
+        ChannelType::F32,
+    ] {
+        for (layout, _) in LAYOUTS {
+            let format = PixelFormat::from_parts(channel, layout, None).unwrap();
+            assert!(!matches!(format, PixelFormat::Generic(_)), "{format:?}");
+        }
+    }
+    // Layouts without generic carriage stay unrepresentable.
+    for channel in NATIVE {
+        for layout in [
+            ChannelLayout::Bgra,
+            ChannelLayout::Cmyk,
+            ChannelLayout::Oklab,
+        ] {
+            assert_eq!(PixelFormat::from_parts(channel, layout, None), None);
+        }
     }
 }

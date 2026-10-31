@@ -241,6 +241,7 @@ pub enum ConvertIntent {
 ///
 /// [`ConvertIntent`] controls how the two axes are weighted for ranking.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ConversionCost {
     /// Computational work (cycles, not quality). Lower is faster.
     pub effort: u16,
@@ -290,6 +291,7 @@ impl Add for ConversionCost {
 /// ];
 /// ```
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct FormatOption {
     /// The pixel format the consumer can accept.
     pub descriptor: PixelDescriptor,
