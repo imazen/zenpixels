@@ -408,7 +408,7 @@ that it consumes these zenpixels types.
 
 | Old | Recommended destination | Warning/removal treatment |
 |---|---|---|
-| `ByteOrder`, `byte_order` for RGB/BGR layout | `ChannelOrder`, `channel_order` | Optional additive aliases + deprecated old names; no endianness change |
+| `ByteOrder`, `byte_order` for RGB/BGR layout | `layout() == ChannelLayout::Bgra`, or `PixelDescriptor::is_bgr()` | Deprecated in 0.2.17, removed in 0.3.1; no replacement type and no endianness change |
 | Transfer-blind ICC helper/constant | Profile selected by complete encoding, or unsupported error | Deprecate only after accurate replacement exists; do not equate matching primaries with matching profile |
 | `requires_cms(from, to)` heuristic | Successful complete planning/preparation, or explicit unsupported result | Do not use a descriptor-only Boolean as a capability guarantee; no external primary caller found |
 | `Adapted`, non-cow adapters | Corrected existing cow helpers | Verify color/alpha/range parity before removal; several callers already migrated |

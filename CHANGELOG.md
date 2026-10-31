@@ -58,6 +58,11 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   Later minor releases can add data-carrying variants. The other descriptor
   enums drop `repr(u8)` but keep their values; `Orientation` keeps its EXIF
   `repr(u8)`. (2ab68259)
+- Remove `ByteOrder` and `PixelFormat::byte_order` /
+  `PixelDescriptor::byte_order`. They described RGB/BGR channel order, not
+  sample endianness, and duplicated `ChannelLayout::Bgra`. Use
+  `layout() == ChannelLayout::Bgra` or `PixelDescriptor::is_bgr()`; samples are
+  always host-endian. No zen crate outside zenpixels used them.
 - The 28 named native-sample formats (`RgbI8` … `GrayAF64`) become one
   `PixelFormat::Generic(GenericFormat)`, returned by `PixelFormat::from_parts`.
   `GenericFormat` has private fields and no constructor; a combination with a

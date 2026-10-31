@@ -177,7 +177,7 @@ pub enum ChannelLayout {
     Rgb,
     /// Red, green, blue, alpha.
     Rgba,
-    /// Blue, green, red, alpha (Windows/DirectX byte order).
+    /// Blue, green, red, alpha (Windows/DirectX channel order).
     Bgra,
     /// Oklab perceptual color: L, a, b.
     Oklab,
@@ -754,12 +754,6 @@ impl PixelDescriptor {
         }
     }
 
-    /// Byte order.
-    #[inline]
-    pub const fn byte_order(&self) -> ByteOrder {
-        self.format.byte_order()
-    }
-
     /// Color model.
     #[inline]
     pub const fn color_model(&self) -> ColorModel {
@@ -1195,10 +1189,13 @@ impl PixelDescriptor {
         self.format.is_grayscale()
     }
 
-    /// Whether this descriptor uses BGR byte order.
+    /// Whether the color channels are stored blue first ([`ChannelLayout::Bgra`]).
+    ///
+    /// This is channel order, not sample endianness: multi-byte samples are
+    /// always host-endian.
     #[inline]
     pub const fn is_bgr(self) -> bool {
-        matches!(self.format.byte_order(), ByteOrder::Bgr)
+        matches!(self.format.layout(), ChannelLayout::Bgra)
     }
 
     /// Return a copy of this descriptor **relabeled** with a different
@@ -1452,13 +1449,13 @@ impl fmt::Display for PixelDescriptor {
 // Color model — what the channels represent
 // ---------------------------------------------------------------------------
 
-/// What the channels represent, independent of channel count or byte order.
+/// What the channels represent, independent of channel count or channel order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ColorModel {
     /// Single grayscale channel.
     Gray = 0,
-    /// Red, green, blue (or BGR when [`ByteOrder::Bgr`]).
+    /// Red, green, blue (stored blue first for [`ChannelLayout::Bgra`]).
     Rgb = 1,
     /// Luma + chroma (Y, Cb, Cr).
     YCbCr = 2,
@@ -1493,30 +1490,6 @@ impl fmt::Display for ColorModel {
             Self::Oklab => f.write_str("Oklab"),
             Self::Cmyk => f.write_str("CMYK"),
             _ => write!(f, "ColorModel({})", *self as u8),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Byte order
-// ---------------------------------------------------------------------------
-
-/// RGB-family byte order. Only meaningful when color model is RGB.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ByteOrder {
-    /// Standard order: R, G, B (+ A if present).
-    #[default]
-    Native = 0,
-    /// Windows/DirectX order: B, G, R (+ A if present).
-    Bgr = 1,
-}
-
-impl fmt::Display for ByteOrder {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Native => f.write_str("native"),
-            Self::Bgr => f.write_str("BGR"),
         }
     }
 }
@@ -1733,16 +1706,6 @@ impl PixelFormat {
             Self::OklabF32 | Self::OklabaF32 => ColorModel::Oklab,
             Self::Cmyk8 | Self::CmykF32 | Self::CmykF32Inverted => ColorModel::Cmyk,
             _ => ColorModel::Rgb,
-        }
-    }
-
-    /// Byte order (Native or BGR).
-    #[inline]
-    #[allow(unreachable_patterns)]
-    pub const fn byte_order(self) -> ByteOrder {
-        match self {
-            Self::Bgra8 | Self::Bgrx8 => ByteOrder::Bgr,
-            _ => ByteOrder::Native,
         }
     }
 
@@ -2034,8 +1997,10 @@ mod tests {
         assert_eq!(PixelFormat::Gray8.channels(), 1);
         assert!(PixelFormat::Gray8.is_grayscale());
         assert!(!PixelFormat::Rgb8.is_grayscale());
-        assert_eq!(PixelFormat::Bgra8.byte_order(), ByteOrder::Bgr);
-        assert_eq!(PixelFormat::Rgb8.byte_order(), ByteOrder::Native);
+        assert!(PixelFormat::Bgra8.descriptor().is_bgr());
+        assert!(PixelFormat::Bgrx8.descriptor().is_bgr());
+        assert!(!PixelFormat::Rgb8.descriptor().is_bgr());
+        assert!(!PixelFormat::Rgba8.descriptor().is_bgr());
     }
 
     #[test]

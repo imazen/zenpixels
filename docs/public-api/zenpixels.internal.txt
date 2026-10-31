@@ -9,16 +9,16 @@
 
 ## summary
 #
-#   inherent methods                           40
+#   inherent methods                           39
 #   enum variants                               4
-#   trait roster entries (type × trait)        41
+#   trait roster entries (type × trait)        40
 #
 # per-module pub lines:
 #   (root)                            2
 #   buffer                            3
 #   cicp                              2
 #   color                             6
-#   descriptor                       13
+#   descriptor                       12
 #   hdr                               1
 #   icc                               2
 #   orientation                       1
@@ -26,7 +26,7 @@
 #   policy                            5
 #   sample                            7
 
-## items (44 lines)
+## items (43 lines)
 
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
@@ -40,7 +40,6 @@ pub fn color::ColorProfileSource<'a>::assert_fields_are_eq(&self)
 pub fn color::ColorProvenance::assert_fields_are_eq(&self)
 pub fn color::NamedProfile::assert_fields_are_eq(&self)
 pub fn descriptor::AlphaMode::assert_fields_are_eq(&self)
-pub fn descriptor::ByteOrder::assert_fields_are_eq(&self)
 pub fn descriptor::ChannelLayout::assert_fields_are_eq(&self)
 pub fn descriptor::ChannelType::assert_fields_are_eq(&self)
 pub fn descriptor::ColorModel::assert_fields_are_eq(&self)
@@ -73,7 +72,7 @@ pub ChannelType::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::ChannelLayout::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::ChannelType::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (41 types)
+## trait impls (40 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
@@ -84,7 +83,6 @@ color::ColorAuthority: TrivialClone
 color::ColorProvenance: TrivialClone
 color::NamedProfile: TrivialClone
 descriptor::AlphaMode: TrivialClone
-descriptor::ByteOrder: TrivialClone
 descriptor::ChannelLayout: TrivialClone
 descriptor::ChannelType: TrivialClone
 descriptor::ColorModel: TrivialClone

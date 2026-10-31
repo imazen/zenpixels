@@ -9,23 +9,23 @@
 ## summary
 #
 #   pub modules                                11
-#   pub types (struct/enum/trait/alias)        90
-#   pub consts/statics                        294
+#   pub types (struct/enum/trait/alias)        88
+#   pub consts/statics                        290
 #   free functions                              4
 #   inherent methods                          271
 #   struct fields                             115
-#   enum variants                             258
+#   enum variants                             254
 #   re-exports                                  4
-#   trait roster entries (type × trait)       309
-#   auto-trait-complete types                  46
+#   trait roster entries (type × trait)       301
+#   auto-trait-complete types                  45
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          428
+#   (root)                          421
 #   buffer                          252
 #   cicp                             36
 #   color                            62
-#   descriptor                      161
+#   descriptor                      158
 #   hdr                              12
 #   icc                              13
 #   orientation                      11
@@ -33,7 +33,7 @@
 #   policy                           25
 #   sample                           38
 
-## items (917 lines)
+## items (910 lines)
 
 pub mod zenpixels
 pub use At
@@ -260,8 +260,6 @@ pub descriptor::AlphaMode::Premultiplied = 3
 pub descriptor::AlphaMode::Straight = 2
 pub descriptor::AlphaMode::Undefined = 1
 pub const fn descriptor::AlphaMode::has_alpha(self) -> bool [also: (root)]
-pub descriptor::ByteOrder::Bgr = 1
-pub descriptor::ByteOrder::Native = 0
 pub descriptor::ChannelLayout::Bgra
 pub descriptor::ChannelLayout::Cmyk
 pub descriptor::ChannelLayout::Gray
@@ -333,7 +331,6 @@ pub descriptor::PixelFormat::Rgba8
 pub descriptor::PixelFormat::RgbaF16
 pub descriptor::PixelFormat::RgbaF32
 pub descriptor::PixelFormat::Rgbx8
-pub const fn descriptor::PixelFormat::byte_order(self) -> descriptor::ByteOrder [also: (root)]
 pub const fn descriptor::PixelFormat::bytes_per_pixel(self) -> usize [also: (root)]
 pub const fn descriptor::PixelFormat::channel_type(self) -> descriptor::ChannelType [also: (root)]
 pub const fn descriptor::PixelFormat::channels(self) -> usize [also: (root)]
@@ -400,7 +397,6 @@ pub const descriptor::PixelDescriptor::RGBX8: Self
 pub const descriptor::PixelDescriptor::RGBX8_SRGB: Self
 pub const fn descriptor::PixelDescriptor::aligned_stride(self, u32) -> usize [also: (root)]
 pub const fn descriptor::PixelDescriptor::alpha(&self) -> core::option::Option<descriptor::AlphaMode> [also: (root)]
-pub const fn descriptor::PixelDescriptor::byte_order(&self) -> descriptor::ByteOrder [also: (root)]
 pub const fn descriptor::PixelDescriptor::bytes_per_channel(self) -> usize [also: (root)]
 pub const fn descriptor::PixelDescriptor::bytes_per_pixel(self) -> usize [also: (root)]
 pub const fn descriptor::PixelDescriptor::channel_type(&self) -> descriptor::ChannelType [also: (root)]
@@ -597,9 +593,6 @@ pub BufferError::InsufficientData
 pub BufferError::InvalidDimensions
 pub BufferError::StrideNotPixelAligned
 pub BufferError::StrideTooSmall
-#[non_exhaustive] pub enum ByteOrder [also: descriptor]
-pub ByteOrder::Bgr = 1
-pub ByteOrder::Native = 0
 #[non_exhaustive] pub enum ChannelLayout [also: descriptor]
 pub ChannelLayout::Bgra
 pub ChannelLayout::Cmyk
@@ -953,7 +946,7 @@ pub Rgbx::x: u8
 pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 
-## trait impls (56 types)
+## trait impls (55 types)
 
 buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
@@ -979,7 +972,6 @@ color::ColorProfileSource<'a>: Clone, Debug, Eq, PartialEq
 color::ColorProvenance: Clone, Copy, Debug, Eq, Hash, PartialEq
 color::NamedProfile: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 descriptor::AlphaMode: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
-descriptor::ByteOrder: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
 descriptor::ChannelLayout: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::ChannelType: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::ColorModel: Clone, Copy, Debug, Display, Eq, Hash, PartialEq

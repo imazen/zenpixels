@@ -189,7 +189,7 @@ All `since = "0.2.17"`. The note text is the migration instruction.
 | `pub mod estimate`, its root re-exports, `ConvertPlan::{estimate, estimate_in}` | `#[cfg_attr(not(feature = "estimation-experimental"), deprecated(note = "unstable; enable the `estimation-experimental` feature, which becomes required in 0.3.1"))]` — a consumer who adds the feature is warning-free now and unaffected later |
 | `requires_cms` | "match `ConvertError::NeedsCms` instead; removed in 0.3.1" |
 | `pipeline::*` (behind the `pipeline` feature) | "dev-only analysis tool; moves to `__pipeline` in 0.3.1" |
-| (optional, decision D3) `ByteOrder` → `pub type ByteOrder = ChannelOrder` deprecated alias; `PixelFormat::byte_order`/`PixelDescriptor::byte_order` → `channel_order` with deprecated forwarders | the enum names R,G,B-vs-B,G,R order, not endianness; zero external uses |
+| `ByteOrder`, `PixelFormat::byte_order`, `PixelDescriptor::byte_order` (decision D3) | "this is RGB/BGR channel order, not sample endianness; use `layout() == ChannelLayout::Bgra` or `PixelDescriptor::is_bgr()`; removed in 0.3.1" — no replacement type: the layout already carries the order, and endianness will get its own property on byte-backed views |
 
 Already deprecated and unchanged: `Adapted` + the three non-cow adapters
 (0.2.15), `from_icc_and_cicp` (0.2.6), `ContentLightLevel::measure` (0.2.16),
@@ -382,7 +382,7 @@ zenpixels:
 - `ColorContext::from_icc_and_cicp` → `from_icc` / `from_cicp`
 - `planar::Plane` → `PlaneLayout` + `PixelBuffer`s
 - `serde` stub feature (zero users)
-- (if D3) `ByteOrder` alias and `byte_order()` forwarders
+- `ByteOrder`, `PixelFormat::byte_order`, `PixelDescriptor::byte_order` (D3)
 
 zenpixels-convert:
 - `Adapted`, `adapt_for_encode`, `adapt_for_encode_with_intent`, `adapt_for_encode_explicit` → `*_cow`
@@ -478,8 +478,12 @@ during 0.3.x; their breaking steps batch into the next release:
 - **D2 — seal the extension traits in 0.2.17** under the tolerated-break
   policy (recommended), or defer sealing to 0.3.1 and add §3.1's trait
   methods as a tolerated break anyway.
-- **D3 — `ByteOrder` → `ChannelOrder`** rename with deprecated alias
-  (cheap, zero users; recommended if `descriptor.rs` is touched anyway).
+- **D3 — `ByteOrder`:** decided 2026-10-30: deprecate in 0.2.17 and remove in
+  0.3.1 without a replacement type. `ChannelLayout::Bgra` already carries the
+  RGB/BGR order (`is_bgr()` reads it), and a renamed enum would duplicate the
+  layout. No zen crate outside zenpixels uses it (searched `~/work/zen` and
+  imageflow on 2026-10-30; the zencodec EXIF and image-tiff `ByteOrder` types
+  are unrelated endianness enums).
 - **D4 — `into_vec`:** deprecate in 0.2.17, keep in 0.3.1 (recommended).
 - **D5 — free `apply_orientation*`:** keep undeprecated (recommended).
 - **D6 — `ColorManagement` removal** conditional on ICC parity (recommended).
