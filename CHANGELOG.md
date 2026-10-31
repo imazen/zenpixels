@@ -49,6 +49,10 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   is incomplete.
 - Both converter versions accept core `>=0.2.17, <0.4.0`; a connected pipeline
   must resolve one core version. Candidate archives are tested before publishing.
+- `sample::ChromaSubsampling` gains `Mono` and `chroma_size`; both enums gain
+  `Hash`, and `ChromaSiting` defaults to `Unknown`. This is the single
+  subsampling/siting vocabulary: `zencodec::frame` re-exports it instead of
+  defining its own. `YcbcrToRgbF32` refuses `Mono` as unsupported chroma.
 
 ## [0.2.17] — unreleased bridge
 
