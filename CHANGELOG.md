@@ -60,12 +60,12 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   same hidden variant, so casts on them stop compiling too; use
   `to_cicp`/`from_cicp` for numeric transfer and primaries codes, or a mapping
   of your own for stored values. Only `Orientation` keeps numeric values
-  (`repr(u8)`, the EXIF codes). (2ab68259)
+  (`repr(u8)`, the EXIF codes). (2ab68259, df9a8ebd)
 - Remove `ByteOrder` and `PixelFormat::byte_order` /
   `PixelDescriptor::byte_order`. They described RGB/BGR channel order, not
   sample endianness, and duplicated `ChannelLayout::Bgra`. Use
   `layout() == ChannelLayout::Bgra` or `PixelDescriptor::is_bgr()`; samples are
-  always host-endian. No zen crate outside zenpixels used them.
+  always host-endian. No zen crate outside zenpixels used them. (5f626fb0)
 - The 28 named native-sample formats (`RgbI8` … `GrayAF64`) become one
   `PixelFormat::Generic(GenericFormat)`, returned by `PixelFormat::from_parts`.
   `GenericFormat` has private fields and no constructor; a combination with a
