@@ -81,6 +81,18 @@ fn main() {
         False,
     ),
 }
+PROBES["byte_order_type"] = (
+    "fn accepts(_: zenpixels::ByteOrder) {} fn main() {}", "ByteOrder", False,
+)
+PROBES["byte_order_format"] = (
+    "fn main() { let _ = zenpixels::PixelFormat::Bgra8.byte_order(); }", "byte_order", False,
+)
+PROBES["byte_order_descriptor"] = (
+    "fn main() { let _ = zenpixels::PixelDescriptor::RGB8_SRGB.byte_order(); }", "byte_order", False,
+)
+PROBES["is_bgr"] = (
+    "fn main() { let _ = zenpixels::PixelDescriptor::RGB8_SRGB.is_bgr(); }", None, False,
+)
 PROBES["into_vec"] = (
     "fn main() { let _ = zenpixels::PixelBuffer::new(1, 1, zenpixels::PixelDescriptor::RGB8_SRGB).into_vec(); }",
     "into_vec", False,
