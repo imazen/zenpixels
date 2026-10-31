@@ -3,8 +3,8 @@
 Written 2026-10-31. Inventories every planar (one array per component)
 representation in the zen codecs and the crates around them, sketches a shared
 format, and lists the duplication. Proposals only; nothing here is implemented.
-An interactive version of this inventory is published as a private artifact
-(link in the session that wrote this doc).
+An interactive version is a private artifact (owner-visible until shared):
+https://claude.ai/artifact/733cxv3SiQCzkQsJ7bKWSW
 
 **Sources.** Local primary checkouts under `~/work/zen` (jj workspaces named
 `<repo>--*` excluded), read on 2026-10-31. Branch caveats: zencodec's working
