@@ -150,7 +150,11 @@ measurements):
   AVX-512. Keep the argument for GPU staging (256).
 - **Avoid power-of-two strides when we choose the stride:** add one alignment
   unit when the stride is a multiple of 4096 (rav1d's rule, at the
-  page-aliasing size; a 1024 threshold would need a measurement).
+  page-aliasing size; a 1024 threshold would need a measurement). Not
+  measured here: the alignment bench walks rows one at a time with a
+  non-power-of-two stride, so it cannot see aliasing. Kernels that read the
+  same column across rows (vertical resize taps, chroma upsampling, 8-row
+  DCT blocks, transposes) are where it would show.
 - **Single-channel planes have no lcm problem:** the word size (1, 2 or 4)
   divides 64, so a plane row can always start on 64 bytes with under 64 bytes
   of padding. Owned plane storage should do that when it allocates

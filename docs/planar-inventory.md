@@ -204,7 +204,7 @@ Recommendation: **word-typed storage with a start offset**, by extending zencode
 
 - Words U8, U16, F32 (F16 only with a consumer), plus the accounted variants.
 - Adopting a codec's `Vec` is free (offset 0): heic, zenavif, zenwebp, zenjpeg and zenfilters outputs move in without a copy.
-- Allocating puts the first sample on 64 bytes and rounds the stride up to 64 bytes, plus 64 when that lands on a multiple of 4096. A plane's word size divides 64, so this costs under 64 bytes per row, and it is worth up to 1.5x on AVX2/AVX-512 cache-resident rows (`benchmarks/row_alignment_2026-10-31.md`).
+- Allocating puts the first sample on 64 bytes and rounds the stride up to 64 bytes, plus 64 when that lands on a multiple of 4096. A plane's word size divides 64, so rounding costs under 64 bytes per row (under 128 with the 4096 bump, which is rav1d's rule and not measured here); the 64-byte start is worth up to 1.5x on AVX2/AVX-512 cache-resident rows (`benchmarks/row_alignment_2026-10-31.md`).
 - Rows are typed slices with no casting; byte views use `bytemuck::cast_slice` from the word slice, which cannot fail. The only checked casts left are on byte buffers a codec hands over (for example `&[u8]` holding `u16` words): `try_cast_slice`, and copy when misaligned.
 - The word type is per plane. Alpha and extra channels can differ from color planes (JXL extra channels do); per-plane is the superset of the "frame-wide versus per-plane encoding" question zencodec #190 leaves open.
 - Borrowed side: `CodePlane` for U8/U16 codes. Add an F32 plane view when the first F32 planes cross crates (zenjpeg `DecodedYCbCr` into jxl-encoder, or metrics).
