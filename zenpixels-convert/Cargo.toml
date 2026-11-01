@@ -193,6 +193,11 @@ path = "benches/bench_row_alignment.rs"
 harness = false
 
 [[bench]]
+name = "bench_stride_aliasing"
+path = "benches/bench_stride_aliasing.rs"
+harness = false
+
+[[bench]]
 name = "bench_t1_layout"
 path = "benches/bench_t1_layout.rs"
 harness = false
