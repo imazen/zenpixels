@@ -1,5 +1,5 @@
 use super::SampleEncoding;
-use crate::ChannelType;
+use crate::plane::AnyPlane;
 use core::fmt;
 
 /// Chroma resolution relative to the complete luma plane.
@@ -57,28 +57,31 @@ enum Words<'a> {
     U16(&'a [u16]),
 }
 
-/// One borrowed unsigned component plane, without normalization or color claims.
+/// Integer codes of one component in a borrowed plane, without normalization
+/// or color claims.
 ///
-/// Typed words use native endianness. Code depth/placement come from
-/// [`crate::sample::SampleEncoding`]; padding bits are ignored on reads. The
-/// enclosing format supplies roles, range, matrix, transfer and sample location.
-/// No pixel payload is copied or allocated. Final-row padding need not exist.
+/// Code depth and placement come from [`crate::sample::SampleEncoding`];
+/// padding bits are ignored on reads. The enclosing format supplies roles,
+/// range, matrix, transfer and sample location. Nothing is copied or allocated.
 ///
-/// A component need not occupy consecutive words. The interleaved constructors
-/// take the distance between neighboring samples of this component within a row,
-/// so one type borrows planar, semi-planar and interleaved native layouts:
+/// The plane is a [`crate::plane::Plane`] of `u8` or `u16` words. A plane may
+/// hold several interleaved components per position, such as the Cb/Cr plane
+/// of NV12 or P010, or interleaved RGB(A); [`component`](Self::component)
+/// reads one of them:
 ///
 /// ```
-/// use zenpixels::{ChannelType, sample::{CodePlane, SampleEncoding}};
-/// // P010 chroma: one interleaved Cb/Cr plane, 10 high bits per little-endian word.
+/// use zenpixels::{ChannelType, plane::{AnyPlane, PlaneRef}, sample::{CodePlane, SampleEncoding}};
+/// // P010 chroma: one interleaved Cb/Cr plane, 10 high bits per word.
 /// let p010 = SampleEncoding::new(ChannelType::U16, 10, 6).unwrap();
 /// let uv: [u16; 4] = [512 << 6, 100 << 6, 300 << 6, 1023 << 6]; // Cb Cr Cb Cr
-/// let cb = CodePlane::from_u16_interleaved(&uv, 2, 1, 8, 2, p010).unwrap();
-/// let cr = CodePlane::from_u16_interleaved(&uv[1..], 2, 1, 8, 2, p010).unwrap();
+/// let plane = AnyPlane::U16(PlaneRef::new(&uv[..], 4, 1, 4).unwrap());
+/// let cb = CodePlane::component(plane, 2, 0, p010).unwrap();
+/// let cr = CodePlane::component(plane, 2, 1, p010).unwrap();
 /// assert_eq!((cb.code(1, 0), cr.code(1, 0)), (Some(300), Some(1023)));
 /// ```
 #[derive(Clone, Copy, Debug)]
 pub struct CodePlane<'a> {
+    // Starts at this component's first word.
     words: Words<'a>,
     width: usize,
     height: usize,
@@ -87,22 +90,16 @@ pub struct CodePlane<'a> {
     encoding: SampleEncoding,
 }
 
-/// A borrowed component plane does not fit its physical storage.
+/// Codes cannot be read from a plane as requested.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CodePlaneError {
-    /// The sample encoding names a different storage word type.
+    /// The plane's word type differs from the sample encoding's storage, or
+    /// is not an integer word.
     StorageMismatch,
-    /// A byte stride does not hold a whole number of storage words.
-    MisalignedStride,
-    /// A nonempty plane's stride is shorter than its active row.
-    ShortStride,
-    /// Storage ends before the last active sample.
-    ShortBuffer,
-    /// Computing the last active sample overflows addressable storage.
-    GeometryOverflow,
-    /// An interleaved component's sample step is zero.
-    ZeroStep,
+    /// The component index is not below the component count, or the plane's
+    /// width does not hold whole positions.
+    Components,
     /// A requested read extends beyond the active plane.
     OutsideActivePlane,
 }
@@ -110,11 +107,7 @@ impl fmt::Display for CodePlaneError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::StorageMismatch => "code plane storage disagrees with sample encoding",
-            Self::MisalignedStride => "code plane stride must hold whole words",
-            Self::ShortStride => "code plane stride is shorter than an active row",
-            Self::ShortBuffer => "code plane storage ends before the last active sample",
-            Self::GeometryOverflow => "code plane geometry overflows addressable storage",
-            Self::ZeroStep => "code plane sample step must be at least one word",
+            Self::Components => "component index or plane width disagrees with the component count",
             Self::OutsideActivePlane => "code plane read extends beyond the active plane",
         })
     }
@@ -122,119 +115,52 @@ impl fmt::Display for CodePlaneError {
 impl core::error::Error for CodePlaneError {}
 
 impl<'a> CodePlane<'a> {
-    /// Borrow U8 words with an explicit byte stride and sample encoding.
-    pub fn from_u8(
-        words: &'a [u8],
-        width: usize,
-        height: usize,
-        stride_bytes: usize,
-        encoding: SampleEncoding,
-    ) -> Result<Self, CodePlaneError> {
-        Self::new(Words::U8(words), width, height, stride_bytes, 1, encoding)
-    }
-
-    /// Borrow U16 words with an explicit byte stride and sample encoding.
-    pub fn from_u16(
-        words: &'a [u16],
-        width: usize,
-        height: usize,
-        stride_bytes: usize,
-        encoding: SampleEncoding,
-    ) -> Result<Self, CodePlaneError> {
-        Self::new(Words::U16(words), width, height, stride_bytes, 1, encoding)
-    }
-
-    /// Borrow one component of interleaved U8 words.
+    /// Codes of a plane holding one component per position.
     ///
-    /// `words` starts at this component's first sample; `step_words` is the
-    /// distance to the same component of the next pixel. Rows are
-    /// `stride_bytes` apart. Construction checks geometry without reading words.
-    pub fn from_u8_interleaved(
-        words: &'a [u8],
-        width: usize,
-        height: usize,
-        stride_bytes: usize,
-        step_words: usize,
-        encoding: SampleEncoding,
-    ) -> Result<Self, CodePlaneError> {
-        Self::new(
-            Words::U8(words),
-            width,
-            height,
-            stride_bytes,
-            step_words,
-            encoding,
-        )
-    }
-
-    /// Borrow one component of interleaved U16 words, such as P010 chroma.
+    /// # Errors
     ///
-    /// `words` starts at this component's first sample; `step_words` is the
-    /// distance to the same component of the next pixel. Rows are
-    /// `stride_bytes` apart. Construction checks geometry without reading words.
-    pub fn from_u16_interleaved(
-        words: &'a [u16],
-        width: usize,
-        height: usize,
-        stride_bytes: usize,
-        step_words: usize,
-        encoding: SampleEncoding,
-    ) -> Result<Self, CodePlaneError> {
-        Self::new(
-            Words::U16(words),
-            width,
-            height,
-            stride_bytes,
-            step_words,
-            encoding,
-        )
+    /// [`CodePlaneError::StorageMismatch`] when the plane's words differ from
+    /// `encoding`'s storage.
+    pub fn new(plane: AnyPlane<'a>, encoding: SampleEncoding) -> Result<Self, CodePlaneError> {
+        Self::component(plane, 1, 0, encoding)
     }
 
-    fn new(
-        words: Words<'a>,
-        width: usize,
-        height: usize,
-        stride_bytes: usize,
-        step_words: usize,
+    /// Codes of component `index` in a plane holding `components`
+    /// interleaved components per position. The plane's width must be a
+    /// multiple of `components`; this view is `width / components` wide.
+    ///
+    /// # Errors
+    ///
+    /// [`CodePlaneError::Components`] for an index not below `components` or
+    /// a width that is not a multiple of it, and
+    /// [`CodePlaneError::StorageMismatch`] when the plane's words differ from
+    /// `encoding`'s storage.
+    pub fn component(
+        plane: AnyPlane<'a>,
+        components: usize,
+        index: usize,
         encoding: SampleEncoding,
     ) -> Result<Self, CodePlaneError> {
-        let (storage, len, bytes) = match words {
-            Words::U8(s) => (ChannelType::U8, s.len(), 1),
-            Words::U16(s) => (ChannelType::U16, s.len(), 2),
-        };
-        if storage != encoding.storage() {
+        if index >= components || plane.width() % components != 0 {
+            return Err(CodePlaneError::Components);
+        }
+        if plane.channel_type() != encoding.storage() {
             return Err(CodePlaneError::StorageMismatch);
         }
-        if step_words == 0 {
-            return Err(CodePlaneError::ZeroStep);
-        }
-        if stride_bytes % bytes != 0 {
-            return Err(CodePlaneError::MisalignedStride);
-        }
-        let stride_words = stride_bytes / bytes;
-        if width != 0 && height != 0 {
-            // One active row of this component spans (width - 1) steps + 1 word.
-            let row_span = (width - 1)
-                .checked_mul(step_words)
-                .and_then(|v| v.checked_add(1))
-                .ok_or(CodePlaneError::GeometryOverflow)?;
-            if stride_words < row_span {
-                return Err(CodePlaneError::ShortStride);
-            }
-            let needed = (height - 1)
-                .checked_mul(stride_words)
-                .and_then(|v| v.checked_add(row_span))
-                .ok_or(CodePlaneError::GeometryOverflow)?;
-            if needed > len {
-                return Err(CodePlaneError::ShortBuffer);
-            }
-        }
+        let (width, height) = (plane.width() / components, plane.height());
+        // A nonempty plane's span reaches past `index`; an empty one is never read.
+        let skip = if width == 0 || height == 0 { 0 } else { index };
+        let (words, stride_words) = match plane {
+            AnyPlane::U8(p) => (Words::U8(&p.into_strided_words()[skip..]), p.stride()),
+            AnyPlane::U16(p) => (Words::U16(&p.into_strided_words()[skip..]), p.stride()),
+            AnyPlane::F32(_) => return Err(CodePlaneError::StorageMismatch),
+        };
         Ok(Self {
             words,
             width,
             height,
             stride_words,
-            step_words,
+            step_words: components,
             encoding,
         })
     }
@@ -250,11 +176,6 @@ impl<'a> CodePlane<'a> {
     /// Storage width, code depth and bit placement; not a normalized pixel format.
     pub const fn encoding(self) -> SampleEncoding {
         self.encoding
-    }
-
-    /// Words between neighboring samples of this component in a row (1 = planar).
-    pub const fn step_words(self) -> usize {
-        self.step_words
     }
 
     /// Extract one code, ignoring padding bits; outside the active plane is None.

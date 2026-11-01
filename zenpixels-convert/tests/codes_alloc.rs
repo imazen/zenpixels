@@ -5,11 +5,16 @@
 //! Links the `allocation-counter` global allocator, so this file is its own
 //! test binary. Error paths are excluded: a `whereat` trace allocates.
 
+use zenpixels::plane::{AnyPlane, PlaneRef};
 use zenpixels::{
     ChannelType, PixelBuffer, PixelDescriptor, PixelSlice, PixelSliceMut, SignalRange,
     sample::{CodePlane, ExactDepth, SampleEncoding},
 };
 use zenpixels_convert::codes::{CodeMap, CodeRole, to_canonical};
+
+fn plane16(words: &[u16], width: usize, height: usize, stride: usize) -> AnyPlane<'_> {
+    AnyPlane::U16(PlaneRef::new(words, width, height, stride).unwrap())
+}
 
 #[test]
 fn conversion_scan_and_evidence_allocate_nothing() {
@@ -26,8 +31,9 @@ fn conversion_scan_and_evidence_allocate_nothing() {
     let mut buffer = PixelBuffer::new(w as u32, h as u32, PixelDescriptor::RGB16);
 
     let info = allocation_counter::measure(|| {
-        let planes = [0usize, 1, 2]
-            .map(|c| CodePlane::from_u16_interleaved(&src[c..], w, h, w * 6, 3, twelve).unwrap());
+        let planes = [0usize, 1, 2].map(|c| {
+            CodePlane::component(plane16(&src, w * 3, h, (w * 6) / 2), 3, c, twelve).unwrap()
+        });
         let out = PixelSliceMut::new(
             bytemuck::cast_slice_mut(&mut dst),
             w as u32,

@@ -59,6 +59,12 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   chroma), per-plane `PlaneEncoding` (integer codes or scaled floats) and a
   validated `PlanarLayout`. `PlaneBuf::alloc` starts rows on 64 bytes and
   avoids strides on 4096 multiples. Design: `docs/planar-types.md`.
+- `sample::CodePlane` reads codes from a `plane::AnyPlane`: `CodePlane::new` for one
+  component per position, `CodePlane::component` for one of several interleaved
+  components (NV12/P010 chroma, interleaved RGB). Removes `from_u8`, `from_u16`,
+  `from_u8_interleaved`, `from_u16_interleaved` and `step_words`; geometry errors move
+  to `plane::PlaneError`, leaving `CodePlaneError::{StorageMismatch, Components,
+  OutsideActivePlane}`.
 
 ## [0.2.17] — unreleased bridge
 

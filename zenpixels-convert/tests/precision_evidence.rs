@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 use zenpixels::Orientation;
+use zenpixels::plane::{AnyPlane, PlaneRef};
 use zenpixels::{
     ChannelType, Cicp, ColorContext, PixelBuffer, PixelCow, PixelDescriptor, PixelSlice,
     SignalRange, TransferFunction,
@@ -18,6 +19,13 @@ use zenpixels_convert::{
     codes::{CodeMap, CodeRole, to_canonical},
     orient::{apply_orientation, apply_orientation_in_place},
 };
+
+fn plane8(words: &[u8], width: usize, height: usize, stride: usize) -> AnyPlane<'_> {
+    AnyPlane::U8(PlaneRef::new(words, width, height, stride).unwrap())
+}
+fn plane16(words: &[u16], width: usize, height: usize, stride: usize) -> AnyPlane<'_> {
+    AnyPlane::U16(PlaneRef::new(words, width, height, stride).unwrap())
+}
 
 const W: u32 = 9;
 const H: u32 = 5;
@@ -37,12 +45,15 @@ fn decode_native(bits: u8, descriptor: PixelDescriptor, seed: usize) -> PixelBuf
         .collect();
     let planes: Vec<CodePlane<'_>> = (0..channels)
         .map(|c| {
-            CodePlane::from_u16_interleaved(
-                &codes[c..],
-                W as usize,
-                H as usize,
-                W as usize * channels * 2,
+            CodePlane::component(
+                plane16(
+                    &codes,
+                    (W as usize) * channels,
+                    H as usize,
+                    (W as usize * channels * 2) / 2,
+                ),
                 channels,
+                c,
                 enc(bits),
             )
             .unwrap()
@@ -908,12 +919,10 @@ fn reversible_conversions_transfer_evidence_that_survives_a_roundtrip() {
         let plane_encoding = SampleEncoding::new(ChannelType::U8, bits, 0).unwrap();
         let planes: Vec<CodePlane<'_>> = (0..3)
             .map(|c| {
-                CodePlane::from_u8_interleaved(
-                    &codes[c..],
-                    W as usize,
-                    H as usize,
-                    W as usize * 3,
+                CodePlane::component(
+                    plane8(&codes, (W as usize) * 3, H as usize, (W as usize * 3)),
                     3,
+                    c,
                     plane_encoding,
                 )
                 .unwrap()

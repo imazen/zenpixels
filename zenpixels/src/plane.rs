@@ -424,6 +424,15 @@ impl<'a, T: PlaneWord> Plane<&'a mut [T]> {
     }
 }
 
+impl<'a, T: PlaneWord> Plane<&'a [T]> {
+    /// [`Plane::strided_words`] for the borrowed lifetime.
+    pub(crate) fn into_strided_words(self) -> &'a [T] {
+        let end = extent(self.start, self.width, self.height, self.stride)
+            .expect("checked at construction");
+        &self.buf[self.start..end]
+    }
+}
+
 struct RowsMut<'a, T> {
     words: &'a mut [T],
     width: usize,

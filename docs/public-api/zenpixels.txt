@@ -10,18 +10,18 @@
 #
 #   pub modules                                12
 #   pub types (struct/enum/trait/alias)       107
-#   pub consts/statics                        304
+#   pub consts/statics                        303
 #   free functions                              6
-#   inherent methods                          298
+#   inherent methods                          296
 #   struct fields                             121
-#   enum variants                             342
+#   enum variants                             338
 #   re-exports                                  4
 #   trait roster entries (type × trait)       370
 #   auto-trait-complete types                  54
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                          467
+#   (root)                          466
 #   buffer                          252
 #   cicp                             36
 #   color                            62
@@ -32,9 +32,9 @@
 #   pixel_types                       9
 #   plane                            81
 #   policy                           25
-#   sample                           39
+#   sample                           33
 
-## items (1064 lines)
+## items (1057 lines)
 
 pub mod zenpixels
 pub use At
@@ -653,13 +653,9 @@ pub sample::ChromaSubsampling::Yuv422
 pub sample::ChromaSubsampling::Yuv444
 pub const fn sample::ChromaSubsampling::chroma_size(self, u32, u32) -> core::option::Option<(u32, u32)>
 #[non_exhaustive] pub enum sample::CodePlaneError
-pub sample::CodePlaneError::GeometryOverflow
-pub sample::CodePlaneError::MisalignedStride
+pub sample::CodePlaneError::Components
 pub sample::CodePlaneError::OutsideActivePlane
-pub sample::CodePlaneError::ShortBuffer
-pub sample::CodePlaneError::ShortStride
 pub sample::CodePlaneError::StorageMismatch
-pub sample::CodePlaneError::ZeroStep
 #[non_exhaustive] pub enum sample::ExactDepthError
 pub sample::ExactDepthError::DescriptorMismatch
 pub sample::ExactDepthError::InvalidBits
@@ -672,14 +668,11 @@ pub sample::SampleEncodingError::InvalidBitShift
 pub sample::SampleEncodingError::UnsupportedStorage
 pub struct sample::CodePlane<'a>
 pub fn sample::CodePlane<'a>::code(self, usize, usize) -> core::option::Option<u16>
+pub fn sample::CodePlane<'a>::component(plane::AnyPlane<'a>, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
 pub const fn sample::CodePlane<'a>::encoding(self) -> sample::SampleEncoding
-pub fn sample::CodePlane<'a>::from_u16(&'a [u16], usize, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
-pub fn sample::CodePlane<'a>::from_u16_interleaved(&'a [u16], usize, usize, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
-pub fn sample::CodePlane<'a>::from_u8(&'a [u8], usize, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
-pub fn sample::CodePlane<'a>::from_u8_interleaved(&'a [u8], usize, usize, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
 pub const fn sample::CodePlane<'a>::height(self) -> usize
+pub fn sample::CodePlane<'a>::new(plane::AnyPlane<'a>, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
 pub fn sample::CodePlane<'a>::read_codes(self, usize, usize, &mut [u16]) -> core::result::Result<(), sample::CodePlaneError>
-pub const fn sample::CodePlane<'a>::step_words(self) -> usize
 pub const fn sample::CodePlane<'a>::width(self) -> usize
 pub struct sample::ExactDepth
 pub const fn sample::ExactDepth::alpha_bits(self) -> u8

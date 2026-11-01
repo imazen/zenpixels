@@ -1,8 +1,16 @@
+use zenpixels::plane::{AnyPlane, PlaneRef};
 use zenpixels::{
     ChannelType, Cicp, PixelDescriptor, PixelSliceMut, TransferFunction,
     sample::{ChromaSiting as Site, ChromaSubsampling as Sub, CodePlane, SampleEncoding},
 };
 use zenpixels_convert::ycbcr::{YcbcrError, YcbcrToRgbF32};
+
+fn plane8(words: &[u8], width: usize, height: usize, stride: usize) -> AnyPlane<'_> {
+    AnyPlane::U8(PlaneRef::new(words, width, height, stride).unwrap())
+}
+fn plane16(words: &[u16], width: usize, height: usize, stride: usize) -> AnyPlane<'_> {
+    AnyPlane::U16(PlaneRef::new(words, width, height, stride).unwrap())
+}
 
 fn descriptor() -> PixelDescriptor {
     PixelDescriptor::RGBF32_LINEAR.with_transfer(TransferFunction::Srgb)
@@ -56,9 +64,9 @@ fn code_placement_and_row_partition_do_not_change_rgb() {
                     .collect();
                 let enc = SampleEncoding::new(ChannelType::U16, bits, 0).unwrap();
                 let planes = [
-                    CodePlane::from_u16(&y, w, h, w * 2, enc).unwrap(),
-                    CodePlane::from_u16(&u, cw, ch, cw * 2, enc).unwrap(),
-                    CodePlane::from_u16(&v, cw, ch, cw * 2, enc).unwrap(),
+                    CodePlane::new(plane16(&y, w, h, (w * 2) / 2), enc).unwrap(),
+                    CodePlane::new(plane16(&u, cw, ch, (cw * 2) / 2), enc).unwrap(),
+                    CodePlane::new(plane16(&v, cw, ch, (cw * 2) / 2), enc).unwrap(),
                 ];
                 let color = Cicp::new(1, 13, 1, full);
                 let plan = YcbcrToRgbF32::new(planes, sub, Site::Center, color).unwrap();
@@ -80,9 +88,9 @@ fn code_placement_and_row_partition_do_not_change_rgb() {
                     let (ys, us, vs) = (encode(&y, w), encode(&u, cw), encode(&v, cw));
                     let enc = SampleEncoding::new(ChannelType::U16, bits, shift).unwrap();
                     let planes = [
-                        CodePlane::from_u16(&ys, w, h, (w + 1) * 2, enc).unwrap(),
-                        CodePlane::from_u16(&us, cw, ch, (cw + 1) * 2, enc).unwrap(),
-                        CodePlane::from_u16(&vs, cw, ch, (cw + 1) * 2, enc).unwrap(),
+                        CodePlane::new(plane16(&ys, w, h, ((w + 1) * 2) / 2), enc).unwrap(),
+                        CodePlane::new(plane16(&us, cw, ch, ((cw + 1) * 2) / 2), enc).unwrap(),
+                        CodePlane::new(plane16(&vs, cw, ch, ((cw + 1) * 2) / 2), enc).unwrap(),
                     ];
                     let plan = YcbcrToRgbF32::new(planes, sub, Site::Center, color).unwrap();
                     assert_eq!(run(&plan, 0, 0, w as u32, h as u32), expected);
@@ -98,9 +106,9 @@ fn limited_neutral_codes_preserve_excursions_and_endpoints() {
     let uv = [128u8; 4];
     let enc = SampleEncoding::new(ChannelType::U8, 8, 0).unwrap();
     let planes = [
-        CodePlane::from_u8(&y, 4, 1, 4, enc).unwrap(),
-        CodePlane::from_u8(&uv, 4, 1, 4, enc).unwrap(),
-        CodePlane::from_u8(&uv, 4, 1, 4, enc).unwrap(),
+        CodePlane::new(plane8(&y, 4, 1, 4), enc).unwrap(),
+        CodePlane::new(plane8(&uv, 4, 1, 4), enc).unwrap(),
+        CodePlane::new(plane8(&uv, 4, 1, 4), enc).unwrap(),
     ];
     let plan = YcbcrToRgbF32::new(
         planes,
@@ -120,8 +128,8 @@ fn limited_neutral_codes_preserve_excursions_and_endpoints() {
 fn bad_interpretation_and_output_fail_before_writes() {
     let samples = [128u8; 4];
     let enc = SampleEncoding::new(ChannelType::U8, 8, 0).unwrap();
-    let p = CodePlane::from_u8(&samples, 2, 2, 2, enc).unwrap();
-    let c = CodePlane::from_u8(&samples, 1, 1, 1, enc).unwrap();
+    let p = CodePlane::new(plane8(&samples, 2, 2, 2), enc).unwrap();
+    let c = CodePlane::new(plane8(&samples, 1, 1, 1), enc).unwrap();
     let color = Cicp::new(1, 13, 1, true);
     assert_eq!(
         *YcbcrToRgbF32::new([p, p, p], Sub::Mono, Site::Unknown, color)
@@ -172,7 +180,7 @@ fn bad_interpretation_and_output_fail_before_writes() {
     );
     let bad_encoding = SampleEncoding::new(ChannelType::U16, 16, 0).unwrap();
     let words = [0u16; 4];
-    let wide = CodePlane::from_u16(&words, 2, 2, 4, bad_encoding).unwrap();
+    let wide = CodePlane::new(plane16(&words, 2, 2, 4 / 2), bad_encoding).unwrap();
     assert_eq!(
         *YcbcrToRgbF32::new([wide, wide, wide], Sub::Yuv444, Site::Unknown, color)
             .err()
@@ -184,7 +192,7 @@ fn bad_interpretation_and_output_fail_before_writes() {
         }
     );
     let other_encoding = SampleEncoding::new(ChannelType::U16, 8, 0).unwrap();
-    let other = CodePlane::from_u16(&words, 1, 1, 2, other_encoding).unwrap();
+    let other = CodePlane::new(plane16(&words, 1, 1, 2 / 2), other_encoding).unwrap();
     assert_eq!(
         *YcbcrToRgbF32::new([p, c, other], Sub::Yuv420, Site::Center, color)
             .err()
@@ -195,7 +203,7 @@ fn bad_interpretation_and_output_fail_before_writes() {
             actual: other_encoding
         }
     );
-    let empty = CodePlane::from_u8(&[], 0, 0, 0, enc).unwrap();
+    let empty = CodePlane::new(plane8(&[], 0, 0, 0), enc).unwrap();
     assert_eq!(
         *YcbcrToRgbF32::new([empty, empty, empty], Sub::Yuv444, Site::Unknown, color)
             .err()
