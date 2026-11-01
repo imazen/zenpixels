@@ -380,7 +380,7 @@ impl<C: PlaneStorageMut> Plane<C> {
     }
 }
 
-impl<'a, T: PlaneWord> Plane<&'a mut [T]> {
+impl<T: PlaneWord> Plane<&mut [T]> {
     /// Split into rows `0..y` and rows `y..`, for filling strips or
     /// handing disjoint rows to threads.
     ///
