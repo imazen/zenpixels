@@ -14,6 +14,7 @@
 //! - [`PixelDescriptor`] — format + transfer function + primaries + alpha mode + signal range
 //! - [`PixelBuffer`] — owned pixel storage with SIMD-aligned allocation
 //! - [`PixelSlice`] / [`PixelSliceMut`] — borrowed views with stride support
+//! - [`plane::Plane`] / [`plane::PlanarLayout`] — strided planes of one word type, and planar picture layouts
 //! - [`Pixel`] — trait mapping concrete types to their descriptor
 //! - [`Cicp`] — ITU-T H.273 color signaling codes
 //! - [`ColorContext`] — ICC profile bytes and/or CICP, `Arc`-shared
@@ -67,6 +68,7 @@ whereat::define_at_crate_info!(path = "zenpixels/");
 
 pub mod descriptor;
 pub mod orientation;
+pub mod plane;
 pub mod policy;
 pub mod sample;
 
