@@ -128,7 +128,7 @@ Facts that settle the design:
    rows at one column share a set); not confirmed with counters. N1's 4-way L1D
    would predict losses at 16384 and 32768, and none appeared. Memory-resident
    rows (128 MiB) are unstable between runs; on x86 they are also hit at 2048
-   and 6144 with 8 rows, and on N1 the bump costs up to 22% at 2048.
+   and 6144 with 8 rows and at 12288 and 16384 with 2 rows, and on N1 the bump costs up to 22% at 2048.
    The x86 load-after-store "4K aliasing" is a different effect and the bump
    does not fix it: for a row-in/row-out kernel on Zen 4 AVX-512, a destination
    64 bytes past a multiple of 4096 from the source was the slow placement (3 of

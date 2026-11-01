@@ -69,6 +69,7 @@ Measured, Zen 4, L2-resident rows (both runs, all tiers, both output placements)
 
 Measured, Zen 4, memory-resident rows: unstable between runs and tiers.
 - K=12 at 8192-32768: +6.6..+42.2% in every cell; at 4096: -2.9..+41.9%.
+- K=2 is hit too at 12288 and 16384 (+7..+29% and +1..+21% across tiers), unlike L2-resident rows.
 - K=8 is hit at 2048 and 6144 too (medians +8..+65% and +10..+34%, scalar worst), so the 4096
   rule does not predict memory-resident behaviour. Not explained.
 - At 1024 the power-of-two stride is faster than +64 for K=2 and K=8 (medians -3..-11%): the
