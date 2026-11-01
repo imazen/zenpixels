@@ -232,7 +232,9 @@ fn reference_vfilter<const K: usize>(w: usize, rows_out: usize) -> Vec<f32> {
 }
 
 /// Strides in bytes: each power of two and its +64 partner.
-const PAIRS: [usize; 6] = [1024, 2048, 4096, 8192, 16384, 32768];
+/// 6144 (a multiple of 2048, not of 4096) and 12288 (a multiple of 4096, not a
+/// power of two) test where the "multiple of 4096" rule starts and stops.
+const PAIRS: [usize; 8] = [1024, 2048, 4096, 6144, 8192, 12288, 16384, 32768];
 
 fn check_vfilter(tiers: &[Tier]) {
     for tier in tiers {
