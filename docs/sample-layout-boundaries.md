@@ -171,8 +171,9 @@ measurements):
   multiples of 1024 or 2048: cache-resident rows show no effect, and the
   memory-resident results differ in sign between Zen 4 and N1. The bump is
   not a fix for load-after-store aliasing between a source and a destination.
-  For a stride we are given, the cost lands only on kernels that keep more
-  than 8 rows live at one column (vertical resize taps, long filters).
+  For a stride we are given, the cost lands on kernels that keep 8 or more
+  rows live at one column (vertical resize taps, long filters): 8 rows lose
+  4-12% at 4096, 12 rows lose 19-48% at 8192 and above.
 - **Single-channel planes have no lcm problem:** the word size (1, 2 or 4)
   divides 64, so a plane row can always start on 64 bytes with under 64 bytes
   of padding. Owned plane storage should do that when it allocates
