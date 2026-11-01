@@ -9,7 +9,11 @@
 //!    output row. Strides 1024, 2048, ... 32768 bytes are each compared with
 //!    the same row width at stride + 64 bytes. The baseline arm of every group
 //!    is the +64 stride, so zenbench's percent change is the power-of-two
-//!    slowdown. Two image heights: L2-resident, and well past L3.
+//!    slowdown. Two image heights: L2-resident, and well past L3. Input and
+//!    output buffers are pinned to a page offset (input 0; output 2048 in the
+//!    `out@2048` groups, 0 in the `out@0` groups) so the result does not
+//!    depend on where the allocator put them: store-to-load 4K aliasing between
+//!    the output and the input rows is then a controlled variable.
 //! 2. Row in to row out (4K aliasing): `dst[y] = src[y] * g + b`, where `dst`
 //!    lives in the same allocation as `src` at a byte distance that is a
 //!    multiple of 4096 plus a chosen offset. Baseline is distance = multiple of
@@ -23,6 +27,11 @@
 
 use archmage::prelude::*;
 use zenbench::prelude::*;
+
+/// Page offset of the output buffer in the main runs: far from every input
+/// column the filter reads, so a store never shares its low 12 address bits
+/// with a nearby load. The `out@0` groups put it where it can.
+const OUT_AWAY: usize = 2048;
 
 const BLOCK: usize = 16; // floats per vector block (f32x16)
 
@@ -143,16 +152,21 @@ fn pixel(y: usize, x: usize) -> f32 {
     ((y * 131 + x * 7) % 1009) as f32 * 0.003 - 1.0
 }
 
-/// A zero-filled `Vec<f32>` plus the index of its first 64-byte-aligned float.
-fn aligned_vec(floats: usize) -> (Vec<f32>, usize) {
-    let v = vec![0.0f32; floats + 16];
-    let start = (16 - (v.as_ptr() as usize % 64) / 4) % 16;
-    assert_eq!((v.as_ptr() as usize + start * 4) % 64, 0);
+/// A zero-filled `Vec<f32>` plus the index of the float whose address is
+/// `page_off` bytes past a 4096-byte boundary (`page_off` is a multiple of 64).
+/// Pinning the page offset keeps the low 12 address bits of every buffer fixed,
+/// so a result does not depend on where the allocator happened to put it.
+fn placed_vec(floats: usize, page_off: usize) -> (Vec<f32>, usize) {
+    assert_eq!(page_off % 64, 0);
+    let v = vec![0.0f32; floats + 1024];
+    let cur = v.as_ptr() as usize % 4096;
+    let start = ((page_off + 4096 - cur) % 4096) / 4;
+    assert_eq!((v.as_ptr() as usize + start * 4) % 4096, page_off);
     (v, start)
 }
 
 /// Input image: `rows` rows of `w` floats at a stride of `stride_bytes`,
-/// every row starting 64-byte aligned.
+/// every row starting 64-byte aligned and the first on a page boundary.
 struct Plane {
     data: Vec<f32>,
     start: usize,
@@ -165,7 +179,7 @@ impl Plane {
         assert_eq!(stride_bytes % 64, 0);
         assert!(w * 4 <= stride_bytes && w.is_multiple_of(BLOCK));
         let stride = stride_bytes / 4;
-        let (mut data, start) = aligned_vec(stride * rows);
+        let (mut data, start) = placed_vec(stride * rows, 0);
         for y in 0..rows {
             for x in 0..w {
                 data[start + y * stride + x] = pixel(y, x);
@@ -184,7 +198,7 @@ impl Plane {
 }
 
 /// Output buffer for a vertical filter: `rows - K + 1` tightly packed rows of
-/// `w` floats, 64-byte aligned.
+/// `w` floats, starting `page_off` bytes past a page boundary.
 struct Out {
     data: Vec<f32>,
     start: usize,
@@ -192,9 +206,9 @@ struct Out {
 }
 
 impl Out {
-    fn new(w: usize, rows: usize) -> Self {
+    fn new(w: usize, rows: usize, page_off: usize) -> Self {
         let len = w * rows;
-        let (data, start) = aligned_vec(len);
+        let (data, start) = placed_vec(len, page_off);
         Self { data, start, len }
     }
     fn slice(&mut self) -> &mut [f32] {
@@ -233,7 +247,7 @@ fn check_vfilter(tiers: &[Tier]) {
                 };
                 for stride in [p, p + 64] {
                     let img = Plane::new(w, stride, rows_out + k - 1);
-                    let mut out = Out::new(w, rows_out);
+                    let mut out = Out::new(w, rows_out, OUT_AWAY);
                     kern(img.src(), img.stride, w, out.slice());
                     assert!(
                         out.slice()
@@ -266,7 +280,7 @@ impl RowPair {
         let stride = stride_bytes / 4;
         assert!(dist_bytes / 4 >= stride * rows, "images overlap");
         let dst_off = dist_bytes / 4;
-        let (mut data, start) = aligned_vec(dst_off + stride * rows);
+        let (mut data, start) = placed_vec(dst_off + stride * rows, 0);
         for y in 0..rows {
             for x in 0..w {
                 data[start + y * stride + x] = pixel(y, x);
@@ -391,7 +405,12 @@ fn bench_filter(
 ) {
     // Heights: L2 keeps about 128 KiB of input (at least K + 4 rows); memory
     // keeps 128 MiB, past both CCDs' L3 on the x86 host.
-    for (size_label, l2) in [("L2", true), ("memory", false)] {
+    for (size_label, l2, out_off) in [
+        ("L2", true, OUT_AWAY),
+        ("memory", false, OUT_AWAY),
+        ("L2", true, 0),
+        ("memory", false, 0),
+    ] {
         for &p in &PAIRS {
             let w = p / 4;
             let in_rows = if l2 {
@@ -402,7 +421,7 @@ fn bench_filter(
             let rows_out = in_rows - k + 1;
             let in_kib = in_rows * p / 1024;
             let label = format!(
-                "{} | K={k} | row {w} floats | {size_label}: {in_rows} rows, {in_kib} KiB in",
+                "{} | K={k} | row {w} floats | out@{out_off} | {size_label}: {in_rows} rows, {in_kib} KiB in",
                 tier.name
             );
             *gid += 1;
@@ -419,7 +438,10 @@ fn bench_filter(
                         format!("stride {stride:>5} B ({tag})"),
                         Kernel::Filter(kern),
                         move || {
-                            State::Filter(Plane::new(w, stride, in_rows), Out::new(w, rows_out))
+                            State::Filter(
+                                Plane::new(w, stride, in_rows),
+                                Out::new(w, rows_out, out_off),
+                            )
                         },
                     );
                 }
