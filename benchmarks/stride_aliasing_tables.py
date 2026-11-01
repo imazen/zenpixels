@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Turn bench_stride_aliasing output into markdown tables.
 
-Usage: stride_aliasing_tables.py LOG [LOG2 ...]
+Usage: stride_aliasing_tables.py LOG [LOG2 ...] [--rows ROWLOG ...]
 Each log is one full run; the tables put the runs side by side.
 Cells are zenbench's 95% CI of the power-of-two stride's time against the +64
 stride (positive = the power of two is slower).
@@ -39,7 +39,7 @@ def ci_bounds(ci):
 
 
 def fmt(ci):
-    return ci.replace("–", " to ")
+    return short(ci)
 
 
 def filter_tables(groups):
@@ -66,7 +66,7 @@ def short(ci):
     b = ci_bounds(ci)
     if not b:
         return ci
-    return f"{b[0]:+.1f} to {b[1]:+.1f}"
+    return f"{b[0]:+.1f}..{b[1]:+.1f}"
 
 
 def mid(ci):
@@ -74,7 +74,7 @@ def mid(ci):
     return None if not b else (b[0] + b[1]) / 2
 
 
-def render(paths):
+def render(paths, row_paths=None):
     runs = [parse(p) for p in paths]
     fts = [filter_tables(g) for g in runs]
     lines = []
@@ -83,15 +83,15 @@ def render(paths):
     keys = sorted(fts[0], key=lambda kv: (kv[1] != "2048", kv[0]))
     for tier, o in keys:
         for k in (2, 8, 12):
-            lines.append(f"\n#### {tier}, K={k}, output buffer at page offset {o}\n")
-            hdr = "| Stride, pow2 vs +64 |"
+            lines.append(f"\n#### {tier}, K={k}, out@{o}\n")
+            hdr = "| Stride B |"
             for size in ("L2", "memory"):
                 for r in range(len(runs)):
-                    hdr += f" {size} run {r + 1} |"
+                    hdr += f" {size} r{r + 1} |"
             lines.append(hdr)
             lines.append("|---|" + "---|" * (2 * len(runs)))
             for p in sorted({key[0] for key in fts[0][(tier, o)]}):
-                row = f"| {p} vs {p + 64} B |"
+                row = f"| {p} |"
                 for size in ("L2", "memory"):
                     cis = [ft[(tier, o)].get((p, k, size), "") for ft in fts]
                     ms = [mid(c) for c in cis]
@@ -104,19 +104,24 @@ def render(paths):
                         row += f" {short(c)}{flag if n == len(cis) - 1 else ''} |"
                 lines.append(row)
     lines.append(f"\n`*` marks {unstable} of {cells_total} (stride, K, size) cells whose two runs' interval midpoints differ by more than 5 percentage points.")
+    rruns = [parse(p) for p in (row_paths or paths)]
     lines.append("\n#### Row in, row out: each placement's time against `dst-src = 4096n + 64`\n")
-    rts = [row_tables(g) for g in runs]
-    lines.append("| Tier, size | " + " | ".join(f"{a[0]} (run {r + 1})" for a in list(rts[0].values())[0][1:] for r in range(len(runs))) + " |")
-    lines.append("|---|" + "---|" * (3 * len(runs)))
+    rts = [row_tables(g) for g in rruns]
+    names = [a[0] for a in list(rts[0].values())[0][1:]]
+    lines.append("| Tier, size, run | baseline (+64) | " + " | ".join(names) + " |")
+    lines.append("|---|---|" + "---|" * len(names))
     for key in sorted(rts[0]):
-        cells = []
-        for a_idx in range(1, 4):
-            for rt in rts:
-                cells.append(short(rt[key][a_idx][3]))
-        base = ", ".join(f"{rt[key][0][1]} {rt[key][0][2]}" for rt in rts)
-        lines.append(f"| {key[0]}, {key[1]} (baseline {base}) | " + " | ".join(cells) + " |")
+        for r, rt in enumerate(rts):
+            base = f"{rt[key][0][1]} {rt[key][0][2]}"
+            cells = [short(rt[key][a][3]) for a in range(1, len(names) + 1)]
+            lines.append(f"| {key[0]}, {key[1]}, run {r + 1} | {base} | " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
 
 if __name__ == "__main__":
-    print(render(sys.argv[1:]))
+    args = sys.argv[1:]
+    rows = None
+    if "--rows" in args:
+        i = args.index("--rows")
+        args, rows = args[:i], args[i + 1:]
+    print(render(args, rows))
