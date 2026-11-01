@@ -578,7 +578,6 @@ pub fn plane::PlanarLayout::planes(&self) -> &[plane::PlaneSpec]
 pub fn plane::PlanarLayout::siting(&self) -> sample::ChromaSiting
 pub fn plane::PlanarLayout::subsampling(&self) -> sample::ChromaSubsampling
 pub struct plane::Plane<C>
-pub fn plane::Plane<&'a mut [T]>::split_at_row(self, usize) -> core::result::Result<(Self, Self), plane::PlaneError>
 pub fn plane::Plane<C>::height(&self) -> usize
 pub fn plane::Plane<C>::new(C, usize, usize, usize) -> core::result::Result<Self, plane::PlaneError>
 pub fn plane::Plane<C>::row(&self, usize) -> core::option::Option<&[<C as plane::PlaneStorage>::Word]>
@@ -592,6 +591,7 @@ pub fn plane::Plane<C>::row_mut(&mut self, usize) -> core::option::Option<&mut [
 pub fn plane::Plane<C>::rows_mut(&mut self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = &mut [<C as plane::PlaneStorage>::Word]> + core::iter::traits::exact_size::ExactSizeIterator
 pub fn plane::Plane<C>::sub_mut(&mut self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneMut<'_, <C as plane::PlaneStorage>::Word>, plane::PlaneError>
 pub fn plane::Plane<C>::view_mut(&mut self) -> plane::PlaneMut<'_, <C as plane::PlaneStorage>::Word>
+pub fn plane::Plane<&mut [T]>::split_at_row(self, usize) -> core::result::Result<(Self, Self), plane::PlaneError>
 pub fn plane::Plane<alloc::vec::Vec<T>>::alloc(usize, usize) -> core::result::Result<Self, plane::PlaneError>
 pub struct plane::PlaneSpec
 pub const fn plane::PlaneSpec::encoding(self) -> plane::PlaneEncoding

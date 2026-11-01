@@ -81,3 +81,34 @@ The inventory that motivated this is `docs/planar-inventory.md`.
   when a shared consumer needs them.
 - `split_at_row` has no consumer yet; it is the primitive for filling disjoint
   strips from threads and was kept on review.
+
+## Interoperability with other crates (reviewed 2026-11-01)
+
+Checked against mediaframe 0.12.0, pixon 0.7.2, yuvutils-rs 0.8.3 and pix 1.0.1
+(sources read with `cargo read`). None needs a change to these types now. Each
+adapter below can be added later without a semver break, because the types it
+needs are already open in the right places: private fields, sealed `PlaneWord`,
+`#[non_exhaustive]` on `AnyPlane`, `PlaneRole`, `PlaneEncoding`,
+`ChromaSubsampling`, `ChromaSiting` and every error enum. Our own matches refuse
+unknown variants (`YcbcrToRgbF32` returns `UnsupportedChroma`), so a later
+variant is refused, not misread.
+
+| Crate | Its model | Maps to | Notes |
+|---|---|---|---|
+| mediaframe (MIT/Apache) | One borrowed type per FFmpeg format (`Yuv420pFrame<'a>`, `Yuv420pFrame16<'a, BITS, BE>`, `PnFrame` for P010, NV12/21/16/24/42, YUVA, GBR(A) incl. float, gray, Bayer, packed YUV); `u32` dims, strides in samples; generic `VideoFrame<P, B>` with byte strides; H.273 `color::Info` | `PlaneRef` (slice from the first sample, stride in words) + `PlanarLayout`; `BITS` and P010's high-bit placement are `SampleEncoding` bit depth and shift | Big-endian (`BE = true`) frames need a byte-swapping copy: planes are native-endian by contract. 4:4:0/4:1:1/4:1:0 need new `ChromaSubsampling` variants; Top/BottomLeft/Bottom siting needs three `ChromaSiting` variants (H.273 values 3-5). Packed YUV, V210, Bayer and PAL8 stay adapter conversions |
+| pixon (GPL-3.0-or-later) | Conversion kernels generic over mediaframe frame traits | Through mediaframe frames | GPL: never a dependency of zen crates. An application that is GPL itself can feed pixon from our planes via mediaframe |
+| yuvutils-rs (BSD-3/Apache) | `YuvPlanarImage<'a, T>`, `YuvBiPlanarImage`, `YuvGrayImage` with public slice + stride (in components) fields, `u32` dims; `*Mut` variants over `BufferStoreMut` (borrowed or owned `Vec`); bit depth, endianness and MSB/LSB packing per call | `PlaneRef`/`PlaneMut` + `SampleEncoding` (depth, shift) | Same length rule as ours (the last row needs no padding). Taking a `PlaneBuf`'s `Vec` as `Owned` works only when its start offset is 0, which `PlaneBuf::alloc` does not promise |
+| pix (MIT/Apache, 1.x) | Packed `Raster<P>` (tight `Box<[P]>`, sealed `Pixel` with type-level channel, alpha mode and gamma) | `PixelSlice` / `PixelDescriptor`, not planes | Borrowed only (`as_u8_slice`); its `u16` rasters cannot become a `Vec<u8>` without a copy |
+
+Additions that would serve these adapters, each additive:
+
+- `Plane<&'a [T]>::into_strided_words(self) -> &'a [T]` (crate-private today) and a
+  mutable counterpart, so an adapter can build a borrowed external frame with the
+  plane's own lifetime.
+- `f16` and `i16` words: a `PlaneWord` impl and an `AnyPlane` variant each.
+- The variants listed in the table, when a source produces them.
+
+Where adapters live: mediaframe and yuvutils-rs are pre-1.0, so a public `From`
+impl naming their types would tie zenpixels' version to theirs. Put those
+adapters in a separate crate or in the codec adapter that needs them; a feature
+in zenpixels fits only 1.x crates such as pix (as `imgref` does today).

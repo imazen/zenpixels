@@ -5,7 +5,9 @@
 //! borrows them mutably, [`PlaneBuf`] owns a `Vec`, and any other owner
 //! (shared or accounted storage) implements [`PlaneStorage`]. Rows are
 //! contiguous `&[T]` slices, so kernels read them without per-sample
-//! dispatch. A plane says nothing about what its words mean.
+//! dispatch. Words are native-endian: an adapter for big-endian samples
+//! (FFmpeg's `*BE` formats) swaps them into a plane; a plane never holds
+//! byte-swapped words. A plane says nothing about what its words mean.
 //!
 //! [`PlanarLayout`] says what they mean: each plane's [`PlaneRole`] (which
 //! component, or for semi-planar chroma which two interleaved components), its
@@ -601,7 +603,8 @@ pub enum PlaneRole {
 }
 
 impl PlaneRole {
-    /// Components stored per position: 2 for interleaved chroma, else 1.
+    /// Words stored per position: 2 for interleaved chroma, else 1. A plane
+    /// holding this role is `positions * components()` words wide.
     pub const fn components(self) -> usize {
         match self {
             Self::CbCr | Self::CrCb => 2,
@@ -709,7 +712,8 @@ pub enum PlaneEncoding {
     /// Integer codes in `u8` or `u16` words; range comes from the enclosing
     /// signal.
     Code(SampleEncoding),
-    /// `f32` words.
+    /// Floating-point words (`f32`); the encoding describes values, not the
+    /// word width.
     Float(FloatEncoding),
 }
 
