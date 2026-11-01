@@ -113,12 +113,28 @@ Facts that settle the design:
    64-byte-aligned row start is aligned for every vector width above, and it
    matches the x86 and Neoverse line size. 128 matters only for false sharing
    between threads writing adjacent rows on Apple silicon, not for SIMD.
-4. **Power-of-two strides alias.** Rows whose stride is a large power of two
-   map to the same cache sets, and on x86 a load 4096 bytes away from a
-   pending store can falsely depend on it. rav1d rounds width up to 128 pixels
-   and then adds 64 bytes whenever the stride is a multiple of 1024
-   (`rav1d-safe/src/picture.rs:147-157`). RGBA8 at widths 256, 512, 1024, 2048
-   and 4096 gives exactly such strides.
+4. **Strides that are multiples of 4096 cost kernels that read many rows at one
+   column; +64 bytes removes it.** Measured (`benchmarks/stride_aliasing_2026-11-01.md`,
+   F32 vertical filters, L2-resident rows, against the same row width at +64 bytes):
+
+   | CPU | 2 rows | 8 rows | 12 rows |
+   |---|---|---|---|
+   | Zen 4 (7900X), AVX2, AVX-512, scalar | no effect | +4..+12% at 4096 only | +19..+48% at 8192, 12288, 16384, 32768; +4..+19% at 4096 |
+   | Neoverse-N1 | no effect | no effect | +6..+10% at 8192 only |
+
+   The trigger is a multiple of 4096: 12288 behaves like 8192, while 1024, 2048
+   and 6144 show nothing, so rav1d's 1024 threshold is not supported for
+   cache-resident rows. A likely cause on Zen 4 is the 8-way L1D (more than 8
+   rows at one column share a set); not confirmed with counters. N1's 4-way L1D
+   would predict losses at 16384 and 32768, and none appeared. Memory-resident
+   rows (128 MiB) are unstable between runs; on x86 they are also hit at 2048
+   and 6144 with 8 rows, and on N1 the bump costs up to 22% at 2048.
+   The x86 load-after-store "4K aliasing" is a different effect and the bump
+   does not fix it: for a row-in/row-out kernel on Zen 4 AVX-512, a destination
+   64 bytes past a multiple of 4096 from the source was the slow placement (3 of
+   4 runs, the other placements took 26-36% less time); AVX2, scalar and NEON
+   showed nothing. Not measured: u8/u16 samples, more than 12 rows, other
+   paddings, Zen 5, Intel, Apple silicon.
 5. **GPU uploads need 256.** wgpu's `COPY_BYTES_PER_ROW_ALIGNMENT` is 256
    (`wgpu-types` 30.0.1, `src/lib.rs:116`); buffers meant for texture copies
    need that row pitch or a repack.
@@ -148,13 +164,15 @@ measurements):
 - **Use 64 for `simd_align` on every CPU tier.** It covers 16-, 32- and
   64-byte vectors and the x86/Neoverse line; the measured gain is on AVX2 and
   AVX-512. Keep the argument for GPU staging (256).
-- **Avoid power-of-two strides when we choose the stride:** add one alignment
-  unit when the stride is a multiple of 4096 (rav1d's rule, at the
-  page-aliasing size; a 1024 threshold would need a measurement). Not
-  measured here: the alignment bench walks rows one at a time with a
-  non-power-of-two stride, so it cannot see aliasing. Kernels that read the
-  same column across rows (vertical resize taps, chroma upsampling, 8-row
-  DCT blocks, transposes) are where it would show.
+- **When we choose the stride, add 64 bytes if it is a multiple of 4096.**
+  Measured: it removes a 19-48% loss for cache-resident 12-row kernels on
+  Zen 4 and is neutral for 2-row kernels (on N1 with memory-resident rows it
+  costs up to 7% at 4096). Do not extend it to
+  multiples of 1024 or 2048: cache-resident rows show no effect, and the
+  memory-resident results differ in sign between Zen 4 and N1. The bump is
+  not a fix for load-after-store aliasing between a source and a destination.
+  For a stride we are given, the cost lands only on kernels that keep more
+  than 8 rows live at one column (vertical resize taps, long filters).
 - **Single-channel planes have no lcm problem:** the word size (1, 2 or 4)
   divides 64, so a plane row can always start on 64 bytes with under 64 bytes
   of padding. Owned plane storage should do that when it allocates
