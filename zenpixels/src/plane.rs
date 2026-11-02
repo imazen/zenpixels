@@ -45,7 +45,7 @@
 
 use crate::ChannelType;
 use crate::sample::{ChromaSiting, ChromaSubsampling, SampleEncoding};
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 use core::fmt;
 
 mod sealed {
@@ -80,6 +80,12 @@ impl PlaneSample for f32 {
 /// use it as `Plane<YourOwner>`. `samples` must return the same slice on every
 /// call: geometry is checked once, at construction, and an owner whose samples
 /// shrink afterwards makes row access panic.
+///
+/// Slices, references, boxes and `Vec` implement it, and the trait stays
+/// dyn-compatible, so planes whose owners differ (a codec's `Vec`, accounted
+/// storage, a `Vec` from another allocator) can share one type as
+/// `Plane<Box<dyn PlaneStorage<Sample = T> + Send + Sync>>`. Borrowed views
+/// ([`Plane::view`], [`AnyPlane`]) need no boxing at all.
 pub trait PlaneStorage {
     /// The sample type.
     type Sample: PlaneSample;
@@ -93,21 +99,43 @@ pub trait PlaneStorageMut: PlaneStorage {
     fn samples_mut(&mut self) -> &mut [Self::Sample];
 }
 
-impl<T: PlaneSample> PlaneStorage for &[T] {
+impl<T: PlaneSample> PlaneStorage for [T] {
     type Sample = T;
     fn samples(&self) -> &[T] {
         self
     }
 }
-impl<T: PlaneSample> PlaneStorage for &mut [T] {
-    type Sample = T;
-    fn samples(&self) -> &[T] {
-        self
-    }
-}
-impl<T: PlaneSample> PlaneStorageMut for &mut [T] {
+impl<T: PlaneSample> PlaneStorageMut for [T] {
     fn samples_mut(&mut self) -> &mut [T] {
         self
+    }
+}
+impl<S: PlaneStorage + ?Sized> PlaneStorage for &S {
+    type Sample = S::Sample;
+    fn samples(&self) -> &[S::Sample] {
+        (**self).samples()
+    }
+}
+impl<S: PlaneStorage + ?Sized> PlaneStorage for &mut S {
+    type Sample = S::Sample;
+    fn samples(&self) -> &[S::Sample] {
+        (**self).samples()
+    }
+}
+impl<S: PlaneStorageMut + ?Sized> PlaneStorageMut for &mut S {
+    fn samples_mut(&mut self) -> &mut [S::Sample] {
+        (**self).samples_mut()
+    }
+}
+impl<S: PlaneStorage + ?Sized> PlaneStorage for Box<S> {
+    type Sample = S::Sample;
+    fn samples(&self) -> &[S::Sample] {
+        (**self).samples()
+    }
+}
+impl<S: PlaneStorageMut + ?Sized> PlaneStorageMut for Box<S> {
+    fn samples_mut(&mut self) -> &mut [S::Sample] {
+        (**self).samples_mut()
     }
 }
 impl<T: PlaneSample> PlaneStorage for Vec<T> {
@@ -121,6 +149,7 @@ impl<T: PlaneSample> PlaneStorageMut for Vec<T> {
         self
     }
 }
+
 /// A plane's geometry does not fit its storage, or a request leaves the plane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]

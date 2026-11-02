@@ -131,6 +131,36 @@ buffers cost little either way; not measured.
 `into_strided_samples` / `into_strided_samples_mut` return the samples for the
 plane's own lifetime, which is what a borrowed external frame needs.
 
+### Mixing owners and allocators
+
+Planes of one picture often have different owners: a codec's `Vec`, an
+aligned allocation, accounted shared storage, a decoder's pool, and after Rust
+1.100 `Vec`s from different allocators. The types support that three ways:
+
+- **Borrowed views erase the owner.** `view()` gives a `PlaneRef` from any
+  `Plane<C>`, and `AnyPlane` carries views of different sample types. Kernels and
+  mapping interfaces work on views, so mixing owners costs nothing there.
+- **Owned sets erase with `dyn`.** `PlaneStorage` and `PlaneStorageMut` are
+  dyn-compatible (a test pins this), and `Box<S>`, `&S` and `&mut S` implement them
+  for any `S: ?Sized` that does. So `Plane<Box<dyn PlaneStorageMut<Sample = u8> +
+  Send + Sync>>` holds any owner: one allocation per plane, no unsafe code, no
+  copy of the samples (tested with four different owners in one `Vec`).
+- **Allocator erasure** is the alternative after 1.100:
+  `Vec<T, Arc<dyn Allocator + Send + Sync>>`. Moving an existing `Vec` into that
+  form takes `Vec::from_parts_in`, which is unsafe, so it belongs with the
+  aligning allocator in a primitive crate.
+
+Semver rules that keep this open:
+
+- `&`, `&mut` and `Box` are fundamental types: a downstream crate may implement
+  our trait for `Box<TheirType>`, so a blanket impl added after release would
+  conflict. Those blanket impls exist from the first release.
+- `Vec`, `Arc` and `Rc` are not fundamental, so `PlaneStorage for Vec<T, A>`,
+  `Arc<S>` or `Rc<S>` can be added later.
+- Every future method on the storage traits must keep them dyn-compatible: no
+  generic methods, no `Self` by value, no `Self: Sized` requirements without a
+  default.
+
 ### Aligned planes with the `Allocator` API (Rust 1.100)
 
 `Allocator`, `Vec<T, A>` and `Box<T, A>` are stable from Rust 1.100

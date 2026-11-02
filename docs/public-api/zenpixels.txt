@@ -16,7 +16,7 @@
 #   struct fields                             121
 #   enum variants                             338
 #   re-exports                                  4
-#   trait roster entries (type × trait)       370
+#   trait roster entries (type × trait)       374
 #   auto-trait-complete types                  54
 #   auto-trait exceptions                       7
 #
@@ -605,11 +605,11 @@ pub const plane::PlaneSample::CHANNEL_TYPE: descriptor::ChannelType
 pub trait plane::PlaneStorage
 pub type plane::PlaneStorage::Sample: plane::PlaneSample
 pub fn plane::PlaneStorage::samples(&self) -> &[Self::Sample]
-pub type &mut [T]::Sample = T
-pub fn &mut [T]::samples(&self) -> &[T]
+pub type &mut S::Sample = <S as plane::PlaneStorage>::Sample
+pub fn &mut S::samples(&self) -> &[<S as plane::PlaneStorage>::Sample]
 pub trait plane::PlaneStorageMut: plane::PlaneStorage
 pub fn plane::PlaneStorageMut::samples_mut(&mut self) -> &mut [Self::Sample]
-pub fn &mut [T]::samples_mut(&mut self) -> &mut [T]
+pub fn &mut S::samples_mut(&mut self) -> &mut [<S as plane::PlaneStorage>::Sample]
 pub type plane::PlaneBuf<T> = plane::Plane<alloc::vec::Vec<T>>
 pub type plane::PlaneMut<'a, T> = plane::Plane<&'a mut [T]>
 pub type plane::PlaneRef<'a, T> = plane::Plane<&'a [T]>
@@ -1097,10 +1097,12 @@ pub Rgbx::x: u8
 pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 
-## trait impls (71 types)
+## trait impls (73 types)
 
-&[T]: plane::PlaneStorage
-&mut [T]: plane::PlaneStorage, plane::PlaneStorageMut
+&S: plane::PlaneStorage
+&mut S: plane::PlaneStorage, plane::PlaneStorageMut
+[T]: plane::PlaneStorage, plane::PlaneStorageMut
+alloc::boxed::Box<S>: plane::PlaneStorage, plane::PlaneStorageMut
 alloc::vec::Vec<T>: plane::PlaneStorage, plane::PlaneStorageMut
 buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
