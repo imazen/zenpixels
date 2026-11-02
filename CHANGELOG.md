@@ -53,7 +53,7 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   `Hash`, and `ChromaSiting` defaults to `Unknown`. This is the single
   subsampling/siting vocabulary: `zencodec::frame` re-exports it instead of
   defining its own. `YcbcrToRgbF32` refuses `Mono` as unsupported chroma.
-- Add `plane`: `Plane<C>` (strided words over any owner, with `PlaneRef`,
+- Add `plane`: `Plane<C>` (strided samples over any owner, with `PlaneRef`,
   `PlaneMut` and `PlaneBuf` aliases and `PlaneStorage` for other owners),
   `AnyPlane`, `PlaneRole` (one role per plane; `CbCr`/`CrCb` for semi-planar
   chroma), per-plane `PlaneEncoding` (integer codes or scaled floats) and a

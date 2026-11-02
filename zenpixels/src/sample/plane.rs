@@ -64,14 +64,14 @@ enum Words<'a> {
 /// padding bits are ignored on reads. The enclosing format supplies roles,
 /// range, matrix, transfer and sample location. Nothing is copied or allocated.
 ///
-/// The plane is a [`crate::plane::Plane`] of `u8` or `u16` words. A plane may
+/// The plane is a [`crate::plane::Plane`] of `u8` or `u16` samples. A plane may
 /// hold several interleaved components per position, such as the Cb/Cr plane
 /// of NV12 or P010, or interleaved RGB(A); [`component`](Self::component)
 /// reads one of them:
 ///
 /// ```
 /// use zenpixels::{ChannelType, plane::{AnyPlane, PlaneRef}, sample::{CodePlane, SampleEncoding}};
-/// // P010 chroma: one interleaved Cb/Cr plane, 10 high bits per word.
+/// // P010 chroma: one interleaved Cb/Cr plane, 10 high bits per sample.
 /// let p010 = SampleEncoding::new(ChannelType::U16, 10, 6).unwrap();
 /// let uv: [u16; 4] = [512 << 6, 100 << 6, 300 << 6, 1023 << 6]; // Cb Cr Cb Cr
 /// let plane = AnyPlane::U16(PlaneRef::new(&uv[..], 4, 1, 4).unwrap());
@@ -94,8 +94,8 @@ pub struct CodePlane<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CodePlaneError {
-    /// The plane's word type differs from the sample encoding's storage, or
-    /// is not an integer word.
+    /// The plane's sample type differs from the sample encoding's storage, or
+    /// is not an integer type.
     StorageMismatch,
     /// The component index is not below the component count, or the plane's
     /// width does not hold whole positions.
@@ -119,7 +119,7 @@ impl<'a> CodePlane<'a> {
     ///
     /// # Errors
     ///
-    /// [`CodePlaneError::StorageMismatch`] when the plane's words differ from
+    /// [`CodePlaneError::StorageMismatch`] when the plane's samples differ from
     /// `encoding`'s storage.
     pub fn new(plane: AnyPlane<'a>, encoding: SampleEncoding) -> Result<Self, CodePlaneError> {
         Self::component(plane, 1, 0, encoding)
@@ -133,7 +133,7 @@ impl<'a> CodePlane<'a> {
     ///
     /// [`CodePlaneError::Components`] for an index not below `components` or
     /// a width that is not a multiple of it, and
-    /// [`CodePlaneError::StorageMismatch`] when the plane's words differ from
+    /// [`CodePlaneError::StorageMismatch`] when the plane's samples differ from
     /// `encoding`'s storage.
     pub fn component(
         plane: AnyPlane<'a>,
@@ -151,8 +151,8 @@ impl<'a> CodePlane<'a> {
         // A nonempty plane's span reaches past `index`; an empty one is never read.
         let skip = if width == 0 || height == 0 { 0 } else { index };
         let (words, stride_words) = match plane {
-            AnyPlane::U8(p) => (Words::U8(&p.into_strided_words()[skip..]), p.stride()),
-            AnyPlane::U16(p) => (Words::U16(&p.into_strided_words()[skip..]), p.stride()),
+            AnyPlane::U8(p) => (Words::U8(&p.into_strided_samples()[skip..]), p.stride()),
+            AnyPlane::U16(p) => (Words::U16(&p.into_strided_samples()[skip..]), p.stride()),
             AnyPlane::F32(_) => return Err(CodePlaneError::StorageMismatch),
         };
         Ok(Self {

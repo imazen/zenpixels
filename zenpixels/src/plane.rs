@@ -1,13 +1,13 @@
 //! Strided planes and the layout of a planar picture.
 //!
-//! [`Plane`] is a two-dimensional array of storage words with a row stride,
-//! generic over who owns the words: [`PlaneRef`] borrows them, [`PlaneMut`]
+//! [`Plane`] is a two-dimensional array of samples with a row stride,
+//! generic over who owns the samples: [`PlaneRef`] borrows them, [`PlaneMut`]
 //! borrows them mutably, [`PlaneBuf`] owns a `Vec`, and any other owner
 //! (shared or accounted storage) implements [`PlaneStorage`]. Rows are
 //! contiguous `&[T]` slices, so kernels read them without per-sample
-//! dispatch. Words are native-endian: an adapter for big-endian samples
+//! dispatch. Samples are native-endian: an adapter for big-endian samples
 //! (FFmpeg's `*BE` formats) swaps them into a plane; a plane never holds
-//! byte-swapped words. A plane says nothing about what its words mean.
+//! byte-swapped samples. A plane says nothing about what its samples mean.
 //!
 //! [`PlanarLayout`] says what they mean: each plane's [`PlaneRole`] (which
 //! component, or for semi-planar chroma which two interleaved components), its
@@ -55,69 +55,69 @@ mod sealed {
     impl Sealed for f32 {}
 }
 
-/// Storage word of a plane: `u8`, `u16` or `f32`.
+/// The sample type of a plane: `u8`, `u16` or `f32`.
 ///
 /// Sealed; `f16` can be added when a consumer exchanges half-float planes.
-pub trait PlaneWord:
+pub trait PlaneSample:
     sealed::Sealed + bytemuck::Pod + Default + PartialEq + fmt::Debug + Send + Sync + 'static
 {
-    /// The channel type of this word.
+    /// The channel type of this sample.
     const CHANNEL_TYPE: ChannelType;
 }
-impl PlaneWord for u8 {
+impl PlaneSample for u8 {
     const CHANNEL_TYPE: ChannelType = ChannelType::U8;
 }
-impl PlaneWord for u16 {
+impl PlaneSample for u16 {
     const CHANNEL_TYPE: ChannelType = ChannelType::U16;
 }
-impl PlaneWord for f32 {
+impl PlaneSample for f32 {
     const CHANNEL_TYPE: ChannelType = ChannelType::F32;
 }
 
-/// Read access to the words of a plane's owner.
+/// Read access to the samples of a plane's owner.
 ///
 /// Implement this for an owner type (for example accounted shared storage) to
-/// use it as `Plane<YourOwner>`. `words` must return the same slice on every
-/// call: geometry is checked once, at construction, and an owner whose words
+/// use it as `Plane<YourOwner>`. `samples` must return the same slice on every
+/// call: geometry is checked once, at construction, and an owner whose samples
 /// shrink afterwards makes row access panic.
 pub trait PlaneStorage {
-    /// The storage word.
-    type Word: PlaneWord;
-    /// The words, including any padding.
-    fn words(&self) -> &[Self::Word];
+    /// The sample type.
+    type Sample: PlaneSample;
+    /// The samples, including any padding.
+    fn samples(&self) -> &[Self::Sample];
 }
 
-/// Write access to the words of a plane's owner.
+/// Write access to the samples of a plane's owner.
 pub trait PlaneStorageMut: PlaneStorage {
-    /// The words, including any padding.
-    fn words_mut(&mut self) -> &mut [Self::Word];
+    /// The samples, including any padding.
+    fn samples_mut(&mut self) -> &mut [Self::Sample];
 }
 
-impl<T: PlaneWord> PlaneStorage for &[T] {
-    type Word = T;
-    fn words(&self) -> &[T] {
+impl<T: PlaneSample> PlaneStorage for &[T] {
+    type Sample = T;
+    fn samples(&self) -> &[T] {
         self
     }
 }
-impl<T: PlaneWord> PlaneStorage for &mut [T] {
-    type Word = T;
-    fn words(&self) -> &[T] {
+impl<T: PlaneSample> PlaneStorage for &mut [T] {
+    type Sample = T;
+    fn samples(&self) -> &[T] {
         self
     }
 }
-impl<T: PlaneWord> PlaneStorageMut for &mut [T] {
-    fn words_mut(&mut self) -> &mut [T] {
+impl<T: PlaneSample> PlaneStorageMut for &mut [T] {
+    fn samples_mut(&mut self) -> &mut [T] {
         self
     }
 }
-impl<T: PlaneWord> PlaneStorage for Vec<T> {
-    type Word = T;
-    fn words(&self) -> &[T] {
+impl<T: PlaneSample> PlaneStorage for Vec<T> {
+    type Sample = T;
+    fn samples(&self) -> &[T] {
         self
     }
 }
-impl<T: PlaneWord> PlaneStorageMut for Vec<T> {
-    fn words_mut(&mut self) -> &mut [T] {
+impl<T: PlaneSample> PlaneStorageMut for Vec<T> {
+    fn samples_mut(&mut self) -> &mut [T] {
         self
     }
 }
@@ -127,7 +127,7 @@ impl<T: PlaneWord> PlaneStorageMut for Vec<T> {
 pub enum PlaneError {
     /// A nonempty plane's stride is shorter than its row.
     ShortStride,
-    /// Storage ends before the last active word.
+    /// Storage ends before the last active sample.
     ShortBuffer,
     /// Computing the plane's extent overflows addressable storage.
     GeometryOverflow,
@@ -141,7 +141,7 @@ impl fmt::Display for PlaneError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::ShortStride => "plane stride is shorter than its row",
-            Self::ShortBuffer => "plane storage ends before the last active word",
+            Self::ShortBuffer => "plane storage ends before the last active sample",
             Self::GeometryOverflow => "plane geometry overflows addressable storage",
             Self::OutsidePlane => "request extends beyond the plane",
             Self::AllocationFailed => "plane allocation failed",
@@ -150,11 +150,11 @@ impl fmt::Display for PlaneError {
 }
 impl core::error::Error for PlaneError {}
 
-/// A strided two-dimensional array of words, generic over its owner.
+/// A strided two-dimensional array of samples, generic over its owner.
 ///
-/// `width` and `stride` count words, not bytes, so a stride always holds whole
-/// words. A plane holding two interleaved components (see
-/// [`PlaneRole::CbCr`]) is `components * positions` words wide. The last row
+/// `width` and `stride` count samples, not bytes, so a stride always holds whole
+/// samples. A plane holding two interleaved components (see
+/// [`PlaneRole::CbCr`]) is `components * positions` samples wide. The last row
 /// need not have padding after it.
 #[derive(Clone, Copy)]
 pub struct Plane<C> {
@@ -182,7 +182,7 @@ impl<C> fmt::Debug for Plane<C> {
     }
 }
 
-/// Words from the first active word through the last one.
+/// Samples from the first active sample through the last one.
 fn extent(start: usize, width: usize, height: usize, stride: usize) -> Result<usize, PlaneError> {
     if width == 0 || height == 0 {
         return Ok(start);
@@ -198,14 +198,14 @@ fn extent(start: usize, width: usize, height: usize, stride: usize) -> Result<us
 }
 
 impl<C: PlaneStorage> Plane<C> {
-    /// Adopt storage holding `height` rows of `width` words, `stride` words
-    /// apart, starting at the first word. No words are copied or read.
+    /// Adopt storage holding `height` rows of `width` samples, `stride` samples
+    /// apart, starting at the first sample. No samples are copied or read.
     ///
     /// # Errors
     ///
     /// [`PlaneError::ShortStride`] when a nonempty plane's stride is shorter
     /// than its width, [`PlaneError::ShortBuffer`] when the storage ends
-    /// before the last active word, [`PlaneError::GeometryOverflow`] when the
+    /// before the last active sample, [`PlaneError::GeometryOverflow`] when the
     /// extent overflows.
     pub fn new(buf: C, width: usize, height: usize, stride: usize) -> Result<Self, PlaneError> {
         Self::with_start(buf, 0, width, height, stride)
@@ -218,7 +218,7 @@ impl<C: PlaneStorage> Plane<C> {
         height: usize,
         stride: usize,
     ) -> Result<Self, PlaneError> {
-        if extent(start, width, height, stride)? > buf.words().len() {
+        if extent(start, width, height, stride)? > buf.samples().len() {
             return Err(PlaneError::ShortBuffer);
         }
         Ok(Self {
@@ -230,7 +230,7 @@ impl<C: PlaneStorage> Plane<C> {
         })
     }
 
-    /// Words per row.
+    /// Samples per row.
     pub fn width(&self) -> usize {
         self.width
     }
@@ -240,12 +240,12 @@ impl<C: PlaneStorage> Plane<C> {
         self.height
     }
 
-    /// Words from one row start to the next.
+    /// Samples from one row start to the next.
     pub fn stride(&self) -> usize {
         self.stride
     }
 
-    // First word of row `y`. An empty row starts at `start`, which is
+    // First sample of row `y`. An empty row starts at `start`, which is
     // within the storage even when `y * stride` is not.
     fn row_start(&self, y: usize) -> usize {
         if self.width == 0 {
@@ -256,35 +256,35 @@ impl<C: PlaneStorage> Plane<C> {
     }
 
     /// Row `y`, without padding; `None` past the last row.
-    pub fn row(&self, y: usize) -> Option<&[C::Word]> {
+    pub fn row(&self, y: usize) -> Option<&[C::Sample]> {
         if y >= self.height {
             return None;
         }
         let s = self.row_start(y);
-        Some(&self.buf.words()[s..s + self.width])
+        Some(&self.buf.samples()[s..s + self.width])
     }
 
     /// Every row, top to bottom, without padding.
-    pub fn rows(&self) -> impl DoubleEndedIterator<Item = &[C::Word]> + ExactSizeIterator {
+    pub fn rows(&self) -> impl DoubleEndedIterator<Item = &[C::Sample]> + ExactSizeIterator {
         (0..self.height).map(move |y| {
             let s = self.row_start(y);
-            &self.buf.words()[s..s + self.width]
+            &self.buf.samples()[s..s + self.width]
         })
     }
 
-    /// The words from the first active word through the last one, including
+    /// The samples from the first active sample through the last one, including
     /// padding between rows but not after the last row. Empty for an empty
     /// plane. For handing the plane to an API that takes a slice and a stride.
-    pub fn strided_words(&self) -> &[C::Word] {
+    pub fn strided_samples(&self) -> &[C::Sample] {
         let end = extent(self.start, self.width, self.height, self.stride)
             .expect("checked at construction");
-        &self.buf.words()[self.start..end]
+        &self.buf.samples()[self.start..end]
     }
 
     /// Borrow this plane.
-    pub fn view(&self) -> PlaneRef<'_, C::Word> {
+    pub fn view(&self) -> PlaneRef<'_, C::Sample> {
         Plane {
-            buf: self.strided_words(),
+            buf: self.strided_samples(),
             start: 0,
             width: self.width,
             height: self.height,
@@ -292,7 +292,7 @@ impl<C: PlaneStorage> Plane<C> {
         }
     }
 
-    /// Borrow the `width` x `height` words at column `x`, row `y`.
+    /// Borrow the `width` x `height` samples at column `x`, row `y`.
     ///
     /// # Errors
     ///
@@ -303,9 +303,9 @@ impl<C: PlaneStorage> Plane<C> {
         y: usize,
         width: usize,
         height: usize,
-    ) -> Result<PlaneRef<'_, C::Word>, PlaneError> {
+    ) -> Result<PlaneRef<'_, C::Sample>, PlaneError> {
         let (start, width, height) = self.sub_rect(x, y, width, height)?;
-        Plane::with_start(self.buf.words(), start, width, height, self.stride)
+        Plane::with_start(self.buf.samples(), start, width, height, self.stride)
     }
 
     fn sub_rect(
@@ -328,23 +328,23 @@ impl<C: PlaneStorage> Plane<C> {
 
 impl<C: PlaneStorageMut> Plane<C> {
     /// Row `y`, without padding; `None` past the last row.
-    pub fn row_mut(&mut self, y: usize) -> Option<&mut [C::Word]> {
+    pub fn row_mut(&mut self, y: usize) -> Option<&mut [C::Sample]> {
         if y >= self.height {
             return None;
         }
         let s = self.row_start(y);
-        Some(&mut self.buf.words_mut()[s..s + self.width])
+        Some(&mut self.buf.samples_mut()[s..s + self.width])
     }
 
     /// Every row, top to bottom, without padding.
     pub fn rows_mut(
         &mut self,
-    ) -> impl DoubleEndedIterator<Item = &mut [C::Word]> + ExactSizeIterator {
+    ) -> impl DoubleEndedIterator<Item = &mut [C::Sample]> + ExactSizeIterator {
         let (width, height, stride) = (self.width, self.height, self.stride);
         let end = extent(self.start, width, height, stride).expect("checked at construction");
-        let words = &mut self.buf.words_mut()[self.start..end];
+        let samples = &mut self.buf.samples_mut()[self.start..end];
         RowsMut {
-            words,
+            samples,
             width,
             stride,
             rows: height,
@@ -352,11 +352,11 @@ impl<C: PlaneStorageMut> Plane<C> {
     }
 
     /// Mutably borrow this plane.
-    pub fn view_mut(&mut self) -> PlaneMut<'_, C::Word> {
+    pub fn view_mut(&mut self) -> PlaneMut<'_, C::Sample> {
         let (width, height, stride) = (self.width, self.height, self.stride);
         let end = extent(self.start, width, height, stride).expect("checked at construction");
         Plane {
-            buf: &mut self.buf.words_mut()[self.start..end],
+            buf: &mut self.buf.samples_mut()[self.start..end],
             start: 0,
             width,
             height,
@@ -364,7 +364,7 @@ impl<C: PlaneStorageMut> Plane<C> {
         }
     }
 
-    /// Mutably borrow the `width` x `height` words at column `x`, row `y`.
+    /// Mutably borrow the `width` x `height` samples at column `x`, row `y`.
     ///
     /// # Errors
     ///
@@ -375,14 +375,14 @@ impl<C: PlaneStorageMut> Plane<C> {
         y: usize,
         width: usize,
         height: usize,
-    ) -> Result<PlaneMut<'_, C::Word>, PlaneError> {
+    ) -> Result<PlaneMut<'_, C::Sample>, PlaneError> {
         let (start, width, height) = self.sub_rect(x, y, width, height)?;
         let stride = self.stride;
-        Plane::with_start(self.buf.words_mut(), start, width, height, stride)
+        Plane::with_start(self.buf.samples_mut(), start, width, height, stride)
     }
 }
 
-impl<T: PlaneWord> Plane<&mut [T]> {
+impl<T: PlaneSample> Plane<&mut [T]> {
     /// Split into rows `0..y` and rows `y..`, for filling strips or
     /// handing disjoint rows to threads.
     ///
@@ -426,9 +426,9 @@ impl<T: PlaneWord> Plane<&mut [T]> {
     }
 }
 
-impl<'a, T: PlaneWord> Plane<&'a [T]> {
-    /// [`Plane::strided_words`] for the borrowed lifetime.
-    pub(crate) fn into_strided_words(self) -> &'a [T] {
+impl<'a, T: PlaneSample> Plane<&'a [T]> {
+    /// [`Plane::strided_samples`] for the borrowed lifetime.
+    pub(crate) fn into_strided_samples(self) -> &'a [T] {
         let end = extent(self.start, self.width, self.height, self.stride)
             .expect("checked at construction");
         &self.buf[self.start..end]
@@ -436,7 +436,7 @@ impl<'a, T: PlaneWord> Plane<&'a [T]> {
 }
 
 struct RowsMut<'a, T> {
-    words: &'a mut [T],
+    samples: &'a mut [T],
     width: usize,
     stride: usize,
     rows: usize,
@@ -452,12 +452,12 @@ impl<'a, T> Iterator for RowsMut<'a, T> {
         if self.width == 0 {
             return Some(&mut []);
         }
-        let words = core::mem::take(&mut self.words);
+        let samples = core::mem::take(&mut self.samples);
         if self.rows == 0 {
-            return Some(&mut words[..self.width]);
+            return Some(&mut samples[..self.width]);
         }
-        let (row, rest) = words.split_at_mut(self.stride);
-        self.words = rest;
+        let (row, rest) = samples.split_at_mut(self.stride);
+        self.samples = rest;
         Some(&mut row[..self.width])
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -474,9 +474,9 @@ impl<T> DoubleEndedIterator for RowsMut<'_, T> {
         if self.width == 0 {
             return Some(&mut []);
         }
-        let words = core::mem::take(&mut self.words);
-        let (rest, last) = words.split_at_mut(self.rows * self.stride);
-        self.words = rest;
+        let samples = core::mem::take(&mut self.samples);
+        let (rest, last) = samples.split_at_mut(self.rows * self.stride);
+        self.samples = rest;
         Some(&mut last[..self.width])
     }
 }
@@ -486,7 +486,7 @@ impl<T> ExactSizeIterator for RowsMut<'_, T> {}
 /// Row starts on 64 bytes, the widest SIMD vector and the x86/Neoverse line.
 const ROW_ALIGN: usize = 64;
 
-impl<T: PlaneWord> Plane<Vec<T>> {
+impl<T: PlaneSample> Plane<Vec<T>> {
     /// Allocate a zeroed `width` x `height` plane for SIMD kernels.
     ///
     /// Every row starts on a 64-byte boundary. The stride is the row rounded
@@ -532,21 +532,21 @@ impl<T: PlaneWord> Plane<Vec<T>> {
     }
 }
 
-/// A borrowed plane of any word type, for interfaces that carry planes of
-/// different word types side by side.
+/// A borrowed plane of any sample type, for interfaces that carry planes of
+/// different sample types side by side.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum AnyPlane<'a> {
-    /// 8-bit words.
+    /// 8-bit samples.
     U8(PlaneRef<'a, u8>),
-    /// 16-bit words.
+    /// 16-bit samples.
     U16(PlaneRef<'a, u16>),
-    /// 32-bit float words.
+    /// 32-bit float samples.
     F32(PlaneRef<'a, f32>),
 }
 
 impl AnyPlane<'_> {
-    /// Words per row.
+    /// Samples per row.
     pub fn width(&self) -> usize {
         match self {
             Self::U8(p) => p.width(),
@@ -564,7 +564,7 @@ impl AnyPlane<'_> {
         }
     }
 
-    /// The word type.
+    /// The sample type.
     pub fn channel_type(&self) -> ChannelType {
         match self {
             Self::U8(_) => ChannelType::U8,
@@ -603,8 +603,8 @@ pub enum PlaneRole {
 }
 
 impl PlaneRole {
-    /// Words stored per position: 2 for interleaved chroma, else 1. A plane
-    /// holding this role is `positions * components()` words wide.
+    /// Samples stored per position: 2 for interleaved chroma, else 1. A plane
+    /// holding this role is `positions * components()` samples wide.
     pub const fn components(self) -> usize {
         match self {
             Self::CbCr | Self::CrCb => 2,
@@ -641,7 +641,7 @@ impl fmt::Display for FloatEncodingError {
 }
 impl core::error::Error for FloatEncodingError {}
 
-/// How float words relate to nominal component values.
+/// How float samples relate to nominal component values.
 ///
 /// `stored = nominal * scale + offset`. Nominal luma, red, green, blue and
 /// alpha run from 0 to 1, and nominal Cb and Cr from -0.5 to 0.5, all full
@@ -705,20 +705,20 @@ impl core::hash::Hash for FloatEncoding {
     }
 }
 
-/// How a plane's words encode component values.
+/// How a plane's samples encode component values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum PlaneEncoding {
-    /// Integer codes in `u8` or `u16` words; range comes from the enclosing
+    /// Integer codes in `u8` or `u16` samples; range comes from the enclosing
     /// signal.
     Code(SampleEncoding),
-    /// Floating-point words (`f32`); the encoding describes values, not the
-    /// word width.
+    /// Floating-point samples (`f32`); the encoding describes values, not the
+    /// sample width.
     Float(FloatEncoding),
 }
 
 impl PlaneEncoding {
-    /// The word type this encoding is stored in.
+    /// The sample type this encoding is stored in.
     pub const fn channel_type(self) -> ChannelType {
         match self {
             Self::Code(e) => e.storage(),
@@ -745,7 +745,7 @@ impl PlaneSpec {
         self.role
     }
 
-    /// How its words encode values.
+    /// How its samples encode values.
     pub const fn encoding(self) -> PlaneEncoding {
         self.encoding
     }
@@ -775,8 +775,8 @@ pub enum LayoutError {
         /// Planes supplied.
         actual: usize,
     },
-    /// A plane's word type differs from its encoding.
-    WordType {
+    /// A plane's sample type differs from its encoding.
+    SampleType {
         /// Plane index.
         index: usize,
     },
@@ -784,9 +784,9 @@ pub enum LayoutError {
     Dimensions {
         /// Plane index.
         index: usize,
-        /// Words per row and rows the layout requires.
+        /// Samples per row and rows the layout requires.
         expected: (usize, usize),
-        /// Words per row and rows supplied.
+        /// Samples per row and rows supplied.
         actual: (usize, usize),
     },
 }
@@ -802,8 +802,8 @@ impl fmt::Display for LayoutError {
             Self::PlaneCount { expected, actual } => {
                 write!(f, "layout has {expected} planes, {actual} supplied")
             }
-            Self::WordType { index } => {
-                write!(f, "plane {index} word type differs from its encoding")
+            Self::SampleType { index } => {
+                write!(f, "plane {index} sample type differs from its encoding")
             }
             Self::Dimensions {
                 index,
@@ -811,7 +811,7 @@ impl fmt::Display for LayoutError {
                 actual,
             } => write!(
                 f,
-                "plane {index} is {}x{} words, layout requires {}x{}",
+                "plane {index} is {}x{} samples, layout requires {}x{}",
                 actual.0, actual.1, expected.0, expected.1
             ),
         }
@@ -914,10 +914,10 @@ impl PlanarLayout {
         self.siting
     }
 
-    /// Positions (not words) per row and rows of plane `index` in a
+    /// Positions (not samples) per row and rows of plane `index` in a
     /// `width` x `height` picture; `None` for an index past the last plane.
     /// Chroma planes are rounded up; multiply the width by
-    /// [`PlaneRole::components`] for words per row.
+    /// [`PlaneRole::components`] for samples per row.
     pub fn plane_size(&self, index: usize, width: u32, height: u32) -> Option<(u32, u32)> {
         let spec = self.planes.get(index)?;
         if spec.role.is_chroma() {
@@ -928,8 +928,8 @@ impl PlanarLayout {
     }
 
     /// Check that `planes` hold this layout for a `width` x `height` picture:
-    /// one plane per spec, in order, each with its encoding's word type and
-    /// exactly the layout's words per row and rows.
+    /// one plane per spec, in order, each with its encoding's sample type and
+    /// exactly the layout's samples per row and rows.
     ///
     /// # Errors
     ///
@@ -948,7 +948,7 @@ impl PlanarLayout {
         }
         for (index, (plane, spec)) in planes.iter().zip(&self.planes).enumerate() {
             if plane.channel_type() != spec.encoding.channel_type() {
-                return Err(LayoutError::WordType { index });
+                return Err(LayoutError::SampleType { index });
             }
             let (w, h) = self
                 .plane_size(index, width, height)

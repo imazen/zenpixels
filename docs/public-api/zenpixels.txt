@@ -541,9 +541,9 @@ pub plane::LayoutError::MixedFamilies
 pub plane::LayoutError::PlaneCount
 pub plane::LayoutError::PlaneCount::actual: usize
 pub plane::LayoutError::PlaneCount::expected: usize
+pub plane::LayoutError::SampleType
+pub plane::LayoutError::SampleType::index: usize
 pub plane::LayoutError::Subsampling
-pub plane::LayoutError::WordType
-pub plane::LayoutError::WordType::index: usize
 #[non_exhaustive] pub enum plane::PlaneEncoding
 pub plane::PlaneEncoding::Code(sample::SampleEncoding)
 pub plane::PlaneEncoding::Float(plane::FloatEncoding)
@@ -580,33 +580,33 @@ pub fn plane::PlanarLayout::subsampling(&self) -> sample::ChromaSubsampling
 pub struct plane::Plane<C>
 pub fn plane::Plane<C>::height(&self) -> usize
 pub fn plane::Plane<C>::new(C, usize, usize, usize) -> core::result::Result<Self, plane::PlaneError>
-pub fn plane::Plane<C>::row(&self, usize) -> core::option::Option<&[<C as plane::PlaneStorage>::Word]>
-pub fn plane::Plane<C>::rows(&self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = &[<C as plane::PlaneStorage>::Word]> + core::iter::traits::exact_size::ExactSizeIterator
+pub fn plane::Plane<C>::row(&self, usize) -> core::option::Option<&[<C as plane::PlaneStorage>::Sample]>
+pub fn plane::Plane<C>::rows(&self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = &[<C as plane::PlaneStorage>::Sample]> + core::iter::traits::exact_size::ExactSizeIterator
 pub fn plane::Plane<C>::stride(&self) -> usize
-pub fn plane::Plane<C>::strided_words(&self) -> &[<C as plane::PlaneStorage>::Word]
-pub fn plane::Plane<C>::sub(&self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneRef<'_, <C as plane::PlaneStorage>::Word>, plane::PlaneError>
-pub fn plane::Plane<C>::view(&self) -> plane::PlaneRef<'_, <C as plane::PlaneStorage>::Word>
+pub fn plane::Plane<C>::strided_samples(&self) -> &[<C as plane::PlaneStorage>::Sample]
+pub fn plane::Plane<C>::sub(&self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneRef<'_, <C as plane::PlaneStorage>::Sample>, plane::PlaneError>
+pub fn plane::Plane<C>::view(&self) -> plane::PlaneRef<'_, <C as plane::PlaneStorage>::Sample>
 pub fn plane::Plane<C>::width(&self) -> usize
-pub fn plane::Plane<C>::row_mut(&mut self, usize) -> core::option::Option<&mut [<C as plane::PlaneStorage>::Word]>
-pub fn plane::Plane<C>::rows_mut(&mut self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = &mut [<C as plane::PlaneStorage>::Word]> + core::iter::traits::exact_size::ExactSizeIterator
-pub fn plane::Plane<C>::sub_mut(&mut self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneMut<'_, <C as plane::PlaneStorage>::Word>, plane::PlaneError>
-pub fn plane::Plane<C>::view_mut(&mut self) -> plane::PlaneMut<'_, <C as plane::PlaneStorage>::Word>
+pub fn plane::Plane<C>::row_mut(&mut self, usize) -> core::option::Option<&mut [<C as plane::PlaneStorage>::Sample]>
+pub fn plane::Plane<C>::rows_mut(&mut self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = &mut [<C as plane::PlaneStorage>::Sample]> + core::iter::traits::exact_size::ExactSizeIterator
+pub fn plane::Plane<C>::sub_mut(&mut self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneMut<'_, <C as plane::PlaneStorage>::Sample>, plane::PlaneError>
+pub fn plane::Plane<C>::view_mut(&mut self) -> plane::PlaneMut<'_, <C as plane::PlaneStorage>::Sample>
 pub fn plane::Plane<&mut [T]>::split_at_row(self, usize) -> core::result::Result<(Self, Self), plane::PlaneError>
 pub fn plane::Plane<alloc::vec::Vec<T>>::alloc(usize, usize) -> core::result::Result<Self, plane::PlaneError>
 pub struct plane::PlaneSpec
 pub const fn plane::PlaneSpec::encoding(self) -> plane::PlaneEncoding
 pub const fn plane::PlaneSpec::new(plane::PlaneRole, plane::PlaneEncoding) -> Self
 pub const fn plane::PlaneSpec::role(self) -> plane::PlaneRole
+pub trait plane::PlaneSample: plane::sealed::Sealed + bytemuck::pod::Pod + core::default::Default + core::cmp::PartialEq + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static
+pub const plane::PlaneSample::CHANNEL_TYPE: descriptor::ChannelType
 pub trait plane::PlaneStorage
-pub type plane::PlaneStorage::Word: plane::PlaneWord
-pub fn plane::PlaneStorage::words(&self) -> &[Self::Word]
-pub type &mut [T]::Word = T
-pub fn &mut [T]::words(&self) -> &[T]
+pub type plane::PlaneStorage::Sample: plane::PlaneSample
+pub fn plane::PlaneStorage::samples(&self) -> &[Self::Sample]
+pub type &mut [T]::Sample = T
+pub fn &mut [T]::samples(&self) -> &[T]
 pub trait plane::PlaneStorageMut: plane::PlaneStorage
-pub fn plane::PlaneStorageMut::words_mut(&mut self) -> &mut [Self::Word]
-pub fn &mut [T]::words_mut(&mut self) -> &mut [T]
-pub trait plane::PlaneWord: plane::sealed::Sealed + bytemuck::pod::Pod + core::default::Default + core::cmp::PartialEq + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static
-pub const plane::PlaneWord::CHANNEL_TYPE: descriptor::ChannelType
+pub fn plane::PlaneStorageMut::samples_mut(&mut self) -> &mut [Self::Sample]
+pub fn &mut [T]::samples_mut(&mut self) -> &mut [T]
 pub type plane::PlaneBuf<T> = plane::Plane<alloc::vec::Vec<T>>
 pub type plane::PlaneMut<'a, T> = plane::Plane<&'a mut [T]>
 pub type plane::PlaneRef<'a, T> = plane::Plane<&'a [T]>
@@ -1132,7 +1132,7 @@ descriptor::PixelDescriptor: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::PixelFormat: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::SignalRange: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
 descriptor::TransferFunction: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
-f32: plane::PlaneWord
+f32: plane::PlaneSample
 hdr::ContentLightLevel: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 hdr::DiffuseWhite: Clone, Copy, Debug, Default, Eq, PartialEq
 hdr::MasteringDisplay: Clone, Copy, Debug, Default, PartialEq
@@ -1165,8 +1165,8 @@ sample::ExactDepth: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::ExactDepthError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 sample::SampleEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::SampleEncodingError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
-u16: plane::PlaneWord
-u8: plane::PlaneWord
+u16: plane::PlaneSample
+u8: plane::PlaneSample
 
 ## auto traits
 

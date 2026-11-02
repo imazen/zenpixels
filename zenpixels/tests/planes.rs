@@ -9,19 +9,19 @@ fn codes(storage: ChannelType, bits: u8, shift: u8) -> PlaneEncoding {
 
 #[test]
 fn construction_checks_geometry_and_allows_a_short_final_row() {
-    // 3 rows of 4 words, stride 6, no padding after the last row: 6+6+4.
-    let words = [0u8; 16];
-    assert!(PlaneRef::new(&words[..], 4, 3, 6).is_ok());
+    // 3 rows of 4 samples, stride 6, no padding after the last row: 6+6+4.
+    let samples = [0u8; 16];
+    assert!(PlaneRef::new(&samples[..], 4, 3, 6).is_ok());
     assert_eq!(
-        PlaneRef::new(&words[..15], 4, 3, 6).unwrap_err(),
+        PlaneRef::new(&samples[..15], 4, 3, 6).unwrap_err(),
         PlaneError::ShortBuffer
     );
     assert_eq!(
-        PlaneRef::new(&words[..], 4, 3, 3).unwrap_err(),
+        PlaneRef::new(&samples[..], 4, 3, 3).unwrap_err(),
         PlaneError::ShortStride
     );
     assert_eq!(
-        PlaneRef::new(&words[..], 4, usize::MAX, usize::MAX / 2).unwrap_err(),
+        PlaneRef::new(&samples[..], 4, usize::MAX, usize::MAX / 2).unwrap_err(),
         PlaneError::GeometryOverflow
     );
     // Empty planes need no storage, whatever the stride.
@@ -31,15 +31,15 @@ fn construction_checks_geometry_and_allows_a_short_final_row() {
     assert!(p.rows().all(|r| r.is_empty()));
     assert_eq!(p.row(4), Some(&[][..]));
     assert_eq!(p.row(5), None);
-    assert!(p.strided_words().is_empty());
+    assert!(p.strided_samples().is_empty());
     assert!(PlaneRef::new(&empty[..], 7, 0, 7).is_ok());
 }
 
 #[test]
 fn rows_exclude_padding_in_both_directions() {
-    // Rows of 3 words, stride 5, final row unpadded: 5 + 5 + 3 = 13 words.
-    let words: Vec<u16> = (0..13).collect();
-    let p = PlaneRef::new(&words[..], 3, 3, 5).unwrap();
+    // Rows of 3 samples, stride 5, final row unpadded: 5 + 5 + 3 = 13 samples.
+    let samples: Vec<u16> = (0..13).collect();
+    let p = PlaneRef::new(&samples[..], 3, 3, 5).unwrap();
     let want: [&[u16]; 3] = [&[0, 1, 2], &[5, 6, 7], &[10, 11, 12]];
     assert_eq!(p.rows().collect::<Vec<_>>(), want);
     assert_eq!(
@@ -48,20 +48,20 @@ fn rows_exclude_padding_in_both_directions() {
     );
     assert_eq!(p.rows().len(), 3);
     assert_eq!(p.row(1), Some(want[1]));
-    assert_eq!(p.strided_words(), &words[..]);
+    assert_eq!(p.strided_samples(), &samples[..]);
     assert_eq!((p.width(), p.height(), p.stride()), (3, 3, 5));
 }
 
 #[test]
 fn sub_views_read_and_write_through() {
-    let mut words: Vec<f32> = (0..20).map(|v| v as f32).collect();
-    let mut p = PlaneMut::new(&mut words[..], 4, 5, 4).unwrap();
+    let mut samples: Vec<f32> = (0..20).map(|v| v as f32).collect();
+    let mut p = PlaneMut::new(&mut samples[..], 4, 5, 4).unwrap();
     let s = p.sub(1, 2, 2, 2).unwrap();
     assert_eq!(
         s.rows().collect::<Vec<_>>(),
         [&[9.0, 10.0][..], &[13.0, 14.0]]
     );
-    assert_eq!(s.strided_words(), &[9.0, 10.0, 11.0, 12.0, 13.0, 14.0]);
+    assert_eq!(s.strided_samples(), &[9.0, 10.0, 11.0, 12.0, 13.0, 14.0]);
     assert_eq!(p.sub(3, 0, 2, 1).unwrap_err(), PlaneError::OutsidePlane);
     assert_eq!(p.sub(0, 5, 1, 1).unwrap_err(), PlaneError::OutsidePlane);
     assert_eq!(
@@ -73,16 +73,16 @@ fn sub_views_read_and_write_through() {
         row.fill(-1.0);
     }
     assert_eq!(
-        &words[8..16],
+        &samples[8..16],
         &[8.0, -1.0, -1.0, 11.0, 12.0, -1.0, -1.0, 15.0]
     );
 }
 
 #[test]
 fn rows_mut_skip_padding_and_meet_in_the_middle() {
-    let mut words = [0u8; 13];
+    let mut samples = [0u8; 13];
     {
-        let mut p = PlaneMut::new(&mut words[..], 3, 3, 5).unwrap();
+        let mut p = PlaneMut::new(&mut samples[..], 3, 3, 5).unwrap();
         let mut it = p.rows_mut();
         assert_eq!(it.len(), 3);
         it.next().unwrap().fill(1);
@@ -90,7 +90,7 @@ fn rows_mut_skip_padding_and_meet_in_the_middle() {
         it.next().unwrap().fill(2);
         assert!(it.next().is_none() && it.next_back().is_none());
     }
-    assert_eq!(words, [1, 1, 1, 0, 0, 2, 2, 2, 0, 0, 3, 3, 3]);
+    assert_eq!(samples, [1, 1, 1, 0, 0, 2, 2, 2, 0, 0, 3, 3, 3]);
 
     let mut none: [u8; 0] = [];
     let mut empty = PlaneMut::new(&mut none[..], 0, 4, 9).unwrap();
@@ -101,27 +101,27 @@ fn rows_mut_skip_padding_and_meet_in_the_middle() {
 
 #[test]
 fn split_at_row_gives_disjoint_strips() {
-    let mut words = [0u16; 13];
-    let p = PlaneMut::new(&mut words[..], 3, 3, 5).unwrap();
+    let mut samples = [0u16; 13];
+    let p = PlaneMut::new(&mut samples[..], 3, 3, 5).unwrap();
     let (mut top, mut bottom) = p.split_at_row(1).unwrap();
     assert_eq!((top.height(), bottom.height()), (1, 2));
     top.row_mut(0).unwrap().fill(7);
     for row in bottom.rows_mut() {
         row.fill(9);
     }
-    assert_eq!(words, [7, 7, 7, 0, 0, 9, 9, 9, 0, 0, 9, 9, 9]);
+    assert_eq!(samples, [7, 7, 7, 0, 0, 9, 9, 9, 0, 0, 9, 9, 9]);
 
     for y in 0..=3 {
-        let p = PlaneMut::new(&mut words[..], 3, 3, 5).unwrap();
+        let p = PlaneMut::new(&mut samples[..], 3, 3, 5).unwrap();
         let (top, bottom) = p.split_at_row(y).unwrap();
         assert_eq!((top.height(), bottom.height()), (y, 3 - y));
         assert_eq!(top.rows().chain(bottom.rows()).count(), 3);
     }
-    let p = PlaneMut::new(&mut words[..], 3, 3, 5).unwrap();
+    let p = PlaneMut::new(&mut samples[..], 3, 3, 5).unwrap();
     assert_eq!(p.split_at_row(4).unwrap_err(), PlaneError::OutsidePlane);
 }
 
-fn assert_aligned<T: PlaneWord>(width: usize, height: usize) {
+fn assert_aligned<T: PlaneSample>(width: usize, height: usize) {
     let mut p = PlaneBuf::<T>::alloc(width, height).unwrap();
     let size = std::mem::size_of::<T>();
     let stride_bytes = p.stride() * size;
@@ -154,7 +154,7 @@ fn alloc_starts_rows_on_64_bytes_and_avoids_4096_strides() {
     assert_eq!(PlaneBuf::<u8>::alloc(2048, 1).unwrap().stride(), 2048);
     assert_eq!(PlaneBuf::<u8>::alloc(100, 1).unwrap().stride(), 128);
     assert_eq!(PlaneBuf::<u8>::alloc(0, 0).unwrap().rows().count(), 0);
-    // More than isize::MAX bytes without overflowing usize, on any word size.
+    // More than isize::MAX bytes without overflowing usize, on any sample size.
     let half = usize::BITS / 2;
     assert_eq!(
         PlaneBuf::<f32>::alloc(usize::MAX / 2, 1).unwrap_err(),
@@ -169,8 +169,8 @@ fn alloc_starts_rows_on_64_bytes_and_avoids_4096_strides() {
 /// Accounted or shared storage outside this crate implements `PlaneStorage`.
 struct Shared(std::sync::Arc<[u16]>);
 impl PlaneStorage for Shared {
-    type Word = u16;
-    fn words(&self) -> &[u16] {
+    type Sample = u16;
+    fn samples(&self) -> &[u16] {
         &self.0
     }
 }
@@ -327,7 +327,7 @@ fn layout_sizes_planes_and_checks_supplied_planes() {
         layout
             .check(&[good[0], good[1], AnyPlane::U16(a16.view())], 5, 3)
             .unwrap_err(),
-        LayoutError::WordType { index: 2 }
+        LayoutError::SampleType { index: 2 }
     );
     assert_eq!(
         layout
