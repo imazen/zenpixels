@@ -145,10 +145,27 @@ aligned allocation, accounted shared storage, a decoder's pool, and after Rust
   for any `S: ?Sized` that does. So `Plane<Box<dyn PlaneStorageMut<Sample = u8> +
   Send + Sync>>` holds any owner: one allocation per plane, no unsafe code, no
   copy of the samples (tested with four different owners in one `Vec`).
-- **Allocator erasure** is the alternative after 1.100:
-  `Vec<T, Arc<dyn Allocator + Send + Sync>>`. Moving an existing `Vec` into that
-  form takes `Vec::from_parts_in`, which is unsafe, so it belongs with the
-  aligning allocator in a primitive crate.
+- **Allocators are values, not pointers.** `Vec<T, A>` stores `A` by value, so a
+  zero-sized allocator costs nothing. Measured with `size_of` on
+  `rustc 1.99.0-nightly (77cf889bc 2026-07-12)`, x86_64: `Vec<u8>`,
+  `Vec<u8, Global>` and `Vec<u8, Align64>` are 24 bytes; `Vec<u8, PlaneAlloc>`,
+  where `PlaneAlloc` is an enum over `Global` and `Align64` implementing
+  `Allocator`, is 32; `Vec<u8, &dyn Allocator>` and
+  `Vec<u8, Arc<dyn Allocator + Send + Sync>>` are 40, and the `Arc` form also
+  adds reference counting and an indirect call per allocation and free. So:
+  - one allocator per plane type: generic `Plane<Vec<T, A>>`, free;
+  - a closed set of allocators in one type: an enum allocator, 8 bytes per `Vec`
+    and a branch per allocation, never per sample;
+  - a `dyn` allocator only when the set is open, and then by reference or
+    `Arc`, accepting the 16-byte pointer.
+  Moving an existing `Vec` between allocator types needs `Vec::from_parts_in`
+  (unsafe), so these allocators belong with the aligning allocator in a
+  primitive crate.
+- Storage that is not a `Vec` at all (accounted shared storage, a decoder's
+  pool) still needs storage-level erasure, the boxed `dyn PlaneStorageMut`
+  above. Its cost is one heap box per plane and an indirect `samples()` call per
+  row access on the boxed plane; kernels take `view()` once and then read rows
+  directly.
 
 Semver rules that keep this open:
 

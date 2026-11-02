@@ -45,3 +45,10 @@ For 64 B through 32 MiB, `Vec<u16, Align64>` started on a 64-byte boundary after
 `Vec<f32, Align64>` after `try_reserve_exact`: 0 misaligned of 24 checks.
 `cargo miri run` (64 B, 1000 B and 4096 B) reported no undefined behaviour,
 which includes freeing with a different layout than the allocation used.
+
+## Vec size by allocator (`allocator_sizes_probe.rs`)
+
+Same nightly, x86_64. `Vec<u8>`, `Vec<u8, Global>`, `Vec<u8, Align64>`: 24 bytes.
+`Vec<u8, PlaneAlloc>` (enum of `Global` and `Align64`): 32. `Vec<u8, &'static dyn
+Allocator>` and `Vec<u8, Arc<dyn Allocator + Send + Sync>>`: 40. A 1 MiB
+`Vec<u16, PlaneAlloc>` allocated as `Align64` started on a 64-byte boundary.
