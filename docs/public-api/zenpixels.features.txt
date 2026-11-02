@@ -10,7 +10,7 @@
 ## summary
 #
 #   inherent methods                           34
-#   trait roster entries (type × trait)        35
+#   trait roster entries (type × trait)        36
 #
 # per-module pub lines:
 #   buffer                           34
@@ -52,7 +52,7 @@ pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::swap_to_bgra(sel
 pub fn buffer::PixelSliceMut<'a, buffer::Bgrx>::upgrade_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
 pub fn buffer::PixelSliceMut<'a, buffer::Rgbx>::upgrade_to_rgba(self) -> buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>
 
-## trait impls (35 types)
+## trait impls (36 types)
 
 buffer::PixelSlice<'a, rgb::formats::bgra::Bgra<u8>>: From<imgref::Img<&'a [rgb::formats::bgra::Bgra<u8>]>>
 buffer::PixelSlice<'a, rgb::formats::gray::Gray_v08<f32>>: From<imgref::Img<&'a [rgb::formats::gray::Gray_v08<f32>]>>
@@ -76,6 +76,7 @@ buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u16>>: From<imgref::Img<&'a m
 buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<u8>]>>
 imgref::ImgRef<'a, T>: TryFrom<plane::Plane<&'a [T]>>
 imgref::ImgRefMut<'a, T>: TryFrom<plane::Plane<&'a mut [T]>>
+imgref::ImgVec<T>: TryFrom<plane::Plane<alloc::vec::Vec<T>>>
 pixel_types::GrayAlpha16: buffer::Pixel
 pixel_types::GrayAlpha8: buffer::Pixel
 pixel_types::GrayAlphaF32: buffer::Pixel

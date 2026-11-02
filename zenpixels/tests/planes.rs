@@ -426,11 +426,48 @@ mod imgref_interop {
     }
 
     #[test]
+    fn planes_starting_at_row_zero_become_owned_images() {
+        let plane = PlaneBuf::new((0..12u16).collect(), 3, 3, 4).unwrap();
+        let ptr = plane.row(0).unwrap().as_ptr();
+        let img = ImgVec::try_from(plane).unwrap();
+        assert_eq!((img.buf().as_ptr(), img.width(), img.stride()), (ptr, 3, 4));
+        // Large glibc blocks usually start 16 bytes past 64; either way nothing is lost.
+        let big = PlaneBuf::<u8>::alloc(1 << 12, 64).unwrap();
+        let first = big.row(0).unwrap().as_ptr();
+        if let Err(big) = ImgVec::try_from(big) {
+            assert_eq!(big.row(0).unwrap().as_ptr(), first);
+        }
+    }
+
+    #[test]
     fn owned_images_become_planes_without_copying() {
         let img = ImgVec::new((0..12u16).collect(), 4, 3);
         let ptr = img.buf().as_ptr();
         let plane = PlaneBuf::try_from(img).unwrap();
         assert_eq!(plane.row(0).unwrap().as_ptr(), ptr);
         assert_eq!(plane.row(2).unwrap(), &[8, 9, 10, 11]);
+    }
+}
+
+#[test]
+fn into_vec_hands_over_only_a_vec_starting_at_row_zero() {
+    let v: Vec<u16> = (0..12).collect();
+    let ptr = v.as_ptr();
+    let adopted = PlaneBuf::new(v, 3, 3, 4).unwrap();
+    let back = adopted.into_vec().unwrap();
+    assert_eq!(back.as_ptr(), ptr);
+
+    // An allocation that needed an offset comes back whole and unchanged.
+    for width in 1..40 {
+        let mut p = PlaneBuf::<u8>::alloc(width, 2).unwrap();
+        p.row_mut(1).unwrap().fill(5);
+        let first = p.row(0).unwrap().as_ptr();
+        match p.into_vec() {
+            Ok(v) => assert_eq!(v.as_ptr(), first),
+            Err(p) => {
+                assert_eq!(p.row(0).unwrap().as_ptr(), first);
+                assert!(p.row(1).unwrap().iter().all(|&s| s == 5));
+            }
+        }
     }
 }

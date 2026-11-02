@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)       107
 #   pub consts/statics                        303
 #   free functions                              6
-#   inherent methods                          298
+#   inherent methods                          299
 #   struct fields                             121
 #   enum variants                             338
 #   re-exports                                  4
@@ -30,11 +30,11 @@
 #   icc                              13
 #   orientation                      11
 #   pixel_types                       9
-#   plane                            83
+#   plane                            84
 #   policy                           25
 #   sample                           33
 
-## items (1059 lines)
+## items (1060 lines)
 
 pub mod zenpixels
 pub use At
@@ -595,6 +595,7 @@ pub fn plane::Plane<C>::sub_mut(&mut self, usize, usize, usize, usize) -> core::
 pub fn plane::Plane<C>::view_mut(&mut self) -> plane::PlaneMut<'_, <C as plane::PlaneStorage>::Sample>
 pub fn plane::Plane<&mut [T]>::split_at_row(self, usize) -> core::result::Result<(Self, Self), plane::PlaneError>
 pub fn plane::Plane<alloc::vec::Vec<T>>::alloc(usize, usize) -> core::result::Result<Self, plane::PlaneError>
+pub fn plane::Plane<alloc::vec::Vec<T>>::into_vec(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
 pub struct plane::PlaneSpec
 pub const fn plane::PlaneSpec::encoding(self) -> plane::PlaneEncoding
 pub const fn plane::PlaneSpec::new(plane::PlaneRole, plane::PlaneEncoding) -> Self

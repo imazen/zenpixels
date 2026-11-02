@@ -109,16 +109,32 @@ imgref (1.x) is built in: with the `imgref` feature, `TryFrom` converts
 `ImgRef`/`ImgRefMut` to `PlaneRef`/`PlaneMut` and back, and adopts an `ImgVec` as
 a `PlaneBuf`, without copying (pointer identity is tested). The conversions are
 fallible because imgref does not check its buffer length, holds `u32`
-dimensions and needs a nonzero stride. `PlaneBuf` to `ImgVec` is not offered:
-imgref's `Vec` must start at the first pixel, and an allocated `PlaneBuf` starts
-at a 64-byte offset; borrow it with `view()` instead.
+dimensions and needs a nonzero stride. `PlaneBuf` to `ImgVec` (and
+`PlaneBuf::into_vec` for any owner of a plain `Vec`) succeeds when row 0 is at
+index 0 and otherwise returns the plane unchanged.
+
+Row 0 at index 0 and 64-byte alignment cannot both be guaranteed in an owned
+`Vec<T>`: `Vec` frees with `align_of::<T>()`, so it cannot own a block allocated
+with 64-byte alignment, and this crate has no unsafe code to try. What the
+allocator gives decides which one a plane gets. Measured on r7900x (glibc 2.43,
+2026-11-01, five allocations per size, `benchmarks/alloc-alignment/`): blocks of 128 KiB and more
+(mmap-backed by default) started 16 bytes past a 64-byte boundary every time;
+smaller blocks landed on 16-byte boundaries at varying offsets. glibc raises its
+mmap threshold after large frees, so this is typical, not guaranteed. A plane
+adopted from a codec's `Vec` therefore usually has every row at +16 bytes, the
+offset that cost AVX2 and AVX-512 28-54% on cache-resident rows and under 7%
+from memory (`benchmarks/row_alignment_2026-10-31.md`). `alloc` avoids that
+with a start offset, which is why its large planes usually cannot be handed over
+as a `Vec`. Kernels that peel to an aligned store address would make adopted
+buffers cost little either way; not measured.
 
 `into_strided_samples` / `into_strided_samples_mut` return the samples for the
 plane's own lifetime, which is what a borrowed external frame needs.
 
 Additions that would serve the other adapters, each additive:
 
-- `PlaneBuf` into its `Vec` plus start offset, for owners that accept an offset.
+- `PlaneBuf` into its `Vec` plus start offset, for owners that accept an offset
+  (`into_vec` covers owners that need index 0).
 - `f16` and `i16` samples: a `PlaneSample` impl and an `AnyPlane` variant each.
 - The variants listed in the table, when a source produces them.
 

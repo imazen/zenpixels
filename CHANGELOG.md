@@ -63,6 +63,8 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   borrowed lifetime for adapters; with the `imgref` feature, `TryFrom` converts
   `ImgRef`/`ImgRefMut` and `PlaneRef`/`PlaneMut` both ways and adopts an `ImgVec`
   as a `PlaneBuf`, all without copying.
+- `PlaneBuf::into_vec` and `TryFrom<PlaneBuf<T>> for ImgVec<T>` hand the `Vec` over when
+  row 0 is at index 0, and return the plane unchanged otherwise.
 - `sample::CodePlane` reads codes from a `plane::AnyPlane`: `CodePlane::new` for one
   component per position, `CodePlane::component` for one of several interleaved
   components (NV12/P010 chroma, interleaved RGB). Removes `from_u8`, `from_u16`,

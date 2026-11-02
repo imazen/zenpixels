@@ -620,6 +620,48 @@ impl<T: PlaneSample> Plane<Vec<T>> {
     }
 }
 
+impl<T: PlaneSample> Plane<Vec<T>> {
+    /// Give up the `Vec`, with row 0 at index 0, for an owner that takes a
+    /// plain `Vec` and a stride (an `ImgVec`, yuvutils-rs' owned planes).
+    /// Read [`width`](Plane::width), [`height`](Plane::height) and
+    /// [`stride`](Plane::stride) first.
+    ///
+    /// A plane adopted with [`Plane::new`] always starts at index 0. One from
+    /// [`alloc`](Plane::alloc) does only when the allocator returned a 64-byte
+    /// aligned block. glibc's mmap-backed blocks (by default those of 128 KiB
+    /// and more) start 16 bytes past a 64-byte boundary, so large allocated
+    /// planes usually do not.
+    ///
+    /// # Errors
+    ///
+    /// The plane itself, unchanged, when its first row starts past index 0.
+    /// Borrow it with [`view`](Plane::view) instead, or copy it.
+    pub fn into_vec(self) -> Result<Vec<T>, Self> {
+        if self.start == 0 {
+            Ok(self.buf)
+        } else {
+            Err(self)
+        }
+    }
+}
+
+/// Hand a plane's `Vec` to an [`imgref::ImgVec`] without copying.
+///
+/// The error is the plane itself, unchanged, when it starts past index 0 (see
+/// [`PlaneBuf::into_vec`]) or holds dimensions past `u32::MAX`.
+#[cfg(feature = "imgref")]
+impl<T: PlaneSample> TryFrom<PlaneBuf<T>> for imgref::ImgVec<T> {
+    type Error = PlaneBuf<T>;
+    fn try_from(plane: PlaneBuf<T>) -> Result<Self, PlaneBuf<T>> {
+        let Ok(stride) = imgref_geometry(plane.width, plane.height, plane.stride) else {
+            return Err(plane);
+        };
+        let (width, height) = (plane.width, plane.height);
+        let buf = plane.into_vec()?;
+        Ok(imgref::Img::new_stride(buf, width, height, stride))
+    }
+}
+
 /// A borrowed plane of any sample type, for interfaces that carry planes of
 /// different sample types side by side.
 #[derive(Clone, Copy, Debug)]
