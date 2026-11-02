@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)       107
 #   pub consts/statics                        303
 #   free functions                              6
-#   inherent methods                          296
+#   inherent methods                          298
 #   struct fields                             121
 #   enum variants                             338
 #   re-exports                                  4
@@ -30,11 +30,11 @@
 #   icc                              13
 #   orientation                      11
 #   pixel_types                       9
-#   plane                            81
+#   plane                            83
 #   policy                           25
 #   sample                           33
 
-## items (1057 lines)
+## items (1059 lines)
 
 pub mod zenpixels
 pub use At
@@ -578,6 +578,8 @@ pub fn plane::PlanarLayout::planes(&self) -> &[plane::PlaneSpec]
 pub fn plane::PlanarLayout::siting(&self) -> sample::ChromaSiting
 pub fn plane::PlanarLayout::subsampling(&self) -> sample::ChromaSubsampling
 pub struct plane::Plane<C>
+pub fn plane::Plane<&'a [T]>::into_strided_samples(self) -> &'a [T]
+pub fn plane::Plane<&'a mut [T]>::into_strided_samples_mut(self) -> &'a mut [T]
 pub fn plane::Plane<C>::height(&self) -> usize
 pub fn plane::Plane<C>::new(C, usize, usize, usize) -> core::result::Result<Self, plane::PlaneError>
 pub fn plane::Plane<C>::row(&self, usize) -> core::option::Option<&[<C as plane::PlaneStorage>::Sample]>

@@ -348,3 +348,89 @@ fn layout_sizes_planes_and_checks_supplied_planes() {
         }
     );
 }
+
+#[test]
+fn strided_samples_keep_the_borrowed_lifetime() {
+    let samples: Vec<u16> = (0..13).collect();
+    let span: &[u16] = {
+        let plane = PlaneRef::new(&samples[..], 3, 3, 5).unwrap();
+        plane.into_strided_samples()
+    };
+    assert_eq!(span.as_ptr(), samples.as_ptr());
+    assert_eq!(span.len(), 13);
+    let mut out = [0u8; 13];
+    let span = PlaneMut::new(&mut out[..], 3, 3, 5)
+        .unwrap()
+        .into_strided_samples_mut();
+    span[12] = 9;
+    assert_eq!(out[12], 9);
+}
+
+#[cfg(feature = "imgref")]
+mod imgref_interop {
+    use super::*;
+    use imgref::{Img, ImgRef, ImgRefMut, ImgVec};
+
+    #[test]
+    fn borrowed_images_and_planes_convert_without_copying() {
+        let buf: Vec<u16> = (0..20).collect();
+        let img = Img::new_stride(&buf[..], 3, 4, 5);
+        let plane = PlaneRef::try_from(img).unwrap();
+        assert_eq!((plane.width(), plane.height(), plane.stride()), (3, 4, 5));
+        assert_eq!(plane.row(1).unwrap().as_ptr(), buf[5..].as_ptr());
+        // A sub-image ends at its last pixel, as a plane may.
+        let sub = img.sub_image(1, 1, 2, 3);
+        let plane = PlaneRef::try_from(sub).unwrap();
+        assert_eq!(
+            plane.rows().collect::<Vec<_>>(),
+            [&[6, 7][..], &[11, 12], &[16, 17]]
+        );
+        let back: ImgRef<'_, u16> = plane.try_into().unwrap();
+        assert_eq!(back.buf().as_ptr(), buf[6..].as_ptr());
+        assert_eq!((back.width(), back.height(), back.stride()), (2, 3, 5));
+
+        // An aligned allocation's offset start survives the conversion.
+        let mut aligned = PlaneBuf::<f32>::alloc(7, 2).unwrap();
+        aligned.row_mut(1).unwrap()[6] = 2.5;
+        let first = aligned.row(0).unwrap().as_ptr();
+        let img: ImgRef<'_, f32> = aligned.view().try_into().unwrap();
+        assert_eq!(img.buf().as_ptr(), first);
+        assert_eq!(img[(6usize, 1usize)], 2.5);
+
+        let short = Img::new_stride(&buf[..3], 4, 2, 4);
+        assert_eq!(
+            PlaneRef::try_from(short).unwrap_err(),
+            PlaneError::ShortBuffer
+        );
+        let empty: [u8; 0] = [];
+        let img: ImgRef<'_, u8> = PlaneRef::new(&empty[..], 0, 3, 0)
+            .unwrap()
+            .try_into()
+            .unwrap();
+        assert_eq!((img.width(), img.height(), img.stride()), (0, 3, 1));
+    }
+
+    #[test]
+    fn mutable_images_and_planes_write_through() {
+        let mut buf = vec![0u8; 12];
+        {
+            let img = ImgRefMut::new_stride(&mut buf[..], 2, 3, 4);
+            let mut plane = PlaneMut::try_from(img).unwrap();
+            for row in plane.rows_mut() {
+                row.fill(1);
+            }
+            let mut img: ImgRefMut<'_, u8> = plane.try_into().unwrap();
+            img[(1usize, 2usize)] = 7;
+        }
+        assert_eq!(buf, [1, 1, 0, 0, 1, 1, 0, 0, 1, 7, 0, 0]);
+    }
+
+    #[test]
+    fn owned_images_become_planes_without_copying() {
+        let img = ImgVec::new((0..12u16).collect(), 4, 3);
+        let ptr = img.buf().as_ptr();
+        let plane = PlaneBuf::try_from(img).unwrap();
+        assert_eq!(plane.row(0).unwrap().as_ptr(), ptr);
+        assert_eq!(plane.row(2).unwrap(), &[8, 9, 10, 11]);
+    }
+}

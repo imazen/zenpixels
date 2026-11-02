@@ -105,11 +105,20 @@ variant is refused, not misread.
 | yuvutils-rs (BSD-3/Apache) | `YuvPlanarImage<'a, T>`, `YuvBiPlanarImage`, `YuvGrayImage` with public slice + stride (in components) fields, `u32` dims; `*Mut` variants over `BufferStoreMut` (borrowed or owned `Vec`); bit depth, endianness and MSB/LSB packing per call | `PlaneRef`/`PlaneMut` + `SampleEncoding` (depth, shift) | Same length rule as ours (the last row needs no padding). Taking a `PlaneBuf`'s `Vec` as `Owned` works only when its start offset is 0, which `PlaneBuf::alloc` does not promise |
 | pix (MIT/Apache, 1.x) | Packed `Raster<P>` (tight `Box<[P]>`, sealed `Pixel` with type-level channel, alpha mode and gamma) | `PixelSlice` / `PixelDescriptor`, not planes | Borrowed only (`as_u8_slice`); its `u16` rasters cannot become a `Vec<u8>` without a copy |
 
-Additions that would serve these adapters, each additive:
+imgref (1.x) is built in: with the `imgref` feature, `TryFrom` converts
+`ImgRef`/`ImgRefMut` to `PlaneRef`/`PlaneMut` and back, and adopts an `ImgVec` as
+a `PlaneBuf`, without copying (pointer identity is tested). The conversions are
+fallible because imgref does not check its buffer length, holds `u32`
+dimensions and needs a nonzero stride. `PlaneBuf` to `ImgVec` is not offered:
+imgref's `Vec` must start at the first pixel, and an allocated `PlaneBuf` starts
+at a 64-byte offset; borrow it with `view()` instead.
 
-- `Plane<&'a [T]>::into_strided_samples(self) -> &'a [T]` (crate-private today) and a
-  mutable counterpart, so an adapter can build a borrowed external frame with the
-  plane's own lifetime.
+`into_strided_samples` / `into_strided_samples_mut` return the samples for the
+plane's own lifetime, which is what a borrowed external frame needs.
+
+Additions that would serve the other adapters, each additive:
+
+- `PlaneBuf` into its `Vec` plus start offset, for owners that accept an offset.
 - `f16` and `i16` samples: a `PlaneSample` impl and an `AnyPlane` variant each.
 - The variants listed in the table, when a source produces them.
 

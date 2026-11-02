@@ -427,11 +427,99 @@ impl<T: PlaneSample> Plane<&mut [T]> {
 }
 
 impl<'a, T: PlaneSample> Plane<&'a [T]> {
-    /// [`Plane::strided_samples`] for the borrowed lifetime.
-    pub(crate) fn into_strided_samples(self) -> &'a [T] {
+    /// [`Plane::strided_samples`] for the borrowed lifetime, so an adapter can
+    /// hand the samples to another crate's borrowed frame type (slice from the
+    /// first sample, stride in samples) without copying.
+    pub fn into_strided_samples(self) -> &'a [T] {
         let end = extent(self.start, self.width, self.height, self.stride)
             .expect("checked at construction");
         &self.buf[self.start..end]
+    }
+}
+
+impl<'a, T: PlaneSample> Plane<&'a mut [T]> {
+    /// The mutable samples from the first active sample through the last one,
+    /// for the borrowed lifetime; see [`into_strided_samples`](Plane::into_strided_samples).
+    pub fn into_strided_samples_mut(self) -> &'a mut [T] {
+        let end = extent(self.start, self.width, self.height, self.stride)
+            .expect("checked at construction");
+        &mut self.buf[self.start..end]
+    }
+}
+
+/// Converting to imgref: dimensions past `u32::MAX`, which imgref cannot hold,
+/// are [`PlaneError::GeometryOverflow`]. An empty plane's zero stride becomes 1,
+/// which imgref requires.
+#[cfg(feature = "imgref")]
+fn imgref_geometry(width: usize, height: usize, stride: usize) -> Result<usize, PlaneError> {
+    if u32::try_from(width).is_err() || u32::try_from(height).is_err() {
+        return Err(PlaneError::GeometryOverflow);
+    }
+    Ok(stride.max(1))
+}
+
+/// Borrow an [`imgref::ImgRef`] of samples as a plane, without copying.
+///
+/// # Errors
+///
+/// A [`PlaneError`] when the image's buffer is shorter than its geometry.
+#[cfg(feature = "imgref")]
+impl<'a, T: PlaneSample> TryFrom<imgref::ImgRef<'a, T>> for PlaneRef<'a, T> {
+    type Error = PlaneError;
+    fn try_from(img: imgref::ImgRef<'a, T>) -> Result<Self, PlaneError> {
+        Plane::new(img.buf(), img.width(), img.height(), img.stride())
+    }
+}
+
+/// Borrow an [`imgref::ImgRefMut`] of samples as a plane, without copying.
+#[cfg(feature = "imgref")]
+impl<'a, T: PlaneSample> TryFrom<imgref::ImgRefMut<'a, T>> for PlaneMut<'a, T> {
+    type Error = PlaneError;
+    fn try_from(img: imgref::ImgRefMut<'a, T>) -> Result<Self, PlaneError> {
+        let (width, height, stride) = (img.width(), img.height(), img.stride());
+        Plane::new(img.into_buf(), width, height, stride)
+    }
+}
+
+/// Adopt an [`imgref::ImgVec`]'s `Vec` as a plane, without copying.
+#[cfg(feature = "imgref")]
+impl<T: PlaneSample> TryFrom<imgref::ImgVec<T>> for PlaneBuf<T> {
+    type Error = PlaneError;
+    fn try_from(img: imgref::ImgVec<T>) -> Result<Self, PlaneError> {
+        let (width, height, stride) = (img.width(), img.height(), img.stride());
+        Plane::new(img.into_buf(), width, height, stride)
+    }
+}
+
+/// Borrow a plane as an [`imgref::ImgRef`], without copying.
+#[cfg(feature = "imgref")]
+impl<'a, T: PlaneSample> TryFrom<PlaneRef<'a, T>> for imgref::ImgRef<'a, T> {
+    type Error = PlaneError;
+    fn try_from(plane: PlaneRef<'a, T>) -> Result<Self, PlaneError> {
+        let stride = imgref_geometry(plane.width, plane.height, plane.stride)?;
+        let (width, height) = (plane.width, plane.height);
+        Ok(imgref::Img::new_stride(
+            plane.into_strided_samples(),
+            width,
+            height,
+            stride,
+        ))
+    }
+}
+
+/// Borrow a mutable plane as an [`imgref::ImgRefMut`], without copying.
+#[cfg(feature = "imgref")]
+impl<'a, T: PlaneSample> TryFrom<PlaneMut<'a, T>> for imgref::ImgRefMut<'a, T> {
+    type Error = PlaneError;
+    fn try_from(plane: PlaneMut<'a, T>) -> Result<Self, PlaneError> {
+        let stride = imgref_geometry(plane.width, plane.height, plane.stride)?;
+        let (width, height) = (plane.width, plane.height);
+        Ok(imgref::Img::new_stride(
+            plane.into_strided_samples_mut(),
+            width,
+            height,
+            stride,
+        ))
     }
 }
 

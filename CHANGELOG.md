@@ -59,6 +59,10 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   chroma), per-plane `PlaneEncoding` (integer codes or scaled floats) and a
   validated `PlanarLayout`. `PlaneBuf::alloc` starts rows on 64 bytes and
   avoids strides on 4096 multiples. Design: `docs/planar-types.md`.
+- `plane` zero-copy interop: `into_strided_samples` / `into_strided_samples_mut` keep the
+  borrowed lifetime for adapters; with the `imgref` feature, `TryFrom` converts
+  `ImgRef`/`ImgRefMut` and `PlaneRef`/`PlaneMut` both ways and adopts an `ImgVec`
+  as a `PlaneBuf`, all without copying.
 - `sample::CodePlane` reads codes from a `plane::AnyPlane`: `CodePlane::new` for one
   component per position, `CodePlane::component` for one of several interleaved
   components (NV12/P010 chroma, interleaved RGB). Removes `from_u8`, `from_u16`,
