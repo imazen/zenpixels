@@ -34,3 +34,14 @@ bytes      u8%64 u16%64 f32%64 (5 allocations each, mod 64 / mod 4096)
 ```
 
 Blocks of 128 KiB and more (glibc's default mmap threshold) start 16 bytes past a 64-byte boundary (16 mod 4096); smaller blocks land on 16-byte boundaries at varying offsets. glibc raises the mmap threshold after large frees, so this is the typical case, not a guarantee.
+
+## Aligning allocator prototype (Rust 1.100 `Allocator`)
+
+`aligned_allocator_probe.rs` wraps `Global` and widens every layout to 64-byte
+alignment, both when allocating and when freeing. Built with
+`rustc 1.99.0-nightly (77cf889bc 2026-07-12)` and `#![feature(allocator_api)]`.
+For 64 B through 32 MiB, `Vec<u16, Align64>` started on a 64-byte boundary after
+`with_capacity_in`, after `clone`, after growing past its capacity, and for
+`Vec<f32, Align64>` after `try_reserve_exact`: 0 misaligned of 24 checks.
+`cargo miri run` (64 B, 1000 B and 4096 B) reported no undefined behaviour,
+which includes freeing with a different layout than the allocation used.

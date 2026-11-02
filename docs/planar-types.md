@@ -131,6 +131,39 @@ buffers cost little either way; not measured.
 `into_strided_samples` / `into_strided_samples_mut` return the samples for the
 plane's own lifetime, which is what a borrowed external frame needs.
 
+### Aligned planes with the `Allocator` API (Rust 1.100)
+
+`Allocator`, `Vec<T, A>` and `Box<T, A>` are stable from Rust 1.100
+(rust-lang/rust#156882, merged 2026-09-23, milestone 1.100.0; `Global` and
+`System` implement it). An allocator that widens every layout to 64-byte
+alignment, both when allocating and when freeing, makes a `Vec<T, Align64>`
+start on 64 bytes at index 0, and clones and growth stay aligned. A nightly
+prototype confirmed this from 64 B to 32 MiB, and Miri found no undefined
+behaviour (`benchmarks/alloc-alignment/`). For our own planes this removes the
+trade-off: no start offset, `into_vec` always succeeds, and cloning keeps the
+alignment.
+
+It does not remove the copy at the boundary with crates that take `Vec<T>`
+(`Vec<T, Global>`): a block allocated by one allocator cannot be freed by
+another. Crates generic over their container (imgref's `Img<Container>`) or over
+`A` can take the aligned `Vec` directly.
+
+The current API extends to it without a semver break:
+
+- `PlaneStorage for Vec<T>` widens to `Vec<T, A>` for any `A: Allocator`, a
+  strict superset of today's impl.
+- `into_vec` moves to `Plane<Vec<T, A>>` returning `Vec<T, A>`; for `Global` the
+  signature is unchanged.
+- `alloc` keeps allocating from `Global` with its offset; an `alloc_in(width,
+  height, alloc)` constructor takes the aligning allocator.
+- `PlaneBuf<T>` can gain a defaulted parameter, `PlaneBuf<T, A = Global>`.
+
+Two decisions remain: implementing `Allocator` is `unsafe impl`, so the
+allocator cannot live in zenpixels (`forbid(unsafe_code)`) and needs a home in a
+verified primitive crate; and zenpixels' MSRV is 1.85, so these impls need
+either an MSRV of 1.100 or a compiler-version gate (impls only, so the gate is
+additive).
+
 Additions that would serve the other adapters, each additive:
 
 - `PlaneBuf` into its `Vec` plus start offset, for owners that accept an offset
