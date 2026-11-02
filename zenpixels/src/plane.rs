@@ -82,10 +82,10 @@ impl PlaneSample for f32 {
 /// shrink afterwards makes row access panic.
 ///
 /// Slices, references, boxes and `Vec` implement it, and the trait stays
-/// dyn-compatible, so planes whose owners differ (a codec's `Vec`, accounted
-/// storage, a `Vec` from another allocator) can share one type as
-/// `Plane<Box<dyn PlaneStorage<Sample = T> + Send + Sync>>`. Borrowed views
-/// ([`Plane::view`], [`AnyPlane`]) need no boxing at all.
+/// dyn-compatible, so an owner can also be hidden as
+/// `Plane<Box<dyn PlaneStorage<Sample = T> + Send + Sync>>`. Planes of one
+/// picture normally share one owner type per sample type; borrowed views
+/// ([`Plane::view`], [`AnyPlane`]) erase the owner at no cost.
 pub trait PlaneStorage {
     /// The sample type.
     type Sample: PlaneSample;

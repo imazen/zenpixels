@@ -472,7 +472,7 @@ fn into_vec_hands_over_only_a_vec_starting_at_row_zero() {
     }
 }
 
-/// Storage from somewhere else (accounted, another allocator, a decoder pool).
+/// Storage from somewhere else (accounted storage, a decoder pool).
 struct Pool {
     samples: Vec<u8>,
 }
@@ -491,8 +491,9 @@ impl PlaneStorageMut for Pool {
 type DynPlane = Plane<Box<dyn PlaneStorageMut<Sample = u8> + Send + Sync>>;
 
 #[test]
-fn planes_with_different_owners_share_one_type() {
-    // A codec's Vec, an aligned allocation, a boxed slice and foreign storage.
+fn any_owner_works_behind_a_boxed_trait_object() {
+    // Not a use case for one picture (one allocator per image); this covers
+    // the blanket impls and dyn compatibility with several owner types.
     let owners: Vec<Box<dyn PlaneStorageMut<Sample = u8> + Send + Sync>> = vec![
         Box::new((0..12u8).collect::<Vec<u8>>()),
         Box::new(

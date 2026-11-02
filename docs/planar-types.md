@@ -131,41 +131,37 @@ buffers cost little either way; not measured.
 `into_strided_samples` / `into_strided_samples_mut` return the samples for the
 plane's own lifetime, which is what a borrowed external frame needs.
 
-### Mixing owners and allocators
+### Owners and allocators
 
-Planes of one picture often have different owners: a codec's `Vec`, an
-aligned allocation, accounted shared storage, a decoder's pool, and after Rust
-1.100 `Vec`s from different allocators. The types support that three ways:
+Within one image or animation sequence every plane comes from the same
+allocator (owner decision, 2026-11-01); mixing allocators inside a picture is
+not a design goal. Sample types do differ inside one picture (10-bit color in
+`u16`, 8-bit alpha in `u8`), so an owned set of planes, such as the
+replacement for zencodec-media's `OwnedPlanes`, is generic over one allocator
+`A` shared by all its planes and chooses the sample type per plane:
+`Plane<Vec<u8, A>>`, `Plane<Vec<u16, A>>` or `Plane<Vec<f32, A>>` in a
+non-exhaustive enum. Accounted storage fits the same shape as a storage family
+(`SharedStorage<T>` for every `T`).
 
-- **Borrowed views erase the owner.** `view()` gives a `PlaneRef` from any
-  `Plane<C>`, and `AnyPlane` carries views of different sample types. Kernels and
-  mapping interfaces work on views, so mixing owners costs nothing there.
-- **Owned sets erase with `dyn`.** `PlaneStorage` and `PlaneStorageMut` are
-  dyn-compatible (a test pins this), and `Box<S>`, `&S` and `&mut S` implement them
-  for any `S: ?Sized` that does. So `Plane<Box<dyn PlaneStorageMut<Sample = u8> +
-  Send + Sync>>` holds any owner: one allocation per plane, no unsafe code, no
-  copy of the samples (tested with four different owners in one `Vec`).
-- **Allocators are values, not pointers.** `Vec<T, A>` stores `A` by value, so a
-  zero-sized allocator costs nothing. Measured with `size_of` on
-  `rustc 1.99.0-nightly (77cf889bc 2026-07-12)`, x86_64: `Vec<u8>`,
-  `Vec<u8, Global>` and `Vec<u8, Align64>` are 24 bytes; `Vec<u8, PlaneAlloc>`,
-  where `PlaneAlloc` is an enum over `Global` and `Align64` implementing
-  `Allocator`, is 32; `Vec<u8, &dyn Allocator>` and
-  `Vec<u8, Arc<dyn Allocator + Send + Sync>>` are 40, and the `Arc` form also
-  adds reference counting and an indirect call per allocation and free. So:
-  - one allocator per plane type: generic `Plane<Vec<T, A>>`, free;
-  - a closed set of allocators in one type: an enum allocator, 8 bytes per `Vec`
-    and a branch per allocation, never per sample;
-  - a `dyn` allocator only when the set is open, and then by reference or
-    `Arc`, accepting the 16-byte pointer.
-  Moving an existing `Vec` between allocator types needs `Vec::from_parts_in`
-  (unsafe), so these allocators belong with the aligning allocator in a
-  primitive crate.
-- Storage that is not a `Vec` at all (accounted shared storage, a decoder's
-  pool) still needs storage-level erasure, the boxed `dyn PlaneStorageMut`
-  above. Its cost is one heap box per plane and an indirect `samples()` call per
-  row access on the boxed plane; kernels take `view()` once and then read rows
-  directly.
+`Vec<T, A>` stores `A` by value, so a zero-sized allocator costs nothing.
+Measured with `size_of` on `rustc 1.99.0-nightly (77cf889bc 2026-07-12)`,
+x86_64: `Vec<u8>`, `Vec<u8, Global>` and `Vec<u8, Align64>` are 24 bytes; an enum
+allocator over `Global` and `Align64` gives 32; `&dyn Allocator` or
+`Arc<dyn Allocator + Send + Sync>` gives 40, and the `Arc` form adds reference
+counting and an indirect call per allocation and free. A generic `A` per set is
+therefore the default; an enum or `dyn` allocator is only for a container that
+must hold sets from several allocators at once (an enum costs 8 bytes per `Vec`
+and a branch per allocation, never per sample). Moving an existing `Vec` between
+allocator types needs `Vec::from_parts_in` (unsafe), so such allocators belong
+with the aligning allocator in a primitive crate.
+
+Erasure, where an interface needs it, happens for a whole picture, not per
+plane: zencodec's `Picture` trait object already hides the owner, and its
+mappings hand out `AnyPlane` views. Borrowed views (`view()`, `AnyPlane`)
+erase the owner at no cost. `PlaneStorage` and `PlaneStorageMut` also stay
+dyn-compatible, and `&S`, `&mut S` and `Box<S>` implement them for any
+`S: ?Sized`, so `Plane<Box<dyn PlaneStorageMut<Sample = T>>>` works where a
+caller wants it (one box per plane, an indirect call per row read through it).
 
 Semver rules that keep this open:
 

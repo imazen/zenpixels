@@ -66,8 +66,7 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
 - `PlaneBuf::into_vec` and `TryFrom<PlaneBuf<T>> for ImgVec<T>` hand the `Vec` over when
   row 0 is at index 0, and return the plane unchanged otherwise.
 - `PlaneStorage`/`PlaneStorageMut` are implemented for `[T]`, `Vec<T>`, and for `&S`,
-  `&mut S` and `Box<S>` over any `S: ?Sized`, and stay dyn-compatible, so planes with
-  different owners share `Plane<Box<dyn PlaneStorageMut<Sample = T> + Send + Sync>>`.
+  `&mut S` and `Box<S>` over any `S: ?Sized`, and stay dyn-compatible.
 - `sample::CodePlane` reads codes from a `plane::AnyPlane`: `CodePlane::new` for one
   component per position, `CodePlane::component` for one of several interleaved
   components (NV12/P010 chroma, interleaved RGB). Removes `from_u8`, `from_u16`,
