@@ -75,6 +75,26 @@ location; a semi-planar chroma plane stores two samples per position.
 | zenmetrics-abstractions local `PlaneRole`, `PlaneSpec`, `PlaneLayout` (PR #104) | zenpixels types, once zenpixels 0.3.1 is on crates.io |
 | Codec boundary types (heic `DecodedFrame`, zenwebp `YuvPlanes`, zenavif `DecodedYuv`, zenjpeg `YCbCrPlanes`/`DecodedYCbCr`) | Emit or accept `PlaneBuf`/`PlaneRef` + `PlanarLayout` at their zencodec boundary; internal padded planes stay private |
 
+## Adoption status (2026-11-03)
+
+Draft PRs against zenpixels rev `5bf81d64`, each assigned for review. "Checked"
+means `cargo check` of the named crates passed; tests are listed where they ran.
+
+| Repo | PR | What it does | Verified |
+|---|---|---|---|
+| zencodec | imazen/zencodec#192 (on #191) | `MappedPlanes::plane` returns `AnyPlane`; `PlaneView`/`PlaneSamples` removed; `PlaneRole`/`PlaneError` re-exported; zencodec-media `OwnedPlane` is `PlaneBuf`/`Plane<SharedStorage>`; adds a defaulted `MappedPlanes::encoding(index)` (open question: carry a `PlanarLayout` instead) | zencodec, zencodec-media, testkit checked; their tests pass; `perf/` not migrated |
+| zenmetrics | imazen/zenmetrics#108 (on #104) | abstractions re-export zenpixels' `PlanarLayout`/`PlaneSpec`/`PlaneRole`; vmaf and callers updated | abstractions + vmaf checked, 81 tests pass in a CI-equivalent tree |
+| heic | imazen/heic#65 | `DecodedFrame::planes()` borrows Y/Cb/Cr/alpha (feature `zenpixels`) | heic-core checked; pointer-identity test passes |
+| zenwebp | imazen/zenwebp#120 | `YuvPlanes::as_planes()`; pins zencodec at #192's head | checked; test passes; lands after #192 |
+| zenjpeg | imazen/zenjpeg#255 | `DecodedYCbCr::planes()` as f32 (Y scale 255 offset -128, Cb/Cr offset 0); `YCbCrPlanes::from_planes` | checked; test passes |
+| zenavif | imazen/zenavif#80 | `DecodedYuv::zenpixels_planes()` | lib and unit tests compile; test passes; lockfile still lists zenpixels 0.2.16 beside 0.3.1 |
+| zenav1-aom | imazen/zenav1-aom#22 | `KeyFramePlanes::from_planes` for tight planes (feature `zenpixels`) | checked; test compiled, not run |
+| zenav1-svt | imazen/zenav1-svt#29 | `AnimationFrame<u8>::as_planes(width, height)` (`svtav1::Frame` no longer exists) | test passes with `avif-container`; building frames from planes not done |
+
+Not yet adopted: zenavif `media.rs` (after #192), zenyuv (its kernels take tight
+slices, so plane input needs stride support first), zenfilters `OklabPlanes` and
+jxl-encoder `YCbCrPlanes` (crate-private), zenmetrics vmaf `Yuv420Frame`.
+
 ## Not covered
 
 - Packed subsampled YUV (YUYV, UYVY, Y210) and packed 4:4:4 with alpha (AYUV,
