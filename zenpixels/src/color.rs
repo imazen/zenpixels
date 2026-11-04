@@ -439,7 +439,7 @@ pub enum ColorProvenance {
 ///
 /// `ColorOrigin` is immutable once set. It records how color was
 /// described, not what the pixels currently are. The encoder uses
-/// [`PixelDescriptor`](crate::PixelDescriptor) for the current state
+/// [`PixelDescriptor`] for the current state
 /// and can consult `ColorOrigin` for provenance decisions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
