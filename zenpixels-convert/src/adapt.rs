@@ -11,7 +11,6 @@
 //! | [`adapt_for_encode_cow`] | `Fastest` intent | Permissive | Simple encode path |
 //! | [`adapt_for_encode_with_intent_cow`] | Caller-specified | Permissive | Encode after processing |
 //! | [`adapt_for_encode_explicit_cow`] | `Fastest` intent | [`ConvertOptions`] | Policy-sensitive encode |
-//! | [`convert_buffer`] | None (caller picks) | Permissive | Direct format→format |
 //!
 //! The old packed compatibility wrappers were removed in 0.3.1; use the
 //! stride-aware [`PixelCow`] forms above.
@@ -252,9 +251,11 @@ pub fn adapt_for_encode_with_intent_cow<'a>(
 
 /// Convert a raw byte buffer from one format to another.
 ///
-/// Assumes packed (stride = width * bpp) layout.
+/// Assumes packed (stride = width * bpp) layout. Crate-internal differential
+/// reference; callers use the `PixelBuffer` conversion methods.
 #[track_caller]
-pub fn convert_buffer(
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn convert_buffer(
     src: &[u8],
     width: u32,
     rows: u32,
@@ -430,7 +431,7 @@ pub(crate) fn convert_into_with_anchor(
 /// `Err(ConvertError::NoPath)` means the transition needs a real
 /// conversion (bit-depth change, chroma removal, lane addition, live
 /// alpha) — the buffer is **untouched**; fall through to the allocating
-/// [`adapt_for_encode_cow`] / [`convert_buffer`]:
+/// [`adapt_for_encode_cow`] or the `PixelBuffer` conversion methods:
 ///
 /// ```rust,ignore
 /// if try_adapt_in_place(&mut buf, target).is_err() {

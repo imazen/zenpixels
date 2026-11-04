@@ -108,15 +108,17 @@ Module sizes are line counts including tests (`wc -l`), not a measure of duplica
 | zenjpeg/zenyuv | whole crate (encode, decode, sharp YUV; magetypes v3, NEON, wasm128, scalar; no AVX-512 tier) | 5,910 | already shared: used by zenjpeg, zenwebp, jxl-encoder, zqi, zenmetrics-cli |
 | zenjpeg | `color/ycbcr.rs`, `color/fast_yuv.rs` | 4,095 | decode side must match jpegli/libjpeg-turbo bit for bit; encode side could use zenyuv |
 | zenwebp | `decoder/yuv.rs`, `yuv_fused.rs`, `vp8v2/yuv_exact.rs` | 6,795 | no: the decoder matches libwebp's fancy upsampler bit for bit |
-| zenavif | `yuv_convert*.rs` (4 variants) + the `yuv` crate 0.8.17 | 5,023 | yes: AV1 does not define RGB output, so the conversion is our choice |
-| heic | `heic-core/src/color_convert.rs` | 789 | yes, for the same reason |
-| zenav1-svt | `svtav1/src/rgba.rs` (BT.601 limited only) | 166 | yes |
-| zentiff | `YCbCrToRgb` (`decode.rs:1006`) | small | yes, apart from the TIFF tag parsing |
+| zenavif | `yuv_convert*.rs` (4 variants) + the `yuv` crate 0.8.17 | 5,023 | keep: its canonical recipe is defined by its own fixed-point formula and exact {9,3,3,1}/16 chroma interpolation ("the formula IS the definition", `yuv_convert.rs`), and the `libyuv` variants exist to match libavif's path |
+| heic | `heic-core/src/color_convert.rs` | 789 | keep: matches libheif's `Op_YCbCr420_to_RGB24` (nearest-neighbor chroma, ×256 fixed point; `heic-core/src/frame.rs:355`) |
+| zenav1-svt | `svtav1/src/rgba.rs` (BT.601 limited only) | 166 | could share: encoder-side input conversion, not defined by AV1 |
+| zentiff | `YCbCrToRgb` (`decode.rs:1006`) | small | keep: defined by the TIFF `YCbCrCoefficients` and `ReferenceBlackWhite` tags |
 | zenjxl-decoder | `render/stages/ycbcr.rs`, `chroma_upsample.rs` | 390 | no: the JXL spec defines it |
 | mozjpeg-rs | `color.rs`, `color_avx2.rs` | 1,623 | no: it is ported for parity with C mozjpeg |
 | zenpixels-convert | `ycbcr.rs` | 299 | the descriptor-checked route; narrow today (BT.709 + sRGB only) |
 
-So four implementations with no bit-exact obligation (zenavif, heic, zenav1-svt, zentiff) could share one kernel set. zenavif also links the third-party `yuv` crate for the same job.
+Decision (2026-10-31): format- or reference-specific conversions stay where they are. On a closer read, zenavif, heic and zentiff each implement a definition tied to their format or reference decoder, so only encoder-side RGB → YCbCr (zenav1-svt, zenjpeg's encode side) is a sharing candidate, and zenyuv already serves most encoders.
+
+Found while reading heic: matrix codes other than 0 (identity), 1, 9 and the BT.601 family fall through to BT.601 (`heic-core/src/color_convert.rs:34-46`), so FCC (4), SMPTE 240M (7) or chromaticity-derived (12/13) streams decode with the wrong matrix and no error. Not fixed here (heic is outside this task).
 
 ### Interleave ↔ planar kernels
 
@@ -142,22 +144,24 @@ zenmetrics `master` (`c5271f16`) uses zenpixels' 0.2 `PlaneLayout`:
 - `crates/zenmetrics-browser/src/lib.rs`
 - `crates/vmaf/src/metric.rs`
 
-Its requirement `zenpixels = { version = ">=0.2.11, <0.4.0", features = ["planar"] }` admits 0.3.1. The feature name survives as a no-op, but `PlaneLayout` is removed, so a `cargo update` after 0.3.1 publishes fails to compile. Its lockfile pins 0.2.16 today. `release-plan-0.2.17-and-0.3.1.md` §3.8 did not list this migration; this doc adds it there. Before 0.3.1 publishes, zenmetrics needs two changes: cap the range at `<0.3`, and move `Planes` to the shared plane view.
+Its requirement `zenpixels = { version = ">=0.2.11, <0.4.0", features = ["planar"] }` admits 0.3.1. The feature name survives as a no-op, but `PlaneLayout` is removed, so a `cargo update` after 0.3.1 publishes fails to compile. Its lockfile pins 0.2.16 today. `release-plan-0.2.17-and-0.3.1.md` §3.8 did not list this migration; this doc adds it there.
+
+**Fix (zenmetrics PR #104):** zenmetrics-abstractions gets local `PlaneLayout`, `PlaneSpec` and `PlaneRole` types with the same facts; callers change only their import path. Local types rather than the new zenpixels vocabulary, because that vocabulary is unpublished and zenmetrics resolves zenpixels 0.2.16. Abstractions and vmaf tests pass on 0.2.16 and with zenpixels patched to 0.3.1. zenmetrics-browser still fails on 0.3.1 through zencodec 0.1.27, which is zencodec's own migration.
 
 ## 4. What a shared format would look like
 
 Build on what exists instead of adding a fourth carrier:
 
 1. **One vocabulary, in zenpixels:**
-   - `ChromaSubsampling` (add `Mono`, or let mono mean "one plane") and `ChromaSiting`, with zencodec re-exporting them instead of defining its own.
+   - `ChromaSubsampling` (gains `Mono` and `chroma_size`) and `ChromaSiting`; zencodec deletes its copies and names these. In review: zenpixels #99 (0.3.1) and #100 (0.2.17), zencodec #191 (stacked on #190).
    - Matrix, range, primaries and transfer stay in `Cicp`/`PixelDescriptor` fields; codecs map their stream's values once, at the boundary.
 2. **One borrowed plane:** `CodePlane` for U8/U16 codes. zencodec's `PlaneView` is the same idea (`SampleEncoding` + width/height/byte stride); merge them, with zencodec keeping only what is frame-specific (roles, crop, timing, ownership).
 3. **One set-of-planes view:** zencodec's `Frame`/`MappedPlanes` contract, a plane list with roles + subsampling + siting + `Cicp` + crop. zenavif already maps rav1d's pool into it without copying.
-4. **Owned storage stays where the allocator is:** zencodec-media `OwnedPlanes` for software decoders; codecs keep their internal padded planes.
+4. **Owned storage stays where the allocator is:** zencodec-media `OwnedPlanes` for software decoders, extended as §6 describes; codecs keep their internal padded planes.
 5. **F32 working planes** (zenfilters, metrics) stay crate-private until two crates exchange them; then add an F32 plane view beside `CodePlane`.
 6. **Kernels in garb and zenyuv:**
    - garb: interleave ↔ planar in both directions for U8/U16/F32, and strided.
-   - zenyuv: the YUV ↔ RGB matrix kernels, taking `CodePlane`s.
+   - zenyuv: encoder-side RGB → YCbCr kernels, taking `CodePlane`s. Decoder-side conversions that a format or reference decoder defines stay in their codec (§2).
    - zenpixels-convert: the descriptor-checked route on top.
 
 What it would bring:
@@ -165,18 +169,45 @@ What it would bring:
 - **Decode → encode without repacking:** AVIF → AVIF, JPEG → JXL (JXL's YCbCr mode), and HEIC → AVIF can pass native planes when the encoder accepts the same subsampling and depth. Today each pair needs glue code or goes through RGB.
 - **Metrics on native YUV:** VMAF-style scorers could take decoder planes directly instead of their own `Yuv420Frame`.
 - **One definition of siting and range handling:** each enum mapping and each conversion kernel is a place where a 4:2:0 siting or a limited-range case goes wrong; there would be one to test.
-- **SIMD written once:** zenyuv already has v3 (AVX2), NEON, wasm128 and scalar arms; zenavif, heic and zenav1-svt would get those tiers without new code.
+- **SIMD written once where the math is ours:** zenyuv already has v3 (AVX2), NEON, wasm128 and scalar arms for encoder-side conversion.
 
-What it would not do: decoders whose YUV → RGB must match a reference bit for bit (WebP, JPEG, JXL, mozjpeg-rs parity) keep their kernels; they can still *emit* the shared planes.
+What it would not do: conversions a format or reference decoder defines (WebP, JPEG, JXL, mozjpeg-rs parity, AVIF's canonical and libyuv recipes, HEIC's libheif parity, TIFF's tag-defined YCbCr) keep their kernels; those codecs can still *emit* the shared planes.
 
 ## 5. Suggested order
 
-1. Merge the subsampling/siting enums before zenpixels 0.3.1 or zencodec's frame module publishes (no break while both are unpublished).
-2. Cap zenmetrics' zenpixels range and port `Planes` (blocks 0.3.1 adoption there).
+1. Merge the subsampling/siting enums before zenpixels 0.3.1 or zencodec's frame module publishes. In review: zenpixels #99, #100; zencodec #191.
+2. Move zenmetrics off the removed planar API. In review: zenmetrics #104.
 3. Map heic `DecodedFrame` and zenwebp `YuvPlanes` into the zencodec frame contract the way zenavif does.
-4. Move zenavif's and heic's YUV → RGB onto zenyuv, after a parity test against the current output (zero-tolerance rule: differences must be explained and accepted).
+4. Owned planes: add F32 storage and a start offset to zencodec-media `OwnedPlanes` when the first adopting codec (heic `Vec<u16>`, zenjpeg `Vec<f32>`) moves onto it (§6).
 5. Add the missing garb interleave kernels; switch zenfilters, zenmetrics-api and jxl-encoder to them.
 6. Make zenjpeg's planar decode and encode agree on Y range, or document the shift at both ends.
+
+## 6. Owned planes: what works for every producer and consumer
+
+How planes are produced and consumed today:
+
+- **Owned `Vec`s handed back:** heic `Vec<u16>` (tight), zenavif `DecodedYuv` `Vec<u16>`, zenwebp `YuvPlanes` `Vec<u8>`, zenjpeg `DecodedYCbCr` `Vec<f32>`, zenfilters `OklabPlanes` `Vec<f32>`.
+- **Pooled, lent storage:** rav1d (64-byte aligned, width rounded up to 128 pixels, stride bumped off multiples of 1024).
+- **Caller buffers:** zenjxl-decoder (`JxlOutputBuffer` per channel), zenjpeg `read_rows_ycbcr_native_i16`.
+- **Encoders take:** zenav1-aom `&[u16]` (tight), zenav1-svt `Vec<u8>` + stride, zenrav1e copies into `v_frame` (padded, 64-byte aligned) regardless.
+
+Storage options:
+
+| Storage | Adopts a codec's `Vec` without copying | 64-byte rows when we allocate | Typed rows |
+|---|---|---|---|
+| `Vec<u8>` + start offset (today's `PixelBuffer`) | `Vec<u8>` only. `Vec<u16>`/`Vec<f32>` copy: `bytemuck::allocation::try_cast_vec::<u16, u8>` fails because the deallocation layout differs (checked 2026-10-31) | yes | checked cast per row |
+| Word-typed enum `U8(Vec<u8>)`/`U16(Vec<u16>)` (zencodec-media `PlaneData` today) | yes | no, allocator alignment only | the slice itself, no cast |
+| Word-typed enum + start offset in words | yes, at offset 0 | yes: start at the first 64-byte-aligned word | the slice itself, no cast |
+| `Vec<Line>` with `#[repr(C, align(64))] struct Line([u8; 64])` | no | always | `bytemuck::cast_slice` to `u8`/`u16`/`f32`, which cannot fail; compiles under `forbid(unsafe_code)` with bytemuck 1.24's `Pod` derive (checked) |
+
+Recommendation: **word-typed storage with a start offset**, by extending zencodec-media `OwnedPlanes` (it already has U8/U16 and accounted shared storage) instead of adding a type to zenpixels:
+
+- Words U8, U16, F32 (F16 only with a consumer), plus the accounted variants.
+- Adopting a codec's `Vec` is free (offset 0): heic, zenavif, zenwebp, zenjpeg and zenfilters outputs move in without a copy.
+- Allocating puts the first sample on 64 bytes and rounds the stride up to 64 bytes, plus 64 when that lands on a multiple of 4096. A plane's word size divides 64, so rounding costs under 64 bytes per row (under 128 with the 4096 bump). The 64-byte start is worth up to 1.5x on AVX2/AVX-512 cache-resident rows (`benchmarks/row_alignment_2026-10-31.md`); the bump is worth 19-48% to cache-resident 12-row vertical filters on Zen 4 and +6..+10% (at 8192 only) on Neoverse-N1 (`benchmarks/stride_aliasing_2026-11-01.md`).
+- Rows are typed slices with no casting; byte views use `bytemuck::cast_slice` from the word slice, which cannot fail. The only checked casts left are on byte buffers a codec hands over (for example `&[u8]` holding `u16` words): `try_cast_slice`, and copy when misaligned.
+- The word type is per plane. Alpha and extra channels can differ from color planes (JXL extra channels do); per-plane is the superset of the "frame-wide versus per-plane encoding" question zencodec #190 leaves open.
+- Borrowed side: `CodePlane` for U8/U16 codes. Add an F32 plane view when the first F32 planes cross crates (zenjpeg `DecodedYCbCr` into jxl-encoder, or metrics).
 
 Re-check the counts:
 

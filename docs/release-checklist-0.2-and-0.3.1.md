@@ -1,11 +1,8 @@
-> **2026-10-15: one 0.2 line.** `release/0.2-bridge` (with PR #85 and the
-> #89 ICC-database backports) was merged into `main` as `1d3ddd21`, so `main`
-> is the 0.2.17 line and the bridge branch is retired. Consumers that pinned
-> the bridge or older main revs (zenavif, zenpng, zenjpeg, ultrahdr, zenpipe)
-> now pin `1d3ddd21`; zenmetrics stays on `e56f626b` until 0.2.17 publishes.
-> `release/0.3.1` (+ #90) still lacks PR #85 and main's newer fixes; rebase it
-> onto `main` before its consumer validation. Publishing 0.2.17 and the 0.3.1
-> rebase are the open steps.
+> **2026-10-30: 0.3.1 is on main.** PR #77 was rebased onto main and merged
+> as `f23ac753`, so `main` is the 0.3.1 candidate. The 0.2.17 bridge is the
+> merge's first parent, `7d28c4b7`, and is kept as branch `release/0.2`.
+> Publishing either line still requires the owner's README review and
+> explicit approval.
 
 # Release checklist: 0.2.17 and 0.3.1
 
@@ -34,6 +31,8 @@ This replaces the older speculative execution checklist.
   each controlled pipeline opts in. A registry dependency still pinned to ^0.2
   can create a second core even if the top-level application selects 0.3.
 - [ ] Publish 0.3.1 core, then converter, after coordinated consumer validation.
+- [ ] For each later converter 0.3.x: if it calls a core item added after
+  0.3.1, raise its `zenpixels` lower bound in the same release.
 
 No registry publication was performed. Native video carriers, a new output-plan
 wrapper family and narrowing-kernel selection remain separate integration and

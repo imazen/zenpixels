@@ -115,22 +115,6 @@ pub const DISPLAY_P3_V2: &[u8] = include_bytes!("profiles/DisplayP3Compat-v2-mag
 /// Source: <https://github.com/saucecontrol/Compact-ICC-Profiles> (CC0)
 pub const ADOBE_RGB: &[u8] = include_bytes!("profiles/AdobeCompat-v2.icc");
 
-/// Deprecated alias for [`ADOBE_RGB`]. The v4 paraType-3 variant was replaced
-/// with the v2 pure-gamma variant to match the spec and ~85% of the ecosystem.
-#[deprecated(
-    since = "0.2.4",
-    note = "renamed to ADOBE_RGB (now v2 pure-gamma form)"
-)]
-pub const ADOBE_RGB_V4: &[u8] = ADOBE_RGB;
-
-/// Deprecated: ProPhoto is not bundled due to TRC fragmentation.
-/// See module-level docs for details.
-#[deprecated(
-    since = "0.2.4",
-    note = "ProPhoto removed — TRC too fragmented to pick a canonical form"
-)]
-pub const PROPHOTO_V4: &[u8] = &[];
-
 /// Rec. 2020 Compatible ICC profile, v4 format (480 bytes).
 ///
 /// Rec. 2020 has a very wide gamut (~75% of visible colors).
