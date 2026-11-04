@@ -167,7 +167,7 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   `background: Color::srgb8(r, g, b)`.
 - New `zenpixels::Color`: one color with its `PixelDescriptor`, `Copy`, 24 bytes, holding up to 16 bytes of samples aligned for every sample type, so
   casting its bytes can't fail. Comparison is bitwise. `ColorConvertExt::try_convert_to` converts one without a
-  one-pixel buffer, and keeps out-of-gamut values unless asked to clip.
+  one-pixel buffer, and keeps out-of-gamut values unless asked to clip. It refuses SDR to PQ or HLG, which would put white at the peak.
 - A pixel's output no longer depends on where it sits in a row. `tests/row_partition.rs` checks
   1792 conversions at every tier.
 - Output no longer depends on the CPU: every native tier gives the same bytes, so bit-exact tests hold across machines. A digest

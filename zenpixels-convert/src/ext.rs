@@ -657,14 +657,19 @@ fn convert_to_typed<Q: Pixel>(buf: &PixelBuffer, target: PixelDescriptor) -> Pix
 pub trait ColorConvertExt: crate::sealed::Sealed + Sized {
     /// This color in `target`'s format, transfer and primaries, without a one-pixel buffer.
     ///
-    /// SDR converted to PQ or HLG puts white at the format's peak, as [`RowConverter`](crate::RowConverter)
-    /// does. For a matte, `CompositeOnto::reference_white` places it instead.
+    /// Linear converted to PQ or HLG takes 1.0 as the format's peak, which is what those
+    /// transfers decode to.
     ///
     /// # Errors
     ///
-    /// Whatever [`RowConverter::new_explicit`](crate::RowConverter::new_explicit) refuses for this
-    /// color's descriptor and `target`, or [`ConvertError::Buffer`](crate::ConvertError::Buffer)
-    /// when `target`'s pixels are too wide for a color.
+    /// [`ConvertError::NoPath`](crate::ConvertError::NoPath) from an SDR transfer to PQ or HLG:
+    /// neither says where SDR white belongs, and passing the signal through would put it at the
+    /// peak, 10,000 cd/m² for PQ. For a matte, `CompositeOnto::reference_white` places it.
+    ///
+    /// Otherwise whatever [`RowConverter::new_explicit`](crate::RowConverter::new_explicit)
+    /// refuses for this color's descriptor and `target`, or
+    /// [`ConvertError::Buffer`](crate::ConvertError::Buffer) when `target`'s pixels are too wide
+    /// for a color.
     fn try_convert_to(
         &self,
         target: PixelDescriptor,
@@ -678,6 +683,15 @@ impl ColorConvertExt for zenpixels::Color {
         target: PixelDescriptor,
         options: &zenpixels::ConvertOptions,
     ) -> Result<Self, whereat::At<crate::ConvertError>> {
+        use zenpixels::TransferFunction as Tf;
+        if matches!(target.transfer(), Tf::Pq | Tf::Hlg)
+            && !matches!(self.descriptor().transfer(), Tf::Pq | Tf::Hlg | Tf::Linear)
+        {
+            return Err(whereat::at!(crate::ConvertError::NoPath {
+                from: self.descriptor(),
+                to: target,
+            }));
+        }
         let mut converter = crate::RowConverter::new_explicit(self.descriptor(), target, options)?;
         let mut pixel = [[0f32; 4]; 1];
         let pixel = bytemuck::cast_slice_mut::<[f32; 4], u8>(&mut pixel);

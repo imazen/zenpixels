@@ -3,7 +3,7 @@ use zenpixels::{
     AlphaMode, AlphaPolicy, ChannelLayout as L, ChannelType as T, Color, ColorPrimaries as P,
     PixelDescriptor as D, TransferFunction as Tf,
 };
-use zenpixels_convert::{ColorConvertExt, ConvertOptions, RowConverter};
+use zenpixels_convert::{ColorConvertExt, ConvertError, ConvertOptions, RowConverter};
 
 fn f32_color(descriptor: D, samples: &[f32]) -> Color {
     Color::try_new(descriptor, bytemuck::cast_slice(samples)).unwrap()
@@ -184,4 +184,35 @@ fn an_hdr_background_on_another_transfer_is_refused() {
     let pq = f32_color(D::RGBF32_LINEAR.with_transfer(Tf::Pq), &[0.5, 0.5, 0.5]);
     assert!(background_of(D::RGBF32_LINEAR.with_transfer(Tf::Hlg), pq).is_err());
     assert!(background_of(D::RGBF32_LINEAR, pq).is_err());
+}
+
+/// PQ and HLG don't say where SDR white belongs, so a color refuses rather than land at the peak.
+#[test]
+fn sdr_to_hdr_transfers_are_refused() {
+    let pq = D::RGBF32_LINEAR.with_transfer(Tf::Pq);
+    let hlg = D::RGBF32_LINEAR.with_transfer(Tf::Hlg);
+    for sdr in [Tf::Srgb, Tf::Bt709, Tf::Gamma22] {
+        let white = Color::try_new(D::RGB8_SRGB.with_transfer(sdr), &[255, 255, 255]).unwrap();
+        for target in [pq, hlg] {
+            let e = white.try_convert_to(target, &lossless()).unwrap_err();
+            assert!(
+                matches!(e.error(), ConvertError::NoPath { .. }),
+                "{sdr:?} to {target:?}: {e:?}"
+            );
+        }
+    }
+}
+
+/// Linear isn't SDR's question: PQ and HLG decode to it and come back.
+#[test]
+fn linear_still_reaches_hdr_transfers() {
+    for (transfer, signal) in [(Tf::Pq, 0.5807f32), (Tf::Hlg, 0.7499)] {
+        let hdr = D::RGBF32_LINEAR.with_transfer(transfer);
+        let linear = f32_color(hdr, &[signal; 3])
+            .try_convert_to(D::RGBF32_LINEAR, &lossless())
+            .unwrap();
+        let back = linear.try_convert_to(hdr, &lossless()).unwrap();
+        let c = bytemuck::cast_slice::<u8, f32>(back.as_bytes());
+        assert!((c[0] - signal).abs() < 1e-4, "{transfer:?}: {c:?}");
+    }
 }

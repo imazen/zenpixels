@@ -124,7 +124,7 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 - Fixed (2026-11-04): a PQ or HLG matte put white at the format's peak: 10,000 cd/m² on PQ.
   `CompositeOnto::reference_white` now places it, defaulting to BT.2408.
 
-- Open (2026-11-04): `ColorConvertExt::try_convert_to` and `RowConverter::new` put SDR white at PQ's peak, 10,000 cd/m², where CSS puts 203.
+- Open (2026-11-04): `RowConverter::new` puts SDR white at PQ's peak, 10,000 cd/m², where CSS puts 203. `ColorConvertExt::try_convert_to` refuses this.
   `docs/css-color-parity.md` lists this and the other CSS differences.
 
 - Fixed (2026-11-04): the matte was not converted to wide-gamut source primaries, so sRGB red over a P3 source came out as P3's red.

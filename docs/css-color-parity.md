@@ -63,7 +63,7 @@ Parsing to linear loses the original space, so a color can't be serialized back 
 
 **1. `rec2100-linear` means something else.** CSS puts 1.0 at 203 cd/m². Our linear puts 1.0 at PQ's peak, 10,000 cd/m². `color(rec2100-linear 1 1 1)` needs scaling by 203/10,000 at parse.
 
-**2. SDR converted straight to PQ lands at the peak.** `Color::srgb8(255, 255, 255).try_convert_to(pq)` gives 1.0, or 10,000 cd/m². CSS gives 0.58. `CompositeOnto` handles this through `reference_white`; `try_convert_to` and `RowConverter::new` don't.
+**2. SDR doesn't convert straight to PQ or HLG.** `Color::srgb8(255, 255, 255).try_convert_to(pq)` is refused, where CSS gives 0.58. `CompositeOnto` places white through `reference_white`. `RowConverter::new` still puts it at the peak, 10,000 cd/m².
 
 **3. Oklab differs slightly.** `oklab.rs` uses Ottosson's 2020 XYZ matrices; CSS recomputed them so that white is exact. Neutrals carry chroma in ours, up to 1.25e-4 at white, and 5.0e-16 under CSS's. A just-noticeable difference is about 0.02.
 
