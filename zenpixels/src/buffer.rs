@@ -626,6 +626,7 @@ fn pixels_into_storage<P: bytemuck::Pod>(
 }
 
 /// Copy fallback for pixels whose alignment differs from their channel type's.
+#[cfg(feature = "rgb")]
 fn pixels_to_bytes<P: bytemuck::Pod>(pixels: Vec<P>) -> (Vec<u8>, usize) {
     match bytemuck::try_cast_vec(pixels) {
         Ok(bytes) => (bytes, 0),

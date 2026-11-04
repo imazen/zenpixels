@@ -2,7 +2,9 @@ use zenpixels::{
     AlphaMode, ColorProfileSource, NamedProfile, PixelBuffer, PixelDescriptor, PixelFormat,
     PixelSlice, PixelSliceMut,
 };
-use zenpixels::{ByteStorage, ByteStorageMut};
+use zenpixels::ByteStorage;
+#[cfg(feature = "rgb")]
+use zenpixels::ByteStorageMut;
 
 #[test]
 fn reject_contradictory_descriptors_at_boundaries() {
