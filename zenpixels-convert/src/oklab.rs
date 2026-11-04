@@ -73,6 +73,7 @@ pub fn lms_to_rgb_matrix(primaries: ColorPrimaries) -> Option<GamutMatrix> {
 ///
 /// Uses bit-manipulation for an initial estimate followed by two
 /// Newton-Raphson iterations. Handles negative inputs and zero correctly.
+#[inline]
 pub fn fast_cbrt(x: f32) -> f32 {
     if x == 0.0 {
         return 0.0;
@@ -101,6 +102,7 @@ pub fn fast_cbrt(x: f32) -> f32 {
 ///
 /// `m1` is the combined RGB→LMS matrix from [`rgb_to_lms_matrix`].
 /// All inputs should be in linear light (apply EOTF first).
+#[inline]
 pub fn rgb_to_oklab(r: f32, g: f32, b: f32, m1: &GamutMatrix) -> [f32; 3] {
     // Step 1: linear RGB → LMS
     let l = m1[0][0] * r + m1[0][1] * g + m1[0][2] * b;
@@ -129,6 +131,7 @@ pub fn rgb_to_oklab(r: f32, g: f32, b: f32, m1: &GamutMatrix) -> [f32; 3] {
 /// Scalar reference: Oklab \[L, a, b\] → linear RGB.
 ///
 /// `m1_inv` is the combined LMS→RGB matrix from [`lms_to_rgb_matrix`].
+#[inline]
 pub fn oklab_to_rgb(l: f32, a: f32, b: f32, m1_inv: &GamutMatrix) -> [f32; 3] {
     // Step 1: Oklab → LMS^(1/3) via inverse M2
     let l_ = LMS_CBRT_FROM_OKLAB[0][0] * l

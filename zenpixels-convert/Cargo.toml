@@ -305,6 +305,10 @@ path = "examples/measure_histogram_throughput.rs"
 required-features = ["hdr-experimental"]
 
 [[bench]]
+name = "row_kernel_tiers"
+harness = false
+
+[[bench]]
 name = "kernel_tiers"
 harness = false
 required-features = ["__bench_scan"]
