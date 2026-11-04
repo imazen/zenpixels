@@ -100,6 +100,9 @@
   facts. The first qualified route is unclipped BT.709/sRGB at 8/10/12 bits.
   Native AV1 validates exact crops/batches and independent numerical agreement;
   no new dependencies or features. See `docs/borrowed-ycbcr-contract.md`.
+- `sample::ChromaSubsampling` gains `Mono` and `chroma_size`; both enums gain
+  `Hash`, and `ChromaSiting` defaults to `Unknown`. This is the single
+  subsampling/siting vocabulary that `zencodec::frame` re-exports.
 
 ### zenpixels-convert — native output-plan integration
 

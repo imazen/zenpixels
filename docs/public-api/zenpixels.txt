@@ -10,18 +10,18 @@
 #
 #   pub modules                                11
 #   pub types (struct/enum/trait/alias)        92
-#   pub consts/statics                        294
+#   pub consts/statics                        295
 #   free functions                              4
 #   inherent methods                          277
 #   struct fields                             115
-#   enum variants                             312
+#   enum variants                             313
 #   re-exports                                  4
-#   trait roster entries (type × trait)       303
+#   trait roster entries (type × trait)       306
 #   auto-trait-complete types                  45
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          458
+#   (root)                          459
 #   buffer                          254
 #   cicp                             38
 #   color                            64
@@ -31,9 +31,9 @@
 #   orientation                      11
 #   pixel_types                       9
 #   policy                           25
-#   sample                           38
+#   sample                           39
 
-## items (979 lines)
+## items (981 lines)
 
 pub mod zenpixels
 pub use At
@@ -557,9 +557,11 @@ pub sample::ChromaSiting::Left
 pub sample::ChromaSiting::TopLeft
 pub sample::ChromaSiting::Unknown
 #[non_exhaustive] pub enum sample::ChromaSubsampling
+pub sample::ChromaSubsampling::Mono
 pub sample::ChromaSubsampling::Yuv420
 pub sample::ChromaSubsampling::Yuv422
 pub sample::ChromaSubsampling::Yuv444
+pub const fn sample::ChromaSubsampling::chroma_size(self, u32, u32) -> core::option::Option<(u32, u32)>
 #[non_exhaustive] pub enum sample::CodePlaneError
 pub sample::CodePlaneError::GeometryOverflow
 pub sample::CodePlaneError::MisalignedStride
@@ -1064,8 +1066,8 @@ policy::ConvertOptions: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::DepthPolicy: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::GrayExpand: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::LumaCoefficients: Clone, Copy, Debug, Eq, Hash, PartialEq
-sample::ChromaSiting: Clone, Copy, Debug, Eq, PartialEq
-sample::ChromaSubsampling: Clone, Copy, Debug, Eq, PartialEq
+sample::ChromaSiting: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+sample::ChromaSubsampling: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::CodePlane<'a>: Clone, Copy, Debug
 sample::CodePlaneError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 sample::ExactDepth: Clone, Copy, Debug, Eq, Hash, PartialEq
