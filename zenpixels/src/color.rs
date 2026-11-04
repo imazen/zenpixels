@@ -271,6 +271,7 @@ impl<'a> ColorProfileSource<'a> {
 /// described* its color (for re-encoding decisions). `ColorAuthority` says
 /// which field the CMS should *prefer* for building transforms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum ColorAuthority {
     /// ICC profile bytes take precedence for CMS transforms.
     ///

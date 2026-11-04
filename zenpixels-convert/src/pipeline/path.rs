@@ -23,6 +23,7 @@ use crate::negotiate::{
 ///
 /// Promoted from test-only type to public API for use with [`QualityThreshold`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum LossBucket {
     /// ΔE < 0.5 — below just-noticeable difference. Model loss ≤ 10.
     Lossless,
@@ -66,6 +67,7 @@ impl LossBucket {
 
 /// Quality threshold for path selection.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub enum QualityThreshold {
     /// Zero information loss (ULP-proven round-trip where available).
     Lossless,
@@ -292,13 +294,11 @@ pub struct MatrixStats {
 
 /// Compute summary statistics for a path matrix.
 pub fn matrix_stats(entries: &[PathEntry]) -> MatrixStats {
-    use alloc::collections::BTreeSet;
-
     let mut stats = MatrixStats {
         total_triples: entries.len(),
         ..Default::default()
     };
-    let mut working_formats = BTreeSet::new();
+    let mut working_formats = alloc::vec::Vec::new();
 
     for entry in entries {
         match &entry.path {
@@ -313,20 +313,18 @@ pub fn matrix_stats(entries: &[PathEntry]) -> MatrixStats {
                 };
                 stats.by_bucket[bucket_idx] += 1;
 
-                // Encode working format as bytes for BTreeSet (PixelDescriptor doesn't impl Ord).
+                // Distinct by sample type, layout, alpha, transfer and primaries.
                 let wf = path.working_format;
-                let alpha_byte = match wf.alpha() {
-                    None => 0u8,
-                    Some(a) => a as u8,
-                };
                 let key = (
-                    wf.channel_type() as u8,
-                    wf.layout() as u8,
-                    alpha_byte,
-                    wf.transfer() as u8,
-                    wf.primaries as u8,
+                    wf.channel_type(),
+                    wf.layout(),
+                    wf.alpha(),
+                    wf.transfer(),
+                    wf.primaries,
                 );
-                working_formats.insert(key);
+                if !working_formats.contains(&key) {
+                    working_formats.push(key);
+                }
             }
             None => stats.no_path += 1,
         }
