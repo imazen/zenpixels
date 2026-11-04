@@ -2,9 +2,22 @@
 //! Extended tests for adapt module — strided buffers, policy enforcement,
 //! and edge cases not covered by the basic adapt tests.
 
-use zenpixels_convert::adapt::{
-    adapt_for_encode_cow, adapt_for_encode_explicit_cow, convert_buffer,
-};
+use zenpixels_convert::adapt::{adapt_for_encode_cow, adapt_for_encode_explicit_cow};
+
+/// The packed rows of `data` converted from `from` to `to` through the
+/// owned-buffer path (formerly checked through the raw `convert_buffer`).
+fn convert_packed(
+    data: &[u8],
+    width: u32,
+    rows: u32,
+    from: PixelDescriptor,
+    to: PixelDescriptor,
+) -> Result<Vec<u8>, whereat::At<zenpixels_convert::ConvertError>> {
+    use zenpixels_convert::PixelBufferConvertExt;
+    let source = zenpixels::PixelBuffer::from_vec(data.to_vec(), width, rows, from).unwrap();
+    let converted = source.convert_to(to)?;
+    Ok(converted.as_slice().contiguous_bytes().into_owned())
+}
 use zenpixels_convert::policy::{AlphaPolicy, ConvertOptions, DepthPolicy};
 use zenpixels_convert::{ConvertError, PixelDescriptor};
 
@@ -184,13 +197,13 @@ fn explicit_discard_if_opaque_fails_when_semitransparent() {
 }
 
 // ---------------------------------------------------------------------------
-// convert_buffer edge cases
+// Packed conversion edge cases
 // ---------------------------------------------------------------------------
 
 #[test]
 fn convert_buffer_identity_returns_copy() {
     let data = vec![100, 150, 200, 50, 100, 150];
-    let result = convert_buffer(
+    let result = convert_packed(
         &data,
         2,
         1,
@@ -210,7 +223,7 @@ fn convert_buffer_multi_row() {
         130, 140, 150, 160, 170, 180, // row 2
     ];
 
-    let result = convert_buffer(
+    let result = convert_packed(
         &data,
         2,
         3,
@@ -230,7 +243,7 @@ fn convert_buffer_multi_row() {
 fn convert_buffer_bgra_to_rgba() {
     // BGRA → RGBA swizzle
     let data = vec![200, 150, 100, 255]; // B=200, G=150, R=100, A=255
-    let result = convert_buffer(
+    let result = convert_packed(
         &data,
         1,
         1,

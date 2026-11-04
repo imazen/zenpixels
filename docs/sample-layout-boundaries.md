@@ -41,11 +41,23 @@ Gaps and proposals:
 - **The stride rule rejects common padded rows.** A 24-bit BMP/DIB pads rows
   to 4 bytes: width 1 gives stride 4, and 4 is not a multiple of 3, so those
   rows cannot be borrowed and must be repacked. Any RGB8 or RGB16 source with
-  a power-of-two row pitch hits the same rule. Proposal: require stride to be
-  a multiple of `min_alignment()` instead, and make only the operations that
-  need pixel-unit strides (`as_imgref`, whole-buffer `&[P]` casts) refuse or
-  copy. This accepts more input, so it can ship in a 0.3.x minor release, but
-  every row-walking path must be audited first.
+  a power-of-two row pitch hits the same rule. An earlier version of this doc
+  proposed relaxing the rule to "a multiple of `min_alignment()`". **Withdrawn
+  (2026-10-31): the whole-pixel stride is a contract callers rely on.**
+  - zenwebp computes `stride_pixels = pixels.stride() / bytes_per_pixel()`
+    (`zenwebp/src/codec.rs:984`) and hands it to its encoder: a non-pixel
+    stride would truncate and read wrong rows without any error.
+  - `as_imgref`/`as_imgref_mut` (`buffer.rs:2265`, `:2294`) call bytemuck's
+    panicking `cast_slice` over the whole buffer before their stride assert;
+    with a non-pixel stride the slice length is not a multiple of
+    `size_of::<P>()`, so these infallible methods would start panicking.
+  - Nothing becomes unsound: both crates are `forbid(unsafe_code)` and every
+    cast is checked. The risk is wrong pixels downstream and new panics, which
+    a grep cannot rule out across every consumer.
+
+  Padded sources stay a boundary concern: the decoder repacks rows into a
+  whole-pixel stride (one copy, already what happens), or exposes the samples
+  as `sample::CodePlane`s, which take any byte stride and an element step.
 - **Typed `Vec` adoption copies.** Backing the owned buffer with storage of the
   sample's alignment (for example `Vec<u16>`/`Vec<u32>`/`Vec<u64>` behind an
   enum) would make `from_pixels(Vec<Rgb<f32>>)` zero-copy. The 0.3.1 work
@@ -77,26 +89,52 @@ Facts that settle the design:
    `arm_neon.rs:37`, `wasm128.rs:30`): unaligned instructions on every ISA.
    `forbid(unsafe_code)` crates cannot reach aligned-only intrinsics anyway.
    Alignment only changes speed.
-2. **The cost is cache-line splits, and it grows with vector width.** Lines are
-   64 bytes on dev (Zen 5) and on Neoverse-N1 (`getconf LEVEL1_DCACHE_LINESIZE`,
-   both measured). macOS reports 128 bytes on Apple silicon (`hw.cachelinesize`;
+2. **The cost is cache-line splits, measured per tier.** Lines are 64 bytes on
+   r7900x (Zen 4) and on Neoverse-N1 (`getconf LEVEL1_DCACHE_LINESIZE`, both
+   measured). macOS reports 128 bytes on Apple silicon (`hw.cachelinesize`;
    Go's `x/sys/cpu` hard-codes 128 for darwin/arm64); not measured here, since
-   the mac host was unreachable. When a row starts at an offset that is not a
-   multiple of the vector width, 1 load in 4 straddles a 64-byte line for
-   16-byte vectors, 1 in 2 for 32-byte vectors, and every load for 64-byte
-   vectors (arithmetic, not a measurement; the cost per split has not been measured on
-   our hosts). So AVX-512 is the tier that needs aligned rows; NEON and wasm
-   barely care.
+   the mac host was unreachable. `benchmarks/row_alignment_2026-10-31.md`
+   measures a load/store-bound F32 row kernel with rows 0, 4, 16 or 32 bytes
+   past a 64-byte boundary:
+
+   | Tier (host) | Cache-resident rows, misaligned start | From memory |
+   |---|---|---|
+   | v4, AVX-512 (Zen 4) | +39% to +54% at +4/+16; +9% at +32 in L2 | under +6% |
+   | v3, AVX2 (Zen 4) | +28% to +49% at +4/+16; none at +32 | under +7% |
+   | SSE2, compiler-vectorized (Zen 4) | +12% (L1) / +23% (L2) at +4; none at +16 | up to +12.5% at +4 |
+   | NEON (Neoverse-N1) | +2% (L1) / +7% (L2) at +4; none at +16 | up to +4% at +4 |
+
+   A start costs only when it is not a multiple of the vector width. Strip
+   processing works on cache-resident rows, so on AVX2 and AVX-512 aligned
+   rows are worth up to about 1.5x on this kernel; on NEON they barely
+   matter. Not measured: Zen 5 or Intel full-width AVX-512, Apple silicon,
+   wasm128, compute-heavier kernels.
 3. **One number covers every tier: 64 bytes.** 16 and 32 divide it, so a
    64-byte-aligned row start is aligned for every vector width above, and it
    matches the x86 and Neoverse line size. 128 matters only for false sharing
    between threads writing adjacent rows on Apple silicon, not for SIMD.
-4. **Power-of-two strides alias.** Rows whose stride is a large power of two
-   map to the same cache sets, and on x86 a load 4096 bytes away from a
-   pending store can falsely depend on it. rav1d rounds width up to 128 pixels
-   and then adds 64 bytes whenever the stride is a multiple of 1024
-   (`rav1d-safe/src/picture.rs:147-157`). RGBA8 at widths 256, 512, 1024, 2048
-   and 4096 gives exactly such strides.
+4. **Strides that are multiples of 4096 cost kernels that read many rows at one
+   column; +64 bytes removes it.** Measured (`benchmarks/stride_aliasing_2026-11-01.md`,
+   F32 vertical filters, L2-resident rows, against the same row width at +64 bytes):
+
+   | CPU | 2 rows | 8 rows | 12 rows |
+   |---|---|---|---|
+   | Zen 4 (7900X), AVX2, AVX-512, scalar | no effect | +4..+12% at 4096 only | +19..+48% at 8192, 12288, 16384, 32768; +4..+19% at 4096 |
+   | Neoverse-N1 | no effect | no effect | +6..+10% at 8192 only |
+
+   The trigger is a multiple of 4096: 12288 behaves like 8192, while 1024, 2048
+   and 6144 show nothing, so rav1d's 1024 threshold is not supported for
+   cache-resident rows. A likely cause on Zen 4 is the 8-way L1D (more than 8
+   rows at one column share a set); not confirmed with counters. N1's 4-way L1D
+   would predict losses at 16384 and 32768, and none appeared. Memory-resident
+   rows (128 MiB) are unstable between runs; on x86 they are also hit at 2048
+   and 6144 with 8 rows and at 12288 and 16384 with 2 rows, and on N1 the bump costs up to 22% at 2048.
+   The x86 load-after-store "4K aliasing" is a different effect and the bump
+   does not fix it: for a row-in/row-out kernel on Zen 4 AVX-512, a destination
+   64 bytes past a multiple of 4096 from the source was the slow placement (3 of
+   4 runs, the other placements took 26-36% less time); AVX2, scalar and NEON
+   showed nothing. Not measured: u8/u16 samples, more than 12 rows, other
+   paddings, Zen 5, Intel, Apple silicon.
 5. **GPU uploads need 256.** wgpu's `COPY_BYTES_PER_ROW_ALIGNMENT` is 256
    (`wgpu-types` 30.0.1, `src/lib.rs:116`); buffers meant for texture copies
    need that row pitch or a repack.
@@ -116,20 +154,32 @@ lcm rule wastes space whenever bpp is not a power of two (computed as
 | RGB8, 1 px | 3 | 192 | 64 |
 | RGB8, 1920 px | 5,760 | 5,760 | 5,760 |
 
-Proposal, extending the stride relaxation above (stride a multiple of
-`min_alignment()` rather than of bpp):
+Recommendation (revised 2026-10-31, after the soundness audit and the
+measurements):
 
-- SIMD-aligned rows use stride `round_up(row_bytes, 64)`, plus 64 when that is
-  a multiple of 4096 (rav1d's rule, at the page-aliasing size; a
-  1024 threshold would need measurement to justify). Because 64 is a multiple
-  of every channel size, the relaxed rule accepts it; the lcm goes away.
-- Keep the `simd_align` argument for GPU staging (256) and for callers with a
-  measured reason; document 64 as the value for CPU SIMD on every tier.
+- **Keep the whole-pixel stride on `PixelSlice`/`PixelBuffer`.** The lcm rule
+  is the price of that contract. It costs padding only on narrow rows (at most
+  `lcm(bpp, 64) - 1` bytes per row: 191 for RGB8, 0% at 1920 px); typed views,
+  `imgref` and downstream `stride / bpp` stay correct.
+- **Use 64 for `simd_align` on every CPU tier.** It covers 16-, 32- and
+  64-byte vectors and the x86/Neoverse line; the measured gain is on AVX2 and
+  AVX-512. Keep the argument for GPU staging (256).
+- **When we choose the stride, add 64 bytes if it is a multiple of 4096.**
+  Measured: it removes a 19-48% loss for cache-resident 12-row kernels on
+  Zen 4 and is neutral for 2-row kernels (on N1 with memory-resident rows it
+  costs up to 7% at 4096). Do not extend it to
+  multiples of 1024 or 2048: cache-resident rows show no effect, and the
+  memory-resident results differ in sign between Zen 4 and N1. The bump is
+  not a fix for load-after-store aliasing between a source and a destination.
+  For a stride we are given, the cost lands on kernels that keep 8 or more
+  rows live at one column (vertical resize taps, long filters): 8 rows lose
+  4-12% at 4096, 12 rows lose 19-48% at 8192 and above.
+- **Single-channel planes have no lcm problem:** the word size (1, 2 or 4)
+  divides 64, so a plane row can always start on 64 bytes with under 64 bytes
+  of padding. Owned plane storage should do that when it allocates
+  (`planar-inventory.md` §6).
 - Do not pad rows so kernels can run past `width`: row accessors return exactly
   `width` pixels, so padding cannot replace a tail loop without new API.
-- Measure before changing defaults: a zenbench pair (aligned vs offset-by-4
-  rows) for one load-bound kernel on v3, v4 (not on dev, per host rules), NEON
-  (zen-arm-xl) and wasm128, so the split cost per tier is known.
 
 ## 2. F16 CMYK
 
