@@ -61,7 +61,7 @@ Callers are text matches of call syntax in local checkouts under `~/work`, shown
 | `zpc::FormatOption` | 0 | `pub(crate)` | None public, once `negotiate` and `best_match_with` leave the API |
 | `zpc::icc_profiles::REC2020_V4` | 0 | `pub(crate)` | **NEW** `SynthesizedIcc::for_cicp`, which accounts for transfer; `output.rs` still uses the constant inside |
 
-The 42 functions split into 17 moved or replaced by a method, 13 deleted, 8 `pub(crate)` and 4 kept as free functions. This adds one sealed trait, `zpc::ext::PixelSliceConvertExt`, and 17 public methods. The list also adds `PixelSliceConvertExt::convert_to(self, Desc) -> Result<PixelBuffer, E>`, which isn't a replacement for any row above: it serves the hand-written row loops described below.
+The 42 functions split into 17 moved or replaced by a method, 13 deleted, 8 `pub(crate)` and 4 kept as free functions. This adds one sealed trait, `zpc::ext::PixelSliceConvertExt`, and 17 public methods. One of the 17, `PixelSliceConvertExt::convert_to(self, Desc) -> Result<PixelBuffer, E>`, replaces no row above: it serves the hand-written row loops described below.
 
 Methods on `zenpixels` types added from `zenpixels-convert` must be sealed trait methods, as `PixelBufferConvertExt` is today. Inherent methods would mean moving the kernels into `zenpixels`. `orient/` alone is 4,039 lines including tests, and it pulls in archmage and magetypes.
 
