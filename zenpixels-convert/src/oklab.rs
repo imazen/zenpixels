@@ -2,7 +2,7 @@
 //! Oklab color space conversion constants and scalar reference functions.
 //!
 //! Provides the building blocks for planar Oklab conversion:
-//! - Const matrices for XYZ↔LMS and LMS^(1/3)↔Oklab (from Björn Ottosson)
+//! - Const matrices for XYZ↔LMS and LMS^(1/3)↔Oklab (CSS Color 4's, for Björn Ottosson's Oklab)
 //! - Combined RGB↔LMS matrix computation for any supported primaries
 //! - `fast_cbrt`: fast cube root (~22 bits precision)
 //! - Scalar `rgb_to_oklab` / `oklab_to_rgb` reference implementations
@@ -12,35 +12,36 @@ use crate::gamut::{GamutMatrix, mat3_mul};
 use zenpixels::ColorPrimaries;
 
 // ---------------------------------------------------------------------------
-// Oklab matrices (Björn Ottosson, 2020)
+// Oklab matrices: CSS Color 4's conversions.js, which recomputes Björn Ottosson's
+// so that D65 white gives L = 1 with no chroma.
 // ---------------------------------------------------------------------------
 
-/// M1 step 1: CIE XYZ → LMS (Hunt-Pointer-Estevez variant, Ottosson 2020).
+/// M1 step 1: CIE XYZ (D65) → LMS.
 pub const LMS_FROM_XYZ: GamutMatrix = [
-    [0.8189330101, 0.3618667424, -0.1288597137],
-    [0.0329845436, 0.9293118715, 0.0361456387],
-    [0.0482003018, 0.2643662691, 0.6338517070],
+    [0.8190224379967030, 0.3619062600528904, -0.1288737815209879],
+    [0.0329836539323885, 0.9292868615863434, 0.0361446663506424],
+    [0.0481771893596242, 0.2642395317527308, 0.6335478284694309],
 ];
 
-/// Inverse of M1: LMS → CIE XYZ.
+/// Inverse of M1: LMS → CIE XYZ (D65).
 pub const XYZ_FROM_LMS: GamutMatrix = [
-    [1.2270138511, -0.5577999807, 0.2812561490],
-    [-0.0405801784, 1.1122568696, -0.0716766787],
-    [-0.0763812845, -0.4214819784, 1.5861632204],
+    [1.2268798758459243, -0.5578149944602171, 0.2813910456659647],
+    [-0.0405757452148008, 1.1122868032803170, -0.0717110580655164],
+    [-0.0763729366746601, -0.4214933324022432, 1.5869240198367816],
 ];
 
 /// M2: LMS^(1/3) → Oklab [L, a, b]. Universal, primaries-independent.
 pub const OKLAB_FROM_LMS_CBRT: GamutMatrix = [
-    [0.2104542553, 0.7936177850, -0.0040720468],
-    [1.9779984951, -2.4285922050, 0.4505937099],
-    [0.0259040371, 0.7827717662, -0.8086757660],
+    [0.2104542683093140, 0.7936177747023054, -0.0040720430116193],
+    [1.9779985324311684, -2.4285922420485799, 0.4505937096174110],
+    [0.0259040424655478, 0.7827717124575296, -0.8086757549230774],
 ];
 
 /// Inverse of M2: Oklab [L, a, b] → LMS^(1/3).
 pub const LMS_CBRT_FROM_OKLAB: GamutMatrix = [
-    [1.0, 0.3963377774, 0.2158037573],
-    [1.0, -0.1055613458, -0.0638541728],
-    [1.0, -0.0894841775, -1.2914855480],
+    [1.0, 0.3963377773761749, 0.2158037573099136],
+    [1.0, -0.1055613458156586, -0.0638541728258133],
+    [1.0, -0.0894841775298119, -1.2914855480194092],
 ];
 
 // ---------------------------------------------------------------------------
@@ -204,15 +205,38 @@ mod tests {
         }
     }
 
+    /// Neutrals have no chroma and L is the cube root of the gray, in every space with a matrix.
     #[test]
-    fn oklab_white_point() {
+    fn oklab_neutrals_have_no_chroma() {
+        for p in [
+            ColorPrimaries::Bt709,
+            ColorPrimaries::DisplayP3,
+            ColorPrimaries::Bt2020,
+        ] {
+            let m1 = rgb_to_lms_matrix(p).unwrap();
+            for i in 1..=4096 {
+                let g = i as f32 / 4096.0;
+                let [l, a, b] = rgb_to_oklab(g, g, g, &m1);
+                assert!(a.hypot(b) < 1e-6, "{p:?} gray {g}: a {a}, b {b}");
+                assert!((l - g.cbrt()).abs() < 2e-6, "{p:?} gray {g}: L {l}");
+            }
+        }
+    }
+
+    /// CSS Color 4's results for sRGB's primaries, from its conversions.js in f64.
+    #[test]
+    fn oklab_matches_css() {
         let m1 = rgb_to_lms_matrix(ColorPrimaries::Bt709).unwrap();
-        let [l, a, b] = rgb_to_oklab(1.0, 1.0, 1.0, &m1);
-        // Tolerance is 5e-4 because the combined matrix (mat3_mul of two f32 matrices)
-        // accumulates rounding beyond 1e-4. The reference Oklab uses f64 matrices.
-        assert!((l - 1.0).abs() < 5e-4, "white L should be ~1.0, got {l}");
-        assert!(a.abs() < 5e-4, "white a should be ~0.0, got {a}");
-        assert!(b.abs() < 5e-4, "white b should be ~0.0, got {b}");
+        for (rgb, css) in [
+            ([1.0, 0.0, 0.0], [0.627955, 0.224863, 0.125846]),
+            ([0.0, 1.0, 0.0], [0.866440, -0.233888, 0.179498]),
+            ([0.0, 0.0, 1.0], [0.452014, -0.032457, -0.311528]),
+        ] {
+            let lab = rgb_to_oklab(rgb[0], rgb[1], rgb[2], &m1);
+            for (got, want) in lab.iter().zip(css) {
+                assert!((got - want).abs() < 2e-6, "{rgb:?}: {lab:?} vs {css:?}");
+            }
+        }
     }
 
     #[test]

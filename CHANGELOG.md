@@ -168,6 +168,8 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
 - New `zenpixels::Color`: one color with its `PixelDescriptor`, `Copy`, 24 bytes, holding up to 16 bytes of samples aligned for every sample type, so
   casting its bytes can't fail. Comparison is bitwise. `ColorConvertExt::try_convert_to` converts one without a
   one-pixel buffer, and keeps out-of-gamut values unless asked to clip. It refuses SDR to PQ or HLG, which would put white at the peak.
+- **BREAKING:** Oklab uses CSS Color 4's matrices, so `LMS_FROM_XYZ`, `XYZ_FROM_LMS`, `OKLAB_FROM_LMS_CBRT` and `LMS_CBRT_FROM_OKLAB` change value. Neutrals lose
+  their chroma, 1.25e-4 at white before. The largest move on a 52³ sRGB grid is 1.25e-4 ΔEOK, so expected values downstream may need refreshing.
 - A pixel's output no longer depends on where it sits in a row. `tests/row_partition.rs` checks
   1792 conversions at every tier.
 - Output no longer depends on the CPU: every native tier gives the same bytes, so bit-exact tests hold across machines. A digest

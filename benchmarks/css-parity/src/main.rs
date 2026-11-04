@@ -163,8 +163,7 @@ fn hdr() {
     let enc = |d: D, v: f32| floats(&rgbf(bt2020, [v; 3]).try_convert_to(d, &opts).unwrap())[0];
     println!("203 cd/m2 in PQ: {:.4} (CSS: 58%)", enc(pq, 203.0 / 10_000.0));
     println!("203 cd/m2 in HLG: {:.4} (CSS: 75%)", enc(hlg, (203.0f32 / 1_000.0).powf(1.0 / 1.2)));
-    let w = Color::srgb8(255, 255, 255).try_convert_to(pq, &opts).unwrap();
-    println!("sRGB white straight to PQ: {:.4}, which is {:.0} cd/m2 (CSS: 0.58, 203 cd/m2)", floats(&w)[0], 10_000.0 * zenpq(floats(&w)[0]));
+    println!("sRGB white straight to PQ: refused {} (CSS: 0.58, 203 cd/m2)", Color::srgb8(255, 255, 255).try_convert_to(pq, &opts).is_err());
     let linear = rgbf(bt2020, [1.0; 3]).try_convert_to(pq, &opts).unwrap();
     println!("linear 1.0 to PQ: {:.4} (CSS rec2100-linear 1.0: 0.58)", floats(&linear)[0]);
 }

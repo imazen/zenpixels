@@ -20,7 +20,7 @@ zenpixels has no CSS parser. zenpipe parses hex and the CSS named colors (`src/b
 | `color(display-p3 …)`, `display-p3-linear` | F32 `Srgb` or `Linear`, `DisplayP3` | Direct |
 | `color(a98-rgb …)` | F32 `Gamma22`, `AdobeRgb` | Direct: same 563/256 exponent |
 | `color(rec2100-pq …)`, `rec2100-hlg` | F32 `Pq` or `Hlg`, `Bt2020` | Direct |
-| `oklab()` | F32 `Oklab` | Direct, but see Oklab below |
+| `oklab()` | F32 `Oklab` | Direct |
 | `oklch()` | F32 `Oklab`, polar to rectangular at parse | Hue is gone once chroma is 0 |
 | `color(rec2100-linear …)` | F32 `Linear`, `Bt2020` | **Anchor differs**: below |
 | `color(rec2020 …)` | Linear `Bt2020`, decoded at parse | Gamma 2.4 has no `TransferFunction`; `Bt709` isn't it |
@@ -57,7 +57,7 @@ Parsing to linear loses the original space, so a color can't be serialized back 
 | sRGB `u8` table | Worst 4.79e-6; 0 of 256 fail to round trip |
 | Adobe RGB decode of 0.5 | 0.21775553, against 0.2177555 |
 | Gamut matrices, 12 pairs of 4 spaces | Worst element off by 4.42e-7 |
-| Oklab, 52³ sRGB colors | Worst ΔEOK 1.25e-4, at white |
+| Oklab, 52³ sRGB colors, same matrices as CSS | Worst ΔEOK 2.31e-6; neutrals' chroma under 6e-7 in `f32` |
 
 ## Differences
 
@@ -65,9 +65,7 @@ Parsing to linear loses the original space, so a color can't be serialized back 
 
 **2. SDR doesn't convert straight to PQ or HLG.** `Color::srgb8(255, 255, 255).try_convert_to(pq)` is refused, where CSS gives 0.58. `CompositeOnto` places white through `reference_white`. `RowConverter::new` still puts it at the peak, 10,000 cd/m².
 
-**3. Oklab differs slightly.** `oklab.rs` uses Ottosson's 2020 XYZ matrices; CSS recomputed them so that white is exact. Neutrals carry chroma in ours, up to 1.25e-4 at white, and 5.0e-16 under CSS's. A just-noticeable difference is about 0.02.
-
-**4. Clipping shifts hue.** To sRGB `u8`, against the spec's binary search implemented here:
+**3. Clipping shifts hue.** To sRGB `u8`, against the spec's binary search implemented here:
 
 | Source | Ours | Hue shift | CSS mapping | Hue shift |
 |---|---|---:|---|---:|
@@ -80,4 +78,4 @@ Parsing to linear loses the original space, so a color can't be serialized back 
 
 CSS applies this to individually specified colors, not images. Clipping is closer in ΔEOK in every case but blue P3, where they tie, and CSS gives up that distance to hold hue.
 
-**5. Mattes blend in linear light, on purpose.** 50% red on white is green 187 here and 127 on encoded values, which is what browsers are reported to do.
+**4. Mattes blend in linear light, on purpose.** 50% red on white is green 187 here and 127 on encoded values, which is what browsers are reported to do.
