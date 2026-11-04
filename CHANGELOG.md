@@ -53,6 +53,17 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   `Hash`, and `ChromaSiting` defaults to `Unknown`. This is the single
   subsampling/siting vocabulary: `zencodec::frame` re-exports it instead of
   defining its own. `YcbcrToRgbF32` refuses `Mono` as unsupported chroma.
+- Add `plane::AlignedSamples<T>` (a `Vec` of 64-byte aligned chunks: index 0 is always
+  on 64 bytes, with no `unsafe` and no custom allocator), `plane::AlignedPlane<T>`,
+  and `PixelBuffer::try_new_aligned`. `PlaneBuf::alloc` moves to `AlignedPlane::alloc`.
+- Add `SampleStorage::as_bytes` and `SampleStorageMut::as_bytes_mut`.
+- Rename `plane::PlaneStorage` and `PlaneStorageMut` to `SampleStorage` and
+  `SampleStorageMut`.
+- Add feature `allocator_api`: `Vec<T, A>` and `Box<S, A>` are sample storage on Rust
+  1.100 or newer, gated with `rustversion`; no effect on older compilers.
+- Add feature `image` (needs Rust 1.88): `TryFrom` conversions with `image` 0.25 for gray,
+  gray-alpha, RGB and RGBA in `u8`, `u16`, `f32`, without copying. Color travels with
+  packed buffers, and a conversion that would relabel pixels refuses.
 - `PixelBuffer<P, S = Vec<u8>>`, `PixelBufferParts<S = Vec<u8>>` and
   `FromPartsError<S = Vec<u8>>`: `try_from_parts` adopts any `plane::SampleStorage`
   (`Vec<u16>`, `Vec<f32>`, `Box<[T]>`, slices, pool slots) without copying, with the same
@@ -61,7 +72,7 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   `PlaneMut` and `PlaneBuf` aliases and `SampleStorage` for other owners),
   `AnyPlane`, `PlaneRole` (one role per plane; `CbCr`/`CrCb` for semi-planar
   chroma), per-plane `PlaneEncoding` (integer codes or scaled floats) and a
-  validated `PlanarLayout`. `PlaneBuf::alloc` starts rows on 64 bytes and
+  validated `PlanarLayout`. `AlignedPlane::alloc` starts rows on 64 bytes and
   avoids strides on 4096 multiples. Design: `docs/planar-types.md`.
 - `plane` zero-copy interop: `into_strided_samples` / `into_strided_samples_mut` keep the
   borrowed lifetime for adapters; with the `imgref` feature, `TryFrom` converts

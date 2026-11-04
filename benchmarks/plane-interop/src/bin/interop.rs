@@ -6,7 +6,7 @@ use image::flat::{FlatSamples, SampleLayout};
 use image::{GenericImageView, ImageBuffer, Luma, Rgb};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use zenpixels::plane::{Plane, PlaneBuf, PlaneMut, PlaneRef, SampleStorage};
+use zenpixels::plane::{AlignedPlane, Plane, PlaneBuf, PlaneMut, PlaneRef, SampleStorage};
 use zenpixels::{PixelBuffer, PixelBufferParts, PixelDescriptor, PixelSlice};
 
 struct Counting;
@@ -124,7 +124,7 @@ fn main() {
         );
 
         // Zenpixels -> v_frame has no adopting constructor; rows are copied.
-        let src = PlaneBuf::<u8>::alloc(W, H).unwrap();
+        let src = AlignedPlane::<u8>::alloc(W, H).unwrap();
         let mut dst = FrameBuilder::new(W, H, ChromaSubsampling::Monochrome, 8)
             .build::<u8>()
             .unwrap();
@@ -319,17 +319,17 @@ fn main() {
             a,
         );
 
-        // PlaneBuf::alloc rounds stride up, so its Vec is rarely tight.
+        // AlignedPlane::alloc starts at index 0 on 64 bytes; only a stride that
+        // happens to equal the width can reach ImageBuffer.
         for (w, h) in [(37usize, 11usize), (64, 11), (4096, 4), (4096, 64)] {
-            let pb = PlaneBuf::<u8>::alloc(w, h).unwrap();
-            let s = pb.stride();
-            match pb.into_vec() {
-                Ok(_) => println!(
-                    "    alloc({w},{h}) stride={s} start0=yes image_tight={}",
-                    s == w
-                ),
-                Err(_) => println!("    alloc({w},{h}) stride={s} start0=no  image_tight=false"),
-            }
+            let p = AlignedPlane::<u8>::alloc(w, h).unwrap();
+            let addr = p.strided_samples().as_ptr() as usize;
+            let s = p.stride();
+            println!(
+                "    alloc({w},{h}) stride={s} addr%64={} image_tight={}",
+                addr % 64,
+                s == w
+            );
         }
     }
 

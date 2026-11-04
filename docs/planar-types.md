@@ -33,8 +33,8 @@ location; a semi-planar chroma plane stores two samples per position.
      storage) implement `SampleStorage` / `SampleStorageMut` and become
      `Plane<TheirOwner>`.
    - `new` adopts storage without copying (a codec's `Vec`, a decoder pool's
-     slice). `PlaneBuf::alloc` allocates fallibly, starts every row on 64 bytes
-     and adds 64 bytes to strides on 4096 multiples
+     slice). `AlignedPlane::alloc` allocates fallibly, starts every row on 64 bytes
+     with row 0 at index 0, and adds 64 bytes to strides on 4096 multiples
      (`benchmarks/row_alignment_2026-10-31.md`, `benchmarks/stride_aliasing_2026-11-01.md`).
    - `row`, `rows`, `row_mut`, `rows_mut`, `sub`, `sub_mut`, `view`, `view_mut`,
      `strided_samples`, and `split_at_row` on `PlaneMut` for strips and threads.
@@ -135,23 +135,26 @@ imgref (1.x) is built in: with the `imgref` feature, `TryFrom` converts
 a `PlaneBuf`, without copying (pointer identity is tested). The conversions are
 fallible because imgref does not check its buffer length, holds `u32`
 dimensions and needs a nonzero stride. `PlaneBuf` to `ImgVec` (and
-`PlaneBuf::into_vec` for any owner of a plain `Vec`) succeeds when row 0 is at
-index 0 and otherwise returns the plane unchanged.
+`PlaneBuf::into_vec` for any owner of a plain `Vec`) hands the adopted `Vec` back;
+`ImgVec` also refuses dimensions it cannot hold.
 
-Row 0 at index 0 and 64-byte alignment cannot both be guaranteed in an owned
-`Vec<T>`: `Vec` frees with `align_of::<T>()`, so it cannot own a block allocated
-with 64-byte alignment, and this crate has no unsafe code to try. What the
-allocator gives decides which one a plane gets. Measured on r7900x (glibc 2.43,
-2026-11-01, five allocations per size, `benchmarks/alloc-alignment/`): blocks of 128 KiB and more
-(mmap-backed by default) started 16 bytes past a 64-byte boundary every time;
-smaller blocks landed on 16-byte boundaries at varying offsets. glibc raises its
-mmap threshold after large frees, so this is typical, not guaranteed. A plane
-adopted from a codec's `Vec` therefore usually has every row at +16 bytes, the
-offset that cost AVX2 and AVX-512 28-54% on cache-resident rows and under 7%
-from memory (`benchmarks/row_alignment_2026-10-31.md`). `alloc` avoids that
-with a start offset, which is why its large planes usually cannot be handed over
-as a `Vec`. Kernels that peel to an aligned store address would make adopted
-buffers cost little either way; not measured.
+A `Vec<T>` cannot be both 64-byte aligned and start at index 0, because `Vec` frees
+with `align_of::<T>()`. `AlignedSamples<T>` holds a `Vec` of a `#[repr(align(64))]`
+chunk instead, and views it as `[T]` and as bytes through `bytemuck`. `Vec` then
+allocates and frees with the chunk's layout, so index 0 is always on 64 bytes, on any
+allocator and with no `unsafe`, and clones stay aligned. 64 bytes covers every
+interleaved pixel type, so viewing samples as `&[Rgb<u16>]` cannot fail on alignment.
+The cost is the boundary: it cannot become a `Vec<T>` without a copy. Owners generic
+over their container (`ImageBuffer`, `imgref::Img`) take it directly.
+
+A plain `Vec` from a codec gets what the allocator gives. Measured on r7900x (glibc
+2.43, 2026-11-01, five allocations per size, `benchmarks/alloc-alignment/`): blocks of
+128 KiB and more (mmap-backed by default) started 16 bytes past a 64-byte boundary
+every time; smaller blocks landed on 16-byte boundaries at varying offsets. glibc
+raises its mmap threshold after large frees, so this is typical, not guaranteed. A
+plane adopted from such a `Vec` therefore usually has every row at +16 bytes, the
+offset that cost AVX2 and AVX-512 28-54% on cache-resident rows and under 7% from
+memory (`benchmarks/row_alignment_2026-10-31.md`).
 
 `into_strided_samples` / `into_strided_samples_mut` return the samples for the
 plane's own lifetime, which is what a borrowed external frame needs.
@@ -193,8 +196,8 @@ Semver rules that keep this open:
 - `&`, `&mut` and `Box` are fundamental types: a downstream crate may implement
   our trait for `Box<TheirType>`, so a blanket impl added after release would
   conflict. Those blanket impls exist from the first release.
-- `Vec`, `Arc` and `Rc` are not fundamental, so `SampleStorage for Vec<T, A>`,
-  `Arc<S>` or `Rc<S>` can be added later.
+- `Arc` and `Rc` are not fundamental, so `SampleStorage for Arc<S>` or `Rc<S>` can be
+  added later.
 - Every future method on the storage traits must keep them dyn-compatible: no
   generic methods, no `Self` by value, no `Self: Sized` requirements without a
   default.
@@ -213,21 +216,40 @@ pointer and allocated nothing, unless marked as a copy.
 | Strided `PlaneRef`/`PixelSlice` to `image::flat::View` | Zero-copy with `SampleLayout`: `height_stride` is the plane's stride |
 | Tight `PlaneRef` to `ImageBuffer<_, &[T]>`; `ImageBuffer` to `PlaneRef` | Zero-copy |
 | `ImageBuffer<_, Vec<T>>` to and from a tight `PlaneBuf`/`PixelBuffer` | Zero-copy for `u8`, `u16`, `f32` |
-| `PlaneBuf::alloc` to `ImageBuffer` | **Copy.** Its stride is 64-byte aligned and its first row usually starts past index 0 |
+| `AlignedPlane` or `AlignedSamples` to `ImageBuffer<_, AlignedSamples<T>>` | Zero-copy when the rows are tight; the image keeps the aligned container |
+| `AlignedSamples<T>` to `ImageBuffer<_, Vec<T>>` | **Copy.** A `Vec` must free with the layout it allocated |
 
-Rules an adapter has to follow:
+The `image` feature provides these as `TryFrom` impls, for gray, gray-alpha, RGB and
+RGBA in `u8`, `u16` and `f32`: `ImageBuffer` to and from `Plane` and `PixelBuffer`,
+`&ImageBuffer` and `&mut ImageBuffer` to the borrowed types, and strided `PlaneRef`,
+`PlaneMut` and `PixelSlice` to `FlatSamples`. `tests/image_interop.rs` runs on plain
+`cargo test` because the crate has a dev-dependency on itself with the feature on.
+`image` needs Rust 1.88; zenpixels without the feature stays on 1.85. The guard in
+`tests/dep_guard.rs` keeps `image` and `rustversion` optional and out of the defaults.
+`DynamicImage` is not covered, because its owned form spans three storage types.
 
-- `ImageBuffer::from_raw` checks only that the buffer is long enough, so strided
-  samples are accepted and read as wrong pixels. Require `stride == width` and
-  `start == 0`, or use `FlatSamples`.
-- `from_raw` labels the image sRGB. Carry color across explicitly with
-  `set_color_space`; never rely on the default.
-- `v_frame` 0.7 refuses odd luma sizes for 4:2:0 (`UnsupportedResolution` at
-  37x11), while our layouts allow them through `ceil(w/2)`. Odd-sized 4:2:0 cannot
-  reach it, zero-copy or not.
-- `v_frame`'s `copy_from_u8_slice_with_stride` requires exactly `stride * height`
-  bytes, so it refuses `into_strided_samples()` when the last row has no padding.
-  Copy row by row.
+What those conversions refuse, returning the source unchanged:
+
+- Moving to `ImageBuffer` needs tight rows and the first pixel at index 0, because
+  `ImageBuffer::from_raw` checks only that the buffer is long enough: it accepts
+  strided samples and reads wrong pixels. Use `FlatSamples` for strided data.
+- `image` has no "unknown" color and labels everything sRGB by default. A buffer moves
+  only when `image` can state its color exactly: not with unknown primaries or
+  transfer, Gamma22, Adobe RGB, narrow range, an ICC profile, or CICP that disagrees
+  with its descriptor. Relabel with `with_transfer`/`with_primaries` when the color is
+  known. Premultiplied and undefined alpha are refused too, since `image` means
+  straight alpha. A `Plane` carries no color, so its image is labeled sRGB: set the
+  color on the result.
+- In the other direction color always travels. CICP that a descriptor cannot name is
+  kept in the color context, and that buffer cannot return to `image`.
+
+For `v_frame`, which has no feature because nothing here consumes it:
+
+- `v_frame` 0.7 refuses odd luma sizes for 4:2:0 (`UnsupportedResolution` at 37x11),
+  while our layouts allow them through `ceil(w/2)`. Odd-sized 4:2:0 cannot reach it,
+  zero-copy or not.
+- Its `copy_from_u8_slice_with_stride` requires exactly `stride * height` bytes, so it
+  refuses `into_strided_samples()` when the last row has no padding. Copy row by row.
 
 ### Packed buffers use the same storage
 
@@ -237,47 +259,32 @@ Rules an adapter has to follow:
 allocator's alignment differs (`bytemuck` refuses it with `AlignmentMismatch`).
 Existing `PixelBuffer` and `PixelBuffer<P>` code keeps meaning `Vec<u8>`.
 
-With the allocator API, `Vec<u8, Align64>`, `Vec<u16, Align64>` and
-`Vec<f32, Align64>` were adopted with offset 0 and 64-byte aligned first samples,
-and `Vec<u8, Align64>` moved on to `ImageBuffer<Rgb<u8>, Vec<u8, Align64>>`
-without a copy. That probe uses a newtype; `impl SampleStorage for Vec<T, A>` has
-to live in this crate, and it can replace today's `Vec<T>` impl compatibly.
+`PixelBuffer::try_new_aligned` allocates `AlignedSamples` directly: index 0, 64-byte
+first pixel, every format viewable as its pixel type. `SampleStorage::as_bytes` and
+`as_bytes_mut` alias any storage as bytes, which is where code generic over storage can
+stop being generic.
 
-Still `Vec<u8>` only: allocating constructors, `crop_copy`, `into_contiguous`,
+Still `Vec<u8>` only: the other allocating constructors, `crop_copy`, `into_contiguous`,
 `into_contiguous_pixels`, `transform_in_place`, and `PixelCow::Owned`.
 
-### Aligned planes with the `Allocator` API (Rust 1.100)
+### The `allocator_api` feature
 
-`Allocator`, `Vec<T, A>` and `Box<T, A>` are stable from Rust 1.100
-(rust-lang/rust#156882, merged 2026-09-23, milestone 1.100.0; `Global` and
-`System` implement it). An allocator that widens every layout to 64-byte
-alignment, both when allocating and when freeing, makes a `Vec<T, Align64>`
-start on 64 bytes at index 0, and clones and growth stay aligned. A nightly
-prototype confirmed this from 64 B to 32 MiB, and Miri found no undefined
-behaviour (`benchmarks/alloc-alignment/`). For our own planes this removes the
-trade-off: no start offset, `into_vec` always succeeds, and cloning keeps the
-alignment.
+Alignment no longer needs a custom allocator; `AlignedSamples` has it. The feature is
+for storage that comes from somewhere else, such as a pool or an arena. With it,
+`Vec<T, A>` and `Box<S, A>` are `SampleStorage` for any `A: Allocator`, and `into_vec`
+returns `Vec<T, A>`. That includes `Global`, so existing code keeps compiling. The
+impls are gated with `rustversion`: `Allocator`, `Vec<T, A>` and `Box<T, A>` are stable
+from Rust 1.100 (rust-lang/rust#156882), and on older compilers the feature has no
+effect, so `--all-features` keeps working on them. CI's beta job tests the real impls
+until 1.100 is stable.
 
-It does not remove the copy at the boundary with crates that take `Vec<T>`
-(`Vec<T, Global>`): a block allocated by one allocator cannot be freed by
-another. Crates generic over their container (imgref's `Img<Container>`) or over
-`A` can take the aligned `Vec` directly.
+A custom allocator is still `unsafe impl`, so none lives in this crate. A 64-byte
+aligned one in `benchmarks/plane-interop/` was adopted by planes and packed buffers at
+offset 0, and moved on to `ImageBuffer`; an earlier prototype ran clean under Miri from
+64 B to 32 MiB (`benchmarks/alloc-alignment/`).
 
-The current API extends to it without a semver break:
-
-- `SampleStorage for Vec<T>` widens to `Vec<T, A>` for any `A: Allocator`, a
-  strict superset of today's impl.
-- `into_vec` moves to `Plane<Vec<T, A>>` returning `Vec<T, A>`; for `Global` the
-  signature is unchanged.
-- `alloc` keeps allocating from `Global` with its offset; an `alloc_in(width,
-  height, alloc)` constructor takes the aligning allocator.
-- `PlaneBuf<T>` can gain a defaulted parameter, `PlaneBuf<T, A = Global>`.
-
-Two decisions remain: implementing `Allocator` is `unsafe impl`, so the
-allocator cannot live in zenpixels (`forbid(unsafe_code)`) and needs a home in a
-verified primitive crate; and zenpixels' MSRV is 1.85, so these impls need
-either an MSRV of 1.100 or a compiler-version gate (impls only, so the gate is
-additive).
+Allocating in a given allocator (`alloc_in`, `try_new_aligned_in`) is not provided.
+Build the `Vec` with `with_capacity_in` and adopt it.
 
 Additions that would serve the other adapters, each additive:
 

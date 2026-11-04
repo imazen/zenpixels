@@ -182,6 +182,45 @@ fn main() {
     );
     let p = pb.into_parts();
     assert_eq!(p.data.id, 7);
+    // The image feature's conversions.
+    let img = ImageBuffer::<Rgb<u16>, Vec<u16>>::new(w, H);
+    let p0 = img.as_raw().as_ptr();
+    let (pb, a) = counted(|| PixelBuffer::try_from(img).unwrap());
+    report(
+        "TryFrom ImageBuffer<Rgb<u16>, Vec<u16>> -> PixelBuffer",
+        pb.as_slice().as_strided_bytes().as_ptr() as *const u16 == p0,
+        a,
+    );
+    let (img, a) = counted(|| ImageBuffer::<Rgb<u16>, Vec<u16>>::try_from(pb).unwrap());
+    report(
+        "TryFrom PixelBuffer -> ImageBuffer<Rgb<u16>, Vec<u16>>",
+        img.as_raw().as_ptr() == p0,
+        a,
+    );
+    let (s, a) = counted(|| zenpixels::PixelSlice::try_from(&img).unwrap());
+    report(
+        "TryFrom &ImageBuffer<Rgb<u16>> -> PixelSlice",
+        s.as_strided_bytes().as_ptr() as *const u16 == p0,
+        a,
+    );
+    // Aligned allocation, viewed as its pixel type with no alignment failure.
+    let (aligned, a) = counted(|| {
+        PixelBuffer::<(), zenpixels::plane::AlignedSamples<u8>>::try_new_aligned(
+            w,
+            H,
+            PixelDescriptor::RGB16_SRGB,
+        )
+        .unwrap()
+    });
+    let first = aligned.as_slice().as_strided_bytes().as_ptr() as usize;
+    println!(
+        "    try_new_aligned RGB16: addr%64={} stride={} allocs={a}",
+        first % 64,
+        aligned.stride()
+    );
+    let slice = aligned.as_slice();
+    let row: &[[u16; 3]] = bytemuck::cast_slice(slice.row(H - 1));
+    println!("    last row as &[[u16; 3]]: {} pixels", row.len());
     // Misaligned u8 storage for u16 samples still refused; rejected parts come back.
     let bytes = vec![0u8; n * 2 + 2];
     let odd = if bytes.as_ptr() as usize % 2 == 0 {

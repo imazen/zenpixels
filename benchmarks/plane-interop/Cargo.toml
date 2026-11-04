@@ -8,14 +8,15 @@ publish = false
 [workspace]
 
 [features]
-nightly-alloc = []
+# Rust 1.100 or newer.
+allocator-beta = []
 
 [[bin]]
-name = "alloc_nightly"
-required-features = ["nightly-alloc"]
+name = "allocator_beta"
+required-features = ["allocator-beta"]
 
 [dependencies]
-zenpixels = { path = "../../zenpixels", features = ["rgb", "imgref"] }
+zenpixels = { path = "../../zenpixels", features = ["rgb", "imgref", "image", "allocator_api"] }
 v_frame07 = { package = "v_frame", version = "=0.7.0", features = ["padding_api"] }
 v_frame03 = { package = "v_frame", version = "=0.3.9" }
 image = { version = "=0.25.10", default-features = false }
