@@ -104,6 +104,7 @@ impl ContentLightLevel {
 /// Describes the display on which the content was mastered, enabling
 /// downstream displays to reproduce the creator's intent.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct MasteringDisplay {
     /// RGB primaries of the mastering display in CIE 1931 xy coordinates.
     /// `[[rx, ry], [gx, gy], [bx, by]]`.

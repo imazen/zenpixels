@@ -3,6 +3,10 @@ use zenpixels::{
 };
 use zenpixels_convert::{ConvertOptions, ConvertPlan, RowConverter};
 
+fn native_rgb(channel: ChannelType) -> PixelFormat {
+    PixelFormat::from_parts(channel, ChannelLayout::Rgb, None).unwrap()
+}
+
 #[test]
 fn native_identity_is_bit_exact_but_unimplemented_transforms_refuse() {
     for ty in [
@@ -73,11 +77,7 @@ fn native_identity_is_bit_exact_but_unimplemented_transforms_refuse() {
 #[cfg(feature = "hdr-experimental")]
 #[test]
 fn hdr_constructor_cannot_treat_native_identity_as_supported_math() {
-    for format in [
-        PixelFormat::RgbI16,
-        PixelFormat::RgbU32,
-        PixelFormat::RgbF64,
-    ] {
+    for format in [ChannelType::I16, ChannelType::U32, ChannelType::F64].map(native_rgb) {
         let desc = format.descriptor().with_transfer(TransferFunction::Linear);
         assert!(
             ConvertPlan::new_with_hdr_config(
@@ -96,11 +96,7 @@ fn opaque_profiles_do_not_turn_native_samples_into_a_relabel() {
     use zenpixels::{ColorContext, ColorOrigin, PixelBuffer};
     use zenpixels_convert::{finalize_for_output_with, output::OutputProfile};
 
-    for format in [
-        PixelFormat::RgbI16,
-        PixelFormat::RgbU32,
-        PixelFormat::RgbF64,
-    ] {
+    for format in [ChannelType::I16, ChannelType::U32, ChannelType::F64].map(native_rgb) {
         let desc = format.descriptor();
         let source = vec![0x96; desc.bytes_per_pixel() * 2];
         let buffer = PixelBuffer::from_vec(source.clone(), 2, 1, desc)
@@ -126,11 +122,7 @@ fn opaque_profiles_do_not_turn_native_samples_into_a_relabel() {
 #[test]
 fn moxcms_does_not_dispatch_native_samples_as_f32() {
     use zenpixels_convert::{cms::PluggableCms, cms_moxcms::MoxCms};
-    for format in [
-        PixelFormat::RgbI16,
-        PixelFormat::RgbU32,
-        PixelFormat::RgbF64,
-    ] {
+    for format in [ChannelType::I16, ChannelType::U32, ChannelType::F64].map(native_rgb) {
         let from = format
             .descriptor()
             .with_primaries(zenpixels::ColorPrimaries::DisplayP3)

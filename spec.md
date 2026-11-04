@@ -36,8 +36,9 @@ Oklab has its own variants because it's a different color model — the three
 channels are L, a, b (not R, G, B). Conversion math is fundamentally different.
 
 Methods derive everything from the variant: `channels()`, `bytes_per_pixel()`,
-`has_alpha()`, `is_grayscale()`, `component_type()`, `color_model()`,
-`byte_order()`.
+`has_alpha()`, `is_grayscale()`, `component_type()`, `color_model()`.
+RGB/BGR channel order is part of the layout (`ChannelLayout::Bgra`); samples
+are always host-endian.
 
 ### What doesn't get a variant
 
