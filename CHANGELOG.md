@@ -147,8 +147,8 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   `RowConverter` on x86-64, fat LTO: 522,784 to 350,096 bytes at opt-level 3, and 401 KB to
   198,920 at opt-level s. Default builds no longer have a v4 tier, so AVX-512 CPUs run some
   kernels up to 2.1x slower (`premul rgba u16`). The `avx512` feature restores that through
-  `+v4x` on 12 kernels and linear-srgb's slices. Non-AVX2 x86-64 is up to 3.1x slower on the
-  slices' scalar tiers, which run fused math. `benchmarks/row_kernel_tiers_2026-11-04.md`.
+  `+v4x` on 12 kernels and linear-srgb's slices. Non-AVX2 x86-64 is up to 5.1x slower on the
+  slices' scalar tiers, which run fused math (near-black PQ; other kernels at most 3x). `benchmarks/row_kernel_tiers_2026-11-04.md`.
 - HLG, BT.709 and PQ rows use linear-srgb's slices, and PQ drops its vendored kernels. Output
   changes: HLG and BT.709 by rounding, PQ toward ST 2084 (wrong `u16` decode values from 10.7%
   to 1.1%, worst error from 4 codes to 1). PQ decode now has rare 1-code reversals, 5,185 of
