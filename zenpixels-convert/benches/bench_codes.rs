@@ -12,11 +12,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 use zenbench::prelude::*;
+use zenpixels::plane::{AnyPlane, PlaneRef};
 use zenpixels::{
     ChannelType, PixelDescriptor, PixelSlice, PixelSliceMut, SignalRange,
     sample::{CodePlane, ExactDepth, SampleEncoding},
 };
 use zenpixels_convert::codes::{CodeMap, CodeRole, to_canonical};
+
+fn plane16(words: &[u16], width: usize, height: usize, stride: usize) -> AnyPlane<'_> {
+    AnyPlane::U16(PlaneRef::new(words, width, height, stride).unwrap())
+}
 
 const SIZES: &[(&str, usize, usize)] = &[
     ("64²", 64, 64),
@@ -31,7 +36,9 @@ fn enc(bits: u8, shift: u8) -> SampleEncoding {
 
 fn widen_rgb(src: &[u16], w: usize, h: usize, dst: &mut [u16]) {
     let planes: Vec<CodePlane<'_>> = (0..3)
-        .map(|c| CodePlane::from_u16_interleaved(&src[c..], w, h, w * 6, 3, enc(12, 0)).unwrap())
+        .map(|c| {
+            CodePlane::component(plane16(src, w * 3, h, (w * 6) / 2), 3, c, enc(12, 0)).unwrap()
+        })
         .collect();
     let out = PixelSliceMut::new(
         bytemuck::cast_slice_mut(dst),
@@ -53,7 +60,9 @@ fn widen_rgb_per_sample(src: &[u16], w: usize, h: usize, dst: &mut [u16]) {
     )
     .unwrap();
     let planes: Vec<CodePlane<'_>> = (0..3)
-        .map(|c| CodePlane::from_u16_interleaved(&src[c..], w, h, w * 6, 3, enc(12, 0)).unwrap())
+        .map(|c| {
+            CodePlane::component(plane16(src, w * 3, h, (w * 6) / 2), 3, c, enc(12, 0)).unwrap()
+        })
         .collect();
     for y in 0..h {
         for x in 0..w {
@@ -65,7 +74,7 @@ fn widen_rgb_per_sample(src: &[u16], w: usize, h: usize, dst: &mut [u16]) {
 }
 
 fn p010_luma(src: &[u16], w: usize, h: usize, dst: &mut [u16]) {
-    let plane = CodePlane::from_u16(src, w, h, w * 2, enc(10, 6)).unwrap();
+    let plane = CodePlane::new(plane16(src, w, h, (w * 2) / 2), enc(10, 6)).unwrap();
     let narrow = PixelDescriptor::GRAY16.with_signal_range(SignalRange::Narrow);
     let out = PixelSliceMut::new(
         bytemuck::cast_slice_mut(dst),

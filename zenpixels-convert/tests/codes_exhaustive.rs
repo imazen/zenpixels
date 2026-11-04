@@ -3,11 +3,19 @@
 //! The oracle rounds in f64 rather than with the kernel's integer formula. Every
 //! code of every depth 1..=16 is visited; the full set runs in well under a second.
 
+use zenpixels::plane::{AnyPlane, PlaneRef};
 use zenpixels::{
     ChannelType, PixelDescriptor, PixelSlice, PixelSliceMut, SignalRange,
     sample::{CodePlane, ExactDepth, ExactDepthError, SampleEncoding},
 };
 use zenpixels_convert::codes::{CodeMap, CodeMapError, CodeRole, CodesError, to_canonical};
+
+fn plane8(words: &[u8], width: usize, height: usize, stride: usize) -> AnyPlane<'_> {
+    AnyPlane::U8(PlaneRef::new(words, width, height, stride).unwrap())
+}
+fn plane16(words: &[u16], width: usize, height: usize, stride: usize) -> AnyPlane<'_> {
+    AnyPlane::U16(PlaneRef::new(words, width, height, stride).unwrap())
+}
 
 fn enc(bits: u8, shift: u8) -> SampleEncoding {
     SampleEncoding::new(ChannelType::U16, bits, shift).unwrap()
@@ -319,8 +327,13 @@ fn interleaved_twelve_bit_rgb_widens_exactly_into_strided_rows() {
     let twelve = enc(12, 0);
     let planes: Vec<CodePlane<'_>> = (0..3)
         .map(|c| {
-            CodePlane::from_u16_interleaved(&words[c..], w, h, src_stride_words * 2, 3, twelve)
-                .unwrap()
+            CodePlane::component(
+                plane16(&words, w * 3, h, (src_stride_words * 2) / 2),
+                3,
+                c,
+                twelve,
+            )
+            .unwrap()
         })
         .collect();
     let (out, exact) = canonical_u16(
@@ -383,10 +396,10 @@ fn per_component_encodings_cover_ten_bit_color_with_sixteen_bit_alpha() {
     let alpha = [0u16, 65535, 32768, 1];
     let ten = enc(10, 0);
     let planes = [
-        CodePlane::from_u16(&color[0..1], 1, 1, 2, ten).unwrap(),
-        CodePlane::from_u16(&color[1..2], 1, 1, 2, ten).unwrap(),
-        CodePlane::from_u16(&color[2..3], 1, 1, 2, ten).unwrap(),
-        CodePlane::from_u16(&alpha[1..2], 1, 1, 2, enc(16, 0)).unwrap(),
+        CodePlane::new(plane16(&color[0..1], 1, 1, 2 / 2), ten).unwrap(),
+        CodePlane::new(plane16(&color[1..2], 1, 1, 2 / 2), ten).unwrap(),
+        CodePlane::new(plane16(&color[2..3], 1, 1, 2 / 2), ten).unwrap(),
+        CodePlane::new(plane16(&alpha[1..2], 1, 1, 2 / 2), enc(16, 0)).unwrap(),
     ];
     let (out, exact) = canonical_u16(
         &planes,
@@ -399,9 +412,9 @@ fn per_component_encodings_cover_ten_bit_color_with_sixteen_bit_alpha() {
     assert_eq!(out, [0, 65535, 32800, 65535]);
     assert_eq!(exact, full(ChannelType::U16, 10, 16));
     // Narrow-range color still gets full-scale alpha.
-    let ten_alpha = [CodePlane::from_u16(&color[1..2], 1, 1, 2, ten).unwrap()];
+    let ten_alpha = [CodePlane::new(plane16(&color[1..2], 1, 1, 2 / 2), ten).unwrap()];
     let narrow_color = [
-        CodePlane::from_u16(&color[3..4], 1, 1, 2, ten).unwrap(),
+        CodePlane::new(plane16(&color[3..4], 1, 1, 2 / 2), ten).unwrap(),
         ten_alpha[0],
     ];
     let (out, exact) = canonical_u16(
@@ -423,7 +436,7 @@ fn per_component_encodings_cover_ten_bit_color_with_sixteen_bit_alpha() {
 fn p010_luma_with_zero_padding_is_already_canonical_narrow_u16() {
     let p010 = enc(10, 6);
     let luma: Vec<u16> = (0..1024u16).map(|q| q << 6).collect();
-    let plane = CodePlane::from_u16(&luma, 1024, 1, 2048, p010).unwrap();
+    let plane = CodePlane::new(plane16(&luma, 1024, 1, 2048 / 2), p010).unwrap();
     let narrow = PixelDescriptor::GRAY16.with_signal_range(SignalRange::Narrow);
     let (out, exact) =
         canonical_u16(&[plane], SignalRange::Narrow, (0, 0), (1024, 1), narrow).unwrap();
@@ -449,7 +462,7 @@ fn p010_luma_with_zero_padding_is_already_canonical_narrow_u16() {
 fn eight_bit_codes_widen_by_257_and_copy_into_u8() {
     let codes: Vec<u8> = (0..=255).collect();
     let eight = SampleEncoding::new(ChannelType::U8, 8, 0).unwrap();
-    let plane = CodePlane::from_u8(&codes, 256, 1, 256, eight).unwrap();
+    let plane = CodePlane::new(plane8(&codes, 256, 1, 256), eight).unwrap();
     let (out, exact) = canonical_u16(
         &[plane],
         SignalRange::Full,
@@ -475,7 +488,7 @@ fn eight_bit_codes_widen_by_257_and_copy_into_u8() {
 fn refusals_precede_every_write() {
     let ten = enc(10, 0);
     let words = [1023u16; 8];
-    let plane = CodePlane::from_u16(&words, 2, 2, 4, ten).unwrap();
+    let plane = CodePlane::new(plane16(&words, 2, 2, 4 / 2), ten).unwrap();
     let rgb = [plane; 3];
     let mut bytes = vec![0x55u8; 2 * 2 * 3];
     let narrowing = PixelSliceMut::new(&mut bytes, 2, 2, 6, PixelDescriptor::RGB8_SRGB).unwrap();

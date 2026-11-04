@@ -1,7 +1,7 @@
 //! Integer sample interpretation for native codec and video planes.
 //!
 //! Storage width, code depth and bit placement are independent. An unshifted
-//! ten-bit code in a `u16` word is not a normalized sixteen-bit image sample.
+//! ten-bit code in a `u16` sample is not a normalized sixteen-bit value.
 //! This description does not change [`crate::PixelDescriptor`] or the existing
 //! RGB/gray U16 numerical contract. A raw plane must retain this encoding with
 //! its storage and obtain component roles, range and color from its enclosing
@@ -11,10 +11,10 @@
 //! of an ordinary U8/U16 image survive re-quantization to a lower depth. Native
 //! codes become canonical samples through `zenpixels_convert::codes`.
 //!
-//! Typed words use native endianness. A byte-backed adapter must decode its
-//! declared byte order before applying the bit placement. Packed words holding
+//! Stored samples use native endianness. A byte-backed adapter must decode its
+//! declared byte order before applying the bit placement. Packed samples holding
 //! multiple components, signed integers and floating point are not described
-//! by this one-unsigned-component-per-word representation.
+//! by this one-unsigned-component-per-sample representation.
 
 use crate::ChannelType;
 use core::fmt;
@@ -24,13 +24,13 @@ mod plane;
 pub use exact::{ExactDepth, ExactDepthError};
 pub use plane::{ChromaSiting, ChromaSubsampling, CodePlane, CodePlaneError};
 
-/// Checked interpretation of one unsigned integer component in a storage word.
+/// Checked interpretation of one unsigned integer code in a stored sample.
 ///
-/// Extract a code with `(word >> bit_shift) & ((1 << code_bits) - 1)`, using
+/// Extract a code with `(sample >> bit_shift) & ((1 << code_bits) - 1)`, using
 /// sufficiently wide arithmetic. Bits outside that payload are padding: ignore
 /// them on read and write zero padding on output. Strict format-conformance
 /// checks may additionally require zero padding, but are separate sample scans.
-/// This value validates the description, not every word in a pixel allocation.
+/// This value validates the description, not every sample in a pixel allocation.
 ///
 /// No range, normalization or transfer conversion is implied. For example,
 /// packing code 1023 at shift 6 produces 65472, whereas rescaling full-range
@@ -46,7 +46,7 @@ impl SampleEncoding {
     /// Describe an unsigned component without examining or changing samples.
     ///
     /// `storage` must be U8 or U16. Code depth must be positive and fit in the
-    /// storage word; adding the low padding bits must also fit. The check accepts
+    /// storage type; adding the low padding bits must also fit. The check accepts
     /// all such placements, including 8-bit codes in U16 and 10/12-bit codes
     /// aligned to either end of U16. A consuming codec can support a narrower
     /// subset and must check that capability separately.
@@ -75,7 +75,7 @@ impl SampleEncoding {
         })
     }
 
-    /// Physical word type; this does not determine the code depth.
+    /// Storage type (`U8` or `U16`); this does not determine the code depth.
     pub const fn storage(self) -> ChannelType {
         self.storage
     }
@@ -85,7 +85,7 @@ impl SampleEncoding {
         self.code_bits
     }
 
-    /// Number of low padding bits below the code in its storage word.
+    /// Number of low padding bits below the code in its stored sample.
     pub const fn bit_shift(self) -> u8 {
         self.bit_shift
     }
@@ -95,7 +95,7 @@ impl SampleEncoding {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SampleEncodingError {
-    /// The word is not an unsigned U8 or U16 component.
+    /// The storage type is not U8 or U16.
     UnsupportedStorage,
     /// Code depth is zero or exceeds storage width.
     InvalidBitDepth,

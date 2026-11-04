@@ -25,22 +25,27 @@ Native codes stay in borrowed `CodePlane` views until a consumer needs canonical
 
 ## 2. Representation: borrow native codes, convert once
 
-`CodePlane` borrows one component without copying. `from_u16_interleaved` / `from_u8_interleaved`
-take a per-pixel step, so planar, semi-planar and interleaved layouts share one view:
+`CodePlane` reads one component's codes from a borrowed `plane::Plane` without copying. A plane may
+hold several interleaved components per position; `CodePlane::component` picks one, so planar,
+semi-planar and interleaved layouts share one view (0.3.1; the 0.2.17 bridge spells this with the
+stepped `from_u16_interleaved` / `from_u8_interleaved` constructors):
 
 ```rust,ignore
 use zenpixels::{ChannelType, SignalRange, PixelBuffer, PixelDescriptor,
+                plane::{AnyPlane, PlaneRef},
                 sample::{CodePlane, SampleEncoding}};
 use zenpixels_convert::codes::to_canonical;
 
-// P010: 10 high bits in little-endian words; chroma interleaved Cb, Cr.
+// P010: 10 high bits in native-endian words; chroma interleaved Cb, Cr.
 let p010 = SampleEncoding::new(ChannelType::U16, 10, 6)?;
-let cb = CodePlane::from_u16_interleaved(&uv, cw, ch, uv_stride, 2, p010)?;
-let cr = CodePlane::from_u16_interleaved(&uv[1..], cw, ch, uv_stride, 2, p010)?;
+let uv = AnyPlane::U16(PlaneRef::new(&uv[..], 2 * cw, ch, uv_stride_words)?);
+let cb = CodePlane::component(uv, 2, 0, p010)?;
+let cr = CodePlane::component(uv, 2, 1, p010)?;
 
 // A 12-bit interleaved RGB TIFF strip, right-aligned codes, converted once:
 let twelve = SampleEncoding::new(ChannelType::U16, 12, 0)?;
-let rgb = [0, 1, 2].map(|c| CodePlane::from_u16_interleaved(&words[c..], w, h, stride, 3, twelve));
+let strip = AnyPlane::U16(PlaneRef::new(&words[..], 3 * w, h, stride_words)?);
+let rgb = [0, 1, 2].map(|c| CodePlane::component(strip, 3, c, twelve));
 let mut image = PixelBuffer::new(w as u32, h as u32, PixelDescriptor::RGB16_SRGB);
 let (_, exact) = to_canonical(&rgb.map(Result::unwrap), SignalRange::Full, 0, 0, image.as_slice_mut())?;
 image.set_exact_depth(Some(exact))?; // the decoder wrote these samples: it may say so
@@ -247,7 +252,8 @@ zencodec's duplicate `frame::SampleEncoding` can re-export zenpixels' in the pai
 
 zenpixels: `sample::{ExactDepth, ExactDepthError}` with `ExactDepth::{measure, holds_for}`;
 `CodePlane::{from_u8_interleaved, from_u16_interleaved, step_words, read_codes}`;
-`CodePlaneError::{ZeroStep, OutsideActivePlane}`; `PixelSlice::{exact_depth, with_exact_depth}`;
+`CodePlaneError::{ZeroStep, OutsideActivePlane}` (0.2.17; 0.3.1 replaces the constructors with
+`CodePlane::{new, component}` over `plane::AnyPlane`, see `docs/planar-types.md`); `PixelSlice::{exact_depth, with_exact_depth}`;
 `PixelBuffer::{exact_depth, set_exact_depth}`. zenpixels-convert: `codes::{CodeRole, CodeMap,
 CodeMapError, CodesError, to_canonical}` and `OutputPlan::output_color_context`. Everything is additive (new private
 fields on types that already had private fields), so this design needs no break of its own and can

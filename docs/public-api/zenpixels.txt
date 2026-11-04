@@ -8,20 +8,20 @@
 
 ## summary
 #
-#   pub modules                                11
-#   pub types (struct/enum/trait/alias)        88
-#   pub consts/statics                        293
-#   free functions                              4
-#   inherent methods                          271
-#   struct fields                             115
-#   enum variants                             255
+#   pub modules                                12
+#   pub types (struct/enum/trait/alias)       106
+#   pub consts/statics                        301
+#   free functions                              6
+#   inherent methods                          299
+#   struct fields                             121
+#   enum variants                             280
 #   re-exports                                  4
-#   trait roster entries (type × trait)       304
-#   auto-trait-complete types                  45
-#   auto-trait exceptions                       6
+#   trait roster entries (type × trait)       372
+#   auto-trait-complete types                  54
+#   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                          424
+#   (root)                          434
 #   buffer                          252
 #   cicp                             36
 #   color                            62
@@ -30,10 +30,11 @@
 #   icc                              13
 #   orientation                      11
 #   pixel_types                       9
+#   plane                            84
 #   policy                           25
-#   sample                           39
+#   sample                           33
 
-## items (913 lines)
+## items (1001 lines)
 
 pub mod zenpixels
 pub use At
@@ -488,6 +489,101 @@ pub const fn pixel_types::GrayAlpha8::new(u8, u8) -> Self [also: (root)]
 pub pixel_types::GrayAlphaF32::a: f32
 pub pixel_types::GrayAlphaF32::v: f32
 pub const fn pixel_types::GrayAlphaF32::new(f32, f32) -> Self [also: (root)]
+pub mod plane
+#[non_exhaustive] pub enum plane::AnyPlane<'a>
+pub plane::AnyPlane::F32(plane::PlaneRef<'a, f32>)
+pub plane::AnyPlane::U16(plane::PlaneRef<'a, u16>)
+pub plane::AnyPlane::U8(plane::PlaneRef<'a, u8>)
+pub fn plane::AnyPlane<'_>::channel_type(&self) -> descriptor::ChannelType
+pub fn plane::AnyPlane<'_>::height(&self) -> usize
+pub fn plane::AnyPlane<'_>::width(&self) -> usize
+#[non_exhaustive] pub enum plane::FloatEncodingError
+pub plane::FloatEncodingError::NotFinite
+pub plane::FloatEncodingError::ZeroScale
+#[non_exhaustive] pub enum plane::LayoutError
+pub plane::LayoutError::Dimensions
+pub plane::LayoutError::Dimensions::actual: (usize, usize)
+pub plane::LayoutError::Dimensions::expected: (usize, usize)
+pub plane::LayoutError::Dimensions::index: usize
+pub plane::LayoutError::DuplicateRole(plane::PlaneRole)
+pub plane::LayoutError::Empty
+pub plane::LayoutError::MissingRole(plane::PlaneRole)
+pub plane::LayoutError::MixedFamilies
+pub plane::LayoutError::PlaneCount
+pub plane::LayoutError::PlaneCount::actual: usize
+pub plane::LayoutError::PlaneCount::expected: usize
+pub plane::LayoutError::SampleType
+pub plane::LayoutError::SampleType::index: usize
+pub plane::LayoutError::Subsampling
+#[non_exhaustive] pub enum plane::PlaneEncoding
+pub plane::PlaneEncoding::Code(sample::SampleEncoding)
+pub plane::PlaneEncoding::Float(plane::FloatEncoding)
+pub const fn plane::PlaneEncoding::channel_type(self) -> descriptor::ChannelType
+#[non_exhaustive] pub enum plane::PlaneError
+pub plane::PlaneError::AllocationFailed
+pub plane::PlaneError::GeometryOverflow
+pub plane::PlaneError::OutsidePlane
+pub plane::PlaneError::ShortBuffer
+pub plane::PlaneError::ShortStride
+#[non_exhaustive] pub enum plane::PlaneRole
+pub plane::PlaneRole::Alpha
+pub plane::PlaneRole::Blue
+pub plane::PlaneRole::Cb
+pub plane::PlaneRole::CbCr
+pub plane::PlaneRole::Cr
+pub plane::PlaneRole::CrCb
+pub plane::PlaneRole::Green
+pub plane::PlaneRole::Luma
+pub plane::PlaneRole::Red
+pub const fn plane::PlaneRole::components(self) -> usize
+pub struct plane::FloatEncoding
+pub const plane::FloatEncoding::NOMINAL: Self
+pub fn plane::FloatEncoding::new(f32, f32) -> core::result::Result<Self, plane::FloatEncodingError>
+pub const fn plane::FloatEncoding::offset(self) -> f32
+pub const fn plane::FloatEncoding::scale(self) -> f32
+pub struct plane::PlanarLayout
+pub fn plane::PlanarLayout::check(&self, &[plane::AnyPlane<'_>], u32, u32) -> core::result::Result<(), plane::LayoutError>
+pub fn plane::PlanarLayout::new(alloc::vec::Vec<plane::PlaneSpec>, sample::ChromaSubsampling, sample::ChromaSiting) -> core::result::Result<Self, plane::LayoutError>
+pub fn plane::PlanarLayout::plane_size(&self, usize, u32, u32) -> core::option::Option<(u32, u32)>
+pub fn plane::PlanarLayout::planes(&self) -> &[plane::PlaneSpec]
+pub fn plane::PlanarLayout::siting(&self) -> sample::ChromaSiting
+pub fn plane::PlanarLayout::subsampling(&self) -> sample::ChromaSubsampling
+pub struct plane::Plane<C>
+pub fn plane::Plane<&'a [T]>::into_strided_samples(self) -> &'a [T]
+pub fn plane::Plane<&'a mut [T]>::into_strided_samples_mut(self) -> &'a mut [T]
+pub fn plane::Plane<C>::height(&self) -> usize
+pub fn plane::Plane<C>::new(C, usize, usize, usize) -> core::result::Result<Self, plane::PlaneError>
+pub fn plane::Plane<C>::row(&self, usize) -> core::option::Option<&[<C as plane::PlaneStorage>::Sample]>
+pub fn plane::Plane<C>::rows(&self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = &[<C as plane::PlaneStorage>::Sample]> + core::iter::traits::exact_size::ExactSizeIterator
+pub fn plane::Plane<C>::stride(&self) -> usize
+pub fn plane::Plane<C>::strided_samples(&self) -> &[<C as plane::PlaneStorage>::Sample]
+pub fn plane::Plane<C>::sub(&self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneRef<'_, <C as plane::PlaneStorage>::Sample>, plane::PlaneError>
+pub fn plane::Plane<C>::view(&self) -> plane::PlaneRef<'_, <C as plane::PlaneStorage>::Sample>
+pub fn plane::Plane<C>::width(&self) -> usize
+pub fn plane::Plane<C>::row_mut(&mut self, usize) -> core::option::Option<&mut [<C as plane::PlaneStorage>::Sample]>
+pub fn plane::Plane<C>::rows_mut(&mut self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = &mut [<C as plane::PlaneStorage>::Sample]> + core::iter::traits::exact_size::ExactSizeIterator
+pub fn plane::Plane<C>::sub_mut(&mut self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneMut<'_, <C as plane::PlaneStorage>::Sample>, plane::PlaneError>
+pub fn plane::Plane<C>::view_mut(&mut self) -> plane::PlaneMut<'_, <C as plane::PlaneStorage>::Sample>
+pub fn plane::Plane<&mut [T]>::split_at_row(self, usize) -> core::result::Result<(Self, Self), plane::PlaneError>
+pub fn plane::Plane<alloc::vec::Vec<T>>::alloc(usize, usize) -> core::result::Result<Self, plane::PlaneError>
+pub fn plane::Plane<alloc::vec::Vec<T>>::into_vec(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
+pub struct plane::PlaneSpec
+pub const fn plane::PlaneSpec::encoding(self) -> plane::PlaneEncoding
+pub const fn plane::PlaneSpec::new(plane::PlaneRole, plane::PlaneEncoding) -> Self
+pub const fn plane::PlaneSpec::role(self) -> plane::PlaneRole
+pub trait plane::PlaneSample: plane::sealed::Sealed + bytemuck::pod::Pod + core::default::Default + core::cmp::PartialEq + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static
+pub const plane::PlaneSample::CHANNEL_TYPE: descriptor::ChannelType
+pub trait plane::PlaneStorage
+pub type plane::PlaneStorage::Sample: plane::PlaneSample
+pub fn plane::PlaneStorage::samples(&self) -> &[Self::Sample]
+pub type &mut S::Sample = <S as plane::PlaneStorage>::Sample
+pub fn &mut S::samples(&self) -> &[<S as plane::PlaneStorage>::Sample]
+pub trait plane::PlaneStorageMut: plane::PlaneStorage
+pub fn plane::PlaneStorageMut::samples_mut(&mut self) -> &mut [Self::Sample]
+pub fn &mut S::samples_mut(&mut self) -> &mut [<S as plane::PlaneStorage>::Sample]
+pub type plane::PlaneBuf<T> = plane::Plane<alloc::vec::Vec<T>>
+pub type plane::PlaneMut<'a, T> = plane::Plane<&'a mut [T]>
+pub type plane::PlaneRef<'a, T> = plane::Plane<&'a [T]>
 pub mod policy
 pub policy::AlphaPolicy::CompositeOnto
 pub policy::AlphaPolicy::CompositeOnto::b: u8
@@ -531,13 +627,9 @@ pub sample::ChromaSubsampling::Yuv422
 pub sample::ChromaSubsampling::Yuv444
 pub const fn sample::ChromaSubsampling::chroma_size(self, u32, u32) -> core::option::Option<(u32, u32)>
 #[non_exhaustive] pub enum sample::CodePlaneError
-pub sample::CodePlaneError::GeometryOverflow
-pub sample::CodePlaneError::MisalignedStride
+pub sample::CodePlaneError::Components
 pub sample::CodePlaneError::OutsideActivePlane
-pub sample::CodePlaneError::ShortBuffer
-pub sample::CodePlaneError::ShortStride
 pub sample::CodePlaneError::StorageMismatch
-pub sample::CodePlaneError::ZeroStep
 #[non_exhaustive] pub enum sample::ExactDepthError
 pub sample::ExactDepthError::DescriptorMismatch
 pub sample::ExactDepthError::InvalidBits
@@ -550,14 +642,11 @@ pub sample::SampleEncodingError::InvalidBitShift
 pub sample::SampleEncodingError::UnsupportedStorage
 pub struct sample::CodePlane<'a>
 pub fn sample::CodePlane<'a>::code(self, usize, usize) -> core::option::Option<u16>
+pub fn sample::CodePlane<'a>::component(plane::AnyPlane<'a>, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
 pub const fn sample::CodePlane<'a>::encoding(self) -> sample::SampleEncoding
-pub fn sample::CodePlane<'a>::from_u16(&'a [u16], usize, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
-pub fn sample::CodePlane<'a>::from_u16_interleaved(&'a [u16], usize, usize, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
-pub fn sample::CodePlane<'a>::from_u8(&'a [u8], usize, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
-pub fn sample::CodePlane<'a>::from_u8_interleaved(&'a [u8], usize, usize, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
 pub const fn sample::CodePlane<'a>::height(self) -> usize
+pub fn sample::CodePlane<'a>::new(plane::AnyPlane<'a>, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
 pub fn sample::CodePlane<'a>::read_codes(self, usize, usize, &mut [u16]) -> core::result::Result<(), sample::CodePlaneError>
-pub const fn sample::CodePlane<'a>::step_words(self) -> usize
 pub const fn sample::CodePlane<'a>::width(self) -> usize
 pub struct sample::ExactDepth
 pub const fn sample::ExactDepth::alpha_bits(self) -> u8
@@ -949,8 +1038,13 @@ pub Rgbx::x: u8
 pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 
-## trait impls (55 types)
+## trait impls (73 types)
 
+&S: plane::PlaneStorage
+&mut S: plane::PlaneStorage, plane::PlaneStorageMut
+[T]: plane::PlaneStorage, plane::PlaneStorageMut
+alloc::boxed::Box<S>: plane::PlaneStorage, plane::PlaneStorageMut
+alloc::vec::Vec<T>: plane::PlaneStorage, plane::PlaneStorageMut
 buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 buffer::FromPartsError: Debug, Display, Error
@@ -984,6 +1078,7 @@ descriptor::PixelDescriptor: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::PixelFormat: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::SignalRange: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
 descriptor::TransferFunction: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
+f32: plane::PlaneSample
 hdr::ContentLightLevel: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 hdr::DiffuseWhite: Clone, Copy, Debug, Default, Eq, PartialEq
 hdr::MasteringDisplay: Clone, Copy, Debug, Default, PartialEq
@@ -993,6 +1088,16 @@ orientation::Orientation: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 pixel_types::GrayAlpha16: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 pixel_types::GrayAlpha8: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 pixel_types::GrayAlphaF32: Clone, Copy, Debug, Default, PartialEq, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
+plane::AnyPlane<'a>: Clone, Copy, Debug
+plane::FloatEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
+plane::FloatEncodingError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+plane::LayoutError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+plane::PlanarLayout: Clone, Debug, Eq, Hash, PartialEq
+plane::Plane<C>: Clone, Copy, Debug
+plane::PlaneEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
+plane::PlaneError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+plane::PlaneRole: Clone, Copy, Debug, Eq, Hash, PartialEq
+plane::PlaneSpec: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::AlphaPolicy: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::ConvertOptions: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::DepthPolicy: Clone, Copy, Debug, Eq, Hash, PartialEq
@@ -1006,6 +1111,8 @@ sample::ExactDepth: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::ExactDepthError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 sample::SampleEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::SampleEncodingError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+u16: plane::PlaneSample
+u8: plane::PlaneSample
 
 ## auto traits
 
@@ -1015,3 +1122,4 @@ buffer::PixelBuffer<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::PixelCow<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::PixelSlice<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::PixelSliceMut<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
+plane::Plane<C>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
