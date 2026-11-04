@@ -8,6 +8,7 @@
 //! Current color state (transfer, primaries, alpha) is tracked on the
 //! pixel descriptor itself, not as a separate enum.
 
+use crate::PixelDescriptor;
 use crate::cicp::Cicp;
 use crate::hdr::DiffuseWhite;
 use crate::{ColorPrimaries, TransferFunction};
@@ -825,5 +826,92 @@ mod tests {
         let _ = alloc::format!("{a:?}");
         let c = ColorOrigin::assumed();
         assert_ne!(a, c);
+    }
+}
+
+/// Bytes aligned for every sample type a [`Color`] can hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(C, align(4))]
+struct ColorSamples([u8; Color::MAX_BYTES]);
+
+const _: () = assert!(core::mem::size_of::<Color>() == 24);
+
+/// One color, and what its samples mean.
+///
+/// Holds one pixel of the descriptor's format, so `0.5` in linear Display P3 and `128` in sRGB
+/// are different colors that both stay exact until converted. `zenpixels_convert::ColorConvertExt`
+/// converts one to any other descriptor.
+///
+/// The bytes are aligned for every sample type, so casting [`as_bytes`](Self::as_bytes) to `f32`
+/// or `u16` samples can't fail and doesn't copy. Comparison is bitwise: `0.0` and `-0.0` differ.
+///
+/// Colors with an ICC profile aren't representable, because a profile can't be `Copy`.
+///
+/// # Examples
+///
+/// ```
+/// use zenpixels::{Color, ColorPrimaries, PixelDescriptor};
+///
+/// let red = Color::srgb8(255, 0, 0);
+/// assert_eq!(red.as_bytes(), [255, 0, 0]);
+///
+/// // Display P3's red, in linear light.
+/// let descriptor = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::DisplayP3);
+/// let p3_red = Color::try_new(descriptor, bytemuck::bytes_of(&[1.0f32, 0.0, 0.0])).unwrap();
+/// let samples: &[f32] = bytemuck::cast_slice(p3_red.as_bytes());
+/// assert_eq!(samples, [1.0, 0.0, 0.0]);
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Color {
+    samples: ColorSamples,
+    descriptor: PixelDescriptor,
+}
+
+impl Color {
+    /// The largest pixel a color holds: four `f32` samples.
+    const MAX_BYTES: usize = 16;
+
+    /// An opaque 8-bit sRGB color, like a CSS hex color.
+    pub const fn srgb8(r: u8, g: u8, b: u8) -> Self {
+        let mut samples = [0; Self::MAX_BYTES];
+        samples[0] = r;
+        samples[1] = g;
+        samples[2] = b;
+        Self {
+            samples: ColorSamples(samples),
+            descriptor: PixelDescriptor::RGB8_SRGB,
+        }
+    }
+
+    /// One pixel of `descriptor`'s format, as bytes in native sample order.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::InvalidDimensions`](crate::buffer::BufferError::InvalidDimensions) when
+    /// `pixel` isn't exactly one pixel, or the format's pixels are wider than 16 bytes.
+    pub fn try_new(
+        descriptor: PixelDescriptor,
+        pixel: &[u8],
+    ) -> Result<Self, crate::buffer::BufferError> {
+        let bytes = descriptor.bytes_per_pixel();
+        if pixel.len() != bytes || bytes > Self::MAX_BYTES {
+            return Err(crate::buffer::BufferError::InvalidDimensions);
+        }
+        let mut samples = [0; Self::MAX_BYTES];
+        samples[..bytes].copy_from_slice(pixel);
+        Ok(Self {
+            samples: ColorSamples(samples),
+            descriptor,
+        })
+    }
+
+    /// What the samples mean.
+    pub const fn descriptor(&self) -> PixelDescriptor {
+        self.descriptor
+    }
+
+    /// The pixel, aligned to 4 bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.samples.0[..self.descriptor.bytes_per_pixel()]
     }
 }

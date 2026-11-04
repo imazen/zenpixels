@@ -414,9 +414,7 @@ fn padding_is_not_alpha_and_opaque_requires_a_proof() {
     assert!(RowConverter::new(rgba, rgba.with_alpha(Some(AlphaMode::Opaque))).is_err());
     assert!(RowConverter::new_explicit(rgba, padding, &ConvertOptions::retain_channels()).is_err());
     let options = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-        r: 255,
-        g: 255,
-        b: 255,
+        background: zenpixels::Color::srgb8(255, 255, 255),
         reference_white: None,
     });
     let mut worker = RowConverter::new_explicit(rgba, padding, &options).unwrap();

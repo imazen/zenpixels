@@ -124,8 +124,8 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 - Fixed (2026-11-04): a PQ or HLG matte put white at the format's peak: 10,000 cd/m² on PQ.
   `CompositeOnto::reference_white` now places it, defaulting to BT.2408.
 
-- Open (2026-11-04): the matte is not converted to wide-gamut source primaries. Non-gray backgrounds on P3 or
-  BT.2020 sources are read as those primaries. Not measured.
+- Fixed (2026-11-04): the matte was not converted to wide-gamut source primaries, so sRGB red over a P3 source came out as P3's red.
+  `CompositeOnto::background` is now a `Color`, converted to the source's primaries; `zenpixels-convert/tests/color.rs`.
 
 - Fixed (2026-11-04, #106): tiers gave different output. Scalar tiers now run the kernels' operations with fused math, so every
   conversion gives the same bytes at every tier, and a digest test pins them across platforms. Strict WASM needs `precise-portable`.

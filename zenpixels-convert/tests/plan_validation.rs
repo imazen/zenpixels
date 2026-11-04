@@ -150,9 +150,7 @@ fn matte_composite_is_single_step_for_every_tf() {
         let src = rgba_u16(tf);
         let dst = rgb_u16(tf);
         let opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-            r: 0,
-            g: 0,
-            b: 0,
+            background: zenpixels::Color::srgb8(0, 0, 0),
             reference_white: None,
         });
         let mut conv = RowConverter::new_explicit(src, dst, &opts).unwrap();
@@ -230,9 +228,7 @@ fn matte_composite_does_not_double_linearize_floats() {
         TransferFunction::Srgb,
     );
     let opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-        r: 0,
-        g: 0,
-        b: 0,
+        background: zenpixels::Color::srgb8(0, 0, 0),
         reference_white: None,
     });
     let mut conv = RowConverter::new_explicit(src, dst, &opts).unwrap();
@@ -267,9 +263,7 @@ fn linear_u16_matte_composite_has_only_one_kernel() {
     let src = rgba_u16(TransferFunction::Linear);
     let dst = rgb_u16(TransferFunction::Linear);
     let opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-        r: 0,
-        g: 0,
-        b: 0,
+        background: zenpixels::Color::srgb8(0, 0, 0),
         reference_white: None,
     });
     let mut conv = RowConverter::new_explicit(src, dst, &opts).unwrap();

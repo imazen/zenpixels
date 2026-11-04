@@ -125,9 +125,7 @@ fn every_tier_gives_the_same_bytes() {
     let policies = [
         AlphaPolicy::DiscardUnchecked,
         AlphaPolicy::CompositeOnto {
-            r: 200,
-            g: 100,
-            b: 50,
+            background: zenpixels::Color::srgb8(200, 100, 50),
             reference_white: None,
         },
     ];

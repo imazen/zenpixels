@@ -110,7 +110,7 @@ For HDR and wide-gamut pipelines that defer tone/gamut mapping, build `ConvertOp
 
 Every operation that destroys information requires an explicit policy via [`ConvertOptions`] (from `zenpixels`, re-exported here):
 
-- **Alpha removal**: `DiscardIfOpaque`, `CompositeOnto { r, g, b }`, `DiscardUnchecked`, or `Forbid`.
+- **Alpha removal**: `DiscardIfOpaque`, `CompositeOnto { background, reference_white }`, `DiscardUnchecked`, or `Forbid`.
 - **Depth reduction**: `Round`, `Truncate`, or `Forbid`.
 - **RGB → gray**: requires explicit luma coefficients (`Bt709`, `Bt601`, `Bt2020`, or `DisplayP3`), or `None` to forbid. Uses Y' (encoded luma) semantics — round-trips bit-exactly when `R == G == B`.
 

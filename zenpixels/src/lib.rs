@@ -105,7 +105,8 @@ pub use buffer::{
 pub use cicp::Cicp;
 #[doc(inline)]
 pub use color::{
-    ColorAuthority, ColorContext, ColorOrigin, ColorProfileSource, ColorProvenance, NamedProfile,
+    Color, ColorAuthority, ColorContext, ColorOrigin, ColorProfileSource, ColorProvenance,
+    NamedProfile,
 };
 
 // Re-export GrayAlpha pixel types at crate root.

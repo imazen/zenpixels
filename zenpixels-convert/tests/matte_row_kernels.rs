@@ -50,9 +50,7 @@ fn converter(t: T, transfer: Tf) -> RowConverter {
     let from = D::new(t, L::Rgba, Some(AlphaMode::Straight), transfer);
     let to = D::new(t, L::Rgb, None, transfer);
     let policy = AlphaPolicy::CompositeOnto {
-        r: MATTE.0,
-        g: MATTE.1,
-        b: MATTE.2,
+        background: zenpixels::Color::srgb8(MATTE.0, MATTE.1, MATTE.2),
         reference_white: None,
     };
     RowConverter::new_explicit(
@@ -110,9 +108,7 @@ fn srgb_u8_gray_matches_its_tables_exhaustively() {
     let mut out = vec![0u8; 65536 * 3];
     let opts = |m: u8| {
         ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-            r: m,
-            g: m,
-            b: m,
+            background: zenpixels::Color::srgb8(m, m, m),
             reference_white: None,
         })
     };
@@ -278,9 +274,7 @@ mod reference_white {
     /// `pixel` composited onto white, as one RGB sample.
     fn over_white(transfer: Tf, pixel: [f32; 4], reference_white: Option<DiffuseWhite>) -> f32 {
         let policy = AlphaPolicy::CompositeOnto {
-            r: 255,
-            g: 255,
-            b: 255,
+            background: zenpixels::Color::srgb8(255, 255, 255),
             reference_white,
         };
         let options = ConvertOptions::permissive().with_alpha_policy(policy);

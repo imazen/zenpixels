@@ -94,10 +94,7 @@ mod tests {
     #[test]
     fn composite_to_gray_includes_background() {
         let options = policy::ConvertOptions::permissive().with_alpha_policy(
-            policy::AlphaPolicy::CompositeOnto {
-                r: 255,
-                g: 255,
-                b: 255, reference_white: None },
+            policy::AlphaPolicy::CompositeOnto { background: zenpixels::Color::srgb8(255, 255, 255), reference_white: None  },
         );
         let dst = PixelDescriptor::new(
             ChannelType::U8,

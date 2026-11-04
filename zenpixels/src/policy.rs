@@ -13,6 +13,7 @@ pub enum GrayExpand {
     Broadcast,
 }
 
+use crate::color::Color;
 use crate::hdr::DiffuseWhite;
 
 /// Policy for alpha channel removal. Required when converting
@@ -24,22 +25,21 @@ pub enum AlphaPolicy {
     DiscardIfOpaque,
     /// Discard unconditionally. Caller acknowledges data loss.
     DiscardUnchecked,
-    /// Composite onto a solid background, given as 8-bit sRGB whatever the source format.
-    /// Blending happens in linear light.
+    /// Composite onto a solid background. Blending happens in linear light.
+    ///
+    /// The background converts to the source's primaries first, so a background keeps its color
+    /// on a wide-gamut source. A source whose primaries are unknown gets the background unconverted.
+    /// Planning refuses a background with alpha, and one that can't convert to the source.
     CompositeOnto {
-        /// Red background value.
-        r: u8,
-        /// Green background value.
-        g: u8,
-        /// Blue background value.
-        b: u8,
-        /// The luminance this background's white sits at on a PQ or HLG source, so that it
-        /// doesn't become the format's peak. Only this background uses it, and SDR sources
-        /// ignore it.
+        /// The color to composite onto.
+        background: Color,
+        /// The luminance an SDR background's white sits at on a PQ or HLG source, so that it
+        /// doesn't become the format's peak. Only this background uses it, and it has no effect
+        /// on an SDR source or an HDR background, whose luminance is already known.
         ///
         /// **Set this for HDR sources, to the reference white the content was graded to.**
-        /// `None` assumes [`DiffuseWhite::BT2408`]'s 203 cd/m², which may not match. On HLG,
-        /// a value also assumes BT.2100's nominal 1000 cd/m² display.
+        /// `None` assumes [`DiffuseWhite::BT2408`]'s 203 cd/m², which may not match. On HLG, a
+        /// value also assumes BT.2100's nominal 1000 cd/m² display.
         reference_white: Option<DiffuseWhite>,
     },
     /// Return error rather than dropping alpha.
@@ -115,7 +115,7 @@ impl LumaCoefficients {
 /// constructors and `with_*` builders for common patterns:
 ///
 /// ```
-/// use zenpixels::{ConvertOptions, AlphaPolicy, DepthPolicy};
+/// use zenpixels::{AlphaPolicy, Color, ConvertOptions, DepthPolicy};
 ///
 /// // Retain channels and depth; requested color conversion may change samples.
 /// let retained = ConvertOptions::retain_channels();
@@ -125,7 +125,10 @@ impl LumaCoefficients {
 ///
 /// // Customize from a preset
 /// let custom = ConvertOptions::permissive()
-///     .with_alpha_policy(AlphaPolicy::CompositeOnto { r: 255, g: 255, b: 255, reference_white: None })
+///     .with_alpha_policy(AlphaPolicy::CompositeOnto {
+///         background: Color::srgb8(255, 255, 255),
+///         reference_white: None,
+///     })
 ///     .with_depth_policy(DepthPolicy::Truncate);
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -275,9 +278,7 @@ mod tests {
         let discard = AlphaPolicy::DiscardIfOpaque;
         let unchecked = AlphaPolicy::DiscardUnchecked;
         let composite = AlphaPolicy::CompositeOnto {
-            r: 255,
-            g: 255,
-            b: 255,
+            background: crate::Color::srgb8(255, 255, 255),
             reference_white: None,
         };
         let forbid = AlphaPolicy::Forbid;
@@ -286,17 +287,13 @@ mod tests {
         assert_ne!(composite, forbid);
 
         let composite2 = AlphaPolicy::CompositeOnto {
-            r: 255,
-            g: 255,
-            b: 255,
+            background: crate::Color::srgb8(255, 255, 255),
             reference_white: None,
         };
         assert_eq!(composite, composite2);
 
         let composite_diff = AlphaPolicy::CompositeOnto {
-            r: 0,
-            g: 0,
-            b: 0,
+            background: crate::Color::srgb8(0, 0, 0),
             reference_white: None,
         };
         assert_ne!(composite, composite_diff);

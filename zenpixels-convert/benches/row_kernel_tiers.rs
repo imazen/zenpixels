@@ -118,9 +118,7 @@ fn fill_source(bytes: &mut [u8], from: D, name: &str) {
 fn options(name: &str) -> ConvertOptions {
     let alpha = if name.starts_with("matte") {
         AlphaPolicy::CompositeOnto {
-            r: 200,
-            g: 100,
-            b: 50,
+            background: zenpixels::Color::srgb8(200, 100, 50),
             reference_white: None,
         }
     } else {

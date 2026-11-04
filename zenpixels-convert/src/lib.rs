@@ -409,6 +409,7 @@ mod sealed {
     pub trait Sealed {}
     impl Sealed for zenpixels::TransferFunction {}
     impl Sealed for zenpixels::ColorPrimaries {}
+    impl Sealed for zenpixels::Color {}
     impl<P> Sealed for zenpixels::PixelBuffer<P> {}
     impl Sealed for zenpixels::hdr::ContentLightLevel {}
 }
@@ -523,7 +524,7 @@ pub use ext::PixelBufferConvertTypedExt;
 #[cfg(feature = "hdr-experimental")]
 pub use ext::PixelBufferHdrConvertExt;
 #[doc(inline)]
-pub use ext::{ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
+pub use ext::{ColorConvertExt, ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
 
 // Re-export gamut conversion utilities.
 pub use gamut::{

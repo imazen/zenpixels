@@ -160,6 +160,14 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   PQ and HLG sources the background sits there, not at the format's peak: white over PQ was
   10,000 cd/m² and is now 203 cd/m² by default. Set it to the content's reference white.
   `DiffuseWhite` gains `Hash`.
+- **BREAKING:** `AlphaPolicy::CompositeOnto`'s `r`, `g`, `b` become `background: Color`, so a matte can be any color
+  in any format. It is converted to the source's primaries before blending: sRGB red over a P3 source was read as P3's
+  red. Unknown source primaries take the background unconverted. A background with alpha, or an HDR background on
+  another transfer than the source, is refused at planning, as `ConvertError::NoPath`. Migrate with
+  `background: Color::srgb8(r, g, b)`.
+- New `zenpixels::Color`: one color with its `PixelDescriptor`, `Copy`, 24 bytes, holding up to 16 bytes of samples aligned for every sample type, so
+  casting its bytes can't fail. Comparison is bitwise. `ColorConvertExt::try_convert_to` converts one without a
+  one-pixel buffer, and keeps out-of-gamut values unless asked to clip.
 - A pixel's output no longer depends on where it sits in a row. `tests/row_partition.rs` checks
   1792 conversions at every tier.
 - Output no longer depends on the CPU: every native tier gives the same bytes, so bit-exact tests hold across machines. A digest

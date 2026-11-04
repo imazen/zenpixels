@@ -203,6 +203,56 @@ fn matte_white(transfer: TransferFunction, white: zenpixels::hdr::DiffuseWhite) 
     }
 }
 
+/// A background in `source`'s primaries and linear light.
+fn matte_background(
+    background: zenpixels::Color,
+    reference_white: Option<zenpixels::hdr::DiffuseWhite>,
+    source: PixelDescriptor,
+) -> Result<[f32; 3], At<ConvertError>> {
+    let from = background.descriptor();
+    let hdr = matches!(
+        from.transfer(),
+        TransferFunction::Pq | TransferFunction::Hlg
+    );
+    // An HDR background's linear is only comparable to a source with the same transfer.
+    if (from.has_alpha() && from.alpha() != Some(AlphaMode::Opaque))
+        || (hdr && from.transfer() != source.transfer())
+    {
+        return Err(whereat::at!(ConvertError::NoPath { from, to: source }));
+    }
+    let primaries = if source.primaries == ColorPrimaries::Unknown {
+        from.primaries
+    } else {
+        source.primaries
+    };
+    let to = PixelDescriptor::new(
+        ChannelType::F32,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Linear,
+    )
+    .with_primaries(primaries);
+    let options = ConvertOptions::permissive()
+        .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
+        .with_clip_out_of_gamut(false);
+    let mut linear = [0f32; 3];
+    convert_row_buffered(
+        &ConvertPlan::new_explicit(from, to, &options)?,
+        background.as_bytes(),
+        bytemuck::cast_slice_mut(&mut linear),
+        1,
+        &mut ConvertScratch::new(),
+    );
+    if hdr {
+        return Ok(linear);
+    }
+    let white = matte_white(
+        source.transfer(),
+        reference_white.unwrap_or(zenpixels::hdr::DiffuseWhite::BT2408),
+    );
+    Ok(linear.map(|c| c * white))
+}
+
 /// Selects which fused TF + matrix + TF kernel a [`ConvertStep::Fused`]
 /// dispatches to. Each variant is one (source-TF, source-depth, dest-depth,
 /// dest-TF, channel-shape) shape that the planner can peephole.
@@ -264,9 +314,9 @@ pub(crate) enum ConvertStep {
     /// function: pixel RGB is EOTF'd per source TF, alpha-blended against
     /// the pre-linearized matte, then OETF'd back to source TF. Alpha is
     /// treated as linear regardless of color-channel TF. The matte
-    /// `(r, g, b)` is always interpreted as sRGB u8 (CSS-style background), and `white` is
-    /// the source's linear value for SDR white: 1.0, except on PQ and HLG.
-    MatteComposite { r: u8, g: u8, b: u8, white: f32 },
+    /// `linear` is the background in the source's primaries and linear light, resolved once at
+    /// planning so that rows only blend.
+    MatteComposite { linear: [f32; 3] },
     /// Gray → RGB (replicate gray to all 3 channels).
     GrayToRgb,
     /// Gray → RGBA (replicate + opaque alpha).
@@ -1509,12 +1559,11 @@ impl ConvertPlan {
         //    the same pass, which a pair of same-layout TF steps cannot do.
         if drops_alpha
             && let AlphaPolicy::CompositeOnto {
-                r,
-                g,
-                b,
+                background,
                 reference_white,
             } = options.alpha_policy
         {
+            let matte = matte_background(background, reference_white, from)?;
             let mut expanded = Vec::new();
             for step in plan.steps.drain(..) {
                 match step {
@@ -1545,15 +1594,7 @@ impl ConvertPlan {
             let mut idx = 0;
             while idx < plan.steps.len() {
                 if matches!(plan.steps[idx], ConvertStep::DropAlpha) {
-                    plan.steps[idx] = ConvertStep::MatteComposite {
-                        r,
-                        g,
-                        b,
-                        white: matte_white(
-                            from.transfer(),
-                            reference_white.unwrap_or(zenpixels::hdr::DiffuseWhite::BT2408),
-                        ),
-                    };
+                    plan.steps[idx] = ConvertStep::MatteComposite { linear: matte };
                     if src_is_premul {
                         plan.steps.insert(idx, ConvertStep::PremulToStraight);
                         idx += 1;

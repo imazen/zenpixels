@@ -500,7 +500,7 @@ Three entry points: `best_match()` (simple), `best_match_with()` (with consumer 
 
 Every operation that destroys information requires an explicit policy via `ConvertOptions`:
 
-- **Alpha removal**: `DiscardIfOpaque`, `CompositeOnto { r, g, b }`, `DiscardUnchecked`, or `Forbid`
+- **Alpha removal**: `DiscardIfOpaque`, `CompositeOnto { background, reference_white }`, `DiscardUnchecked`, or `Forbid`
 - **Depth reduction**: `Round`, `Truncate`, or `Forbid`
 - **RGB to gray**: requires explicit luma coefficients (`Bt709`, `Bt601`, `Bt2020`, or `DisplayP3`), or `None` to forbid. Y' (encoded luma) semantic — round-trips bit-exactly for `R==G==B`.
 

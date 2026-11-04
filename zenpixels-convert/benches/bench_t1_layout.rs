@@ -271,9 +271,7 @@ fn bench_matte_composite(suite: &mut Suite) {
                     let dst_desc = rgb_desc(ct, tf);
                     let opts = ConvertOptions::permissive().with_alpha_policy(
                         AlphaPolicy::CompositeOnto {
-                            r: 64,
-                            g: 64,
-                            b: 64,
+                            background: zenpixels::Color::srgb8(64, 64, 64),
                             reference_white: None,
                         },
                     );

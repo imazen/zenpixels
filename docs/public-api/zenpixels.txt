@@ -9,32 +9,32 @@
 ## summary
 #
 #   pub modules                                12
-#   pub types (struct/enum/trait/alias)       116
-#   pub consts/statics                        305
+#   pub types (struct/enum/trait/alias)       118
+#   pub consts/statics                        309
 #   free functions                              6
-#   inherent methods                          310
-#   struct fields                             123
+#   inherent methods                          314
+#   struct fields                             119
 #   enum variants                             306
 #   re-exports                                  4
-#   trait roster entries (type × trait)       396
-#   auto-trait-complete types                  54
+#   trait roster entries (type × trait)       402
+#   auto-trait-complete types                  55
 #   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          454
+#   (root)                          457
 #   buffer                          272
 #   cicp                             36
-#   color                            64
+#   color                            69
 #   descriptor                      165
 #   hdr                              12
 #   icc                              13
 #   orientation                      11
 #   pixel_types                       9
 #   plane                            87
-#   policy                           26
+#   policy                           24
 #   sample                           33
 
-## items (1050 lines)
+## items (1053 lines)
 
 pub mod zenpixels
 pub use At
@@ -249,6 +249,10 @@ pub const fn color::NamedProfile::from_cicp(cicp::Cicp) -> core::option::Option<
 pub const fn color::NamedProfile::from_primaries_transfer(descriptor::ColorPrimaries, descriptor::TransferFunction) -> core::option::Option<Self> [also: (root)]
 pub const fn color::NamedProfile::to_cicp(self) -> core::option::Option<cicp::Cicp> [also: (root)]
 pub const fn color::NamedProfile::to_primaries_transfer(self) -> (descriptor::ColorPrimaries, descriptor::TransferFunction) [also: (root)]
+pub fn color::Color::as_bytes(&self) -> &[u8]
+pub const fn color::Color::descriptor(&self) -> descriptor::PixelDescriptor [also: (root)]
+pub const fn color::Color::srgb8(u8, u8, u8) -> Self [also: (root)]
+pub fn color::Color::try_new(descriptor::PixelDescriptor, &[u8]) -> core::result::Result<Self, buffer::BufferError>
 pub color::ColorContext::cicp: core::option::Option<cicp::Cicp>
 pub color::ColorContext::diffuse_white: core::option::Option<hdr::DiffuseWhite>
 pub color::ColorContext::icc: core::option::Option<alloc::sync::Arc<[u8]>>
@@ -609,9 +613,7 @@ pub type plane::PlaneMut<'a, T> = plane::Plane<&'a mut [T]>
 pub type plane::PlaneRef<'a, T> = plane::Plane<&'a [T]>
 pub mod policy
 pub policy::AlphaPolicy::CompositeOnto
-pub policy::AlphaPolicy::CompositeOnto::b: u8
-pub policy::AlphaPolicy::CompositeOnto::g: u8
-pub policy::AlphaPolicy::CompositeOnto::r: u8
+pub policy::AlphaPolicy::CompositeOnto::background: color::Color
 pub policy::AlphaPolicy::CompositeOnto::reference_white: core::option::Option<hdr::DiffuseWhite>
 pub policy::AlphaPolicy::DiscardIfOpaque
 pub policy::AlphaPolicy::DiscardUnchecked
@@ -695,9 +697,7 @@ pub AlphaMode::Straight
 pub AlphaMode::Undefined
 #[non_exhaustive] pub enum AlphaPolicy [also: policy]
 pub AlphaPolicy::CompositeOnto
-pub AlphaPolicy::CompositeOnto::b: u8
-pub AlphaPolicy::CompositeOnto::g: u8
-pub AlphaPolicy::CompositeOnto::r: u8
+pub AlphaPolicy::CompositeOnto::background: color::Color
 pub AlphaPolicy::CompositeOnto::reference_white: core::option::Option<hdr::DiffuseWhite>
 pub AlphaPolicy::DiscardIfOpaque
 pub AlphaPolicy::DiscardUnchecked
@@ -870,6 +870,9 @@ pub fn cicp::Cicp::matrix_coefficients_name(u8) -> &'static str
 pub fn cicp::Cicp::transfer_characteristics_name(u8) -> &'static str
 pub fn cicp::Cicp::transfer_function_enum(&self) -> descriptor::TransferFunction
 pub fn cicp::Cicp::try_to_descriptor(&self, descriptor::PixelFormat) -> core::result::Result<descriptor::PixelDescriptor, cicp::CicpDescriptorError>
+pub struct Color [also: color]
+pub fn color::Color::as_bytes(&self) -> &[u8]
+pub fn color::Color::try_new(descriptor::PixelDescriptor, &[u8]) -> core::result::Result<Self, buffer::BufferError>
 #[non_exhaustive] pub struct ColorContext [also: color]
 pub ColorContext::cicp: core::option::Option<cicp::Cicp>
 pub ColorContext::diffuse_white: core::option::Option<hdr::DiffuseWhite>
@@ -1087,7 +1090,7 @@ pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 pub trait StorageSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::marker::Sized [also: buffer]
 
-## trait impls (83 types)
+## trait impls (84 types)
 
 &S: plane::SampleStorage
 &mut S: plane::SampleStorage, plane::SampleStorageMut
@@ -1113,6 +1116,7 @@ buffer::Rgbx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, b
 cicp::Cicp: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 cicp::CicpDescriptorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 cicp::UnspecifiedMatrixError: Debug, Display, Error
+color::Color: Clone, Copy, Debug, Eq, Hash, PartialEq
 color::ColorAuthority: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 color::ColorContext: Clone, Debug, Default, Eq, PartialEq
 color::ColorOrigin: Clone, Debug, Eq, PartialEq

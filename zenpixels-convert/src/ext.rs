@@ -653,6 +653,42 @@ fn convert_to_typed<Q: Pixel>(buf: &PixelBuffer, target: PixelDescriptor) -> Pix
         .expect("convert_to_typed: type mismatch after conversion")
 }
 
+/// Conversion of one [`Color`](zenpixels::Color).
+pub trait ColorConvertExt: crate::sealed::Sealed + Sized {
+    /// This color in `target`'s format, transfer and primaries, without a one-pixel buffer.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`RowConverter::new_explicit`](crate::RowConverter::new_explicit) refuses for this
+    /// color's descriptor and `target`, or [`ConvertError::Buffer`](crate::ConvertError::Buffer)
+    /// when `target`'s pixels are too wide for a color.
+    fn try_convert_to(
+        &self,
+        target: PixelDescriptor,
+        options: &zenpixels::ConvertOptions,
+    ) -> Result<Self, whereat::At<crate::ConvertError>>;
+}
+
+impl ColorConvertExt for zenpixels::Color {
+    fn try_convert_to(
+        &self,
+        target: PixelDescriptor,
+        options: &zenpixels::ConvertOptions,
+    ) -> Result<Self, whereat::At<crate::ConvertError>> {
+        let mut converter = crate::RowConverter::new_explicit(self.descriptor(), target, options)?;
+        let mut pixel = [[0f32; 4]; 1];
+        let pixel = bytemuck::cast_slice_mut::<[f32; 4], u8>(&mut pixel);
+        if target.bytes_per_pixel() > pixel.len() {
+            return Err(whereat::at!(crate::ConvertError::Buffer(
+                zenpixels::buffer::BufferError::InvalidDimensions
+            )));
+        }
+        let pixel = &mut pixel[..target.bytes_per_pixel()];
+        converter.convert_row(self.as_bytes(), pixel, 1);
+        Self::try_new(target, pixel).map_err(|e| whereat::at!(crate::ConvertError::Buffer(e)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

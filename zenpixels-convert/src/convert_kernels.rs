@@ -105,8 +105,8 @@ pub(super) fn apply_step_u8(
             drop_alpha(src, dst, w, from.channel_type());
         }
 
-        ConvertStep::MatteComposite { r, g, b, white } => {
-            matte_composite(src, dst, w, from, [*r, *g, *b], *white);
+        ConvertStep::MatteComposite { linear } => {
+            matte_composite(src, dst, w, from, *linear);
         }
 
         ConvertStep::GrayToRgb => {
@@ -681,16 +681,13 @@ fn drop_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
 /// channel type and transfer, through the same transfer slices as the other kernels.
 /// sRGB U8 keeps its table-based decode and encode.
 ///
-/// **Matte interpretation.** The matte (r, g, b) is sRGB u8 regardless of source TF, like a
-/// CSS background color. On PQ and HLG sources it sits at `white`, the linear value of the
-/// reference white the planner resolved, so that white isn't the format's peak.
+/// `matte` is the background, already in the source's primaries and linear light.
 fn matte_composite(
     src: &[u8],
     dst: &mut [u8],
     width: usize,
     from: PixelDescriptor,
-    background: [u8; 3],
-    white: f32,
+    matte: [f32; 3],
 ) {
     let ch_type = from.channel_type();
     if !matches!(
@@ -702,9 +699,6 @@ fn matte_composite(
     }
     let tf = from.transfer();
     let srgb_u8 = ch_type == ChannelType::U8 && tf == TransferFunction::Srgb;
-
-    // Matte is specified in sRGB regardless of source TF (see doc above).
-    let matte = background.map(|c| linear_srgb::default::srgb_u8_to_linear(c) * white);
 
     const PIXELS: usize = 128;
     let mut rgba = [0f32; PIXELS * 4];

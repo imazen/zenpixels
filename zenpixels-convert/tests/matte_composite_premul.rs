@@ -35,9 +35,7 @@ fn rgb_u8() -> PixelDescriptor {
 
 fn opts_with_bg(r: u8, g: u8, b: u8) -> ConvertOptions {
     ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-        r,
-        g,
-        b,
+        background: zenpixels::Color::srgb8(r, g, b),
         reference_white: None,
     })
 }
