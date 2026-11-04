@@ -382,3 +382,47 @@ fn typed_buffers_move_into_imgvec() {
     let back = ImgVec::try_from(buffer).unwrap();
     assert_eq!(back.buf().as_ptr(), ptr);
 }
+
+#[test]
+fn slices_copy_to_tight_typed_buffers() {
+    use zenpixels::{Cicp, ColorContext};
+    let context = std::sync::Arc::new(ColorContext::from_cicp(Cicp::DISPLAY_P3));
+    // Padded rows with non-zero padding, in three sample types.
+    for (d, sample) in [
+        (PixelDescriptor::RGB8_SRGB, 1usize),
+        (PixelDescriptor::RGB16_SRGB, 2),
+        (PixelDescriptor::RGBAF32_LINEAR, 4),
+    ] {
+        let row = 5 * d.bytes_per_pixel();
+        let stride = row + d.bytes_per_pixel();
+        let mut source = PixelBuffer::new((stride / d.bytes_per_pixel()) as u32, 3, d).into_parts();
+        source.width = 5;
+        source.color_context = Some(context.clone());
+        let mut source = PixelBuffer::try_from_parts(source).unwrap();
+        source.as_slice_mut().as_strided_bytes_mut().fill(0xEE);
+        for y in 0..3 {
+            source.as_slice_mut().row_mut(y).fill(y as u8 + 1);
+        }
+        let copy = source.as_slice().try_to_tight_buffer().unwrap();
+        assert_eq!(copy.stride(), row);
+        assert_eq!(copy.descriptor(), d);
+        assert!(std::sync::Arc::ptr_eq(
+            copy.color_context().unwrap(),
+            &context
+        ));
+        for y in 0..3 {
+            assert_eq!(copy.as_slice().row(y), source.as_slice().row(y));
+        }
+        let parts = copy.into_parts();
+        assert_eq!(parts.offset, 0);
+        assert_eq!(parts.data.as_bytes().len(), row * 3);
+        match (parts.data, sample) {
+            (PixelStorage::U8(_), 1) | (PixelStorage::U16(_), 2) | (PixelStorage::F32(_), 4) => {}
+            (other, _) => panic!("{d:?}: {other:?}"),
+        }
+    }
+    // Empty.
+    let empty = PixelBuffer::new(0, 0, PixelDescriptor::RGB16_SRGB);
+    let copy = empty.as_slice().try_to_tight_buffer().unwrap();
+    assert_eq!((copy.width(), copy.height()), (0, 0));
+}

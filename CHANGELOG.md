@@ -78,6 +78,7 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   one byte late when longer. It now copies into typed storage in that case.
 - `from_pixels` and `from_imgvec` move `u16` and `f32` pixels instead of copying. Add
   `TryFrom<PixelBuffer<P>> for ImgVec<P>`.
+- Add `PixelSlice::try_to_tight_buffer`, which copies rows into typed storage without zeroing first.
 - Remove `new_simd_aligned` and `try_new_simd_aligned`; `try_new_aligned` allocates aligned
   storage. `offset` and `simd_aligned_stride` remain.
 - `ColorAuthority` is no longer `#[non_exhaustive]`, and gains `select`, so readers can't

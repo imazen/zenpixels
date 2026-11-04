@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)       116
 #   pub consts/statics                        301
 #   free functions                              6
-#   inherent methods                          308
+#   inherent methods                          310
 #   struct fields                             121
 #   enum variants                             300
 #   re-exports                                  4
@@ -22,7 +22,7 @@
 #
 # per-module pub lines:
 #   (root)                          450
-#   buffer                          270
+#   buffer                          272
 #   cicp                             36
 #   color                            64
 #   descriptor                      158
@@ -34,7 +34,7 @@
 #   policy                           25
 #   sample                           33
 
-## items (1036 lines)
+## items (1038 lines)
 
 pub mod zenpixels
 pub use At
@@ -146,6 +146,7 @@ pub fn buffer::PixelSlice<'a, P>::row_with_stride(&self, u32) -> &[u8]
 pub fn buffer::PixelSlice<'a, P>::rows(&self) -> u32
 pub fn buffer::PixelSlice<'a, P>::stride(&self) -> usize
 pub fn buffer::PixelSlice<'a, P>::sub_rows(&self, u32, u32) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelSlice<'a, P>::try_to_tight_buffer(&self) -> core::result::Result<buffer::PixelBuffer, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSlice<'a, P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelSlice<'a, Q>>
 pub fn buffer::PixelSlice<'a, P>::width(&self) -> u32
 pub fn buffer::PixelSlice<'a, P>::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self
@@ -1019,6 +1020,7 @@ pub fn buffer::PixelSlice<'a, P>::row_with_stride(&self, u32) -> &[u8]
 pub fn buffer::PixelSlice<'a, P>::rows(&self) -> u32
 pub fn buffer::PixelSlice<'a, P>::stride(&self) -> usize
 pub fn buffer::PixelSlice<'a, P>::sub_rows(&self, u32, u32) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelSlice<'a, P>::try_to_tight_buffer(&self) -> core::result::Result<buffer::PixelBuffer, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSlice<'a, P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelSlice<'a, Q>>
 pub fn buffer::PixelSlice<'a, P>::width(&self) -> u32
 pub fn buffer::PixelSlice<'a, P>::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self

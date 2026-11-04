@@ -398,6 +398,40 @@ impl PixelStorage {
         })
     }
 
+    /// Storage of `channel`'s sample type holding `rows` appended in order. `rows` must
+    /// be aligned for that sample type and total `bytes` bytes. Nothing is zeroed first.
+    fn try_from_rows<'r>(
+        channel: ChannelType,
+        bytes: usize,
+        rows: impl Iterator<Item = &'r [u8]>,
+    ) -> Result<Self, BufferError> {
+        fn gather<'r, T: StorageSample>(
+            bytes: usize,
+            rows: impl Iterator<Item = &'r [u8]>,
+        ) -> Result<PixelStorage, BufferError> {
+            let mut samples: Vec<T> = Vec::new();
+            samples
+                .try_reserve_exact(bytes / core::mem::size_of::<T>())
+                .map_err(|_| BufferError::AllocationFailed)?;
+            for row in rows {
+                samples.extend_from_slice(bytemuck::cast_slice(row));
+            }
+            Ok(samples.into())
+        }
+        match channel {
+            ChannelType::I8 => gather::<i8>(bytes, rows),
+            ChannelType::U16 | ChannelType::F16 => gather::<u16>(bytes, rows),
+            ChannelType::I16 => gather::<i16>(bytes, rows),
+            ChannelType::U32 => gather::<u32>(bytes, rows),
+            ChannelType::I32 => gather::<i32>(bytes, rows),
+            ChannelType::F32 => gather::<f32>(bytes, rows),
+            ChannelType::U64 => gather::<u64>(bytes, rows),
+            ChannelType::I64 => gather::<i64>(bytes, rows),
+            ChannelType::F64 => gather::<f64>(bytes, rows),
+            _ => gather::<u8>(bytes, rows),
+        }
+    }
+
     /// Allocate zeroed storage of `channel`'s sample type holding `bytes` bytes.
     fn try_zeroed(channel: ChannelType, bytes: usize) -> Result<Self, BufferError> {
         fn zeroed<T: StorageSample>(bytes: usize) -> Result<PixelStorage, BufferError> {
@@ -977,6 +1011,40 @@ impl<'a, P> PixelSlice<'a, P> {
         } else {
             None
         }
+    }
+
+    /// Copy the rows into a tight owned buffer of the format's own sample type, with the
+    /// same color. It doesn't zero the allocation first, and the result can move to a
+    /// typed owner.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::InvalidDimensions`] when the size overflows,
+    /// [`BufferError::AllocationFailed`] when the allocator refuses.
+    pub fn try_to_tight_buffer(&self) -> Result<PixelBuffer, At<BufferError>> {
+        let row_bytes = (self.width as usize)
+            .checked_mul(self.descriptor.bytes_per_pixel())
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let total = row_bytes
+            .checked_mul(self.rows as usize)
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let rows = (0..self.rows as usize).map(|y| {
+            let start = y * self.stride;
+            &self.data[start..start + row_bytes]
+        });
+        let data = PixelStorage::try_from_rows(self.descriptor.channel_type(), total, rows)
+            .map_err(|e| whereat::at!(e))?;
+        Ok(PixelBuffer {
+            data,
+            offset: 0,
+            width: self.width,
+            height: self.rows,
+            stride: row_bytes,
+            descriptor: self.descriptor,
+            color: self.color.clone(),
+            exact: self.exact,
+            _pixel: PhantomData,
+        })
     }
 
     /// Raw backing bytes including inter-row stride padding.
