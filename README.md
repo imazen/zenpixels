@@ -423,12 +423,12 @@ the descriptor is a small `Copy` struct, so read its fields freely
 > Parts extraction and checked strided ownership adoption are implemented.
 
 `PixelBuffer::new(w, h, desc)` / `try_new()` allocate a zero-filled buffer with
-tight stride; `new_simd_aligned()` / `try_new_simd_aligned()` pad rows for SIMD;
+tight stride, in a `Vec` of the format's sample type; `try_new_aligned()` gives 64-byte rows for SIMD;
 [`from_vec(data, w, h, desc)`](#wrapping-a-decoders-vecu8-no-copy) wraps an
 existing `Vec<u8>` (tight stride, no copy). Allocating `try_*` constructors return
 `Result<_, At<BufferError>>` (a [`whereat`](https://crates.io/crates/whereat)
 location wrapper around [`BufferError`] — `AllocationFailed`, `InvalidDimensions`,
-`InsufficientData`, `StrideTooSmall`, …); `new` and `new_simd_aligned` panic on failure
+`InsufficientData`, `StrideTooSmall`, …); `new` panics on failure
 (see [allocation policy](https://docs.rs/zenpixels/latest/zenpixels/#allocation-policy)).
 All constructors validate dimensions, stride, and alignment. `into_parts()`
 recovers the allocation with its description; the removed `into_vec()` recovered only the

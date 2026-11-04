@@ -135,8 +135,10 @@ imgref (1.x) is built in: with the `imgref` feature, `TryFrom` converts
 a `PlaneBuf`, without copying (pointer identity is tested). The conversions are
 fallible because imgref does not check its buffer length, holds `u32`
 dimensions and needs a nonzero stride. `PlaneBuf` to `ImgVec` (and
-`PlaneBuf::into_vec` for any owner of a plain `Vec`) hands the adopted `Vec` back;
-`ImgVec` also refuses dimensions it cannot hold.
+`PlaneBuf::try_into_vec` for any owner of a plain `Vec`) hands the adopted `Vec` back
+when row 0 is at index 0, and otherwise returns the plane unchanged. Today's
+constructors always put it there; the method stays fallible so that a later form can
+use an offset. `ImgVec` also refuses dimensions it cannot hold.
 
 A `Vec<T>` cannot be both 64-byte aligned and start at index 0, because `Vec` frees
 with `align_of::<T>()`. `AlignedSamples<T>` holds a `Vec` of a `#[repr(align(64))]`
@@ -218,15 +220,22 @@ pointer and allocated nothing, unless marked as a copy.
 | `ImageBuffer<_, Vec<T>>` to and from a tight `PlaneBuf`/`PixelBuffer` | Zero-copy for `u8`, `u16`, `f32` |
 | `AlignedPlane` or `AlignedSamples` to `ImageBuffer<_, AlignedSamples<T>>` | Zero-copy when the rows are tight; the image keeps the aligned container |
 | `AlignedSamples<T>` to `ImageBuffer<_, Vec<T>>` | **Copy.** A `Vec` must free with the layout it allocated |
+| `DynamicImage` to and from `PixelBuffer`, every variant | Zero-copy, through `PixelStorage` |
 
 The `image` feature provides these as `TryFrom` impls, for gray, gray-alpha, RGB and
 RGBA in `u8`, `u16` and `f32`: `ImageBuffer` to and from `Plane` and `PixelBuffer`,
-`&ImageBuffer` and `&mut ImageBuffer` to the borrowed types, and strided `PlaneRef`,
-`PlaneMut` and `PixelSlice` to `FlatSamples`. `tests/image_interop.rs` runs on plain
+`&ImageBuffer` and `&mut ImageBuffer` to the borrowed types, strided `PlaneRef`,
+`PlaneMut` and `PixelSlice` to `FlatSamples`, and every `DynamicImage` variant to and
+from `PixelBuffer` and the borrowed types.
+
+`PixelFormat` converts with all 10 `ColorType`s. It converts with 12 of the 29
+`ExtendedColorType`s (`L8`, `La8`, `Rgb8`, `Rgba8`, `L16`, `La16`, `Rgb16`, `Rgba16`,
+`Bgra8`, `Rgb32F`, `Rgba32F`, `Cmyk8`). The rest refuse: `A8`, `Bgr8` and `Cmyk16` have no
+`PixelFormat`, the sub-byte types and `Rgb5x1` aren't byte-addressable samples, and
+`Unknown` has no meaning. `image` itself has no pixel type for most of these. `tests/image_interop.rs` runs on plain
 `cargo test` because the crate has a dev-dependency on itself with the feature on.
 `image` needs Rust 1.88; zenpixels without the feature stays on 1.85. The guard in
 `tests/dep_guard.rs` keeps `image` and `rustversion` optional and out of the defaults.
-`DynamicImage` is not covered, because its owned form spans three storage types.
 
 What those conversions refuse, returning the source unchanged:
 
@@ -251,27 +260,51 @@ For `v_frame`, which has no feature because nothing here consumes it:
 - Its `copy_from_u8_slice_with_stride` requires exactly `stride * height` bytes, so it
   refuses `into_strided_samples()` when the last row has no padding. Copy row by row.
 
-### Packed buffers use the same storage
+### Packed buffers: `PixelStorage`
 
-`PixelBuffer<P, S = Vec<u8>>` adopts any `SampleStorage` through
-`PixelBufferParts<S>`, so packed data gets what planes get: `Vec<u16>` and
-`Vec<f32>` move in and out with no copy, which `Vec<u8>` could not do because the
-allocator's alignment differs (`bytemuck` refuses it with `AlignmentMismatch`).
-Existing `PixelBuffer` and `PixelBuffer<P>` code keeps meaning `Vec<u8>`.
+`PixelBuffer<P, S = PixelStorage>` holds a `Vec` of the format's real sample type. A
+`Vec` must free memory with the alignment it allocated, so an owned `Vec<u8>` can never
+become a `Vec<u16>` or the reverse without a copy; only the same alignment casts
+(`Vec<Rgb<u16>>` to `Vec<u16>`, measured). An enum is what lets that survive type
+erasure: `DecodeOutput` goes through `dyn` dispatch, so a type parameter can't carry it.
+Only `as_bytes` branches on the variant. `PixelSlice` stays `&[u8]`, so `row()` and
+kernels have no branch.
 
-`PixelBuffer::try_new_aligned` allocates `AlignedSamples` directly: index 0, 64-byte
-first pixel, every format viewable as its pixel type. `SampleStorage::as_bytes` and
-`as_bytes_mut` alias any storage as bytes, which is where code generic over storage can
-stop being generic.
+- **Going in:** `PixelBufferParts::new(rgb_f32.into(), ...)` moves a decoder's `Vec`.
+  `from_vec(Vec<u8>)` stays for bytes; `from_pixels(Vec<P>)` now moves instead of copying.
+- **Coming out:** `into_parts().data` is the enum. `try_into_vec::<T>()` returns the `Vec`
+  or the storage unchanged, and `try_into_tight_u8_vec` also checks the offset and stride.
+  `TryFrom<PixelBuffer<P>> for ImgVec<P>` moves a typed buffer. None of these hides a copy.
+- **Size:** the default buffer stays 72 bytes, which a compile-time assert pins. The enum
+  costs 8 bytes because a nested enum's tag can't use the outer struct's padding, so
+  `offset` is stored as `u32` and the freed bytes plus existing padding absorb it.
+  `try_from_parts` refuses an offset past 4 GiB. `Box<[T]>` would also fit, but shrinking
+  a `Vec` with spare capacity can reallocate, a hidden copy, and it loses the capacity.
+- **Offsets stay:** adopted buffers can have a prefix, and `offset` plus an LCM stride
+  (`PixelDescriptor::simd_aligned_stride`) is how a later constructor can reach 64-byte
+  rows in a plain `Vec`. Handoffs are `try_` so that adding one needs no API change.
 
-Still `Vec<u8>` only: the other allocating constructors, `crop_copy`, `into_contiguous`,
-`into_contiguous_pixels`, `transform_in_place`, and `PixelCow::Owned`.
+**Alignment and handoff conflict.** Keeping every row on 64 bytes takes a padded stride,
+and `ImageBuffer` needs tight rows. `AlignedSamples` can't become a `Vec<T>` at all. So
+`PixelStorage` is plain `Vec`s with tight rows, which favors the handoff on whole frames,
+where alignment gains least (under 7% from memory,
+`benchmarks/row_alignment_2026-10-31.md`). 64-byte buffers belong where kernels work on
+cache-resident rows: `AlignedPlane`, `try_new_aligned`, or a `DecodeRowSink` that owns its
+memory. The sink is also the route for custom allocators and pools across `zencodec`.
+`PixelStorage` is `#[non_exhaustive]`, so aligned or boxed variants can come later.
+
+`S` stays for storage that doesn't flow through `DecodeOutput`. Any `SampleStorage` works:
+`Vec<T>`, `Box<[T]>`, `AlignedSamples`, slices, pool slots. `ByteStorage` is what
+`PixelBuffer` needs; everything past that reference works on bytes.
+
+Still `PixelStorage` only: `into_contiguous`, `into_contiguous_pixels`,
+`transform_in_place`, and `PixelCow::Owned`.
 
 ### The `allocator_api` feature
 
 Alignment no longer needs a custom allocator; `AlignedSamples` has it. The feature is
 for storage that comes from somewhere else, such as a pool or an arena. With it,
-`Vec<T, A>` and `Box<S, A>` are `SampleStorage` for any `A: Allocator`, and `into_vec`
+`Vec<T, A>` and `Box<S, A>` are `SampleStorage` for any `A: Allocator`, and `try_into_vec`
 returns `Vec<T, A>`. That includes `Global`, so existing code keeps compiling. The
 impls are gated with `rustversion`: `Allocator`, `Vec<T, A>` and `Box<T, A>` are stable
 from Rust 1.100 (rust-lang/rust#156882), and on older compilers the feature has no
@@ -289,7 +322,7 @@ Build the `Vec` with `with_capacity_in` and adopt it.
 Additions that would serve the other adapters, each additive:
 
 - `PlaneBuf` into its `Vec` plus start offset, for owners that accept an offset
-  (`into_vec` covers owners that need index 0).
+  (`try_into_vec` covers owners that need index 0).
 - `f16` and `i16` samples: a `PlaneSample` impl and an `AnyPlane` variant each.
 - The variants listed in the table, when a source produces them.
 

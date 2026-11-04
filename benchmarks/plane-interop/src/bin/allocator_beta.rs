@@ -69,13 +69,13 @@ fn main() {
     );
 
     let plane = Plane::new(aligned::<u16>(16), 3, 4, 4).unwrap();
-    let back: Vec<u16, Align64> = plane.into_vec().unwrap();
+    let back: Vec<u16, Align64> = plane.try_into_vec().unwrap();
     println!(
-        "Plane<Vec<u16, Align64>>::into_vec: addr%64={}",
+        "Plane<Vec<u16, Align64>>::try_into_vec: addr%64={}",
         back.as_ptr() as usize % 64
     );
     println!(
-        "size_of PixelBuffer: Vec<u8>={} Vec<u8, Align64>={}",
+        "size_of PixelBuffer: default={} Vec<u8, Align64>={}",
         size_of::<PixelBuffer>(),
         size_of::<PixelBuffer<(), Vec<u8, Align64>>>()
     );

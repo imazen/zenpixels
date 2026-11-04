@@ -53,8 +53,8 @@ move tight PlaneBuf<f32> -> ImageBuffer<Luma<f32>, Vec>        same-ptr  allocs=
 move ImageBuffer<Rgb<u8>, Vec> -> PixelBuffer                  same-ptr  allocs=0
 move tight PixelBuffer<RGB8> -> ImageBuffer<Rgb<u8>, Vec>      same-ptr  allocs=0
 ImageBuffer<Rgb<u16>> -> PixelSlice (borrow)                   same-ptr  allocs=0
-    Vec<u16> -> Vec<u8>: refused (AlignmentMismatch), so Vec<u8> storage cannot adopt it
-    Vec<u8> -> Vec<u16>: refused (AlignmentMismatch), so a Vec<u8>-backed buffer copies to reach ImageBuffer<Rgb<u16>, Vec<u16>>
+    Vec<u16> -> Vec<u8>: refused (AlignmentMismatch), so Vec<u8> storage cannot adopt it; PixelStorage holds the Vec<u16> instead
+    Vec<u8> -> Vec<u16>: refused (AlignmentMismatch), so bytes copy to reach ImageBuffer<Rgb<u16>, Vec<u16>>
     new_simd_aligned stride_bytes=384 (next multiple of 64 = 256)
     as_view::<Rgb<u16>> ok=true
 strided PixelSlice<RGB16> -> image::flat::View<Rgb<u16>>       same-ptr  allocs=0
@@ -74,7 +74,7 @@ TryFrom &ImageBuffer<Rgb<u16>> -> PixelSlice                   same-ptr  allocs=
     try_new_aligned RGB16: addr%64=0 stride=384 allocs=1
     last row as &[[u16; 3]]: 37 pixels
     misaligned u8 storage for RGB16: refused, parts_returned=true
-    size_of PixelBuffer: Vec<u8>=72 Vec<u16>=72 Box<[u8]>=64 &[u8]=64
+    size_of PixelBuffer: Vec<u8>=72 Vec<u16>=64 Box<[u8]>=56 &[u8]=56
 ### stride_rule
 RGB8   tight         stride=111  PixelSlice: ok
 RGB8   4-byte rows   stride=112  PixelSlice: REFUSED StrideNotPixelAligned
@@ -94,8 +94,8 @@ Vec<u8, Align64> adopted: offset=0 addr%64=0
 -> ImageBuffer<Rgb<u8>, Vec<u8, Align64>>: same-ptr
 Vec<u16, Align64> adopted: offset=0 addr%64=0
 Vec<f32, Align64> adopted: offset=0 addr%64=0
-Plane<Vec<u16, Align64>>::into_vec: addr%64=0
-size_of PixelBuffer: Vec<u8>=72 Vec<u8, Align64>=72
+Plane<Vec<u16, Align64>>::try_into_vec: addr%64=0
+size_of PixelBuffer: default=72 Vec<u8, Align64>=64
 ```
 
 Interpretation is in `docs/planar-types.md`.

@@ -118,6 +118,19 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed in the `PixelStorage` work (2026-11-04): `PixelBuffer::from_vec` assumed a
+  `Vec<u8>` is aligned for wide samples. On an allocator returning an odd address, an
+  exact-length buffer failed with `InsufficientData`, and a longer one was accepted with
+  every sample read one byte late: silently wrong pixels. glibc hid both.
+  `tests/odd_allocator.rs` runs under such an allocator; `from_vec` now copies into typed
+  storage in that case.
+- Fixed in the same work: `ColorAuthority`'s readers could disagree on a new variant
+  (ICC, CICP or the current pixel profile, depending on the reader, with no compile
+  error). It is no longer `#[non_exhaustive]`, and `ColorAuthority::select` is the one
+  decision. zencodec and zencodecs readers still need to adopt it.
+- Fixed in the same work: `cargo test -p zenpixels --no-default-features` didn't build, because
+  `tests/storage_contracts.rs` called the `icc`-only `resolve`.
+
 - Fixed on the output-plan review (2026-10-27): Gamma22 F32 conversion accepted
   `clip_out_of_gamut(false)` but clipped negative and above-white samples. The
   extended steps now reflect the existing Adobe exponent, retain the existing

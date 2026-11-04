@@ -310,8 +310,12 @@ fn main() {
             a,
         );
         let (back, a) = counted(|| {
-            ImageBuffer::<Luma<f32>, Vec<f32>>::from_raw(W as u32, H as u32, pb.into_vec().unwrap())
-                .unwrap()
+            ImageBuffer::<Luma<f32>, Vec<f32>>::from_raw(
+                W as u32,
+                H as u32,
+                pb.try_into_vec().unwrap(),
+            )
+            .unwrap()
         });
         report(
             "move tight PlaneBuf<f32> -> ImageBuffer<Luma<f32>, Vec>",
@@ -388,21 +392,25 @@ fn main() {
         match bytemuck::allocation::try_cast_vec::<u16, u8>(raw) {
             Ok(_) => println!("    Vec<u16> -> Vec<u8>: adopted"),
             Err((e, _)) => println!(
-                "    Vec<u16> -> Vec<u8>: refused ({e:?}), so Vec<u8> storage cannot adopt it"
+                "    Vec<u16> -> Vec<u8>: refused ({e:?}), so Vec<u8> storage cannot adopt it; PixelStorage holds the Vec<u16> instead"
             ),
         }
         let bytes = vec![0u8; 12];
         match bytemuck::allocation::try_cast_vec::<u8, u16>(bytes) {
             Ok(_) => println!("    Vec<u8> -> Vec<u16>: adopted"),
             Err((e, _)) => println!(
-                "    Vec<u8> -> Vec<u16>: refused ({e:?}), so a Vec<u8>-backed buffer copies to reach ImageBuffer<Rgb<u16>, Vec<u16>>"
+                "    Vec<u8> -> Vec<u16>: refused ({e:?}), so bytes copy to reach ImageBuffer<Rgb<u16>, Vec<u16>>"
             ),
         }
 
         // PixelBuffer u16, padded rows, to image's strided view (borrow).
         let stride_bytes = (W * 6).next_multiple_of(64);
-        let aligned =
-            PixelBuffer::try_new_simd_aligned(w, h, PixelDescriptor::RGB16_SRGB, 64).unwrap();
+        let aligned = PixelBuffer::<(), zenpixels::plane::AlignedSamples<u8>>::try_new_aligned(
+            w,
+            h,
+            PixelDescriptor::RGB16_SRGB,
+        )
+        .unwrap();
         let sl = aligned.as_slice();
         let bytes = sl.as_strided_bytes();
         println!(

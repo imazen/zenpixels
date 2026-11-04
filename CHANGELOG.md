@@ -56,18 +56,32 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
 - Add `plane::AlignedSamples<T>` (a `Vec` of 64-byte aligned chunks: index 0 is always
   on 64 bytes, with no `unsafe` and no custom allocator), `plane::AlignedPlane<T>`,
   and `PixelBuffer::try_new_aligned`. `PlaneBuf::alloc` moves to `AlignedPlane::alloc`.
-- Add `SampleStorage::as_bytes` and `SampleStorageMut::as_bytes_mut`.
+- Rename `PlaneBuf::into_vec` to `try_into_vec`.
+- Add `ByteStorage` and `ByteStorageMut`, with `as_bytes` and `as_bytes_mut`, for any `SampleStorage` and `PixelStorage`.
 - Rename `plane::PlaneStorage` and `PlaneStorageMut` to `SampleStorage` and
   `SampleStorageMut`.
 - Add feature `allocator_api`: `Vec<T, A>` and `Box<S, A>` are sample storage on Rust
   1.100 or newer, gated with `rustversion`; no effect on older compilers.
 - Add feature `image` (needs Rust 1.88): `TryFrom` conversions with `image` 0.25 for gray,
-  gray-alpha, RGB and RGBA in `u8`, `u16`, `f32`, without copying. Color travels with
+  gray-alpha, RGB and RGBA in `u8`, `u16`, `f32`, and every `DynamicImage` variant, without
+  copying, plus `PixelFormat` with `ColorType` (10 of 10) and `ExtendedColorType` (12 of 29). Color travels with
   packed buffers, and a conversion that would relabel pixels refuses.
-- `PixelBuffer<P, S = Vec<u8>>`, `PixelBufferParts<S = Vec<u8>>` and
-  `FromPartsError<S = Vec<u8>>`: `try_from_parts` adopts any `plane::SampleStorage`
-  (`Vec<u16>`, `Vec<f32>`, `Box<[T]>`, slices, pool slots) without copying, with the same
-  validation. Allocating constructors and layout-changing methods remain `Vec<u8>`.
+- `PixelBuffer<P, S = PixelStorage>`, `PixelBufferParts<S = PixelStorage>` and
+  `FromPartsError<S = PixelStorage>`. `PixelStorage` holds a `Vec` of the format's sample
+  type, so a decoder's `Vec<u16>` or `Vec<f32>` moves through type-erased carriers. Any
+  `ByteStorage` also adopts through `try_from_parts`. `PixelBuffer` stays 72 bytes.
+- **Breaking from 0.2:** `PixelBufferParts::data` is `PixelStorage`, not `Vec<u8>`. Use
+  `try_into_vec::<u8>()`, or `PixelBuffer::try_into_tight_u8_vec`, which also checks the
+  offset and stride. Neither copies.
+- `from_vec` treats byte 0 as the first pixel. Before, a misaligned `Vec<u8>` holding wide
+  samples failed with `InsufficientData` when exact-length and silently read every sample
+  one byte late when longer. It now copies into typed storage in that case.
+- `from_pixels` and `from_imgvec` move `u16` and `f32` pixels instead of copying. Add
+  `TryFrom<PixelBuffer<P>> for ImgVec<P>`.
+- Remove `new_simd_aligned` and `try_new_simd_aligned`; `try_new_aligned` allocates aligned
+  storage. `offset` and `simd_aligned_stride` remain.
+- `ColorAuthority` is no longer `#[non_exhaustive]`, and gains `select`, so readers can't
+  disagree about which source wins.
 - Add `plane`: `Plane<C>` (strided samples over any owner, with `PlaneRef`,
   `PlaneMut` and `PlaneBuf` aliases and `SampleStorage` for other owners),
   `AnyPlane`, `PlaneRole` (one role per plane; `CbCr`/`CrCb` for semi-planar

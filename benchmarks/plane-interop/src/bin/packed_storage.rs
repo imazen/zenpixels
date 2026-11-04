@@ -185,7 +185,7 @@ fn main() {
     // The image feature's conversions.
     let img = ImageBuffer::<Rgb<u16>, Vec<u16>>::new(w, H);
     let p0 = img.as_raw().as_ptr();
-    let (pb, a) = counted(|| PixelBuffer::try_from(img).unwrap());
+    let (pb, a) = counted(|| -> PixelBuffer { PixelBuffer::try_from(img).unwrap() });
     report(
         "TryFrom ImageBuffer<Rgb<u16>, Vec<u16>> -> PixelBuffer",
         pb.as_slice().as_strided_bytes().as_ptr() as *const u16 == p0,
