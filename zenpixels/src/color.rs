@@ -271,7 +271,6 @@ impl<'a> ColorProfileSource<'a> {
 /// described* its color (for re-encoding decisions). `ColorAuthority` says
 /// which field the CMS should *prefer* for building transforms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-#[non_exhaustive]
 pub enum ColorAuthority {
     /// ICC profile bytes take precedence for CMS transforms.
     ///
@@ -292,6 +291,19 @@ pub enum ColorAuthority {
     /// Codecs should only set this when `cicp` is populated.
     /// Lenient consumers may fall back to `icc_profile` if CICP is absent.
     Cicp,
+}
+
+impl ColorAuthority {
+    /// Choose between the ICC and CICP form of a color source: the authoritative one
+    /// when it is present, otherwise the other. Every reader of the authority should
+    /// choose through this, so that they cannot disagree.
+    #[inline]
+    pub fn select<T>(self, icc: Option<T>, cicp: Option<T>) -> Option<T> {
+        match self {
+            Self::Icc => icc.or(cicp),
+            Self::Cicp => cicp.or(icc),
+        }
+    }
 }
 
 /// Color space metadata for pixel data.

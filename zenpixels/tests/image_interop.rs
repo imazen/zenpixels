@@ -4,13 +4,16 @@
 
 use image::flat::FlatSamples;
 use image::metadata::{CicpColorPrimaries as P, CicpTransferCharacteristics as Tf};
-use image::{GenericImage, GenericImageView, ImageBuffer, Luma, LumaA, Pixel, Rgb, Rgba};
+use image::{
+    ColorType, DynamicImage, ExtendedColorType, GenericImage, GenericImageView, ImageBuffer, Luma,
+    LumaA, Pixel, Rgb, Rgba,
+};
 use zenpixels::plane::{
     AlignedPlane, AlignedSamples, Plane, PlaneBuf, PlaneMut, PlaneRef, SampleStorage,
 };
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelBuffer, PixelBufferParts,
-    PixelDescriptor, PixelSlice, PixelSliceMut, SignalRange, TransferFunction,
+    PixelDescriptor, PixelFormat, PixelSlice, PixelSliceMut, SignalRange, TransferFunction,
 };
 
 const SIZES: [(u32, u32); 5] = [(1, 1), (2, 3), (37, 11), (64, 2), (65, 7)];
@@ -46,7 +49,7 @@ macro_rules! every_format {
                     let ptr = img.as_raw().as_ptr();
                     let color = img.color_space();
 
-                    let buffer = PixelBuffer::try_from(img).unwrap();
+                    let buffer: PixelBuffer<(), Vec<$sample>> = PixelBuffer::try_from(img).unwrap();
                     let d = buffer.descriptor();
                     assert_eq!(d.channel_type(), ChannelType::$channel);
                     assert_eq!(d.layout(), ChannelLayout::$layout);
@@ -60,6 +63,34 @@ macro_rules! every_format {
                     assert_eq!(back.as_raw(), &want);
                     assert_eq!(back.color_space(), color);
                 }
+            }
+
+            /// The default storage, which crosses `dyn` boundaries, moves too.
+            #[test]
+            fn default_storage_round_trip_moves_the_allocation() {
+                for (w, h) in SIZES {
+                    let img = image(w, h);
+                    let ptr = img.as_raw().as_ptr();
+                    let want = img.as_raw().clone();
+                    let buffer: PixelBuffer = PixelBuffer::try_from(img).unwrap();
+                    assert_eq!(buffer.as_slice().as_strided_bytes().as_ptr().cast(), ptr);
+                    let back = ImageBuffer::<Px, Vec<$sample>>::try_from(buffer).unwrap();
+                    assert_eq!(back.as_raw().as_ptr(), ptr);
+                    assert_eq!(back.as_raw(), &want);
+                }
+            }
+
+            /// A buffer we allocated reaches `image` without a copy.
+            #[test]
+            fn allocated_buffers_hand_off() {
+                let d = PixelDescriptor::new_full(
+                    ChannelType::$channel, ChannelLayout::$layout, $alpha,
+                    TransferFunction::Srgb, ColorPrimaries::Bt709,
+                );
+                let buffer = PixelBuffer::new(9, 4, d);
+                let ptr = buffer.as_slice().as_strided_bytes().as_ptr();
+                let img = ImageBuffer::<Px, Vec<$sample>>::try_from(buffer).unwrap();
+                assert_eq!(img.as_raw().as_ptr().cast(), ptr);
             }
 
             #[test]
@@ -156,7 +187,7 @@ macro_rules! every_format {
                 let buffer = PixelBuffer::try_from_parts(PixelBufferParts::new(samples, w, h, w as usize * BPP, d)).unwrap();
                 let img = ImageBuffer::<Px, AlignedSamples<$sample>>::try_from(buffer).unwrap();
                 assert_eq!(img.as_raw().as_ptr(), ptr);
-                let again = PixelBuffer::try_from(img).unwrap();
+                let again: PixelBuffer<(), AlignedSamples<$sample>> = PixelBuffer::try_from(img).unwrap();
                 assert_eq!(again.as_slice().as_strided_bytes().as_ptr().cast(), ptr);
             }
         }
@@ -233,7 +264,7 @@ fn color_survives_both_directions() {
         assert_eq!(slice.descriptor().transfer, want_tf);
         assert_eq!(slice.descriptor().signal_range, SignalRange::Full);
         assert!(slice.color_context().is_none());
-        let buffer = PixelBuffer::try_from(img).unwrap();
+        let buffer: PixelBuffer = PixelBuffer::try_from(img).unwrap();
         assert_eq!(buffer.descriptor().primaries, want_prim);
         assert_eq!(buffer.descriptor().transfer, want_tf);
         assert!(buffer.color_context().is_none());
@@ -246,7 +277,7 @@ fn color_survives_both_directions() {
 fn color_zenpixels_cannot_name_is_kept_and_blocks_the_return_trip() {
     let img = rgb8_labeled(P::Rgb240m, Tf::Smpte240m);
     let ptr = img.as_raw().as_ptr();
-    let buffer = PixelBuffer::try_from(img).unwrap();
+    let buffer: PixelBuffer = PixelBuffer::try_from(img).unwrap();
     assert_eq!(buffer.descriptor().primaries, ColorPrimaries::Unknown);
     assert_eq!(buffer.descriptor().transfer, TransferFunction::Unknown);
     let cicp = buffer.color_context().unwrap().cicp.unwrap();
@@ -259,7 +290,7 @@ fn color_zenpixels_cannot_name_is_kept_and_blocks_the_return_trip() {
 }
 
 fn rgb8_parts(d: PixelDescriptor) -> PixelBuffer {
-    PixelBuffer::try_from_parts(PixelBufferParts::new(fill_u8(24), 4, 2, 12, d)).unwrap()
+    PixelBuffer::try_from_parts(PixelBufferParts::new(fill_u8(24).into(), 4, 2, 12, d)).unwrap()
 }
 
 #[test]
@@ -357,9 +388,9 @@ fn a_prefix_before_the_first_pixel_is_refused() {
         TransferFunction::Srgb,
         ColorPrimaries::Bt709,
     );
-    let mut parts = PixelBufferParts::new(fill_u8(30), 4, 2, 12, d);
+    let mut parts = PixelBufferParts::new(fill_u8(30).into(), 4, 2, 12, d);
     parts.offset = 3;
-    let buffer = PixelBuffer::try_from_parts(parts).unwrap();
+    let buffer: PixelBuffer = PixelBuffer::try_from_parts(parts).unwrap();
     assert!(ImageBuffer::<Rgb<u8>, Vec<u8>>::try_from(buffer).is_err());
 }
 
@@ -466,7 +497,7 @@ macro_rules! gray_planes {
                 let ptr = plane.row(0).unwrap().as_ptr();
                 let img = ImageBuffer::<Luma<$sample>, AlignedSamples<$sample>>::try_from(plane).unwrap();
                 assert_eq!(img.as_raw().as_ptr(), ptr);
-                let again = Plane::try_from(img).unwrap();
+                let again: Plane<AlignedSamples<$sample>> = Plane::try_from(img).unwrap();
                 assert_eq!(again.row(0).unwrap().as_ptr(), ptr);
 
                 let padded = AlignedPlane::<$sample>::alloc(width - 1, 3).unwrap();
@@ -513,4 +544,132 @@ fn storage_trait_is_met_by_the_image_container_types() {
     fn storage<S: SampleStorage>(_: &S) {}
     storage(&vec![0u8; 1]);
     storage(&AlignedSamples::<f32>::try_zeroed(1).unwrap());
+}
+
+macro_rules! dynamic_images {
+    ($($variant:ident($pixel:ident<$sample:ty>), $fill:ident, $color:ident;)*) => {
+        #[test]
+        fn dynamic_images_move_borrow_and_return_in_every_variant() {
+            $({
+                let channels = usize::from(<$pixel<$sample> as Pixel>::CHANNEL_COUNT);
+                let raw = $fill(9 * 4 * channels);
+                let mut image = DynamicImage::$variant(ImageBuffer::from_raw(9, 4, raw.clone()).unwrap());
+                assert_eq!(image.color(), ColorType::$color);
+                let slice = PixelSlice::try_from(&image).unwrap();
+                assert_eq!(slice.as_strided_bytes(), bytemuck::cast_slice::<$sample, u8>(&raw));
+                assert_eq!(slice.descriptor().format, PixelFormat::try_from(ColorType::$color).unwrap());
+                {
+                    let mut m = PixelSliceMut::try_from(&mut image).unwrap();
+                    assert_eq!(m.row_mut(0).len(), 9 * channels * size_of::<$sample>());
+                }
+                let moved_from = match &image {
+                    DynamicImage::$variant(image) => image.as_raw().as_ptr(),
+                    _ => panic!("wrong variant"),
+                };
+                let buffer = PixelBuffer::try_from(image).unwrap();
+                assert_eq!(buffer_ptr::<$sample>(&buffer), moved_from);
+                let back = DynamicImage::try_from(buffer).unwrap();
+                assert_eq!(back.color(), ColorType::$color);
+                match back {
+                    DynamicImage::$variant(image) => assert_eq!(image.as_raw(), &raw),
+                    _ => panic!("wrong variant"),
+                }
+            })*
+        }
+    };
+}
+
+fn buffer_ptr<T>(buffer: &PixelBuffer) -> *const T {
+    buffer.as_slice().as_strided_bytes().as_ptr().cast()
+}
+
+dynamic_images! {
+    ImageLuma8(Luma<u8>), fill_u8, L8;
+    ImageLumaA8(LumaA<u8>), fill_u8, La8;
+    ImageRgb8(Rgb<u8>), fill_u8, Rgb8;
+    ImageRgba8(Rgba<u8>), fill_u8, Rgba8;
+    ImageLuma16(Luma<u16>), fill_u16, L16;
+    ImageLumaA16(LumaA<u16>), fill_u16, La16;
+    ImageRgb16(Rgb<u16>), fill_u16, Rgb16;
+    ImageRgba16(Rgba<u16>), fill_u16, Rgba16;
+    ImageRgb32F(Rgb<f32>), fill_f32, Rgb32F;
+    ImageRgba32F(Rgba<f32>), fill_f32, Rgba32F;
+}
+
+#[test]
+fn dynamic_image_refuses_a_format_it_has_no_variant_for() {
+    let d = PixelDescriptor::new_full(
+        ChannelType::F32,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Linear,
+        ColorPrimaries::Bt709,
+    );
+    assert!(DynamicImage::try_from(PixelBuffer::new(2, 2, d)).is_err());
+}
+
+#[test]
+fn every_color_type_maps_to_a_format_and_back() {
+    use ColorType::*;
+    let all = [
+        L8, La8, Rgb8, Rgba8, L16, La16, Rgb16, Rgba16, Rgb32F, Rgba32F,
+    ];
+    for color in all {
+        let format = PixelFormat::try_from(color).unwrap();
+        assert_eq!(ColorType::try_from(format).unwrap(), color);
+        assert_eq!(
+            usize::from(color.bytes_per_pixel()),
+            format.bytes_per_pixel(),
+            "{color:?}"
+        );
+        let extended = ExtendedColorType::try_from(format).unwrap();
+        assert_eq!(extended, ExtendedColorType::from(color));
+    }
+}
+
+#[test]
+fn extended_color_types_map_or_refuse_explicitly() {
+    use ExtendedColorType as E;
+    let mapped = [
+        (E::L8, PixelFormat::Gray8),
+        (E::La8, PixelFormat::GrayA8),
+        (E::Rgb8, PixelFormat::Rgb8),
+        (E::Rgba8, PixelFormat::Rgba8),
+        (E::L16, PixelFormat::Gray16),
+        (E::La16, PixelFormat::GrayA16),
+        (E::Rgb16, PixelFormat::Rgb16),
+        (E::Rgba16, PixelFormat::Rgba16),
+        (E::Bgra8, PixelFormat::Bgra8),
+        (E::Rgb32F, PixelFormat::RgbF32),
+        (E::Rgba32F, PixelFormat::RgbaF32),
+        (E::Cmyk8, PixelFormat::Cmyk8),
+    ];
+    for (color, format) in mapped {
+        assert_eq!(PixelFormat::try_from(color).unwrap(), format);
+        assert_eq!(E::try_from(format).unwrap(), color);
+    }
+    let refused = [
+        E::A8,
+        E::L1,
+        E::La1,
+        E::Rgb1,
+        E::Rgba1,
+        E::L2,
+        E::La2,
+        E::Rgb2,
+        E::Rgba2,
+        E::L4,
+        E::La4,
+        E::Rgb4,
+        E::Rgba4,
+        E::Rgb5x1,
+        E::Bgr8,
+        E::Cmyk16,
+        E::Unknown(7),
+    ];
+    for color in refused {
+        assert!(PixelFormat::try_from(color).is_err(), "{color:?}");
+    }
+    assert!(ColorType::try_from(PixelFormat::GrayF32).is_err());
+    assert!(ColorType::try_from(PixelFormat::Bgra8).is_err());
 }

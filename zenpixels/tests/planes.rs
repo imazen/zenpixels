@@ -455,7 +455,7 @@ fn into_vec_hands_an_adopted_vec_back() {
     let v: Vec<u16> = (0..12).collect();
     let ptr = v.as_ptr();
     let adopted = PlaneBuf::new(v, 3, 3, 4).unwrap();
-    let back = adopted.into_vec().unwrap();
+    let back = adopted.try_into_vec().unwrap();
     assert_eq!(back.as_ptr(), ptr);
 }
 
@@ -480,15 +480,18 @@ fn aligned_samples_are_aligned_zeroed_and_exact_length() {
 fn byte_methods_alias_the_samples() {
     let mut v: Vec<u16> = vec![0x0102, 0x0304];
     let ptr = v.as_ptr();
-    assert_eq!(SampleStorage::as_bytes(&v).as_ptr().cast(), ptr);
-    assert_eq!(SampleStorage::as_bytes(&v).len(), 4);
-    SampleStorageMut::as_bytes_mut(&mut v)[..2].copy_from_slice(&0xBEEFu16.to_ne_bytes());
+    assert_eq!(zenpixels::ByteStorage::as_bytes(&v).as_ptr().cast(), ptr);
+    assert_eq!(zenpixels::ByteStorage::as_bytes(&v).len(), 4);
+    zenpixels::ByteStorageMut::as_bytes_mut(&mut v)[..2].copy_from_slice(&0xBEEFu16.to_ne_bytes());
     assert_eq!(v[0], 0xBEEF);
 
     // Trait objects keep them, so storage can stay erased down to the reference.
     let erased: Box<dyn SampleStorage<Sample = u16>> = Box::new(v);
-    assert_eq!(erased.as_bytes().len(), 4);
-    assert_eq!(erased.as_bytes().as_ptr().cast(), ptr);
+    assert_eq!(zenpixels::ByteStorage::as_bytes(&erased).len(), 4);
+    assert_eq!(
+        zenpixels::ByteStorage::as_bytes(&erased).as_ptr().cast(),
+        ptr
+    );
 }
 
 /// Storage from somewhere else (accounted storage, a decoder pool).

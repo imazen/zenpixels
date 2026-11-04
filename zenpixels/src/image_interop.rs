@@ -13,17 +13,20 @@ use image::metadata::{
     Cicp as ImageCicp, CicpColorPrimaries, CicpMatrixCoefficients, CicpTransferCharacteristics,
     CicpVideoFullRangeFlag,
 };
-use image::{ImageBuffer, Luma, LumaA, Primitive, Rgb, Rgba};
+use image::{
+    ColorType, DynamicImage, ExtendedColorType, ImageBuffer, Luma, LumaA, Primitive, Rgb, Rgba,
+};
 use whereat::{At, at};
 
 use crate::buffer::{
-    BufferError, FromPartsError, PixelBuffer, PixelBufferParts, PixelSlice, PixelSliceMut,
+    BufferError, ByteStorage, FromPartsError, PixelBuffer, PixelBufferParts, PixelSlice,
+    PixelSliceMut, PixelStorage,
 };
 use crate::cicp::Cicp;
 use crate::color::ColorContext;
 use crate::descriptor::{
-    AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, SignalRange,
-    TransferFunction,
+    AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, PixelFormat,
+    SignalRange, TransferFunction,
 };
 use crate::plane::{Plane, PlaneError, PlaneMut, PlaneRef, PlaneSample, SampleStorage};
 
@@ -282,6 +285,35 @@ fn image_color(
 
 // ---- Packed buffers -------------------------------------------------------
 
+/// The `image` labels when this buffer can move into an `ImageBuffer` of this format:
+/// same format, straight alpha, tight rows, first pixel at index 0, color `image` can
+/// state exactly.
+fn movable<S: ByteStorage>(
+    buffer: &PixelBuffer<(), S>,
+    channel: ChannelType,
+    layout: ChannelLayout,
+    alpha: Option<AlphaMode>,
+) -> Option<(CicpColorPrimaries, CicpTransferCharacteristics)> {
+    let descriptor = buffer.descriptor();
+    let alpha_ok = match alpha {
+        None => descriptor.alpha().is_none(),
+        Some(_) => matches!(
+            descriptor.alpha(),
+            Some(AlphaMode::Straight | AlphaMode::Opaque)
+        ),
+    };
+    let tight = buffer.stride() == buffer.width() as usize * descriptor.bytes_per_pixel();
+    if descriptor.channel_type() != channel
+        || descriptor.layout() != layout
+        || !alpha_ok
+        || !tight
+        || buffer.offset_bytes() != 0
+    {
+        return None;
+    }
+    image_color(descriptor, buffer.color_context())
+}
+
 macro_rules! packed_conversions {
     ($($pixel:ident<$sample:ty> => $channel:ident, $layout:ident, $alpha:expr;)*) => {$(
         /// Move an image's container into a buffer, with its color.
@@ -301,6 +333,52 @@ macro_rules! packed_conversions {
                     Some(cicp) => buffer.with_cicp(cicp),
                     None => buffer,
                 })
+            }
+        }
+
+        /// Move an image's `Vec` into a default [`PixelBuffer`], with its color.
+        impl TryFrom<ImageBuffer<$pixel<$sample>, Vec<$sample>>> for PixelBuffer {
+            type Error = FromPartsError;
+            fn try_from(image: ImageBuffer<$pixel<$sample>, Vec<$sample>>) -> Result<Self, FromPartsError> {
+                let (descriptor, cicp) =
+                    describe(ChannelType::$channel, ChannelLayout::$layout, $alpha, image.color_space());
+                let (width, height) = image.dimensions();
+                let stride = width as usize * descriptor.bytes_per_pixel();
+                let parts = PixelBufferParts::new(PixelStorage::from(image.into_raw()), width, height, stride, descriptor);
+                let buffer = PixelBuffer::try_from_parts(parts)?;
+                Ok(match cicp {
+                    Some(cicp) => buffer.with_cicp(cicp),
+                    None => buffer,
+                })
+            }
+        }
+
+        /// Move a default [`PixelBuffer`] into an image, with its color. Refuses as
+        /// the storage-generic form does, and also when the buffer's storage isn't
+        /// this sample type.
+        impl TryFrom<PixelBuffer> for ImageBuffer<$pixel<$sample>, Vec<$sample>> {
+            type Error = PixelBuffer;
+            fn try_from(buffer: PixelBuffer) -> Result<Self, PixelBuffer> {
+                let Some((primaries, transfer)) =
+                    movable(&buffer, ChannelType::$channel, ChannelLayout::$layout, $alpha)
+                else {
+                    return Err(buffer);
+                };
+                if !buffer.storage_holds::<$sample>() {
+                    return Err(buffer);
+                }
+                let (width, height) = (buffer.width(), buffer.height());
+                let samples = buffer
+                    .into_parts()
+                    .data
+                    .try_into_vec::<$sample>()
+                    .ok()
+                    .expect("checked above");
+                let mut image: Self = ImageBuffer::from_raw(width, height, samples)
+                    .expect("validated storage covers width * height pixels");
+                image.set_rgb_primaries(primaries);
+                image.set_transfer_function(transfer);
+                Ok(image)
             }
         }
 
@@ -355,25 +433,9 @@ macro_rules! packed_conversions {
         {
             type Error = PixelBuffer<(), C>;
             fn try_from(buffer: PixelBuffer<(), C>) -> Result<Self, PixelBuffer<(), C>> {
-                let descriptor = buffer.descriptor();
-                let expected_alpha: Option<AlphaMode> = $alpha;
-                let alpha_ok = match expected_alpha {
-                    None => descriptor.alpha().is_none(),
-                    Some(_) => matches!(
-                        descriptor.alpha(),
-                        Some(AlphaMode::Straight | AlphaMode::Opaque)
-                    ),
-                };
-                let tight = buffer.stride() == buffer.width() as usize * descriptor.bytes_per_pixel();
-                if descriptor.channel_type() != ChannelType::$channel
-                    || descriptor.layout() != ChannelLayout::$layout
-                    || !alpha_ok
-                    || !tight
-                    || buffer.storage_offset() != 0
-                {
-                    return Err(buffer);
-                }
-                let Some((primaries, transfer)) = image_color(descriptor, buffer.color_context()) else {
+                let Some((primaries, transfer)) =
+                    movable(&buffer, ChannelType::$channel, ChannelLayout::$layout, $alpha)
+                else {
                     return Err(buffer);
                 };
                 let (width, height) = (buffer.width(), buffer.height());
@@ -446,4 +508,164 @@ flat_views! {
     u8 => U8;
     u16 => U16;
     f32 => F32;
+}
+
+// ---- DynamicImage ---------------------------------------------------------
+
+macro_rules! dynamic_image {
+    ($($variant:ident: $pixel:ident<$sample:ty> => $channel:ident, $layout:ident;)*) => {
+        /// Move a [`DynamicImage`]'s samples into a buffer, with its color.
+        impl TryFrom<DynamicImage> for PixelBuffer {
+            type Error = At<BufferError>;
+            fn try_from(image: DynamicImage) -> Result<Self, At<BufferError>> {
+                match image {
+                    $(DynamicImage::$variant(image) => {
+                        PixelBuffer::try_from(image).map_err(FromPartsError::without_buffer)
+                    })*
+                    _ => Err(at!(BufferError::IncompatibleDescriptor)),
+                }
+            }
+        }
+
+        /// Borrow a [`DynamicImage`] as a slice, with its color.
+        impl<'a> TryFrom<&'a DynamicImage> for PixelSlice<'a> {
+            type Error = At<BufferError>;
+            fn try_from(image: &'a DynamicImage) -> Result<Self, At<BufferError>> {
+                match image {
+                    $(DynamicImage::$variant(image) => PixelSlice::try_from(image),)*
+                    _ => Err(at!(BufferError::IncompatibleDescriptor)),
+                }
+            }
+        }
+
+        /// Borrow a [`DynamicImage`] as a mutable slice, with its color.
+        impl<'a> TryFrom<&'a mut DynamicImage> for PixelSliceMut<'a> {
+            type Error = At<BufferError>;
+            fn try_from(image: &'a mut DynamicImage) -> Result<Self, At<BufferError>> {
+                match image {
+                    $(DynamicImage::$variant(image) => PixelSliceMut::try_from(image),)*
+                    _ => Err(at!(BufferError::IncompatibleDescriptor)),
+                }
+            }
+        }
+
+        /// Move a buffer into a [`DynamicImage`], with its color.
+        ///
+        /// The error is the buffer, unchanged, for a format `DynamicImage` has no
+        /// variant for, such as gray `f32`, or whenever the matching `ImageBuffer`
+        /// conversion refuses.
+        impl TryFrom<PixelBuffer> for DynamicImage {
+            type Error = PixelBuffer;
+            fn try_from(buffer: PixelBuffer) -> Result<Self, PixelBuffer> {
+                let descriptor = buffer.descriptor();
+                let format = (descriptor.channel_type(), descriptor.layout());
+                $(if format == (ChannelType::$channel, ChannelLayout::$layout) {
+                    return ImageBuffer::<$pixel<$sample>, Vec<$sample>>::try_from(buffer)
+                        .map(DynamicImage::$variant);
+                })*
+                Err(buffer)
+            }
+        }
+    };
+}
+
+dynamic_image! {
+    ImageLuma8: Luma<u8> => U8, Gray;
+    ImageLumaA8: LumaA<u8> => U8, GrayAlpha;
+    ImageRgb8: Rgb<u8> => U8, Rgb;
+    ImageRgba8: Rgba<u8> => U8, Rgba;
+    ImageLuma16: Luma<u16> => U16, Gray;
+    ImageLumaA16: LumaA<u16> => U16, GrayAlpha;
+    ImageRgb16: Rgb<u16> => U16, Rgb;
+    ImageRgba16: Rgba<u16> => U16, Rgba;
+    ImageRgb32F: Rgb<f32> => F32, Rgb;
+    ImageRgba32F: Rgba<f32> => F32, Rgba;
+}
+
+// ---- Color types ----------------------------------------------------------
+
+/// The format of an `image` color type.
+impl TryFrom<ColorType> for PixelFormat {
+    type Error = BufferError;
+    fn try_from(color: ColorType) -> Result<Self, BufferError> {
+        Ok(match color {
+            ColorType::L8 => Self::Gray8,
+            ColorType::La8 => Self::GrayA8,
+            ColorType::Rgb8 => Self::Rgb8,
+            ColorType::Rgba8 => Self::Rgba8,
+            ColorType::L16 => Self::Gray16,
+            ColorType::La16 => Self::GrayA16,
+            ColorType::Rgb16 => Self::Rgb16,
+            ColorType::Rgba16 => Self::Rgba16,
+            ColorType::Rgb32F => Self::RgbF32,
+            ColorType::Rgba32F => Self::RgbaF32,
+            _ => return Err(BufferError::IncompatibleDescriptor),
+        })
+    }
+}
+
+/// The `image` color type of a format, when it has one.
+impl TryFrom<PixelFormat> for ColorType {
+    type Error = BufferError;
+    fn try_from(format: PixelFormat) -> Result<Self, BufferError> {
+        Ok(match format {
+            PixelFormat::Gray8 => Self::L8,
+            PixelFormat::GrayA8 => Self::La8,
+            PixelFormat::Rgb8 => Self::Rgb8,
+            PixelFormat::Rgba8 => Self::Rgba8,
+            PixelFormat::Gray16 => Self::L16,
+            PixelFormat::GrayA16 => Self::La16,
+            PixelFormat::Rgb16 => Self::Rgb16,
+            PixelFormat::Rgba16 => Self::Rgba16,
+            PixelFormat::RgbF32 => Self::Rgb32F,
+            PixelFormat::RgbaF32 => Self::Rgba32F,
+            _ => return Err(BufferError::IncompatibleDescriptor),
+        })
+    }
+}
+
+/// The format of an `image` extended color type, for the ones with byte-addressable
+/// samples that zenpixels has a format for. The rest are refused: sub-byte layouts,
+/// `Rgb5x1`, `A8`, `Bgr8`, `Cmyk16` and `Unknown`.
+impl TryFrom<ExtendedColorType> for PixelFormat {
+    type Error = BufferError;
+    fn try_from(color: ExtendedColorType) -> Result<Self, BufferError> {
+        Ok(match color {
+            ExtendedColorType::L8 => Self::Gray8,
+            ExtendedColorType::La8 => Self::GrayA8,
+            ExtendedColorType::Rgb8 => Self::Rgb8,
+            ExtendedColorType::Rgba8 => Self::Rgba8,
+            ExtendedColorType::L16 => Self::Gray16,
+            ExtendedColorType::La16 => Self::GrayA16,
+            ExtendedColorType::Rgb16 => Self::Rgb16,
+            ExtendedColorType::Rgba16 => Self::Rgba16,
+            ExtendedColorType::Bgra8 => Self::Bgra8,
+            ExtendedColorType::Rgb32F => Self::RgbF32,
+            ExtendedColorType::Rgba32F => Self::RgbaF32,
+            ExtendedColorType::Cmyk8 => Self::Cmyk8,
+            _ => return Err(BufferError::IncompatibleDescriptor),
+        })
+    }
+}
+
+/// The `image` extended color type of a format, when it has one.
+impl TryFrom<PixelFormat> for ExtendedColorType {
+    type Error = BufferError;
+    fn try_from(format: PixelFormat) -> Result<Self, BufferError> {
+        Ok(match format {
+            PixelFormat::Gray8 => Self::L8,
+            PixelFormat::GrayA8 => Self::La8,
+            PixelFormat::Rgb8 => Self::Rgb8,
+            PixelFormat::Rgba8 => Self::Rgba8,
+            PixelFormat::Gray16 => Self::L16,
+            PixelFormat::GrayA16 => Self::La16,
+            PixelFormat::Rgb16 => Self::Rgb16,
+            PixelFormat::Rgba16 => Self::Rgba16,
+            PixelFormat::Bgra8 => Self::Bgra8,
+            PixelFormat::RgbF32 => Self::Rgb32F,
+            PixelFormat::RgbaF32 => Self::Rgba32F,
+            PixelFormat::Cmyk8 => Self::Cmyk8,
+            _ => return Err(BufferError::IncompatibleDescriptor),
+        })
+    }
 }

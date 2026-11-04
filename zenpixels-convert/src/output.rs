@@ -38,8 +38,8 @@ use alloc::sync::Arc;
 use crate::cms::ColorManagement;
 use crate::error::ConvertError;
 use crate::{
-    Cicp, ColorAuthority, ColorOrigin, ColorPrimaries, PixelBuffer, PixelDescriptor, PixelFormat,
-    PixelSlice, TransferFunction,
+    Cicp, ColorOrigin, ColorPrimaries, PixelBuffer, PixelDescriptor, PixelFormat, PixelSlice,
+    TransferFunction,
 };
 use whereat::{At, ResultAtExt};
 
@@ -312,7 +312,7 @@ pub fn finalize_for_output<C: ColorManagement>(
 
 /// Build a CMS transform from the origin's color metadata.
 ///
-/// Respects [`ColorAuthority`]: when `Icc`, builds from ICC bytes; when `Cicp`,
+/// Respects [`ColorAuthority`](crate::ColorAuthority): when `Icc`, builds from ICC bytes; when `Cicp`,
 /// builds from CICP codes via the CMS's `build_transform_from_cicp`. Falls
 /// back to the non-authoritative field when the authoritative one is missing.
 ///
@@ -485,13 +485,7 @@ fn origin_profile(origin: &ColorOrigin) -> Option<crate::ColorProfileSource<'_>>
             true,
         ))
     });
-    match origin.color_authority {
-        ColorAuthority::Icc => icc.or(cicp),
-        ColorAuthority::Cicp => cicp.or(icc),
-        // An authority this crate does not know cannot select between the
-        // fields; callers fall back to the current pixel profile.
-        _ => None,
-    }
+    origin.color_authority.select(icc, cicp)
 }
 
 fn descriptor_for_profile(

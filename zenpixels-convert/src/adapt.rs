@@ -1003,8 +1003,9 @@ mod tests {
     fn in_place_swap_respects_stride_padding() {
         // SIMD-aligned buffer: 1 px/row at simd_align 16 → stride 16,
         // 12 padding bytes per row that must be untouched.
-        let mut buf =
-            zenpixels::PixelBuffer::new_simd_aligned(1, 2, PixelDescriptor::BGRA8_SRGB, 16);
+        let mut parts = PixelBuffer::new(4, 2, PixelDescriptor::BGRA8_SRGB).into_parts();
+        parts.width = 1;
+        let mut buf = PixelBuffer::try_from_parts(parts).unwrap();
         assert_eq!(buf.stride(), 16, "fixture must be strided");
         {
             let mut view = buf.as_slice_mut();

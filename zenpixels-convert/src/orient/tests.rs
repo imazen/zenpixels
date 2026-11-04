@@ -923,7 +923,10 @@ fn in_place_padded_stride_matches_out_of_place() {
             for &o in &Orientation::ALL {
                 // simd_align 32 pads the row whenever w*bpp isn't a multiple of
                 // lcm(bpp, 32) — true for every (desc, w) here.
-                let mut buf = PixelBuffer::new_simd_aligned(w, h, desc, 32);
+                let stride = desc.simd_aligned_stride(w, 32);
+                let mut parts = PixelBuffer::new((stride / bpp) as u32, h, desc).into_parts();
+                parts.width = w;
+                let mut buf = PixelBuffer::try_from_parts(parts).unwrap();
                 assert!(
                     buf.as_slice().stride() > w as usize * bpp,
                     "{desc:?} {w}x{h}: expected a padded stride"

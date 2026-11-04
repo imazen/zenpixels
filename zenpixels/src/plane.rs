@@ -92,25 +92,12 @@ pub trait SampleStorage {
     type Sample: PlaneSample;
     /// The samples, including any padding.
     fn samples(&self) -> &[Self::Sample];
-
-    /// The same samples as native-endian bytes, without copying.
-    ///
-    /// Everything past this reference works on bytes, so code generic over
-    /// storage stops being generic here.
-    fn as_bytes(&self) -> &[u8] {
-        bytemuck::cast_slice(self.samples())
-    }
 }
 
 /// Write access to the samples of a plane's owner.
 pub trait SampleStorageMut: SampleStorage {
     /// The samples, including any padding.
     fn samples_mut(&mut self) -> &mut [Self::Sample];
-
-    /// The same samples as mutable native-endian bytes, without copying.
-    fn as_bytes_mut(&mut self) -> &mut [u8] {
-        bytemuck::cast_slice_mut(self.samples_mut())
-    }
 }
 
 impl<T: PlaneSample> SampleStorage for [T] {
@@ -177,16 +164,18 @@ macro_rules! owned_storage {
             }
         }
         impl<T: PlaneSample $(, $alloc: core::alloc::Allocator)?> Plane<Vec<T $(, $alloc)?>> {
-            /// Give up the `Vec`, with row 0 at index 0, for an owner that takes a
-            /// plain `Vec` and a stride (an `ImgVec`, yuvutils-rs' owned planes).
-            /// Read [`width`](Plane::width), [`height`](Plane::height) and
+            /// Give up the `Vec`, for an owner that takes a plain `Vec` and a stride
+            /// (an `ImgVec`, yuvutils-rs' owned planes). Read
+            /// [`width`](Plane::width), [`height`](Plane::height) and
             /// [`stride`](Plane::stride) first.
             ///
             /// # Errors
             ///
-            /// The plane itself, unchanged, when its first row starts past index 0.
-            /// Borrow it with [`view`](Plane::view) instead, or copy it.
-            pub fn into_vec(self) -> Result<Vec<T $(, $alloc)?>, Self> {
+            /// The plane itself, unchanged, when its first row isn't at index 0.
+            /// Today's constructors always put it there, but the first row may start
+            /// later in a future aligned form, so this stays fallible. Borrow it with
+            /// [`view`](Plane::view) instead, or copy it.
+            pub fn try_into_vec(self) -> Result<Vec<T $(, $alloc)?>, Self> {
                 if self.start == 0 {
                     Ok(self.buf)
                 } else {
@@ -791,7 +780,7 @@ impl<T: PlaneSample> Plane<AlignedSamples<T>> {
 /// Hand a plane's `Vec` to an [`imgref::ImgVec`] without copying.
 ///
 /// The error is the plane itself, unchanged, when it starts past index 0 (see
-/// [`PlaneBuf::into_vec`]) or holds dimensions past `u32::MAX`.
+/// [`PlaneBuf::try_into_vec`]) or holds dimensions past `u32::MAX`.
 #[cfg(feature = "imgref")]
 impl<T: PlaneSample> TryFrom<PlaneBuf<T>> for imgref::ImgVec<T> {
     type Error = PlaneBuf<T>;
@@ -800,7 +789,7 @@ impl<T: PlaneSample> TryFrom<PlaneBuf<T>> for imgref::ImgVec<T> {
             return Err(plane);
         };
         let (width, height) = (plane.width, plane.height);
-        let buf = plane.into_vec()?;
+        let buf = plane.try_into_vec()?;
         Ok(imgref::Img::new_stride(buf, width, height, stride))
     }
 }

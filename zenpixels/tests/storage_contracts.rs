@@ -2,6 +2,7 @@ use zenpixels::{
     AlphaMode, ColorProfileSource, NamedProfile, PixelBuffer, PixelDescriptor, PixelFormat,
     PixelSlice, PixelSliceMut,
 };
+use zenpixels::{ByteStorage, ByteStorageMut};
 
 #[test]
 fn reject_contradictory_descriptors_at_boundaries() {
@@ -16,7 +17,7 @@ fn reject_contradictory_descriptors_at_boundaries() {
         let mut parts = PixelBuffer::new(1, 1, PixelDescriptor::RGBA8).into_parts();
         parts.descriptor = d;
         let mut error = PixelBuffer::try_from_parts(parts).unwrap_err();
-        assert_eq!(error.take_parts().unwrap().data.len(), 4);
+        assert_eq!(error.take_parts().unwrap().data.as_bytes().len(), 4);
     }
 }
 
@@ -61,6 +62,7 @@ fn empty_views_do_not_compute_unused_offsets() {
     assert!(slice.row_mut(u32::MAX - 1).is_empty());
 }
 
+#[cfg(feature = "icc")]
 #[test]
 fn named_hdr_rgb_profiles_match_their_cicp() {
     for named in [NamedProfile::Bt2020Pq, NamedProfile::Bt2020Hlg] {
@@ -85,12 +87,12 @@ fn typed_layout_changes_require_erasure() {
 #[test]
 fn padded_u8_export_reuses_allocation() {
     let mut parts = PixelBuffer::new(1, 2, PixelDescriptor::RGBA8).into_parts();
-    parts.data = vec![91; 20];
+    parts.data = vec![91u8; 20].into();
     parts.offset = 4;
     parts.stride_bytes = 8;
-    parts.data[4..8].copy_from_slice(&[1, 2, 3, 4]);
-    parts.data[12..16].copy_from_slice(&[5, 6, 7, 8]);
-    let ptr = parts.data.as_ptr();
+    parts.data.as_bytes_mut()[4..8].copy_from_slice(&[1, 2, 3, 4]);
+    parts.data.as_bytes_mut()[12..16].copy_from_slice(&[5, 6, 7, 8]);
+    let ptr = parts.data.as_bytes().as_ptr();
     let b = PixelBuffer::try_from_parts(parts).unwrap();
     let pixels = b.into_contiguous_pixels::<rgb::RGBA<u8>>().unwrap();
     assert_eq!(pixels.as_ptr().cast::<u8>(), ptr);

@@ -89,7 +89,11 @@ fn native_storage_survives_strides_subviews_and_owned_handoff() {
             assert_eq!(descriptor.channel_type(), channel);
             assert_eq!(descriptor.layout(), layout);
             assert_eq!(descriptor.alpha(), alpha);
-            let mut buffer = PixelBuffer::try_new_simd_aligned(5, 3, descriptor, 64).unwrap();
+            let mut buffer =
+                PixelBuffer::<(), zenpixels::plane::AlignedSamples<u8>>::try_new_aligned(
+                    5, 3, descriptor,
+                )
+                .unwrap();
             let patterns = native_patterns(channel);
             let row_bytes = 5 * layout.channels() * channel.byte_size();
             let expected: Vec<u8> = (0..row_bytes)

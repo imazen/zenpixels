@@ -171,7 +171,7 @@ fn imgref_views_cover_any_storage() {
 }
 
 #[test]
-fn default_storage_type_is_unchanged() {
+fn default_storage_is_pixel_storage() {
     fn takes_default(_: PixelBuffer) {}
     takes_default(PixelBuffer::new(1, 1, PixelDescriptor::RGB8_SRGB));
     #[cfg(feature = "rgb")]
@@ -180,7 +180,7 @@ fn default_storage_type_is_unchanged() {
         takes_typed(PixelBuffer::new_typed(1, 1));
     }
     let parts: PixelBufferParts = PixelBuffer::new(1, 1, PixelDescriptor::RGB8_SRGB).into_parts();
-    assert_eq!(parts.data.len(), 3);
+    assert_eq!(zenpixels::ByteStorage::as_bytes(&parts.data).len(), 3);
 }
 
 #[test]
@@ -250,4 +250,135 @@ fn aligned_buffers_can_hold_the_channel_type_directly() {
         PixelDescriptor::RGBAF32_LINEAR,
     );
     assert!(overflow.is_err());
+}
+
+use zenpixels::{ByteStorage, ByteStorageMut, PixelStorage};
+
+#[test]
+fn allocation_uses_the_sample_type_of_the_format() {
+    let cases = [
+        (PixelDescriptor::RGB8_SRGB, 1usize),
+        (PixelDescriptor::RGB16_SRGB, 2),
+        (PixelDescriptor::RGBAF32_LINEAR, 4),
+    ];
+    for (d, align) in cases {
+        let buffer = PixelBuffer::new(5, 3, d);
+        let parts = buffer.into_parts();
+        assert_eq!(parts.offset, 0);
+        assert_eq!(parts.data.as_bytes().len(), 5 * 3 * d.bytes_per_pixel());
+        match (parts.data, align) {
+            (PixelStorage::U8(_), 1) | (PixelStorage::U16(_), 2) | (PixelStorage::F32(_), 4) => {}
+            (other, _) => panic!("{d:?}: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn storage_gives_back_only_its_own_sample_type() {
+    let v: Vec<u16> = vec![1, 2, 3];
+    let ptr = v.as_ptr();
+    let storage = PixelStorage::from(v);
+    assert_eq!(storage.as_bytes().len(), 6);
+    let storage = storage.try_into_vec::<u8>().unwrap_err();
+    let storage = storage.try_into_vec::<f32>().unwrap_err();
+    let back = storage.try_into_vec::<u16>().unwrap();
+    assert_eq!(back.as_ptr(), ptr);
+}
+
+#[test]
+fn every_sample_type_round_trips_through_storage() {
+    macro_rules! round_trip {
+        ($($t:ty),*) => {$(
+            let v: Vec<$t> = vec![<$t>::default(); 4];
+            let ptr = v.as_ptr();
+            let mut s = PixelStorage::from(v);
+            assert_eq!(s.as_bytes().len(), 4 * size_of::<$t>());
+            s.as_bytes_mut()[0] = 0;
+            let back = s.try_into_vec::<$t>().unwrap();
+            assert_eq!(back.as_ptr(), ptr);
+        )*};
+    }
+    round_trip!(u8, i8, u16, i16, u32, i32, f32, u64, i64, f64);
+}
+
+#[test]
+fn decoder_vecs_move_through_the_default_buffer() {
+    let raw: Vec<f32> = (0..N).map(|i| i as f32).collect();
+    let ptr = raw.as_ptr();
+    let parts = PixelBufferParts::new(
+        raw.into(),
+        W,
+        H,
+        W as usize * 12,
+        PixelDescriptor::RGBF32_LINEAR,
+    );
+    let buffer: PixelBuffer = PixelBuffer::try_from_parts(parts).unwrap();
+    assert_eq!(buffer.as_slice().as_strided_bytes().as_ptr().cast(), ptr);
+    let back = buffer.into_parts().data.try_into_vec::<f32>().unwrap();
+    assert_eq!(back.as_ptr(), ptr);
+}
+
+#[test]
+fn offset_past_u32_is_refused_not_truncated() {
+    let mut parts: PixelBufferParts =
+        PixelBufferParts::new(vec![0u8; 12].into(), 2, 2, 6, PixelDescriptor::RGB8_SRGB);
+    if let Ok(offset) = usize::try_from(u64::from(u32::MAX) + 1) {
+        parts.offset = offset;
+        assert!(PixelBuffer::try_from_parts(parts).is_err());
+    }
+}
+
+#[test]
+fn tight_byte_handoff_is_fallible_on_storage_offset_and_stride() {
+    let tight = PixelBuffer::new(2, 2, PixelDescriptor::RGB8_SRGB);
+    let ptr = tight.as_slice().as_strided_bytes().as_ptr();
+    let bytes = tight.try_into_tight_u8_vec().unwrap();
+    assert_eq!((bytes.as_ptr(), bytes.len()), (ptr, 12));
+
+    // Wider storage.
+    assert!(
+        PixelBuffer::new(2, 2, PixelDescriptor::RGB16_SRGB)
+            .try_into_tight_u8_vec()
+            .is_err()
+    );
+    // A prefix before the first pixel.
+    let mut parts =
+        PixelBufferParts::new(vec![0u8; 15].into(), 2, 2, 6, PixelDescriptor::RGB8_SRGB);
+    parts.offset = 3;
+    let offset: PixelBuffer = PixelBuffer::try_from_parts(parts).unwrap();
+    let offset = offset.try_into_tight_u8_vec().unwrap_err();
+    assert_eq!(offset.into_parts().offset, 3);
+    // Padded rows, then packing them makes the handoff succeed in place.
+    let parts = PixelBufferParts::new(vec![0u8; 18].into(), 2, 2, 9, PixelDescriptor::RGB8_SRGB);
+    let padded: PixelBuffer = PixelBuffer::try_from_parts(parts).unwrap();
+    let padded = padded.try_into_tight_u8_vec().unwrap_err();
+    assert_eq!(
+        padded
+            .into_contiguous()
+            .try_into_tight_u8_vec()
+            .unwrap()
+            .len(),
+        12
+    );
+}
+
+#[cfg(feature = "imgref")]
+#[test]
+fn typed_buffers_move_into_imgvec() {
+    use imgref::ImgVec;
+    use rgb::Rgb;
+
+    let buffer = PixelBuffer::<Rgb<u16>>::new_typed(W, H);
+    let ptr = buffer.as_slice().as_strided_bytes().as_ptr();
+    let img = ImgVec::try_from(buffer).unwrap();
+    assert_eq!(img.buf().as_ptr().cast(), ptr);
+    assert_eq!((img.width(), img.height()), (W as usize, H as usize));
+
+    // `from_pixels` moves too, in both directions.
+    let pixels = vec![Rgb::new(1u16, 2, 3); (W * H) as usize];
+    let ptr = pixels.as_ptr();
+    let buffer = PixelBuffer::from_pixels(pixels, W, H).unwrap();
+    assert_eq!(buffer.as_slice().as_strided_bytes().as_ptr().cast(), ptr);
+    let back = ImgVec::try_from(buffer).unwrap();
+    assert_eq!(back.buf().as_ptr(), ptr);
 }
