@@ -920,7 +920,7 @@ fn reversible_conversions_transfer_evidence_that_survives_a_roundtrip() {
         let planes: Vec<CodePlane<'_>> = (0..3)
             .map(|c| {
                 CodePlane::component(
-                    plane8(&codes, (W as usize) * 3, H as usize, (W as usize * 3)),
+                    plane8(&codes, (W as usize) * 3, H as usize, W as usize * 3),
                     3,
                     c,
                     plane_encoding,

@@ -37,7 +37,7 @@ fn enc(bits: u8, shift: u8) -> SampleEncoding {
 fn widen_rgb(src: &[u16], w: usize, h: usize, dst: &mut [u16]) {
     let planes: Vec<CodePlane<'_>> = (0..3)
         .map(|c| {
-            CodePlane::component(plane16(&src, w * 3, h, (w * 6) / 2), 3, c, enc(12, 0)).unwrap()
+            CodePlane::component(plane16(src, w * 3, h, (w * 6) / 2), 3, c, enc(12, 0)).unwrap()
         })
         .collect();
     let out = PixelSliceMut::new(
@@ -61,7 +61,7 @@ fn widen_rgb_per_sample(src: &[u16], w: usize, h: usize, dst: &mut [u16]) {
     .unwrap();
     let planes: Vec<CodePlane<'_>> = (0..3)
         .map(|c| {
-            CodePlane::component(plane16(&src, w * 3, h, (w * 6) / 2), 3, c, enc(12, 0)).unwrap()
+            CodePlane::component(plane16(src, w * 3, h, (w * 6) / 2), 3, c, enc(12, 0)).unwrap()
         })
         .collect();
     for y in 0..h {
