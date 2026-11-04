@@ -1594,8 +1594,9 @@ impl fmt::Display for ColorModel {
 /// [`PixelDescriptor`], not here.
 ///
 /// Every format has exactly one representation:
-/// [`from_parts`](Self::from_parts) returns the named variant whenever one
-/// exists, and a [`GenericFormat`] cannot be constructed directly. Variants
+/// [`create_from`](Self::create_from) and [`from_parts`](Self::from_parts) return
+/// the named variant whenever one exists, and a [`GenericFormat`] cannot be
+/// constructed directly. Variants
 /// have no integer value; more variants may be added in a minor release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -1648,7 +1649,7 @@ pub enum PixelFormat {
 
 /// Interleaved sample type and layout without a named [`PixelFormat`] variant.
 ///
-/// Obtain one from [`PixelFormat::from_parts`] or by matching
+/// Obtain one from [`PixelFormat::create_from`] or by matching
 /// [`PixelFormat::Generic`]. It has no public constructor, so a combination
 /// that has a named variant is never represented generically. It may record
 /// more of the format (such as a channel count and per-channel roles) in a
@@ -1662,7 +1663,7 @@ pub struct GenericFormat {
 impl GenericFormat {
     /// The combination when it is representable and has no named variant.
     #[allow(unreachable_patterns)]
-    const fn new(channel_type: ChannelType, layout: ChannelLayout) -> Option<Self> {
+    const fn create_if_unnamed(channel_type: ChannelType, layout: ChannelLayout) -> Option<Self> {
         let generic_type = matches!(
             channel_type,
             ChannelType::I8
@@ -1881,6 +1882,18 @@ impl PixelFormat {
         }
     }
 
+    /// The format for a sample type and layout: the named variant when one exists,
+    /// [`Generic`](Self::Generic) otherwise, `None` when the combination is not
+    /// representable.
+    ///
+    /// `U8` with `Rgba` or `Bgra` resolves to [`Rgba8`](Self::Rgba8) or
+    /// [`Bgra8`](Self::Bgra8); [`from_parts`](Self::from_parts) with
+    /// [`AlphaMode::Undefined`] selects the padding formats.
+    #[inline]
+    pub const fn create_from(channel_type: ChannelType, layout: ChannelLayout) -> Option<Self> {
+        Self::from_parts(channel_type, layout, None)
+    }
+
     /// Resolve a format from channel type, layout, and alpha presence.
     ///
     /// Returns `None` for combinations that have no `PixelFormat` variant
@@ -1925,7 +1938,7 @@ impl PixelFormat {
             (ChannelType::U8, ChannelLayout::Cmyk, _) => Some(Self::Cmyk8),
             (ChannelType::F32, ChannelLayout::Cmyk, _) => Some(Self::CmykF32),
 
-            _ => match GenericFormat::new(channel_type, layout) {
+            _ => match GenericFormat::create_if_unnamed(channel_type, layout) {
                 Some(generic) => Some(Self::Generic(generic)),
                 None => None,
             },

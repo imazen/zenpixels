@@ -68,11 +68,10 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   always host-endian. No zen crate outside zenpixels used them. (5f626fb0)
 - The 28 named native-sample formats (`RgbI8` … `GrayAF64`) become one
   `PixelFormat::Generic(GenericFormat)`, returned by `PixelFormat::from_parts`.
-  `GenericFormat` has private fields and no constructor; a combination with a
-  named variant never resolves generically. Names, sizes, alpha defaults,
-  carriage and conversion refusal are unchanged. Migrate
-  `PixelFormat::RgbI16` to `PixelFormat::from_parts(ChannelType::I16,
-  ChannelLayout::Rgb, None)`. (2ab68259)
+  `GenericFormat` has private fields and no public constructor; a combination
+  with a named variant never resolves generically. Names, sizes, alpha defaults,
+  carriage and conversion refusal are unchanged. Migrate `PixelFormat::RgbI16` to
+  `PixelFormat::create_from(ChannelType::I16, ChannelLayout::Rgb)`. (2ab68259)
 - `#[non_exhaustive]`: `ColorAuthority`, `ColorPriority`, `OpCategory`,
   `LossBucket`, `QualityThreshold`, `MasteringDisplay`, `ConversionCost`,
   `FormatOption`. Build the structs with their constructors. (2ab68259,

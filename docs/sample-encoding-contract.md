@@ -69,7 +69,7 @@ TIFF selection and [IMIJ's sample model](https://github.com/imazen/zenpixels/iss
 need I8, I16, U32, I32, U64, I64 and F64 storage. `ChannelType` names
 those types. In gray, gray-alpha, RGB and RGBA layouts they form one
 `PixelFormat::Generic(GenericFormat)` variant rather than a named variant per
-combination: `PixelFormat::from_parts` returns it, the payload has private
+combination: `PixelFormat::create_from` returns it, the payload has private
 fields and no public constructor, and a combination with a named variant
 never resolves generically, so equality and hashing see one representation.
 `ChannelType`, `ChannelLayout` and `PixelFormat` have no integer values

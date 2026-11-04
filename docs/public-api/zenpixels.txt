@@ -10,7 +10,7 @@
 #
 #   pub modules                                11
 #   pub types (struct/enum/trait/alias)        88
-#   pub consts/statics                        290
+#   pub consts/statics                        292
 #   free functions                              4
 #   inherent methods                          271
 #   struct fields                             115
@@ -21,7 +21,7 @@
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          421
+#   (root)                          423
 #   buffer                          252
 #   cicp                             36
 #   color                            62
@@ -33,7 +33,7 @@
 #   policy                           25
 #   sample                           38
 
-## items (910 lines)
+## items (911 lines)
 
 pub mod zenpixels
 pub use At
@@ -335,6 +335,7 @@ pub const fn descriptor::PixelFormat::bytes_per_pixel(self) -> usize [also: (roo
 pub const fn descriptor::PixelFormat::channel_type(self) -> descriptor::ChannelType [also: (root)]
 pub const fn descriptor::PixelFormat::channels(self) -> usize [also: (root)]
 pub const fn descriptor::PixelFormat::color_model(self) -> descriptor::ColorModel [also: (root)]
+pub const fn descriptor::PixelFormat::create_from(descriptor::ChannelType, descriptor::ChannelLayout) -> core::option::Option<Self> [also: (root)]
 pub const fn descriptor::PixelFormat::default_alpha(self) -> core::option::Option<descriptor::AlphaMode> [also: (root)]
 pub const fn descriptor::PixelFormat::descriptor(self) -> descriptor::PixelDescriptor [also: (root)]
 pub const fn descriptor::PixelFormat::from_parts(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>) -> core::option::Option<Self> [also: (root)]

@@ -237,3 +237,44 @@ fn native_combinations_have_one_generic_representation() {
         }
     }
 }
+
+#[test]
+fn create_from_uses_the_named_format_whenever_one_exists() {
+    use zenpixels::{ChannelLayout as L, ChannelType as T, PixelFormat as F};
+    let named = [
+        (T::U8, L::Rgb, F::Rgb8),
+        (T::U16, L::Rgb, F::Rgb16),
+        (T::F32, L::Rgb, F::RgbF32),
+        (T::F16, L::Rgb, F::RgbF16),
+        (T::U8, L::Rgba, F::Rgba8),
+        (T::U16, L::Rgba, F::Rgba16),
+        (T::F32, L::Rgba, F::RgbaF32),
+        (T::F16, L::Rgba, F::RgbaF16),
+        (T::U8, L::Gray, F::Gray8),
+        (T::U16, L::Gray, F::Gray16),
+        (T::F32, L::Gray, F::GrayF32),
+        (T::F16, L::Gray, F::GrayF16),
+        (T::U8, L::GrayAlpha, F::GrayA8),
+        (T::U16, L::GrayAlpha, F::GrayA16),
+        (T::F32, L::GrayAlpha, F::GrayAF32),
+        (T::F16, L::GrayAlpha, F::GrayAF16),
+        (T::U8, L::Bgra, F::Bgra8),
+        (T::F32, L::Oklab, F::OklabF32),
+        (T::F32, L::OklabA, F::OklabaF32),
+        (T::U8, L::Cmyk, F::Cmyk8),
+        (T::F32, L::Cmyk, F::CmykF32),
+    ];
+    for (channel, layout, want) in named {
+        assert_eq!(F::create_from(channel, layout), Some(want));
+    }
+    for channel in [T::I8, T::I16, T::U32, T::I32, T::U64, T::I64, T::F64] {
+        for layout in [L::Gray, L::GrayAlpha, L::Rgb, L::Rgba] {
+            let format = F::create_from(channel, layout).unwrap();
+            assert!(matches!(format, F::Generic(_)), "{channel:?} {layout:?}");
+            assert_eq!((format.channel_type(), format.layout()), (channel, layout));
+            assert_eq!(F::from_parts(channel, layout, None), Some(format));
+        }
+        // Layouts without a generic form stay unrepresentable.
+        assert_eq!(F::create_from(channel, L::Cmyk), None);
+    }
+}
