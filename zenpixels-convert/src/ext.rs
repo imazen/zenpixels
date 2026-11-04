@@ -657,6 +657,9 @@ fn convert_to_typed<Q: Pixel>(buf: &PixelBuffer, target: PixelDescriptor) -> Pix
 pub trait ColorConvertExt: crate::sealed::Sealed + Sized {
     /// This color in `target`'s format, transfer and primaries, without a one-pixel buffer.
     ///
+    /// SDR converted to PQ or HLG puts white at the format's peak, as [`RowConverter`](crate::RowConverter)
+    /// does. For a matte, `CompositeOnto::reference_white` places it instead.
+    ///
     /// # Errors
     ///
     /// Whatever [`RowConverter::new_explicit`](crate::RowConverter::new_explicit) refuses for this
