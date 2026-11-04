@@ -82,39 +82,33 @@ use alloc::boxed::Box;
 /// output.
 ///
 /// For **photographic print** with a profile that has a perceptual table:
-/// use [`Perceptual`](Self::Perceptual). It compresses the full source gamut
-/// smoothly instead of clipping.
+/// use [`Perceptual`](Self::Perceptual). It runs the rendering that table encodes.
 ///
-/// For **soft-proofing** ("what will this print look like on screen"): use
-/// [`AbsoluteColorimetric`](Self::AbsoluteColorimetric) to simulate the
-/// paper white.
+/// For **soft-proofing** ("what will this print look like on screen"):
+/// [`AbsoluteColorimetric`](Self::AbsoluteColorimetric), with a CMS that applies the media white.
 ///
 /// [`Saturation`](Self::Saturation) is for business graphics (pie charts,
 /// logos). It is almost never correct for photographic images.
 ///
 /// # Interaction with ICC profiles
 ///
-/// An ICC profile may contain up to four LUTs (AToB0–AToB3), one per intent.
-/// **Most display profiles only ship a single LUT** (relative colorimetric).
-/// When you request an intent whose LUT is absent, the CMS silently falls
-/// back to the profile's default — usually relative colorimetric. This means
-/// `Perceptual` and `RelativeColorimetric` produce **identical output** for
-/// the vast majority of display profiles (sRGB IEC 61966-2.1, Display P3,
-/// etc.). The distinction only matters for print/press profiles that include
-/// dedicated perceptual gamut-mapping tables.
+/// ICC defines tables per intent: A2B0 and B2A0 for perceptual, A2B1 and B2A1 for both
+/// colorimetric intents, A2B2 and B2A2 for saturation. **Matrix profiles have none**, including
+/// the usual sRGB, Display P3 and BT.2020 ones, so every intent gives the same result for them.
+/// What happens when a profile has tables but not the requested ones depends on the CMS: moxcms
+/// can return an error rather than falling back.
+///
+/// The `MoxCms` backend always requests relative colorimetric. This type doesn't configure it.
 ///
 /// # Bugs and pitfalls
 ///
-/// - **Perceptual on display profiles is a no-op.** Requesting `Perceptual`
-///   doesn't add gamut mapping when the profile lacks a perceptual table —
-///   it silently degrades to clipping. If you need actual gamut mapping
-///   between display profiles, you must supply a profile that contains
-///   perceptual intent tables (e.g., a proofing profile or a carefully
-///   authored display profile).
+/// - **Perceptual on matrix profiles adds nothing.** It doesn't compress the gamut, because
+///   the tables that would are absent. For that, use a profile with perceptual tables.
+///   See `docs/gamut-mapping-survey.md`.
 ///
-/// - **AbsoluteColorimetric tints whites.** Source white is preserved
-///   literally, so a D50 source on a D65 display shows yellowish whites.
-///   Never use this for final output — only for proofing previews.
+/// - **AbsoluteColorimetric depends on the CMS.** The ICC intent keeps source white literally,
+///   so a D50 source on a D65 display shows yellowish whites. moxcms selects the same tables
+///   as relative colorimetric, with no media-white adjustment, so it doesn't simulate paper.
 ///
 /// - **Saturation may shift hues.** The ICC spec allows saturation-intent
 ///   tables to sacrifice hue accuracy for vividness. Photographs will look

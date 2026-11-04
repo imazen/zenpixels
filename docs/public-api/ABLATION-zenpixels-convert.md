@@ -10,6 +10,8 @@ All 42 public free functions in `zenpixels` and `zenpixels-convert`, at `feat/co
 
 **Keep, in wide use:** `adapt_for_encode_cow`, `apply_orientation`, `apply_orientation_into`, `extract_cicp`, `finalize_for_output_with`, `identify_common`, `is_common_srgb`, `lms_to_rgb_matrix`, `oklab_to_rgb`, `profile_color_space`, `rgb_to_lms_matrix`, `rgb_to_oklab`, `synthesize_icc_for_cicp`.
 
+Not a free function, but the same finding: `RenderingIntent` and `ColorPriority` are public and no trait takes them. Only a private `MoxCms` helper uses them, with fixed values, and no caller exists outside this repo.
+
 The `pipeline` feature, 1,485 lines, has no user outside this repo's tests; no manifest enables it.
 
 Repeated caller code: 16 hand-written whole-image row loops in shipped code (heuristic: `RowConverter::new` or `ConvertPlan::new` with a row loop within 22 lines), against 7 uses of `.convert_to(`, which exists only on `PixelBuffer`. 10 of 12 `apply_orientation` sites guard for identity first. `adapt_for_encode_cow` and its variants take bare bytes, descriptor, width, height and stride instead of a `PixelSlice`.

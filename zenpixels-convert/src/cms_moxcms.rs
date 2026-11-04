@@ -71,10 +71,9 @@ use crate::cms::{ColorPriority, RenderingIntent};
 ///
 /// # Rendering intent vs. profile LUT availability
 ///
-/// Requesting an intent whose LUT is absent in the profile causes a silent
-/// fallback to the profile's default intent (typically relative colorimetric).
-/// Most display profiles only ship one LUT. See [`RenderingIntent`] docs for
-/// details on which profiles actually honor which intents.
+/// Matrix profiles ignore the intent. A profile with tables but not the requested
+/// ones can make moxcms return an error, so a source with only A2B0 fails under
+/// relative colorimetric. See [`RenderingIntent`].
 ///
 ///
 /// Crate-internal: moxcms types stay out of the public API so the moxcms

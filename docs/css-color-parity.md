@@ -65,7 +65,7 @@ Parsing to linear loses the original space, so a color can't be serialized back 
 
 **2. SDR doesn't convert straight to PQ or HLG.** `Color::srgb8(255, 255, 255).try_convert_to(pq)` is refused, where CSS gives 0.58. `CompositeOnto` places white through `reference_white`. `RowConverter::new` still puts it at the peak, 10,000 cd/m².
 
-**3. Clipping shifts hue.** To sRGB `u8`, against the spec's binary search implemented here:
+**3. Clipping shifts hue.** To sRGB `u8`, against the spec's binary search implemented here. Hue and ΔEOK are measured before rounding, with the rounded result beside them. [The gamut survey](gamut-mapping-survey.md) adds other methods and a tolerance-free search:
 
 | Source | Ours | Hue shift | CSS mapping | Hue shift |
 |---|---|---:|---|---:|
