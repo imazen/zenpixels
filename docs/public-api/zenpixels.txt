@@ -13,15 +13,15 @@
 #   pub consts/statics                        305
 #   free functions                              6
 #   inherent methods                          310
-#   struct fields                             121
+#   struct fields                             123
 #   enum variants                             306
 #   re-exports                                  4
-#   trait roster entries (type × trait)       395
+#   trait roster entries (type × trait)       396
 #   auto-trait-complete types                  54
 #   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          453
+#   (root)                          454
 #   buffer                          272
 #   cicp                             36
 #   color                            64
@@ -31,10 +31,10 @@
 #   orientation                      11
 #   pixel_types                       9
 #   plane                            87
-#   policy                           25
+#   policy                           26
 #   sample                           33
 
-## items (1048 lines)
+## items (1050 lines)
 
 pub mod zenpixels
 pub use At
@@ -612,6 +612,7 @@ pub policy::AlphaPolicy::CompositeOnto
 pub policy::AlphaPolicy::CompositeOnto::b: u8
 pub policy::AlphaPolicy::CompositeOnto::g: u8
 pub policy::AlphaPolicy::CompositeOnto::r: u8
+pub policy::AlphaPolicy::CompositeOnto::reference_white: core::option::Option<hdr::DiffuseWhite>
 pub policy::AlphaPolicy::DiscardIfOpaque
 pub policy::AlphaPolicy::DiscardUnchecked
 pub policy::AlphaPolicy::Forbid
@@ -697,6 +698,7 @@ pub AlphaPolicy::CompositeOnto
 pub AlphaPolicy::CompositeOnto::b: u8
 pub AlphaPolicy::CompositeOnto::g: u8
 pub AlphaPolicy::CompositeOnto::r: u8
+pub AlphaPolicy::CompositeOnto::reference_white: core::option::Option<hdr::DiffuseWhite>
 pub AlphaPolicy::DiscardIfOpaque
 pub AlphaPolicy::DiscardUnchecked
 pub AlphaPolicy::Forbid
@@ -1130,7 +1132,7 @@ descriptor::TransferFunction: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 f32: buffer::StorageSample, plane::PlaneSample
 f64: buffer::StorageSample
 hdr::ContentLightLevel: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
-hdr::DiffuseWhite: Clone, Copy, Debug, Default, Eq, PartialEq
+hdr::DiffuseWhite: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 hdr::MasteringDisplay: Clone, Copy, Debug, Default, PartialEq
 i16: buffer::StorageSample
 i32: buffer::StorageSample

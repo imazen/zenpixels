@@ -118,6 +118,16 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Open (2026-11-04): adjacent inputs can reverse by 1 `u16` code on PQ, sRGB, BT.709, HLG and gamma encode
+  curves, and on PQ and sRGB decode. Counts over every f32 in `[0, 1]` are in
+  `benchmarks/row_kernel_tiers_2026-11-04.md`. `tests/ulp_exhaustive.rs` only checks `u16`-derived inputs.
+
+- Fixed (2026-11-04): a PQ or HLG matte put white at the format's peak: 10,000 cd/m² on PQ.
+  `CompositeOnto::reference_white` now places it, defaulting to BT.2408.
+
+- Open (2026-11-04): the matte is not converted to wide-gamut source primaries. Non-gray backgrounds on P3 or
+  BT.2020 sources are read as those primaries. Not measured.
+
 - Open (2026-11-04, #106): the scalar tier disagrees with the SIMD tiers. 528 of 1792 conversions
   differ between v3 and baseline, mostly because hand-written scalar tiers run different algorithms;
   fusing alone doesn't close it. Integer output: 853 of 517,562 samples, at most 1 code.

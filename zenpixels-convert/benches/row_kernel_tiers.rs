@@ -43,6 +43,31 @@ fn set_tier(tier: &str) {
     #[cfg(target_arch = "aarch64")]
     let _ = archmage::NeonToken::dangerously_disable_token_process_wide(tier == "baseline");
     let _ = tier;
+    assert_tier(tier);
+}
+
+/// A tier that silently stays on is how an earlier version reported v4 as v3.
+fn assert_tier(tier: &str) {
+    use archmage::SimdToken;
+    #[cfg(target_arch = "x86_64")]
+    {
+        assert_eq!(
+            archmage::X64V3Token::summon().is_none(),
+            tier == "baseline",
+            "{tier}"
+        );
+        if tier != "v4x" {
+            assert!(archmage::X64V4Token::summon().is_none(), "{tier}");
+            assert!(archmage::X64V4xToken::summon().is_none(), "{tier}");
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    assert_eq!(
+        archmage::NeonToken::summon().is_none(),
+        tier == "baseline",
+        "{tier}"
+    );
+    let _ = tier;
 }
 
 fn d(c: T, l: L, a: Option<AlphaMode>, t: Tf) -> Option<D> {
@@ -96,6 +121,7 @@ fn options(name: &str) -> ConvertOptions {
             r: 200,
             g: 100,
             b: 50,
+            reference_white: None,
         }
     } else {
         AlphaPolicy::DiscardUnchecked
@@ -314,7 +340,6 @@ fn main() {
                         g.bench(tier, move |b| {
                             set_tier(tier);
                             b.iter(|| {
-                                set_tier(tier);
                                 let s = &src[s0..s0 + src_bytes];
                                 let o = &mut dst[d0..d0 + dst_bytes];
                                 c.convert_row(s, o, width as u32);

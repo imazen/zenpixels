@@ -274,6 +274,7 @@ fn bench_matte_composite(suite: &mut Suite) {
                             r: 64,
                             g: 64,
                             b: 64,
+                            reference_white: None,
                         },
                     );
                     let mut conv = match RowConverter::new_explicit(src_desc, dst_desc, &opts) {

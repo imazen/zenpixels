@@ -38,6 +38,11 @@ impl PartialEq for DiffuseWhite {
     }
 }
 impl Eq for DiffuseWhite {}
+impl core::hash::Hash for DiffuseWhite {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state);
+    }
+}
 
 impl DiffuseWhite {
     /// ITU-R BT.2408 HDR reference white: **203 cd/m²**. The cross-industry

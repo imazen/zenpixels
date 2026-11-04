@@ -417,6 +417,7 @@ fn padding_is_not_alpha_and_opaque_requires_a_proof() {
         r: 255,
         g: 255,
         b: 255,
+        reference_white: None,
     });
     let mut worker = RowConverter::new_explicit(rgba, padding, &options).unwrap();
     let mut dst = [0; 4];

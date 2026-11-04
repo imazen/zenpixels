@@ -13,6 +13,8 @@ pub enum GrayExpand {
     Broadcast,
 }
 
+use crate::hdr::DiffuseWhite;
+
 /// Policy for alpha channel removal. Required when converting
 /// from a layout with alpha to one without.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -22,7 +24,8 @@ pub enum AlphaPolicy {
     DiscardIfOpaque,
     /// Discard unconditionally. Caller acknowledges data loss.
     DiscardUnchecked,
-    /// Composite onto solid background (values in source range, 0–255 for U8).
+    /// Composite onto a solid background, given as 8-bit sRGB whatever the source format.
+    /// Blending happens in linear light.
     CompositeOnto {
         /// Red background value.
         r: u8,
@@ -30,6 +33,14 @@ pub enum AlphaPolicy {
         g: u8,
         /// Blue background value.
         b: u8,
+        /// The luminance this background's white sits at on a PQ or HLG source, so that it
+        /// doesn't become the format's peak. Only this background uses it, and SDR sources
+        /// ignore it.
+        ///
+        /// **Set this for HDR sources, to the reference white the content was graded to.**
+        /// `None` assumes [`DiffuseWhite::BT2408`]'s 203 cd/m², which may not match. On HLG,
+        /// a value also assumes BT.2100's nominal 1000 cd/m² display.
+        reference_white: Option<DiffuseWhite>,
     },
     /// Return error rather than dropping alpha.
     Forbid,
@@ -114,7 +125,7 @@ impl LumaCoefficients {
 ///
 /// // Customize from a preset
 /// let custom = ConvertOptions::permissive()
-///     .with_alpha_policy(AlphaPolicy::CompositeOnto { r: 255, g: 255, b: 255 })
+///     .with_alpha_policy(AlphaPolicy::CompositeOnto { r: 255, g: 255, b: 255, reference_white: None })
 ///     .with_depth_policy(DepthPolicy::Truncate);
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -267,6 +278,7 @@ mod tests {
             r: 255,
             g: 255,
             b: 255,
+            reference_white: None,
         };
         let forbid = AlphaPolicy::Forbid;
 
@@ -277,10 +289,16 @@ mod tests {
             r: 255,
             g: 255,
             b: 255,
+            reference_white: None,
         };
         assert_eq!(composite, composite2);
 
-        let composite_diff = AlphaPolicy::CompositeOnto { r: 0, g: 0, b: 0 };
+        let composite_diff = AlphaPolicy::CompositeOnto {
+            r: 0,
+            g: 0,
+            b: 0,
+            reference_white: None,
+        };
         assert_ne!(composite, composite_diff);
     }
 

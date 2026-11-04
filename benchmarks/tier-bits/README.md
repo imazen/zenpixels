@@ -51,3 +51,18 @@ each, so treat small differences as noise.
 The unfused-kernels scalar tier on x86-64 ran at 0.58-8.47 ns.
 
 `RowConverter` size at x86-64 opt-level 3, fat LTO: 319,592 bytes added today, 654,680 with fused kernels.
+
+## Does host FMA change the scalar tier?
+
+No. Forced onto the scalar tier on r7900x, which has FMA:
+
+| Comparison | Samples differing of 14.4M |
+|---|---:|
+| libm's FMA hidden with `GLIBC_TUNABLES=glibc.cpu.hwcaps=-FMA,-FMA4,-AVX2,-AVX512F` | 0 |
+| `-Ctarget-cpu=x86-64-v3` build | 412,679, all in `linear_to_srgb_extended`, 1 ULP |
+| `-Ctarget-cpu=x86-64-v3` build against aarch64 scalar | 0 |
+
+Output depends on the compile target, through `mlaf`, not on the host. That flag does change speed: the scalar tier runs at
+about 1-3 ns per sample with FMA guaranteed at compile time, against 3-19 ns on baseline x86-64 builds. The same scalar tier
+still differs from v3 on any host, because it runs different algorithms. `monotonic.rs` is the scan behind the monotonicity
+table in `../row_kernel_tiers_2026-11-04.md`.

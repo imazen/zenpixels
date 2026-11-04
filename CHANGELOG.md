@@ -144,23 +144,29 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   and those crates are released. Consumers capped at
   `<=0.9.31-beta.1` must raise the cap.
 - Row kernels compile only for the tiers that pay for them. Stripped size added by
-  `RowConverter` on x86-64, fat LTO: 522,784 to 319,592 bytes at opt-level 3, and 401 KB to
-  194,640 at opt-level s. Default builds no longer have a v4 tier, so AVX-512 CPUs run some
-  kernels up to 2.4x slower (`oklab to rgb`, `premul rgba u16`, `add alpha`). The `avx512`
-  feature restores that through `+v4x` on 13 kernels and linear-srgb's slices, for 47 KB.
-  `benchmarks/row_kernel_tiers_2026-11-04.md`.
+  `RowConverter` on x86-64, fat LTO: 522,784 to 320,520 bytes at opt-level 3, and 401 KB to
+  195,328 at opt-level s. Default builds no longer have a v4 tier, so AVX-512 CPUs run some
+  kernels up to 2.1x slower (`premul rgba u16`). The `avx512` feature restores that through
+  `+v4x` on 12 kernels and linear-srgb's slices. Non-AVX2 x86-64 is up to 3.1x slower on the
+  slices' scalar tiers. `benchmarks/row_kernel_tiers_2026-11-04.md`.
 - HLG, BT.709 and PQ rows use linear-srgb's slices, and PQ drops its vendored kernels. Output
-  changes: HLG and BT.709 by rounding, PQ toward ST 2084 (wrong `u16` values from 10.7% to
-  1.1%, worst error from 4 codes to 1). `bt709 f32 to linear` runs 32x faster at v3.
-- One matte kernel replaces the per-transfer copies, 12 to 33x faster at v3 except on linear
-  and sRGB U8, and 56 KB smaller. sRGB U8 output is unchanged; other integer output stays
-  within 1 code of the formula. `matte f32 linear` is 30% slower.
+  changes: HLG and BT.709 by rounding, PQ toward ST 2084 (wrong `u16` decode values from 10.7%
+  to 1.1%, worst error from 4 codes to 1). PQ decode now has rare 1-code reversals, 5,185 of
+  every f32 in `[0, 1]`, where it had none; encode's fell from 886,928 to 17,934.
+- One matte kernel replaces the per-transfer copies, up to 32x faster at v3, though `matte f32
+  linear` is 1.3x slower. sRGB U8 output is unchanged for every gray, alpha and matte value;
+  other integer output stays within 1 code of the formula.
+- **BREAKING:** `AlphaPolicy::CompositeOnto` gains `reference_white: Option<DiffuseWhite>`. On
+  PQ and HLG sources the background sits there, not at the format's peak: white over PQ was
+  10,000 cd/m² and is now 203 cd/m² by default. Set it to the content's reference white.
+  `DiffuseWhite` gains `Hash`.
 - A pixel's output no longer depends on where it sits in a row. `tests/row_partition.rs` checks
   1792 conversions at every tier.
 - Gray from F16 goes through the F16C slice converters and the f32 kernel: 4x faster on x86-64
   and 7x on aarch64. NaN stays NaN, but which input's payload survives can change.
 - `rgb_to_oklab`, `oklab_to_rgb` and `fast_cbrt` are `#[inline]`: without LTO, Oklab encode ran
   6x slower and had no gain from any tier.
+- The `zenpixels` requirement is now `0.3.1`: this source uses its new storage API.
 
 ## [0.2.17] — unreleased bridge
 

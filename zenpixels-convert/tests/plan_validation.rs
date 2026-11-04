@@ -153,6 +153,7 @@ fn matte_composite_is_single_step_for_every_tf() {
             r: 0,
             g: 0,
             b: 0,
+            reference_white: None,
         });
         let mut conv = RowConverter::new_explicit(src, dst, &opts).unwrap();
         let pixel: [u16; 4] = [32768, 32768, 32768, 32768];
@@ -232,6 +233,7 @@ fn matte_composite_does_not_double_linearize_floats() {
         r: 0,
         g: 0,
         b: 0,
+        reference_white: None,
     });
     let mut conv = RowConverter::new_explicit(src, dst, &opts).unwrap();
     let pixel: [f32; 4] = [0.5, 0.5, 0.5, 0.5];
@@ -268,6 +270,7 @@ fn linear_u16_matte_composite_has_only_one_kernel() {
         r: 0,
         g: 0,
         b: 0,
+        reference_white: None,
     });
     let mut conv = RowConverter::new_explicit(src, dst, &opts).unwrap();
     let pixel: [u16; 4] = [32768; 4];

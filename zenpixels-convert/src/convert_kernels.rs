@@ -105,8 +105,8 @@ pub(super) fn apply_step_u8(
             drop_alpha(src, dst, w, from.channel_type());
         }
 
-        ConvertStep::MatteComposite { r, g, b } => {
-            matte_composite(src, dst, w, from, *r, *g, *b);
+        ConvertStep::MatteComposite { r, g, b, white } => {
+            matte_composite(src, dst, w, from, [*r, *g, *b], *white);
         }
 
         ConvertStep::GrayToRgb => {
@@ -681,18 +681,16 @@ fn drop_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
 /// channel type and transfer, through the same transfer slices as the other kernels.
 /// sRGB U8 keeps its table-based decode and encode.
 ///
-/// **Matte interpretation.** The matte (r, g, b) is specified as sRGB u8
-/// regardless of source TF — this matches the common usage (CSS-style
-/// background colors). For HDR sources (PQ/HLG), the matte is implicitly
-/// SDR-range since u8 caps at 255 = 1.0 normalized.
+/// **Matte interpretation.** The matte (r, g, b) is sRGB u8 regardless of source TF, like a
+/// CSS background color. On PQ and HLG sources it sits at `white`, the linear value of the
+/// reference white the planner resolved, so that white isn't the format's peak.
 fn matte_composite(
     src: &[u8],
     dst: &mut [u8],
     width: usize,
     from: PixelDescriptor,
-    mr: u8,
-    mg: u8,
-    mb: u8,
+    background: [u8; 3],
+    white: f32,
 ) {
     let ch_type = from.channel_type();
     if !matches!(
@@ -706,11 +704,7 @@ fn matte_composite(
     let srgb_u8 = ch_type == ChannelType::U8 && tf == TransferFunction::Srgb;
 
     // Matte is specified in sRGB regardless of source TF (see doc above).
-    let matte = [
-        linear_srgb::default::srgb_u8_to_linear(mr),
-        linear_srgb::default::srgb_u8_to_linear(mg),
-        linear_srgb::default::srgb_u8_to_linear(mb),
-    ];
+    let matte = background.map(|c| linear_srgb::default::srgb_u8_to_linear(c) * white);
 
     const PIXELS: usize = 128;
     let mut rgba = [0f32; PIXELS * 4];
@@ -737,15 +731,18 @@ fn matte_composite(
         }
         matte_split(rgba, rgb, alpha);
         if srgb_u8 {
-            for (lane, byte) in rgb
+            // The tables and this alpha scale define sRGB U8 matte output.
+            for ((lane, byte), a) in rgb
                 .as_chunks_mut::<3>()
                 .0
                 .iter_mut()
                 .zip(s.as_chunks::<4>().0)
+                .zip(alpha.iter_mut())
             {
                 for c in 0..3 {
                     lane[c] = linear_srgb::default::srgb_u8_to_linear(byte[c]);
                 }
+                *a = f32::from(byte[3]) * (1.0 / 255.0);
             }
         } else {
             matte_to_linear(rgb, tf);
@@ -1228,6 +1225,7 @@ fn gray_alpha_to_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelT
 
 // -- gray_to_gray_alpha (inserts opaque alpha: differs per type) -------------
 
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_gray_alpha_2bytes(src: &[u16], dst: &mut [u16], width: usize, opaque: u16) {
     for i in 0..width {
         let d: &mut [u16; 2] = (&mut dst[i * 2..i * 2 + 2]).try_into().unwrap();
@@ -2108,7 +2106,7 @@ fn premul_u16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
-#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn premul_f32_ga(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let base = i * 2;
@@ -2342,6 +2340,7 @@ fn unpremul_u16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
+#[attune(dispatch, -_v3, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn unpremul_f32_ga(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let base = i * 2;

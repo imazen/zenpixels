@@ -36,8 +36,14 @@ fn blend(v: f32, a: f32, m: f32) -> f32 {
     v * a.clamp(0.0, 1.0) + m * (1.0 - a.clamp(0.0, 1.0))
 }
 
-fn matte() -> [f32; 3] {
-    [MATTE.0, MATTE.1, MATTE.2].map(ds::srgb_u8_to_linear)
+/// The background in `transfer`'s linear, at the default reference white.
+fn matte(transfer: Tf) -> [f32; 3] {
+    let white = match transfer {
+        Tf::Pq => 203.0 / 10_000.0,
+        Tf::Hlg => 0.203f32.powf(1.0 / 1.2),
+        _ => 1.0,
+    };
+    [MATTE.0, MATTE.1, MATTE.2].map(|c| ds::srgb_u8_to_linear(c) * white)
 }
 
 fn converter(t: T, transfer: Tf) -> RowConverter {
@@ -47,6 +53,7 @@ fn converter(t: T, transfer: Tf) -> RowConverter {
         r: MATTE.0,
         g: MATTE.1,
         b: MATTE.2,
+        reference_white: None,
     };
     RowConverter::new_explicit(
         from,
@@ -80,7 +87,7 @@ const CURVES: [Tf; 6] = [
 /// sRGB U8 uses the same tables as before: no difference at all.
 #[test]
 fn srgb_u8_matches_its_tables_exactly() {
-    let m = matte();
+    let m = matte(Tf::Srgb);
     let src: Vec<u8> = samples(255).iter().map(|v| *v as u8).collect();
     let mut out = vec![0u8; WIDTH * 3];
     converter(T::U8, Tf::Srgb).convert_row(&src, &mut out, WIDTH as u32);
@@ -93,10 +100,43 @@ fn srgb_u8_matches_its_tables_exactly() {
     }
 }
 
+/// Every gray source, alpha and matte value. A random sample at a fixed matte misses the 32
+/// combinations where a correctly rounded alpha would change the result.
+#[test]
+fn srgb_u8_gray_matches_its_tables_exhaustively() {
+    let src: Vec<u8> = (0..=255u8)
+        .flat_map(|g| (0..=255u8).flat_map(move |a| [g, g, g, a]))
+        .collect();
+    let mut out = vec![0u8; 65536 * 3];
+    let opts = |m: u8| {
+        ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
+            r: m,
+            g: m,
+            b: m,
+            reference_white: None,
+        })
+    };
+    let (from, to) = (
+        D::new(T::U8, L::Rgba, Some(AlphaMode::Straight), Tf::Srgb),
+        D::new(T::U8, L::Rgb, None, Tf::Srgb),
+    );
+    for m in 0..=255u8 {
+        RowConverter::new_explicit(from, to, &opts(m))
+            .unwrap()
+            .convert_row(&src, &mut out, 65536);
+        let matte = ds::srgb_u8_to_linear(m);
+        for (p, o) in src.as_chunks::<4>().0.iter().zip(out.as_chunks::<3>().0) {
+            let a = f32::from(p[3]) * (1.0 / 255.0);
+            let want = ds::linear_to_srgb_u8(blend(ds::srgb_u8_to_linear(p[0]), a, matte));
+            assert_eq!(o[0], want, "gray {} alpha {} matte {m}", p[0], p[3]);
+        }
+    }
+}
+
 #[test]
 fn integer_output_stays_within_one_code() {
-    let m = matte();
     for transfer in CURVES {
+        let m = matte(transfer);
         if transfer != Tf::Srgb {
             let src: Vec<u8> = samples(255).iter().map(|v| *v as u8).collect();
             let mut out = vec![0u8; WIDTH * 3];
@@ -136,8 +176,8 @@ fn integer_output_stays_within_one_code() {
 
 #[test]
 fn float_output_stays_within_rounding() {
-    let m = matte();
     for transfer in CURVES {
+        let m = matte(transfer);
         let src: Vec<f32> = samples(1 << 24)
             .iter()
             .map(|v| *v as f32 / (1 << 24) as f32)
@@ -163,8 +203,8 @@ fn float_output_stays_within_rounding() {
 
 #[test]
 fn half_float_output_stays_within_one_step() {
-    let m = matte();
     for transfer in CURVES {
+        let m = matte(transfer);
         let src: Vec<u16> = samples(1 << 24)
             .iter()
             .map(|v| half::f16::from_f32(*v as f32 / (1 << 24) as f32).to_bits())
@@ -193,8 +233,8 @@ fn half_float_output_stays_within_one_step() {
 /// Values outside `[0, 1]` behave like the formula, or the difference is on record here.
 #[test]
 fn out_of_range_float_samples_follow_the_formula() {
-    let m = matte();
     for transfer in CURVES {
+        let m = matte(transfer);
         let mut src = Vec::new();
         for v in [-0.5f32, -0.01, 1.01, 1.5, 4.0] {
             for a in [0.0f32, 0.25, 1.0, 1.5, -0.5] {
@@ -215,6 +255,101 @@ fn out_of_range_float_samples_follow_the_formula() {
                 (got - want).abs() <= 1e-5 + want.abs() * 1e-5,
                 "{transfer:?} {p:?}: {got} {want}"
             );
+        }
+    }
+}
+
+mod reference_white {
+    use super::*;
+    use zenpixels::hdr::DiffuseWhite;
+
+    /// ST 2084 EOTF in cd/m².
+    fn pq_nits(signal: f64) -> f64 {
+        let (m1, m2) = (2610.0 / 16384.0, 2523.0 / 4096.0 * 128.0);
+        let (c1, c2, c3) = (
+            3424.0 / 4096.0,
+            2413.0 / 4096.0 * 32.0,
+            2392.0 / 4096.0 * 32.0,
+        );
+        let p = signal.powf(1.0 / m2);
+        10_000.0 * (f64::max(p - c1, 0.0) / (c2 - c3 * p)).powf(1.0 / m1)
+    }
+
+    /// `pixel` composited onto white, as one RGB sample.
+    fn over_white(transfer: Tf, pixel: [f32; 4], reference_white: Option<DiffuseWhite>) -> f32 {
+        let policy = AlphaPolicy::CompositeOnto {
+            r: 255,
+            g: 255,
+            b: 255,
+            reference_white,
+        };
+        let options = ConvertOptions::permissive().with_alpha_policy(policy);
+        let from = D::new(T::F32, L::Rgba, Some(AlphaMode::Straight), transfer);
+        let to = D::new(T::F32, L::Rgb, None, transfer);
+        let mut out = [0f32; 3];
+        RowConverter::new_explicit(from, to, &options)
+            .unwrap()
+            .convert_row(
+                bytemuck::cast_slice(&pixel),
+                bytemuck::cast_slice_mut(&mut out),
+                1,
+            );
+        out[0]
+    }
+
+    const TRANSPARENT: [f32; 4] = [0.0; 4];
+
+    #[test]
+    fn pq_background_defaults_to_bt2408() {
+        let nits = pq_nits(f64::from(over_white(Tf::Pq, TRANSPARENT, None)));
+        assert!((nits - 203.0).abs() < 0.1, "{nits}");
+    }
+
+    #[test]
+    fn pq_background_uses_the_callers_reference_white() {
+        for want in [100.0f32, 203.0, 1000.0] {
+            let signal = over_white(Tf::Pq, TRANSPARENT, Some(DiffuseWhite::new(want)));
+            let nits = pq_nits(f64::from(signal));
+            assert!(
+                (nits - f64::from(want)).abs() < f64::from(want) * 5e-4,
+                "{want}: {nits}"
+            );
+        }
+    }
+
+    /// BT.2408: HLG reference white is at 75% signal.
+    #[test]
+    fn hlg_background_defaults_to_three_quarters_signal() {
+        let signal = over_white(Tf::Hlg, TRANSPARENT, None);
+        assert!((signal - 0.75).abs() < 0.002, "{signal}");
+    }
+
+    #[test]
+    fn hlg_background_follows_the_callers_reference_white() {
+        let low = over_white(Tf::Hlg, TRANSPARENT, Some(DiffuseWhite::new(100.0)));
+        let high = over_white(Tf::Hlg, TRANSPARENT, Some(DiffuseWhite::new(400.0)));
+        assert!(low < 0.75 && high > 0.75, "{low} {high}");
+    }
+
+    /// Opaque pixels show no background, so reference white can't change them.
+    #[test]
+    fn opaque_pixels_ignore_reference_white() {
+        for transfer in [Tf::Pq, Tf::Hlg] {
+            let pixel = [0.25, 0.25, 0.25, 1.0];
+            let a = over_white(transfer, pixel, Some(DiffuseWhite::new(100.0)));
+            let b = over_white(transfer, pixel, Some(DiffuseWhite::new(1000.0)));
+            assert_eq!(a.to_bits(), b.to_bits());
+        }
+    }
+
+    /// SDR white is the format's white, whatever reference white says.
+    #[test]
+    fn sdr_sources_ignore_reference_white() {
+        for transfer in [Tf::Srgb, Tf::Bt709, Tf::Gamma22, Tf::Linear] {
+            let a = over_white(transfer, TRANSPARENT, None);
+            let b = over_white(transfer, TRANSPARENT, Some(DiffuseWhite::new(1000.0)));
+            assert_eq!(a.to_bits(), b.to_bits(), "{transfer:?}");
+            assert!((a - 1.0).abs() < 2e-6, "{transfer:?}: {a}");
         }
     }
 }

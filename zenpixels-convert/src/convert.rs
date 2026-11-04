@@ -190,6 +190,19 @@ pub struct ConvertPlan {
     execution: Option<Vec<(PixelDescriptor, PixelDescriptor, f32)>>,
 }
 
+/// The linear value of SDR white in `transfer`, for a background composited into it.
+///
+/// PQ's linear is absolute, with 1.0 at 10000 cd/m². HLG's is scene-referred, so the
+/// luminance goes through BT.2100's display OOTF inverted, at the nominal 1000 cd/m² peak
+/// and its system gamma of 1.2. 203 cd/m² lands at signal 0.75, as BT.2408 specifies.
+fn matte_white(transfer: TransferFunction, white: zenpixels::hdr::DiffuseWhite) -> f32 {
+    match transfer {
+        TransferFunction::Pq => white.nits() / 10_000.0,
+        TransferFunction::Hlg => libm::powf(white.nits() / 1_000.0, 1.0 / 1.2),
+        _ => 1.0,
+    }
+}
+
 /// Selects which fused TF + matrix + TF kernel a [`ConvertStep::Fused`]
 /// dispatches to. Each variant is one (source-TF, source-depth, dest-depth,
 /// dest-TF, channel-shape) shape that the planner can peephole.
@@ -251,11 +264,9 @@ pub(crate) enum ConvertStep {
     /// function: pixel RGB is EOTF'd per source TF, alpha-blended against
     /// the pre-linearized matte, then OETF'd back to source TF. Alpha is
     /// treated as linear regardless of color-channel TF. The matte
-    /// `(r, g, b)` is always interpreted as sRGB u8 (CSS-style background).
-    ///
-    /// Implemented uniformly across U8/U16/F32/F16 via per-TF
-    /// monomorphization; sRGB integer paths use LUT-based EOTF/OETF.
-    MatteComposite { r: u8, g: u8, b: u8 },
+    /// `(r, g, b)` is always interpreted as sRGB u8 (CSS-style background), and `white` is
+    /// the source's linear value for SDR white: 1.0, except on PQ and HLG.
+    MatteComposite { r: u8, g: u8, b: u8, white: f32 },
     /// Gray → RGB (replicate gray to all 3 channels).
     GrayToRgb,
     /// Gray → RGBA (replicate + opaque alpha).
@@ -1496,7 +1507,14 @@ impl ConvertPlan {
         //    pass; wrapping turns that into three full row passes.
         //  * `MatteComposite` also drops the alpha channel (RGBA → RGB) in
         //    the same pass, which a pair of same-layout TF steps cannot do.
-        if drops_alpha && let AlphaPolicy::CompositeOnto { r, g, b } = options.alpha_policy {
+        if drops_alpha
+            && let AlphaPolicy::CompositeOnto {
+                r,
+                g,
+                b,
+                reference_white,
+            } = options.alpha_policy
+        {
             let mut expanded = Vec::new();
             for step in plan.steps.drain(..) {
                 match step {
@@ -1527,7 +1545,15 @@ impl ConvertPlan {
             let mut idx = 0;
             while idx < plan.steps.len() {
                 if matches!(plan.steps[idx], ConvertStep::DropAlpha) {
-                    plan.steps[idx] = ConvertStep::MatteComposite { r, g, b };
+                    plan.steps[idx] = ConvertStep::MatteComposite {
+                        r,
+                        g,
+                        b,
+                        white: matte_white(
+                            from.transfer(),
+                            reference_white.unwrap_or(zenpixels::hdr::DiffuseWhite::BT2408),
+                        ),
+                    };
                     if src_is_premul {
                         plan.steps.insert(idx, ConvertStep::PremulToStraight);
                         idx += 1;

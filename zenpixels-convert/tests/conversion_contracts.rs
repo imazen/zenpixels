@@ -103,6 +103,7 @@ mod tests {
                 r: 255,
                 g: 255,
                 b: 255,
+                reference_white: None,
             },
         );
         let dst = PixelDescriptor::new(
