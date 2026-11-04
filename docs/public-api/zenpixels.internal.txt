@@ -9,49 +9,29 @@
 
 ## summary
 #
-#   free functions                             30
-#   inherent methods                           52
+#   inherent methods                           46
 #   enum variants                              14
 #   trait roster entries (type × trait)        48
 #
 # per-module pub lines:
-#   (root)                           10
-#   buffer                            6
+#   (root)                            7
+#   buffer                            3
 #   cicp                              2
 #   color                             6
 #   descriptor                       17
-#   f32                               3
-#   f64                               3
 #   hdr                               1
-#   i16                               3
-#   i32                               3
-#   i64                               3
-#   i8                                3
 #   icc                               2
 #   orientation                       1
 #   pixel_types                       2
 #   plane                             7
 #   policy                            5
 #   sample                            7
-#   u16                               3
-#   u32                               3
-#   u64                               3
-#   u8                                3
 
-## items (69 lines)
+## items (60 lines)
 
-pub fn i8::from_storage(buffer::PixelStorage) -> core::result::Result<alloc::vec::Vec<Self>, buffer::PixelStorage> [also: f32, f64, i16, i32, i64, u16, u32, u64, u8]
-pub fn i8::held_by(&buffer::PixelStorage) -> bool [also: f32, f64, i16, i32, i64, u16, u32, u64, u8]
-pub fn i8::into_storage(alloc::vec::Vec<Self>) -> buffer::PixelStorage [also: f32, f64, i16, i32, i64, u16, u32, u64, u8]
-pub fn StorageSample::from_storage(buffer::PixelStorage) -> core::result::Result<alloc::vec::Vec<Self>, buffer::PixelStorage>
-pub fn StorageSample::held_by(&buffer::PixelStorage) -> bool
-pub fn StorageSample::into_storage(alloc::vec::Vec<Self>) -> buffer::PixelStorage
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
 pub fn buffer::Rgbx::assert_fields_are_eq(&self)
-pub fn buffer::StorageSample::from_storage(buffer::PixelStorage) -> core::result::Result<alloc::vec::Vec<Self>, buffer::PixelStorage>
-pub fn buffer::StorageSample::held_by(&buffer::PixelStorage) -> bool
-pub fn buffer::StorageSample::into_storage(alloc::vec::Vec<Self>) -> buffer::PixelStorage
 pub fn cicp::Cicp::assert_fields_are_eq(&self)
 pub fn cicp::CicpDescriptorError::assert_fields_are_eq(&self)
 pub fn color::ColorAuthority::assert_fields_are_eq(&self)
