@@ -374,9 +374,9 @@ impl<'a> PixelSlice<'a> {
     ///
     /// Multi-byte samples (U16, F16, F32) are interpreted in **native byte
     /// order** — the bytes must already be host-endian. There is no
-    /// endianness tag on [`PixelDescriptor`] ([`ByteOrder`](crate::ByteOrder)
-    /// describes *channel* order, BGR vs RGB, not byte order within a
-    /// sample), so a decoder reading big-endian container data (e.g. PNG
+    /// endianness tag on [`PixelDescriptor`] (a BGR [`ChannelLayout`](crate::ChannelLayout)
+    /// describes *channel* order, not byte order within a sample), so a
+    /// decoder reading big-endian container data (e.g. PNG
     /// 16-bit) must byte-swap before wrapping the buffer in a slice.
     /// Handing over non-native bytes silently misinterprets every sample.
     ///

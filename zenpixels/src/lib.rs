@@ -91,6 +91,7 @@ pub mod buffer;
 pub use orientation::Orientation;
 
 // Re-export key descriptor types at crate root for ergonomics.
+#[allow(deprecated)]
 #[doc(inline)]
 pub use descriptor::{
     AlphaMode, ByteOrder, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, PixelDescriptor,

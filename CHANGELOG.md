@@ -18,6 +18,15 @@
 
 ## [Unreleased]
 
+### Deprecated: `ByteOrder`
+
+- Deprecate `ByteOrder`, `PixelFormat::byte_order` and
+  `PixelDescriptor::byte_order`; 0.3.1 removes them. They describe RGB/BGR
+  channel order, not sample endianness (samples are always host-endian), and
+  repeat `ChannelLayout::Bgra`. Use `layout() == ChannelLayout::Bgra` or
+  `PixelDescriptor::is_bgr()`, which now reads the layout. No zen crate outside
+  zenpixels uses them. `scripts/check-deprecations.py` probes all three.
+
 ### Native codes and current-precision evidence
 
 - Add `CodePlane::from_u8_interleaved` / `from_u16_interleaved`, `step_words` and

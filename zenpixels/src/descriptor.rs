@@ -703,7 +703,12 @@ impl PixelDescriptor {
         }
     }
 
-    /// Byte order.
+    /// RGB/BGR channel order (not sample endianness).
+    #[deprecated(
+        since = "0.2.17",
+        note = "this is RGB/BGR channel order, not sample endianness; use `layout() == ChannelLayout::Bgra` or `PixelDescriptor::is_bgr()`. Removed in 0.3.1."
+    )]
+    #[allow(deprecated)]
     #[inline]
     pub const fn byte_order(&self) -> ByteOrder {
         self.format.byte_order()
@@ -1144,10 +1149,13 @@ impl PixelDescriptor {
         self.format.is_grayscale()
     }
 
-    /// Whether this descriptor uses BGR byte order.
+    /// Whether the color channels are stored blue first ([`ChannelLayout::Bgra`]).
+    ///
+    /// This is channel order, not sample endianness: multi-byte samples are
+    /// always host-endian.
     #[inline]
     pub const fn is_bgr(self) -> bool {
-        matches!(self.format.byte_order(), ByteOrder::Bgr)
+        matches!(self.format.layout(), ChannelLayout::Bgra)
     }
 
     /// Return a copy of this descriptor **relabeled** with a different
@@ -1408,7 +1416,7 @@ impl fmt::Display for PixelDescriptor {
 pub enum ColorModel {
     /// Single grayscale channel.
     Gray = 0,
-    /// Red, green, blue (or BGR when [`ByteOrder::Bgr`]).
+    /// Red, green, blue (stored blue first for [`ChannelLayout::Bgra`]).
     Rgb = 1,
     /// Luma + chroma (Y, Cb, Cr).
     YCbCr = 2,
@@ -1451,7 +1459,16 @@ impl fmt::Display for ColorModel {
 // Byte order
 // ---------------------------------------------------------------------------
 
-/// RGB-family byte order. Only meaningful when color model is RGB.
+/// RGB-family channel order. Only meaningful when color model is RGB.
+///
+/// Despite the name, this is not sample endianness: multi-byte samples are
+/// always host-endian. The layout already carries the order
+/// ([`ChannelLayout::Bgra`]).
+#[deprecated(
+    since = "0.2.17",
+    note = "this is RGB/BGR channel order, not sample endianness; use `layout() == ChannelLayout::Bgra` or `PixelDescriptor::is_bgr()`. Removed in 0.3.1."
+)]
+#[allow(deprecated)] // the derived `Default` names `Native`
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 #[repr(u8)]
@@ -1463,6 +1480,7 @@ pub enum ByteOrder {
     Bgr = 1,
 }
 
+#[allow(deprecated)]
 impl fmt::Display for ByteOrder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1701,9 +1719,13 @@ impl PixelFormat {
         }
     }
 
-    /// Byte order (Native or BGR).
+    /// RGB/BGR channel order (not sample endianness).
+    #[deprecated(
+        since = "0.2.17",
+        note = "this is RGB/BGR channel order, not sample endianness; use `layout() == ChannelLayout::Bgra` or `PixelDescriptor::is_bgr()`. Removed in 0.3.1."
+    )]
     #[inline]
-    #[allow(unreachable_patterns)]
+    #[allow(unreachable_patterns, deprecated)]
     pub const fn byte_order(self) -> ByteOrder {
         match self {
             Self::Bgra8 | Self::Bgrx8 => ByteOrder::Bgr,
@@ -2091,8 +2113,15 @@ mod tests {
         assert_eq!(PixelFormat::Gray8.channels(), 1);
         assert!(PixelFormat::Gray8.is_grayscale());
         assert!(!PixelFormat::Rgb8.is_grayscale());
-        assert_eq!(PixelFormat::Bgra8.byte_order(), ByteOrder::Bgr);
-        assert_eq!(PixelFormat::Rgb8.byte_order(), ByteOrder::Native);
+        assert!(PixelFormat::Bgra8.descriptor().is_bgr());
+        assert!(PixelFormat::Bgrx8.descriptor().is_bgr());
+        assert!(!PixelFormat::Rgb8.descriptor().is_bgr());
+        assert!(!PixelFormat::Rgba8.descriptor().is_bgr());
+        #[allow(deprecated)]
+        {
+            assert_eq!(PixelFormat::Bgra8.byte_order(), ByteOrder::Bgr);
+            assert_eq!(PixelFormat::Rgb8.byte_order(), ByteOrder::Native);
+        }
     }
 
     #[test]
