@@ -14,6 +14,7 @@
 //! For format conversions (e.g., `convert_to`, `to_rgb8`), see the
 //! `zenpixels-convert` crate which provides `PixelBufferConvertExt`.
 
+use crate::plane::{PlaneStorage, PlaneStorageMut};
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -1640,17 +1641,24 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
 
 /// Owned pixel buffer with format metadata.
 ///
-/// Wraps a `Vec<u8>` with an optional alignment offset so that pixel
-/// rows start at the correct alignment for the channel type. The
-/// allocation and its layout/metadata can be recovered together with
+/// Owns its samples through `S`, with an optional alignment offset so that
+/// pixel rows start at the correct alignment for the channel type. The storage
+/// and its layout/metadata can be recovered together with
 /// [`into_parts`](Self::into_parts). Use [`into_contiguous`](Self::into_contiguous)
 /// first when the receiver needs tightly packed rows.
 ///
 /// The type parameter `P` tracks pixel format at compile time, same as
 /// [`PixelSlice`].
+///
+/// `S` defaults to `Vec<u8>`, which is what the allocating constructors make.
+/// [`PixelBuffer::try_from_parts`] adopts any
+/// [`PlaneStorage`](crate::plane::PlaneStorage) without copying: a `Vec<u16>` or
+/// `Vec<f32>` from another crate, a `Box<[T]>`, a borrowed slice, or a pool slot.
+/// [`PlaneStorageMut`](crate::plane::PlaneStorageMut) storage also gets the
+/// mutable views.
 #[non_exhaustive]
-pub struct PixelBuffer<P = ()> {
-    data: Vec<u8>,
+pub struct PixelBuffer<P = (), S = Vec<u8>> {
+    data: S,
     /// Byte offset from `data` start to the first aligned pixel.
     offset: usize,
     width: u32,
@@ -1680,9 +1688,9 @@ pub struct PixelBuffer<P = ()> {
 /// [`PixelBuffer::try_from_parts`] to validate and adopt the edited record.
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct PixelBufferParts {
-    /// Original backing allocation, including any alignment prefix or padding.
-    pub data: Vec<u8>,
+pub struct PixelBufferParts<S = Vec<u8>> {
+    /// Original backing storage, including any alignment prefix or padding.
+    pub data: S,
     /// Byte offset to the first pixel (or the empty pixel span).
     pub offset: usize,
     /// Bytes between successive row starts.
@@ -1697,7 +1705,7 @@ pub struct PixelBufferParts {
     pub color_context: Option<Arc<ColorContext>>,
 }
 
-impl PixelBufferParts {
+impl<S> PixelBufferParts<S> {
     /// Describe a native allocation for checked adoption without copying.
     ///
     /// Samples start at byte zero and no color context is attached. Set
@@ -1706,7 +1714,7 @@ impl PixelBufferParts {
     /// Construction does not validate or interpret the bytes; pass these parts
     /// to [`PixelBuffer::try_from_parts`] to check the extent and alignment.
     pub fn new(
-        data: Vec<u8>,
+        data: S,
         width: u32,
         height: u32,
         stride_bytes: usize,
@@ -1732,12 +1740,12 @@ impl PixelBufferParts {
 /// Retaining the parts does not allocate or clone them. Capturing the validation
 /// error uses the usual `whereat` diagnostic trace allocation.
 #[must_use]
-pub struct FromPartsError {
+pub struct FromPartsError<S = Vec<u8>> {
     error: At<BufferError>,
-    parts: Option<PixelBufferParts>,
+    parts: Option<PixelBufferParts<S>>,
 }
 
-impl FromPartsError {
+impl<S> FromPartsError<S> {
     /// The validation error, including its location trace.
     pub fn error(&self) -> &At<BufferError> {
         &self.error
@@ -1746,7 +1754,7 @@ impl FromPartsError {
     /// Take the rejected allocation and metadata, leaving this error intact.
     ///
     /// Returns `None` after the parts have already been taken.
-    pub fn take_parts(&mut self) -> Option<PixelBufferParts> {
+    pub fn take_parts(&mut self) -> Option<PixelBufferParts<S>> {
         self.parts.take()
     }
 
@@ -1759,7 +1767,7 @@ impl FromPartsError {
     }
 }
 
-impl fmt::Debug for FromPartsError {
+impl<S> fmt::Debug for FromPartsError<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Never dump a potentially 100 MB allocation into logs.
         f.debug_struct("FromPartsError")
@@ -1769,13 +1777,13 @@ impl fmt::Debug for FromPartsError {
     }
 }
 
-impl fmt::Display for FromPartsError {
+impl<S> fmt::Display for FromPartsError<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.error, f)
     }
 }
 
-impl core::error::Error for FromPartsError {
+impl<S> core::error::Error for FromPartsError<S> {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         Some(&self.error)
     }
@@ -1858,7 +1866,7 @@ impl<P> fmt::Debug for PixelCow<'_, P> {
     }
 }
 
-impl PixelBuffer {
+impl<S: PlaneStorage> PixelBuffer<(), S> {
     /// Adopt an allocation, geometry and color context without copying pixels.
     ///
     /// Validates offset, byte stride, sample alignment and the minimum visible
@@ -1894,18 +1902,19 @@ impl PixelBuffer {
     /// ```
     #[track_caller]
     #[allow(clippy::result_large_err)] // Keep rejected parts inline, without allocating an error box.
-    pub fn try_from_parts(parts: PixelBufferParts) -> Result<Self, FromPartsError> {
-        let validation = match parts.data.get(parts.offset..) {
-            Some(data) => validate_slice(
-                data.len(),
-                data.as_ptr(),
-                parts.width,
-                parts.height,
-                parts.stride_bytes,
-                &parts.descriptor,
-            ),
-            None => Err(BufferError::InsufficientData),
-        };
+    pub fn try_from_parts(parts: PixelBufferParts<S>) -> Result<Self, FromPartsError<S>> {
+        let validation =
+            match bytemuck::cast_slice::<S::Sample, u8>(parts.data.samples()).get(parts.offset..) {
+                Some(data) => validate_slice(
+                    data.len(),
+                    data.as_ptr(),
+                    parts.width,
+                    parts.height,
+                    parts.stride_bytes,
+                    &parts.descriptor,
+                ),
+                None => Err(BufferError::InsufficientData),
+            };
         if let Err(error) = validation {
             return Err(FromPartsError {
                 error: whereat::at!(error),
@@ -1924,7 +1933,9 @@ impl PixelBuffer {
             _pixel: PhantomData,
         })
     }
+}
 
+impl PixelBuffer {
     /// Allocate a zero-filled buffer for the given dimensions and format.
     ///
     /// The default path is infallible for speed — see the
@@ -2241,7 +2252,7 @@ impl<P: Pixel> PixelBuffer<P> {
 }
 
 #[cfg(feature = "imgref")]
-impl<P: Pixel> PixelBuffer<P> {
+impl<P: Pixel, S: PlaneStorage> PixelBuffer<P, S> {
     /// Borrow the buffer as an [`ImgRef`].
     ///
     /// Zero-copy: reinterprets the raw bytes as typed pixels via
@@ -2258,7 +2269,8 @@ impl<P: Pixel> PixelBuffer<P> {
             (self.height as usize - 1) * self.stride
                 + self.width as usize * core::mem::size_of::<P>()
         };
-        let data = &self.data[self.offset..self.offset + total_bytes];
+        let data = &bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())
+            [self.offset..self.offset + total_bytes];
         let pixels: &[P] = if data.is_empty() {
             &[]
         } else {
@@ -2273,7 +2285,10 @@ impl<P: Pixel> PixelBuffer<P> {
         let stride_px = (self.stride / core::mem::size_of::<P>()).max(1);
         imgref::Img::new_stride(pixels, self.width as usize, self.height as usize, stride_px)
     }
+}
 
+#[cfg(feature = "imgref")]
+impl<P: Pixel, S: PlaneStorageMut> PixelBuffer<P, S> {
     /// Borrow the buffer as a mutable [`ImgRefMut`](imgref::ImgRefMut).
     ///
     /// Zero-copy: reinterprets the raw bytes as typed pixels.
@@ -2287,7 +2302,8 @@ impl<P: Pixel> PixelBuffer<P> {
                 + self.width as usize * core::mem::size_of::<P>()
         };
         let offset = self.offset;
-        let data = &mut self.data[offset..offset + total_bytes];
+        let data = &mut bytemuck::cast_slice_mut::<S::Sample, u8>(self.data.samples_mut())
+            [offset..offset + total_bytes];
         let pixels: &mut [P] = if data.is_empty() {
             &mut []
         } else {
@@ -2408,7 +2424,7 @@ impl PixelBuffer {
 
 /// Imgref interop for type-erased PixelBuffer.
 #[cfg(feature = "imgref")]
-impl PixelBuffer {
+impl<S: PlaneStorage> PixelBuffer<(), S> {
     /// Try to borrow the buffer as a typed [`ImgRef`].
     ///
     /// Returns `None` if the descriptor is not layout-compatible with `P`.
@@ -2427,7 +2443,8 @@ impl PixelBuffer {
         } else {
             (self.height as usize - 1) * self.stride + self.width as usize * pixel_size
         };
-        let data = &self.data[self.offset..self.offset + total_bytes];
+        let data = &bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())
+            [self.offset..self.offset + total_bytes];
         let pixels: &[P] = if data.is_empty() {
             &[]
         } else {
@@ -2441,7 +2458,10 @@ impl PixelBuffer {
             stride_px,
         ))
     }
+}
 
+#[cfg(feature = "imgref")]
+impl<S: PlaneStorageMut> PixelBuffer<(), S> {
     /// Try to borrow the buffer as a typed mutable [`ImgRefMut`](imgref::ImgRefMut).
     ///
     /// Returns `None` if the descriptor is not layout-compatible with `P`.
@@ -2463,7 +2483,8 @@ impl PixelBuffer {
             (self.height as usize - 1) * self.stride + self.width as usize * pixel_size
         };
         let offset = self.offset;
-        let data = &mut self.data[offset..offset + total_bytes];
+        let data = &mut bytemuck::cast_slice_mut::<S::Sample, u8>(self.data.samples_mut())
+            [offset..offset + total_bytes];
         let pixels: &mut [P] = if data.is_empty() {
             &mut []
         } else {
@@ -2640,17 +2661,17 @@ impl PixelBuffer {
     }
 }
 
-impl<P> PixelBuffer<P> {
+impl<P, S: PlaneStorage> PixelBuffer<P, S> {
     // Retain available final-row padding, but do not require it. Validation
     // establishes the visible extent; padding need not fit or even be representable.
     fn storage_span_len(&self) -> usize {
         self.stride
             .saturating_mul(self.height as usize)
-            .min(self.data.len() - self.offset)
+            .min(bytemuck::cast_slice::<S::Sample, u8>(self.data.samples()).len() - self.offset)
     }
 
     /// Erase the pixel type, returning a type-erased buffer.
-    pub fn erase(self) -> PixelBuffer {
+    pub fn erase(self) -> PixelBuffer<(), S> {
         PixelBuffer {
             data: self.data,
             offset: self.offset,
@@ -2668,12 +2689,15 @@ impl<P> PixelBuffer<P> {
     /// Try to reinterpret as a typed pixel buffer.
     ///
     /// Succeeds if the descriptors are layout-compatible.
-    pub fn try_typed<Q: Pixel>(self) -> Option<PixelBuffer<Q>> {
+    pub fn try_typed<Q: Pixel>(self) -> Option<PixelBuffer<Q, S>> {
         if self.descriptor.layout_compatible(Q::DESCRIPTOR)
             && core::mem::size_of::<Q>() == Q::DESCRIPTOR.bytes_per_pixel()
             && (self.width == 0
                 || self.height == 0
-                || (self.data[self.offset..].as_ptr() as usize) % core::mem::align_of::<Q>() == 0)
+                || (bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())[self.offset..]
+                    .as_ptr() as usize)
+                    % core::mem::align_of::<Q>()
+                    == 0)
         {
             Some(PixelBuffer {
                 data: self.data,
@@ -2724,8 +2748,8 @@ impl<P> PixelBuffer<P> {
             return Err(whereat::at!(BufferError::IncompatibleDescriptor));
         }
         validate_slice(
-            self.data.len() - self.offset,
-            self.data[self.offset..].as_ptr(),
+            bytemuck::cast_slice::<S::Sample, u8>(self.data.samples()).len() - self.offset,
+            bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())[self.offset..].as_ptr(),
             self.width,
             self.height,
             self.stride,
@@ -2798,7 +2822,7 @@ impl<P> PixelBuffer<P> {
     /// Call [`into_contiguous`](Self::into_contiguous) first if the receiver
     /// requires packed rows; otherwise pass the offset and stride onward.
     #[must_use]
-    pub fn into_parts(self) -> PixelBufferParts {
+    pub fn into_parts(self) -> PixelBufferParts<S> {
         PixelBufferParts {
             data: self.data,
             offset: self.offset,
@@ -2809,7 +2833,9 @@ impl<P> PixelBuffer<P> {
             color_context: self.color,
         }
     }
+}
 
+impl<P> PixelBuffer<P, Vec<u8>> {
     /// Pack the rows within this allocation, preserving the pixel type and metadata.
     ///
     /// The result has `stride() == width() * descriptor().bytes_per_pixel()`.
@@ -2882,7 +2908,9 @@ impl<P> PixelBuffer<P> {
         self.stride = row_bytes;
         self
     }
+}
 
+impl<P, S: PlaneStorage> PixelBuffer<P, S> {
     /// Zero-copy access to the raw pixel bytes when rows are tightly packed.
     ///
     /// Returns `Some(&[u8])` if `stride == width * bpp` (no padding),
@@ -2896,7 +2924,10 @@ impl<P> PixelBuffer<P> {
         let row_bytes = self.width as usize * bpp;
         if self.stride == row_bytes {
             let total = row_bytes * self.height as usize;
-            Some(&self.data[self.offset..self.offset + total])
+            Some(
+                &bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())
+                    [self.offset..self.offset + total],
+            )
         } else {
             None
         }
@@ -2915,7 +2946,9 @@ impl<P> PixelBuffer<P> {
         // Fast path: already contiguous
         if self.stride == row_bytes {
             let start = self.offset;
-            return self.data[start..start + total].to_vec();
+            return bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())
+                [start..start + total]
+                .to_vec();
         }
 
         // Slow path: strip padding
@@ -3032,7 +3065,8 @@ impl<P> PixelBuffer<P> {
     pub fn as_slice(&self) -> PixelSlice<'_, P> {
         let total = self.storage_span_len();
         PixelSlice {
-            data: &self.data[self.offset..self.offset + total],
+            data: &bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())
+                [self.offset..self.offset + total],
             width: self.width,
             rows: self.height,
             stride: self.stride,
@@ -3043,7 +3077,9 @@ impl<P> PixelBuffer<P> {
             _pixel: PhantomData,
         }
     }
+}
 
+impl<P, S: PlaneStorageMut> PixelBuffer<P, S> {
     /// Borrow the full buffer as a mutable [`PixelSliceMut`].
     ///
     /// Note: this is a *view*; transforms that change the buffer's layout
@@ -3057,7 +3093,8 @@ impl<P> PixelBuffer<P> {
         let total = self.storage_span_len();
         let offset = self.offset;
         PixelSliceMut {
-            data: &mut self.data[offset..offset + total],
+            data: &mut bytemuck::cast_slice_mut::<S::Sample, u8>(self.data.samples_mut())
+                [offset..offset + total],
             width: self.width,
             rows: self.height,
             stride: self.stride,
@@ -3067,7 +3104,9 @@ impl<P> PixelBuffer<P> {
             _pixel: PhantomData,
         }
     }
+}
 
+impl<P, S: PlaneStorage> PixelBuffer<P, S> {
     /// Borrow a range of rows as an immutable [`PixelSlice`].
     ///
     /// # Panics
@@ -3098,7 +3137,7 @@ impl<P> PixelBuffer<P> {
             + (y as usize + count as usize - 1) * self.stride
             + self.width as usize * bpp;
         PixelSlice {
-            data: &self.data[start..end],
+            data: &bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())[start..end],
             width: self.width,
             rows: count,
             stride: self.stride,
@@ -3109,7 +3148,9 @@ impl<P> PixelBuffer<P> {
             _pixel: PhantomData,
         }
     }
+}
 
+impl<P, S: PlaneStorageMut> PixelBuffer<P, S> {
     /// Borrow a range of rows as a mutable [`PixelSliceMut`].
     ///
     /// # Panics
@@ -3141,7 +3182,8 @@ impl<P> PixelBuffer<P> {
             + (y as usize + count as usize - 1) * self.stride
             + self.width as usize * bpp;
         PixelSliceMut {
-            data: &mut self.data[start..end],
+            data: &mut bytemuck::cast_slice_mut::<S::Sample, u8>(self.data.samples_mut())
+                [start..end],
             width: self.width,
             rows: count,
             stride: self.stride,
@@ -3151,7 +3193,9 @@ impl<P> PixelBuffer<P> {
             _pixel: PhantomData,
         }
     }
+}
 
+impl<P, S: PlaneStorage> PixelBuffer<P, S> {
     /// Zero-copy sub-region view (immutable).
     ///
     /// # Panics
@@ -3187,7 +3231,7 @@ impl<P> PixelBuffer<P> {
             + (y as usize + h as usize - 1) * self.stride
             + (x as usize + w as usize) * bpp;
         PixelSlice {
-            data: &self.data[start..end],
+            data: &bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())[start..end],
             width: w,
             rows: h,
             stride: self.stride,
@@ -3244,7 +3288,7 @@ impl<P> PixelBuffer<P> {
     }
 }
 
-impl<P> fmt::Debug for PixelBuffer<P> {
+impl<P, S> fmt::Debug for PixelBuffer<P, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
