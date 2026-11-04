@@ -23,8 +23,8 @@ Builds, all from linear-srgb `2145ecbc` unless stated:
 | v3 and WASM relaxed, current (wasmtime fuses) | 0 | 0 | 0 | 0 |
 | v3 and WASM strict, current | 5,536,533 | 114,827 | 22,689 | 1 |
 | v3 and scalar, unfused kernels | 5,519,873 | 81 | 22,689 | 1 |
-| v3 and scalar, current | 5,318,178 | 4,124,044 | 16,587 | 1 |
-| v3 and scalar, fused | 5,287,855 | 4,124,044 | 15,989 | 1 |
+| v3 and scalar, current | 5,318,178 | 4,124,044 | 16,988 | 1 |
+| v3 and scalar, fused | 5,287,855 | 4,124,044 | 16,390 | 1 |
 | v3 and scalar, fused kernels | 338,229 | 114,827 | 772 | 1 |
 | x86-64 scalar and aarch64 scalar, current | 412,679 | 1 | 1,304 | 1 |
 | x86-64 scalar and aarch64 scalar, fused | 0 | 0 | 0 | 0 |
@@ -37,11 +37,12 @@ The x86-64 scalar difference is `mlaf`, which chooses fused or separate at compi
 
 ## Cost of fused kernels
 
-ns per sample, range over the 12 slices. One run each, so treat small differences as noise.
+ns per sample, range over the slices: 12 natively, 11 on WASM (test output overwrote one timing). One run
+each, so treat small differences as noise.
 
 | Target | Current | Fused kernels |
 |---|---:|---:|
-| x86-64 v3 | 0.17-0.57 | 0.17-0.58 |
+| x86-64 v3 | 0.18-0.57 | 0.17-0.58 |
 | aarch64 NEON | 1.41-2.99 | 1.29-3.00 |
 | x86-64 without FMA (scalar tier) | 3.09-18.78 | 3.50-13.88 |
 | WASM strict | 0.80-3.35 | 3.33-34.17 |
