@@ -2008,82 +2008,22 @@ pub(crate) fn multiply_color_channels(buf: &mut [f32], channels: usize, factor: 
 }
 
 // ---------------------------------------------------------------------------
-// Vendored **precise** SIMD PQ (exact SMPTE ST 2084)
+// PQ (SMPTE ST 2084)
 // ---------------------------------------------------------------------------
-//
-// `linear_srgb::default`'s PQ slice uses a rational-polynomial fit whose valid
-// range starts at v≈0.02 (its *scalar* path switches to an exact `powf` below
-// that); applied as a slice it extrapolates the poly all the way to 0, so the
-// tight U16 → f32 → U16 round-trip drifts up to ~256 codes near black. We vendor
-// the **exact** ST 2084 formula and evaluate it in SIMD with magetypes' precise
-// `pow`, giving full-range precision (round-trip ≤1) while staying SIMD. The
-// scalar remainder defers to `linear_srgb::tf` (exact-below-threshold). Operates
-// on every lane; the kernels restore any alpha lane afterward (alpha is linear).
-// Canonical SMPTE ST 2084 constants (m1 = 2610/16384, m2 = 2523·128/4096, etc.),
-// written in their exact rational decimal form — all are exactly f32-representable
-// even though the literals run longer than the shortest round-trip.
-#[allow(clippy::excessive_precision)]
-const PQ_M1: f32 = 0.1593017578125;
-const PQ_M2: f32 = 78.84375;
-const PQ_C1: f32 = 0.8359375;
-#[allow(clippy::excessive_precision)]
-const PQ_C2: f32 = 18.8515625;
-const PQ_C3: f32 = 18.6875;
 
-/// PQ EOTF (signal → linear), exact, precise SIMD.
-#[archmage::magetypes(define(f32x16), v4(cfg(avx512)), v3, neon, wasm128, scalar)]
-fn pq_eotf_slice_tier(token: Token, buf: &mut [f32]) {
-    let zero = f32x16::splat_t(token, 0.0);
-    let c1 = f32x16::splat_t(token, PQ_C1);
-    let c2 = f32x16::splat_t(token, PQ_C2);
-    let c3 = f32x16::splat_t(token, PQ_C3);
-    let (chunks, rem) = buf.as_chunks_mut::<16>();
-    for chunk in chunks {
-        let v = f32x16::from_array_t(token, *chunk).max(zero);
-        let vp = v.pow_midp_precise(1.0 / PQ_M2);
-        let num = (vp - c1).max(zero);
-        let den = c2 - c3 * vp;
-        let lin = (num / den).pow_midp_precise(1.0 / PQ_M1);
-        *chunk = f32x16::blend(v.simd_le(zero), zero, lin).to_array();
-    }
-    for v in rem {
-        *v = linear_srgb::tf::pq_to_linear(*v);
-    }
-}
-
-/// PQ inverse-EOTF / OETF (linear → signal), exact, precise SIMD.
-#[archmage::magetypes(define(f32x16), v4(cfg(avx512)), v3, neon, wasm128, scalar)]
-fn pq_oetf_slice_tier(token: Token, buf: &mut [f32]) {
-    let zero = f32x16::splat_t(token, 0.0);
-    let one = f32x16::splat_t(token, 1.0);
-    let c1 = f32x16::splat_t(token, PQ_C1);
-    let c2 = f32x16::splat_t(token, PQ_C2);
-    let c3 = f32x16::splat_t(token, PQ_C3);
-    let (chunks, rem) = buf.as_chunks_mut::<16>();
-    for chunk in chunks {
-        let v = f32x16::from_array_t(token, *chunk).max(zero);
-        let vp = v.pow_midp_precise(PQ_M1);
-        let sig = ((c1 + c2 * vp) / (one + c3 * vp)).pow_midp_precise(PQ_M2);
-        *chunk = f32x16::blend(v.simd_le(zero), zero, sig).to_array();
-    }
-    for v in rem {
-        *v = linear_srgb::tf::linear_to_pq(*v);
-    }
-}
-
-/// PQ EOTF over an interleaved f32 slice, every lane (precise SIMD).
+/// PQ EOTF over an interleaved f32 slice, every lane.
 pub(crate) fn pq_eotf_slice(buf: &mut [f32]) {
-    incant!(pq_eotf_slice_tier(buf), [v4, v3, neon, wasm128, scalar]);
+    linear_srgb::default::pq_to_linear_slice(buf);
 }
 
-/// PQ OETF over an interleaved f32 slice, every lane (precise SIMD).
+/// PQ OETF over an interleaved f32 slice, every lane.
 pub(crate) fn pq_oetf_slice(buf: &mut [f32]) {
-    incant!(pq_oetf_slice_tier(buf), [v4, v3, neon, wasm128, scalar]);
+    linear_srgb::default::linear_to_pq_slice(buf);
 }
 
 /// PQ U16 → Linear F32 (EOTF during depth conversion), alpha-preserving.
 ///
-/// Widens the U16 codes (`garb` SIMD) and applies the precise SIMD PQ EOTF
+/// Widens the U16 codes (`garb` SIMD) and applies the PQ EOTF
 /// ([`pq_eotf_slice`]) to land relative-linear, dividing the RGB lanes by `scale`
 /// (`diffuse_white / 10000`). The EOTF runs over every lane; for alpha-bearing
 /// layouts the alpha lane is then overwritten with its (un-transformed,
@@ -2108,7 +2048,7 @@ fn pq_u16_to_linear_f32(
 
 /// Linear F32 → PQ U16 (OETF during depth conversion), alpha-preserving.
 ///
-/// Anchors the RGB lanes (`× scale`, negatives → 0), applies the precise SIMD PQ
+/// Anchors the RGB lanes (`× scale`, negatives → 0), applies the PQ
 /// OETF ([`pq_oetf_slice`]) in fixed stack-sized chunks (the U16 output is
 /// half-width, so it cannot host the in-place f32 transform), then narrows to U16
 /// (`garb` SIMD). For alpha-bearing layouts the alpha lane is overwritten with its
@@ -2146,7 +2086,7 @@ fn linear_f32_to_pq_u16(
     }
 }
 
-/// PQ F32 → Linear F32 (EOTF, same depth), alpha-preserving. Precise SIMD.
+/// PQ F32 → Linear F32 (EOTF, same depth), alpha-preserving. SIMD.
 ///
 /// `scale` is the `diffuse_white / 10000` anchor (see [`pq_u16_to_linear_f32`]);
 /// the RGB lanes are divided by it after the EOTF and, for alpha-bearing layouts,
@@ -2169,7 +2109,7 @@ fn pq_f32_to_linear_f32(
     restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
 }
 
-/// Linear F32 → PQ F32 (OETF, same depth), alpha-preserving. Precise SIMD.
+/// Linear F32 → PQ F32 (OETF, same depth), alpha-preserving. SIMD.
 ///
 /// `scale` is the `diffuse_white / 10000` anchor (see [`linear_f32_to_pq_u16`]);
 /// the RGB lanes are multiplied by it before the OETF and, for alpha-bearing
@@ -2226,64 +2166,33 @@ pub(crate) fn hlg_eotf(v: f32) -> f32 {
 /// alpha-preserving (the alpha lane is carried linearly, `v / 65535`).
 fn hlg_u16_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
     let count = width * layout.channels();
+    garb::bytes::convert_u16_to_f32(&src[..count * 2], &mut dst[..count * 4])
+        .expect("pre-validated row size");
     let src16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    hlg_u16_to_linear_f32_inner(src16, dstf);
+    linear_srgb::default::hlg_to_linear_slice(dstf);
     restore_alpha_u16_f32(src16, dstf, layout);
-}
-
-#[attune(dispatch, -_v3, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-fn hlg_u16_to_linear_f32_inner(src: &[u16], dst: &mut [f32]) {
-    for (s, d) in src
-        .as_chunks::<16>()
-        .0
-        .iter()
-        .zip(dst.as_chunks_mut::<16>().0)
-    {
-        for i in 0..16 {
-            d[i] = linear_srgb::tf::hlg_to_linear(s[i] as f32 / 65535.0);
-        }
-    }
-    let rem = src.len() % 16;
-    if rem > 0 {
-        let off = src.len() - rem;
-        for i in 0..rem {
-            dst[off + i] = linear_srgb::tf::hlg_to_linear(src[off + i] as f32 / 65535.0);
-        }
-    }
 }
 
 /// Linear F32 → HLG U16 (OETF applied during depth conversion),
 /// alpha-preserving (the alpha lane is scaled linearly, never HLG-encoded).
 fn linear_f32_to_hlg_u16(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
+    const LANES: usize = 256;
     let count = width * layout.channels();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
-    let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
-    linear_f32_to_hlg_u16_inner(srcf, dst16);
-    restore_alpha_f32_u16(srcf, dst16, layout);
-}
-
-#[attune(dispatch, -_neon, -_wasm128)]
-fn linear_f32_to_hlg_u16_inner(src: &[f32], dst: &mut [u16]) {
-    for (s, d) in src
-        .as_chunks::<16>()
-        .0
-        .iter()
-        .zip(dst.as_chunks_mut::<16>().0)
+    let mut lanes = [0f32; LANES];
+    for (s, d) in srcf
+        .chunks(LANES)
+        .zip(dst[..count * 2].chunks_mut(LANES * 2))
     {
-        for i in 0..16 {
-            let encoded = linear_srgb::tf::linear_to_hlg(s[i]);
-            d[i] = (encoded.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
-        }
+        let encoded = &mut lanes[..s.len()];
+        encoded.copy_from_slice(s);
+        linear_srgb::default::linear_to_hlg_slice(encoded);
+        garb::bytes::convert_f32_to_u16(bytemuck::cast_slice(&*encoded), d)
+            .expect("pre-validated row size");
     }
-    let rem = src.len() % 16;
-    if rem > 0 {
-        let off = src.len() - rem;
-        for i in 0..rem {
-            let encoded = linear_srgb::tf::linear_to_hlg(src[off + i]);
-            dst[off + i] = (encoded.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
-        }
-    }
+    let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
+    restore_alpha_f32_u16(srcf, dst16, layout);
 }
 
 /// HLG F32 → Linear F32 (EOTF, same depth). SIMD-dispatched,
@@ -2371,28 +2280,9 @@ fn bt709_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, layout: Cha
     let count = width * layout.channels();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    bt709_f32_to_linear_f32_inner(&srcf[..count], &mut dstf[..count]);
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::bt709_to_linear_slice(&mut dstf[..count]);
     restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
-}
-
-fn bt709_f32_to_linear_f32_inner(src: &[f32], dst: &mut [f32]) {
-    for (s, d) in src
-        .as_chunks::<16>()
-        .0
-        .iter()
-        .zip(dst.as_chunks_mut::<16>().0)
-    {
-        for i in 0..16 {
-            d[i] = linear_srgb::tf::bt709_to_linear(s[i]);
-        }
-    }
-    let rem = src.len() % 16;
-    if rem > 0 {
-        let off = src.len() - rem;
-        for i in 0..rem {
-            dst[off + i] = linear_srgb::tf::bt709_to_linear(src[off + i]);
-        }
-    }
 }
 
 /// Linear F32 → BT.709 F32 (OETF, same depth). Alpha-preserving.
@@ -2400,28 +2290,9 @@ fn linear_f32_to_bt709_f32(src: &[u8], dst: &mut [u8], width: usize, layout: Cha
     let count = width * layout.channels();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    linear_f32_to_bt709_f32_inner(&srcf[..count], &mut dstf[..count]);
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::linear_to_bt709_slice(&mut dstf[..count]);
     restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
-}
-
-fn linear_f32_to_bt709_f32_inner(src: &[f32], dst: &mut [f32]) {
-    for (s, d) in src
-        .as_chunks::<16>()
-        .0
-        .iter()
-        .zip(dst.as_chunks_mut::<16>().0)
-    {
-        for i in 0..16 {
-            d[i] = linear_srgb::tf::linear_to_bt709(s[i]);
-        }
-    }
-    let rem = src.len() % 16;
-    if rem > 0 {
-        let off = src.len() - rem;
-        for i in 0..rem {
-            dst[off + i] = linear_srgb::tf::linear_to_bt709(src[off + i]);
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

@@ -22,5 +22,5 @@ categories = ["multimedia::images"]
 
 # Versions that admit archmage 0.9.31-beta.2. Remove once both are released.
 [patch.crates-io]
-garb = { git = "https://github.com/imazen/garb", rev = "63c4f312f6103d8d86329a3686a974b7aa63746e" }
-linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "26be65afdc1b4968af6598860c7e7ceea2829c50" }
+garb = { git = "https://github.com/imazen/garb", rev = "605276d717ea0b31a1cd2a36ae05301383c7b8b5" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "c47ee9f603dac9075677ae62023508deadd41e8b" }
