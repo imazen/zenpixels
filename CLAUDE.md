@@ -118,6 +118,11 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed in #103 before release (2026-11-04): `RowConverter` panicked on `Bgr8` to `Bgr8`
+  with a different transfer, because the plan went through a BGR F32 format that does not
+  exist. BGR now refuses anything except an identical descriptor. `bgra_is_8bit` runs every
+  format pair across layouts, alpha modes and transfers.
+
 - Fixed in the `PixelStorage` work (2026-11-04): `PixelBuffer::from_vec` assumed a
   `Vec<u8>` is aligned for wide samples. On an allocator returning an odd address, an
   exact-length buffer failed with `InsufficientData`, and a longer one was accepted with

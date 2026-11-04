@@ -637,6 +637,12 @@ impl ConvertPlan {
             }));
         }
 
+        // BGR has no kernels: it may only move between identical descriptors. A transfer
+        // or primaries change would plan through a BGR format that doesn't exist.
+        if from.layout() == ChannelLayout::Bgr || to.layout() == ChannelLayout::Bgr {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+
         // BGRA storage exists only at U8. Keep it at the endpoint instead
         // of inventing a BGRA F32/U16 intermediate during depth/TF work.
         if (from.layout() == ChannelLayout::Bgra || to.layout() == ChannelLayout::Bgra)

@@ -37,6 +37,19 @@ fn bgr8_conversions_refuse_or_swap_channels() {
     }
 }
 
+/// Changing only the transfer has no kernels either, and must refuse rather than panic.
+#[test]
+fn bgr8_refuses_a_transfer_change() {
+    let linear = D::BGR8.with_transfer(T::Linear);
+    assert!(RowConverter::new(SRGB_BGR, linear).is_err());
+    assert!(RowConverter::new(linear, SRGB_BGR).is_err());
+    let mut out = [0u8; 3];
+    RowConverter::new(SRGB_BGR, SRGB_BGR)
+        .unwrap()
+        .convert_row(&[1, 2, 3], &mut out, 1);
+    assert_eq!(out, [1, 2, 3]);
+}
+
 #[test]
 fn cmyk16_has_no_numeric_conversion() {
     assert!(RowConverter::new(D::CMYK16, D::RGB16_SRGB).is_err());
