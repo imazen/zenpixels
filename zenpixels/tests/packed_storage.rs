@@ -426,3 +426,25 @@ fn slices_copy_to_tight_typed_buffers() {
     let copy = empty.as_slice().try_to_tight_buffer().unwrap();
     assert_eq!((copy.width(), copy.height()), (0, 0));
 }
+
+/// Empty views are valid whatever their stride, and may have no bytes at any row start
+/// and no alignment for a wider sample.
+#[test]
+fn empty_views_copy_to_empty_buffers() {
+    use zenpixels::{PixelDescriptor, PixelSlice};
+    for (width, rows, stride, descriptor) in [
+        (0, 2, 1, PixelDescriptor::GRAY8),
+        (0, 1, 0, PixelDescriptor::GRAY16),
+        (0, 3, 64, PixelDescriptor::RGBAF32),
+        (0, 0, 0, PixelDescriptor::GRAY16),
+    ] {
+        let view = PixelSlice::new(&[], width, rows, stride, descriptor).unwrap();
+        let copy = view.try_to_tight_buffer().unwrap();
+        assert_eq!((copy.width(), copy.height()), (width, rows));
+        assert_eq!(copy.descriptor(), descriptor);
+    }
+    // A width with no rows, over bytes that wouldn't hold a row.
+    let view = PixelSlice::new(&[], 4, 0, 16, PixelDescriptor::RGBAF32).unwrap();
+    let copy = view.try_to_tight_buffer().unwrap();
+    assert_eq!((copy.width(), copy.height()), (4, 0));
+}

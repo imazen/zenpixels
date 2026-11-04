@@ -272,18 +272,30 @@ impl<S: SampleStorageMut + ?Sized> ByteStorageMut for S {
 }
 
 mod storage_sample {
-    pub trait Sealed {}
+    use super::{PixelStorage, Vec};
+
+    /// Proves a call comes from this module, because a generic caller could otherwise
+    /// reach these methods through a `StorageSample` bound.
+    pub struct Private(pub(super) ());
+
+    pub trait Sealed: Sized {
+        fn into_storage(samples: Vec<Self>, _: Private) -> PixelStorage;
+        fn from_storage(storage: PixelStorage, _: Private) -> Result<Vec<Self>, PixelStorage>;
+        fn held_by(storage: &PixelStorage, _: Private) -> bool;
+    }
 }
+use storage_sample::Private;
 
 /// A sample type that [`PixelStorage`] can hold. Sealed.
-pub trait StorageSample: storage_sample::Sealed + bytemuck::Pod + Sized {
-    #[doc(hidden)]
-    fn into_storage(samples: Vec<Self>) -> PixelStorage;
-    #[doc(hidden)]
-    fn from_storage(storage: PixelStorage) -> Result<Vec<Self>, PixelStorage>;
-    #[doc(hidden)]
-    fn held_by(storage: &PixelStorage) -> bool;
-}
+///
+/// Its conversions are private: use [`PixelStorage::from`] and the `PixelStorage` methods.
+///
+/// ```compile_fail
+/// fn store<T: zenpixels::buffer::StorageSample>(samples: Vec<T>) {
+///     let _ = T::into_storage(samples, Private(()));
+/// }
+/// ```
+pub trait StorageSample: storage_sample::Sealed + bytemuck::Pod + Sized {}
 
 /// Owned samples of the type a pixel format is made of.
 ///
@@ -339,21 +351,21 @@ macro_rules! for_each_storage {
 
 macro_rules! storage_samples {
     ($($sample:ty => $variant:ident),* $(,)?) => {$(
-        impl storage_sample::Sealed for $sample {}
-        impl StorageSample for $sample {
-            fn into_storage(samples: Vec<Self>) -> PixelStorage {
+        impl storage_sample::Sealed for $sample {
+            fn into_storage(samples: Vec<Self>, _: Private) -> PixelStorage {
                 PixelStorage::$variant(samples)
             }
-            fn from_storage(storage: PixelStorage) -> Result<Vec<Self>, PixelStorage> {
+            fn from_storage(storage: PixelStorage, _: Private) -> Result<Vec<Self>, PixelStorage> {
                 match storage {
                     PixelStorage::$variant(samples) => Ok(samples),
                     other => Err(other),
                 }
             }
-            fn held_by(storage: &PixelStorage) -> bool {
+            fn held_by(storage: &PixelStorage, _: Private) -> bool {
                 matches!(storage, PixelStorage::$variant(_))
             }
         }
+        impl StorageSample for $sample {}
     )*};
 }
 storage_samples! {
@@ -364,7 +376,7 @@ storage_samples! {
 impl<T: StorageSample> From<Vec<T>> for PixelStorage {
     /// Adopt the `Vec` without copying.
     fn from(samples: Vec<T>) -> Self {
-        T::into_storage(samples)
+        T::into_storage(samples, Private(()))
     }
 }
 
@@ -375,13 +387,13 @@ impl PixelStorage {
     ///
     /// The storage, unchanged, when it holds another sample type.
     pub fn try_into_vec<T: StorageSample>(self) -> Result<Vec<T>, Self> {
-        T::from_storage(self)
+        T::from_storage(self, Private(()))
     }
 
     /// Whether the storage holds samples of type `T`.
     #[cfg(feature = "image")]
     pub(crate) fn holds<T: StorageSample>(&self) -> bool {
-        T::held_by(self)
+        T::held_by(self, Private(()))
     }
 
     /// The samples as a `Vec` of pixels, moving the allocation.
@@ -1028,7 +1040,10 @@ impl<'a, P> PixelSlice<'a, P> {
         let total = row_bytes
             .checked_mul(self.rows as usize)
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
-        let rows = (0..self.rows as usize).map(|y| {
+        // A valid empty view may have no bytes at any row start, and an empty slice's
+        // pointer need not be aligned for the sample type.
+        let row_count = if total == 0 { 0 } else { self.rows as usize };
+        let rows = (0..row_count).map(|y| {
             let start = y * self.stride;
             &self.data[start..start + row_bytes]
         });
