@@ -553,7 +553,7 @@ fn soft_compress_oklch_kernel(
 // gain over a plain function, `+v4x` a 1.2x gain over v3. Neon and wasm128 are their targets'
 // baseline, so a plain function already gets them.
 //
-// Shuffle / replicate kernels — split-per-type #[autoversion] pattern.
+// Shuffle / replicate kernels — split-per-type #[attune] pattern.
 //
 // U16 and F16 share one function per shape, because the operation only moves
 // 2-byte samples around. Kernels that insert opaque alpha take its bits as an
@@ -576,7 +576,7 @@ fn rgb_to_bgra(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
 
 // -- add_alpha (inserts opaque alpha: differs per type) ----------------------
 
-#[autoversion(v4x(cfg(avx512)), v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn add_alpha_2bytes(src: &[u16], dst: &mut [u16], width: usize, opaque: u16) {
     for i in 0..width {
         let s: &[u16; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
@@ -588,7 +588,7 @@ fn add_alpha_2bytes(src: &[u16], dst: &mut [u16], width: usize, opaque: u16) {
     }
 }
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn add_alpha_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let s: &[f32; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
@@ -630,7 +630,7 @@ fn add_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
 
 // -- drop_alpha (pure shuffle — U16 and F16 share one kernel) ----------------
 
-#[autoversion(v4x(cfg(avx512)), v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn drop_alpha_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let s: &[u16; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
@@ -641,7 +641,7 @@ fn drop_alpha_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn drop_alpha_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let s: &[f32; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
@@ -1132,7 +1132,7 @@ fn matte_composite(
 
 // -- gray_to_rgb (pure replicate — U16 and F16 share) ------------------------
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_rgb_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let g = src[i];
@@ -1143,7 +1143,7 @@ fn gray_to_rgb_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_rgb_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let g = src[i];
@@ -1177,7 +1177,7 @@ fn gray_to_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
 
 // -- gray_to_rgba (replicate + opaque alpha) ---------------------------------
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_rgba_2bytes(src: &[u16], dst: &mut [u16], width: usize, opaque: u16) {
     for i in 0..width {
         let g = src[i];
@@ -1189,7 +1189,7 @@ fn gray_to_rgba_2bytes(src: &[u16], dst: &mut [u16], width: usize, opaque: u16) 
     }
 }
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_rgba_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let g = src[i];
@@ -1243,7 +1243,7 @@ fn gray_to_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) 
 // path; other coefficient choices on u8 + all U16/F32/F16 paths use the
 // generic f32 path.
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn rgb_to_gray_u8_generic(src: &[u8], dst: &mut [u8], width: usize, w: [f32; 3]) {
     for i in 0..width {
         let s: &[u8; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
@@ -1252,7 +1252,7 @@ fn rgb_to_gray_u8_generic(src: &[u8], dst: &mut [u8], width: usize, w: [f32; 3])
     }
 }
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn rgba_to_gray_u8_generic(src: &[u8], dst: &mut [u8], width: usize, w: [f32; 3]) {
     for i in 0..width {
         let s: &[u8; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
@@ -1261,7 +1261,7 @@ fn rgba_to_gray_u8_generic(src: &[u8], dst: &mut [u8], width: usize, w: [f32; 3]
     }
 }
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn rgb_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
     for i in 0..width {
         let s: &[u16; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
@@ -1270,7 +1270,7 @@ fn rgb_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
     }
 }
 
-#[autoversion(v4x(cfg(avx512)), scalar)]
+#[attune(dispatch, -_v3, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn rgba_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
     for i in 0..width {
         let s: &[u16; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
@@ -1279,7 +1279,7 @@ fn rgba_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
     }
 }
 
-#[autoversion(v4x(cfg(avx512)), v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn rgb_to_gray_f32(src: &[f32], dst: &mut [f32], width: usize, w: [f32; 3]) {
     for i in 0..width {
         let s: &[f32; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
@@ -1287,7 +1287,7 @@ fn rgb_to_gray_f32(src: &[f32], dst: &mut [f32], width: usize, w: [f32; 3]) {
     }
 }
 
-#[autoversion(v4x(cfg(avx512)), v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn rgba_to_gray_f32(src: &[f32], dst: &mut [f32], width: usize, w: [f32; 3]) {
     for i in 0..width {
         let s: &[f32; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
@@ -1445,7 +1445,7 @@ fn rgba_to_gray(
 
 // -- gray_alpha_to_rgba (pure replicate + alpha-preserve — U16 and F16 share)
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_rgba_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let s: &[u16; 2] = (&src[i * 2..i * 2 + 2]).try_into().unwrap();
@@ -1457,7 +1457,7 @@ fn gray_alpha_to_rgba_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_rgba_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let s: &[f32; 2] = (&src[i * 2..i * 2 + 2]).try_into().unwrap();
@@ -1492,7 +1492,7 @@ fn gray_alpha_to_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: Channel
 
 // -- gray_alpha_to_rgb (replicate + drop alpha — U16 and F16 share) ---------
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_rgb_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let g = src[i * 2];
@@ -1503,7 +1503,7 @@ fn gray_alpha_to_rgb_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_rgb_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let g = src[i * 2];
@@ -1545,7 +1545,7 @@ fn gray_to_gray_alpha_2bytes(src: &[u16], dst: &mut [u16], width: usize, opaque:
     }
 }
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_gray_alpha_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let d: &mut [f32; 2] = (&mut dst[i * 2..i * 2 + 2]).try_into().unwrap();
@@ -1584,14 +1584,14 @@ fn gray_to_gray_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: Channel
 
 // -- gray_alpha_to_gray (drop alpha — U16 and F16 share) --------------------
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_gray_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         dst[i] = src[i * 2];
     }
 }
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_gray_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         dst[i] = src[i * 2];
@@ -2232,7 +2232,7 @@ fn hlg_u16_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, layout: Chann
     restore_alpha_u16_f32(src16, dstf, layout);
 }
 
-#[autoversion(v4x(cfg(avx512)), scalar)]
+#[attune(dispatch, -_v3, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn hlg_u16_to_linear_f32_inner(src: &[u16], dst: &mut [f32]) {
     for (s, d) in src
         .as_chunks::<16>()
@@ -2263,7 +2263,7 @@ fn linear_f32_to_hlg_u16(src: &[u8], dst: &mut [u8], width: usize, layout: Chann
     restore_alpha_f32_u16(srcf, dst16, layout);
 }
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn linear_f32_to_hlg_u16_inner(src: &[f32], dst: &mut [u16]) {
     for (s, d) in src
         .as_chunks::<16>()
@@ -2499,7 +2499,7 @@ fn gamma22_f32_extended(
 // Alpha premultiplication
 // ---------------------------------------------------------------------------
 //
-// Pattern: dispatch on (ChannelType, channels) to concrete #[autoversion(v3, scalar)]
+// Pattern: dispatch on (ChannelType, channels) to concrete #[attune(dispatch, -_neon, -_wasm128)]
 // kernels. Each kernel has a flat per-pixel loop with fixed-size array
 // slicing at the pixel boundary so LLVM can drop bounds checks and
 // vectorize. Empirically ~10× faster than the previous big-match-in-fn
@@ -2508,7 +2508,7 @@ fn gamma22_f32_extended(
 
 // -- Straight → Premultiplied: per-(type, channels) kernels ------------------
 
-#[autoversion(v4x(cfg(avx512)), v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn premul_u8_ga(src: &[u8], dst: &mut [u8], width: usize) {
     for i in 0..width {
         let base = i * 2;
@@ -2520,7 +2520,7 @@ fn premul_u8_ga(src: &[u8], dst: &mut [u8], width: usize) {
     }
 }
 
-#[autoversion(v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn premul_u16_ga(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let base = i * 2;
@@ -2532,7 +2532,7 @@ fn premul_u16_ga(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
-#[autoversion(v4x(cfg(avx512)), v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn premul_u16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let base = i * 4;
@@ -2546,7 +2546,7 @@ fn premul_u16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
-#[autoversion(v4x(cfg(avx512)), v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn premul_f32_ga(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let base = i * 2;
@@ -2979,7 +2979,7 @@ fn linear_rgb_to_oklab_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: 
 }
 
 /// 3-channel RGB→Oklab inner loop (16 pixels = 48 f32s per chunk).
-#[autoversion(v4x(cfg(avx512)), v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn rgb_to_oklab_3ch_inner(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
     // 16 pixels × 3 channels = 48 f32s = 192 bytes
     for (s, d) in src
@@ -3020,7 +3020,7 @@ fn oklab_to_linear_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: 
 }
 
 /// 3-channel Oklab→RGB inner loop (16 pixels = 48 f32s per chunk).
-#[autoversion(v4x(cfg(avx512)), v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn oklab_to_rgb_3ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) {
     for (s, d) in src
         .as_chunks::<48>()
@@ -3060,7 +3060,7 @@ fn linear_rgba_to_oklaba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries
 }
 
 /// 4-channel RGBA→Oklaba inner loop (16 pixels = 64 f32s per chunk).
-#[autoversion(v4x(cfg(avx512)), v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn rgb_to_oklab_4ch_inner(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
     for (s, d) in src
         .as_chunks::<64>()
@@ -3102,7 +3102,7 @@ fn oklaba_to_linear_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries
 }
 
 /// 4-channel Oklaba→RGBA inner loop (16 pixels = 64 f32s per chunk).
-#[autoversion(v4x(cfg(avx512)), v3, scalar)]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn oklab_to_rgb_4ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) {
     for (s, d) in src
         .as_chunks::<64>()
@@ -3198,9 +3198,9 @@ fn gamut_matrix_f32_tier<const CHANNELS: usize>(
         // 3×3 matmul as fused-multiply-adds — same shape as
         // fast_gamut::mat3x3_x8 but typed against the generic
         // magetypes `f32x8`.
-        let or = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
-        let og = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
-        let ob = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
+        let or = m00.mul_add_relaxed(rl, m01.mul_add_relaxed(gl, m02 * bl));
+        let og = m10.mul_add_relaxed(rl, m11.mul_add_relaxed(gl, m12 * bl));
+        let ob = m20.mul_add_relaxed(rl, m21.mul_add_relaxed(gl, m22 * bl));
 
         let ro = or.to_array();
         let go = og.to_array();

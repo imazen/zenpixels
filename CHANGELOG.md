@@ -139,9 +139,19 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   conversion methods), `icc_profiles::{ADOBE_RGB_V4, PROPHOTO_V4}`, and every
   public moxcms type: `cms_moxcms::{transform_opts, lut_transform_opts,
   cicp_transform_opts}`. `MoxCmsError`'s field is private. (6e4c7ede)
-- archmage/magetypes requirements are plain caret `0.9.30` (>=0.9.30,
-  <0.10.0, no prereleases); the previous `<=0.9.31-beta.1` cap excluded later
-  0.9 releases. (e5112d5f)
+- archmage/magetypes requirements are `>=0.9.31-beta.2, <0.10.0`, for `#[attune]`. The
+  workspace patches garb and linear-srgb to revisions that admit the beta. Don't publish
+  until archmage 0.9.31 and those crates are released. Consumers capped at
+  `<=0.9.31-beta.1` must raise the cap.
+- Row kernels compile only for the tiers that pay for them. Stripped size added by
+  `RowConverter` on x86-64, fat LTO: 522,784 to 436,416 bytes at opt-level 3. Default builds no
+  longer have a v4 tier, so AVX-512 CPUs run some kernels up to 2.4x slower than before
+  (`oklab to rgb`, `premul rgba u16`, `add alpha`). The `avx512` feature restores that speed
+  through `+v4x` on 13 kernels, for 39 KB. `benchmarks/row_kernel_tiers_2026-11-04.md`.
+- Gray from F16 goes through the F16C slice converters and the f32 kernel: 4x faster on x86-64
+  and 7x on aarch64. NaN stays NaN, but which input's payload survives can change.
+- `rgb_to_oklab`, `oklab_to_rgb` and `fast_cbrt` are `#[inline]`: without LTO, Oklab encode ran
+  6x slower and had no gain from any tier.
 
 ## [0.2.17] — unreleased bridge
 

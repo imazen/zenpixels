@@ -390,9 +390,9 @@ mod simd {
         let m21 = mt_f32x8::splat_t(token, INV_OPSIN[2][1]);
         let m22 = mt_f32x8::splat_t(token, INV_OPSIN[2][2]);
 
-        let lin_r = m00.mul_add(opsin_r, m01.mul_add(opsin_g, m02 * opsin_b));
-        let lin_g = m10.mul_add(opsin_r, m11.mul_add(opsin_g, m12 * opsin_b));
-        let lin_b = m20.mul_add(opsin_r, m21.mul_add(opsin_g, m22 * opsin_b));
+        let lin_r = m00.mul_add_relaxed(opsin_r, m01.mul_add_relaxed(opsin_g, m02 * opsin_b));
+        let lin_g = m10.mul_add_relaxed(opsin_r, m11.mul_add_relaxed(opsin_g, m12 * opsin_b));
+        let lin_b = m20.mul_add_relaxed(opsin_r, m21.mul_add_relaxed(opsin_g, m22 * opsin_b));
 
         // Step 5: clamp to [0, 1], then OETF via linear-srgb's 8-wide
         // SIMD sRGB encoder.

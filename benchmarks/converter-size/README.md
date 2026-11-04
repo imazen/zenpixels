@@ -96,3 +96,9 @@ wasm_oz_simd                       base=   57937 conv=  313932 added=  255995
   because users get runtime dispatch.
 - wasm: `wasm_oz_simd` after `wasm-opt -Oz` is 252,479 bytes against a 38,600 byte base (214 KB added),
   and 85,274 against 16,913 after `gzip -9` (68 KB added). wasm has one SIMD tier and no `std` backtrace.
+
+## After the tier rule (2026-11-04)
+
+The numbers above are from before row kernels were limited to the tiers that pay for them. Opt-level 3
+now adds 436,416 bytes, not 522,784. `../row_kernel_tiers_2026-11-04.md` has the rule, speeds and size
+per build.

@@ -13,3 +13,7 @@ codegen-units = 1
 panic = "abort"
 opt-level = 3
 debug = 2
+
+[patch.crates-io]
+garb = { git = "https://github.com/imazen/garb", rev = "63c4f312f6103d8d86329a3686a974b7aa63746e" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "26be65afdc1b4968af6598860c7e7ceea2829c50" }

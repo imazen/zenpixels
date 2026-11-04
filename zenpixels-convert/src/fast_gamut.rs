@@ -61,17 +61,20 @@ fn mat3x3_x8(
     gl: mt_f32x8,
     bl: mt_f32x8,
 ) -> (mt_f32x8, mt_f32x8, mt_f32x8) {
-    let or = mt_f32x8::splat_t(token, m[0][0]).mul_add(
+    let or = mt_f32x8::splat_t(token, m[0][0]).mul_add_relaxed(
         rl,
-        mt_f32x8::splat_t(token, m[0][1]).mul_add(gl, mt_f32x8::splat_t(token, m[0][2]) * bl),
+        mt_f32x8::splat_t(token, m[0][1])
+            .mul_add_relaxed(gl, mt_f32x8::splat_t(token, m[0][2]) * bl),
     );
-    let og = mt_f32x8::splat_t(token, m[1][0]).mul_add(
+    let og = mt_f32x8::splat_t(token, m[1][0]).mul_add_relaxed(
         rl,
-        mt_f32x8::splat_t(token, m[1][1]).mul_add(gl, mt_f32x8::splat_t(token, m[1][2]) * bl),
+        mt_f32x8::splat_t(token, m[1][1])
+            .mul_add_relaxed(gl, mt_f32x8::splat_t(token, m[1][2]) * bl),
     );
-    let ob = mt_f32x8::splat_t(token, m[2][0]).mul_add(
+    let ob = mt_f32x8::splat_t(token, m[2][0]).mul_add_relaxed(
         rl,
-        mt_f32x8::splat_t(token, m[2][1]).mul_add(gl, mt_f32x8::splat_t(token, m[2][2]) * bl),
+        mt_f32x8::splat_t(token, m[2][1])
+            .mul_add_relaxed(gl, mt_f32x8::splat_t(token, m[2][2]) * bl),
     );
     (or, og, ob)
 }
