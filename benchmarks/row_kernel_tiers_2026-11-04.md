@@ -157,9 +157,10 @@ Near-black rows, the slice's worst case, cost 6.2 µs against 5.1 µs before.
 
 - **Position:** 572 of the conversions tested gave a different result for a pixel depending on where it
   sat in a row, up to 4 `u16` codes on PQ. Now zero of 1792, at every tier (`tests/row_partition.rs`).
-- **Tiers:** 528 of 1792 conversions still differ between v3 and `base`, because the vector kernels fuse
-  multiply-add where the hardware does. 189 of those have integer output: 853 of 517,562 samples differ,
-  by at most 1 code. Run `measure_differences_between_tiers` to reproduce.
+- **Tiers:** 528 of 1792 conversions still differ between v3 and `base`, because the scalar tier runs
+  different algorithms, not only because of fusing (`tier-bits/README.md`). 189 of those have integer output:
+  853 of 517,562 samples differ, by at most 1 code. Run `measure_differences_between_tiers` to reproduce.
+  v3, v4x, NEON and relaxed WASM under wasmtime match each other bit for bit on linear-srgb's slices.
 
 ## aarch64
 
