@@ -6,7 +6,7 @@ use image::flat::{FlatSamples, SampleLayout};
 use image::{GenericImageView, ImageBuffer, Luma, Rgb};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use zenpixels::plane::{Plane, PlaneBuf, PlaneMut, PlaneRef, PlaneStorage};
+use zenpixels::plane::{Plane, PlaneBuf, PlaneMut, PlaneRef, SampleStorage};
 use zenpixels::{PixelBuffer, PixelBufferParts, PixelDescriptor, PixelSlice};
 
 struct Counting;
@@ -94,7 +94,7 @@ fn main() {
 
         // Owned: move the whole v_frame plane behind our storage trait.
         struct OwnedV(v_frame07::plane::Plane<u8>, usize);
-        impl PlaneStorage for OwnedV {
+        impl SampleStorage for OwnedV {
             type Sample = u8;
             fn samples(&self) -> &[u8] {
                 &self.0.data()[self.1..]
@@ -180,7 +180,7 @@ fn main() {
             a,
         );
         struct OwnedV3(v_frame03::plane::Plane<u16>);
-        impl PlaneStorage for OwnedV3 {
+        impl SampleStorage for OwnedV3 {
             type Sample = u16;
             fn samples(&self) -> &[u16] {
                 self.0.data_origin()

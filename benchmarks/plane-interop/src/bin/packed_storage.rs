@@ -4,7 +4,7 @@ use image::{ImageBuffer, Rgb};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::mem::size_of;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use zenpixels::plane::{PlaneStorage, PlaneStorageMut};
+use zenpixels::plane::{SampleStorage, SampleStorageMut};
 use zenpixels::{PixelBuffer, PixelBufferParts, PixelDescriptor};
 struct C;
 static N: AtomicUsize = AtomicUsize::new(0);
@@ -41,13 +41,13 @@ struct Pool {
     id: u32,
     buf: Vec<u16>,
 }
-impl PlaneStorage for Pool {
+impl SampleStorage for Pool {
     type Sample = u16;
     fn samples(&self) -> &[u16] {
         &self.buf
     }
 }
-impl PlaneStorageMut for Pool {
+impl SampleStorageMut for Pool {
     fn samples_mut(&mut self) -> &mut [u16] {
         &mut self.buf
     }

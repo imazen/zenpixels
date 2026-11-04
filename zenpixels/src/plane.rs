@@ -3,7 +3,7 @@
 //! [`Plane`] is a two-dimensional array of samples with a row stride,
 //! generic over who owns the samples: [`PlaneRef`] borrows them, [`PlaneMut`]
 //! borrows them mutably, [`PlaneBuf`] owns a `Vec`, and any other owner
-//! (shared or accounted storage) implements [`PlaneStorage`]. Rows are
+//! (shared or accounted storage) implements [`SampleStorage`]. Rows are
 //! contiguous `&[T]` slices, so kernels read them without per-sample
 //! dispatch. Samples are native-endian: an adapter for big-endian samples
 //! (FFmpeg's `*BE` formats) swaps them into a plane; a plane never holds
@@ -83,10 +83,10 @@ impl PlaneSample for f32 {
 ///
 /// Slices, references, boxes and `Vec` implement it, and the trait stays
 /// dyn-compatible, so an owner can also be hidden as
-/// `Plane<Box<dyn PlaneStorage<Sample = T> + Send + Sync>>`. Planes of one
+/// `Plane<Box<dyn SampleStorage<Sample = T> + Send + Sync>>`. Planes of one
 /// picture normally share one owner type per sample type; borrowed views
 /// ([`Plane::view`], [`AnyPlane`]) erase the owner at no cost.
-pub trait PlaneStorage {
+pub trait SampleStorage {
     /// The sample type.
     type Sample: PlaneSample;
     /// The samples, including any padding.
@@ -94,57 +94,57 @@ pub trait PlaneStorage {
 }
 
 /// Write access to the samples of a plane's owner.
-pub trait PlaneStorageMut: PlaneStorage {
+pub trait SampleStorageMut: SampleStorage {
     /// The samples, including any padding.
     fn samples_mut(&mut self) -> &mut [Self::Sample];
 }
 
-impl<T: PlaneSample> PlaneStorage for [T] {
+impl<T: PlaneSample> SampleStorage for [T] {
     type Sample = T;
     fn samples(&self) -> &[T] {
         self
     }
 }
-impl<T: PlaneSample> PlaneStorageMut for [T] {
+impl<T: PlaneSample> SampleStorageMut for [T] {
     fn samples_mut(&mut self) -> &mut [T] {
         self
     }
 }
-impl<S: PlaneStorage + ?Sized> PlaneStorage for &S {
+impl<S: SampleStorage + ?Sized> SampleStorage for &S {
     type Sample = S::Sample;
     fn samples(&self) -> &[S::Sample] {
         (**self).samples()
     }
 }
-impl<S: PlaneStorage + ?Sized> PlaneStorage for &mut S {
+impl<S: SampleStorage + ?Sized> SampleStorage for &mut S {
     type Sample = S::Sample;
     fn samples(&self) -> &[S::Sample] {
         (**self).samples()
     }
 }
-impl<S: PlaneStorageMut + ?Sized> PlaneStorageMut for &mut S {
+impl<S: SampleStorageMut + ?Sized> SampleStorageMut for &mut S {
     fn samples_mut(&mut self) -> &mut [S::Sample] {
         (**self).samples_mut()
     }
 }
-impl<S: PlaneStorage + ?Sized> PlaneStorage for Box<S> {
+impl<S: SampleStorage + ?Sized> SampleStorage for Box<S> {
     type Sample = S::Sample;
     fn samples(&self) -> &[S::Sample] {
         (**self).samples()
     }
 }
-impl<S: PlaneStorageMut + ?Sized> PlaneStorageMut for Box<S> {
+impl<S: SampleStorageMut + ?Sized> SampleStorageMut for Box<S> {
     fn samples_mut(&mut self) -> &mut [S::Sample] {
         (**self).samples_mut()
     }
 }
-impl<T: PlaneSample> PlaneStorage for Vec<T> {
+impl<T: PlaneSample> SampleStorage for Vec<T> {
     type Sample = T;
     fn samples(&self) -> &[T] {
         self
     }
 }
-impl<T: PlaneSample> PlaneStorageMut for Vec<T> {
+impl<T: PlaneSample> SampleStorageMut for Vec<T> {
     fn samples_mut(&mut self) -> &mut [T] {
         self
     }
@@ -226,7 +226,7 @@ fn extent(start: usize, width: usize, height: usize, stride: usize) -> Result<us
         .ok_or(PlaneError::GeometryOverflow)
 }
 
-impl<C: PlaneStorage> Plane<C> {
+impl<C: SampleStorage> Plane<C> {
     /// Adopt storage holding `height` rows of `width` samples, `stride` samples
     /// apart, starting at the first sample. No samples are copied or read.
     ///
@@ -355,7 +355,7 @@ impl<C: PlaneStorage> Plane<C> {
     }
 }
 
-impl<C: PlaneStorageMut> Plane<C> {
+impl<C: SampleStorageMut> Plane<C> {
     /// Row `y`, without padding; `None` past the last row.
     pub fn row_mut(&mut self, y: usize) -> Option<&mut [C::Sample]> {
         if y >= self.height {

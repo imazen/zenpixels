@@ -166,9 +166,9 @@ fn alloc_starts_rows_on_64_bytes_and_avoids_4096_strides() {
     );
 }
 
-/// Accounted or shared storage outside this crate implements `PlaneStorage`.
+/// Accounted or shared storage outside this crate implements `SampleStorage`.
 struct Shared(std::sync::Arc<[u16]>);
-impl PlaneStorage for Shared {
+impl SampleStorage for Shared {
     type Sample = u16;
     fn samples(&self) -> &[u16] {
         &self.0
@@ -476,25 +476,25 @@ fn into_vec_hands_over_only_a_vec_starting_at_row_zero() {
 struct Pool {
     samples: Vec<u8>,
 }
-impl PlaneStorage for Pool {
+impl SampleStorage for Pool {
     type Sample = u8;
     fn samples(&self) -> &[u8] {
         &self.samples
     }
 }
-impl PlaneStorageMut for Pool {
+impl SampleStorageMut for Pool {
     fn samples_mut(&mut self) -> &mut [u8] {
         &mut self.samples
     }
 }
 
-type DynPlane = Plane<Box<dyn PlaneStorageMut<Sample = u8> + Send + Sync>>;
+type DynPlane = Plane<Box<dyn SampleStorageMut<Sample = u8> + Send + Sync>>;
 
 #[test]
 fn any_owner_works_behind_a_boxed_trait_object() {
     // Not a use case for one picture (one allocator per image); this covers
     // the blanket impls and dyn compatibility with several owner types.
-    let owners: Vec<Box<dyn PlaneStorageMut<Sample = u8> + Send + Sync>> = vec![
+    let owners: Vec<Box<dyn SampleStorageMut<Sample = u8> + Send + Sync>> = vec![
         Box::new((0..12u8).collect::<Vec<u8>>()),
         Box::new(
             PlaneBuf::<u8>::alloc(4, 3)
@@ -524,18 +524,18 @@ fn any_owner_works_behind_a_boxed_trait_object() {
     // References to any owner, and to trait objects, are owners too.
     let v: Vec<u16> = (0..6).collect();
     let by_ref = Plane::new(&v, 3, 2, 3).unwrap();
-    let dyn_ref: &dyn PlaneStorage<Sample = u16> = &v;
+    let dyn_ref: &dyn SampleStorage<Sample = u16> = &v;
     let by_dyn = Plane::new(dyn_ref, 3, 2, 3).unwrap();
     assert_eq!(by_ref.row(1), by_dyn.row(1));
 }
 
 #[test]
 fn storage_traits_stay_dyn_compatible() {
-    fn read(_: &dyn PlaneStorage<Sample = f32>) {}
-    fn write(_: &mut dyn PlaneStorageMut<Sample = u16>) {}
+    fn read(_: &dyn SampleStorage<Sample = f32>) {}
+    fn write(_: &mut dyn SampleStorageMut<Sample = u16>) {}
     read(&vec![0.0f32; 2]);
     write(&mut vec![0u16; 2]);
-    let mut boxed: Box<dyn PlaneStorageMut<Sample = u16>> = Box::new(vec![0u16; 4]);
+    let mut boxed: Box<dyn SampleStorageMut<Sample = u16>> = Box::new(vec![0u16; 4]);
     write(&mut boxed);
     assert_eq!(boxed.samples().len(), 4);
 }

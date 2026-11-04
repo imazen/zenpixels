@@ -1,14 +1,14 @@
 //! `PixelBuffer` over storage other than `Vec<u8>`: nothing is copied, and
 //! layout validation matches the `Vec<u8>` path.
 
-use zenpixels::plane::{PlaneStorage, PlaneStorageMut};
+use zenpixels::plane::{SampleStorage, SampleStorageMut};
 use zenpixels::{PixelBuffer, PixelBufferParts, PixelDescriptor};
 
 const W: u32 = 37;
 const H: u32 = 11;
 const N: usize = (W * H * 3) as usize;
 
-fn adopt<S: PlaneStorage>(data: S, stride: usize, d: PixelDescriptor) -> PixelBuffer<(), S> {
+fn adopt<S: SampleStorage>(data: S, stride: usize, d: PixelDescriptor) -> PixelBuffer<(), S> {
     PixelBuffer::try_from_parts(PixelBufferParts::new(data, W, H, stride, d)).unwrap()
 }
 
@@ -96,13 +96,13 @@ fn boxes_slices_and_custom_owners_adopt() {
         slot: u32,
         buf: Vec<u16>,
     }
-    impl PlaneStorage for Pool {
+    impl SampleStorage for Pool {
         type Sample = u16;
         fn samples(&self) -> &[u16] {
             &self.buf
         }
     }
-    impl PlaneStorageMut for Pool {
+    impl SampleStorageMut for Pool {
         fn samples_mut(&mut self) -> &mut [u16] {
             &mut self.buf
         }

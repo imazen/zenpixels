@@ -582,17 +582,17 @@ pub fn plane::Plane<&'a [T]>::into_strided_samples(self) -> &'a [T]
 pub fn plane::Plane<&'a mut [T]>::into_strided_samples_mut(self) -> &'a mut [T]
 pub fn plane::Plane<C>::height(&self) -> usize
 pub fn plane::Plane<C>::new(C, usize, usize, usize) -> core::result::Result<Self, plane::PlaneError>
-pub fn plane::Plane<C>::row(&self, usize) -> core::option::Option<&[<C as plane::PlaneStorage>::Sample]>
-pub fn plane::Plane<C>::rows(&self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = &[<C as plane::PlaneStorage>::Sample]> + core::iter::traits::exact_size::ExactSizeIterator
+pub fn plane::Plane<C>::row(&self, usize) -> core::option::Option<&[<C as plane::SampleStorage>::Sample]>
+pub fn plane::Plane<C>::rows(&self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = &[<C as plane::SampleStorage>::Sample]> + core::iter::traits::exact_size::ExactSizeIterator
 pub fn plane::Plane<C>::stride(&self) -> usize
-pub fn plane::Plane<C>::strided_samples(&self) -> &[<C as plane::PlaneStorage>::Sample]
-pub fn plane::Plane<C>::sub(&self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneRef<'_, <C as plane::PlaneStorage>::Sample>, plane::PlaneError>
-pub fn plane::Plane<C>::view(&self) -> plane::PlaneRef<'_, <C as plane::PlaneStorage>::Sample>
+pub fn plane::Plane<C>::strided_samples(&self) -> &[<C as plane::SampleStorage>::Sample]
+pub fn plane::Plane<C>::sub(&self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneRef<'_, <C as plane::SampleStorage>::Sample>, plane::PlaneError>
+pub fn plane::Plane<C>::view(&self) -> plane::PlaneRef<'_, <C as plane::SampleStorage>::Sample>
 pub fn plane::Plane<C>::width(&self) -> usize
-pub fn plane::Plane<C>::row_mut(&mut self, usize) -> core::option::Option<&mut [<C as plane::PlaneStorage>::Sample]>
-pub fn plane::Plane<C>::rows_mut(&mut self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = &mut [<C as plane::PlaneStorage>::Sample]> + core::iter::traits::exact_size::ExactSizeIterator
-pub fn plane::Plane<C>::sub_mut(&mut self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneMut<'_, <C as plane::PlaneStorage>::Sample>, plane::PlaneError>
-pub fn plane::Plane<C>::view_mut(&mut self) -> plane::PlaneMut<'_, <C as plane::PlaneStorage>::Sample>
+pub fn plane::Plane<C>::row_mut(&mut self, usize) -> core::option::Option<&mut [<C as plane::SampleStorage>::Sample]>
+pub fn plane::Plane<C>::rows_mut(&mut self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = &mut [<C as plane::SampleStorage>::Sample]> + core::iter::traits::exact_size::ExactSizeIterator
+pub fn plane::Plane<C>::sub_mut(&mut self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneMut<'_, <C as plane::SampleStorage>::Sample>, plane::PlaneError>
+pub fn plane::Plane<C>::view_mut(&mut self) -> plane::PlaneMut<'_, <C as plane::SampleStorage>::Sample>
 pub fn plane::Plane<&mut [T]>::split_at_row(self, usize) -> core::result::Result<(Self, Self), plane::PlaneError>
 pub fn plane::Plane<alloc::vec::Vec<T>>::alloc(usize, usize) -> core::result::Result<Self, plane::PlaneError>
 pub fn plane::Plane<alloc::vec::Vec<T>>::into_vec(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
@@ -602,14 +602,14 @@ pub const fn plane::PlaneSpec::new(plane::PlaneRole, plane::PlaneEncoding) -> Se
 pub const fn plane::PlaneSpec::role(self) -> plane::PlaneRole
 pub trait plane::PlaneSample: plane::sealed::Sealed + bytemuck::pod::Pod + core::default::Default + core::cmp::PartialEq + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static
 pub const plane::PlaneSample::CHANNEL_TYPE: descriptor::ChannelType
-pub trait plane::PlaneStorage
-pub type plane::PlaneStorage::Sample: plane::PlaneSample
-pub fn plane::PlaneStorage::samples(&self) -> &[Self::Sample]
-pub type &mut S::Sample = <S as plane::PlaneStorage>::Sample
-pub fn &mut S::samples(&self) -> &[<S as plane::PlaneStorage>::Sample]
-pub trait plane::PlaneStorageMut: plane::PlaneStorage
-pub fn plane::PlaneStorageMut::samples_mut(&mut self) -> &mut [Self::Sample]
-pub fn &mut S::samples_mut(&mut self) -> &mut [<S as plane::PlaneStorage>::Sample]
+pub trait plane::SampleStorage
+pub type plane::SampleStorage::Sample: plane::PlaneSample
+pub fn plane::SampleStorage::samples(&self) -> &[Self::Sample]
+pub type &mut S::Sample = <S as plane::SampleStorage>::Sample
+pub fn &mut S::samples(&self) -> &[<S as plane::SampleStorage>::Sample]
+pub trait plane::SampleStorageMut: plane::SampleStorage
+pub fn plane::SampleStorageMut::samples_mut(&mut self) -> &mut [Self::Sample]
+pub fn &mut S::samples_mut(&mut self) -> &mut [<S as plane::SampleStorage>::Sample]
 pub type plane::PlaneBuf<T> = plane::Plane<alloc::vec::Vec<T>>
 pub type plane::PlaneMut<'a, T> = plane::Plane<&'a mut [T]>
 pub type plane::PlaneRef<'a, T> = plane::Plane<&'a [T]>
@@ -1099,11 +1099,11 @@ pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 
 ## trait impls (73 types)
 
-&S: plane::PlaneStorage
-&mut S: plane::PlaneStorage, plane::PlaneStorageMut
-[T]: plane::PlaneStorage, plane::PlaneStorageMut
-alloc::boxed::Box<S>: plane::PlaneStorage, plane::PlaneStorageMut
-alloc::vec::Vec<T>: plane::PlaneStorage, plane::PlaneStorageMut
+&S: plane::SampleStorage
+&mut S: plane::SampleStorage, plane::SampleStorageMut
+[T]: plane::SampleStorage, plane::SampleStorageMut
+alloc::boxed::Box<S>: plane::SampleStorage, plane::SampleStorageMut
+alloc::vec::Vec<T>: plane::SampleStorage, plane::SampleStorageMut
 buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 buffer::FromPartsError<S>: Debug, Display, Error

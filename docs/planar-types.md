@@ -30,7 +30,7 @@ location; a semi-planar chroma plane stores two samples per position.
    contiguous `&[T]`; the last row needs no padding after it.
    - `PlaneRef<'a, T>` = `Plane<&'a [T]>`, `PlaneMut<'a, T>` = `Plane<&'a mut [T]>`,
      `PlaneBuf<T>` = `Plane<Vec<T>>`. Other owners (zencodec's accounted shared
-     storage) implement `PlaneStorage` / `PlaneStorageMut` and become
+     storage) implement `SampleStorage` / `SampleStorageMut` and become
      `Plane<TheirOwner>`.
    - `new` adopts storage without copying (a codec's `Vec`, a decoder pool's
      slice). `PlaneBuf::alloc` allocates fallibly, starts every row on 64 bytes
@@ -183,9 +183,9 @@ with the aligning allocator in a primitive crate.
 Erasure, where an interface needs it, happens for a whole picture, not per
 plane: zencodec's `Picture` trait object already hides the owner, and its
 mappings hand out `AnyPlane` views. Borrowed views (`view()`, `AnyPlane`)
-erase the owner at no cost. `PlaneStorage` and `PlaneStorageMut` also stay
+erase the owner at no cost. `SampleStorage` and `SampleStorageMut` also stay
 dyn-compatible, and `&S`, `&mut S` and `Box<S>` implement them for any
-`S: ?Sized`, so `Plane<Box<dyn PlaneStorageMut<Sample = T>>>` works where a
+`S: ?Sized`, so `Plane<Box<dyn SampleStorageMut<Sample = T>>>` works where a
 caller wants it (one box per plane, an indirect call per row read through it).
 
 Semver rules that keep this open:
@@ -193,7 +193,7 @@ Semver rules that keep this open:
 - `&`, `&mut` and `Box` are fundamental types: a downstream crate may implement
   our trait for `Box<TheirType>`, so a blanket impl added after release would
   conflict. Those blanket impls exist from the first release.
-- `Vec`, `Arc` and `Rc` are not fundamental, so `PlaneStorage for Vec<T, A>`,
+- `Vec`, `Arc` and `Rc` are not fundamental, so `SampleStorage for Vec<T, A>`,
   `Arc<S>` or `Rc<S>` can be added later.
 - Every future method on the storage traits must keep them dyn-compatible: no
   generic methods, no `Self` by value, no `Self: Sized` requirements without a
@@ -208,7 +208,7 @@ pointer and allocated nothing, unless marked as a copy.
 |---|---|
 | `v_frame` 0.7 `Plane` to `PlaneRef`/`PlaneMut` | Zero-copy with `padding_api`: `&data()[pad_top * stride + pad_left..]`. Without the feature `v_frame` exposes rows only, not one slice |
 | `v_frame` 0.3.9 (zenrav1e's pin) to `PlaneRef`/`PlaneMut` | Zero-copy: `data_origin()`, `cfg.stride` |
-| Owned `v_frame` plane to zenpixels | Zero-copy through a small `PlaneStorage` newtype, keeping its allocation and padding |
+| Owned `v_frame` plane to zenpixels | Zero-copy through a small `SampleStorage` newtype, keeping its allocation and padding |
 | zenpixels to `v_frame` | **Copy, both versions.** `v_frame` has no constructor that adopts storage |
 | Strided `PlaneRef`/`PixelSlice` to `image::flat::View` | Zero-copy with `SampleLayout`: `height_stride` is the plane's stride |
 | Tight `PlaneRef` to `ImageBuffer<_, &[T]>`; `ImageBuffer` to `PlaneRef` | Zero-copy |
@@ -231,7 +231,7 @@ Rules an adapter has to follow:
 
 ### Packed buffers use the same storage
 
-`PixelBuffer<P, S = Vec<u8>>` adopts any `PlaneStorage` through
+`PixelBuffer<P, S = Vec<u8>>` adopts any `SampleStorage` through
 `PixelBufferParts<S>`, so packed data gets what planes get: `Vec<u16>` and
 `Vec<f32>` move in and out with no copy, which `Vec<u8>` could not do because the
 allocator's alignment differs (`bytemuck` refuses it with `AlignmentMismatch`).
@@ -240,7 +240,7 @@ Existing `PixelBuffer` and `PixelBuffer<P>` code keeps meaning `Vec<u8>`.
 With the allocator API, `Vec<u8, Align64>`, `Vec<u16, Align64>` and
 `Vec<f32, Align64>` were adopted with offset 0 and 64-byte aligned first samples,
 and `Vec<u8, Align64>` moved on to `ImageBuffer<Rgb<u8>, Vec<u8, Align64>>`
-without a copy. That probe uses a newtype; `impl PlaneStorage for Vec<T, A>` has
+without a copy. That probe uses a newtype; `impl SampleStorage for Vec<T, A>` has
 to live in this crate, and it can replace today's `Vec<T>` impl compatibly.
 
 Still `Vec<u8>` only: allocating constructors, `crop_copy`, `into_contiguous`,
@@ -265,7 +265,7 @@ another. Crates generic over their container (imgref's `Img<Container>`) or over
 
 The current API extends to it without a semver break:
 
-- `PlaneStorage for Vec<T>` widens to `Vec<T, A>` for any `A: Allocator`, a
+- `SampleStorage for Vec<T>` widens to `Vec<T, A>` for any `A: Allocator`, a
   strict superset of today's impl.
 - `into_vec` moves to `Plane<Vec<T, A>>` returning `Vec<T, A>`; for `Global` the
   signature is unchanged.

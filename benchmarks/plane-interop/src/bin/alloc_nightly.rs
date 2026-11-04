@@ -6,7 +6,7 @@ use image::{ImageBuffer, Rgb};
 use std::alloc::{AllocError, Allocator, Global, Layout};
 use std::mem::size_of;
 use std::ptr::NonNull;
-use zenpixels::plane::{PlaneSample, PlaneStorage, PlaneStorageMut};
+use zenpixels::plane::{PlaneSample, SampleStorage, SampleStorageMut};
 use zenpixels::{PixelBuffer, PixelBufferParts, PixelDescriptor};
 #[derive(Clone, Copy, Default)]
 struct Align64;
@@ -22,13 +22,13 @@ unsafe impl Allocator for Align64 {
     }
 }
 struct AV<T>(Vec<T, Align64>);
-impl<T: PlaneSample> PlaneStorage for AV<T> {
+impl<T: PlaneSample> SampleStorage for AV<T> {
     type Sample = T;
     fn samples(&self) -> &[T] {
         &self.0
     }
 }
-impl<T: PlaneSample> PlaneStorageMut for AV<T> {
+impl<T: PlaneSample> SampleStorageMut for AV<T> {
     fn samples_mut(&mut self) -> &mut [T] {
         &mut self.0
     }

@@ -14,7 +14,7 @@
 //! For format conversions (e.g., `convert_to`, `to_rgb8`), see the
 //! `zenpixels-convert` crate which provides `PixelBufferConvertExt`.
 
-use crate::plane::{PlaneStorage, PlaneStorageMut};
+use crate::plane::{SampleStorage, SampleStorageMut};
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -1652,9 +1652,9 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
 ///
 /// `S` defaults to `Vec<u8>`, which is what the allocating constructors make.
 /// [`PixelBuffer::try_from_parts`] adopts any
-/// [`PlaneStorage`](crate::plane::PlaneStorage) without copying: a `Vec<u16>` or
+/// [`SampleStorage`](crate::plane::SampleStorage) without copying: a `Vec<u16>` or
 /// `Vec<f32>` from another crate, a `Box<[T]>`, a borrowed slice, or a pool slot.
-/// [`PlaneStorageMut`](crate::plane::PlaneStorageMut) storage also gets the
+/// [`SampleStorageMut`](crate::plane::SampleStorageMut) storage also gets the
 /// mutable views.
 #[non_exhaustive]
 pub struct PixelBuffer<P = (), S = Vec<u8>> {
@@ -1866,7 +1866,7 @@ impl<P> fmt::Debug for PixelCow<'_, P> {
     }
 }
 
-impl<S: PlaneStorage> PixelBuffer<(), S> {
+impl<S: SampleStorage> PixelBuffer<(), S> {
     /// Adopt an allocation, geometry and color context without copying pixels.
     ///
     /// Validates offset, byte stride, sample alignment and the minimum visible
@@ -2252,7 +2252,7 @@ impl<P: Pixel> PixelBuffer<P> {
 }
 
 #[cfg(feature = "imgref")]
-impl<P: Pixel, S: PlaneStorage> PixelBuffer<P, S> {
+impl<P: Pixel, S: SampleStorage> PixelBuffer<P, S> {
     /// Borrow the buffer as an [`ImgRef`].
     ///
     /// Zero-copy: reinterprets the raw bytes as typed pixels via
@@ -2288,7 +2288,7 @@ impl<P: Pixel, S: PlaneStorage> PixelBuffer<P, S> {
 }
 
 #[cfg(feature = "imgref")]
-impl<P: Pixel, S: PlaneStorageMut> PixelBuffer<P, S> {
+impl<P: Pixel, S: SampleStorageMut> PixelBuffer<P, S> {
     /// Borrow the buffer as a mutable [`ImgRefMut`](imgref::ImgRefMut).
     ///
     /// Zero-copy: reinterprets the raw bytes as typed pixels.
@@ -2424,7 +2424,7 @@ impl PixelBuffer {
 
 /// Imgref interop for type-erased PixelBuffer.
 #[cfg(feature = "imgref")]
-impl<S: PlaneStorage> PixelBuffer<(), S> {
+impl<S: SampleStorage> PixelBuffer<(), S> {
     /// Try to borrow the buffer as a typed [`ImgRef`].
     ///
     /// Returns `None` if the descriptor is not layout-compatible with `P`.
@@ -2461,7 +2461,7 @@ impl<S: PlaneStorage> PixelBuffer<(), S> {
 }
 
 #[cfg(feature = "imgref")]
-impl<S: PlaneStorageMut> PixelBuffer<(), S> {
+impl<S: SampleStorageMut> PixelBuffer<(), S> {
     /// Try to borrow the buffer as a typed mutable [`ImgRefMut`](imgref::ImgRefMut).
     ///
     /// Returns `None` if the descriptor is not layout-compatible with `P`.
@@ -2661,7 +2661,7 @@ impl PixelBuffer {
     }
 }
 
-impl<P, S: PlaneStorage> PixelBuffer<P, S> {
+impl<P, S: SampleStorage> PixelBuffer<P, S> {
     // Retain available final-row padding, but do not require it. Validation
     // establishes the visible extent; padding need not fit or even be representable.
     fn storage_span_len(&self) -> usize {
@@ -2910,7 +2910,7 @@ impl<P> PixelBuffer<P, Vec<u8>> {
     }
 }
 
-impl<P, S: PlaneStorage> PixelBuffer<P, S> {
+impl<P, S: SampleStorage> PixelBuffer<P, S> {
     /// Zero-copy access to the raw pixel bytes when rows are tightly packed.
     ///
     /// Returns `Some(&[u8])` if `stride == width * bpp` (no padding),
@@ -3079,7 +3079,7 @@ impl<P, S: PlaneStorage> PixelBuffer<P, S> {
     }
 }
 
-impl<P, S: PlaneStorageMut> PixelBuffer<P, S> {
+impl<P, S: SampleStorageMut> PixelBuffer<P, S> {
     /// Borrow the full buffer as a mutable [`PixelSliceMut`].
     ///
     /// Note: this is a *view*; transforms that change the buffer's layout
@@ -3106,7 +3106,7 @@ impl<P, S: PlaneStorageMut> PixelBuffer<P, S> {
     }
 }
 
-impl<P, S: PlaneStorage> PixelBuffer<P, S> {
+impl<P, S: SampleStorage> PixelBuffer<P, S> {
     /// Borrow a range of rows as an immutable [`PixelSlice`].
     ///
     /// # Panics
@@ -3150,7 +3150,7 @@ impl<P, S: PlaneStorage> PixelBuffer<P, S> {
     }
 }
 
-impl<P, S: PlaneStorageMut> PixelBuffer<P, S> {
+impl<P, S: SampleStorageMut> PixelBuffer<P, S> {
     /// Borrow a range of rows as a mutable [`PixelSliceMut`].
     ///
     /// # Panics
@@ -3195,7 +3195,7 @@ impl<P, S: PlaneStorageMut> PixelBuffer<P, S> {
     }
 }
 
-impl<P, S: PlaneStorage> PixelBuffer<P, S> {
+impl<P, S: SampleStorage> PixelBuffer<P, S> {
     /// Zero-copy sub-region view (immutable).
     ///
     /// # Panics

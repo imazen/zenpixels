@@ -54,11 +54,11 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   subsampling/siting vocabulary: `zencodec::frame` re-exports it instead of
   defining its own. `YcbcrToRgbF32` refuses `Mono` as unsupported chroma.
 - `PixelBuffer<P, S = Vec<u8>>`, `PixelBufferParts<S = Vec<u8>>` and
-  `FromPartsError<S = Vec<u8>>`: `try_from_parts` adopts any `plane::PlaneStorage`
+  `FromPartsError<S = Vec<u8>>`: `try_from_parts` adopts any `plane::SampleStorage`
   (`Vec<u16>`, `Vec<f32>`, `Box<[T]>`, slices, pool slots) without copying, with the same
   validation. Allocating constructors and layout-changing methods remain `Vec<u8>`.
 - Add `plane`: `Plane<C>` (strided samples over any owner, with `PlaneRef`,
-  `PlaneMut` and `PlaneBuf` aliases and `PlaneStorage` for other owners),
+  `PlaneMut` and `PlaneBuf` aliases and `SampleStorage` for other owners),
   `AnyPlane`, `PlaneRole` (one role per plane; `CbCr`/`CrCb` for semi-planar
   chroma), per-plane `PlaneEncoding` (integer codes or scaled floats) and a
   validated `PlanarLayout`. `PlaneBuf::alloc` starts rows on 64 bytes and
@@ -69,7 +69,7 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   as a `PlaneBuf`, all without copying.
 - `PlaneBuf::into_vec` and `TryFrom<PlaneBuf<T>> for ImgVec<T>` hand the `Vec` over when
   row 0 is at index 0, and return the plane unchanged otherwise.
-- `PlaneStorage`/`PlaneStorageMut` are implemented for `[T]`, `Vec<T>`, and for `&S`,
+- `SampleStorage`/`SampleStorageMut` are implemented for `[T]`, `Vec<T>`, and for `&S`,
   `&mut S` and `Box<S>` over any `S: ?Sized`, and stay dyn-compatible.
 - `sample::CodePlane` reads codes from a `plane::AnyPlane`: `CodePlane::new` for one
   component per position, `CodePlane::component` for one of several interleaved
