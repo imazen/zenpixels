@@ -118,6 +118,17 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Open (2026-11-04): tiers disagree. 528 of 1792 conversions differ between v3 and baseline
+  because vector kernels fuse multiply-add only where the hardware does. Integer output: 853 of
+  517,562 samples, at most 1 code. `measure_differences_between_tiers` in `tests/row_partition.rs`.
+
+- Fixed (2026-11-04): a pixel's output depended on its position in a row, up to 4 `u16` codes
+  on PQ, because slice tails ran different math from the body. `tests/row_partition.rs`.
+
+- Fixed (2026-11-04): the vendored PQ kernels reached 4 `u16` codes off ST 2084 at signal 0.9988.
+  A test appeared to bound this, but single-sample rows only exercised the scalar tail. PQ now
+  uses linear-srgb's slices, whose low range is fixed.
+
 - Fixed in #103 before release (2026-11-04): `RowConverter` panicked on `Bgr8` to `Bgr8`
   with a different transfer, because the plan went through a BGR F32 format that does not
   exist. BGR now refuses anything except an identical descriptor. `bgra_is_8bit` runs every

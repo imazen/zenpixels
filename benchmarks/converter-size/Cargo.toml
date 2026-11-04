@@ -16,4 +16,4 @@ debug = 2
 
 [patch.crates-io]
 garb = { git = "https://github.com/imazen/garb", rev = "605276d717ea0b31a1cd2a36ae05301383c7b8b5" }
-linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "c47ee9f603dac9075677ae62023508deadd41e8b" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "2145ecbcadf35e1aafd8b5c55d995f33c68fa748" }

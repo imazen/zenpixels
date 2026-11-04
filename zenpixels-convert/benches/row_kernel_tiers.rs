@@ -59,10 +59,50 @@ fn placed(len: usize, page_offset: usize) -> (usize, Vec<u8>) {
     (start, bytes)
 }
 
-fn options() -> ConvertOptions {
+/// Random samples, uniform in `[0, 1]` for floats. `near black` cases sit under the PQ
+/// polynomials' floors, which is their worst case.
+fn fill_source(bytes: &mut [u8], from: D, name: &str) {
+    let scale = match (name.contains("near black"), from.transfer()) {
+        (true, Tf::Linear) => 1e-7,
+        (true, _) => 0.02,
+        _ => 1.0,
+    };
+    let mut x = 0x2545_F491u32;
+    let mut next = move || {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        x
+    };
+    match from.channel_type() {
+        T::F32 => {
+            for v in bytes.as_chunks_mut::<4>().0 {
+                let f = (next() >> 8) as f32 / 16777215.0 * scale;
+                *v = f.to_ne_bytes();
+            }
+        }
+        T::F16 => {
+            for v in bytes.as_chunks_mut::<2>().0 {
+                *v = half::f16::from_f32((next() >> 8) as f32 / 16777215.0).to_ne_bytes();
+            }
+        }
+        _ => bytes.fill_with(|| next() as u8),
+    }
+}
+
+fn options(name: &str) -> ConvertOptions {
+    let alpha = if name.starts_with("matte") {
+        AlphaPolicy::CompositeOnto {
+            r: 200,
+            g: 100,
+            b: 50,
+        }
+    } else {
+        AlphaPolicy::DiscardUnchecked
+    };
     ConvertOptions::permissive()
         .with_luma(Some(LumaCoefficients::Bt601))
-        .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
+        .with_alpha_policy(alpha)
 }
 
 /// Every kernel family, by name, from one descriptor to another.
@@ -132,6 +172,26 @@ fn cases() -> Vec<(String, Option<D>, Option<D>)> {
         );
         c("unpremul rgba", d(t, L::Rgba, p, tf), d(t, L::Rgba, s, tf));
     }
+    for (tn, t) in [
+        ("u8", T::U8),
+        ("u16", T::U16),
+        ("f16", T::F16),
+        ("f32", T::F32),
+    ] {
+        for (fnm, tf) in [
+            ("srgb", srgb),
+            ("linear", lin),
+            ("bt709", Tf::Bt709),
+            ("pq", Tf::Pq),
+            ("hlg", Tf::Hlg),
+        ] {
+            cases.push((
+                format!("matte {tn} {fnm}"),
+                d(t, L::Rgba, s, tf),
+                d(t, L::Rgb, None, tf),
+            ));
+        }
+    }
     let mut c = |n: &str, f, to| cases.push((n.to_string(), f, to));
     c(
         "rgb to gray u8",
@@ -164,6 +224,46 @@ fn cases() -> Vec<(String, Option<D>, Option<D>)> {
         d(f, L::Rgb, None, lin),
         d(f, L::Rgb, None, Tf::Bt709),
     );
+    c(
+        "hlg f32 to linear",
+        d(f, L::Rgb, None, Tf::Hlg),
+        d(f, L::Rgb, None, lin),
+    );
+    c(
+        "linear to hlg f32",
+        d(f, L::Rgb, None, lin),
+        d(f, L::Rgb, None, Tf::Hlg),
+    );
+    c(
+        "pq u16 to linear",
+        d(u, L::Rgb, None, Tf::Pq),
+        d(f, L::Rgb, None, lin),
+    );
+    c(
+        "linear to pq u16",
+        d(f, L::Rgb, None, lin),
+        d(u, L::Rgb, None, Tf::Pq),
+    );
+    c(
+        "pq f32 to linear",
+        d(f, L::Rgb, None, Tf::Pq),
+        d(f, L::Rgb, None, lin),
+    );
+    c(
+        "linear to pq f32",
+        d(f, L::Rgb, None, lin),
+        d(f, L::Rgb, None, Tf::Pq),
+    );
+    c(
+        "pq f32 to linear, near black",
+        d(f, L::Rgb, None, Tf::Pq),
+        d(f, L::Rgb, None, lin),
+    );
+    c(
+        "linear to pq f32, near black",
+        d(f, L::Rgb, None, lin),
+        d(f, L::Rgb, None, Tf::Pq),
+    );
     let un = Tf::Unknown;
     c(
         "rgb to oklab",
@@ -195,28 +295,21 @@ fn main() {
                 eprintln!("skip {name}: no such format");
                 continue;
             };
-            if let Err(e) = RowConverter::new_explicit(from, to, &options()) {
+            if let Err(e) = RowConverter::new_explicit(from, to, &options(&name)) {
                 eprintln!("skip {name}: {e}");
                 continue;
             }
             for width in [16usize, 1024] {
                 let src_bytes = width * from.bytes_per_pixel();
                 let dst_bytes = width * to.bytes_per_pixel();
+                let name = name.clone();
                 suite.group(format!("{name}, {width} px"), move |g| {
                     g.throughput(Throughput::Bytes(src_bytes as u64));
                     g.config().auto_rounds(false).min_rounds(20).max_rounds(20);
                     for &tier in TIERS {
-                        let mut c = RowConverter::new_explicit(from, to, &options()).unwrap();
+                        let mut c = RowConverter::new_explicit(from, to, &options(&name)).unwrap();
                         let (s0, mut src) = placed(src_bytes, 0);
-                        for (i, v) in src[s0..s0 + src_bytes]
-                            .as_chunks_mut::<4>()
-                            .0
-                            .iter_mut()
-                            .enumerate()
-                        {
-                            let x = (i as u32).wrapping_mul(2654435761) & 0x3f00_3f00;
-                            v.copy_from_slice(&x.to_ne_bytes());
-                        }
+                        fill_source(&mut src[s0..s0 + src_bytes], from, &name);
                         let (d0, mut dst) = placed(dst_bytes, 2048);
                         g.bench(tier, move |b| {
                             set_tier(tier);

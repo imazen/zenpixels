@@ -59,7 +59,7 @@ fast-transpose = []
 # kernels are hardwired 8-wide AVX2 — no clean 16-wide variant, so no `_v4` is
 # defined for them). x86 without this feature still gets 8-wide F16C; aarch64
 # gets NEON-fp16 regardless.
-avx512 = ["magetypes/avx512", "archmage/avx512"]
+avx512 = ["magetypes/avx512", "archmage/avx512", "linear-srgb/avx512"]
 rgb = ["zenpixels/rgb", "dep:rgb"]
 imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]

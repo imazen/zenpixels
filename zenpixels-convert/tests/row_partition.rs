@@ -123,7 +123,7 @@ fn measure_differences_between_tiers() {
     use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
     use std::collections::BTreeMap;
     let options = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
-    let mut rows: Vec<BTreeMap<(String, String), Vec<u8>>> = Vec::new();
+    let mut rows: Vec<BTreeMap<(String, String, usize), Vec<u8>>> = Vec::new();
     let mut names = Vec::new();
     let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
         names.push(perm.to_string());
@@ -132,24 +132,51 @@ fn measure_differences_between_tiers() {
             if let Ok(mut c) = RowConverter::new_explicit(from, to, &options) {
                 let mut row = vec![0u8; WIDTH * to.bytes_per_pixel()];
                 c.convert_row(&source_bytes(from), &mut row, WIDTH as u32);
-                out.insert((format!("{from:?}"), format!("{to:?}")), row);
+                out.insert(
+                    (
+                        format!("{from:?}"),
+                        format!("{to:?}"),
+                        match to.channel_type() {
+                            T::U8 => 1,
+                            T::U16 => 2,
+                            _ => 0,
+                        },
+                    ),
+                    row,
+                );
             }
         });
         rows.push(out);
     });
     for (name, tier) in names.iter().zip(&rows) {
-        let (mut conversions, mut differ, mut int_conversions) = (0u32, 0u32, 0u32);
+        let (mut conversions, mut differ, mut integer) = (0u32, 0u32, 0u32);
+        let (mut samples, mut wrong, mut worst) = (0u64, 0u64, 0u64);
+        let mut worst_at = String::new();
         for (k, row) in tier {
             conversions += 1;
-            if row != &rows[0][k] {
-                differ += 1;
-                if !k.1.contains("F32") && !k.1.contains("F16") {
-                    int_conversions += 1;
+            let base = &rows[0][k];
+            if row == base {
+                continue;
+            }
+            differ += 1;
+            let size = k.2;
+            if size == 0 {
+                continue;
+            }
+            integer += 1;
+            let v = |s: &[u8]| s.iter().rev().fold(0u64, |n, &b| n << 8 | u64::from(b));
+            for (a, b) in row.chunks(size).zip(base.chunks(size)) {
+                samples += 1;
+                let d = v(a).abs_diff(v(b));
+                wrong += u64::from(d != 0);
+                if d > worst {
+                    worst = d;
+                    worst_at = format!("{} -> {}", k.0, k.1);
                 }
             }
         }
         println!(
-            "{name}: {differ} of {conversions} conversions differ from {}, {int_conversions} with integer output",
+            "{name}: {differ} of {conversions} differ from {}; {integer} with integer output, {wrong} of {samples} samples, largest {worst} codes {worst_at}",
             names[0]
         );
     }

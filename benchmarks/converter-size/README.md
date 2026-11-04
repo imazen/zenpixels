@@ -100,5 +100,5 @@ wasm_oz_simd                       base=   57937 conv=  313932 added=  255995
 ## After the tier rule (2026-11-04)
 
 The numbers above are from before row kernels were limited to the tiers that pay for them. Opt-level 3
-now adds 436,416 bytes, not 522,784. `../row_kernel_tiers_2026-11-04.md` has the rule, speeds and size
+now adds 319,592 bytes, not 522,784. `../row_kernel_tiers_2026-11-04.md` has the rule, speeds and size
 per build.

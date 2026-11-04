@@ -1,124 +1,195 @@
-# Row kernel speed per dispatch tier, 2026-11-04
+# Row kernels, 2026-11-04: tiers, transfer math and size
 
-`cargo bench -p zenpixels-convert --bench row_kernel_tiers`, 1024-pixel rows, median of the group's
-20 rounds, source and destination at fixed page offsets. x86-64 on r7900x (Ryzen 9 7900X, Zen 4,
-double-pumped AVX-512). **Not measured on Zen 5**, where 512-bit kernels may gain more. "Old" is this
-branch's source with every kernel still on the `#[autoversion]` default tiers, so it already includes
-the gray f16 port and merged kernels; "new" is the same source with the tiers below, as `#[attune]` on
-archmage 0.9.31-beta.2. Build: fat LTO, one codegen unit, except the last two columns (default bench
-profile). `base` turns the runtime tiers off, so it shows what a
-plain function compiles to: SSE2 with autovectorization. `new v4x` needs `--features avx512`.
+`cargo bench -p zenpixels-convert --bench row_kernel_tiers`, 1024-pixel rows, median of the group's 20
+rounds, source and destination at fixed page offsets, floats uniform in `[0, 1]`. x86-64 on r7900x (Ryzen
+9 7900X, Zen 4, double-pumped AVX-512), fat LTO, one codegen unit. **Not measured on Zen 5**, where 512-bit
+kernels may gain more. Built on archmage 0.9.31-beta.2, garb `605276d7`, linear-srgb `2145ecbc`.
+
+`base` turns the runtime tiers off, so it shows what a plain function compiles to: SSE2 with
+autovectorization. `v4x` needs `--features avx512`.
+
+## Size
+
+Bytes `RowConverter` adds to a stripped binary, from `benchmarks/converter-size`, fat LTO.
+
+| build | before | after |
+|---|---:|---:|
+| x86-64 opt-level 3 | 522,784 | 319,592 |
+| x86-64 opt-level s | 401 KB | 194,640 |
+| x86-64 opt-level 3, `avx512` | not measured | 366,600 |
+| wasm32 opt-level 3, simd128 | 299 KB | 248,117 |
+| wasm32 opt-level z, simd128 | 256 KB | 229,141 |
+| aarch64 opt-level 3 (section sums) | 245,328 | 194,688 |
+
+Where the x86-64 opt-level 3 reduction came from, in order:
+
+| step | added bytes |
+|---|---:|
+| start | 522,784 |
+| tier rule, merged kernels, gray f16 | 432,464 |
+| `#[attune]`, newer garb and linear-srgb | 436,416 |
+| HLG and BT.709 through slices | 427,632 |
+| tails through the vector kernels | 412,560 |
+| PQ through linear-srgb | 395,264 |
+| one matte kernel | 339,120 |
+| hand-written scalar tiers in linear-srgb | 319,592 |
+
+New code by crate at the end, from symbol names: zenpixels-convert 209,018, linear-srgb 14,414, garb
+11,252, others 21,479. Inlining counts toward the caller, so dependency code inlined into
+zenpixels-convert appears under it. What remains largest: `ConvertPlan::new` 14 KB, gamut matrix kernels
+about 27 KB, `matte_composite` 10 KB, `apply_step_u8` 7 KB.
+
+## Compile time
+
+Clean build of the whole graph with default features, `-j 2`: `cargo check` 4.5 s, debug 5.3 s, release
+7.6 s. In release, by crate: zenpixels-convert 2.6 s, garb 2.4 s, magetypes 1.4 s, syn 1.3 s, linear-srgb
+0.9 s. Fat LTO adds about 1.4 s to a final binary that uses `RowConverter`. These changes left it about
+the same: 8.1 s before.
 
 ## Rule
 
 - Keep a v3 copy only if it beats `base` by at least 1.25x in both build profiles.
 - Add `+v4x(cfg(avx512))` only if v4 beats v3 by at least 1.2x in both profiles.
-- bt709 stays plain: `base` beats v3 there, and v4 by 19% in one direction and within 3% in the other.
-- Kernels with no neon or wasm128 copy: those tiers are the baseline of their targets.
+- No neon or wasm128 copies of autovectorized kernels: those are their targets' baseline.
 
-## x86-64
+The rule ran before the bench used uniform floats. Rechecked with uniform floats: every kept v3 copy and
+v4x tier still passes or sits at the threshold. Plain kernels were not re-measured with a v3 copy.
 
-| kernel | old v4 | old v3 | old base | new v3 | new base | new v4x | tiers | old v4, default | new v3, default |
-|---|---:|---:|---:|---:|---:|---:|---|---:|---:|
-| add alpha u16 | 111 ns | 204 ns | 462 ns | 202 ns | 459 ns | 115 ns | v4x, v3 | 116 ns | 209 ns |
-| drop alpha u16 | 71 ns | 93 ns | 217 ns | 89 ns | 211 ns | 73 ns | v4x, v3 | 73 ns | 92 ns |
-| gray to rgb u16 | 66 ns | 57 ns | 84 ns | 56 ns | 84 ns | 58 ns | v3 | 69 ns | 63 ns |
-| gray to rgba u16 | 92 ns | 67 ns | 139 ns | 66 ns | 206 ns | 66 ns | v3 | 98 ns | 70 ns |
-| rgb to gray u16 | 761 ns | 870 ns | 1.28 µs | 867 ns | 1.28 µs | 856 ns | v3 | 755 ns | 867 ns |
-| rgba to gray u16 | 772 ns | 1.12 µs | 1.36 µs | 1.40 µs | 1.40 µs | 771 ns | v4x | 774 ns | 1.40 µs |
-| ga to rgba u16 | 74 ns | 66 ns | 133 ns | 66 ns | 130 ns | 66 ns | v3 | 77 ns | 68 ns |
-| ga to rgb u16 | 68 ns | 57 ns | 297 ns | 57 ns | 302 ns | 62 ns | v3 | 72 ns | 61 ns |
-| gray to ga u16 | 85 ns | 50 ns | 59 ns | 61 ns | 61 ns | 63 ns | plain | 88 ns | 66 ns |
-| ga to gray u16 | 83 ns | 46 ns | 77 ns | 46 ns | 76 ns | 48 ns | v3 | 77 ns | 51 ns |
-| add alpha f16 | 111 ns | 204 ns | 461 ns | 203 ns | 485 ns | 116 ns | v4x, v3 | 115 ns | 215 ns |
-| drop alpha f16 | 70 ns | 95 ns | 210 ns | 88 ns | 211 ns | 73 ns | v4x, v3 | 73 ns | 96 ns |
-| gray to rgb f16 | 66 ns | 56 ns | 84 ns | 56 ns | 84 ns | 58 ns | v3 | 69 ns | 60 ns |
-| gray to rgba f16 | 92 ns | 68 ns | 139 ns | 66 ns | 163 ns | 67 ns | v3 | 96 ns | 71 ns |
-| rgb to gray f16 | 327 ns | 333 ns | 2.52 µs | 320 ns | 2.55 µs | 330 ns | v4x, v3 | 327 ns | 334 ns |
-| rgba to gray f16 | 370 ns | 451 ns | 3.11 µs | 445 ns | 3.10 µs | 376 ns | v4x, v3 | 377 ns | 444 ns |
-| ga to rgba f16 | 75 ns | 65 ns | 129 ns | 65 ns | 130 ns | 67 ns | v3 | 76 ns | 68 ns |
-| ga to rgb f16 | 68 ns | 57 ns | 299 ns | 57 ns | 302 ns | 58 ns | v3 | 72 ns | 61 ns |
-| gray to ga f16 | 85 ns | 50 ns | 59 ns | 61 ns | 61 ns | 63 ns | plain | 88 ns | 65 ns |
-| ga to gray f16 | 71 ns | 46 ns | 75 ns | 46 ns | 76 ns | 48 ns | v3 | 67 ns | 51 ns |
-| add alpha f32 | 245 ns | 236 ns | 390 ns | 238 ns | 394 ns | 238 ns | v3 | 248 ns | 264 ns |
-| drop alpha f32 | 122 ns | 101 ns | 297 ns | 100 ns | 300 ns | 105 ns | v3 | 123 ns | 107 ns |
-| gray to rgb f32 | 94 ns | 88 ns | 150 ns | 89 ns | 153 ns | 89 ns | v3 | 98 ns | 93 ns |
-| gray to rgba f32 | 141 ns | 117 ns | 195 ns | 116 ns | 197 ns | 119 ns | v3 | 150 ns | 121 ns |
-| rgb to gray f32 | 272 ns | 371 ns | 898 ns | 350 ns | 792 ns | 277 ns | v4x, v3 | 257 ns | 381 ns |
-| rgba to gray f32 | 302 ns | 473 ns | 689 ns | 472 ns | 747 ns | 339 ns | v4x, v3 | 328 ns | 472 ns |
-| ga to rgba f32 | 114 ns | 112 ns | 197 ns | 110 ns | 198 ns | 115 ns | v3 | 116 ns | 117 ns |
-| ga to rgb f32 | 98 ns | 88 ns | 151 ns | 88 ns | 152 ns | 89 ns | v3 | 102 ns | 99 ns |
-| gray to ga f32 | 88 ns | 69 ns | 103 ns | 69 ns | 112 ns | 70 ns | v3 | 93 ns | 73 ns |
-| ga to gray f32 | 60 ns | 53 ns | 73 ns | 52 ns | 72 ns | 55 ns | v3 | 65 ns | 57 ns |
-| premul ga u8 | 68 ns | 82 ns | 495 ns | 84 ns | 493 ns | 65 ns | v4x, v3 | 71 ns | 86 ns |
-| premul rgba u8 | 320 ns | 324 ns | 1.30 µs | 319 ns | 1.29 µs | 324 ns | garb | 324 ns | 324 ns |
-| unpremul ga u8 | 946 ns | 956 ns | 778 ns | 788 ns | 787 ns | 783 ns | plain | 960 ns | 805 ns |
-| unpremul rgba u8 | 2.20 µs | 2.20 µs | 2.20 µs | 2.20 µs | 2.20 µs | 2.20 µs | plain | 2.20 µs | 2.20 µs |
-| premul ga u16 | 112 ns | 117 ns | 347 ns | 118 ns | 340 ns | 119 ns | v3 | 113 ns | 118 ns |
-| premul rgba u16 | 338 ns | 702 ns | 1.69 µs | 701 ns | 1.70 µs | 339 ns | v4x, v3 | 339 ns | 700 ns |
-| unpremul ga u16 | 1.10 µs | 1.10 µs | 1.10 µs | 1.10 µs | 1.10 µs | 1.10 µs | plain | 1.10 µs | 1.10 µs |
-| unpremul rgba u16 | 3.30 µs | 3.30 µs | 3.30 µs | 3.30 µs | 3.30 µs | 3.30 µs | plain | 3.30 µs | 3.30 µs |
-| premul ga f32 | 272 ns | 347 ns | 744 ns | 352 ns | 766 ns | 230 ns | v4x, v3 | 221 ns | 333 ns |
-| premul rgba f32 | 421 ns | 426 ns | 1.47 µs | 412 ns | 1.46 µs | 418 ns | garb | 417 ns | 572 ns |
-| unpremul ga f32 | 895 ns | 1.05 µs | 1.11 µs | 1.10 µs | 1.10 µs | 1.10 µs | plain | 908 ns | 1.10 µs |
-| unpremul rgba f32 | 806 ns | 804 ns | 1.47 µs | 855 ns | 1.57 µs | 845 ns | garb | 842 ns | 822 ns |
-| rgb to gray u8 | 735 ns | 801 ns | 1.08 µs | 808 ns | 1.09 µs | 803 ns | v3 | 739 ns | 811 ns |
-| rgba to gray u8 | 758 ns | 767 ns | 1.11 µs | 769 ns | 1.10 µs | 758 ns | v3 | 756 ns | 777 ns |
-| hlg u16 to linear | 2.60 µs | 3.20 µs | 3.50 µs | 3.50 µs | 3.50 µs | 2.70 µs | v4x | 2.60 µs | 3.50 µs |
-| linear to hlg u16 | 3.80 µs | 3.70 µs | 4.70 µs | 3.60 µs | 4.70 µs | 3.70 µs | v3 | 3.80 µs | 3.70 µs |
-| bt709 f32 to linear | 5.30 µs | 6.40 µs | 4.30 µs | 4.50 µs | 4.50 µs | 4.40 µs | plain | 5.40 µs | 4.50 µs |
-| linear to bt709 f32 | 3.90 µs | 4.70 µs | 4.00 µs | 4.00 µs | 4.00 µs | 3.90 µs | plain | 3.90 µs | 3.80 µs |
-| rgb to oklab | 2.50 µs | 3.40 µs | 5.50 µs | 3.60 µs | 5.80 µs | 2.50 µs | v4x, v3 | 2.50 µs | 3.50 µs |
-| oklab to rgb | 589 ns | 1.35 µs | 2.66 µs | 1.40 µs | 2.70 µs | 606 ns | v4x, v3 | 656 ns | 1.40 µs |
-| rgba to oklaba | 2.20 µs | 3.60 µs | 5.80 µs | 3.50 µs | 5.80 µs | 2.20 µs | v4x, v3 | 2.20 µs | 3.70 µs |
-| oklaba to rgba | 968 ns | 1.76 µs | 3.62 µs | 1.80 µs | 3.70 µs | 952 ns | v4x, v3 | 957 ns | 1.70 µs |
+## Kernels
 
-The u16 and f16 rows of `add alpha`, `gray to rgba` and `gray to ga` now run one kernel, which takes the
-alpha value as an argument.
+"Before" is v3 before the transfer and matte changes.
 
-Gray f16 before the port (`83839ef3`): `rgb to gray f16` took 1.30 µs at v4 and 3.90 µs at `base`. It
-goes through the F16C slice converters and the f32 kernel now. NaN stays NaN, but which payload survives
-can differ from per-sample software conversion, as in the f32 kernel. Other values match bit for bit.
+| kernel | before | v3 | `base` | v4x | tiers |
+|---|---:|---:|---:|---:|---|
+| add alpha u16 | 204 ns | 203 ns | 461 ns | 113 ns | v4x, v3 |
+| drop alpha u16 | 89 ns | 93 ns | 209 ns | 74 ns | v4x, v3 |
+| gray to rgb u16 | 56 ns | 56 ns | 84 ns | 58 ns | v3 |
+| gray to rgba u16 | 65 ns | 66 ns | 206 ns | 68 ns | v3 |
+| rgb to gray u16 | 867 ns | 868 ns | 1.28 µs | 860 ns | v3 |
+| rgba to gray u16 | 1.40 µs | 1.40 µs | 1.40 µs | 775 ns | v4x |
+| ga to rgba u16 | 64 ns | 66 ns | 132 ns | 66 ns | v3 |
+| ga to rgb u16 | 58 ns | 57 ns | 299 ns | 58 ns | v3 |
+| gray to ga u16 | 55 ns | 62 ns | 62 ns | 62 ns | plain |
+| ga to gray u16 | 46 ns | 46 ns | 76 ns | 48 ns | v3 |
+| add alpha f16 | 201 ns | 203 ns | 463 ns | 113 ns | v4x, v3 |
+| drop alpha f16 | 89 ns | 88 ns | 211 ns | 72 ns | v4x, v3 |
+| gray to rgb f16 | 56 ns | 56 ns | 85 ns | 58 ns | v3 |
+| gray to rgba f16 | 67 ns | 72 ns | 168 ns | 67 ns | v3 |
+| rgb to gray f16 | 326 ns | 324 ns | 1.67 µs | 331 ns | v4x, v3 |
+| rgba to gray f16 | 436 ns | 441 ns | 1.94 µs | 370 ns | v4x, v3 |
+| ga to rgba f16 | 65 ns | 65 ns | 129 ns | 66 ns | v3 |
+| ga to rgb f16 | 57 ns | 56 ns | 299 ns | 58 ns | v3 |
+| gray to ga f16 | 55 ns | 61 ns | 61 ns | 62 ns | plain |
+| ga to gray f16 | 46 ns | 46 ns | 75 ns | 48 ns | v3 |
+| add alpha f32 | 246 ns | 237 ns | 395 ns | 241 ns | v3 |
+| drop alpha f32 | 98 ns | 100 ns | 303 ns | 100 ns | v3 |
+| gray to rgb f32 | 87 ns | 88 ns | 148 ns | 89 ns | v3 |
+| gray to rgba f32 | 116 ns | 116 ns | 201 ns | 117 ns | v3 |
+| rgb to gray f32 | 138 ns | 138 ns | 305 ns | 116 ns | v4x, v3 |
+| rgba to gray f32 | 222 ns | 222 ns | 306 ns | 145 ns | v4x, v3 |
+| ga to rgba f32 | 110 ns | 112 ns | 199 ns | 112 ns | v3 |
+| ga to rgb f32 | 90 ns | 89 ns | 151 ns | 90 ns | v3 |
+| gray to ga f32 | 68 ns | 68 ns | 112 ns | 70 ns | v3 |
+| ga to gray f32 | 52 ns | 56 ns | 72 ns | 54 ns | v3 |
+| premul ga u8 | 84 ns | 82 ns | 492 ns | 65 ns | v4x, v3 |
+| premul rgba u8 | 319 ns | 318 ns | 1.31 µs | 321 ns | garb |
+| unpremul ga u8 | 854 ns | 854 ns | 854 ns | 855 ns | plain |
+| unpremul rgba u8 | 2.30 µs | 2.30 µs | 2.30 µs | 2.30 µs | plain |
+| premul ga u16 | 114 ns | 115 ns | 352 ns | 116 ns | v3 |
+| premul rgba u16 | 698 ns | 703 ns | 1.70 µs | 339 ns | v4x, v3 |
+| unpremul ga u16 | 1.10 µs | 1.10 µs | 1.10 µs | 1.10 µs | plain |
+| unpremul rgba u16 | 3.40 µs | 3.40 µs | 3.40 µs | 3.40 µs | plain |
+| premul ga f32 | 105 ns | 105 ns | 172 ns | 105 ns | v4x, v3 |
+| premul rgba f32 | 272 ns | 268 ns | 502 ns | 267 ns | garb |
+| unpremul ga f32 | 589 ns | 590 ns | 590 ns | 588 ns | plain |
+| unpremul rgba f32 | 333 ns | 334 ns | 686 ns | 334 ns | garb |
+| matte u8 srgb | 4.10 µs | 2.20 µs | 4.80 µs | 2.50 µs | slices |
+| matte u8 linear | 2.90 µs | 1.10 µs | 3.10 µs | 1.00 µs | slices |
+| matte u8 bt709 | 96.60 µs | 3.80 µs | 101.90 µs | 3.00 µs | slices |
+| matte u8 pq | 73.90 µs | 5.30 µs | 78.30 µs | 4.50 µs | slices |
+| matte u8 hlg | 34.20 µs | 2.60 µs | 36.00 µs | 2.20 µs | slices |
+| matte u16 srgb | 35.40 µs | 2.40 µs | 73.20 µs | 2.20 µs | slices |
+| matte u16 linear | 3.00 µs | 1.10 µs | 3.60 µs | 1.10 µs | slices |
+| matte u16 bt709 | 94.00 µs | 3.90 µs | 102.50 µs | 3.00 µs | slices |
+| matte u16 pq | 74.20 µs | 5.00 µs | 77.00 µs | 4.30 µs | slices |
+| matte u16 hlg | 33.80 µs | 2.60 µs | 36.00 µs | 2.30 µs | slices |
+| matte f16 srgb | 67.40 µs | 2.10 µs | 72.10 µs | 1.90 µs | slices |
+| matte f16 linear | 2.00 µs | 877 ns | 3.64 µs | 856 ns | slices |
+| matte f16 bt709 | 95.90 µs | 3.60 µs | 98.60 µs | 2.70 µs | slices |
+| matte f16 pq | 75.90 µs | 4.70 µs | 77.20 µs | 4.00 µs | slices |
+| matte f16 hlg | 31.30 µs | 2.40 µs | 35.40 µs | 2.00 µs | slices |
+| matte f32 srgb | 66.50 µs | 2.10 µs | 72.70 µs | 2.00 µs | slices |
+| matte f32 linear | 654 ns | 853 ns | 1.39 µs | 909 ns | slices |
+| matte f32 bt709 | 96.30 µs | 3.70 µs | 96.80 µs | 2.70 µs | slices |
+| matte f32 pq | 74.90 µs | 4.70 µs | 78.20 µs | 4.10 µs | slices |
+| matte f32 hlg | 30.70 µs | 2.30 µs | 33.10 µs | 2.00 µs | slices |
+| rgb to gray u8 | 809 ns | 808 ns | 1.08 µs | 809 ns | v3 |
+| rgba to gray u8 | 771 ns | 764 ns | 1.10 µs | 767 ns | v3 |
+| hlg u16 to linear | 16.40 µs | 924 ns | 17.15 µs | 733 ns | slices |
+| linear to hlg u16 | 3.10 µs | 1.10 µs | 22.70 µs | 1.10 µs | slices |
+| bt709 f32 to linear | 47.70 µs | 1.50 µs | 48.20 µs | 1.10 µs | slices |
+| linear to bt709 f32 | 48.80 µs | 1.40 µs | 51.70 µs | 897 ns | slices |
+| hlg f32 to linear | 805 ns | 810 ns | 16.31 µs | 598 ns | slices |
+| linear to hlg f32 | 797 ns | 793 ns | 20.44 µs | 668 ns | slices |
+| pq u16 to linear | 5.20 µs | 2.80 µs | 36.60 µs | 2.00 µs | slices |
+| linear to pq u16 | 5.50 µs | 1.90 µs | 41.00 µs | 1.80 µs | slices |
+| pq f32 to linear | 5.10 µs | 2.40 µs | 36.80 µs | 1.80 µs | slices |
+| linear to pq f32 | 5.10 µs | 1.60 µs | 41.90 µs | 1.50 µs | slices |
+| pq f32 to linear near black | 5.10 µs | 6.30 µs | 30.70 µs | 4.40 µs | slices |
+| linear to pq f32 near black | 5.10 µs | 6.50 µs | 29.70 µs | 4.90 µs | slices |
+| rgb to oklab | 1.90 µs | 1.90 µs | 3.80 µs | 1.20 µs | v4x, v3 |
+| oklab to rgb | 664 ns | 667 ns | 1.05 µs | 432 ns | v4x, v3 |
+| rgba to oklaba | 2.30 µs | 2.30 µs | 4.00 µs | 1.30 µs | v4x, v3 |
+| oklaba to rgba | 769 ns | 773 ns | 1.23 µs | 517 ns | v4x, v3 |
+
+## PQ accuracy
+
+Against ST 2084 in f64, a million samples each way, rounded to `u16`:
+
+| | decode: wrong, worst | encode: wrong, worst | decode speed |
+|---|---:|---:|---:|
+| vendored "precise" kernel, before | 10.7%, 4 codes | 12.5%, 1 code | 5.1 µs |
+| linear-srgb slice, after | 1.1%, 1 code | 0.7%, 1 code | 2.4 µs |
+
+Near-black rows, the slice's worst case, cost 6.2 µs against 5.1 µs before.
+
+## Position and tiers
+
+- **Position:** 572 of the conversions tested gave a different result for a pixel depending on where it
+  sat in a row, up to 4 `u16` codes on PQ. Now zero of 1792, at every tier (`tests/row_partition.rs`).
+- **Tiers:** 528 of 1792 conversions still differ between v3 and `base`, because the vector kernels fuse
+  multiply-add where the hardware does. 189 of those have integer output: 853 of 517,562 samples differ,
+  by at most 1 code. Run `measure_differences_between_tiers` to reproduce.
 
 ## aarch64
 
-`zen-arm-xl`, Neoverse N1, shared with a niced fuzz service, so differences up to about 20% on move
-kernels are noise: `ga to rgb f16` measured 527 ns and 715 ns in the same old build. "Old" `neon` and
-`base` matched throughout, because NEON is that target's baseline. Removing the neon copies changes no
-kernel beyond that noise, and gray f16 is the one large change.
+`zen-arm-xl`, Neoverse N1, shared with a niced fuzz service, so differences up to about 20% on move kernels
+are noise. 1011 tests pass there.
 
-| kernel | old neon | new |
+| kernel | before | after |
 |---|---:|---:|
-| rgb to gray f16 | 10.40 µs | 1.40 µs |
-| rgba to gray f16 | 10.90 µs | 1.90 µs |
-| add alpha u16 | 427 ns | 426 ns |
-| rgb to gray f32 | 485 ns | 494 ns |
+| rgb to gray f16 | 10.40 µs | 1.30 µs |
+| rgba to gray f16 | 10.90 µs | 1.80 µs |
+| add alpha u16 | 427 ns | 422 ns |
+| rgb to gray f32 | 485 ns | 475 ns |
 | premul rgba u16 | 1.80 µs | 1.80 µs |
-| rgb to oklab | 10.20 µs | 10.30 µs |
-| hlg u16 to linear | 8.60 µs | 8.60 µs |
-| linear to bt709 f32 | 10.70 µs | 7.60 µs |
+| hlg u16 to linear | 8.60 µs | 5.90 µs |
+| linear to hlg u16 | 6.20 µs | 6.10 µs |
+| bt709 f32 to linear | 10.70 µs | 8.00 µs |
+| linear to bt709 f32 | 10.70 µs | 7.40 µs |
 
-## Binary size
+## Costs
 
-Bytes `RowConverter` adds to a stripped binary, from `benchmarks/converter-size`, fat LTO.
-
-| build | before | tiers on 0.9.30 | attune on the beta |
-|---|---:|---:|---:|
-| x86-64 opt-level 3 | 522,784 | 432,464 | 436,416 |
-| x86-64 opt-level s | 401 KB | 367,944 | 357,200 |
-| x86-64 opt-level 3, `avx512` | not measured | 471,624 | 475,512 |
-| wasm32 opt-level 3, simd128 | 299 KB | 295,888 | 295,633 |
-| wasm32 opt-level z, simd128 | 256 KB | 256,226 | 250,311 |
-| aarch64 opt-level 3 (section sums) | 245,328 | 246,696 | 253,672 |
-
-aarch64 did not shrink. Its neon and baseline copies were already the same code. The last column also
-picks up newer garb and linear-srgb `main`, so the 7 KB there isn't attributed to attune alone.
+- Default builds have no v4 tier, so AVX-512 CPUs run some kernels up to 2.4x slower than before unless
+  built with `avx512` (`add alpha`, `premul rgba u16`, `oklab to rgb`).
+- Non-AVX2 x86-64 is slower on the slices' scalar tiers, which are smaller: up to 3x on `hlg f32 to linear`.
+- `matte f32 linear` is 30% slower: it now splits channels and goes through scratch rows.
+- Near-black PQ rows are about 25% slower at v3.
 
 ## Limits
 
-- Harness bug, fixed: enabling V3 re-enables V4, so setting V4 first made every "v3" run v4. Tier
-  tables measured before this file are wrong.
-- `rgba to gray u16` and `hlg u16 to linear` have no v3 copy under the rule, so AVX2 machines get `base`.
-- `premul rgba f32` varied by 30% between identical runs of the default profile.
-- 16-pixel rows were measured but aren't listed: `base` is usually fastest there, by about 5 ns.
+- Harness bug, fixed: enabling V3 re-enables V4, so setting V4 first made every "v3" run v4. Tier tables
+  measured before this file are wrong.
+- `premul rgba f32` varied by 30% between identical runs.
+- 16-pixel rows were measured but aren't listed.
 
