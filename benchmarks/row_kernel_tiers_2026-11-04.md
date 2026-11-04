@@ -11,17 +11,18 @@ SSE2 with autovectorization. `v4x` needs `--features avx512`.
 
 ## Size
 
-Bytes `RowConverter` adds to a stripped binary, from `benchmarks/converter-size`, fat LTO. An independent review
-measured the x86-64 opt-level 3 pair as 523,440 and 319,672; small differences come from fresh dependency resolution.
+Bytes `RowConverter` adds to a stripped binary, from `benchmarks/converter-size/measure.sh`, fat LTO, on this branch and the
+real base `5bd0d3aa` with the same script. aarch64 is section sums on `zen-arm-xl`, because stripping rounds to 64 KB pages.
+Earlier figures here came from different measurements and aren't comparable.
 
 | build | before | now |
 |---|---:|---:|
-| x86-64 opt-level 3 | 522,784 | 350,096 |
-| x86-64 opt-level s | 401 KB | 198,920 |
-| x86-64 opt-level 3, `avx512` | not measured | 399,776 |
-| wasm32 opt-level 3, simd128 | 299 KB | 248,690 |
-| wasm32 opt-level z, simd128 | 256 KB | 229,711 |
-| aarch64 opt-level 3 (section sums) | 245,328 | 194,968 |
+| x86-64 opt-level 3 | 529,152 | 355,904 |
+| x86-64 opt-level s | 400,840 | 198,968 |
+| x86-64 opt-level 3, `avx512` | 547,312 | 405,584 |
+| wasm32 opt-level 3, simd128 | 284,462 | 233,370 |
+| wasm32 opt-level z, simd128 | 225,591 | 197,127 |
+| aarch64 opt-level 3 | 268,416 | 206,470 |
 
 ## Compile time
 
