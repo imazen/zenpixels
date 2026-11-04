@@ -144,11 +144,11 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   and those crates are released. Consumers capped at
   `<=0.9.31-beta.1` must raise the cap.
 - Row kernels compile only for the tiers that pay for them. Stripped size added by
-  `RowConverter` on x86-64, fat LTO: 522,784 to 320,520 bytes at opt-level 3, and 401 KB to
-  195,328 at opt-level s. Default builds no longer have a v4 tier, so AVX-512 CPUs run some
+  `RowConverter` on x86-64, fat LTO: 522,784 to 350,096 bytes at opt-level 3, and 401 KB to
+  198,920 at opt-level s. Default builds no longer have a v4 tier, so AVX-512 CPUs run some
   kernels up to 2.1x slower (`premul rgba u16`). The `avx512` feature restores that through
   `+v4x` on 12 kernels and linear-srgb's slices. Non-AVX2 x86-64 is up to 3.1x slower on the
-  slices' scalar tiers. `benchmarks/row_kernel_tiers_2026-11-04.md`.
+  slices' scalar tiers, which run fused math. `benchmarks/row_kernel_tiers_2026-11-04.md`.
 - HLG, BT.709 and PQ rows use linear-srgb's slices, and PQ drops its vendored kernels. Output
   changes: HLG and BT.709 by rounding, PQ toward ST 2084 (wrong `u16` decode values from 10.7%
   to 1.1%, worst error from 4 codes to 1). PQ decode now has rare 1-code reversals, 5,185 of
@@ -162,6 +162,8 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   `DiffuseWhite` gains `Hash`.
 - A pixel's output no longer depends on where it sits in a row. `tests/row_partition.rs` checks
   1792 conversions at every tier.
+- Output no longer depends on the CPU: every native tier gives the same bytes, so bit-exact tests hold across machines. A digest
+  test pins them. New feature `precise-portable` extends this to strict WASM, at up to about 18x cost there.
 - Gray from F16 goes through the F16C slice converters and the f32 kernel: 4x faster on x86-64
   and 7x on aarch64. NaN stays NaN, but which input's payload survives can change.
 - `rgb_to_oklab`, `oklab_to_rgb` and `fast_cbrt` are `#[inline]`: without LTO, Oklab encode ran

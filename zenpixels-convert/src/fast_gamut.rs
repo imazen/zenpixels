@@ -1369,9 +1369,7 @@ mod hybrids {
             let g = lin_lut[src[base + 1] as usize];
             let b = lin_lut[src[base + 2] as usize];
             let (nr, ng, nb) = mat3x3(m, r, g, b);
-            dst[base] = linear_srgb::default::linear_to_srgb_u16(nr);
-            dst[base + 1] = linear_srgb::default::linear_to_srgb_u16(ng);
-            dst[base + 2] = linear_srgb::default::linear_to_srgb_u16(nb);
+            linear_srgb::default::linear_to_srgb_u16_slice(&[nr, ng, nb], &mut dst[base..base + 3]);
         }
     }
 
@@ -1426,9 +1424,7 @@ mod hybrids {
             let g = linear_srgb::default::srgb_u16_to_linear(src[base + 1]);
             let b = linear_srgb::default::srgb_u16_to_linear(src[base + 2]);
             let (nr, ng, nb) = mat3x3(m, r, g, b);
-            dst[base] = linear_srgb::default::linear_to_srgb_u16(nr);
-            dst[base + 1] = linear_srgb::default::linear_to_srgb_u16(ng);
-            dst[base + 2] = linear_srgb::default::linear_to_srgb_u16(nb);
+            linear_srgb::default::linear_to_srgb_u16_slice(&[nr, ng, nb], &mut dst[base..base + 3]);
         }
     }
 
@@ -1449,9 +1445,7 @@ mod hybrids {
             let g = lin_lut[src_px[1] as usize];
             let b = lin_lut[src_px[2] as usize];
             let (nr, ng, nb) = mat3x3(m, r, g, b);
-            dst_px[0] = linear_srgb::default::linear_to_srgb_u16(nr);
-            dst_px[1] = linear_srgb::default::linear_to_srgb_u16(ng);
-            dst_px[2] = linear_srgb::default::linear_to_srgb_u16(nb);
+            linear_srgb::default::linear_to_srgb_u16_slice(&[nr, ng, nb], &mut dst_px[..]);
         }
     }
 
@@ -1494,9 +1488,7 @@ mod hybrids {
             let g = linear_srgb::default::srgb_u16_to_linear(src_px[1]);
             let b = linear_srgb::default::srgb_u16_to_linear(src_px[2]);
             let (nr, ng, nb) = mat3x3(m, r, g, b);
-            dst_px[0] = linear_srgb::default::linear_to_srgb_u16(nr);
-            dst_px[1] = linear_srgb::default::linear_to_srgb_u16(ng);
-            dst_px[2] = linear_srgb::default::linear_to_srgb_u16(nb);
+            linear_srgb::default::linear_to_srgb_u16_slice(&[nr, ng, nb], &mut dst_px[..]);
         }
     }
 

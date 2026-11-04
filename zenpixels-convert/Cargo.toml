@@ -60,6 +60,9 @@ fast-transpose = []
 # defined for them). x86 without this feature still gets 8-wide F16C; aarch64
 # gets NEON-fp16 regardless.
 avx512 = ["magetypes/avx512", "archmage/avx512", "linear-srgb/avx512"]
+# The same bits as native tiers on strict WASM and engines that round relaxed madd twice, using
+# software FMA: up to about 18x slower there. No effect on native targets, which always match.
+precise-portable = ["linear-srgb/precise-portable"]
 rgb = ["zenpixels/rgb", "dep:rgb"]
 imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]

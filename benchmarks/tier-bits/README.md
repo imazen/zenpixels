@@ -1,5 +1,23 @@
 # Do tiers and platforms produce the same bits?
 
+**Yes, as of linear-srgb `52896f4b`.** Every conversion in `zenpixels-convert/tests/row_partition.rs` gives the same bytes at
+every tier, and `output_digest_matches_on_every_platform` pins one digest across platforms. x86-64 and aarch64 match. Not measured:
+Zen 5, Apple, Windows, ARMv7, JavaScriptCore, V8.
+
+WASM with `+relaxed-simd` under wasmtime matches too. Strict WASM doesn't, unless built with `precise-portable`, which is slower:
+
+| Target, ns per sample over the slices | Default | `precise-portable` |
+|---|---:|---:|
+| WASM strict | 0.83-3.34 | 9.01-36.72 |
+
+How: scalar tiers run the kernels' own operations per sample with fused math (linear-srgb `src/lanes.rs`), and `pow` is ours, so
+magetypes is unchanged. Size added by `RowConverter`, x86-64: 350,096 bytes at opt-level 3 and 198,920 at opt-level s, against
+320,520 and 195,328 before.
+
+The measurements below led there and are kept for the record.
+
+## History: what was measured on the way
+
 Measured 2026-11-04 on linear-srgb's 12 plain slices, 1,200,002 samples each: 1,000,001 uniform in `[0, 1]`
 and 200,001 of `t^4`. Hosts: r7900x (Zen 4) and `zen-arm-xl` (Neoverse N1). WASM under wasmtime on r7900x.
 Not measured: Zen 5, Apple, ARMv7, JavaScriptCore, V8, or NaN and out-of-range input.
@@ -90,4 +108,7 @@ Measured over every f32 in `[0, 1]` at v3 (`reversals.rs`):
 - They are small: all sRGB and BT.709 encode reversals are at most 5 output ULP. PQ reaches 1,263 ULP, at inputs around 1e-6.
 - The cause is rounding in the f32 arithmetic, not the curve: the same PQ decode polynomial over `[0.25, 1]` gives 412,701 reversals
   and 5,086 `u16` reversals in f32, and none of either in f64 (`polynomial_f64.rs`).
-- Two are branch seams instead: HLG encode at `1/12` (10 ULP) and BT.709 decode near 0.0812 (5 ULP).
+- Two were branch seams instead: HLG encode at `1/12` (10 ULP) and BT.709 decode near 0.0812 (5 ULP). Both are fixed, and those
+  curves now have no reversals at all.
+
+The contract is at most one `u16` code, tested on windows of consecutive floats by `adjacent_inputs_reverse_by_at_most_one_code`.

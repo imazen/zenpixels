@@ -2718,6 +2718,25 @@ fn oklab_to_rgb_4ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) 
 /// Per-tier SIMD body for [`gamut_matrix_rgb_f32`] / [`gamut_matrix_rgba_f32`]
 /// — `CHANNELS == 3` is interleaved RGB (no alpha), `CHANNELS == 4` carries an
 /// alpha lane that's copied through unmodified.
+/// Multiply-add for kernels: one rounding on every native tier, so output doesn't depend on the CPU.
+/// WASM stays relaxed unless `precise-portable` asks for the same bits, because fused is software
+/// there unless the engine fuses.
+#[inline(always)]
+fn fused_mul_add<T: magetypes::simd::backends::F32x8Backend>(
+    a: magetypes::simd::generic::f32x8<T>,
+    b: magetypes::simd::generic::f32x8<T>,
+    c: magetypes::simd::generic::f32x8<T>,
+) -> magetypes::simd::generic::f32x8<T> {
+    #[cfg(all(target_arch = "wasm32", not(feature = "precise-portable")))]
+    {
+        a.mul_add_relaxed(b, c)
+    }
+    #[cfg(not(all(target_arch = "wasm32", not(feature = "precise-portable"))))]
+    {
+        a.mul_add_fused(b, c)
+    }
+}
+
 #[archmage::magetypes(define(f32x8), v4(cfg(avx512)), v3, neon, wasm128, scalar)]
 fn gamut_matrix_f32_tier<const CHANNELS: usize>(
     token: Token,
@@ -2759,9 +2778,9 @@ fn gamut_matrix_f32_tier<const CHANNELS: usize>(
         // 3×3 matmul as fused-multiply-adds — same shape as
         // fast_gamut::mat3x3_x8 but typed against the generic
         // magetypes `f32x8`.
-        let or = m00.mul_add_relaxed(rl, m01.mul_add_relaxed(gl, m02 * bl));
-        let og = m10.mul_add_relaxed(rl, m11.mul_add_relaxed(gl, m12 * bl));
-        let ob = m20.mul_add_relaxed(rl, m21.mul_add_relaxed(gl, m22 * bl));
+        let or = fused_mul_add(m00, rl, fused_mul_add(m01, gl, m02 * bl));
+        let og = fused_mul_add(m10, rl, fused_mul_add(m11, gl, m12 * bl));
+        let ob = fused_mul_add(m20, rl, fused_mul_add(m21, gl, m22 * bl));
 
         let ro = or.to_array();
         let go = og.to_array();

@@ -16,11 +16,11 @@ measured the x86-64 opt-level 3 pair as 523,440 and 319,672; small differences c
 
 | build | before | now |
 |---|---:|---:|
-| x86-64 opt-level 3 | 522,784 | 320,520 |
-| x86-64 opt-level s | 401 KB | 195,328 |
-| x86-64 opt-level 3, `avx512` | not measured | 367,448 |
-| wasm32 opt-level 3, simd128 | 299 KB | 248,816 |
-| wasm32 opt-level z, simd128 | 256 KB | 229,770 |
+| x86-64 opt-level 3 | 522,784 | 350,096 |
+| x86-64 opt-level s | 401 KB | 198,920 |
+| x86-64 opt-level 3, `avx512` | not measured | 399,776 |
+| wasm32 opt-level 3, simd128 | 299 KB | 248,690 |
+| wasm32 opt-level z, simd128 | 256 KB | 229,711 |
 | aarch64 opt-level 3 (section sums) | 245,328 | 194,968 |
 
 ## Compile time
@@ -158,8 +158,8 @@ smaller output. All `u16` reversals are 1 code. `tier-bits/monotonic.rs`.
 | PQ decode | 0 | 5,185 | 7,051 | 533,912 |
 | PQ encode | 886,928 | 17,934 | 6,478,185 | 6,684,199 |
 | HLG decode | 0 | 0 | 0 | 0 |
-| HLG encode | 1 | 1 | 1 | 1 |
-| BT.709 decode | 0 | 0 | 1 | 1 |
+| HLG encode | 1 | 0 | 1 | 0 |
+| BT.709 decode | 0 | 0 | 1 | 0 |
 | BT.709 encode | 14 | 8 | 2,007 | 2,316 |
 | sRGB decode | 875 | 875 | 594,354 | 594,354 |
 | sRGB encode | 10,835 | 10,835 | 3,315,023 | 3,315,023 |
@@ -171,8 +171,7 @@ smaller output. All `u16` reversals are 1 code. `tier-bits/monotonic.rs`.
 - **Position:** 572 tested conversions gave a different result for a pixel depending on where it sat in a row, up to 4
   `u16` codes on PQ. Now none of 1792, at every tier (`tests/row_partition.rs`). That suite doesn't cover matte or layout
   changes.
-- **Tiers:** 528 of 1792 conversions differ between v3 and `baseline`, because the scalar tier runs different algorithms.
-  189 of those have integer output: 853 of 517,562 samples differ, by at most 1 code. See `tier-bits/README.md`.
+- **Tiers:** every conversion now gives the same bytes at every tier, including gamut, matte and Oklab. See `tier-bits/README.md`.
 
 ## aarch64
 

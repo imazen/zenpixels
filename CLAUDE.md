@@ -118,10 +118,8 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
-- Open (2026-11-04): adjacent inputs can reverse by 1 `u16` code on PQ, sRGB, BT.709, HLG and gamma encode
-  curves, and on PQ and sRGB decode. Counts over every f32 in `[0, 1]` are in
-  `benchmarks/row_kernel_tiers_2026-11-04.md`. `tests/ulp_exhaustive.rs` only checks `u16`-derived inputs.
-  The cause is f32 rounding in polynomial evaluation: the same PQ polynomial in f64 has none. `benchmarks/tier-bits/README.md`.
+- Contract (2026-11-04): adjacent inputs can reverse by at most 1 `u16` code on PQ, sRGB, BT.709 encode and gamma encode, from f32
+  rounding in polynomial evaluation. `adjacent_inputs_reverse_by_at_most_one_code` holds it. Counts: `benchmarks/row_kernel_tiers_2026-11-04.md`.
 
 - Fixed (2026-11-04): a PQ or HLG matte put white at the format's peak: 10,000 cd/m² on PQ.
   `CompositeOnto::reference_white` now places it, defaulting to BT.2408.
@@ -129,10 +127,8 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 - Open (2026-11-04): the matte is not converted to wide-gamut source primaries. Non-gray backgrounds on P3 or
   BT.2020 sources are read as those primaries. Not measured.
 
-- Open (2026-11-04, #106): the scalar tier disagrees with the SIMD tiers. 528 of 1792 conversions
-  differ between v3 and baseline, mostly because hand-written scalar tiers run different algorithms;
-  fusing alone doesn't close it. Integer output: 853 of 517,562 samples, at most 1 code.
-  `benchmarks/tier-bits/README.md`, and `measure_differences_between_tiers` in `tests/row_partition.rs`.
+- Fixed (2026-11-04, #106): tiers gave different output. Scalar tiers now run the kernels' operations with fused math, so every
+  conversion gives the same bytes at every tier, and a digest test pins them across platforms. Strict WASM needs `precise-portable`.
 
 - Fixed (2026-11-04): a pixel's output depended on its position in a row, up to 4 `u16` codes
   on PQ, because slice tails ran different math from the body. `tests/row_partition.rs`.
