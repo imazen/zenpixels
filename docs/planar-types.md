@@ -97,6 +97,11 @@ jxl-encoder `YCbCrPlanes` (crate-private), zenmetrics vmaf `Yuv420Frame`.
 
 ## Not covered
 
+- Packed rows whose pitch is not a whole number of pixels. `PixelSlice` and
+  `PixelBuffer` return `StrideNotPixelAligned` for RGB8 and RGB16 at 4, 16 or
+  64-byte row alignment when the width leaves a remainder, so such a foreign
+  frame has to be copied (`benchmarks/plane-interop/`, `stride_rule`). RGBA8 at
+  those alignments is accepted, and `Plane` has no such rule.
 - Packed subsampled YUV (YUYV, UYVY, Y210) and packed 4:4:4 with alpha (AYUV,
   Y410): not planes; convert at the boundary if a source produces them.
 - `f16` samples: add a `PlaneSample` impl and an `AnyPlane` variant when a crate
@@ -193,6 +198,53 @@ Semver rules that keep this open:
 - Every future method on the storage traits must keep them dyn-compatible: no
   generic methods, no `Self` by value, no `Self: Sized` requirements without a
   default.
+
+### `v_frame` and `image` (measured 2026-11-03)
+
+Probes and full output: `benchmarks/plane-interop/`. Every route below moved a
+pointer and allocated nothing, unless marked as a copy.
+
+| Route | Result |
+|---|---|
+| `v_frame` 0.7 `Plane` to `PlaneRef`/`PlaneMut` | Zero-copy with `padding_api`: `&data()[pad_top * stride + pad_left..]`. Without the feature `v_frame` exposes rows only, not one slice |
+| `v_frame` 0.3.9 (zenrav1e's pin) to `PlaneRef`/`PlaneMut` | Zero-copy: `data_origin()`, `cfg.stride` |
+| Owned `v_frame` plane to zenpixels | Zero-copy through a small `PlaneStorage` newtype, keeping its allocation and padding |
+| zenpixels to `v_frame` | **Copy, both versions.** `v_frame` has no constructor that adopts storage |
+| Strided `PlaneRef`/`PixelSlice` to `image::flat::View` | Zero-copy with `SampleLayout`: `height_stride` is the plane's stride |
+| Tight `PlaneRef` to `ImageBuffer<_, &[T]>`; `ImageBuffer` to `PlaneRef` | Zero-copy |
+| `ImageBuffer<_, Vec<T>>` to and from a tight `PlaneBuf`/`PixelBuffer` | Zero-copy for `u8`, `u16`, `f32` |
+| `PlaneBuf::alloc` to `ImageBuffer` | **Copy.** Its stride is 64-byte aligned and its first row usually starts past index 0 |
+
+Rules an adapter has to follow:
+
+- `ImageBuffer::from_raw` checks only that the buffer is long enough, so strided
+  samples are accepted and read as wrong pixels. Require `stride == width` and
+  `start == 0`, or use `FlatSamples`.
+- `from_raw` labels the image sRGB. Carry color across explicitly with
+  `set_color_space`; never rely on the default.
+- `v_frame` 0.7 refuses odd luma sizes for 4:2:0 (`UnsupportedResolution` at
+  37x11), while our layouts allow them through `ceil(w/2)`. Odd-sized 4:2:0 cannot
+  reach it, zero-copy or not.
+- `v_frame`'s `copy_from_u8_slice_with_stride` requires exactly `stride * height`
+  bytes, so it refuses `into_strided_samples()` when the last row has no padding.
+  Copy row by row.
+
+### Packed buffers use the same storage
+
+`PixelBuffer<P, S = Vec<u8>>` adopts any `PlaneStorage` through
+`PixelBufferParts<S>`, so packed data gets what planes get: `Vec<u16>` and
+`Vec<f32>` move in and out with no copy, which `Vec<u8>` could not do because the
+allocator's alignment differs (`bytemuck` refuses it with `AlignmentMismatch`).
+Existing `PixelBuffer` and `PixelBuffer<P>` code keeps meaning `Vec<u8>`.
+
+With the allocator API, `Vec<u8, Align64>`, `Vec<u16, Align64>` and
+`Vec<f32, Align64>` were adopted with offset 0 and 64-byte aligned first samples,
+and `Vec<u8, Align64>` moved on to `ImageBuffer<Rgb<u8>, Vec<u8, Align64>>`
+without a copy. That probe uses a newtype; `impl PlaneStorage for Vec<T, A>` has
+to live in this crate, and it can replace today's `Vec<T>` impl compatibly.
+
+Still `Vec<u8>` only: allocating constructors, `crop_copy`, `into_contiguous`,
+`into_contiguous_pixels`, `transform_in_place`, and `PixelCow::Owned`.
 
 ### Aligned planes with the `Allocator` API (Rust 1.100)
 

@@ -1,0 +1,22 @@
+[package]
+name = "plane-interop-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone so third-party crates stay out of the zenpixels dependency graph.
+[workspace]
+
+[features]
+nightly-alloc = []
+
+[[bin]]
+name = "alloc_nightly"
+required-features = ["nightly-alloc"]
+
+[dependencies]
+zenpixels = { path = "../../zenpixels", features = ["rgb", "imgref"] }
+v_frame07 = { package = "v_frame", version = "=0.7.0", features = ["padding_api"] }
+v_frame03 = { package = "v_frame", version = "=0.3.9" }
+image = { version = "=0.25.10", default-features = false }
+bytemuck = { version = "1.21", features = ["extern_crate_alloc"] }
