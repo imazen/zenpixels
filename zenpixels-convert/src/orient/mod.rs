@@ -205,12 +205,9 @@ const MAX_INPLACE_BPP: usize = 16;
 /// Bake `orientation` into `dst` **in place**, reusing its allocation — no second
 /// pixel buffer (the transposing orientations would otherwise need a 2× transient).
 ///
-/// Consumes the mutable view, permutes the bytes within the backing allocation,
-/// and returns a re-described **tight-stride** `PixelSliceMut` over the same
-/// memory — dimensions swapped for the four transposing orientations. Like the
-/// no-alloc reduction APIs, the returned view carries the new geometry; the
-/// source `PixelBuffer`'s own `width()`/`height()` go stale, so use the returned
-/// view. Square images transpose via an in-place diagonal swap; non-square via
+/// Permutes the bytes within the backing allocation and updates `dst`'s geometry:
+/// tight stride, with dimensions swapped for the four transposing orientations.
+/// Square images transpose via an in-place diagonal swap; non-square via
 /// cycle-following (an `n`-element visited scratch — not a 2× pixel buffer).
 ///
 /// Returns [`ConvertError::BufferSize`] if `bpp` exceeds 16 (the per-element temp

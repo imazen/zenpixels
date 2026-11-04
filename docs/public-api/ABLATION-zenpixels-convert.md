@@ -1,3 +1,21 @@
+# Free functions, 2026-11-04
+
+All 42 public free functions in `zenpixels` and `zenpixels-convert`, at `feat/color-value`, from `docs/public-api/`. Callers are non-comment uses in local checkouts under `~/work`, excluding jj workspaces of the same repo, plus `gh search code --owner imazen` for each function with no local caller, because some local checkouts lag (imageflow by months). "src" is shipped code. Tests, examples, benches and `perf/` are "other". The counts are text matches checked against imports, not compiler output. This doesn't cover repos outside the imazen org.
+
+**No caller outside this repo:** `adapt_for_encode_with_intent_cow`, `apply_matrix_row_rgba_f32`, `best_match_with`, `conversion_cost_with_provenance`, `fast_cbrt`, `finalize_for_output`, `generate_path_matrix`, `icc_profile_for_primaries` (deprecated), `ideal_format`, `mat3_mul`, `matrix_stats`, `measure_exact_depth` (deprecated), `negotiate`, `normalized_hash`, `optimal_path`, `synthesize_gray_icc_for_cicp`, `to_canonical`, `try_adapt_in_place`. `fast_cbrt` and `mat3_mul` names appear elsewhere, but those are local functions.
+
+**Only tests or tools call them:** `apply_matrix_f32` (one zqi tool), `apply_matrix_row_f32` and `conversion_matrix` (zentone tests), `check_opaque` (a zencodec doc example), `display_p3_icc` (zencodec `perf/` and zenjxl tests).
+
+**One shipped repo calls them:** `adapt_for_encode_explicit_cow` (zenmetrics, 2), `best_match` (zencodecs, 1), `conversion_cost` (zenpipe trace, 1), `convert_row` (zenmetrics, 6), `quantize_to` (zencodecs, 1), `apply_orientation_in_place` (zenjpeg, 3).
+
+**Keep, in wide use:** `adapt_for_encode_cow`, `apply_orientation`, `apply_orientation_into`, `extract_cicp`, `finalize_for_output_with`, `identify_common`, `is_common_srgb`, `lms_to_rgb_matrix`, `oklab_to_rgb`, `profile_color_space`, `rgb_to_lms_matrix`, `rgb_to_oklab`, `synthesize_icc_for_cicp`.
+
+The `pipeline` feature, 1,485 lines, has no user outside this repo's tests; no manifest enables it.
+
+Repeated caller code: 16 hand-written whole-image row loops in shipped code (heuristic: `RowConverter::new` or `ConvertPlan::new` with a row loop within 22 lines), against 7 uses of `.convert_to(`, which exists only on `PixelBuffer`. 10 of 12 `apply_orientation` sites guard for identity first. `adapt_for_encode_cow` and its variants take bare bytes, descriptor, width, height and stride instead of a `PixelSlice`.
+
+---
+
 # ABLATION REPORT — zenpixels-convert
 
 **Date:** 2026-06-11  
