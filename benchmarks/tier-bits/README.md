@@ -29,9 +29,9 @@ Builds, all from linear-srgb `2145ecbc` unless stated:
 | x86-64 scalar and aarch64 scalar, current | 412,679 | 1 | 1,304 | 1 |
 | x86-64 scalar and aarch64 scalar, fused | 0 | 0 | 0 | 0 |
 
-So fusing doesn't close the v3 and scalar gap on its own, because the hand-written scalar tiers run different
-algorithms. With fused kernels, 8 of 12 slices match exactly. The other 4 are the gamma and PQ slices, the
-ones that call `pow_midp`; magetypes' transcendentals call `mul_add` internally, the likely but unproved cause.
+So fusing the slices doesn't close the v3 and scalar gap on its own, because the hand-written scalar tiers run different
+algorithms. With fused kernels, 8 of 12 slices match exactly. The other 4 are the gamma and PQ slices, which call `pow_midp`;
+magetypes' transcendentals call `mul_add_relaxed` internally. Patching those to `mul_add_fused` makes all 12 match.
 
 The x86-64 scalar difference is `mlaf`, which chooses fused or separate at compile time.
 
@@ -66,3 +66,28 @@ Output depends on the compile target, through `mlaf`, not on the host. That flag
 about 1-3 ns per sample with FMA guaranteed at compile time, against 3-19 ns on baseline x86-64 builds. The same scalar tier
 still differs from v3 on any host, because it runs different algorithms. `monotonic.rs` is the scan behind the monotonicity
 table in `../row_kernel_tiers_2026-11-04.md`.
+
+## Fused kernels with a fused `pow_midp`
+
+Scratch patches to linear-srgb and magetypes 0.9.31-beta.2: `mul_add_fused` everywhere including transcendentals, and the scalar
+tier running the vector kernels. **The scalar tier matches v3 on all 12 slices, 0 of 14.4M samples differ, and v3 itself doesn't
+change.** Also 0 of 14.4M when the software FMA is out of line.
+
+| Scalar tier | ns per sample | `RowConverter` added, opt-level 3 | opt-level s |
+|---|---:|---:|---:|
+| Hand-written, today | 3.09-18.78 | 320,520 | 195,328 |
+| Fused kernels, software FMA inlined | 3.51-13.88 | 823,912 | not measured |
+| Fused kernels, software FMA `#[inline(never)]` | 4.30-16.55 | 371,880 | 314,048 |
+
+16 inlined lanes per operation is what costs the size: the PQ encode scalar tier alone was 124 KB, and is 13 KB out of line.
+
+## Why reversals happen
+
+Measured over every f32 in `[0, 1]` at v3 (`reversals.rs`):
+
+- Every `u16` reversal is an f32 reversal that crosses a rounding boundary: 5,185 of 5,185 on PQ decode, 17,934 of 17,934 on PQ
+  encode, 875 of 875 and 10,835 of 10,835 on sRGB, 8 of 8 on BT.709 encode.
+- They are small: all sRGB and BT.709 encode reversals are at most 5 output ULP. PQ reaches 1,263 ULP, at inputs around 1e-6.
+- The cause is rounding in the f32 arithmetic, not the curve: the same PQ decode polynomial over `[0.25, 1]` gives 412,701 reversals
+  and 5,086 `u16` reversals in f32, and none of either in f64 (`polynomial_f64.rs`).
+- Two are branch seams instead: HLG encode at `1/12` (10 ULP) and BT.709 decode near 0.0812 (5 ULP).

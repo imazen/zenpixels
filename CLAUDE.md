@@ -121,6 +121,7 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 - Open (2026-11-04): adjacent inputs can reverse by 1 `u16` code on PQ, sRGB, BT.709, HLG and gamma encode
   curves, and on PQ and sRGB decode. Counts over every f32 in `[0, 1]` are in
   `benchmarks/row_kernel_tiers_2026-11-04.md`. `tests/ulp_exhaustive.rs` only checks `u16`-derived inputs.
+  The cause is f32 rounding in polynomial evaluation: the same PQ polynomial in f64 has none. `benchmarks/tier-bits/README.md`.
 
 - Fixed (2026-11-04): a PQ or HLG matte put white at the format's peak: 10,000 cd/m² on PQ.
   `CompositeOnto::reference_white` now places it, defaulting to BT.2408.
