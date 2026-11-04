@@ -434,13 +434,12 @@ impl PixelStorage {
 
     /// Allocate zeroed storage of `channel`'s sample type holding `bytes` bytes.
     fn try_zeroed(channel: ChannelType, bytes: usize) -> Result<Self, BufferError> {
+        // `try_zeroed_vec` goes through `alloc_zeroed`, so large buffers get untouched
+        // zero pages from the OS, as `vec![0; n]` does, and it can still report failure.
         fn zeroed<T: StorageSample>(bytes: usize) -> Result<PixelStorage, BufferError> {
             let len = bytes.div_ceil(core::mem::size_of::<T>());
-            let mut samples: Vec<T> = Vec::new();
-            samples
-                .try_reserve_exact(len)
-                .map_err(|_| BufferError::AllocationFailed)?;
-            samples.resize(len, bytemuck::Zeroable::zeroed());
+            let samples: Vec<T> = bytemuck::allocation::try_zeroed_vec(len)
+                .map_err(|()| BufferError::AllocationFailed)?;
             Ok(samples.into())
         }
         match channel {

@@ -10,22 +10,22 @@
 #
 #   pub modules                                12
 #   pub types (struct/enum/trait/alias)       116
-#   pub consts/statics                        301
+#   pub consts/statics                        305
 #   free functions                              6
 #   inherent methods                          310
 #   struct fields                             121
-#   enum variants                             300
+#   enum variants                             306
 #   re-exports                                  4
 #   trait roster entries (type × trait)       395
 #   auto-trait-complete types                  54
 #   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          450
+#   (root)                          453
 #   buffer                          272
 #   cicp                             36
 #   color                            64
-#   descriptor                      158
+#   descriptor                      165
 #   hdr                              12
 #   icc                              13
 #   orientation                      11
@@ -34,7 +34,7 @@
 #   policy                           25
 #   sample                           33
 
-## items (1038 lines)
+## items (1048 lines)
 
 pub mod zenpixels
 pub use At
@@ -276,6 +276,7 @@ pub descriptor::AlphaMode::Premultiplied
 pub descriptor::AlphaMode::Straight
 pub descriptor::AlphaMode::Undefined
 pub const fn descriptor::AlphaMode::has_alpha(self) -> bool [also: (root)]
+pub descriptor::ChannelLayout::Bgr
 pub descriptor::ChannelLayout::Bgra
 pub descriptor::ChannelLayout::Cmyk
 pub descriptor::ChannelLayout::Gray
@@ -322,8 +323,10 @@ pub const fn descriptor::ColorPrimaries::from_cicp(u8) -> core::option::Option<S
 pub const fn descriptor::ColorPrimaries::gamut_matrix_to(self, Self) -> core::option::Option<[[f32; 3]; 3]> [also: (root)]
 pub const fn descriptor::ColorPrimaries::to_cicp(self) -> core::option::Option<u8> [also: (root)]
 pub const fn descriptor::ColorPrimaries::white_point(self) -> (f32, f32) [also: (root)]
+pub descriptor::PixelFormat::Bgr8
 pub descriptor::PixelFormat::Bgra8
 pub descriptor::PixelFormat::Bgrx8
+pub descriptor::PixelFormat::Cmyk16
 pub descriptor::PixelFormat::Cmyk8
 pub descriptor::PixelFormat::CmykF32
 pub descriptor::PixelFormat::CmykF32Inverted
@@ -377,10 +380,12 @@ pub descriptor::PixelDescriptor::format: descriptor::PixelFormat
 pub descriptor::PixelDescriptor::primaries: descriptor::ColorPrimaries
 pub descriptor::PixelDescriptor::signal_range: descriptor::SignalRange
 pub descriptor::PixelDescriptor::transfer: descriptor::TransferFunction
+pub const descriptor::PixelDescriptor::BGR8: Self
 pub const descriptor::PixelDescriptor::BGRA8: Self
 pub const descriptor::PixelDescriptor::BGRA8_SRGB: Self
 pub const descriptor::PixelDescriptor::BGRX8: Self
 pub const descriptor::PixelDescriptor::BGRX8_SRGB: Self
+pub const descriptor::PixelDescriptor::CMYK16: Self
 pub const descriptor::PixelDescriptor::CMYK8: Self
 pub const descriptor::PixelDescriptor::GRAY16: Self
 pub const descriptor::PixelDescriptor::GRAY16_SRGB: Self
@@ -704,6 +709,7 @@ pub BufferError::InvalidDimensions
 pub BufferError::StrideNotPixelAligned
 pub BufferError::StrideTooSmall
 #[non_exhaustive] pub enum ChannelLayout [also: descriptor]
+pub ChannelLayout::Bgr
 pub ChannelLayout::Bgra
 pub ChannelLayout::Cmyk
 pub ChannelLayout::Gray
@@ -790,8 +796,10 @@ pub fn buffer::PixelCow<'a>::into_owned(self) -> buffer::PixelBuffer
 pub fn buffer::PixelCow<'a>::to_mut(&mut self) -> &mut buffer::PixelBuffer
 pub fn buffer::PixelCow<'_, P>::as_slice(&self) -> buffer::PixelSlice<'_, P>
 #[non_exhaustive] pub enum PixelFormat [also: descriptor]
+pub PixelFormat::Bgr8
 pub PixelFormat::Bgra8
 pub PixelFormat::Bgrx8
+pub PixelFormat::Cmyk16
 pub PixelFormat::Cmyk8
 pub PixelFormat::CmykF32
 pub PixelFormat::CmykF32Inverted
@@ -967,10 +975,12 @@ pub PixelDescriptor::format: descriptor::PixelFormat
 pub PixelDescriptor::primaries: descriptor::ColorPrimaries
 pub PixelDescriptor::signal_range: descriptor::SignalRange
 pub PixelDescriptor::transfer: descriptor::TransferFunction
+pub const descriptor::PixelDescriptor::BGR8: Self
 pub const descriptor::PixelDescriptor::BGRA8: Self
 pub const descriptor::PixelDescriptor::BGRA8_SRGB: Self
 pub const descriptor::PixelDescriptor::BGRX8: Self
 pub const descriptor::PixelDescriptor::BGRX8_SRGB: Self
+pub const descriptor::PixelDescriptor::CMYK16: Self
 pub const descriptor::PixelDescriptor::CMYK8: Self
 pub const descriptor::PixelDescriptor::GRAY16: Self
 pub const descriptor::PixelDescriptor::GRAY16_SRGB: Self

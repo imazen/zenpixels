@@ -230,11 +230,9 @@ impl<T: PlaneSample> AlignedSamples<T> {
             .checked_mul(core::mem::size_of::<T>())
             .ok_or(PlaneError::GeometryOverflow)?
             .div_ceil(core::mem::size_of::<Chunk>());
-        let mut chunks = Vec::new();
-        chunks
-            .try_reserve_exact(chunk_count)
-            .map_err(|_| PlaneError::AllocationFailed)?;
-        chunks.resize(chunk_count, bytemuck::Zeroable::zeroed());
+        // Goes through `alloc_zeroed`, so large buffers get untouched zero pages.
+        let chunks: Vec<Chunk> = bytemuck::allocation::try_zeroed_vec(chunk_count)
+            .map_err(|()| PlaneError::AllocationFailed)?;
         Ok(Self {
             chunks,
             len,
@@ -1097,7 +1095,8 @@ impl PlanarLayout {
     ///
     /// Each component appears once. YCbCr layouts hold Luma, optionally both
     /// Cb and Cr (separately or in one interleaved plane), and optionally
-    /// Alpha; RGB layouts hold Red, Green, Blue and optionally Alpha.
+    /// Alpha; RGB layouts hold Red, Green, Blue and optionally Alpha; an alpha-only
+    /// layout holds Alpha alone, with `Mono` subsampling.
     ///
     /// # Errors
     ///
@@ -1143,7 +1142,9 @@ impl PlanarLayout {
                 return Err(LayoutError::Subsampling);
             }
         } else {
-            if !has(PlaneRole::Luma) {
+            // A lone alpha plane is a valid image (`image`'s `A8`); anything else needs luma.
+            let alpha_only = planes.len() == 1 && has(PlaneRole::Alpha);
+            if !has(PlaneRole::Luma) && !alpha_only {
                 return Err(LayoutError::MissingRole(PlaneRole::Luma));
             }
             if cb != cr {

@@ -640,6 +640,8 @@ fn extended_color_types_map_or_refuse_explicitly() {
         (E::Rgb16, PixelFormat::Rgb16),
         (E::Rgba16, PixelFormat::Rgba16),
         (E::Bgra8, PixelFormat::Bgra8),
+        (E::Bgr8, PixelFormat::Bgr8),
+        (E::Cmyk16, PixelFormat::Cmyk16),
         (E::Rgb32F, PixelFormat::RgbF32),
         (E::Rgba32F, PixelFormat::RgbaF32),
         (E::Cmyk8, PixelFormat::Cmyk8),
@@ -663,8 +665,6 @@ fn extended_color_types_map_or_refuse_explicitly() {
         E::Rgb4,
         E::Rgba4,
         E::Rgb5x1,
-        E::Bgr8,
-        E::Cmyk16,
         E::Unknown(7),
     ];
     for color in refused {

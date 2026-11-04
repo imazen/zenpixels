@@ -228,11 +228,17 @@ RGBA in `u8`, `u16` and `f32`: `ImageBuffer` to and from `Plane` and `PixelBuffe
 `PlaneMut` and `PixelSlice` to `FlatSamples`, and every `DynamicImage` variant to and
 from `PixelBuffer` and the borrowed types.
 
-`PixelFormat` converts with all 10 `ColorType`s. It converts with 12 of the 29
-`ExtendedColorType`s (`L8`, `La8`, `Rgb8`, `Rgba8`, `L16`, `La16`, `Rgb16`, `Rgba16`,
-`Bgra8`, `Rgb32F`, `Rgba32F`, `Cmyk8`). The rest refuse: `A8`, `Bgr8` and `Cmyk16` have no
-`PixelFormat`, the sub-byte types and `Rgb5x1` aren't byte-addressable samples, and
-`Unknown` has no meaning. `image` itself has no pixel type for most of these. `tests/image_interop.rs` runs on plain
+`PixelFormat` converts with all 10 `ColorType`s, and with 14 of the 29 `ExtendedColorType`s:
+`L8`, `La8`, `Rgb8`, `Rgba8`, `L16`, `La16`, `Rgb16`, `Rgba16`, `Bgr8`, `Bgra8`, `Rgb32F`, `Rgba32F`,
+`Cmyk8` and `Cmyk16`. `A8` isn't a packed format, but it fits: a `Plane` with `PlaneRole::Alpha`, which
+is also a valid single-plane `PlanarLayout`. The other 14 refuse, because they have no byte-addressable
+samples: `L1`, `La1`, `Rgb1`, `Rgba1`, `L2`, `La2`, `Rgb2`, `Rgba2`, `L4`, `La4`, `Rgb4`, `Rgba4` and
+`Rgb5x1`, which would break `bytes_per_pixel` and row math, and `Unknown`, which says nothing about
+layout. `image` has no pixel type for any of them, nor for `Bgr8`, `Bgra8` or `Cmyk`, so those stop at
+the color-type mapping. `Bgr8` and `Cmyk16` carry samples exactly; numeric conversion refuses
+(`NoPath`).
+
+`tests/image_interop.rs` runs on plain
 `cargo test` because the crate has a dev-dependency on itself with the feature on.
 `image` needs Rust 1.88; zenpixels without the feature stays on 1.85. The guard in
 `tests/dep_guard.rs` keeps `image` and `rustversion` optional and out of the defaults.
@@ -275,6 +281,9 @@ kernels have no branch.
 - **Coming out:** `into_parts().data` is the enum. `try_into_vec::<T>()` returns the `Vec`
   or the storage unchanged, and `try_into_tight_u8_vec` also checks the offset and stride.
   `TryFrom<PixelBuffer<P>> for ImgVec<P>` moves a typed buffer. None of these hides a copy.
+- **Allocation:** zeroed storage comes from `try_zeroed_vec`, which is fallible and gets untouched
+  zero pages as `vec![0; n]` does, so no separate infallible path is needed for speed
+  (`benchmarks/zeroed-alloc/`).
 - **Size:** the default buffer stays 72 bytes, which a compile-time assert pins. The enum
   costs 8 bytes because a nested enum's tag can't use the outer struct's padding, so
   `offset` is stored as `u32` and the freed bytes plus existing padding absorb it.

@@ -266,7 +266,9 @@ fn create_from_uses_the_named_format_whenever_one_exists() {
         (T::F32, L::Oklab, F::OklabF32),
         (T::F32, L::OklabA, F::OklabaF32),
         (T::U8, L::Cmyk, F::Cmyk8),
+        (T::U16, L::Cmyk, F::Cmyk16),
         (T::F32, L::Cmyk, F::CmykF32),
+        (T::U8, L::Bgr, F::Bgr8),
     ];
     for (channel, layout, want) in named {
         assert_eq!(F::create_from(channel, layout), Some(want));
@@ -281,4 +283,33 @@ fn create_from_uses_the_named_format_whenever_one_exists() {
         // Layouts without a generic form stay unrepresentable.
         assert_eq!(F::create_from(channel, L::Cmyk), None);
     }
+}
+
+#[test]
+fn bgr8_and_cmyk16_carry_exact_samples() {
+    use zenpixels::{
+        ChannelLayout as L, ChannelType as T, PixelBuffer, PixelDescriptor as D, PixelFormat as F,
+    };
+    assert_eq!(F::Bgr8.bytes_per_pixel(), 3);
+    assert_eq!(F::Bgr8.layout(), L::Bgr);
+    assert_eq!(F::Bgr8.channel_type(), T::U8);
+    assert_eq!(F::Bgr8.descriptor().alpha(), None);
+    assert!(F::Bgr8.descriptor().is_bgr());
+    assert_eq!(F::Cmyk16.bytes_per_pixel(), 8);
+    assert_eq!(F::Cmyk16.channel_type(), T::U16);
+    assert_eq!(F::Cmyk16.layout(), L::Cmyk);
+    assert_eq!(D::CMYK16.color_model(), zenpixels::ColorModel::Cmyk);
+    assert_eq!(format!("{}", L::Bgr), "BGR");
+    for d in [D::BGR8, D::CMYK16] {
+        let mut buffer = PixelBuffer::new(3, 2, d);
+        let row = 3 * d.bytes_per_pixel();
+        let expected: Vec<u8> = (0..row as u8).collect();
+        buffer.as_slice_mut().row_mut(1).copy_from_slice(&expected);
+        assert_eq!(buffer.as_slice().row(1), &expected[..]);
+        assert_eq!(buffer.stride(), row);
+    }
+    assert!(matches!(
+        PixelBuffer::new(1, 1, D::CMYK16).into_parts().data,
+        zenpixels::PixelStorage::U16(_)
+    ));
 }

@@ -625,8 +625,9 @@ impl TryFrom<PixelFormat> for ColorType {
 }
 
 /// The format of an `image` extended color type, for the ones with byte-addressable
-/// samples that zenpixels has a format for. The rest are refused: sub-byte layouts,
-/// `Rgb5x1`, `A8`, `Bgr8`, `Cmyk16` and `Unknown`.
+/// samples and a packed format. The rest are refused: sub-byte layouts, `Rgb5x1` and
+/// `Unknown` have no samples to address, and `A8` isn't a packed format: it is a [`Plane`]
+/// with [`PlaneRole::Alpha`](crate::plane::PlaneRole::Alpha).
 impl TryFrom<ExtendedColorType> for PixelFormat {
     type Error = BufferError;
     fn try_from(color: ExtendedColorType) -> Result<Self, BufferError> {
@@ -643,6 +644,8 @@ impl TryFrom<ExtendedColorType> for PixelFormat {
             ExtendedColorType::Rgb32F => Self::RgbF32,
             ExtendedColorType::Rgba32F => Self::RgbaF32,
             ExtendedColorType::Cmyk8 => Self::Cmyk8,
+            ExtendedColorType::Cmyk16 => Self::Cmyk16,
+            ExtendedColorType::Bgr8 => Self::Bgr8,
             _ => return Err(BufferError::IncompatibleDescriptor),
         })
     }
@@ -665,6 +668,8 @@ impl TryFrom<PixelFormat> for ExtendedColorType {
             PixelFormat::RgbF32 => Self::Rgb32F,
             PixelFormat::RgbaF32 => Self::Rgba32F,
             PixelFormat::Cmyk8 => Self::Cmyk8,
+            PixelFormat::Cmyk16 => Self::Cmyk16,
+            PixelFormat::Bgr8 => Self::Bgr8,
             _ => return Err(BufferError::IncompatibleDescriptor),
         })
     }

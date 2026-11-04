@@ -64,7 +64,7 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   1.100 or newer, gated with `rustversion`; no effect on older compilers.
 - Add feature `image` (needs Rust 1.88): `TryFrom` conversions with `image` 0.25 for gray,
   gray-alpha, RGB and RGBA in `u8`, `u16`, `f32`, and every `DynamicImage` variant, without
-  copying, plus `PixelFormat` with `ColorType` (10 of 10) and `ExtendedColorType` (12 of 29). Color travels with
+  copying, plus `PixelFormat` with `ColorType` (10 of 10) and `ExtendedColorType` (14 of 29; `A8` fits as an alpha plane). Color travels with
   packed buffers, and a conversion that would relabel pixels refuses.
 - `PixelBuffer<P, S = PixelStorage>`, `PixelBufferParts<S = PixelStorage>` and
   `FromPartsError<S = PixelStorage>`. `PixelStorage` holds a `Vec` of the format's sample
@@ -78,6 +78,11 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   one byte late when longer. It now copies into typed storage in that case.
 - `from_pixels` and `from_imgvec` move `u16` and `f32` pixels instead of copying. Add
   `TryFrom<PixelBuffer<P>> for ImgVec<P>`.
+- Add `PixelFormat::Bgr8` and `Cmyk16`, `ChannelLayout::Bgr`, and `PixelDescriptor::BGR8` and
+  `CMYK16`. They carry samples exactly; numeric conversion refuses with `NoPath`.
+- A single `Alpha` plane is a valid `PlanarLayout`.
+- Zeroed `PixelStorage` and `AlignedSamples` allocate through `alloc_zeroed`: at 64 MiB and up,
+  allocation alone goes from 21 ms to near zero, and allocating then writing is about 10% faster.
 - Add `PixelSlice::try_to_tight_buffer`, which copies rows into typed storage without zeroing first.
 - Remove `new_simd_aligned` and `try_new_simd_aligned`; `try_new_aligned` allocates aligned
   storage. `offset` and `simd_aligned_stride` remain.

@@ -282,7 +282,8 @@ fn layouts_refuse_inconsistent_planes() {
         LayoutError::MixedFamilies
     );
     assert_eq!(err(&[Cb, Cr], Yuv420), LayoutError::MissingRole(Luma));
-    assert_eq!(err(&[Alpha], Mono), LayoutError::MissingRole(Luma));
+    assert_eq!(err(&[Alpha], Yuv420), LayoutError::Subsampling);
+    assert_eq!(err(&[Alpha, Cb], Mono), LayoutError::MissingRole(Luma));
     assert_eq!(err(&[Luma, Cb], Yuv420), LayoutError::MissingRole(Cr));
     assert_eq!(err(&[Red, Green], Yuv444), LayoutError::MissingRole(Blue));
     assert_eq!(err(&[Luma, Cb, Cr], Mono), LayoutError::Subsampling);
@@ -555,4 +556,19 @@ fn storage_traits_stay_dyn_compatible() {
     let mut boxed: Box<dyn SampleStorageMut<Sample = u16>> = Box::new(vec![0u16; 4]);
     write(&mut boxed);
     assert_eq!(boxed.samples().len(), 4);
+}
+
+#[test]
+fn a_lone_alpha_plane_is_a_layout() {
+    use zenpixels::sample::{ChromaSiting, ChromaSubsampling, SampleEncoding};
+    let code = PlaneEncoding::Code(SampleEncoding::new(ChannelType::U8, 8, 0).unwrap());
+    let layout = PlanarLayout::new(
+        vec![PlaneSpec::new(PlaneRole::Alpha, code)],
+        ChromaSubsampling::Mono,
+        ChromaSiting::Unknown,
+    )
+    .unwrap();
+    assert_eq!(layout.plane_size(0, 5, 3), Some((5, 3)));
+    let plane = AlignedPlane::<u8>::alloc(5, 3).unwrap();
+    assert_eq!(plane.row(2).unwrap().len(), 5);
 }
