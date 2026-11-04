@@ -14,7 +14,7 @@
 //! For format conversions (e.g., `convert_to`, `to_rgb8`), see the
 //! `zenpixels-convert` crate which provides `PixelBufferConvertExt`.
 
-use crate::plane::{SampleStorage, SampleStorageMut};
+use crate::plane::{AlignedSamples, PlaneError, PlaneSample, SampleStorage, SampleStorageMut};
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -301,6 +301,29 @@ fn required_bytes(rows: u32, stride: usize, min_stride: usize) -> Result<usize, 
     preceding
         .checked_add(min_stride)
         .ok_or(BufferError::InvalidDimensions)
+}
+
+/// [`PixelBuffer::try_from_parts`]'s checks, on bytes so that they are compiled once
+/// rather than once per storage type.
+fn validate_parts(
+    bytes: &[u8],
+    offset: usize,
+    width: u32,
+    height: u32,
+    stride_bytes: usize,
+    descriptor: &PixelDescriptor,
+) -> Result<(), BufferError> {
+    match bytes.get(offset..) {
+        Some(data) => validate_slice(
+            data.len(),
+            data.as_ptr(),
+            width,
+            height,
+            stride_bytes,
+            descriptor,
+        ),
+        None => Err(BufferError::InsufficientData),
+    }
 }
 
 /// Convert `Vec<P>` to `Vec<u8>`. Zero-copy when alignment matches (u8-component
@@ -1650,7 +1673,8 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
 /// The type parameter `P` tracks pixel format at compile time, same as
 /// [`PixelSlice`].
 ///
-/// `S` defaults to `Vec<u8>`, which is what the allocating constructors make.
+/// `S` defaults to `Vec<u8>`, which is what most allocating constructors make;
+/// [`PixelBuffer::try_new_aligned`] makes [`AlignedSamples`](crate::plane::AlignedSamples).
 /// [`PixelBuffer::try_from_parts`] adopts any
 /// [`SampleStorage`](crate::plane::SampleStorage) without copying: a `Vec<u16>` or
 /// `Vec<f32>` from another crate, a `Box<[T]>`, a borrowed slice, or a pool slot.
@@ -1866,6 +1890,56 @@ impl<P> fmt::Debug for PixelCow<'_, P> {
     }
 }
 
+impl<T: PlaneSample> PixelBuffer<(), AlignedSamples<T>> {
+    /// Allocate a zeroed buffer with every row on a 64-byte boundary where the
+    /// pixel size allows it, and the first pixel at index 0.
+    ///
+    /// The storage can always be viewed as the descriptor's pixel type. `T` is
+    /// `u8` for any descriptor, or the descriptor's own channel type when the
+    /// samples will move to an owner of that type.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::IncompatibleDescriptor`] when `T` is neither,
+    /// [`BufferError::InvalidDimensions`] when the size overflows,
+    /// [`BufferError::AllocationFailed`] when the allocator refuses.
+    pub fn try_new_aligned(
+        width: u32,
+        height: u32,
+        descriptor: PixelDescriptor,
+    ) -> Result<Self, At<BufferError>> {
+        descriptor.validate().map_err(|e| whereat::at!(e))?;
+        let sample = core::mem::size_of::<T>();
+        if sample != 1 && T::CHANNEL_TYPE != descriptor.channel_type() {
+            return Err(whereat::at!(BufferError::IncompatibleDescriptor));
+        }
+        (width as usize)
+            .checked_mul(descriptor.bytes_per_pixel())
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let stride = descriptor.simd_aligned_stride(width, 64);
+        let total = stride
+            .checked_mul(height as usize)
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let data = AlignedSamples::try_zeroed(total / sample).map_err(|e| {
+            whereat::at!(match e {
+                PlaneError::AllocationFailed => BufferError::AllocationFailed,
+                _ => BufferError::InvalidDimensions,
+            })
+        })?;
+        Ok(Self {
+            data,
+            offset: 0,
+            width,
+            height,
+            stride,
+            descriptor,
+            color: None,
+            exact: None,
+            _pixel: PhantomData,
+        })
+    }
+}
+
 impl<S: SampleStorage> PixelBuffer<(), S> {
     /// Adopt an allocation, geometry and color context without copying pixels.
     ///
@@ -1903,18 +1977,14 @@ impl<S: SampleStorage> PixelBuffer<(), S> {
     #[track_caller]
     #[allow(clippy::result_large_err)] // Keep rejected parts inline, without allocating an error box.
     pub fn try_from_parts(parts: PixelBufferParts<S>) -> Result<Self, FromPartsError<S>> {
-        let validation =
-            match bytemuck::cast_slice::<S::Sample, u8>(parts.data.samples()).get(parts.offset..) {
-                Some(data) => validate_slice(
-                    data.len(),
-                    data.as_ptr(),
-                    parts.width,
-                    parts.height,
-                    parts.stride_bytes,
-                    &parts.descriptor,
-                ),
-                None => Err(BufferError::InsufficientData),
-            };
+        let validation = validate_parts(
+            parts.data.as_bytes(),
+            parts.offset,
+            parts.width,
+            parts.height,
+            parts.stride_bytes,
+            &parts.descriptor,
+        );
         if let Err(error) = validation {
             return Err(FromPartsError {
                 error: whereat::at!(error),
@@ -2269,8 +2339,7 @@ impl<P: Pixel, S: SampleStorage> PixelBuffer<P, S> {
             (self.height as usize - 1) * self.stride
                 + self.width as usize * core::mem::size_of::<P>()
         };
-        let data = &bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())
-            [self.offset..self.offset + total_bytes];
+        let data = &self.data.as_bytes()[self.offset..self.offset + total_bytes];
         let pixels: &[P] = if data.is_empty() {
             &[]
         } else {
@@ -2302,8 +2371,7 @@ impl<P: Pixel, S: SampleStorageMut> PixelBuffer<P, S> {
                 + self.width as usize * core::mem::size_of::<P>()
         };
         let offset = self.offset;
-        let data = &mut bytemuck::cast_slice_mut::<S::Sample, u8>(self.data.samples_mut())
-            [offset..offset + total_bytes];
+        let data = &mut self.data.as_bytes_mut()[offset..offset + total_bytes];
         let pixels: &mut [P] = if data.is_empty() {
             &mut []
         } else {
@@ -2443,8 +2511,7 @@ impl<S: SampleStorage> PixelBuffer<(), S> {
         } else {
             (self.height as usize - 1) * self.stride + self.width as usize * pixel_size
         };
-        let data = &bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())
-            [self.offset..self.offset + total_bytes];
+        let data = &self.data.as_bytes()[self.offset..self.offset + total_bytes];
         let pixels: &[P] = if data.is_empty() {
             &[]
         } else {
@@ -2483,8 +2550,7 @@ impl<S: SampleStorageMut> PixelBuffer<(), S> {
             (self.height as usize - 1) * self.stride + self.width as usize * pixel_size
         };
         let offset = self.offset;
-        let data = &mut bytemuck::cast_slice_mut::<S::Sample, u8>(self.data.samples_mut())
-            [offset..offset + total_bytes];
+        let data = &mut self.data.as_bytes_mut()[offset..offset + total_bytes];
         let pixels: &mut [P] = if data.is_empty() {
             &mut []
         } else {
@@ -2667,7 +2733,7 @@ impl<P, S: SampleStorage> PixelBuffer<P, S> {
     fn storage_span_len(&self) -> usize {
         self.stride
             .saturating_mul(self.height as usize)
-            .min(bytemuck::cast_slice::<S::Sample, u8>(self.data.samples()).len() - self.offset)
+            .min(self.data.as_bytes().len() - self.offset)
     }
 
     /// Erase the pixel type, returning a type-erased buffer.
@@ -2694,8 +2760,7 @@ impl<P, S: SampleStorage> PixelBuffer<P, S> {
             && core::mem::size_of::<Q>() == Q::DESCRIPTOR.bytes_per_pixel()
             && (self.width == 0
                 || self.height == 0
-                || (bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())[self.offset..]
-                    .as_ptr() as usize)
+                || (self.data.as_bytes()[self.offset..].as_ptr() as usize)
                     % core::mem::align_of::<Q>()
                     == 0)
         {
@@ -2748,8 +2813,8 @@ impl<P, S: SampleStorage> PixelBuffer<P, S> {
             return Err(whereat::at!(BufferError::IncompatibleDescriptor));
         }
         validate_slice(
-            bytemuck::cast_slice::<S::Sample, u8>(self.data.samples()).len() - self.offset,
-            bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())[self.offset..].as_ptr(),
+            self.data.as_bytes().len() - self.offset,
+            self.data.as_bytes()[self.offset..].as_ptr(),
             self.width,
             self.height,
             self.stride,
@@ -2924,10 +2989,7 @@ impl<P, S: SampleStorage> PixelBuffer<P, S> {
         let row_bytes = self.width as usize * bpp;
         if self.stride == row_bytes {
             let total = row_bytes * self.height as usize;
-            Some(
-                &bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())
-                    [self.offset..self.offset + total],
-            )
+            Some(&self.data.as_bytes()[self.offset..self.offset + total])
         } else {
             None
         }
@@ -2946,9 +3008,7 @@ impl<P, S: SampleStorage> PixelBuffer<P, S> {
         // Fast path: already contiguous
         if self.stride == row_bytes {
             let start = self.offset;
-            return bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())
-                [start..start + total]
-                .to_vec();
+            return self.data.as_bytes()[start..start + total].to_vec();
         }
 
         // Slow path: strip padding
@@ -3065,8 +3125,7 @@ impl<P, S: SampleStorage> PixelBuffer<P, S> {
     pub fn as_slice(&self) -> PixelSlice<'_, P> {
         let total = self.storage_span_len();
         PixelSlice {
-            data: &bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())
-                [self.offset..self.offset + total],
+            data: &self.data.as_bytes()[self.offset..self.offset + total],
             width: self.width,
             rows: self.height,
             stride: self.stride,
@@ -3093,8 +3152,7 @@ impl<P, S: SampleStorageMut> PixelBuffer<P, S> {
         let total = self.storage_span_len();
         let offset = self.offset;
         PixelSliceMut {
-            data: &mut bytemuck::cast_slice_mut::<S::Sample, u8>(self.data.samples_mut())
-                [offset..offset + total],
+            data: &mut self.data.as_bytes_mut()[offset..offset + total],
             width: self.width,
             rows: self.height,
             stride: self.stride,
@@ -3137,7 +3195,7 @@ impl<P, S: SampleStorage> PixelBuffer<P, S> {
             + (y as usize + count as usize - 1) * self.stride
             + self.width as usize * bpp;
         PixelSlice {
-            data: &bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())[start..end],
+            data: &self.data.as_bytes()[start..end],
             width: self.width,
             rows: count,
             stride: self.stride,
@@ -3182,8 +3240,7 @@ impl<P, S: SampleStorageMut> PixelBuffer<P, S> {
             + (y as usize + count as usize - 1) * self.stride
             + self.width as usize * bpp;
         PixelSliceMut {
-            data: &mut bytemuck::cast_slice_mut::<S::Sample, u8>(self.data.samples_mut())
-                [start..end],
+            data: &mut self.data.as_bytes_mut()[start..end],
             width: self.width,
             rows: count,
             stride: self.stride,
@@ -3231,7 +3288,7 @@ impl<P, S: SampleStorage> PixelBuffer<P, S> {
             + (y as usize + h as usize - 1) * self.stride
             + (x as usize + w as usize) * bpp;
         PixelSlice {
-            data: &bytemuck::cast_slice::<S::Sample, u8>(self.data.samples())[start..end],
+            data: &self.data.as_bytes()[start..end],
             width: w,
             rows: h,
             stride: self.stride,
@@ -3285,6 +3342,14 @@ impl<P, S: SampleStorage> PixelBuffer<P, S> {
             dst.data[dst_start..dst_start + row_bytes].copy_from_slice(&src_row[..row_bytes]);
         }
         dst
+    }
+}
+
+#[cfg(feature = "image")]
+impl<P, S> PixelBuffer<P, S> {
+    /// Byte index of the first pixel in the storage.
+    pub(crate) fn storage_offset(&self) -> usize {
+        self.offset
     }
 }
 

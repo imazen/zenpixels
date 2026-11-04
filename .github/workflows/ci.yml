@@ -249,6 +249,24 @@ jobs:
           ZEN_API_DOC_TOOLCHAIN: nightly-2026-07-13
 
   # ==========================================================================
+  # allocator_api is a no-op before Rust 1.100. Test the real impls on beta; move
+  # this to stable once 1.100 ships.
+  # ==========================================================================
+  allocator-api:
+    name: allocator_api on beta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@beta
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test zenpixels with Vec<T, A> and Box<S, A> storage
+        run: cargo test -p zenpixels
+
+  # ==========================================================================
   # Format check
   # ==========================================================================
   fmt:

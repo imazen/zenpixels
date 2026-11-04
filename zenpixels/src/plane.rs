@@ -2,7 +2,8 @@
 //!
 //! [`Plane`] is a two-dimensional array of samples with a row stride,
 //! generic over who owns the samples: [`PlaneRef`] borrows them, [`PlaneMut`]
-//! borrows them mutably, [`PlaneBuf`] owns a `Vec`, and any other owner
+//! borrows them mutably, [`PlaneBuf`] owns a `Vec`, [`AlignedPlane`] owns
+//! [`AlignedSamples`], and any other owner
 //! (shared or accounted storage) implements [`SampleStorage`]. Rows are
 //! contiguous `&[T]` slices, so kernels read them without per-sample
 //! dispatch. Samples are native-endian: an adapter for big-endian samples
@@ -36,8 +37,8 @@
 //! .unwrap();
 //! assert_eq!(layout.plane_size(1, 5, 3), Some((3, 2)));
 //!
-//! let y = PlaneBuf::<u8>::alloc(5, 3).unwrap();
-//! let uv = PlaneBuf::<u8>::alloc(3 * PlaneRole::CbCr.components(), 2).unwrap();
+//! let y = AlignedPlane::<u8>::alloc(5, 3).unwrap();
+//! let uv = AlignedPlane::<u8>::alloc(3 * PlaneRole::CbCr.components(), 2).unwrap();
 //! layout
 //!     .check(&[AnyPlane::U8(y.view()), AnyPlane::U8(uv.view())], 5, 3)
 //!     .unwrap();
@@ -91,12 +92,25 @@ pub trait SampleStorage {
     type Sample: PlaneSample;
     /// The samples, including any padding.
     fn samples(&self) -> &[Self::Sample];
+
+    /// The same samples as native-endian bytes, without copying.
+    ///
+    /// Everything past this reference works on bytes, so code generic over
+    /// storage stops being generic here.
+    fn as_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(self.samples())
+    }
 }
 
 /// Write access to the samples of a plane's owner.
 pub trait SampleStorageMut: SampleStorage {
     /// The samples, including any padding.
     fn samples_mut(&mut self) -> &mut [Self::Sample];
+
+    /// The same samples as mutable native-endian bytes, without copying.
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
+        bytemuck::cast_slice_mut(self.samples_mut())
+    }
 }
 
 impl<T: PlaneSample> SampleStorage for [T] {
@@ -127,24 +141,146 @@ impl<S: SampleStorageMut + ?Sized> SampleStorageMut for &mut S {
         (**self).samples_mut()
     }
 }
-impl<S: SampleStorage + ?Sized> SampleStorage for Box<S> {
-    type Sample = S::Sample;
-    fn samples(&self) -> &[S::Sample] {
-        (**self).samples()
+// `Vec` and `Box` storage. With the `allocator_api` feature on Rust 1.100 or newer
+// these cover every allocator, which includes the global one, so existing uses
+// keep compiling; before 1.100 the feature changes nothing.
+macro_rules! owned_storage {
+    ($($alloc:ident)?) => {
+        impl<S: SampleStorage + ?Sized $(, $alloc: core::alloc::Allocator)?> SampleStorage
+            for Box<S $(, $alloc)?>
+        {
+            type Sample = S::Sample;
+            fn samples(&self) -> &[S::Sample] {
+                (**self).samples()
+            }
+        }
+        impl<S: SampleStorageMut + ?Sized $(, $alloc: core::alloc::Allocator)?> SampleStorageMut
+            for Box<S $(, $alloc)?>
+        {
+            fn samples_mut(&mut self) -> &mut [S::Sample] {
+                (**self).samples_mut()
+            }
+        }
+        impl<T: PlaneSample $(, $alloc: core::alloc::Allocator)?> SampleStorage
+            for Vec<T $(, $alloc)?>
+        {
+            type Sample = T;
+            fn samples(&self) -> &[T] {
+                self
+            }
+        }
+        impl<T: PlaneSample $(, $alloc: core::alloc::Allocator)?> SampleStorageMut
+            for Vec<T $(, $alloc)?>
+        {
+            fn samples_mut(&mut self) -> &mut [T] {
+                self
+            }
+        }
+        impl<T: PlaneSample $(, $alloc: core::alloc::Allocator)?> Plane<Vec<T $(, $alloc)?>> {
+            /// Give up the `Vec`, with row 0 at index 0, for an owner that takes a
+            /// plain `Vec` and a stride (an `ImgVec`, yuvutils-rs' owned planes).
+            /// Read [`width`](Plane::width), [`height`](Plane::height) and
+            /// [`stride`](Plane::stride) first.
+            ///
+            /// # Errors
+            ///
+            /// The plane itself, unchanged, when its first row starts past index 0.
+            /// Borrow it with [`view`](Plane::view) instead, or copy it.
+            pub fn into_vec(self) -> Result<Vec<T $(, $alloc)?>, Self> {
+                if self.start == 0 {
+                    Ok(self.buf)
+                } else {
+                    Err(self)
+                }
+            }
+        }
+    };
+}
+#[cfg(not(feature = "allocator_api"))]
+owned_storage!();
+#[cfg(feature = "allocator_api")]
+#[rustversion::before(1.100)]
+owned_storage!();
+#[cfg(feature = "allocator_api")]
+#[rustversion::since(1.100)]
+owned_storage!(A);
+
+/// One allocation unit of [`AlignedSamples`]. Its alignment is what keeps the
+/// buffer aligned without an offset, a custom allocator, or `unsafe`: `Vec`
+/// allocates and frees it with this layout.
+#[derive(Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
+#[repr(C, align(64))]
+struct Chunk([u8; 64]);
+
+/// Owned samples whose first element is on a 64-byte boundary, on any allocator.
+///
+/// 64 bytes covers every interleaved pixel type, so the samples can always be
+/// viewed as `&[Rgb<u16>]`, `&[Rgba<f32>]` and the like with `bytemuck`, and index
+/// 0 is always the first sample. Clones stay aligned. It derefs to `[T]`, so it
+/// also serves as an `image::ImageBuffer` container.
+///
+/// The price is that it cannot become a `Vec<T>` without a copy: a `Vec` has to
+/// free memory with the layout it allocated. Adopt a `Vec<T>` directly when the
+/// next owner needs one.
+#[derive(Clone)]
+pub struct AlignedSamples<T> {
+    chunks: Vec<Chunk>,
+    len: usize,
+    _sample: core::marker::PhantomData<T>,
+}
+
+impl<T: PlaneSample> AlignedSamples<T> {
+    /// Allocate `len` zeroed samples, fallibly.
+    ///
+    /// # Errors
+    ///
+    /// [`PlaneError::GeometryOverflow`] when the size overflows,
+    /// [`PlaneError::AllocationFailed`] when the allocator refuses.
+    pub fn try_zeroed(len: usize) -> Result<Self, PlaneError> {
+        let chunk_count = len
+            .checked_mul(core::mem::size_of::<T>())
+            .ok_or(PlaneError::GeometryOverflow)?
+            .div_ceil(core::mem::size_of::<Chunk>());
+        let mut chunks = Vec::new();
+        chunks
+            .try_reserve_exact(chunk_count)
+            .map_err(|_| PlaneError::AllocationFailed)?;
+        chunks.resize(chunk_count, bytemuck::Zeroable::zeroed());
+        Ok(Self {
+            chunks,
+            len,
+            _sample: core::marker::PhantomData,
+        })
     }
 }
-impl<S: SampleStorageMut + ?Sized> SampleStorageMut for Box<S> {
-    fn samples_mut(&mut self) -> &mut [S::Sample] {
-        (**self).samples_mut()
+
+impl<T: PlaneSample> core::ops::Deref for AlignedSamples<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        &bytemuck::cast_slice(&self.chunks)[..self.len]
     }
 }
-impl<T: PlaneSample> SampleStorage for Vec<T> {
+
+impl<T: PlaneSample> core::ops::DerefMut for AlignedSamples<T> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        &mut bytemuck::cast_slice_mut(&mut self.chunks)[..self.len]
+    }
+}
+
+impl<T> fmt::Debug for AlignedSamples<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AlignedSamples(len: {})", self.len)
+    }
+}
+
+impl<T: PlaneSample> SampleStorage for AlignedSamples<T> {
     type Sample = T;
     fn samples(&self) -> &[T] {
         self
     }
 }
-impl<T: PlaneSample> SampleStorageMut for Vec<T> {
+
+impl<T: PlaneSample> SampleStorageMut for AlignedSamples<T> {
     fn samples_mut(&mut self) -> &mut [T] {
         self
     }
@@ -200,6 +336,8 @@ pub type PlaneRef<'a, T> = Plane<&'a [T]>;
 pub type PlaneMut<'a, T> = Plane<&'a mut [T]>;
 /// An owned plane.
 pub type PlaneBuf<T> = Plane<Vec<T>>;
+/// A plane that owns [`AlignedSamples`]; see [`Plane::alloc`].
+pub type AlignedPlane<T> = Plane<AlignedSamples<T>>;
 
 impl<C> fmt::Debug for Plane<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -224,6 +362,20 @@ fn extent(start: usize, width: usize, height: usize, stride: usize) -> Result<us
         .and_then(|n| n.checked_add(width))
         .and_then(|n| n.checked_add(start))
         .ok_or(PlaneError::GeometryOverflow)
+}
+
+impl<C> Plane<C> {
+    /// The storage, whatever row 0's index.
+    #[cfg(feature = "image")]
+    pub(crate) fn into_storage(self) -> C {
+        self.buf
+    }
+
+    /// The index of row 0 in the storage.
+    #[cfg(feature = "image")]
+    pub(crate) fn samples_start(&self) -> usize {
+        self.start
+    }
 }
 
 impl<C: SampleStorage> Plane<C> {
@@ -603,16 +755,15 @@ impl<T> ExactSizeIterator for RowsMut<'_, T> {}
 /// Row starts on 64 bytes, the widest SIMD vector and the x86/Neoverse line.
 const ROW_ALIGN: usize = 64;
 
-impl<T: PlaneSample> Plane<Vec<T>> {
+impl<T: PlaneSample> Plane<AlignedSamples<T>> {
     /// Allocate a zeroed `width` x `height` plane for SIMD kernels.
     ///
-    /// Every row starts on a 64-byte boundary. The stride is the row rounded
-    /// up to 64 bytes, plus 64 more when that is a multiple of 4096: such
-    /// strides put a column's rows in one cache set, which cost cache-resident
-    /// 12-row vertical filters 19-48% on Zen 4
-    /// (`benchmarks/stride_aliasing_2026-11-01.md` in the zenpixels repo).
-    /// The allocation is fallible. Cloning keeps the geometry but not the
-    /// alignment, which affects speed only.
+    /// Every row starts on a 64-byte boundary, with row 0 at index 0. The stride
+    /// is the row rounded up to 64 bytes, plus 64 more when that is a multiple of
+    /// 4096: such strides put a column's rows in one cache set, which cost
+    /// cache-resident 12-row vertical filters 19-48% on Zen 4
+    /// (`benchmarks/stride_aliasing_2026-11-01.md` in the zenpixels repo). The
+    /// allocation is fallible, and clones keep the alignment.
     ///
     /// # Errors
     ///
@@ -630,47 +781,10 @@ impl<T: PlaneSample> Plane<Vec<T>> {
             row_bytes
         };
         let stride = stride_bytes / size;
-        let slack = ROW_ALIGN / size - 1;
         let len = stride
             .checked_mul(height)
-            .and_then(|n| n.checked_add(slack))
             .ok_or(PlaneError::GeometryOverflow)?;
-        let mut buf = Vec::new();
-        buf.try_reserve_exact(len)
-            .map_err(|_| PlaneError::AllocationFailed)?;
-        buf.resize(len, T::default());
-        let misalign = (buf.as_ptr() as usize) % ROW_ALIGN;
-        let start = if misalign == 0 {
-            0
-        } else {
-            (ROW_ALIGN - misalign) / size
-        };
-        Self::with_start(buf, start, width, height, stride)
-    }
-}
-
-impl<T: PlaneSample> Plane<Vec<T>> {
-    /// Give up the `Vec`, with row 0 at index 0, for an owner that takes a
-    /// plain `Vec` and a stride (an `ImgVec`, yuvutils-rs' owned planes).
-    /// Read [`width`](Plane::width), [`height`](Plane::height) and
-    /// [`stride`](Plane::stride) first.
-    ///
-    /// A plane adopted with [`Plane::new`] always starts at index 0. One from
-    /// [`alloc`](Plane::alloc) does only when the allocator returned a 64-byte
-    /// aligned block. glibc's mmap-backed blocks (by default those of 128 KiB
-    /// and more) start 16 bytes past a 64-byte boundary, so large allocated
-    /// planes usually do not.
-    ///
-    /// # Errors
-    ///
-    /// The plane itself, unchanged, when its first row starts past index 0.
-    /// Borrow it with [`view`](Plane::view) instead, or copy it.
-    pub fn into_vec(self) -> Result<Vec<T>, Self> {
-        if self.start == 0 {
-            Ok(self.buf)
-        } else {
-            Err(self)
-        }
+        Self::with_start(AlignedSamples::try_zeroed(len)?, 0, width, height, stride)
     }
 }
 

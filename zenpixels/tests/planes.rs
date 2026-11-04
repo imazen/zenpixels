@@ -122,7 +122,14 @@ fn split_at_row_gives_disjoint_strips() {
 }
 
 fn assert_aligned<T: PlaneSample>(width: usize, height: usize) {
-    let mut p = PlaneBuf::<T>::alloc(width, height).unwrap();
+    let mut p = AlignedPlane::<T>::alloc(width, height).unwrap();
+    assert_eq!(p.strided_samples().as_ptr() as usize % 64, 0, "{width}");
+    let cloned = p.clone();
+    assert_eq!(
+        cloned.strided_samples().as_ptr() as usize % 64,
+        0,
+        "{width}"
+    );
     let size = std::mem::size_of::<T>();
     let stride_bytes = p.stride() * size;
     assert_eq!(stride_bytes % 64, 0, "{width}");
@@ -148,20 +155,20 @@ fn alloc_starts_rows_on_64_bytes_and_avoids_4096_strides() {
         assert_aligned::<f32>(width, 3);
     }
     // 4096-byte rows get 64 bytes more; others are only rounded.
-    assert_eq!(PlaneBuf::<u8>::alloc(4096, 1).unwrap().stride(), 4160);
-    assert_eq!(PlaneBuf::<u16>::alloc(2048, 1).unwrap().stride(), 2080);
-    assert_eq!(PlaneBuf::<f32>::alloc(1024, 1).unwrap().stride(), 1040);
-    assert_eq!(PlaneBuf::<u8>::alloc(2048, 1).unwrap().stride(), 2048);
-    assert_eq!(PlaneBuf::<u8>::alloc(100, 1).unwrap().stride(), 128);
-    assert_eq!(PlaneBuf::<u8>::alloc(0, 0).unwrap().rows().count(), 0);
+    assert_eq!(AlignedPlane::<u8>::alloc(4096, 1).unwrap().stride(), 4160);
+    assert_eq!(AlignedPlane::<u16>::alloc(2048, 1).unwrap().stride(), 2080);
+    assert_eq!(AlignedPlane::<f32>::alloc(1024, 1).unwrap().stride(), 1040);
+    assert_eq!(AlignedPlane::<u8>::alloc(2048, 1).unwrap().stride(), 2048);
+    assert_eq!(AlignedPlane::<u8>::alloc(100, 1).unwrap().stride(), 128);
+    assert_eq!(AlignedPlane::<u8>::alloc(0, 0).unwrap().rows().count(), 0);
     // More than isize::MAX bytes without overflowing usize, on any sample size.
     let half = usize::BITS / 2;
     assert_eq!(
-        PlaneBuf::<f32>::alloc(usize::MAX / 2, 1).unwrap_err(),
+        AlignedPlane::<f32>::alloc(usize::MAX / 2, 1).unwrap_err(),
         PlaneError::GeometryOverflow
     );
     assert_eq!(
-        PlaneBuf::<u8>::alloc(1 << half, 1 << (half - 1)).unwrap_err(),
+        AlignedPlane::<u8>::alloc(1 << half, 1 << (half - 1)).unwrap_err(),
         PlaneError::AllocationFailed
     );
 }
@@ -305,11 +312,11 @@ fn layout_sizes_planes_and_checks_supplied_planes() {
     assert_eq!(layout.plane_size(2, 5, 3), Some((5, 3)));
     assert_eq!(layout.plane_size(3, 5, 3), None);
 
-    let y = PlaneBuf::<u16>::alloc(5, 3).unwrap();
-    let uv = PlaneBuf::<u16>::alloc(6, 2).unwrap();
-    let a = PlaneBuf::<u8>::alloc(5, 3).unwrap();
-    let a16 = PlaneBuf::<u16>::alloc(5, 3).unwrap();
-    let uv_narrow = PlaneBuf::<u16>::alloc(3, 2).unwrap();
+    let y = AlignedPlane::<u16>::alloc(5, 3).unwrap();
+    let uv = AlignedPlane::<u16>::alloc(6, 2).unwrap();
+    let a = AlignedPlane::<u8>::alloc(5, 3).unwrap();
+    let a16 = AlignedPlane::<u16>::alloc(5, 3).unwrap();
+    let uv_narrow = AlignedPlane::<u16>::alloc(3, 2).unwrap();
     let good = [
         AnyPlane::U16(y.view()),
         AnyPlane::U16(uv.view()),
@@ -389,8 +396,8 @@ mod imgref_interop {
         assert_eq!(back.buf().as_ptr(), buf[6..].as_ptr());
         assert_eq!((back.width(), back.height(), back.stride()), (2, 3, 5));
 
-        // An aligned allocation's offset start survives the conversion.
-        let mut aligned = PlaneBuf::<f32>::alloc(7, 2).unwrap();
+        // An aligned allocation converts without moving.
+        let mut aligned = AlignedPlane::<f32>::alloc(7, 2).unwrap();
         aligned.row_mut(1).unwrap()[6] = 2.5;
         let first = aligned.row(0).unwrap().as_ptr();
         let img: ImgRef<'_, f32> = aligned.view().try_into().unwrap();
@@ -431,12 +438,6 @@ mod imgref_interop {
         let ptr = plane.row(0).unwrap().as_ptr();
         let img = ImgVec::try_from(plane).unwrap();
         assert_eq!((img.buf().as_ptr(), img.width(), img.stride()), (ptr, 3, 4));
-        // Large glibc blocks usually start 16 bytes past 64; either way nothing is lost.
-        let big = PlaneBuf::<u8>::alloc(1 << 12, 64).unwrap();
-        let first = big.row(0).unwrap().as_ptr();
-        if let Err(big) = ImgVec::try_from(big) {
-            assert_eq!(big.row(0).unwrap().as_ptr(), first);
-        }
     }
 
     #[test]
@@ -450,26 +451,44 @@ mod imgref_interop {
 }
 
 #[test]
-fn into_vec_hands_over_only_a_vec_starting_at_row_zero() {
+fn into_vec_hands_an_adopted_vec_back() {
     let v: Vec<u16> = (0..12).collect();
     let ptr = v.as_ptr();
     let adopted = PlaneBuf::new(v, 3, 3, 4).unwrap();
     let back = adopted.into_vec().unwrap();
     assert_eq!(back.as_ptr(), ptr);
+}
 
-    // An allocation that needed an offset comes back whole and unchanged.
-    for width in 1..40 {
-        let mut p = PlaneBuf::<u8>::alloc(width, 2).unwrap();
-        p.row_mut(1).unwrap().fill(5);
-        let first = p.row(0).unwrap().as_ptr();
-        match p.into_vec() {
-            Ok(v) => assert_eq!(v.as_ptr(), first),
-            Err(p) => {
-                assert_eq!(p.row(0).unwrap().as_ptr(), first);
-                assert!(p.row(1).unwrap().iter().all(|&s| s == 5));
-            }
+#[test]
+fn aligned_samples_are_aligned_zeroed_and_exact_length() {
+    for len in [0usize, 1, 31, 32, 33, 64, 65, 4096, 1 << 20] {
+        let a = AlignedSamples::<u16>::try_zeroed(len).unwrap();
+        assert_eq!(a.len(), len);
+        assert!(a.iter().all(|&s| s == 0));
+        if len > 0 {
+            assert_eq!(a.as_ptr() as usize % 64, 0);
+            assert_eq!(a.clone().as_ptr() as usize % 64, 0);
         }
     }
+    assert_eq!(
+        AlignedSamples::<f32>::try_zeroed(usize::MAX).unwrap_err(),
+        PlaneError::GeometryOverflow
+    );
+}
+
+#[test]
+fn byte_methods_alias_the_samples() {
+    let mut v: Vec<u16> = vec![0x0102, 0x0304];
+    let ptr = v.as_ptr();
+    assert_eq!(SampleStorage::as_bytes(&v).as_ptr().cast(), ptr);
+    assert_eq!(SampleStorage::as_bytes(&v).len(), 4);
+    SampleStorageMut::as_bytes_mut(&mut v)[..2].copy_from_slice(&0xBEEFu16.to_ne_bytes());
+    assert_eq!(v[0], 0xBEEF);
+
+    // Trait objects keep them, so storage can stay erased down to the reference.
+    let erased: Box<dyn SampleStorage<Sample = u16>> = Box::new(v);
+    assert_eq!(erased.as_bytes().len(), 4);
+    assert_eq!(erased.as_bytes().as_ptr().cast(), ptr);
 }
 
 /// Storage from somewhere else (accounted storage, a decoder pool).
@@ -496,12 +515,7 @@ fn any_owner_works_behind_a_boxed_trait_object() {
     // the blanket impls and dyn compatibility with several owner types.
     let owners: Vec<Box<dyn SampleStorageMut<Sample = u8> + Send + Sync>> = vec![
         Box::new((0..12u8).collect::<Vec<u8>>()),
-        Box::new(
-            PlaneBuf::<u8>::alloc(4, 3)
-                .unwrap()
-                .into_vec()
-                .unwrap_or_else(|p| p.rows().flatten().copied().collect()),
-        ),
+        Box::new(AlignedSamples::<u8>::try_zeroed(12).unwrap()),
         Box::new(vec![1u8; 12].into_boxed_slice()),
         Box::new(Pool {
             samples: vec![2; 12],

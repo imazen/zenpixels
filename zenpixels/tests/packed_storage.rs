@@ -1,7 +1,7 @@
 //! `PixelBuffer` over storage other than `Vec<u8>`: nothing is copied, and
 //! layout validation matches the `Vec<u8>` path.
 
-use zenpixels::plane::{SampleStorage, SampleStorageMut};
+use zenpixels::plane::{AlignedSamples, SampleStorage, SampleStorageMut};
 use zenpixels::{PixelBuffer, PixelBufferParts, PixelDescriptor};
 
 const W: u32 = 37;
@@ -181,4 +181,73 @@ fn default_storage_type_is_unchanged() {
     }
     let parts: PixelBufferParts = PixelBuffer::new(1, 1, PixelDescriptor::RGB8_SRGB).into_parts();
     assert_eq!(parts.data.len(), 3);
+}
+
+#[test]
+fn aligned_buffers_start_at_index_zero_on_64_bytes_for_every_format() {
+    for d in [
+        PixelDescriptor::RGB8_SRGB,
+        PixelDescriptor::RGBA8_SRGB,
+        PixelDescriptor::RGB16_SRGB,
+        PixelDescriptor::RGBA16_SRGB,
+        PixelDescriptor::RGBF32_LINEAR,
+        PixelDescriptor::RGBAF32_LINEAR,
+        PixelDescriptor::GRAY8_SRGB,
+        PixelDescriptor::GRAY16_SRGB,
+        PixelDescriptor::GRAYF32_LINEAR,
+        PixelDescriptor::GRAYA8_SRGB,
+        PixelDescriptor::GRAYA16_SRGB,
+        PixelDescriptor::GRAYAF32_LINEAR,
+    ] {
+        for (w, h) in [(1u32, 1u32), (2, 3), (37, 11), (64, 2), (4096, 2)] {
+            let buffer: PixelBuffer<(), AlignedSamples<u8>> =
+                PixelBuffer::try_new_aligned(w, h, d).unwrap();
+            let bpp = d.bytes_per_pixel();
+            assert_eq!(buffer.stride() % bpp, 0);
+            assert!(buffer.stride() >= w as usize * bpp);
+            let slice = buffer.as_slice();
+            let bytes = slice.as_strided_bytes();
+            assert_eq!(bytes.as_ptr() as usize % 64, 0);
+            assert!(bytes.iter().all(|&b| b == 0));
+            drop(slice);
+            let parts = buffer.into_parts();
+            assert_eq!(parts.offset, 0);
+            assert_eq!(parts.data.as_ptr() as usize % 64, 0);
+        }
+    }
+}
+
+#[cfg(feature = "rgb")]
+#[test]
+fn aligned_buffers_view_as_their_pixel_type_on_every_row() {
+    let mut buffer: PixelBuffer<(), AlignedSamples<u8>> =
+        PixelBuffer::try_new_aligned(W, H, PixelDescriptor::RGBA16_SRGB).unwrap();
+    buffer.as_slice_mut().row_mut(3)[0] = 0xAA;
+    let slice = buffer.as_slice();
+    for y in 0..H {
+        let row: &[rgb::Rgba<u16>] = bytemuck::cast_slice(slice.row(y));
+        assert_eq!(row.len(), W as usize);
+    }
+    drop(slice);
+    let typed = buffer.try_typed::<rgb::Rgba<u16>>().unwrap();
+    assert_eq!(typed.into_parts().data.as_ptr() as usize % 64, 0);
+}
+
+#[test]
+fn aligned_buffers_can_hold_the_channel_type_directly() {
+    let wide: PixelBuffer<(), AlignedSamples<u16>> =
+        PixelBuffer::try_new_aligned(W, H, PixelDescriptor::RGB16_SRGB).unwrap();
+    assert_eq!(wide.as_slice().row(0).len(), W as usize * 6);
+    let mismatch = PixelBuffer::<(), AlignedSamples<u16>>::try_new_aligned(
+        W,
+        H,
+        PixelDescriptor::RGBF32_LINEAR,
+    );
+    assert!(mismatch.is_err());
+    let overflow = PixelBuffer::<(), AlignedSamples<u8>>::try_new_aligned(
+        u32::MAX,
+        u32::MAX,
+        PixelDescriptor::RGBAF32_LINEAR,
+    );
+    assert!(overflow.is_err());
 }

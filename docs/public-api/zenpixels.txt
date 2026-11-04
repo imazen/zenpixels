@@ -9,20 +9,20 @@
 ## summary
 #
 #   pub modules                                12
-#   pub types (struct/enum/trait/alias)       107
+#   pub types (struct/enum/trait/alias)       109
 #   pub consts/statics                        303
-#   free functions                              6
-#   inherent methods                          299
+#   free functions                              8
+#   inherent methods                          304
 #   struct fields                             121
 #   enum variants                             338
 #   re-exports                                  4
-#   trait roster entries (type × trait)       374
+#   trait roster entries (type × trait)       380
 #   auto-trait-complete types                  53
-#   auto-trait exceptions                       8
+#   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          466
-#   buffer                          252
+#   (root)                          468
+#   buffer                          254
 #   cicp                             36
 #   color                            62
 #   descriptor                      187
@@ -30,11 +30,11 @@
 #   icc                              13
 #   orientation                      11
 #   pixel_types                       9
-#   plane                            84
+#   plane                            89
 #   policy                           25
 #   sample                           33
 
-## items (1060 lines)
+## items (1069 lines)
 
 pub mod zenpixels
 pub use At
@@ -111,6 +111,7 @@ pub fn buffer::PixelBuffer<P>::new_typed(u32, u32) -> Self
 pub fn buffer::PixelBuffer<P>::try_new_typed(u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P, alloc::vec::Vec<u8>>::into_contiguous(self) -> Self
 pub fn buffer::PixelBuffer<(), S>::try_from_parts(buffer::PixelBufferParts<S>) -> core::result::Result<Self, buffer::FromPartsError<S>>
+pub fn buffer::PixelBuffer<(), plane::AlignedSamples<T>>::try_new_aligned(u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub buffer::PixelBufferParts::color_context: core::option::Option<alloc::sync::Arc<color::ColorContext>>
 pub buffer::PixelBufferParts::data: S
 pub buffer::PixelBufferParts::descriptor: descriptor::PixelDescriptor
@@ -565,6 +566,8 @@ pub plane::PlaneRole::Green
 pub plane::PlaneRole::Luma
 pub plane::PlaneRole::Red
 pub const fn plane::PlaneRole::components(self) -> usize
+pub struct plane::AlignedSamples<T>
+pub fn plane::AlignedSamples<T>::try_zeroed(usize) -> core::result::Result<Self, plane::PlaneError>
 pub struct plane::FloatEncoding
 pub const plane::FloatEncoding::NOMINAL: Self
 pub fn plane::FloatEncoding::new(f32, f32) -> core::result::Result<Self, plane::FloatEncodingError>
@@ -594,8 +597,8 @@ pub fn plane::Plane<C>::rows_mut(&mut self) -> impl core::iter::traits::double_e
 pub fn plane::Plane<C>::sub_mut(&mut self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneMut<'_, <C as plane::SampleStorage>::Sample>, plane::PlaneError>
 pub fn plane::Plane<C>::view_mut(&mut self) -> plane::PlaneMut<'_, <C as plane::SampleStorage>::Sample>
 pub fn plane::Plane<&mut [T]>::split_at_row(self, usize) -> core::result::Result<(Self, Self), plane::PlaneError>
-pub fn plane::Plane<alloc::vec::Vec<T>>::alloc(usize, usize) -> core::result::Result<Self, plane::PlaneError>
 pub fn plane::Plane<alloc::vec::Vec<T>>::into_vec(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
+pub fn plane::Plane<plane::AlignedSamples<T>>::alloc(usize, usize) -> core::result::Result<Self, plane::PlaneError>
 pub struct plane::PlaneSpec
 pub const fn plane::PlaneSpec::encoding(self) -> plane::PlaneEncoding
 pub const fn plane::PlaneSpec::new(plane::PlaneRole, plane::PlaneEncoding) -> Self
@@ -604,12 +607,17 @@ pub trait plane::PlaneSample: plane::sealed::Sealed + bytemuck::pod::Pod + core:
 pub const plane::PlaneSample::CHANNEL_TYPE: descriptor::ChannelType
 pub trait plane::SampleStorage
 pub type plane::SampleStorage::Sample: plane::PlaneSample
+pub fn plane::SampleStorage::as_bytes(&self) -> &[u8]
 pub fn plane::SampleStorage::samples(&self) -> &[Self::Sample]
 pub type &mut S::Sample = <S as plane::SampleStorage>::Sample
+pub fn &mut S::as_bytes(&self) -> &[u8]
 pub fn &mut S::samples(&self) -> &[<S as plane::SampleStorage>::Sample]
 pub trait plane::SampleStorageMut: plane::SampleStorage
+pub fn plane::SampleStorageMut::as_bytes_mut(&mut self) -> &mut [u8]
 pub fn plane::SampleStorageMut::samples_mut(&mut self) -> &mut [Self::Sample]
+pub fn &mut S::as_bytes_mut(&mut self) -> &mut [u8]
 pub fn &mut S::samples_mut(&mut self) -> &mut [<S as plane::SampleStorage>::Sample]
+pub type plane::AlignedPlane<T> = plane::Plane<plane::AlignedSamples<T>>
 pub type plane::PlaneBuf<T> = plane::Plane<alloc::vec::Vec<T>>
 pub type plane::PlaneMut<'a, T> = plane::Plane<&'a mut [T]>
 pub type plane::PlaneRef<'a, T> = plane::Plane<&'a [T]>
@@ -980,6 +988,7 @@ pub fn buffer::PixelBuffer<P>::new_typed(u32, u32) -> Self
 pub fn buffer::PixelBuffer<P>::try_new_typed(u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P, alloc::vec::Vec<u8>>::into_contiguous(self) -> Self
 pub fn buffer::PixelBuffer<(), S>::try_from_parts(buffer::PixelBufferParts<S>) -> core::result::Result<Self, buffer::FromPartsError<S>>
+pub fn buffer::PixelBuffer<(), plane::AlignedSamples<T>>::try_new_aligned(u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 #[non_exhaustive] pub struct PixelBufferParts<S> [also: buffer]
 pub PixelBufferParts::color_context: core::option::Option<alloc::sync::Arc<color::ColorContext>>
 pub PixelBufferParts::data: S
@@ -1097,7 +1106,7 @@ pub Rgbx::x: u8
 pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 
-## trait impls (73 types)
+## trait impls (74 types)
 
 &S: plane::SampleStorage
 &mut S: plane::SampleStorage, plane::SampleStorageMut
@@ -1147,6 +1156,7 @@ orientation::Orientation: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 pixel_types::GrayAlpha16: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 pixel_types::GrayAlpha8: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 pixel_types::GrayAlphaF32: Clone, Copy, Debug, Default, PartialEq, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
+plane::AlignedSamples<T>: Clone, Debug, Deref, DerefMut, plane::SampleStorage, plane::SampleStorageMut
 plane::AnyPlane<'a>: Clone, Copy, Debug
 plane::FloatEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
 plane::FloatEncodingError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
@@ -1182,4 +1192,5 @@ buffer::PixelBufferParts<S>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSa
 buffer::PixelCow<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::PixelSlice<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::PixelSliceMut<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
+plane::AlignedSamples<T>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 plane::Plane<C>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe

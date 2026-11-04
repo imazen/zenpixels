@@ -1,5 +1,5 @@
 # zenpixels public API — additions from non-default features
-# features: icc,imgref,planar,rgb,serde,std
+# features: allocator_api,icc,image,imgref,planar,rgb,serde,std
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -10,7 +10,8 @@
 ## summary
 #
 #   inherent methods                           34
-#   trait roster entries (type × trait)        36
+#   trait roster entries (type × trait)        41
+#   conditional trait impls (verbatim)         98
 #
 # per-module pub lines:
 #   buffer                           34
@@ -52,7 +53,7 @@ pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::swap_to_bgra(sel
 pub fn buffer::PixelSliceMut<'a, buffer::Bgrx>::upgrade_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
 pub fn buffer::PixelSliceMut<'a, buffer::Rgbx>::upgrade_to_rgba(self) -> buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>
 
-## trait impls (36 types)
+## trait impls (41 types)
 
 buffer::PixelSlice<'a, rgb::formats::bgra::Bgra<u8>>: From<imgref::Img<&'a [rgb::formats::bgra::Bgra<u8>]>>
 buffer::PixelSlice<'a, rgb::formats::gray::Gray_v08<f32>>: From<imgref::Img<&'a [rgb::formats::gray::Gray_v08<f32>]>>
@@ -74,6 +75,11 @@ buffer::PixelSliceMut<'a, rgb::formats::rgb::Rgb<u8>>: From<imgref::Img<&'a mut 
 buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<f32>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<f32>]>>
 buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u16>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<u16>]>>
 buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<u8>]>>
+image::images::flat::FlatSamples<&'a [T]>: TryFrom<plane::Plane<&'a [T]>>
+image::images::flat::FlatSamples<&'a [f32]>: TryFrom<buffer::PixelSlice<'a>>
+image::images::flat::FlatSamples<&'a [u16]>: TryFrom<buffer::PixelSlice<'a>>
+image::images::flat::FlatSamples<&'a [u8]>: TryFrom<buffer::PixelSlice<'a>>
+image::images::flat::FlatSamples<&'a mut [T]>: TryFrom<plane::Plane<&'a mut [T]>>
 imgref::ImgRef<'a, T>: TryFrom<plane::Plane<&'a [T]>>
 imgref::ImgRefMut<'a, T>: TryFrom<plane::Plane<&'a mut [T]>>
 imgref::ImgVec<T>: TryFrom<plane::Plane<alloc::vec::Vec<T>>>
@@ -90,3 +96,101 @@ rgb::formats::rgb::Rgb<u8>: buffer::Pixel
 rgb::formats::rgba::Rgba<f32>: buffer::Pixel
 rgb::formats::rgba::Rgba<u16>: buffer::Pixel
 rgb::formats::rgba::Rgba<u8>: buffer::Pixel
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<f32>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<u16>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<u8>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<f32>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<u16>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<u8>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<f32>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<u16>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<u8>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<f32>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<u16>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<u8>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Luma<f32>, C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Luma<u16>, C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Luma<u8>, C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::LumaA<f32>, C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::LumaA<u16>, C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::LumaA<u8>, C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Rgb<f32>, C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Rgb<u16>, C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Rgb<u8>, C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Rgba<f32>, C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Rgba<u16>, C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Rgba<u8>, C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Luma<f32>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Luma<u16>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Luma<u8>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::LumaA<f32>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::LumaA<u16>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::LumaA<u8>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Rgb<f32>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Rgb<u16>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Rgb<u8>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Rgba<f32>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Rgba<u16>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Rgba<u8>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Luma<f32>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Luma<u16>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Luma<u8>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::LumaA<f32>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::LumaA<u16>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::LumaA<u8>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Rgb<f32>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Rgb<u16>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Rgb<u8>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Rgba<f32>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Rgba<u16>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Rgba<u8>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u8]>
+impl<T, C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<T>, C>> for plane::Plane<C> where T: plane::PlaneSample + image::traits::Primitive, C: plane::SampleStorage<Sample = T> + core::ops::deref::Deref<Target = [T]>
+impl<T, C> core::convert::TryFrom<plane::Plane<C>> for image::images::buffer::ImageBuffer<image::color::Luma<T>, C> where T: plane::PlaneSample + image::traits::Primitive, C: plane::SampleStorage<Sample = T> + core::ops::deref::Deref<Target = [T]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<f32>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<u16>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<u8>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<f32>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<u16>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<u8>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<f32>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<u16>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<u8>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<f32>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<u16>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<u8>, C>> for buffer::PixelBuffer<(), C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Luma<f32>, C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Luma<u16>, C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Luma<u8>, C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::LumaA<f32>, C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::LumaA<u16>, C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::LumaA<u8>, C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Rgb<f32>, C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Rgb<u16>, C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Rgb<u8>, C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Rgba<f32>, C> where C: plane::SampleStorage<Sample = f32> + core::ops::deref::Deref<Target = [f32]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Rgba<u16>, C> where C: plane::SampleStorage<Sample = u16> + core::ops::deref::Deref<Target = [u16]>
+impl<C> core::convert::TryFrom<buffer::PixelBuffer<(), C>> for image::images::buffer::ImageBuffer<image::color::Rgba<u8>, C> where C: plane::SampleStorage<Sample = u8> + core::ops::deref::Deref<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Luma<f32>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Luma<u16>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Luma<u8>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::LumaA<f32>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::LumaA<u16>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::LumaA<u8>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Rgb<f32>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Rgb<u16>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Rgb<u8>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Rgba<f32>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Rgba<u16>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a image::images::buffer::ImageBuffer<image::color::Rgba<u8>, C>> for buffer::PixelSlice<'a> where C: core::ops::deref::Deref<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Luma<f32>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Luma<u16>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Luma<u8>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::LumaA<f32>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::LumaA<u16>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::LumaA<u8>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Rgb<f32>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Rgb<u16>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Rgb<u8>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u8]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Rgba<f32>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [f32]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Rgba<u16>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u16]>
+impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<image::color::Rgba<u8>, C>> for buffer::PixelSliceMut<'a> where C: core::ops::deref::DerefMut<Target = [u8]>

@@ -67,6 +67,8 @@ extern crate alloc;
 whereat::define_at_crate_info!(path = "zenpixels/");
 
 pub mod descriptor;
+#[cfg(feature = "image")]
+mod image_interop;
 pub mod orientation;
 pub mod plane;
 pub mod policy;
