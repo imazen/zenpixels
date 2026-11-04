@@ -1674,11 +1674,11 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
 /// [`PixelSlice`].
 ///
 /// `S` defaults to `Vec<u8>`, which is what most allocating constructors make;
-/// [`PixelBuffer::try_new_aligned`] makes [`AlignedSamples`](crate::plane::AlignedSamples).
+/// [`PixelBuffer::try_new_aligned`] makes [`AlignedSamples`].
 /// [`PixelBuffer::try_from_parts`] adopts any
-/// [`SampleStorage`](crate::plane::SampleStorage) without copying: a `Vec<u16>` or
+/// [`SampleStorage`] without copying: a `Vec<u16>` or
 /// `Vec<f32>` from another crate, a `Box<[T]>`, a borrowed slice, or a pool slot.
-/// [`SampleStorageMut`](crate::plane::SampleStorageMut) storage also gets the
+/// [`SampleStorageMut`] storage also gets the
 /// mutable views.
 #[non_exhaustive]
 pub struct PixelBuffer<P = (), S = Vec<u8>> {
