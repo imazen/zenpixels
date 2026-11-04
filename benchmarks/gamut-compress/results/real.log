@@ -1,0 +1,12 @@
+run-heavy: mem-cap=8G (cgroup, hard) jobs=1/24 avail=19564MiB :: ./target/release/gamut-compress real /home/lilith/tmp/gamut-p3 0.0875 0.05
+11056_general_flower-bouquet-and-cards: 2048x1024, ch=3, icc=Some((DisplayP3, Srgb))
+11215_interiors_living-room-interior: 2048x1024, ch=3, icc=Some((DisplayP3, Srgb))
+11408_nature_coastal-cliff-road: 2048x1024, ch=3, icc=None
+11426_nature_mountain-over-lake: 2048x1024, ch=3, icc=Some((DisplayP3, Srgb))
+11545_nature_stalactite-cave-lake: 2048x1024, ch=3, icc=Some((DisplayP3, Srgb))
+11627_food_assorted-mochi-platter: 2048x1024, ch=3, icc=Some((DisplayP3, Srgb))
+12010_people_by-emmanuel-black-j7lc6bzguzs-unsplash: 2048x1024, ch=3, icc=None
+12210_renders_abstract-line-pattern: 2048x1024, ch=3, icc=None
+19110_gen_illustrations: 1536x1024, ch=3, icc=None
+19121_gen_illustrations: 1024x1024, ch=3, icc=None
+run-heavy: done rc=0 5s | peak-RSS 0.33GiB | min-avail 19235MiB | peak-load 1.43
