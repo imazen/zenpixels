@@ -26,6 +26,15 @@ Worst difference in 8-bit codes, clamped to 0..=1, and the share of samples more
 The "Not comparable" cells predate zenjxl-decoder `bffc2ed`: `Lcms2Cms` used to pass 0..1 where lcms2's float CMYK takes 0..100, which returned 0.968 for no ink. Against the lcms2 values in the decoder's `cmyk_to_srgb_matches_lcms2_relative_bpc`, the adapter and the
 wrapper agree, within 0.26 of a code on four colors.
 
+## Exact-math harnesses
+
+`exact/` holds what the findings below and in `CLAUDE.md` came from. Each is one `main.rs` with path dependencies on this tree and on a copy of moxcms 0.9.1 with `exact/moxcms-0.9.1-bisect.patch` applied, which adds stage toggles and changes nothing while they're off. `hdr_class.rs` also takes a copy of `imazen/zenjxl-decoder` and `imazen/lcms`; `adapter_paths.rs` and `gray_icc.rs` take `lcms-cref`. Profiles: `zenpixels-convert/src/profiles/` plus mozjpeg's `test1.icc` and `test3.icc` from codec-corpus.
+
+- `mox_bias.rs`: moxcms's U8 path over all 2^24 inputs, one stage at a time, with a scalar model that reproduces its bytes.
+- `adapter_paths.rs`: every `MoxCms` route against exact math, and tables evaluated exactly, tetrahedral and trilinear.
+- `hdr_class.rs`: the HDR rows below against an exact `mft1`, the analytic tone map, libjxl's analytic path and `djxl` PFMs.
+- `gray_icc.rs`: every GRAY-class bundled profile through a gray PNG, C lcms2 and the load-bearing rewrite.
+
 ## Classifying the HDR rows, 2026-11-05
 
 Each row's cause, from a harness that evaluates the source profile's `A2B0` table exactly in f64 and swaps one stage at a time in a scratch copy of moxcms 0.9.1. PQ and HLG are BT.2100; `intensity_target` is 10000 and 1000. Worst code and mean |d| over the decoded image's rows. Not measured on Zen 5.
