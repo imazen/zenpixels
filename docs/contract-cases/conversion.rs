@@ -7,7 +7,7 @@ mod tests {
     fn known_transfer_is_converted() {
         let src = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Linear);
         let pixels = [128u8; 3];
-        let out = adapt::adapt_for_encode_cow(&pixels, src, 1, 1, 3, &[PixelDescriptor::RGB8_SRGB])
+        let out = adapt::adapt_raw_rows_for_encode(&pixels, src, 1, 1, 3, &[PixelDescriptor::RGB8_SRGB], &ConvertOptions::permissive())
             .unwrap();
         assert_eq!(
             out.as_slice().descriptor().transfer(),

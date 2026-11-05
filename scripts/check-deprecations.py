@@ -73,7 +73,7 @@ fn main() { let _ = legacy_provider().as_pixel_slice(); }
         """
 fn main() {
     let d = zenpixels_convert::PixelDescriptor::RGB8_SRGB;
-    let result = zenpixels_convert::adapt::adapt_for_encode_cow(&[0, 0, 0], d, 1, 1, 3, &[d]).unwrap();
+    let result = zenpixels_convert::adapt::adapt_raw_rows_for_encode(&[0, 0, 0], d, 1, 1, 3, &[d], &zenpixels_convert::ConvertOptions::permissive()).unwrap();
     let _ = result.as_slice();
 }
 """,

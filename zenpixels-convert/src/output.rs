@@ -430,6 +430,7 @@ pub(crate) fn finalize_for_output_with(
 }
 
 /// Resolve current color once; provenance never overrides working pixels.
+#[cfg(feature = "hdr-experimental")]
 pub(crate) fn current_profile(
     buffer: &PixelBuffer,
 ) -> Result<crate::ColorProfileSource<'_>, At<ConvertError>> {
