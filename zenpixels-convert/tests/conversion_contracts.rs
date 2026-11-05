@@ -1,13 +1,16 @@
 // Regression cases from the API contract review.
+#[path = "common/adapt_rows.rs"]
+mod adapt_rows;
+
 #[cfg(test)]
 mod tests {
-    use zenpixels_convert::adapt::adapt_raw_rows_for_encode;
+    use super::adapt_rows::adapt_rows;
     use zenpixels_convert::*;
     #[test]
     fn known_transfer_is_converted() {
         let src = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Linear);
         let pixels = [128u8; 3];
-        let out = adapt_raw_rows_for_encode(
+        let out = adapt_rows(
             &pixels,
             src,
             1,

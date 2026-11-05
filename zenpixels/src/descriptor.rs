@@ -1664,7 +1664,7 @@ impl fmt::Display for ColorModel {
 /// [`PixelDescriptor`], not here.
 ///
 /// Every format has exactly one representation:
-/// [`create_from`](Self::create_from) and [`from_parts`](Self::from_parts) return
+/// [`from_parts`](Self::from_parts) returns
 /// the named variant whenever one exists, and a [`GenericFormat`] cannot be
 /// constructed directly. Variants
 /// have no integer value; more variants may be added in a minor release.
@@ -1724,7 +1724,7 @@ pub enum PixelFormat {
 
 /// Interleaved sample type and layout without a named [`PixelFormat`] variant.
 ///
-/// Obtain one from [`PixelFormat::create_from`] or by matching
+/// Obtain one from [`PixelFormat::from_parts`] or by matching
 /// [`PixelFormat::Generic`]. It has no public constructor, so a combination
 /// that has a named variant is never represented generically. It may record
 /// more of the format (such as a channel count and per-channel roles) in a
@@ -1967,22 +1967,13 @@ impl PixelFormat {
         }
     }
 
-    /// The format for a sample type and layout: the named variant when one exists,
-    /// [`Generic`](Self::Generic) otherwise, `None` when the combination is not
-    /// representable.
+    /// The format for a sample type, layout and alpha mode: the named variant when
+    /// one exists, [`Generic`](Self::Generic) otherwise, `None` when the combination
+    /// is not representable (e.g. `(U16, Bgra, _)`).
     ///
     /// `U8` with `Rgba` or `Bgra` resolves to [`Rgba8`](Self::Rgba8) or
-    /// [`Bgra8`](Self::Bgra8); [`from_parts`](Self::from_parts) with
-    /// [`AlphaMode::Undefined`] selects the padding formats.
-    #[inline]
-    pub const fn create_from(channel_type: ChannelType, layout: ChannelLayout) -> Option<Self> {
-        Self::from_parts(channel_type, layout, None)
-    }
-
-    /// Resolve a format from channel type, layout, and alpha presence.
-    ///
-    /// Returns `None` for combinations that have no `PixelFormat` variant
-    /// (e.g. `(U16, Bgra, _)`). CMYK resolves to conventional ink polarity;
+    /// [`Bgra8`](Self::Bgra8); [`AlphaMode::Undefined`] selects the padding formats.
+    /// CMYK resolves to conventional ink polarity;
     /// reversed F32 ink polarity must be selected explicitly with
     /// [`Self::CmykF32Inverted`]. Channel layout alone does not retain polarity.
     #[inline]

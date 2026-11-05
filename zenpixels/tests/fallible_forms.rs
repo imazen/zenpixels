@@ -137,7 +137,8 @@ fn constructors() {
 fn any_color_holds_formats_wider_than_color() {
     use zenpixels::{AnyColor, Color, PixelFormat};
     let wide = PixelDescriptor::from_pixel_format(
-        PixelFormat::create_from(ChannelType::F64, ChannelLayout::Rgba).expect("generic format"),
+        PixelFormat::from_parts(ChannelType::F64, ChannelLayout::Rgba, None)
+            .expect("generic format"),
     );
     let bytes: Vec<u8> = [0.25f64, 0.5, 0.75, 1.0]
         .iter()

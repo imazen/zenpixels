@@ -33,6 +33,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- **Breaking:** removed three duplicates, none used outside this repo. `PixelFormat::create_from(c, l)` is `from_parts(c, l, None)`. `adapt::adapt_raw_rows_for_encode` and the `adapt` module are private: use `PixelSliceConvertExt::adapt_for_encode`. `zenpixels` re-exports only `whereat::At`, not `ResultAtExt` or `at`; take those from `whereat`.
+
 - New test: premultiplied ICC samples keep every bit through `OutputPlan::new_preserving_samples`, with no CMS.
 
 - `Cmyk8` through `MoxCms` now gives `CmykF32`'s color, rounded, including its black-point compensation: on 49 real profiles to sRGB they differed by a mean of 17.8 codes. RGBA targets get the same transform as RGB. `Cmyk8` is 44% slower and `CmykF32` 6 times faster (`benchmarks/cmyk8_bpc_2026-11-05.md`).

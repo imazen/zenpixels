@@ -8,10 +8,10 @@
 
 ## summary
 #
-#   pub modules                                15
+#   pub modules                                14
 #   pub types (struct/enum/trait/alias)        53
 #   pub consts/statics                         32
-#   free functions                              2
+#   free functions                              1
 #   inherent methods                          168
 #   struct fields                              73
 #   enum variants                              83
@@ -21,8 +21,7 @@
 #   auto-trait exceptions                       4
 #
 # per-module pub lines:
-#   (root)                          190
-#   adapt                             1
+#   (root)                          189
 #   cms                              18
 #   codes                            39
 #   converter                        31
@@ -37,12 +36,10 @@
 #   output                           19
 #   ycbcr                            22
 
-## items (406 lines)
+## items (404 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
-pub mod adapt
-pub fn adapt::adapt_raw_rows_for_encode<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelCow<'a>, whereat::at::At<error::ConvertError>>
 pub mod cms
 pub fn cms::CmsPluginError::as_inner(&self) -> &(dyn core::error::Error + core::marker::Send + core::marker::Sync + 'static)
 pub fn cms::CmsPluginError::msg(impl core::convert::Into<alloc::string::String>) -> Self

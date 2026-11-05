@@ -243,7 +243,7 @@ fn native_combinations_have_one_generic_representation() {
 }
 
 #[test]
-fn create_from_uses_the_named_format_whenever_one_exists() {
+fn from_parts_uses_the_named_format_whenever_one_exists() {
     use zenpixels::{ChannelLayout as L, ChannelType as T, PixelFormat as F};
     let named = [
         (T::U8, L::Rgb, F::Rgb8),
@@ -271,17 +271,16 @@ fn create_from_uses_the_named_format_whenever_one_exists() {
         (T::U8, L::Bgr, F::Bgr8),
     ];
     for (channel, layout, want) in named {
-        assert_eq!(F::create_from(channel, layout), Some(want));
+        assert_eq!(F::from_parts(channel, layout, None), Some(want));
     }
     for channel in [T::I8, T::I16, T::U32, T::I32, T::U64, T::I64, T::F64] {
         for layout in [L::Gray, L::GrayAlpha, L::Rgb, L::Rgba] {
-            let format = F::create_from(channel, layout).unwrap();
+            let format = F::from_parts(channel, layout, None).unwrap();
             assert!(matches!(format, F::Generic(_)), "{channel:?} {layout:?}");
             assert_eq!((format.channel_type(), format.layout()), (channel, layout));
-            assert_eq!(F::from_parts(channel, layout, None), Some(format));
         }
         // Layouts without a generic form stay unrepresentable.
-        assert_eq!(F::create_from(channel, L::Cmyk), None);
+        assert_eq!(F::from_parts(channel, L::Cmyk, None), None);
     }
 }
 

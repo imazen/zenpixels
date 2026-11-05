@@ -2,7 +2,9 @@
 #![allow(deprecated)]
 
 use zenpixels_convert::PixelDescriptor;
-use zenpixels_convert::adapt::adapt_raw_rows_for_encode;
+#[path = "common/adapt_rows.rs"]
+mod adapt_rows;
+use adapt_rows::adapt_rows;
 
 /// The packed rows of `data` converted from `from` to `to` through the
 /// owned-buffer path (formerly checked through the raw `convert_buffer`).
@@ -30,7 +32,7 @@ fn adapt_exact_match_is_borrowed() {
     let desc = PixelDescriptor::RGB8_SRGB;
     let supported = &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB];
 
-    let result = adapt_raw_rows_for_encode(
+    let result = adapt_rows(
         &data,
         desc,
         width,
@@ -51,7 +53,7 @@ fn adapt_exact_match_is_borrowed() {
 #[test]
 fn pixel_cow_preserves_valid_source_stride() {
     let data = [1u8, 2, 3, 0, 0, 0, 4, 5, 6, 0, 0, 0];
-    let result = adapt_raw_rows_for_encode(
+    let result = adapt_rows(
         &data,
         PixelDescriptor::RGB8_SRGB,
         1,
@@ -84,7 +86,7 @@ fn adapt_converts_when_needed() {
     // Only supports RGBA8.
     let supported = &[PixelDescriptor::RGBA8_SRGB];
 
-    let result = adapt_raw_rows_for_encode(
+    let result = adapt_rows(
         &data,
         desc,
         width,
@@ -114,7 +116,7 @@ fn adapt_empty_list_errors() {
     let data = vec![0u8; 3];
     let desc = PixelDescriptor::RGB8_SRGB;
 
-    let result = adapt_raw_rows_for_encode(
+    let result = adapt_rows(
         &data,
         desc,
         1,
@@ -137,7 +139,7 @@ fn adapt_transfer_agnostic_match() {
     let desc = PixelDescriptor::RGB8; // Unknown transfer
     let supported = &[PixelDescriptor::RGB8_SRGB];
 
-    let result = adapt_raw_rows_for_encode(
+    let result = adapt_rows(
         &data,
         desc,
         width,
