@@ -1872,7 +1872,7 @@ fn convert_u8_rgb_matlut_v3(
     src: &[u8],
     dst: &mut [u8],
     lin_lut: &[f32; 256],
-    enc_u8: fn(f32) -> u8,
+    _enc_u8: fn(f32) -> u8,
 ) {
     let pixel_count = src.len() / 3;
     let bulk = (pixel_count / 8) * 8;
@@ -1883,15 +1883,14 @@ fn convert_u8_rgb_matlut_v3(
         let d: &mut [u8; 24] = (&mut dst[off..off + 24]).try_into().unwrap();
         convert_8px_u8_rgb_matlut(token, m, s, d, lin_lut, enc_lut);
     }
-    for i in bulk..pixel_count {
-        let base = i * 3;
-        let r = lin_lut[src[base] as usize];
-        let g = lin_lut[src[base + 1] as usize];
-        let b = lin_lut[src[base + 2] as usize];
-        let (nr, ng, nb) = mat3x3(m, r, g, b);
-        dst[base] = enc_u8(nr);
-        dst[base + 1] = enc_u8(ng);
-        dst[base + 2] = enc_u8(nb);
+    // The tail takes the same kernel, so a pixel's result doesn't depend on where it sits in the row.
+    let tail = &src[bulk_bytes..pixel_count * 3];
+    if !tail.is_empty() {
+        let mut s = [0u8; 24];
+        let mut d = [0u8; 24];
+        s[..tail.len()].copy_from_slice(tail);
+        convert_8px_u8_rgb_matlut(token, m, &s, &mut d, lin_lut, enc_lut);
+        dst[bulk_bytes..pixel_count * 3].copy_from_slice(&d[..tail.len()]);
     }
 }
 
@@ -1949,7 +1948,7 @@ fn convert_u8_rgb_fused_v3(
     dst: &mut [u8],
     lin_lut: &[f32; 256],
     dst_trc: TransferFunction,
-    scalar_enc: fn(f32) -> f32,
+    _scalar_enc: fn(f32) -> f32,
 ) {
     let pixel_count = src.len() / 3;
     let bulk = (pixel_count / 8) * 8;
@@ -1959,15 +1958,14 @@ fn convert_u8_rgb_fused_v3(
         let d: &mut [u8; 24] = (&mut dst[off..off + 24]).try_into().unwrap();
         convert_8px_u8_rgb_fused(token, m, s, d, lin_lut, dst_trc);
     }
-    for i in bulk..pixel_count {
-        let base = i * 3;
-        let r = lin_lut[src[base] as usize];
-        let g = lin_lut[src[base + 1] as usize];
-        let b = lin_lut[src[base + 2] as usize];
-        let (nr, ng, nb) = mat3x3(m, r, g, b);
-        dst[base] = (scalar_enc(nr) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
-        dst[base + 1] = (scalar_enc(ng) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
-        dst[base + 2] = (scalar_enc(nb) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+    // The tail takes the same kernel, so a pixel's result doesn't depend on where it sits in the row.
+    let tail = &src[bulk_bytes..pixel_count * 3];
+    if !tail.is_empty() {
+        let mut s = [0u8; 24];
+        let mut d = [0u8; 24];
+        s[..tail.len()].copy_from_slice(tail);
+        convert_8px_u8_rgb_fused(token, m, &s, &mut d, lin_lut, dst_trc);
+        dst[bulk_bytes..pixel_count * 3].copy_from_slice(&d[..tail.len()]);
     }
 }
 
@@ -2076,16 +2074,14 @@ fn convert_u8_rgba_lut_simd_v3(
             enc_u8,
         );
     }
-    for i in bulk..pixel_count {
-        let base = i * 4;
-        let r = lin_lut[src[base] as usize];
-        let g = lin_lut[src[base + 1] as usize];
-        let b = lin_lut[src[base + 2] as usize];
-        let (nr, ng, nb) = mat3x3(m, r, g, b);
-        dst[base] = enc_u8(nr);
-        dst[base + 1] = enc_u8(ng);
-        dst[base + 2] = enc_u8(nb);
-        dst[base + 3] = src[base + 3];
+    // The tail takes the same kernel, so a pixel's result doesn't depend on where it sits in the row.
+    let tail = &src[bulk_bytes..pixel_count * 4];
+    if !tail.is_empty() {
+        let mut s = [0u8; 32];
+        let mut d = [0u8; 32];
+        s[..tail.len()].copy_from_slice(tail);
+        convert_8px_u8_rgba_simd(token, m, &s, &mut d, lin_lut, enc_u8);
+        dst[bulk_bytes..pixel_count * 4].copy_from_slice(&d[..tail.len()]);
     }
 }
 

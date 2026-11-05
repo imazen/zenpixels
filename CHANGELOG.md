@@ -33,6 +33,10 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- Fast U8 gamut kernels give each pixel the same result wherever it sits in a row. The tail used different arithmetic.
+- `ConvertPlan`: cross-gamut U8 from an unknown transfer encodes as the target says, instead of always as sRGB.
+- `PixelDescriptor::layout_compatible` separates `CmykF32` from `CmykF32Inverted`. `same_color` sees out-of-range channels. `try_as_imgref` no longer panics on empty buffers.
+
 - `ConvertPlan`: conversions to and from Oklab pass through linear RGB. A non-linear source skipped its transfer function, float sRGB ran it after Oklab and clamped a and b, and cross-gamut sources multiplied Oklab by an RGB matrix.
 - `ConvertPlan`: F16 cross-gamut conversion read samples as U8 and wrote half the row.
 - `ConvertPlan::new_with_tone_mapper`: a premultiplied source keeps the injected mapper, and a mapper receives the working primaries it asks for.

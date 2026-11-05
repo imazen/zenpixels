@@ -2995,7 +2995,8 @@ impl<S: ByteStorage> PixelBuffer<(), S> {
         } else {
             bytemuck::try_cast_slice(data).ok()?
         };
-        let stride_px = self.stride / pixel_size;
+        // imgref refuses a stride of 0, even for an empty image.
+        let stride_px = (self.stride / pixel_size).max(1);
         Some(imgref::Img::new_stride(
             pixels,
             self.width as usize,
@@ -3034,7 +3035,8 @@ impl<S: ByteStorageMut> PixelBuffer<(), S> {
         } else {
             bytemuck::try_cast_slice_mut(data).ok()?
         };
-        let stride_px = self.stride / pixel_size;
+        // imgref refuses a stride of 0, even for an empty image.
+        let stride_px = (self.stride / pixel_size).max(1);
         Some(imgref::Img::new_stride(
             pixels,
             self.width as usize,

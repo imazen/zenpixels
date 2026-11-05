@@ -1519,6 +1519,9 @@ impl PixelDescriptor {
     pub const fn layout_compatible(self, other: Self) -> bool {
         self.format.channel_type().same(other.format.channel_type())
             && self.layout().same(other.layout())
+            // Same bytes, opposite meaning: 1.0 is full ink in one and no ink in the other.
+            && matches!(self.format, PixelFormat::CmykF32Inverted)
+                == matches!(other.format, PixelFormat::CmykF32Inverted)
     }
 }
 

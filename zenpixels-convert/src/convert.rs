@@ -1264,7 +1264,18 @@ impl ConvertPlan {
                         gamut_steps.push(ConvertStep::SrgbU8ToLinearF32);
                         // Already linear, skip separate linearize.
                         gamut_steps.push(gamut_step);
-                        gamut_steps.push(ConvertStep::LinearF32ToSrgbU8);
+                        // Unknown input decodes as sRGB, but the output is still what `to` says.
+                        if matches!(
+                            to.transfer(),
+                            TransferFunction::Srgb | TransferFunction::Unknown
+                        ) {
+                            gamut_steps.push(ConvertStep::LinearF32ToSrgbU8);
+                        } else {
+                            if !matches!(to_target_tf, ConvertStep::Identity) {
+                                gamut_steps.push(to_target_tf);
+                            }
+                            gamut_steps.push(ConvertStep::NaiveF32ToU8);
+                        }
                     } else if desc.channel_type() == ChannelType::U16
                         && desc.transfer() == TransferFunction::Pq
                     {

@@ -203,3 +203,126 @@ fn orientation_refuses_a_different_format_of_the_same_size() {
             .is_err()
     );
 }
+
+/// One conversion of a row and of its pixels one at a time must give the same bytes, through
+/// `RowConverter::new`, which takes the fast gamut kernels.
+#[test]
+fn fast_gamut_kernels_are_row_split_invariant() {
+    use zenpixels::ChannelType as C;
+    let mut failures = Vec::new();
+    for base in [
+        D::RGB8_SRGB,
+        D::RGBA8_SRGB,
+        D::BGRA8_SRGB,
+        D::RGB16_SRGB,
+        D::RGBA16_SRGB,
+        D::RGBF32_LINEAR,
+        D::RGBAF32_LINEAR,
+    ] {
+        for (transfer_in, transfer_out) in [
+            (T::Srgb, T::Srgb),
+            (T::Linear, T::Srgb),
+            (T::Srgb, T::Linear),
+        ] {
+            for (a, b) in [
+                (P::DisplayP3, P::Bt709),
+                (P::Bt709, P::DisplayP3),
+                (P::Bt2020, P::Bt709),
+            ] {
+                let from = base.with_transfer(transfer_in).with_primaries(a);
+                let to = base.with_transfer(transfer_out).with_primaries(b);
+                let Ok(mut c) = RowConverter::new(from, to) else {
+                    continue;
+                };
+                let n = 65_537usize;
+                // A hash, so neighboring channels don't move together.
+                let value = |i: usize| {
+                    let h = (i as u32).wrapping_mul(0x9E37_79B1);
+                    (h ^ (h >> 15)).wrapping_mul(0x85EB_CA77) >> 16
+                };
+                let sample = from.channel_type().byte_size();
+                let bpp = from.bytes_per_pixel();
+                let src: Vec<u8> = match from.channel_type() {
+                    C::U8 => (0..n * bpp).map(|i| value(i) as u8).collect(),
+                    C::U16 => (0..n * bpp / sample)
+                        .flat_map(|i| (value(i) as u16).to_ne_bytes())
+                        .collect(),
+                    _ => (0..n * bpp / sample)
+                        .flat_map(|i| ((value(i) as f32) / 65535.0).to_ne_bytes())
+                        .collect(),
+                };
+                let mut whole = vec![0u8; n * bpp];
+                c.try_convert_row(&src, &mut whole, n as u32).unwrap();
+                let mut parts = vec![0u8; n * bpp];
+                for i in 0..n {
+                    c.try_convert_row(
+                        &src[i * bpp..(i + 1) * bpp],
+                        &mut parts[i * bpp..(i + 1) * bpp],
+                        1,
+                    )
+                    .unwrap();
+                }
+                if whole != parts {
+                    let wrong = whole.iter().zip(&parts).filter(|(x, y)| x != y).count();
+                    failures.push(format!(
+                        "{:?} {transfer_in:?}>{transfer_out:?} {a:?}>{b:?}: {wrong} bytes",
+                        base.pixel_format()
+                    ));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+
+    // The pixel that first showed it.
+    let from = D::RGB8_SRGB.with_primaries(P::DisplayP3);
+    let mut c = RowConverter::new(from, D::RGB8_SRGB).unwrap();
+    let src: Vec<u8> = [12u8, 153, 195].repeat(9);
+    let mut out = vec![0u8; 27];
+    c.try_convert_row(&src, &mut out, 9).unwrap();
+    assert_eq!(out[..3], out[24..27]);
+}
+
+#[test]
+fn unknown_input_still_encodes_as_the_target_says() {
+    let from = D::RGB8_SRGB
+        .with_transfer(T::Unknown)
+        .with_primaries(P::DisplayP3);
+    let to = D::RGB8_SRGB
+        .with_transfer(T::Linear)
+        .with_primaries(P::Bt709);
+    let mut out = [0u8; 3];
+    RowConverter::new(from, to)
+        .unwrap()
+        .try_convert_row(&[128, 128, 128], &mut out, 1)
+        .unwrap();
+    assert_eq!(out, [55, 55, 55]);
+}
+
+#[test]
+fn opposite_ink_polarity_is_not_layout_compatible() {
+    use zenpixels::PixelFormat as F;
+    assert!(
+        !F::CmykF32
+            .descriptor()
+            .layout_compatible(F::CmykF32Inverted.descriptor())
+    );
+    assert!(
+        F::CmykF32
+            .descriptor()
+            .layout_compatible(F::CmykF32.descriptor())
+    );
+}
+
+#[test]
+fn same_color_sees_out_of_range_channels() {
+    use zenpixels_convert::ColorConvertExt;
+    let color = |r: f32| {
+        zenpixels::Color::try_new(
+            D::RGBF32_LINEAR.with_primaries(P::Bt709),
+            bytemuck::cast_slice(&[r, 0.0, 0.0]),
+        )
+        .unwrap()
+    };
+    assert!(!color(-0.5).same_color(&color(0.0)));
+}

@@ -1074,8 +1074,10 @@ impl ColorConvertExt for zenpixels::Color {
         }
         let linear = |color: &Self| {
             let target = PixelDescriptor::RGBAF32_LINEAR.with_primaries(ColorPrimaries::Bt2020);
+            // Out-of-range channels are part of the color, so they must reach the comparison.
             let options = zenpixels::ConvertOptions::permissive()
-                .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked);
+                .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked)
+                .with_clip_out_of_gamut(false);
             let converted = color.try_convert_to(target, &options).ok()?;
             let bytes: [u8; 16] = converted.as_bytes().try_into().ok()?;
             Some(core::array::from_fn::<f32, 4, _>(|i| {
