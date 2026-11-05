@@ -138,8 +138,8 @@ share a curve and the target has sRGB's. Everything else, including table profil
 so it matches that path's result. Against moxcms's own F32 output, 0.13% of samples or fewer miss nearest on Display P3, Adobe RGB and BT.2020.
 
 moxcms is a different implementation from lcms2 and is expected to differ from it. On table profiles the two differ more: on mozjpeg's `test1.icc` about 16% of 8-bit samples differ, and on `test3.icc` 61%.
-`CmykF32` and `CmykF32Inverted` sources convert to any RGB target; converting into F32 CMYK is refused. `Cmyk8` has no
-black-point compensation, while F32 CMYK to sRGB does.
+`CmykF32` and `CmykF32Inverted` sources convert to any RGB target; converting into F32 CMYK is refused. `Cmyk8` runs the
+same transform and rounds, so both have F32 CMYK's black-point compensation to sRGB.
 
 Every backend passes the same contract in `cms-contract/`: `just cms-contract`.
 

@@ -136,3 +136,79 @@ fn exact_output_refuses_color_math_depth_loss_and_reassociation() {
     .unwrap_err();
     assert!(matches!(error.error(), ConvertError::NoPath { .. }));
 }
+
+/// imazen/zenpixels#94: a decoded premultiplied JPEG XL image, with only an ICC profile to describe
+/// its color, kept as it is. No CMS exists here, and none is needed.
+#[test]
+fn premultiplied_icc_samples_keep_every_bit_without_a_cms() {
+    let from = PixelDescriptor::RGBAF32_LINEAR
+        .with_alpha(Some(AlphaMode::Premultiplied))
+        .with_primaries(zenpixels_convert::ColorPrimaries::Unknown)
+        .with_transfer(TransferFunction::Unknown);
+    let icc: Arc<[u8]> = Arc::from(&b"profile no parser has to read"[..]);
+    let context = Arc::new(ColorContext::from_icc(icc.clone()));
+    let origin = ColorOrigin::from_icc(icc.clone());
+    // Two rows, stride 32: a padding pixel, and a NaN payload and -0.0 among the samples.
+    let samples = [
+        f32::from_bits(0x7fc1_2345),
+        -0.0,
+        0.25,
+        0.5,
+        9.0,
+        9.0,
+        9.0,
+        9.0,
+        f32::from_bits(0x7fa5_5a5a),
+        1.5,
+        -0.125,
+        0.75,
+    ];
+    let source = PixelSlice::new(bytemuck::cast_slice(&samples), 1, 2, 32, from)
+        .unwrap()
+        .with_color_context(context.clone());
+    for profile in [OutputProfile::SameAsOrigin, OutputProfile::Icc(icc.clone())] {
+        let mut plan =
+            OutputPlan::new_preserving_samples(from, Some(context.clone()), &origin, profile, from)
+                .unwrap();
+        plan.prepare(1).unwrap();
+        assert_eq!(plan.output_descriptor(), from);
+
+        // Borrowed: the same memory, with the current profile.
+        let view = plan.borrow_rows(source.clone()).unwrap().unwrap();
+        assert_eq!(view.row(0).as_ptr(), source.row(0).as_ptr());
+        assert_eq!(view.stride(), 32);
+        assert_eq!(view.descriptor(), from);
+        assert_eq!(view.color_context().unwrap().icc.as_deref(), Some(&*icc));
+
+        // Copied into a strided destination: exact bits, and its padding untouched.
+        let mut target = [f32::from_bits(0x1234_5678); 16];
+        let rows = plan
+            .convert_rows(
+                source.clone(),
+                PixelSliceMut::new(bytemuck::cast_slice_mut(&mut target), 1, 2, 48, from).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(rows.descriptor(), from);
+        assert_eq!(rows.color_context().unwrap().icc.as_deref(), Some(&*icc));
+        let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&target[..4]), bits(&samples[..4]));
+        assert_eq!(bits(&target[4..12]), [0x1234_5678; 8]);
+        assert_eq!(bits(&target[12..]), bits(&samples[8..]));
+    }
+
+    // The format-only constructor still can't express this, and refuses rather than relabeling.
+    let error = OutputPlan::new(
+        from,
+        Some(context),
+        &origin,
+        OutputProfile::SameAsOrigin,
+        from.pixel_format(),
+        &zenpixels_convert::ConvertOptions::retain_channels(),
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error.error(), ConvertError::NeedsCms { .. }),
+        "{error}"
+    );
+}
