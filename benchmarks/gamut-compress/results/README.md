@@ -14,3 +14,4 @@ Commands,: build with `cargo build --release`, then run
 `gamut-compress real <dir> 0.0875 0.05`, `gamut-compress bench <dir> 0.0875 0.05`.
 
 The full `bench.json` and `bench.log` exceed the size limit for generated data and are not committed.
+- `knee.csv`: knees 0.90 to 1.0 through the integrated `SoftCompress`, on the same images and a 33³ BT.2020 grid.

@@ -88,5 +88,5 @@ moxcms doesn't need to change to use this: for recognizable matrix-shaper curves
 - `GamutMapping::SoftCompress` used the table through `compress_planes`, building one per `Pipeline`. `compress_oklab_planes` is the replacement.
 - `GamutMapping::ChromaReduce` is declared but never applied, so selecting it gives clipping. A knee of 1.0 is the same mapping.
 - Its docs suggest a knee of 0.9, against the 0.96 default the June sweep chose.
-- The June sweep measured pre-clamp out-of-gamut pixels through the table, so table overshoot counts in its result. Whether 0.96 survives an exact boundary needs a re-run.
+- The June sweep chose 0.96 as the largest knee keeping pre-clamp out-of-gamut pixels under 0.1 % at corpus p90, measured through the table. An exact boundary leaves almost nothing out of gamut at any knee, so that criterion no longer separates knees. On a BT.2020 grid, knees from 0.90 to 0.99 left no pixels past 1e-7, and 1.0 left 11.8 % from roundoff at the boundary. On the 10 real P3 images, moving from 0.96 to 0.99 changed about 1 % fewer pixels, 9.27 % against 10.29 % on average, and mean OKLab error barely moved, 0.00059 against 0.00065. So 0.96 stays. The gain-mapped HDR corpus wasn't re-run, and any new criterion would need a visual judgment.
 - `GamutLut` and `GamutMLP` expand sRGB toward P3, the other direction, so nothing here touches them.

@@ -465,6 +465,51 @@ fn main() {
     std::fs::create_dir_all("results").unwrap();
     let (tau, eps): (f32, f32) = (a.get(3).and_then(|v| v.parse().ok()).unwrap_or(0.0), a.get(4).map(|v| v.parse().unwrap()).unwrap_or(0.01));
     match a.get(1).map(|s| s.as_str()) {
+        Some("knee") => {
+            // What the exact boundary does to the June knee criterion, on real P3 images
+            // and a saturation-heavy BT.2020 set. HDR gain-map corpus not included.
+            let m = source_matrix(0);
+            let imgs = images(&a[2], &m);
+            let space = OklabSpace::for_primaries(P::Bt709).unwrap();
+            let mut f = std::fs::File::create("results/knee.csv").unwrap();
+            writeln!(f, "set,knee,pixels,raw_outside_pct,changed_pct,mean_de,p999_de,max_de,max_ramp_step").unwrap();
+            let mut sets: Vec<(String, Vec<[f32; 3]>)> = vec![("grid-BT2020".into(), {
+                let m2 = source_matrix(1);
+                let mut v = Vec::new();
+                for r in 0..33 { for g in 0..33 { for b in 0..33 {
+                    v.push(mul(&m2, [r as f64 / 32.0, g as f64 / 32.0, b as f64 / 32.0]).map(|x| x as f32));
+                }}}
+                v
+            })];
+            for i in imgs { sets.push((i.name, i.rgb)); }
+            for (name, data) in &sets {
+                for knee in [0.90f32, 0.94, 0.96, 0.98, 0.99, 1.0] {
+                    let sc = SoftCompress::new(&space, knee);
+                    let mut out = data.clone();
+                    sc.apply_strip(&mut out);
+                    let n = data.len() as f64;
+                    let raw = out.iter().filter(|p| p.iter().any(|&v| !(-1e-7..=1.0 + 1e-7).contains(&v))).count() as f64;
+                    let changed = out.iter().zip(data).filter(|(a, b)| a != b).count() as f64;
+                    let mut de_v: Vec<f64> = out.iter().zip(data).map(|(x, o)| de(lab(clip(x.map(|v| v as f64))), lab(o.map(|v| v as f64)))).collect();
+                    let mean = de_v.iter().sum::<f64>() / n;
+                    de_v.sort_by(f64::total_cmp);
+                    // Largest output step along chroma ramps out to twice the boundary.
+                    let mut step = 0.0f64;
+                    for ll in [0.3f64, 0.5, 0.7] { for h in (0..360).step_by(10) {
+                        let (sh, ch) = (h as f64).to_radians().sin_cos();
+                        let mut ramp: Vec<[f32; 3]> = (0..512).map(|i| {
+                            let c = 0.6 * i as f64 / 511.0;
+                            unlab([ll, c * ch, c * sh]).map(|v| v as f32)
+                        }).collect();
+                        sc.apply_strip(&mut ramp);
+                        for w in ramp.windows(2) {
+                            step = step.max(de(lab(clip(w[0].map(|v| v as f64))), lab(clip(w[1].map(|v| v as f64)))));
+                        }
+                    }}
+                    writeln!(f, "{name},{knee},{},{:.5},{:.4},{mean:.6},{:.5},{:.5},{step:.6}", data.len(), raw / n * 100.0, changed / n * 100.0, de_v[(n * 0.999) as usize], de_v[de_v.len() - 1]).unwrap();
+                }
+            }
+        }
         Some("css-golden") => {
             // Reference values for the crate's map_to_gamut test: the f64 port that
             // agreed with Color.js within 1.55e-14 in the gamut survey.
