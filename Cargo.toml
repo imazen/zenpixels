@@ -5,7 +5,7 @@ members = ["zenpixels", "zenpixels-convert", "scripts/icc-gen"]
 # Regenerate snapshots via `just api-doc`.
 # `benchmarks/transpose-shootout/` is dev-box-only measurement equipment
 # (external transpose crates + optional C++ Simd FFI) — never built by CI/tests.
-exclude = ["apidoc", "benchmarks/transpose-shootout"]
+exclude = ["zenpixels-iqa", "apidoc", "benchmarks/transpose-shootout"]
 resolver = "2"
 
 [workspace.dependencies]

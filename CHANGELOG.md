@@ -1,3 +1,17 @@
+# zenpixels-iqa
+
+## [Unreleased]
+
+### QUEUED BREAKING CHANGES
+
+None. This new companion is an unpublished review API.
+
+### Added
+
+- Still-image metric contracts with rich results, native plane validation,
+  persistent identity, map geometry/folds, real reference reuse and conformance
+  controls. No metric implementations or video session contracts are included.
+
 ## 0.3.1 cleanup — release reconciliation (2026-09-28)
 
 Includes all 0.2.17 behavior fixes and `SampleEncoding`, then removes:

@@ -302,3 +302,16 @@ release-reconcile-check:
     cargo check --workspace --all-targets --all-features --locked
     cargo test --workspace --all-features --locked
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+# Still-image IQA contract: no codec or metric implementation dependencies.
+iqa-check:
+    cargo fmt --manifest-path zenpixels-iqa/Cargo.toml --check
+    cargo test --locked --manifest-path zenpixels-iqa/Cargo.toml --no-default-features
+    cargo test --locked --manifest-path zenpixels-iqa/Cargo.toml --features std
+    cargo clippy --locked --manifest-path zenpixels-iqa/Cargo.toml --all-targets --all-features -- -D warnings
+    RUSTDOCFLAGS="-D warnings" cargo doc --locked --manifest-path zenpixels-iqa/Cargo.toml --no-deps
+
+iqa-portability-check:
+    cargo +1.88.0 check --locked --manifest-path zenpixels-iqa/Cargo.toml --no-default-features
+    cargo check --locked --manifest-path zenpixels-iqa/Cargo.toml --no-default-features --target wasm32-unknown-unknown
+    cargo check --locked --manifest-path zenpixels-iqa/Cargo.toml --no-default-features --target thumbv7em-none-eabihf

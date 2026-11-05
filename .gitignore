@@ -64,3 +64,6 @@ fuzz-*.log
 
 # colocated jj state dir
 .jj/
+
+# Retain the standalone IQA review dependency graph.
+!zenpixels-iqa/Cargo.lock
