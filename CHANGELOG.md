@@ -52,7 +52,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
   `ConvertIntent::best_match_within`.
 - API: `ConvertOptions::gamut_mapping` with `GamutMapping::{Clip, SoftCompress}`.
   `SoftCompress::compress_oklab_planes`. `AnyColor` for pixels wider than `Color` holds.
-  `ColorConvertExt::map_to_gamut`, the CSS Color 4 algorithm.
+  `ColorConvertExt::map_to_gamut`, the CSS Color 4 algorithm, and
+  `ColorConvertExt::parse_css`, checked against Color.js.
 - Fix: `SoftCompress` solves the boundary directly, without its table. In-gamut colors
   below the knee stay bit-identical, and every SIMD tier gives identical bits.
   `adapt_for_encode_explicit_cow` is now `adapt_raw_rows_for_encode`.

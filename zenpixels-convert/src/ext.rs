@@ -884,6 +884,29 @@ pub trait ColorConvertExt: crate::sealed::Sealed + Sized {
         options: &zenpixels::ConvertOptions,
     ) -> Result<Self, whereat::At<crate::ConvertError>>;
 
+    /// Parse a CSS color: hex, a name, `rgb()`, `hsl()`, `hwb()`, `color()`, `lab()`,
+    /// `lch()`, `oklab()` or `oklch()`. Case doesn't matter.
+    ///
+    /// Spaces with no descriptor, such as `lab()`, resolve to linear BT.2020 `f32`, which
+    /// keeps out-of-gamut values. See [`map_to_gamut`](Self::map_to_gamut) for output.
+    ///
+    /// ```
+    /// use zenpixels::Color;
+    /// use zenpixels_convert::ColorConvertExt;
+    ///
+    /// assert_eq!(Color::parse_css("#ff0000").unwrap(), Color::srgb8(255, 0, 0));
+    /// assert_eq!(Color::parse_css("rebeccapurple").unwrap(), Color::srgb8(102, 51, 153));
+    /// let wide = Color::parse_css("color(display-p3 1 0 0 / 50%)").unwrap();
+    /// assert!(wide.descriptor().has_alpha());
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`CssColorError::Unsupported`](crate::css::CssColorError::Unsupported) for forms that
+    /// need context, such as `currentcolor`, and
+    /// [`CssColorError::Invalid`](crate::css::CssColorError::Invalid) otherwise.
+    fn parse_css(css: &str) -> Result<Self, crate::css::CssColorError>;
+
     /// This color in `target`, moved into its gamut if needed, keeping hue and lightness.
     ///
     /// Follows the CSS Color 4 gamut mapping algorithm: OKLCh chroma reduction with a
@@ -956,6 +979,10 @@ fn css_gamut_map(space: &crate::oklab::OklabSpace, rgb: [f32; 3]) -> [f32; 3] {
 }
 
 impl ColorConvertExt for zenpixels::Color {
+    fn parse_css(css: &str) -> Result<Self, crate::css::CssColorError> {
+        crate::css::parse(css)
+    }
+
     fn map_to_gamut(
         &self,
         target: PixelDescriptor,

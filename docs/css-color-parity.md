@@ -8,7 +8,7 @@ Compared with the editor's drafts of [CSS Color 4](https://drafts.csswg.org/css-
 - sRGB, Display P3, Adobe RGB, BT.2020 primaries and the 203 cd/m² HDR anchors match to rounding.
 - Five real differences, in [Differences](#differences).
 
-zenpixels has no CSS parser. zenpipe parses hex and the CSS named colors (`src/bridge/parse.rs`); nothing parses the functional forms.
+`ColorConvertExt::parse_css` parses hex, named colors and the functional forms below, and agrees with Color.js 0.7.1 within 4.71e-6 on 64 colors (`tests/css_color_oracle.rs`). zenpipe still has its own hex and named-color parser in `src/bridge/parse.rs`, until it moves to this API.
 
 ## Syntax
 
@@ -20,15 +20,14 @@ zenpixels has no CSS parser. zenpipe parses hex and the CSS named colors (`src/b
 | `color(display-p3 …)`, `display-p3-linear` | F32 `Srgb` or `Linear`, `DisplayP3` | Direct |
 | `color(a98-rgb …)` | F32 `Gamma22`, `AdobeRgb` | Direct: same 563/256 exponent |
 | `color(rec2100-pq …)`, `rec2100-hlg` | F32 `Pq` or `Hlg`, `Bt2020` | Direct |
-| `oklab()` | F32 `Oklab` | Direct |
-| `oklch()` | F32 `Oklab`, polar to rectangular at parse | Hue is gone once chroma is 0 |
+| `oklab()`, `oklch()` | Linear `Bt2020`, converted at parse | Hue is gone once chroma is 0 |
 | `color(rec2100-linear …)` | F32 `Linear`, `Bt2020` | **Anchor differs**: below |
 | `color(rec2020 …)` | Linear `Bt2020`, decoded at parse | Gamma 2.4 has no `TransferFunction`; `Bt709` isn't it |
 | `color(prophoto-rgb …)`, `xyz`, `xyz-d50`, `xyz-d65`, `lab()`, `lch()` | Linear `Bt2020`, converted at parse | No named space; D50 needs Bradford at parse |
-| `ictcp()`, `jzazbz()`, `jzczhz()` | Linear `Bt2020`, converted at parse | No named space |
-| `device-cmyk()` | F32 `Cmyk` holds it | Numeric conversion refused; CSS's naive formula isn't implemented |
+| `ictcp()`, `jzazbz()`, `jzczhz()` | Not parsed | Returns `Unsupported`; no consumer yet |
+| `device-cmyk()` | Not parsed; F32 `Cmyk` could hold it | Returns `Unsupported`; numeric conversion refused, and CSS's naive formula isn't implemented |
 | `color(--profile …)` with `@color-profile` | Converted through a CMS at parse | `Color` is `Copy` and can't hold ICC |
-| `none` | Not representable | Parser's job; renders as 0, only matters for interpolation |
+| `none` | Not representable | Reads as 0; only matters for interpolation |
 | `currentcolor`, `light-dark()`, `contrast-color()`, `color-mix()`, relative colors | Resolved before `Color` | Engine level |
 
 Parsing to linear loses the original space, so a color can't be serialized back as written.
@@ -45,7 +44,7 @@ Parsing to linear loses the original space, so a color can't be serialized back 
 | [Compositing](https://drafts.csswg.org/compositing-1/) | The text read here names no space. Browsers are reported to use encoded sRGB ([csswg-drafts #6093](https://github.com/w3c/csswg-drafts/issues/6093), [public-colorweb, 2021](https://lists.w3.org/Archives/Public/public-colorweb/2021Jan/0044.html)); not verified | Linear; zenpipe's `MatteBlend::Encoded` opts into the other |
 | SDR white in HDR | 203 cd/m²: 58% PQ, 75% HLG | `DiffuseWhite::BT2408`, for mattes: 0.5807 and 0.7499 measured |
 | Headroom, `dynamic-range-limit`, `hdr-color()` | Defined | None |
-| Rendering intents | `@color-profile`, relative colorimetric default | `cms::RenderingIntent` |
+| Rendering intents | `@color-profile`, relative colorimetric default | Relative colorimetric only; other intents need another `PluggableCms` |
 | Serialization | Precision rules per space | None |
 
 ## Measured agreement
