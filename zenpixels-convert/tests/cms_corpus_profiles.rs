@@ -1,4 +1,3 @@
-#![allow(deprecated)]
 //! CMS tests using real-world ICC profiles extracted from non-sRGB images.
 //!
 //! Exercises the moxcms CMS backend against ICC profiles embedded in a corpus
@@ -27,7 +26,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use zenpixels_convert::PixelFormat;
-use zenpixels_convert::cms::ColorManagement;
+#[path = "common/icc_transforms.rs"]
+mod icc_transforms;
+use icc_transforms::IccTransforms;
 use zenpixels_convert::cms_moxcms::MoxCms;
 
 // ---------------------------------------------------------------------------
@@ -344,7 +345,7 @@ fn white_preservation_corpus() {
     let mut worst_name = String::new();
 
     for (name, dst_icc) in &rgb_profiles {
-        let xform = match cms.build_transform(src_icc, dst_icc) {
+        let mut xform = match cms.build_transform(src_icc, dst_icc) {
             Ok(x) => x,
             Err(_) => continue,
         };
@@ -390,7 +391,7 @@ fn black_preservation_corpus() {
     let mut worst_name = String::new();
 
     for (name, dst_icc) in &rgb_profiles {
-        let xform = match cms.build_transform(src_icc, dst_icc) {
+        let mut xform = match cms.build_transform(src_icc, dst_icc) {
             Ok(x) => x,
             Err(_) => continue,
         };
@@ -476,7 +477,7 @@ fn rgba_alpha_preserved_corpus() {
 
     for (src_name, src_icc) in &rgb_profiles {
         for (dst_name, dst_icc) in &rgb_profiles {
-            let xform = match cms.build_transform_for_format(
+            let mut xform = match cms.build_transform_for_format(
                 src_icc,
                 dst_icc,
                 PixelFormat::Rgba8,
@@ -530,7 +531,7 @@ fn monitor_profile_transforms() {
     let (src_name, src_icc) = srgb_like.expect("need at least one RGB profile as source");
 
     for (mon_name, mon_icc) in &monitor_profiles {
-        let xform = match cms.build_transform(src_icc, mon_icc) {
+        let mut xform = match cms.build_transform(src_icc, mon_icc) {
             Ok(x) => x,
             Err(e) => {
                 eprintln!("  skip {mon_name}: {e:?}");
@@ -606,7 +607,7 @@ fn camera_profiles_transform_correctly() {
     };
 
     for (name, src_icc) in &camera_profiles {
-        let xform = match cms.build_transform(src_icc, dst_icc) {
+        let mut xform = match cms.build_transform(src_icc, dst_icc) {
             Ok(x) => x,
             Err(e) => {
                 eprintln!("  skip {name}: {e:?}");
@@ -653,7 +654,7 @@ fn self_transform_near_identity() {
     let mut worst_name = String::new();
 
     for (name, icc) in &rgb_profiles {
-        let xform = match cms.build_transform(icc, icc) {
+        let mut xform = match cms.build_transform(icc, icc) {
             Ok(x) => x,
             Err(_) => continue,
         };
@@ -716,7 +717,7 @@ fn adobe_rgb_variant_consistency() {
         .map(|(_, icc)| icc)
         .unwrap_or(ref_icc);
 
-    let ref_xform = cms.build_transform(ref_icc, dst_icc).unwrap();
+    let mut ref_xform = cms.build_transform(ref_icc, dst_icc).unwrap();
 
     let mut outlier_count = 0;
 
@@ -742,7 +743,7 @@ fn adobe_rgb_variant_consistency() {
         .collect();
 
     for (name, icc) in &adobe_profiles[1..] {
-        let xform = match cms.build_transform(icc, dst_icc) {
+        let mut xform = match cms.build_transform(icc, dst_icc) {
             Ok(x) => x,
             Err(_) => continue,
         };

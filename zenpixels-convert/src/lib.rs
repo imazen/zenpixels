@@ -499,7 +499,7 @@ pub use load_bearing::{LoadBearingReport, PixelBufferLoadBearingExt, PixelSliceL
 
 // Re-export CMS traits, enums, and implementations.
 #[allow(deprecated)]
-pub use cms::{CmsPluginError, ColorManagement, PluggableCms, RowTransform, RowTransformMut};
+pub use cms::{CmsPluginError, PluggableCms, RowTransform, RowTransformMut};
 // TODO: pub use cms_lite::ZenCmsLite once benchmarked on aarch64.
 #[cfg(feature = "cms-moxcms")]
 pub use cms_moxcms::MoxCms;
@@ -507,4 +507,4 @@ pub use cms_moxcms::MoxCms;
 // Re-export output types.
 pub use output::OutputPlan;
 #[allow(deprecated)]
-pub use output::{EncodeReady, OutputMetadata, OutputProfile, finalize_for_output};
+pub use output::{EncodeReady, OutputMetadata, OutputProfile};

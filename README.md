@@ -508,7 +508,7 @@ Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `C
 
 ### Atomic output assembly
 
-`finalize_for_output` couples converted pixels with matching encoder metadata in one step. Prevents the bug where pixel values don't match the embedded ICC/CICP profile.
+`EncodeReady::finalize` couples converted pixels with matching encoder metadata in one step. Prevents the bug where pixel values don't match the embedded ICC/CICP profile.
 
 ### Gamut, HDR, Oklab
 

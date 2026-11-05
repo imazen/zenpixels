@@ -1,4 +1,3 @@
-#![allow(deprecated)]
 //! Integration tests for the moxcms CMS backend.
 //!
 //! Uses generated minimal ICC v2 profiles for real CMS transforms, then
@@ -11,9 +10,11 @@ extern crate alloc;
 
 use alloc::sync::Arc;
 
-use zenpixels_convert::cms::ColorManagement;
+#[path = "common/icc_transforms.rs"]
+mod icc_transforms;
+use icc_transforms::IccTransforms;
 use zenpixels_convert::cms_moxcms::MoxCms;
-use zenpixels_convert::output::{OutputProfile, finalize_for_output};
+use zenpixels_convert::output::{EncodeReady, OutputProfile};
 use zenpixels_convert::{
     Cicp, ColorContext, ColorOrigin, PixelBuffer, PixelDescriptor, PixelFormat,
 };
@@ -215,7 +216,7 @@ fn build_transform_srgb_to_p3() {
     let src = srgb_icc();
     let dst = display_p3_icc();
 
-    let xform = cms.build_transform(&src, &dst).unwrap();
+    let mut xform = cms.build_transform(&src, &dst).unwrap();
 
     // Transform a red pixel: sRGB (255, 0, 0) → Display P3
     let src_row = [255u8, 0, 0];
@@ -240,7 +241,7 @@ fn build_transform_for_format_rgba() {
     let src = srgb_icc();
     let dst = display_p3_icc();
 
-    let xform = cms
+    let mut xform = cms
         .build_transform_for_format(&src, &dst, PixelFormat::Rgba8, PixelFormat::Rgba8)
         .unwrap();
 
@@ -258,7 +259,7 @@ fn build_transform_for_format_f32() {
     let src = srgb_icc();
     let dst = bt2020_icc();
 
-    let xform = cms
+    let mut xform = cms
         .build_transform_for_format(&src, &dst, PixelFormat::RgbF32, PixelFormat::RgbF32)
         .unwrap();
 
@@ -498,7 +499,7 @@ fn gray_neutral_preserved() {
     let src = srgb_icc();
     let dst = display_p3_icc();
 
-    let xform = cms.build_transform(&src, &dst).unwrap();
+    let mut xform = cms.build_transform(&src, &dst).unwrap();
 
     // Mid-gray should be approximately preserved (neutral axis)
     let src_row = [128u8, 128, 128];
@@ -516,42 +517,6 @@ fn gray_neutral_preserved() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn identify_srgb_profile() {
-    let cms = MoxCms;
-    let icc = srgb_icc();
-
-    let cicp = cms.identify_profile(&icc);
-    assert!(cicp.is_some(), "should identify sRGB profile");
-
-    let cicp = cicp.unwrap();
-    assert_eq!(cicp.color_primaries, 1, "BT.709 primaries");
-}
-
-#[test]
-fn identify_display_p3_profile() {
-    let cms = MoxCms;
-    let icc = display_p3_icc();
-
-    let cicp = cms.identify_profile(&icc);
-    assert!(cicp.is_some(), "should identify Display P3 profile");
-
-    let cicp = cicp.unwrap();
-    assert_eq!(cicp.color_primaries, 12, "Display P3 primaries");
-}
-
-#[test]
-fn identify_bt2020_profile() {
-    let cms = MoxCms;
-    let icc = bt2020_icc();
-
-    let cicp = cms.identify_profile(&icc);
-    assert!(cicp.is_some(), "should identify BT.2020 profile");
-
-    let cicp = cicp.unwrap();
-    assert_eq!(cicp.color_primaries, 9, "BT.2020 primaries");
-}
-
-#[test]
 fn identify_garbage_returns_none() {
     let cms = MoxCms;
     assert!(cms.identify_profile(&[0u8; 100]).is_none());
@@ -567,8 +532,8 @@ fn srgb_p3_roundtrip_accuracy() {
     let srgb = srgb_icc();
     let p3 = display_p3_icc();
 
-    let forward = cms.build_transform(&srgb, &p3).unwrap();
-    let inverse = cms.build_transform(&p3, &srgb).unwrap();
+    let mut forward = cms.build_transform(&srgb, &p3).unwrap();
+    let mut inverse = cms.build_transform(&p3, &srgb).unwrap();
 
     for r in (0..=255).step_by(51) {
         for g in (0..=255).step_by(51) {
@@ -609,7 +574,7 @@ fn multi_pixel_row_transform() {
     let src = srgb_icc();
     let dst = display_p3_icc();
 
-    let xform = cms.build_transform(&src, &dst).unwrap();
+    let mut xform = cms.build_transform(&src, &dst).unwrap();
 
     // 4 pixels
     let src_row = [
@@ -635,7 +600,7 @@ fn multi_pixel_row_transform() {
 }
 
 // ---------------------------------------------------------------------------
-// Integration with finalize_for_output
+// Integration with EncodeReady::finalize
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -653,12 +618,12 @@ fn finalize_with_moxcms_icc_transform() {
 
     let dst_icc: Arc<[u8]> = display_p3_icc().into();
 
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(dst_icc.clone()),
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
 
@@ -684,12 +649,12 @@ fn finalize_named_profile_bypasses_cms() {
 
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Named(Cicp::SRGB),
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
 
@@ -709,7 +674,7 @@ fn cms_srgb_to_srgb_is_identity() {
     let cms = MoxCms;
     let srgb = srgb_icc();
 
-    let xform = cms.build_transform(&srgb, &srgb.clone()).unwrap();
+    let mut xform = cms.build_transform(&srgb, &srgb.clone()).unwrap();
 
     for r in (0..=255).step_by(17) {
         for g in (0..=255).step_by(17) {
@@ -739,7 +704,7 @@ fn cms_white_preserved_across_profiles() {
 
     // White should map to ~white in any gamut conversion
     for (name, dst_icc) in [("P3", display_p3_icc()), ("BT.2020", bt2020_icc())] {
-        let xform = cms.build_transform(&srgb_icc(), &dst_icc).unwrap();
+        let mut xform = cms.build_transform(&srgb_icc(), &dst_icc).unwrap();
         let src = [255u8, 255, 255];
         let mut dst = [0u8; 3];
         xform.transform_row(&src, &mut dst, 1);
@@ -758,7 +723,7 @@ fn cms_black_preserved_across_profiles() {
     let cms = MoxCms;
 
     for (name, dst_icc) in [("P3", display_p3_icc()), ("BT.2020", bt2020_icc())] {
-        let xform = cms.build_transform(&srgb_icc(), &dst_icc).unwrap();
+        let mut xform = cms.build_transform(&srgb_icc(), &dst_icc).unwrap();
         let src = [0u8, 0, 0];
         let mut dst = [0u8; 3];
         xform.transform_row(&src, &mut dst, 1);

@@ -1,6 +1,6 @@
 //! CMS backend using [moxcms](https://crates.io/crates/moxcms).
 //!
-//! Provides a concrete [`ColorManagement`] implementation backed by the moxcms
+//! Provides a concrete [`PluggableCms`](crate::cms::PluggableCms) implementation backed by the moxcms
 //! ICC profile engine. Requires the `cms-moxcms` feature.
 //!
 //! # Supported formats
@@ -14,13 +14,13 @@
 //!
 //! ```rust,ignore
 //! use zenpixels_convert::cms_moxcms::MoxCms;
-//! use zenpixels_convert::output::{finalize_for_output, OutputProfile};
+//! use zenpixels_convert::output::{EncodeReady, OutputProfile};
 //!
-//! let ready = finalize_for_output(
+//! let ready = EncodeReady::finalize(
 //!     &buffer, &origin,
 //!     OutputProfile::Icc(dst_icc.into()),
 //!     PixelFormat::Rgb8,
-//!     &MoxCms,
+//!     Some(&MoxCms),
 //! )?;
 //! ```
 
@@ -58,8 +58,6 @@ pub(crate) fn transform_opts() -> TransformOptions {
     }
 }
 
-#[allow(deprecated)]
-use crate::cms::{ColorManagement, RowTransform};
 use crate::{ChannelType, Cicp, PixelFormat};
 
 /// CMS backend using moxcms.
@@ -628,160 +626,12 @@ fn try_mox_row(
     })
 }
 
-struct MoxRowTransform {
-    inner: MoxTransformInner,
-    extent: RowExtent,
-}
-
-#[allow(deprecated)]
-impl RowTransform for MoxRowTransform {
-    fn transform_row(&self, src: &[u8], dst: &mut [u8], width: u32) {
-        try_mox_row(&self.inner, self.extent, src, dst, width).expect("moxcms row failed");
-    }
-    fn try_transform_row(
-        &self,
-        src: &[u8],
-        dst: &mut [u8],
-        width: u32,
-    ) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
-        try_mox_row(&self.inner, self.extent, src, dst, width)
-    }
-    fn prepare(&self, _max_width: u32) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
-        Ok(())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ColorManagement implementation
-// ---------------------------------------------------------------------------
-
-/// Build a [`RowTransform`] from two already-parsed [`ColorProfile`]s.
-///
-/// Shared implementation for both ICC-to-ICC and CICP-to-ICC paths.
-/// Always uses `PreferIcc` / `RelativeColorimetric` — CICP-in-ICC tags
-/// are never trusted for TRC (see moxcms issue #154).
-fn build_transform_inner(
-    src_profile: &ColorProfile,
-    dst_profile: &ColorProfile,
-    src_format: PixelFormat,
-    dst_format: PixelFormat,
-) -> Result<Box<dyn RowTransform>, MoxCmsError> {
-    // Native F32 CMYK carriage is qualified, its color conversion is not.
-    // Never let this unsupported four-channel layout fall back to RGB.
-    if matches!(
-        src_format,
-        PixelFormat::CmykF32 | PixelFormat::CmykF32Inverted
-    ) || matches!(
-        dst_format,
-        PixelFormat::CmykF32 | PixelFormat::CmykF32Inverted
-    ) {
-        return Err(MoxCmsError("F32 CMYK conversion is not qualified".into()));
-    }
-    if src_format.channel_type() != dst_format.channel_type()
-        || !matches!(
-            src_format.channel_type(),
-            ChannelType::U8 | ChannelType::U16 | ChannelType::F32
-        )
-    {
-        return Err(MoxCmsError(
-            "moxcms requires matching U8, U16 or F32 sample types; convert depth separately".into(),
-        ));
-    }
-    let src_layout = pixel_format_to_layout(src_format).unwrap_or(Layout::Rgb);
-    let dst_layout = pixel_format_to_layout(dst_format).unwrap_or(Layout::Rgb);
-    validate_channel_curves(src_profile)?;
-    validate_channel_curves(dst_profile)?;
-    let opts = options_for_profiles(src_format, src_profile, dst_profile);
-
-    let depth = src_format.channel_type();
-
-    let inner = match depth {
-        ChannelType::U8 => u8_transform(
-            src_profile,
-            dst_profile,
-            (src_layout, dst_layout),
-            options_for_profiles(PixelFormat::RgbF32, src_profile, dst_profile),
-        )
-        .map_err(|e| MoxCmsError(format!("failed to create u8 transform: {e}")))?,
-        ChannelType::U16 => {
-            let xform = src_profile
-                .create_transform_16bit(src_layout, dst_profile, dst_layout, opts)
-                .map_err(|e| MoxCmsError(format!("failed to create u16 transform: {e}")))?;
-            MoxTransformInner::U16(xform)
-        }
-        // F16 and F32 both use the f32 transform path (F16 data must be
-        // converted to f32 before CMS — IEEE 754 half-floats are not
-        // integer-encoded u16 values).
-        ChannelType::F16 | ChannelType::F32 | _ => {
-            let xform = src_profile
-                .create_transform_f32(src_layout, dst_profile, dst_layout, opts)
-                .map_err(|e| MoxCmsError(format!("failed to create f32 transform: {e}")))?;
-            float_transform(xform, src_layout, dst_layout, true)
-        }
-    };
-
-    Ok(Box::new(MoxRowTransform {
-        inner,
-        extent: RowExtent::of(src_format, dst_format),
-    }))
-}
-
-#[allow(deprecated)]
-impl ColorManagement for MoxCms {
-    type Error = MoxCmsError;
-
-    fn build_transform(
-        &self,
-        src_icc: &[u8],
-        dst_icc: &[u8],
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        self.build_transform_for_format(src_icc, dst_icc, PixelFormat::Rgb8, PixelFormat::Rgb8)
-    }
-
-    fn build_transform_for_format(
-        &self,
-        src_icc: &[u8],
-        dst_icc: &[u8],
-        src_format: PixelFormat,
-        dst_format: PixelFormat,
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        let mut src_profile = ColorProfile::new_from_slice(src_icc)
-            .map_err(|e| MoxCmsError(format!("failed to parse source ICC profile: {e}")))?;
-        let mut dst_profile = ColorProfile::new_from_slice(dst_icc)
-            .map_err(|e| MoxCmsError(format!("failed to parse destination ICC profile: {e}")))?;
-
-        prefer_icc_for_float(&mut src_profile, src_format);
-        prefer_icc_for_float(&mut dst_profile, dst_format);
-        build_transform_inner(&src_profile, &dst_profile, src_format, dst_format)
-    }
-
-    fn identify_profile(&self, icc: &[u8]) -> Option<Cicp> {
-        let profile = ColorProfile::new_from_slice(icc).ok()?;
-
-        // If the profile has embedded CICP metadata, use it directly.
-        if let Some(cicp) = &profile.cicp {
-            return Some(Cicp::new(
-                cicp.color_primaries as u8,
-                cicp.transfer_characteristics as u8,
-                cicp.matrix_coefficients as u8,
-                cicp.full_range,
-            ));
-        }
-
-        // Fall back to comparing colorant matrices against known profiles.
-        identify_by_colorants(&profile)
-    }
-
-    // TODO(0.3.0): implement build_source_transform once the trait method
-    // is added. The plumbing (source_to_moxcms_profile) is already here.
-}
-
 // ---------------------------------------------------------------------------
 // PluggableCms — the dispatch chain RowConverter actually consults.
 // ---------------------------------------------------------------------------
 
 /// `RowTransformMut` wrapper for moxcms transform executors at the three
-/// supported bit depths. Mirrors [`MoxRowTransform`] but exposes the
+/// supported bit depths. It exposes the
 /// `RowTransformMut` (`&mut self`) shape that [`PluggableCms`] expects.
 ///
 /// moxcms `TransformExecutor::transform` is `&self`, so there's no actual
@@ -1280,96 +1130,6 @@ fn primaries_transfer_to_moxcms_profile(
 // ---------------------------------------------------------------------------
 // Profile identification by colorant comparison
 // ---------------------------------------------------------------------------
-
-/// Compare XYZ colorants to identify well-known profiles.
-///
-/// Checks the profile's red/green/blue colorants against sRGB (BT.709),
-/// Display P3, and BT.2020. The colorant values are in PCS (D50-adapted)
-/// space, as stored in ICC profiles after Bradford chromatic adaptation
-/// from D65. Tolerance is 0.003 in XYZ, tight enough to distinguish
-/// these gamuts while tolerating s15Fixed16 quantization.
-fn identify_by_colorants(profile: &ColorProfile) -> Option<Cicp> {
-    // Known colorant values in D50 PCS space (Bradford-adapted from D65).
-    // Computed by applying the standard D65→D50 Bradford matrix to the
-    // absolute D65 XYZ colorant matrices from ITU-R specifications.
-    struct KnownProfile {
-        primaries_code: u8,
-        rx: f64,
-        ry: f64,
-        gx: f64,
-        gy: f64,
-        bx: f64,
-        by: f64,
-    }
-
-    const KNOWN: &[KnownProfile] = &[
-        // sRGB / BT.709 (D50-adapted)
-        KnownProfile {
-            primaries_code: 1,
-            rx: 0.4361,
-            ry: 0.2225,
-            gx: 0.3851,
-            gy: 0.7169,
-            bx: 0.1431,
-            by: 0.0606,
-        },
-        // Display P3 (D50-adapted)
-        KnownProfile {
-            primaries_code: 12,
-            rx: 0.5151,
-            ry: 0.2412,
-            gx: 0.2919,
-            gy: 0.6922,
-            bx: 0.1572,
-            by: 0.0666,
-        },
-        // BT.2020 (D50-adapted)
-        KnownProfile {
-            primaries_code: 9,
-            rx: 0.6734,
-            ry: 0.2790,
-            gx: 0.1656,
-            gy: 0.6753,
-            bx: 0.1251,
-            by: 0.0456,
-        },
-    ];
-
-    let r = &profile.red_colorant;
-    let g = &profile.green_colorant;
-    let b = &profile.blue_colorant;
-
-    const TOL: f64 = 0.003;
-
-    for known in KNOWN {
-        let matches = (r.x - known.rx).abs() < TOL
-            && (r.y - known.ry).abs() < TOL
-            && (g.x - known.gx).abs() < TOL
-            && (g.y - known.gy).abs() < TOL
-            && (b.x - known.bx).abs() < TOL
-            && (b.y - known.by).abs() < TOL;
-
-        if matches {
-            // Map known primaries to their standard transfer characteristic.
-            // sRGB (1) and Display P3 (12) both use the sRGB TRC (13).
-            // BT.2020 (9) uses BT.709 TRC (1) as a safe default since
-            // the actual TRC (PQ, HLG, or BT.709) can't be identified
-            // from colorants alone.
-            let transfer = match known.primaries_code {
-                1 | 12 => 13, // sRGB and Display P3 use sRGB TRC
-                _ => 1,       // BT.2020 etc. default to BT.709 TRC
-            };
-            return Some(Cicp::new(
-                known.primaries_code,
-                transfer,
-                0, // Identity (RGB)
-                true,
-            ));
-        }
-    }
-
-    None
-}
 
 // ---------------------------------------------------------------------------
 // Error type

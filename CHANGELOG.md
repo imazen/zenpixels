@@ -33,6 +33,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- **Breaking:** removed `cms::ColorManagement`, `finalize_for_output` and the colorant-based `identify_profile` with them. Use `PluggableCms` and `EncodeReady::finalize`; `zenpixels::icc::IccIdentification` identifies profiles. zenpipe's `IccTransformSource` and `job` need migrating at the pin bump. `builtin_profiles` stays: it's `pub(crate)`, and zenjpeg's XYB plan names it.
+
 - `SynthesizedIcc::for_gray_cicp` gives the GRAY-class profile for a gray image.
 - **Breaking:** `ColorPrimaries::white_point` returns `Option`, `None` for unknown primaries. `ColorAuthority` is `#[non_exhaustive]`. `PixelDescriptor::try_new` refuses a layout with alpha and no mode, or the reverse. Typed views of padding formats no longer read padding as alpha. `hdr::SoftCompress` needs `hdr-experimental`.
 - **Breaking:** removed `PixelSliceMut::{upgrade_to_rgba, upgrade_to_bgra, matte_to_rgbx, matte_to_bgrx, strip_alpha_to_rgbx, strip_alpha_to_bgrx}`, which relabeled pixels as sRGB and double-multiplied premultiplied alpha. Nothing used them. `zenpixels_convert`'s `AlphaPolicy::CompositeOnto` composites.

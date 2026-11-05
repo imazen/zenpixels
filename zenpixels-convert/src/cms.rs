@@ -8,7 +8,7 @@
 //! # When codecs need a CMS
 //!
 //! Most codecs don't need to interact with the CMS directly.
-//! [`finalize_for_output`](super::finalize_for_output) handles CMS transforms
+//! [`EncodeReady::finalize`](super::EncodeReady::finalize) handles CMS transforms
 //! internally when the [`OutputProfile`](super::OutputProfile) requires one.
 //!
 //! A codec needs CMS awareness only when:
@@ -19,7 +19,7 @@
 //!   later (at encode or processing time), not during decode.
 //!
 //! - **Encoding** with `OutputProfile::Icc(custom_profile)`. The CMS builds
-//!   a source→destination transform, which `finalize_for_output` applies
+//!   a source→destination transform, which `EncodeReady::finalize` applies
 //!   row-by-row via [`RowTransform`].
 //!
 //! # Implementing a CMS backend
@@ -116,87 +116,6 @@ pub trait RowTransformMut: Send {
     }
 }
 
-/// Color management system interface.
-///
-/// Abstracts over CMS backends (moxcms, lcms2, etc.) to provide
-/// ICC profile transforms and profile identification.
-///
-/// # Feature-gated
-///
-/// The trait is always available for trait bounds and generic code.
-/// Concrete implementations are provided by feature-gated modules
-/// (e.g., `cms-moxcms`).
-///
-/// # Deprecated
-///
-/// Prefer [`PluggableCms`] for new code. `ColorManagement` is generic,
-/// not dyn-safe, and takes raw ICC byte pairs; `PluggableCms` is
-/// dyn-safe, accepts [`ColorProfileSource`] (ICC / CICP / named /
-/// primaries+transfer), carries [`ConvertOptions`], and composes into
-/// the dispatch chain used by
-/// [`RowConverter::new_explicit_with_cms`](crate::RowConverter::new_explicit_with_cms).
-///
-/// [`ColorProfileSource`]: crate::ColorProfileSource
-/// [`ConvertOptions`]: crate::policy::ConvertOptions
-#[deprecated(
-    since = "0.2.8",
-    note = "use PluggableCms (dyn-safe, ColorProfileSource-based)"
-)]
-pub trait ColorManagement {
-    /// Error type for CMS operations.
-    type Error: core::fmt::Debug;
-
-    /// Build a row-level transform between two ICC profiles.
-    ///
-    /// Returns a [`RowTransform`] that converts pixel rows from the
-    /// source profile's color space to the destination profile's.
-    ///
-    /// This method assumes u8 RGB pixel data. For format-aware transforms
-    /// that match the actual source/destination bit depth and layout, use
-    /// [`build_transform_for_format`](Self::build_transform_for_format).
-    fn build_transform(
-        &self,
-        src_icc: &[u8],
-        dst_icc: &[u8],
-    ) -> Result<Box<dyn RowTransform>, Self::Error>;
-
-    /// Build a format-aware row-level transform between two ICC profiles.
-    ///
-    /// Like [`build_transform`](Self::build_transform), but the CMS backend
-    /// can use the pixel format information to create a transform at the
-    /// native bit depth (u8, u16, or f32) and layout (RGB, RGBA, Gray, etc.),
-    /// avoiding unnecessary depth conversions.
-    ///
-    /// The default implementation ignores the format parameters and delegates
-    /// to [`build_transform`](Self::build_transform).
-    fn build_transform_for_format(
-        &self,
-        src_icc: &[u8],
-        dst_icc: &[u8],
-        src_format: PixelFormat,
-        dst_format: PixelFormat,
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        let _ = (src_format, dst_format);
-        self.build_transform(src_icc, dst_icc)
-    }
-
-    /// Identify whether an ICC profile matches a known CICP combination.
-    ///
-    /// Two-tier matching:
-    /// 1. Hash table of known ICC byte sequences for instant lookup.
-    /// 2. Semantic comparison: parse matrix + TRC, compare against known
-    ///    values within tolerance.
-    ///
-    /// Returns `Some(cicp)` if the profile matches a standard combination,
-    /// `None` if the profile is custom.
-    fn identify_profile(&self, icc: &[u8]) -> Option<crate::Cicp>;
-
-    // TODO(0.3.0): Add build_source_transform(ColorProfileSource, ...) as the
-    // single entry point, replacing build_transform / build_transform_for_format.
-    // Deferred until the trait is redesigned with options (rendering intent, HDR
-    // policy) and ZenCmsLite is benchmarked against moxcms on all platforms.
-}
-
 /// Dyn-compatible CMS plugin interface for overriding gamut/profile
 /// conversions inside a [`ConvertPlan`](crate::ConvertPlan).
 ///
@@ -210,7 +129,6 @@ pub trait ColorManagement {
 /// matlut kernels) are bypassed for that conversion. If the plugin
 /// returns `None`, the plan falls back to the built-in path.
 ///
-/// `PluggableCms` is intentionally narrower than [`ColorManagement`]:
 /// - It accepts [`ColorProfileSource`] instead of raw ICC bytes, so
 ///   plugins can use primaries/transfer shortcuts, named profiles, CICP,
 ///   or ICC without forcing the caller to serialize to ICC.

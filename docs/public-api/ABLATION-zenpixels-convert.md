@@ -26,7 +26,7 @@ Callers are text matches of call syntax in local checkouts under `~/work`, not c
 | `zpc::gamut::apply_matrix_row_f32` | 0+4 | `GamutMatrix::apply_row_rgb(&self, &mut [[f32; 3]])`, in place |
 | `zpc::gamut::apply_matrix_row_rgba_f32` | 0 | `GamutMatrix::apply_row_rgba(&self, &mut [[f32; 4]])`, in place, alpha unchanged |
 | `zpc::gamut::mat3_mul(a, b)` | 0 | `b.then(&a)` on `GamutMatrix`. Also new: `GamutMatrix::inverse`. The array is private: `from_rows` and `rows()` |
-| `zpc::output::finalize_for_output` | 0 | **Not yet.** Goes with `ColorManagement`: 40 tests use mock backends and must prove `EncodeReady::finalize` agrees first |
+| `zpc::output::finalize_for_output` | 0 | Removed: `EncodeReady::finalize` |
 | `zpc::output::finalize_for_output_with` | 2+6 | `EncodeReady::finalize(&PixelBuffer, &ColorOrigin, OutputProfile, PixelFormat, Option<&dyn PluggableCms>)`. Streaming stays `OutputPlan` |
 | `zpc::hdr::quantize_to` | 1+0 | `PixelSliceConvertExt::quantize_to(&self, Desc) -> Result<PixelBuffer, E>` |
 | `zpc::codes::measure_exact_depth` | 0 | Removed: `zp::sample::ExactDepth::measure` |
@@ -55,7 +55,7 @@ Callers are text matches of call syntax in local checkouts under `~/work`, not c
 | `zpc::pipeline::*` otherwise, feature `pipeline` | 0 | Removed. See below |
 | `zpc::hdr::GamutBoundaryLut` | 1+0 | Removed: `SoftCompress::compress_oklab_planes(&self, &[f32], &mut [f32], &mut [f32]) -> Result<(), E>` |
 | `zpc::cms::RenderingIntent`, `ColorPriority` | 0 | Removed. See below |
-| `zpc::cms::ColorManagement` | 1+0 | **Not yet.** Needs a public signature change in zenpipe, `IccTransformSource::new<C: ColorManagement>` |
+| `zpc::cms::ColorManagement` | 1+0 | Removed: `PluggableCms`. zenpipe migrates at the pin bump |
 
 ## What replaced the removed types
 

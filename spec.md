@@ -206,7 +206,7 @@ data so the CMS can build transforms and the encoder can re-embed them.
 ### ColorOrigin
 
 Tracks what the source file said, preserved for re-encoding and round-trip
-conversion. Not yet implemented — see finalize_for_output below.
+conversion. See `EncodeReady::finalize` below.
 
 ```rust
 pub struct ColorOrigin {
@@ -421,23 +421,25 @@ combination. Two-tier: hash table of known ICC byte sequences for instant
 lookup, then semantic comparison (parse matrix + TRC, compare against known
 values within tolerance).
 
-## Atomic finalize_for_output
+## Atomic `EncodeReady::finalize`
 
 The conversion to an output format and the metadata generation for the encoder
 must be a single atomic operation. This prevents the most common color
 management bug: pixel values that don't match the embedded color metadata.
 
 ```rust
-pub fn finalize_for_output<C: ColorManagement>(
-    buffer: &PixelBuffer,
-    origin: &ColorOrigin,
-    target: OutputProfile,
-    pixel_format: PixelFormat,
-    cms: &C,
-) -> Result<EncodeReady, ConvertError>
+impl EncodeReady {
+    pub fn finalize(
+        buffer: &PixelBuffer,
+        origin: &ColorOrigin,
+        target: OutputProfile,
+        pixel_format: PixelFormat,
+        cms: Option<&dyn PluggableCms>,
+    ) -> Result<EncodeReady, At<ConvertError>>
+}
 ```
 
-`finalize_for_output` does three things atomically:
+`EncodeReady::finalize` does three things atomically:
 
 1. Determines the current pixel color state from `PixelDescriptor` + optional
    ICC profile on `ColorContext`.
@@ -468,7 +470,7 @@ pub struct EncodeReady {
 }
 ```
 
-The only way to get an `EncodeReady` is through `finalize_for_output`, which
+The only way to get an `EncodeReady` is through `EncodeReady::finalize`, which
 guarantees the pixels and metadata match. `into_parts()` exists for power
 users who need to destructure, but the default path keeps them coupled.
 

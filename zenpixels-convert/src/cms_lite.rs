@@ -1,6 +1,6 @@
 //! Lightweight CMS backend using fused SIMD gamut kernels.
 //!
-//! [`ZenCmsLite`] implements [`ColorManagement`] for named-profile conversions
+//! [`ZenCmsLite`] implements [`PluggableCms`](crate::cms::PluggableCms) for named-profile conversions
 //! (sRGB, Display P3, BT.2020, Adobe RGB) without ICC profile parsing.
 //! It delegates to [`fast_gamut`](crate::fast_gamut) kernels for the actual
 //! conversion work — fused TRC + matrix + TRC in a single SIMD pass.
@@ -21,36 +21,28 @@
 //! Any combination of `ColorProfileSource::PrimariesTransferPair`,
 //! `ColorProfileSource::Named`, or `ColorProfileSource::Cicp` where both
 //! primaries sets have known chromaticities. ICC profile sources are not
-//! supported — `build_transform` returns an error, `identify_profile`
-//! returns `None`.
+//! supported unless identified: an unknown one is declined.
 //!
 //! # Example
 //!
 //! ```rust,ignore
 //! use zenpixels_convert::cms_lite::ZenCmsLite;
-//! use zenpixels_convert::output::{finalize_for_output, OutputProfile};
+//! use zenpixels_convert::output::{EncodeReady, OutputProfile};
 //! use zenpixels_convert::Cicp;
 //!
-//! let ready = finalize_for_output(
+//! let ready = EncodeReady::finalize(
 //!     &buffer, &origin,
 //!     OutputProfile::Named(Cicp::SRGB),
 //!     PixelFormat::Rgb8,
-//!     &ZenCmsLite,
+//!     Some(&ZenCmsLite),
 //! )?;
 //! ```
 
 use alloc::boxed::Box;
-#[cfg(feature = "std")]
-use alloc::format;
 
-#[cfg(any(feature = "std", test))]
-use crate::Cicp;
 use crate::PixelFormat;
 #[cfg(test)]
 use crate::TransferFunction;
-#[allow(deprecated)]
-#[cfg(feature = "std")]
-use crate::cms::{ColorManagement, RowTransform};
 
 /// Lightweight CMS using fused SIMD gamut conversion kernels.
 ///
@@ -97,132 +89,9 @@ impl core::fmt::Display for ZenCmsLiteError {
 // identification, CICP-in-ICC extraction, and CICP safety checks
 // (rejects non-identity matrix coefficients and narrow range).
 
-// The deprecated ColorManagement API uses `Box<dyn RowTransform>` with
-// `&self`, which requires Mutex interior mutability to wrap
-// `RowConverter::convert_row(&mut self)`. `Mutex` is std-only, so the
-// impl is gated on std. The new `PluggableCms` path is no_std-compatible.
-#[cfg(feature = "std")]
-#[allow(deprecated)]
-impl ColorManagement for ZenCmsLite {
-    type Error = ZenCmsLiteError;
-
-    fn build_transform(
-        &self,
-        src_icc: &[u8],
-        dst_icc: &[u8],
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        self.build_transform_for_format(src_icc, dst_icc, PixelFormat::Rgb8, PixelFormat::Rgb8)
-    }
-
-    fn build_transform_for_format(
-        &self,
-        src_icc: &[u8],
-        dst_icc: &[u8],
-        src_format: PixelFormat,
-        dst_format: PixelFormat,
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        let src = crate::ColorProfileSource::Icc(src_icc);
-        let dst = crate::ColorProfileSource::Icc(dst_icc);
-        match self.build_source_transform(src, dst, src_format, dst_format) {
-            Some(result) => result,
-            None => Err(ZenCmsLiteError(
-                "unrecognized ICC profile (not in known-profile table)".into(),
-            )),
-        }
-    }
-
-    fn identify_profile(&self, icc_bytes: &[u8]) -> Option<Cicp> {
-        // Metadata-only lookup: returns the profile's claimed (primaries,
-        // transfer) without filtering by intent-safety. A profile may be
-        // recognized here but rejected by `build_source_transform` when the
-        // strict empirical check determined that canonical matrix+TRC math
-        // diverges from CMS behavior for any rendering intent.
-        if let Some(id) = zenpixels::icc::IccIdentification::from_icc(icc_bytes) {
-            let cp = id.primaries.to_cicp()?;
-            let tc = id.transfer.to_cicp()?;
-            return Some(Cicp::new(cp, tc, 0, true));
-        }
-        // CICP-in-ICC tag (ICC v4.4+) is authoritative metadata.
-        if let Some(cicp) = zenpixels::Cicp::from_icc(icc_bytes) {
-            return Some(cicp);
-        }
-        None
-    }
-}
-
-#[cfg(feature = "std")]
-impl ZenCmsLite {
-    /// Build a transform from resolved `ColorProfileSource`s for the
-    /// deprecated [`ColorManagement`] API. std-only because
-    /// `RowTransform::&self` requires a Mutex wrapper.
-    ///
-    /// Returns `None` if either source can't be resolved or the conversion
-    /// is a no-op.
-    #[doc(hidden)]
-    pub fn build_source_transform(
-        &self,
-        src: crate::ColorProfileSource<'_>,
-        dst: crate::ColorProfileSource<'_>,
-        src_format: PixelFormat,
-        dst_format: PixelFormat,
-    ) -> Option<Result<Box<dyn RowTransform>, ZenCmsLiteError>> {
-        use zenpixels::PixelDescriptor;
-
-        let (src_p, src_t) = src.resolve()?;
-        let (dst_p, dst_t) = dst.resolve()?;
-
-        // Same color space and format — no transform needed.
-        if src_p == dst_p && src_t == dst_t && src_format == dst_format {
-            return None;
-        }
-
-        let from = PixelDescriptor::from_pixel_format(src_format)
-            .with_primaries(src_p)
-            .with_transfer(src_t);
-        let to = PixelDescriptor::from_pixel_format(dst_format)
-            .with_primaries(dst_p)
-            .with_transfer(dst_t);
-
-        let conv = match crate::converter::RowConverter::new(from, to) {
-            Ok(c) => c,
-            Err(e) => {
-                return Some(Err(ZenCmsLiteError(format!(
-                    "RowConverter::new failed: {e:?}"
-                ))));
-            }
-        };
-
-        Some(Ok(Box::new(LiteTransform {
-            inner: std::sync::Mutex::new(conv),
-        })))
-    }
-}
-
-/// Row-transform wrapper around `RowConverter` for the deprecated
-/// [`ColorManagement`] API.
+/// `RowTransformMut` wrapper for the [`PluggableCms`](crate::cms::PluggableCms) path.
 ///
-/// Uses a Mutex because `RowTransform::transform_row(&self)` requires
-/// shared access while `RowConverter::convert_row` needs `&mut self`.
-/// The new `PluggableCms` path stores a `Box<dyn RowTransformMut>` on
-/// `RowConverter` directly, bypassing this wrapper entirely.
-#[cfg(feature = "std")]
-struct LiteTransform {
-    inner: std::sync::Mutex<crate::converter::RowConverter>,
-}
-
-#[cfg(feature = "std")]
-#[allow(deprecated)]
-impl RowTransform for LiteTransform {
-    fn transform_row(&self, src: &[u8], dst: &mut [u8], width: u32) {
-        let mut inner = self.inner.lock().unwrap();
-        inner.convert_row(src, dst, width);
-    }
-}
-
-/// Mutex-free `RowTransformMut` wrapper for the [`PluggableCms`](crate::cms::PluggableCms) path.
-///
-/// Owns a `RowConverter` directly — no interior mutability needed since
-/// `RowTransformMut::transform_row` takes `&mut self`.
+/// Owns a `RowConverter` directly, since `RowTransformMut::transform_row` takes `&mut self`.
 struct LiteTransformMut {
     inner: crate::converter::RowConverter,
 }
@@ -317,20 +186,26 @@ impl crate::cms::PluggableCms for ZenCmsLite {
 
 #[cfg(test)]
 #[allow(clippy::needless_range_loop)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::cms::ColorManagement;
-    use crate::{ColorPrimaries, ColorProfileSource, NamedProfile, PixelFormat};
+    use crate::cms::PluggableCms;
+    use crate::policy::ConvertOptions;
+    use crate::{Cicp, ColorPrimaries, ColorProfileSource, NamedProfile, PixelFormat};
 
     #[test]
     fn build_source_transform_p3_to_srgb_f32() {
         let cms = ZenCmsLite;
         let src = ColorProfileSource::Named(NamedProfile::DisplayP3);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
-        let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
+        let result = cms.build_source_transform(
+            src,
+            dst,
+            PixelFormat::RgbF32,
+            PixelFormat::RgbF32,
+            &ConvertOptions::permissive(),
+        );
         assert!(result.is_some(), "should support P3→sRGB");
-        let transform = result.unwrap().expect("should not error");
+        let mut transform = result.unwrap().expect("should not error");
 
         // White should map to white
         let src_px: [f32; 3] = [1.0, 1.0, 1.0];
@@ -354,9 +229,15 @@ mod tests {
         let cms = ZenCmsLite;
         let src = ColorProfileSource::Named(NamedProfile::DisplayP3);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
-        let result = cms.build_source_transform(src, dst, PixelFormat::Rgb8, PixelFormat::Rgb8);
+        let result = cms.build_source_transform(
+            src,
+            dst,
+            PixelFormat::Rgb8,
+            PixelFormat::Rgb8,
+            &ConvertOptions::permissive(),
+        );
         assert!(result.is_some());
-        let transform = result.unwrap().expect("should not error");
+        let mut transform = result.unwrap().expect("should not error");
 
         // White (255,255,255) should map to (255,255,255)
         let src_px = [255u8, 255, 255];
@@ -377,17 +258,16 @@ mod tests {
         let src = ColorProfileSource::Named(NamedProfile::Srgb);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
         assert!(
-            cms.build_source_transform(src, dst, PixelFormat::Rgb8, PixelFormat::Rgb8)
-                .is_none(),
+            cms.build_source_transform(
+                src,
+                dst,
+                PixelFormat::Rgb8,
+                PixelFormat::Rgb8,
+                &ConvertOptions::permissive()
+            )
+            .is_none(),
             "same color space should return None (no transform needed)"
         );
-    }
-
-    #[test]
-    fn icc_profile_not_supported() {
-        let cms = ZenCmsLite;
-        assert!(cms.build_transform(&[0; 100], &[0; 100]).is_err());
-        assert!(cms.identify_profile(&[0; 100]).is_none());
     }
 
     #[test]
@@ -395,7 +275,13 @@ mod tests {
         let cms = ZenCmsLite;
         let src = ColorProfileSource::Cicp(Cicp::DISPLAY_P3);
         let dst = ColorProfileSource::Cicp(Cicp::SRGB);
-        let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
+        let result = cms.build_source_transform(
+            src,
+            dst,
+            PixelFormat::RgbF32,
+            PixelFormat::RgbF32,
+            &ConvertOptions::permissive(),
+        );
         assert!(result.is_some(), "CICP source should be supported");
         assert!(result.unwrap().is_ok());
     }
@@ -411,7 +297,13 @@ mod tests {
             primaries: ColorPrimaries::Bt709,
             transfer: TransferFunction::Srgb,
         };
-        let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
+        let result = cms.build_source_transform(
+            src,
+            dst,
+            PixelFormat::RgbF32,
+            PixelFormat::RgbF32,
+            &ConvertOptions::permissive(),
+        );
         assert!(result.is_some());
         assert!(result.unwrap().is_ok());
     }
@@ -424,9 +316,15 @@ mod tests {
         // HDR-requires-peak refusal, since cms_lite has no source-peak input).
         let src = ColorProfileSource::Named(NamedProfile::Bt2020);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
-        let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
+        let result = cms.build_source_transform(
+            src,
+            dst,
+            PixelFormat::RgbF32,
+            PixelFormat::RgbF32,
+            &ConvertOptions::permissive(),
+        );
         assert!(result.is_some());
-        let transform = result.unwrap().expect("should not error");
+        let mut transform = result.unwrap().expect("should not error");
 
         // Black should still map to black
         let src_px = [0.0f32, 0.0, 0.0];
@@ -444,60 +342,6 @@ mod tests {
     // --- ICC profile identification ---
 
     #[test]
-    fn identify_profile_p3_icc() {
-        let cms = ZenCmsLite;
-        let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
-        let cicp = cms.identify_profile(p3_icc);
-        assert!(cicp.is_some(), "should identify Display P3 ICC profile");
-        let cicp = cicp.unwrap();
-        assert_eq!(cicp.color_primaries, 12, "should be Display P3 (cp=12)");
-        assert_eq!(
-            cicp.transfer_characteristics, 13,
-            "should be sRGB TRC (tc=13)"
-        );
-    }
-
-    #[test]
-    fn identify_profile_unknown_returns_none() {
-        let cms = ZenCmsLite;
-        assert!(cms.identify_profile(&[0; 100]).is_none());
-        assert!(cms.identify_profile(&[]).is_none());
-    }
-
-    #[test]
-    fn build_transform_for_format_icc_to_icc_compat() {
-        // The bundled DisplayP3Compat-v4 / REC2020_V4 profiles from the
-        // saucecontrol Compact-ICC corpus are matrix-shaper profiles with
-        // no LUTs. Structural inspection marks them as safe for all intents
-        // (pure matrix+TRC path), so ZenCmsLite accepts them for the fast
-        // path. Their encoded XYZ matrices drift ~590-931 u16 from
-        // mathematically-derived canonical, but the structural rule treats
-        // LUT-absence as sufficient — consistent with how other CMSs
-        // route these profiles through matrix-shaper math anyway.
-        let cms = ZenCmsLite;
-        let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
-        let bt2020_icc = crate::icc_profiles::REC2020_V4;
-
-        let result = cms.build_transform_for_format(
-            p3_icc,
-            bt2020_icc,
-            PixelFormat::RgbF32,
-            PixelFormat::RgbF32,
-        );
-        assert!(
-            result.is_ok(),
-            "bundled compat profiles should be handled via lite CMS (matrix-shaper, no LUTs)"
-        );
-    }
-
-    #[test]
-    fn build_transform_unrecognized_icc_fails() {
-        let cms = ZenCmsLite;
-        let garbage = [0u8; 200];
-        assert!(cms.build_transform(&garbage, &garbage).is_err());
-    }
-
-    #[test]
     fn build_source_transform_icc_compat() {
         // The bundled DisplayP3Compat-v4 is a matrix-shaper profile with no
         // LUTs → accepted by the structural rule → resolved by lite CMS.
@@ -505,7 +349,13 @@ mod tests {
         let p3_icc = crate::icc_profiles::DISPLAY_P3_V4;
         let src = ColorProfileSource::Icc(p3_icc);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
-        let result = cms.build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32);
+        let result = cms.build_source_transform(
+            src,
+            dst,
+            PixelFormat::RgbF32,
+            PixelFormat::RgbF32,
+            &ConvertOptions::permissive(),
+        );
         assert!(
             result.is_some(),
             "bundled compat profile should resolve via lite CMS"
@@ -522,8 +372,14 @@ mod tests {
         let cms = ZenCmsLite;
         let src = ColorProfileSource::Named(NamedProfile::DisplayP3);
         let dst = ColorProfileSource::Named(NamedProfile::Srgb);
-        let transform = cms
-            .build_source_transform(src, dst, PixelFormat::RgbF32, PixelFormat::RgbF32)
+        let mut transform = cms
+            .build_source_transform(
+                src,
+                dst,
+                PixelFormat::RgbF32,
+                PixelFormat::RgbF32,
+                &ConvertOptions::permissive(),
+            )
             .unwrap()
             .unwrap();
 
@@ -558,6 +414,7 @@ mod tests {
 #[allow(clippy::type_complexity)]
 mod accuracy_ground_truth_tests {
     use super::*;
+    use crate::cms::PluggableCms;
     use crate::{ColorProfileSource, NamedProfile, PixelFormat};
     use moxcms::{
         BarycentricWeightScale, ColorProfile, InterpolationMethod, Layout, RenderingIntent,
@@ -822,12 +679,14 @@ mod accuracy_ground_truth_tests {
                 dst_profile,
                 PixelFormat::Rgb8,
                 PixelFormat::Rgb8,
+                &crate::policy::ConvertOptions::permissive(),
             )
             .unwrap()
             .unwrap();
+        let xf = core::cell::RefCell::new(xf);
         alloc::boxed::Box::new(move |src: &[u8], dst: &mut [u8]| {
             let width = (src.len() / 3) as u32;
-            xf.transform_row(src, dst, width);
+            xf.borrow_mut().transform_row(src, dst, width);
         })
     }
 
@@ -922,6 +781,7 @@ mod accuracy_ground_truth_tests {
 )]
 mod gamut_reduction_compare_tests {
     use super::*;
+    use crate::cms::PluggableCms;
     use crate::{ColorProfileSource, NamedProfile, PixelFormat};
     use moxcms::{
         BarycentricWeightScale, ColorProfile, InterpolationMethod, Layout, RenderingIntent,
@@ -950,12 +810,14 @@ mod gamut_reduction_compare_tests {
                 dst_profile,
                 PixelFormat::Rgb8,
                 PixelFormat::Rgb8,
+                &crate::policy::ConvertOptions::permissive(),
             )
             .unwrap()
             .unwrap();
+        let xf = core::cell::RefCell::new(xf);
         alloc::boxed::Box::new(move |src: &[u8], dst: &mut [u8]| {
             let width = (src.len() / 3) as u32;
-            xf.transform_row(src, dst, width);
+            xf.borrow_mut().transform_row(src, dst, width);
         })
     }
 
@@ -971,16 +833,18 @@ mod gamut_reduction_compare_tests {
                 dst_profile,
                 PixelFormat::RgbF32,
                 PixelFormat::RgbF32,
+                &crate::policy::ConvertOptions::permissive(),
             )
             .unwrap()
             .unwrap();
+        let xf = core::cell::RefCell::new(xf);
         alloc::boxed::Box::new(move |data: &mut [f32]| {
             let width = (data.len() / 3) as u32;
             let bytes: &[u8] = bytemuck::cast_slice(data);
             // transform_row needs separate src/dst; copy src first.
             let src_copy = bytes.to_vec();
             let dst_bytes: &mut [u8] = bytemuck::cast_slice_mut(data);
-            xf.transform_row(&src_copy, dst_bytes, width);
+            xf.borrow_mut().transform_row(&src_copy, dst_bytes, width);
         })
     }
 

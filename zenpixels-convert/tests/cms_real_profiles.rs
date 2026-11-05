@@ -1,4 +1,3 @@
-#![allow(deprecated)]
 //! Comprehensive CMS tests using real-world ICC profiles from the system.
 //!
 //! These tests exercise the moxcms CMS backend against the colord ICC profile
@@ -31,7 +30,9 @@ extern crate alloc;
 use std::path::Path;
 
 use zenpixels_convert::PixelFormat;
-use zenpixels_convert::cms::ColorManagement;
+#[path = "common/icc_transforms.rs"]
+mod icc_transforms;
+use icc_transforms::IccTransforms;
 use zenpixels_convert::cms_moxcms::MoxCms;
 
 // ---------------------------------------------------------------------------
@@ -255,7 +256,7 @@ fn white_black_preservation_all_pairs() {
             if src_name == dst_name {
                 continue;
             }
-            let xform = match cms.build_transform(src_data, dst_data) {
+            let mut xform = match cms.build_transform(src_data, dst_data) {
                 Ok(x) => x,
                 Err(_) => continue,
             };
@@ -341,14 +342,14 @@ fn roundtrip_accuracy_key_pairs() {
             }
         };
 
-        let forward = match cms.build_transform(src, dst) {
+        let mut forward = match cms.build_transform(src, dst) {
             Ok(x) => x,
             Err(e) => {
                 eprintln!("  skip {src_name}→{dst_name}: {e}");
                 continue;
             }
         };
-        let inverse = match cms.build_transform(dst, src) {
+        let mut inverse = match cms.build_transform(dst, src) {
             Ok(x) => x,
             Err(e) => {
                 eprintln!("  skip {dst_name}→{src_name}: {e}");
@@ -436,17 +437,17 @@ fn format_aware_transforms_real_profiles() {
     };
 
     // u8 transform
-    let xform_u8 = cms
+    let mut xform_u8 = cms
         .build_transform_for_format(srgb, adobe, PixelFormat::Rgb8, PixelFormat::Rgb8)
         .unwrap();
 
     // u16 transform
-    let xform_u16 = cms
+    let mut xform_u16 = cms
         .build_transform_for_format(srgb, adobe, PixelFormat::Rgb16, PixelFormat::Rgb16)
         .unwrap();
 
     // f32 transform
-    let xform_f32 = cms
+    let mut xform_f32 = cms
         .build_transform_for_format(srgb, adobe, PixelFormat::RgbF32, PixelFormat::RgbF32)
         .unwrap();
 
@@ -517,7 +518,7 @@ fn rgba_alpha_preserved_real_profiles() {
             if src_name == dst_name {
                 continue;
             }
-            let xform = match cms.build_transform_for_format(
+            let mut xform = match cms.build_transform_for_format(
                 src_data,
                 dst_data,
                 PixelFormat::Rgba8,
@@ -569,7 +570,7 @@ fn multi_pixel_consistency() {
     let srgb = find("sRGB").expect("sRGB profile required");
     let adobe = find("AdobeRGB1998").expect("AdobeRGB profile required");
 
-    let xform = cms.build_transform(srgb, adobe).unwrap();
+    let mut xform = cms.build_transform(srgb, adobe).unwrap();
 
     // Transform 4 pixels individually and as a row, compare results
     let pixels = [[255u8, 0, 0], [0, 255, 0], [0, 0, 255], [128, 128, 128]];
@@ -653,7 +654,7 @@ fn near_identity_profile_pairs() {
         None => return,
     };
 
-    let xform = cms.build_transform(srgb, rec709).unwrap();
+    let mut xform = cms.build_transform(srgb, rec709).unwrap();
 
     let mut max_diff = 0i32;
     for r in (0..=255).step_by(5) {
