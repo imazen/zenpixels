@@ -334,7 +334,7 @@ fn native_trace_cause_and_error_priority_survive_the_envelope_and_scoring_bounda
     );
     assert_eq!(stop_reason(&error), None);
     let first = error.frames().find_map(|frame| frame.location()).unwrap();
-    assert!(first.file().ends_with("tests/protocol.rs"));
+    assert_eq!(first.file(), file!());
     assert_eq!(first.line(), origin);
     assert!(
         error

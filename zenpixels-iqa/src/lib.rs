@@ -4,6 +4,15 @@
 //! real prepared-reference work. No codec, conversion, kernel, runtime, video
 //! session or implicit replay is included. External metric implementations are
 //! intentional extension points; optional methods must default to refusal.
+//!
+//! Public records are extended through constructors, never downstream literals:
+//! ```compile_fail
+//! let opts = zenpixels_iqa::EvalOpts {
+//!     pulse: &zenpixels_iqa::how_far::NoPulse,
+//!     map: None,
+//!     max_pixels: None,
+//! };
+//! ```
 #![no_std]
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

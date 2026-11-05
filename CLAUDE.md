@@ -118,6 +118,13 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed IQA conformance portability (2026-11-05): the new native trace test
+  assumed forward-slash source paths and failed on Windows x64/ARM64. It now
+  compares the recorded source path with `file!()` while retaining the exact
+  origin-line, context, cause-identity and propagation assertions. IQA scalar
+  arithmetic and native metric expectations are unchanged.
+
+
 - Fixed 2026-11-04: planning added the gamut matrix after layout and depth steps, so wide
   RGB into gray or from RGBA to RGB ran it on rows of the wrong shape, and U16 rows ran U8
   steps. An odd scratch size could also misalign F32 rows. `tests/gamut_across_layouts.rs`
