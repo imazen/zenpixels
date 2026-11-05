@@ -42,7 +42,7 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 - **Breaking:** removed `PixelSliceMut::{upgrade_to_rgba, upgrade_to_bgra, matte_to_rgbx, matte_to_bgrx, strip_alpha_to_rgbx, strip_alpha_to_bgrx}`, which relabeled pixels as sRGB and double-multiplied premultiplied alpha. Nothing used them. `zenpixels_convert`'s `AlphaPolicy::CompositeOnto` composites.
 - `RowConverter` implements `Debug`. `image_interop` maps `YCgCoRo`. `UnspecifiedMatrixError` implements `Error` without `std`. `GrayAlpha` pixel impls no longer need the `rgb` feature. `__trace_ops` is public only with its feature. Both crates package their license files.
 
-- New feature `bt2446a`, which implies `hdr-experimental`, holds the BT.2446 Method A curve. **Breaking for `hdr-experimental` users:** `hdr::Bt2446A` needs it, and `new_with_hdr_config`, `convert_to_sdr` and friends return `NoPath` without it unless a `ToneMapper` is injected. At opt-level 3 it adds 64,008 B; the machinery alone adds 23,320 B.
+- New feature `bt2446a`, which implies `hdr-experimental`, holds the BT.2446 Method A curve. **Breaking for `hdr-experimental` users:** `hdr::Bt2446A` needs it, and `new_with_hdr_config`, `convert_to_sdr` and friends return `NoPath` without it unless a `ToneMapper` is injected. At opt-level 3 it adds 63,696 B; the machinery alone adds 24,920 B.
 
 - Fast U8 gamut kernels give each pixel the same result wherever it sits in a row. The tail used different arithmetic.
 - `ConvertPlan`: cross-gamut U8 from an unknown transfer encodes as the target says, instead of always as sRGB.

@@ -80,7 +80,7 @@ estimation-experimental = []
 # `features = ["hdr-experimental"]` to access measurement until the API
 # locks at 0.3.0.
 hdr-experimental = []
-# The BT.2446 Method A curve, about 64 KB of the HDR surface's 87 KB at opt-level 3. Without it, tone mapping
+# The BT.2446 Method A curve, 63,696 B of the HDR surface's 88,616 B at opt-level 3. Without it, tone mapping
 # takes an injected `ToneMapper`, and planning without one returns `NoPath`.
 bt2446a = ["hdr-experimental"]
 cms-moxcms = ["std", "dep:moxcms"]

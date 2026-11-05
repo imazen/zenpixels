@@ -177,6 +177,6 @@ was scored, so this isn't a measured comparison against metadata.
 Two consequences: a flat 203-nit image renders as white, since 203 is its peak, and 203 nits at a 1000-nit peak is 171 of 255, lower than
 BT.2408 would give.
 
-Size, for `zenpixels-convert` alone, stripped with thin LTO: `hdr-experimental` on and unused adds 13,424 B at opt-3 or 8,680 B at opt-s.
-The machinery with an injected mapper adds 23,320 B or 16,320 B. With `Bt2446A` it adds 87,328 B or 99,488 B. A `bt2446a` feature would remove
-64,008 B or 83,168 B. That gate is a prototype and is in no branch.
+Size, for `zenpixels-convert` alone, stripped with thin LTO, against a binary that already does a non-HDR conversion: `hdr-experimental` on and
+unused adds 14,480 B at opt-3 or 8,144 B at opt-s. The machinery with an injected mapper adds 24,920 B or 16,496 B. With the `bt2446a` feature and
+`Bt2446A` planned it adds 88,616 B or 100,888 B, so leaving that feature off saves 63,696 B or 84,392 B.
