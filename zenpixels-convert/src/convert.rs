@@ -895,15 +895,15 @@ impl ConvertPlan {
         {
             // Flatten the 3×3 matrix for storage in the step enum.
             let flat = [
-                matrix[0][0],
-                matrix[0][1],
-                matrix[0][2],
-                matrix[1][0],
-                matrix[1][1],
-                matrix[1][2],
-                matrix[2][0],
-                matrix[2][1],
-                matrix[2][2],
+                matrix.0[0][0],
+                matrix.0[0][1],
+                matrix.0[0][2],
+                matrix.0[1][0],
+                matrix.0[1][1],
+                matrix.0[1][2],
+                matrix.0[2][0],
+                matrix.0[2][1],
+                matrix.0[2][2],
             ];
 
             // The gamut matrix must be applied in linear f32 space.
@@ -1345,15 +1345,15 @@ impl ConvertPlan {
                 crate::gamut::conversion_matrix(from.primaries, ColorPrimaries::Bt2020)
         {
             let flat = [
-                matrix[0][0],
-                matrix[0][1],
-                matrix[0][2],
-                matrix[1][0],
-                matrix[1][1],
-                matrix[1][2],
-                matrix[2][0],
-                matrix[2][1],
-                matrix[2][2],
+                matrix.0[0][0],
+                matrix.0[0][1],
+                matrix.0[0][2],
+                matrix.0[1][0],
+                matrix.0[1][1],
+                matrix.0[1][2],
+                matrix.0[2][0],
+                matrix.0[2][1],
+                matrix.0[2][2],
             ];
             let step = if after_decode.layout().has_alpha() {
                 ConvertStep::GamutMatrixRgbaF32(flat)
@@ -1376,15 +1376,15 @@ impl ConvertPlan {
                 crate::gamut::conversion_matrix(ColorPrimaries::Bt2020, to.primaries)
         {
             let flat = [
-                matrix[0][0],
-                matrix[0][1],
-                matrix[0][2],
-                matrix[1][0],
-                matrix[1][1],
-                matrix[1][2],
-                matrix[2][0],
-                matrix[2][1],
-                matrix[2][2],
+                matrix.0[0][0],
+                matrix.0[0][1],
+                matrix.0[0][2],
+                matrix.0[1][0],
+                matrix.0[1][1],
+                matrix.0[1][2],
+                matrix.0[2][0],
+                matrix.0[2][1],
+                matrix.0[2][2],
             ];
             let step = if after_decode.layout().has_alpha() {
                 ConvertStep::GamutMatrixRgbaF32(flat)

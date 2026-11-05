@@ -156,6 +156,19 @@ pub trait PixelBufferConvertExt: crate::sealed::Sealed + Sized {
     /// **Allocates** a new [`PixelBuffer`].
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>>;
 
+    /// Change format in place when no conversion math is needed, with no allocation.
+    ///
+    /// Handles metadata-only changes, the `Rgba8` and `Bgra8` byte swap, and removing a
+    /// padding or declared-opaque alpha lane. Anything else returns
+    /// [`ConvertError::NoPath`](crate::ConvertError::NoPath) with the buffer untouched:
+    /// fall back to [`convert_to`](Self::convert_to). Live alpha is refused, so use
+    /// [`reduce_to_load_bearing_format_in_place`](crate::PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place)
+    /// to scan for it and drop it when it's opaque.
+    fn try_adapt_in_place(
+        &mut self,
+        target: PixelDescriptor,
+    ) -> Result<(), At<crate::ConvertError>>;
+
     /// Physically apply `orientation`, reusing this allocation where possible.
     ///
     /// Identity returns the buffer untouched. Orientations permute in place, with
@@ -518,6 +531,14 @@ impl PixelBufferConvertExt for PixelBuffer {
     #[track_caller]
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>> {
         self.as_slice().convert_to(target)
+    }
+
+    #[track_caller]
+    fn try_adapt_in_place(
+        &mut self,
+        target: PixelDescriptor,
+    ) -> Result<(), At<crate::ConvertError>> {
+        crate::adapt::try_adapt_in_place(self, target)
     }
 
     #[track_caller]

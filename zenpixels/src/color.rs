@@ -892,6 +892,7 @@ impl Color {
     ///
     /// [`BufferError::InvalidDimensions`](crate::buffer::BufferError::InvalidDimensions) when
     /// `pixel` isn't exactly one pixel, or the format's pixels are wider than 16 bytes.
+    /// [`AnyColor`] holds those.
     pub fn try_new(
         descriptor: PixelDescriptor,
         pixel: &[u8],
@@ -913,8 +914,112 @@ impl Color {
         self.descriptor
     }
 
-    /// The pixel, aligned to 4 bytes.
+    /// The pixel, aligned to 4 bytes. Sample types wider than that need [`AnyColor`].
     pub fn as_bytes(&self) -> &[u8] {
         &self.samples.0[..self.descriptor.bytes_per_pixel()]
+    }
+}
+
+/// A color in any format, including pixels wider than [`Color`] holds.
+///
+/// [`Color`] is `Copy` and holds up to 16 bytes, which covers every format at 8 and 16
+/// bits and everything with four `f32` samples. It has to be `Copy` to live in
+/// `ConvertOptions`. This type also holds wider pixels, such as RGBA in `f64`, on the
+/// heap, and costs no more space. Comparison is bitwise.
+///
+/// ```
+/// use zenpixels::{AnyColor, ChannelLayout, ChannelType, Color, PixelDescriptor, PixelFormat};
+///
+/// let small = AnyColor::from(Color::srgb8(255, 0, 0));
+/// assert_eq!(small.as_bytes(), [255, 0, 0]);
+/// assert!(small.as_color().is_some());
+///
+/// let format = PixelFormat::create_from(ChannelType::F64, ChannelLayout::Gray).unwrap();
+/// let descriptor = PixelDescriptor::from_pixel_format(format);
+/// let wide = AnyColor::try_new(descriptor, &0.5f64.to_ne_bytes()).unwrap();
+/// let samples: &[f64] = bytemuck::cast_slice(wide.as_bytes());
+/// assert_eq!(samples, [0.5]);
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AnyColor(AnyColorRepr);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum AnyColorRepr {
+    Compact(Color),
+    Wide(alloc::boxed::Box<WideColor>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct WideColor {
+    descriptor: PixelDescriptor,
+    /// Eight-byte words, so the bytes are aligned for every sample type.
+    words: alloc::boxed::Box<[u64]>,
+}
+
+const _: () = assert!(core::mem::size_of::<AnyColor>() == core::mem::size_of::<Color>());
+
+impl AnyColor {
+    /// One pixel of `descriptor`'s format, as bytes in native sample order.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::InvalidDimensions`](crate::buffer::BufferError::InvalidDimensions) when
+    /// `pixel` isn't exactly one pixel, and
+    /// [`BufferError::AllocationFailed`](crate::buffer::BufferError::AllocationFailed).
+    pub fn try_new(
+        descriptor: PixelDescriptor,
+        pixel: &[u8],
+    ) -> Result<Self, crate::buffer::BufferError> {
+        use crate::buffer::BufferError;
+        let bytes = descriptor.bytes_per_pixel();
+        if pixel.len() != bytes {
+            return Err(BufferError::InvalidDimensions);
+        }
+        if bytes <= Color::MAX_BYTES {
+            return Color::try_new(descriptor, pixel).map(Self::from);
+        }
+        let mut words = alloc::vec::Vec::new();
+        words
+            .try_reserve_exact(bytes.div_ceil(8))
+            .map_err(|_| BufferError::AllocationFailed)?;
+        words.resize(bytes.div_ceil(8), 0u64);
+        bytemuck::cast_slice_mut::<u64, u8>(&mut words)[..bytes].copy_from_slice(pixel);
+        let wide = WideColor {
+            descriptor,
+            words: words.into_boxed_slice(),
+        };
+        Ok(Self(AnyColorRepr::Wide(alloc::boxed::Box::new(wide))))
+    }
+
+    /// What the samples mean.
+    pub fn descriptor(&self) -> PixelDescriptor {
+        match &self.0 {
+            AnyColorRepr::Compact(color) => color.descriptor(),
+            AnyColorRepr::Wide(wide) => wide.descriptor,
+        }
+    }
+
+    /// The pixel, aligned for its sample type.
+    pub fn as_bytes(&self) -> &[u8] {
+        match &self.0 {
+            AnyColorRepr::Compact(color) => color.as_bytes(),
+            AnyColorRepr::Wide(wide) => {
+                &bytemuck::cast_slice(&wide.words)[..wide.descriptor.bytes_per_pixel()]
+            }
+        }
+    }
+
+    /// The compact form, or `None` when the pixel is wider than [`Color`] holds.
+    pub fn as_color(&self) -> Option<Color> {
+        match &self.0 {
+            AnyColorRepr::Compact(color) => Some(*color),
+            AnyColorRepr::Wide(_) => None,
+        }
+    }
+}
+
+impl From<Color> for AnyColor {
+    fn from(color: Color) -> Self {
+        Self(AnyColorRepr::Compact(color))
     }
 }

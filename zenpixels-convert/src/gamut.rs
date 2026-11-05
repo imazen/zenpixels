@@ -11,8 +11,8 @@ use crate::ColorPrimaries;
 
 /// A 3×3 row-major matrix between linear-light tristimulus spaces, in `f32`.
 ///
-/// Dereferences to `[[f32; 3]; 3]`, so `m[0][2]` reads and SIMD kernels taking
-/// the plain array accept `&m`.
+/// The array stays private so that the representation can change. Kernels read it
+/// through [`rows`](Self::rows).
 ///
 /// ```
 /// use zenpixels_convert::{ColorPrimaries, gamut::GamutMatrix};
@@ -23,30 +23,7 @@ use crate::ColorPrimaries;
 /// assert!((row[1][0] - 0.5).abs() < 1e-4, "gray stays gray");
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(transparent)]
-pub struct GamutMatrix([[f32; 3]; 3]);
-
-impl core::ops::Deref for GamutMatrix {
-    type Target = [[f32; 3]; 3];
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<[[f32; 3]; 3]> for GamutMatrix {
-    #[inline]
-    fn from(rows: [[f32; 3]; 3]) -> Self {
-        Self(rows)
-    }
-}
-
-impl From<GamutMatrix> for [[f32; 3]; 3] {
-    #[inline]
-    fn from(m: GamutMatrix) -> Self {
-        m.0
-    }
-}
+pub struct GamutMatrix(pub(crate) [[f32; 3]; 3]);
 
 impl GamutMatrix {
     /// A matrix from its rows.
@@ -54,6 +31,13 @@ impl GamutMatrix {
     #[must_use]
     pub const fn from_rows(rows: [[f32; 3]; 3]) -> Self {
         Self(rows)
+    }
+
+    /// The rows, for a kernel that takes them directly.
+    #[inline]
+    #[must_use]
+    pub const fn rows(&self) -> &[[f32; 3]; 3] {
+        &self.0
     }
 
     /// The matrix taking linear RGB in `from` to linear RGB in `to`.
@@ -333,7 +317,7 @@ mod tests {
     #[test]
     fn mat3_mul_inverse() {
         let identity = XYZ_TO_BT709.then(&BT709_TO_XYZ);
-        for (i, row) in identity.iter().enumerate() {
+        for (i, row) in identity.rows().iter().enumerate() {
             for (j, &val) in row.iter().enumerate() {
                 let expected = if i == j { 1.0 } else { 0.0 };
                 assert!(

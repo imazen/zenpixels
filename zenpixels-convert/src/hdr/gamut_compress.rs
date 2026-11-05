@@ -151,7 +151,7 @@ impl SoftCompress {
 /// gives identical bits.
 macro_rules! chroma_scale {
     ($splat:ident, $dot:ident, $sc:expr, $ll:ident, $dl:ident, $dm:ident, $ds:ident, $r0:ident, $g0:ident, $b0:ident) => {{
-        let inv = $sc.space.lms_to_rgb();
+        let inv = $sc.space.lms_to_rgb().rows();
         let (zero, one, three) = ($splat(0.0), $splat(1.0), $splat(3.0));
         let cap = $splat($sc.scale_cap);
         let tiny = $splat(1e-12);
@@ -217,8 +217,8 @@ fn apply_strip_impl(token: Token, sc: &SoftCompress, rgb: &mut [[f32; 3]]) {
     let dot = |row: &[f32; 3], a: f32x8, b: f32x8, c: f32x8| -> f32x8 {
         splat(row[0]) * a + splat(row[1]) * b + splat(row[2]) * c
     };
-    let (m1, inv) = (sc.space.rgb_to_lms(), sc.space.lms_to_rgb());
-    let ok = OKLAB_FROM_LMS_CBRT[0];
+    let (m1, inv) = (sc.space.rgb_to_lms().rows(), sc.space.lms_to_rgb().rows());
+    let ok = OKLAB_FROM_LMS_CBRT.rows()[0];
     let (ratio, top) = (splat(sc.gate_ratio), splat(GATE_TOP));
 
     let solve = |px: &mut [[f32; 3]; 8]| {
@@ -300,12 +300,8 @@ fn compress_planes_impl(token: Token, sc: &SoftCompress, l: &[f32], a: &mut [f32
     let dot = |row: &[f32; 3], x: f32x8, y: f32x8, z: f32x8| -> f32x8 {
         splat(row[0]) * x + splat(row[1]) * y + splat(row[2]) * z
     };
-    let inv = sc.space.lms_to_rgb();
-    let [row_l, row_m, row_s] = [
-        LMS_CBRT_FROM_OKLAB[0],
-        LMS_CBRT_FROM_OKLAB[1],
-        LMS_CBRT_FROM_OKLAB[2],
-    ];
+    let inv = sc.space.lms_to_rgb().rows();
+    let [row_l, row_m, row_s] = *LMS_CBRT_FROM_OKLAB.rows();
     let n = l.len();
     let mut start = 0;
     while start < n {

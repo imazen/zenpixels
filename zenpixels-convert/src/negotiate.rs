@@ -244,6 +244,30 @@ impl ConvertIntent {
         best_match(source, supported, self)
     }
 
+    /// [`best_match`](Self::best_match) among formats no lossier than `ceiling`, or
+    /// `None` when none qualifies. A ranking from the calibrated cost model, not a
+    /// proof: see [`LossBucket`].
+    #[must_use]
+    pub fn best_match_within(
+        self,
+        source: PixelDescriptor,
+        supported: &[PixelDescriptor],
+        ceiling: LossBucket,
+    ) -> Option<PixelDescriptor> {
+        let provenance = Provenance::from_source(source);
+        negotiate(
+            source,
+            provenance,
+            supported
+                .iter()
+                .filter(|&&d| {
+                    conversion_cost_with_provenance(source, d, provenance).loss_bucket() <= ceiling
+                })
+                .map(|&d| FormatOption::from(d)),
+            self,
+        )
+    }
+
     /// Like [`best_match`](Self::best_match), with the data's origin and each
     /// candidate's cost to the consumer: `our conversion + consumer cost`.
     ///
@@ -269,6 +293,28 @@ impl ConvertIntent {
     }
 }
 
+/// How visible a conversion's modeled loss is, calibrated against CIEDE2000
+/// measurements in `tests/perceptual_loss.rs`. Ordered from least to most visible.
+///
+/// This ranks formats. It isn't a guarantee about particular pixels: even
+/// [`Imperceptible`](Self::Imperceptible) can change samples. For hard guarantees use
+/// `ConvertPlan::new_preserving_samples`, which refuses anything that isn't a proven
+/// reversible change, or the refusals in `ConvertOptions`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum LossBucket {
+    /// Below a just-noticeable difference: ΔE under 0.5, model loss up to 10.
+    Imperceptible,
+    /// Visible only side by side: ΔE 0.5 to 2, model loss 11 to 50.
+    SideBySide,
+    /// Minor visible differences: ΔE 2 to 5, model loss 51 to 150.
+    Minor,
+    /// Clearly visible: ΔE 5 to 15, model loss 151 to 400.
+    Clear,
+    /// Severe: ΔE over 15, model loss over 400.
+    Severe,
+}
+
 /// Two-axis conversion cost: computational effort vs. information loss.
 ///
 /// These are independent concerns:
@@ -287,6 +333,18 @@ pub struct ConversionCost {
 }
 
 impl ConversionCost {
+    /// How visible this cost's [`loss`](Self::loss) is expected to be.
+    #[must_use]
+    pub const fn loss_bucket(&self) -> LossBucket {
+        match self.loss {
+            0..=10 => LossBucket::Imperceptible,
+            11..=50 => LossBucket::SideBySide,
+            51..=150 => LossBucket::Minor,
+            151..=400 => LossBucket::Clear,
+            _ => LossBucket::Severe,
+        }
+    }
+
     /// The cost of our kernels for `from` to `to`, independent of intent.
     ///
     /// Assumes `from`'s depth and primaries are the data's origin. Use

@@ -120,15 +120,10 @@
 //!   not what the pixels are. This is immutable and used only at encode time
 //!   for provenance decisions (e.g., "re-embed the original ICC profile").
 //!
-//! - Set `effective_bits` correctly on `FormatEntry`. A 10-bit AVIF decoded
-//!   to 10-bit codes widened into u16 has `effective_bits = 10`, not 16. For
-//!   RGB rebuilt from 10-bit YCbCr, 10 is a cost estimate, not a claim that
-//!   the samples lie on a 10-bit grid. A JPEG decoded to f32
-//!   with debiased dequantization has `effective_bits = 10`. Getting this
-//!   wrong makes the cost model over- or under-value precision.
-//!
-//! - Set `can_overshoot = true` only when output values exceed `[0.0, 1.0]`.
-//!   This is rare — only JPEG f32 decode with preserved IDCT ringing.
+//! - Report what you know about real precision. [`Provenance`] carries origin depth
+//!   into negotiation, as a cost estimate: RGB rebuilt from 10-bit YCbCr is not on a
+//!   10-bit grid. [`ExactDepth`](zenpixels::sample::ExactDepth) is measured evidence
+//!   that samples are exact lower-depth codes.
 //!
 //! ### Step 2: Negotiate
 //!
@@ -136,10 +131,13 @@
 //! Negotiation uses the two-axis cost model (effort vs. loss) weighted by
 //! [`ConvertIntent`].
 //!
-//! Two entry points:
+//! Three entry points:
 //!
 //! - **[`ConvertIntent::best_match`]**: Pass a source descriptor and a list of
 //!   supported descriptors. Good for simple encode paths.
+//!
+//! - **[`ConvertIntent::best_match_within`]**: Adds a ceiling on modeled loss, as a
+//!   [`LossBucket`]. Returns `None` when no format qualifies.
 //!
 //! - **[`ConvertIntent::negotiate`]**: Adds explicit [`Provenance`] (so the cost
 //!   model knows the data's origin) and consumer costs ([`FormatOption`]). Use it
@@ -473,7 +471,7 @@ pub use convert::HdrConfig;
 pub use converter::RowConverter;
 #[doc(inline)]
 pub use error::ConvertError;
-pub use negotiate::{ConversionCost, ConvertIntent, FormatOption, Provenance};
+pub use negotiate::{ConversionCost, ConvertIntent, FormatOption, LossBucket, Provenance};
 
 // Re-export extension traits.
 #[cfg(feature = "rgb")]

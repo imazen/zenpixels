@@ -351,10 +351,19 @@ impl IccIdentification {
     ///
     /// `None` means not in the table, which says nothing about the profile. A
     /// match is an approximate color identification, as described on this type.
-    /// For sRGB use [`is_srgb`](Self::is_srgb) on the result.
+    /// For sRGB use [`is_common_srgb`](Self::is_common_srgb).
     #[must_use]
     pub fn from_icc(icc_bytes: &[u8]) -> Option<Self> {
         identify_common(icc_bytes)
+    }
+
+    /// Whether `icc_bytes` is a well-known sRGB profile, for skipping a CMS.
+    ///
+    /// `false` means not recognized, which doesn't mean it isn't sRGB.
+    #[inline]
+    #[must_use]
+    pub fn is_common_srgb(icc_bytes: &[u8]) -> bool {
+        identify_common(icc_bytes).is_some_and(|id| id.is_srgb())
     }
 
     /// Create a new identification result.

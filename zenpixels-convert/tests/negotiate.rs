@@ -602,3 +602,60 @@ fn provenance_shifts_negotiate_preference() {
         "with u8 provenance, u8 should win: the cost model scores the return as lossless"
     );
 }
+
+// =========================================================================
+// Loss ceilings
+// =========================================================================
+
+#[test]
+fn loss_buckets_follow_their_documented_ranges() {
+    use zenpixels_convert::LossBucket::{Clear, Imperceptible, Minor, Severe, SideBySide};
+    for (loss, bucket) in [
+        (0, Imperceptible),
+        (10, Imperceptible),
+        (11, SideBySide),
+        (50, SideBySide),
+        (51, Minor),
+        (150, Minor),
+        (151, Clear),
+        (400, Clear),
+        (401, Severe),
+        (u16::MAX, Severe),
+    ] {
+        assert_eq!(
+            ConversionCost::new(0, loss).loss_bucket(),
+            bucket,
+            "loss {loss}"
+        );
+    }
+    assert!(Imperceptible < SideBySide && SideBySide < Minor && Minor < Clear && Clear < Severe);
+}
+
+#[test]
+fn best_match_within_refuses_rather_than_exceeds_the_ceiling() {
+    let src = PixelDescriptor::RGBAF32_LINEAR;
+    let only_u8 = [PixelDescriptor::RGB8_SRGB];
+    let bucket = ConversionCost::between(src, only_u8[0]).loss_bucket();
+    assert!(bucket > zenpixels_convert::LossBucket::Imperceptible);
+    assert_eq!(
+        ConvertIntent::Fastest.best_match_within(
+            src,
+            &only_u8,
+            zenpixels_convert::LossBucket::Imperceptible
+        ),
+        None
+    );
+    assert_eq!(
+        ConvertIntent::Fastest.best_match_within(src, &only_u8, bucket),
+        Some(only_u8[0])
+    );
+    // A candidate inside the ceiling is chosen, even when another would be cheaper.
+    assert_eq!(
+        ConvertIntent::Fastest.best_match_within(
+            src,
+            &[only_u8[0], src],
+            zenpixels_convert::LossBucket::Imperceptible
+        ),
+        Some(src)
+    );
+}

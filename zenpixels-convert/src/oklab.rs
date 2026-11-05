@@ -102,14 +102,14 @@ impl OklabSpace {
     #[must_use]
     #[allow(clippy::wrong_self_convention)]
     pub fn from_rgb(&self, [r, g, b]: [f32; 3]) -> [f32; 3] {
-        rgb_to_oklab(r, g, b, &self.rgb_to_lms)
+        rgb_to_oklab(r, g, b, self.rgb_to_lms.rows())
     }
 
     /// `[L, a, b]` to linear RGB, unclipped.
     #[inline]
     #[must_use]
     pub fn to_rgb(&self, [l, a, b]: [f32; 3]) -> [f32; 3] {
-        oklab_to_rgb(l, a, b, &self.lms_to_rgb)
+        oklab_to_rgb(l, a, b, self.lms_to_rgb.rows())
     }
 }
 
@@ -173,15 +173,15 @@ pub(crate) fn rgb_to_oklab(r: f32, g: f32, b: f32, m1: &[[f32; 3]; 3]) -> [f32; 
     let s_ = fast_cbrt(s);
 
     // Step 3: LMS^(1/3) → Oklab via M2
-    let ok_l = OKLAB_FROM_LMS_CBRT[0][0] * l_
-        + OKLAB_FROM_LMS_CBRT[0][1] * m_
-        + OKLAB_FROM_LMS_CBRT[0][2] * s_;
-    let ok_a = OKLAB_FROM_LMS_CBRT[1][0] * l_
-        + OKLAB_FROM_LMS_CBRT[1][1] * m_
-        + OKLAB_FROM_LMS_CBRT[1][2] * s_;
-    let ok_b = OKLAB_FROM_LMS_CBRT[2][0] * l_
-        + OKLAB_FROM_LMS_CBRT[2][1] * m_
-        + OKLAB_FROM_LMS_CBRT[2][2] * s_;
+    let ok_l = OKLAB_FROM_LMS_CBRT.0[0][0] * l_
+        + OKLAB_FROM_LMS_CBRT.0[0][1] * m_
+        + OKLAB_FROM_LMS_CBRT.0[0][2] * s_;
+    let ok_a = OKLAB_FROM_LMS_CBRT.0[1][0] * l_
+        + OKLAB_FROM_LMS_CBRT.0[1][1] * m_
+        + OKLAB_FROM_LMS_CBRT.0[1][2] * s_;
+    let ok_b = OKLAB_FROM_LMS_CBRT.0[2][0] * l_
+        + OKLAB_FROM_LMS_CBRT.0[2][1] * m_
+        + OKLAB_FROM_LMS_CBRT.0[2][2] * s_;
 
     [ok_l, ok_a, ok_b]
 }
@@ -192,15 +192,15 @@ pub(crate) fn rgb_to_oklab(r: f32, g: f32, b: f32, m1: &[[f32; 3]; 3]) -> [f32; 
 #[inline]
 pub(crate) fn oklab_to_rgb(l: f32, a: f32, b: f32, m1_inv: &[[f32; 3]; 3]) -> [f32; 3] {
     // Step 1: Oklab → LMS^(1/3) via inverse M2
-    let l_ = LMS_CBRT_FROM_OKLAB[0][0] * l
-        + LMS_CBRT_FROM_OKLAB[0][1] * a
-        + LMS_CBRT_FROM_OKLAB[0][2] * b;
-    let m_ = LMS_CBRT_FROM_OKLAB[1][0] * l
-        + LMS_CBRT_FROM_OKLAB[1][1] * a
-        + LMS_CBRT_FROM_OKLAB[1][2] * b;
-    let s_ = LMS_CBRT_FROM_OKLAB[2][0] * l
-        + LMS_CBRT_FROM_OKLAB[2][1] * a
-        + LMS_CBRT_FROM_OKLAB[2][2] * b;
+    let l_ = LMS_CBRT_FROM_OKLAB.0[0][0] * l
+        + LMS_CBRT_FROM_OKLAB.0[0][1] * a
+        + LMS_CBRT_FROM_OKLAB.0[0][2] * b;
+    let m_ = LMS_CBRT_FROM_OKLAB.0[1][0] * l
+        + LMS_CBRT_FROM_OKLAB.0[1][1] * a
+        + LMS_CBRT_FROM_OKLAB.0[1][2] * b;
+    let s_ = LMS_CBRT_FROM_OKLAB.0[2][0] * l
+        + LMS_CBRT_FROM_OKLAB.0[2][1] * a
+        + LMS_CBRT_FROM_OKLAB.0[2][2] * b;
 
     // Step 2: cube (inverse of cube root)
     let lms_l = l_ * l_ * l_;
@@ -257,8 +257,8 @@ mod tests {
         ];
 
         for rgb in &test_colors {
-            let [l, a, b] = rgb_to_oklab(rgb[0], rgb[1], rgb[2], &m1);
-            let [r2, g2, b2] = oklab_to_rgb(l, a, b, &m1_inv);
+            let [l, a, b] = rgb_to_oklab(rgb[0], rgb[1], rgb[2], m1.rows());
+            let [r2, g2, b2] = oklab_to_rgb(l, a, b, m1_inv.rows());
             for c in 0..3 {
                 let err = (rgb[c] - [r2, g2, b2][c]).abs();
                 assert!(err < 1e-4, "roundtrip error for {rgb:?} channel {c}: {err}");
@@ -277,7 +277,7 @@ mod tests {
             let m1 = rgb_to_lms_matrix(p).unwrap();
             for i in 1..=4096 {
                 let g = i as f32 / 4096.0;
-                let [l, a, b] = rgb_to_oklab(g, g, g, &m1);
+                let [l, a, b] = rgb_to_oklab(g, g, g, m1.rows());
                 assert!(a.hypot(b) < 1e-6, "{p:?} gray {g}: a {a}, b {b}");
                 assert!((l - g.cbrt()).abs() < 2e-6, "{p:?} gray {g}: L {l}");
             }
@@ -293,7 +293,7 @@ mod tests {
             ([0.0, 1.0, 0.0], [0.866440, -0.233888, 0.179498]),
             ([0.0, 0.0, 1.0], [0.452014, -0.032457, -0.311528]),
         ] {
-            let lab = rgb_to_oklab(rgb[0], rgb[1], rgb[2], &m1);
+            let lab = rgb_to_oklab(rgb[0], rgb[1], rgb[2], m1.rows());
             for (got, want) in lab.iter().zip(css) {
                 assert!((got - want).abs() < 2e-6, "{rgb:?}: {lab:?} vs {css:?}");
             }
@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn oklab_black_point() {
         let m1 = rgb_to_lms_matrix(ColorPrimaries::Bt709).unwrap();
-        let [l, a, b] = rgb_to_oklab(0.0, 0.0, 0.0, &m1);
+        let [l, a, b] = rgb_to_oklab(0.0, 0.0, 0.0, m1.rows());
         assert!(l.abs() < 1e-6, "black L should be ~0.0, got {l}");
         assert!(a.abs() < 1e-6, "black a should be ~0.0, got {a}");
         assert!(b.abs() < 1e-6, "black b should be ~0.0, got {b}");
@@ -315,8 +315,8 @@ mod tests {
         let m1_inv = lms_to_rgb_matrix(ColorPrimaries::Bt2020).unwrap();
 
         let rgb = [0.4, 0.6, 0.2];
-        let [l, a, b] = rgb_to_oklab(rgb[0], rgb[1], rgb[2], &m1);
-        let [r2, g2, b2] = oklab_to_rgb(l, a, b, &m1_inv);
+        let [l, a, b] = rgb_to_oklab(rgb[0], rgb[1], rgb[2], m1.rows());
+        let [r2, g2, b2] = oklab_to_rgb(l, a, b, m1_inv.rows());
         for c in 0..3 {
             let err = (rgb[c] - [r2, g2, b2][c]).abs();
             assert!(err < 1e-4, "BT.2020 roundtrip error channel {c}: {err}");

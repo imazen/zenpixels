@@ -132,3 +132,38 @@ fn constructors() {
         assert!(DiffuseWhite::try_new(bad).is_none());
     }
 }
+
+#[test]
+fn any_color_holds_formats_wider_than_color() {
+    use zenpixels::{AnyColor, Color, PixelFormat};
+    let wide = PixelDescriptor::from_pixel_format(
+        PixelFormat::create_from(ChannelType::F64, ChannelLayout::Rgba).expect("generic format"),
+    );
+    let bytes: Vec<u8> = [0.25f64, 0.5, 0.75, 1.0]
+        .iter()
+        .flat_map(|v| v.to_ne_bytes())
+        .collect();
+    assert!(Color::try_new(wide, &bytes).is_err());
+    let any = AnyColor::try_new(wide, &bytes).unwrap();
+    assert_eq!(any.descriptor(), wide);
+    assert_eq!(
+        bytemuck::cast_slice::<u8, f64>(any.as_bytes()),
+        [0.25, 0.5, 0.75, 1.0]
+    );
+    assert!(any.as_color().is_none());
+    assert_eq!(any.clone(), any);
+    assert_eq!(
+        *AnyColor::try_new(wide, &bytes[..8])
+            .unwrap_err()
+            .to_string(),
+        BufferError::InvalidDimensions.to_string()
+    );
+
+    let small = AnyColor::try_new(D, &[1, 2, 3]).unwrap();
+    assert_eq!(
+        small.as_color(),
+        Some(Color::try_new(D, &[1, 2, 3]).unwrap())
+    );
+    assert_eq!(small, AnyColor::from(Color::srgb8(1, 2, 3)));
+    assert_ne!(small, any);
+}

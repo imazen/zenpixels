@@ -2494,7 +2494,7 @@ fn linear_rgb_to_oklab_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: 
 
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-    rgb_to_oklab_3ch_inner(srcf, dstf, &m1);
+    rgb_to_oklab_3ch_inner(srcf, dstf, m1.rows());
 }
 
 /// 3-channel RGB→Oklab inner loop (16 pixels = 48 f32s per chunk).
@@ -2535,7 +2535,7 @@ fn oklab_to_linear_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: 
 
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-    oklab_to_rgb_3ch_inner(srcf, dstf, &m1_inv);
+    oklab_to_rgb_3ch_inner(srcf, dstf, m1_inv.rows());
 }
 
 /// 3-channel Oklab→RGB inner loop (16 pixels = 48 f32s per chunk).
@@ -2575,7 +2575,7 @@ fn linear_rgba_to_oklaba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries
 
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
-    rgb_to_oklab_4ch_inner(srcf, dstf, &m1);
+    rgb_to_oklab_4ch_inner(srcf, dstf, m1.rows());
 }
 
 /// 4-channel RGBA→Oklaba inner loop (16 pixels = 64 f32s per chunk).
@@ -2617,7 +2617,7 @@ fn oklaba_to_linear_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries
 
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
-    oklab_to_rgb_4ch_inner(srcf, dstf, &m1_inv);
+    oklab_to_rgb_4ch_inner(srcf, dstf, m1_inv.rows());
 }
 
 /// 4-channel Oklaba→RGBA inner loop (16 pixels = 64 f32s per chunk).
