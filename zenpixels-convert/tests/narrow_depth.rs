@@ -81,7 +81,7 @@ fn cms_cannot_bypass_range_guards() {
     }
 }
 
-#[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 #[test]
 fn hdr_constructor_refuses_narrow_depth_changes() {
     let narrow8 = PixelDescriptor::RGB8_SRGB

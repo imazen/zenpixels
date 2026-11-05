@@ -22,6 +22,7 @@ include = [
 [package.metadata.docs.rs]
 features = [
     "hdr-experimental",
+    "bt2446a",
     "cms-moxcms",
     "rgb",
     "imgref",
@@ -77,6 +78,9 @@ estimation-experimental = []
 # `features = ["hdr-experimental"]` to access measurement until the API
 # locks at 0.3.0.
 hdr-experimental = []
+# The BT.2446 Method A curve, about 64 KB of the HDR surface's 87 KB at opt-level 3. Without it, tone mapping
+# takes an injected `ToneMapper`, and planning without one returns `NoPath`.
+bt2446a = ["hdr-experimental"]
 cms-moxcms = ["std", "dep:moxcms"]
 # Soft-removed in 0.2.15. The `serde` feature previously forwarded to
 # `zenpixels/serde` and added a `Serialize`/`Deserialize` derive on
@@ -181,7 +185,7 @@ allocation-counter = "0.8.1"
 [[test]]
 name = "hdr_sdr_alloc"
 path = "tests/hdr_sdr_alloc.rs"
-required-features = ["hdr-experimental"]
+required-features = ["bt2446a"]
 
 [[bench]]
 name = "bench_cms"
@@ -304,7 +308,7 @@ required-features = ["__bench_orient"]
 [[example]]
 name = "measure_histogram_throughput"
 path = "examples/measure_histogram_throughput.rs"
-required-features = ["hdr-experimental"]
+required-features = ["bt2446a"]
 
 [[bench]]
 name = "row_kernel_tiers"

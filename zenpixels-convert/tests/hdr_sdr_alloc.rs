@@ -19,7 +19,7 @@
 //! own test binary (see the `[[test]]` entry in Cargo.toml). Gated on
 //! `hdr-experimental` (required-features).
 
-#![cfg(feature = "hdr-experimental")]
+#![cfg(feature = "bt2446a")]
 
 use zenpixels::buffer::PixelBuffer;
 use zenpixels::hdr::{ContentLightLevel, DiffuseWhite};

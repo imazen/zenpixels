@@ -75,6 +75,8 @@ jobs:
       # feature — run it explicitly so those suites execute in CI.
       - name: Test (zenpixels-convert HDR measurement, hdr-experimental)
         run: cargo test -p zenpixels-convert --features hdr-experimental
+      - name: Test (zenpixels-convert BT.2446 Method A, bt2446a)
+        run: cargo test -p zenpixels-convert --features bt2446a
 
       # Downstream consumers ship `default-features = false, features = ["rgb"]`
       # (no `icc-db`, no `std`). Run the whole suite in that exact configuration
@@ -105,6 +107,8 @@ jobs:
       # gamut compression). It must stay no_std-clean (libm, not the std f32
       # inherents) — this combination was previously never built in CI, so a
       # std-only method could regress the no_std path unnoticed.
+      - name: Check no_std + bt2446a (zenpixels-convert)
+        run: cargo check -p zenpixels-convert --no-default-features --features bt2446a
       - name: Check no_std + hdr-experimental (zenpixels-convert)
         run: cargo check -p zenpixels-convert --no-default-features --features hdr-experimental
 

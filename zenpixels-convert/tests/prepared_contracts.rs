@@ -255,7 +255,7 @@ fn backend_row_failure_preserves_concrete_error_and_never_returns_encode_ready()
     );
 }
 
-#[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 #[test]
 fn composed_hdr_preparation_retains_every_gamut_table() {
     use zenpixels_convert::{ColorPrimaries, HdrConfig};
@@ -282,7 +282,7 @@ fn composed_hdr_preparation_retains_every_gamut_table() {
     assert!(dst.iter().all(|v| v.is_finite()));
 }
 
-#[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 #[test]
 fn hdr_unassociates_before_nonlinear_mapping() {
     use zenpixels_convert::HdrConfig;
@@ -350,7 +350,7 @@ fn conversion_replaces_current_color_signaling_and_refuses_ambiguous_context() {
     );
 }
 
-#[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 #[test]
 fn pq_and_explicit_linear_anchor_describe_the_same_luminance() {
     use std::sync::Arc;

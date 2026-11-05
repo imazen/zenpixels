@@ -1390,7 +1390,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "hdr-experimental")]
+    #[cfg(feature = "bt2446a")]
     fn hdr_u16_to_sdr_u8_pq_requires_peak() {
         // Pre-0.2.16: PQ U16 → sRGB U8 silently routed through linear with no
         // tone-mapping (every HDR sample > SDR diffuse-white saturated to

@@ -1,5 +1,5 @@
 //! Injecting a tone mapper, and what the default is.
-#![cfg(feature = "hdr-experimental")]
+#![cfg(feature = "bt2446a")]
 use std::sync::Arc;
 use zenpixels::{ColorPrimaries as P, PixelDescriptor as D};
 use zenpixels_convert::hdr::{

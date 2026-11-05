@@ -144,7 +144,7 @@ fn padding_becomes_opaque_alpha_without_touching_color() {
     }
 }
 
-#[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 #[test]
 fn tone_mapping_associated_samples_matches_straight_samples() {
     use zenpixels_convert::ConvertPlan;

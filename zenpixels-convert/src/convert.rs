@@ -1619,6 +1619,7 @@ impl ConvertPlan {
         // ---- The mapper is either the caller-supplied one (via `new_with_tone_mapper`) or the in-crate
         // BT.2446-A reference curve, constructed from the supplied `HdrConfig`. Its working primaries
         // decide the matrices on both sides of it. An unknown target keeps the source's.
+        #[cfg(feature = "bt2446a")]
         let mapper: alloc::sync::Arc<dyn crate::hdr::ToneMapper> =
             mapper_override.unwrap_or_else(|| {
                 alloc::sync::Arc::new(crate::hdr::Bt2446A::new(
@@ -1626,6 +1627,11 @@ impl ConvertPlan {
                     hdr.target_peak_nits,
                 ))
             });
+        #[cfg(not(feature = "bt2446a"))]
+        let mapper: alloc::sync::Arc<dyn crate::hdr::ToneMapper> = match mapper_override {
+            Some(mapper) => mapper,
+            None => return Err(whereat::at!(ConvertError::NoPath { from, to })),
+        };
         let requirements = mapper.requirements();
         if requirements.full_image {
             return Err(whereat::at!(ConvertError::FullImageMapperNotSupported {
@@ -3184,7 +3190,7 @@ mod convert_kernels;
 use convert_kernels::apply_step_u8;
 pub(crate) use convert_kernels::{hlg_eotf, hlg_oetf, pq_eotf, pq_oetf};
 
-#[cfg(all(test, feature = "hdr-experimental"))]
+#[cfg(all(test, feature = "bt2446a"))]
 mod hdr_plan_tests {
     //! Unit tests pinning the HDR-aware `ConvertPlan` against the same math
     //! the deleted `HdrToSdr::apply_strip` ran. Keeps the e2e ΔE2000 budget

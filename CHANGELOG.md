@@ -33,6 +33,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- New feature `bt2446a`, which implies `hdr-experimental`, holds the BT.2446 Method A curve. **Breaking for `hdr-experimental` users:** `hdr::Bt2446A` needs it, and `new_with_hdr_config`, `convert_to_sdr` and friends return `NoPath` without it unless a `ToneMapper` is injected. At opt-level 3 it adds 64,008 B; the machinery alone adds 23,320 B.
+
 - Fast U8 gamut kernels give each pixel the same result wherever it sits in a row. The tail used different arithmetic.
 - `ConvertPlan`: cross-gamut U8 from an unknown transfer encodes as the target says, instead of always as sRGB.
 - `PixelDescriptor::layout_compatible` separates `CmykF32` from `CmykF32Inverted`. `same_color` sees out-of-range channels. `try_as_imgref` no longer panics on empty buffers.

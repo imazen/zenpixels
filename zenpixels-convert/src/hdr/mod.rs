@@ -44,6 +44,7 @@ pub mod measure;
 /// Linear-light HDR → linear-light SDR curve. Gated behind
 /// `hdr-experimental` while the cross-crate API surface settles.
 #[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 mod bt2446a;
 
 /// Soft chroma compression in OKLch with a precomputed gamut boundary LUT.
@@ -72,6 +73,7 @@ pub use measure::{CllMeasure, LightLevelHistogram, LightLevelMethod};
 // underlying `Bt2446A` and `SoftCompress` primitives stay public for advanced
 // callers that want to drive the math directly.
 #[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 pub use bt2446a::Bt2446A;
 pub use gamut_compress::SoftCompress;
 // Two-phase tone-mapping surface: the pluggable curve trait and the strip executor

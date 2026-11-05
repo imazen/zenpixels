@@ -24,7 +24,7 @@
 //! without the feature those tests skip (the recorder is a no-op so
 //! the assertions can't fire).
 
-#![cfg(feature = "hdr-experimental")]
+#![cfg(feature = "bt2446a")]
 
 extern crate alloc;
 

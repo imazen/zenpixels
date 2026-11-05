@@ -74,7 +74,7 @@ fn native_identity_is_bit_exact_but_unimplemented_transforms_refuse() {
     }
 }
 
-#[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 #[test]
 fn hdr_constructor_cannot_treat_native_identity_as_supported_math() {
     for format in [ChannelType::I16, ChannelType::U32, ChannelType::F64].map(native_rgb) {

@@ -1181,7 +1181,7 @@ fn hlg_u16_f32_u16_roundtrip_wide_range() {
 /// curve — black stays black, mid-grey rises with luminance, and peak
 /// HDR maps near SDR peak.
 #[test]
-#[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 fn pq_u16_to_srgb_u8_correctness() {
     use zenpixels_convert::ConvertPlan;
     let pq_u16 = PixelDescriptor::new(
@@ -1232,7 +1232,7 @@ fn pq_u16_to_srgb_u8_correctness() {
 
 /// A peak alone cannot map scene-referred HLG to display-referred SDR.
 #[test]
-#[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 fn hlg_u16_to_srgb_u8_requires_display_mapping() {
     let hlg = PixelDescriptor::RGB16_SRGB.with_transfer(TransferFunction::Hlg);
     assert!(

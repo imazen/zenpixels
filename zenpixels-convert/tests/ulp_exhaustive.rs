@@ -1116,7 +1116,7 @@ fn ulp_hlg_eotf_monotonic() {
 // ═══════════════════════════════════════════════════════════════════════
 
 #[test]
-#[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 fn ulp_pq_to_srgb_basic() {
     use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
 
