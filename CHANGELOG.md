@@ -33,6 +33,11 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- Fix `GamutBoundaryLut::max_chroma` just below hue zero, where a rounded-up hue
+  read the table with a blend weight of 256 and returned about a quarter of the
+  true bound. `SoftCompress` and zenfilters' soft gamut mapping desaturated those
+  colors too far, with a jump of up to 0.18 in OKLab chroma.
+
 Built on the 0.2.17 bridge, with identical migrated signatures and feature names.
 
 - Remove the deprecated legacy `planar` module/re-exports; retain `planar` as a

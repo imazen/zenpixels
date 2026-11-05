@@ -75,11 +75,14 @@ impl GamutBoundaryLut {
 
         let l0 = (l_f as usize).min(L_STEPS - 2);
         let l1 = l0 + 1;
-        let h0 = h_f as usize % H_STEPS;
+        // `rem_euclid` of a tiny negative hue rounds up to exactly 2π, so `h_f`
+        // can equal `H_STEPS`. Take the fraction before wrapping the index.
+        let h_floor = h_f as usize;
+        let h0 = h_floor % H_STEPS;
         let h1 = (h0 + 1) % H_STEPS;
 
         let lt = l_f - l0 as f32;
-        let ht = h_f - h0 as f32;
+        let ht = h_f - h_floor as f32;
 
         let v00 = self.data[l0 * H_STEPS + h0];
         let v01 = self.data[l0 * H_STEPS + h1];
@@ -606,6 +609,23 @@ mod tests {
                 "B out of gamut after compress: color {i} B={:.4}",
                 rgb[2]
             );
+        }
+    }
+
+    /// A hue a hair below zero rounds to exactly 2π. It used to read the table
+    /// with a blend weight of 256, returning about a quarter of the true bound.
+    #[test]
+    fn max_chroma_is_continuous_across_hue_zero() {
+        let lut = bt709_lut();
+        for l in [0.2, 0.4, 0.5, 0.6, 0.8] {
+            let at_zero = lut.max_chroma(l, 0.0);
+            for h in [-1e-5_f32, -1e-6, -1e-7, -1e-9, -1e-20, 1e-9, 1e-7] {
+                let got = lut.max_chroma(l, h);
+                assert!(
+                    (got - at_zero).abs() < 1e-3,
+                    "max_chroma({l}, {h:e}) = {got}, but {at_zero} at hue 0"
+                );
+            }
         }
     }
 
