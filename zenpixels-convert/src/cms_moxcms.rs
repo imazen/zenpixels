@@ -350,6 +350,357 @@ fn f32_transform(
     }))
 }
 
+/// A pure-gamma curve, evaluated as the backend does where it can represent the result.
+///
+/// The backend's fast power returns unrelated values otherwise, and loses the sign of a negative sample:
+/// on gamma 1.8, zero decoded to -1.65e8, so ProPhoto (0.5, 0.5, 0) into sRGB came out (1, 1, 0), clipped
+/// or not. Over all 2^32 `f32` inputs on 11 curves, the magnitudes in this range are within 1.3e-5 of
+/// exact math. Anything else, zero, subnormals, infinity and NaN among them, takes `libm`.
+struct PureGammaCurve {
+    evaluator: alloc::boxed::Box<dyn moxcms::ToneCurveEvaluator + Send + Sync>,
+    exponent: f32,
+    fast_min_bits: u32,
+    fast_span: u32,
+}
+
+impl PureGammaCurve {
+    fn new(
+        evaluator: alloc::boxed::Box<dyn moxcms::ToneCurveEvaluator + Send + Sync>,
+        exponent: f32,
+    ) -> Self {
+        let fast_min = libm::powf(2.0, -125.0 / exponent).max(f32::MIN_POSITIVE);
+        let fast_max = libm::powf(2.0, 126.0 / exponent).min(f32::MAX);
+        Self {
+            evaluator,
+            exponent,
+            fast_min_bits: fast_min.to_bits(),
+            fast_span: fast_max.to_bits() - fast_min.to_bits(),
+        }
+    }
+
+    #[inline(always)]
+    fn is_fast(&self, x: f32) -> bool {
+        (x.to_bits() & 0x7fff_ffff).wrapping_sub(self.fast_min_bits) <= self.fast_span
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exact(&self, x: f32) -> f32 {
+        libm::powf(x.abs(), self.exponent).copysign(x)
+    }
+
+    #[inline(always)]
+    fn sample(&self, x: f32) -> f32 {
+        if self.is_fast(x) {
+            self.evaluator.evaluate_value(x.abs()).copysign(x)
+        } else {
+            self.exact(x)
+        }
+    }
+
+    /// Applies the curve to a pixel's leading color channels, three or one.
+    #[inline(always)]
+    fn apply(&self, pixel: &mut [f32], colors: usize) {
+        if colors == 3 {
+            let [r, g, b] = [pixel[0], pixel[1], pixel[2]];
+            if self.is_fast(r) & self.is_fast(g) & self.is_fast(b) {
+                let rgb = moxcms::Rgb::new(r.abs(), g.abs(), b.abs());
+                let rgb = self.evaluator.evaluate_tristimulus(rgb);
+                pixel[0] = rgb.r.copysign(r);
+                pixel[1] = rgb.g.copysign(g);
+                pixel[2] = rgb.b.copysign(b);
+            } else {
+                pixel[0] = self.sample(r);
+                pixel[1] = self.sample(g);
+                pixel[2] = self.sample(b);
+            }
+        } else {
+            pixel[0] = self.sample(pixel[0]);
+        }
+    }
+}
+
+/// F32 input through a pure-gamma curve: the backend starts from linear light, see [`PureGammaCurve`].
+struct PureGammaInput {
+    transform: Arc<dyn TransformExecutor<f32> + Send + Sync>,
+    curve: PureGammaCurve,
+    source_channels: usize,
+    target_channels: usize,
+}
+
+impl TransformExecutor<f32> for PureGammaInput {
+    fn transform(&self, source: &[f32], target: &mut [f32]) -> Result<(), moxcms::CmsError> {
+        const PIXELS: usize = 128;
+        const MOST_CHANNELS: usize = 4;
+        let (sc, tc) = (self.source_channels, self.target_channels);
+        if !source.len().is_multiple_of(sc) || !target.len().is_multiple_of(tc) {
+            return Err(moxcms::CmsError::LaneMultipleOfChannels);
+        }
+        if source.len() / sc != target.len() / tc {
+            return Err(moxcms::CmsError::LaneSizeMismatch);
+        }
+        let colors = color_channels(sc);
+        // Stack scratch, so a row doesn't allocate.
+        let mut linear = [0f32; PIXELS * MOST_CHANNELS];
+        for (input, output) in source
+            .chunks(PIXELS * sc)
+            .zip(target.chunks_mut(PIXELS * tc))
+        {
+            let stage = &mut linear[..input.len()];
+            stage.copy_from_slice(input);
+            for pixel in stage.chunks_exact_mut(sc) {
+                self.curve.apply(pixel, colors);
+            }
+            self.transform.transform(stage, output)?;
+        }
+        Ok(())
+    }
+}
+
+/// F32 output through a pure-gamma curve where a gray profile is on either side: the backend stops at
+/// linear light, see [`PureGammaCurve`].
+struct PureGammaGrayOutput {
+    transform: Arc<dyn TransformExecutor<f32> + Send + Sync>,
+    curve: PureGammaCurve,
+    target_channels: usize,
+}
+
+impl TransformExecutor<f32> for PureGammaGrayOutput {
+    fn transform(&self, source: &[f32], target: &mut [f32]) -> Result<(), moxcms::CmsError> {
+        self.transform.transform(source, target)?;
+        let colors = color_channels(self.target_channels);
+        for pixel in target.chunks_exact_mut(self.target_channels) {
+            self.curve.apply(pixel, colors);
+        }
+        Ok(())
+    }
+}
+
+/// F32 output through a pure-gamma curve from a table source, whose grid the backend fills through the
+/// target's curve and then interpolates. Stopping at linear light would interpolate there instead, so
+/// the backend keeps encoding, with the curve in its parametric form: that keeps a negative sample's sign
+/// but leaves it in linear light, and this encodes those. Grid nodes are exact. Between a negative node
+/// and a positive one the result mixes the two forms.
+struct TableSourcePureGammaOutput {
+    transform: Arc<dyn TransformExecutor<f32> + Send + Sync>,
+    exponent: f32,
+    target_channels: usize,
+}
+
+impl TransformExecutor<f32> for TableSourcePureGammaOutput {
+    fn transform(&self, source: &[f32], target: &mut [f32]) -> Result<(), moxcms::CmsError> {
+        self.transform.transform(source, target)?;
+        for pixel in target.chunks_exact_mut(self.target_channels) {
+            for value in &mut pixel[..3] {
+                if *value < 0.0 {
+                    *value = -libm::powf(-*value, self.exponent);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The color channels of a pixel with this many channels, alpha aside.
+const fn color_channels(channels: usize) -> usize {
+    if channels <= 2 { 1 } else { 3 }
+}
+
+fn has_tables(p: &ColorProfile) -> bool {
+    p.lut_a_to_b_colorimetric.is_some()
+        || p.lut_a_to_b_perceptual.is_some()
+        || p.lut_b_to_a_colorimetric.is_some()
+        || p.lut_b_to_a_perceptual.is_some()
+}
+
+/// A profile whose curves alone convert it, gray or RGB.
+fn is_curves_only(p: &ColorProfile) -> bool {
+    matches!(
+        p.color_space,
+        moxcms::DataColorSpace::Rgb | moxcms::DataColorSpace::Gray
+    ) && !has_tables(p)
+}
+
+/// The curve shared by a profile's channels. [`options_for_profiles`] allows the analytic path only when
+/// the three RGB curves are equal.
+fn shared_curve(p: &ColorProfile) -> Option<&moxcms::ToneReprCurve> {
+    if p.color_space == moxcms::DataColorSpace::Gray {
+        p.gray_trc.as_ref()
+    } else {
+        p.red_trc.as_ref()
+    }
+}
+
+/// The gamma of a pure-gamma curve.
+fn stored_gamma(curve: &moxcms::ToneReprCurve) -> Option<f32> {
+    match curve {
+        moxcms::ToneReprCurve::Lut(curve) => match curve.as_slice() {
+            [gamma] if *gamma != 0 => Some(f32::from(*gamma) / 256.0),
+            _ => None,
+        },
+        moxcms::ToneReprCurve::Parametric(_) => None,
+    }
+}
+
+/// Whether a CICP tag selects the backend's analytic curve, whichever curves the profile also stores.
+fn has_cicp_curve(p: &ColorProfile) -> bool {
+    p.cicp.as_ref().is_some_and(|cicp| {
+        !matches!(
+            cicp.transfer_characteristics,
+            moxcms::TransferCharacteristics::Reserved
+                | moxcms::TransferCharacteristics::Unspecified
+        )
+    })
+}
+
+/// Whether the backend's analytic F32 path can decode this profile. Without it, the backend takes
+/// lookup tables, whose even steps can't resolve the darks of a linear signal, so the curve has to stay
+/// in the profile.
+fn decodes_analytically(p: &ColorProfile) -> bool {
+    has_cicp_curve(p)
+        || shared_curve(p).is_some_and(|curve| match curve {
+            moxcms::ToneReprCurve::Lut(curve) => curve.len() <= 1,
+            moxcms::ToneReprCurve::Parametric(params) => {
+                moxcms::ParametricCurve::new(params).is_some()
+            }
+        })
+}
+
+/// [`decodes_analytically`] for the other direction.
+fn encodes_analytically(p: &ColorProfile) -> bool {
+    has_cicp_curve(p)
+        || shared_curve(p).is_some_and(|curve| match curve {
+            moxcms::ToneReprCurve::Lut(curve) => curve.len() <= 1,
+            moxcms::ToneReprCurve::Parametric(params) => {
+                moxcms::ParametricCurve::new(params).is_some_and(|c| c.invert().is_some())
+            }
+        })
+}
+
+/// A copy of a curves-only profile whose curves are the ICC identity, an empty curve.
+fn with_linear_curves(p: &ColorProfile) -> ColorProfile {
+    let mut linear = p.clone();
+    linear.cicp = None;
+    let identity = || Some(moxcms::ToneReprCurve::Lut(alloc::vec::Vec::new()));
+    if p.color_space == moxcms::DataColorSpace::Gray {
+        linear.gray_trc = identity();
+    } else {
+        linear.red_trc = identity();
+        linear.green_trc = identity();
+        linear.blue_trc = identity();
+    }
+    linear
+}
+
+/// A pure-gamma source's curve, if the backend would otherwise evaluate it. A generated profile's CICP
+/// tag selects another evaluator, which has exact 2.2 and 2.8 where the stored curve is only near them.
+fn pure_gamma_source<'a>(
+    source: &'a ColorProfile,
+    target: &ColorProfile,
+    options: &TransformOptions,
+) -> Option<&'a moxcms::ToneReprCurve> {
+    if !options.allow_extended_range_rgb_xyz
+        || !is_curves_only(source)
+        || !is_curves_only(target)
+        || source.cicp.is_some()
+        || !encodes_analytically(target)
+    {
+        return None;
+    }
+    shared_curve(source).filter(|curve| stored_gamma(curve).is_some())
+}
+
+/// A pure-gamma target's curve where a gray profile is on either side. [`pure_gamma_exponent`] has RGB to
+/// RGB. The backend's gray paths use its analytic curves only if it has them in both directions. A CICP
+/// tag selects another evaluator here too.
+fn pure_gamma_gray_target<'a>(
+    source: &ColorProfile,
+    target: &'a ColorProfile,
+    options: &TransformOptions,
+) -> Option<&'a moxcms::ToneReprCurve> {
+    let gray = moxcms::DataColorSpace::Gray;
+    if !options.allow_extended_range_rgb_xyz
+        || (source.color_space != gray && target.color_space != gray)
+        || !is_curves_only(source)
+        || !is_curves_only(target)
+        || target.cicp.is_some()
+        || !decodes_analytically(source)
+    {
+        return None;
+    }
+    shared_curve(target).filter(|curve| stored_gamma(curve).is_some())
+}
+
+/// The analytic F32 transform with pure-gamma curves applied here, on whichever sides have them.
+///
+/// 8-bit samples take [`f32_transform`] and don't reach this.
+fn exact_gamma_f32_transform(
+    source: &ColorProfile,
+    target: &ColorProfile,
+    layout: (Layout, Layout),
+    options: TransformOptions,
+) -> Result<Arc<dyn TransformExecutor<f32> + Send + Sync>, moxcms::CmsError> {
+    let (source_channels, target_channels) = (layout.0.channels(), layout.1.channels());
+    if options.allow_extended_range_rgb_xyz
+        && has_tables(source)
+        && !has_tables(target)
+        && target.cicp.is_none()
+        && target.color_space == moxcms::DataColorSpace::Rgb
+        && matches!(layout.1, Layout::Rgb | Layout::Rgba)
+        && let Some(gamma) = target.red_trc.as_ref().and_then(stored_gamma)
+    {
+        let mut parametric = target.clone();
+        let curve = || Some(moxcms::ToneReprCurve::Parametric(alloc::vec![gamma]));
+        parametric.red_trc = curve();
+        parametric.green_trc = curve();
+        parametric.blue_trc = curve();
+        return Ok(Arc::new(TableSourcePureGammaOutput {
+            transform: source.create_transform_f32(layout.0, &parametric, layout.1, options)?,
+            exponent: 1.0 / gamma,
+            target_channels,
+        }));
+    }
+    let source_curve = pure_gamma_source(source, target, &options);
+    let rgb_exponent = pure_gamma_exponent(source, target, layout.1, &options);
+    let gray_curve = pure_gamma_gray_target(source, target, &options);
+    let linear_source = source_curve.map(|_| with_linear_curves(source));
+    let linear_target =
+        (rgb_exponent.is_some() || gray_curve.is_some()).then(|| with_linear_curves(target));
+    let mut transform = linear_source
+        .as_ref()
+        .unwrap_or(source)
+        .create_transform_f32(
+            layout.0,
+            linear_target.as_ref().unwrap_or(target),
+            layout.1,
+            options,
+        )?;
+    if let Some(exponent) = rgb_exponent {
+        transform = Arc::new(PureGammaOutput {
+            transform,
+            exponent,
+            target_channels,
+        });
+    } else if let Some(curve) = gray_curve {
+        let gamma = stored_gamma(curve).unwrap_or(1.0);
+        transform = Arc::new(PureGammaGrayOutput {
+            transform,
+            curve: PureGammaCurve::new(curve.make_gamma_evaluator()?, 1.0 / gamma),
+            target_channels,
+        });
+    }
+    if let Some(curve) = source_curve {
+        let gamma = stored_gamma(curve).unwrap_or(1.0);
+        transform = Arc::new(PureGammaInput {
+            transform,
+            curve: PureGammaCurve::new(curve.make_linear_evaluator()?, gamma),
+            source_channels,
+            target_channels,
+        });
+    }
+    Ok(transform)
+}
+
 /// 8-bit samples through the backend's F32 path, with nearest rounding on the way out, for tables, gray
 /// and anything else without a matrix to take. `v / 255` rounds back to `v`, so a carried alpha is exact.
 struct U8ThroughF32 {
@@ -939,18 +1290,20 @@ impl crate::cms::PluggableCms for MoxCms {
             ChannelType::U16 => src_profile
                 .create_transform_16bit(src_layout, &dst_profile, dst_layout, opts)
                 .map(MoxTransformInner::U16),
-            ChannelType::F16 | ChannelType::F32 | _ => {
-                f32_transform(&src_profile, &dst_profile, (src_layout, dst_layout), opts).map(
-                    |transform| {
-                        float_transform(
-                            transform,
-                            src_layout,
-                            dst_layout,
-                            options.clip_out_of_gamut(),
-                        )
-                    },
+            ChannelType::F16 | ChannelType::F32 | _ => exact_gamma_f32_transform(
+                &src_profile,
+                &dst_profile,
+                (src_layout, dst_layout),
+                opts,
+            )
+            .map(|transform| {
+                float_transform(
+                    transform,
+                    src_layout,
+                    dst_layout,
+                    options.clip_out_of_gamut(),
                 )
-            }
+            }),
         };
 
         let inner = match inner_result {

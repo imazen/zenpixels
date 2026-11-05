@@ -352,3 +352,395 @@ fn cmyk_targets_agree_with_and_without_alpha() {
         assert_eq!(b[3], 1.0);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Pure-gamma curves at F32, which the backend evaluates with a fast power. It returns unrelated values
+// for results it can't represent, and loses the sign of negative samples: gamma 1.8 of zero is -1.65e8.
+// ---------------------------------------------------------------------------
+
+use moxcms::{ColorProfile, ToneReprCurve};
+
+fn float_row(src: &[u8], dst: &[u8], from: F, to: F, clip: bool, input: &[f32]) -> Vec<f32> {
+    let channels = |f: F| f.bytes_per_pixel() / 4;
+    let width = input.len() / channels(from);
+    let mut out = vec![f32::NAN; width * channels(to)];
+    MoxCms
+        .build_source_transform(
+            Source::Icc(src),
+            Source::Icc(dst),
+            from,
+            to,
+            &ConvertOptions::retain_channels().with_clip_out_of_gamut(clip),
+        )
+        .expect("declined")
+        .expect("refused")
+        .try_transform_row(
+            bytemuck::cast_slice(input),
+            bytemuck::cast_slice_mut(&mut out),
+            width as u32,
+        )
+        .unwrap();
+    out
+}
+
+fn no_cicp_icc(mut profile: ColorProfile) -> Vec<u8> {
+    profile.cicp = None;
+    profile.encode().unwrap()
+}
+
+fn prophoto_icc() -> Vec<u8> {
+    no_cicp_icc(ColorProfile::new_pro_photo_rgb())
+}
+
+fn adobe_icc() -> Vec<u8> {
+    no_cicp_icc(ColorProfile::new_adobe_rgb())
+}
+
+fn srgb_icc() -> Vec<u8> {
+    no_cicp_icc(ColorProfile::new_srgb())
+}
+
+fn gray_icc(gamma: f32) -> Vec<u8> {
+    ColorProfile::new_gray_with_gamma(gamma).encode().unwrap()
+}
+
+/// The exponent of an ICC profile's single-value curve, if that's what it has.
+fn stored_gamma(icc: &[u8]) -> Option<f64> {
+    let profile = ColorProfile::new_from_slice(icc).unwrap();
+    match profile.gray_trc.or(profile.red_trc)? {
+        ToneReprCurve::Lut(curve) if curve.len() == 1 => Some(f64::from(curve[0]) / 256.0),
+        _ => None,
+    }
+}
+
+fn odd_pow(x: f64, exponent: f64) -> f64 {
+    x.abs().powf(exponent).copysign(x)
+}
+
+/// sRGB's curve, continued through its linear segment below zero as the backend does.
+fn srgb_encode(v: f64) -> f64 {
+    if v < 0.003041282560127521 {
+        v * 12.92
+    } else {
+        1.055_010_718_947_586_6 * v.powf(1.0 / 2.4) - 0.055_010_718_947_586_6
+    }
+}
+
+/// Matrix-to-matrix conversion in f64, with the target's stored curve or else sRGB's.
+fn exact_rgb(src: &[u8], dst: &[u8], clip: bool, pixel: [f32; 3]) -> [f64; 3] {
+    let (s, t) = (
+        ColorProfile::new_from_slice(src).unwrap(),
+        ColorProfile::new_from_slice(dst).unwrap(),
+    );
+    let m = t
+        .rgb_to_xyz_matrix()
+        .inverse()
+        .mat_mul(s.rgb_to_xyz_matrix())
+        .v;
+    let decode = stored_gamma(src).unwrap();
+    let linear = pixel.map(|x| odd_pow(f64::from(x), decode));
+    [0, 1, 2].map(|c| {
+        let v = m[c][0] * linear[0] + m[c][1] * linear[1] + m[c][2] * linear[2];
+        let v = if clip { v.clamp(0.0, 1.0) } else { v };
+        match stored_gamma(dst) {
+            Some(gamma) => odd_pow(v, 1.0 / gamma),
+            None => srgb_encode(v),
+        }
+    })
+}
+
+#[track_caller]
+fn assert_close(got: &[f32], exact: &[f64], what: &str) {
+    for (g, e) in got.iter().zip(exact) {
+        assert!(
+            (f64::from(*g) - e).abs() <= 2e-4 * e.abs().max(1.0),
+            "{what}: got {got:?}, exact {exact:?}"
+        );
+    }
+}
+
+/// A zero channel made ordinary colors clip to full scale even with clipping on: ProPhoto
+/// (0.5, 0.5, 0) came out (1, 1, 0).
+#[test]
+fn pure_gamma_source_matches_exact_math() {
+    let (prophoto, adobe, srgb) = (prophoto_icc(), adobe_icc(), srgb_icc());
+    let pixels = [
+        [0.5f32, 0.5, 0.0],
+        [0.6, 0.0, 0.3],
+        [0.0, 0.4, 0.4],
+        [0.0, 0.0, 0.0],
+        [0.5, 0.5, 0.5],
+        [1.0, 1.0, 1.0],
+    ];
+    for clip in [true, false] {
+        for (src, dst, name) in [
+            (&prophoto, &srgb, "ProPhoto to sRGB"),
+            (&prophoto, &adobe, "ProPhoto to Adobe RGB"),
+            (&adobe, &srgb, "Adobe RGB to sRGB"),
+            (&adobe, &prophoto, "Adobe RGB to ProPhoto"),
+        ] {
+            for pixel in pixels {
+                let got = float_row(src, dst, F::RgbF32, F::RgbF32, clip, &pixel);
+                let what = format!("{name} clip={clip} {pixel:?}");
+                assert_close(&got, &exact_rgb(src, dst, clip, pixel), &what);
+            }
+        }
+    }
+}
+
+/// Unclipped black was about -2.1e9 from ProPhoto.
+#[test]
+fn unclipped_black_stays_black_from_a_pure_gamma_source() {
+    let srgb = srgb_icc();
+    for src in [prophoto_icc(), adobe_icc()] {
+        let got = float_row(&src, &srgb, F::RgbF32, F::RgbF32, false, &[0.0; 3]);
+        assert_eq!(got, [0.0; 3]);
+    }
+}
+
+/// Adobe RGB of 1e-20 came out about -1.55e34 in linear light.
+#[test]
+fn tiny_samples_from_a_pure_gamma_source_are_exact() {
+    let (adobe, srgb) = (adobe_icc(), srgb_icc());
+    for clip in [true, false] {
+        for pixel in [
+            [1e-30f32, 1e-30, 1e-30],
+            [1e-20, 1e-20, 1e-20],
+            [1e-20, 0.5, 0.5],
+            [f32::from_bits(1), 0.5, 0.5],
+        ] {
+            let got = float_row(&adobe, &srgb, F::RgbF32, F::RgbF32, clip, &pixel);
+            let what = format!("clip={clip} {pixel:?}");
+            assert_close(&got, &exact_rgb(&adobe, &srgb, clip, pixel), &what);
+        }
+    }
+}
+
+/// An unclipped negative sample is the curve's odd extension, from any gamma.
+#[test]
+fn negative_samples_from_a_pure_gamma_source_keep_their_sign() {
+    let srgb = srgb_icc();
+    for src in [prophoto_icc(), adobe_icc()] {
+        let pixel = [-0.5f32, 0.5, 0.5];
+        let got = float_row(&src, &srgb, F::RgbF32, F::RgbF32, false, &pixel);
+        assert_close(&got, &exact_rgb(&src, &srgb, false, pixel), "negative red");
+    }
+}
+
+/// 8-bit into sRGB takes its own matrix kernels, so these are independent routes to one answer.
+#[test]
+fn pure_gamma_source_agrees_with_the_eight_bit_route() {
+    let (prophoto, srgb) = (prophoto_icc(), srgb_icc());
+    let levels = 0..=255u8;
+    let mut eight_in = Vec::new();
+    for r in levels.clone().step_by(5) {
+        for g in levels.clone().step_by(5) {
+            for b in levels.clone().step_by(5) {
+                eight_in.extend_from_slice(&[r, g, b]);
+            }
+        }
+    }
+    let float_in: Vec<f32> = eight_in.iter().map(|&v| f32::from(v) / 255.0).collect();
+    let mut eight_out = vec![0u8; eight_in.len()];
+    build(Source::Icc(&prophoto), Source::Icc(&srgb), F::Rgb8, F::Rgb8)
+        .try_transform_row(&eight_in, &mut eight_out, (eight_in.len() / 3) as u32)
+        .unwrap();
+    let float_out = float_row(&prophoto, &srgb, F::RgbF32, F::RgbF32, true, &float_in);
+    for (i, (e, f)) in eight_out.iter().zip(&float_out).enumerate() {
+        let f = (f * 255.0).round() as i32;
+        assert!(
+            (f - i32::from(*e)).abs() <= 1,
+            "sample {i} of {:?}: 8-bit {e}, F32 {f}",
+            &float_in[i / 3 * 3..i / 3 * 3 + 3]
+        );
+    }
+}
+
+/// The row is staged in pieces: a long row, alpha, and every pixel's result must not depend on them.
+#[test]
+fn pure_gamma_source_is_the_same_per_pixel_and_keeps_alpha() {
+    let (prophoto, srgb) = (prophoto_icc(), srgb_icc());
+    let row: Vec<f32> = (0..1000)
+        .flat_map(|i| {
+            let v = |k: u32| ((i * k) % 256) as f32 / 255.0;
+            [v(7), v(13), v(29), i as f32 * 0.25 - 40.0]
+        })
+        .collect();
+    let whole = float_row(&prophoto, &srgb, F::RgbaF32, F::RgbaF32, false, &row);
+    for (pixel, out) in row.as_chunks::<4>().0.iter().zip(whole.as_chunks::<4>().0) {
+        let alone = float_row(&prophoto, &srgb, F::RgbaF32, F::RgbaF32, false, pixel);
+        assert_eq!(alone.len(), 4);
+        for (a, b) in alone.iter().zip(out) {
+            assert_eq!(a.to_bits(), b.to_bits(), "{pixel:?}");
+        }
+        assert_eq!(out[3].to_bits(), pixel[3].to_bits(), "alpha is carried");
+    }
+}
+
+/// Samples the backend's fast power can represent keep the backend's exact bits, so this path changes
+/// only what was wrong.
+#[test]
+fn representable_samples_keep_the_backends_bits() {
+    let options = moxcms::TransformOptions {
+        rendering_intent: moxcms::RenderingIntent::RelativeColorimetric,
+        allow_use_cicp_transfer: false,
+        barycentric_weight_scale: moxcms::BarycentricWeightScale::High,
+        interpolation_method: moxcms::InterpolationMethod::Tetrahedral,
+        prefer_fixed_point: false,
+        allow_extended_range_rgb_xyz: true,
+    };
+    let parsed = |icc: &[u8]| {
+        let mut profile = ColorProfile::new_from_slice(icc).unwrap();
+        profile.cicp = None;
+        profile
+    };
+    let (prophoto, srgb) = (prophoto_icc(), srgb_icc());
+    let row: Vec<f32> = (1..=1000).map(|i| i as f32 * 0.0037 + 1e-3).collect();
+    let mut direct = vec![0f32; row.len()];
+    parsed(&prophoto)
+        .create_transform_f32(
+            moxcms::Layout::Rgb,
+            &parsed(&srgb),
+            moxcms::Layout::Rgb,
+            options,
+        )
+        .unwrap()
+        .transform(&row[..999], &mut direct[..999])
+        .unwrap();
+    let adapter = float_row(&prophoto, &srgb, F::RgbF32, F::RgbF32, false, &row[..999]);
+    for (a, d) in adapter.iter().zip(&direct) {
+        assert_eq!(a.to_bits(), d.to_bits());
+    }
+    let (g18, g22) = (gray_icc(1.8), gray_icc(2.2));
+    let mut direct = vec![0f32; row.len()];
+    parsed(&g18)
+        .create_transform_f32(
+            moxcms::Layout::Gray,
+            &parsed(&g22),
+            moxcms::Layout::Gray,
+            options,
+        )
+        .unwrap()
+        .transform(&row, &mut direct)
+        .unwrap();
+    let adapter = float_row(&g18, &g22, F::GrayF32, F::GrayF32, false, &row);
+    for (a, d) in adapter.iter().zip(&direct) {
+        assert_eq!(a.to_bits(), d.to_bits());
+    }
+}
+
+/// Gray of zero through gamma 1.8 into gray 2.2 came out full scale, clipped or not.
+#[test]
+fn pure_gamma_gray_source_and_target_are_exact() {
+    let (g18, g22, g26, srgb, adobe) = (
+        gray_icc(1.8),
+        gray_icc(2.2),
+        gray_icc(2.6),
+        srgb_icc(),
+        adobe_icc(),
+    );
+    for clip in [true, false] {
+        for x in [0.0f32, 1e-30, 1e-20, 1e-6, 0.25, 0.5, 1.0, -0.5] {
+            let clipped = if clip { x.clamp(0.0, 1.0) } else { x };
+            for (src, dst) in [(&g18, &g22), (&g22, &g26), (&g26, &g18)] {
+                let linear = odd_pow(f64::from(clipped), stored_gamma(src).unwrap());
+                let exact = odd_pow(linear, 1.0 / stored_gamma(dst).unwrap());
+                let got = float_row(src, dst, F::GrayF32, F::GrayF32, clip, &[x]);
+                assert_close(&got, &[exact], &format!("gray to gray clip={clip} {x}"));
+            }
+            // Into RGB, gray's neutral axis through the target's own curve.
+            let linear = odd_pow(f64::from(clipped), stored_gamma(&g18).unwrap());
+            let got = float_row(&g18, &adobe, F::GrayF32, F::RgbF32, clip, &[x]);
+            let exact = odd_pow(linear, 1.0 / stored_gamma(&adobe).unwrap());
+            assert_close(&got, &[exact; 3], &format!("gray to Adobe clip={clip} {x}"));
+            let got = float_row(&g18, &srgb, F::GrayF32, F::RgbF32, clip, &[x]);
+            let exact = srgb_encode(linear);
+            assert_close(&got, &[exact; 3], &format!("gray to sRGB clip={clip} {x}"));
+        }
+    }
+}
+
+/// A gray target weighs the source's linear channels by their luminance and keeps it in range.
+#[test]
+fn rgb_into_a_pure_gamma_gray_target_is_exact() {
+    let g22 = gray_icc(2.2);
+    let gamma = stored_gamma(&g22).unwrap();
+    for (src, decode) in [(prophoto_icc(), true), (srgb_icc(), false)] {
+        let profile = ColorProfile::new_from_slice(&src).unwrap();
+        let y = profile.colorant_matrix().v[1];
+        for pixel in [
+            [0.5f32, 0.5, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.6, 0.0, 0.3],
+            [0.5, 0.5, 0.5],
+        ] {
+            let linear = pixel.map(|x| {
+                let x = f64::from(x);
+                if decode {
+                    x.powf(stored_gamma(&src).unwrap())
+                } else if x < 0.04045 {
+                    x / 12.92
+                } else {
+                    ((x + 0.055) / 1.055).powf(2.4)
+                }
+            });
+            let v = y[0] * linear[0] + y[1] * linear[1] + y[2] * linear[2];
+            let exact = v.clamp(0.0, 1.0).powf(1.0 / gamma);
+            let got = float_row(&src, &g22, F::RgbF32, F::GrayF32, true, &pixel);
+            assert_close(&got, &[exact], &format!("RGB to gray {pixel:?}"));
+        }
+    }
+}
+
+/// A target with sRGB's white and primaries pulled toward it, so sRGB's corners are out of its gamut.
+fn narrow_target_icc(curve: ToneReprCurve) -> Vec<u8> {
+    let mut profile = ColorProfile::new_srgb();
+    profile.cicp = None;
+    profile.red_trc = Some(curve.clone());
+    profile.green_trc = Some(curve.clone());
+    profile.blue_trc = Some(curve);
+    let white = [0.9642, 1.0, 0.8249];
+    for colorant in [
+        &mut profile.red_colorant,
+        &mut profile.green_colorant,
+        &mut profile.blue_colorant,
+    ] {
+        colorant.x = colorant.x * 0.7 + white[0] * 0.1;
+        colorant.y = colorant.y * 0.7 + white[1] * 0.1;
+        colorant.z = colorant.z * 0.7 + white[2] * 0.1;
+    }
+    profile.encode().unwrap()
+}
+
+/// At a table's grid nodes the result is the node's linear value through the curve. Red of sRGB came
+/// out (1, 0.39, 0.39) on a narrower pure-gamma target, clipped or not.
+#[test]
+fn table_source_keeps_the_sign_at_grid_nodes_on_a_pure_gamma_target() {
+    let table = synthetic_icc::synthetic_rgb_lut_icc();
+    let encoded = narrow_target_icc(moxcms::curve_from_gamma(563.0 / 256.0));
+    let linear = narrow_target_icc(ToneReprCurve::Lut(Vec::new()));
+    for pixel in [
+        [1.0f32, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 1.0],
+    ] {
+        let light = float_row(&table, &linear, F::RgbF32, F::RgbF32, false, &pixel);
+        assert!(
+            light.iter().any(|&v| v < -0.01),
+            "needs out-of-gamut: {light:?}"
+        );
+        for clip in [true, false] {
+            let exact: Vec<f64> = light
+                .iter()
+                .map(|&v| {
+                    let v = f64::from(v);
+                    odd_pow(if clip { v.clamp(0.0, 1.0) } else { v }, 256.0 / 563.0)
+                })
+                .collect();
+            let got = float_row(&table, &encoded, F::RgbF32, F::RgbF32, clip, &pixel);
+            assert_close(&got, &exact, &format!("table node clip={clip} {pixel:?}"));
+        }
+    }
+}

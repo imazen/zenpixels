@@ -118,6 +118,12 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed at F32 (2026-11-05): moxcms's `ToneCurveEvaluatorPureGamma` uses `dirty_powf`, which returns unrelated values where the power isn't representable (gamma 1.8 of zero is -1.65e8) and takes a negative base's sign from the exponent's integer part. A zero channel of a ProPhoto F32 sample clipped ordinary colors to full scale: 13,254 of 421,824 channels were over 2 codes from the 8-bit route, worst 255; now 0, worst 1. `PureGammaCurve` keeps the backend's evaluator for representable magnitudes and takes `libm` for the rest, on sources and gray routes. Evidence and limits: `benchmarks/pure_gamma_f32_2026-11-05.md`.
+
+- Open (2026-11-05): 8-bit routes through `U8ThroughF32` still take `f32_transform` and so keep this bug. Gray gamma 1.8 to gray gamma 2.2 turns 0 into 255, and ProPhoto (128, 128, 0) into Adobe RGB comes out (255, 255, 0). `U8MatrixShaper` routes, any target with sRGB's curve, aren't affected. Sending `u8_transform` to `exact_gamma_f32_transform` fixes them; that changes 8-bit output, so it waits for the owner.
+
+- Open (2026-11-05), can't be fixed in the adapter: table source to pure-gamma RGB target. The backend interpolates a grid filled through the target's curve, so a grid node can be corrected but a value between a negative node and a positive one mixes two forms: worst 18 codes on a synthetic table, from 144 before. Upstream's own fix would remove this.
+
 - Fixed (2026-11-05): `Cmyk8` and `CmykF32` gave different colors from one ink: on 49 real profiles to sRGB, a mean of 17.8 codes and at worst 114, because `Cmyk8` had no black-point compensation and its own intent. `Cmyk8` now runs the F32 transform and rounds, with no U16 in the way, so they agree exactly (`eight_bit_cmyk_is_f32_cmyk_rounded`). Also fixed: RGBA targets from CMYK skipped the compensation that RGB got (`cmyk_targets_agree_with_and_without_alpha`). `benchmarks/cmyk8_bpc_2026-11-05.md`: `Cmyk8` is 44% slower, `CmykF32` 6 times faster.
 
 - Open (2026-11-05): `linear_light_suitability` charges 120 (LowLoss) for any gamma-encoded format whatever the resize kernel. On the sharp-edge image Mitchell and Robidoux agree within a bucket, but CatmullRom and Lanczos through U8 measure p95 ΔE 21 to 33 (High), and clipping alone accounts for it: 6 of 12 scenarios are two buckets off. The model has no kernel input. `gamut_clamping_scenarios` pins the gap.
