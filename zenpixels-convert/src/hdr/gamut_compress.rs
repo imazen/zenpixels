@@ -75,11 +75,14 @@ impl GamutBoundaryLut {
 
         let l0 = (l_f as usize).min(L_STEPS - 2);
         let l1 = l0 + 1;
-        let h0 = h_f as usize % H_STEPS;
+        // `rem_euclid` of a tiny negative hue rounds up to exactly 2π, so `h_f`
+        // can equal `H_STEPS`. Take the fraction before wrapping the index.
+        let h_floor = h_f as usize;
+        let h0 = h_floor % H_STEPS;
         let h1 = (h0 + 1) % H_STEPS;
 
         let lt = l_f - l0 as f32;
-        let ht = h_f - h0 as f32;
+        let ht = h_f - h_floor as f32;
 
         let v00 = self.data[l0 * H_STEPS + h0];
         let v01 = self.data[l0 * H_STEPS + h1];
@@ -110,20 +113,24 @@ impl GamutBoundaryLut {
     /// (no scrubbing — the caller owns input sanitisation; the pipeline
     /// path feeds this finite values).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a.len()` or `b.len()` differs from `l.len()`. The three
-    /// planes describe one image and must be the same length; a mismatch
-    /// is a caller bug. (Promoted from a `debug_assert` so release builds
-    /// get this message instead of a raw index-out-of-bounds panic.)
-    pub fn compress_planes(&self, l: &[f32], a: &mut [f32], b: &mut [f32], knee: f32) {
+    /// [`BufferSize`](crate::ConvertError::BufferSize) when `a` or `b` differs in length from `l`,
+    /// leaving both untouched.
+    pub fn compress_planes(
+        &self,
+        l: &[f32],
+        a: &mut [f32],
+        b: &mut [f32],
+        knee: f32,
+    ) -> Result<(), whereat::At<crate::ConvertError>> {
         let n = l.len();
-        assert!(
-            a.len() == n && b.len() == n,
-            "compress_planes: L/a/b plane lengths must match (l={n}, a={}, b={})",
-            a.len(),
-            b.len(),
-        );
+        if a.len() != n || b.len() != n {
+            return Err(whereat::at!(crate::ConvertError::BufferSize {
+                expected: n,
+                actual: if a.len() != n { a.len() } else { b.len() },
+            }));
+        }
 
         for i in 0..n {
             let av = a[i];
@@ -169,6 +176,7 @@ impl GamutBoundaryLut {
             a[i] = av * scale;
             b[i] = bv * scale;
         }
+        Ok(())
     }
 }
 
@@ -434,7 +442,7 @@ mod tests {
             );
         }
 
-        lut.compress_planes(&l, &mut a, &mut b, 0.9);
+        lut.compress_planes(&l, &mut a, &mut b, 0.9).unwrap();
 
         for i in 0..l.len() {
             assert!(
@@ -462,7 +470,7 @@ mod tests {
             .map(|(&av, &bv): (&f32, &f32)| (av * av + bv * bv).sqrt())
             .collect();
 
-        lut.compress_planes(&l, &mut a, &mut b, 0.9);
+        lut.compress_planes(&l, &mut a, &mut b, 0.9).unwrap();
 
         for i in 0..l.len() {
             let new_chroma = (a[i] * a[i] + b[i] * b[i]).sqrt();
@@ -489,7 +497,7 @@ mod tests {
             .map(|(&av, &bv): (&f32, &f32)| bv.atan2(av))
             .collect();
 
-        lut.compress_planes(&l, &mut a, &mut b, 0.9);
+        lut.compress_planes(&l, &mut a, &mut b, 0.9).unwrap();
 
         for i in 0..l.len() {
             let new_hue = b[i].atan2(a[i]);
@@ -512,7 +520,7 @@ mod tests {
         let mut a = alloc::vec![0.4, -0.3, 0.2, -0.4, 0.15, 0.05];
         let mut b = alloc::vec![0.3, 0.4, -0.3, -0.2, 0.2, -0.03];
 
-        lut.compress_planes(&l, &mut a, &mut b, 0.9);
+        lut.compress_planes(&l, &mut a, &mut b, 0.9).unwrap();
 
         for i in 0..l.len() {
             let rgb = oklab::oklab_to_rgb(l[i], a[i], b[i], &m1_inv);
@@ -531,6 +539,23 @@ mod tests {
                 "B out of gamut after compress: color {i} B={:.4}",
                 rgb[2]
             );
+        }
+    }
+
+    /// A hue a hair below zero rounds to exactly 2π. It used to read the table
+    /// with a blend weight of 256, returning about a quarter of the true bound.
+    #[test]
+    fn max_chroma_is_continuous_across_hue_zero() {
+        let lut = bt709_lut();
+        for l in [0.2, 0.4, 0.5, 0.6, 0.8] {
+            let at_zero = lut.max_chroma(l, 0.0);
+            for h in [-1e-5_f32, -1e-6, -1e-7, -1e-9, -1e-20, 1e-9, 1e-7] {
+                let got = lut.max_chroma(l, h);
+                assert!(
+                    (got - at_zero).abs() < 1e-3,
+                    "max_chroma({l}, {h:e}) = {got}, but {at_zero} at hue 0"
+                );
+            }
         }
     }
 

@@ -399,7 +399,8 @@ fn gamut_boundary_lut_compresses_planes_in_place_at_default_knee() {
     let mut b = vec![0.0_f32, 0.1, 0.0];
     let a0 = a.clone();
     let b0 = b.clone();
-    lut.compress_planes(&l, &mut a, &mut b, SoftCompress::DEFAULT_KNEE);
+    lut.compress_planes(&l, &mut a, &mut b, SoftCompress::DEFAULT_KNEE)
+        .unwrap();
     // The achromatic+low-chroma pixel (a=0.1, b=0.0) is small enough
     // to lie inside the knee — values stay identical or very close.
     assert!((a[2] - a0[2]).abs() < 1e-3 && (b[2] - b0[2]).abs() < 1e-3,);
@@ -511,8 +512,7 @@ fn hdr_pipeline_e2e_neutral_gray_lands_in_sdr_range() {
     let src_pixel: [u16; 3] = [40_000, 40_000, 40_000];
     let src_bytes: [u8; 6] = bytemuck::cast(src_pixel);
     let mut out = [0u8; 3];
-    zenpixels_convert::RowConverter::from_plan(plan.clone())
-        .convert_row(&src_bytes, &mut out, 1);
+    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(&src_bytes, &mut out, 1);
     // Neutral gray must stay neutral within ±2 codes (rounding).
     assert!(
         (out[0] as i32 - out[1] as i32).abs() <= 2 && (out[1] as i32 - out[2] as i32).abs() <= 2,

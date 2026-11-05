@@ -378,8 +378,7 @@ fn ulp_srgb_eotf_monotonic() {
     let input_255 = [255u8, 0, 0];
     let mut out_0 = [0u8; 12];
     let mut out_255 = [0u8; 12];
-    zenpixels_convert::RowConverter::from_plan(plan.clone())
-        .convert_row(&input_0, &mut out_0, 1);
+    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(&input_0, &mut out_0, 1);
     zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
         &input_255,
         &mut out_255,
@@ -810,8 +809,7 @@ fn ulp_pq_eotf_boundary_values() {
     // PQ code 0 → linear 0.0
     let input_0: [u8; 2] = 0u16.to_ne_bytes();
     let mut out_0 = [0u8; 4];
-    zenpixels_convert::RowConverter::from_plan(plan.clone())
-        .convert_row(&input_0, &mut out_0, 1);
+    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(&input_0, &mut out_0, 1);
     let f0: f32 = bytemuck::cast(out_0);
     assert_eq!(f0, 0.0, "PQ EOTF(0) should be 0.0");
 
@@ -1009,8 +1007,7 @@ fn ulp_hlg_boundary_values() {
     // HLG code 0 → linear 0.0
     let input_0: [u8; 2] = 0u16.to_ne_bytes();
     let mut out_0 = [0u8; 4];
-    zenpixels_convert::RowConverter::from_plan(plan.clone())
-        .convert_row(&input_0, &mut out_0, 1);
+    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(&input_0, &mut out_0, 1);
     let f0: f32 = bytemuck::cast(out_0);
     assert_eq!(f0, 0.0, "HLG EOTF(0) should be 0.0");
 
@@ -1144,8 +1141,7 @@ fn ulp_pq_to_srgb_basic() {
     // PQ code 0 → sRGB 0
     let input_0: [u8; 6] = [0; 6]; // 3 × u16(0)
     let mut out_0 = [0u8; 3];
-    zenpixels_convert::RowConverter::from_plan(plan.clone())
-        .convert_row(&input_0, &mut out_0, 1);
+    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(&input_0, &mut out_0, 1);
     assert_eq!(out_0, [0, 0, 0], "PQ(0) → sRGB should be black");
 
     // ~203 nits (diffuse white) in PQ ≈ code ~33280 → should map to sRGB ~200-255
