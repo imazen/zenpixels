@@ -319,3 +319,9 @@ iqa-portability-check:
 # Run at the repository root to retain pixel workspace inheritance in cross.
 iqa-cross-check toolchain='':
     cross {{toolchain}} test --locked --manifest-path zenpsychovisual-api/Cargo.toml --target i686-unknown-linux-gnu
+
+# Zeroed storage plus the existing row/alignment constructor contracts.
+zeroed-alloc-check:
+    cargo test --locked -p zenpixels --lib
+    cargo check --locked -p zenpixels --no-default-features
+    cargo clippy --locked -p zenpixels --lib -- -D warnings
