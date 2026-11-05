@@ -33,6 +33,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- **Breaking:** removed the doc-hidden `CllMeasure::{measure_max_smoothed, measure_robust, measure_percentile, measure_histogram}` and `hdr::LightLevelHistogram`, with their kernels. `measure_max` is the one peak measurement, as the 2026-06-22 shootout chose. Only zentone's `hdr-shootout` examples called them.
+
 - Docs: JPEG XL color authority cites ISO/IEC 18181-1, and AVIF lists its ICC encode.
 
 - `gamut_clamping_scenarios` runs again, with a resampling filter in the test file that matches zenresize to 2.3e-4 on its image. It also checks that unclipped F32 keeps what a kernel's lobes produce through an sRGB round trip, and that `RowConverter`'s U8 output clamps them.

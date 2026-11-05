@@ -70,15 +70,10 @@ imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]
 # Compatibility feature name only. Estimation is removed.
 estimation-experimental = []
-# Experimental HDR analysis surface (gates `hdr::measure` — the `CllMeasure`
-# extension trait + `LightLevelHistogram` / `LightLevelMethod` + the SIMD
-# CLL scan kernel). The underlying scan + accuracy contracts are stable —
-# the gate covers expected pre-0.3.0 shape churn (the queued
-# `measure_robust` → `measure` rename when `zenpixels::ContentLightLevel`'s
-# deprecated 2-arg `measure` ships its 0.3.0 removal, plus potential trait-
-# vs-free-fn restructuring). Default-off; opt in with
-# `features = ["hdr-experimental"]` to access measurement until the API
-# locks at 0.3.0.
+# Experimental HDR analysis surface (gates `hdr::measure`: the `CllMeasure`
+# extension trait + `LightLevelMethod` + the SIMD CLL scan kernel). The underlying
+# scan + accuracy contracts are stable; the gate covers potential trait-vs-free-fn
+# restructuring. Default-off; opt in with `features = ["hdr-experimental"]`.
 hdr-experimental = []
 # The BT.2446 Method A curve, 63,696 B of the HDR surface's 88,616 B at opt-level 3. Without it, tone mapping
 # takes an injected `ToneMapper`, and planning without one returns `NoPath`.
@@ -308,8 +303,8 @@ required-features = ["__bench_orient"]
 # required-features = ["cms-moxcms"]
 
 [[example]]
-name = "measure_histogram_throughput"
-path = "examples/measure_histogram_throughput.rs"
+name = "measure_max_throughput"
+path = "examples/measure_max_throughput.rs"
 required-features = ["bt2446a"]
 
 [[bench]]
