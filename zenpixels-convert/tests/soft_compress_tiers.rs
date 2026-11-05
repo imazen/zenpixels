@@ -1,4 +1,5 @@
 //! SoftCompress uses no fused operations, so every SIMD tier gives identical bits.
+#![cfg(feature = "hdr-experimental")]
 use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 use zenpixels_convert::ColorPrimaries as P;
 use zenpixels_convert::gamut::GamutMatrix;

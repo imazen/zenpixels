@@ -10,6 +10,8 @@ categories.workspace = true
 description = "Transfer-function-aware pixel conversion, gamut mapping, and codec format negotiation for zenpixels"
 keywords = ["image", "pixel", "conversion", "srgb", "codec"]
 include = [
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
     "/src/**",
     "/benches/*.rs",
     "/README.crates.md",

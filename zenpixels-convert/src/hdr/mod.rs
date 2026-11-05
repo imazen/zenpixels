@@ -49,6 +49,7 @@ mod bt2446a;
 
 /// Soft chroma compression in OKLch with a precomputed gamut boundary LUT.
 /// Gated behind `hdr-experimental`.
+#[cfg_attr(not(feature = "hdr-experimental"), allow(dead_code))]
 mod gamut_compress;
 
 /// Pluggable two-phase HDR→SDR tone-mapper trait — the permanent DI
@@ -75,7 +76,10 @@ pub use measure::{CllMeasure, LightLevelHistogram, LightLevelMethod};
 #[cfg(feature = "hdr-experimental")]
 #[cfg(feature = "bt2446a")]
 pub use bt2446a::Bt2446A;
+#[cfg(feature = "hdr-experimental")]
 pub use gamut_compress::SoftCompress;
+#[cfg(not(feature = "hdr-experimental"))]
+pub(crate) use gamut_compress::SoftCompress;
 // Two-phase tone-mapping surface: the pluggable curve trait and the strip executor
 // that `ToneMapper::prepare` produces.
 #[cfg(feature = "hdr-experimental")]

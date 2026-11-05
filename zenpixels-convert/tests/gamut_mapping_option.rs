@@ -1,5 +1,6 @@
 //! `ConvertOptions::gamut_mapping`: clip stays the default, and compression matches
 //! the kernel it wraps and never silently falls back to clipping.
+#![cfg(feature = "hdr-experimental")]
 use zenpixels_convert::hdr::SoftCompress;
 use zenpixels_convert::oklab::OklabSpace;
 use zenpixels_convert::policy::{AlphaPolicy, ConvertOptions, GamutMapping};

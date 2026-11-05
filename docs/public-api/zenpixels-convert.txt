@@ -9,15 +9,15 @@
 ## summary
 #
 #   pub modules                                15
-#   pub types (struct/enum/trait/alias)        58
-#   pub consts/statics                         33
+#   pub types (struct/enum/trait/alias)        57
+#   pub consts/statics                         32
 #   free functions                              4
-#   inherent methods                          177
+#   inherent methods                          174
 #   struct fields                              73
 #   enum variants                              83
 #   re-exports                                  3
-#   trait roster entries (type × trait)       113
-#   auto-trait-complete types                  21
+#   trait roster entries (type × trait)       111
+#   auto-trait-complete types                  20
 #   auto-trait exceptions                       4
 #
 # per-module pub lines:
@@ -30,14 +30,14 @@
 #   error                            36
 #   ext                              28
 #   gamut                            11
-#   hdr                               8
-#   icc_profiles                      9
+#   hdr                               2
+#   icc_profiles                     10
 #   load_bearing                     11
 #   oklab                             8
 #   output                           20
 #   ycbcr                            22
 
-## items (421 lines)
+## items (416 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -196,12 +196,6 @@ pub fn gamut::GamutMatrix::then(&self, &Self) -> Self
 pub mod hdr
 pub use hdr::ContentLightLevel
 pub use hdr::MasteringDisplay
-pub struct hdr::SoftCompress
-pub const hdr::SoftCompress::DEFAULT_KNEE: f32
-pub fn hdr::SoftCompress::apply_strip(&self, &mut [[f32; 3]])
-pub fn hdr::SoftCompress::compress_oklab_planes(&self, &[f32], &mut [f32], &mut [f32]) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn hdr::SoftCompress::knee(&self) -> f32
-pub fn hdr::SoftCompress::new(&oklab::OklabSpace, f32) -> Self
 pub mod icc_profiles
 #[non_exhaustive] pub enum icc_profiles::SynthesizedIcc
 pub icc_profiles::SynthesizedIcc::CmsUnsupported
@@ -209,6 +203,7 @@ pub icc_profiles::SynthesizedIcc::NeedsCms
 pub icc_profiles::SynthesizedIcc::NotNeeded
 pub icc_profiles::SynthesizedIcc::Profile(alloc::borrow::Cow<'static, [u8]>)
 pub fn icc_profiles::SynthesizedIcc::for_cicp(zenpixels::cicp::Cicp) -> Self
+pub fn icc_profiles::SynthesizedIcc::for_gray_cicp(zenpixels::cicp::Cicp) -> Self
 pub const icc_profiles::ADOBE_RGB: &[u8]
 pub const icc_profiles::DISPLAY_P3_V2: &[u8]
 pub const icc_profiles::DISPLAY_P3_V4: &[u8]
@@ -461,7 +456,7 @@ pub fn TransferFunctionExt::delinearize(&self, f32) -> f32
 pub fn TransferFunctionExt::linearize(&self, f32) -> f32
 pub fn finalize_for_output<C: cms::ColorManagement>(&zenpixels::buffer::PixelBuffer, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelFormat, &C) -> core::result::Result<output::EncodeReady, whereat::at::At<error::ConvertError>> [also: output]
 
-## trait impls (29 types)
+## trait impls (28 types)
 
 ConversionCost: Add, Clone, Copy, Debug, Default, Eq, PartialEq
 ConvertIntent: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -475,11 +470,10 @@ codes::CodeMap: Clone, Copy, Debug, Eq, PartialEq
 codes::CodeMapError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 codes::CodeRole: Clone, Copy, Debug, Eq, Hash, PartialEq
 codes::CodesError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
-converter::RowConverter: Clone
+converter::RowConverter: Clone, Debug
 css::CssColorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 error::ConvertError: Clone, Debug, Display, Error, From<zenpixels::buffer::BufferError>, PartialEq
 gamut::GamutMatrix: Clone, Copy, Debug, PartialEq
-hdr::SoftCompress: Clone, Debug, PartialEq
 icc_profiles::SynthesizedIcc: Clone, Debug, Eq, PartialEq
 load_bearing::LoadBearingReport: Clone, Copy, Debug, Default
 oklab::OklabSpace: Clone, Copy, Debug, PartialEq

@@ -10,21 +10,21 @@
 ## summary
 #
 #   pub modules                                 2
-#   pub types (struct/enum/trait/alias)        18
-#   pub consts/statics                          2
-#   inherent methods                           32
+#   pub types (struct/enum/trait/alias)        19
+#   pub consts/statics                          3
+#   inherent methods                           36
 #   struct fields                               8
 #   enum variants                               5
-#   trait roster entries (type × trait)        37
-#   auto-trait-complete types                   8
+#   trait roster entries (type × trait)        40
+#   auto-trait-complete types                   9
 #
 # per-module pub lines:
 #   (root)                           20
 #   cms_moxcms                        2
 #   ext                               8
-#   hdr                              37
+#   hdr                              43
 
-## items (62 lines)
+## items (68 lines)
 
 pub mod cms_moxcms
 pub struct cms_moxcms::MoxCmsError(_)
@@ -56,6 +56,12 @@ pub hdr::Requirements::full_image: bool
 pub hdr::Requirements::source_peak_nits: bool
 pub const hdr::Requirements::NONE: Self
 pub const hdr::Requirements::SOURCE_PEAK_ONLY: Self
+pub struct hdr::SoftCompress
+pub const hdr::SoftCompress::DEFAULT_KNEE: f32
+pub fn hdr::SoftCompress::apply_strip(&self, &mut [[f32; 3]])
+pub fn hdr::SoftCompress::compress_oklab_planes(&self, &[f32], &mut [f32], &mut [f32]) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn hdr::SoftCompress::knee(&self) -> f32
+pub fn hdr::SoftCompress::new(&oklab::OklabSpace, f32) -> Self
 #[non_exhaustive] pub struct hdr::ToneMapContext
 pub hdr::ToneMapContext::source_peak_nits: f32
 pub hdr::ToneMapContext::target_peak_nits: f32
@@ -89,7 +95,7 @@ pub trait PixelBufferHdrConvertExt: sealed::Sealed [also: ext]
 pub fn PixelBufferHdrConvertExt::convert_to_sdr_measuring_peak(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferHdrConvertExt::convert_to_with_hdr_config(&self, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 
-## trait impls (10 types)
+## trait impls (11 types)
 
 HdrConfig: Clone, Copy, Debug, Default, PartialEq
 cms_moxcms::MoxCms: Clone, Copy, Debug, Default, cms::ColorManagement, cms::PluggableCms
@@ -97,6 +103,7 @@ cms_moxcms::MoxCmsError: Clone, Debug, Display, Error
 hdr::Bt2446A: Clone, Copy, Debug, hdr::ToneMapper
 hdr::PreparedMapper: Debug
 hdr::Requirements: Clone, Copy, Debug, Default, Eq, PartialEq
+hdr::SoftCompress: Clone, Debug, PartialEq
 hdr::ToneMapContext: Debug
 hdr::measure::LightLevelMethod: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 zenpixels::buffer::PixelBuffer: ext::PixelBufferConvertTypedExt, ext::PixelBufferHdrConvertExt

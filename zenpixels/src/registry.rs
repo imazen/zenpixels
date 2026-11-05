@@ -173,7 +173,9 @@ pub const fn rgb_to_xyz(primaries: ColorPrimaries) -> Option<Mat3> {
         None => return None,
     };
     let ((rx, ry), (gx, gy), (bx, by)) = chrom;
-    let (wx, wy) = primaries.white_point();
+    let Some((wx, wy)) = primaries.white_point() else {
+        return None;
+    };
 
     let xr = rx / ry;
     let zr = (1.0 - rx - ry) / ry;
@@ -218,7 +220,11 @@ pub const fn gamut_matrix(src: ColorPrimaries, dst: ColorPrimaries) -> Option<Ma
     };
 
     if src.needs_chromatic_adaptation(dst) {
-        let adapt = bradford_adapt(src.white_point(), dst.white_point());
+        // `needs_chromatic_adaptation` is true only when both white points are known.
+        let (Some(src_white), Some(dst_white)) = (src.white_point(), dst.white_point()) else {
+            return None;
+        };
+        let adapt = bradford_adapt(src_white, dst_white);
         Some(mul_3x3(&mul_3x3(&dst_inv, &adapt), &src_xyz))
     } else {
         Some(mul_3x3(&dst_inv, &src_xyz))

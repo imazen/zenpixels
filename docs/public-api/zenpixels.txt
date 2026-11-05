@@ -16,7 +16,7 @@
 #   struct fields                             109
 #   enum variants                             310
 #   re-exports                                  4
-#   trait roster entries (type × trait)       415
+#   trait roster entries (type × trait)       418
 #   auto-trait-complete types                  57
 #   auto-trait exceptions                       9
 #
@@ -353,7 +353,7 @@ pub const fn descriptor::ColorPrimaries::contains(self, Self) -> bool [also: (ro
 pub const fn descriptor::ColorPrimaries::from_cicp(u8) -> core::option::Option<Self> [also: (root)]
 pub const fn descriptor::ColorPrimaries::gamut_matrix_to(self, Self) -> core::option::Option<[[f32; 3]; 3]> [also: (root)]
 pub const fn descriptor::ColorPrimaries::to_cicp(self) -> core::option::Option<u8> [also: (root)]
-pub const fn descriptor::ColorPrimaries::white_point(self) -> (f32, f32) [also: (root)]
+pub const fn descriptor::ColorPrimaries::white_point(self) -> core::option::Option<(f32, f32)> [also: (root)]
 pub descriptor::PixelFormat::Bgr8
 pub descriptor::PixelFormat::Bgra8
 pub descriptor::PixelFormat::Bgrx8
@@ -764,7 +764,7 @@ pub ChannelType::U16
 pub ChannelType::U32
 pub ChannelType::U64
 pub ChannelType::U8
-pub enum ColorAuthority [also: color]
+#[non_exhaustive] pub enum ColorAuthority [also: color]
 pub ColorAuthority::Cicp
 pub ColorAuthority::Icc
 pub fn color::ColorAuthority::select<T>(self, core::option::Option<T>, core::option::Option<T>) -> core::option::Option<T>
@@ -1203,9 +1203,9 @@ i8: buffer::StorageSample
 icc::IccIdentification: Clone, Copy, Debug, Eq, Hash, PartialEq
 icc::IdentificationUse: Clone, Copy, Debug, Eq, Hash, PartialEq
 orientation::Orientation: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
-pixel_types::GrayAlpha16: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
-pixel_types::GrayAlpha8: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
-pixel_types::GrayAlphaF32: Clone, Copy, Debug, Default, PartialEq, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
+pixel_types::GrayAlpha16: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
+pixel_types::GrayAlpha8: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
+pixel_types::GrayAlphaF32: Clone, Copy, Debug, Default, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 plane::AlignedSamples<T>: Clone, Debug, Deref, DerefMut, plane::SampleStorage, plane::SampleStorageMut
 plane::AnyPlane<'a>: Clone, Copy, Debug
 plane::FloatEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq

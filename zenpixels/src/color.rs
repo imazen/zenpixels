@@ -275,6 +275,7 @@ impl<'a> ColorProfileSource<'a> {
 /// described* its color (for re-encoding decisions). `ColorAuthority` says
 /// which field the CMS should *prefer* for building transforms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum ColorAuthority {
     /// ICC profile bytes take precedence for CMS transforms.
     ///
@@ -478,7 +479,8 @@ impl ColorOrigin {
         }
     }
 
-    /// Create from both ICC and CICP (e.g., AVIF with both).
+    /// Create from both ICC and CICP, with CICP authoritative. Formats where ICC wins, such as AVIF with
+    /// an ICC `colr` box, set that with [`with_color_authority`](Self::with_color_authority).
     pub fn from_icc_and_cicp(icc: impl Into<Arc<[u8]>>, cicp: Cicp) -> Self {
         Self {
             icc: Some(icc.into()),

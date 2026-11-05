@@ -40,7 +40,6 @@ use crate::descriptor::{
     AlphaMode, ColorPrimaries, PixelDescriptor, SignalRange, TransferFunction,
 };
 use crate::hdr::DiffuseWhite;
-#[cfg(feature = "rgb")]
 use crate::pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
 use crate::sample::{ExactDepth, ExactDepthError};
 
@@ -158,17 +157,14 @@ impl Pixel for BGRA<u8> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::BGRA8;
 }
 
-#[cfg(feature = "rgb")]
 impl Pixel for GrayAlpha8 {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYA8;
 }
 
-#[cfg(feature = "rgb")]
 impl Pixel for GrayAlpha16 {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYA16;
 }
 
-#[cfg(feature = "rgb")]
 impl Pixel for GrayAlphaF32 {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYAF32;
 }
@@ -773,7 +769,7 @@ impl<'a, P> PixelSlice<'a, P> {
     /// and layout). Transfer function and alpha mode are metadata, not
     /// layout constraints.
     pub fn try_typed<Q: Pixel>(self) -> Option<PixelSlice<'a, Q>> {
-        if self.descriptor.layout_compatible(Q::DESCRIPTOR)
+        if self.descriptor.typed_view_compatible(Q::DESCRIPTOR)
             && core::mem::size_of::<Q>() == Q::DESCRIPTOR.bytes_per_pixel()
             && (self.width == 0
                 || self.rows == 0
@@ -1467,7 +1463,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
     ///
     /// Succeeds if the descriptors are layout-compatible.
     pub fn try_typed<Q: Pixel>(self) -> Option<PixelSliceMut<'a, Q>> {
-        if self.descriptor.layout_compatible(Q::DESCRIPTOR)
+        if self.descriptor.typed_view_compatible(Q::DESCRIPTOR)
             && core::mem::size_of::<Q>() == Q::DESCRIPTOR.bytes_per_pixel()
             && (self.width == 0
                 || self.rows == 0
@@ -1911,31 +1907,7 @@ impl<'a> PixelSliceMut<'a, Rgbx> {
 }
 
 #[cfg(feature = "rgb")]
-impl<'a> PixelSliceMut<'a, Rgbx> {
-    /// Upgrade to RGBA by setting all padding bytes to 255 (fully opaque).
-    #[must_use]
-    pub fn upgrade_to_rgba(self) -> PixelSliceMut<'a, Rgba<u8>> {
-        let width = self.width;
-        let rows = self.rows;
-        let stride = self.stride;
-
-        let color = self.color;
-        let data = self.data;
-        for_each_pixel_4bpp(data, width, rows, stride, |px| {
-            px[3] = 255;
-        });
-        PixelSliceMut {
-            data,
-            width,
-            rows,
-            stride,
-            descriptor: PixelDescriptor::RGBA8_SRGB,
-
-            color,
-            _pixel: PhantomData,
-        }
-    }
-}
+impl<'a> PixelSliceMut<'a, Rgbx> {}
 
 impl<'a> PixelSliceMut<'a, Bgrx> {
     /// Byte-swap B<->R channels in place, converting to RGBX.
@@ -1966,84 +1938,10 @@ impl<'a> PixelSliceMut<'a, Bgrx> {
 }
 
 #[cfg(feature = "rgb")]
-impl<'a> PixelSliceMut<'a, Bgrx> {
-    /// Upgrade to BGRA by setting all padding bytes to 255 (fully opaque).
-    #[must_use]
-    pub fn upgrade_to_bgra(self) -> PixelSliceMut<'a, BGRA<u8>> {
-        let width = self.width;
-        let rows = self.rows;
-        let stride = self.stride;
-
-        let color = self.color;
-        let data = self.data;
-        for_each_pixel_4bpp(data, width, rows, stride, |px| {
-            px[3] = 255;
-        });
-        PixelSliceMut {
-            data,
-            width,
-            rows,
-            stride,
-            descriptor: PixelDescriptor::BGRA8_SRGB,
-
-            color,
-            _pixel: PhantomData,
-        }
-    }
-}
+impl<'a> PixelSliceMut<'a, Bgrx> {}
 
 #[cfg(feature = "rgb")]
 impl<'a> PixelSliceMut<'a, Rgba<u8>> {
-    /// Matte alpha against a solid RGB background, producing RGBX.
-    ///
-    /// Each pixel is composited: `out = src * alpha/255 + bg * (255 - alpha)/255`.
-    /// The alpha byte becomes padding.
-    #[must_use]
-    pub fn matte_to_rgbx(self, bg: Rgb<u8>) -> PixelSliceMut<'a, Rgbx> {
-        let width = self.width;
-        let rows = self.rows;
-        let stride = self.stride;
-
-        let color = self.color;
-        let data = self.data;
-        for_each_pixel_4bpp(data, width, rows, stride, |px| {
-            let a = px[3] as u16;
-            let inv_a = 255 - a;
-            px[0] = ((px[0] as u16 * a + bg.r as u16 * inv_a + 127) / 255) as u8;
-            px[1] = ((px[1] as u16 * a + bg.g as u16 * inv_a + 127) / 255) as u8;
-            px[2] = ((px[2] as u16 * a + bg.b as u16 * inv_a + 127) / 255) as u8;
-            px[3] = 0;
-        });
-        PixelSliceMut {
-            data,
-            width,
-            rows,
-            stride,
-            descriptor: PixelDescriptor::RGBX8_SRGB,
-
-            color,
-            _pixel: PhantomData,
-        }
-    }
-
-    /// Strip alpha to RGBX without compositing (just mark as padding).
-    ///
-    /// The alpha byte value is preserved in memory but semantically ignored.
-    /// Use when you know alpha is already 255 or don't care about the values.
-    #[must_use]
-    pub fn strip_alpha_to_rgbx(self) -> PixelSliceMut<'a, Rgbx> {
-        PixelSliceMut {
-            data: self.data,
-            width: self.width,
-            rows: self.rows,
-            stride: self.stride,
-            descriptor: PixelDescriptor::RGBX8_SRGB,
-
-            color: self.color,
-            _pixel: PhantomData,
-        }
-    }
-
     /// Byte-swap R<->B channels in place, converting to BGRA.
     #[must_use]
     pub fn swap_to_bgra(self) -> PixelSliceMut<'a, BGRA<u8>> {
@@ -2073,54 +1971,6 @@ impl<'a> PixelSliceMut<'a, Rgba<u8>> {
 
 #[cfg(feature = "rgb")]
 impl<'a> PixelSliceMut<'a, BGRA<u8>> {
-    /// Matte alpha against a solid RGB background, producing BGRX.
-    ///
-    /// Each pixel is composited: `out = src * alpha/255 + bg * (255 - alpha)/255`.
-    /// The alpha byte becomes padding.
-    #[must_use]
-    pub fn matte_to_bgrx(self, bg: Rgb<u8>) -> PixelSliceMut<'a, Bgrx> {
-        let width = self.width;
-        let rows = self.rows;
-        let stride = self.stride;
-
-        let color = self.color;
-        let data = self.data;
-        for_each_pixel_4bpp(data, width, rows, stride, |px| {
-            let a = px[3] as u16;
-            let inv_a = 255 - a;
-            // BGRA layout: [B, G, R, A]
-            px[0] = ((px[0] as u16 * a + bg.b as u16 * inv_a + 127) / 255) as u8;
-            px[1] = ((px[1] as u16 * a + bg.g as u16 * inv_a + 127) / 255) as u8;
-            px[2] = ((px[2] as u16 * a + bg.r as u16 * inv_a + 127) / 255) as u8;
-            px[3] = 0;
-        });
-        PixelSliceMut {
-            data,
-            width,
-            rows,
-            stride,
-            descriptor: PixelDescriptor::BGRX8_SRGB,
-
-            color,
-            _pixel: PhantomData,
-        }
-    }
-
-    /// Strip alpha to BGRX without compositing (just mark as padding).
-    #[must_use]
-    pub fn strip_alpha_to_bgrx(self) -> PixelSliceMut<'a, Bgrx> {
-        PixelSliceMut {
-            data: self.data,
-            width: self.width,
-            rows: self.rows,
-            stride: self.stride,
-            descriptor: PixelDescriptor::BGRX8_SRGB,
-
-            color: self.color,
-            _pixel: PhantomData,
-        }
-    }
-
     /// Byte-swap B<->R channels in place, converting to RGBA.
     #[must_use]
     pub fn swap_to_rgba(self) -> PixelSliceMut<'a, Rgba<u8>> {
@@ -2897,7 +2747,7 @@ impl PixelBuffer {
     /// pixel slice without imgref metadata. For strided access, use
     /// [`try_as_imgref()`](Self::try_as_imgref).
     pub fn as_contiguous_pixels<P: Pixel>(&self) -> Option<&[P]> {
-        if !self.descriptor.layout_compatible(P::DESCRIPTOR)
+        if !self.descriptor.typed_view_compatible(P::DESCRIPTOR)
             || core::mem::size_of::<P>() != self.descriptor.bytes_per_pixel()
         {
             return None;
@@ -2926,7 +2776,7 @@ impl PixelBuffer {
     /// alignment 1 and the allocation capacity is a multiple of its size.
     /// Other allocator layouts require one copy into a typed allocation.
     pub fn into_contiguous_pixels<P: Pixel>(self) -> Option<Vec<P>> {
-        if !self.descriptor.layout_compatible(P::DESCRIPTOR)
+        if !self.descriptor.typed_view_compatible(P::DESCRIPTOR)
             || core::mem::size_of::<P>() != self.descriptor.bytes_per_pixel()
         {
             return None;
@@ -2974,7 +2824,7 @@ impl<S: ByteStorage> PixelBuffer<(), S> {
     ///
     /// Returns `None` if the descriptor is not layout-compatible with `P`.
     pub fn try_as_imgref<P: Pixel>(&self) -> Option<ImgRef<'_, P>> {
-        if !self.descriptor.layout_compatible(P::DESCRIPTOR)
+        if !self.descriptor.typed_view_compatible(P::DESCRIPTOR)
             || core::mem::size_of::<P>() != self.descriptor.bytes_per_pixel()
         {
             return None;
@@ -3014,7 +2864,7 @@ impl<S: ByteStorageMut> PixelBuffer<(), S> {
     pub fn try_as_imgref_mut<P: Pixel>(&mut self) -> Option<imgref::ImgRefMut<'_, P>> {
         // Mutable access can change any sample: end current-sample evidence.
         self.exact = None;
-        if !self.descriptor.layout_compatible(P::DESCRIPTOR)
+        if !self.descriptor.typed_view_compatible(P::DESCRIPTOR)
             || core::mem::size_of::<P>() != self.descriptor.bytes_per_pixel()
         {
             return None;
@@ -3236,7 +3086,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
     ///
     /// Succeeds if the descriptors are layout-compatible.
     pub fn try_typed<Q: Pixel>(self) -> Option<PixelBuffer<Q, S>> {
-        if self.descriptor.layout_compatible(Q::DESCRIPTOR)
+        if self.descriptor.typed_view_compatible(Q::DESCRIPTOR)
             && core::mem::size_of::<Q>() == Q::DESCRIPTOR.bytes_per_pixel()
             && (self.width == 0
                 || self.height == 0

@@ -326,3 +326,46 @@ fn same_color_sees_out_of_range_channels() {
     };
     assert!(!color(-0.5).same_color(&color(0.0)));
 }
+
+#[test]
+fn a_layout_and_its_alpha_mode_must_agree() {
+    use zenpixels::{AlphaMode, ChannelLayout, ChannelType};
+    assert!(D::try_new(ChannelType::U8, ChannelLayout::Rgba, None, T::Srgb).is_none());
+    assert!(
+        D::try_new(
+            ChannelType::U8,
+            ChannelLayout::Rgb,
+            Some(AlphaMode::Straight),
+            T::Srgb
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn gray_icc_is_gray_class() {
+    use zenpixels_convert::icc_profiles::SynthesizedIcc;
+    let cicp = zenpixels::Cicp::new(9, 16, 0, true);
+    let SynthesizedIcc::Profile(icc) = SynthesizedIcc::for_gray_cicp(cicp) else {
+        panic!("a bundled profile");
+    };
+    assert_eq!(&icc[16..20], b"GRAY");
+}
+
+/// Padding bits aren't image data: they can't show that an image uses 16 bits.
+#[test]
+fn padding_does_not_count_as_low_bits() {
+    let d = D::RGBA16_SRGB.with_alpha_mode(Some(zenpixels::AlphaMode::Undefined));
+    for pixels in [1usize, 64] {
+        let row: Vec<u8> = (0..pixels)
+            .flat_map(|_| [0x0101u16, 0x0202, 0x0303, 0x1234])
+            .flat_map(u16::to_ne_bytes)
+            .collect();
+        let slice = PixelSlice::new(&row, pixels as u32, 1, row.len(), d).unwrap();
+        let report =
+            zenpixels_convert::load_bearing::PixelSliceLoadBearingExt::determine_load_bearing(
+                &slice,
+            );
+        assert_eq!(report.uses_low_bits, Some(false), "{pixels} pixels");
+    }
+}

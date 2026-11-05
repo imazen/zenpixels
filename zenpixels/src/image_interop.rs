@@ -205,6 +205,7 @@ fn matrix_code(m: CicpMatrixCoefficients) -> u8 {
         CicpMatrixCoefficients::Bt2100 => 14,
         CicpMatrixCoefficients::IptPqC2 => 15,
         CicpMatrixCoefficients::YCgCoRe => 16,
+        CicpMatrixCoefficients::YCgCoRo => 17,
         _ => 2,
     }
 }

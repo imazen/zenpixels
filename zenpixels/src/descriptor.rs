@@ -642,14 +642,14 @@ impl ColorPrimaries {
         }
     }
 
-    /// CIE 1931 xy chromaticity of this color space's white point.
+    /// CIE 1931 xy chromaticity of this color space's white point, or `None` when the primaries are
+    /// unknown.
     #[allow(unreachable_patterns)]
     #[inline]
-    pub const fn white_point(self) -> (f32, f32) {
+    pub const fn white_point(self) -> Option<(f32, f32)> {
         match self {
-            Self::Bt709 | Self::Bt2020 | Self::DisplayP3 | Self::AdobeRgb => Self::WHITE_D65,
-            Self::Unknown => Self::WHITE_D65,
-            _ => Self::WHITE_D65,
+            Self::Unknown => None,
+            _ => Some(Self::WHITE_D65),
         }
     }
 
@@ -657,8 +657,10 @@ impl ColorPrimaries {
     /// adaptation (different white points).
     #[inline]
     pub(crate) const fn needs_chromatic_adaptation(self, other: Self) -> bool {
-        let (sx, sy) = self.white_point();
-        let (ox, oy) = other.white_point();
+        // Unknown primaries have no white point to adapt from or to.
+        let (Some((sx, sy)), Some((ox, oy))) = (self.white_point(), other.white_point()) else {
+            return false;
+        };
         sx.to_bits() != ox.to_bits() || sy.to_bits() != oy.to_bits()
     }
 
@@ -864,14 +866,15 @@ impl PixelDescriptor {
         transfer: TransferFunction,
     ) -> Option<Self> {
         match PixelFormat::from_parts(channel_type, layout, alpha) {
-            Some(format) => Some(Self {
+            // A layout with alpha needs a mode, and one without can't have one.
+            Some(format) if layout.has_alpha() == alpha.is_some() => Some(Self {
                 format,
                 transfer,
                 alpha,
                 primaries: ColorPrimaries::Bt709,
                 signal_range: SignalRange::Full,
             }),
-            None => None,
+            _ => None,
         }
     }
 
@@ -1522,6 +1525,16 @@ impl PixelDescriptor {
             // Same bytes, opposite meaning: 1.0 is full ink in one and no ink in the other.
             && matches!(self.format, PixelFormat::CmykF32Inverted)
                 == matches!(other.format, PixelFormat::CmykF32Inverted)
+    }
+}
+
+impl PixelDescriptor {
+    /// Whether `other`'s typed pixels can view these bytes: layout-compatible, and padding is never read
+    /// as alpha.
+    pub(crate) const fn typed_view_compatible(self, other: Self) -> bool {
+        self.layout_compatible(other)
+            && matches!(self.alpha, Some(AlphaMode::Undefined))
+                == matches!(other.alpha, Some(AlphaMode::Undefined))
     }
 }
 

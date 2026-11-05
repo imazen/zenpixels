@@ -57,6 +57,7 @@ fn gate_ratio(primaries: ColorPrimaries, knee: f32) -> f32 {
 /// # Examples
 ///
 /// ```
+/// # #[cfg(feature = "hdr-experimental")] {
 /// use zenpixels_convert::hdr::SoftCompress;
 /// use zenpixels_convert::oklab::OklabSpace;
 /// use zenpixels::ColorPrimaries;
@@ -67,6 +68,7 @@ fn gate_ratio(primaries: ColorPrimaries, knee: f32) -> f32 {
 /// let mut pixels = [[1.2_f32, 0.05, 0.05]]; // out-of-gamut red
 /// compress.apply_strip(&mut pixels);
 /// assert!(pixels[0].iter().all(|&c| (-1e-3..=1.0 + 1e-3).contains(&c)));
+/// # }
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SoftCompress {

@@ -158,6 +158,16 @@ fn owned_external(t: Box<dyn crate::cms::RowTransformMut>) -> ExternalTransform 
     }
 }
 
+impl core::fmt::Debug for RowConverter {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RowConverter")
+            .field("plan", &self.plan)
+            .field("prepared_width", &self.prepared_width)
+            .field("external", &self.external.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 impl RowConverter {
     /// Create a converter from `from` to `to`.
     ///
@@ -1368,8 +1378,7 @@ mod tests {
                 PixelDescriptor::RGB16_BT2100_HLG,
                 PixelDescriptor::RGB8_SRGB,
             )
-            .err()
-            .expect("HLG → sRGB without peak must refuse");
+            .expect_err("HLG → sRGB without peak must refuse");
             assert!(
                 matches!(*err.error(), ConvertError::HdrSourceRequiresPeak { .. })
                     || matches!(
@@ -1403,8 +1412,7 @@ mod tests {
             TransferFunction::Pq,
         );
         let err = RowConverter::new(pq_u16, PixelDescriptor::RGB8_SRGB)
-            .err()
-            .expect("plain HDR→SDR must refuse")
+            .expect_err("plain HDR→SDR must refuse")
             .error()
             .clone();
         assert!(matches!(err, ConvertError::HdrSourceRequiresPeak { .. }));
@@ -1432,8 +1440,7 @@ mod tests {
             TransferFunction::Hlg,
         );
         let err = RowConverter::new(hlg_u16, PixelDescriptor::RGB8_SRGB)
-            .err()
-            .expect("plain HDR→SDR must refuse")
+            .expect_err("plain HDR→SDR must refuse")
             .error()
             .clone();
         assert!(matches!(err, ConvertError::HdrSourceRequiresPeak { .. }));

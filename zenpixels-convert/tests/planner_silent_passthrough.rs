@@ -245,7 +245,7 @@ fn u8_same_depth_pq_to_srgb_diverges_wildly() {
     #[cfg(feature = "bt2446a")]
     {
         use zenpixels_convert::{ConvertError, ConvertPlan};
-        let err = RowConverter::new(src_d, dst_d).err().expect("must refuse");
+        let err = RowConverter::new(src_d, dst_d).expect_err("must refuse");
         assert!(matches!(
             *err.error(),
             ConvertError::HdrSourceRequiresPeak { .. }
@@ -272,8 +272,7 @@ fn u8_same_depth_pq_to_srgb_diverges_wildly() {
     #[cfg(not(feature = "bt2446a"))]
     assert!(matches!(
         *RowConverter::new(src_d, dst_d)
-            .err()
-            .expect("HDR mapping requires a supplied peak even without the feature")
+            .expect_err("HDR mapping requires a supplied peak even without the feature")
             .error(),
         zenpixels_convert::ConvertError::HdrSourceRequiresPeak { .. }
     ));
@@ -545,7 +544,7 @@ fn u16_pq_to_u8_srgb_fused_path() {
     #[cfg(feature = "bt2446a")]
     {
         use zenpixels_convert::{ConvertError, ConvertPlan};
-        let err = RowConverter::new(src_d, dst_d).err().expect("must refuse");
+        let err = RowConverter::new(src_d, dst_d).expect_err("must refuse");
         assert!(matches!(
             *err.error(),
             ConvertError::HdrSourceRequiresPeak { .. }
@@ -564,8 +563,7 @@ fn u16_pq_to_u8_srgb_fused_path() {
     #[cfg(not(feature = "bt2446a"))]
     assert!(matches!(
         *RowConverter::new(src_d, dst_d)
-            .err()
-            .expect("HDR mapping requires a supplied peak even without the feature")
+            .expect_err("HDR mapping requires a supplied peak even without the feature")
             .error(),
         zenpixels_convert::ConvertError::HdrSourceRequiresPeak { .. }
     ));

@@ -261,6 +261,7 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
                     layout.channels(),
                     has_alpha && scan_alpha,
                     has_chroma,
+                    self.descriptor().alpha() == Some(zenpixels::AlphaMode::Undefined),
                     [alpha, chroma, low_bits],
                 );
                 if (!has_alpha || !scan_alpha || alpha) && (!has_chroma || chroma) && low_bits {

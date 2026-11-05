@@ -221,6 +221,13 @@ impl SynthesizedIcc {
     pub fn for_cicp(cicp: Cicp) -> Self {
         synthesize_icc_for_cicp(cicp)
     }
+
+    /// The GRAY-class counterpart of [`for_cicp`](Self::for_cicp), for gray images: containers such as
+    /// PNG refuse an RGB profile on a gray image.
+    #[must_use]
+    pub fn for_gray_cicp(cicp: Cicp) -> Self {
+        synthesize_gray_icc_for_cicp(cicp)
+    }
 }
 
 /// Resolve an ICC profile for a full [`Cicp`] color description (primaries **and**

@@ -10,6 +10,8 @@ categories.workspace = true
 description = "Pixel format interchange types for zen* codecs"
 keywords = ["image", "pixel", "format", "descriptor", "codec"]
 include = [
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
     "/src/**",
 ]
 
