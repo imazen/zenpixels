@@ -33,6 +33,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- `gamut_clamping_scenarios` runs again, with a resampling filter in the test file that matches zenresize to 2.3e-4 on its image. It also checks that unclipped F32 keeps what a kernel's lobes produce through an sRGB round trip, and that `RowConverter`'s U8 output clamps them.
+
 - README review callouts match the code: the authority rule, constructor geometry and in-place retag refusal exist, and output metadata no longer disagrees with pixels on the paths the review reproduced. The limits that remain true stay listed.
 
 - Fallible pixel-buffer constructors request allocator-zeroed bytes directly, retaining allocation errors.
