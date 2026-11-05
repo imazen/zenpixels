@@ -33,6 +33,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- Fallible pixel-buffer constructors request allocator-zeroed bytes directly, retaining allocation errors, row strides and explicit alignment padding.
+
 ### Fixed: conversions that change primaries
 
 - RGB into gray ran the gamut matrix on gray rows: P3 RGB8 `[200,100,50]` to Gray8 gave `117,117,117,128,0` instead of `114,114,114,114`, and GrayF32 panicked. RGB now changes primaries first. A gray source needs no matrix.

@@ -302,3 +302,9 @@ release-reconcile-check:
     cargo check --workspace --all-targets --all-features --locked
     cargo test --workspace --all-features --locked
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+# Zeroed storage plus the existing row/alignment constructor contracts.
+zeroed-alloc-check:
+    cargo test --locked -p zenpixels --lib
+    cargo check --locked -p zenpixels --no-default-features
+    cargo clippy --locked -p zenpixels --lib -- -D warnings

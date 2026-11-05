@@ -246,11 +246,7 @@ fn align_offset(ptr: *const u8, align: usize) -> usize {
 ///
 /// Returns [`BufferError::AllocationFailed`] if the allocation fails.
 fn try_alloc_zeroed(size: usize) -> Result<Vec<u8>, BufferError> {
-    let mut data = Vec::new();
-    data.try_reserve_exact(size)
-        .map_err(|_| BufferError::AllocationFailed)?;
-    data.resize(size, 0);
-    Ok(data)
+    bytemuck::allocation::try_zeroed_vec(size).map_err(|()| BufferError::AllocationFailed)
 }
 
 /// Validate slice parameters (shared by erased and typed constructors).
@@ -3441,6 +3437,23 @@ mod tests {
 
     /// The buffer-level relabel builders set their field and **preserve** the
     /// rest of the `ColorContext` (clone-override-reattach), and chain.
+    #[test]
+    fn allocator_zeroed_storage_boundaries_and_growth() {
+        for size in [0, 1, 4095, 4096, 4097, 65536] {
+            let mut data = try_alloc_zeroed(size).unwrap();
+            assert_eq!(data.len(), size);
+            assert!(data.iter().all(|&byte| byte == 0));
+            data.fill(0xAB);
+            data.push(0xCD);
+            assert!(data[..size].iter().all(|&byte| byte == 0xAB));
+            assert_eq!(data[size], 0xCD);
+        }
+        assert_eq!(
+            try_alloc_zeroed(usize::MAX),
+            Err(BufferError::AllocationFailed)
+        );
+    }
+
     #[test]
     fn relabel_builders_set_and_preserve_color_context() {
         let data = alloc::vec![0u8; 4 * 4 * 3];
