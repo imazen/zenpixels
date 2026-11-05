@@ -1,10 +1,7 @@
 //! A [`PluggableCms`] over the pure-Rust lcms port, the second real backend behind the trait.
 //!
 //! Test equipment, not a product backend: the port is unreleased and its own README calls it early.
-//! It tracks lcms2 2.20 bit for bit, so it also stands in for lcms2 as a reference here. Its transform
-//! isn't `Send`, so it lives on a thread of its own.
-
-use std::sync::mpsc::{Receiver, Sender, channel};
+//! It tracks lcms2 2.20 bit for bit, so it also stands in for lcms2 as a reference here.
 
 use lcms::types::{FLAGS_BLACKPOINTCOMPENSATION, FLAGS_COPY_ALPHA, FLAGS_NOOPTIMIZE};
 use zenpixels::{ChannelType, Cicp, ColorProfileSource, PixelFormat};
@@ -89,61 +86,33 @@ impl Profile {
     }
 }
 
-struct Job {
-    src: Vec<u8>,
-    dst: Vec<u8>,
-    width: u32,
-}
-
-/// Builds the transform on a thread of its own and serves rows from it. `lcms::xform::Transform`
-/// isn't `Send`, while `RowTransformMut` must be, so nothing else can hold it. This only costs speed,
-/// and nothing here measures speed.
-fn spawn_worker(
+fn build_transform(
     source: Profile,
     target: Profile,
     from: u32,
     to: u32,
     flags: u32,
     bpc: bool,
-) -> Result<(Sender<Job>, Receiver<Job>), &'static str> {
-    let (jobs, inbox) = channel::<Job>();
-    let (outbox, done) = channel::<Job>();
-    let (ready, built) = channel::<Result<(), &'static str>>();
-    std::thread::spawn(move || {
-        let Some((source, target)) = source.open().zip(target.open()) else {
-            let _ = ready.send(Err("lcms could not open a profile"));
-            return;
-        };
-        let mut profiles = vec![source, target];
-        let intents = [lcms::virt::INTENT_RELATIVE_COLORIMETRIC; 2];
-        let transform = lcms::xform::create_extended_transform(
-            None,
-            &mut profiles,
-            &mut [bpc, bpc],
-            &intents,
-            &[1.0, 1.0],
-            None,
-            0,
-            from,
-            to,
-            flags,
-        );
-        let Some(mut transform) = transform else {
-            let _ = ready.send(Err("lcms refused the transform"));
-            return;
-        };
-        let _ = ready.send(Ok(()));
-        for mut job in inbox {
-            transform.do_transform(&job.src, &mut job.dst, job.width);
-            if outbox.send(job).is_err() {
-                return;
-            }
-        }
-    });
-    built
-        .recv()
-        .map_err(|_| "the lcms worker panicked")?
-        .map(|()| (jobs, done))
+) -> Result<Box<lcms::xform::Transform>, &'static str> {
+    let (source, target) = source
+        .open()
+        .zip(target.open())
+        .ok_or("lcms could not open a profile")?;
+    let mut profiles = vec![source, target];
+    let intents = [lcms::virt::INTENT_RELATIVE_COLORIMETRIC; 2];
+    lcms::xform::create_extended_transform(
+        None,
+        &mut profiles,
+        &mut [bpc, bpc],
+        &intents,
+        &[1.0, 1.0],
+        None,
+        0,
+        from,
+        to,
+        flags,
+    )
+    .ok_or("lcms refused the transform")
 }
 
 /// Bytes of a gamma 2.2 gray profile, written by the port.
@@ -184,13 +153,12 @@ impl PluggableCms for LcmsPort {
             } else {
                 0
             };
-        let (jobs, done) = match spawn_worker(source, target, from, to, flags, ink_source) {
-            Ok(worker) => worker,
+        let transform = match build_transform(source, target, from, to, flags, ink_source) {
+            Ok(transform) => transform,
             Err(reason) => return Some(Err(whereat::at!(CmsPluginError::msg(reason)))),
         };
         Some(Ok(Box::new(Row {
-            jobs,
-            done,
+            transform,
             ink: from_ink,
             clip: options.clip_out_of_gamut() && dst_format.channel_type() == ChannelType::F32,
             source_bytes: src_format.bytes_per_pixel(),
@@ -202,8 +170,7 @@ impl PluggableCms for LcmsPort {
 }
 
 struct Row {
-    jobs: Sender<Job>,
-    done: Receiver<Job>,
+    transform: Box<lcms::xform::Transform>,
     ink: Ink,
     clip: bool,
     source_bytes: usize,
@@ -217,25 +184,19 @@ impl RowTransformMut for Row {
         let pixels = width as usize;
         let src = &src[..pixels * self.source_bytes];
         let dst = &mut dst[..pixels * self.target_bytes];
-        let src = match self.ink {
-            Ink::None => src.to_vec(),
-            ink => src
-                .chunks_exact(4)
-                .flat_map(|b| {
-                    let v = f32::from_ne_bytes(b.try_into().unwrap());
-                    (100.0 * if ink == Ink::Float { v } else { 1.0 - v }).to_ne_bytes()
-                })
-                .collect(),
-        };
-        // Sample bytes the transform doesn't write must survive, as they do through a slice.
-        let job = Job {
-            src,
-            dst: dst.to_vec(),
-            width,
-        };
-        self.jobs.send(job).expect("the lcms worker is gone");
-        let job = self.done.recv().expect("the lcms worker panicked");
-        dst.copy_from_slice(&job.dst);
+        match self.ink {
+            Ink::None => self.transform.do_transform(src, dst, width),
+            ink => {
+                let scaled: Vec<u8> = src
+                    .chunks_exact(4)
+                    .flat_map(|b| {
+                        let v = f32::from_ne_bytes(b.try_into().unwrap());
+                        (100.0 * if ink == Ink::Float { v } else { 1.0 - v }).to_ne_bytes()
+                    })
+                    .collect();
+                self.transform.do_transform(&scaled, dst, width);
+            }
+        }
         if self.clip {
             for pixel in dst.chunks_exact_mut(4 * self.target_channels) {
                 for sample in pixel[..4 * self.target_color].chunks_exact_mut(4) {
