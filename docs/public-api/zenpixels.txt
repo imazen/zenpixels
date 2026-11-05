@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)       140
 #   pub consts/statics                        346
 #   free functions                              2
-#   inherent methods                          374
+#   inherent methods                          372
 #   struct fields                             138
 #   enum variants                             333
 #   re-exports                                  4
@@ -33,10 +33,10 @@
 #   pixel_types                       9
 #   plane                            87
 #   policy                           22
-#   precision                        78
+#   precision                        76
 #   sample                           33
 
-## items (1204 lines)
+## items (1202 lines)
 
 pub mod zenpixels
 pub use At
@@ -743,8 +743,6 @@ pub const fn precision::ConversionOffer::with_peak_bytes(self, u64) -> Self
 #[non_exhaustive] pub struct precision::ConversionPolicy
 pub const fn precision::ConversionPolicy::new() -> Self
 pub fn precision::ConversionPolicy::plan_chain<R: precision::ConversionResolver + ?core::marker::Sized>(&self, &precision::SourcePrecision, descriptor::PixelDescriptor, &[&[precision::ConversionOffer]], precision::OutputChoice, &mut R) -> core::result::Result<precision::ChainPlan, whereat::at::At<precision::ChainFailure<<R as precision::ConversionResolver>::Error>>>
-pub fn precision::ConversionPolicy::plan_chain_preset(&self, &precision::SourcePrecision, descriptor::PixelDescriptor, &[&[precision::ConversionOffer]], precision::OutputChoice) -> core::result::Result<precision::ChainPlan, whereat::at::At<precision::ChainFailure<core::convert::Infallible>>>
-pub fn precision::ConversionPolicy::resolve<R: precision::ConversionResolver + ?core::marker::Sized>(&self, &precision::SourcePrecision, precision::OutputChoice, &[precision::ConversionOffer], &mut R) -> core::result::Result<precision::ConversionRecord, whereat::at::At<precision::ConversionFailure<<R as precision::ConversionResolver>::Error>>>
 pub fn precision::ConversionPolicy::resolve_preset(&self, &precision::SourcePrecision, precision::OutputChoice, &[precision::ConversionOffer]) -> core::result::Result<precision::ConversionRecord, whereat::at::At<precision::ConversionRefusal>>
 pub const fn precision::ConversionPolicy::with_max_peak_bytes(self, u64) -> Self
 pub const fn precision::ConversionPolicy::with_min_bits(self, u8) -> Self

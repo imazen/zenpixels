@@ -24,7 +24,6 @@
 //! assert!(policy.resolve_preset(&sixteen, OutputChoice::Hidden, &offers).is_err());
 //! ```
 
-use core::convert::Infallible;
 use core::error::Error;
 use core::fmt;
 
@@ -622,71 +621,6 @@ impl ConversionPolicy {
         let question = ConversionQuestion::new(source, choice, offers, *self);
         self.check_admitted(&question).at()?;
         self.apply_preset(&question).at()
-    }
-
-    /// Settle a conversion: requirements first, then `resolver`, then the preset if it defers.
-    ///
-    /// # Errors
-    ///
-    /// [`ConversionFailure::Refused`] for an expected refusal and
-    /// [`ConversionFailure::Resolver`] for the resolver's own failure, with its trace.
-    #[track_caller]
-    pub fn resolve<R: ConversionResolver + ?Sized>(
-        &self,
-        source: &SourcePrecision,
-        choice: OutputChoice,
-        offers: &[ConversionOffer],
-        resolver: &mut R,
-    ) -> Result<ConversionRecord, At<ConversionFailure<R::Error>>> {
-        let question = ConversionQuestion::new(source, choice, offers, *self);
-        self.check_admitted(&question)
-            .map_err_at(ConversionFailure::Refused)?;
-        match resolver
-            .resolve(question)
-            .at()
-            .map_err_at(ConversionFailure::Resolver)?
-        {
-            ConversionDecision::Choose(index) => question
-                .admitted()
-                .find(|admitted| admitted.index == index)
-                .map(|admitted| ConversionRecord {
-                    index,
-                    output: admitted.offer.output,
-                    effect: admitted.effect,
-                    decided_by: DecidedBy::Resolver,
-                })
-                .ok_or_else(|| {
-                    whereat::at!(ConversionFailure::Refused(
-                        ConversionRefusal::InvalidChoice { index }
-                    ))
-                }),
-            ConversionDecision::Refuse => Err(whereat::at!(ConversionFailure::Refused(
-                ConversionRefusal::ResolverRefused
-            ))),
-            ConversionDecision::Defer => self
-                .apply_preset(&question)
-                .map_err_at(ConversionFailure::Refused),
-        }
-    }
-
-    /// Choose a format at every node of a chain with the preset alone. See
-    /// [`plan_chain`](Self::plan_chain).
-    ///
-    /// # Errors
-    ///
-    /// [`ChainFailure`] naming the first node with nothing usable.
-    #[track_caller]
-    pub fn plan_chain_preset(
-        &self,
-        source: &SourcePrecision,
-        start: PixelDescriptor,
-        nodes: &[&[ConversionOffer]],
-        last: OutputChoice,
-    ) -> Result<ChainPlan, At<ChainFailure<Infallible>>> {
-        let mut defer = |_: ConversionQuestion<'_>| -> Result<ConversionDecision, At<Infallible>> {
-            Ok(ConversionDecision::Defer)
-        };
-        self.plan_chain(source, start, nodes, last, &mut defer)
     }
 
     /// Choose a format at every node of a chain, so that estimating and running a job read one

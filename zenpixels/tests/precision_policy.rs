@@ -7,9 +7,9 @@ use whereat::At;
 whereat::define_at_crate_info!();
 
 use zenpixels::precision::{
-    AlphaContent, ConversionDecision, ConversionEffect, ConversionFailure, ConversionOffer,
-    ConversionPolicy, ConversionPreset, ConversionQuestion, ConversionRefusal, DecidedBy,
-    OutputChoice, SourcePrecision,
+    AlphaContent, ChainFailure, ChainPlan, ConversionDecision, ConversionEffect, ConversionFailure,
+    ConversionOffer, ConversionPolicy, ConversionPreset, ConversionQuestion, ConversionRecord,
+    ConversionRefusal, ConversionResolver, DecidedBy, OutputChoice, SourcePrecision,
 };
 use zenpixels::sample::ExactDepth;
 use zenpixels::{
@@ -31,6 +31,52 @@ fn offer(output: D) -> ConversionOffer {
 
 fn keep() -> ConversionPolicy {
     ConversionPolicy::new()
+}
+
+/// One node of a chain, and a chain with no resolver.
+trait Settle {
+    fn resolve<R: ConversionResolver>(
+        &self,
+        source: &SourcePrecision,
+        choice: OutputChoice,
+        offers: &[ConversionOffer],
+        resolver: &mut R,
+    ) -> Result<ConversionRecord, At<ConversionFailure<R::Error>>>;
+
+    fn plan_chain_preset(
+        &self,
+        source: &SourcePrecision,
+        start: D,
+        nodes: &[&[ConversionOffer]],
+        last: OutputChoice,
+    ) -> Result<ChainPlan, At<ChainFailure<Never>>>;
+}
+
+impl Settle for ConversionPolicy {
+    fn resolve<R: ConversionResolver>(
+        &self,
+        source: &SourcePrecision,
+        choice: OutputChoice,
+        offers: &[ConversionOffer],
+        resolver: &mut R,
+    ) -> Result<ConversionRecord, At<ConversionFailure<R::Error>>> {
+        self.plan_chain(source, D::RGB8_SRGB, &[offers], choice, resolver)
+            .map(|plan| plan.steps[0])
+            .map_err(|failure| failure.map_error(|chain| chain.failure))
+    }
+
+    fn plan_chain_preset(
+        &self,
+        source: &SourcePrecision,
+        start: D,
+        nodes: &[&[ConversionOffer]],
+        last: OutputChoice,
+    ) -> Result<ChainPlan, At<ChainFailure<Never>>> {
+        let mut defer = |_: ConversionQuestion<'_>| -> Result<ConversionDecision, At<Never>> {
+            Ok(ConversionDecision::Defer)
+        };
+        self.plan_chain(source, start, nodes, last, &mut defer)
+    }
 }
 
 fn linear(channel: ChannelType, layout: ChannelLayout) -> D {
@@ -629,7 +675,7 @@ fn resolvers_compose_by_deferring() {
                 Ok(ConversionDecision::Defer)
             }
         };
-        zenpixels::precision::ConversionResolver::resolve(&mut inner, q)
+        ConversionResolver::resolve(&mut inner, q)
     };
     let from_preset = keep()
         .resolve(&real16(), OutputChoice::Hidden, &offers, &mut outer)
