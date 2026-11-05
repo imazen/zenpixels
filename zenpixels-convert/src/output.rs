@@ -92,10 +92,6 @@ impl OutputProfile {
     }
 }
 
-// TODO(0.3.0): Add HdrPolicy enum and ConvertOutputOptions here once
-// ConvertError is #[non_exhaustive] and can carry HdrTransferRequiresToneMapping.
-// See imazen/zenpixels#10 for the full HDR provenance plan.
-
 /// Metadata that the encoder should embed alongside the pixel data.
 ///
 /// Generated atomically by [`EncodeReady::finalize`] to guarantee that
@@ -188,9 +184,6 @@ impl EncodeReady {
     }
 }
 
-// TODO(0.3.0): restore origin_has_hdr_transfer / target_has_hdr_transfer
-// helpers here for the HDR→SDR policy gate.
-
 /// Finalize a pixel buffer for output using the [`PluggableCms`](crate::cms::PluggableCms) dispatch chain.
 ///
 /// When a CMS plugin is supplied, it is offered the conversion first; on
@@ -219,7 +212,6 @@ impl EncodeReady {
 /// allocation fails, or a policy gate (alpha/depth/luma) forbids a
 /// required operation.
 #[track_caller]
-#[allow(deprecated)] // sets the unwired, deprecated OutputMetadata::hdr to None
 pub(crate) fn finalize_for_output_with(
     buffer: &PixelBuffer,
     origin: &ColorOrigin,

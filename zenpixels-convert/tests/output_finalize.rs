@@ -830,8 +830,6 @@ fn named_target_never_uses_cms_with_cicp_authority() {
 
 // ---------------------------------------------------------------------------
 // HDR passthrough tests
-// TODO(0.3.0): Add HDR→SDR rejection tests once ConvertError has
-// HdrTransferRequiresToneMapping. See imazen/zenpixels#10.
 // ---------------------------------------------------------------------------
 
 fn pq_cicp() -> Cicp {
@@ -944,12 +942,9 @@ fn no_metadata_no_hdr_guard() {
 // ---------------------------------------------------------------------------
 
 /// A PQ (BT.2100) source finalized `SameAsOrigin` passes the origin CICP
-/// through for container signaling, and `OutputMetadata::hdr` stays `None` —
-/// the documented not-yet-wired contract (`output.rs` `TODO(0.3.0)`;
-/// zenpixels#39 Rung 4 is consumer-gated). Wiring `hdr` must consciously
-/// update this pin.
+/// through for container signaling.
 #[test]
-fn pq_source_same_as_origin_pins_cicp_passthrough_and_unwired_hdr() {
+fn pq_source_same_as_origin_pins_cicp_passthrough() {
     let desc = PixelDescriptor::RGB16_BT2100_PQ;
     let px = vec![0u8; 2 * 2 * desc.bytes_per_pixel()];
     let buffer = PixelBuffer::from_vec(px, 2, 2, desc).unwrap();

@@ -926,31 +926,6 @@ fn with_pcs_white(mut profile: ColorProfile) -> ColorProfile {
     profile
 }
 
-/// Convert a [`ColorProfileSource`](crate::ColorProfileSource) to a moxcms [`ColorProfile`].
-///
-/// Returns `Ok(None)` if the source can't be mapped to moxcms.
-// TODO(0.3.0): used by build_source_transform once trait is redesigned.
-#[allow(dead_code)]
-fn source_to_moxcms_profile(
-    src: &crate::ColorProfileSource<'_>,
-) -> Result<Option<ColorProfile>, MoxCmsError> {
-    match src {
-        crate::ColorProfileSource::Icc(icc) => ColorProfile::new_from_slice(icc)
-            .map(Some)
-            .map_err(|e| MoxCmsError(format!("failed to parse ICC: {e}"))),
-        crate::ColorProfileSource::Cicp(cicp) => Ok(Some(cicp_to_moxcms_profile(cicp))),
-        crate::ColorProfileSource::Named(named) => {
-            let (p, t) = named.to_primaries_transfer();
-            primaries_transfer_to_moxcms_profile(p, t)
-        }
-        crate::ColorProfileSource::PrimariesTransferPair {
-            primaries,
-            transfer,
-        } => primaries_transfer_to_moxcms_profile(*primaries, *transfer),
-        _ => Ok(None),
-    }
-}
-
 /// Generate ICC profile bytes for a CICP via moxcms, or `None` if moxcms doesn't
 /// recognize the **color-defining** code points (primaries / transfer).
 ///

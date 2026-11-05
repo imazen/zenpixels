@@ -496,7 +496,7 @@ Two entry points: `ConvertIntent::best_match` (simple) and `ConvertIntent::negot
 ### No silent lossy conversions
 
 > **Review:** This is an intended guarantee, not fully enforced today.
-> `forbid_lossy` still allows clipping, provenance alone cannot prove sample
+> `retain_channels` still allows clipping, provenance alone cannot prove sample
 > preservation, and output metadata can disagree with converted pixels.
 > [Preservation/output/HDR changes](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#negotiation-preservation-output-and-hdr).
 
@@ -506,7 +506,7 @@ Every operation that destroys information requires an explicit policy via `Conve
 - **Depth reduction**: `Round`, `Truncate`, or `Forbid`
 - **RGB to gray**: requires explicit luma coefficients (`Bt709`, `Bt601`, `Bt2020`, or `DisplayP3`), or `None` to forbid. Y' (encoded luma) semantic — round-trips bit-exactly for `R==G==B`.
 
-Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `ConvertOptions::permissive()` (sensible lossy defaults), with `with_alpha_policy()`, `with_depth_policy()`, etc. for customization.
+Convenience constructors: `ConvertOptions::retain_channels()` (forbids alpha and depth loss, still clips out-of-gamut floats) and `ConvertOptions::permissive()` (sensible lossy defaults), with `with_alpha_policy()`, `with_depth_policy()`, etc. for customization.
 
 ### Atomic output assembly
 

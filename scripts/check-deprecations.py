@@ -25,6 +25,11 @@ PROBES = {
         "to_descriptor",
         False,
     ),
+    "forbid_lossy": (
+        "fn main() { let _ = zenpixels::ConvertOptions::forbid_lossy(); }",
+        "forbid_lossy",
+        False,
+    ),
     "predicate": (
         "fn main() { let d = zenpixels_convert::PixelDescriptor::RGB8_SRGB; "
         "let _ = zenpixels_convert::requires_cms(&d, &d); }",

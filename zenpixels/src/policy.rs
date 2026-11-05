@@ -203,18 +203,6 @@ impl ConvertOptions {
         }
     }
 
-    /// Historical channel/depth restrictions, including enabled float clipping.
-    ///
-    /// The name does not describe its behavior: color conversion, reassociation
-    /// and clipping can change or discard information. This is a compatibility
-    /// alias of [`Self::retain_channels`]; its behavior has not changed.
-    #[deprecated(
-        note = "use retain_channels() for channel/depth restrictions; use zenpixels_convert::OutputPlan::new_preserving_samples for exact samples. This preset permits clipping and color arithmetic"
-    )]
-    pub const fn forbid_lossy() -> Self {
-        Self::retain_channels()
-    }
-
     /// Allow common lossy operations with sensible defaults.
     ///
     /// - Alpha removal: discard only if all pixels are opaque
@@ -309,16 +297,13 @@ mod tests {
     use alloc::format;
 
     #[test]
-    #[allow(deprecated)] // The compatibility alias must retain every policy value.
-    fn old_preset_preserves_behavior_and_does_not_promise_exact_samples() {
-        let old = ConvertOptions::forbid_lossy();
-        let replacement = ConvertOptions::retain_channels();
-        assert_eq!(old, replacement);
-        assert_eq!(old.alpha_policy, AlphaPolicy::Forbid);
-        assert_eq!(old.depth_policy, DepthPolicy::Forbid);
-        assert_eq!(old.luma, None);
-        assert_eq!(old.gray_expand, GrayExpand::Broadcast);
-        assert!(old.clip_out_of_gamut);
+    fn retain_channels_does_not_promise_exact_samples() {
+        let options = ConvertOptions::retain_channels();
+        assert_eq!(options.alpha_policy, AlphaPolicy::Forbid);
+        assert_eq!(options.depth_policy, DepthPolicy::Forbid);
+        assert_eq!(options.luma, None);
+        assert_eq!(options.gray_expand, GrayExpand::Broadcast);
+        assert!(options.clip_out_of_gamut);
     }
 
     #[test]

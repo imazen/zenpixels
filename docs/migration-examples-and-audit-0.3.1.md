@@ -350,8 +350,9 @@ let opts = ConvertOptions::forbid_lossy();
 let plan = request.require_sample_preservation().plan()?;
 ```
 
-Deprecate the misleading preset only after its replacement has a precise
-contract. A reversible channel reorder/widening may qualify. Arbitrary transfer,
+0.3.1 removes the misleading preset; `retain_channels()` keeps its exact policy
+values, and `OutputPlan::new_preserving_samples` is the exact-carriage path.
+A replacement needs a precise contract. A reversible channel reorder/widening may qualify. Arbitrary transfer,
 gamut, rounding or clipping does not qualify merely because a loss estimator
 returns zero. Alpha removal can require an explicit scan for opacity.
 Source provenance “originally U8” does not prove samples remain on the U8 grid

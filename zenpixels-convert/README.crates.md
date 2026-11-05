@@ -116,7 +116,7 @@ Every operation that destroys information requires an explicit policy via [`Conv
 - **Depth reduction**: `Round`, `Truncate`, or `Forbid`.
 - **RGB → gray**: requires explicit luma coefficients (`Bt709`, `Bt601`, `Bt2020`, or `DisplayP3`), or `None` to forbid. Uses Y' (encoded luma) semantics — round-trips bit-exactly when `R == G == B`.
 
-Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `ConvertOptions::permissive()` (sensible lossy defaults), plus `with_alpha_policy()` / `with_depth_policy()` for customization.
+Convenience constructors: `ConvertOptions::retain_channels()` (forbids alpha and depth loss, still clips out-of-gamut floats) and `ConvertOptions::permissive()` (sensible lossy defaults), plus `with_alpha_policy()` / `with_depth_policy()` for customization.
 
 ## Format negotiation
 
