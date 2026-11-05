@@ -121,7 +121,7 @@ fn u8_color(r: u8, g: u8, b: u8, a: u8) -> Result<Color, CssColorError> {
     if a == 255 {
         return Ok(Color::srgb8(r, g, b));
     }
-    Color::try_new(PixelDescriptor::RGBA8_SRGB, &[r, g, b, a]).map_err(|_| CssColorError::Invalid)
+    Ok(Color::srgba8(r, g, b, a))
 }
 
 /// One argument of a color function.

@@ -167,3 +167,21 @@ fn any_color_holds_formats_wider_than_color() {
     assert_eq!(small, AnyColor::from(Color::srgb8(1, 2, 3)));
     assert_ne!(small, any);
 }
+
+#[test]
+fn get_pixel_reads_strided_pixels_and_refuses_out_of_bounds() {
+    use zenpixels::Color;
+    let data = strided();
+    let s = PixelSlice::new(&data, 3, 2, 12, D).unwrap();
+    assert_eq!(s.get_pixel(1, 1).unwrap().as_bytes(), [15, 16, 17]);
+    assert_eq!(
+        s.get_pixel(1, 1).unwrap().as_color(),
+        Some(Color::srgb8(15, 16, 17))
+    );
+    assert!(s.get_pixel(3, 0).is_none());
+    assert!(s.get_pixel(0, 2).is_none());
+    let empty = PixelSlice::new(&[], 0, 0, 3, D);
+    if let Ok(empty) = empty {
+        assert!(empty.get_pixel(0, 0).is_none());
+    }
+}

@@ -10,9 +10,9 @@
 #
 #   pub modules                                12
 #   pub types (struct/enum/trait/alias)       122
-#   pub consts/statics                        328
+#   pub consts/statics                        332
 #   free functions                              2
-#   inherent methods                          364
+#   inherent methods                          366
 #   struct fields                             109
 #   enum variants                             310
 #   re-exports                                  4
@@ -21,10 +21,10 @@
 #   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          475
-#   buffer                          308
+#   (root)                          477
+#   buffer                          310
 #   cicp                             38
-#   color                            78
+#   color                            80
 #   descriptor                      167
 #   hdr                              12
 #   icc                              11
@@ -34,7 +34,7 @@
 #   policy                           22
 #   sample                           33
 
-## items (1105 lines)
+## items (1110 lines)
 
 pub mod zenpixels
 pub use At
@@ -165,6 +165,7 @@ pub fn buffer::PixelSlice<'a, P>::with_icc(self, impl core::convert::Into<alloc:
 pub fn buffer::PixelSlice<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
+pub fn buffer::PixelSlice<'a, P>::get_pixel(&self, u32, u32) -> core::option::Option<color::AnyColor>
 pub fn buffer::PixelSlice<'a, P>::try_contiguous_bytes(&self) -> core::result::Result<alloc::borrow::Cow<'a, [u8]>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSlice<'a, P>::try_crop_view(&self, u32, u32, u32, u32) -> core::option::Option<buffer::PixelSlice<'_, P>>
 pub fn buffer::PixelSlice<'a, P>::try_row(&self, u32) -> core::option::Option<&[u8]>
@@ -272,9 +273,11 @@ pub fn color::AnyColor::as_bytes(&self) -> &[u8]
 pub fn color::AnyColor::as_color(&self) -> core::option::Option<color::Color>
 pub fn color::AnyColor::descriptor(&self) -> descriptor::PixelDescriptor
 pub fn color::AnyColor::try_new(descriptor::PixelDescriptor, &[u8]) -> core::result::Result<Self, buffer::BufferError>
+pub const color::Color::TRANSPARENT: Self
 pub fn color::Color::as_bytes(&self) -> &[u8]
 pub const fn color::Color::descriptor(&self) -> descriptor::PixelDescriptor [also: (root)]
 pub const fn color::Color::srgb8(u8, u8, u8) -> Self [also: (root)]
+pub const fn color::Color::srgba8(u8, u8, u8, u8) -> Self [also: (root)]
 pub fn color::Color::try_new(descriptor::PixelDescriptor, &[u8]) -> core::result::Result<Self, buffer::BufferError>
 pub color::ColorContext::cicp: core::option::Option<cicp::Cicp>
 pub color::ColorContext::diffuse_white: core::option::Option<hdr::DiffuseWhite>
@@ -910,6 +913,7 @@ pub fn cicp::Cicp::transfer_function_enum(&self) -> descriptor::TransferFunction
 pub fn cicp::Cicp::try_to_descriptor(&self, descriptor::PixelFormat) -> core::result::Result<descriptor::PixelDescriptor, cicp::CicpDescriptorError>
 pub fn cicp::Cicp::from_icc(&[u8]) -> core::option::Option<Self>
 pub struct Color [also: color]
+pub const color::Color::TRANSPARENT: Self
 pub fn color::Color::as_bytes(&self) -> &[u8]
 pub fn color::Color::try_new(descriptor::PixelDescriptor, &[u8]) -> core::result::Result<Self, buffer::BufferError>
 #[non_exhaustive] pub struct ColorContext [also: color]
@@ -1088,6 +1092,7 @@ pub fn buffer::PixelSlice<'a, P>::with_icc(self, impl core::convert::Into<alloc:
 pub fn buffer::PixelSlice<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
+pub fn buffer::PixelSlice<'a, P>::get_pixel(&self, u32, u32) -> core::option::Option<color::AnyColor>
 pub fn buffer::PixelSlice<'a, P>::try_contiguous_bytes(&self) -> core::result::Result<alloc::borrow::Cow<'a, [u8]>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSlice<'a, P>::try_crop_view(&self, u32, u32, u32, u32) -> core::option::Option<buffer::PixelSlice<'_, P>>
 pub fn buffer::PixelSlice<'a, P>::try_row(&self, u32) -> core::option::Option<&[u8]>

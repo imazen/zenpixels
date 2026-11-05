@@ -1279,6 +1279,21 @@ impl<'a, P: Pixel> PixelSlice<'a, P> {
 }
 
 impl<'a, P> PixelSlice<'a, P> {
+    /// The pixel at `(x, y)`, or `None` when out of bounds.
+    ///
+    /// For one-off reads, tests and pickers. Looping over this is slow: use
+    /// [`row`](Self::row) for many pixels. Wide formats, such as RGBA in `f64`, allocate.
+    #[must_use]
+    pub fn get_pixel(&self, x: u32, y: u32) -> Option<crate::AnyColor> {
+        if x >= self.width || y >= self.rows {
+            return None;
+        }
+        let bytes = self.descriptor.bytes_per_pixel();
+        let start = x as usize * bytes;
+        let pixel = &self.row(y)[start..start + bytes];
+        crate::AnyColor::try_new(self.descriptor, pixel).ok()
+    }
+
     /// [`row`](Self::row), or `None` when `y` is out of bounds.
     #[inline]
     #[must_use]

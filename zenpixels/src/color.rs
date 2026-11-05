@@ -886,6 +886,22 @@ impl Color {
         }
     }
 
+    /// Fully transparent 8-bit sRGB black, CSS's `transparent`.
+    pub const TRANSPARENT: Self = Self::srgba8(0, 0, 0, 0);
+
+    /// An 8-bit sRGB color with straight alpha, like a CSS `#rrggbbaa` color.
+    pub const fn srgba8(r: u8, g: u8, b: u8, a: u8) -> Self {
+        let mut samples = [0; Self::MAX_BYTES];
+        samples[0] = r;
+        samples[1] = g;
+        samples[2] = b;
+        samples[3] = a;
+        Self {
+            samples: ColorSamples(samples),
+            descriptor: PixelDescriptor::RGBA8_SRGB,
+        }
+    }
+
     /// One pixel of `descriptor`'s format, as bytes in native sample order.
     ///
     /// # Errors
