@@ -1,0 +1,21 @@
+[package]
+name = "cms-contract"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Runs every PluggableCms backend through one behavioral contract and compares them"
+
+# Standalone, outside the workspace: CI and plain `cargo test` never compile the lcms port.
+[workspace]
+
+[dependencies]
+zenpixels = { path = "../zenpixels" }
+zenpixels-convert = { path = "../zenpixels-convert", features = ["cms-moxcms"] }
+lcms = { git = "https://github.com/imazen/lcms", rev = "f81f5a7a" }
+whereat = "0.1"
+bytemuck = "1.21"
+archmage = ">=0.9.31-beta.2, <0.10.0"
+
+[patch.crates-io]
+garb = { git = "https://github.com/imazen/garb", rev = "605276d717ea0b31a1cd2a36ae05301383c7b8b5" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }

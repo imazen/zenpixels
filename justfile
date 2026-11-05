@@ -27,6 +27,10 @@ fmt:
     ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
 
 # Regenerate the public-API surface snapshots only
+# One behavioral contract for every CMS backend. A directory of ICC profiles adds a comparison on each.
+cms-contract PROFILES='':
+    CMS_CONTRACT_PROFILES={{PROFILES}} cargo test --manifest-path cms-contract/Cargo.toml {{ if PROFILES == "" { "" } else { "-- --include-ignored --nocapture" } }}
+
 api-doc:
     ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
 
