@@ -33,6 +33,14 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+### Fixed: conversions that change primaries
+
+- RGB into gray ran the gamut matrix on gray rows: P3 RGB8 `[200,100,50]` to Gray8 gave `117,117,117,128,0` instead of `114,114,114,114`, and GrayF32 panicked. RGB now changes primaries first. A gray source needs no matrix.
+- RGBA into RGB ran the RGBA matrix on RGB rows.
+- Across primaries, U16 rows other than PQ and HLG ran 8-bit steps, so RGBA16 P3 to sRGB gave garbage. U8 BT.709 used the sRGB curve, up to 3% off in the darks.
+- Narrowing no longer precedes the matrix, so only the last step rounds.
+- `ConvertScratch` could put its second half 2 bytes off a `u32` boundary, which panicked on F32 rows at odd widths. `tests/gamut_across_layouts.rs` covers these.
+
 - Fix `GamutBoundaryLut::max_chroma` just below hue zero, where a rounded-up hue
   read the table with a blend weight of 256 and returned about a quarter of the
   true bound. `SoftCompress` and zenfilters' soft gamut mapping desaturated those

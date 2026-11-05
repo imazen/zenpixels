@@ -118,6 +118,13 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed 2026-11-04: planning added the gamut matrix after layout and depth steps, so wide
+  RGB into gray or from RGBA to RGB ran it on rows of the wrong shape, and U16 rows ran U8
+  steps. An odd scratch size could also misalign F32 rows. `tests/gamut_across_layouts.rs`
+  measures every route against independent `f64` math. BT.709 and Gamma22 `f32` output keep
+  negative values while sRGB `f32` clips: that difference is existing behavior, pinned by
+  the test.
+
 - Fixed on the output-plan review (2026-10-27): Gamma22 F32 conversion accepted
   `clip_out_of_gamut(false)` but clipped negative and above-white samples. The
   extended steps now reflect the existing Adobe exponent, retain the existing
