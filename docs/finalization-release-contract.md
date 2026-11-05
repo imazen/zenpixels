@@ -8,7 +8,7 @@ version per connected pipeline; buffers from two core versions are not interchan
 
 ## What finalization guarantees
 
-`finalize_for_output_with` returns an owned `EncodeReady`: pixels, their current
+`EncodeReady::finalize` returns an owned `EncodeReady`: pixels, their current
 `ColorContext`, and output color metadata agree. A failure yields no result;
 the borrowed source is unchanged. It does not serialize a container or guarantee
 that an arbitrary encoder supports every returned profile.
@@ -49,7 +49,7 @@ frame/disposal semantics.
 // WRONG: provenance describes the original file, not these modified pixels.
 encode(converted_pixels, original_icc);
 // RIGHT: the CMS sees current ColorContext; the returned context matches too.
-let ready = finalize_for_output_with(
+let ready = EncodeReady::finalize(
     &converted_pixels, &origin, OutputProfile::SameAsOrigin,
     PixelFormat::Rgb8, Some(&cms),
 )?;
@@ -128,7 +128,7 @@ absence in our tree is not proof about every registry consumer.
 | Load-bearing extension traits | Already sealed | No change needed |
 | `Pixel` | Keep open | Deliberate typed-pixel interoperability; requires `Pod` |
 | `PluggableCms`, `RowTransform`, `RowTransformMut` | Keep open | Runtime CMS injection is essential |
-| Legacy `ColorManagement` | Preserve for now | Existing integrations; don't invent a second migration |
+| Legacy `ColorManagement` | Removed in 0.3.1 | `PluggableCms` replaces it; zenpipe migrates at the pin bump |
 
 Sealing is an explicit compatibility exception: 0.2 cannot warn on an external
 implementation without also deprecating legitimate trait use. No such external

@@ -369,3 +369,35 @@ fn padding_does_not_count_as_low_bits() {
         assert_eq!(report.uses_low_bits, Some(false), "{pixels} pixels");
     }
 }
+
+/// The fast U8 gamut kernels give the same bytes at every SIMD tier.
+#[test]
+fn fast_gamut_kernels_are_the_same_at_every_tier() {
+    use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+    let from = D::RGB8_SRGB.with_primaries(P::DisplayP3);
+    let n = 65_537usize;
+    let src: Vec<u8> = (0..n * 3)
+        .map(|i| {
+            let h = (i as u32).wrapping_mul(0x9E37_79B1);
+            ((h ^ (h >> 15)).wrapping_mul(0x85EB_CA77) >> 24) as u8
+        })
+        .collect();
+    let mut first: Option<Vec<u8>> = None;
+    let mut failures = Vec::new();
+    let report = for_each_token_permutation(CompileTimePolicy::WarnStderr, |perm| {
+        let mut out = vec![0u8; n * 3];
+        RowConverter::new(from, D::RGB8_SRGB)
+            .unwrap()
+            .try_convert_row(&src, &mut out, n as u32)
+            .unwrap();
+        match &first {
+            None => first = Some(out),
+            Some(expected) if *expected != out => {
+                let wrong = expected.iter().zip(&out).filter(|(a, b)| a != b).count();
+                failures.push(format!("{perm}: {wrong} bytes"));
+            }
+            _ => {}
+        }
+    });
+    assert!(failures.is_empty(), "{failures:#?}\n{report}");
+}

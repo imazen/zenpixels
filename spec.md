@@ -416,9 +416,9 @@ need a CMS.
 
 ### ICC-to-CICP equivalence
 
-`identify_profile()` checks whether an ICC profile matches a known CICP
-combination. Two-tier: hash table of known ICC byte sequences for instant
-lookup, then semantic comparison (parse matrix + TRC, compare against known
+`zenpixels::icc::IccIdentification::from_icc` checks whether an ICC profile matches a known CICP
+combination, by a hash table of known ICC byte sequences. It doesn't fall back to
+semantic comparison (parse matrix + TRC, compare against known
 values within tolerance).
 
 ## Atomic `EncodeReady::finalize`
@@ -648,11 +648,9 @@ minimum define the pattern so new constants are consistent.
 ### 2. In-place typed conversions on PixelSliceMut
 
 The code has specialized in-place operations for 4bpp types:
-`Rgbx::swap_to_bgrx()`, `Rgba::matte_to_rgbx()`, `Bgrx::upgrade_to_bgra()`,
-etc. These are zero-allocation, type-state-changing operations — the return
-type changes to reflect the new pixel layout. The spec should document which
-conversions are available and their safety guarantees (e.g., `upgrade_to_rgba`
-sets padding to 255, which is only correct for opaque images).
+`Rgbx::swap_to_bgrx()` and its Bgrx counterpart. These are zero-allocation, type-state-changing
+operations: the return type changes to reflect the new pixel layout. Removing alpha or compositing is
+`zenpixels_convert`'s work, through `AlphaPolicy`, in linear light.
 
 ### 3. crop_view semantics
 

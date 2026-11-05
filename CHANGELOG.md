@@ -33,6 +33,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- Fallible pixel-buffer constructors request allocator-zeroed bytes directly, retaining allocation errors.
+
 - **Breaking:** removed `cms::ColorManagement`, `finalize_for_output` and the colorant-based `identify_profile` with them. Use `PluggableCms` and `EncodeReady::finalize`; `zenpixels::icc::IccIdentification` identifies profiles. zenpipe's `IccTransformSource` and `job` need migrating at the pin bump. `builtin_profiles` stays: it's `pub(crate)`, and zenjpeg's XYB plan names it.
 
 - `SynthesizedIcc::for_gray_cicp` gives the GRAY-class profile for a gray image.

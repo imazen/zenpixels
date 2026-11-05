@@ -152,7 +152,7 @@ Every backend passes the same contract in `cms-contract/`: `just cms-contract`.
 ## Gamut, HDR, Oklab
 
 - **Gamut matrices** — 3×3 row-major f32 between BT.709, Display P3, BT.2020 via [`GamutMatrix`], with `between`, `then`, `apply` and in-place `apply_row_rgb` / `apply_row_rgba`. No CMS needed for named-profile conversions.
-- **HDR (`hdr-experimental`)** — explicit `ConvertPlan::new_with_hdr_config` runs BT.2446 Method A tone mapping plus gamut compression with supplied peak/white policy. `convert_to_sdr_measuring_peak` explicitly requests an additional rowwise scan; `hdr::measure::CllMeasure` provides measurements. Plain HDR→SDR conversion refuses missing peak policy. `hdr::quantize_to` converts anchored linear samples to PQ16. Shared metadata types live in `zenpixels::hdr`; core measurement, the old bundle and naive global curves are removed in 0.3.1.
+- **HDR (`hdr-experimental`)** — `ConvertPlan::new_with_tone_mapper` takes any `ToneMapper`. With `bt2446a`, explicit `ConvertPlan::new_with_hdr_config` runs BT.2446 Method A tone mapping plus gamut compression with supplied peak/white policy. `convert_to_sdr_measuring_peak` explicitly requests an additional rowwise scan; `hdr::measure::CllMeasure` provides measurements. Plain HDR→SDR conversion refuses missing peak policy. `hdr::quantize_to` converts anchored linear samples to PQ16. Shared metadata types live in `zenpixels::hdr`; core measurement, the old bundle and naive global curves are removed in 0.3.1.
 - **Oklab** — `OklabSpace` holds both LMS matrices for a set of primaries and does scalar conversions. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
 
 ## CICP / ICC
@@ -196,7 +196,7 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 | `PixelSlice::adapt_for_encode` / [`adapt::adapt_raw_rows_for_encode`] / `PixelBuffer::try_adapt_in_place` | One-call negotiate-and-convert helpers |
 | [`PluggableCms`] / [`RowTransformMut`] / [`MoxCms`] | Pluggable CMS backend interface + moxcms impl |
 | [`GamutMatrix`] | Gamut matrix construction and application, in place on rows |
-| [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`hdr-experimental` feature) |
+| [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`bt2446a` feature) |
 | [`Bt2446A`] / [`SoftCompress`] / [`CllMeasure`] | ITU-R BT.2446 Method A curve + OKLch knee + CTA-861.3 CLL measurement (`hdr-experimental` feature) |
 | `PixelSlice::quantize_to` | Anchor-aware linear→PQ16 quantizer |
 | [`EncodeReady::finalize`] / [`EncodeReady`] / [`OutputMetadata`] | Atomic pixels-plus-metadata output assembly |

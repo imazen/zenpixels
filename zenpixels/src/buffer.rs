@@ -4026,6 +4026,23 @@ mod tests {
     /// The buffer-level relabel builders set their field and **preserve** the
     /// rest of the `ColorContext` (clone-override-reattach), and chain.
     #[test]
+    fn allocator_zeroed_storage_boundaries() {
+        for size in [0, 1, 4095, 4096, 4097, 65536] {
+            let storage = PixelStorage::try_zeroed(ChannelType::U8, size).unwrap();
+            assert_eq!(ByteStorage::as_bytes(&storage).len(), size);
+            assert!(
+                ByteStorage::as_bytes(&storage)
+                    .iter()
+                    .all(|&byte| byte == 0)
+            );
+        }
+        assert!(matches!(
+            PixelStorage::try_zeroed(ChannelType::U8, usize::MAX),
+            Err(BufferError::AllocationFailed)
+        ));
+    }
+
+    #[test]
     fn relabel_builders_set_and_preserve_color_context() {
         let data = alloc::vec![0u8; 4 * 4 * 3];
         let slice = PixelSlice::new(&data, 4, 4, 12, PixelDescriptor::RGB8_SRGB)

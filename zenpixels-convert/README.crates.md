@@ -131,6 +131,18 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 
 [`Provenance`] guides cost-model ranking, not exactness after edits. Use `ConvertPlan::new_preserving_samples` for proven representation changes or explicitly request value analysis. Three entry points: [`best_match`] (simple), [`best_match_with`] (with consumer costs), [`negotiate`] (full control with provenance).
 
+## What `MoxCms` does at each depth
+
+Matrix-and-curve profiles take this crate's U8 kernels at 8 bits, using each profile's own curve and colorants, when the source's channels
+share a curve and the target has sRGB's. Everything else, including table profiles and CMYK, takes moxcms's F32 path and rounds to nearest,
+so it matches that path's result. Against moxcms's own F32 output, 0.13% of samples or fewer miss nearest on Display P3, Adobe RGB and BT.2020.
+
+moxcms is a different implementation from lcms2 and is expected to differ from it. On table profiles the two differ more: on mozjpeg's `test1.icc` about 16% of 8-bit samples differ, and on `test3.icc` 61%.
+`CmykF32` and `CmykF32Inverted` sources convert to any RGB target; converting into F32 CMYK is refused. `Cmyk8` has no
+black-point compensation, while F32 CMYK to sRGB does.
+
+Every backend passes the same contract in `cms-contract/`: `just cms-contract`.
+
 ## Row conversion tiers
 
 [`RowConverter`] pre-computes a conversion plan from a source/target descriptor pair, choosing one of three tiers:
@@ -142,7 +154,7 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 ## Gamut, HDR, Oklab
 
 - **Gamut matrices** — 3×3 row-major f32 between BT.709, Display P3, BT.2020 via [`GamutMatrix`], with `between`, `then`, `apply` and in-place `apply_row_rgb` / `apply_row_rgba`. No CMS needed for named-profile conversions.
-- **HDR (`hdr-experimental`)** — explicit `ConvertPlan::new_with_hdr_config` runs BT.2446 Method A tone mapping plus gamut compression with supplied peak/white policy. `convert_to_sdr_measuring_peak` explicitly requests an additional rowwise scan; `hdr::measure::CllMeasure` provides measurements. Plain HDR→SDR conversion refuses missing peak policy. `hdr::quantize_to` converts anchored linear samples to PQ16. Shared metadata types live in `zenpixels::hdr`; core measurement, the old bundle and naive global curves are removed in 0.3.1.
+- **HDR (`hdr-experimental`)** — `ConvertPlan::new_with_tone_mapper` takes any `ToneMapper`. With `bt2446a`, explicit `ConvertPlan::new_with_hdr_config` runs BT.2446 Method A tone mapping plus gamut compression with supplied peak/white policy. `convert_to_sdr_measuring_peak` explicitly requests an additional rowwise scan; `hdr::measure::CllMeasure` provides measurements. Plain HDR→SDR conversion refuses missing peak policy. `hdr::quantize_to` converts anchored linear samples to PQ16. Shared metadata types live in `zenpixels::hdr`; core measurement, the old bundle and naive global curves are removed in 0.3.1.
 - **Oklab** — `OklabSpace` holds both LMS matrices for a set of primaries and does scalar conversions. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
 
 ## CICP / ICC
@@ -186,7 +198,7 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 | `PixelSlice::adapt_for_encode` / [`adapt::adapt_raw_rows_for_encode`] / `PixelBuffer::try_adapt_in_place` | One-call negotiate-and-convert helpers |
 | [`PluggableCms`] / [`RowTransformMut`] / [`MoxCms`] | Pluggable CMS backend interface + moxcms impl |
 | [`GamutMatrix`] | Gamut matrix construction and application, in place on rows |
-| [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`hdr-experimental` feature) |
+| [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`bt2446a` feature) |
 | [`Bt2446A`] / [`SoftCompress`] / [`CllMeasure`] | ITU-R BT.2446 Method A curve + OKLch knee + CTA-861.3 CLL measurement (`hdr-experimental` feature) |
 | `PixelSlice::quantize_to` | Anchor-aware linear→PQ16 quantizer |
 | [`EncodeReady::finalize`] / [`EncodeReady`] / [`OutputMetadata`] | Atomic pixels-plus-metadata output assembly |
@@ -206,6 +218,7 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 | `imgref` | | `ImgRef` / `ImgVec` conversions (implies `rgb`) |
 | `planar` | | Retained no-op feature; legacy planar API removed |
 | `hdr-experimental` | | HDR→SDR display mapping (ITU-R BT.2446 Method A curve + OKLch soft compress + CTA-861.3 CLL measurement). API shape may move ahead of 0.3.0 (in particular `measure_robust` → `measure` rename); scan kernels and accuracy contracts are stable. See [HDR section](#gamut-hdr-oklab) above. |
+| `bt2446a` | | The BT.2446 Method A tone-mapping curve (implies `hdr-experimental`) |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
 | `serde` | | No-op stub (soft-removed in 0.2.15, queued for removal in the next breaking release); previously forwarded to `zenpixels/serde`. Kept so `features = ["serde"]` from 0.2.14 still builds |
 

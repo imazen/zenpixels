@@ -514,11 +514,11 @@ Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `C
 
 **Gamut matrices** — 3x3 row-major f32 between BT.709, Display P3, BT.2020. No CMS needed for named-profile conversions.
 
-**HDR** — `zenpixels::hdr` contains the small luminance and mastering metadata types. Measurement and conversion live in `zenpixels-convert::hdr`. With `hdr-experimental`, construct an explicit `ConvertPlan::new_with_hdr_config` using a supplied peak, or call `convert_to_sdr_measuring_peak` to request a separate rowwise measurement pass. `quantize_to` converts anchored linear samples to PQ16. The legacy core scan, root metadata aliases, bundled `HdrMetadata`, and global Reinhard/exposure helpers are removed in 0.3.1.
+**HDR** — `zenpixels::hdr` contains the small luminance and mastering metadata types. Measurement and conversion live in `zenpixels-convert::hdr`. With `hdr-experimental`, inject a `ToneMapper` through `ConvertPlan::new_with_tone_mapper`. The `bt2446a` feature adds the BT.2446 Method A curve: construct `ConvertPlan::new_with_hdr_config` using a supplied peak, or call `convert_to_sdr_measuring_peak` to request a separate rowwise measurement pass. `quantize_to` converts anchored linear samples to PQ16. The legacy core scan, root metadata aliases, bundled `HdrMetadata`, and global Reinhard/exposure helpers are removed in 0.3.1.
 
 **Oklab** — `OklabSpace` holds both LMS matrices for a set of primaries and does scalar conversions, with public LMS/XYZ/Oklab matrices. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
 
-**CMS** — `PluggableCms` trait (dyn-compatible, accepts `ColorProfileSource` directly — CICP, named profiles, or raw ICC bytes) plugs an external backend into `RowConverter`. `RowTransformMut` is the `&mut self` row-level transform returned by plugins. The `cms-moxcms` feature provides a concrete backend using [moxcms](https://crates.io/crates/moxcms), supporting u8/u16/f32 transforms with automatic profile identification. The older `ColorManagement` / `RowTransform` traits (ICC-bytes-only, `&self`) are retained for backward compatibility.
+**CMS** — `PluggableCms` trait (dyn-compatible, accepts `ColorProfileSource` directly — CICP, named profiles, or raw ICC bytes) plugs an external backend into `RowConverter`. `RowTransformMut` is the `&mut self` row-level transform returned by plugins. `cms-contract/` holds every backend to the same behavior. The `cms-moxcms` feature provides a concrete backend using [moxcms](https://crates.io/crates/moxcms), supporting u8/u16/f32 transforms with automatic profile identification..
 
 **ICC identification** — `zenpixels::icc::IccIdentification::from_icc(icc_bytes)` recognizes 298 well-known RGB + 69 grayscale profiles via normalized FNV-1a hash lookup (~100ns), including every profile the CICP database itself embeds in encoded output. Returns primaries, transfer function, and `IdentificationUse` (whether matrix+TRC substitution is safe vs CMS-only). Covers sRGB, Display P3, BT.2020, Adobe RGB variants across ICC v2–v5; `extract_cicp` reads embedded `cICP` tags directly.
 
@@ -568,7 +568,8 @@ branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs
 | `imgref` | | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
 | `planar` | | Retained no-op feature; legacy planar API removed |
 | `estimation-experimental` | | Compatibility feature only; estimation is deprecated in 0.2 and absent in 0.3 |
-| `hdr-experimental` | | Native HDR→SDR display mapping inside `ConvertPlan` (BT.2446 Method A + OKLch soft compress + CTA-861.3 CLL measurement); API shape may move ahead of 0.3.0 |
+| `bt2446a` | | The BT.2446 Method A tone-mapping curve (implies `hdr-experimental`) |
+| `hdr-experimental` | | Native HDR→SDR display mapping inside `ConvertPlan` (with `bt2446a`: BT.2446 Method A + OKLch soft compress + CTA-861.3 CLL measurement); API shape may move ahead of 0.3.0 |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
 | `serde` | | No-op stub (soft-removed in 0.2.15, queued for removal); previously forwarded to `zenpixels/serde` |
 
