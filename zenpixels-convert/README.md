@@ -132,13 +132,13 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 ## What `MoxCms` does at each depth
 
 Matrix-and-curve profiles take this crate's U8 kernels at 8 bits, using each profile's own curve and colorants, when the source's channels
-share a curve and the target has sRGB's. Everything else at 8 bits, including table profiles and CMYK, takes moxcms's F32 path and rounds to nearest,
+share a curve and the target has sRGB's. Everything else at 8 bits, including table profiles and CMYK, takes the F32 path and rounds to nearest,
 so it matches that path's result. Over all 2^24 8-bit inputs, against exact math on each profile's curve and colorants, Display P3 and Adobe RGB into sRGB, sRGB into P3, and P3 into BT.2020 each miss nearest on at most 0.16% of samples, worst 0.502 of a code; P3 into Adobe RGB misses on 0.14%, worst 1.0.
 16-bit takes moxcms's own path, whose sRGB table truncates: 57% of samples miss nearest, for a mean of -0.64 of a 16-bit code.
 
 moxcms is a different implementation from lcms2 and is expected to differ from it. On table profiles the two differ more: lcms2's float path matches an exact evaluation of the tables to 0.35 of a code on mozjpeg's `test1.icc` and `test3.icc`. moxcms 0.9.1 interpolates Lab and XYZ tables trilinearly where lcms2 uses tetrahedra, scales a pre-v4 `lut8Type` table's Lab as if it were `lut16Type` (a mean of +0.68 of a code on `test3.icc`; fixed on its master, unreleased), and maps a v4 RGB table profile's black to zero (a mean of about -1 of a code on JPEG XL's PQ and HLG profiles). `benchmarks/jxl-cms-parity/README.md` has the HDR measurements.
-`CmykF32` and `CmykF32Inverted` sources convert to any RGB target; converting into F32 CMYK is refused. `Cmyk8` has no
-black-point compensation, while F32 CMYK to sRGB does.
+`CmykF32` and `CmykF32Inverted` sources convert to any RGB target; converting into F32 CMYK is refused. `Cmyk8` runs the
+same transform and rounds, so both have F32 CMYK's black-point compensation to sRGB.
 
 Every backend passes the same contract in `cms-contract/`: `just cms-contract`.
 

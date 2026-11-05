@@ -9,7 +9,7 @@ mod synthetic_icc;
 use zenpixels::{Cicp, ColorProfileSource as Source, PixelFormat as F};
 use zenpixels_convert::cms::{PluggableCms, RowTransformMut};
 use zenpixels_convert::cms_moxcms::MoxCms;
-use zenpixels_convert::icc_profiles::{ADOBE_RGB, DISPLAY_P3_V4};
+use zenpixels_convert::icc_profiles::{ADOBE_RGB, DISPLAY_P3_V4, SynthesizedIcc};
 use zenpixels_convert::policy::ConvertOptions;
 
 const SRGB: Source<'static> = Source::Cicp(Cicp::new(1, 13, 0, true));
@@ -255,5 +255,100 @@ fn alpha_is_exact_through_the_eight_bit_route() {
         .unwrap();
     for i in 0..256 {
         assert_eq!(usize::from(out[i * 4 + 3]), i);
+    }
+}
+
+/// One ink has one color: 8-bit CMYK is F32 CMYK rounded, in every RGB layout, on every target.
+/// The 8-bit path used to have no black-point compensation and its own intent.
+#[test]
+fn eight_bit_cmyk_is_f32_cmyk_rounded() {
+    let icc = synthetic_icc::synthetic_cmyk_icc();
+    let ink: Vec<u8> = (0..4096u32 * 4)
+        .map(|i| ((i * 37 + i / 4 * 11) % 256) as u8)
+        .collect();
+    let ink_f32: Vec<f32> = ink.iter().map(|&v| f32::from(v) / 255.0).collect();
+    let p3 = Source::Cicp(Cicp::new(12, 13, 0, true));
+    // A profile with a `cicp` tag, which F32 parsing drops.
+    let SynthesizedIcc::Profile(tagged) = SynthesizedIcc::for_cicp(Cicp::new(12, 13, 0, true))
+    else {
+        panic!("no profile for Display P3");
+    };
+    for target in [SRGB, Source::Icc(ADOBE_RGB), Source::Icc(&tagged), p3] {
+        for (to8, tof, channels) in [(F::Rgb8, F::RgbF32, 3), (F::Rgba8, F::RgbaF32, 4)] {
+            let mut bytes = vec![0u8; 4096 * channels];
+            build(Source::Icc(&icc), target.clone(), F::Cmyk8, to8)
+                .try_transform_row(&ink, &mut bytes, 4096)
+                .unwrap();
+            let mut floats = vec![0f32; 4096 * channels];
+            build(Source::Icc(&icc), target.clone(), F::CmykF32, tof)
+                .try_transform_row(
+                    bytemuck::cast_slice(&ink_f32),
+                    bytemuck::cast_slice_mut(&mut floats),
+                    4096,
+                )
+                .unwrap();
+            for (byte, float) in bytes.iter().zip(&floats) {
+                let rounded = (f64::from(float.clamp(0.0, 1.0)) * 255.0 + 0.5) as u8;
+                assert_eq!(*byte, rounded, "{target:?} {to8:?}: {float}");
+            }
+        }
+    }
+}
+
+/// A row splits anywhere, across the 8-bit path's stack chunk too, and alpha stays opaque.
+#[test]
+fn eight_bit_cmyk_rows_split_and_alpha_is_opaque() {
+    let icc = synthetic_icc::synthetic_cmyk_icc();
+    let ink: Vec<u8> = (0..600u32 * 4).map(|i| (i * 53 % 256) as u8).collect();
+    let mut whole = vec![0u8; 600 * 4];
+    let mut t = build(Source::Icc(&icc), SRGB, F::Cmyk8, F::Rgba8);
+    t.try_transform_row(&ink, &mut whole, 600).unwrap();
+    let mut parts = Vec::new();
+    for row in ink.chunks(7 * 4) {
+        let mut out = vec![0u8; row.len()];
+        t.try_transform_row(row, &mut out, (row.len() / 4) as u32)
+            .unwrap();
+        parts.extend(out);
+    }
+    assert_eq!(whole, parts);
+    assert!(whole.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
+}
+
+/// RGB and RGBA targets carry the same color from CMYK, at both depths.
+#[test]
+fn cmyk_targets_agree_with_and_without_alpha() {
+    let icc = synthetic_icc::synthetic_cmyk_icc();
+    let ink: Vec<u8> = (0..4096u32 * 4).map(|i| (i * 61 % 256) as u8).collect();
+    let mut rgb = vec![0u8; 4096 * 3];
+    let mut rgba = vec![0u8; 4096 * 4];
+    build(Source::Icc(&icc), SRGB, F::Cmyk8, F::Rgb8)
+        .try_transform_row(&ink, &mut rgb, 4096)
+        .unwrap();
+    build(Source::Icc(&icc), SRGB, F::Cmyk8, F::Rgba8)
+        .try_transform_row(&ink, &mut rgba, 4096)
+        .unwrap();
+    for (a, b) in rgb.as_chunks::<3>().0.iter().zip(rgba.as_chunks::<4>().0) {
+        assert_eq!(a, &b[..3]);
+    }
+    let ink_f32: Vec<f32> = ink.iter().map(|&v| f32::from(v) / 255.0).collect();
+    let mut rgb = vec![0f32; 4096 * 3];
+    let mut rgba = vec![0f32; 4096 * 4];
+    build(Source::Icc(&icc), SRGB, F::CmykF32, F::RgbF32)
+        .try_transform_row(
+            bytemuck::cast_slice(&ink_f32),
+            bytemuck::cast_slice_mut(&mut rgb),
+            4096,
+        )
+        .unwrap();
+    build(Source::Icc(&icc), SRGB, F::CmykF32, F::RgbaF32)
+        .try_transform_row(
+            bytemuck::cast_slice(&ink_f32),
+            bytemuck::cast_slice_mut(&mut rgba),
+            4096,
+        )
+        .unwrap();
+    for (a, b) in rgb.as_chunks::<3>().0.iter().zip(rgba.as_chunks::<4>().0) {
+        assert_eq!(a, &b[..3]);
+        assert_eq!(b[3], 1.0);
     }
 }
