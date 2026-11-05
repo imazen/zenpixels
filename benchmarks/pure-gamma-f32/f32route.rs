@@ -18,6 +18,17 @@ macro_rules! arm { ($g:ident, $name:literal, $z:ident, $zc:ident, $s:expr, $t:ex
         b.iter(move || { tr.try_transform_row(bytemuck::cast_slice(black_box(&input[..])), bytemuck::cast_slice_mut(&mut out), w as u32).unwrap(); black_box(out[0]) })
     });
 }}}
+macro_rules! u8arm { ($g:ident, $name:literal, $z:ident, $zc:ident, $s:expr, $t:expr, $from:ident, $to:ident, $input:expr, $w:expr, $n:expr) => {{
+    use $zc::cms::PluggableCms;
+    let (s, t, input) = ($s.clone(), $t.clone(), $input.clone());
+    let n: usize = $n; let w: usize = $w;
+    $g.bench($name, move |b| {
+        let mut tr = $zc::cms_moxcms::MoxCms.build_source_transform($z::ColorProfileSource::Icc(&s), $z::ColorProfileSource::Icc(&t), $z::PixelFormat::$from, $z::PixelFormat::$to, &$zc::ConvertOptions::permissive()).unwrap().unwrap();
+        let input = input.clone();
+        let mut out = vec![0u8; n];
+        b.iter(move || { tr.try_transform_row(black_box(&input[..]), &mut out, w as u32).unwrap(); black_box(out[0]) })
+    });
+}}}
 fn f32route(suite: &mut Suite) {
     let no = |mut p: P| { p.cicp = None; Arc::new(p.encode().unwrap()) };
     let (pp, ad, srgb, p3) = (no(P::new_pro_photo_rgb()), no(P::new_adobe_rgb()), no(P::new_srgb()), no(P::new_display_p3()));
@@ -56,6 +67,20 @@ fn f32route(suite: &mut Suite) {
         }}}
         graygroup!("gray/g18_g22", g18, g22, GrayF32, 1);
         graygroup!("gray/g18_srgb", g18, srgb, RgbF32, 3);
+        let bytes3: Arc<Vec<u8>> = Arc::new(rgb.iter().map(|v| (v * 255.0) as u8).collect());
+        let bytes1: Arc<Vec<u8>> = Arc::new(gray.iter().map(|v| (v * 255.0) as u8).collect());
+        { let (i, s, t) = (bytes3.clone(), pp.clone(), ad.clone());
+          suite.group(format!("u8/prophoto_adobe/w{w}"), move |g2| { g2.throughput(Throughput::Elements(w as u64)); g2.baseline("before");
+            u8arm!(g2, "before", zb, zcb, s, t, Rgb8, Rgb8, i, w, w * 3);
+            u8arm!(g2, "after", za, zca, s, t, Rgb8, Rgb8, i, w, w * 3); }); }
+        { let (i, s, t) = (bytes1.clone(), g18.clone(), g22.clone());
+          suite.group(format!("u8/g18_g22/w{w}"), move |g2| { g2.throughput(Throughput::Elements(w as u64)); g2.baseline("before");
+            u8arm!(g2, "before", zb, zcb, s, t, Gray8, Gray8, i, w, w);
+            u8arm!(g2, "after", za, zca, s, t, Gray8, Gray8, i, w, w); }); }
+        { let (i, s, t) = (bytes3.clone(), p3.clone(), ad.clone());
+          suite.group(format!("u8/control_p3_adobe/w{w}"), move |g2| { g2.throughput(Throughput::Elements(w as u64)); g2.baseline("before");
+            u8arm!(g2, "before", zb, zcb, s, t, Rgb8, Rgb8, i, w, w * 3);
+            u8arm!(g2, "after", za, zca, s, t, Rgb8, Rgb8, i, w, w * 3); }); }
         let (rgb2, s, t) = (rgb.clone(), srgb.clone(), g22.clone());
         suite.group(format!("gray/srgb_g22/w{w}"), move |g2| { g2.throughput(Throughput::Elements(w as u64)); g2.baseline("before");
             arm!(g2, "before", zb, zcb, s, t, RgbF32, GrayF32, true, rgb2, w, w);

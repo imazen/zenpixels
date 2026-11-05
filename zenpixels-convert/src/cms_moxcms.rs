@@ -322,34 +322,6 @@ fn pure_gamma_exponent(
     }
 }
 
-/// The backend's F32 transform, apart from a pure-gamma target's curve, see [`PureGammaOutput`].
-fn f32_transform(
-    source: &ColorProfile,
-    target: &ColorProfile,
-    layout: (Layout, Layout),
-    options: TransformOptions,
-) -> Result<Arc<dyn TransformExecutor<f32> + Send + Sync>, moxcms::CmsError> {
-    let Some(exponent) = pure_gamma_exponent(source, target, layout.1, &options) else {
-        return source.create_transform_f32(layout.0, target, layout.1, options);
-    };
-    let mut linear = target.clone();
-    linear.cicp = None;
-    for trc in [
-        &mut linear.red_trc,
-        &mut linear.green_trc,
-        &mut linear.blue_trc,
-    ] {
-        // An empty curve is the ICC identity.
-        *trc = Some(moxcms::ToneReprCurve::Lut(alloc::vec::Vec::new()));
-    }
-    let transform = source.create_transform_f32(layout.0, &linear, layout.1, options)?;
-    Ok(Arc::new(PureGammaOutput {
-        transform,
-        exponent,
-        target_channels: layout.1.channels(),
-    }))
-}
-
 /// A pure-gamma curve, evaluated as the backend does where it can represent the result.
 ///
 /// The backend's fast power returns unrelated values otherwise, and loses the sign of a negative sample:
@@ -632,8 +604,6 @@ fn pure_gamma_gray_target<'a>(
 }
 
 /// The analytic F32 transform with pure-gamma curves applied here, on whichever sides have them.
-///
-/// 8-bit samples take [`f32_transform`] and don't reach this.
 fn exact_gamma_f32_transform(
     source: &ColorProfile,
     target: &ColorProfile,
@@ -751,7 +721,7 @@ fn u8_transform(
     if let Some(shaper) = U8MatrixShaper::of(source, target, layout) {
         return Ok(MoxTransformInner::U8(Arc::new(shaper)));
     }
-    let transform = f32_transform(source, target, layout, options)?;
+    let transform = exact_gamma_f32_transform(source, target, layout, options)?;
     Ok(MoxTransformInner::U8(Arc::new(U8ThroughF32 {
         transform,
         source_channels: layout.0.channels(),

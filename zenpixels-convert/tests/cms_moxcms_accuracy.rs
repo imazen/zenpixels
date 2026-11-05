@@ -744,3 +744,63 @@ fn table_source_keeps_the_sign_at_grid_nodes_on_a_pure_gamma_target() {
         }
     }
 }
+
+fn byte_row(
+    src: &[u8],
+    dst: &[u8],
+    from: F,
+    to: F,
+    input: &[u8],
+    width: usize,
+    out: usize,
+) -> Vec<u8> {
+    let mut output = vec![0u8; out];
+    build(Source::Icc(src), Source::Icc(dst), from, to)
+        .try_transform_row(input, &mut output, width as u32)
+        .unwrap();
+    output
+}
+
+/// 8-bit samples that don't take the matrix kernels go through the F32 path: gray 1.8 of 0 into gray 2.2
+/// was 255, and ProPhoto (128, 128, 0) into Adobe RGB was (255, 255, 0).
+#[test]
+fn eight_bit_pure_gamma_routes_are_nearest_of_exact_math() {
+    let (g18, g22, prophoto, adobe) = (gray_icc(1.8), gray_icc(2.2), prophoto_icc(), adobe_icc());
+    let (decode, encode) = (stored_gamma(&g18).unwrap(), stored_gamma(&g22).unwrap());
+    let levels: Vec<u8> = (0..=255).collect();
+    let out = byte_row(&g18, &g22, F::Gray8, F::Gray8, &levels, 256, 256);
+    for (&level, &got) in levels.iter().zip(&out) {
+        let exact = (f64::from(level) / 255.0).powf(decode).powf(1.0 / encode) * 255.0;
+        assert!(
+            (f64::from(got) - exact).abs() <= 0.51,
+            "gray {level}: {got}, exact {exact}"
+        );
+    }
+    let mut pixels = Vec::new();
+    for r in (0..=255u8).step_by(15) {
+        for g in (0..=255u8).step_by(15) {
+            for b in (0..=255u8).step_by(15) {
+                pixels.extend_from_slice(&[r, g, b]);
+            }
+        }
+    }
+    let width = pixels.len() / 3;
+    let out = byte_row(
+        &prophoto,
+        &adobe,
+        F::Rgb8,
+        F::Rgb8,
+        &pixels,
+        width,
+        pixels.len(),
+    );
+    for (input, got) in pixels.as_chunks::<3>().0.iter().zip(out.as_chunks::<3>().0) {
+        let exact = exact_rgb(&prophoto, &adobe, true, input.map(|v| f32::from(v) / 255.0));
+        for (g, e) in got.iter().zip(exact) {
+            assert!(
+                (f64::from(*g) - e * 255.0).abs() <= 0.51,
+                "{input:?}: {got:?}, exact {exact:?}"
+            );
+        }
+    }
+}

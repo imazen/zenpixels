@@ -33,7 +33,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
-- `MoxCms` at F32 no longer returns unrelated values from pure-gamma curves: ProPhoto (0.5, 0.5, 0) into sRGB was (1, 1, 0) with clipping on, and black was about -2.1e9 without it. The adapter now applies a single-value `curv` itself on RGB and gray sources and on gray routes, and keeps a negative sample's sign from a table source. Values the backend's fast power can represent keep their bits, and 8-bit routes are unchanged. See `benchmarks/pure_gamma_f32_2026-11-05.md`.
+- `MoxCms` at F32 no longer returns unrelated values from pure-gamma curves: ProPhoto (0.5, 0.5, 0) into sRGB was (1, 1, 0) with clipping on, and black was about -2.1e9 without it. The adapter now applies a single-value `curv` itself on RGB and gray sources and on gray routes, and keeps a negative sample's sign from a table source. Values the backend's fast power can represent keep their bits. See `benchmarks/pure_gamma_f32_2026-11-05.md`.
+- `MoxCms` 8-bit routes that go through F32 get the same fix: gray 1.8 of 0 into gray 2.2 was 255, and ProPhoto (128, 128, 0) into Adobe RGB was (255, 255, 0). Routes into sRGB's curve take the matrix kernels and don't change.
 
 - New test: premultiplied ICC samples keep every bit through `OutputPlan::new_preserving_samples`, with no CMS.
 
