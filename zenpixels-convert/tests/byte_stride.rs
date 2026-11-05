@@ -35,7 +35,7 @@ fn cases() -> Vec<(D, u32, u32, usize)> {
         for d in [D::RGB8_SRGB, D::RGB16_SRGB, D::RGBF32_LINEAR] {
             for extra in [1, 2, 5] {
                 let stride = stride_of(d, width, extra);
-                if stride % d.bytes_per_pixel() != 0 {
+                if !is_whole_pixels(d, stride) {
                     cases.push((d, width, height, stride));
                 }
             }
@@ -45,7 +45,7 @@ fn cases() -> Vec<(D, u32, u32, usize)> {
 }
 
 fn is_whole_pixels(d: D, stride: usize) -> bool {
-    stride % d.bytes_per_pixel() == 0
+    stride.is_multiple_of(d.bytes_per_pixel())
 }
 
 /// Samples for `d`: varied, and in range for a float.
@@ -375,8 +375,9 @@ fn scans_ignore_padding() {
         let mut bytes = vec![0u8; 2 * stride + 16];
         for y in 0..h as usize {
             bytes[y * stride..y * stride + 16]
-                .chunks_exact_mut(4)
-                .for_each(|p| p.copy_from_slice(&[9, 9, 9, 255]));
+                .as_chunks_mut::<4>()
+                .0
+                .fill([9, 9, 9, 255]);
             if y + 1 < h as usize {
                 bytes[y * stride + 16..(y + 1) * stride].fill(1);
             }
@@ -534,7 +535,7 @@ fn raw_rows_off_a_sample_boundary_are_copied() {
     let row = w as usize * 6;
     let stride = row + 3;
     let packed = packed_pixels(d, w, h);
-    let source: &[u8] = bytemuck::cast_slice(&packed);
+    let source = &bytemuck::cast_slice::<u32, u8>(&packed)[..row * h as usize];
     let mut raw = vec![PAD; 2 * stride + row];
     // Rows start at 0, 21 and 42: whole bytes, odd and even, so some u16 can't sit there.
     for y in 0..h as usize {
