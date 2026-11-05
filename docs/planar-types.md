@@ -97,11 +97,6 @@ jxl-encoder `YCbCrPlanes` (crate-private), zenmetrics vmaf `Yuv420Frame`.
 
 ## Not covered
 
-- Packed rows whose pitch is not a whole number of pixels. `PixelSlice` and
-  `PixelBuffer` return `StrideNotPixelAligned` for RGB8 and RGB16 at 4, 16 or
-  64-byte row alignment when the width leaves a remainder, so such a foreign
-  frame has to be copied (`benchmarks/plane-interop/`, `stride_rule`). RGBA8 at
-  those alignments is accepted, and `Plane` has no such rule.
 - Packed subsampled YUV (YUYV, UYVY, Y210) and packed 4:4:4 with alpha (AYUV,
   Y410): not planes; convert at the boundary if a source produces them.
 - `f16` samples: add a `PlaneSample` impl and an `AnyPlane` variant when a crate

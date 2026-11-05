@@ -33,6 +33,10 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- **Breaking:** views and buffers accept any stride that is at least `width * bytes_per_pixel` and a multiple of the sample size, so RGB8 rows 8 bytes apart and f32 RGB with 16 bytes of padding are borrowed as they are. A stride off a sample boundary now returns `AlignmentViolation`; constructors no longer return `StrideNotPixelAligned`. Code that divides `stride()` by the pixel size must stop: it misreads these rows silently. Issue #91.
+- **Breaking:** `PixelBuffer::try_as_imgref` and `try_as_imgref_mut` return `Result<_, At<BufferError>>`, so a stride `imgref` can't express (`StrideNotPixelAligned`) is told apart from a wrong format (`IncompatibleDescriptor`). They also keep exact-depth evidence on failure. Use `.ok()` where an `Option` is wanted. Typed `as_imgref` and `as_imgref_mut` panic on such a stride, naming it, before reading anything.
+- `try_typed` also requires the stride to suit the pixel type's alignment, which only a custom over-aligned `Pixel` notices.
+
 - Fallible pixel-buffer constructors request allocator-zeroed bytes directly, retaining allocation errors.
 
 - **Breaking:** removed `cms::ColorManagement`, `finalize_for_output` and the colorant-based `identify_profile` with them. Use `PluggableCms` and `EncodeReady::finalize`; `zenpixels::icc::IccIdentification` identifies profiles. zenpipe's `IccTransformSource` and `job` need migrating at the pin bump. `builtin_profiles` stays: it's `pub(crate)`, and zenjpeg's XYB plan names it.

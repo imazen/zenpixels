@@ -134,9 +134,9 @@ an opaque-profile plugin can accept a transform.
 padding, source-interpretation checks, sample-policy refusal and native ICC rows
 against a separately built CMS worker. Its prepared authored transform allocates
 no memory during row conversion. This is not an RSS or arbitrary-CMS guarantee.
-The plan inherits the pixel-view constructors' whole-pixel stride restriction;
-[issue 91](https://github.com/imazen/zenpixels/issues/91) tracks the byte-stride
-contract and typed-bridge audit. The output-allocation work also continues
+Its rows may be any sample-aligned stride apart, as for the pixel views
+([issue 91](https://github.com/imazen/zenpixels/issues/91)); `tests/byte_stride.rs`
+covers the plan. The output-allocation work also continues
 [issue 69](https://github.com/imazen/zenpixels/issues/69).
 
 ### Other bridge scope
