@@ -71,6 +71,7 @@ mod image_interop;
 pub mod orientation;
 pub mod plane;
 pub mod policy;
+pub mod precision;
 pub mod sample;
 
 pub mod cicp;
