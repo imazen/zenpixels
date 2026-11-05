@@ -42,3 +42,34 @@ The CSS search here agrees with Color.js 0.7.1 within 1.55e-14 on 2,048 samples,
 - **`Color`:** a private CSS search once a CSS parser or similar single-color output exists. zenpipe's parser takes named and hex colors today, so nothing calls for it yet.
 - **Images:** an explicit output choice reusing `SoftCompress`, after the matrix and before the target transfer, with a final clamp. zenfilters already calls it (`GamutMapping::SoftCompress`) and the HDR plan emits it. No SDR export path asks for it yet.
 - **CMS:** ICC tables, media white and BPC stay there. BPC doesn't address gamut, and adding it or absolute media-white handling means changing moxcms' connection stage, not setting a flag. Making `MoxCms` request other intents is a small adapter change, and matters only for profiles with tables.
+
+## A faster soft compressor, 2026-11-04
+
+`benchmarks/gamut-compress` tests a two-step mapper for images, against the existing `SoftCompress`, with the same 0.96 knee. Results are on the Ryzen 9 7900X (Zen 4) with AVX2 dispatch; not measured on Zen 5.
+
+1. **Gate in linear RGB.** A pixel with `min > 0.0875 * max` and `max < 0.95` can't be past the knee, so it stays bit-identical with no color math. A 257³ sRGB grid had 12,020,103 passing colors and none the exact mapper would change. These thresholds are for sRGB output; other primaries need their own.
+2. **Solve the boundary directly.** Scaling OKLab chroma by `s` at constant L and hue is a lerp in cube-root LMS, `x'(s) = L + s (x' - L)`, because the a and b rows of M2 sum to zero and the L row sums to one. So each RGB channel is a cubic in `s`, needing no atan2, square root or table. Start on the chord from gray to the input, take 2 or 3 Newton steps on packed SIMD batches, and apply the same knee.
+
+| ns/pixel, kernel only | Clip | Table | Solve, 3 steps |
+|---|---:|---:|---:|
+| Saturation-heavy P3 | 0.55 | 40.80 | 5.60 |
+| Saturation-heavy BT.2020 | 0.55 | 42.28 | 7.19 |
+| 10 real P3 images, range | 0.67 to 0.94 | 36.15 to 44.33 | 0.64 to 7.20 |
+
+Whole P3 u8 to sRGB u8 rows on those images took 2.65 to 9.00 ns/pixel with 3 steps, against 1.23 to 1.25 for the fused clipping row. About 1.4 ns of that gap is the unfused route through f32, measured on the image where almost nothing reaches the solve. A fused kernel could remove it, but that hasn't been built.
+
+| Quality on the survey's grids | Clip | Table | Solve, 3 steps |
+|---|---:|---:|---:|
+| BT.2020 blue hue shift | +18.985° | 0° | 0° |
+| Max hue shift, BT.2020 grid | 22.84° | 0.16° | 0.0012° |
+| In-gamut colors changed, P3 grid | 0 of 2,855 | 433 | 198 |
+| Max change to an in-gamut color, P3 | 0 | 0.0244 | 0.0063 |
+| Largest raw excursion past the cube, BT.2020 | 0 | 0.0025 | 0.000000 |
+| Ramp reversals over 1e-7, P3 / BT.2020 | 1,780 / 2,270 | 288 / 345 | 0 / 380 |
+| Largest reversal, P3 / BT.2020 | 0.0000038 / 0.0000039 | 0.178 / 0.179 | 0 / 0.00027 |
+
+The table's large reversals came from a hue-seam bug, since fixed; its figures here predate the fix. It also needs a 64 KiB table per primaries, which the solve doesn't. On real images the solve and the table differed by at most 0.0064 in OKLab.
+
+The solve keeps more chroma than bisection on the dark P3 blues, by up to 0.042 in OKLab, because the sRGB boundary there leaves and re-enters at fixed L and hue. Which is preferable hasn't been judged, and no visual comparison has been done.
+
+moxcms doesn't need to change to use this: for recognizable matrix-shaper curves it can produce unclipped linear target RGB, and the mapper then runs before the target curve. A hook inside moxcms would touch its matrix kernels, 16 files and 5,625 lines across SSE, AVX, AVX-512 and NEON and the fixed-point variants. LUT profiles keep their authored tables.

@@ -1,73 +1,64 @@
 # Free functions and other cut candidates, 2026-11-04
 
-All 42 public free functions in `zenpixels` and `zenpixels-convert` at `feat/color-value`, read from `docs/public-api/`, plus other candidates. Nothing in this table is applied yet.
+Every public free function in `zenpixels` and `zenpixels-convert`, plus other candidates, with where each went. All of it is applied on `feat/api-ablation`, except the two rows marked **not yet**.
 
-Callers are text matches of call syntax in local checkouts under `~/work`, shown as shipped + other. "Other" means tests, examples, benches, tools and `perf/`. They aren't compiler output. Each count excludes this repo, jj workspaces and the archived standalone `zenfilters` checkout, but `zensim` and `zensimx` are counted separately. Names with no local caller were also searched with `gh search code --owner imazen`, which only sees default branches. The Oklab rows are total matches.
+`zpc` = `zenpixels_convert`, `zp` = `zenpixels`, `Desc` = `zp::PixelDescriptor`, `E` = `whereat::At<ConvertError>`.
 
-`zpc` = `zenpixels_convert`, `zp` = `zenpixels`, `Desc` = `zp::PixelDescriptor`, `E` = `whereat::At<ConvertError>`. **NEW** doesn't exist yet. **Exists** is in the API today.
+Callers are text matches of call syntax in local checkouts under `~/work`, not compiler output: shipped + other, where other means tests, examples, benches, tools and `perf/`. `zensim` and `zensimx` count separately, so some totals overstate real sites. Oklab rows are totals.
 
-| Current item | Callers | Action | Canonical path |
-|---|---:|---|---|
-| `zpc::adapt::adapt_for_encode_cow<'a>(&'a [u8], Desc, u32, u32, usize, &[Desc]) -> Result<PixelCow<'a>, E>` | 8+4 | Replace | **NEW** `PixelSliceConvertExt::adapt_for_encode(self, &[Desc], &ConvertOptions) -> Result<PixelCow<'a>, E>`, passing `ConvertOptions::permissive().with_alpha_policy(DiscardUnchecked)`, which is what this function uses today |
-| `zpc::adapt::adapt_for_encode_with_intent_cow<'a>(&'a [u8], Desc, u32, u32, usize, &[Desc], ConvertIntent) -> Result<PixelCow<'a>, E>` | 0 | Delete | **NEW** `PixelSliceConvertExt::adapt_for_encode`, which always uses the fastest intent |
-| `zpc::adapt::adapt_for_encode_explicit_cow<'a>(&'a [u8], Desc, u32, u32, usize, &[Desc], &ConvertOptions) -> Result<PixelCow<'a>, E>` | 2+0 | Replace | **NEW** `PixelSliceConvertExt::adapt_for_encode` |
-| `zpc::adapt::check_opaque(PixelSlice<'_>) -> Result<(), E>` | 0+1 | Move, stays public | **NEW** `PixelSliceConvertExt::check_opaque(&self) -> Result<(), E>`. `AlphaPolicy::DiscardIfOpaque` errors send callers here |
-| `zpc::adapt::try_adapt_in_place(&mut PixelBuffer, Desc) -> Result<(), E>` | 0 | Delete | **Exists** `PixelBufferConvertExt::convert_to(&self, Desc)`, which allocates; no in-place equivalent remains |
-| `zpc::convert_row(&ConvertPlan, &[u8], &mut [u8], u32)` | 6+0 | Replace | **Exists** `RowConverter::from_plan(plan).convert_row(src, dst, width)`. Whole images: **NEW** `PixelSliceConvertExt::convert_into(self, PixelSliceMut) -> Result<PixelSliceMut, E>` |
-| `zpc::best_match(Desc, &[Desc], ConvertIntent) -> Option<Desc>` | 1+0 | Move | **NEW** `ConvertIntent::best_match(self, Desc, &[Desc]) -> Option<Desc>` |
-| `zpc::best_match_with(Desc, &[FormatOption], ConvertIntent) -> Option<Desc>` | 0 | `pub(crate)` | None public; **NEW** `ConvertIntent::best_match` covers real callers |
-| `zpc::negotiate(Desc, Provenance, impl Iterator<Item = FormatOption>, ConvertIntent) -> Option<Desc>` | 0 | `pub(crate)` | None public; **NEW** `ConvertIntent::best_match` covers real callers |
-| `zpc::ideal_format(Desc, ConvertIntent) -> Desc` | 0 | Delete | None. Nothing inside calls it either, and its private precision tier goes too |
-| `zpc::conversion_cost(Desc, Desc) -> ConversionCost` | 1+0 | Move | **NEW** `ConversionCost::between(Desc, Desc) -> ConversionCost` |
-| `zpc::conversion_cost_with_provenance(Desc, Desc, Provenance) -> ConversionCost` | 0 | `pub(crate)` | None public |
-| `zpc::gamut::conversion_matrix(ColorPrimaries, ColorPrimaries) -> Option<GamutMatrix>` | 0+3 | `pub(crate)` | **Exists** `zp::ColorPrimaries::gamut_matrix_to(self, Self) -> Option<[[f32; 3]; 3]>`. It returns a matrix for equal primaries where this returns `None`, so callers guard `from != to` |
-| `zpc::gamut::apply_matrix_f32(&mut [f32; 3], &GamutMatrix)` | 1+0 | `pub(crate)` | None attachable: `GamutMatrix` is an alias of `[[f32; 3]; 3]`. The one zqi tool writes the three lines |
-| `zpc::gamut::apply_matrix_row_f32(&mut [f32], usize, &GamutMatrix)` | 0+4 | Delete | **Exists** `RowConverter::new(from, to)?.convert_row(src, dst, width)`. Nothing inside calls it |
-| `zpc::gamut::apply_matrix_row_rgba_f32(&mut [f32], usize, &GamutMatrix)` | 0 | Delete | **Exists** `RowConverter::new(from, to)?.convert_row(src, dst, width)`. Nothing inside calls it |
-| `zpc::gamut::mat3_mul(&GamutMatrix, &GamutMatrix) -> GamutMatrix` | 0 | `pub(crate)` | None public; `oklab.rs` uses it |
-| `zpc::output::finalize_for_output<C: ColorManagement>(&PixelBuffer, &ColorOrigin, OutputProfile, PixelFormat, &C) -> Result<EncodeReady, E>` | 0 | Delete | **NEW** `EncodeReady::finalize`, below. It's a separate code path today, so `tests/output_finalize.rs` has to move and show the two agree |
-| `zpc::output::finalize_for_output_with(&PixelBuffer, &ColorOrigin, OutputProfile, PixelFormat, Option<&dyn PluggableCms>) -> Result<EncodeReady, E>` | 2+6 | Move | **NEW** `EncodeReady::finalize(&PixelBuffer, &ColorOrigin, OutputProfile, PixelFormat, Option<&dyn PluggableCms>) -> Result<EncodeReady, E>`. Streaming stays **Exists** `OutputPlan::new` + `convert_rows` |
-| `zpc::hdr::quantize_to(PixelSlice<'_>, Desc) -> Result<PixelBuffer, E>` | 1+0 | Move | **NEW** `PixelSliceConvertExt::quantize_to(self, Desc) -> Result<PixelBuffer, E>` |
-| `zpc::codes::measure_exact_depth(&PixelSlice<'_>) -> Result<ExactDepth, At<CodesError>>` (deprecated) | 0 | Delete | **Exists** `zp::sample::ExactDepth::measure(&PixelSlice) -> Result<ExactDepth, ExactDepthError>` |
-| `zpc::codes::to_canonical<'b>(&[CodePlane<'_>], SignalRange, usize, usize, PixelSliceMut<'b>) -> Result<(PixelSliceMut<'b>, ExactDepth), At<CodesError>>` | 0 | Keep to 0.3, then cut if no codec calls it | Stays here; its main input is a slice of planes, so no type owns it. `docs/sample-precision-evidence.md` documents it |
-| `zpc::oklab::fast_cbrt(f32) -> f32` | 0+5 | `pub(crate)` | `f32::cbrt` in the five zentone example calls; difference in results not measured |
-| `zpc::oklab::rgb_to_oklab(f32, f32, f32, &GamutMatrix) -> [f32; 3]` | 17 | Keep | Stays here; no type owns three floats and a matrix without adding a new one |
-| `zpc::oklab::oklab_to_rgb(f32, f32, f32, &GamutMatrix) -> [f32; 3]` | 14 | Keep | Stays here, same reason |
-| `zpc::oklab::rgb_to_lms_matrix(ColorPrimaries) -> Option<GamutMatrix>` | 35 | Move | **NEW** `ColorPrimariesExt::to_lms_matrix(&self) -> Option<GamutMatrix>`, beside **Exists** `to_xyz_matrix` |
-| `zpc::oklab::lms_to_rgb_matrix(ColorPrimaries) -> Option<GamutMatrix>` | 27 | Move | **NEW** `ColorPrimariesExt::from_lms_matrix(&self) -> Option<GamutMatrix>`, beside **Exists** `from_xyz_matrix` |
-| `zpc::icc_profiles::display_p3_icc(bool) -> &'static [u8]` | 0+7 | Delete | **Exists** `zpc::icc_profiles::DISPLAY_P3_V4`, `DISPLAY_P3_V2` |
-| `zpc::icc_profiles::icc_profile_for_primaries(ColorPrimaries) -> Option<&'static [u8]>` (deprecated) | 0 | Delete | **NEW** `SynthesizedIcc::for_cicp`, or **Exists** the bundled constants |
-| `zpc::icc_profiles::synthesize_icc_for_cicp(Cicp) -> SynthesizedIcc` | 12+5 | Move | **NEW** `SynthesizedIcc::for_cicp(Cicp) -> SynthesizedIcc` |
-| `zpc::icc_profiles::synthesize_gray_icc_for_cicp(Cicp) -> SynthesizedIcc` | 0 | `pub(crate)` | None public; `load_bearing.rs:473` uses it |
-| `zp::icc::extract_cicp(&[u8]) -> Option<Cicp>` | 9+6 | Move | **NEW** `zp::Cicp::from_icc(&[u8]) -> Option<Cicp>` |
-| `zp::icc::identify_common(&[u8]) -> Option<IccIdentification>` | 15+8 | Move | **NEW** `zp::icc::IccIdentification::from_icc(&[u8]) -> Option<IccIdentification>` |
-| `zp::icc::is_common_srgb(&[u8]) -> bool` | 7+0 | Delete | **NEW** `IccIdentification::from_icc(bytes)`, then **Exists** `.is_srgb()`. That's the function's whole body |
-| `zp::icc::profile_color_space(&[u8]) -> Option<ColorModel>` | 5+0 | Move | **NEW** `zp::ColorModel::from_icc(&[u8]) -> Option<ColorModel>` |
-| `zp::icc::normalized_hash(&[u8]) -> u64` | 0 | Keep | Stays here. `zpc`'s `output.rs:77` calls it across crates, so `pub(crate)` won't compile, and no type owns it |
-| `zpc::orient::apply_orientation(PixelSlice<'_>, Orientation) -> PixelBuffer` | 14+7 | Move | **NEW** `PixelSliceConvertExt::oriented(self, Orientation) -> PixelBuffer` |
-| `zpc::orient::apply_orientation_into(PixelSlice<'_>, Orientation, PixelSliceMut<'_>) -> Result<(), ConvertError>` | 4+0 | Move | **NEW** `PixelSliceConvertExt::oriented_into(self, Orientation, PixelSliceMut<'_>) -> Result<(), E>` |
-| `zpc::orient::apply_orientation_in_place(&mut PixelBuffer, Orientation) -> Result<(), ConvertError>` | 3+0 | Replace | **NEW** `PixelBufferConvertExt::into_oriented(self, Orientation) -> Result<PixelBuffer, E>`: untouched for identity, in place where possible, otherwise copies |
-| `zpc::pipeline::generate_path_matrix(&[&CodecFormats], &[OpCategory], &[&CodecFormats], QualityThreshold) -> Vec<PathEntry>` | 0 | Delete with feature | None |
-| `zpc::pipeline::optimal_path(Desc, Provenance, OpCategory, Desc, QualityThreshold) -> Option<ConversionPath>` | 0 | Delete with feature | None |
-| `zpc::pipeline::matrix_stats(&[PathEntry]) -> MatrixStats` | 0 | Delete with feature | None |
-| `zpc::pipeline::path::{ConversionPath, PathEntry, MatrixStats, LossBucket, QualityThreshold}` | 0 | Delete with feature | None |
-| `zpc::pipeline::op_format::{OpCategory, OpRequirement}` | 0 | Delete with feature | None |
-| `zpc::pipeline::registry::{CodecFormats, FormatEntry, ALL_CODECS, AVIF, BMP, FARBFELD, GIF, JPEG, JPEG_DECODE_EXTENDED, JXL, PNG, PNM, WEBP}` | 0 | Delete with feature | None |
-| Cargo feature `zenpixels-convert/pipeline` (1,485 lines) | 0 | Delete | None. `tests/path_validation.rs` and `tests/registry_validation.rs` go with it, and the `lib.rs` docs pointing at its table need rewriting |
-| `zpc::cms::RenderingIntent` | 0 | Delete | None public. `cms_moxcms.rs` names `moxcms::RenderingIntent::RelativeColorimetric` directly; another intent means another **Exists** `PluggableCms` implementation |
-| `zpc::cms::ColorPriority` | 0 | Delete | None public. `cms_moxcms.rs` sets `allow_use_cicp_transfer: false` directly |
-| `zpc::cms::ColorManagement` (deprecated since 0.2.8) | 1+0 | Delete | **Exists** `zpc::cms::PluggableCms`. Needs a public signature change first in zenpipe: `IccTransformSource::new<C: ColorManagement>` (`src/sources/icc_transform.rs:72`, called at `src/graph.rs:1832`) |
-| `zpc::Provenance` | 0 | `pub(crate)` | None public, once `negotiate` and the `pipeline` feature leave the API |
-| `zpc::FormatOption` | 0 | `pub(crate)` | None public, once `negotiate` and `best_match_with` leave the API |
-| `zpc::icc_profiles::REC2020_V4` | 0 | `pub(crate)` | **NEW** `SynthesizedIcc::for_cicp`, which accounts for transfer; `output.rs` still uses the constant inside |
+| Old item | Callers | Canonical path now |
+|---|---:|---|
+| `zpc::adapt::adapt_for_encode_cow` | 8+4 | `PixelSliceConvertExt::adapt_for_encode(&self, &[Desc], &ConvertOptions) -> Result<PixelCow<'a>, E>`. The old behavior is `ConvertOptions::permissive().with_alpha_policy(DiscardUnchecked)` |
+| `zpc::adapt::adapt_for_encode_with_intent_cow` | 0 | Removed. Encode paths use the fastest intent |
+| `zpc::adapt::adapt_for_encode_explicit_cow` | 2+0 | `PixelSliceConvertExt::adapt_for_encode`, or `zpc::adapt::adapt_raw_rows_for_encode` for rows whose padding isn't a whole number of pixels, which no type can own |
+| `zpc::adapt::check_opaque(PixelSlice)` | 0+1 | `PixelSliceConvertExt::check_opaque(&self) -> Result<(), E>` |
+| `zpc::adapt::try_adapt_in_place` | 0 | Removed. `PixelBufferConvertExt::convert_to` allocates |
+| `zpc::convert_row` | 6+0 | `RowConverter::from_plan(plan).convert_row`. Whole images: `PixelSliceConvertExt::convert_into(&self, PixelSliceMut) -> Result<PixelSliceMut, E>` and `convert_to` |
+| `zpc::best_match` | 1+0 | `ConvertIntent::best_match(self, Desc, &[Desc]) -> Option<Desc>` |
+| `zpc::best_match_with` | 0 | Removed: `ConvertIntent::negotiate` with `Provenance::from_source` |
+| `zpc::negotiate` | 0 | `ConvertIntent::negotiate(self, Desc, Provenance, impl Iterator<Item = FormatOption>) -> Option<Desc>`. No caller yet, kept for the unique job: origin depth and consumer fused-path costs |
+| `zpc::ideal_format` | 0 | Removed, with its private precision tier |
+| `zpc::conversion_cost` | 1+0 | `ConversionCost::between(Desc, Desc) -> ConversionCost` |
+| `zpc::conversion_cost_with_provenance` | 0 | `ConversionCost::between_with_provenance(Desc, Desc, Provenance)`. Kept: nothing else says narrowing back to the origin depth is free |
+| `zpc::Provenance`, `zpc::FormatOption` | 0 | Kept public, as inputs to the two above |
+| `zpc::gamut::conversion_matrix` | 0+3 | `GamutMatrix::between(from, to) -> Option<GamutMatrix>`. Equal primaries now give the identity, not `None` |
+| `zpc::gamut::apply_matrix_f32` | 1+0 | `GamutMatrix::apply(&self, [f32; 3]) -> [f32; 3]` |
+| `zpc::gamut::apply_matrix_row_f32` | 0+4 | `GamutMatrix::apply_row_rgb(&self, &mut [[f32; 3]])`, in place |
+| `zpc::gamut::apply_matrix_row_rgba_f32` | 0 | `GamutMatrix::apply_row_rgba(&self, &mut [[f32; 4]])`, in place, alpha unchanged |
+| `zpc::gamut::mat3_mul(a, b)` | 0 | `b.then(&a)` on `GamutMatrix`. Also new: `GamutMatrix::inverse` |
+| `zpc::output::finalize_for_output` | 0 | **Not yet.** Goes with `ColorManagement`: 40 tests use mock backends and must prove `EncodeReady::finalize` agrees first |
+| `zpc::output::finalize_for_output_with` | 2+6 | `EncodeReady::finalize(&PixelBuffer, &ColorOrigin, OutputProfile, PixelFormat, Option<&dyn PluggableCms>)`. Streaming stays `OutputPlan` |
+| `zpc::hdr::quantize_to` | 1+0 | `PixelSliceConvertExt::quantize_to(&self, Desc) -> Result<PixelBuffer, E>` |
+| `zpc::codes::measure_exact_depth` | 0 | Removed: `zp::sample::ExactDepth::measure` |
+| `zpc::codes::to_canonical` | 0 | Stays free until 0.3, then cut if no codec calls it. Its main input is a slice of planes, so no type owns it |
+| `zpc::oklab::fast_cbrt` | 0+5 | `pub(crate)`. zentone's examples use `f32::cbrt` |
+| `zpc::oklab::rgb_to_oklab` | 17 | `OklabSpace::from_rgb(&self, [f32; 3]) -> [f32; 3]` |
+| `zpc::oklab::oklab_to_rgb` | 14 | `OklabSpace::to_rgb(&self, [f32; 3]) -> [f32; 3]` |
+| `zpc::oklab::rgb_to_lms_matrix` | 35 | `OklabSpace::for_primaries(p)?.rgb_to_lms() -> &GamutMatrix` |
+| `zpc::oklab::lms_to_rgb_matrix` | 27 | `OklabSpace::for_primaries(p)?.lms_to_rgb() -> &GamutMatrix` |
+| `zpc::hdr::SoftCompress::{new, from_matrices}` | 0 | `SoftCompress::new(&OklabSpace, knee)`, which can't panic or take a mismatched pair |
+| `zpc::icc_profiles::display_p3_icc` | 0+7 | Removed: `DISPLAY_P3_V4`, `DISPLAY_P3_V2` |
+| `zpc::icc_profiles::icc_profile_for_primaries` | 0 | Removed: `SynthesizedIcc::for_cicp` or the constants |
+| `zpc::icc_profiles::synthesize_icc_for_cicp` | 12+5 | `SynthesizedIcc::for_cicp(Cicp) -> SynthesizedIcc` |
+| `zpc::icc_profiles::synthesize_gray_icc_for_cicp` | 0 | `pub(crate)`. Used by `load_bearing` |
+| `zpc::icc_profiles::REC2020_V4` | 0 | `pub(crate)`. `SynthesizedIcc::for_cicp` accounts for transfer |
+| `zp::icc::extract_cicp` | 9+6 | `zp::Cicp::from_icc(&[u8]) -> Option<Cicp>` |
+| `zp::icc::identify_common` | 15+8 | `zp::icc::IccIdentification::from_icc(&[u8]) -> Option<IccIdentification>` |
+| `zp::icc::is_common_srgb` | 7+0 | Removed: `IccIdentification::from_icc(b).is_some_and(\|id\| id.is_srgb())`, its whole body |
+| `zp::icc::profile_color_space` | 5+0 | `zp::ColorModel::from_icc(&[u8]) -> Option<ColorModel>` |
+| `zp::icc::normalized_hash` | 0 | Stays free: `zpc` calls it across crates and no type owns it. It stays FNV-1a, because the identification tables hold its values |
+| `zpc::orient::apply_orientation` | 14+7 | `PixelSliceConvertExt::oriented(&self, Orientation) -> Result<PixelBuffer, E>`, which no longer panics on a failed allocation |
+| `zpc::orient::apply_orientation_into` | 4+0 | `PixelSliceConvertExt::oriented_into(&self, Orientation, PixelSliceMut) -> Result<(), E>` |
+| `zpc::orient::apply_orientation_in_place` | 3+0 | `PixelBufferConvertExt::into_oriented(self, Orientation) -> Result<PixelBuffer, E>`: untouched for identity, in place where possible, copies for pixels over 16 bytes |
+| `zpc::pipeline::*`, feature `pipeline` (1,485 lines) | 0 | Removed. See below |
+| `zpc::cms::RenderingIntent`, `ColorPriority` | 0 | Removed. See below |
+| `zpc::cms::ColorManagement` | 1+0 | **Not yet.** Needs a public signature change in zenpipe, `IccTransformSource::new<C: ColorManagement>` |
 
-The 42 functions split into 17 moved or replaced by a method, 13 deleted, 8 `pub(crate)` and 4 kept as free functions. This adds one sealed trait, `zpc::ext::PixelSliceConvertExt`, and 17 public methods. One of the 17, `PixelSliceConvertExt::convert_to(self, Desc) -> Result<PixelBuffer, E>`, replaces no row above: it serves the hand-written row loops described below.
+## What replaced the removed types
 
-Methods on `zenpixels` types added from `zenpixels-convert` must be sealed trait methods, as `PixelBufferConvertExt` is today. Inherent methods would mean moving the kernels into `zenpixels`. `orient/` alone is 4,039 lines including tests, and it pulls in archmage and magetypes.
-
-Repeated caller code: 16 hand-written whole-image row loops in shipped code (heuristic: `RowConverter::new` or `ConvertPlan::new` with a row loop within 22 lines), against 7 uses of `.convert_to(`, which exists only on `PixelBuffer`. 10 of 12 `apply_orientation` sites guard for identity first. `adapt_for_encode_cow` and its variants take bare bytes, descriptor, width, height and stride instead of a `PixelSlice`.
-
----
+- **`pipeline`** chose *which* working format to use for a source, an operation category and an output, from static tables of 13 operation categories and 10 codec format lists, and from a cost it scored but never executed. Conversions never ran through it, and nothing outside this repo enabled it. `ConvertIntent::best_match` and `::negotiate` do the choosing, with each codec's live `supported_descriptors()` in place of the copied table.
+- **`RenderingIntent`** was never wired to the moxcms backend, which always used relative colorimetric. Matrix profiles have no rendering tables, and all four moxcms intents gave identical output on 4,913 colors per gamut. An image gamut policy will be a `ConvertOptions` choice if one ships; authored tables stay a `PluggableCms` matter.
+- **`ColorPriority`** duplicated `zp::ColorAuthority`, which is what decoders set per image. See `docs/color-signal-precedence.md`.
 
 # ABLATION REPORT — zenpixels-convert
 

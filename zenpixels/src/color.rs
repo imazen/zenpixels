@@ -265,6 +265,9 @@ impl<'a> ColorProfileSource<'a> {
 /// - **HEIC/HEIF**: `Cicp` when nclx colr box present, `Icc` otherwise
 /// - **JPEG XL**: `Cicp` when enum encoding (`want_icc=false`), `Icc` when embedded ICC
 ///
+/// Readers' measured behavior for conflicting signals is in
+/// `docs/color-signal-precedence.md`.
+///
 /// Both `icc_profile` and `cicp` may be populated regardless of this flag —
 /// the non-authoritative field is preserved for metadata roundtripping.
 ///
