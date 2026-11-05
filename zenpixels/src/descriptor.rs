@@ -854,6 +854,49 @@ impl PixelDescriptor {
 
     // -- Constructors ---------------------------------------------------------
 
+    /// [`new`](Self::new), or `None` for a combination with no [`PixelFormat`].
+    #[inline]
+    #[must_use]
+    pub const fn try_new(
+        channel_type: ChannelType,
+        layout: ChannelLayout,
+        alpha: Option<AlphaMode>,
+        transfer: TransferFunction,
+    ) -> Option<Self> {
+        match PixelFormat::from_parts(channel_type, layout, alpha) {
+            Some(format) => Some(Self {
+                format,
+                transfer,
+                alpha,
+                primaries: ColorPrimaries::Bt709,
+                signal_range: SignalRange::Full,
+            }),
+            None => None,
+        }
+    }
+
+    /// [`new_full`](Self::new_full), or `None` for a combination with no [`PixelFormat`].
+    #[inline]
+    #[must_use]
+    pub const fn try_new_full(
+        channel_type: ChannelType,
+        layout: ChannelLayout,
+        alpha: Option<AlphaMode>,
+        transfer: TransferFunction,
+        primaries: ColorPrimaries,
+    ) -> Option<Self> {
+        match PixelFormat::from_parts(channel_type, layout, alpha) {
+            Some(format) => Some(Self {
+                format,
+                transfer,
+                alpha,
+                primaries,
+                signal_range: SignalRange::Full,
+            }),
+            None => None,
+        }
+    }
+
     /// Create a descriptor with default primaries (BT.709) and full range.
     ///
     /// # See also

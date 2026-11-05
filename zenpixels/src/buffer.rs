@@ -1278,6 +1278,85 @@ impl<'a, P: Pixel> PixelSlice<'a, P> {
     }
 }
 
+impl<'a, P> PixelSlice<'a, P> {
+    /// [`row`](Self::row), or `None` when `y` is out of bounds.
+    #[inline]
+    #[must_use]
+    pub fn try_row(&self, y: u32) -> Option<&[u8]> {
+        (y < self.rows).then(|| self.row(y))
+    }
+
+    /// [`row_with_stride`](Self::row_with_stride), or `None` when `y` is out of bounds.
+    #[inline]
+    #[must_use]
+    pub fn try_row_with_stride(&self, y: u32) -> Option<&[u8]> {
+        (y < self.rows).then(|| self.row_with_stride(y))
+    }
+
+    /// [`sub_rows`](Self::sub_rows), or `None` when the rows are out of bounds.
+    #[must_use]
+    pub fn try_sub_rows(&self, y: u32, count: u32) -> Option<PixelSlice<'_, P>> {
+        y.checked_add(count)
+            .is_some_and(|end| end <= self.rows)
+            .then(|| self.sub_rows(y, count))
+    }
+
+    /// [`crop_view`](Self::crop_view), or `None` when the region is out of bounds.
+    #[must_use]
+    pub fn try_crop_view(&self, x: u32, y: u32, w: u32, h: u32) -> Option<PixelSlice<'_, P>> {
+        let fits = x.checked_add(w).is_some_and(|end| end <= self.width)
+            && y.checked_add(h).is_some_and(|end| end <= self.rows);
+        fits.then(|| self.crop_view(x, y, w, h))
+    }
+
+    /// [`with_descriptor`](Self::with_descriptor) for a descriptor that may not fit.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::IncompatibleDescriptor`] when it changes the physical layout
+    /// or is invalid.
+    pub fn try_with_descriptor(self, descriptor: PixelDescriptor) -> Result<Self, At<BufferError>> {
+        if !self.descriptor.layout_compatible(descriptor) || descriptor.validate().is_err() {
+            return Err(whereat::at!(BufferError::IncompatibleDescriptor));
+        }
+        Ok(self.with_descriptor(descriptor))
+    }
+
+    /// [`with_alpha_mode`](Self::with_alpha_mode) for a mode the layout may not allow.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::IncompatibleDescriptor`] when the layout can't hold it.
+    pub fn try_with_alpha_mode(self, am: Option<AlphaMode>) -> Result<Self, At<BufferError>> {
+        if self.descriptor.with_alpha(am).validate().is_err() {
+            return Err(whereat::at!(BufferError::IncompatibleDescriptor));
+        }
+        Ok(self.with_alpha_mode(am))
+    }
+
+    /// [`contiguous_bytes`](Self::contiguous_bytes), reporting a failed allocation.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::AllocationFailed`] when padded rows can't be copied.
+    pub fn try_contiguous_bytes(&self) -> Result<alloc::borrow::Cow<'a, [u8]>, At<BufferError>> {
+        if let Some(bytes) = self.as_contiguous_bytes() {
+            return Ok(alloc::borrow::Cow::Borrowed(bytes));
+        }
+        let row_bytes = self.width as usize * self.descriptor.bytes_per_pixel();
+        let total = row_bytes
+            .checked_mul(self.rows as usize)
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let mut buf = Vec::new();
+        buf.try_reserve_exact(total)
+            .map_err(|_| whereat::at!(BufferError::AllocationFailed))?;
+        for y in 0..self.rows {
+            buf.extend_from_slice(self.row(y));
+        }
+        Ok(alloc::borrow::Cow::Owned(buf))
+    }
+}
+
 impl<P> fmt::Debug for PixelSlice<'_, P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -1700,6 +1779,55 @@ impl<'a, P: Pixel> PixelSliceMut<'a, P> {
             color: None,
             _pixel: PhantomData,
         })
+    }
+}
+
+impl<P> PixelSliceMut<'_, P> {
+    /// [`row`](Self::row), or `None` when `y` is out of bounds.
+    #[inline]
+    #[must_use]
+    pub fn try_row(&self, y: u32) -> Option<&[u8]> {
+        (y < self.rows).then(|| self.row(y))
+    }
+
+    /// [`row_mut`](Self::row_mut), or `None` when `y` is out of bounds.
+    #[inline]
+    #[must_use]
+    pub fn try_row_mut(&mut self, y: u32) -> Option<&mut [u8]> {
+        (y < self.rows).then(|| self.row_mut(y))
+    }
+
+    /// [`sub_rows_mut`](Self::sub_rows_mut), or `None` when the rows are out of bounds.
+    #[must_use]
+    pub fn try_sub_rows_mut(&mut self, y: u32, count: u32) -> Option<PixelSliceMut<'_, P>> {
+        y.checked_add(count)
+            .is_some_and(|end| end <= self.rows)
+            .then(|| self.sub_rows_mut(y, count))
+    }
+
+    /// [`with_descriptor`](Self::with_descriptor) for a descriptor that may not fit.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::IncompatibleDescriptor`] when it changes the physical layout
+    /// or is invalid.
+    pub fn try_with_descriptor(self, descriptor: PixelDescriptor) -> Result<Self, At<BufferError>> {
+        if !self.descriptor.layout_compatible(descriptor) || descriptor.validate().is_err() {
+            return Err(whereat::at!(BufferError::IncompatibleDescriptor));
+        }
+        Ok(self.with_descriptor(descriptor))
+    }
+
+    /// [`with_alpha_mode`](Self::with_alpha_mode) for a mode the layout may not allow.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::IncompatibleDescriptor`] when the layout can't hold it.
+    pub fn try_with_alpha_mode(self, am: Option<AlphaMode>) -> Result<Self, At<BufferError>> {
+        if self.descriptor.with_alpha(am).validate().is_err() {
+            return Err(whereat::at!(BufferError::IncompatibleDescriptor));
+        }
+        Ok(self.with_alpha_mode(am))
     }
 }
 
@@ -3547,6 +3675,69 @@ impl<P, S: ByteStorageMut> PixelBuffer<P, S> {
 }
 
 impl<P, S: ByteStorage> PixelBuffer<P, S> {
+    /// [`rows`](Self::rows), or `None` when the rows are out of bounds.
+    #[must_use]
+    pub fn try_rows(&self, y: u32, count: u32) -> Option<PixelSlice<'_, P>> {
+        y.checked_add(count)
+            .is_some_and(|end| end <= self.height)
+            .then(|| self.rows(y, count))
+    }
+
+    /// [`crop_view`](Self::crop_view), or `None` when the region is out of bounds.
+    #[must_use]
+    pub fn try_crop_view(&self, x: u32, y: u32, w: u32, h: u32) -> Option<PixelSlice<'_, P>> {
+        let fits = x.checked_add(w).is_some_and(|end| end <= self.width)
+            && y.checked_add(h).is_some_and(|end| end <= self.height);
+        fits.then(|| self.crop_view(x, y, w, h))
+    }
+
+    /// [`with_descriptor`](Self::with_descriptor) for a descriptor that may not fit.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::IncompatibleDescriptor`] when it changes the physical layout
+    /// or is invalid.
+    pub fn try_with_descriptor(self, descriptor: PixelDescriptor) -> Result<Self, At<BufferError>> {
+        if !self.descriptor.layout_compatible(descriptor) || descriptor.validate().is_err() {
+            return Err(whereat::at!(BufferError::IncompatibleDescriptor));
+        }
+        Ok(self.with_descriptor(descriptor))
+    }
+
+    /// [`with_alpha_mode`](Self::with_alpha_mode) for a mode the layout may not allow.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::IncompatibleDescriptor`] when the layout can't hold it.
+    pub fn try_with_alpha_mode(self, am: Option<AlphaMode>) -> Result<Self, At<BufferError>> {
+        if self.descriptor.with_alpha(am).validate().is_err() {
+            return Err(whereat::at!(BufferError::IncompatibleDescriptor));
+        }
+        Ok(self.with_alpha_mode(am))
+    }
+
+    /// [`copy_to_contiguous_bytes`](Self::copy_to_contiguous_bytes), reporting a
+    /// failed allocation.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::AllocationFailed`], or [`BufferError::InvalidDimensions`] when
+    /// the size overflows.
+    pub fn try_copy_to_contiguous_bytes(&self) -> Result<Vec<u8>, At<BufferError>> {
+        let row_bytes = self.width as usize * self.descriptor.bytes_per_pixel();
+        let total = row_bytes
+            .checked_mul(self.height as usize)
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let mut out = Vec::new();
+        out.try_reserve_exact(total)
+            .map_err(|_| whereat::at!(BufferError::AllocationFailed))?;
+        let slice = self.as_slice();
+        for y in 0..self.height {
+            out.extend_from_slice(slice.row(y));
+        }
+        Ok(out)
+    }
+
     /// Borrow a range of rows as an immutable [`PixelSlice`].
     ///
     /// # Panics
@@ -3591,6 +3782,14 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
 }
 
 impl<P, S: ByteStorageMut> PixelBuffer<P, S> {
+    /// [`rows_mut`](Self::rows_mut), or `None` when the rows are out of bounds.
+    #[must_use]
+    pub fn try_rows_mut(&mut self, y: u32, count: u32) -> Option<PixelSliceMut<'_, P>> {
+        y.checked_add(count)
+            .is_some_and(|end| end <= self.height)
+            .then(|| self.rows_mut(y, count))
+    }
+
     /// Borrow a range of rows as a mutable [`PixelSliceMut`].
     ///
     /// # Panics
@@ -3684,23 +3883,27 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
 
     /// Copy a sub-region into a new, tightly-packed [`PixelBuffer`].
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the crop region is out of bounds, or if the destination
-    /// allocation size (`aligned_stride(w) * h + min_alignment - 1`)
-    /// overflows `usize`. On 64-bit targets the overflow case is
-    /// unreachable for `u32` dimensions; on 32-bit targets it can be
-    /// reached with adversarial inputs and panics eagerly here rather
-    /// than producing a deferred slice-bounds panic.
-    pub fn crop_copy(&self, x: u32, y: u32, w: u32, h: u32) -> PixelBuffer<P> {
-        let src = self.crop_view(x, y, w, h);
+    /// [`BufferError::InvalidDimensions`] when the region is out of bounds or its
+    /// size overflows `usize`, and [`BufferError::AllocationFailed`].
+    pub fn crop_copy(
+        &self,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    ) -> Result<PixelBuffer<P>, At<BufferError>> {
+        let src = self
+            .try_crop_view(x, y, w, h)
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let stride = self.descriptor.aligned_stride(w);
         let align = self.descriptor.min_alignment();
         let total = stride
             .checked_mul(h as usize)
-            .expect("crop_copy: stride * height overflows usize");
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let (data, offset) =
-            alloc_storage(&self.descriptor, total, align).expect("crop_copy: allocation failed");
+            alloc_storage(&self.descriptor, total, align).map_err(|e| whereat::at!(e))?;
         let mut dst = PixelBuffer {
             data,
             offset,
@@ -3721,7 +3924,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             dst.data.as_bytes_mut()[dst_start..dst_start + row_bytes]
                 .copy_from_slice(&src_row[..row_bytes]);
         }
-        dst
+        Ok(dst)
     }
 }
 
@@ -4246,7 +4449,7 @@ mod tests {
                 }
             }
         }
-        let cropped = buf.crop_copy(1, 1, 2, 2);
+        let cropped = buf.crop_copy(1, 1, 2, 2).unwrap();
         assert_eq!(cropped.width(), 2);
         assert_eq!(cropped.height(), 2);
         // Row 0: original row 1, pixels 1-2 -> bytes [103,104,105, 106,107,108]
@@ -4786,7 +4989,7 @@ mod tests {
         // we exercise that the happy path still returns a tightly-packed
         // buffer of the requested size.
         let buf = PixelBuffer::new(8, 4, PixelDescriptor::RGB8_SRGB);
-        let cropped = buf.crop_copy(1, 1, 3, 2);
+        let cropped = buf.crop_copy(1, 1, 3, 2).unwrap();
         assert_eq!(cropped.width(), 3);
         assert_eq!(cropped.height(), 2);
         assert_eq!(cropped.stride(), 3 * 3); // tightly packed RGB8

@@ -319,10 +319,9 @@ fn softcompress_knee_in_zero_one_clamps_chroma_inside_gamut() {
     // For a saturated red well outside BT.709, SoftCompress at the
     // default knee should pull it into a near-in-gamut value (within
     // a small float epsilon of the unit cube).
-    use zenpixels_convert::oklab;
-    let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).expect("BT.709 inverse matrix");
-    let m1 = oklab::rgb_to_lms_matrix(ColorPrimaries::Bt709).expect("BT.709 forward matrix");
-    let compress = SoftCompress::from_matrices(&m1, &m1_inv, SoftCompress::DEFAULT_KNEE);
+    use zenpixels_convert::oklab::OklabSpace;
+    let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).expect("BT.709 matrices");
+    let compress = SoftCompress::new(&space, SoftCompress::DEFAULT_KNEE);
     let mut pixels = vec![[1.2_f32, 0.05, 0.05]];
     compress.apply_strip(&mut pixels);
     for &c in &pixels[0] {
@@ -337,10 +336,10 @@ fn softcompress_accessor_round_trips_knee_value() {
     // pipeline introspector can verify what knee was applied. Pin the
     // identity through the accessor for a couple of representative
     // knee values + the empirical default.
-    use zenpixels_convert::oklab;
-    let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).expect("BT.709 inverse matrix");
+    use zenpixels_convert::oklab::OklabSpace;
+    let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).expect("BT.709 matrices");
     for &knee in &[0.0_f32, 0.5, 0.96, 1.0] {
-        let sc = SoftCompress::new(&m1_inv, knee);
+        let sc = SoftCompress::new(&space, knee);
         assert_eq!(
             sc.knee(),
             knee,
@@ -355,9 +354,9 @@ fn softcompress_lut_accessor_returns_same_lut_across_calls() {
     // The `lut()` accessor borrows the internal LUT — same reference
     // across calls is a contract for callers that want to forward
     // the LUT to a planar pipeline (zenfilters does this).
-    use zenpixels_convert::oklab;
-    let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).expect("BT.709 inverse matrix");
-    let sc = SoftCompress::new(&m1_inv, SoftCompress::DEFAULT_KNEE);
+    use zenpixels_convert::oklab::OklabSpace;
+    let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).expect("BT.709 matrices");
+    let sc = SoftCompress::new(&space, SoftCompress::DEFAULT_KNEE);
     let a = sc.lut();
     let b = sc.lut();
     // Compare via raw pointer equality — same backing storage.
@@ -370,9 +369,9 @@ fn gamut_boundary_lut_handles_extremes_without_panic() {
     // those invariants — at L=0 and L=1 the achromatic max should be
     // ~0 (no chroma at black or white); at L=0.5 hue=0 it should be
     // positive (red boundary in sRGB).
-    use zenpixels_convert::oklab;
-    let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).expect("BT.709 inverse matrix");
-    let lut = GamutBoundaryLut::new(&m1_inv);
+    use zenpixels_convert::oklab::OklabSpace;
+    let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).expect("BT.709 matrices");
+    let lut = GamutBoundaryLut::new(space.lms_to_rgb());
     let at_black = lut.max_chroma(0.0, 0.0);
     let at_white = lut.max_chroma(1.0, 0.0);
     let at_mid = lut.max_chroma(0.5, 0.0);
@@ -391,16 +390,17 @@ fn gamut_boundary_lut_handles_extremes_without_panic() {
 
 #[test]
 fn gamut_boundary_lut_compresses_planes_in_place_at_default_knee() {
-    use zenpixels_convert::oklab;
-    let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).expect("BT.709 inverse matrix");
-    let lut = GamutBoundaryLut::new(&m1_inv);
+    use zenpixels_convert::oklab::OklabSpace;
+    let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).expect("BT.709 matrices");
+    let lut = GamutBoundaryLut::new(space.lms_to_rgb());
     // Build OKLab planes: L=0.6 (mid lightness), a/b on a saturated arc.
     let l = vec![0.6_f32, 0.6, 0.6];
     let mut a = vec![0.3_f32, 0.2, 0.1];
     let mut b = vec![0.0_f32, 0.1, 0.0];
     let a0 = a.clone();
     let b0 = b.clone();
-    lut.compress_planes(&l, &mut a, &mut b, SoftCompress::DEFAULT_KNEE);
+    lut.compress_planes(&l, &mut a, &mut b, SoftCompress::DEFAULT_KNEE)
+        .unwrap();
     // The achromatic+low-chroma pixel (a=0.1, b=0.0) is small enough
     // to lie inside the knee — values stay identical or very close.
     assert!((a[2] - a0[2]).abs() < 1e-3 && (b[2] - b0[2]).abs() < 1e-3,);
@@ -512,7 +512,7 @@ fn hdr_pipeline_e2e_neutral_gray_lands_in_sdr_range() {
     let src_pixel: [u16; 3] = [40_000, 40_000, 40_000];
     let src_bytes: [u8; 6] = bytemuck::cast(src_pixel);
     let mut out = [0u8; 3];
-    zenpixels_convert::convert_row(&plan, &src_bytes, &mut out, 1);
+    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(&src_bytes, &mut out, 1);
     // Neutral gray must stay neutral within ±2 codes (rounding).
     assert!(
         (out[0] as i32 - out[1] as i32).abs() <= 2 && (out[1] as i32 - out[2] as i32).abs() <= 2,
@@ -541,9 +541,12 @@ fn new_with_hdr_peak_delegates_to_config_with_defaults() {
     let input: Vec<u16> = (0..=u16::MAX).flat_map(|v| [v; 3]).collect();
     let mut peak = vec![0u8; input.len()];
     let mut config = vec![0u8; input.len()];
-    zenpixels_convert::convert_row(&plan_peak, bytemuck::cast_slice(&input), &mut peak, 65536);
-    zenpixels_convert::convert_row(
-        &plan_config,
+    zenpixels_convert::RowConverter::from_plan(plan_peak.clone()).convert_row(
+        bytemuck::cast_slice(&input),
+        &mut peak,
+        65536,
+    );
+    zenpixels_convert::RowConverter::from_plan(plan_config.clone()).convert_row(
         bytemuck::cast_slice(&input),
         &mut config,
         65536,

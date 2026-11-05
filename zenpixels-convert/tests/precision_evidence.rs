@@ -14,10 +14,10 @@ use zenpixels::{
     SignalRange, TransferFunction,
     sample::{CodePlane, ExactDepth, SampleEncoding},
 };
+use zenpixels_convert::PixelSliceConvertExt;
 use zenpixels_convert::{
     PixelBufferConvertExt,
     codes::{CodeMap, CodeRole, to_canonical},
-    orient::{apply_orientation, apply_orientation_in_place},
 };
 
 fn plane8(words: &[u8], width: usize, height: usize, stride: usize) -> AnyPlane<'_> {
@@ -353,14 +353,14 @@ fn views_crops_clones_and_copies_keep_evidence() {
     assert_eq!(decoded.rows(1, 2).exact_depth(), e);
     assert_eq!(decoded.crop_view(2, 1, 3, 3).exact_depth(), e);
     assert_eq!(decoded.as_slice().clone().exact_depth(), e);
-    let crop = decoded.crop_copy(1, 1, 4, 2);
+    let crop = decoded.crop_copy(1, 1, 4, 2).unwrap();
     assert_eq!(crop.exact_depth(), e);
     assert_eq!(changed_by_roundtrip(&crop.as_slice(), 10), 0);
     // A borrowed cow copied into ownership keeps the same values and evidence.
     let slice = decoded.as_slice();
     let mut cow = PixelCow::from(slice);
     assert_eq!(cow.to_mut().exact_depth(), e);
-    let contiguous = decoded.crop_copy(0, 0, W, H).into_contiguous();
+    let contiguous = decoded.crop_copy(0, 0, W, H).unwrap().into_contiguous();
     assert_eq!(contiguous.exact_depth(), e);
     // An identity conversion copies the same samples under the same descriptor.
     assert_eq!(
@@ -861,7 +861,7 @@ impl Proven {
     /// Every preserving operation needs its own wrapper method.
     fn crop(&self, x: u32, y: u32, w: u32, h: u32) -> Self {
         let evidence = self.buffer.exact_depth().unwrap();
-        Self::new(self.buffer.crop_copy(x, y, w, h), evidence)
+        Self::new(self.buffer.crop_copy(x, y, w, h).unwrap(), evidence)
     }
     fn into_inner(self) -> PixelBuffer {
         let mut b = self.buffer;
@@ -957,12 +957,15 @@ fn orientation_moves_pixels_and_keeps_evidence() {
         Orientation::FlipH,
         Orientation::Transverse,
     ] {
-        let rotated = apply_orientation(decoded.as_slice(), orientation);
+        let rotated = decoded.as_slice().oriented(orientation).unwrap();
         assert_eq!(rotated.exact_depth(), e, "{orientation:?}");
         assert_eq!(changed_by_roundtrip(&rotated.as_slice(), 12), 0);
     }
-    let mut in_place = decoded.crop_copy(0, 0, W, H);
-    apply_orientation_in_place(&mut in_place, Orientation::Rotate270).unwrap();
+    let in_place = decoded
+        .crop_copy(0, 0, W, H)
+        .unwrap()
+        .into_oriented(Orientation::Rotate270)
+        .unwrap();
     assert_eq!(in_place.exact_depth(), e);
     assert_eq!(changed_by_roundtrip(&in_place.as_slice(), 12), 0);
 }

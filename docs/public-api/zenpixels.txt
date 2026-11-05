@@ -10,9 +10,9 @@
 #
 #   pub modules                                12
 #   pub types (struct/enum/trait/alias)       118
-#   pub consts/statics                        309
-#   free functions                              6
-#   inherent methods                          314
+#   pub consts/statics                        314
+#   free functions                              2
+#   inherent methods                          355
 #   struct fields                             119
 #   enum variants                             306
 #   re-exports                                  4
@@ -21,20 +21,20 @@
 #   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          457
-#   buffer                          272
-#   cicp                             36
+#   (root)                          462
+#   buffer                          308
+#   cicp                             38
 #   color                            69
-#   descriptor                      165
+#   descriptor                      167
 #   hdr                              12
-#   icc                              13
+#   icc                              10
 #   orientation                      11
 #   pixel_types                       9
 #   plane                            87
 #   policy                           24
 #   sample                           33
 
-## items (1053 lines)
+## items (1093 lines)
 
 pub mod zenpixels
 pub use At
@@ -100,7 +100,7 @@ pub fn buffer::PixelBuffer<P, S>::with_cicp(self, cicp::Cicp) -> Self
 pub fn buffer::PixelBuffer<P, S>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
 pub fn buffer::PixelBuffer<P, S>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
 pub fn buffer::PixelBuffer<P, S>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
-pub fn buffer::PixelBuffer<P, S>::crop_copy(&self, u32, u32, u32, u32) -> buffer::PixelBuffer<P>
+pub fn buffer::PixelBuffer<P, S>::crop_copy(&self, u32, u32, u32, u32) -> core::result::Result<buffer::PixelBuffer<P>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P, S>::crop_view(&self, u32, u32, u32, u32) -> buffer::PixelSlice<'_, P>
 pub fn buffer::PixelBuffer<P, S>::erase(self) -> buffer::PixelBuffer<(), S>
 pub fn buffer::PixelBuffer<P, S>::has_alpha(&self) -> bool
@@ -114,8 +114,14 @@ pub fn buffer::PixelBuffer<P, S>::with_primaries(self, descriptor::ColorPrimarie
 pub fn buffer::PixelBuffer<P, S>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelBuffer<P, S>::with_transfer(self, descriptor::TransferFunction) -> Self
 pub fn buffer::PixelBuffer<P, S>::rows(&self, u32, u32) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelBuffer<P, S>::try_copy_to_contiguous_bytes(&self) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<P, S>::try_crop_view(&self, u32, u32, u32, u32) -> core::option::Option<buffer::PixelSlice<'_, P>>
+pub fn buffer::PixelBuffer<P, S>::try_rows(&self, u32, u32) -> core::option::Option<buffer::PixelSlice<'_, P>>
+pub fn buffer::PixelBuffer<P, S>::try_with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<P, S>::try_with_descriptor(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P, S>::as_slice_mut(&mut self) -> buffer::PixelSliceMut<'_, P>
 pub fn buffer::PixelBuffer<P, S>::rows_mut(&mut self, u32, u32) -> buffer::PixelSliceMut<'_, P>
+pub fn buffer::PixelBuffer<P, S>::try_rows_mut(&mut self, u32, u32) -> core::option::Option<buffer::PixelSliceMut<'_, P>>
 pub fn buffer::PixelBuffer<P>::new_typed(u32, u32) -> Self
 pub fn buffer::PixelBuffer<P>::try_new_typed(u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P>::into_contiguous(self) -> Self
@@ -159,6 +165,13 @@ pub fn buffer::PixelSlice<'a, P>::with_icc(self, impl core::convert::Into<alloc:
 pub fn buffer::PixelSlice<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
+pub fn buffer::PixelSlice<'a, P>::try_contiguous_bytes(&self) -> core::result::Result<alloc::borrow::Cow<'a, [u8]>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSlice<'a, P>::try_crop_view(&self, u32, u32, u32, u32) -> core::option::Option<buffer::PixelSlice<'_, P>>
+pub fn buffer::PixelSlice<'a, P>::try_row(&self, u32) -> core::option::Option<&[u8]>
+pub fn buffer::PixelSlice<'a, P>::try_row_with_stride(&self, u32) -> core::option::Option<&[u8]>
+pub fn buffer::PixelSlice<'a, P>::try_sub_rows(&self, u32, u32) -> core::option::Option<buffer::PixelSlice<'_, P>>
+pub fn buffer::PixelSlice<'a, P>::try_with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSlice<'a, P>::try_with_descriptor(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSlice<'a>::new(&'a [u8], u32, u32, usize, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSliceMut<'a, P>::new_typed(&'a mut [u8], u32, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSliceMut<'a, P>::as_pixel_slice(&self) -> buffer::PixelSlice<'_, P>
@@ -187,6 +200,11 @@ pub fn buffer::PixelSliceMut<'a, P>::with_transfer(self, descriptor::TransferFun
 pub fn buffer::PixelSliceMut<'a, buffer::Bgrx>::swap_to_rgbx(self) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
 pub fn buffer::PixelSliceMut<'a, buffer::Rgbx>::swap_to_bgrx(self) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
 pub fn buffer::PixelSliceMut<'a>::new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'_, P>::try_row(&self, u32) -> core::option::Option<&[u8]>
+pub fn buffer::PixelSliceMut<'_, P>::try_row_mut(&mut self, u32) -> core::option::Option<&mut [u8]>
+pub fn buffer::PixelSliceMut<'_, P>::try_sub_rows_mut(&mut self, u32, u32) -> core::option::Option<buffer::PixelSliceMut<'_, P>>
+pub fn buffer::PixelSliceMut<'_, P>::try_with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'_, P>::try_with_descriptor(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub buffer::Rgbx::b: u8
 pub buffer::Rgbx::g: u8
 pub buffer::Rgbx::r: u8
@@ -217,6 +235,7 @@ pub const fn cicp::Cicp::resolve_matrix(self, core::option::Option<u8>) -> core:
 pub fn cicp::Cicp::transfer_characteristics_name(u8) -> &'static str
 pub fn cicp::Cicp::transfer_function_enum(&self) -> descriptor::TransferFunction
 pub fn cicp::Cicp::try_to_descriptor(&self, descriptor::PixelFormat) -> core::result::Result<descriptor::PixelDescriptor, cicp::CicpDescriptorError>
+pub fn cicp::Cicp::from_icc(&[u8]) -> core::option::Option<Self>
 #[non_exhaustive] pub struct cicp::UnspecifiedMatrixError
 pub fn cicp::UnspecifiedMatrixError::color_primaries(&self) -> u8
 pub fn cicp::UnspecifiedMatrixError::matrix_coefficients(&self) -> u8
@@ -315,6 +334,7 @@ pub descriptor::ColorModel::Oklab
 pub descriptor::ColorModel::Rgb
 pub descriptor::ColorModel::YCbCr
 pub const fn descriptor::ColorModel::color_channels(self) -> u8 [also: (root)]
+pub fn descriptor::ColorModel::from_icc(&[u8]) -> core::option::Option<Self>
 pub descriptor::ColorPrimaries::AdobeRgb
 pub descriptor::ColorPrimaries::Bt2020
 pub descriptor::ColorPrimaries::Bt709
@@ -445,6 +465,8 @@ pub const fn descriptor::PixelDescriptor::new_full(descriptor::ChannelType, desc
 pub const fn descriptor::PixelDescriptor::pixel_format(&self) -> descriptor::PixelFormat [also: (root)]
 pub const fn descriptor::PixelDescriptor::simd_aligned_stride(self, u32, usize) -> usize [also: (root)]
 pub const fn descriptor::PixelDescriptor::transfer(&self) -> descriptor::TransferFunction [also: (root)]
+pub const fn descriptor::PixelDescriptor::try_new(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction) -> core::option::Option<Self> [also: (root)]
+pub const fn descriptor::PixelDescriptor::try_new_full(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction, descriptor::ColorPrimaries) -> core::option::Option<Self> [also: (root)]
 pub fn descriptor::PixelDescriptor::validate(self) -> core::result::Result<(), buffer::BufferError>
 pub const fn descriptor::PixelDescriptor::with_alpha(self, core::option::Option<descriptor::AlphaMode>) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self [also: (root)]
@@ -460,6 +482,7 @@ pub struct hdr::DiffuseWhite(_)
 pub const hdr::DiffuseWhite::BT2408: Self
 pub const fn hdr::DiffuseWhite::new(f32) -> Self
 pub const fn hdr::DiffuseWhite::nits(self) -> f32
+pub const fn hdr::DiffuseWhite::try_new(f32) -> core::option::Option<Self>
 #[non_exhaustive] pub struct hdr::MasteringDisplay
 pub hdr::MasteringDisplay::max_luminance: f32
 pub hdr::MasteringDisplay::min_luminance: f32
@@ -476,13 +499,10 @@ pub icc::IdentificationUse::MetadataOnly
 pub icc::IccIdentification::primaries: descriptor::ColorPrimaries
 pub icc::IccIdentification::transfer: descriptor::TransferFunction
 pub icc::IccIdentification::valid_use: icc::IdentificationUse
+pub fn icc::IccIdentification::from_icc(&[u8]) -> core::option::Option<Self>
 pub fn icc::IccIdentification::is_srgb(&self) -> bool
 pub fn icc::IccIdentification::to_cicp(&self) -> core::option::Option<cicp::Cicp>
-pub fn icc::extract_cicp(&[u8]) -> core::option::Option<cicp::Cicp>
-pub fn icc::identify_common(&[u8]) -> core::option::Option<icc::IccIdentification>
-pub fn icc::is_common_srgb(&[u8]) -> bool
 pub const fn icc::normalized_hash(&[u8]) -> u64
-pub fn icc::profile_color_space(&[u8]) -> core::option::Option<descriptor::ColorModel>
 pub mod orientation
 pub orientation::Orientation::FlipH = 2
 pub orientation::Orientation::FlipV = 4
@@ -742,6 +762,7 @@ pub ColorModel::Gray
 pub ColorModel::Oklab
 pub ColorModel::Rgb
 pub ColorModel::YCbCr
+pub fn descriptor::ColorModel::from_icc(&[u8]) -> core::option::Option<Self>
 #[non_exhaustive] pub enum ColorPrimaries [also: descriptor]
 pub ColorPrimaries::AdobeRgb
 pub ColorPrimaries::Bt2020
@@ -870,6 +891,7 @@ pub fn cicp::Cicp::matrix_coefficients_name(u8) -> &'static str
 pub fn cicp::Cicp::transfer_characteristics_name(u8) -> &'static str
 pub fn cicp::Cicp::transfer_function_enum(&self) -> descriptor::TransferFunction
 pub fn cicp::Cicp::try_to_descriptor(&self, descriptor::PixelFormat) -> core::result::Result<descriptor::PixelDescriptor, cicp::CicpDescriptorError>
+pub fn cicp::Cicp::from_icc(&[u8]) -> core::option::Option<Self>
 pub struct Color [also: color]
 pub fn color::Color::as_bytes(&self) -> &[u8]
 pub fn color::Color::try_new(descriptor::PixelDescriptor, &[u8]) -> core::result::Result<Self, buffer::BufferError>
@@ -943,7 +965,7 @@ pub fn buffer::PixelBuffer<P, S>::with_cicp(self, cicp::Cicp) -> Self
 pub fn buffer::PixelBuffer<P, S>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
 pub fn buffer::PixelBuffer<P, S>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
 pub fn buffer::PixelBuffer<P, S>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
-pub fn buffer::PixelBuffer<P, S>::crop_copy(&self, u32, u32, u32, u32) -> buffer::PixelBuffer<P>
+pub fn buffer::PixelBuffer<P, S>::crop_copy(&self, u32, u32, u32, u32) -> core::result::Result<buffer::PixelBuffer<P>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P, S>::crop_view(&self, u32, u32, u32, u32) -> buffer::PixelSlice<'_, P>
 pub fn buffer::PixelBuffer<P, S>::erase(self) -> buffer::PixelBuffer<(), S>
 pub fn buffer::PixelBuffer<P, S>::has_alpha(&self) -> bool
@@ -957,8 +979,14 @@ pub fn buffer::PixelBuffer<P, S>::with_primaries(self, descriptor::ColorPrimarie
 pub fn buffer::PixelBuffer<P, S>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelBuffer<P, S>::with_transfer(self, descriptor::TransferFunction) -> Self
 pub fn buffer::PixelBuffer<P, S>::rows(&self, u32, u32) -> buffer::PixelSlice<'_, P>
+pub fn buffer::PixelBuffer<P, S>::try_copy_to_contiguous_bytes(&self) -> core::result::Result<alloc::vec::Vec<u8>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<P, S>::try_crop_view(&self, u32, u32, u32, u32) -> core::option::Option<buffer::PixelSlice<'_, P>>
+pub fn buffer::PixelBuffer<P, S>::try_rows(&self, u32, u32) -> core::option::Option<buffer::PixelSlice<'_, P>>
+pub fn buffer::PixelBuffer<P, S>::try_with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<P, S>::try_with_descriptor(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P, S>::as_slice_mut(&mut self) -> buffer::PixelSliceMut<'_, P>
 pub fn buffer::PixelBuffer<P, S>::rows_mut(&mut self, u32, u32) -> buffer::PixelSliceMut<'_, P>
+pub fn buffer::PixelBuffer<P, S>::try_rows_mut(&mut self, u32, u32) -> core::option::Option<buffer::PixelSliceMut<'_, P>>
 pub fn buffer::PixelBuffer<P>::new_typed(u32, u32) -> Self
 pub fn buffer::PixelBuffer<P>::try_new_typed(u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P>::into_contiguous(self) -> Self
@@ -1048,6 +1076,13 @@ pub fn buffer::PixelSlice<'a, P>::with_icc(self, impl core::convert::Into<alloc:
 pub fn buffer::PixelSlice<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
+pub fn buffer::PixelSlice<'a, P>::try_contiguous_bytes(&self) -> core::result::Result<alloc::borrow::Cow<'a, [u8]>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSlice<'a, P>::try_crop_view(&self, u32, u32, u32, u32) -> core::option::Option<buffer::PixelSlice<'_, P>>
+pub fn buffer::PixelSlice<'a, P>::try_row(&self, u32) -> core::option::Option<&[u8]>
+pub fn buffer::PixelSlice<'a, P>::try_row_with_stride(&self, u32) -> core::option::Option<&[u8]>
+pub fn buffer::PixelSlice<'a, P>::try_sub_rows(&self, u32, u32) -> core::option::Option<buffer::PixelSlice<'_, P>>
+pub fn buffer::PixelSlice<'a, P>::try_with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSlice<'a, P>::try_with_descriptor(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSlice<'a>::new(&'a [u8], u32, u32, usize, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 #[non_exhaustive] pub struct PixelSliceMut<'a, P> [also: buffer]
 pub fn buffer::PixelSliceMut<'a, P>::new_typed(&'a mut [u8], u32, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
@@ -1077,6 +1112,11 @@ pub fn buffer::PixelSliceMut<'a, P>::with_transfer(self, descriptor::TransferFun
 pub fn buffer::PixelSliceMut<'a, buffer::Bgrx>::swap_to_rgbx(self) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
 pub fn buffer::PixelSliceMut<'a, buffer::Rgbx>::swap_to_bgrx(self) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
 pub fn buffer::PixelSliceMut<'a>::new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'_, P>::try_row(&self, u32) -> core::option::Option<&[u8]>
+pub fn buffer::PixelSliceMut<'_, P>::try_row_mut(&mut self, u32) -> core::option::Option<&mut [u8]>
+pub fn buffer::PixelSliceMut<'_, P>::try_sub_rows_mut(&mut self, u32, u32) -> core::option::Option<buffer::PixelSliceMut<'_, P>>
+pub fn buffer::PixelSliceMut<'_, P>::try_with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'_, P>::try_with_descriptor(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 #[repr(C)] pub struct Rgbx [also: buffer]
 pub Rgbx::b: u8
 pub Rgbx::g: u8

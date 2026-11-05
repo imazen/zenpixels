@@ -499,14 +499,12 @@ fn soft_compress_oklch_kernel(
         .iter()
         .position(|c| c.primaries == primaries && c.knee_bits == knee.to_bits())
         .unwrap_or_else(|| {
-            let m1 = crate::oklab::rgb_to_lms_matrix(primaries)
-                .expect("target primaries have a defined LMS matrix");
-            let m1_inv = crate::oklab::lms_to_rgb_matrix(primaries)
-                .expect("target primaries have a defined inverse LMS matrix");
+            let space = crate::oklab::OklabSpace::for_primaries(primaries)
+                .expect("target primaries have defined LMS matrices");
             scratch.soft_compress.push(CachedSoftCompress {
                 primaries,
                 knee_bits: knee.to_bits(),
-                compressor: crate::hdr::SoftCompress::from_matrices(&m1, &m1_inv, knee),
+                compressor: crate::hdr::SoftCompress::new(&space, knee),
             });
             scratch.soft_compress.len() - 1
         });

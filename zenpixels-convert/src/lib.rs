@@ -11,14 +11,14 @@
 //!
 //! # Core concepts
 //!
-//! - **Format negotiation**: [`best_match`] picks the cheapest conversion
+//! - **Format negotiation**: [`ConvertIntent::best_match`] picks the cheapest conversion
 //!   target from a codec's supported formats for a given source descriptor.
 //!
 //! - **Row conversion**: [`RowConverter`] pre-computes a conversion plan and
 //!   `prepare` moves scratch/table setup out of the row loop; `try_convert_row`
 //!   executes within that capacity, using SIMD where available.
 //!
-//! - **Codec helpers**: [`adapt::adapt_for_encode_cow`] negotiates format and converts
+//! - **Codec helpers**: [`PixelSliceConvertExt::adapt_for_encode`] negotiates format and converts
 //!   pixel data in one call, returning [`PixelCow::Borrowed`] when the input
 //!   already matches a supported format.
 //!
@@ -51,7 +51,7 @@
 //!
 //! 4. **Pixels and metadata travel together.** [`ColorContext`] rides on
 //!    [`PixelBuffer`] via `Arc` so ICC/CICP metadata follows pixel data
-//!    through the pipeline. [`finalize_for_output_with`] couples converted pixels
+//!    through the pipeline. [`EncodeReady::finalize`] couples converted pixels
 //!    with matching encoder metadata atomically.
 //!
 //! 5. **Provenance informs negotiation, not exactness.** Origin precision is
@@ -136,38 +136,31 @@
 //! Negotiation uses the two-axis cost model (effort vs. loss) weighted by
 //! [`ConvertIntent`].
 //!
-//! Three entry points, from simplest to most flexible:
+//! Two entry points:
 //!
-//! - **[`best_match`]**: Pass a source descriptor, a list of supported
-//!   descriptors, and an intent. Good for simple encode paths.
+//! - **[`ConvertIntent::best_match`]**: Pass a source descriptor and a list of
+//!   supported descriptors. Good for simple encode paths.
 //!
-//! - **[`best_match_with`]**: Like `best_match`, but each candidate carries
-//!   a consumer cost ([`FormatOption`]). Use this when the encoder has fast
-//!   internal conversion paths (e.g., a JPEG encoder with a fused f32→u8+DCT
-//!   kernel can advertise `RGBF32_LINEAR` with low consumer cost).
-//!
-//! - **[`negotiate()`](fn@crate::negotiate)**: Full control. Explicit [`Provenance`] (so the cost
-//!   model knows the data's origin) plus consumer costs. Use this in
-//!   processing pipelines where data has been widened from a lower-precision
-//!   source (e.g., JPEG u8 decoded to f32: provenance says "u8 origin", so
-//!   converting back to u8 reports zero loss, which understates the rounding
-//!   once a resize or filter has changed the samples).
+//! - **[`ConvertIntent::negotiate`]**: Adds explicit [`Provenance`] (so the cost
+//!   model knows the data's origin) and consumer costs ([`FormatOption`]). Use it
+//!   when an encoder has fast internal paths (a JPEG encoder with a fused f32→u8+DCT
+//!   kernel can advertise `RGBF32_LINEAR` with low consumer cost), or in processing
+//!   pipelines where data has been widened from a lower-precision source (JPEG u8
+//!   decoded to f32: provenance says "u8 origin", so converting back to u8 reports
+//!   zero loss, which understates the rounding once a resize or filter has changed
+//!   the samples).
 //!
 //! ```rust,ignore
 //! // Simple: "what format should I encode to?"
-//! let target = best_match(
-//!     buffer.descriptor(),
-//!     &encoder_supported,
-//!     ConvertIntent::Fastest,
-//! ).ok_or("no compatible format")?;
+//! let target = ConvertIntent::Fastest
+//!     .best_match(buffer.descriptor(), &encoder_supported)
+//!     .ok_or("no compatible format")?;
 //!
 //! // With provenance: "this f32 data came from u8 JPEG"
-//! let provenance = Provenance::with_origin_depth(ChannelType::U8);
-//! let target = negotiate(
+//! let target = ConvertIntent::Fastest.negotiate(
 //!     current_desc,
-//!     provenance,
+//!     Provenance::with_origin_depth(ChannelType::U8),
 //!     options.iter().copied(),
-//!     ConvertIntent::Fastest,
 //! );
 //! ```
 //!
@@ -212,10 +205,7 @@
 //! Or use the convenience function that combines negotiation and conversion:
 //!
 //! ```rust,ignore
-//! let adapted = adapt::adapt_for_encode_cow(
-//!     raw_bytes, descriptor, width, rows, stride,
-//!     &encoder_supported,
-//! )?;
+//! let adapted = pixels.adapt_for_encode(&encoder_supported, &options)?;
 //! // adapted is PixelCow::Borrowed on equivalent interpretation.
 //! ```
 //!
@@ -227,7 +217,7 @@
 //!   checked row boundaries and no scratch/table allocation within prepared capacity.
 //!
 //! - For policy-sensitive conversions (when you need to control what lossy
-//!   operations are allowed), use [`adapt::adapt_for_encode_explicit_cow`] with
+//!   operations are allowed), use [`PixelSliceConvertExt::adapt_for_encode`] with
 //!   [`ConvertOptions`]. This validates policies *before* doing work and
 //!   returns specific errors like [`ConvertError::AlphaNotOpaque`] or
 //!   [`ConvertError::DepthReductionForbidden`].
@@ -254,10 +244,10 @@
 //! The encoder receives pixel data in a format it natively supports and
 //! must embed correct color metadata.
 //!
-//! For the atomic path (recommended), use [`finalize_for_output_with`]:
+//! For the atomic path (recommended), use [`EncodeReady::finalize`]:
 //!
 //! ```rust,ignore
-//! let ready = finalize_for_output_with(
+//! let ready = EncodeReady::finalize(
 //!     &buffer,
 //!     &color_origin,
 //!     OutputProfile::SameAsOrigin,
@@ -284,13 +274,11 @@
 //!   so negotiation will route f32 data directly to the encoder instead of
 //!   doing a redundant f32→u8 conversion first.
 //!
-//! - Use [`finalize_for_output_with`] to bundle pixels and metadata atomically.
+//! - Use [`EncodeReady::finalize`] to bundle pixels and metadata atomically.
 //!   This prevents the most common color management bug: pixel values that
 //!   don't match the embedded ICC/CICP.
 //!
-//! - Always embed color metadata when the format supports it. Check
-//!   `CodecFormats::icc_encode` and `CodecFormats::cicp` for your codec's
-//!   capabilities. Omitting color metadata causes browsers and OS viewers
+//! - Always embed color metadata when the format supports it. Omitting color metadata causes browsers and OS viewers
 //!   to assume sRGB, which corrupts Display P3 and HDR content.
 //!
 //! - The [`OutputProfile`] enum controls what gets embedded:
@@ -300,30 +288,6 @@
 //!     BT.2020). Uses hardcoded gamut matrices, no CMS needed.
 //!   - [`OutputProfile::Icc`]: Use specific ICC profile bytes. Requires a
 //!     [`PluggableCms`] implementation.
-//!
-//! ## Format registry
-//!
-//! Every codec must declare its capabilities in a `CodecFormats` struct,
-//! typically as a `pub static`. This serves as the single source of truth
-//! for what the codec can produce and consume. See the `pipeline::registry`
-//! module (requires the `pipeline` feature) for the full format table and
-//! examples for each codec.
-//!
-//! ```rust,ignore
-//! pub static MY_CODEC: CodecFormats = CodecFormats {
-//!     name: "mycodec",
-//!     decode_outputs: &[
-//!         FormatEntry::standard(PixelDescriptor::RGB8_SRGB),
-//!         FormatEntry::standard(PixelDescriptor::RGBA8_SRGB),
-//!     ],
-//!     encode_inputs: &[
-//!         FormatEntry::standard(PixelDescriptor::RGB8_SRGB),
-//!     ],
-//!     icc_decode: true,   // extracts ICC profiles
-//!     icc_encode: true,   // embeds ICC profiles
-//!     cicp: false,        // no CICP support
-//! };
-//! ```
 //!
 //! ## Cost model
 //!
@@ -355,7 +319,7 @@
 //! Codecs that handle ICC profiles must:
 //! 1. Extract ICC bytes on decode and store them on [`ColorContext`].
 //! 2. Record provenance on [`ColorOrigin`].
-//! 3. On encode, let [`finalize_for_output_with`] handle the ICC transform
+//! 3. On encode, let [`EncodeReady::finalize`] handle the ICC transform
 //!    (if the target profile differs from the source) or pass-through
 //!    (if `SameAsOrigin`).
 //!
@@ -381,16 +345,15 @@
 //!
 //! ## Checklist
 //!
-//! - [ ] Declare `CodecFormats` with correct `effective_bits` and `can_overshoot`
 //! - [ ] Decode: extract ICC + CICP → [`ColorContext`]
 //! - [ ] Decode: record provenance → [`ColorOrigin`]
-//! - [ ] Encode: negotiate via [`best_match`] or [`adapt::adapt_for_encode_cow`]
+//! - [ ] Encode: negotiate via [`ConvertIntent::best_match`] or [`PixelSliceConvertExt::adapt_for_encode`]
 //! - [ ] Encode: convert via [`RowConverter`] (not hand-rolled)
-//! - [ ] Encode: embed metadata via [`finalize_for_output_with`]
+//! - [ ] Encode: embed metadata via [`EncodeReady::finalize`]
 //! - [ ] Encode: embed ICC/CICP when the format supports it
 //! - [ ] Handle [`ConvertError`] variants specifically
 //! - [ ] Test round-trip: native format → encode → decode = lossless
-//! - [ ] Test negotiation: `best_match(my_format, my_supported, Fastest)` picks identity
+//! - [ ] Test negotiation: `ConvertIntent::Fastest.best_match(my_format, my_supported)` picks identity
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
@@ -411,6 +374,7 @@ mod sealed {
     impl Sealed for zenpixels::ColorPrimaries {}
     impl Sealed for zenpixels::Color {}
     impl<P> Sealed for zenpixels::PixelBuffer<P> {}
+    impl Sealed for zenpixels::PixelSlice<'_> {}
     impl Sealed for zenpixels::hdr::ContentLightLevel {}
 }
 pub mod error;
@@ -489,10 +453,12 @@ pub mod hdr;
 pub mod icc_profiles;
 pub mod load_bearing;
 pub mod oklab;
+#[cfg(not(feature = "__bench_orient"))]
+pub(crate) mod orient;
+#[cfg(feature = "__bench_orient")]
+#[doc(hidden)]
 pub mod orient;
 pub mod output;
-#[cfg(feature = "pipeline")]
-pub mod pipeline;
 pub mod ycbcr;
 // Crate-internal SIMD predicates backing `load_bearing` -- the module
 // stays private so the per-(layout × channel-type) kernel set never
@@ -500,23 +466,14 @@ pub mod ycbcr;
 mod scan;
 
 // Re-export key conversion types at crate root.
-pub use adapt::{adapt_for_encode_explicit_cow, try_adapt_in_place};
+pub use convert::ConvertPlan;
 #[cfg(feature = "hdr-experimental")]
 pub use convert::HdrConfig;
-pub use convert::{ConvertPlan, convert_row};
 #[doc(inline)]
 pub use converter::RowConverter;
 #[doc(inline)]
 pub use error::ConvertError;
-pub use negotiate::{
-    ConversionCost, ConvertIntent, FormatOption, Provenance, best_match, best_match_with,
-    conversion_cost, conversion_cost_with_provenance, ideal_format, negotiate,
-};
-#[cfg(feature = "pipeline")]
-pub use pipeline::{
-    CodecFormats, ConversionPath, FormatEntry, LossBucket, MatrixStats, OpCategory, OpRequirement,
-    PathEntry, QualityThreshold, generate_path_matrix, matrix_stats, optimal_path,
-};
+pub use negotiate::{ConversionCost, ConvertIntent, FormatOption, Provenance};
 
 // Re-export extension traits.
 #[cfg(feature = "rgb")]
@@ -524,32 +481,26 @@ pub use ext::PixelBufferConvertTypedExt;
 #[cfg(feature = "hdr-experimental")]
 pub use ext::PixelBufferHdrConvertExt;
 #[doc(inline)]
-pub use ext::{ColorConvertExt, ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
+pub use ext::{
+    ColorConvertExt, ColorPrimariesExt, PixelBufferConvertExt, PixelSliceConvertExt,
+    TransferFunctionExt,
+};
 
 // Re-export gamut conversion utilities.
-pub use gamut::{
-    GamutMatrix, apply_matrix_f32, apply_matrix_row_f32, apply_matrix_row_rgba_f32,
-    conversion_matrix,
-};
+pub use gamut::GamutMatrix;
 
 // Re-export the load-bearing analysis surface: one trait, one report.
 // The scan-level predicates stay crate-internal.
 pub use load_bearing::{LoadBearingReport, PixelBufferLoadBearingExt, PixelSliceLoadBearingExt};
 
-// Anchor-aware quantization; implementation lives in the HDR module.
-pub use hdr::quantize_to;
-
 // Re-export CMS traits, enums, and implementations.
 #[allow(deprecated)]
-pub use cms::{
-    CmsPluginError, ColorManagement, ColorPriority, PluggableCms, RenderingIntent, RowTransform,
-    RowTransformMut,
-};
+pub use cms::{CmsPluginError, ColorManagement, PluggableCms, RowTransform, RowTransformMut};
 // TODO: pub use cms_lite::ZenCmsLite once benchmarked on aarch64.
 #[cfg(feature = "cms-moxcms")]
 pub use cms_moxcms::MoxCms;
 
 // Re-export output types.
+pub use output::OutputPlan;
 #[allow(deprecated)]
 pub use output::{EncodeReady, OutputMetadata, OutputProfile, finalize_for_output};
-pub use output::{OutputPlan, finalize_for_output_with};

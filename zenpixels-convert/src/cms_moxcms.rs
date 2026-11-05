@@ -33,60 +33,24 @@ use moxcms::{
     TransformOptions,
 };
 
-use crate::cms::{ColorPriority, RenderingIntent};
-
-/// Build moxcms [`TransformOptions`] from a [`ColorPriority`] and
-/// [`RenderingIntent`].
+/// Our moxcms options, the one place they're set.
 ///
-/// This is the single entry point for constructing moxcms transform options.
-/// It applies our quality defaults (tetrahedral interpolation, high-precision
-/// barycentric weights) and maps the backend-agnostic enums to moxcms types.
+/// - **Relative colorimetric**, with the ICC profile's own curves. Container color
+///   signals are resolved earlier through [`ColorAuthority`](crate::ColorAuthority),
+///   so a transform never overrides a profile with a `cicp` tag inside it. Matrix
+///   profiles have no rendering tables, and all four moxcms intents give identical
+///   results on them. See `docs/gamut-mapping-survey.md`.
+/// - **Tetrahedral interpolation** for 3D CLUTs, more accurate than trilinear where
+///   saturated colors cross cube diagonals.
+/// - **High barycentric weight scale.** Cuts LUT interpolation error from max 14 to
+///   max 2 code values at u8 scale against lcms2, on standard ICC LUT profiles.
 ///
-/// # Parameters
-///
-/// - `priority` — which transfer function metadata to trust. Use
-///   [`ColorPriority::PreferIcc`] for standard ICC workflows (JPEG, PNG, TIFF,
-///   WebP). Use [`ColorPriority::PreferCicp`] for CICP-native formats (JPEG XL,
-///   HEIF, AVIF) where the CICP code is the authoritative description and the
-///   ICC profile is a backwards-compatibility fallback.
-///
-/// - `intent` — ICC rendering intent. Use
-///   [`RenderingIntent::RelativeColorimetric`] (the default) for display output.
-///   See [`RenderingIntent`] docs for when to use other intents.
-///
-/// # Quality settings
-///
-/// The following are always applied regardless of arguments:
-///
-/// - **Tetrahedral interpolation** over trilinear for 3D CLUTs. Produces
-///   higher accuracy in saturated regions where trilinear interpolation
-///   crosses cube diagonals. No measurable performance cost for the image
-///   sizes we handle.
-///
-/// - **High barycentric weight scale.** Cuts LUT interpolation error from
-///   max ≤ 14 to max ≤ 2 (code values, u8 scale) vs. lcms2 for standard
-///   ICC LUT profiles. The 5% performance cost cited in moxcms docs is
-///   negligible at our call granularity (row-level transforms, not
-///   pixel-level).
-///
-/// # Rendering intent vs. profile LUT availability
-///
-/// Matrix profiles ignore the intent. A profile with tables but not the requested
-/// ones can make moxcms return an error, so a source with only A2B0 fails under
-/// relative colorimetric. See [`RenderingIntent`].
-///
-///
-/// Crate-internal: moxcms types stay out of the public API so the moxcms
-/// version range can change without a zenpixels-convert release.
-pub(crate) fn transform_opts(priority: ColorPriority, intent: RenderingIntent) -> TransformOptions {
+/// Crate-internal: moxcms types stay out of the public API so the moxcms version
+/// range can change without a zenpixels-convert release.
+pub(crate) fn transform_opts() -> TransformOptions {
     TransformOptions {
-        rendering_intent: match intent {
-            RenderingIntent::Perceptual => moxcms::RenderingIntent::Perceptual,
-            RenderingIntent::RelativeColorimetric => moxcms::RenderingIntent::RelativeColorimetric,
-            RenderingIntent::Saturation => moxcms::RenderingIntent::Saturation,
-            RenderingIntent::AbsoluteColorimetric => moxcms::RenderingIntent::AbsoluteColorimetric,
-        },
-        allow_use_cicp_transfer: matches!(priority, ColorPriority::PreferCicp),
+        rendering_intent: moxcms::RenderingIntent::RelativeColorimetric,
+        allow_use_cicp_transfer: false,
         barycentric_weight_scale: BarycentricWeightScale::High,
         interpolation_method: InterpolationMethod::Tetrahedral,
         ..Default::default()
@@ -135,7 +99,7 @@ fn options_for_profiles(
     source: &ColorProfile,
     target: &ColorProfile,
 ) -> TransformOptions {
-    let mut options = transform_opts(ColorPriority::PreferIcc, RenderingIntent::default());
+    let mut options = transform_opts();
     // Native F32 ICC-to-P3 comparisons exposed quantization near black and
     // clipping of layer samples outside 0..1. Keep float arithmetic and use
     // analytic curves when available. This does not qualify arbitrary LUTs.

@@ -1,0 +1,21 @@
+[package]
+name = "gamut-compress"
+version = "0.0.0"
+edition = "2024"
+publish = false
+[workspace]
+[dependencies]
+archmage = { version = ">=0.9.31-beta.2, <0.10.0", default-features = false, features = ["std", "macros"] }
+magetypes = { version = ">=0.9.31-beta.2, <0.10.0", default-features = false, features = ["std"] }
+zenpixels = { path = "../../zenpixels", default-features = false }
+zenpixels-convert = { path = "../../zenpixels-convert", default-features = false, features = ["std", "hdr-experimental"] }
+zenbench = "0.1.11"
+serde_json = "1.0.145"
+bytemuck = "1.25.2"
+png = "0.18.1"
+[patch.crates-io]
+garb = { git = "https://github.com/imazen/garb", rev = "605276d717ea0b31a1cd2a36ae05301383c7b8b5" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
+[profile.release]
+lto = "thin"
+codegen-units = 1

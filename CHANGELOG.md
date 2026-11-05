@@ -33,6 +33,34 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- API: free functions move onto the types that own them. See the table in
+  `docs/public-api/ABLATION-zenpixels-convert.md` for each old and new path.
+  - `PixelSliceConvertExt` (new): `convert_to`, `convert_into`, `adapt_for_encode`,
+    `check_opaque`, `quantize_to`, `oriented`, `oriented_into`.
+    `PixelBufferConvertExt::into_oriented` (new).
+  - `ConvertIntent::{best_match, negotiate}`, `ConversionCost::{between,
+    between_with_provenance}`, `EncodeReady::finalize`, `SynthesizedIcc::for_cicp`,
+    `Cicp::from_icc`, `IccIdentification::from_icc`, `ColorModel::from_icc`.
+  - `GamutMatrix` is a newtype with `between`, `then`, `inverse`, `apply`, and in-place
+    `apply_row_rgb` and `apply_row_rgba`. `OklabSpace` (new) replaces the free Oklab
+    functions and holds both directions. `SoftCompress::new` takes it and can't panic.
+- API: removed `pipeline` and its feature, `ideal_format`, `best_match_with`,
+  `is_common_srgb`, `try_adapt_in_place`, `RenderingIntent`, `ColorPriority`,
+  `measure_exact_depth`, `icc_profile_for_primaries`, `display_p3_icc`,
+  `adapt_for_encode_cow`, `adapt_for_encode_with_intent_cow`, and `CodesError::Unmeasurable`.
+  `adapt_for_encode_explicit_cow` is now `adapt_raw_rows_for_encode`.
+- API: `crop_copy` and `compress_planes` return `Result`. Panicking accessors gain
+  `try_` forms: `try_row`, `try_row_mut`, `try_row_with_stride`, `try_sub_rows`,
+  `try_sub_rows_mut`, `try_rows`, `try_rows_mut`, `try_crop_view`, `try_with_descriptor`,
+  `try_with_alpha_mode`, `try_contiguous_bytes`, `try_copy_to_contiguous_bytes`,
+  `PixelDescriptor::{try_new, try_new_full}` and `DiffuseWhite::try_new`.
+- Fix: the two encode adapters shared no conversion route. `adapt_raw_rows_for_encode`
+  now always goes through `RowConverter::new_explicit`.
+- Fix `GamutBoundaryLut::max_chroma` just below hue zero, where a rounded-up hue
+  read the table with a blend weight of 256 and returned about a quarter of the
+  true bound. `SoftCompress` and zenfilters' soft gamut mapping desaturated those
+  colors too far, with a jump of up to 0.18 in OKLab chroma.
+
 Built on the 0.2.17 bridge, with identical migrated signatures and feature names.
 
 - Remove the deprecated legacy `planar` module/re-exports; retain `planar` as a

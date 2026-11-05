@@ -1,10 +1,21 @@
+use zenpixels_convert::PixelSliceConvertExt;
+use zenpixels_convert::adapt::adapt_raw_rows_for_encode;
 use zenpixels_convert::*;
 #[test]
 fn known_transfer_is_converted() {
     let src = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Linear);
     let pixels = [128u8; 3];
-    let out =
-        adapt::adapt_for_encode_cow(&pixels, src, 1, 1, 3, &[PixelDescriptor::RGB8_SRGB]).unwrap();
+    let out = adapt_raw_rows_for_encode(
+        &pixels,
+        src,
+        1,
+        1,
+        3,
+        &[PixelDescriptor::RGB8_SRGB],
+        &zenpixels_convert::ConvertOptions::permissive()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
+    )
+    .unwrap();
     assert_eq!(
         out.as_slice().descriptor().transfer(),
         TransferFunction::Srgb
@@ -69,15 +80,15 @@ fn f16_premultiply_rounds_below_midpoint_to_zero() {
 fn orientation_preserves_color_context() {
     use std::sync::Arc;
     use zenpixels::{Cicp, ColorContext, Orientation, PixelBuffer, PixelDescriptor};
-    use zenpixels_convert::orient::{apply_orientation, apply_orientation_in_place};
+    use zenpixels_convert::PixelBufferConvertExt;
     let ctx = Arc::new(ColorContext::from_cicp(Cicp::DISPLAY_P3));
-    let mut src = PixelBuffer::new(2, 3, PixelDescriptor::RGB8).with_color_context(ctx);
-    let out = apply_orientation(src.as_slice(), Orientation::Rotate90);
+    let src = PixelBuffer::new(2, 3, PixelDescriptor::RGB8).with_color_context(ctx);
+    let out = src.as_slice().oriented(Orientation::Rotate90).unwrap();
     assert!(Arc::ptr_eq(
         out.color_context().unwrap(),
         src.color_context().unwrap()
     ));
-    apply_orientation_in_place(&mut src, Orientation::Rotate90).unwrap();
+    let src = src.into_oriented(Orientation::Rotate90).unwrap();
     assert!(src.color_context().is_some());
 }
 
@@ -85,7 +96,7 @@ fn orientation_preserves_color_context() {
 fn explicit_adapter_encodes_known_transfer() {
     let src = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Linear);
     let pixels = [128u8; 3];
-    let out = adapt::adapt_for_encode_explicit_cow(
+    let out = adapt_raw_rows_for_encode(
         &pixels,
         src,
         1,

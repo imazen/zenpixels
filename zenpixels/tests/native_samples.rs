@@ -108,7 +108,7 @@ fn native_storage_survives_strides_subviews_and_owned_handoff() {
             for y in 0..3 {
                 assert_eq!(buffer.as_slice().row(y), expected);
             }
-            let cropped = buffer.crop_copy(1, 1, 3, 2);
+            let cropped = buffer.crop_copy(1, 1, 3, 2).unwrap();
             let pixel = layout.channels() * channel.byte_size();
             for y in 0..2 {
                 assert_eq!(cropped.as_slice().row(y), &expected[pixel..4 * pixel]);

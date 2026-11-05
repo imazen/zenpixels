@@ -10,7 +10,7 @@ fn main(){
  #[cfg(feature="size-soft")]{
   use zenpixels_convert::{hdr::SoftCompress,oklab};
   let p=zenpixels::ColorPrimaries::Bt709;
-  let s=SoftCompress::from_matrices(&oklab::rgb_to_lms_matrix(p).unwrap(),&oklab::lms_to_rgb_matrix(p).unwrap(),0.96);
+  let s=SoftCompress::new(&oklab::OklabSpace::for_primaries(p).unwrap(),0.96);
   let mut row=[rgb.map(|v|v as f32)];s.apply_strip(&mut row);rgb=row[0].map(|v|methods::enc(v.clamp(0.0,1.0)as f64));
  }
  #[cfg(not(any(feature="size-css",feature="size-ott",feature="size-soft")))]{rgb=methods::clip(std::hint::black_box(rgb)).map(methods::enc);}

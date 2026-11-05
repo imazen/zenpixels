@@ -5,8 +5,7 @@
 
 use palette::{IntoColor, LinSrgb, Oklab, Srgb, Xyz};
 use zenpixels_convert::ext::{ColorPrimariesExt, TransferFunctionExt};
-use zenpixels_convert::gamut::apply_matrix_f32;
-use zenpixels_convert::oklab::{lms_to_rgb_matrix, oklab_to_rgb, rgb_to_lms_matrix, rgb_to_oklab};
+use zenpixels_convert::oklab::OklabSpace;
 use zenpixels_convert::{ColorPrimaries, TransferFunction};
 
 fn assert_close(a: f32, b: f32, tol: f32, label: &str) {
@@ -78,7 +77,7 @@ fn srgb_transfer_exhaustive_u8() {
 #[test]
 fn oklab_crossval() {
     let tf = TransferFunction::Srgb;
-    let m1 = rgb_to_lms_matrix(ColorPrimaries::Bt709).unwrap();
+    let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).unwrap();
 
     for ri in (0..=255).step_by(17) {
         for gi in (0..=255).step_by(17) {
@@ -88,7 +87,7 @@ fn oklab_crossval() {
                 let lb = tf.linearize(bi as f32 / 255.0);
 
                 // Our implementation
-                let [ok_l, ok_a, ok_b] = rgb_to_oklab(lr, lg, lb, &m1);
+                let [ok_l, ok_a, ok_b] = space.from_rgb([lr, lg, lb]);
 
                 // palette's implementation
                 let p_oklab: Oklab = LinSrgb::new(lr, lg, lb).into_color();
@@ -109,8 +108,7 @@ fn oklab_crossval() {
 #[test]
 fn oklab_roundtrip_u8() {
     let tf = TransferFunction::Srgb;
-    let m1 = rgb_to_lms_matrix(ColorPrimaries::Bt709).unwrap();
-    let m1_inv = lms_to_rgb_matrix(ColorPrimaries::Bt709).unwrap();
+    let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).unwrap();
 
     let mut max_err = 0i32;
 
@@ -122,10 +120,10 @@ fn oklab_roundtrip_u8() {
                 let lb = tf.linearize(bi as f32 / 255.0);
 
                 // Forward: linear RGB -> Oklab
-                let [ok_l, ok_a, ok_b] = rgb_to_oklab(lr, lg, lb, &m1);
+                let [ok_l, ok_a, ok_b] = space.from_rgb([lr, lg, lb]);
 
                 // Inverse: Oklab -> linear RGB
-                let [lr2, lg2, lb2] = oklab_to_rgb(ok_l, ok_a, ok_b, &m1_inv);
+                let [lr2, lg2, lb2] = space.to_rgb([ok_l, ok_a, ok_b]);
 
                 // Back to sRGB u8
                 let r2 = (tf.delinearize(lr2) * 255.0 + 0.5) as i32;
@@ -174,7 +172,7 @@ fn xyz_matrix_crossval() {
 
                 // Our implementation
                 let mut rgb = [r, g, b];
-                apply_matrix_f32(&mut rgb, to_xyz);
+                rgb = to_xyz.apply(rgb);
 
                 // palette's implementation
                 let p_xyz: Xyz = LinSrgb::new(r, g, b).into_color();
@@ -213,8 +211,8 @@ fn gamut_roundtrip_via_xyz() {
 
         // Our round-trip: RGB -> XYZ -> RGB
         let mut ours = color;
-        apply_matrix_f32(&mut ours, to_xyz);
-        apply_matrix_f32(&mut ours, from_xyz);
+        ours = to_xyz.apply(ours);
+        ours = from_xyz.apply(ours);
 
         // palette round-trip: LinSrgb -> Xyz -> LinSrgb
         let p_xyz: Xyz = LinSrgb::new(r, g, b).into_color();

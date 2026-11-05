@@ -464,8 +464,8 @@ fn plan_chroma_collapse_signaling(ctx: Option<&Arc<ColorContext>>) -> GraySignal
 
     let cicp = ctx
         .cicp
-        .or_else(|| zenpixels::icc::extract_cicp(icc))
-        .or_else(|| zenpixels::icc::identify_common(icc).and_then(|id| id.to_cicp()));
+        .or_else(|| zenpixels::Cicp::from_icc(icc))
+        .or_else(|| zenpixels::icc::IccIdentification::from_icc(icc).and_then(|id| id.to_cicp()));
     let Some(cicp) = cicp else {
         return GraySignalPlan::Suppress;
     };

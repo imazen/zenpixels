@@ -25,7 +25,7 @@ impl PluggableCms for NoCms {
 
 #[test]
 fn current_icc_resolves_unknown_descriptor_without_changing_same_profile_samples() {
-    let profile: Arc<[u8]> = Arc::from(zenpixels_convert::icc_profiles::display_p3_icc(false));
+    let profile: Arc<[u8]> = Arc::from(zenpixels_convert::icc_profiles::DISPLAY_P3_V4);
     let context = Arc::new(ColorContext::from_icc(profile.clone()));
     for format in [
         PixelFormat::Rgb8,

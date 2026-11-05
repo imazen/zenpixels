@@ -25,11 +25,12 @@
 //!
 //! Run: `cargo run --release [--features cpp-simd] [-- --group="T 3ch 12MP"]`
 
+use zenpixels_convert::PixelSliceConvertExt;
 use std::time::Duration;
 
 use zenbench::prelude::*;
 use zenpixels::{Orientation, PixelDescriptor, PixelSlice, PixelSliceMut};
-use zenpixels_convert::orient::{__bench_apply_orientation_staged, apply_orientation_into};
+use zenpixels_convert::orient::{__bench_apply_orientation_staged};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Op {
@@ -122,7 +123,7 @@ fn run_zpc(src: &[u8], dst: &mut [u8], w: usize, h: usize, ch: usize, op: Op) {
     let desc = descriptor(ch);
     let s = PixelSlice::new(src, w as u32, h as u32, w * ch, desc).unwrap();
     let d = PixelSliceMut::new(dst, h as u32, w as u32, h * ch, desc).unwrap();
-    apply_orientation_into(s, op.orientation(), d).unwrap();
+    s.oriented_into(op.orientation(), d).unwrap();
 }
 
 /// Experimental staged micro-tile path (bpp 1..=4) from zenpixels-convert.

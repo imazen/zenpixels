@@ -4,10 +4,10 @@
 //!
 //! Scalar-only — matches what zenpixels-convert's current Oklab path uses.
 //!
-//! Run: `cargo test --release -p zenpixels-convert --test cbrt_compare -- --nocapture`
+//! Run: `cargo test --release -p zenpixels-convert --lib cbrt_compare -- --nocapture`
 
+use super::fast_cbrt;
 use magetypes::nostd_math::{cbrt_lowp_f32, cbrt_midp_f32};
-use zenpixels_convert::oklab::fast_cbrt;
 
 /// ULP error against `std::f32::cbrt` (considered the reference).
 fn ulp_err(ours: f32, std_result: f32) -> u32 {

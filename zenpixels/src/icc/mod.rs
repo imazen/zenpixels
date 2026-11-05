@@ -2,10 +2,10 @@
 //!
 //! Two capabilities, no dependencies beyond `core`:
 //!
-//! - **CICP extraction**: [`extract_cicp`] reads the `cicp` tag from ICC v4.4+
+//! - **CICP extraction**: [`Cicp::from_icc`] reads the `cicp` tag from ICC v4.4+
 //!   profiles (~100ns, no allocation).
 //!
-//! - **Hash-based identification**: [`identify_common`] recognizes 181
+//! - **Hash-based identification**: [`IccIdentification::from_icc`] recognizes 181
 //!   well-known profiles (sRGB, Display P3, BT.2020, Adobe RGB,
 //!   grayscale) via normalized FNV-1a hash lookup (~100ns).
 //!
@@ -19,10 +19,10 @@
 //! # Example
 //!
 //! ```
-//! use zenpixels::icc::{identify_common, IdentificationUse};
+//! use zenpixels::icc::{IccIdentification, IdentificationUse};
 //!
 //! # let icc_bytes: &[u8] = &[];
-//! if let Some(id) = identify_common(icc_bytes) {
+//! if let Some(id) = IccIdentification::from_icc(icc_bytes) {
 //!     if id.valid_use == IdentificationUse::MatrixTrcSubstitution {
 //!         // Safe to skip CMS — use matrix+TRC math directly
 //!     }
@@ -31,6 +31,23 @@
 //! ```
 
 use crate::{Cicp, ColorPrimaries, TransferFunction};
+
+impl Cicp {
+    /// Read the `cicp` tag of an ICC profile (ICC v4.4+), or `None` when absent.
+    #[must_use]
+    pub fn from_icc(icc_bytes: &[u8]) -> Option<Self> {
+        extract_cicp(icc_bytes)
+    }
+}
+
+impl crate::ColorModel {
+    /// The data color space from an ICC profile's header (bytes 16 to 19), or
+    /// `None` when the profile is too short or has a signature with no model here.
+    #[must_use]
+    pub fn from_icc(icc_bytes: &[u8]) -> Option<Self> {
+        profile_color_space(icc_bytes)
+    }
+}
 
 // ── ICC header layout (ITU-T / ISO 15076-1) ──────────────────────────────
 
@@ -82,7 +99,7 @@ const ICC_HEADER_NORMALIZE_END: usize = 100;
 /// (Postel's law). zenpixels itself never *emits* a cicp tag on a gray profile
 /// (see the GRAY-class synthesis in `zenpixels-convert`); this leniency only
 /// affects what we accept, never what we produce.
-pub fn extract_cicp(data: &[u8]) -> Option<Cicp> {
+pub(crate) fn extract_cicp(data: &[u8]) -> Option<Cicp> {
     if data.len() < ICC_MIN_SIZE {
         return None;
     }
@@ -198,7 +215,7 @@ const CHAD_TOL: f64 = 0.005;
 /// Inspect an ICC profile and return which features it uses.
 ///
 /// Use [`ProfileFeatures::is_safe_matrix_shaper`] to decide whether
-/// matrix+TRC approximation via [`identify_common`] is equivalent to a
+/// matrix+TRC approximation via [`IccIdentification::from_icc`] is equivalent to a
 /// full CMS's output.
 ///
 /// Returns `None` if the bytes aren't a valid ICC profile.
@@ -330,6 +347,16 @@ pub enum IdentificationUse {
 }
 
 impl IccIdentification {
+    /// Recognize `icc_bytes` as a well-known profile from its normalized hash.
+    ///
+    /// `None` means not in the table, which says nothing about the profile. A
+    /// match is an approximate color identification, as described on this type.
+    /// For sRGB use [`is_srgb`](Self::is_srgb) on the result.
+    #[must_use]
+    pub fn from_icc(icc_bytes: &[u8]) -> Option<Self> {
+        identify_common(icc_bytes)
+    }
+
     /// Create a new identification result.
     #[inline]
     pub(crate) fn new(
@@ -477,7 +504,7 @@ impl CoalesceForUse {
 ///
 /// ~100ns. For the long tail of vendor/monitor profiles, use structural
 /// analysis via a CMS backend.
-pub fn identify_common(icc_bytes: &[u8]) -> Option<IccIdentification> {
+pub(crate) fn identify_common(icc_bytes: &[u8]) -> Option<IccIdentification> {
     identify_common_at(icc_bytes, Tolerance::Intent)
 }
 
@@ -528,7 +555,7 @@ fn use_from_mask(mask: u8) -> IdentificationUse {
 /// `use_for` are rejected.
 ///
 /// Use this when you need byte-exact equivalence with a full CMS for a
-/// specific rendering intent. Use [`identify_common`] for the common
+/// specific rendering intent. Use [`IccIdentification::from_icc`] for the common
 /// colorimetric-intent case.
 ///
 /// Returns `None` if the profile isn't in the table, its measured u16 error
@@ -569,20 +596,12 @@ pub(crate) fn identify_common_for(
     None
 }
 
-/// Check if an ICC profile is a known sRGB profile.
-///
-/// Convenience wrapper — returns `true` if the profile is recognized as sRGB.
-#[inline]
-pub fn is_common_srgb(icc_bytes: &[u8]) -> bool {
-    identify_common(icc_bytes).is_some_and(|id| id.is_srgb())
-}
-
 /// Read the ICC profile's data color space from the header (bytes 16–19).
 ///
 /// Returns the [`ColorModel`](crate::ColorModel) corresponding to the four-byte signature
 /// at offset 16 in the ICC header, or `None` if the profile is too short
 /// or uses an unrecognized color space.
-pub fn profile_color_space(icc_bytes: &[u8]) -> Option<crate::ColorModel> {
+pub(crate) fn profile_color_space(icc_bytes: &[u8]) -> Option<crate::ColorModel> {
     if icc_bytes.len() < 20 {
         return None;
     }
@@ -882,8 +901,8 @@ mod tests {
 
     #[test]
     fn is_common_srgb_rejects_empty() {
-        assert!(!is_common_srgb(&[]));
-        assert!(!is_common_srgb(&[0; 100]));
+        assert!(!identify_common(&[]).is_some_and(|id| id.is_srgb()));
+        assert!(!identify_common(&[0; 100]).is_some_and(|id| id.is_srgb()));
     }
 
     // ── extract_cicp tests ───────────────────────────────────────────

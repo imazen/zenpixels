@@ -1,0 +1,12 @@
+set shell := ["bash", "-uc"]
+heavy := "~/work/claudehints/scripts/run-heavy"
+tau := "0.0875"
+eps := "0.05"
+build:
+    {{heavy}} --mem 12G --jobs 8 -- cargo build --release
+quality:
+    {{heavy}} --mem 4G --jobs 1 -- ./target/release/gamut-compress quality _ {{tau}} {{eps}} 2>&1 | tee results/quality.log
+real dir:
+    {{heavy}} --mem 8G --jobs 1 -- ./target/release/gamut-compress real {{dir}} {{tau}} {{eps}} 2>&1 | tee results/real.log
+bench dir:
+    {{heavy}} --mem 8G --jobs 1 -- ./target/release/gamut-compress bench {{dir}} {{tau}} {{eps}} > results/bench.log 2>&1

@@ -1,13 +1,23 @@
 // Regression cases from the API contract review.
 #[cfg(test)]
 mod tests {
+    use zenpixels_convert::adapt::adapt_raw_rows_for_encode;
     use zenpixels_convert::*;
     #[test]
     fn known_transfer_is_converted() {
         let src = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Linear);
         let pixels = [128u8; 3];
-        let out = adapt::adapt_for_encode_cow(&pixels, src, 1, 1, 3, &[PixelDescriptor::RGB8_SRGB])
-            .unwrap();
+        let out = adapt_raw_rows_for_encode(
+            &pixels,
+            src,
+            1,
+            1,
+            3,
+            &[PixelDescriptor::RGB8_SRGB],
+            &zenpixels_convert::ConvertOptions::permissive()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
+        )
+        .unwrap();
         assert_eq!(
             out.as_slice().descriptor().transfer(),
             TransferFunction::Srgb

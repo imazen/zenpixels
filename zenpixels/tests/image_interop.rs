@@ -151,7 +151,7 @@ macro_rules! every_format {
                                 theirs.extend_from_slice(cropped.get_pixel(x, y).channels());
                             }
                         }
-                        let ours = buffer.crop_copy(w - cw, h - ch, cw, ch);
+                        let ours = buffer.crop_copy(w - cw, h - ch, cw, ch).unwrap();
                         assert_eq!(bytemuck::cast_slice::<$sample, u8>(&theirs), ours.copy_to_contiguous_bytes());
                     }
                 }

@@ -137,13 +137,13 @@ impl ColorManagement for ZenCmsLite {
         // recognized here but rejected by `build_source_transform` when the
         // strict empirical check determined that canonical matrix+TRC math
         // diverges from CMS behavior for any rendering intent.
-        if let Some(id) = zenpixels::icc::identify_common(icc_bytes) {
+        if let Some(id) = zenpixels::icc::IccIdentification::from_icc(icc_bytes) {
             let cp = id.primaries.to_cicp()?;
             let tc = id.transfer.to_cicp()?;
             return Some(Cicp::new(cp, tc, 0, true));
         }
         // CICP-in-ICC tag (ICC v4.4+) is authoritative metadata.
-        if let Some(cicp) = zenpixels::icc::extract_cicp(icc_bytes) {
+        if let Some(cicp) = zenpixels::Cicp::from_icc(icc_bytes) {
             return Some(cicp);
         }
         None

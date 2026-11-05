@@ -933,7 +933,7 @@ fn pq_source_same_as_origin_pins_cicp_passthrough_and_unwired_hdr() {
     let buffer = PixelBuffer::from_vec(px, 2, 2, desc).unwrap();
     let origin = ColorOrigin::from_cicp(Cicp::new(9, 16, 0, true));
 
-    let ready = zenpixels_convert::finalize_for_output_with(
+    let ready = zenpixels_convert::EncodeReady::finalize(
         &buffer,
         &origin,
         OutputProfile::SameAsOrigin,

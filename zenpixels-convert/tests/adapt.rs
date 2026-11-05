@@ -2,7 +2,7 @@
 #![allow(deprecated)]
 
 use zenpixels_convert::PixelDescriptor;
-use zenpixels_convert::adapt::adapt_for_encode_cow;
+use zenpixels_convert::adapt::adapt_raw_rows_for_encode;
 
 /// The packed rows of `data` converted from `from` to `to` through the
 /// owned-buffer path (formerly checked through the raw `convert_buffer`).
@@ -30,7 +30,17 @@ fn adapt_exact_match_is_borrowed() {
     let desc = PixelDescriptor::RGB8_SRGB;
     let supported = &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB];
 
-    let result = adapt_for_encode_cow(&data, desc, width, rows, stride, supported).unwrap();
+    let result = adapt_raw_rows_for_encode(
+        &data,
+        desc,
+        width,
+        rows,
+        stride,
+        supported,
+        &zenpixels_convert::ConvertOptions::permissive()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
+    )
+    .unwrap();
     assert_eq!(result.as_slice().descriptor(), PixelDescriptor::RGB8_SRGB);
     assert!(
         matches!(result, zenpixels::PixelCow::Borrowed(_)),
@@ -41,13 +51,15 @@ fn adapt_exact_match_is_borrowed() {
 #[test]
 fn pixel_cow_preserves_valid_source_stride() {
     let data = [1u8, 2, 3, 0, 0, 0, 4, 5, 6, 0, 0, 0];
-    let result = adapt_for_encode_cow(
+    let result = adapt_raw_rows_for_encode(
         &data,
         PixelDescriptor::RGB8_SRGB,
         1,
         2,
         6,
         &[PixelDescriptor::RGB8_SRGB],
+        &zenpixels_convert::ConvertOptions::permissive()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
     )
     .unwrap();
 
@@ -72,7 +84,17 @@ fn adapt_converts_when_needed() {
     // Only supports RGBA8.
     let supported = &[PixelDescriptor::RGBA8_SRGB];
 
-    let result = adapt_for_encode_cow(&data, desc, width, rows, stride, supported).unwrap();
+    let result = adapt_raw_rows_for_encode(
+        &data,
+        desc,
+        width,
+        rows,
+        stride,
+        supported,
+        &zenpixels_convert::ConvertOptions::permissive()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
+    )
+    .unwrap();
     assert_eq!(result.as_slice().descriptor(), PixelDescriptor::RGBA8_SRGB);
     assert!(
         matches!(result, zenpixels::PixelCow::Owned(_)),
@@ -92,7 +114,16 @@ fn adapt_empty_list_errors() {
     let data = vec![0u8; 3];
     let desc = PixelDescriptor::RGB8_SRGB;
 
-    let result = adapt_for_encode_cow(&data, desc, 1, 1, 3, &[]);
+    let result = adapt_raw_rows_for_encode(
+        &data,
+        desc,
+        1,
+        1,
+        3,
+        &[],
+        &zenpixels_convert::ConvertOptions::permissive()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
+    );
     assert!(result.is_err());
 }
 
@@ -106,7 +137,17 @@ fn adapt_transfer_agnostic_match() {
     let desc = PixelDescriptor::RGB8; // Unknown transfer
     let supported = &[PixelDescriptor::RGB8_SRGB];
 
-    let result = adapt_for_encode_cow(&data, desc, width, rows, 6, supported).unwrap();
+    let result = adapt_raw_rows_for_encode(
+        &data,
+        desc,
+        width,
+        rows,
+        6,
+        supported,
+        &zenpixels_convert::ConvertOptions::permissive()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
+    )
+    .unwrap();
     assert_eq!(result.as_slice().descriptor(), PixelDescriptor::RGB8_SRGB);
     assert!(
         matches!(result, zenpixels::PixelCow::Borrowed(_)),

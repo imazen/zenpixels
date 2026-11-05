@@ -1,10 +1,8 @@
 //! Independent read-back of the shipped profiles; no generator/moxcms math.
 //! Tables: ITU-T H.273 (07/2024), Tables 2/3, https://www.itu.int/rec/T-REC-H.273
 //! ICC curve encodings: https://www.color.org/specification/ICC.1-2022-05.pdf
-use zenpixels_convert::Cicp;
-use zenpixels_convert::icc_profiles::{
-    SynthesizedIcc, synthesize_gray_icc_for_cicp, synthesize_icc_for_cicp,
-};
+use crate::Cicp;
+use crate::icc_profiles::{SynthesizedIcc, synthesize_gray_icc_for_cicp, synthesize_icc_for_cicp};
 
 const PRIMARIES: &[u8] = &[1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 22];
 const TRANSFERS: &[u8] = &[1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];

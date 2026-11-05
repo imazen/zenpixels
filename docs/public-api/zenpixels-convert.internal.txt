@@ -9,30 +9,28 @@
 
 ## summary
 #
-#   pub modules                                 3
+#   pub modules                                 4
 #   pub types (struct/enum/trait/alias)         4
 #   pub consts/statics                          3
 #   free functions                             11
-#   inherent methods                           44
+#   inherent methods                           40
 #   struct fields                               4
-#   trait roster entries (type × trait)        37
+#   trait roster entries (type × trait)        32
 #   auto-trait-complete types                   2
 #
 # per-module pub lines:
-#   (root)                            6
+#   (root)                            7
 #   __bench_scan                     19
 #   __bench_u16_hybrids               4
 #   __trace_ops                       2
-#   cms                               2
 #   codes                             4
 #   hdr                              22
 #   icc_profiles                      1
 #   orient                            2
-#   pipeline                          2
 #   ycbcr                             1
 #   zenpixels                         4
 
-## items (68 lines)
+## items (65 lines)
 
 #[non_exhaustive] pub struct hdr::LightLevelHistogram [also: hdr::measure]
 pub const hdr::measure::LightLevelHistogram::BIN_MAX_NITS: f32
@@ -64,8 +62,6 @@ pub fn __bench_u16_hybrids::poly_lut(&[[f32; 3]; 3], &[u16], &mut [u16])
 pub fn __bench_u16_hybrids::poly_poly(&[[f32; 3]; 3], &[u16], &mut [u16])
 pub fn __trace_ops::start_recording()
 pub fn __trace_ops::stop_recording() -> alloc::vec::Vec<&'static str>
-pub fn cms::ColorPriority::assert_fields_are_eq(&self)
-pub fn cms::RenderingIntent::assert_fields_are_eq(&self)
 pub fn codes::CodeMap::assert_fields_are_eq(&self)
 pub fn codes::CodeMapError::assert_fields_are_eq(&self)
 pub fn codes::CodeRole::assert_fields_are_eq(&self)
@@ -90,12 +86,11 @@ pub fn hdr::measure::LightLevelMethod::assert_fields_are_eq(&self)
 pub fn icc_profiles::SynthesizedIcc::assert_fields_are_eq(&self)
 pub fn orient::__bench_apply_orientation_scalar(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation) -> zenpixels::buffer::PixelBuffer
 pub fn orient::__bench_apply_orientation_staged(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), error::ConvertError>
-pub fn pipeline::op_format::OpCategory::assert_fields_are_eq(&self)
-pub fn pipeline::path::LossBucket::assert_fields_are_eq(&self)
 pub fn ycbcr::YcbcrError::assert_fields_are_eq(&self)
 pub mod __bench_scan
 pub mod __bench_u16_hybrids
 pub mod __trace_ops
+pub mod orient
 pub struct __bench_scan::FusedRequest
 pub struct __bench_scan::FusedResult
 pub __bench_scan::FusedRequest::check_grayscale: bool
@@ -103,7 +98,7 @@ pub __bench_scan::FusedRequest::check_opaque: bool
 pub __bench_scan::FusedResult::is_grayscale: bool
 pub __bench_scan::FusedResult::is_opaque: bool
 
-## trait impls (24 types)
+## trait impls (19 types)
 
 ConversionCost: TrivialClone
 ConvertIntent: TrivialClone
@@ -112,20 +107,15 @@ HdrConfig: TrivialClone
 Provenance: TrivialClone
 __bench_scan::FusedRequest: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
 __bench_scan::FusedResult: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
-cms::ColorPriority: TrivialClone
-cms::RenderingIntent: TrivialClone
 cms_moxcms::MoxCms: TrivialClone
 codes::CodeMap: TrivialClone
 codes::CodeMapError: TrivialClone
 codes::CodeRole: TrivialClone
 codes::CodesError: TrivialClone
+gamut::GamutMatrix: TrivialClone
 hdr::Bt2446A: TrivialClone
 hdr::measure::LightLevelHistogram: Clone, Debug
 hdr::measure::LightLevelMethod: TrivialClone
 load_bearing::LoadBearingReport: TrivialClone
-pipeline::op_format::OpCategory: TrivialClone
-pipeline::op_format::OpRequirement: TrivialClone
-pipeline::path::LossBucket: TrivialClone
-pipeline::path::QualityThreshold: TrivialClone
-pipeline::registry::FormatEntry: TrivialClone
+oklab::OklabSpace: TrivialClone
 ycbcr::YcbcrError: TrivialClone

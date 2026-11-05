@@ -94,7 +94,7 @@ fn hdr_constructor_cannot_treat_native_identity_as_supported_math() {
 fn opaque_profiles_do_not_turn_native_samples_into_a_relabel() {
     use std::sync::Arc;
     use zenpixels::{ColorContext, ColorOrigin, PixelBuffer};
-    use zenpixels_convert::{finalize_for_output_with, output::OutputProfile};
+    use zenpixels_convert::output::OutputProfile;
 
     for format in [ChannelType::I16, ChannelType::U32, ChannelType::F64].map(native_rgb) {
         let desc = format.descriptor();
@@ -105,7 +105,7 @@ fn opaque_profiles_do_not_turn_native_samples_into_a_relabel() {
                 &b"unresolved-source-profile"[..],
             ))));
         assert!(
-            finalize_for_output_with(
+            zenpixels_convert::EncodeReady::finalize(
                 &buffer,
                 &ColorOrigin::assumed(),
                 OutputProfile::Icc(Arc::from(&b"different-target-profile"[..])),
