@@ -127,7 +127,18 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 | `Blend` | 1× | 4× | Compositing — premultiplied alpha |
 | `Perceptual` | 1× | 3× | Color grading, sharpening |
 
-[`Provenance`] guides cost-model ranking, not exactness after edits. Use `ConvertPlan::new_preserving_samples` for proven representation changes or explicitly request value analysis. Three entry points: [`best_match`] (simple), [`best_match_with`] (with consumer costs), [`negotiate`] (full control with provenance).
+[`Provenance`] guides cost-model ranking, not exactness after edits. Use `ConvertPlan::new_preserving_samples` for proven representation changes or explicitly request value analysis. Three entry points: [`best_match`] (simple), [`best_match_within`] (with a loss ceiling), [`negotiate`] (full control with provenance).
+
+## What `MoxCms` does at each depth
+
+8-bit samples go through moxcms's 16-bit path and round to nearest. Against C lcms2 2.20 on Display P3 to sRGB, 1.5% of samples
+differ, all by one code, with a mean error of -0.006 of a code.
+
+Results on table profiles differ more: on mozjpeg's `test1.icc` 17% to 26% of 8-bit samples differ, and on `test3.icc` 61%.
+`CmykF32` and `CmykF32Inverted` sources convert to any RGB target; converting into F32 CMYK is refused. `Cmyk8` has no
+black-point compensation, while F32 CMYK to sRGB does.
+
+Every backend passes the same contract in `cms-contract/`: `just cms-contract`.
 
 ## Row conversion tiers
 

@@ -1,6 +1,7 @@
 # Precision policy: what we keep by default, and who decides
 
-Proposal, 2026-11-04. Signatures go through a PR for review. The measurements are in
+Proposal, 2026-11-04, revised 2026-11-05. No policy or solver code lands until the current PR stack merges. Signatures go
+through a PR for review. The measurements are in
 [precision-audit-2026-11-04.md](precision-audit-2026-11-04.md).
 
 ## The rule
@@ -21,9 +22,43 @@ Bits that were only ever storage can go without anyone asking.
 | Peak memory over the limit at the depth that keeps the data | Refuse, naming both costs, unless a resolver chooses |
 
 A direct `RowConverter::new(RGB16, RGB8)` already names its target, and it has no provenance to consult, so
-it stays as it is. The rule binds wherever a format is *chosen*: `adapt_for_encode` (41 call sites in 5 repos),
+it stays as it is. Naming a conversion is consent. The rule binds wherever a format is *chosen*: `adapt_for_encode` (41 call sites in 5 repos),
 `best_match`, `negotiate`, zenpipe, zencodecs and the codec command-line tools. Those call sites run
 `DiscardUnchecked` today, and only 2 sites in the tree set any depth policy.
+
+## Which conversions are hidden
+
+| Who chose | Example | Default |
+|---|---|---|
+| The caller named both ends | `RowConverter::new(RGB16, RGB8)`, `convert_to` | Do it, with no event |
+| The caller named an output format and the encoder can hold the source | 16-bit PNG source to PNG | Keep it |
+| The caller named an output format and the encoder can't hold the source | 16-bit PNG source to JPEG | Allowed: choosing the format is consent. The result records what was dropped |
+| The same format in and out, and only one path keeps the data | 12-bit JPEG to JPEG | Take the path that keeps it. If the caller's request rules that out, refuse |
+| The library chose the output format | Automatic format selection | Pick one that holds the source, or refuse |
+| Something chose between decode and encode | `adapt_for_encode`, a zenpipe working format, a decoder asked for its first supported descriptor | Never below significant bits without a resolver or a named opt-in |
+
+The last two rows are the ones a caller can't see, and they're what the policy exists for. `zencodecs` and `zenpipe` transcoding sit
+on all of them at once, so that's where the choice has to become visible: in the encode result and its trace, with bits kept and
+bits dropped. A narrowing nobody named must never be silent, even when it's allowed.
+
+## "JPEG" doesn't name a depth
+
+A format's capability isn't one number. It varies by codec and by path. JPEG in zenjpeg, as read from source at `762fa712` on
+2026-11-05 (not run):
+
+| Path | Depth |
+|---|---|
+| The format | 8 and 12-bit DCT; lossless SOF3 at 2 to 16 bits |
+| zenjpeg decode (`extended-jpeg`, on by default) | 12-bit DCT and lossless. `OutputTarget::Native16` gives native codes, 0 to 4095 for 12-bit, not canonical U16. `sample_precision()` reports the source |
+| zenjpeg's zencodec decoder | `U8` and `F32` descriptors only. 12-bit input rounds to 8 when `U8` is preferred, with `bit_depth` 12 in `ImageInfo`. A comment there still says the parser rejects 12-bit |
+| Coefficient transcoding (lossless transforms) | Keeps 12-bit, written as SOF1 |
+| Pixel encoding and lossy recompression | 8-bit only |
+
+So a capability table needs at least: what the decoder delivers, what the encoder accepts, and what a coefficient path keeps. Today a
+12-bit JPEG through `zencodecs` with a `U8` preference drops 4 bits at the decoder with nothing but a metadata field to show it. This
+is the hidden case in the table above. The fix has two parts, both after the stack merges: zenjpeg's zencodec decoder offers a canonical
+`U16` exit, scaled to white at 65535 by `zenpixels_convert::codes`; and a decoder that delivers fewer bits than the source
+reports that as a narrowing.
 
 ## Why two facts
 
@@ -103,6 +138,10 @@ the four-axis sweep.
 
 ## One CMS trait
 
+`PluggableCms` is the trait. A prototype adapter, `impl JxlCms` over it, decodes real JPEG XL files; `benchmarks/jxl-cms-parity` has the
+tables. Against lcms2 on RGB and gray the worst difference is 0.17 of a code. On CMYK it is 0.26 against pinned lcms2 values, the same as
+the decoder's own wrapper. On HDR, moxcms and lcms2 differ by far more than the two moxcms paths do, so neither is a reference there.
+
 | Need | `JxlCms` (zenjxl-decoder) | `PluggableCms` |
 |---|---|---|
 | Profiles | ICC, or a JXL encoding | ICC, CICP, named, primaries + transfer |
@@ -111,18 +150,33 @@ the four-axis sweep.
 | Threads | `n` transformers, each with a pixel limit | One owned per call, or a shared `Arc`, with `prepare(max_width)` |
 | In place | Yes | No |
 | Luminance | `intensity_target` | None |
-| Ink | 0 is maximum ink | Not stated |
+| Ink | 0 is maximum ink | `CmykF32Inverted` is that convention; `CmykF32` is 1 at maximum ink |
 | Errors | `whereat` | `whereat` |
 
-`PluggableCms` covers the larger case. Three gaps stand between it and JXL: an intensity target, a stated ink convention, and gray and
-CMYK coverage proven in tests. In-place and `n` transformers fit in an adapter. The decoder stays a jxl-rs fork with its own trait
-and no zenpixels dependency, so the adapter belongs in zenjxl, which has both. There is then one trait to implement across our crates.
+Remaining gaps, none blocking:
 
-Two findings: zenjxl sets no CMS on the decoder at all, and zenjxl-decoder's moxcms wrapper sets `allow_use_cicp_transfer` true and ignores
-`intensity_target`, while zenpixels-convert's sets it false. Those two can disagree on the same profile.
+- `RowTransformMut` isn't `Sync`. The adapter holds it in a `Mutex`.
+- There's no intensity target. Both JXL wrappers ignore it too, so it has no measured effect.
+
+The decoder stays a jxl-rs fork with its own trait and no zenpixels dependency, so the adapter belongs in zenjxl, which has both. It lands
+after this stack: zenjxl-decoder caps archmage below what this stack needs. zenjxl sets no CMS on the decoder today.
+
+`cms-contract/` holds every backend to the same behavior. It found four defects in `MoxCms`, fixed on #113. The lcms port is a
+reference only for matrix profiles for now, since it diverges from C on table profiles (imazen/lcms#1).
 
 ## Tone mapping
 
-There is one algorithm: `Bt2446A`, the winner of zentone's 2026-06-22 shootout. It reaches zencodecs through
-`ConvertPlan::new_with_hdr_config`. `ToneMapper`, with `Requirements`, `ToneMapContext` and `StripMapper`, is on the unmerged
-`feat/tone-map-two-phase` branch, which #61 closed in favor of.
+There is one algorithm: `Bt2446A`, the winner of zentone's 2026-06-22 shootout. `ToneMapper` injects another. `ConvertPlan::new_with_hdr_config`
+takes a peak and `new_with_tone_mapper` takes the mapper.
+
+Streaming doesn't work for PQ, because the peak needs every row. `zencodecs` holds PQ rows until `finish`, measures the brightest channel, and
+reports `OutputTiming::AT_FINISH`. HLG has a fixed reference peak and streams. Declared MaxCLL and mastering peaks don't drive the render: all of
+the shootout's top results measure, and the flicker notes recorded a declared 24,285 nits for content measuring 1,401. No metadata variant
+was scored, so this isn't a measured comparison against metadata.
+
+Two consequences: a flat 203-nit image renders as white, since 203 is its peak, and 203 nits at a 1000-nit peak is 171 of 255, lower than
+BT.2408 would give.
+
+Size, for `zenpixels-convert` alone, stripped with thin LTO: `hdr-experimental` on and unused adds 13,424 B at opt-3 or 8,680 B at opt-s.
+The machinery with an injected mapper adds 23,320 B or 16,320 B. With `Bt2446A` it adds 87,328 B or 99,488 B. A `bt2446a` feature would remove
+64,008 B or 83,168 B. That gate is a prototype and is in no branch.

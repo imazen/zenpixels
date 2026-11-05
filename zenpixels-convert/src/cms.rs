@@ -1,7 +1,7 @@
 //! Color Management System (CMS) traits.
 //!
 //! Defines the interface for ICC profile-based color transforms. When a CMS
-//! feature is enabled (e.g., `cms-moxcms`, `cms-lcms2`), the implementation
+//! feature is enabled (`cms-moxcms`), the implementation
 //! provides ICC-to-ICC transforms. Named profile conversions (sRGB, P3,
 //! BT.2020) use hardcoded matrices and don't require a CMS.
 //!
@@ -24,49 +24,17 @@
 //!
 //! # Implementing a CMS backend
 //!
-//! To add a new CMS backend (e.g., wrapping Little CMS 2):
+//! Implement [`PluggableCms`]. A backend must:
 //!
-//! 1. Implement [`ColorManagement`] on your backend struct.
-//! 2. `build_transform` should parse both ICC profiles, create an internal
-//!    transform object, and return it as `Box<dyn RowTransform>`.
-//! 3. `identify_profile` should check if an ICC profile matches a known
-//!    standard (sRGB, Display P3, etc.) and return the corresponding
-//!    [`Cicp`](crate::Cicp). This enables the fast path: if both source
-//!    and destination are known profiles, hardcoded matrices are used
-//!    instead of the CMS.
-//! 4. Feature-gate your implementation behind a cargo feature
-//!    (e.g., `cms-lcms2`).
+//! - Return `None` for a conversion it doesn't take, and `Some(Err)` once it took one and failed.
+//! - Never accept an ICC profile it couldn't read.
+//! - Treat `width` as the row's extent. Slices may be longer, and bytes past the row stay untouched.
+//!   A slice shorter than the row is an error from `try_transform_row`.
+//! - Keep no state between rows: any split of a row gives the same samples.
+//! - Carry alpha exactly, at every depth.
+//! - Round 8-bit samples to nearest, and keep white at white.
 //!
-//! ```rust,ignore
-//! struct MyLcms2;
-//!
-//! impl ColorManagement for MyLcms2 {
-//!     type Error = lcms2::Error;
-//!
-//!     fn build_transform(
-//!         &self,
-//!         src_icc: &[u8],
-//!         dst_icc: &[u8],
-//!     ) -> Result<Box<dyn RowTransform>, Self::Error> {
-//!         let src = lcms2::Profile::new_icc(src_icc)?;
-//!         let dst = lcms2::Profile::new_icc(dst_icc)?;
-//!         let xform = lcms2::Transform::new(&src, &dst, ...)?;
-//!         Ok(Box::new(Lcms2RowTransform(xform)))
-//!     }
-//!
-//!     fn identify_profile(&self, icc: &[u8]) -> Option<Cicp> {
-//!         // Fast: check MD5 hash against known profiles
-//!         // Slow: parse TRC+matrix, compare within tolerance
-//!         None
-//!     }
-//! }
-//! ```
-//!
-//! # No-op CMS
-//!
-//! Codecs that don't need ICC support can provide a no-op CMS whose
-//! `build_transform` always returns an error. This satisfies the type
-//! system while making it clear that ICC transforms are unsupported.
+//! `cms-contract/` in this repository tests all of this on `MoxCms` and on the lcms port.
 
 use crate::PixelFormat;
 use alloc::boxed::Box;
@@ -126,7 +94,7 @@ pub trait RowTransformMut: Send {
     ///
     /// `src` and `dst` may be different lengths if the transform changes
     /// the pixel format (e.g., CMYK to RGB). `width` is the number of
-    /// pixels, not bytes.
+    /// pixels, not bytes. Either slice may extend past the row, and those bytes stay untouched.
     fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32);
 
     /// Fallible execution hook, preserving source compatibility for old backends.
