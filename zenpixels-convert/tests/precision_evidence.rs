@@ -14,10 +14,10 @@ use zenpixels::{
     SignalRange, TransferFunction,
     sample::{CodePlane, ExactDepth, SampleEncoding},
 };
+use zenpixels_convert::PixelSliceConvertExt;
 use zenpixels_convert::{
     PixelBufferConvertExt,
     codes::{CodeMap, CodeRole, to_canonical},
-    orient::{apply_orientation, apply_orientation_in_place},
 };
 
 fn plane8(words: &[u8], width: usize, height: usize, stride: usize) -> AnyPlane<'_> {
@@ -957,12 +957,14 @@ fn orientation_moves_pixels_and_keeps_evidence() {
         Orientation::FlipH,
         Orientation::Transverse,
     ] {
-        let rotated = apply_orientation(decoded.as_slice(), orientation);
+        let rotated = decoded.as_slice().oriented(orientation).unwrap();
         assert_eq!(rotated.exact_depth(), e, "{orientation:?}");
         assert_eq!(changed_by_roundtrip(&rotated.as_slice(), 12), 0);
     }
-    let mut in_place = decoded.crop_copy(0, 0, W, H);
-    apply_orientation_in_place(&mut in_place, Orientation::Rotate270).unwrap();
+    let in_place = decoded
+        .crop_copy(0, 0, W, H)
+        .into_oriented(Orientation::Rotate270)
+        .unwrap();
     assert_eq!(in_place.exact_depth(), e);
     assert_eq!(changed_by_roundtrip(&in_place.as_slice(), 12), 0);
 }

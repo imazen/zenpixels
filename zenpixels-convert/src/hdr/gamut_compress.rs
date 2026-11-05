@@ -347,7 +347,10 @@ mod tests {
     }
 
     fn bt709_soft_compress(knee: f32) -> SoftCompress {
-        SoftCompress::new(&OklabSpace::for_primaries(ColorPrimaries::Bt709).unwrap(), knee)
+        SoftCompress::new(
+            &OklabSpace::for_primaries(ColorPrimaries::Bt709).unwrap(),
+            knee,
+        )
     }
 
     // ---- Tests carried from zenfilters/src/gamut_lut.rs ----

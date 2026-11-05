@@ -3,7 +3,7 @@ mod matrices; mod methods;
 use matrices::*;use methods::*;
 use std::{fs,io::{Write,BufWriter},sync::Arc};
 use zenpixels::ColorPrimaries as P;
-use zenpixels_convert::{oklab,hdr::SoftCompress};
+use zenpixels_convert::{oklab, hdr::SoftCompress};
 type Xf=Arc<dyn moxcms::TransformExecutor<f32>+Send+Sync>;
 type Xl=Arc<dyn moxlocal::TransformExecutor<f32>+Send+Sync>;
 enum Kind{Clip,Css,CssBrief,Ott,Soft(SoftCompress),Film,Mox(Xf),Local(Xl)}
@@ -11,7 +11,7 @@ struct Method{name:String,matrix:M,kind:Kind}
 fn matrix(g:usize)->M{let p=if g==0{[(0.68,0.32),(0.265,0.69),(0.15,0.06)]}else{[(0.708,0.292),(0.17,0.797),(0.131,0.046)]};matmul(&inv(&CSS_SRGB_TO_XYZ),&rgb_to_xyz(p))}
 fn make_methods(g:usize)->Vec<Method>{
  let matrix=matrix(g);let mut out=Vec::new();
- for(name,kind)in[("clip-f64",Kind::Clip),("css-search-f64",Kind::Css),("css-brief-tolerance-f64",Kind::CssBrief),("ottosson-adaptive-f64",Kind::Ott),("softcompress-f32-k096",Kind::Soft(SoftCompress::from_matrices(&oklab::rgb_to_lms_matrix(P::Bt709).unwrap(),&oklab::lms_to_rgb_matrix(P::Bt709).unwrap(),0.96))),("mox-filmlike-f32",Kind::Film)]{out.push(Method{name:name.into(),matrix,kind})}
+ for(name,kind)in[("clip-f64",Kind::Clip),("css-search-f64",Kind::Css),("css-brief-tolerance-f64",Kind::CssBrief),("ottosson-adaptive-f64",Kind::Ott),("softcompress-f32-k096",Kind::Soft(SoftCompress::new(&oklab::OklabSpace::for_primaries(P::Bt709).unwrap(),0.96))),("mox-filmlike-f32",Kind::Film)]{out.push(Method{name:name.into(),matrix,kind})}
  let mut src=if g==0{moxcms::ColorProfile::new_display_p3()}else{moxcms::ColorProfile::new_bt2020()};src.cicp=None;
  for v in [&mut src.red_trc,&mut src.green_trc,&mut src.blue_trc]{*v=Some(moxcms::ToneReprCurve::Parametric(vec![1.0]));}
  let dst=moxcms::ColorProfile::new_srgb();
@@ -119,7 +119,7 @@ fn benchmark(){
  let src:Vec<f32>=(0..1024).flat_map(|i|[((i*313+17)%1024)as f32/1023.0,((i*619+71)%1024)as f32/1023.0,((i*109+337)%1024)as f32/1023.0]).collect();let mut dst=vec![0_f32;3072];
  group.bench(format!("zen-row-{gn}-f32"),move|b|b.iter(||{converter.convert_row(bytemuck::cast_slice(std::hint::black_box(&src)),bytemuck::cast_slice_mut(&mut dst),1024);std::hint::black_box(&dst);}));
  }
- let p=P::Bt709;let soft=SoftCompress::from_matrices(&oklab::rgb_to_lms_matrix(p).unwrap(),&oklab::lms_to_rgb_matrix(p).unwrap(),0.96);let src:Vec<_>=(0..1024).map(|i|[(i%1024)as f32/1023.0,-0.1,0.3]).collect();let mut dst=src.clone();
+ let p=P::Bt709;let soft=SoftCompress::new(&oklab::OklabSpace::for_primaries(p).unwrap(),0.96);let src:Vec<_>=(0..1024).map(|i|[(i%1024)as f32/1023.0,-0.1,0.3]).collect();let mut dst=src.clone();
  group.bench("soft-kernel-copy-1024",move|b|b.iter(||{dst.copy_from_slice(std::hint::black_box(&src));soft.apply_strip(&mut dst);std::hint::black_box(&dst);}));
  });});
  fs::write("bench.json",serde_json::to_string_pretty(&result).unwrap()).unwrap();println!("{}",result.to_markdown());

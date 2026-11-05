@@ -173,11 +173,11 @@ returning `At<BufferError>` (`InsufficientData` / `StrideTooSmall` /
 
 ```rust
 use zenpixels::PixelBuffer;
-use zenpixels_convert::{RowConverter, best_match, ConvertIntent};
+use zenpixels_convert::{RowConverter, ConvertIntent};
 
 // `src: PixelBuffer` — pick the cheapest target format the encoder supports
 let source_desc = src.descriptor();
-let target = best_match(source_desc, &encoder_formats, ConvertIntent::Fastest)
+let target = ConvertIntent::Fastest.best_match(source_desc, &encoder_formats)
     .ok_or("no compatible format")?;
 
 // Unreleased bridge: allocate output and prepare once before the row loop
@@ -319,7 +319,7 @@ Every buffer carries one. Every codec declares which ones it produces and consum
 
 `ColorOrigin` is the immutable provenance record: *how the source file described its color*, not what the pixels currently are. Used at encode time to decide whether to re-embed the original profile.
 
-**CICP → ICC synthesis** (zenpixels-convert): `synthesize_icc_for_cicp(Cicp)` resolves an embeddable ICC profile for any assigned H.273 combination — bundled compressed database (`icc-db` feature, on by default; ~36 KB asset, lazily decoded per transfer group, no CMS required), with PQ/HLG HDR included. `synthesize_gray_icc_for_cicp` is the GRAY-class sibling for single-channel output (libpng rejects gray images paired with RGB-class profiles). The sRGB default answers `NotNeeded`; everything the database serves round-trips back through `extract_cicp` / `identify_common`.
+**CICP → ICC synthesis** (zenpixels-convert): `SynthesizedIcc::for_cicp(Cicp)` resolves an embeddable ICC profile for any assigned H.273 combination — bundled compressed database (`icc-db` feature, on by default; ~36 KB asset, lazily decoded per transfer group, no CMS required), with PQ/HLG HDR included. `synthesize_gray_icc_for_cicp` is the GRAY-class sibling for single-channel output (libpng rejects gray images paired with RGB-class profiles). The sRGB default answers `NotNeeded`; everything the database serves round-trips back through `extract_cicp` / `identify_common`.
 
 ### Orientation
 
@@ -340,11 +340,11 @@ let (w, h) = Orientation::Rotate90.output_dimensions(1920, 1080);
 assert_eq!((w, h), (1080, 1920));
 ```
 
-The buffer-baking half lives in zenpixels-convert: `apply_orientation`
+The buffer-baking half lives in zenpixels-convert: `PixelSlice::oriented`
 (fresh buffer; SIMD-tiled transpose for 4-byte pixels behind the
 `fast-transpose` feature, portable scalar tiled path otherwise),
-`apply_orientation_into` (caller-provided target, no allocation), and
-`apply_orientation_in_place` (reuses the buffer's own allocation; see below).
+`PixelSlice::oriented_into` (caller-provided target, no allocation), and
+`PixelBuffer::into_oriented` (reuses the buffer's own allocation; see below).
 
 ## Pixel buffers
 
@@ -453,10 +453,8 @@ operations on it, all allocation-free:
 - `buf.reduce_to_load_bearing_format_in_place(force)` — bit-exact narrowing
   (drop an all-opaque alpha lane, collapse `R==G==B` to gray, narrow
   bit-replicated U16 to U8) driven by a SIMD content scan;
-- `try_adapt_in_place(&mut buf, target)` — metadata re-tags, `Rgba8`↔`Bgra8`
-  SIMD B↔R swap, and contract-exact alpha-lane drops (RGBX→RGB and friends);
-- `apply_orientation_in_place(&mut buf, orientation)` — orientation baking
-  without a second pixel buffer.
+- `buf.into_oriented(orientation)` — orientation baking without a second
+  pixel buffer.
 
 The analysis half is allocation-free too: `slice.determine_load_bearing()`
 reports `uses_alpha` / `uses_chroma` / `uses_low_bits` (~75 GiB/s fused
@@ -491,7 +489,7 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 
 `Provenance` guides cost-model ranking; it cannot prove exact narrowing after edits. Use `ConvertPlan::new_preserving_samples` for proven representation changes or explicitly request value analysis.
 
-Three entry points: `best_match()` (simple), `best_match_with()` (with consumer costs), `negotiate()` (full control with provenance).
+Two entry points: `ConvertIntent::best_match` (simple) and `ConvertIntent::negotiate` (with provenance and consumer costs).
 
 ### No silent lossy conversions
 
@@ -518,15 +516,11 @@ Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `C
 
 **HDR** — `zenpixels::hdr` contains the small luminance and mastering metadata types. Measurement and conversion live in `zenpixels-convert::hdr`. With `hdr-experimental`, construct an explicit `ConvertPlan::new_with_hdr_config` using a supplied peak, or call `convert_to_sdr_measuring_peak` to request a separate rowwise measurement pass. `quantize_to` converts anchored linear samples to PQ16. The legacy core scan, root metadata aliases, bundled `HdrMetadata`, and global Reinhard/exposure helpers are removed in 0.3.1.
 
-**Oklab** — primaries-aware `rgb_to_lms_matrix()` / `lms_to_rgb_matrix()`, scalar `rgb_to_oklab()` / `oklab_to_rgb()`, public LMS/XYZ/Oklab matrices. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
+**Oklab** — `OklabSpace` holds both LMS matrices for a set of primaries and does scalar conversions, with public LMS/XYZ/Oklab matrices. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
 
 **CMS** — `PluggableCms` trait (dyn-compatible, accepts `ColorProfileSource` directly — CICP, named profiles, or raw ICC bytes) plugs an external backend into `RowConverter`. `RowTransformMut` is the `&mut self` row-level transform returned by plugins. The `cms-moxcms` feature provides a concrete backend using [moxcms](https://crates.io/crates/moxcms), supporting u8/u16/f32 transforms with automatic profile identification. The older `ColorManagement` / `RowTransform` traits (ICC-bytes-only, `&self`) are retained for backward compatibility.
 
-**ICC identification** — `zenpixels::icc::identify_common(icc_bytes)` recognizes 298 well-known RGB + 69 grayscale profiles via normalized FNV-1a hash lookup (~100ns), including every profile the CICP database itself embeds in encoded output. Returns primaries, transfer function, and `IdentificationUse` (whether matrix+TRC substitution is safe vs CMS-only). Covers sRGB, Display P3, BT.2020, Adobe RGB variants across ICC v2–v5; `extract_cicp` reads embedded `cICP` tags directly.
-
-### Pipeline planner
-
-`CodecFormats` declares each codec's decode outputs and encode inputs, ICC/CICP support, effective bits, and overshoot behavior. The `pipeline` feature enables the format registry, operation requirements, and path solver for multi-step conversion planning.
+**ICC identification** — `zenpixels::icc::IccIdentification::from_icc(icc_bytes)` recognizes 298 well-known RGB + 69 grayscale profiles via normalized FNV-1a hash lookup (~100ns), including every profile the CICP database itself embeds in encoded output. Returns primaries, transfer function, and `IdentificationUse` (whether matrix+TRC substitution is safe vs CMS-only). Covers sRGB, Display P3, BT.2020, Adobe RGB variants across ICC v2–v5; `extract_cicp` reads embedded `cICP` tags directly.
 
 ### Resource estimation
 
@@ -567,13 +561,12 @@ branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs
 | Feature | Default | What it enables |
 |---|---|---|
 | `std` | yes | Standard library |
-| `icc-db` | yes | Bundled CICP→ICC profile database (~36 KB asset) behind `synthesize_icc_for_cicp` / `synthesize_gray_icc_for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
-| `fast-transpose` | | SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON) for `apply_orientation*`; portable scalar otherwise (output is bit-identical) |
+| `icc-db` | yes | Bundled CICP→ICC profile database (~36 KB asset) behind `SynthesizedIcc::for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
+| `fast-transpose` | | SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON) for orientation; portable scalar otherwise (output is bit-identical) |
 | `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed convenience methods (`to_rgb8()`, `to_rgba8()`, etc.) |
 | `imgref` | | `ImgRef`/`ImgVec` conversions (implies `rgb`) |
 | `planar` | | Retained no-op feature; legacy planar API removed |
-| `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
 | `estimation-experimental` | | Compatibility feature only; estimation is deprecated in 0.2 and absent in 0.3 |
 | `hdr-experimental` | | Native HDR→SDR display mapping inside `ConvertPlan` (BT.2446 Method A + OKLch soft compress + CTA-861.3 CLL measurement); API shape may move ahead of 0.3.0 |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |

@@ -2339,18 +2339,10 @@ impl core::fmt::Debug for ConvertScratch {
     }
 }
 
-/// Convert one row of `width` pixels using a pre-computed plan.
-///
-/// `src` and `dst` must be sized for `width` pixels in their respective formats.
-/// For multi-step plans, an internal scratch buffer is allocated per call.
-/// Prefer [`RowConverter`](crate::RowConverter) in hot loops (reuses scratch buffers).
-pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
-    // Allocating fallback for one-off calls: the scratch starts empty and
-    // only grows if the plan actually needs it (multi-step ping-pong or an
-    // HDR tone-map kernel); identity and other single-step plans stay
-    // allocation-free.
-    let mut scratch = ConvertScratch::new();
-    convert_row_buffered(plan, src, dst, width, &mut scratch);
+/// One row with fresh scratch, for tests that run a plan directly.
+#[cfg(test)]
+fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
+    convert_row_buffered(plan, src, dst, width, &mut ConvertScratch::new());
 }
 
 /// Convert one row of `width` pixels, reusing pre-allocated scratch buffers.

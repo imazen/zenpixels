@@ -13,9 +13,7 @@
 use zenpixels_convert::{
     ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
 };
-use zenpixels_convert::{
-    ConversionCost, Provenance, conversion_cost, conversion_cost_with_provenance,
-};
+use zenpixels_convert::{ConversionCost, Provenance};
 
 // ===========================================================================
 // Reference color math (f64 precision, test-only)
@@ -669,8 +667,11 @@ fn depth_roundtrip_scenarios() {
         let converted: Vec<_> = grid.iter().map(|c| roundtrip_u8_srgb(*c)).collect();
         // The return leg uses u8 provenance; no operation changed the samples, so
         // f32→u8 is lossless here.
-        let cost_fwd = conversion_cost(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR);
-        let cost_back = conversion_cost_with_provenance(
+        let cost_fwd = zenpixels_convert::ConversionCost::between(
+            PixelDescriptor::RGB8_SRGB,
+            PixelDescriptor::RGBF32_LINEAR,
+        );
+        let cost_back = zenpixels_convert::ConversionCost::between_with_provenance(
             PixelDescriptor::RGBF32_LINEAR,
             PixelDescriptor::RGB8_SRGB,
             Provenance::with_origin_depth(ChannelType::U8),
@@ -695,8 +696,11 @@ fn depth_roundtrip_scenarios() {
             })
             .collect();
         // Return leg uses u8 provenance.
-        let cost_fwd = conversion_cost(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGB16_SRGB);
-        let cost_back = conversion_cost_with_provenance(
+        let cost_fwd = zenpixels_convert::ConversionCost::between(
+            PixelDescriptor::RGB8_SRGB,
+            PixelDescriptor::RGB16_SRGB,
+        );
+        let cost_back = zenpixels_convert::ConversionCost::between_with_provenance(
             PixelDescriptor::RGB16_SRGB,
             PixelDescriptor::RGB8_SRGB,
             Provenance::with_origin_depth(ChannelType::U8),
@@ -716,7 +720,10 @@ fn depth_roundtrip_scenarios() {
             .iter()
             .map(|c| roundtrip_u8_srgb(*c))
             .collect();
-        let cost = conversion_cost(PixelDescriptor::RGB16_SRGB, PixelDescriptor::RGB8_SRGB);
+        let cost = zenpixels_convert::ConversionCost::between(
+            PixelDescriptor::RGB16_SRGB,
+            PixelDescriptor::RGB8_SRGB,
+        );
         results.push(run_scenario(
             "u16 sRGB → u8 sRGB",
             &reference_u16,
@@ -728,7 +735,10 @@ fn depth_roundtrip_scenarios() {
     // 4. f32 Linear → u8 sRGB (origin f32 — true loss)
     {
         let converted: Vec<_> = ramp.iter().map(|c| roundtrip_u8_srgb(*c)).collect();
-        let cost = conversion_cost(PixelDescriptor::RGBF32_LINEAR, PixelDescriptor::RGB8_SRGB);
+        let cost = zenpixels_convert::ConversionCost::between(
+            PixelDescriptor::RGBF32_LINEAR,
+            PixelDescriptor::RGB8_SRGB,
+        );
         results.push(run_scenario(
             "f32 Lin → u8 sRGB (origin f32)",
             &ramp,
@@ -750,7 +760,7 @@ fn depth_roundtrip_scenarios() {
             })
             .collect();
         let converted: Vec<_> = reference.iter().map(|c| roundtrip_u8_srgb(*c)).collect();
-        let cost = conversion_cost_with_provenance(
+        let cost = zenpixels_convert::ConversionCost::between_with_provenance(
             PixelDescriptor::RGBF32_LINEAR,
             PixelDescriptor::RGB8_SRGB,
             Provenance::with_origin_depth(ChannelType::U8),
@@ -1222,7 +1232,7 @@ fn gamut_conversion_scenarios() {
             ColorPrimaries::DisplayP3,
         );
         let srgb = PixelDescriptor::RGBF32_LINEAR;
-        let cost = conversion_cost(p3_to_srgb, srgb);
+        let cost = zenpixels_convert::ConversionCost::between(p3_to_srgb, srgb);
         let model_bucket = Bucket::from_model_loss(cost.loss);
         let match_ok = (measured_bucket as i32 - model_bucket as i32).abs() <= 1;
         results.push(ScenarioResult {
@@ -1288,7 +1298,7 @@ fn gamut_conversion_scenarios() {
             ColorPrimaries::Bt2020,
         );
         let srgb = PixelDescriptor::RGBF32_LINEAR;
-        let cost = conversion_cost(bt2020, srgb);
+        let cost = zenpixels_convert::ConversionCost::between(bt2020, srgb);
         let model_bucket = Bucket::from_model_loss(cost.loss);
         let match_ok = (measured_bucket as i32 - model_bucket as i32).abs() <= 1;
         results.push(ScenarioResult {
@@ -1339,7 +1349,7 @@ fn gamut_conversion_scenarios() {
             TransferFunction::Linear,
             ColorPrimaries::DisplayP3,
         );
-        let cost = conversion_cost(bt2020, p3);
+        let cost = zenpixels_convert::ConversionCost::between(bt2020, p3);
         results.push(run_scenario(
             "BT.2020 → P3 → BT.2020 (saturated)",
             &refs,
@@ -1391,7 +1401,7 @@ fn gamut_conversion_scenarios() {
         );
         let srgb = PixelDescriptor::RGBF32_LINEAR;
         let prov = Provenance::with_origin(ChannelType::F32, ColorPrimaries::Bt709);
-        let cost = conversion_cost_with_provenance(bt2020, srgb, prov);
+        let cost = zenpixels_convert::ConversionCost::between_with_provenance(bt2020, srgb, prov);
         results.push(run_scenario(
             "BT.2020→sRGB (origin sRGB)",
             &refs,
@@ -1422,7 +1432,7 @@ fn gamut_conversion_scenarios() {
         );
         let srgb = PixelDescriptor::RGBF32_LINEAR;
         let prov = Provenance::with_origin(ChannelType::F32, ColorPrimaries::Bt709);
-        let cost = conversion_cost_with_provenance(p3, srgb, prov);
+        let cost = zenpixels_convert::ConversionCost::between_with_provenance(p3, srgb, prov);
         results.push(run_scenario(
             "P3→sRGB (origin sRGB)",
             &refs,
@@ -1542,7 +1552,7 @@ fn transfer_function_scenarios() {
             TransferFunction::Pq,
             ColorPrimaries::Bt2020,
         );
-        let cost = conversion_cost(pq_desc, PixelDescriptor::RGB8_SRGB);
+        let cost = zenpixels_convert::ConversionCost::between(pq_desc, PixelDescriptor::RGB8_SRGB);
         results.push(run_scenario(
             "f32 PQ → u8 sRGB (HDR→SDR)",
             &reference,
@@ -2607,8 +2617,11 @@ fn cost_model_ranking_correlates() {
     {
         let conv: Vec<_> = grid.iter().map(|c| roundtrip_u8_srgb(*c)).collect();
         let stats = measure_conversion_loss(&grid, &conv);
-        let cost_fwd = conversion_cost(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR);
-        let cost_back = conversion_cost_with_provenance(
+        let cost_fwd = zenpixels_convert::ConversionCost::between(
+            PixelDescriptor::RGB8_SRGB,
+            PixelDescriptor::RGBF32_LINEAR,
+        );
+        let cost_back = zenpixels_convert::ConversionCost::between_with_provenance(
             PixelDescriptor::RGBF32_LINEAR,
             PixelDescriptor::RGB8_SRGB,
             Provenance::with_origin_depth(ChannelType::U8),
@@ -2624,7 +2637,10 @@ fn cost_model_ranking_correlates() {
     {
         let conv: Vec<_> = ramp.iter().map(|c| roundtrip_u8_srgb(*c)).collect();
         let stats = measure_conversion_loss(&ramp, &conv);
-        let cost = conversion_cost(PixelDescriptor::RGBF32_LINEAR, PixelDescriptor::RGB8_SRGB);
+        let cost = zenpixels_convert::ConversionCost::between(
+            PixelDescriptor::RGBF32_LINEAR,
+            PixelDescriptor::RGB8_SRGB,
+        );
         pairs.push(("f32→u8 origin f32", stats.p95_de, cost.loss));
     }
 

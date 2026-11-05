@@ -1,6 +1,11 @@
 use super::*;
 use zenpixels::PixelDescriptor;
 
+/// The allocating entry, for tests that can't run out of memory.
+fn apply_orientation(src: PixelSlice<'_>, orientation: Orientation) -> PixelBuffer {
+    super::apply_orientation(src, orientation).unwrap()
+}
+
 /// Build a tightly-packed source slice from raw bytes.
 fn slice<'a>(data: &'a [u8], w: u32, h: u32, desc: PixelDescriptor) -> PixelSlice<'a> {
     PixelSlice::new(data, w, h, w as usize * desc.bytes_per_pixel(), desc).unwrap()

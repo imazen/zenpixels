@@ -232,6 +232,43 @@ pub enum ConvertIntent {
     Perceptual,
 }
 
+impl ConvertIntent {
+    /// The cheapest of `supported` for `source` under this intent, or `None` when
+    /// `supported` is empty.
+    #[must_use]
+    pub fn best_match(
+        self,
+        source: PixelDescriptor,
+        supported: &[PixelDescriptor],
+    ) -> Option<PixelDescriptor> {
+        best_match(source, supported, self)
+    }
+
+    /// Like [`best_match`](Self::best_match), with the data's origin and each
+    /// candidate's cost to the consumer: `our conversion + consumer cost`.
+    ///
+    /// Use [`Provenance`] when data was widened from a lower precision, and
+    /// [`FormatOption`] costs when a consumer has fused paths, such as a JPEG
+    /// encoder that goes from `f32` to DCT directly.
+    ///
+    /// ```rust,ignore
+    /// let target = ConvertIntent::Fastest.negotiate(
+    ///     current_f32_desc,
+    ///     Provenance::with_origin_depth(ChannelType::U8),
+    ///     encoder_options.iter().copied(),
+    /// );
+    /// ```
+    #[must_use]
+    pub fn negotiate(
+        self,
+        source: PixelDescriptor,
+        provenance: Provenance,
+        options: impl Iterator<Item = FormatOption>,
+    ) -> Option<PixelDescriptor> {
+        negotiate(source, provenance, options, self)
+    }
+}
+
 /// Two-axis conversion cost: computational effort vs. information loss.
 ///
 /// These are independent concerns:
@@ -250,6 +287,28 @@ pub struct ConversionCost {
 }
 
 impl ConversionCost {
+    /// The cost of our kernels for `from` to `to`, independent of intent.
+    ///
+    /// Assumes `from`'s depth and primaries are the data's origin. Use
+    /// [`between_with_provenance`](Self::between_with_provenance) for data that
+    /// was widened from a lower precision.
+    #[must_use]
+    pub fn between(from: PixelDescriptor, to: PixelDescriptor) -> Self {
+        conversion_cost(from, to)
+    }
+
+    /// The cost of `from` to `to`, given where the data came from. Narrowing back
+    /// to the origin depth reports no loss: `f32` to `u8` is free for `u8` origin.
+    /// That models an unchanged round trip and doesn't check the samples.
+    #[must_use]
+    pub fn between_with_provenance(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        provenance: Provenance,
+    ) -> Self {
+        conversion_cost_with_provenance(from, to, provenance)
+    }
+
     /// Zero cost — identity conversion.
     pub const ZERO: Self = Self { effort: 0, loss: 0 };
 
@@ -271,7 +330,7 @@ impl Add for ConversionCost {
 
 /// A supported format with optional consumer-provided cost override.
 ///
-/// Use this with [`best_match_with`] when the consumer can handle some
+/// Use this with [`ConvertIntent::negotiate`] when the consumer can handle some
 /// formats more efficiently than the default conversion path.
 ///
 /// # Example
@@ -329,9 +388,9 @@ impl From<PixelDescriptor> for FormatOption {
 ///
 /// This is the simple API — all consumer costs are assumed zero,
 /// and provenance is inferred from the source descriptor (conservative).
-/// Use [`best_match_with`] for consumer cost overrides, or
+/// Use [`ConvertIntent::negotiate`] for consumer cost overrides, or
 /// [`negotiate`] for full control over provenance and consumer costs.
-pub fn best_match(
+pub(crate) fn best_match(
     source: PixelDescriptor,
     supported: &[PixelDescriptor],
     intent: ConvertIntent,
@@ -340,30 +399,6 @@ pub fn best_match(
         source,
         Provenance::from_source(source),
         supported.iter().map(|&d| FormatOption::from(d)),
-        intent,
-    )
-}
-
-/// Pick the best conversion target from `options`, accounting for
-/// consumer-provided cost overrides.
-///
-/// Returns `None` only if `options` is empty.
-///
-/// Each [`FormatOption`] specifies a format the consumer can accept
-/// and what it costs the consumer to handle that format internally.
-/// The total cost is `our_conversion + consumer_cost`, weighted by intent.
-///
-/// Provenance is inferred from the source descriptor. Use [`negotiate`]
-/// when the data has been widened from a lower-precision origin.
-pub fn best_match_with(
-    source: PixelDescriptor,
-    options: &[FormatOption],
-    intent: ConvertIntent,
-) -> Option<PixelDescriptor> {
-    negotiate(
-        source,
-        Provenance::from_source(source),
-        options.iter().copied(),
         intent,
     )
 }
@@ -392,7 +427,7 @@ pub fn best_match_with(
 ///     ConvertIntent::Fastest,
 /// );
 /// ```
-pub fn negotiate(
+pub(crate) fn negotiate(
     source: PixelDescriptor,
     provenance: Provenance,
     options: impl Iterator<Item = FormatOption>,
@@ -412,10 +447,10 @@ pub fn negotiate(
 /// any consumer-side cost. Intent-independent.
 ///
 /// Provenance is inferred from `from` (conservative: assumes current
-/// depth is the true origin). Use [`conversion_cost_with_provenance`]
+/// depth is the true origin). Use [`ConversionCost::between_with_provenance`]
 /// when the data has been widened from a lower-precision source.
 #[must_use]
-pub fn conversion_cost(from: PixelDescriptor, to: PixelDescriptor) -> ConversionCost {
+pub(crate) fn conversion_cost(from: PixelDescriptor, to: PixelDescriptor) -> ConversionCost {
     conversion_cost_with_provenance(from, to, Provenance::from_source(from))
 }
 
@@ -427,7 +462,7 @@ pub fn conversion_cost(from: PixelDescriptor, to: PixelDescriptor) -> Conversion
 /// models an unchanged round trip; it does not check that the samples are
 /// still u8 levels.
 #[must_use]
-pub fn conversion_cost_with_provenance(
+pub(crate) fn conversion_cost_with_provenance(
     from: PixelDescriptor,
     to: PixelDescriptor,
     provenance: Provenance,
@@ -920,7 +955,12 @@ mod tests {
         ];
         // Even Fastest should prefer the zero-conversion path with low consumer cost.
         assert_eq!(
-            best_match_with(src, options, ConvertIntent::Fastest),
+            negotiate(
+                src,
+                Provenance::from_source(src),
+                options.iter().copied(),
+                ConvertIntent::Fastest
+            ),
             Some(PixelDescriptor::RGBF32_LINEAR)
         );
     }

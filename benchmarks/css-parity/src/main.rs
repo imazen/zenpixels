@@ -3,7 +3,7 @@ mod matrices;
 use linear_srgb::default as d;
 use matrices::*;
 use zenpixels::{ChannelLayout as L, ChannelType as T, Color, ColorPrimaries as P, PixelDescriptor as D, TransferFunction as Tf};
-use zenpixels_convert::gamut::conversion_matrix;
+use zenpixels_convert::gamut::GamutMatrix;
 use zenpixels_convert::{ColorConvertExt, ConvertOptions};
 
 fn css_lin(c: f64) -> f64 { let a = c.abs(); if a <= 0.04045 { c / 12.92 } else { c.signum() * ((a + 0.055) / 1.055).powf(2.4) } }
@@ -59,7 +59,7 @@ fn matrices_against_chromaticities() {
     for (fname, f, fp) in spaces { for (tname, t, tp) in spaces {
         if fname == tname { continue; }
         let exact = matmul(&inv(&rgb_to_xyz(tp)), &rgb_to_xyz(fp));
-        let ours = conversion_matrix(f, t).unwrap();
+        let ours = GamutMatrix::between(f, t).unwrap();
         for i in 0..3 { for j in 0..3 { all = all.max((f64::from(ours[i][j]) - exact[i][j]).abs()); } }
     } }
     println!("Gamut matrices among 4 spaces, 12 pairs: worst element off by {all:.2e}");

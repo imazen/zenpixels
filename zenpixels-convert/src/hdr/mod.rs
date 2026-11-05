@@ -166,7 +166,7 @@ fn quantize_setup(
 ///   scene-referred anchor differs and is not handled here).
 /// - [`ConvertError::InvalidWidth`] for zero-area input, or any error the
 ///   inner anchored conversion raises.
-pub fn quantize_to(
+pub(crate) fn quantize_to(
     px: PixelSlice<'_>,
     target: PixelDescriptor,
 ) -> Result<PixelBuffer, At<ConvertError>> {

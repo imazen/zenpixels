@@ -1,5 +1,6 @@
 whereat::define_at_crate_info!();
 
+use zenpixels_convert::PixelSliceConvertExt;
 use zenpixels_convert::{AlphaMode, ConvertPlan, PixelDescriptor, RowConverter, TransferFunction};
 
 #[test]
@@ -127,7 +128,7 @@ fn explicit_opacity_scan_rejects_nonfinite_and_out_of_range_alpha() {
             PixelDescriptor::RGBAF32_LINEAR,
         )
         .unwrap();
-        assert!(zenpixels_convert::adapt::check_opaque(view).is_err());
+        assert!(view.check_opaque().is_err());
     }
 }
 
@@ -243,7 +244,7 @@ fn backend_row_failure_preserves_concrete_error_and_never_returns_encode_ready()
     );
     let buffer = zenpixels::PixelBuffer::from_vec(vec![1, 2, 3], 1, 1, from).unwrap();
     assert!(
-        zenpixels_convert::finalize_for_output_with(
+        zenpixels_convert::EncodeReady::finalize(
             &buffer,
             &zenpixels::ColorOrigin::assumed(),
             zenpixels_convert::OutputProfile::Named(zenpixels::Cicp::DISPLAY_P3),

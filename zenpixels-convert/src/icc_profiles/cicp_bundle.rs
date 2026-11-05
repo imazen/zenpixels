@@ -303,7 +303,7 @@ mod tests {
         for p in &BUNDLE_PROFILES {
             let icc = bundled_profile_for_cicp(p.primaries, p.transfer)
                 .expect("indexed profile must resolve");
-            let got = zenpixels::icc::extract_cicp(&icc).unwrap_or_else(|| {
+            let got = zenpixels::Cicp::from_icc(&icc).unwrap_or_else(|| {
                 panic!(
                     "RGB profile ({}, {}) has no recoverable cicp tag",
                     p.primaries, p.transfer
@@ -336,13 +336,13 @@ mod tests {
             let icc = bundled_gray_profile_for_cicp(p.primaries, p.transfer)
                 .expect("indexed gray profile must resolve");
             assert!(
-                zenpixels::icc::extract_cicp(&icc).is_none(),
+                zenpixels::Cicp::from_icc(&icc).is_none(),
                 "GRAY profiles must not carry a cicp tag (ICC.1 forbids it \
                  outside RGB/YCbCr/XYZ); ({}, {}) has one",
                 p.primaries,
                 p.transfer
             );
-            let identified = zenpixels::icc::identify_common(&icc);
+            let identified = zenpixels::icc::IccIdentification::from_icc(&icc);
             if GRAY_HASH_RECOGNIZED_TC.contains(&p.transfer) {
                 assert!(
                     identified.is_some(),
@@ -381,7 +381,7 @@ mod tests {
             (crate::icc_profiles::REC2020_V4, "Rec2020Compat v4"),
         ] {
             assert!(
-                zenpixels::icc::identify_common(bytes).is_some(),
+                zenpixels::icc::IccIdentification::from_icc(bytes).is_some(),
                 "{name} fell out of the zenpixels identification table"
             );
         }

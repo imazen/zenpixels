@@ -14,7 +14,7 @@ use matrices::*;
 use methods::*;
 use std::io::Write;
 use zenpixels::{ColorPrimaries as P, PixelDescriptor as D, TransferFunction as Tf};
-use zenpixels_convert::{RowConverter, hdr::SoftCompress, oklab, policy::ConvertOptions};
+use zenpixels_convert::{RowConverter, hdr::SoftCompress, oklab::OklabSpace, policy::ConvertOptions};
 
 const KNEE: f32 = 0.96;
 
@@ -28,9 +28,10 @@ fn source_matrix(g: usize) -> M {
 }
 
 fn params(iters: u32, tau: f32, eps: f32) -> Params {
+    let space = OklabSpace::for_primaries(P::Bt709).unwrap();
     Params {
-        m1: oklab::rgb_to_lms_matrix(P::Bt709).unwrap(),
-        m1_inv: oklab::lms_to_rgb_matrix(P::Bt709).unwrap(),
+        m1: (*space.rgb_to_lms()).into(),
+        m1_inv: (*space.lms_to_rgb()).into(),
         knee: KNEE,
         tau,
         eps,
@@ -40,11 +41,7 @@ fn params(iters: u32, tau: f32, eps: f32) -> Params {
 }
 
 fn soft() -> SoftCompress {
-    SoftCompress::from_matrices(
-        &oklab::rgb_to_lms_matrix(P::Bt709).unwrap(),
-        &oklab::lms_to_rgb_matrix(P::Bt709).unwrap(),
-        KNEE,
-    )
+    SoftCompress::new(&OklabSpace::for_primaries(P::Bt709).unwrap(), KNEE)
 }
 
 /// Exact chroma boundary along constant L and hue, by bisection in f64.
@@ -300,7 +297,7 @@ fn load(path: &std::path::Path, m: &M, max_rows: usize) -> Img {
     d.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut r = d.read_info().unwrap();
     let icc = r.info().icc_profile.as_ref().map(|c| c.to_vec());
-    let id = icc.as_deref().and_then(zenpixels::icc::identify_common);
+    let id = icc.as_deref().and_then(zenpixels::icc::IccIdentification::from_icc);
     let mut buf = vec![0u8; r.output_buffer_size().unwrap()];
     let info = r.next_frame(&mut buf).unwrap();
     let ch = info.color_type.samples();

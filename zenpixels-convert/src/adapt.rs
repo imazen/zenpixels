@@ -6,18 +6,13 @@
 //!
 //! # Which function to use
 //!
-//! | Function | Negotiation | Policy | Use case |
-//! |----------|-------------|--------|----------|
-//! | [`adapt_for_encode_cow`] | `Fastest` intent | Permissive | Simple encode path |
-//! | [`adapt_for_encode_with_intent_cow`] | Caller-specified | Permissive | Encode after processing |
-//! | [`adapt_for_encode_explicit_cow`] | `Fastest` intent | [`ConvertOptions`] | Policy-sensitive encode |
-//!
-//! The old packed compatibility wrappers were removed in 0.3.1; use the
-//! stride-aware [`PixelCow`] forms above.
+//! [`PixelSliceConvertExt::adapt_for_encode`](crate::ext::PixelSliceConvertExt::adapt_for_encode)
+//! covers pixels a [`PixelSlice`] can describe. [`adapt_raw_rows_for_encode`] covers
+//! raw rows with padding that isn't a whole number of pixels.
 //!
 //! # Zero-copy fast path
 //!
-//! All `adapt_for_encode*_cow` functions check for an exact match first. If the
+//! Both check for an exact match first. If the
 //! source descriptor matches one of the supported formats, the function
 //! returns `PixelCow::Borrowed` — no allocation, no copy, no conversion. This
 //! means the common case (JPEG u8 sRGB → JPEG u8 sRGB) has zero overhead.
@@ -60,9 +55,7 @@ use crate::convert::ConvertPlan;
 use crate::converter::RowConverter;
 use crate::negotiate::{ConvertIntent, best_match};
 use crate::policy::{AlphaPolicy, ConvertOptions};
-use crate::{
-    ColorModel, ConvertError, PixelBuffer, PixelCow, PixelDescriptor, PixelSlice,
-};
+use crate::{ColorModel, ConvertError, PixelBuffer, PixelCow, PixelDescriptor, PixelSlice};
 use whereat::{At, ResultAtExt};
 
 /// Reject CMYK on either side of a `from`/`to` pair at the public-API
@@ -167,9 +160,10 @@ fn borrow_or_copy<'a>(
     Ok(PixelCow::Owned(output))
 }
 
-/// Negotiate format and return borrowed-or-owned, stride-aware pixels.
+/// [`adapt_raw_rows_for_encode`] with no alpha or depth checks and any channels dropped.
+#[cfg(test)]
 #[track_caller]
-pub fn adapt_for_encode_cow<'a>(
+pub(crate) fn adapt_for_encode_cow<'a>(
     data: &'a [u8],
     descriptor: PixelDescriptor,
     width: u32,
@@ -177,7 +171,7 @@ pub fn adapt_for_encode_cow<'a>(
     stride: usize,
     supported: &[PixelDescriptor],
 ) -> Result<PixelCow<'a>, At<ConvertError>> {
-    adapt_for_encode_explicit_cow(
+    adapt_raw_rows_for_encode(
         data,
         descriptor,
         width,
@@ -338,9 +332,13 @@ pub(crate) fn convert_into_with_anchor(
     Ok(())
 }
 
-/// Negotiate with explicit conversion policies and return [`PixelCow`].
+/// [`PixelSliceConvertExt::adapt_for_encode`] for raw rows that a [`PixelSlice`]
+/// can't describe: padding that isn't a whole number of pixels, as in rows aligned
+/// to 4 bytes. Such rows are copied to tight ones when they match a supported format.
+///
+/// [`PixelSliceConvertExt::adapt_for_encode`]: crate::ext::PixelSliceConvertExt::adapt_for_encode
 #[track_caller]
-pub fn adapt_for_encode_explicit_cow<'a>(
+pub fn adapt_raw_rows_for_encode<'a>(
     data: &'a [u8],
     descriptor: PixelDescriptor,
     width: u32,
@@ -384,7 +382,7 @@ pub fn adapt_for_encode_explicit_cow<'a>(
     if drops_alpha && options.alpha_policy == AlphaPolicy::DiscardIfOpaque {
         let view = PixelSlice::new(data, width, rows, stride, descriptor)
             .map_err_at(ConvertError::from)?;
-        check_opaque(view)?;
+        check_opaque(&view)?;
         checked_options.alpha_policy = AlphaPolicy::DiscardUnchecked;
     }
     let mut converter = RowConverter::new_explicit(descriptor, target, &checked_options).at()?;
@@ -408,7 +406,7 @@ pub fn adapt_for_encode_explicit_cow<'a>(
 /// Use this before planning with `AlphaPolicy::DiscardUnchecked` when the
 /// destination must remain unchanged on opacity failure. Floating alpha must
 /// equal 1.0 exactly; NaN, infinity and values above 1 are not opaque.
-pub fn check_opaque(pixels: PixelSlice<'_>) -> Result<(), At<ConvertError>> {
+pub(crate) fn check_opaque(pixels: &PixelSlice<'_>) -> Result<(), At<ConvertError>> {
     let desc = pixels.descriptor();
     if !desc.has_alpha() {
         return Ok(());
@@ -881,7 +879,7 @@ mod tests {
             .with_depth_policy(DepthPolicy::Round);
 
         let result =
-            adapt_for_encode_explicit_cow(&data, source, 2, 1, 6, &[target], &options).unwrap();
+            adapt_raw_rows_for_encode(&data, source, 2, 1, 6, &[target], &options).unwrap();
 
         assert!(
             matches!(result, PixelCow::Owned(_)),

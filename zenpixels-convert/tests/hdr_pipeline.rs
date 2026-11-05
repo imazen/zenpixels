@@ -511,7 +511,8 @@ fn hdr_pipeline_e2e_neutral_gray_lands_in_sdr_range() {
     let src_pixel: [u16; 3] = [40_000, 40_000, 40_000];
     let src_bytes: [u8; 6] = bytemuck::cast(src_pixel);
     let mut out = [0u8; 3];
-    zenpixels_convert::convert_row(&plan, &src_bytes, &mut out, 1);
+    zenpixels_convert::RowConverter::from_plan(plan.clone())
+        .convert_row(&src_bytes, &mut out, 1);
     // Neutral gray must stay neutral within ±2 codes (rounding).
     assert!(
         (out[0] as i32 - out[1] as i32).abs() <= 2 && (out[1] as i32 - out[2] as i32).abs() <= 2,
@@ -540,9 +541,12 @@ fn new_with_hdr_peak_delegates_to_config_with_defaults() {
     let input: Vec<u16> = (0..=u16::MAX).flat_map(|v| [v; 3]).collect();
     let mut peak = vec![0u8; input.len()];
     let mut config = vec![0u8; input.len()];
-    zenpixels_convert::convert_row(&plan_peak, bytemuck::cast_slice(&input), &mut peak, 65536);
-    zenpixels_convert::convert_row(
-        &plan_config,
+    zenpixels_convert::RowConverter::from_plan(plan_peak.clone()).convert_row(
+        bytemuck::cast_slice(&input),
+        &mut peak,
+        65536,
+    );
+    zenpixels_convert::RowConverter::from_plan(plan_config.clone()).convert_row(
         bytemuck::cast_slice(&input),
         &mut config,
         65536,

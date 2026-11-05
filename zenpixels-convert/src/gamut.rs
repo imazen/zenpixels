@@ -199,10 +199,8 @@ mod tests {
     /// Verify that forward × inverse ≈ identity for BT.709 ↔ BT.2020.
     #[test]
     fn bt709_bt2020_roundtrip() {
-        let fwd = GamutMatrix::between(ColorPrimaries::Bt709, ColorPrimaries::Bt2020)
-            .unwrap();
-        let inv = GamutMatrix::between(ColorPrimaries::Bt2020, ColorPrimaries::Bt709)
-            .unwrap();
+        let fwd = GamutMatrix::between(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
+        let inv = GamutMatrix::between(ColorPrimaries::Bt2020, ColorPrimaries::Bt709).unwrap();
         let test_rgb = [0.5f32, 0.3, 0.8];
         let mut rgb = test_rgb;
         rgb = fwd.apply(rgb);
@@ -220,10 +218,8 @@ mod tests {
     /// Verify that forward × inverse ≈ identity for BT.709 ↔ Display P3.
     #[test]
     fn bt709_displayp3_roundtrip() {
-        let fwd = GamutMatrix::between(ColorPrimaries::Bt709, ColorPrimaries::DisplayP3)
-            .unwrap();
-        let inv = GamutMatrix::between(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709)
-            .unwrap();
+        let fwd = GamutMatrix::between(ColorPrimaries::Bt709, ColorPrimaries::DisplayP3).unwrap();
+        let inv = GamutMatrix::between(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709).unwrap();
         let test_rgb = [0.5f32, 0.3, 0.8];
         let mut rgb = test_rgb;
         rgb = fwd.apply(rgb);
@@ -241,8 +237,7 @@ mod tests {
     /// White point preservation: [1,1,1] in BT.709 → BT.2020 should remain ~[1,1,1].
     #[test]
     fn white_point_preservation() {
-        let m = GamutMatrix::between(ColorPrimaries::Bt709, ColorPrimaries::Bt2020)
-            .unwrap();
+        let m = GamutMatrix::between(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
         let mut rgb = [1.0f32, 1.0, 1.0];
         rgb = m.apply(rgb);
         for (c, &val) in rgb.iter().enumerate() {
@@ -256,8 +251,7 @@ mod tests {
     /// RGBA row preserves alpha.
     #[test]
     fn rgba_alpha_preserved() {
-        let m = GamutMatrix::between(ColorPrimaries::Bt709, ColorPrimaries::Bt2020)
-            .unwrap();
+        let m = GamutMatrix::between(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
         let mut row = [0.5f32, 0.3, 0.8, 0.42, 0.1, 0.9, 0.2, 0.99];
         m.apply_row_rgba(&mut row.as_chunks_mut::<4>().0[..2]);
         assert_eq!(row[3], 0.42);
@@ -354,8 +348,7 @@ mod tests {
     #[test]
     fn xyz_cross_gamut_consistency() {
         let via_xyz = BT709_TO_XYZ.then(&XYZ_TO_BT2020);
-        let direct = GamutMatrix::between(ColorPrimaries::Bt709, ColorPrimaries::Bt2020)
-            .unwrap();
+        let direct = GamutMatrix::between(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
         let rgb = [0.5f32, 0.3, 0.8];
         let mut v1 = rgb;
         v1 = via_xyz.apply(v1);

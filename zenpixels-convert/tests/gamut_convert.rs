@@ -5,9 +5,7 @@
 //! + `GamutMatrix::apply_row_rgb`. This tests both paths.
 
 use zenpixels_convert::{
-    ColorPrimaries, PixelDescriptor, RowConverter,
-    ext::ColorPrimariesExt,
-    gamut::GamutMatrix,
+    ColorPrimaries, PixelDescriptor, RowConverter, ext::ColorPrimariesExt, gamut::GamutMatrix,
 };
 
 /// Make an f32 RGB descriptor with specific primaries.

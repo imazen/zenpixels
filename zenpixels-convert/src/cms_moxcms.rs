@@ -33,7 +33,6 @@ use moxcms::{
     TransformOptions,
 };
 
-
 /// Our moxcms options, the one place they're set.
 ///
 /// - **Relative colorimetric**, with the ICC profile's own curves. Container color

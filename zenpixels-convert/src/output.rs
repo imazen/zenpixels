@@ -1,6 +1,6 @@
 //! Atomic output preparation for encoders.
 //!
-//! [`finalize_for_output_with`] converts pixel data and generates matching metadata
+//! [`EncodeReady::finalize`] converts pixel data and generates matching metadata
 //! in a single atomic operation, preventing the most common color management
 //! bug: pixel values that don't match the embedded color metadata.
 //!
@@ -15,12 +15,12 @@
 //! // ^^^ pixels are Display P3 but metadata says sRGB — wrong!
 //! ```
 //!
-//! [`finalize_for_output_with`] prevents this by producing the pixels and metadata
+//! [`EncodeReady::finalize`] prevents this by producing the pixels and metadata
 //! together. The [`EncodeReady`] struct bundles both, and the only way to
 //! create one is through this function. If the conversion fails, neither
 //! pixels nor metadata are produced.
 //!
-//! Use [`finalize_for_output_with`] for current profile-aware conversion.
+//! Use [`EncodeReady::finalize`] for current profile-aware conversion.
 //! `ColorContext` describes current pixels; `ColorOrigin` is provenance.
 //! `SameAsOrigin` requests an actual conversion back to the origin profile.
 //! Attached ICC bytes are passed to the CMS even for a named destination.
@@ -146,7 +146,7 @@ pub struct OutputMetadata {
 ///
 /// The pixels are always owned (one full output buffer per call, even when
 /// no conversion was needed); see the *Allocation* section on
-/// [`finalize_for_output_with`].
+/// [`EncodeReady::finalize`].
 #[non_exhaustive]
 pub struct EncodeReady {
     pixels: PixelBuffer,
@@ -154,6 +154,26 @@ pub struct EncodeReady {
 }
 
 impl EncodeReady {
+    /// Couple converted pixels with the metadata that describes them, atomically.
+    ///
+    /// Offers a conversion to `cms` first, then to the built-in named-profile
+    /// paths. Streaming callers use [`OutputPlan`]. Always allocates one output
+    /// buffer, including when nothing needs converting.
+    ///
+    /// # Errors
+    ///
+    /// When no plan reaches `pixel_format` for `target`, or allocation fails.
+    #[track_caller]
+    pub fn finalize(
+        buffer: &PixelBuffer,
+        origin: &ColorOrigin,
+        target: OutputProfile,
+        pixel_format: PixelFormat,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
+        finalize_for_output_with(buffer, origin, target, pixel_format, cms)
+    }
+
     /// Borrow the pixel data.
     pub fn pixels(&self) -> PixelSlice<'_> {
         self.pixels.as_slice()
@@ -381,7 +401,7 @@ fn build_cms_transform<C: ColorManagement>(
 /// required operation.
 #[track_caller]
 #[allow(deprecated)] // sets the unwired, deprecated OutputMetadata::hdr to None
-pub fn finalize_for_output_with(
+pub(crate) fn finalize_for_output_with(
     buffer: &PixelBuffer,
     origin: &ColorOrigin,
     target: OutputProfile,
@@ -416,7 +436,7 @@ pub(crate) fn current_profile(
     current_profile_for(buffer.descriptor(), buffer.color_context().map(Arc::as_ref))
 }
 
-pub(super) fn current_profile_for(
+pub(crate) fn current_profile_for(
     desc: PixelDescriptor,
     current: Option<&crate::ColorContext>,
 ) -> Result<crate::ColorProfileSource<'_>, At<ConvertError>> {
