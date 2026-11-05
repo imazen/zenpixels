@@ -45,10 +45,24 @@ pub(crate) fn mat3x3_scalar(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, 
 #[inline(always)]
 fn mat3x3(m: &[[f32; 3]; 3], r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     (
-        m[0][0].mul_add(r, m[0][1].mul_add(g, m[0][2] * b)),
-        m[1][0].mul_add(r, m[1][1].mul_add(g, m[1][2] * b)),
-        m[2][0].mul_add(r, m[2][1].mul_add(g, m[2][2] * b)),
+        fused_row(m[0][0], m[0][1], m[0][2], r, g, b),
+        fused_row(m[1][0], m[1][1], m[1][2], r, g, b),
+        fused_row(m[2][0], m[2][1], m[2][2], r, g, b),
     )
+}
+
+/// One row of a 3×3 matrix, as the SIMD kernels compute it, one multiply then two fused
+/// multiply-adds. WASM's lanes are relaxed unless `precise-portable` asks otherwise.
+#[inline(always)]
+pub(crate) fn fused_row(m0: f32, m1: f32, m2: f32, r: f32, g: f32, b: f32) -> f32 {
+    #[cfg(all(target_arch = "wasm32", not(feature = "precise-portable")))]
+    {
+        m0 * r + (m1 * g + m2 * b)
+    }
+    #[cfg(not(all(target_arch = "wasm32", not(feature = "precise-portable"))))]
+    {
+        m0.mul_add(r, m1.mul_add(g, m2 * b))
+    }
 }
 
 /// SIMD matrix multiply: 3 channels × 8 pixels via FMA.

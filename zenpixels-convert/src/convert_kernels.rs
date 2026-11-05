@@ -2762,9 +2762,11 @@ fn gamut_matrix_f32_tier<const CHANNELS: usize>(
         let rv = src[base];
         let gv = src[base + 1];
         let bv = src[base + 2];
-        dst[base] = m[0] * rv + m[1] * gv + m[2] * bv;
-        dst[base + 1] = m[3] * rv + m[4] * gv + m[5] * bv;
-        dst[base + 2] = m[6] * rv + m[7] * gv + m[8] * bv;
+        // The same operations as the lanes above, or a row's split would show in its output.
+        let row = |i: usize| crate::fast_gamut::fused_row(m[i], m[i + 1], m[i + 2], rv, gv, bv);
+        dst[base] = row(0);
+        dst[base + 1] = row(3);
+        dst[base + 2] = row(6);
         if CHANNELS == 4 {
             dst[base + 3] = src[base + 3];
         }

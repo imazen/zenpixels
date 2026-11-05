@@ -557,6 +557,37 @@ impl ConvertPlan {
     /// Assemble a plan with the default (no-anchor) PQ scale. The single place
     /// `pq_anchor_scale` is defaulted, so every construction path starts at the
     /// behavior-preserving `1.0`.
+    /// Both primaries are known, and differ.
+    fn primaries_differ(from: PixelDescriptor, to: PixelDescriptor) -> bool {
+        from.primaries != to.primaries
+            && from.primaries != ColorPrimaries::Unknown
+            && to.primaries != ColorPrimaries::Unknown
+    }
+
+    /// Plan between the canonical forms of two descriptors, with a byte swizzle on each
+    /// end whose layout is not canonical.
+    fn around_swizzle(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        canonical: impl Fn(PixelDescriptor) -> PixelDescriptor,
+        swizzle: ConvertStep,
+    ) -> Result<Self, At<ConvertError>> {
+        let (first, last) = (canonical(from), canonical(to));
+        let mut plan = Self::new(first, last)?;
+        let no_path = || whereat::at!(ConvertError::NoPath { from, to });
+        if from != first {
+            plan = Self::build(from, first, vec![swizzle.clone()])
+                .compose(&plan)
+                .ok_or_else(no_path)?;
+        }
+        if to != last {
+            plan = plan
+                .compose(&Self::build(last, to, vec![swizzle]))
+                .ok_or_else(no_path)?;
+        }
+        Ok(plan)
+    }
+
     fn build(from: PixelDescriptor, to: PixelDescriptor, steps: Vec<ConvertStep>) -> Self {
         Self {
             from,
@@ -694,8 +725,7 @@ impl ConvertPlan {
             }));
         }
 
-        // BGR has no kernels: it may only move between identical descriptors. A transfer
-        // or primaries change would plan through a BGR format that doesn't exist.
+        // BGR has no kernels: it may only move between identical descriptors.
         if from.layout() == ChannelLayout::Bgr || to.layout() == ChannelLayout::Bgr {
             return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
@@ -722,16 +752,50 @@ impl ConvertPlan {
                     d
                 }
             };
-            let mut plan = Self::new(canonical(from), canonical(to))?;
-            if from.layout() == ChannelLayout::Bgra {
-                plan.steps.insert(0, ConvertStep::SwizzleBgraRgba);
+            return Self::around_swizzle(from, to, canonical, ConvertStep::SwizzleBgraRgba);
+        }
+
+        // Change primaries while the samples still have three color channels, since gamut
+        // kernels read RGB or RGBA, and before narrowing, so that only the last step rounds.
+        if Self::primaries_differ(from, to)
+            && matches!(from.layout(), ChannelLayout::Rgb | ChannelLayout::Rgba)
+            && crate::gamut::conversion_matrix(from.primaries, to.primaries).is_some()
+        {
+            let to_gray = matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
+            let drops_alpha =
+                from.layout() == ChannelLayout::Rgba && to.layout() == ChannelLayout::Rgb;
+            let narrows = match to.channel_type() {
+                ChannelType::U8 => from.channel_type() != ChannelType::U8,
+                ChannelType::U16 => from.channel_type() == ChannelType::F32,
+                _ => false,
+            };
+            // This one has a kernel that rounds only once.
+            let direct = from.channel_type() == ChannelType::F32
+                && from.transfer() == TransferFunction::Linear
+                && to.channel_type() == ChannelType::U8
+                && to.transfer() == TransferFunction::Srgb
+                && from.layout() == ChannelLayout::Rgb
+                && to.layout() == ChannelLayout::Rgb;
+            let narrows = narrows && !direct;
+            if to_gray || drops_alpha || narrows {
+                // Luma keeps the encoding it would have had without the gamut change.
+                let transfer = if to_gray {
+                    from.transfer()
+                } else {
+                    to.transfer()
+                };
+                let depth = if to_gray || narrows {
+                    ChannelType::F32
+                } else {
+                    to.channel_type()
+                };
+                let middle = PixelDescriptor::new(depth, from.layout(), from.alpha(), transfer)
+                    .with_primaries(to.primaries)
+                    .with_signal_range(from.signal_range);
+                return Self::new(from, middle)?
+                    .compose(&Self::new(middle, to)?)
+                    .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
             }
-            if to.layout() == ChannelLayout::Bgra {
-                plan.steps.push(ConvertStep::SwizzleBgraRgba);
-            }
-            plan.from = from;
-            plan.to = to;
-            return Ok(plan);
         }
 
         // Padding bytes must never become alpha samples. Discard padding,
@@ -886,9 +950,13 @@ impl ConvertPlan {
 
         // Primaries conversion: if source and destination have different known
         // primaries, inject a gamut matrix in linear f32 space.
-        let need_primaries = from.primaries != to.primaries
-            && from.primaries != ColorPrimaries::Unknown
-            && to.primaries != ColorPrimaries::Unknown;
+        // Gray has no gamut: neutral stays neutral under every matrix here, so
+        // a gray source needs none, and has too few channels for one.
+        let need_primaries = Self::primaries_differ(from, to)
+            && !matches!(
+                from.layout(),
+                ChannelLayout::Gray | ChannelLayout::GrayAlpha
+            );
 
         if need_primaries
             && let Some(matrix) = crate::gamut::conversion_matrix(from.primaries, to.primaries)
@@ -1043,9 +1111,7 @@ impl ConvertPlan {
                     if desc.channel_type() == ChannelType::U8
                         && matches!(
                             desc.transfer(),
-                            TransferFunction::Srgb
-                                | TransferFunction::Bt709
-                                | TransferFunction::Unknown
+                            TransferFunction::Srgb | TransferFunction::Unknown
                         )
                     {
                         gamut_steps.push(ConvertStep::SrgbU8ToLinearF32);
@@ -1065,8 +1131,13 @@ impl ConvertPlan {
                         gamut_steps.push(gamut_step);
                         gamut_steps.push(ConvertStep::LinearF32ToHlgU16);
                     } else {
-                        // Generic: naive to f32, linearize, gamut, delinearize, naive back
-                        gamut_steps.push(ConvertStep::NaiveU8ToF32);
+                        // Generic: to f32, linearize, gamut, delinearize, back to the depth.
+                        let (widen, narrow) = if desc.channel_type() == ChannelType::U16 {
+                            (ConvertStep::U16ToF32, ConvertStep::F32ToU16)
+                        } else {
+                            (ConvertStep::NaiveU8ToF32, ConvertStep::NaiveF32ToU8)
+                        };
+                        gamut_steps.push(widen);
                         if !matches!(linearize, ConvertStep::Identity) {
                             gamut_steps.push(linearize);
                         }
@@ -1074,7 +1145,7 @@ impl ConvertPlan {
                         if !matches!(to_target_tf, ConvertStep::Identity) {
                             gamut_steps.push(to_target_tf);
                         }
-                        gamut_steps.push(ConvertStep::NaiveF32ToU8);
+                        gamut_steps.push(narrow);
                     }
                 } else {
                     // Already f32, just linearize → gamut → encode
@@ -2368,8 +2439,9 @@ impl ConvertScratch {
     /// Ensure the buffer is large enough for two halves of the max
     /// intermediate format at the given width.
     fn ensure_capacity(&mut self, plan: &ConvertPlan, width: u32) {
+        // An even count of u32 puts both halves on a u32 boundary, as F32 rows need.
         let half_bytes = (width as usize) * plan.max_intermediate_bpp();
-        let total_u32 = (half_bytes * 2).div_ceil(4);
+        let total_u32 = half_bytes.div_ceil(4) * 2;
         if self.buf.len() < total_u32 {
             self.buf.resize(total_u32, 0);
         }

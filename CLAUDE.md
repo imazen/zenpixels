@@ -118,6 +118,13 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed 2026-11-04: planning added the gamut matrix after layout and depth steps, so wide
+  RGB into gray or from RGBA to RGB ran it on rows of the wrong shape, and U16 rows ran U8
+  steps. `tests/gamut_across_layouts.rs` measures every route against independent `f64`
+  math. A row split could also change `f32` bits, and an odd scratch size could misalign
+  F32 rows: `tests/row_partition_parity.rs`. BT.709 and Gamma22 `f32` output keep negative
+  values while sRGB `f32` clips: that difference is existing behavior, pinned by the test.
+
 - Contract (2026-11-04): adjacent inputs can reverse by at most 1 `u16` code on PQ, sRGB, BT.709 encode and gamma encode, from f32
   rounding in polynomial evaluation. `adjacent_inputs_reverse_by_at_most_one_code` holds it. Counts: `benchmarks/row_kernel_tiers_2026-11-04.md`.
 
