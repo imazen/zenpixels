@@ -41,7 +41,7 @@ impl ToneMapper for Halve {
     fn requirements(&self) -> Requirements {
         Requirements::NONE
     }
-    fn prepare(&self, ctx: &ToneMapContext<'_>) -> PreparedMapper {
+    fn prepare(&self, ctx: &ToneMapContext) -> PreparedMapper {
         assert_eq!(ctx.source_peak_nits, 1000.0);
         PreparedMapper::Streaming(Box::new(HalveStrip))
     }
@@ -133,7 +133,7 @@ impl ToneMapper for NeedsEverything {
         r.full_image = true;
         r
     }
-    fn prepare(&self, _: &ToneMapContext<'_>) -> PreparedMapper {
+    fn prepare(&self, _: &ToneMapContext) -> PreparedMapper {
         unreachable!()
     }
     fn name(&self) -> &'static str {
@@ -196,4 +196,106 @@ fn tiers_agree_within_a_fraction_of_a_16_bit_code() {
     let worst = *worst.lock().unwrap();
     println!("worst across {report}: {worst:e}");
     assert!(worst < 1.0 / 65535.0 / 4.0, "{worst:e}");
+}
+
+/// Records what it was given and halves it.
+#[derive(Debug)]
+struct Recording {
+    working: P,
+    called: Arc<std::sync::Mutex<Vec<f32>>>,
+}
+
+#[derive(Debug)]
+struct RecordingStrip(Arc<std::sync::Mutex<Vec<f32>>>);
+
+impl StripMapper for RecordingStrip {
+    fn map_strip(&self, input: &[f32], output: &mut [f32]) {
+        self.0.lock().unwrap().extend_from_slice(input);
+        for (o, i) in output.iter_mut().zip(input) {
+            *o = i * 0.5;
+        }
+    }
+}
+
+impl ToneMapper for Recording {
+    fn requirements(&self) -> Requirements {
+        Requirements::NONE
+    }
+    fn prepare(&self, _: &ToneMapContext) -> PreparedMapper {
+        PreparedMapper::Streaming(Box::new(RecordingStrip(self.called.clone())))
+    }
+    fn name(&self) -> &'static str {
+        "recording"
+    }
+    fn working_primaries_for(&self, _: P) -> P {
+        self.working
+    }
+}
+
+#[test]
+fn a_premultiplied_source_keeps_the_injected_mapper() {
+    use zenpixels::AlphaMode;
+    let d = D::RGBAF32_LINEAR.with_primaries(P::Bt2020);
+    let called = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mapper = Arc::new(Recording {
+        working: P::Bt2020,
+        called: called.clone(),
+    });
+    let plan = ConvertPlan::new_with_tone_mapper(
+        d.with_alpha(Some(AlphaMode::Premultiplied)),
+        d.with_alpha(Some(AlphaMode::Straight)),
+        HdrConfig::for_source_peak(1000.0),
+        mapper,
+    )
+    .unwrap();
+    let mut converter = RowConverter::from_plan(plan);
+    let src = [0.1f32, 0.2, 0.3, 0.5];
+    let mut dst = [0f32; 4];
+    converter
+        .try_convert_row(
+            bytemuck::cast_slice(&src),
+            bytemuck::cast_slice_mut(&mut dst),
+            1,
+        )
+        .unwrap();
+    assert!(!called.lock().unwrap().is_empty(), "the mapper never ran");
+    for (got, want) in dst.iter().zip([0.1, 0.2, 0.3, 0.5]) {
+        assert!((got - want).abs() < 1e-5, "{dst:?}");
+    }
+}
+
+#[test]
+fn a_mapper_receives_its_working_primaries() {
+    use zenpixels::ColorPrimaries::{Bt709, Bt2020};
+    let called = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mapper = Arc::new(Recording {
+        working: Bt709,
+        called: called.clone(),
+    });
+    let plan = ConvertPlan::new_with_tone_mapper(
+        D::RGBF32_LINEAR.with_primaries(Bt709),
+        D::RGBF32_LINEAR.with_primaries(Bt2020),
+        HdrConfig::for_source_peak(1000.0),
+        mapper,
+    )
+    .unwrap();
+    let mut converter = RowConverter::from_plan(plan);
+    let src = [1.0f32, 0.0, 0.0];
+    let mut dst = [0f32; 3];
+    converter
+        .try_convert_row(
+            bytemuck::cast_slice(&src),
+            bytemuck::cast_slice_mut(&mut dst),
+            1,
+        )
+        .unwrap();
+    let seen = called.lock().unwrap();
+    assert_eq!(
+        &seen[..3],
+        &[1.0, 0.0, 0.0],
+        "BT.709 red stays [1, 0, 0] in BT.709"
+    );
+    // Half of BT.709 red, then to BT.2020.
+    assert!((dst[0] - 0.3137).abs() < 1e-3, "{dst:?}");
+    assert!((dst[1] - 0.0345).abs() < 1e-3, "{dst:?}");
 }

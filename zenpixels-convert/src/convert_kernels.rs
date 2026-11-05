@@ -396,10 +396,6 @@ fn tone_map_kernel(
                 source_peak_nits: step.source_peak_nits,
                 target_peak_nits: step.target_peak_nits,
                 working_primaries: step.working_primaries,
-                // Reserved on `Requirements`. Mappers can declare them and receive `None`,
-                // and `new_with_tone_mapper` refuses `full_image`.
-                log_avg_luminance: None,
-                luminance_histogram: None,
             };
             match step.mapper.prepare(&ctx) {
                 crate::hdr::PreparedMapper::Streaming(boxed) => {

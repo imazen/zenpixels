@@ -205,7 +205,7 @@ impl Bt2446A {
     /// [`pipeline_managed`](Self::pipeline_managed) descriptor, for the same
     /// reason as [`map_rgb`](Self::map_rgb).
     pub fn map_strip_simd(&self, strip: &mut [[f32; 3]]) {
-        debug_assert!(
+        assert!(
             self.peaks_baked(),
             "Bt2446A::map_strip_simd called on a pipeline-managed descriptor; \
              obtain a compiled executor through ToneMapper::prepare first"
@@ -309,7 +309,7 @@ impl crate::hdr::ToneMapper for Bt2446A {
         }
     }
 
-    fn prepare(&self, ctx: &crate::hdr::ToneMapContext<'_>) -> crate::hdr::PreparedMapper {
+    fn prepare(&self, ctx: &crate::hdr::ToneMapContext) -> crate::hdr::PreparedMapper {
         // Resolve peaks: prefer the descriptor's baked values when
         // present (constructed via `new`); fall back to the pipeline-
         // gathered context otherwise (constructed via
@@ -325,15 +325,6 @@ impl crate::hdr::ToneMapper for Bt2446A {
 
     fn name(&self) -> &'static str {
         "bt2446a"
-    }
-
-    fn cost_ns_per_mp(&self) -> u32 {
-        // BT.2446-A: ~250 Mpix/s on RGB f32 linear-light (Ryzen 9 7950X,
-        // AVX2, 2026-06-20). 1 MP / 250 Mpix/s ≈ 4.194 ms/MP. Kept in
-        // lockstep with the per-step cost in `crate::estimate` —
-        // `ConvertStep::ToneMap` delegates to this method now, so the
-        // two figures cannot drift.
-        4_194_304
     }
 
     fn working_primaries_for(&self, _target: crate::ColorPrimaries) -> crate::ColorPrimaries {

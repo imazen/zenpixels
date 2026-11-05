@@ -1539,7 +1539,7 @@ impl ConvertPlan {
             } else {
                 to
             };
-            let mut plan = Self::new_with_hdr_config(straight_from, straight_to, hdr)?;
+            let mut plan = Self::plan_hdr(straight_from, straight_to, hdr, mapper_override)?;
             plan.steps.insert(0, ConvertStep::PremulToStraight);
             if to.alpha() == Some(AlphaMode::Premultiplied) {
                 plan.steps.push(ConvertStep::StraightToPremul);
@@ -1578,37 +1578,9 @@ impl ConvertPlan {
             .map_err(|e| whereat::at!(e))?,
         );
 
-        // ---- (b) Source primaries → BT.2020 (skip when source IS BT.2020).
-        if from.primaries != ColorPrimaries::Bt2020
-            && let Some(matrix) =
-                crate::gamut::conversion_matrix(from.primaries, ColorPrimaries::Bt2020)
-        {
-            let flat = [
-                matrix.0[0][0],
-                matrix.0[0][1],
-                matrix.0[0][2],
-                matrix.0[1][0],
-                matrix.0[1][1],
-                matrix.0[1][2],
-                matrix.0[2][0],
-                matrix.0[2][1],
-                matrix.0[2][2],
-            ];
-            let step = if after_decode.layout().has_alpha() {
-                ConvertStep::GamutMatrixRgbaF32(flat)
-            } else {
-                ConvertStep::GamutMatrixRgbF32(flat)
-            };
-            steps.push(step);
-        }
-
-        // ---- (c) Tone-map step. The mapper is either the caller-supplied
-        // one (via `new_with_tone_mapper`) or the in-crate
-        // BT.2446-A reference curve, constructed from the supplied
-        // `HdrConfig`. The mapper's working primaries are read here
-        // (default BT.2020) so an adaptive curve could re-target P3 etc.
-        // The shared `OnceCell` is freshly allocated so plan clones
-        // reuse the same lazy cache.
+        // ---- The mapper is either the caller-supplied one (via `new_with_tone_mapper`) or the in-crate
+        // BT.2446-A reference curve, constructed from the supplied `HdrConfig`. Its working primaries
+        // decide the matrices on both sides of it. An unknown target keeps the source's.
         let mapper: alloc::sync::Arc<dyn crate::hdr::ToneMapper> =
             mapper_override.unwrap_or_else(|| {
                 alloc::sync::Arc::new(crate::hdr::Bt2446A::new(
@@ -1623,21 +1595,13 @@ impl ConvertPlan {
             }));
         }
         let working_primaries = mapper.working_primaries_for(to.primaries);
-        steps.push(ConvertStep::ToneMap(ToneMapStep {
-            mapper,
-            requirements,
-            source_peak_nits: hdr.source_peak_nits,
-            target_peak_nits: hdr.target_peak_nits,
-            working_primaries,
-            prepared: alloc::sync::Arc::new(once_cell::race::OnceBox::new()),
-        }));
-
-        // ---- (d) BT.2020 → target primaries (skip when target IS BT.2020).
-        if to.primaries != ColorPrimaries::Bt2020
-            && to.primaries != ColorPrimaries::Unknown
-            && let Some(matrix) =
-                crate::gamut::conversion_matrix(ColorPrimaries::Bt2020, to.primaries)
-        {
+        let gamut_step = |a: ColorPrimaries, b: ColorPrimaries| {
+            if a == b {
+                return Ok(None);
+            }
+            let Some(matrix) = crate::gamut::conversion_matrix(a, b) else {
+                return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            };
             let flat = [
                 matrix.0[0][0],
                 matrix.0[0][1],
@@ -1649,12 +1613,30 @@ impl ConvertPlan {
                 matrix.0[2][1],
                 matrix.0[2][2],
             ];
-            let step = if after_decode.layout().has_alpha() {
+            Ok(Some(if after_decode.layout().has_alpha() {
                 ConvertStep::GamutMatrixRgbaF32(flat)
             } else {
                 ConvertStep::GamutMatrixRgbF32(flat)
-            };
-            steps.push(step);
+            }))
+        };
+
+        // ---- (b) Source primaries → the mapper's working primaries.
+        steps.extend(gamut_step(from.primaries, working_primaries)?);
+
+        // ---- (c) Tone-map step. The shared `OnceBox` is freshly allocated so plan clones
+        // reuse the same lazy cache.
+        steps.push(ConvertStep::ToneMap(ToneMapStep {
+            mapper,
+            requirements,
+            source_peak_nits: hdr.source_peak_nits,
+            target_peak_nits: hdr.target_peak_nits,
+            working_primaries,
+            prepared: alloc::sync::Arc::new(once_cell::race::OnceBox::new()),
+        }));
+
+        // ---- (d) Working primaries → target primaries.
+        if to.primaries != ColorPrimaries::Unknown {
+            steps.extend(gamut_step(working_primaries, to.primaries)?);
         }
 
         // ---- (e) OKLch soft chroma compression (skip when target IS BT.2020;

@@ -77,9 +77,7 @@ pub use gamut_compress::SoftCompress;
 // Two-phase tone-mapping surface: the pluggable curve trait and the strip executor
 // that `ToneMapper::prepare` produces.
 #[cfg(feature = "hdr-experimental")]
-pub use tone_mapper::{
-    LuminanceHistogram, PreparedMapper, Requirements, StripMapper, ToneMapContext, ToneMapper,
-};
+pub use tone_mapper::{PreparedMapper, Requirements, StripMapper, ToneMapContext, ToneMapper};
 
 use crate::adapt::{convert_buffer_with_anchor, convert_into_with_anchor};
 use crate::error::ConvertError;
