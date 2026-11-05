@@ -131,9 +131,6 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
   high, worst 66. A CICP tag inside an explicit ICC profile changed the 8-bit route's curves, while F32 ignored it.
   `cms_moxcms_accuracy` and `cms_moxcms` cover both.
 
-- Open, in moxcms 0.9.1: 16-bit output through its sRGB or BT.709 table misses nearest on 57% of samples, mean -0.64 of a
-  16-bit code, because the same `make_gamma_table_impl` truncates. `MoxCms` still takes that path.
-
 - Fixed in the CMS contract (2026-11-05). moxcms' own 8-bit path comes out low (mean -0.40 of a code against its own F32; cause not
   located). The wrapper chose high barycentric weights at 16 bits, which turned table profiles into a constant, ignored a row's
   `width`, and mixed moxcms' generated colorants (CIE D50) with ICC profiles (PCS white), leaving 8-bit white at (255, 255, 254).

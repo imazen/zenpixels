@@ -42,9 +42,9 @@ use moxcms::{
 ///   results on them. See `docs/gamut-mapping-survey.md`.
 /// - **Tetrahedral interpolation** for 3D CLUTs, more accurate than trilinear where
 ///   saturated colors cross cube diagonals.
-/// - **High barycentric weight scale** for F32: on a CMYK table it stays closer to lcms2, at a worst
-///   difference of 2.18 of a code against 2.99 for `Low`. [`options_for_profiles`] selects `Low` for
-///   16-bit, where `High` turned table profiles into a constant.
+/// - **High barycentric weight scale**: on a CMYK table it stays closer to lcms2, at a worst
+///   difference of 2.18 of a code against 2.99 for `Low`. Every depth runs the F32 path, where it
+///   works; the backend's own 16-bit path turned table profiles into a constant with it.
 ///
 /// Crate-internal: moxcms types stay out of the public API so the moxcms version
 /// range can change without a zenpixels-convert release.
@@ -95,15 +95,9 @@ fn pixel_format_to_layout(format: PixelFormat) -> Option<Layout> {
     }
 }
 
-fn options_for_profiles(
-    format: PixelFormat,
-    source: &ColorProfile,
-    target: &ColorProfile,
-) -> TransformOptions {
+/// Options for the backend's F32 transform, the path every depth runs through.
+fn options_for_profiles(source: &ColorProfile, target: &ColorProfile) -> TransformOptions {
     let mut options = transform_opts();
-    if format.channel_type() != ChannelType::F32 {
-        options.barycentric_weight_scale = BarycentricWeightScale::Low;
-    }
     // ICC falls back to A2B0 when A2B1 is absent, as lcms2 does. JPEG XL's PQ and HLG profiles have
     // only A2B0, and the backend refuses them under relative colorimetric intent.
     if source.lut_a_to_b_colorimetric.is_none()
@@ -115,17 +109,15 @@ fn options_for_profiles(
     // Native F32 ICC-to-P3 comparisons exposed quantization near black and
     // clipping of layer samples outside 0..1. Keep float arithmetic and use
     // analytic curves when available. This does not qualify arbitrary LUTs.
-    if format.channel_type() == ChannelType::F32 {
-        options.prefer_fixed_point = false;
-        // The backend's extended RGB evaluator shares one curve among all
-        // channels. Require equality of ALL three, not merely a matching pair. A
-        // table-only profile has no curves to confuse.
-        let shared_curve = |p: &ColorProfile| {
-            p.color_space != moxcms::DataColorSpace::Rgb
-                || (p.red_trc == p.green_trc && p.red_trc == p.blue_trc)
-        };
-        options.allow_extended_range_rgb_xyz = shared_curve(source) && shared_curve(target);
-    }
+    options.prefer_fixed_point = false;
+    // The backend's extended RGB evaluator shares one curve among all
+    // channels. Require equality of ALL three, not merely a matching pair. A
+    // table-only profile has no curves to confuse.
+    let shared_curve = |p: &ColorProfile| {
+        p.color_space != moxcms::DataColorSpace::Rgb
+            || (p.red_trc == p.green_trc && p.red_trc == p.blue_trc)
+    };
+    options.allow_extended_range_rgb_xyz = shared_curve(source) && shared_curve(target);
     options
 }
 
@@ -350,16 +342,42 @@ fn f32_transform(
     }))
 }
 
-/// 8-bit samples through the backend's F32 path, with nearest rounding on the way out, for tables, gray
-/// and anything else without a matrix to take. `v / 255` rounds back to `v`, so a carried alpha is exact.
-struct U8ThroughF32 {
+/// An integer sample type on the backend's F32 path. `to_unit` rounds back to the same sample through
+/// `from_unit`, so a carried alpha is exact.
+trait UnitSample: Copy + Default {
+    fn to_unit(self) -> f32;
+    fn from_unit(unit: f32) -> Self;
+}
+
+impl UnitSample for u8 {
+    fn to_unit(self) -> f32 {
+        f32::from(self) / 255.0
+    }
+    fn from_unit(unit: f32) -> Self {
+        (f64::from(unit.clamp(0.0, 1.0)) * 255.0 + 0.5) as u8
+    }
+}
+
+impl UnitSample for u16 {
+    fn to_unit(self) -> f32 {
+        f32::from(self) / 65535.0
+    }
+    fn from_unit(unit: f32) -> Self {
+        (f64::from(unit.clamp(0.0, 1.0)) * 65535.0 + 0.5) as u16
+    }
+}
+
+/// Integer samples through the backend's F32 path, with nearest rounding on the way out, for 16-bit
+/// and for 8-bit tables, gray and anything else without a matrix to take. The backend's own integer
+/// paths truncate their gamma tables, see [`U8MatrixShaper`].
+struct IntegerThroughF32 {
     transform: Arc<dyn TransformExecutor<f32> + Send + Sync>,
     source_channels: usize,
     target_channels: usize,
 }
 
-impl TransformExecutor<u8> for U8ThroughF32 {
-    fn transform(&self, source: &[u8], target: &mut [u8]) -> Result<(), moxcms::CmsError> {
+impl<S: UnitSample> TransformExecutor<S> for IntegerThroughF32 {
+    fn transform(&self, source: &[S], target: &mut [S]) -> Result<(), moxcms::CmsError> {
         const PIXELS: usize = 256;
         const MOST_CHANNELS: usize = 4;
         let (sc, tc) = (self.source_channels, self.target_channels);
@@ -378,12 +396,12 @@ impl TransformExecutor<u8> for U8ThroughF32 {
         {
             let in_float = &mut float_source[..src.len()];
             for (float, sample) in in_float.iter_mut().zip(src) {
-                *float = f32::from(*sample) / 255.0;
+                *float = sample.to_unit();
             }
             let out_float = &mut float_target[..dst.len()];
             self.transform.transform(in_float, out_float)?;
             for (sample, float) in dst.iter_mut().zip(out_float.iter()) {
-                *sample = (f64::from(float.clamp(0.0, 1.0)) * 255.0 + 0.5) as u8;
+                *sample = S::from_unit(*float);
             }
         }
         Ok(())
@@ -401,7 +419,22 @@ fn u8_transform(
         return Ok(MoxTransformInner::U8(Arc::new(shaper)));
     }
     let transform = f32_transform(source, target, layout, options)?;
-    Ok(MoxTransformInner::U8(Arc::new(U8ThroughF32 {
+    Ok(MoxTransformInner::U8(Arc::new(IntegerThroughF32 {
+        transform,
+        source_channels: layout.0.channels(),
+        target_channels: layout.1.channels(),
+    })))
+}
+
+/// The 16-bit transform for a pair of profiles. `options` are for the F32 path.
+fn u16_transform(
+    source: &ColorProfile,
+    target: &ColorProfile,
+    layout: (Layout, Layout),
+    options: TransformOptions,
+) -> Result<MoxTransformInner, moxcms::CmsError> {
+    let transform = f32_transform(source, target, layout, options)?;
+    Ok(MoxTransformInner::U16(Arc::new(IntegerThroughF32 {
         transform,
         source_channels: layout.0.channels(),
         target_channels: layout.1.channels(),
@@ -866,7 +899,7 @@ impl crate::cms::PluggableCms for MoxCms {
         {
             return Some(Err(whereat::at!(CmsPluginError::new(error))));
         }
-        let opts = options_for_profiles(src_format, &src_profile, &dst_profile);
+        let opts = options_for_profiles(&src_profile, &dst_profile);
 
         // Dispatch on the source `ChannelType`. F16 is widened to f32
         // before the CMS step in this crate, so we route F16 to the f32
@@ -876,15 +909,12 @@ impl crate::cms::PluggableCms for MoxCms {
         // outside moxcms in a separate plan step.
         let depth = src_format.channel_type();
         let inner_result = match depth {
-            ChannelType::U8 => u8_transform(
-                &src_profile,
-                &dst_profile,
-                (src_layout, dst_layout),
-                options_for_profiles(PixelFormat::RgbF32, &src_profile, &dst_profile),
-            ),
-            ChannelType::U16 => src_profile
-                .create_transform_16bit(src_layout, &dst_profile, dst_layout, opts)
-                .map(MoxTransformInner::U16),
+            ChannelType::U8 => {
+                u8_transform(&src_profile, &dst_profile, (src_layout, dst_layout), opts)
+            }
+            ChannelType::U16 => {
+                u16_transform(&src_profile, &dst_profile, (src_layout, dst_layout), opts)
+            }
             ChannelType::F16 | ChannelType::F32 | _ => {
                 f32_transform(&src_profile, &dst_profile, (src_layout, dst_layout), opts).map(
                     |transform| {
