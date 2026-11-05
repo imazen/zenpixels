@@ -48,7 +48,6 @@ mod bt2446a;
 
 /// Soft chroma compression in OKLch with a precomputed gamut boundary LUT.
 /// Gated behind `hdr-experimental`.
-#[cfg(feature = "hdr-experimental")]
 mod gamut_compress;
 
 /// Re-exports of the experimental [`measure`] surface at the [`hdr`](self)
@@ -66,8 +65,7 @@ pub use measure::{CllMeasure, LightLevelHistogram, LightLevelMethod};
 // callers that want to drive the math directly.
 #[cfg(feature = "hdr-experimental")]
 pub use bt2446a::Bt2446A;
-#[cfg(feature = "hdr-experimental")]
-pub use gamut_compress::{GamutBoundaryLut, SoftCompress};
+pub use gamut_compress::SoftCompress;
 
 use crate::adapt::{convert_buffer_with_anchor, convert_into_with_anchor};
 use crate::error::ConvertError;

@@ -108,6 +108,25 @@ impl LumaCoefficients {
     }
 }
 
+/// What happens to colors outside the target's gamut when primaries narrow.
+///
+/// Applies to built-in conversions between named SDR primaries, such as Display P3
+/// or BT.2020 to sRGB. Requesting mapping where it isn't available returns an error
+/// rather than clipping. See `docs/gamut-mapping-survey.md`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum GamutMapping {
+    /// Clamp each channel. In-gamut colors are untouched and it's the fastest, but
+    /// saturated colors can change hue, up to 19° for BT.2020 blue in OKLab.
+    #[default]
+    Clip,
+    /// Reduce OKLab chroma near and past the boundary, keeping hue and lightness.
+    ///
+    /// Smooth across gradients, and slower. It also changes in-gamut colors close to
+    /// the boundary: 7 % of a Display P3 grid, by at most 0.0063 in OKLab.
+    SoftCompress,
+}
+
 /// Explicit permissions for pixel format conversion. Presets select channel,
 /// depth and clipping behavior; they do not prove reversible color arithmetic.
 ///
@@ -156,6 +175,8 @@ pub struct ConvertOptions {
     /// Only affects f32 intermediate conversions. u8/u16 outputs always
     /// clip since those formats can't represent out-of-gamut values.
     pub clip_out_of_gamut: bool,
+    /// What happens to colors outside the target's gamut.
+    pub gamut_mapping: GamutMapping,
 }
 
 impl ConvertOptions {
@@ -178,6 +199,7 @@ impl ConvertOptions {
             depth_policy: DepthPolicy::Forbid,
             luma: None,
             clip_out_of_gamut: true,
+            gamut_mapping: GamutMapping::Clip,
         }
     }
 
@@ -206,6 +228,7 @@ impl ConvertOptions {
             depth_policy: DepthPolicy::Round,
             luma: Some(LumaCoefficients::Bt709),
             clip_out_of_gamut: true,
+            gamut_mapping: GamutMapping::Clip,
         }
     }
 
@@ -232,6 +255,12 @@ impl ConvertOptions {
     /// (`false`). u8/u16 outputs always clip.
     pub const fn with_clip_out_of_gamut(mut self, clip: bool) -> Self {
         self.clip_out_of_gamut = clip;
+        self
+    }
+
+    /// Set what happens to colors outside the target's gamut.
+    pub const fn with_gamut_mapping(mut self, mapping: GamutMapping) -> Self {
+        self.gamut_mapping = mapping;
         self
     }
 
@@ -373,6 +402,7 @@ mod tests {
             depth_policy: DepthPolicy::Round,
             luma: Some(LumaCoefficients::Bt709),
             clip_out_of_gamut: true,
+            gamut_mapping: GamutMapping::Clip,
         };
         #[allow(clippy::clone_on_copy)]
         let opts2 = opts.clone();
@@ -401,6 +431,7 @@ mod tests {
             depth_policy: DepthPolicy::Forbid,
             luma: None,
             clip_out_of_gamut: true,
+            gamut_mapping: GamutMapping::Clip,
         };
         let mut h = std::hash::DefaultHasher::new();
         opts.hash(&mut h);

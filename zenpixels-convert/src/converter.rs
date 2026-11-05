@@ -234,6 +234,15 @@ impl RowConverter {
             return Err(whereat::at!(ConvertError::AlphaCheckRequired));
         }
 
+        // Gamut mapping runs on the built-in plan. A plugin's transform would clip.
+        if options.gamut_mapping == crate::policy::GamutMapping::SoftCompress
+            && crate::convert::soft_compress_applies(&from, &to)
+        {
+            return Ok(Self::from_plan(ConvertPlan::new_explicit(
+                from, to, options,
+            )?));
+        }
+
         // CMS dispatch chain. Fires when:
         //   - primaries differ (cross-gamut RGB↔RGB, where ZenCmsLite or
         //     moxcms supplies a matlut / 3x3+TF transform), OR
@@ -392,6 +401,10 @@ impl RowConverter {
                 from,
                 to
             }));
+        }
+        // No ICC transform here can honor a mapping, and clipping silently would be wrong.
+        if options.gamut_mapping != crate::policy::GamutMapping::Clip {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
         // Plugins accept PixelFormat, which cannot express association or range.
         if (from.alpha() == Some(crate::AlphaMode::Undefined) && to.has_alpha())

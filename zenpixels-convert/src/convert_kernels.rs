@@ -32,18 +32,11 @@ pub(super) struct HdrKernelScratch {
     /// RGB-triple strip for the RGBA carrier paths — the SIMD curves want a
     /// contiguous `[[f32; 3]]` view, so alpha is peeled into this scratch.
     /// Grow-only; sliced to the row width on each use.
-    #[cfg(feature = "hdr-experimental")]
     rgb_strip: alloc::vec::Vec<[f32; 3]>,
-    /// Cached [`SoftCompress`](crate::hdr::SoftCompress) — it owns a
-    /// gamut-boundary LUT whose construction runs 16 k bisection searches,
-    /// so it must not be rebuilt per row. Keyed by the step params.
-    #[cfg(feature = "hdr-experimental")]
-    soft_compress: alloc::vec::Vec<CachedSoftCompress>,
 }
 
 impl HdrKernelScratch {
     pub(super) fn prepare(&mut self, _width: u32) -> Result<(), whereat::At<crate::ConvertError>> {
-        #[cfg(feature = "hdr-experimental")]
         if self.rgb_strip.len() < _width as usize {
             self.rgb_strip
                 .try_reserve(_width as usize - self.rgb_strip.len())
@@ -52,14 +45,6 @@ impl HdrKernelScratch {
         }
         Ok(())
     }
-}
-
-#[cfg(feature = "hdr-experimental")]
-struct CachedSoftCompress {
-    primaries: ColorPrimaries,
-    /// Bit pattern of the knee so the key comparison is exact (no float `==`).
-    knee_bits: u32,
-    compressor: crate::hdr::SoftCompress,
 }
 
 /// Apply a single conversion step on raw byte slices.
@@ -363,7 +348,6 @@ pub(super) fn apply_step_u8(
             );
         }
 
-        #[cfg(feature = "hdr-experimental")]
         ConvertStep::SoftCompressOklch { primaries, knee } => {
             soft_compress_oklch_kernel(src, dst, w, from, *primaries, *knee, hdr_scratch);
         }
@@ -478,7 +462,6 @@ fn tone_map_bt2446a_kernel(
 //
 // Same justification for `needless_range_loop` as in
 // `tone_map_bt2446a_kernel`.
-#[cfg(feature = "hdr-experimental")]
 #[allow(clippy::needless_range_loop)]
 fn soft_compress_oklch_kernel(
     src: &[u8],
@@ -489,26 +472,9 @@ fn soft_compress_oklch_kernel(
     knee: f32,
     scratch: &mut HdrKernelScratch,
 ) {
-    // Resolve the compressor once per plan/strip run and cache it in the
-    // row-persistent scratch: `SoftCompress` owns a gamut-boundary LUT whose
-    // construction runs 16 k bisection searches, so rebuilding it per row
-    // dominated this kernel (and heap-allocated per row, violating the
-    // module contract). The cache key is the step params that shape it.
-    let index = scratch
-        .soft_compress
-        .iter()
-        .position(|c| c.primaries == primaries && c.knee_bits == knee.to_bits())
-        .unwrap_or_else(|| {
-            let space = crate::oklab::OklabSpace::for_primaries(primaries)
-                .expect("target primaries have defined LMS matrices");
-            scratch.soft_compress.push(CachedSoftCompress {
-                primaries,
-                knee_bits: knee.to_bits(),
-                compressor: crate::hdr::SoftCompress::new(&space, knee),
-            });
-            scratch.soft_compress.len() - 1
-        });
-    let compressor = &scratch.soft_compress[index].compressor;
+    let space = crate::oklab::OklabSpace::for_primaries(primaries)
+        .expect("target primaries have defined LMS matrices");
+    let compressor = crate::hdr::SoftCompress::new(&space, knee);
 
     let has_alpha = from.layout().has_alpha();
     let channels = if has_alpha { 4 } else { 3 };

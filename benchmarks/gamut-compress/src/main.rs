@@ -478,7 +478,7 @@ fn bench(dir: &str, tau: f32, eps: f32) {
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     std::fs::create_dir_all("results").unwrap();
-    let (tau, eps) = (a.get(3).map(|v| v.parse().unwrap()).unwrap_or(0.0), a.get(4).map(|v| v.parse().unwrap()).unwrap_or(0.01));
+    let (tau, eps) = (a.get(3).and_then(|v| v.parse().ok()).unwrap_or(0.0), a.get(4).map(|v| v.parse().unwrap()).unwrap_or(0.01));
     match a.get(1).map(|s| s.as_str()) {
         Some("table-seam") => {
             let lut = soft();
@@ -510,6 +510,89 @@ fn main() {
                     if !ing(unlab([l, a / h * t, b / h * t])) { first = t; break }
                 }
                 println!("de {e:.5} src {c:?} L {l:.5} C {h:.5} bisect {:.5} first_crossing {first:.5} solve_out {:?}", exact_cmax(l, a, b), o.map(|v| (v * 1e4).round() / 1e4));
+            }
+        }
+        Some("planar-table") => {
+            use zenpixels_convert::hdr::GamutBoundaryLut;
+            let m = source_matrix(0);
+            let imgs = images(&a[2], &m);
+            let space = OklabSpace::for_primaries(P::Bt709).unwrap();
+            let result = zenbench::run(|suite| {
+                suite.group("table-build", |group| {
+                    let cfg = group.config();
+                    cfg.max_rounds = 20;
+                    cfg.min_rounds = 10;
+                    cfg.auto_rounds = false;
+                    cfg.max_iterations = 1;
+                    let inv = *space.lms_to_rgb();
+                    group.bench("GamutBoundaryLut::new", move |b| {
+                        b.iter(|| std::hint::black_box(GamutBoundaryLut::new(&inv)))
+                    });
+                });
+                for img in &imgs {
+                    let n = (1usize << 18).min(img.rgb.len());
+                    let (mut l, mut oa, mut ob) = (vec![0f32; n], vec![0f32; n], vec![0f32; n]);
+                    for i in 0..n {
+                        let [x, y, z] = space.from_rgb(img.rgb[i]);
+                        l[i] = x;
+                        oa[i] = y;
+                        ob[i] = z;
+                    }
+                    suite.group(format!("planar-{}", img.name), |group| {
+                        let cfg = group.config();
+                        cfg.max_rounds = 30;
+                        cfg.min_rounds = 20;
+                        cfg.auto_rounds = false;
+                        cfg.max_iterations = 16;
+                        group.throughput(zenbench::Throughput::Elements(n as u64));
+                        let lut = GamutBoundaryLut::new(space.lms_to_rgb());
+                        let (mut wa, mut wb) = (oa.clone(), ob.clone());
+                        group.bench("table", move |b| {
+                            b.iter(|| {
+                                wa.copy_from_slice(&oa);
+                                wb.copy_from_slice(&ob);
+                                lut.compress_planes(&l, &mut wa, &mut wb, KNEE).unwrap();
+                                std::hint::black_box(&wa);
+                            })
+                        });
+                    });
+                }
+            });
+            std::fs::write(&a[3], serde_json::to_string_pretty(&result).unwrap()).unwrap();
+        }
+        Some("gate-all") => {
+            // Boundary points for each target and knee: the tightest tau at eps 0.05.
+            let targets: [(&str, [(f64, f64); 3]); 3] = [
+                ("Bt709", [(0.64, 0.33), (0.30, 0.60), (0.15, 0.06)]),
+                ("DisplayP3", [(0.68, 0.32), (0.265, 0.69), (0.15, 0.06)]),
+                ("Bt2020", [(0.708, 0.292), (0.17, 0.797), (0.131, 0.046)]),
+            ];
+            for (name, prim) in targets {
+                let to = inv(&matmul(&inv(&CSS_SRGB_TO_XYZ), &rgb_to_xyz(prim)));
+                let eval = |lab_v: [f64; 3]| mul(&to, unlab(lab_v));
+                for knee in [0.90f64, 0.96] {
+                    let mut tau = f64::NEG_INFINITY;
+                    for li in 1..400 {
+                        let l = li as f64 / 400.0;
+                        for hi in 0..1440 {
+                            let (sh, ch) = (hi as f64 / 1440.0 * core::f64::consts::TAU).sin_cos();
+                            let (mut lo, mut hi2) = (0.0, 2.0);
+                            for _ in 0..60 {
+                                let mid = (lo + hi2) / 2.0;
+                                if ing(eval([l, mid * ch, mid * sh])) { lo = mid } else { hi2 = mid }
+                            }
+                            for k in [knee - 1e-3, knee + 0.02, 1.0] {
+                                let p = eval([l, k * lo * ch, k * lo * sh]);
+                                let mx = p[0].max(p[1]).max(p[2]);
+                                let mn = p[0].min(p[1]).min(p[2]);
+                                if mx > 0.0 && mx < 0.95 {
+                                    tau = tau.max(mn / mx);
+                                }
+                            }
+                        }
+                    }
+                    println!("{name} knee {knee}: tau {tau:.6}");
+                }
             }
         }
         Some("gate") => {

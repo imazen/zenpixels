@@ -60,6 +60,7 @@ pub const LMS_CBRT_FROM_OKLAB: GamutMatrix = GamutMatrix::from_rows([
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OklabSpace {
+    primaries: ColorPrimaries,
     rgb_to_lms: GamutMatrix,
     lms_to_rgb: GamutMatrix,
 }
@@ -69,9 +70,17 @@ impl OklabSpace {
     #[must_use]
     pub fn for_primaries(primaries: ColorPrimaries) -> Option<Self> {
         Some(Self {
+            primaries,
             rgb_to_lms: rgb_to_lms_matrix(primaries)?,
             lms_to_rgb: lms_to_rgb_matrix(primaries)?,
         })
+    }
+
+    /// The primaries this space is relative to.
+    #[inline]
+    #[must_use]
+    pub const fn primaries(&self) -> ColorPrimaries {
+        self.primaries
     }
 
     /// Linear RGB to LMS, skipping an intermediate XYZ buffer.

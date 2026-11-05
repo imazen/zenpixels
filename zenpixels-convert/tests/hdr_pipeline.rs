@@ -33,7 +33,7 @@ use zenpixels::buffer::PixelBuffer;
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
 };
-use zenpixels_convert::hdr::{Bt2446A, GamutBoundaryLut, SoftCompress};
+use zenpixels_convert::hdr::{Bt2446A, SoftCompress};
 use zenpixels_convert::{ConvertPlan, HdrConfig};
 
 // ── Test inputs ─────────────────────────────────────────────────────────
@@ -350,57 +350,17 @@ fn softcompress_accessor_round_trips_knee_value() {
 }
 
 #[test]
-fn softcompress_lut_accessor_returns_same_lut_across_calls() {
-    // The `lut()` accessor borrows the internal LUT — same reference
-    // across calls is a contract for callers that want to forward
-    // the LUT to a planar pipeline (zenfilters does this).
+fn soft_compress_compresses_planes_in_place_at_default_knee() {
     use zenpixels_convert::oklab::OklabSpace;
     let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).expect("BT.709 matrices");
-    let sc = SoftCompress::new(&space, SoftCompress::DEFAULT_KNEE);
-    let a = sc.lut();
-    let b = sc.lut();
-    // Compare via raw pointer equality — same backing storage.
-    assert!(core::ptr::eq(a, b), "lut() must return a stable reference");
-}
-
-#[test]
-fn gamut_boundary_lut_handles_extremes_without_panic() {
-    // The LUT lookup clamps L to [0, 1] and wraps h modulo TAU. Pin
-    // those invariants — at L=0 and L=1 the achromatic max should be
-    // ~0 (no chroma at black or white); at L=0.5 hue=0 it should be
-    // positive (red boundary in sRGB).
-    use zenpixels_convert::oklab::OklabSpace;
-    let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).expect("BT.709 matrices");
-    let lut = GamutBoundaryLut::new(space.lms_to_rgb());
-    let at_black = lut.max_chroma(0.0, 0.0);
-    let at_white = lut.max_chroma(1.0, 0.0);
-    let at_mid = lut.max_chroma(0.5, 0.0);
-    assert!(
-        at_black < 1e-2 && at_white < 1e-2,
-        "max_chroma at L=0 / L=1 must be ~0, got {at_black} / {at_white}"
-    );
-    assert!(
-        at_mid > 0.0,
-        "max_chroma at L=0.5 hue=0 (red) must be positive, got {at_mid}"
-    );
-    // `max_chroma` must not panic at the hue-wrap boundary or out-of-range L.
-    let _ = lut.max_chroma(-0.5, 100.0);
-    let _ = lut.max_chroma(2.0, -1.0);
-}
-
-#[test]
-fn gamut_boundary_lut_compresses_planes_in_place_at_default_knee() {
-    use zenpixels_convert::oklab::OklabSpace;
-    let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).expect("BT.709 matrices");
-    let lut = GamutBoundaryLut::new(space.lms_to_rgb());
+    let compress = SoftCompress::new(&space, SoftCompress::DEFAULT_KNEE);
     // Build OKLab planes: L=0.6 (mid lightness), a/b on a saturated arc.
     let l = vec![0.6_f32, 0.6, 0.6];
     let mut a = vec![0.3_f32, 0.2, 0.1];
     let mut b = vec![0.0_f32, 0.1, 0.0];
     let a0 = a.clone();
     let b0 = b.clone();
-    lut.compress_planes(&l, &mut a, &mut b, SoftCompress::DEFAULT_KNEE)
-        .unwrap();
+    compress.compress_oklab_planes(&l, &mut a, &mut b).unwrap();
     // The achromatic+low-chroma pixel (a=0.1, b=0.0) is small enough
     // to lie inside the knee — values stay identical or very close.
     assert!((a[2] - a0[2]).abs() < 1e-3 && (b[2] - b0[2]).abs() < 1e-3,);

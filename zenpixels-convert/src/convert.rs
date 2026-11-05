@@ -8,7 +8,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy, LumaCoefficients};
+use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GamutMapping, LumaCoefficients};
 use crate::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, ConvertError, PixelDescriptor,
     TransferFunction,
@@ -452,9 +452,6 @@ pub(crate) enum ConvertStep {
     /// target unit cube using a hue-preserving rational knee curve.
     /// Skipped (no step emitted) when the target is BT.2020 — the
     /// wide-gamut output mode.
-    ///
-    /// Gated behind `hdr-experimental` at the kernel side.
-    #[cfg(feature = "hdr-experimental")]
     SoftCompressOklch {
         primaries: ColorPrimaries,
         knee: f32,
@@ -525,7 +522,6 @@ impl ConvertStep {
             Self::Fused { kind, .. } => kind.variant_name(),
             #[cfg(feature = "hdr-experimental")]
             Self::ToneMapBt2446A { .. } => "ToneMapBt2446A",
-            #[cfg(feature = "hdr-experimental")]
             Self::SoftCompressOklch { .. } => "SoftCompressOklch",
         }
     }
@@ -1524,6 +1520,11 @@ impl ConvertPlan {
                 .expect("matching built-in endpoints"));
         }
 
+        if options.gamut_mapping == GamutMapping::SoftCompress && soft_compress_applies(&from, &to)
+        {
+            return Self::new_soft_compressed(from, to, options);
+        }
+
         let mut plan = Self::new(from, to).at()?;
 
         // Replace DropAlpha with MatteComposite when policy is CompositeOnto.
@@ -1646,6 +1647,51 @@ impl ConvertPlan {
         }
 
         Ok(plan)
+    }
+
+    /// Source to linear `f32` in the target's primaries with out-of-gamut values
+    /// kept, then compression, then linear to target.
+    fn new_soft_compressed(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &ConvertOptions,
+    ) -> Result<Self, At<ConvertError>> {
+        let sdr = |t: TransferFunction| !matches!(t, TransferFunction::Pq | TransferFunction::Hlg);
+        if !sdr(from.transfer()) || !sdr(to.transfer()) {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        if crate::oklab::OklabSpace::for_primaries(to.primaries).is_none() {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        let keeps_alpha = from.has_alpha() && from.alpha() != Some(AlphaMode::Undefined);
+        let middle = PixelDescriptor::new(
+            ChannelType::F32,
+            if keeps_alpha {
+                ChannelLayout::Rgba
+            } else {
+                ChannelLayout::Rgb
+            },
+            keeps_alpha.then_some(AlphaMode::Straight),
+            TransferFunction::Linear,
+        )
+        .with_primaries(to.primaries);
+        let plain = options.with_gamut_mapping(GamutMapping::Clip);
+        // Padding isn't alpha, and real alpha stays in `middle`, so nothing is dropped here.
+        let into = Self::new_explicit(
+            from,
+            middle,
+            &plain
+                .with_clip_out_of_gamut(false)
+                .with_alpha_policy(AlphaPolicy::DiscardUnchecked),
+        )?;
+        let out = Self::new_explicit(middle, to, &plain.with_clip_out_of_gamut(true))?;
+        let mut steps = into.steps;
+        steps.push(ConvertStep::SoftCompressOklch {
+            primaries: to.primaries,
+            knee: crate::hdr::SoftCompress::DEFAULT_KNEE,
+        });
+        steps.extend(out.steps);
+        Ok(Self::build(from, to, steps))
     }
 
     /// Create a shell plan that records from/to but has no conversion steps.
@@ -2271,9 +2317,7 @@ pub(crate) struct ConvertScratch {
     /// Stored as `Vec<u32>` to guarantee 4-byte alignment, which lets
     /// garb and bytemuck use fast aligned paths instead of unaligned fallbacks.
     buf: Vec<u32>,
-    /// Row-persistent scratch for the HDR tone-map kernels (RGB strip +
-    /// cached `SoftCompress` gamut LUT). Empty placeholder without the
-    /// `hdr-experimental` feature.
+    /// Row-persistent RGB strip for the kernels that peel alpha off.
     hdr: convert_kernels::HdrKernelScratch,
 }
 
@@ -2337,6 +2381,19 @@ impl core::fmt::Debug for ConvertScratch {
             .field("capacity", &self.buf.capacity())
             .finish()
     }
+}
+
+/// Whether primaries narrow between RGB-family layouts, so that colors can leave
+/// the target's gamut. Equal or containing primaries clip nothing.
+pub(crate) fn soft_compress_applies(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
+    from.primaries != to.primaries
+        && from.primaries != ColorPrimaries::Unknown
+        && to.primaries != ColorPrimaries::Unknown
+        && !to.primaries.contains(from.primaries)
+        && matches!(
+            from.layout(),
+            ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
+        )
 }
 
 /// One row with fresh scratch, for tests that run a plan directly.
@@ -2813,7 +2870,6 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
         // shape — they only update pixel values.
         #[cfg(feature = "hdr-experimental")]
         ConvertStep::ToneMapBt2446A { .. } => current,
-        #[cfg(feature = "hdr-experimental")]
         ConvertStep::SoftCompressOklch { .. } => current,
     };
     next.primaries = current.primaries;
