@@ -37,6 +37,10 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 - `Cmyk8` through `MoxCms` now gives `CmykF32`'s color, rounded, including its black-point compensation: on 49 real profiles to sRGB they differed by a mean of 17.8 codes. RGBA targets get the same transform as RGB. `Cmyk8` is 44% slower and `CmykF32` 6 times faster (`benchmarks/cmyk8_bpc_2026-11-05.md`).
 
+- **Breaking:** views and buffers accept any stride that is at least `width * bytes_per_pixel` and a multiple of the sample size, so RGB8 rows 8 bytes apart and f32 RGB with 16 bytes of padding are borrowed as they are. A stride off a sample boundary now returns `AlignmentViolation`; constructors no longer return `StrideNotPixelAligned`. Code that divides `stride()` by the pixel size must stop: it misreads these rows silently. Issue #91.
+- **Breaking:** `PixelBuffer::try_as_imgref` and `try_as_imgref_mut` return `Result<_, At<BufferError>>`, so a stride `imgref` can't express (`StrideNotPixelAligned`) is told apart from a wrong format (`IncompatibleDescriptor`). They also keep exact-depth evidence on failure. Use `.ok()` where an `Option` is wanted. Typed `as_imgref` and `as_imgref_mut` panic on such a stride, naming it, before reading anything.
+- `try_typed` also requires the stride to suit the pixel type's alignment, which only a custom over-aligned `Pixel` notices.
+
 - Docs: JPEG XL color authority cites ISO/IEC 18181-1, and AVIF lists its ICC encode.
 
 - `gamut_clamping_scenarios` runs again, with a resampling filter in the test file that matches zenresize to 2.3e-4 on its image. It also checks that unclipped F32 keeps what a kernel's lobes produce through an sRGB round trip, and that `RowConverter`'s U8 output clamps them.

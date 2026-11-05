@@ -726,6 +726,14 @@ workers; source/color resolution outside row loops; minimal/default clean build
 timings on a fixed toolchain. These are measurements to run on implementation,
 not performance claims established by this documentation-only change.
 
+## Byte strides (issue #91)
+
+A stride may now be any multiple of the sample size. Search for `stride() / ` and
+`stride / bpp`: those misread rows silently and must read through `row(y)` or the
+byte stride instead. `try_as_imgref` and `try_as_imgref_mut` return a `Result`, so
+`if let Some(view) = buffer.try_as_imgref::<P>()` becomes `if let Ok(view) = ...`.
+Adapters that padded by a whole pixel only to satisfy the old rule can stop.
+
 ## Added by the final review, 2026-11-05
 
 | Removed or changed | Use |

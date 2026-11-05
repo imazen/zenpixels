@@ -25,8 +25,8 @@ pub fn buffer::PixelBuffer<P, S>::as_imgref(&self) -> imgref::ImgRef<'_, P>
 pub fn buffer::PixelBuffer<P, S>::as_imgref_mut(&mut self) -> imgref::ImgRefMut<'_, P>
 pub fn buffer::PixelBuffer<P>::from_imgvec(imgref::ImgVec<P>) -> Self
 pub fn buffer::PixelBuffer<P>::from_pixels(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuffer<(), S>::try_as_imgref<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
-pub fn buffer::PixelBuffer<(), S>::try_as_imgref_mut<P: buffer::Pixel>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
+pub fn buffer::PixelBuffer<(), S>::try_as_imgref<P: buffer::Pixel>(&self) -> core::result::Result<imgref::ImgRef<'_, P>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<(), S>::try_as_imgref_mut<P: buffer::Pixel>(&mut self) -> core::result::Result<imgref::ImgRefMut<'_, P>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::swap_to_rgba(self) -> buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>
 pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::swap_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
 pub fn buffer::PixelBuffer::as_contiguous_pixels<P: buffer::Pixel>(&self) -> core::option::Option<&[P]>
@@ -36,8 +36,8 @@ pub fn buffer::PixelBuffer<P, S>::as_imgref(&self) -> imgref::ImgRef<'_, P>
 pub fn buffer::PixelBuffer<P, S>::as_imgref_mut(&mut self) -> imgref::ImgRefMut<'_, P>
 pub fn buffer::PixelBuffer<P>::from_imgvec(imgref::ImgVec<P>) -> Self
 pub fn buffer::PixelBuffer<P>::from_pixels(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuffer<(), S>::try_as_imgref<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
-pub fn buffer::PixelBuffer<(), S>::try_as_imgref_mut<P: buffer::Pixel>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
+pub fn buffer::PixelBuffer<(), S>::try_as_imgref<P: buffer::Pixel>(&self) -> core::result::Result<imgref::ImgRef<'_, P>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<(), S>::try_as_imgref_mut<P: buffer::Pixel>(&mut self) -> core::result::Result<imgref::ImgRefMut<'_, P>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::swap_to_rgba(self) -> buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>
 pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::swap_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
 
