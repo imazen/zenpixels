@@ -229,13 +229,13 @@ impl RowConverter {
 
         if from.has_alpha()
             && !to.has_alpha()
-            && options.alpha_policy == AlphaPolicy::DiscardIfOpaque
+            && options.alpha_policy() == AlphaPolicy::DiscardIfOpaque
         {
             return Err(whereat::at!(ConvertError::AlphaCheckRequired));
         }
 
         // Gamut mapping runs on the built-in plan. A plugin's transform would clip.
-        if options.gamut_mapping == crate::policy::GamutMapping::SoftCompress
+        if options.gamut_mapping() == crate::policy::GamutMapping::SoftCompress
             && crate::convert::soft_compress_applies(&from, &to)
         {
             return Ok(Self::from_plan(ConvertPlan::new_explicit(
@@ -340,13 +340,13 @@ impl RowConverter {
             if let Some(external) = external {
                 // Policy checks still apply.
                 let drops_alpha = from.has_alpha() && !to.has_alpha();
-                if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
+                if drops_alpha && options.alpha_policy() == AlphaPolicy::Forbid {
                     return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
                 }
                 // Precision bits, not byte size — see convert.rs for rationale.
                 let reduces_depth = crate::negotiate::channel_bits(from.channel_type())
                     > crate::negotiate::channel_bits(to.channel_type());
-                if reduces_depth && options.depth_policy == DepthPolicy::Forbid {
+                if reduces_depth && options.depth_policy() == DepthPolicy::Forbid {
                     return Err(whereat::at!(ConvertError::DepthReductionForbidden));
                 }
                 let src_is_rgb = matches!(
@@ -355,7 +355,7 @@ impl RowConverter {
                 );
                 let dst_is_gray =
                     matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
-                if src_is_rgb && dst_is_gray && options.luma.is_none() {
+                if src_is_rgb && dst_is_gray && options.luma().is_none() {
                     return Err(whereat::at!(ConvertError::RgbToGray));
                 }
 
@@ -403,7 +403,7 @@ impl RowConverter {
             }));
         }
         // No ICC transform here can honor a mapping, and clipping silently would be wrong.
-        if options.gamut_mapping != crate::policy::GamutMapping::Clip {
+        if options.gamut_mapping() != crate::policy::GamutMapping::Clip {
             return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
         // Plugins accept PixelFormat, which cannot express association or range.
@@ -415,7 +415,7 @@ impl RowConverter {
             return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
         if from.has_alpha() && !to.has_alpha() {
-            match options.alpha_policy {
+            match options.alpha_policy() {
                 crate::AlphaPolicy::DiscardUnchecked => {}
                 crate::AlphaPolicy::DiscardIfOpaque => {
                     return Err(whereat::at!(ConvertError::AlphaCheckRequired));
@@ -1744,7 +1744,7 @@ mod tests {
         );
 
         let opts = ConvertOptions::permissive();
-        assert!(opts.clip_out_of_gamut);
+        assert!(opts.clip_out_of_gamut());
         let mut conv = crate::RowConverter::new_explicit(p3, srgb, &opts).unwrap();
 
         let src: [f32; 3] = [0.0, 1.0, 0.0];

@@ -680,7 +680,7 @@ fn depth_roundtrip_scenarios() {
             "u8 sRGB → f32 Lin → u8 sRGB",
             &grid,
             &converted,
-            (cost_fwd + cost_back).loss,
+            (cost_fwd + cost_back).loss(),
         ));
     }
 
@@ -709,7 +709,7 @@ fn depth_roundtrip_scenarios() {
             "u8 sRGB → u16 sRGB → u8 sRGB",
             &grid,
             &converted,
-            (cost_fwd + cost_back).loss,
+            (cost_fwd + cost_back).loss(),
         ));
     }
 
@@ -728,7 +728,7 @@ fn depth_roundtrip_scenarios() {
             "u16 sRGB → u8 sRGB",
             &reference_u16,
             &converted,
-            cost.loss,
+            cost.loss(),
         ));
     }
 
@@ -743,7 +743,7 @@ fn depth_roundtrip_scenarios() {
             "f32 Lin → u8 sRGB (origin f32)",
             &ramp,
             &converted,
-            cost.loss,
+            cost.loss(),
         ));
     }
 
@@ -769,7 +769,7 @@ fn depth_roundtrip_scenarios() {
             "f32 Lin → u8 sRGB (origin u8)",
             &reference,
             &converted,
-            cost.loss,
+            cost.loss(),
         ));
     }
 
@@ -781,7 +781,7 @@ fn depth_roundtrip_scenarios() {
             "f32 → f16 → f32",
             &ramp,
             &converted,
-            cost.loss,
+            cost.loss(),
         ));
     }
 
@@ -838,7 +838,7 @@ fn depth_roundtrip_scenarios() {
             "f32 → i16 → f32",
             &ramp,
             &converted,
-            cost.loss,
+            cost.loss(),
         ));
     }
 
@@ -1016,7 +1016,12 @@ fn premul_roundtrip_scenarios() {
             convs.push(conv_c);
         }
         let cost = ConversionCost::new(45, 15); // premul+unpremul
-        results.push(run_scenario("u8 premul rt α=128", &refs, &convs, cost.loss));
+        results.push(run_scenario(
+            "u8 premul rt α=128",
+            &refs,
+            &convs,
+            cost.loss(),
+        ));
     }
 
     // 3. α=2 (severe error)
@@ -1200,7 +1205,7 @@ fn gamut_conversion_scenarios() {
             "sRGB → P3 → sRGB (in-gamut)",
             &refs,
             &convs,
-            cost.loss,
+            cost.loss(),
         ));
     }
 
@@ -1233,7 +1238,7 @@ fn gamut_conversion_scenarios() {
         );
         let srgb = PixelDescriptor::RGBF32_LINEAR;
         let cost = zenpixels_convert::ConversionCost::between(p3_to_srgb, srgb);
-        let model_bucket = Bucket::from_model_loss(cost.loss);
+        let model_bucket = Bucket::from_model_loss(cost.loss());
         let match_ok = (measured_bucket as i32 - model_bucket as i32).abs() <= 1;
         results.push(ScenarioResult {
             name: "P3 → sRGB → P3 (saturated)",
@@ -1247,7 +1252,7 @@ fn gamut_conversion_scenarios() {
                     .unwrap_or(0.0),
                 sample_count: de_values.len(),
             },
-            model_loss: cost.loss,
+            model_loss: cost.loss(),
             measured_bucket,
             model_bucket,
             match_ok,
@@ -1299,7 +1304,7 @@ fn gamut_conversion_scenarios() {
         );
         let srgb = PixelDescriptor::RGBF32_LINEAR;
         let cost = zenpixels_convert::ConversionCost::between(bt2020, srgb);
-        let model_bucket = Bucket::from_model_loss(cost.loss);
+        let model_bucket = Bucket::from_model_loss(cost.loss());
         let match_ok = (measured_bucket as i32 - model_bucket as i32).abs() <= 1;
         results.push(ScenarioResult {
             name: "BT.2020 → sRGB → BT.2020 (saturated)",
@@ -1313,7 +1318,7 @@ fn gamut_conversion_scenarios() {
                     .unwrap_or(0.0),
                 sample_count: de_values.len(),
             },
-            model_loss: cost.loss,
+            model_loss: cost.loss(),
             measured_bucket,
             model_bucket,
             match_ok,
@@ -1354,7 +1359,7 @@ fn gamut_conversion_scenarios() {
             "BT.2020 → P3 → BT.2020 (saturated)",
             &refs,
             &convs,
-            cost.loss,
+            cost.loss(),
         ));
     }
 
@@ -1406,7 +1411,7 @@ fn gamut_conversion_scenarios() {
             "BT.2020→sRGB (origin sRGB)",
             &refs,
             &convs,
-            cost.loss,
+            cost.loss(),
         ));
     }
 
@@ -1437,7 +1442,7 @@ fn gamut_conversion_scenarios() {
             "P3→sRGB (origin sRGB)",
             &refs,
             &convs,
-            cost.loss,
+            cost.loss(),
         ));
     }
 
@@ -1557,7 +1562,7 @@ fn transfer_function_scenarios() {
             "f32 PQ → u8 sRGB (HDR→SDR)",
             &reference,
             &converted,
-            cost.loss,
+            cost.loss(),
         ));
     }
 
@@ -2629,7 +2634,7 @@ fn cost_model_ranking_correlates() {
         pairs.push((
             "u8→f32→u8 (prov)",
             stats.p95_de,
-            (cost_fwd + cost_back).loss,
+            (cost_fwd + cost_back).loss(),
         ));
     }
 
@@ -2641,7 +2646,7 @@ fn cost_model_ranking_correlates() {
             PixelDescriptor::RGBF32_LINEAR,
             PixelDescriptor::RGB8_SRGB,
         );
-        pairs.push(("f32→u8 origin f32", stats.p95_de, cost.loss));
+        pairs.push(("f32→u8 origin f32", stats.p95_de, cost.loss()));
     }
 
     // f32→f16→f32: small precision loss

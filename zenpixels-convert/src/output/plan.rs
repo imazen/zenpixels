@@ -198,7 +198,7 @@ impl OutputPlan {
         // to a plugin: a plugin may accept a transform while ignoring options.
         if crate::negotiate::channel_bits(source_desc.channel_type())
             > crate::negotiate::channel_bits(target_desc_full.channel_type())
-            && options.depth_policy == crate::DepthPolicy::Forbid
+            && options.depth_policy() == crate::DepthPolicy::Forbid
         {
             return Err(whereat::at!(ConvertError::DepthReductionForbidden));
         }
@@ -208,7 +208,7 @@ impl OutputPlan {
         ) && matches!(
             target_desc_full.layout(),
             crate::ChannelLayout::Gray | crate::ChannelLayout::GrayAlpha
-        ) && options.luma.is_none()
+        ) && options.luma().is_none()
         {
             return Err(whereat::at!(ConvertError::RgbToGray));
         }

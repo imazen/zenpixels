@@ -1479,10 +1479,10 @@ impl ConvertPlan {
         }
         // Check alpha removal policy.
         let drops_alpha = from.has_alpha() && !to.has_alpha();
-        if drops_alpha && options.alpha_policy == AlphaPolicy::DiscardIfOpaque {
+        if drops_alpha && options.alpha_policy() == AlphaPolicy::DiscardIfOpaque {
             return Err(whereat::at!(ConvertError::AlphaCheckRequired));
         }
-        if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
+        if drops_alpha && options.alpha_policy() == AlphaPolicy::Forbid {
             return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
         }
 
@@ -1492,7 +1492,7 @@ impl ConvertPlan {
         // must be policy-gated.
         let reduces_depth = crate::negotiate::channel_bits(from.channel_type())
             > crate::negotiate::channel_bits(to.channel_type());
-        if reduces_depth && options.depth_policy == DepthPolicy::Forbid {
+        if reduces_depth && options.depth_policy() == DepthPolicy::Forbid {
             return Err(whereat::at!(ConvertError::DepthReductionForbidden));
         }
 
@@ -1502,13 +1502,13 @@ impl ConvertPlan {
             ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
         );
         let dst_is_gray = matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
-        if src_is_rgb && dst_is_gray && options.luma.is_none() {
+        if src_is_rgb && dst_is_gray && options.luma().is_none() {
             return Err(whereat::at!(ConvertError::RgbToGray));
         }
 
         if drops_alpha
             && to.alpha() == Some(AlphaMode::Undefined)
-            && matches!(options.alpha_policy, AlphaPolicy::CompositeOnto { .. })
+            && matches!(options.alpha_policy(), AlphaPolicy::CompositeOnto { .. })
         {
             let rgb =
                 PixelDescriptor::new(to.channel_type(), ChannelLayout::Rgb, None, to.transfer())
@@ -1520,7 +1520,8 @@ impl ConvertPlan {
                 .expect("matching built-in endpoints"));
         }
 
-        if options.gamut_mapping == GamutMapping::SoftCompress && soft_compress_applies(&from, &to)
+        if options.gamut_mapping() == GamutMapping::SoftCompress
+            && soft_compress_applies(&from, &to)
         {
             return Self::new_soft_compressed(from, to, options);
         }
@@ -1562,7 +1563,7 @@ impl ConvertPlan {
             && let AlphaPolicy::CompositeOnto {
                 background,
                 reference_white,
-            } = options.alpha_policy
+            } = options.alpha_policy()
         {
             let matte = matte_background(background, reference_white, from)?;
             let mut expanded = Vec::new();
@@ -1579,7 +1580,7 @@ impl ConvertPlan {
                         ConvertStep::GrayAlphaToRgba,
                         ConvertStep::DropAlpha,
                         ConvertStep::RgbToGray {
-                            coefficients: options.luma.unwrap_or(LumaCoefficients::Bt709),
+                            coefficients: options.luma().unwrap_or(LumaCoefficients::Bt709),
                         },
                     ]),
                     other => expanded.push(other),
@@ -1609,7 +1610,7 @@ impl ConvertPlan {
         // steps for their sign-preserving extended-range counterparts.
         // Fused u8/u16 matlut steps are unaffected (integer I/O can't
         // represent extended range anyway).
-        if !options.clip_out_of_gamut {
+        if !options.clip_out_of_gamut() {
             for step in &mut plan.steps {
                 match step {
                     ConvertStep::SrgbF32ToLinearF32 => {
@@ -1634,7 +1635,7 @@ impl ConvertPlan {
         // `layout_steps` constructs these variants with a Bt709 placeholder
         // because it has no access to options; we replace with the user's
         // explicit choice (or the permissive default of Bt709) here.
-        let user_luma = options.luma.unwrap_or(LumaCoefficients::Bt709);
+        let user_luma = options.luma().unwrap_or(LumaCoefficients::Bt709);
         for step in &mut plan.steps {
             match step {
                 ConvertStep::RgbToGray { coefficients }

@@ -180,8 +180,8 @@ fn widening_conversion_has_zero_loss() {
         PixelDescriptor::RGB8_SRGB,
         PixelDescriptor::RGBF32_LINEAR,
     );
-    assert_eq!(cost.loss, 0, "widening should be lossless");
-    assert!(cost.effort > 0, "conversion should have nonzero effort");
+    assert_eq!(cost.loss(), 0, "widening should be lossless");
+    assert!(cost.effort() > 0, "conversion should have nonzero effort");
 }
 
 #[test]
@@ -191,8 +191,8 @@ fn narrowing_conversion_has_nonzero_loss() {
         PixelDescriptor::RGBF32_LINEAR,
         PixelDescriptor::RGB8_SRGB,
     );
-    assert!(cost.loss > 0, "f32→u8 should report data loss");
-    assert!(cost.effort > 0);
+    assert!(cost.loss() > 0, "f32→u8 should report data loss");
+    assert!(cost.effort() > 0);
 }
 
 #[test]
@@ -201,8 +201,8 @@ fn swizzle_is_effort_only() {
         PixelDescriptor::BGRA8_SRGB,
         PixelDescriptor::RGBA8_SRGB,
     );
-    assert!(cost.effort > 0);
-    assert_eq!(cost.loss, 0, "swizzle is lossless");
+    assert!(cost.effort() > 0);
+    assert_eq!(cost.loss(), 0, "swizzle is lossless");
 }
 
 #[test]
@@ -211,7 +211,7 @@ fn drop_alpha_reports_loss() {
         PixelDescriptor::RGBA8_SRGB,
         PixelDescriptor::RGB8_SRGB,
     );
-    assert!(cost.loss > 0, "dropping alpha loses information");
+    assert!(cost.loss() > 0, "dropping alpha loses information");
 }
 
 #[test]
@@ -221,9 +221,9 @@ fn color_to_gray_reports_high_loss() {
         PixelDescriptor::GRAY8_SRGB,
     );
     assert!(
-        cost.loss >= 400,
+        cost.loss() >= 400,
         "RGB→Gray loses color information (loss={})",
-        cost.loss
+        cost.loss()
     );
 }
 
@@ -463,10 +463,11 @@ fn u8_origin_f32_to_u8_reports_zero_loss() {
         provenance,
     );
     assert_eq!(
-        cost.loss, 0,
+        cost.loss(),
+        0,
         "u8→f32→u8 round-trip should report zero depth loss"
     );
-    assert!(cost.effort > 0, "conversion still has effort cost");
+    assert!(cost.effort() > 0, "conversion still has effort cost");
 }
 
 #[test]
@@ -479,7 +480,7 @@ fn u16_origin_f32_to_u8_reports_loss() {
         PixelDescriptor::RGB8_SRGB,
         provenance,
     );
-    assert!(cost.loss > 0, "u16→f32→u8 truncates precision");
+    assert!(cost.loss() > 0, "u16→f32→u8 truncates precision");
 }
 
 #[test]
@@ -495,9 +496,9 @@ fn f32_origin_f32_to_u8_reports_high_loss() {
         provenance,
     );
     assert!(
-        cost.loss > 0,
+        cost.loss() > 0,
         "f32→u8 with f32 origin should report nonzero loss (got {})",
-        cost.loss
+        cost.loss()
     );
     // Verify it's higher than the u8 round-trip (which is zero)
     let u8_prov = Provenance::with_origin_depth(ChannelType::U8);
@@ -507,7 +508,7 @@ fn f32_origin_f32_to_u8_reports_high_loss() {
         u8_prov,
     );
     assert!(
-        cost.loss > u8_cost.loss,
+        cost.loss() > u8_cost.loss(),
         "f32 origin should have more loss than u8 origin"
     );
 }
@@ -531,7 +532,8 @@ fn u16_origin_f32_to_u16_reports_zero_loss() {
     let cost =
         zenpixels_convert::ConversionCost::between_with_provenance(f32_src, u16_dst, provenance);
     assert_eq!(
-        cost.loss, 0,
+        cost.loss(),
+        0,
         "u16→f32→u16 round-trip should report zero depth loss"
     );
 }

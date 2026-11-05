@@ -52,7 +52,7 @@ fn cross_gamut_preserves_partial_alpha_and_cloned_transforms() {
     let from = PixelDescriptor::RGBAF32_LINEAR.with_primaries(ColorPrimaries::DisplayP3);
     let to = PixelDescriptor::RGBAF32_LINEAR;
     let mut options = ConvertOptions::permissive();
-    options.clip_out_of_gamut = false;
+    options = options.with_clip_out_of_gamut(false);
     let straight = [
         [0.0_f32, 0.0, 0.0, 0.0],
         [0.8, 0.3, 0.1, 0.25],

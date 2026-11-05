@@ -232,12 +232,7 @@ fn parse_args(
     if n != count {
         return Err(CssColorError::Invalid);
     }
-    if inner.contains(',')
-        && matches!(
-            args[..count].iter().find(|a| matches!(a, Arg::None)),
-            Some(_)
-        )
-    {
+    if inner.contains(',') && args[..count].iter().any(|a| matches!(a, Arg::None)) {
         return Err(CssColorError::Invalid);
     }
     if let Some(text) = alpha_text {

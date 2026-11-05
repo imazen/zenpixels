@@ -154,14 +154,14 @@ pub enum GamutMapping {
 #[non_exhaustive]
 pub struct ConvertOptions {
     /// How to expand grayscale to RGB.
-    pub gray_expand: GrayExpand,
+    gray_expand: GrayExpand,
     /// How to handle alpha removal.
-    pub alpha_policy: AlphaPolicy,
+    alpha_policy: AlphaPolicy,
     /// How to handle depth reduction.
-    pub depth_policy: DepthPolicy,
+    depth_policy: DepthPolicy,
     /// Luma coefficients for RGB→Gray conversion. `None` means
     /// RGB→Gray is forbidden (returns `ConvertError::RgbToGray`).
-    pub luma: Option<LumaCoefficients>,
+    luma: Option<LumaCoefficients>,
     /// Whether to clamp out-of-gamut values to [0, 1] during f32 transfer
     /// function conversions.
     ///
@@ -174,9 +174,9 @@ pub struct ConvertOptions {
     ///
     /// Only affects f32 intermediate conversions. u8/u16 outputs always
     /// clip since those formats can't represent out-of-gamut values.
-    pub clip_out_of_gamut: bool,
+    clip_out_of_gamut: bool,
     /// What happens to colors outside the target's gamut.
-    pub gamut_mapping: GamutMapping,
+    gamut_mapping: GamutMapping,
 }
 
 impl ConvertOptions {
@@ -230,6 +230,36 @@ impl ConvertOptions {
             clip_out_of_gamut: true,
             gamut_mapping: GamutMapping::Clip,
         }
+    }
+
+    /// How grayscale expands to RGB.
+    pub const fn gray_expand(&self) -> GrayExpand {
+        self.gray_expand
+    }
+
+    /// How alpha removal is handled.
+    pub const fn alpha_policy(&self) -> AlphaPolicy {
+        self.alpha_policy
+    }
+
+    /// How depth reduction is handled.
+    pub const fn depth_policy(&self) -> DepthPolicy {
+        self.depth_policy
+    }
+
+    /// Luma coefficients for RGB to gray, or `None` when that's forbidden.
+    pub const fn luma(&self) -> Option<LumaCoefficients> {
+        self.luma
+    }
+
+    /// Whether `f32` transfer conversions clamp to `0..=1`. `u8` and `u16` outputs always clip.
+    pub const fn clip_out_of_gamut(&self) -> bool {
+        self.clip_out_of_gamut
+    }
+
+    /// What happens to colors outside the target's gamut.
+    pub const fn gamut_mapping(&self) -> GamutMapping {
+        self.gamut_mapping
     }
 
     /// Set the alpha removal policy.

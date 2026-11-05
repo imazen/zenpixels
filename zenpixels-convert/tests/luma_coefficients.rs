@@ -82,7 +82,7 @@ fn u8_bt601_gives_different_output_than_bt709() {
     assert_eq!(dst_601[0], 76, "BT.601 red expected 76, got {}", dst_601[0]);
     assert_ne!(
         dst_709[0], dst_601[0],
-        "BT.601 must differ from BT.709 — pre-fix the kernel ignored options.luma"
+        "BT.601 must differ from BT.709 — pre-fix the kernel ignored options.luma()"
     );
 }
 

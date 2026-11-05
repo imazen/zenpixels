@@ -563,11 +563,11 @@ pub fn adapt_raw_rows_for_encode<'a>(
     // allocation or output writes. Row planners themselves never hide this scan.
     let mut checked_options = *options;
     let drops_alpha = descriptor.has_alpha() && !target.has_alpha();
-    if drops_alpha && options.alpha_policy == AlphaPolicy::DiscardIfOpaque {
+    if drops_alpha && options.alpha_policy() == AlphaPolicy::DiscardIfOpaque {
         let view = PixelSlice::new(data, width, rows, stride, descriptor)
             .map_err_at(ConvertError::from)?;
         check_opaque(&view)?;
-        checked_options.alpha_policy = AlphaPolicy::DiscardUnchecked;
+        checked_options = checked_options.with_alpha_policy(AlphaPolicy::DiscardUnchecked);
     }
     let mut converter = RowConverter::new_explicit(descriptor, target, &checked_options).at()?;
     let src_bpp = descriptor.bytes_per_pixel();

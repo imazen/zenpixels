@@ -326,13 +326,23 @@ pub enum LossBucket {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ConversionCost {
-    /// Computational work (cycles, not quality). Lower is faster.
-    pub effort: u16,
-    /// Information destroyed (precision, gamut, channels). Lower is more faithful.
-    pub loss: u16,
+    effort: u16,
+    loss: u16,
 }
 
 impl ConversionCost {
+    /// Computational work (cycles, not quality). Lower is faster.
+    #[must_use]
+    pub const fn effort(&self) -> u16 {
+        self.effort
+    }
+
+    /// Information destroyed (precision, gamut, channels). Lower is more faithful.
+    #[must_use]
+    pub const fn loss(&self) -> u16 {
+        self.loss
+    }
+
     /// How visible this cost's [`loss`](Self::loss) is expected to be.
     #[must_use]
     pub const fn loss_bucket(&self) -> LossBucket {
@@ -562,18 +572,22 @@ fn best_of(
     options: impl Iterator<Item = (PixelDescriptor, ConversionCost)>,
     intent: ConvertIntent,
 ) -> Option<PixelDescriptor> {
-    let mut best: Option<(PixelDescriptor, u32)> = None;
-
-    for (target, consumer_cost) in options {
-        let score = score_target(source, provenance, target, consumer_cost, intent);
-        match best {
-            Some((_, best_score)) if score < best_score => best = Some((target, score)),
-            None => best = Some((target, score)),
-            _ => {}
-        }
-    }
-
-    best.map(|(desc, _)| desc)
+    // Ties keep the earlier candidate, so the sort must be stable.
+    let mut ranked: alloc::vec::Vec<(u32, PixelDescriptor)> = options
+        .map(|(target, consumer_cost)| {
+            let score = score_target(source, provenance, target, consumer_cost, intent);
+            (score, target)
+        })
+        .collect();
+    ranked.sort_by_key(|&(score, _)| score);
+    // The cost model doesn't know which pairs can be planned. Skip a cheap format that
+    // can't be reached when a dearer one can. If none can, return the cheapest, so that
+    // converting to it reports why.
+    ranked
+        .iter()
+        .find(|&&(_, target)| crate::ConvertPlan::new(source, target).is_ok())
+        .or(ranked.first())
+        .map(|&(_, target)| target)
 }
 
 /// Blend effort and loss into a single ranking score based on intent.

@@ -10,10 +10,10 @@
 #
 #   pub modules                                12
 #   pub types (struct/enum/trait/alias)       122
-#   pub consts/statics                        316
+#   pub consts/statics                        328
 #   free functions                              2
 #   inherent methods                          364
-#   struct fields                             121
+#   struct fields                             109
 #   enum variants                             310
 #   re-exports                                  4
 #   trait roster entries (type × trait)       415
@@ -21,7 +21,7 @@
 #   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          469
+#   (root)                          475
 #   buffer                          308
 #   cicp                             38
 #   color                            78
@@ -31,10 +31,10 @@
 #   orientation                      11
 #   pixel_types                       9
 #   plane                            87
-#   policy                           28
+#   policy                           22
 #   sample                           33
 
-## items (1111 lines)
+## items (1105 lines)
 
 pub mod zenpixels
 pub use At
@@ -654,13 +654,13 @@ pub policy::LumaCoefficients::Bt601
 pub policy::LumaCoefficients::Bt709
 pub policy::LumaCoefficients::DisplayP3
 pub const fn policy::LumaCoefficients::coefficients(self) -> [f32; 3] [also: (root)]
-pub policy::ConvertOptions::alpha_policy: policy::AlphaPolicy
-pub policy::ConvertOptions::clip_out_of_gamut: bool
-pub policy::ConvertOptions::depth_policy: policy::DepthPolicy
-pub policy::ConvertOptions::gamut_mapping: policy::GamutMapping
-pub policy::ConvertOptions::gray_expand: policy::GrayExpand
-pub policy::ConvertOptions::luma: core::option::Option<policy::LumaCoefficients>
+pub const fn policy::ConvertOptions::alpha_policy(&self) -> policy::AlphaPolicy [also: (root)]
+pub const fn policy::ConvertOptions::clip_out_of_gamut(&self) -> bool [also: (root)]
+pub const fn policy::ConvertOptions::depth_policy(&self) -> policy::DepthPolicy [also: (root)]
 pub const fn policy::ConvertOptions::forbid_lossy() -> Self [also: (root)]
+pub const fn policy::ConvertOptions::gamut_mapping(&self) -> policy::GamutMapping [also: (root)]
+pub const fn policy::ConvertOptions::gray_expand(&self) -> policy::GrayExpand [also: (root)]
+pub const fn policy::ConvertOptions::luma(&self) -> core::option::Option<policy::LumaCoefficients> [also: (root)]
 pub const fn policy::ConvertOptions::permissive() -> Self [also: (root)]
 pub const fn policy::ConvertOptions::retain_channels() -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_alpha_policy(self, policy::AlphaPolicy) -> Self [also: (root)]
@@ -936,12 +936,6 @@ pub fn color::ColorOrigin::from_icc(impl core::convert::Into<alloc::sync::Arc<[u
 pub fn color::ColorOrigin::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
 pub fn color::ColorOrigin::with_color_authority(self, color::ColorAuthority) -> Self
 #[non_exhaustive] pub struct ConvertOptions [also: policy]
-pub ConvertOptions::alpha_policy: policy::AlphaPolicy
-pub ConvertOptions::clip_out_of_gamut: bool
-pub ConvertOptions::depth_policy: policy::DepthPolicy
-pub ConvertOptions::gamut_mapping: policy::GamutMapping
-pub ConvertOptions::gray_expand: policy::GrayExpand
-pub ConvertOptions::luma: core::option::Option<policy::LumaCoefficients>
 pub struct FromPartsError<S> [also: buffer]
 pub fn buffer::FromPartsError<S>::error(&self) -> &whereat::at::At<buffer::BufferError>
 pub fn buffer::FromPartsError<S>::take_parts(&mut self) -> core::option::Option<buffer::PixelBufferParts<S>>

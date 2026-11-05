@@ -10,10 +10,10 @@
 #
 #   pub modules                                15
 #   pub types (struct/enum/trait/alias)        58
-#   pub consts/statics                         31
+#   pub consts/statics                         33
 #   free functions                              4
 #   inherent methods                          175
-#   struct fields                              73
+#   struct fields                              71
 #   enum variants                              81
 #   re-exports                                  3
 #   trait roster entries (type × trait)       113
@@ -332,11 +332,11 @@ pub fn cms::CmsPluginError::as_inner(&self) -> &(dyn core::error::Error + core::
 pub fn cms::CmsPluginError::msg(impl core::convert::Into<alloc::string::String>) -> Self
 pub fn cms::CmsPluginError::new<E>(E) -> Self where E: core::error::Error + core::marker::Send + core::marker::Sync + 'static
 #[non_exhaustive] pub struct ConversionCost
-pub ConversionCost::effort: u16
-pub ConversionCost::loss: u16
 pub const ConversionCost::ZERO: Self
 pub fn ConversionCost::between(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> Self
 pub fn ConversionCost::between_with_provenance(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, Provenance) -> Self
+pub const fn ConversionCost::effort(&self) -> u16
+pub const fn ConversionCost::loss(&self) -> u16
 pub const fn ConversionCost::loss_bucket(&self) -> LossBucket
 pub const fn ConversionCost::new(u16, u16) -> Self
 pub struct ConvertPlan

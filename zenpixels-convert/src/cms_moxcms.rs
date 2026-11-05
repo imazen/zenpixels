@@ -577,7 +577,12 @@ impl crate::cms::PluggableCms for MoxCms {
             ChannelType::F16 | ChannelType::F32 | _ => src_profile
                 .create_transform_f32(src_layout, &dst_profile, dst_layout, opts)
                 .map(|transform| {
-                    float_transform(transform, src_layout, dst_layout, options.clip_out_of_gamut)
+                    float_transform(
+                        transform,
+                        src_layout,
+                        dst_layout,
+                        options.clip_out_of_gamut(),
+                    )
                 }),
         };
 

@@ -45,7 +45,7 @@ fn convert(from: D, to: D, options: &ConvertOptions, src: &[u8]) -> Vec<u8> {
 #[test]
 fn default_is_clip_and_identical_to_no_option() {
     assert_eq!(
-        ConvertOptions::permissive().gamut_mapping,
+        ConvertOptions::permissive().gamut_mapping(),
         GamutMapping::Clip
     );
     let src = grid();
