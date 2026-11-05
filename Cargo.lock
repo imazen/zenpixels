@@ -431,6 +431,7 @@ dependencies = [
  "lcms2",
  "lz4_flex",
  "moxcms 0.9.1",
+ "zenpixels-convert",
 ]
 
 [[package]]
