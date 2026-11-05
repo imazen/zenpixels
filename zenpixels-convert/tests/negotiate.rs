@@ -3,7 +3,7 @@
 use zenpixels_convert::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
 use zenpixels_convert::{
     ConversionCost, ConvertIntent, FormatOption, Provenance, best_match, best_match_with,
-    conversion_cost, conversion_cost_with_provenance, ideal_format, negotiate,
+    conversion_cost, conversion_cost_with_provenance, negotiate,
 };
 
 // =========================================================================
@@ -453,98 +453,14 @@ fn format_option_from_descriptor_has_zero_cost() {
 // ideal_format tests
 // =========================================================================
 
-#[test]
-fn ideal_format_fastest_identity() {
-    assert_eq!(
-        ideal_format(PixelDescriptor::RGB8_SRGB, ConvertIntent::Fastest),
-        PixelDescriptor::RGB8_SRGB
-    );
-    assert_eq!(
-        ideal_format(PixelDescriptor::RGBF32_LINEAR, ConvertIntent::Fastest),
-        PixelDescriptor::RGBF32_LINEAR
-    );
-    let pq = PixelDescriptor::new(
-        ChannelType::F32,
-        ChannelLayout::Rgb,
-        None,
-        TransferFunction::Pq,
-    );
-    assert_eq!(ideal_format(pq, ConvertIntent::Fastest), pq);
-}
 
-#[test]
-fn ideal_format_linear_light_sdr() {
-    let result = ideal_format(PixelDescriptor::RGB8_SRGB, ConvertIntent::LinearLight);
-    assert_eq!(result.channel_type(), ChannelType::F32);
-    assert_eq!(result.transfer(), TransferFunction::Linear);
-    assert_eq!(result.layout(), ChannelLayout::Rgb);
-}
 
-#[test]
-fn ideal_format_linear_light_already_f32_linear() {
-    assert_eq!(
-        ideal_format(PixelDescriptor::RGBF32_LINEAR, ConvertIntent::LinearLight),
-        PixelDescriptor::RGBF32_LINEAR
-    );
-}
 
-#[test]
-fn ideal_format_linear_light_hdr() {
-    let pq = PixelDescriptor::new(
-        ChannelType::F32,
-        ChannelLayout::Rgb,
-        None,
-        TransferFunction::Pq,
-    );
-    let result = ideal_format(pq, ConvertIntent::LinearLight);
-    assert_eq!(result.channel_type(), ChannelType::F32);
-    assert_eq!(result.transfer(), TransferFunction::Linear);
-}
 
-#[test]
-fn ideal_format_blend_adds_premul() {
-    let result = ideal_format(PixelDescriptor::RGBA8_SRGB, ConvertIntent::Blend);
-    assert_eq!(result.channel_type(), ChannelType::F32);
-    assert_eq!(result.transfer(), TransferFunction::Linear);
-    assert_eq!(result.alpha(), Some(AlphaMode::Premultiplied));
-    assert_eq!(result.layout(), ChannelLayout::Rgba);
-}
 
-#[test]
-fn ideal_format_blend_no_alpha_source() {
-    let result = ideal_format(PixelDescriptor::RGB8_SRGB, ConvertIntent::Blend);
-    assert_eq!(result.channel_type(), ChannelType::F32);
-    assert_eq!(result.transfer(), TransferFunction::Linear);
-    assert!(result.alpha().is_none());
-}
 
-#[test]
-fn ideal_format_perceptual_sdr8() {
-    assert_eq!(
-        ideal_format(PixelDescriptor::RGB8_SRGB, ConvertIntent::Perceptual),
-        PixelDescriptor::RGB8_SRGB
-    );
-}
 
-#[test]
-fn ideal_format_perceptual_u16() {
-    let result = ideal_format(PixelDescriptor::RGB16_SRGB, ConvertIntent::Perceptual);
-    assert_eq!(result.channel_type(), ChannelType::F32);
-    assert_eq!(result.transfer(), TransferFunction::Srgb);
-}
 
-#[test]
-fn ideal_format_perceptual_hdr() {
-    let pq = PixelDescriptor::new(
-        ChannelType::F32,
-        ChannelLayout::Rgb,
-        None,
-        TransferFunction::Pq,
-    );
-    let result = ideal_format(pq, ConvertIntent::Perceptual);
-    assert_eq!(result.channel_type(), ChannelType::F32);
-    assert_eq!(result.transfer(), TransferFunction::Srgb);
-}
 
 // =========================================================================
 // Provenance tests — origin depth tracking

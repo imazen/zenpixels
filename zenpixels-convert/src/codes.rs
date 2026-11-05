@@ -52,7 +52,7 @@
 use core::fmt;
 use whereat::At;
 use zenpixels::{
-    ChannelLayout, ChannelType, PixelDescriptor, PixelSlice, PixelSliceMut, SignalRange,
+    ChannelLayout, ChannelType, PixelDescriptor, PixelSliceMut, SignalRange,
     sample::{CodePlane, CodePlaneError, ExactDepth, SampleEncoding},
 };
 
@@ -285,11 +285,6 @@ pub enum CodesError {
     },
     /// A plane read failed after validation; an internal consistency error.
     Read(CodePlaneError),
-    /// Exact depth is defined only for canonical U8/U16 gray, gray-alpha, RGB, RGBA or BGRA.
-    Unmeasurable {
-        /// The measured slice's descriptor.
-        actual: PixelDescriptor,
-    },
 }
 
 impl fmt::Display for CodesError {
@@ -331,9 +326,6 @@ impl fmt::Display for CodesError {
                 "component {component}: region {extent:?} at {origin:?} exceeds plane {plane:?}"
             ),
             Self::Read(error) => write!(f, "code plane read failed: {error}"),
-            Self::Unmeasurable { actual } => {
-                write!(f, "exact depth is not defined for {actual:?}")
-            }
         }
     }
 }
@@ -510,15 +502,3 @@ fn lcm(a: u32, b: u32) -> u32 {
     a / x * b
 }
 
-/// Measure the smallest exact color and alpha depths of a canonical image.
-///
-/// Forwards to [`ExactDepth::measure`], which now lives beside `ExactDepth` in
-/// zenpixels so that row drivers can scan without this crate.
-#[deprecated(note = "use zenpixels::sample::ExactDepth::measure")]
-pub fn measure_exact_depth(pixels: &PixelSlice<'_>) -> Result<ExactDepth, At<CodesError>> {
-    ExactDepth::measure(pixels).map_err(|_| {
-        whereat::at!(CodesError::Unmeasurable {
-            actual: pixels.descriptor()
-        })
-    })
-}

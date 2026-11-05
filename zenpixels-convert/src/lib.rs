@@ -301,30 +301,6 @@
 //!   - [`OutputProfile::Icc`]: Use specific ICC profile bytes. Requires a
 //!     [`PluggableCms`] implementation.
 //!
-//! ## Format registry
-//!
-//! Every codec must declare its capabilities in a `CodecFormats` struct,
-//! typically as a `pub static`. This serves as the single source of truth
-//! for what the codec can produce and consume. See the `pipeline::registry`
-//! module (requires the `pipeline` feature) for the full format table and
-//! examples for each codec.
-//!
-//! ```rust,ignore
-//! pub static MY_CODEC: CodecFormats = CodecFormats {
-//!     name: "mycodec",
-//!     decode_outputs: &[
-//!         FormatEntry::standard(PixelDescriptor::RGB8_SRGB),
-//!         FormatEntry::standard(PixelDescriptor::RGBA8_SRGB),
-//!     ],
-//!     encode_inputs: &[
-//!         FormatEntry::standard(PixelDescriptor::RGB8_SRGB),
-//!     ],
-//!     icc_decode: true,   // extracts ICC profiles
-//!     icc_encode: true,   // embeds ICC profiles
-//!     cicp: false,        // no CICP support
-//! };
-//! ```
-//!
 //! ## Cost model
 //!
 //! Format negotiation uses a two-axis cost model separating **effort**
@@ -491,8 +467,6 @@ pub mod load_bearing;
 pub mod oklab;
 pub mod orient;
 pub mod output;
-#[cfg(feature = "pipeline")]
-pub mod pipeline;
 pub mod ycbcr;
 // Crate-internal SIMD predicates backing `load_bearing` -- the module
 // stays private so the per-(layout × channel-type) kernel set never
@@ -500,7 +474,7 @@ pub mod ycbcr;
 mod scan;
 
 // Re-export key conversion types at crate root.
-pub use adapt::{adapt_for_encode_explicit_cow, try_adapt_in_place};
+pub use adapt::adapt_for_encode_explicit_cow;
 #[cfg(feature = "hdr-experimental")]
 pub use convert::HdrConfig;
 pub use convert::{ConvertPlan, convert_row};
@@ -510,12 +484,7 @@ pub use converter::RowConverter;
 pub use error::ConvertError;
 pub use negotiate::{
     ConversionCost, ConvertIntent, FormatOption, Provenance, best_match, best_match_with,
-    conversion_cost, conversion_cost_with_provenance, ideal_format, negotiate,
-};
-#[cfg(feature = "pipeline")]
-pub use pipeline::{
-    CodecFormats, ConversionPath, FormatEntry, LossBucket, MatrixStats, OpCategory, OpRequirement,
-    PathEntry, QualityThreshold, generate_path_matrix, matrix_stats, optimal_path,
+    conversion_cost, conversion_cost_with_provenance, negotiate,
 };
 
 // Re-export extension traits.
@@ -542,8 +511,7 @@ pub use hdr::quantize_to;
 // Re-export CMS traits, enums, and implementations.
 #[allow(deprecated)]
 pub use cms::{
-    CmsPluginError, ColorManagement, ColorPriority, PluggableCms, RenderingIntent, RowTransform,
-    RowTransformMut,
+    CmsPluginError, ColorManagement, PluggableCms, RowTransform, RowTransformMut,
 };
 // TODO: pub use cms_lite::ZenCmsLite once benchmarked on aarch64.
 #[cfg(feature = "cms-moxcms")]

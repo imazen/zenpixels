@@ -22,7 +22,6 @@ include = [
 [package.metadata.docs.rs]
 features = [
     "hdr-experimental",
-    "pipeline",
     "cms-moxcms",
     "rgb",
     "imgref",
@@ -66,7 +65,6 @@ precise-portable = ["linear-srgb/precise-portable"]
 rgb = ["zenpixels/rgb", "dep:rgb"]
 imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]
-pipeline = []
 # Compatibility feature name only. Estimation is removed.
 estimation-experimental = []
 # Experimental HDR analysis surface (gates `hdr::measure` — the `CllMeasure`
@@ -159,7 +157,7 @@ zenpixels = { workspace = true, features = ["planar", "imgref"] }
 # (verified: it appears in `cargo test --lib -- --list` under default
 # features, imazen/zenpixels#40). Dropping `cms-moxcms` here would silently
 # remove those gates from CI.
-zenpixels-convert = { path = ".", features = ["pipeline", "imgref", "cms-moxcms"] }
+zenpixels-convert = { path = ".", features = ["imgref", "cms-moxcms"] }
 zenbench = { version = "0.1.11" }
 # DEV-only: lets benches/kernel_tiers.rs disable the baseline SIMD token (NEON
 # on aarch64) so the "scalar" arm is real. Feature unification applies this to

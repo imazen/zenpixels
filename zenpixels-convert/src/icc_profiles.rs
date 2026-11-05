@@ -55,13 +55,6 @@
 //! only as the fallback of a build without `icc-db`. They remain exported for
 //! callers that embed them directly.
 //!
-//! # Lookup by primaries
-//!
-//! Use [`icc_profile_for_primaries`] to get the recommended ICC profile bytes
-//! for a [`ColorPrimaries`] value. Returns `None` for `Bt709` (sRGB is assumed
-//! by default and rarely needs an explicit ICC profile), `ProPhoto` (not
-//! bundled; see above), and `Unknown`.
-//!
 //! # Precision warnings
 //!
 //! Rec. 2020 has a very wide gamut. Using 8-bit precision with Rec. 2020
@@ -71,7 +64,9 @@ use alloc::borrow::Cow;
 
 #[cfg(any(not(feature = "icc-db"), test))]
 use crate::TransferFunction;
-use crate::{Cicp, ColorPrimaries};
+use crate::Cicp;
+#[cfg(test)]
+use crate::ColorPrimaries;
 
 // Bundled, transfer-grouped CICP→ICC blob: a build-time-generated index
 // (`cicp_bundle_index`) over an LZ4-compressed asset, decoded lazily per
@@ -126,74 +121,10 @@ pub const REC2020_V4: &[u8] = include_bytes!("profiles/Rec2020Compat-v4.icc");
 // ProPhoto / ROMM RGB is intentionally not bundled — see the module-level
 // "ProPhoto — not bundled" note for the fragmentation analysis.
 
-/// Get the recommended ICC profile for a set of color primaries.
-///
-/// Returns the recommended ICC profile bytes for the given primaries, or
-/// `None` when no embedded profile is available. Returns `None` for:
-/// - [`ColorPrimaries::Bt709`] — sRGB is the assumed default and rarely
-///   needs an explicit ICC profile
-/// - [`ColorPrimaries::Unknown`]
-///
-/// # Transfer-blind — prefer [`synthesize_icc_for_cicp`] when lowering a CICP
-///
-/// This function looks at primaries **only**, so the profile it returns always
-/// carries the bundled SDR TRC for that gamut. Handing it a gamut whose source
-/// is HDR — e.g. BT.2020 pixels that are actually **PQ** or **HLG** — gets back
-/// the SDR-TRC Rec.2020 profile, which *mis-tags* the transfer. When you have a
-/// full [`Cicp`] (primaries **and** transfer), call [`synthesize_icc_for_cicp`]
-/// instead: it matches the TRC, returns a bundled profile for any assigned CICP
-/// (HDR PQ/HLG included) with no CMS, and never substitutes a contradicting curve.
-///
-/// # Examples
-///
-/// ```
-/// # #![allow(deprecated)] // demonstrating the (deprecated) primaries-only lookup
-/// use zenpixels_convert::icc_profiles::icc_profile_for_primaries;
-/// use zenpixels_convert::ColorPrimaries;
-///
-/// let p3_icc = icc_profile_for_primaries(ColorPrimaries::DisplayP3);
-/// assert!(p3_icc.is_some());
-/// assert_eq!(p3_icc.unwrap().len(), 480);
-///
-/// // sRGB returns None (assumed default)
-/// assert!(icc_profile_for_primaries(ColorPrimaries::Bt709).is_none());
-/// ```
-#[deprecated(
-    since = "0.2.12",
-    note = "transfer-blind (can mis-tag an HDR gamut with an SDR TRC); use \
-            synthesize_icc_for_cicp for transfer-aware synthesis, or embed a \
-            bundled const (DISPLAY_P3_V4 / REC2020_V4 / ADOBE_RGB) directly"
-)]
-#[inline]
-pub const fn icc_profile_for_primaries(primaries: ColorPrimaries) -> Option<&'static [u8]> {
-    match primaries {
-        ColorPrimaries::DisplayP3 => Some(DISPLAY_P3_V4),
-        ColorPrimaries::Bt2020 => Some(REC2020_V4),
-        ColorPrimaries::AdobeRgb => Some(ADOBE_RGB),
-        // BT.709/sRGB is the assumed default; no explicit ICC profile needed.
-        // ProPhoto is deliberately not bundled — see module-level notes.
-        ColorPrimaries::Bt709 | ColorPrimaries::Unknown | _ => None,
-    }
-}
-
-/// Get the Display P3 ICC profile, choosing v4 or v2 format.
-///
-/// Returns v4 by default, or v2 if `prefer_v2` is true (for compatibility
-/// with older software).
-#[inline]
-pub const fn display_p3_icc(prefer_v2: bool) -> &'static [u8] {
-    if prefer_v2 {
-        DISPLAY_P3_V2
-    } else {
-        DISPLAY_P3_V4
-    }
-}
-
 /// Get a bundled `&'static` ICC profile whose tone curve is exactly the
 /// requested transfer function on exactly the requested primaries.
 ///
-/// This is a finer-grained accessor than [`icc_profile_for_primaries`]: it
-/// matches against the TRC encoded in each bundled profile, so `(Bt2020,
+/// This accessor matches against the TRC encoded in each bundled profile, so `(Bt2020,
 /// Bt709)` gets the Rec. 2020 profile while `(Bt2020, Srgb)` and `(Bt2020,
 /// Pq)` get `None`. sRGB and BT.709 are different curves (at linear 0.18 they
 /// encode 0.461 and 0.409, 13 code values apart at 8 bits), so neither stands
@@ -573,30 +504,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn display_p3_icc_selector() {
-        assert_eq!(display_p3_icc(false).len(), 480); // v4
-        assert_eq!(display_p3_icc(true).len(), 736); // v2
-    }
 
-    #[test]
-    #[allow(deprecated)] // exercises the deprecated primaries-only lookup
-    fn icc_profile_for_primaries_mapping() {
-        assert_eq!(
-            icc_profile_for_primaries(ColorPrimaries::DisplayP3),
-            Some(DISPLAY_P3_V4)
-        );
-        assert_eq!(
-            icc_profile_for_primaries(ColorPrimaries::Bt2020),
-            Some(REC2020_V4)
-        );
-        assert_eq!(
-            icc_profile_for_primaries(ColorPrimaries::AdobeRgb),
-            Some(ADOBE_RGB)
-        );
-        assert!(icc_profile_for_primaries(ColorPrimaries::Bt709).is_none());
-        assert!(icc_profile_for_primaries(ColorPrimaries::Unknown).is_none());
-    }
 
     #[test]
     fn bundled_icc_profile_hits_combinations() {
@@ -629,32 +537,7 @@ mod tests {
         assert!(bundled_icc_profile(ColorPrimaries::DisplayP3, TransferFunction::Linear).is_none());
     }
 
-    #[test]
-    fn bundled_icc_profile_rejects_mismatched_trc() {
-        // We only bundle Adobe RGB with gamma 2.2 — asking for sRGB TRC on
-        // Adobe RGB primaries returns None rather than lying with a mismatched
-        // curve. Callers who want a fallback use icc_profile_for_primaries.
-        assert!(bundled_icc_profile(ColorPrimaries::AdobeRgb, TransferFunction::Srgb).is_none());
-        assert!(bundled_icc_profile(ColorPrimaries::AdobeRgb, TransferFunction::Bt709).is_none());
-        // sRGB and BT.709 are different curves: neither stands in for the
-        // other (zenpixels#86: BT.2020 + sRGB got the BT.709-curve profile).
-        assert!(bundled_icc_profile(ColorPrimaries::Bt2020, TransferFunction::Srgb).is_none());
-        assert!(bundled_icc_profile(ColorPrimaries::DisplayP3, TransferFunction::Bt709).is_none());
-        // Gamma 2.2 on DisplayP3 / Bt2020 isn't bundled either.
-        assert!(
-            bundled_icc_profile(ColorPrimaries::DisplayP3, TransferFunction::Gamma22).is_none()
-        );
-        assert!(bundled_icc_profile(ColorPrimaries::Bt2020, TransferFunction::Gamma22).is_none());
-    }
 
-    #[test]
-    fn bundled_icc_profile_bt709_returns_none() {
-        // Same as icc_profile_for_primaries: BT.709 / sRGB is the assumed
-        // default and isn't bundled.
-        assert!(bundled_icc_profile(ColorPrimaries::Bt709, TransferFunction::Srgb).is_none());
-        assert!(bundled_icc_profile(ColorPrimaries::Bt709, TransferFunction::Bt709).is_none());
-        assert!(bundled_icc_profile(ColorPrimaries::Unknown, TransferFunction::Unknown).is_none());
-    }
 
     #[test]
     fn synthesize_icc_for_cicp_srgb_is_not_needed() {

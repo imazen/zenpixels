@@ -406,82 +406,6 @@ pub fn negotiate(
     )
 }
 
-/// Recommend the ideal working format for a given intent, based on the source format.
-///
-/// Unlike [`best_match`], this isn't constrained to a list — it returns what
-/// the consumer *should* be working in for optimal results.
-///
-/// Key principles:
-/// - **Fastest** preserves the source format (identity).
-/// - **LinearLight** upgrades to f32 Linear for gamma-correct operations.
-/// - **Blend** upgrades to f32 Linear with premultiplied alpha.
-/// - **Perceptual** keeps u8 sRGB for SDR-8 sources (LUT-fast), upgrades others to f32 sRGB.
-/// - Never downgrades precision — a u16 source won't be recommended as u8.
-pub fn ideal_format(source: PixelDescriptor, intent: ConvertIntent) -> PixelDescriptor {
-    match intent {
-        ConvertIntent::Fastest => source,
-
-        ConvertIntent::LinearLight => {
-            if source.channel_type() == ChannelType::F32
-                && source.transfer() == TransferFunction::Linear
-            {
-                return source;
-            }
-            PixelDescriptor::new(
-                ChannelType::F32,
-                source.layout(),
-                source.alpha(),
-                TransferFunction::Linear,
-            )
-        }
-
-        ConvertIntent::Blend => {
-            let alpha = if source.layout().has_alpha() {
-                Some(AlphaMode::Premultiplied)
-            } else {
-                source.alpha()
-            };
-            if source.channel_type() == ChannelType::F32
-                && source.transfer() == TransferFunction::Linear
-                && source.alpha() == alpha
-            {
-                return source;
-            }
-            PixelDescriptor::new(
-                ChannelType::F32,
-                source.layout(),
-                alpha,
-                TransferFunction::Linear,
-            )
-        }
-
-        ConvertIntent::Perceptual => {
-            let tier = precision_tier(source);
-            match tier {
-                PrecisionTier::Sdr8 => {
-                    if source.transfer() == TransferFunction::Srgb
-                        || source.transfer() == TransferFunction::Unknown
-                    {
-                        return source;
-                    }
-                    PixelDescriptor::new(
-                        ChannelType::U8,
-                        source.layout(),
-                        source.alpha(),
-                        TransferFunction::Srgb,
-                    )
-                }
-                _ => PixelDescriptor::new(
-                    ChannelType::F32,
-                    source.layout(),
-                    source.alpha(),
-                    TransferFunction::Srgb,
-                ),
-            }
-        }
-    }
-}
-
 /// Compute the two-axis conversion cost for `from` → `to`.
 ///
 /// This is the cost of *our* conversion kernels — it doesn't include
@@ -890,34 +814,6 @@ fn alpha_cost(
         // Premul → Straight: per-pixel divide, worse rounding at low alpha.
         (Some(AlphaMode::Premultiplied), Some(AlphaMode::Straight)) => ConversionCost::new(25, 10),
         _ => ConversionCost::ZERO,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Precision tier (used by ideal_format only)
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum PrecisionTier {
-    Sdr8 = 0,
-    Sdr16 = 1,
-    LinearF32 = 2,
-    Hdr = 3,
-}
-
-#[allow(unreachable_patterns)] // non_exhaustive: future variants
-fn precision_tier(desc: PixelDescriptor) -> PrecisionTier {
-    if matches!(
-        desc.transfer(),
-        TransferFunction::Pq | TransferFunction::Hlg
-    ) {
-        return PrecisionTier::Hdr;
-    }
-    match desc.channel_type() {
-        ChannelType::U8 => PrecisionTier::Sdr8,
-        ChannelType::U16 | ChannelType::F16 => PrecisionTier::Sdr16,
-        ChannelType::F32 => PrecisionTier::LinearF32,
-        _ => PrecisionTier::Sdr8,
     }
 }
 
