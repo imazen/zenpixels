@@ -33,6 +33,9 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- `hdr::ToneMapper`, a two-phase tone-mapping trait with `Requirements`, `ToneMapContext`, `PreparedMapper` and `StripMapper`, and `ConvertPlan::new_with_tone_mapper` to inject one. `Bt2446A` implements it and stays the one built-in algorithm.
+- `Bt2446A` output no longer depends on where a row ends or splits: the tail ran exact `powf` while the lanes ran a polynomial. The lanes now use `pow_midp_unchecked`, so black is 0, not 5.88e-5, and the worst error falls from 49.8 16-bit codes to under 0.1. On 16,384-pixel rows, 70.5 µs becomes 75.1 µs on Zen 4.
+
 - `Color::same_color` (on `ColorConvertExt`) asks whether two colors match whatever their formats, as `==` stays exact.
 - BGR8 converts through RGB8, which every route to and from BGR8 used to refuse.
 

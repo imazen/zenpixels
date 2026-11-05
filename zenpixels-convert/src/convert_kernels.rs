@@ -33,6 +33,8 @@ pub(super) struct HdrKernelScratch {
     /// contiguous `[[f32; 3]]` view, so alpha is peeled into this scratch.
     /// Grow-only; sliced to the row width on each use.
     rgb_strip: alloc::vec::Vec<[f32; 3]>,
+    /// Output of a pluggable tone mapper, which doesn't work in place.
+    rgb_out: alloc::vec::Vec<[f32; 3]>,
 }
 
 impl HdrKernelScratch {
@@ -42,6 +44,12 @@ impl HdrKernelScratch {
                 .try_reserve(_width as usize - self.rgb_strip.len())
                 .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
             self.rgb_strip.resize(_width as usize, [0.; 3]);
+        }
+        if self.rgb_out.len() < _width as usize {
+            self.rgb_out
+                .try_reserve(_width as usize - self.rgb_out.len())
+                .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
+            self.rgb_out.resize(_width as usize, [0.; 3]);
         }
         Ok(())
     }
@@ -344,19 +352,8 @@ pub(super) fn apply_step_u8(
         }
 
         #[cfg(feature = "hdr-experimental")]
-        ConvertStep::ToneMapBt2446A {
-            source_peak_nits,
-            target_peak_nits,
-        } => {
-            tone_map_bt2446a_kernel(
-                src,
-                dst,
-                w,
-                from,
-                *source_peak_nits,
-                *target_peak_nits,
-                hdr_scratch,
-            );
+        ConvertStep::ToneMap(step) => {
+            tone_map_kernel(src, dst, w, from, step, hdr_scratch);
         }
 
         ConvertStep::SoftCompressOklch { primaries, knee } => {
@@ -365,105 +362,91 @@ pub(super) fn apply_step_u8(
     }
 }
 
-/// Apply the BT.2446 Method A tone curve to a row of linear-light F32 RGB(A)
-/// pixels in BT.2020 primaries.
+/// Apply a pluggable HDR tone-map step to one row of linear-light F32
+/// RGB(A) pixels in the mapper's working primaries.
 ///
-/// The carrier layout (RGB vs RGBA) is read from `from.layout()`. For RGBA,
-/// the alpha channel is copied through verbatim. Input is scrubbed for
-/// non-finite values and negatives; output is clamped to `[0, 1]` to absorb
-/// f32 epsilon-level overshoot at the saturated end.
+/// The carrier layout (RGB vs RGBA) is read from `from.layout()`. For
+/// RGBA, the alpha channel is copied through verbatim. Input is scrubbed
+/// for non-finite values and negatives before reaching the mapper;
+/// output is clamped to `[0, 1]` to absorb f32 epsilon-level overshoot at
+/// the saturated end.
+///
+/// **Lazy compilation.** On the first row that flows through a given
+/// step, this kernel resolves the [`ToneMapContext`](crate::hdr::ToneMapContext)
+/// from the step's stored peaks / working primaries, calls
+/// [`ToneMapper::prepare`](crate::hdr::ToneMapper::prepare), and stashes
+/// the resulting [`StripMapper`](crate::hdr::StripMapper) in the step's
+/// shared `OnceCell`. Every subsequent row reuses the cached executor
+/// without rebuilding context or re-virtualizing `prepare`.
 //
-// `needless_range_loop` would flatten the loops to iter_mut() + enumerate
-// over the strip — but each iter writes BOTH `rgb_strip[p]` and the parallel
-// `dst_f32[p * channels + 3]` (alpha passthrough), so the index-based form
-// is the readable shape. Same logic applies in the SoftCompress kernel
-// below; suppress for the whole function rather than per-loop.
 #[cfg(feature = "hdr-experimental")]
-#[allow(clippy::needless_range_loop)]
-fn tone_map_bt2446a_kernel(
+fn tone_map_kernel(
     src: &[u8],
     dst: &mut [u8],
     width: usize,
     from: PixelDescriptor,
-    source_peak_nits: f32,
-    target_peak_nits: f32,
+    step: &super::ToneMapStep,
     scratch: &mut HdrKernelScratch,
 ) {
-    let curve = crate::hdr::Bt2446A::new(source_peak_nits, target_peak_nits);
-    let has_alpha = from.layout().has_alpha();
-    let channels = if has_alpha { 4 } else { 3 };
+    // Compile the strip executor on the first row through this step. The `Arc<OnceBox>` is
+    // shared across plan clones, so `prepare` runs at most once.
+    let strip_mapper: &alloc::sync::Arc<dyn crate::hdr::StripMapper> =
+        step.prepared.get_or_init(|| {
+            let ctx = crate::hdr::ToneMapContext {
+                source_peak_nits: step.source_peak_nits,
+                target_peak_nits: step.target_peak_nits,
+                working_primaries: step.working_primaries,
+                // Reserved on `Requirements`. Mappers can declare them and receive `None`,
+                // and `new_with_tone_mapper` refuses `full_image`.
+                log_avg_luminance: None,
+                luminance_histogram: None,
+            };
+            match step.mapper.prepare(&ctx) {
+                crate::hdr::PreparedMapper::Streaming(boxed) => {
+                    alloc::boxed::Box::new(alloc::sync::Arc::from(boxed))
+                }
+            }
+        });
+
+    let channels = if from.layout().has_alpha() { 4 } else { 3 };
     let src_f32: &[f32] = bytemuck::cast_slice(src);
     let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
 
-    if has_alpha {
-        // RGBA: extract RGB triples into the row-persistent scratch strip,
-        // run the SIMD curve, write back while passing alpha through
-        // verbatim. The scratch keeps the SIMD kernel's contiguous
-        // `[[f32; 3]]` shape and is allocated once per plan/strip run
-        // (grow-only), not per row — the module's no-per-row-allocation
-        // contract. Every `[..width]` element is written before being read.
-        if scratch.rgb_strip.len() < width {
-            scratch.rgb_strip.resize(width, [0.0; 3]);
+    // Grow-only scratch, sliced to the row, so no row allocates.
+    if scratch.rgb_strip.len() < width {
+        scratch.rgb_strip.resize(width, [0.0; 3]);
+    }
+    if scratch.rgb_out.len() < width {
+        scratch.rgb_out.resize(width, [0.0; 3]);
+    }
+    let rgb_in = &mut scratch.rgb_strip[..width];
+    let rgb_out = &mut scratch.rgb_out[..width];
+
+    // Mappers see finite, non-negative linear light.
+    let scrub = |v: f32| if v.is_finite() && v >= 0.0 { v } else { 0.0 };
+    for (p, px) in rgb_in.iter_mut().enumerate() {
+        let base = p * channels;
+        *px = [
+            scrub(src_f32[base]),
+            scrub(src_f32[base + 1]),
+            scrub(src_f32[base + 2]),
+        ];
+    }
+    strip_mapper.map_strip(rgb_in.as_flattened(), rgb_out.as_flattened_mut());
+    let settle = |v: f32| {
+        if v.is_finite() {
+            v.clamp(0.0, 1.0)
+        } else {
+            0.0
         }
-        let rgb_strip = &mut scratch.rgb_strip[..width];
-        for p in 0..width {
-            let base = p * channels;
-            let r = src_f32[base];
-            let g = src_f32[base + 1];
-            let b = src_f32[base + 2];
-            // Scrub non-finite / negatives — matches the prior HdrToSdr
-            // contract so consumers see clean linear-light values.
-            let r = if r.is_finite() && r >= 0.0 { r } else { 0.0 };
-            let g = if g.is_finite() && g >= 0.0 { g } else { 0.0 };
-            let b = if b.is_finite() && b >= 0.0 { b } else { 0.0 };
-            rgb_strip[p] = [r, g, b];
-        }
-        curve.map_strip_simd(&mut *rgb_strip);
-        for p in 0..width {
-            let base = p * channels;
-            let [r, g, b] = rgb_strip[p];
-            // Final clamp absorbs BT.2446-A's near-peak ~1e-4 overshoot
-            // (matches the prior HdrToSdr final-clamp postcondition).
-            dst_f32[base] = if r.is_finite() {
-                r.clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            dst_f32[base + 1] = if g.is_finite() {
-                g.clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            dst_f32[base + 2] = if b.is_finite() {
-                b.clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            // Alpha passthrough.
+    };
+    for (p, px) in rgb_out.iter().enumerate() {
+        let base = p * channels;
+        dst_f32[base] = settle(px[0]);
+        dst_f32[base + 1] = settle(px[1]);
+        dst_f32[base + 2] = settle(px[2]);
+        if channels == 4 {
             dst_f32[base + 3] = src_f32[base + 3];
-        }
-    } else {
-        // RGB: cast straight to `[[f32; 3]]` and apply in-place after
-        // copying src → dst. The SIMD curve is in-place.
-        let n_floats = width * 3;
-        dst_f32[..n_floats].copy_from_slice(&src_f32[..n_floats]);
-        let strip: &mut [[f32; 3]] = bytemuck::cast_slice_mut(&mut dst_f32[..n_floats]);
-        for px in strip.iter_mut() {
-            for c in px.iter_mut() {
-                if !c.is_finite() || *c < 0.0 {
-                    *c = 0.0;
-                }
-            }
-        }
-        curve.map_strip_simd(strip);
-        for px in strip.iter_mut() {
-            for c in px.iter_mut() {
-                if !c.is_finite() {
-                    *c = 0.0;
-                } else {
-                    *c = c.clamp(0.0, 1.0);
-                }
-            }
         }
     }
 }

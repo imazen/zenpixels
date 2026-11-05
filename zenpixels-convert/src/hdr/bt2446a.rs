@@ -1,8 +1,3 @@
-// The POW24_* coefficients are kept at their full numpy-polyfit precision so
-// the constant block matches the upstream zentone copy byte-for-byte; the
-// trailing digits are below the f32 ULP for these values.
-#![allow(clippy::excessive_precision)]
-
 //! BT.2446 Method A tone mapper — the ITU's reference for graded
 //! HDR↔SDR conversion with psychophysically verified round-trip fidelity.
 //!
@@ -29,33 +24,14 @@
 //!
 //! The kernel is a magetypes-defined `f32x16` strip that resolves to
 //! AVX-512 on V4, 2× AVX2 on V3, NEON on aarch64, WASM-SIMD on wasm32, and
-//! the polyfill scalar on everything else. The single-pixel
-//! [`Bt2446A::map_rgb`] entry point is a 1-element wrapper around the
-//! strip kernel — every code path through the curve goes through the same
-//! kernel (the SIMD body on full 16-wide chunks, the scalar remainder tail
-//! on the trailing 1–15 pixels and on `map_rgb`).
+//! the polyfill scalar on everything else. [`Bt2446A::map_rgb`] and the last
+//! 1–15 pixels of a row run the same lanes, padded.
 
 use libm::powf;
 
 // BT.2020 luma weights (BT.2446 uses BT.2020, not BT.709) — shared with
 // `measure` via the parent module's `BT2020_L*` constants.
 use super::{BT2020_LB as LB, BT2020_LG as LG, BT2020_LR as LR};
-
-/// Degree-7 monomial polynomial for `x^2.4` on `[0, 1]` (BT.1886 EOTF).
-/// Max approximation error 5.88e-5 vs `libm::powf` over 20k uniform samples,
-/// ~10× inside the SIMD parity tolerance (5e-4). Coefficients from
-/// `numpy.polyfit`; order is Horner-form (highest degree first; constant
-/// last). Costs 7 FMA vs ~24 ops for `pow_midp_unchecked(2.4)`. Used by the
-/// SIMD body only — the scalar remainder tail (which also services
-/// [`Bt2446A::map_rgb`]) keeps `libm::powf` for spec-bit-exact output.
-const POW24_C7: f32 = 1.979_355_7e-1;
-const POW24_C6: f32 = -8.261_85e-1;
-const POW24_C5: f32 = 1.470_748_3;
-const POW24_C4: f32 = -1.531_952;
-const POW24_C3: f32 = 1.361_614_9;
-const POW24_C2: f32 = 3.341_598e-1;
-const POW24_C1: f32 = -6.362_703_7e-3;
-const POW24_C0: f32 = 5.884_862_3e-5;
 
 /// BT.2446 Method A tonemapper.
 ///
@@ -92,6 +68,19 @@ const POW24_C0: f32 = 5.884_862_3e-5;
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct Bt2446A {
+    /// Source peak luminance in cd/m² as constructed. `0.0` signals
+    /// "pipeline-managed" — the curve's coefficients are deferred until
+    /// the pipeline supplies the peak via [`ToneMapContext`](crate::hdr::ToneMapContext) at
+    /// `prepare()` time. See
+    /// [`Bt2446A::pipeline_managed`](Self::pipeline_managed) and
+    /// [`Bt2446A::peaks_baked`](Self::peaks_baked).
+    pub(crate) source_peak_nits: f32,
+    /// Target peak luminance in cd/m² as constructed. `0.0` signals
+    /// "pipeline-managed" alongside `source_peak_nits`.
+    pub(crate) target_peak_nits: f32,
+    /// Precomputed `ρ_H = 1 + 32 · (L_HDR / 10000)^(1/2.4)`. Valid only
+    /// when [`peaks_baked`](Self::peaks_baked) returns `true`; otherwise
+    /// the kernel must read peaks from a [`ToneMapContext`](crate::hdr::ToneMapContext) instead.
     pub(crate) rho_hdr: f32,
     pub(crate) inv_log_rho_hdr: f32,
     pub(crate) rho_sdr: f32,
@@ -99,10 +88,17 @@ pub struct Bt2446A {
 }
 
 impl Bt2446A {
-    /// Create a new BT.2446 Method A tonemapper.
+    /// Create a new BT.2446 Method A tonemapper with peaks baked in.
     ///
     /// `hdr_peak_nits`: peak luminance of HDR content (typically 1000).
     /// `sdr_peak_nits`: peak luminance of SDR target (typically 100).
+    ///
+    /// Use this when the source peak is already known at construction
+    /// time. For pipeline-orchestrated measurement (the pipeline reads
+    /// [`HdrConfig::source_peak_nits`](crate::HdrConfig::source_peak_nits)
+    /// or measures via [`CllMeasure`](crate::hdr::CllMeasure) at
+    /// `prepare()` time), use
+    /// [`pipeline_managed`](Self::pipeline_managed) instead.
     #[must_use]
     pub fn new(hdr_peak_nits: f32, sdr_peak_nits: f32) -> Self {
         // ρ_H = 1 + 32 · (L_HDR / 10 000)^(1/2.4) per ITU-R BT.2446-1 §4.
@@ -117,11 +113,68 @@ impl Bt2446A {
         let log_rho_hdr = libm::logf(rho_hdr);
         let rho_sdr = 1.0 + 32.0 * powf(sdr_peak_nits / 10000.0, inv_gamma);
         Self {
+            source_peak_nits: hdr_peak_nits,
+            target_peak_nits: sdr_peak_nits,
             rho_hdr,
             inv_log_rho_hdr: 1.0 / log_rho_hdr,
             rho_sdr,
             inv_rho_sdr_minus_1: 1.0 / (rho_sdr - 1.0),
         }
+    }
+
+    /// Construct a BT.2446-A descriptor whose peaks are supplied by the
+    /// pipeline at [`ToneMapper::prepare`](crate::hdr::ToneMapper::prepare)
+    /// time.
+    ///
+    /// Use this when you don't know the source peak nits at the
+    /// builder-construction site and want the pipeline to measure them
+    /// via [`CllMeasure`](crate::hdr::CllMeasure) (when
+    /// [`HdrConfig::source_peak_nits`](crate::HdrConfig::source_peak_nits)
+    /// is `0.0`) or to forward the caller-supplied value otherwise.
+    ///
+    /// The returned descriptor stores no coefficients — the compiled
+    /// strip executor is produced from the resolved peaks inside
+    /// [`ToneMapper::prepare`](crate::hdr::ToneMapper::prepare).
+    /// [`peaks_baked`](Self::peaks_baked) returns `false`;
+    /// [`requirements`](crate::hdr::ToneMapper::requirements) returns
+    /// [`Requirements::SOURCE_PEAK_ONLY`](crate::hdr::Requirements::SOURCE_PEAK_ONLY).
+    #[must_use]
+    pub fn pipeline_managed() -> Self {
+        Self {
+            source_peak_nits: 0.0,
+            target_peak_nits: 0.0,
+            rho_hdr: 0.0,
+            inv_log_rho_hdr: 0.0,
+            rho_sdr: 0.0,
+            inv_rho_sdr_minus_1: 0.0,
+        }
+    }
+
+    /// `true` when this descriptor was constructed via
+    /// [`new`](Self::new) with explicit peaks — its coefficients are
+    /// already compiled. `false` after
+    /// [`pipeline_managed`](Self::pipeline_managed); the pipeline must
+    /// supply peaks via [`ToneMapContext`](crate::hdr::ToneMapContext)
+    /// at `prepare()` time.
+    #[must_use]
+    pub fn peaks_baked(&self) -> bool {
+        self.source_peak_nits > 0.0 && self.target_peak_nits > 0.0
+    }
+
+    /// HDR source peak luminance in cd/m², as constructed via
+    /// [`new`](Self::new). Returns `0.0` for
+    /// [`pipeline_managed`](Self::pipeline_managed) descriptors —
+    /// peaks live on the [`ToneMapContext`](crate::hdr::ToneMapContext) in that mode.
+    #[must_use]
+    pub fn source_peak_nits(&self) -> f32 {
+        self.source_peak_nits
+    }
+
+    /// SDR target peak luminance in cd/m², as constructed. Returns `0.0`
+    /// for [`pipeline_managed`](Self::pipeline_managed) descriptors.
+    #[must_use]
+    pub fn target_peak_nits(&self) -> f32 {
+        self.target_peak_nits
     }
 
     /// Map a single HDR pixel (linear-light BT.2020 RGB, source-normalized)
@@ -131,13 +184,7 @@ impl Bt2446A {
     /// (see [`Self::map_strip_simd`]).
     ///
     /// Implemented as a 1-element strip through [`Self::map_strip_simd`].
-    /// A single pixel never reaches the SIMD body (`chunks_exact(16)`
-    /// yields zero chunks); it goes through the scalar remainder tail,
-    /// which uses `libm::powf` for bit-exact reproducibility against the
-    /// ITU-R BT.2446-1 §4 spec.
-    ///
-    /// See the struct-level docs for the input/output normalization
-    /// contract.
+    /// A single pixel runs the same lanes as a row, padded.
     #[must_use]
     pub fn map_rgb(&self, rgb: [f32; 3]) -> [f32; 3] {
         let mut buf = [rgb];
@@ -150,12 +197,19 @@ impl Bt2446A {
     /// # Input contract
     ///
     /// Expects **finite** linear-light BT.2020 RGB. Non-finite input is
-    /// not scrubbed: the SIMD body can carry `NaN`/`inf` through to the
-    /// output while the scalar-tail branch folds it toward black, so the
-    /// two paths need not agree on garbage input. The conversion pipeline
+    /// not scrubbed, and `NaN`/`inf` can reach the output. The conversion pipeline
     /// (`ConvertPlan` tone-map step) scrubs non-finite values *before*
     /// calling this; direct callers own that themselves.
+    ///
+    /// **Panics** if called on a
+    /// [`pipeline_managed`](Self::pipeline_managed) descriptor, for the same
+    /// reason as [`map_rgb`](Self::map_rgb).
     pub fn map_strip_simd(&self, strip: &mut [[f32; 3]]) {
+        debug_assert!(
+            self.peaks_baked(),
+            "Bt2446A::map_strip_simd called on a pipeline-managed descriptor; \
+             obtain a compiled executor through ToneMapper::prepare first"
+        );
         archmage::incant!(
             bt2446a_tier(
                 strip,
@@ -169,18 +223,137 @@ impl Bt2446A {
     }
 }
 
+// ----------------------------------------------------------------------------
+// Two-phase ToneMapper integration
+// ----------------------------------------------------------------------------
+
+/// Compiled-for-this-image BT.2446-A strip executor.
+///
+/// Holds the `(rho_hdr, inv_log_rho_hdr, rho_sdr, inv_rho_sdr_minus_1)`
+/// quadruple precomputed from a resolved
+/// [`ToneMapContext`](crate::hdr::ToneMapContext). Produced by
+/// [`<Bt2446A as ToneMapper>::prepare`](crate::hdr::ToneMapper::prepare)
+/// and stashed in the plan's
+/// [`OnceCell<Arc<dyn StripMapper>>`](once_cell::sync::OnceCell) so
+/// subsequent strip dispatches reuse the same compiled kernel.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Bt2446AExecutor {
+    pub(crate) rho_hdr: f32,
+    pub(crate) inv_log_rho_hdr: f32,
+    pub(crate) rho_sdr: f32,
+    pub(crate) inv_rho_sdr_minus_1: f32,
+}
+
+impl Bt2446AExecutor {
+    /// Compile from a resolved `(source_peak_nits, target_peak_nits)`
+    /// pair. Mirrors the math in [`Bt2446A::new`].
+    #[must_use]
+    pub(crate) fn compile(source_peak_nits: f32, target_peak_nits: f32) -> Self {
+        let inv_gamma = 1.0_f32 / 2.4;
+        let rho_hdr = 1.0 + 32.0 * powf(source_peak_nits / 10000.0, inv_gamma);
+        let log_rho_hdr = libm::logf(rho_hdr);
+        let rho_sdr = 1.0 + 32.0 * powf(target_peak_nits / 10000.0, inv_gamma);
+        Self {
+            rho_hdr,
+            inv_log_rho_hdr: 1.0 / log_rho_hdr,
+            rho_sdr,
+            inv_rho_sdr_minus_1: 1.0 / (rho_sdr - 1.0),
+        }
+    }
+
+    /// Apply the compiled curve to an interleaved RGB strip in place
+    /// (BT.2020 working space).
+    fn apply_strip(&self, strip: &mut [[f32; 3]]) {
+        archmage::incant!(
+            bt2446a_tier(
+                strip,
+                self.rho_hdr,
+                self.inv_log_rho_hdr,
+                self.rho_sdr,
+                self.inv_rho_sdr_minus_1,
+            ),
+            [v4(cfg(avx512)), v3, neon, wasm128, scalar]
+        );
+    }
+}
+
+impl crate::hdr::StripMapper for Bt2446AExecutor {
+    fn map_strip(&self, input: &[f32], output: &mut [f32]) {
+        debug_assert_eq!(
+            input.len(),
+            output.len(),
+            "StripMapper::map_strip: slice length mismatch"
+        );
+        debug_assert!(
+            input.len().is_multiple_of(3),
+            "StripMapper::map_strip: input not RGB-triple-aligned"
+        );
+        // The SIMD body operates in-place on `[[f32; 3]]`, so copy
+        // input → output first (no-op when caller aliased the same
+        // slice), then dispatch with a recast of the destination.
+        if !core::ptr::eq(input.as_ptr(), output.as_ptr()) {
+            output.copy_from_slice(input);
+        }
+        let triples = output.len() / 3;
+        let strip: &mut [[f32; 3]] = bytemuck::cast_slice_mut(&mut output[..triples * 3]);
+        self.apply_strip(strip);
+    }
+}
+
+impl crate::hdr::ToneMapper for Bt2446A {
+    fn requirements(&self) -> crate::hdr::Requirements {
+        if self.peaks_baked() {
+            crate::hdr::Requirements::NONE
+        } else {
+            crate::hdr::Requirements::SOURCE_PEAK_ONLY
+        }
+    }
+
+    fn prepare(&self, ctx: &crate::hdr::ToneMapContext<'_>) -> crate::hdr::PreparedMapper {
+        // Resolve peaks: prefer the descriptor's baked values when
+        // present (constructed via `new`); fall back to the pipeline-
+        // gathered context otherwise (constructed via
+        // `pipeline_managed`).
+        let (src, dst) = if self.peaks_baked() {
+            (self.source_peak_nits, self.target_peak_nits)
+        } else {
+            (ctx.source_peak_nits, ctx.target_peak_nits)
+        };
+        let exec = Bt2446AExecutor::compile(src, dst);
+        crate::hdr::PreparedMapper::Streaming(alloc::boxed::Box::new(exec))
+    }
+
+    fn name(&self) -> &'static str {
+        "bt2446a"
+    }
+
+    fn cost_ns_per_mp(&self) -> u32 {
+        // BT.2446-A: ~250 Mpix/s on RGB f32 linear-light (Ryzen 9 7950X,
+        // AVX2, 2026-06-20). 1 MP / 250 Mpix/s ≈ 4.194 ms/MP. Kept in
+        // lockstep with the per-step cost in `crate::estimate` —
+        // `ConvertStep::ToneMap` delegates to this method now, so the
+        // two figures cannot drift.
+        4_194_304
+    }
+
+    fn working_primaries_for(&self, _target: crate::ColorPrimaries) -> crate::ColorPrimaries {
+        // BT.2446 Method A is defined in BT.2020 RGB — see the
+        // struct-level docs and the planner's BT.2020-bracketing of
+        // this step in `ConvertPlan::plan_hdr`.
+        crate::ColorPrimaries::Bt2020
+    }
+}
+
 /// 16-wide BT.2446-A SIMD kernel. Polyfills per tier: AVX-512 (V4) → one
 /// `f32x16` op per stage; AVX2 (V3) / NEON / WASM128 → 2× native width;
-/// scalar → polyfill loop (runtime fallback AND the byte-exact reference
-/// for the [`Bt2446A::map_rgb`] single-pixel entry via the remainder tail).
+/// scalar → polyfill loop.
 ///
 /// Key optimizations vs a naive scalar port: (1) f32x16 chunking; (2)
 /// `pow/log2/exp2_midp_unchecked` (inputs pre-clamped to `[pos_eps, ∞)`, so
-/// the polynomial-only paths are correct); (3) single `pos_eps` clamp
-/// absorbing `max(zero)` + `max(pos_eps)`; (4) degree-7 polynomial for the
-/// BT.1886 EOTF (`x^2.4`) on `[0, 1]` — 7 FMA vs ~24 ops, accuracy 5.88e-5
-/// (see `POW24_*`). The forward gamma encode keeps `pow_midp_unchecked` —
-/// its input range `[0, ~hdr_peak]` doesn't polynomial-approximate cleanly.
+/// the checked paths are not needed); (3) single `pos_eps` clamp
+/// absorbing `max(zero)` + `max(pos_eps)`. Both gamma steps use
+/// `pow_midp_unchecked`. A degree-7 polynomial for the EOTF saved 6.5% of the time on long
+/// rows, but put black at 5.88e-5 and erred by 49.8 16-bit codes in the darks.
 #[archmage::magetypes(define(f32x16), v4(cfg(avx512)), v3, neon, wasm128, scalar)]
 pub(crate) fn bt2446a_tier(
     token: Token,
@@ -222,18 +395,8 @@ pub(crate) fn bt2446a_tier(
     let mat_b_cb = f32x16::splat_t(token, 1.8814);
     let zero_one = f32x16::splat_t(token, 0.1);
 
-    // BT.1886 EOTF polynomial coefficients — see `POW24_*` constants above.
-    let c7 = f32x16::splat_t(token, POW24_C7);
-    let c6 = f32x16::splat_t(token, POW24_C6);
-    let c5 = f32x16::splat_t(token, POW24_C5);
-    let c4 = f32x16::splat_t(token, POW24_C4);
-    let c3 = f32x16::splat_t(token, POW24_C3);
-    let c2 = f32x16::splat_t(token, POW24_C2);
-    let c1 = f32x16::splat_t(token, POW24_C1);
-    let c0 = f32x16::splat_t(token, POW24_C0);
-
     let (chunks, remainder) = row.as_chunks_mut::<16>();
-    for chunk in chunks {
+    let run = |chunk: &mut [[f32; 3]; 16]| {
         let mut ra = [0.0_f32; 16];
         let mut ga = [0.0_f32; 16];
         let mut ba = [0.0_f32; 16];
@@ -276,46 +439,24 @@ pub(crate) fn bt2446a_tier(
         let cr_pos = cr.max(zero);
         let y_tmo = y_sdr - zero_one * cr_pos;
 
-        // Clamp into `[0, 1]` — the BT.1886 EOTF polynomial below is fit on
+        // Clamp into `[0, 1]`, the domain of the BT.1886 EOTF.
         // this domain. The final `valid` mask still zeroes pixels the spec
         // would emit as black.
         let r_prime_out = (y_tmo + mat_r_cr * cr).max(zero).min(one);
         let g_prime_out = (y_tmo - mat_g_b * cb - mat_g_r * cr).max(zero).min(one);
         let b_prime_out = (y_tmo + mat_b_cb * cb).max(zero).min(one);
 
-        // BT.1886 EOTF (^2.4): degree-7 polynomial on `[0, 1]` via Estrin's
-        // method (split into pairs of independent FMAs at depth 1, two at
-        // depth 2, final merge). Critical path 3 FMA vs Horner's 7 FMA
-        // chain; with 3 channels in parallel the pipeline stays fed.
-        let r2 = r_prime_out * r_prime_out;
-        let r4 = r2 * r2;
-        let r_h7 = c7 * r_prime_out + c6;
-        let r_h5 = c5 * r_prime_out + c4;
-        let r_h3 = c3 * r_prime_out + c2;
-        let r_h1 = c1 * r_prime_out + c0;
-        let r_hi = r_h7 * r2 + r_h5;
-        let r_lo = r_h3 * r2 + r_h1;
-        let r_out = r_hi * r4 + r_lo;
-
-        let g2 = g_prime_out * g_prime_out;
-        let g4 = g2 * g2;
-        let g_h7 = c7 * g_prime_out + c6;
-        let g_h5 = c5 * g_prime_out + c4;
-        let g_h3 = c3 * g_prime_out + c2;
-        let g_h1 = c1 * g_prime_out + c0;
-        let g_hi = g_h7 * g2 + g_h5;
-        let g_lo = g_h3 * g2 + g_h1;
-        let g_out = g_hi * g4 + g_lo;
-
-        let b2 = b_prime_out * b_prime_out;
-        let b4 = b2 * b2;
-        let b_h7 = c7 * b_prime_out + c6;
-        let b_h5 = c5 * b_prime_out + c4;
-        let b_h3 = c3 * b_prime_out + c2;
-        let b_h1 = c1 * b_prime_out + c0;
-        let b_hi = b_h7 * b2 + b_h5;
-        let b_lo = b_h3 * b2 + b_h1;
-        let b_out = b_hi * b4 + b_lo;
+        // BT.1886 EOTF. `pos_eps` keeps the logarithm defined, and 0 stays exactly 0.
+        let eotf = |v: f32x16| {
+            f32x16::blend(
+                v.simd_gt(zero),
+                v.max(pos_eps).pow_midp_unchecked(2.4),
+                zero,
+            )
+        };
+        let r_out = eotf(r_prime_out);
+        let g_out = eotf(g_prime_out);
+        let b_out = eotf(b_prime_out);
 
         // Pre-clamp turns originally-zero pixels into `pos_eps`; the
         // `valid` mask snaps them back to true black on store.
@@ -328,51 +469,18 @@ pub(crate) fn bt2446a_tier(
             px[1] = og_arr[i];
             px[2] = ob_arr[i];
         }
+    };
+    for chunk in chunks {
+        run(chunk);
     }
 
-    // Scalar remainder tail — also services the 1-element `map_rgb` entry
-    // point. Uses `libm::powf` for both the input gamma encode (`^(1/2.4)`)
-    // and the BT.1886 EOTF (`^2.4`) for bit-exact reproducibility against the
-    // ITU-R BT.2446-1 §4 spec, where the SIMD body's polynomial
-    // approximations diverge by up to 5.88e-5 (still inside the 5e-4 parity
-    // bound).
-    for px in remainder {
-        let r_p = powf(px[0].max(0.0), 1.0 / 2.4);
-        let g_p = powf(px[1].max(0.0), 1.0 / 2.4);
-        let b_p = powf(px[2].max(0.0), 1.0 / 2.4);
-        let y_p = LR * r_p + LG * g_p + LB * b_p;
-        if y_p <= 0.0 {
-            *px = [0.0, 0.0, 0.0];
-            continue;
-        }
-        let y_p_lin = libm::logf(1.0 + (rho_hdr - 1.0) * y_p) * inv_log_rho_hdr;
-        let y_c = if y_p_lin <= 0.7399 {
-            1.0770 * y_p_lin
-        } else if y_p_lin < 0.9909 {
-            -1.1510 * y_p_lin * y_p_lin + 2.7811 * y_p_lin - 0.6302
-        } else {
-            0.5000 * y_p_lin + 0.5000
-        };
-        let y_sdr = (powf(rho_sdr, y_c) - 1.0) * inv_rho_sdr_minus_1;
-        let f = y_sdr / (1.1 * y_p);
-        let cb = f * (b_p - y_p) / 1.8814;
-        let cr = f * (r_p - y_p) / 1.4746;
-        // 0.1 · max(Cr, 0) — matches the SIMD `zero_one * cr_pos` above.
-        // (Was `0.1_f32.max(0.0)`: a no-op `max` on the constant.)
-        let y_tmo = y_sdr - 0.1 * cr.max(0.0);
-        let r_prime_out = (y_tmo + 1.4746 * cr).clamp(0.0, 1.0);
-        // 0.16455 / 0.57135 are already the BT.2020 G' coefficients (already
-        // divided by Kg); see the `POW24_*` comment + struct docs above for
-        // the derivation.
-        let g_prime_out = (y_tmo - 0.16455 * cb - 0.57135 * cr).clamp(0.0, 1.0);
-        let b_prime_out = (y_tmo + 1.8814 * cb).clamp(0.0, 1.0);
-        // BT.1886 EOTF (^2.4) — see the struct docs above for the
-        // linear-light contract.
-        *px = [
-            powf(r_prime_out, 2.4),
-            powf(g_prime_out, 2.4),
-            powf(b_prime_out, 2.4),
-        ];
+    // The same lanes for the tail, padded, so that where a row ends or splits can't show in its
+    // output. A second implementation here once did, by up to 5.88e-5 of polynomial error.
+    if !remainder.is_empty() {
+        let mut tail = [[0.0_f32; 3]; 16];
+        tail[..remainder.len()].copy_from_slice(remainder);
+        run(&mut tail);
+        remainder.copy_from_slice(&tail[..remainder.len()]);
     }
 }
 

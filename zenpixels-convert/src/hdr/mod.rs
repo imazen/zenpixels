@@ -50,6 +50,14 @@ mod bt2446a;
 /// Gated behind `hdr-experimental`.
 mod gamut_compress;
 
+/// Pluggable two-phase HDR→SDR tone-mapper trait — the permanent DI
+/// surface for injecting custom curves into [`crate::ConvertPlan`].
+///
+/// Gated behind `hdr-experimental` together with the rest of the HDR
+/// surface.
+#[cfg(feature = "hdr-experimental")]
+mod tone_mapper;
+
 /// Re-exports of the experimental [`measure`] surface at the [`hdr`](self)
 /// boundary, so callers can write
 /// `use zenpixels_convert::hdr::CllMeasure;` instead of the full
@@ -66,6 +74,12 @@ pub use measure::{CllMeasure, LightLevelHistogram, LightLevelMethod};
 #[cfg(feature = "hdr-experimental")]
 pub use bt2446a::Bt2446A;
 pub use gamut_compress::SoftCompress;
+// Two-phase tone-mapping surface: the pluggable curve trait and the strip executor
+// that `ToneMapper::prepare` produces.
+#[cfg(feature = "hdr-experimental")]
+pub use tone_mapper::{
+    LuminanceHistogram, PreparedMapper, Requirements, StripMapper, ToneMapContext, ToneMapper,
+};
 
 use crate::adapt::{convert_buffer_with_anchor, convert_into_with_anchor};
 use crate::error::ConvertError;

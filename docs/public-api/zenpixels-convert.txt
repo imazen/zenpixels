@@ -13,21 +13,21 @@
 #   pub consts/statics                         33
 #   free functions                              4
 #   inherent methods                          177
-#   struct fields                              71
-#   enum variants                              81
+#   struct fields                              73
+#   enum variants                              83
 #   re-exports                                  3
 #   trait roster entries (type × trait)       113
 #   auto-trait-complete types                  21
 #   auto-trait exceptions                       4
 #
 # per-module pub lines:
-#   (root)                          194
+#   (root)                          196
 #   adapt                             1
 #   cms                              23
 #   codes                            39
 #   converter                        31
 #   css                               3
-#   error                            34
+#   error                            36
 #   ext                              28
 #   gamut                            11
 #   hdr                               8
@@ -37,7 +37,7 @@
 #   output                           20
 #   ycbcr                            22
 
-## items (417 lines)
+## items (421 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -138,6 +138,8 @@ pub error::ConvertError::CmsBackend(alloc::sync::Arc<cms::CmsPluginError>)
 pub error::ConvertError::CmsError(alloc::string::String)
 pub error::ConvertError::DepthReductionForbidden
 pub error::ConvertError::EmptyFormatList
+pub error::ConvertError::FullImageMapperNotSupported
+pub error::ConvertError::FullImageMapperNotSupported::mapper_name: &'static str
 pub error::ConvertError::HdrSourceRequiresPeak
 pub error::ConvertError::HdrSourceRequiresPeak::from: zenpixels::descriptor::PixelDescriptor
 pub error::ConvertError::HdrSourceRequiresPeak::to: zenpixels::descriptor::PixelDescriptor
@@ -289,6 +291,8 @@ pub ConvertError::CmsBackend(alloc::sync::Arc<cms::CmsPluginError>)
 pub ConvertError::CmsError(alloc::string::String)
 pub ConvertError::DepthReductionForbidden
 pub ConvertError::EmptyFormatList
+pub ConvertError::FullImageMapperNotSupported
+pub ConvertError::FullImageMapperNotSupported::mapper_name: &'static str
 pub ConvertError::HdrSourceRequiresPeak
 pub ConvertError::HdrSourceRequiresPeak::from: zenpixels::descriptor::PixelDescriptor
 pub ConvertError::HdrSourceRequiresPeak::to: zenpixels::descriptor::PixelDescriptor

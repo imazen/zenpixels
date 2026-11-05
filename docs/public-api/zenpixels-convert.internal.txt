@@ -13,9 +13,9 @@
 #   pub types (struct/enum/trait/alias)         4
 #   pub consts/statics                          3
 #   free functions                             11
-#   inherent methods                           42
+#   inherent methods                           43
 #   struct fields                               4
-#   trait roster entries (type × trait)        34
+#   trait roster entries (type × trait)        35
 #   auto-trait-complete types                   2
 #
 # per-module pub lines:
@@ -25,13 +25,13 @@
 #   __trace_ops                       2
 #   codes                             4
 #   css                               1
-#   hdr                              22
+#   hdr                              23
 #   icc_profiles                      1
 #   orient                            2
 #   ycbcr                             1
 #   zenpixels                         4
 
-## items (67 lines)
+## items (68 lines)
 
 #[non_exhaustive] pub struct hdr::LightLevelHistogram [also: hdr::measure]
 pub const hdr::measure::LightLevelHistogram::BIN_MAX_NITS: f32
@@ -73,6 +73,7 @@ pub fn hdr::CllMeasure::measure_histogram(zenpixels::buffer::PixelSlice<'_>, zen
 pub fn hdr::CllMeasure::measure_max_smoothed(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
 pub fn hdr::CllMeasure::measure_percentile(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, f32, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
 pub fn hdr::CllMeasure::measure_robust(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
+pub fn hdr::Requirements::assert_fields_are_eq(&self)
 pub fn hdr::measure::CllMeasure::measure_histogram(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
 pub fn hdr::measure::CllMeasure::measure_max_smoothed(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
 pub fn hdr::measure::CllMeasure::measure_percentile(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, f32, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
@@ -101,7 +102,7 @@ pub __bench_scan::FusedRequest::check_opaque: bool
 pub __bench_scan::FusedResult::is_grayscale: bool
 pub __bench_scan::FusedResult::is_opaque: bool
 
-## trait impls (21 types)
+## trait impls (22 types)
 
 ConversionCost: TrivialClone
 ConvertIntent: TrivialClone
@@ -119,6 +120,7 @@ codes::CodesError: TrivialClone
 css::CssColorError: TrivialClone
 gamut::GamutMatrix: TrivialClone
 hdr::Bt2446A: TrivialClone
+hdr::Requirements: TrivialClone
 hdr::measure::LightLevelHistogram: Clone, Debug
 hdr::measure::LightLevelMethod: TrivialClone
 load_bearing::LoadBearingReport: TrivialClone
