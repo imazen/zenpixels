@@ -700,13 +700,15 @@ fn ycbcr_writes_samples_and_leaves_padding() {
     let (w, h) = (5usize, 3usize);
     let y: Vec<u8> = (0..w * h).map(|i| (i * 17) as u8).collect();
     let u: Vec<u8> = (0..w * h).map(|i| (i * 41) as u8).collect();
-    let v: Vec<u8> = (0..w * h).map(|i| (255 - i * 31) as u8).collect();
+    let v: Vec<u8> = (0..w * h)
+        .map(|i| 255usize.wrapping_sub(i * 31) as u8)
+        .collect();
     let enc = SampleEncoding::new(ChannelType::U8, 8, 0).unwrap();
     let planes = [&y, &u, &v].map(|p| {
         CodePlane::new(AnyPlane::U8(PlaneRef::new(&p[..], w, h, w).unwrap()), enc).unwrap()
     });
     let plan = YcbcrToRgbF32::new(
-        &planes,
+        planes,
         ChromaSubsampling::Yuv444,
         ChromaSiting::Center,
         Cicp::new(1, 13, 1, true),

@@ -207,9 +207,7 @@ pub enum BufferError {
 impl fmt::Display for BufferError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::AlignmentViolation => {
-                write!(f, "data or stride is not aligned for the channel type")
-            }
+            Self::AlignmentViolation => write!(f, "data is not aligned for the channel type"),
             Self::InsufficientData => {
                 write!(f, "data slice is too small for the given dimensions")
             }
