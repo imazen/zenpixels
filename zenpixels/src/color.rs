@@ -874,6 +874,11 @@ impl Color {
     /// The largest pixel a color holds: four `f32` samples.
     const MAX_BYTES: usize = 16;
 
+    /// Whether one pixel fits, in bytes and in the storage's alignment.
+    const fn fits(descriptor: PixelDescriptor) -> bool {
+        descriptor.bytes_per_pixel() <= Self::MAX_BYTES && descriptor.min_alignment() <= 4
+    }
+
     /// An opaque 8-bit sRGB color, like a CSS hex color.
     pub const fn srgb8(r: u8, g: u8, b: u8) -> Self {
         let mut samples = [0; Self::MAX_BYTES];
@@ -907,14 +912,14 @@ impl Color {
     /// # Errors
     ///
     /// [`BufferError::InvalidDimensions`](crate::buffer::BufferError::InvalidDimensions) when
-    /// `pixel` isn't exactly one pixel, or the format's pixels are wider than 16 bytes.
-    /// [`AnyColor`] holds those.
+    /// `pixel` isn't exactly one pixel, the format's pixels are wider than 16 bytes, or its samples
+    /// need alignment above 4 bytes. [`AnyColor`] holds those.
     pub fn try_new(
         descriptor: PixelDescriptor,
         pixel: &[u8],
     ) -> Result<Self, crate::buffer::BufferError> {
         let bytes = descriptor.bytes_per_pixel();
-        if pixel.len() != bytes || bytes > Self::MAX_BYTES {
+        if pixel.len() != bytes || !Self::fits(descriptor) {
             return Err(crate::buffer::BufferError::InvalidDimensions);
         }
         let mut samples = [0; Self::MAX_BYTES];
@@ -991,7 +996,7 @@ impl AnyColor {
         if pixel.len() != bytes {
             return Err(BufferError::InvalidDimensions);
         }
-        if bytes <= Color::MAX_BYTES {
+        if Color::fits(descriptor) {
             return Color::try_new(descriptor, pixel).map(Self::from);
         }
         let mut words = alloc::vec::Vec::new();

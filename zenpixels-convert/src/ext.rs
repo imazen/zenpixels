@@ -457,16 +457,29 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
         mut dst: PixelSliceMut<'d>,
     ) -> Result<PixelSliceMut<'d>, At<crate::ConvertError>> {
         if dst.width() != self.width() || dst.rows() != self.rows() {
+            let bytes = |width: u32, rows: u32, descriptor: PixelDescriptor| {
+                (width as usize)
+                    .saturating_mul(rows as usize)
+                    .saturating_mul(descriptor.bytes_per_pixel())
+            };
             return Err(whereat::at!(crate::ConvertError::BufferSize {
-                expected: self.width() as usize * self.rows() as usize,
-                actual: dst.width() as usize * dst.rows() as usize,
+                expected: bytes(self.width(), self.rows(), dst.descriptor()),
+                actual: bytes(dst.width(), dst.rows(), dst.descriptor()),
             }));
         }
-        let mut converter = converter_for(self, dst.descriptor())?;
+        let target = dst.descriptor();
+        let mut converter = converter_for(self, target)?;
         for y in 0..self.rows() {
             converter.try_convert_row(self.row(y), dst.row_mut(y), self.width())?;
         }
-        Ok(dst)
+        // The pixels are new, so nothing the destination said about its old ones still holds.
+        Ok(match context_after_conversion(self, target) {
+            Some(ctx) => dst.with_color_context(ctx),
+            None if dst.color_context().is_some() => {
+                dst.with_color_context(Arc::new(zenpixels::ColorContext::default()))
+            }
+            None => dst,
+        })
     }
 
     #[track_caller]
@@ -475,6 +488,43 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
         supported: &[PixelDescriptor],
         options: &zenpixels::ConvertOptions,
     ) -> Result<PixelCow<'a>, At<crate::ConvertError>> {
+        // A current ICC profile outranks the descriptor, as it does in `convert_to`.
+        if let Some(target) = crate::adapt::encode_conversion_target(self.descriptor(), supported) {
+            let source = self.descriptor();
+            let profile =
+                crate::output::current_profile_for(source, self.color_context().map(Arc::as_ref))?;
+            let changes_color =
+                source.transfer() != target.transfer() || source.primaries != target.primaries;
+            if changes_color && matches!(profile, zenpixels::ColorProfileSource::Icc(_)) {
+                let checked = crate::adapt::options_after_opacity_check(self, target, options)?;
+                let mut converter = crate::RowConverter::new_with_sources(
+                    source,
+                    target,
+                    profile,
+                    target.color_profile_source(),
+                    &checked,
+                    None,
+                )?;
+                let mut output = PixelBuffer::try_new(self.width(), self.rows(), target)
+                    .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
+                {
+                    let mut destination = output.as_slice_mut();
+                    for y in 0..self.rows() {
+                        converter.try_convert_row(
+                            self.row(y),
+                            destination.row_mut(y),
+                            self.width(),
+                        )?;
+                    }
+                }
+                return Ok(PixelCow::Owned(
+                    match context_after_conversion(self, target) {
+                        Some(ctx) => output.with_color_context(ctx),
+                        None => output,
+                    },
+                ));
+            }
+        }
         let adapted = crate::adapt::adapt_raw_rows_for_encode(
             self.as_strided_bytes(),
             self.descriptor(),
@@ -1121,7 +1171,7 @@ impl ColorConvertExt for zenpixels::Color {
             )));
         }
         let pixel = &mut pixel[..target.bytes_per_pixel()];
-        converter.convert_row(self.as_bytes(), pixel, 1);
+        converter.try_convert_row(self.as_bytes(), pixel, 1)?;
         Self::try_new(target, pixel).map_err(|e| whereat::at!(crate::ConvertError::Buffer(e)))
     }
 }

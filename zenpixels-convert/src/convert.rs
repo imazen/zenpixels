@@ -1252,10 +1252,10 @@ impl ConvertPlan {
                         gamut_steps.push(ConvertStep::LinearF32ToHlgU16);
                     } else {
                         // Generic: to f32, linearize, gamut, delinearize, back to the depth.
-                        let (widen, narrow) = if desc.channel_type() == ChannelType::U16 {
-                            (ConvertStep::U16ToF32, ConvertStep::F32ToU16)
-                        } else {
-                            (ConvertStep::NaiveU8ToF32, ConvertStep::NaiveF32ToU8)
+                        let (widen, narrow) = match desc.channel_type() {
+                            ChannelType::U16 => (ConvertStep::U16ToF32, ConvertStep::F32ToU16),
+                            ChannelType::F16 => (ConvertStep::F16ToF32, ConvertStep::F32ToF16),
+                            _ => (ConvertStep::NaiveU8ToF32, ConvertStep::NaiveF32ToU8),
                         };
                         gamut_steps.push(widen);
                         if !matches!(linearize, ConvertStep::Identity) {

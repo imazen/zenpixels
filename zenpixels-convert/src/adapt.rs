@@ -87,26 +87,35 @@ fn reject_cmyk(from: PixelDescriptor, to: PixelDescriptor) -> Result<(), At<Conv
     Ok(())
 }
 
-/// Validate that a raw input buffer is long enough to hold the declared
-/// geometry: `rows × stride` bytes minimum (the contract documented on
-/// every raw-bytes entry point on this module).
+/// Validate that a raw input buffer holds the declared geometry: a stride no shorter than a row, and
+/// `(rows - 1) × stride + row` bytes. The last row needs no trailing padding, as in
+/// [`PixelSlice`](zenpixels::PixelSlice).
 ///
-/// The multiplication is `checked_mul` so a 32-bit `usize` wrap on i686 /
-/// wasm32 surfaces as [`ConvertError::AllocationFailed`] (the same class
-/// `PixelBuffer::from_pixels` uses) instead of silently passing through
-/// with a small number that then OOBs in the slice loop. Pre-#44 the raw
-/// entry points slice into `data` with no length check at all and panic
-/// with index-OOB on a truncated buffer.
+/// A 32-bit `usize` wrap on i686 or wasm32 surfaces as [`ConvertError::AllocationFailed`], the same
+/// class `PixelBuffer::from_pixels` uses, rather than passing with a small number that then goes out of
+/// bounds in the row loop.
 fn ensure_src_buffer_fits(
     data_len: usize,
+    descriptor: PixelDescriptor,
+    width: u32,
     rows: u32,
     stride: usize,
 ) -> Result<(), At<ConvertError>> {
-    if rows == 0 {
+    let row = (width as usize)
+        .checked_mul(descriptor.bytes_per_pixel())
+        .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))?;
+    if rows == 0 || row == 0 {
         return Ok(());
     }
-    let needed = (rows as usize)
+    if stride < row {
+        return Err(whereat::at!(ConvertError::BufferSize {
+            expected: row,
+            actual: stride,
+        }));
+    }
+    let needed = ((rows - 1) as usize)
         .checked_mul(stride)
+        .and_then(|n| n.checked_add(row))
         .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))?;
     if data_len < needed {
         return Err(whereat::at!(ConvertError::BufferSize {
@@ -201,7 +210,7 @@ pub(crate) fn convert_buffer(
     reject_cmyk(from, to)?;
     let src_bpp = from.bytes_per_pixel();
     let src_stride = (width as usize) * src_bpp;
-    ensure_src_buffer_fits(src.len(), rows, src_stride)?;
+    ensure_src_buffer_fits(src.len(), from, width, rows, src_stride)?;
     if from == to {
         return Ok(src.to_vec());
     }
@@ -256,7 +265,7 @@ pub(crate) fn convert_buffer_with_anchor(
     // failing fast saves the alloc on a broken request, and points the
     // error at the outer entry point instead of the inner helper.
     reject_cmyk(from, to)?;
-    ensure_src_buffer_fits(src.len(), rows, src_stride)?;
+    ensure_src_buffer_fits(src.len(), from, width, rows, src_stride)?;
     // Allocate through the existing PixelBuffer machinery (start-aligned,
     // fallible) rather than a hand-rolled `vec![0u8; …]`, and convert into its
     // backing at the buffer's own row stride.
@@ -300,7 +309,7 @@ pub(crate) fn convert_into_with_anchor(
     dst_stride: usize,
 ) -> Result<(), At<ConvertError>> {
     reject_cmyk(from, to)?;
-    ensure_src_buffer_fits(src.len(), rows, src_stride)?;
+    ensure_src_buffer_fits(src.len(), from, width, rows, src_stride)?;
 
     let dst_row = (width as usize) * to.bytes_per_pixel();
     if rows > 0 {
@@ -531,7 +540,7 @@ pub fn adapt_raw_rows_for_encode<'a>(
     supported: &[PixelDescriptor],
     options: &ConvertOptions,
 ) -> Result<PixelCow<'a>, At<ConvertError>> {
-    ensure_src_buffer_fits(data.len(), rows, stride)?;
+    ensure_src_buffer_fits(data.len(), descriptor, width, rows, stride)?;
     if supported.is_empty() {
         return Err(whereat::at!(ConvertError::EmptyFormatList));
     }
@@ -559,16 +568,13 @@ pub fn adapt_raw_rows_for_encode<'a>(
     let target = best_match(descriptor, supported, ConvertIntent::Fastest)
         .ok_or_else(|| whereat::at!(ConvertError::EmptyFormatList))?;
 
-    // This whole-image adapter explicitly preflights conditional alpha before
-    // allocation or output writes. Row planners themselves never hide this scan.
-    let mut checked_options = *options;
-    let drops_alpha = descriptor.has_alpha() && !target.has_alpha();
-    if drops_alpha && options.alpha_policy() == AlphaPolicy::DiscardIfOpaque {
+    let checked_options = if descriptor.has_alpha() && !target.has_alpha() {
         let view = PixelSlice::new(data, width, rows, stride, descriptor)
             .map_err_at(ConvertError::from)?;
-        check_opaque(&view)?;
-        checked_options = checked_options.with_alpha_policy(AlphaPolicy::DiscardUnchecked);
-    }
+        options_after_opacity_check(&view, target, options)?
+    } else {
+        *options
+    };
     let mut converter = RowConverter::new_explicit(descriptor, target, &checked_options).at()?;
     let src_bpp = descriptor.bytes_per_pixel();
     let mut output = PixelBuffer::try_new(width, rows, target)
@@ -578,10 +584,47 @@ pub fn adapt_raw_rows_for_encode<'a>(
         for y in 0..rows {
             let src_start = y as usize * stride;
             let src_end = src_start + (width as usize * src_bpp);
-            converter.convert_row(&data[src_start..src_end], destination.row_mut(y), width);
+            converter.try_convert_row(&data[src_start..src_end], destination.row_mut(y), width)?;
         }
     }
     Ok(PixelCow::Owned(output))
+}
+
+/// The format [`adapt_raw_rows_for_encode`] would convert to, or `None` if it needs no conversion.
+pub(crate) fn encode_conversion_target(
+    descriptor: PixelDescriptor,
+    supported: &[PixelDescriptor],
+) -> Option<PixelDescriptor> {
+    if supported.is_empty() || supported.contains(&descriptor) {
+        return None;
+    }
+    let relabels = supported.iter().any(|target| {
+        descriptor.transfer == crate::TransferFunction::Unknown
+            && descriptor.channel_type() == target.channel_type()
+            && descriptor.layout() == target.layout()
+            && descriptor.alpha() == target.alpha()
+            && descriptor.primaries == target.primaries
+            && descriptor.signal_range == target.signal_range
+    });
+    if relabels {
+        return None;
+    }
+    best_match(descriptor, supported, ConvertIntent::Fastest)
+}
+
+/// Whole-image adapters preflight conditional alpha before allocation or output writes. Row planners
+/// themselves never hide this scan.
+pub(crate) fn options_after_opacity_check(
+    pixels: &PixelSlice<'_>,
+    target: PixelDescriptor,
+    options: &ConvertOptions,
+) -> Result<ConvertOptions, At<ConvertError>> {
+    let drops_alpha = pixels.descriptor().has_alpha() && !target.has_alpha();
+    if drops_alpha && options.alpha_policy() == AlphaPolicy::DiscardIfOpaque {
+        check_opaque(pixels)?;
+        return Ok(options.with_alpha_policy(AlphaPolicy::DiscardUnchecked));
+    }
+    Ok(*options)
 }
 
 /// Explicit opacity preflight: scans visible alpha samples, stopping at the
