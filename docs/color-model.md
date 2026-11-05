@@ -71,7 +71,7 @@ pub enum ColorProfileSource<'a> {
 | WebP | ICC (ICCP); no CICP in spec | ICC |
 | AVIF / MIAF | ICC (`colr`-Restricted) > CICP (nclx) | ICC if colr, else CICP |
 | HEIF | nclx primary (ISO 23008-12) | CICP |
-| JXL | CICP > ICC (ISO 21496-1) | CICP if CICP present, else ICC |
+| JXL | One or the other: enum encoding, or embedded ICC when `want_icc` is set (ISO/IEC 18181-1) | CICP if CICP present, else ICC |
 | TIFF | ICC (tag 34675); no CICP | ICC |
 | GIF / BMP / PNM | no metadata, assumed sRGB | n/a |
 

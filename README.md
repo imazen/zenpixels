@@ -168,9 +168,9 @@ of pixels apart; read those through `row(y)`.
 ## Format conversion (zenpixels-convert)
 
 > **Review:** This descriptor-only example does not resolve attached ICC/context.
-> The unreleased bridge now prepares a fallible worker once, with explicit policy and
-> checked execution capacity. The custom-ICC example below does
-> not itself supply ICC bytes. [Conversion/CMS review](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#conversion-examples-and-cms).
+> It prepares a fallible worker once, with checked execution capacity. `RowConverter::new`
+> discards alpha unchecked; use `new_explicit` to choose a policy. The custom-ICC example
+> below does not itself supply ICC bytes. [Conversion/CMS review](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#conversion-examples-and-cms).
 
 ```rust
 use zenpixels::PixelBuffer;
@@ -181,7 +181,7 @@ let source_desc = src.descriptor();
 let target = ConvertIntent::Fastest.best_match(source_desc, &encoder_formats)
     .ok_or("no compatible format")?;
 
-// Unreleased bridge: allocate output and prepare once before the row loop
+// Allocate output and prepare once before the row loop
 let (w, h) = (src.width(), src.height());
 let mut dst = PixelBuffer::new(w, h, target);
 let src_view = src.as_slice();
@@ -309,9 +309,9 @@ Every buffer carries one. Every codec declares which ones it produces and consum
 
 ### CICP and ICC
 
-> **Review:** Current encoding, attached profiles and source provenance need an
-> explicit authority rule. Re-embedding an original profile may require converting
-> pixels back to it. ICC synthesis alone does not perform YCbCr conversion.
+> **Review:** A current ICC and CICP set together are refused as ambiguous, and
+> `ColorAuthority::select` chooses between an origin's two. Re-embedding an original
+> profile may require converting pixels back to it. ICC synthesis alone does not perform YCbCr conversion.
 > [Descriptor/context review](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#descriptors-icc-cicp-and-provenance).
 
 `Cicp` carries ITU-T H.273 code points (used by AVIF, HEIF, JPEG XL, AV1). Named constants for `SRGB`, `DISPLAY_P3`, `BT2100_PQ`, `BT2100_HLG`. Human-readable name lookups via `color_primaries_name()` etc.
@@ -421,9 +421,9 @@ the descriptor is a small `Copy` struct, so read its fields freely
 
 ### Allocation
 
-> **Review:** Constructor checks need the geometry/empty-view repairs described in
-> the [buffer review](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#wrapping-borrowing-and-buffer-access).
-> Parts extraction and checked strided ownership adoption are implemented.
+> **Review:** Constructors use checked arithmetic and the minimal extent, so a final row
+> needs no padding, and empty views are valid. The [buffer review](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#wrapping-borrowing-and-buffer-access)
+> records the earlier failures. Parts extraction and checked strided ownership adoption are implemented.
 
 `PixelBuffer::new(w, h, desc)` / `try_new()` allocate a zero-filled buffer with
 tight stride, in a `Vec` of the format's sample type; `try_new_aligned()` gives 64-byte rows for SIMD;
@@ -440,9 +440,9 @@ allocation for pool reuse and discards layout/color information.
 ### In-place layout transforms
 
 > **Review:** The guarantees in this section need narrowing: arbitrary transforms
-> are not transactional; known color changes cannot be mere retags; rectangular
-> in-place transpose allocates a visited array. Avoiding a second pixel buffer is
-> not allocation-free. [In-place review](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#orientation-and-in-place-operations).
+> are not transactional, and rectangular in-place transpose allocates a visited array.
+> Avoiding a second pixel buffer is not allocation-free. `try_adapt_in_place` does refuse
+> a transfer, primaries or range change before touching the buffer. [In-place review](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#orientation-and-in-place-operations).
 
 Layout-changing in-place work goes through one atomic primitive:
 `PixelBuffer::transform_in_place` runs a transform over the buffer's own
@@ -498,7 +498,7 @@ Two entry points: `ConvertIntent::best_match` (simple) and `ConvertIntent::negot
 
 > **Review:** This is an intended guarantee, not fully enforced today.
 > `retain_channels` still allows clipping, provenance alone cannot prove sample
-> preservation, and output metadata can disagree with converted pixels.
+> preservation, and `RowConverter::new` discards alpha unchecked.
 > [Preservation/output/HDR changes](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#negotiation-preservation-output-and-hdr).
 
 Every operation that destroys information requires an explicit policy via `ConvertOptions`:
@@ -544,9 +544,9 @@ branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs
 
 ## Features
 
-> **Review:** Historical removal queues below do not supersede the proposed
-> common-source contract. Preserve recognized feature names/stubs and test both
-> release lines. [Features, docs.rs and compilation review](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#features-docsrs-build-time-and-remaining-sections).
+> **Review:** Historical removal queues below do not supersede the
+> [release contract](https://github.com/imazen/zenpixels/blob/main/docs/finalization-release-contract.md).
+> Recognized feature names stay as no-ops, on both release lines. [Features, docs.rs and compilation review](https://github.com/imazen/zenpixels/blob/main/docs/readme-contract-review.md#features-docsrs-build-time-and-remaining-sections).
 
 ### zenpixels
 

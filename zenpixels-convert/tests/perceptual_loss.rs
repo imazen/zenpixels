@@ -550,15 +550,7 @@ fn sharp_edge_image(width: usize, height: usize) -> Vec<[f64; 3]> {
     row.iter().cycle().take(width * height).copied().collect()
 }
 
-/// Convert f64 linear RGB image to packed f32 for zenresize LinearF32 input.
-fn to_f32_linear_packed(pixels: &[[f64; 3]]) -> Vec<f32> {
-    pixels
-        .iter()
-        .flat_map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
-        .collect()
-}
-
-/// Convert f64 linear RGB image to packed u8 sRGB for zenresize Srgb8 input.
+/// Convert f64 linear RGB image to packed u8 sRGB, clamped.
 fn to_u8_srgb_packed(pixels: &[[f64; 3]]) -> Vec<u8> {
     pixels
         .iter()
@@ -572,16 +564,7 @@ fn to_u8_srgb_packed(pixels: &[[f64; 3]]) -> Vec<u8> {
         .collect()
 }
 
-/// Unpack zenresize f32 linear output to f64 triples.
-fn from_f32_linear_packed(data: &[f32]) -> Vec<[f64; 3]> {
-    data.as_chunks::<3>()
-        .0
-        .iter()
-        .map(|c| [c[0] as f64, c[1] as f64, c[2] as f64])
-        .collect()
-}
-
-/// Unpack zenresize u8 sRGB output to f64 linear triples.
+/// Unpack u8 sRGB to f64 linear triples.
 fn from_u8_srgb_packed(data: &[u8]) -> Vec<[f64; 3]> {
     data.as_chunks::<3>()
         .0
@@ -2371,235 +2354,289 @@ fn perceptual_operation_scenarios() {
 // above don't capture it because bilinear interpolation can't overshoot.
 // ===========================================================================
 
-// TODO: update to zenresize 0.2+ API (PixelFormat/PixelLayout removed)
-#[cfg(any())] // disabled: zenresize API changed
+/// Resampling kernels with negative lobes. Same curves, window and edge handling as zenresize's
+/// `Filter::{Mitchell, CatmullRom, Lanczos, Robidoux}`, which can't be a dev-dependency here: it
+/// caps archmage below the version this crate requires.
+#[derive(Clone, Copy, Debug)]
+enum Kernel {
+    Mitchell,
+    CatmullRom,
+    Lanczos,
+    Robidoux,
+}
+
+impl Kernel {
+    fn window(self) -> f64 {
+        match self {
+            Self::Lanczos => 3.0,
+            _ => 2.0,
+        }
+    }
+
+    fn at(self, x: f64) -> f64 {
+        let cubic = |b: f64, c: f64| {
+            let x = x.abs();
+            let v = if x < 1.0 {
+                (12.0 - 9.0 * b - 6.0 * c) * x * x * x + (-18.0 + 12.0 * b + 6.0 * c) * x * x + 6.0
+                    - 2.0 * b
+            } else if x < 2.0 {
+                (-b - 6.0 * c) * x * x * x
+                    + (6.0 * b + 30.0 * c) * x * x
+                    + (-12.0 * b - 48.0 * c) * x
+                    + 8.0 * b
+                    + 24.0 * c
+            } else {
+                0.0
+            };
+            v / 6.0
+        };
+        let sinc = |x: f64| {
+            if x == 0.0 {
+                1.0
+            } else {
+                let p = core::f64::consts::PI * x;
+                p.sin() / p
+            }
+        };
+        match self {
+            Self::Mitchell => cubic(1.0 / 3.0, 1.0 / 3.0),
+            Self::CatmullRom => cubic(0.0, 0.5),
+            Self::Robidoux => cubic(0.3782157550939987, 0.3108921224530007),
+            Self::Lanczos if x.abs() < 3.0 => sinc(x) * sinc(x / 3.0),
+            Self::Lanczos => 0.0,
+        }
+    }
+}
+
+/// One row downscaled with `kernel`, weights renormalized at each output pixel, including where
+/// the window runs off the row. Nothing is clamped.
+fn resample(row: &[[f64; 3]], out: usize, kernel: Kernel) -> Vec<[f64; 3]> {
+    let scale = row.len() as f64 / out as f64;
+    let reach = kernel.window() * scale;
+    (0..out)
+        .map(|o| {
+            let center = (o as f64 + 0.5) * scale - 0.5;
+            let first = (center - reach).ceil().max(0.0) as usize;
+            let last = ((center + reach).floor() as usize).min(row.len() - 1);
+            let (mut sum, mut total) = ([0.0; 3], 0.0);
+            for (i, sample) in row.iter().enumerate().take(last + 1).skip(first) {
+                let w = kernel.at((i as f64 - center) / scale);
+                total += w;
+                for c in 0..3 {
+                    sum[c] += w * sample[c];
+                }
+            }
+            sum.map(|v| v / total)
+        })
+        .collect()
+}
+
+/// The resize in linear light, keeping what the lobes produce.
+fn resize_linear(row: &[[f64; 3]], out: usize, kernel: Kernel) -> Vec<[f64; 3]> {
+    resample(row, out, kernel)
+}
+
+/// u8 sRGB in, resized on the encoded values, u8 sRGB out.
+fn resize_u8_encoded(row: &[[f64; 3]], out: usize, kernel: Kernel) -> Vec<[f64; 3]> {
+    let encoded: Vec<[f64; 3]> = to_u8_srgb_packed(row)
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|c| c.map(|v| f64::from(v) / 255.0))
+        .collect();
+    let codes: Vec<u8> = resample(&encoded, out, kernel)
+        .iter()
+        .flat_map(|p| p.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8))
+        .collect();
+    from_u8_srgb_packed(&codes)
+}
+
+/// u8 sRGB in, resized in linear light, u8 sRGB out: the lobes don't survive the output format.
+fn resize_u8_linear(row: &[[f64; 3]], out: usize, kernel: Kernel) -> Vec<[f64; 3]> {
+    let decoded = from_u8_srgb_packed(&to_u8_srgb_packed(row));
+    from_u8_srgb_packed(&to_u8_srgb_packed(&resample(&decoded, out, kernel)))
+}
+
+/// How far the worst sample lies outside `0..=1`.
+fn overshoot(pixels: &[[f64; 3]]) -> f64 {
+    pixels
+        .iter()
+        .flatten()
+        .map(|&v| (v - 1.0).max(-v).max(0.0))
+        .fold(0.0, f64::max)
+}
+
+/// Linear F32 with these samples, through the crate's own kernels, in sRGB and back.
+fn through_srgb_f32(pixels: &[[f64; 3]], options: &zenpixels_convert::ConvertOptions) -> Vec<f32> {
+    use zenpixels_convert::RowConverter;
+    let linear = PixelDescriptor::RGBF32_LINEAR;
+    let srgb = linear.with_transfer(TransferFunction::Srgb);
+    let input: Vec<f32> = pixels.iter().flatten().map(|&v| v as f32).collect();
+    let mut encoded = vec![0f32; input.len()];
+    let mut back = vec![0f32; input.len()];
+    let width = pixels.len() as u32;
+    RowConverter::new_explicit(linear, srgb, options)
+        .unwrap()
+        .convert_row(
+            bytemuck::cast_slice(&input),
+            bytemuck::cast_slice_mut(&mut encoded),
+            width,
+        );
+    RowConverter::new_explicit(srgb, linear, options)
+        .unwrap()
+        .convert_row(
+            bytemuck::cast_slice(&encoded),
+            bytemuck::cast_slice_mut(&mut back),
+            width,
+        );
+    back
+}
+
 #[test]
 fn gamut_clamping_scenarios() {
-    use zenresize::{Filter, PixelFormat, PixelLayout, ResizeConfig, Resizer};
+    use Kernel::{CatmullRom, Lanczos, Mitchell, Robidoux};
+    use zenpixels_convert::{ConvertIntent, ConvertOptions, RowConverter};
 
-    let mut results = Vec::new();
+    // What `negotiate.rs` charges a gamma-encoded format for a resize, whatever the kernel:
+    // `linear_light_suitability`. It has no kernel input.
+    const MODEL_NONLINEAR: u16 = 120;
 
-    // Test image: 200×4, sharp step edges + gradients in linear sRGB.
-    // 4 rows so vertical resize also exercises the filter (200×4 → 100×2).
-    let in_w = 200u32;
-    let in_h = 4u32;
-    let out_w = 100u32;
-    let out_h = 2u32;
-    let image = sharp_edge_image(in_w as usize, in_h as usize);
+    // Every row of `sharp_edge_image` is the same, so a vertical pass changes nothing: 200 to 100.
+    let width = 200;
+    let out = 100;
+    let row = &sharp_edge_image(width, 1)[..width];
 
-    // Reference: zenresize in f32 linear — best quality path.
-    // Uses proper weight tables with normalization, wide window for 2x downscale.
-    let ref_input = to_f32_linear_packed(&image);
-
-    // Helper: resize with a given filter + format config, return f64 linear pixels.
-    let resize_f32_linear = |filter: Filter| -> Vec<[f64; 3]> {
-        let config = ResizeConfig::builder(in_w, in_h, out_w, out_h)
-            .filter(filter)
-            .format(PixelFormat::LinearF32(PixelLayout::Rgb))
-            .linear()
-            .build();
-        let output = Resizer::new(&config).resize_f32(&ref_input);
-        from_f32_linear_packed(&output)
-    };
-
-    let resize_u8_srgb_gamma = |filter: Filter| -> Vec<[f64; 3]> {
-        let input = to_u8_srgb_packed(&image);
-        let config = ResizeConfig::builder(in_w, in_h, out_w, out_h)
-            .filter(filter)
-            .format(PixelFormat::Srgb8(PixelLayout::Rgb))
-            .srgb() // resize in gamma space (i16 sRGB internally)
-            .build();
-        let output = Resizer::new(&config).resize(&input);
-        from_u8_srgb_packed(&output)
-    };
-
-    let resize_u8_srgb_linear = |filter: Filter| -> Vec<[f64; 3]> {
-        let input = to_u8_srgb_packed(&image);
-        let config = ResizeConfig::builder(in_w, in_h, out_w, out_h)
-            .filter(filter)
-            .format(PixelFormat::Srgb8(PixelLayout::Rgb))
-            .linear() // sRGB→linear→resize→linear→sRGB (f32 internally)
-            .build();
-        let output = Resizer::new(&config).resize(&input);
-        from_u8_srgb_packed(&output)
-    };
-
-    // Clamp f32 linear output to [0,1] to simulate integer format behavior.
-    let clamp_to_01 = |pixels: &[[f64; 3]]| -> Vec<[f64; 3]> {
+    let clamp = |pixels: &[[f64; 3]]| -> Vec<[f64; 3]> {
         pixels
             .iter()
             .map(|p| p.map(|v| v.clamp(0.0, 1.0)))
             .collect()
     };
 
-    // -----------------------------------------------------------------------
-    // Mitchell (B=1/3, C=1/3): moderate ringing
-    // -----------------------------------------------------------------------
-    //
-    // zenresize uses proper weight tables: wider window at 2x downscale,
-    // f32 weights renormalized to sum=1.0, i16 weights use largest-remainder
-    // error distribution guaranteeing sum=16384. This is more realistic than
-    // a naive 4-tap kernel.
-
-    let mitchell_ref = resize_f32_linear(Filter::Mitchell);
-    let mitchell_ref_clamped = clamp_to_01(&mitchell_ref);
-
-    // 1. Mitchell: f32 unclamped vs clamped (pure clamping loss)
-    //    Isolates the [0,1] clamping effect. f32 linear can represent overshoot;
-    //    clamping destroys it. This documents the gap the cost model doesn't capture.
-    results.push(run_scenario(
-        "Mitchell: unclamped vs clamped",
-        &mitchell_ref,
-        &mitchell_ref_clamped,
-        200,
-    ));
-
-    // 2. Mitchell: f32 linear vs u8 sRGB in gamma space
-    //    Gamma darkening + u8 quantization + clamping (i16 sRGB internal path
-    //    with largest-remainder error distribution).
-    //    Cost model says suitability=120 (LowLoss). Mitchell is mild enough
-    //    that gamma darkening dominates and lands in Moderate — within tolerance.
-    {
-        let candidate = resize_u8_srgb_gamma(Filter::Mitchell);
-        results.push(run_scenario(
+    let mut results = Vec::new();
+    let mut clip_p95 = Vec::new();
+    let mut reach = Vec::new();
+    for (kernel, clipped_name, encoded_name, linear_name) in [
+        (
+            Mitchell,
+            "Mitchell: unclamped vs clamped",
             "Mitchell f32 Lin vs u8 sRGB gamma",
-            &mitchell_ref,
-            &candidate,
-            120,
-        ));
-    }
-
-    // 3. Mitchell: f32 linear vs u8 sRGB in linear space
-    //    Proper linear resize but u8 I/O means clamping + quantization on
-    //    the round-trip through sRGB encoding. Nearly identical to pure clamping
-    //    — u8 quantization adds negligible error on top.
-    {
-        let candidate = resize_u8_srgb_linear(Filter::Mitchell);
-        results.push(run_scenario(
             "Mitchell f32 Lin vs u8 sRGB linear",
-            &mitchell_ref,
-            &candidate,
-            120,
-        ));
-    }
-
-    // -----------------------------------------------------------------------
-    // CatmullRom (B=0, C=0.5): sharper, more ringing than Mitchell
-    // -----------------------------------------------------------------------
-
-    let catrom_ref = resize_f32_linear(Filter::CatmullRom);
-    let catrom_ref_clamped = clamp_to_01(&catrom_ref);
-
-    // 4. CatmullRom: f32 unclamped vs clamped
-    //    Sharper filter → more ringing → more clamping loss. p95 ≈ 21 ΔE (High).
-    results.push(run_scenario(
-        "CatmullRom: unclamped vs clamped",
-        &catrom_ref,
-        &catrom_ref_clamped,
-        500,
-    ));
-
-    // 5. CatmullRom: f32 linear vs u8 sRGB gamma
-    //    Cost model says 120 (LowLoss), but CatmullRom's ringing pushes this
-    //    into High. The model is per-format, not per-filter — this is the gap.
-    {
-        let candidate = resize_u8_srgb_gamma(Filter::CatmullRom);
-        results.push(run_scenario(
+        ),
+        (
+            CatmullRom,
+            "CatmullRom: unclamped vs clamped",
             "CatmullRom f32 Lin vs u8 sRGB gamma",
-            &catrom_ref,
-            &candidate,
-            500,
-        ));
-    }
-
-    // 6. CatmullRom: f32 linear vs u8 sRGB linear
-    //    Even with linear resize, u8 output clips overshoot → High.
-    {
-        let candidate = resize_u8_srgb_linear(Filter::CatmullRom);
-        results.push(run_scenario(
             "CatmullRom f32 Lin vs u8 sRGB linear",
-            &catrom_ref,
-            &candidate,
-            500,
-        ));
-    }
-
-    // -----------------------------------------------------------------------
-    // Lanczos: high-quality but maximum ringing — worst case for clamping
-    // -----------------------------------------------------------------------
-
-    let lanczos_ref = resize_f32_linear(Filter::Lanczos);
-    let lanczos_ref_clamped = clamp_to_01(&lanczos_ref);
-
-    // 7. Lanczos: f32 unclamped vs clamped
-    //    Maximum ringing of any standard filter → p95 ≈ 33 ΔE (High).
-    //    This is the worst case for [0,1] clamping on sharp edges.
-    results.push(run_scenario(
-        "Lanczos: unclamped vs clamped",
-        &lanczos_ref,
-        &lanczos_ref_clamped,
-        500,
-    ));
-
-    // 8. Lanczos: f32 linear vs u8 sRGB gamma
-    //    Cost model says 120 (LowLoss), but Lanczos clamping alone is 33 ΔE.
-    //    Gamma darkening barely matters when clamping is this severe.
-    {
-        let candidate = resize_u8_srgb_gamma(Filter::Lanczos);
-        results.push(run_scenario(
+        ),
+        (
+            Lanczos,
+            "Lanczos: unclamped vs clamped",
             "Lanczos f32 Lin vs u8 sRGB gamma",
-            &lanczos_ref,
-            &candidate,
-            500,
-        ));
-    }
-
-    // 9. Lanczos: f32 linear vs u8 sRGB linear
-    //    Even linear resize can't save Lanczos from clamping loss at u8.
-    {
-        let candidate = resize_u8_srgb_linear(Filter::Lanczos);
-        results.push(run_scenario(
             "Lanczos f32 Lin vs u8 sRGB linear",
-            &lanczos_ref,
-            &candidate,
-            500,
-        ));
-    }
-
-    // -----------------------------------------------------------------------
-    // Robidoux (default): designed for minimal artifact — control scenario
-    // -----------------------------------------------------------------------
-
-    let robidoux_ref = resize_f32_linear(Filter::Robidoux);
-
-    // 10. Robidoux: f32 linear vs u8 sRGB gamma
-    {
-        let candidate = resize_u8_srgb_gamma(Filter::Robidoux);
-        results.push(run_scenario(
+        ),
+        (
+            Robidoux,
+            "Robidoux: unclamped vs clamped",
             "Robidoux f32 Lin vs u8 sRGB gamma",
-            &robidoux_ref,
-            &candidate,
-            120,
+            "Robidoux f32 Lin vs u8 sRGB linear",
+        ),
+    ] {
+        let reference = resize_linear(row, out, kernel);
+        reach.push(overshoot(&reference));
+        let clipped = run_scenario(
+            clipped_name,
+            &reference,
+            &clamp(&reference),
+            MODEL_NONLINEAR,
+        );
+        clip_p95.push(clipped.stats.p95_de);
+        results.push(clipped);
+        results.push(run_scenario(
+            encoded_name,
+            &reference,
+            &resize_u8_encoded(row, out, kernel),
+            MODEL_NONLINEAR,
         ));
+        results.push(run_scenario(
+            linear_name,
+            &reference,
+            &resize_u8_linear(row, out, kernel),
+            MODEL_NONLINEAR,
+        ));
+
+        // The crate's own kernels behave the way these scenarios model them. Unclipped F32 keeps
+        // the lobes through an sRGB round trip, and the default clips them, as U8 output does.
+        let kept = through_srgb_f32(
+            &reference,
+            &ConvertOptions::permissive().with_clip_out_of_gamut(false),
+        );
+        for (got, want) in kept.iter().zip(reference.iter().flatten()) {
+            assert!(
+                (f64::from(*got) - want).abs() < 2e-3,
+                "{kernel:?}: unclipped round trip {got} from {want}"
+            );
+        }
+        let cut = through_srgb_f32(&reference, &ConvertOptions::permissive());
+        assert!(
+            cut.iter().all(|v| (0.0..=1.0).contains(v)),
+            "{kernel:?}: clipped output left 0..=1"
+        );
+        let input: Vec<f32> = reference.iter().flatten().map(|&v| v as f32).collect();
+        let mut codes = vec![0u8; input.len()];
+        RowConverter::new(PixelDescriptor::RGBF32_LINEAR, PixelDescriptor::RGB8_SRGB)
+            .unwrap()
+            .convert_row(bytemuck::cast_slice(&input), &mut codes, out as u32);
+        for (got, want) in codes.iter().zip(to_u8_srgb_packed(&reference)) {
+            assert!(
+                got.abs_diff(want) <= 1,
+                "{kernel:?}: RowConverter gave {got}, clamped reference {want}"
+            );
+        }
     }
 
     print_results(&results);
+    eprintln!("overshoot {reach:?}\nclipping p95 {clip_p95:?}");
 
-    let failures: Vec<_> = results.iter().filter(|r| !r.match_ok).collect();
-    if !failures.is_empty() {
-        eprintln!("\nBucket mismatches:");
-        for f in &failures {
-            eprintln!(
-                "  {} — measured {} (p95 ΔE={:.3}), model {} (loss={})",
-                f.name,
-                f.measured_bucket.name(),
-                f.stats.p95_de,
-                f.model_bucket.name(),
-                f.model_loss
-            );
+    // Every kernel here rings on this image, and sharper kernels ring further.
+    assert!(reach.iter().all(|&v| v > 0.0), "{reach:?}");
+    assert!(reach[0] < reach[1] && reach[1] < reach[2], "{reach:?}");
+    // Clipping costs more as the ringing grows.
+    assert!(
+        clip_p95[0] < clip_p95[1] && clip_p95[1] < clip_p95[2],
+        "{clip_p95:?}"
+    );
+
+    // Mild kernels: the model's one number holds, within the file's one-bucket tolerance.
+    for r in &results {
+        if r.name.starts_with("Mitchell") || r.name.starts_with("Robidoux") {
+            assert!(r.match_ok, "{}: p95 {}", r.name, r.stats.p95_de);
         }
-        panic!("{} bucket mismatch(es)", failures.len());
     }
+    // Sharp kernels: clipping alone lands in High, two buckets past what the model charges.
+    // A model given the kernel would close this gap, and this assertion would then need updating.
+    for name in [
+        "CatmullRom: unclamped vs clamped",
+        "Lanczos: unclamped vs clamped",
+    ] {
+        let r = results.iter().find(|r| r.name == name).unwrap();
+        assert_eq!(
+            r.measured_bucket,
+            Bucket::High,
+            "{name}: p95 {}",
+            r.stats.p95_de
+        );
+        assert_eq!(r.model_bucket, Bucket::LowLoss);
+    }
+
+    // The decision this all feeds: a resize picks linear F32 over U8 sRGB.
+    assert_eq!(
+        ConvertIntent::LinearLight.best_match(
+            PixelDescriptor::RGB8_SRGB,
+            &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR]
+        ),
+        Some(PixelDescriptor::RGBF32_LINEAR)
+    );
 }
 
 // ===========================================================================

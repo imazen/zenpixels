@@ -118,6 +118,22 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Open (2026-11-05): `linear_light_suitability` charges 120 (LowLoss) for any gamma-encoded format whatever the resize kernel. On the sharp-edge image Mitchell and Robidoux agree within a bucket, but CatmullRom and Lanczos through U8 measure p95 ΔE 21 to 33 (High), and clipping alone accounts for it: 6 of 12 scenarios are two buckets off. The model has no kernel input. `gamut_clamping_scenarios` pins the gap.
+
+- Open, in moxcms 0.9.1, measured 2026-11-05 against exact evaluation: a pre-v4 `lut8Type` Lab table reads 0.39%
+  high (mozjpeg `test3.icc`, mean +0.68 of a code, worst 22; fixed on moxcms master, unreleased). A v4 RGB table
+  profile's black is mapped to zero whatever the intent (mean about -1 of a code on JPEG XL's PQ and HLG profiles;
+  still so on master). `benchmarks/jxl-cms-parity/README.md` has the measurements. Neither can be routed around from
+  `cms_moxcms.rs`: moxcms reads the profile version privately, and a patched header changes both.
+
+- Fixed in the CMS investigation (2026-11-05): `MoxCms` lost the sign of out-of-gamut samples on pure-gamma matrix
+  targets, through moxcms's `ToneCurveEvaluatorPureGamma`: P3 into Adobe RGB was a mean of +2.35 of an 8-bit code
+  high, worst 66. A CICP tag inside an explicit ICC profile changed the 8-bit route's curves, while F32 ignored it.
+  `cms_moxcms_accuracy` and `cms_moxcms` cover both.
+
+- Open, in moxcms 0.9.1: 16-bit output through its sRGB or BT.709 table misses nearest on 57% of samples, mean -0.64 of a
+  16-bit code, because the same `make_gamma_table_impl` truncates. `MoxCms` still takes that path.
+
 - Fixed in the CMS contract (2026-11-05). moxcms' own 8-bit path comes out low (mean -0.40 of a code against its own F32; cause not
   located). The wrapper chose high barycentric weights at 16 bits, which turned table profiles into a constant, ignored a row's
   `width`, and mixed moxcms' generated colorants (CIE D50) with ICC profiles (PCS white), leaving 8-bit white at (255, 255, 254).
