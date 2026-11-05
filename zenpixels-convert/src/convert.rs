@@ -2840,7 +2840,7 @@ mod hdr_plan_tests {
     //! the deleted `HdrToSdr::apply_strip` ran. Keeps the e2e ΔE2000 budget
     //! grounded in per-pixel parity rather than only the imazen-26 sample.
     use super::*;
-    use crate::gamut::{apply_matrix_f32, conversion_matrix};
+    use crate::gamut::conversion_matrix;
     use crate::hdr::{Bt2446A, SoftCompress};
     use crate::oklab;
 
@@ -2857,19 +2857,18 @@ mod hdr_plan_tests {
         // Source primaries → BT.2020.
         let m_src = conversion_matrix(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
         for p in px.iter_mut() {
-            apply_matrix_f32(p, &m_src);
+            *p = m_src.apply(*p);
         }
         // BT.2446-A curve in BT.2020.
         Bt2446A::new(1000.0, 100.0).map_strip_simd(&mut px);
         // BT.2020 → target primaries.
         let m_dst = conversion_matrix(ColorPrimaries::Bt2020, ColorPrimaries::Bt709).unwrap();
         for p in px.iter_mut() {
-            apply_matrix_f32(p, &m_dst);
+            *p = m_dst.apply(*p);
         }
         // OKLch soft compress in target primaries.
-        let m1 = oklab::rgb_to_lms_matrix(ColorPrimaries::Bt709).unwrap();
-        let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).unwrap();
-        let compressor = SoftCompress::from_matrices(&m1, &m1_inv, 0.96);
+        let space = oklab::OklabSpace::for_primaries(ColorPrimaries::Bt709).unwrap();
+        let compressor = SoftCompress::new(&space, 0.96);
         compressor.apply_strip(&mut px);
         // Final clamp.
         for c in px[0].iter_mut() {

@@ -17,7 +17,7 @@
 extern crate alloc;
 
 use crate::gamut::GamutMatrix;
-use crate::oklab;
+use crate::oklab::{self, OklabSpace};
 
 /// Precomputed sRGB (or P3 / BT.2020) gamut boundary in OKLch space.
 ///
@@ -47,7 +47,7 @@ impl GamutBoundaryLut {
     /// Build the gamut boundary LUT for a given primaries set.
     ///
     /// `m1_inv` is the combined LMS → linear RGB matrix for the target
-    /// primaries, from [`crate::oklab::lms_to_rgb_matrix`].
+    /// primaries, from [`OklabSpace::lms_to_rgb`].
     pub fn new(m1_inv: &GamutMatrix) -> Self {
         let mut data = alloc::vec![0.0f32; L_STEPS * H_STEPS];
 
@@ -217,7 +217,7 @@ fn is_in_gamut(l: f32, a: f32, b: f32, m1_inv: &GamutMatrix) -> bool {
 /// # Pipeline
 ///
 /// For each pixel:
-/// 1. Convert linear RGB → OKLab (via [`crate::oklab::rgb_to_oklab`]).
+/// 1. Convert linear RGB → OKLab.
 /// 2. Compute chroma `c = √(a² + b²)` and hue `h = atan2(b, a)`.
 /// 3. Look up max in-gamut chroma `c_max` at `(L, h)`.
 /// 4. If `c > knee · c_max`, compress: `c' = knee·c_max + range · excess / (excess + range)`.
@@ -233,11 +233,11 @@ fn is_in_gamut(l: f32, a: f32, b: f32, m1_inv: &GamutMatrix) -> bool {
 /// # #[cfg(feature = "hdr-experimental")]
 /// # {
 /// use zenpixels_convert::hdr::SoftCompress;
-/// use zenpixels_convert::oklab;
+/// use zenpixels_convert::oklab::OklabSpace;
 /// use zenpixels::ColorPrimaries;
 ///
-/// let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).unwrap();
-/// let compress = SoftCompress::new(&m1_inv, 0.96);
+/// let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).unwrap();
+/// let compress = SoftCompress::new(&space, 0.96);
 ///
 /// let mut pixels = vec![[1.2_f32, 0.05, 0.05]]; // out-of-gamut red
 /// compress.apply_strip(&mut pixels);
@@ -252,8 +252,7 @@ fn is_in_gamut(l: f32, a: f32, b: f32, m1_inv: &GamutMatrix) -> bool {
 pub struct SoftCompress {
     lut: GamutBoundaryLut,
     knee: f32,
-    m1: GamutMatrix,
-    m1_inv: GamutMatrix,
+    space: OklabSpace,
 }
 
 impl SoftCompress {
@@ -268,53 +267,14 @@ impl SoftCompress {
     /// `HdrConfig::default().gamut_knee` byte-for-byte.
     pub const DEFAULT_KNEE: f32 = 0.96;
 
-    /// Construct a [`SoftCompress`] for the given primaries (via `m1_inv`,
-    /// the LMS → RGB matrix from
-    /// [`crate::oklab::lms_to_rgb_matrix`]) and
-    /// `knee` threshold (`0.0`–`1.0`; production default `0.96`,
-    /// corpus-validated 2026-06-23).
-    ///
-    /// The matching forward matrix is derived by inverting `m1_inv`. If you
-    /// already have the forward matrix on hand (the `rgb_to_lms_matrix`
-    /// output), prefer [`SoftCompress::from_matrices`] (which takes both
-    /// and cannot panic).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `m1_inv` is singular (non-invertible). Every matrix from
-    /// [`crate::oklab::lms_to_rgb_matrix`] — the intended input — is
-    /// invertible, so the pipeline path never triggers this; it only
-    /// fires for a hand-constructed degenerate matrix. Pass matrices from
-    /// `oklab::lms_to_rgb_matrix` / `rgb_to_lms_matrix`, or use
-    /// [`from_matrices`](Self::from_matrices) to supply the inverse
-    /// directly.
+    /// A compressor for `space`, with `knee` in `0.0..=1.0`. Production default:
+    /// [`DEFAULT_KNEE`](Self::DEFAULT_KNEE).
     #[must_use]
-    pub fn new(m1_inv: &GamutMatrix, knee: f32) -> Self {
-        let m1 = invert_3x3(m1_inv).expect("LMS→RGB matrix must be invertible");
+    pub fn new(space: &OklabSpace, knee: f32) -> Self {
         Self {
-            lut: GamutBoundaryLut::new(m1_inv),
+            lut: GamutBoundaryLut::new(space.lms_to_rgb()),
             knee,
-            m1,
-            m1_inv: *m1_inv,
-        }
-    }
-
-    /// Construct a [`SoftCompress`] from both forward and inverse matrices.
-    /// `m1` is the linear-RGB → LMS matrix (from `oklab::rgb_to_lms_matrix`);
-    /// `m1_inv` is the LMS → linear-RGB matrix.
-    ///
-    /// The two matrices must be a matched inverse pair for the same
-    /// primaries — this constructor does not verify that (it's the cheap,
-    /// no-panic path). A mismatched pair yields a wrong (but non-panicking)
-    /// color transform. Prefer [`new`](Self::new) when you only have the
-    /// inverse and want the forward derived consistently.
-    #[must_use]
-    pub fn from_matrices(m1: &GamutMatrix, m1_inv: &GamutMatrix, knee: f32) -> Self {
-        Self {
-            lut: GamutBoundaryLut::new(m1_inv),
-            knee,
-            m1: *m1,
-            m1_inv: *m1_inv,
+            space: *space,
         }
     }
 
@@ -328,7 +288,7 @@ impl SoftCompress {
         // Convert to OKLab in planar form for the LUT — small temporaries
         // per pixel keep the API allocation-free even for short strips.
         for px in rgb.iter_mut() {
-            let lab = oklab::rgb_to_oklab(px[0], px[1], px[2], &self.m1);
+            let lab = self.space.from_rgb(*px);
             let l = lab[0];
             let mut a = lab[1];
             let mut b = lab[2];
@@ -354,7 +314,7 @@ impl SoftCompress {
                     b *= scale;
                 }
             }
-            let out = oklab::oklab_to_rgb(l, a, b, &self.m1_inv);
+            let out = self.space.to_rgb([l, a, b]);
             *px = out;
         }
     }
@@ -375,42 +335,6 @@ impl SoftCompress {
     }
 }
 
-/// Invert a 3×3 matrix via cofactor expansion. Returns `None` if singular.
-fn invert_3x3(m: &GamutMatrix) -> Option<GamutMatrix> {
-    let a = m[0][0];
-    let b = m[0][1];
-    let c = m[0][2];
-    let d = m[1][0];
-    let e = m[1][1];
-    let f = m[1][2];
-    let g = m[2][0];
-    let h = m[2][1];
-    let i = m[2][2];
-
-    let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
-    if det.abs() < 1e-30 {
-        return None;
-    }
-    let inv_det = 1.0 / det;
-    Some([
-        [
-            (e * i - f * h) * inv_det,
-            -(b * i - c * h) * inv_det,
-            (b * f - c * e) * inv_det,
-        ],
-        [
-            -(d * i - f * g) * inv_det,
-            (a * i - c * g) * inv_det,
-            -(a * f - c * d) * inv_det,
-        ],
-        [
-            (d * h - e * g) * inv_det,
-            -(a * h - b * g) * inv_det,
-            (a * e - b * d) * inv_det,
-        ],
-    ])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,9 +347,7 @@ mod tests {
     }
 
     fn bt709_soft_compress(knee: f32) -> SoftCompress {
-        let m1 = oklab::rgb_to_lms_matrix(ColorPrimaries::Bt709).unwrap();
-        let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).unwrap();
-        SoftCompress::from_matrices(&m1, &m1_inv, knee)
+        SoftCompress::new(&OklabSpace::for_primaries(ColorPrimaries::Bt709).unwrap(), knee)
     }
 
     // ---- Tests carried from zenfilters/src/gamut_lut.rs ----
@@ -729,8 +651,8 @@ mod tests {
     #[test]
     fn matrix_invert_round_trip() {
         let m_in = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).unwrap();
-        let m_out = invert_3x3(&m_in).unwrap();
-        let m_back = invert_3x3(&m_out).unwrap();
+        let m_out = m_in.inverse().unwrap();
+        let m_back = m_out.inverse().unwrap();
         for i in 0..3 {
             for j in 0..3 {
                 assert!(

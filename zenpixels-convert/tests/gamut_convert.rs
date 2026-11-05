@@ -1,13 +1,13 @@
 //! Tests for gamut (color primaries) conversion and color context preservation.
 //!
 //! Key architectural note: RowConverter does NOT apply gamut matrices.
-//! Primaries conversion is handled separately via `gamut::conversion_matrix()`
-//! + `apply_matrix_row_f32()`. This tests both paths.
+//! Primaries conversion is handled separately via `GamutMatrix::between`
+//! + `GamutMatrix::apply_row_rgb`. This tests both paths.
 
 use zenpixels_convert::{
     ColorPrimaries, PixelDescriptor, RowConverter,
     ext::ColorPrimariesExt,
-    gamut::{apply_matrix_f32, apply_matrix_row_f32, apply_matrix_row_rgba_f32, conversion_matrix},
+    gamut::GamutMatrix,
 };
 
 /// Make an f32 RGB descriptor with specific primaries.
@@ -78,7 +78,7 @@ fn manual_gamut_pipeline_bt709_to_bt2020() {
     to_linear.convert_row(&src_bytes, &mut linear_bytes, 1);
 
     // Step 2: Apply BT.709 → BT.2020 gamut matrix
-    let m = conversion_matrix(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
+    let m = GamutMatrix::between(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
     let mut linear_f32 = [
         f32::from_ne_bytes([
             linear_bytes[0],
@@ -100,7 +100,7 @@ fn manual_gamut_pipeline_bt709_to_bt2020() {
         ]),
     ];
     let before = linear_f32;
-    apply_matrix_f32(&mut linear_f32, &m);
+    linear_f32 = m.apply(linear_f32);
 
     // The gamut matrix should change the values (BT.709 → BT.2020 is not identity).
     let changed = linear_f32
@@ -113,8 +113,8 @@ fn manual_gamut_pipeline_bt709_to_bt2020() {
     );
 
     // Step 3: Roundtrip back to BT.709 and verify
-    let m_back = conversion_matrix(ColorPrimaries::Bt2020, ColorPrimaries::Bt709).unwrap();
-    apply_matrix_f32(&mut linear_f32, &m_back);
+    let m_back = GamutMatrix::between(ColorPrimaries::Bt2020, ColorPrimaries::Bt709).unwrap();
+    linear_f32 = m_back.apply(linear_f32);
 
     for c in 0..3 {
         assert!(
@@ -127,15 +127,20 @@ fn manual_gamut_pipeline_bt709_to_bt2020() {
 }
 
 #[test]
-fn conversion_matrix_returns_none_for_same_primaries() {
-    assert!(conversion_matrix(ColorPrimaries::Bt709, ColorPrimaries::Bt709).is_none());
-    assert!(conversion_matrix(ColorPrimaries::Bt2020, ColorPrimaries::Bt2020).is_none());
+fn between_equal_primaries_is_the_identity() {
+    for p in [ColorPrimaries::Bt709, ColorPrimaries::Bt2020] {
+        let m = GamutMatrix::between(p, p).unwrap();
+        let v = m.apply([0.25, 0.5, 0.75]);
+        for (got, want) in v.into_iter().zip([0.25, 0.5, 0.75]) {
+            assert!((got - want).abs() < 1e-5, "{p:?}: {got} vs {want}");
+        }
+    }
 }
 
 #[test]
 fn conversion_matrix_returns_none_for_unknown() {
-    assert!(conversion_matrix(ColorPrimaries::Unknown, ColorPrimaries::Bt709).is_none());
-    assert!(conversion_matrix(ColorPrimaries::Bt709, ColorPrimaries::Unknown).is_none());
+    assert!(GamutMatrix::between(ColorPrimaries::Unknown, ColorPrimaries::Bt709).is_none());
+    assert!(GamutMatrix::between(ColorPrimaries::Bt709, ColorPrimaries::Unknown).is_none());
 }
 
 #[test]
@@ -149,7 +154,7 @@ fn all_named_primaries_pairs_have_matrices() {
         for &to in &known {
             if from != to {
                 assert!(
-                    conversion_matrix(from, to).is_some(),
+                    GamutMatrix::between(from, to).is_some(),
                     "missing matrix for {from:?} → {to:?}"
                 );
             }
@@ -159,7 +164,7 @@ fn all_named_primaries_pairs_have_matrices() {
 
 #[test]
 fn gamut_row_conversion_multi_pixel() {
-    let m = conversion_matrix(ColorPrimaries::Bt709, ColorPrimaries::DisplayP3).unwrap();
+    let m = GamutMatrix::between(ColorPrimaries::Bt709, ColorPrimaries::DisplayP3).unwrap();
 
     // 3 pixels, RGB f32
     let mut data = [
@@ -169,7 +174,7 @@ fn gamut_row_conversion_multi_pixel() {
     ];
 
     let original = data;
-    apply_matrix_row_f32(&mut data, 3, &m);
+    m.apply_row_rgb(&mut data.as_chunks_mut::<3>().0[..3]);
 
     // White should be ~preserved
     assert!((data[3] - 1.0).abs() < 1e-4, "white R");
@@ -191,10 +196,10 @@ fn gamut_row_conversion_multi_pixel() {
 
 #[test]
 fn gamut_rgba_row_preserves_alpha() {
-    let m = conversion_matrix(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
+    let m = GamutMatrix::between(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
 
     let mut data = [0.5f32, 0.3, 0.8, 0.42, 0.1, 0.9, 0.2, 0.99];
-    apply_matrix_row_rgba_f32(&mut data, 2, &m);
+    m.apply_row_rgba(&mut data.as_chunks_mut::<4>().0[..2]);
 
     assert_eq!(data[3], 0.42, "alpha pixel 0 must be preserved");
     assert_eq!(data[7], 0.99, "alpha pixel 1 must be preserved");
@@ -216,8 +221,8 @@ fn xyz_matrices_invert_correctly() {
 
         let original = [0.6f32, 0.3, 0.7];
         let mut v = original;
-        apply_matrix_f32(&mut v, to_xyz);
-        apply_matrix_f32(&mut v, from_xyz);
+        v = to_xyz.apply(v);
+        v = from_xyz.apply(v);
 
         for c in 0..3 {
             assert!(

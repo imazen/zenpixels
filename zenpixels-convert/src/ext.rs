@@ -817,9 +817,7 @@ mod tests {
         let to = ColorPrimaries::Bt709.to_xyz_matrix().unwrap();
         let from = ColorPrimaries::Bt709.from_xyz_matrix().unwrap();
         let rgb = [0.5f32, 0.3, 0.8];
-        let mut v = rgb;
-        crate::gamut::apply_matrix_f32(&mut v, to);
-        crate::gamut::apply_matrix_f32(&mut v, from);
+        let v = from.apply(to.apply(rgb));
         for c in 0..3 {
             assert!(
                 (v[c] - rgb[c]).abs() < 1e-4,

@@ -496,10 +496,7 @@ pub use ext::PixelBufferHdrConvertExt;
 pub use ext::{ColorConvertExt, ColorPrimariesExt, PixelBufferConvertExt, TransferFunctionExt};
 
 // Re-export gamut conversion utilities.
-pub use gamut::{
-    GamutMatrix, apply_matrix_f32, apply_matrix_row_f32, apply_matrix_row_rgba_f32,
-    conversion_matrix,
-};
+pub use gamut::GamutMatrix;
 
 // Re-export the load-bearing analysis surface: one trait, one report.
 // The scan-level predicates stay crate-internal.
