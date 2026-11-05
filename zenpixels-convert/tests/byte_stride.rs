@@ -405,6 +405,63 @@ fn scans_ignore_padding() {
     }
 }
 
+/// RGB with R == G == B in every pixel: gray in value, whatever the padding holds.
+fn gray_rgb_pixels(d: D, width: u32, height: u32) -> Vec<u32> {
+    let row = width as usize * d.bytes_per_pixel();
+    let mut words = vec![0u32; (row * height as usize).div_ceil(4)];
+    let bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut words);
+    for (i, pixel) in bytes[..row * height as usize]
+        .chunks_exact_mut(d.bytes_per_pixel())
+        .enumerate()
+    {
+        let v = (i * 29 % 256) as u8;
+        for sample in pixel.chunks_exact_mut(d.min_alignment()) {
+            match d.channel_type() {
+                ChannelType::U8 => sample[0] = v,
+                ChannelType::U16 => sample.copy_from_slice(&(u16::from(v) * 257).to_ne_bytes()),
+                ChannelType::F32 => sample.copy_from_slice(&(f32::from(v) / 255.0).to_ne_bytes()),
+                other => panic!("no fixture for {other:?}"),
+            }
+        }
+    }
+    words
+}
+
+/// The load-bearing scans give the packed answer on RGB at every depth, for pixels that pass and
+/// pixels that fail, and a reduction holds the same pixels.
+#[test]
+fn rgb_scans_and_reductions_match_packed() {
+    for (d, w, h, stride) in cases() {
+        let row = w as usize * d.bytes_per_pixel();
+        for packed in [packed_pixels(d, w, h), gray_rgb_pixels(d, w, h)] {
+            let padded = pad(&packed, d, w, h, stride);
+            let a = view(&packed, d, w, h, row);
+            let b = view(&padded, d, w, h, stride);
+            let (want, got) = (a.determine_load_bearing(), b.determine_load_bearing());
+            assert_eq!(got.uses_alpha, want.uses_alpha, "{d:?} {w}x{h} {stride}");
+            assert_eq!(got.uses_chroma, want.uses_chroma, "{d:?} {w}x{h} {stride}");
+            assert_eq!(
+                got.uses_low_bits, want.uses_low_bits,
+                "{d:?} {w}x{h} {stride}"
+            );
+            let want = a.try_reduce_to_load_bearing_format();
+            let got = b.try_reduce_to_load_bearing_format();
+            assert_eq!(got.is_some(), want.is_some(), "{d:?} {w}x{h} {stride}");
+            if let (Some(got), Some(want)) = (got, want) {
+                assert_eq!(got.descriptor(), want.descriptor());
+                assert_eq!(tight(&got), tight(&want), "{d:?} {w}x{h} {stride}");
+            }
+        }
+        // The fixture has to exercise the scan it claims to.
+        let gray = gray_rgb_pixels(d, w, h);
+        let padded = pad(&gray, d, w, h, stride);
+        let report = view(&padded, d, w, h, stride).determine_load_bearing();
+        if d.channel_type() != ChannelType::F32 {
+            assert_eq!(report.uses_chroma, Some(false), "{d:?}");
+        }
+    }
+}
+
 #[test]
 fn in_place_reduction_matches_the_allocating_path() {
     for stride in [17usize, 18, 19, 21, 67] {
