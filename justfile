@@ -315,3 +315,7 @@ iqa-portability-check:
     cargo +1.88.0 check --locked --manifest-path zenpixels-iqa/Cargo.toml --no-default-features
     cargo check --locked --manifest-path zenpixels-iqa/Cargo.toml --no-default-features --target wasm32-unknown-unknown
     cargo check --locked --manifest-path zenpixels-iqa/Cargo.toml --no-default-features --target thumbv7em-none-eabihf
+
+# Run at the repository root to retain pixel workspace inheritance in cross.
+iqa-cross-check toolchain='':
+    cross {{toolchain}} test --locked --manifest-path zenpixels-iqa/Cargo.toml --target i686-unknown-linux-gnu

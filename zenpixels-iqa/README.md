@@ -42,3 +42,10 @@ Identity, scalar/map operations and no-reference pairing originate in
 [zenmetrics-abstractions at b50fea22](https://github.com/imazen/zenmetrics/tree/b50fea22/crates/zenmetrics-abstractions).
 The existing `zenmetrics-id-v1` fingerprint domain and column derivation remain
 unchanged so moving the contract need not rename persisted observations.
+
+The [native consumer validation](https://github.com/imazen/zenmetrics/blob/40590360c00be0a5fb5aab0535d4c70dd792301a/docs/IQA_STILL_CONTRACT_VALIDATION.md)
+checks serving Zensim A, selected Margarine, Butteraugli and fast-ssim2 with
+pinned sources. Both Linux x64 and aarch64 CI panels pass. Coverage is native
+sRGB RGB8 on three representative shapes; it does not qualify HDR, all models
+or algorithm/reference parity. Margarine has no prepared-reference API and
+only observes cancellation at native-call boundaries.
