@@ -33,6 +33,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- `Cmyk8` through `MoxCms` now gives `CmykF32`'s color, rounded, including its black-point compensation: on 49 real profiles to sRGB they differed by a mean of 17.8 codes. RGBA targets get the same transform as RGB. `Cmyk8` is 44% slower and `CmykF32` 6 times faster (`benchmarks/cmyk8_bpc_2026-11-05.md`).
+
 - Docs: JPEG XL color authority cites ISO/IEC 18181-1, and AVIF lists its ICC encode.
 
 - `gamut_clamping_scenarios` runs again, with a resampling filter in the test file that matches zenresize to 2.3e-4 on its image. It also checks that unclipped F32 keeps what a kernel's lobes produce through an sRGB round trip, and that `RowConverter`'s U8 output clamps them.

@@ -490,3 +490,85 @@ fn k_only_ink_is_black() {
         assert!(got.iter().all(|v| v.abs() < 1.0), "{name}: {got:?}");
     }
 }
+
+/// 8-bit CMYK against the same profile's F32 path and against lcms2 (relative colorimetric with
+/// black-point compensation at both depths). `CMS_CONTRACT_PROFILES` adds a directory of profiles.
+/// Prints mean and worst differences in 8-bit codes, and the share more than one code apart.
+#[test]
+#[ignore = "measurement: run with --nocapture"]
+fn cmyk8_against_f32_and_lcms() {
+    let [(_, mox), (_, lcms)] = backends();
+    let n = 16384;
+    let ink: Vec<u8> = (0..n as u32 * 4)
+        .map(|i| ((i * 37 + i / 4 * 11 + i / 64 * 3) % 256) as u8)
+        .collect();
+    let ink_f: Vec<u8> = ink
+        .iter()
+        .flat_map(|&v| (f32::from(v) / 255.0).to_ne_bytes())
+        .collect();
+    let mut profiles = vec![("synthetic".to_string(), synthetic_icc::synthetic_cmyk_icc())];
+    if let Ok(dir) = std::env::var("CMS_CONTRACT_PROFILES") {
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .expect("profile directory")
+            .map(|e| e.unwrap().path())
+            .collect();
+        paths.sort();
+        for path in paths {
+            let icc = std::fs::read(&path).unwrap();
+            // Device links are CMYK to CMYK; they don't convert to RGB.
+            if icc.get(16..20) == Some(b"CMYK".as_slice())
+                && icc.get(12..16) != Some(b"link".as_slice())
+            {
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                profiles.push((name, icc));
+            }
+        }
+    }
+    let p3 = Source::Cicp(Cicp::new(12, 13, 0, true));
+    let stats = |a: &[f64], b: &[f64]| {
+        let d: Vec<f64> = a.iter().zip(b).map(|(x, y)| (x - y).abs()).collect();
+        let over = d.iter().filter(|v| **v > 1.0).count();
+        (
+            d.iter().sum::<f64>() / d.len() as f64,
+            d.iter().cloned().fold(0.0, f64::max),
+            over as f64 * 100.0 / d.len() as f64,
+        )
+    };
+    println!(
+        "profile|target|layout|8-vs-f32 mean/worst/%>1|8-vs-lcms8 mean/worst/%>1|f32-vs-lcmsf32 mean/worst"
+    );
+    for (name, icc) in &profiles {
+        for (tname, target) in [("sRGB", SRGB), ("P3", p3.clone())] {
+            for (lname, to8, tof) in [("RGB", F::Rgb8, F::RgbF32), ("RGBA", F::Rgba8, F::RgbaF32)] {
+                let run_one = |cms: &dyn PluggableCms, from: F, to: F, input: &[u8]| match cms
+                    .build_source_transform(Source::Icc(icc), target.clone(), from, to, &opts())
+                {
+                    Some(Ok(mut t)) => {
+                        let mut dst = vec![0u8; n * to.bytes_per_pixel()];
+                        t.try_transform_row(input, &mut dst, n as u32)
+                            .ok()
+                            .map(|()| codes(to, &dst))
+                    }
+                    _ => None,
+                };
+                let cells = (
+                    run_one(mox, F::Cmyk8, to8, &ink),
+                    run_one(mox, F::CmykF32, tof, &ink_f),
+                    run_one(lcms, F::Cmyk8, to8, &ink),
+                    run_one(lcms, F::CmykF32, tof, &ink_f),
+                );
+                let (Some(m8), Some(mf), Some(l8), Some(lf)) = cells else {
+                    println!("{name}|{tname}|{lname}|a backend refused");
+                    continue;
+                };
+                let rounded: Vec<f64> = mf.iter().map(|v| v.clamp(0.0, 255.0).round()).collect();
+                let (a, b, c) = stats(&m8, &rounded);
+                let (d, e, f) = stats(&m8, &l8);
+                let (g, h, _) = stats(&mf, &lf);
+                println!(
+                    "{name}|{tname}|{lname}|{a:.3}/{b:.1}/{c:.2}|{d:.3}/{e:.1}/{f:.2}|{g:.3}/{h:.2}"
+                );
+            }
+        }
+    }
+}

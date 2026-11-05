@@ -118,6 +118,8 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed (2026-11-05): `Cmyk8` and `CmykF32` gave different colors from one ink: on 49 real profiles to sRGB, a mean of 17.8 codes and at worst 114, because `Cmyk8` had no black-point compensation and its own intent. `Cmyk8` now runs the F32 transform and rounds, with no U16 in the way, so they agree exactly (`eight_bit_cmyk_is_f32_cmyk_rounded`). Also fixed: RGBA targets from CMYK skipped the compensation that RGB got (`cmyk_targets_agree_with_and_without_alpha`). `benchmarks/cmyk8_bpc_2026-11-05.md`: `Cmyk8` is 44% slower, `CmykF32` 6 times faster.
+
 - Open (2026-11-05): `linear_light_suitability` charges 120 (LowLoss) for any gamma-encoded format whatever the resize kernel. On the sharp-edge image Mitchell and Robidoux agree within a bucket, but CatmullRom and Lanczos through U8 measure p95 ΔE 21 to 33 (High), and clipping alone accounts for it: 6 of 12 scenarios are two buckets off. The model has no kernel input. `gamut_clamping_scenarios` pins the gap.
 
 - Open, in moxcms 0.9.1, measured 2026-11-05 against exact evaluation: a pre-v4 `lut8Type` Lab table reads 0.39%
