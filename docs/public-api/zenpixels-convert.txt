@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)        58
 #   pub consts/statics                         33
 #   free functions                              4
-#   inherent methods                          175
+#   inherent methods                          177
 #   struct fields                              71
 #   enum variants                              81
 #   re-exports                                  3
@@ -21,14 +21,14 @@
 #   auto-trait exceptions                       4
 #
 # per-module pub lines:
-#   (root)                          193
+#   (root)                          194
 #   adapt                             1
 #   cms                              23
 #   codes                            39
 #   converter                        31
 #   css                               3
 #   error                            34
-#   ext                              27
+#   ext                              28
 #   gamut                            11
 #   hdr                               8
 #   icc_profiles                      9
@@ -37,7 +37,7 @@
 #   output                           20
 #   ycbcr                            22
 
-## items (415 lines)
+## items (417 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -161,6 +161,7 @@ pub error::ConvertError::UnsupportedTransfer::to: zenpixels::descriptor::Transfe
 pub mod ext
 pub fn ext::ColorConvertExt::map_to_gamut(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn ext::ColorConvertExt::parse_css(&str) -> core::result::Result<Self, css::CssColorError>
+pub fn ext::ColorConvertExt::same_color(&self, &Self) -> bool
 pub fn ext::ColorConvertExt::try_convert_to(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn ext::ColorPrimariesExt::from_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub fn ext::ColorPrimariesExt::to_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
@@ -408,6 +409,7 @@ pub fn converter::RowConverter::try_convert_row(&mut self, &[u8], &mut [u8], u32
 pub trait ColorConvertExt: sealed::Sealed + core::marker::Sized [also: ext]
 pub fn ColorConvertExt::map_to_gamut(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn ColorConvertExt::parse_css(&str) -> core::result::Result<Self, css::CssColorError>
+pub fn ColorConvertExt::same_color(&self, &Self) -> bool
 pub fn ColorConvertExt::try_convert_to(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub trait ColorManagement [also: cms]
 pub type ColorManagement::Error: core::fmt::Debug

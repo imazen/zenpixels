@@ -922,6 +922,28 @@ pub trait ColorConvertExt: crate::sealed::Sealed + Sized {
         &self,
         target: PixelDescriptor,
     ) -> Result<Self, whereat::At<crate::ConvertError>>;
+
+    /// Whether both are the same color, whatever their formats.
+    ///
+    /// `==` asks whether format and samples match, so opaque red as `RGB8` and as `RGBA8`
+    /// differ under it and are the same here. This compares linear light with 1e-6 of
+    /// tolerance, which is below one 16-bit step, and above the rounding of a conversion.
+    ///
+    /// Fully transparent colors are all the same, since no composite can tell them apart.
+    /// A color with no way to linear light, such as CMYK or an unknown transfer or primaries,
+    /// is the same only as an identical one. SDR and HDR never match, nor do PQ and HLG, since
+    /// their linear scales differ.
+    ///
+    /// ```
+    /// use zenpixels::{Color, PixelDescriptor};
+    /// use zenpixels_convert::ColorConvertExt;
+    ///
+    /// let red = Color::srgb8(255, 0, 0);
+    /// assert!(red.same_color(&Color::srgba8(255, 0, 0, 255)));
+    /// assert_ne!(red, Color::srgba8(255, 0, 0, 255));
+    /// assert!(!red.same_color(&Color::srgb8(254, 0, 0)));
+    /// ```
+    fn same_color(&self, other: &Self) -> bool;
 }
 
 /// CSS Color 4 gamut mapping of linear RGB, in the RGB of `space`.
@@ -981,6 +1003,48 @@ fn css_gamut_map(space: &crate::oklab::OklabSpace, rgb: [f32; 3]) -> [f32; 3] {
 impl ColorConvertExt for zenpixels::Color {
     fn parse_css(css: &str) -> Result<Self, crate::css::CssColorError> {
         crate::css::parse(css)
+    }
+
+    fn same_color(&self, other: &Self) -> bool {
+        use zenpixels::TransferFunction as Tf;
+        if self == other {
+            return true;
+        }
+        let scale = |d: PixelDescriptor| match d.transfer() {
+            Tf::Pq => 1,
+            Tf::Hlg => 2,
+            _ => 0,
+        };
+        let known = |d: PixelDescriptor| {
+            d.transfer() != Tf::Unknown && d.primaries != ColorPrimaries::Unknown
+        };
+        let (a, b) = (self.descriptor(), other.descriptor());
+        if !known(a) || !known(b) || scale(a) != scale(b) {
+            return false;
+        }
+        let linear = |color: &Self| {
+            let target = PixelDescriptor::RGBAF32_LINEAR.with_primaries(ColorPrimaries::Bt2020);
+            let options = zenpixels::ConvertOptions::permissive()
+                .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked);
+            let converted = color.try_convert_to(target, &options).ok()?;
+            let bytes: [u8; 16] = converted.as_bytes().try_into().ok()?;
+            Some(core::array::from_fn::<f32, 4, _>(|i| {
+                f32::from_ne_bytes([
+                    bytes[i * 4],
+                    bytes[i * 4 + 1],
+                    bytes[i * 4 + 2],
+                    bytes[i * 4 + 3],
+                ])
+            }))
+        };
+        let (Some(a), Some(b)) = (linear(self), linear(other)) else {
+            return false;
+        };
+        const TOLERANCE: f32 = 1e-6;
+        if a[3] == 0.0 && b[3] == 0.0 {
+            return true;
+        }
+        a.iter().zip(&b).all(|(x, y)| (x - y).abs() <= TOLERANCE)
     }
 
     fn map_to_gamut(

@@ -33,6 +33,9 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- `Color::same_color` (on `ColorConvertExt`) asks whether two colors match whatever their formats, as `==` stays exact.
+- BGR8 converts through RGB8, which every route to and from BGR8 used to refuse.
+
 ### Fixed: conversions that change primaries
 
 - RGB into gray ran the gamut matrix on gray rows: P3 RGB8 `[200,100,50]` to Gray8 gave `117,117,117,128,0` instead of `114,114,114,114`, and GrayF32 panicked. RGB now changes primaries first. A gray source needs no matrix.
