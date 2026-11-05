@@ -118,11 +118,10 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
-- Fixed in the CMS contract (2026-11-05): `MoxCms` floored 8-bit samples (mean -0.40 of a code against lcms2), left
-  8-bit white at (255, 255, 254) between ICC and generated profiles, turned 16-bit table profiles into a constant
-  through high barycentric weights, and ignored a row's `width`. `tests/cms_moxcms_accuracy.rs` covers each.
-  moxcms' table results still differ from lcms2 on some profiles: on mozjpeg's `test3.icc` 61% of 8-bit samples differ
-  and on `test1.icc` 17% to 26%.
+- Fixed in the CMS contract (2026-11-05). moxcms' own 8-bit path comes out low (mean -0.40 of a code against its own F32; cause not
+  located). The wrapper chose high barycentric weights at 16 bits, which turned table profiles into a constant, ignored a row's
+  `width`, and mixed moxcms' generated colorants (CIE D50) with ICC profiles (PCS white), leaving 8-bit white at (255, 255, 254).
+  `tests/cms_moxcms_accuracy.rs` covers each. moxcms differing from lcms2 on table profiles is expected, not a bug.
 
 - Fixed 2026-11-04: planning added the gamut matrix after layout and depth steps, so wide
   RGB into gray or from RGBA to RGB ran it on rows of the wrong shape, and U16 rows ran U8

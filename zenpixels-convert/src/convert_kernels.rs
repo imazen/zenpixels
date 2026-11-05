@@ -309,7 +309,7 @@ pub(super) fn apply_step_u8(
                         src,
                         dst,
                         crate::fast_gamut::srgb_lin_lut_u8(),
-                        |v: f32| linear_srgb::default::linear_to_srgb_u8(v),
+                        crate::fast_gamut::srgb_encode_u8,
                     );
                 }
                 crate::convert::FusedKind::SrgbU8GamutRgba => {
@@ -318,7 +318,7 @@ pub(super) fn apply_step_u8(
                         src,
                         dst,
                         crate::fast_gamut::srgb_lin_lut_u8(),
-                        linear_srgb::default::linear_to_srgb_u8,
+                        crate::fast_gamut::srgb_encode_u8,
                     );
                 }
                 crate::convert::FusedKind::SrgbU16GamutRgb => {
@@ -345,7 +345,7 @@ pub(super) fn apply_step_u8(
                         &m,
                         src_f32,
                         dst,
-                        crate::fast_gamut::srgb_enc_lut_u8(),
+                        crate::fast_gamut::srgb_u8_encoder(),
                     );
                 }
             }

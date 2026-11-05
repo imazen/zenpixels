@@ -57,7 +57,7 @@ fn white_stays_white_between_icc_and_generated_profiles() {
     }
 }
 
-/// The backend's own 8-bit path floors, missing nearest on 43% of samples.
+/// The backend's own 8-bit path comes out low, missing nearest on 43% of samples.
 #[test]
 fn eight_bit_rounds_to_nearest() {
     for (src, dst) in [
@@ -176,6 +176,29 @@ fn rows_honor_their_width() {
             t.try_transform_row(&input[..8 * stride], &mut padded[..aligned], 32)
                 .is_err()
         );
+    }
+}
+
+/// Table profiles take the F32 path, so 8-bit is nearest of F32 exactly.
+#[test]
+fn eight_bit_table_profiles_are_nearest_of_their_float_result() {
+    let icc = synthetic_icc::synthetic_rgb_lut_icc();
+    let input = ramp8(4096);
+    let mut out = vec![0u8; input.len()];
+    build(Source::Icc(&icc), SRGB, F::Rgb8, F::Rgb8)
+        .try_transform_row(&input, &mut out, 4096)
+        .unwrap();
+    let float: Vec<f32> = input.iter().map(|&v| f32::from(v) / 255.0).collect();
+    let mut reference = vec![0f32; float.len()];
+    build(Source::Icc(&icc), SRGB, F::RgbF32, F::RgbF32)
+        .try_transform_row(
+            bytemuck::cast_slice(&float),
+            bytemuck::cast_slice_mut(&mut reference),
+            4096,
+        )
+        .unwrap();
+    for (v, r) in out.iter().zip(&reference) {
+        assert_eq!(*v, (f64::from(r.clamp(0.0, 1.0)) * 255.0 + 0.5) as u8);
     }
 }
 

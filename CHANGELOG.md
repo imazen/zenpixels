@@ -48,9 +48,10 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 - `RowConverter`: with a CMS, a conversion across depths, into gray, or compositing onto a background now gives a result where it refused or dropped alpha. `MoxCms` declines depth pairs the plan can convert.
 - `Color::try_new` refuses samples needing alignment above 4 bytes; `AnyColor` holds them. `adapt_raw_rows_for_encode` accepts a last row without padding, and returns an error for a short stride instead of panicking.
 
-- `MoxCms` rounds 8-bit samples to nearest, by taking them through the backend's 16-bit path. The backend's 8-bit path floors. On Display P3 to sRGB, 40.2% of samples missed C lcms2 2.20, for a mean of -0.40 of a code; now 1.5% miss, for a mean of -0.006. This changes 8-bit output and costs speed.
+- `MoxCms` rounds 8-bit samples to nearest. The backend's 8-bit path comes out low: on Display P3 to sRGB, 40% of its samples miss nearest, for a mean of -0.40 of a code; the cause isn't located. Matrix-and-curve profiles now take this crate's kernels with the profiles' own curve and colorants, and the rest take the backend's F32 path. This changes 8-bit output and costs speed: on Zen 4, 1.05 G px/s becomes 416 M on a matrix profile, 396 M becomes 116 M on an RGB table and 216 M becomes 88.5 M on CMYK.
+- Fused U8 sRGB kernels round to nearest. A floor-indexed table with one threshold comparison replaces a 4096-entry table that was off by one on about 1.3% of inputs.
 - `MoxCms` keeps white between ICC profiles and generated ones: 8-bit white into generated sRGB was (255, 255, 254). Generated colorants now sum to the ICC PCS white.
-- `MoxCms` uses low barycentric weights on integer paths. High weights turned every 16-bit pixel of a table profile into a constant.
+- `MoxCms` uses low barycentric weights at 16 bits. High weights turned every 16-bit pixel of a table profile into a constant.
 - `MoxCms` row transforms honor `width`, and return an error for a row shorter than it. They used to convert the whole slice.
 - `cms-contract/` runs each CMS backend through one behavioral contract and against the others: `just cms-contract`. It isn't a workspace member.
 

@@ -43,9 +43,8 @@ use moxcms::{
 /// - **Tetrahedral interpolation** for 3D CLUTs, more accurate than trilinear where
 ///   saturated colors cross cube diagonals.
 /// - **High barycentric weight scale** for F32: on a CMYK table it stays closer to lcms2, at a worst
-///   difference of 2.18 of a code against 2.99 for `Low`. [`options_for_profiles`] selects `Low` for the
-///   integer paths, because `High` turned 16-bit table profiles into a constant, and 8-bit samples take the
-///   16-bit path.
+///   difference of 2.18 of a code against 2.99 for `Low`. [`options_for_profiles`] selects `Low` for
+///   16-bit, where `High` turned table profiles into a constant.
 ///
 /// Crate-internal: moxcms types stay out of the public API so the moxcms version
 /// range can change without a zenpixels-convert release.
@@ -187,18 +186,102 @@ impl RowExtent {
     }
 }
 
-/// 8-bit samples through the backend's 16-bit path, with nearest rounding on the way out.
+/// 8-bit matrix-and-curve conversion through our own kernels, using the profiles' real curve and colorants.
 ///
-/// The backend's own 8-bit path floors. On Display P3 to sRGB, 40% of its samples missed lcms2, all by
-/// a code, for a mean of -0.40. This route misses 1.5%, at a mean of -0.006, and costs speed. Widening
-/// then narrowing returns a sample unchanged, so a carried alpha is exact.
-struct U8ThroughU16 {
-    transform: Arc<dyn TransformExecutor<u16> + Send + Sync>,
+/// The backend's 8-bit path comes out low: on Display P3 to sRGB, 40% of its samples missed nearest
+/// rounding of its own F32 result, for a mean of -0.40 of a code. This covers RGB and RGBA where every
+/// source channel shares a curve and the target's curve is sRGB's.
+struct U8MatrixShaper {
+    matrix: [[f32; 3]; 3],
+    linearize: alloc::boxed::Box<[f32; 256]>,
+    alpha: bool,
+}
+
+impl U8MatrixShaper {
+    fn of(source: &ColorProfile, target: &ColorProfile, layout: (Layout, Layout)) -> Option<Self> {
+        let alpha = match layout {
+            (Layout::Rgb, Layout::Rgb) => false,
+            (Layout::Rgba, Layout::Rgba) => true,
+            _ => return None,
+        };
+        let matrix_shaper = |p: &ColorProfile| {
+            p.color_space == moxcms::DataColorSpace::Rgb
+                && p.pcs == moxcms::DataColorSpace::Xyz
+                && p.lut_a_to_b_colorimetric.is_none()
+                && p.lut_a_to_b_perceptual.is_none()
+                && p.lut_b_to_a_colorimetric.is_none()
+                && p.lut_b_to_a_perceptual.is_none()
+                && p.red_trc.is_some()
+                && p.red_trc == p.green_trc
+                && p.red_trc == p.blue_trc
+        };
+        if !matrix_shaper(source) || !matrix_shaper(target) {
+            return None;
+        }
+        // Compared by value across the range, since a profile may store this curve in any form.
+        let target_curve = target.build_8bit_lin_table(&target.red_trc).ok()?;
+        let srgb = crate::fast_gamut::srgb_lin_lut_u8();
+        if target_curve
+            .iter()
+            .zip(srgb.iter())
+            .any(|(a, b)| (a - b).abs() > 5e-4)
+        {
+            return None;
+        }
+        let linearize = source.build_8bit_lin_table(&source.red_trc).ok()?;
+        let product = target
+            .colorant_matrix()
+            .inverse()
+            .mat_mul(source.colorant_matrix());
+        let matrix = product.v.map(|row| row.map(|v| v as f32));
+        Some(Self {
+            matrix,
+            linearize,
+            alpha,
+        })
+    }
+}
+
+impl TransformExecutor<u8> for U8MatrixShaper {
+    fn transform(&self, source: &[u8], target: &mut [u8]) -> Result<(), moxcms::CmsError> {
+        let channels = if self.alpha { 4 } else { 3 };
+        if !source.len().is_multiple_of(channels) {
+            return Err(moxcms::CmsError::LaneMultipleOfChannels);
+        }
+        if source.len() != target.len() {
+            return Err(moxcms::CmsError::LaneSizeMismatch);
+        }
+        let encode = crate::fast_gamut::srgb_encode_u8;
+        if self.alpha {
+            crate::fast_gamut::convert_u8_rgba_simd_lut(
+                &self.matrix,
+                source,
+                target,
+                &self.linearize,
+                encode,
+            );
+        } else {
+            crate::fast_gamut::convert_u8_rgb_simd_matlut(
+                &self.matrix,
+                source,
+                target,
+                &self.linearize,
+                encode,
+            );
+        }
+        Ok(())
+    }
+}
+
+/// 8-bit samples through the backend's F32 path, with nearest rounding on the way out, for tables, gray
+/// and anything else without a matrix to take. `v / 255` rounds back to `v`, so a carried alpha is exact.
+struct U8ThroughF32 {
+    transform: Arc<dyn TransformExecutor<f32> + Send + Sync>,
     source_channels: usize,
     target_channels: usize,
 }
 
-impl TransformExecutor<u8> for U8ThroughU16 {
+impl TransformExecutor<u8> for U8ThroughF32 {
     fn transform(&self, source: &[u8], target: &mut [u8]) -> Result<(), moxcms::CmsError> {
         const PIXELS: usize = 256;
         const MOST_CHANNELS: usize = 4;
@@ -210,36 +293,42 @@ impl TransformExecutor<u8> for U8ThroughU16 {
             return Err(moxcms::CmsError::LaneSizeMismatch);
         }
         // Stack scratch, so a row doesn't allocate.
-        let mut wide_source = [0u16; PIXELS * MOST_CHANNELS];
-        let mut wide_target = [0u16; PIXELS * MOST_CHANNELS];
+        let mut float_source = [0f32; PIXELS * MOST_CHANNELS];
+        let mut float_target = [0f32; PIXELS * MOST_CHANNELS];
         for (src, dst) in source
             .chunks(PIXELS * sc)
             .zip(target.chunks_mut(PIXELS * tc))
         {
-            let wide_src = &mut wide_source[..src.len()];
-            for (wide, sample) in wide_src.iter_mut().zip(src) {
-                *wide = u16::from(*sample) * 257;
+            let in_float = &mut float_source[..src.len()];
+            for (float, sample) in in_float.iter_mut().zip(src) {
+                *float = f32::from(*sample) / 255.0;
             }
-            let wide_dst = &mut wide_target[..dst.len()];
-            self.transform.transform(wide_src, wide_dst)?;
-            for (sample, wide) in dst.iter_mut().zip(wide_dst.iter()) {
-                *sample = ((u32::from(*wide) * 255 + 32767) / 65535) as u8;
+            let out_float = &mut float_target[..dst.len()];
+            self.transform.transform(in_float, out_float)?;
+            for (sample, float) in dst.iter_mut().zip(out_float.iter()) {
+                *sample = (f64::from(float.clamp(0.0, 1.0)) * 255.0 + 0.5) as u8;
             }
         }
         Ok(())
     }
 }
 
-fn u8_through_u16(
-    transform: Arc<dyn TransformExecutor<u16> + Send + Sync>,
-    source: Layout,
-    target: Layout,
-) -> MoxTransformInner {
-    MoxTransformInner::U8(Arc::new(U8ThroughU16 {
+/// The 8-bit transform for a pair of profiles. `options` are for the F32 path.
+fn u8_transform(
+    source: &ColorProfile,
+    target: &ColorProfile,
+    layout: (Layout, Layout),
+    options: TransformOptions,
+) -> Result<MoxTransformInner, moxcms::CmsError> {
+    if let Some(shaper) = U8MatrixShaper::of(source, target, layout) {
+        return Ok(MoxTransformInner::U8(Arc::new(shaper)));
+    }
+    let transform = source.create_transform_f32(layout.0, target, layout.1, options)?;
+    Ok(MoxTransformInner::U8(Arc::new(U8ThroughF32 {
         transform,
-        source_channels: source.channels(),
-        target_channels: target.channels(),
-    }))
+        source_channels: layout.0.channels(),
+        target_channels: layout.1.channels(),
+    })))
 }
 
 const fn is_rgb_format(format: PixelFormat) -> bool {
@@ -607,12 +696,13 @@ fn build_transform_inner(
     let depth = src_format.channel_type();
 
     let inner = match depth {
-        ChannelType::U8 => {
-            let xform = src_profile
-                .create_transform_16bit(src_layout, dst_profile, dst_layout, opts)
-                .map_err(|e| MoxCmsError(format!("failed to create u8 transform: {e}")))?;
-            u8_through_u16(xform, src_layout, dst_layout)
-        }
+        ChannelType::U8 => u8_transform(
+            src_profile,
+            dst_profile,
+            (src_layout, dst_layout),
+            options_for_profiles(PixelFormat::RgbF32, src_profile, dst_profile),
+        )
+        .map_err(|e| MoxCmsError(format!("failed to create u8 transform: {e}")))?,
         ChannelType::U16 => {
             let xform = src_profile
                 .create_transform_16bit(src_layout, dst_profile, dst_layout, opts)
@@ -857,9 +947,12 @@ impl crate::cms::PluggableCms for MoxCms {
         // outside moxcms in a separate plan step.
         let depth = src_format.channel_type();
         let inner_result = match depth {
-            ChannelType::U8 => src_profile
-                .create_transform_16bit(src_layout, &dst_profile, dst_layout, opts)
-                .map(|transform| u8_through_u16(transform, src_layout, dst_layout)),
+            ChannelType::U8 => u8_transform(
+                &src_profile,
+                &dst_profile,
+                (src_layout, dst_layout),
+                options_for_profiles(PixelFormat::RgbF32, &src_profile, &dst_profile),
+            ),
             ChannelType::U16 => src_profile
                 .create_transform_16bit(src_layout, &dst_profile, dst_layout, opts)
                 .map(MoxTransformInner::U16),
