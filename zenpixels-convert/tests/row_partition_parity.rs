@@ -29,7 +29,7 @@ fn source_row(d: D, pixels: usize) -> Vec<u8> {
 
 #[test]
 fn splits_change_nothing() {
-    let layouts = [L::Rgb, L::Rgba, L::Bgra, L::Gray, L::GrayAlpha];
+    let layouts = [L::Rgb, L::Rgba, L::Bgr, L::Bgra, L::Gray, L::GrayAlpha];
     let transfers = [T::Srgb, T::Linear, T::Bt709, T::Gamma22, T::Pq, T::Hlg];
     let mut failures = Vec::new();
     let mut checked = 0;
@@ -40,7 +40,7 @@ fn splits_change_nothing() {
                     for to_c in [C::U8, C::U16, C::F32] {
                         for from_t in transfers {
                             for to_t in transfers {
-                                let fixed = |l, c| matches!(l, L::Bgra) && c != C::U8;
+                                let fixed = |l, c| matches!(l, L::Bgr | L::Bgra) && c != C::U8;
                                 if fixed(from_l, from_c) || fixed(to_l, to_c) {
                                     continue;
                                 }

@@ -92,7 +92,7 @@ fn encoders() -> [(&'static str, Vec<D>); 5] {
     ]
 }
 
-/// PQ and HLG sources need a peak to reach SDR, and BGR has no conversion kernels. A cheap
+/// PQ and HLG sources need a peak to reach SDR. A cheap
 /// format that fails that way mustn't hide a dearer one that works: 80 of these 2,450 pairs
 /// did before candidates were checked.
 #[test]

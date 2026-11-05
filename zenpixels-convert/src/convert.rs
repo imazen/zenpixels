@@ -300,6 +300,8 @@ pub(crate) enum ConvertStep {
     Identity,
     /// BGRA → RGBA byte swizzle (or vice versa).
     SwizzleBgraRgba,
+    /// BGR → RGB byte swizzle (or vice versa), at 8 bits.
+    SwizzleBgrRgb,
     /// Fused RGB → BGRA: byte swap + add opaque alpha in a single SIMD pass.
     /// Equivalent to `[AddAlpha, SwizzleBgraRgba]` but writes the destination
     /// once instead of twice.
@@ -469,6 +471,7 @@ impl ConvertStep {
         match self {
             Self::Identity => "Identity",
             Self::SwizzleBgraRgba => "SwizzleBgraRgba",
+            Self::SwizzleBgrRgb => "SwizzleBgrRgb",
             Self::RgbToBgra => "RgbToBgra",
             Self::AddAlpha => "AddAlpha",
             Self::DropAlpha => "DropAlpha",
@@ -725,9 +728,24 @@ impl ConvertPlan {
             }));
         }
 
-        // BGR has no kernels: it may only move between identical descriptors.
+        // BGR kernels only swap bytes, at U8. Everything else happens as RGB in between.
         if from.layout() == ChannelLayout::Bgr || to.layout() == ChannelLayout::Bgr {
-            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            let eight_bit = |d: PixelDescriptor| {
+                d.layout() != ChannelLayout::Bgr || d.channel_type() == ChannelType::U8
+            };
+            if !eight_bit(from) || !eight_bit(to) {
+                return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            }
+            let canonical = |d: PixelDescriptor| {
+                if d.layout() == ChannelLayout::Bgr {
+                    PixelDescriptor::new(d.channel_type(), ChannelLayout::Rgb, None, d.transfer())
+                        .with_primaries(d.primaries)
+                        .with_signal_range(d.signal_range)
+                } else {
+                    d
+                }
+            };
+            return Self::around_swizzle(from, to, canonical, ConvertStep::SwizzleBgrRgb);
         }
 
         // BGRA storage exists only at U8. Keep it at the endpoint instead
@@ -1191,6 +1209,7 @@ impl ConvertPlan {
                     step,
                     ConvertStep::Identity
                         | ConvertStep::SwizzleBgraRgba
+                        | ConvertStep::SwizzleBgrRgb
                         | ConvertStep::AddAlpha
                         | ConvertStep::RgbToBgra
                         | ConvertStep::GrayToRgb
@@ -2640,6 +2659,7 @@ fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
         (a, b),
         // Self-inverse
         (ConvertStep::SwizzleBgraRgba, ConvertStep::SwizzleBgraRgba)
+        | (ConvertStep::SwizzleBgrRgb, ConvertStep::SwizzleBgrRgb)
         // Layout inverses (lossless for opaque data)
         | (ConvertStep::AddAlpha, ConvertStep::DropAlpha)
         // Transfer function f32↔f32 (exact inverses in float)
@@ -2687,6 +2707,16 @@ fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
 fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescriptor {
     let mut next = match step {
         ConvertStep::Identity => current,
+        ConvertStep::SwizzleBgrRgb => PixelDescriptor::new(
+            current.channel_type(),
+            if current.layout() == ChannelLayout::Bgr {
+                ChannelLayout::Rgb
+            } else {
+                ChannelLayout::Bgr
+            },
+            None,
+            current.transfer(),
+        ),
         ConvertStep::SwizzleBgraRgba => {
             let new_layout = match current.layout() {
                 ChannelLayout::Bgra => ChannelLayout::Rgba,

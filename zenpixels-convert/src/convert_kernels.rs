@@ -78,6 +78,17 @@ pub(super) fn apply_step_u8(
             swizzle_bgra_rgba(src, dst, w, from.channel_type());
         }
 
+        ConvertStep::SwizzleBgrRgb => {
+            for (out, px) in dst[..w * 3]
+                .as_chunks_mut::<3>()
+                .0
+                .iter_mut()
+                .zip(src[..w * 3].as_chunks::<3>().0)
+            {
+                *out = [px[2], px[1], px[0]];
+            }
+        }
+
         ConvertStep::AddAlpha => {
             add_alpha(src, dst, w, from.channel_type());
         }
