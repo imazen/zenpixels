@@ -8,7 +8,7 @@
 
 Pixel format types and transfer-function-aware conversion for Rust image codecs.
 
-The unpublished [zenpixels-iqa](zenpixels-iqa/README.md) companion defines
+The unpublished [zenpsychovisual-api](zenpsychovisual-api/README.md) companion defines
 still-image quality contracts without adding metric or codec dependencies to
 the pixel package.
 

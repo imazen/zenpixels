@@ -1,10 +1,12 @@
 use std::{borrow::Cow, sync::Arc};
-use zenpixels_iqa::zenpixels::plane::{
+use zenpsychovisual_api::zenpixels::plane::{
     AnyPlane, PlanarLayout, PlaneEncoding, PlaneRef, PlaneRole, PlaneSpec,
 };
-use zenpixels_iqa::zenpixels::sample::{ChromaSiting, ChromaSubsampling, SampleEncoding};
-use zenpixels_iqa::zenpixels::{ChannelType, Cicp, ColorContext, PixelDescriptor, PixelSlice};
-use zenpixels_iqa::*;
+use zenpsychovisual_api::zenpixels::sample::{ChromaSiting, ChromaSubsampling, SampleEncoding};
+use zenpsychovisual_api::zenpixels::{
+    ChannelType, Cicp, ColorContext, PixelDescriptor, PixelSlice,
+};
+use zenpsychovisual_api::*;
 
 struct Control {
     calls: usize,

@@ -1,8 +1,8 @@
-# zenpixels-iqa
+# zenpsychovisual-api
 
-Unpublished still-image quality contracts over zenpixels. The core is
-`no_std + alloc`, forbids unsafe code and depends on no metric implementation,
-codec, converter or GPU runtime.
+Shared contracts for image quality assessment over zenpixels. The current
+scope is still images. This unpublished core is `no_std + alloc`, forbids unsafe
+code and depends on no metric implementation, codec, converter or GPU runtime.
 
 A configured `Metric` declares every native output and its full arithmetic
 identity. `score` admits inputs and binds the rich evaluation to that identity:

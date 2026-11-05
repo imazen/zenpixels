@@ -305,17 +305,17 @@ release-reconcile-check:
 
 # Still-image IQA contract: no codec or metric implementation dependencies.
 iqa-check:
-    cargo fmt --manifest-path zenpixels-iqa/Cargo.toml --check
-    cargo test --locked --manifest-path zenpixels-iqa/Cargo.toml --no-default-features
-    cargo test --locked --manifest-path zenpixels-iqa/Cargo.toml --features std
-    cargo clippy --locked --manifest-path zenpixels-iqa/Cargo.toml --all-targets --all-features -- -D warnings
-    RUSTDOCFLAGS="-D warnings" cargo doc --locked --manifest-path zenpixels-iqa/Cargo.toml --no-deps
+    cargo fmt --manifest-path zenpsychovisual-api/Cargo.toml --check
+    cargo test --locked --manifest-path zenpsychovisual-api/Cargo.toml --no-default-features
+    cargo test --locked --manifest-path zenpsychovisual-api/Cargo.toml --features std
+    cargo clippy --locked --manifest-path zenpsychovisual-api/Cargo.toml --all-targets --all-features -- -D warnings
+    RUSTDOCFLAGS="-D warnings" cargo doc --locked --manifest-path zenpsychovisual-api/Cargo.toml --no-deps
 
 iqa-portability-check:
-    cargo +1.88.0 check --locked --manifest-path zenpixels-iqa/Cargo.toml --no-default-features
-    cargo check --locked --manifest-path zenpixels-iqa/Cargo.toml --no-default-features --target wasm32-unknown-unknown
-    cargo check --locked --manifest-path zenpixels-iqa/Cargo.toml --no-default-features --target thumbv7em-none-eabihf
+    cargo +1.88.0 check --locked --manifest-path zenpsychovisual-api/Cargo.toml --no-default-features
+    cargo check --locked --manifest-path zenpsychovisual-api/Cargo.toml --no-default-features --target wasm32-unknown-unknown
+    cargo check --locked --manifest-path zenpsychovisual-api/Cargo.toml --no-default-features --target thumbv7em-none-eabihf
 
 # Run at the repository root to retain pixel workspace inheritance in cross.
 iqa-cross-check toolchain='':
-    cross {{toolchain}} test --locked --manifest-path zenpixels-iqa/Cargo.toml --target i686-unknown-linux-gnu
+    cross {{toolchain}} test --locked --manifest-path zenpsychovisual-api/Cargo.toml --target i686-unknown-linux-gnu

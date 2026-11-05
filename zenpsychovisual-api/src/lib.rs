@@ -7,8 +7,8 @@
 //!
 //! Public records are extended through constructors, never downstream literals:
 //! ```compile_fail
-//! let opts = zenpixels_iqa::EvalOpts {
-//!     pulse: &zenpixels_iqa::how_far::NoPulse,
+//! let opts = zenpsychovisual_api::EvalOpts {
+//!     pulse: &zenpsychovisual_api::how_far::NoPulse,
 //!     map: None,
 //!     max_pixels: None,
 //! };

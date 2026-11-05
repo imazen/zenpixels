@@ -10,9 +10,9 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use zenpixels_iqa::how_far::{Pulse, SharedPulse, StopReason};
-use zenpixels_iqa::whereat::{At, ErrorAtExt};
-use zenpixels_iqa::*;
+use zenpsychovisual_api::how_far::{Pulse, SharedPulse, StopReason};
+use zenpsychovisual_api::whereat::{At, ErrorAtExt};
+use zenpsychovisual_api::*;
 type Error = MetricError;
 type Result<T> = MetricResult<T>;
 use zenpixels::{PixelDescriptor, PixelSlice};

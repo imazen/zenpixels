@@ -1,4 +1,4 @@
-# zenpixels-iqa
+# zenpsychovisual-api
 
 ## [Unreleased]
 
@@ -11,6 +11,11 @@ None. This new companion is an unpublished review API.
 - Still-image metric contracts with rich results, native plane validation,
   persistent identity, map geometry/folds, real reference reuse and conformance
   controls. No metric implementations or video session contracts are included.
+
+### Changed
+
+- Name the unpublished shared contract `zenpsychovisual-api`, with the Rust
+  namespace `zenpsychovisual_api`; retain `iqa` as a consumer-local alias.
 
 ## 0.3.1 cleanup — release reconciliation (2026-09-28)
 

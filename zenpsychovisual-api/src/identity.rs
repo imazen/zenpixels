@@ -127,8 +127,8 @@ impl Implementation {
 /// when it was set at compile time.
 ///
 /// ```
-/// let imp = zenpixels_iqa::implementation!(3);
-/// assert_eq!(imp.crate_name, "zenpixels-iqa");
+/// let imp = zenpsychovisual_api::implementation!(3);
+/// assert_eq!(imp.crate_name, "zenpsychovisual-api");
 /// assert_eq!(imp.score_revision, 3);
 /// ```
 #[macro_export]
@@ -497,7 +497,7 @@ mod tests {
     #[test]
     fn macro_reads_cargo() {
         let imp = crate::implementation!(4);
-        assert_eq!(imp.crate_name, "zenpixels-iqa");
+        assert_eq!(imp.crate_name, "zenpsychovisual-api");
         assert_eq!(imp.crate_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(imp.score_revision, 4);
         assert_eq!(imp.backend, Backend::Cpu);

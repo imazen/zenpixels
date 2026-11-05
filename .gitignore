@@ -66,4 +66,4 @@ fuzz-*.log
 .jj/
 
 # Retain the standalone IQA review dependency graph.
-!zenpixels-iqa/Cargo.lock
+!zenpsychovisual-api/Cargo.lock
