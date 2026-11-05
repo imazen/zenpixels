@@ -99,6 +99,50 @@ fn eight_bit_rounds_to_nearest() {
     }
 }
 
+/// Blue of this color is -0.051 in linear Adobe RGB. The backend's pure-gamma evaluator drops the sign,
+/// which gave 66 at 8 bits and 0.259 at F32. 16-bit takes the backend's table and isn't affected.
+#[test]
+fn out_of_gamut_samples_clip_on_a_pure_gamma_target() {
+    let dst = Source::Icc(ADOBE_RGB);
+    let src = Source::Icc(DISPLAY_P3_V4);
+
+    let mut eight = [0u8; 3];
+    build(src.clone(), dst.clone(), F::Rgb8, F::Rgb8)
+        .try_transform_row(&[247, 255, 0], &mut eight, 1)
+        .unwrap();
+    assert_eq!(eight[2], 0);
+
+    let input = [247.0f32 / 255.0, 1.0, 0.0];
+    let mut clipped = [0f32; 3];
+    build(src.clone(), dst.clone(), F::RgbF32, F::RgbF32)
+        .try_transform_row(
+            bytemuck::cast_slice(&input),
+            bytemuck::cast_slice_mut(&mut clipped),
+            1,
+        )
+        .unwrap();
+    assert_eq!(clipped[2], 0.0);
+
+    let mut unclipped = [0f32; 3];
+    MoxCms
+        .build_source_transform(
+            src,
+            dst,
+            F::RgbF32,
+            F::RgbF32,
+            &ConvertOptions::permissive().with_clip_out_of_gamut(false),
+        )
+        .unwrap()
+        .unwrap()
+        .try_transform_row(
+            bytemuck::cast_slice(&input),
+            bytemuck::cast_slice_mut(&mut unclipped),
+            1,
+        )
+        .unwrap();
+    assert!(unclipped[2] < -0.2, "blue {}", unclipped[2]);
+}
+
 /// `High` barycentric weights turned this into a constant at 16 bits.
 #[test]
 fn table_profile_is_right_at_every_depth() {

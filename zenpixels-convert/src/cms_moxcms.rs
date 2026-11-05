@@ -129,13 +129,10 @@ fn options_for_profiles(
     options
 }
 
-fn prefer_icc_for_float(profile: &mut ColorProfile, format: PixelFormat) {
-    if format.channel_type() == ChannelType::F32 {
-        // The extended evaluator checks CICP independently of
-        // allow_use_cicp_transfer. An explicit ICC request still selects its
-        // actual curves. Only this private parsed copy loses the hint.
-        profile.cicp = None;
-    }
+/// An explicit ICC request selects its actual curves. The extended evaluator checks CICP
+/// independently of `allow_use_cicp_transfer`, so only this private parsed copy loses the hint.
+fn prefer_icc_curves(profile: &mut ColorProfile) {
+    profile.cicp = None;
 }
 
 fn validate_channel_curves(profile: &ColorProfile) -> Result<(), MoxCmsError> {
@@ -186,9 +183,10 @@ impl RowExtent {
 
 /// 8-bit matrix-and-curve conversion through our own kernels, using the profiles' real curve and colorants.
 ///
-/// The backend's 8-bit path comes out low: on Display P3 to sRGB, 40% of its samples missed nearest
-/// rounding of its own F32 result, for a mean of -0.40 of a code. This covers RGB and RGBA where every
-/// source channel shares a curve and the target's curve is sRGB's.
+/// The backend's integer gamma tables truncate where the target's curve is sRGB's or BT.709's, in
+/// `make_gamma_table_impl`: on Display P3 to sRGB, 40% of its 8-bit samples missed nearest rounding, for
+/// a mean of -0.40 of a code. This covers RGB and RGBA where every source channel shares a curve and the
+/// target's curve is sRGB's.
 struct U8MatrixShaper {
     matrix: [[f32; 3]; 3],
     linearize: alloc::boxed::Box<[f32; 256]>,
@@ -271,6 +269,87 @@ impl TransformExecutor<u8> for U8MatrixShaper {
     }
 }
 
+/// F32 output through a pure-gamma curve. The backend's evaluator takes the power of a linear sample's
+/// magnitude and loses its sign, which turned out-of-gamut samples positive: on Display P3 to Adobe RGB,
+/// blue of 8-bit (247, 255, 0) came out 66 where the exact result clips to 0. The backend stops at linear
+/// light here, and this applies the curve, keeping the sign.
+struct PureGammaOutput {
+    transform: Arc<dyn TransformExecutor<f32> + Send + Sync>,
+    exponent: f32,
+    target_channels: usize,
+}
+
+impl TransformExecutor<f32> for PureGammaOutput {
+    fn transform(&self, source: &[f32], target: &mut [f32]) -> Result<(), moxcms::CmsError> {
+        self.transform.transform(source, target)?;
+        for pixel in target.chunks_exact_mut(self.target_channels) {
+            for value in &mut pixel[..3] {
+                *value = libm::powf(value.abs(), self.exponent).copysign(*value);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The exponent that encodes linear light into a pure-gamma RGB matrix profile, if the conversion is
+/// matrix to matrix on the analytic path.
+fn pure_gamma_exponent(
+    source: &ColorProfile,
+    target: &ColorProfile,
+    target_layout: Layout,
+    options: &TransformOptions,
+) -> Option<f32> {
+    let no_tables = |p: &ColorProfile| {
+        p.color_space == moxcms::DataColorSpace::Rgb
+            && p.lut_a_to_b_colorimetric.is_none()
+            && p.lut_a_to_b_perceptual.is_none()
+            && p.lut_b_to_a_colorimetric.is_none()
+            && p.lut_b_to_a_perceptual.is_none()
+    };
+    if !options.allow_extended_range_rgb_xyz
+        || !no_tables(source)
+        || !no_tables(target)
+        || !matches!(target_layout, Layout::Rgb | Layout::Rgba)
+    {
+        return None;
+    }
+    match target.red_trc.as_ref()? {
+        moxcms::ToneReprCurve::Lut(curve) => match curve.as_slice() {
+            [gamma] if *gamma != 0 => Some(256.0 / f32::from(*gamma)),
+            _ => None,
+        },
+        moxcms::ToneReprCurve::Parametric(_) => None,
+    }
+}
+
+/// The backend's F32 transform, apart from a pure-gamma target's curve, see [`PureGammaOutput`].
+fn f32_transform(
+    source: &ColorProfile,
+    target: &ColorProfile,
+    layout: (Layout, Layout),
+    options: TransformOptions,
+) -> Result<Arc<dyn TransformExecutor<f32> + Send + Sync>, moxcms::CmsError> {
+    let Some(exponent) = pure_gamma_exponent(source, target, layout.1, &options) else {
+        return source.create_transform_f32(layout.0, target, layout.1, options);
+    };
+    let mut linear = target.clone();
+    linear.cicp = None;
+    for trc in [
+        &mut linear.red_trc,
+        &mut linear.green_trc,
+        &mut linear.blue_trc,
+    ] {
+        // An empty curve is the ICC identity.
+        *trc = Some(moxcms::ToneReprCurve::Lut(alloc::vec::Vec::new()));
+    }
+    let transform = source.create_transform_f32(layout.0, &linear, layout.1, options)?;
+    Ok(Arc::new(PureGammaOutput {
+        transform,
+        exponent,
+        target_channels: layout.1.channels(),
+    }))
+}
+
 /// 8-bit samples through the backend's F32 path, with nearest rounding on the way out, for tables, gray
 /// and anything else without a matrix to take. `v / 255` rounds back to `v`, so a carried alpha is exact.
 struct U8ThroughF32 {
@@ -321,7 +400,7 @@ fn u8_transform(
     if let Some(shaper) = U8MatrixShaper::of(source, target, layout) {
         return Ok(MoxTransformInner::U8(Arc::new(shaper)));
     }
-    let transform = source.create_transform_f32(layout.0, target, layout.1, options)?;
+    let transform = f32_transform(source, target, layout, options)?;
     Ok(MoxTransformInner::U8(Arc::new(U8ThroughF32 {
         transform,
         source_channels: layout.0.channels(),
@@ -806,16 +885,18 @@ impl crate::cms::PluggableCms for MoxCms {
             ChannelType::U16 => src_profile
                 .create_transform_16bit(src_layout, &dst_profile, dst_layout, opts)
                 .map(MoxTransformInner::U16),
-            ChannelType::F16 | ChannelType::F32 | _ => src_profile
-                .create_transform_f32(src_layout, &dst_profile, dst_layout, opts)
-                .map(|transform| {
-                    float_transform(
-                        transform,
-                        src_layout,
-                        dst_layout,
-                        options.clip_out_of_gamut(),
-                    )
-                }),
+            ChannelType::F16 | ChannelType::F32 | _ => {
+                f32_transform(&src_profile, &dst_profile, (src_layout, dst_layout), opts).map(
+                    |transform| {
+                        float_transform(
+                            transform,
+                            src_layout,
+                            dst_layout,
+                            options.clip_out_of_gamut(),
+                        )
+                    },
+                )
+            }
         };
 
         let inner = match inner_result {
@@ -858,7 +939,7 @@ fn build_moxcms_profile_for_format(
         // (`check_layout`).
         crate::ColorProfileSource::Icc(icc) => ColorProfile::new_from_slice(icc)
             .map(|mut profile| {
-                prefer_icc_for_float(&mut profile, format);
+                prefer_icc_curves(&mut profile);
                 Some(profile)
             })
             .map_err(|e| MoxCmsError(format!("failed to parse ICC: {e}"))),
