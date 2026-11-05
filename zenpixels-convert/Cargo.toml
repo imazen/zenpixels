@@ -196,6 +196,12 @@ harness = false
 required-features = ["cms-moxcms"]
 
 [[bench]]
+name = "bench_cmyk8"
+path = "benches/bench_cmyk8.rs"
+harness = false
+required-features = ["cms-moxcms"]
+
+[[bench]]
 name = "bench_premul_u16"
 path = "benches/bench_premul_u16.rs"
 harness = false

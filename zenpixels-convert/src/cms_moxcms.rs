@@ -445,10 +445,13 @@ fn names_srgb(source: &crate::ColorProfileSource<'_>) -> bool {
     }
 }
 
-/// F32 CMYK through a profile, on the path libjxl takes through lcms2 for sRGB output: relative
-/// colorimetric with black-point compensation, and its own sign-preserving sRGB encode. The backend
+/// CMYK through a profile, on the path libjxl takes through lcms2 for sRGB output: relative
+/// colorimetric with black-point compensation, and a sign-preserving sRGB encode of its own. The backend
 /// evaluates its sRGB curve imprecisely after a CMYK lookup and has no black-point compensation.
 /// Other destinations use the perceptual intent, without extended range, the closer of the two.
+///
+/// F32 CMYK runs this directly. `Cmyk8` runs it through [`U8ThroughF32`], so the two depths give one
+/// color, rounded: an 8-bit path of its own had no black-point compensation.
 struct CmykFloatTransform {
     transform: Arc<dyn TransformExecutor<f32> + Send + Sync>,
     invert_input: bool,
@@ -486,22 +489,27 @@ impl TransformExecutor<f32> for CmykFloatTransform {
                     *v = 1.0 - *v;
                 }
             }
+            // A target's alpha is 1 from the backend, and neither encoded nor scaled.
+            let colors = if tc <= 2 { 1 } else { 3 };
             if self.encode_srgb {
                 let scale = 1.0 / (1.0 - self.black_point_y);
-                for v in dst.iter_mut() {
-                    let linear = (*v - self.black_point_y) * scale;
-                    let a = linear.abs();
-                    let encoded = if a <= 0.003_130_8 {
-                        a * 12.92
-                    } else {
-                        1.055 * libm::powf(a, 1.0 / 2.4) - 0.055
-                    };
-                    *v = encoded.copysign(linear);
+                for pixel in dst.chunks_exact_mut(tc) {
+                    for v in &mut pixel[..colors] {
+                        *v = (*v - self.black_point_y) * scale;
+                    }
+                }
+                // Sign-preserving, so out-of-gamut samples survive for `clip` to decide.
+                if tc == 4 {
+                    linear_srgb::default::linear_to_srgb_extended_rgba_slice(dst);
+                } else {
+                    linear_srgb::default::linear_to_srgb_extended_slice(dst);
                 }
             }
             if self.clip {
-                for v in dst.iter_mut() {
-                    *v = v.clamp(0.0, 1.0);
+                for pixel in dst.chunks_exact_mut(tc) {
+                    for v in &mut pixel[..colors] {
+                        *v = v.clamp(0.0, 1.0);
+                    }
                 }
             }
         }
@@ -546,14 +554,12 @@ fn cmyk_float_transform(
     dst_format: PixelFormat,
     target_is_srgb: bool,
     clip: bool,
-) -> Result<MoxTransformInner, MoxCmsError> {
+) -> Result<Arc<CmykFloatTransform>, MoxCmsError> {
     let Some(dst_layout) = pixel_format_to_layout(dst_format) else {
-        return Err(MoxCmsError(
-            "F32 CMYK has no conversion to this layout".into(),
-        ));
+        return Err(MoxCmsError("CMYK has no conversion to this layout".into()));
     };
     let mut target = target.clone();
-    let encode_srgb = target_is_srgb && dst_layout == Layout::Rgb;
+    let encode_srgb = target_is_srgb && matches!(dst_layout, Layout::Rgb | Layout::Rgba);
     if encode_srgb {
         target.cicp = None;
         // An empty curve is the ICC identity.
@@ -584,7 +590,7 @@ fn cmyk_float_transform(
     let transform = source
         .create_transform_f32(Layout::Rgba, &target, dst_layout, options)
         .map_err(|e| MoxCmsError(format!("moxcms create_transform_f32 failed: {e}")))?;
-    Ok(MoxTransformInner::F32(Arc::new(CmykFloatTransform {
+    Ok(Arc::new(CmykFloatTransform {
         transform,
         invert_input: src_format == PixelFormat::CmykF32Inverted,
         invert_output: dst_format == PixelFormat::CmykF32Inverted,
@@ -592,7 +598,7 @@ fn cmyk_float_transform(
         black_point_y,
         target_channels: dst_layout.channels(),
         clip,
-    })))
+    }))
 }
 
 /// Preserve the requested bounded input/output behavior around the analytic
@@ -846,9 +852,57 @@ impl crate::cms::PluggableCms for MoxCms {
                     names_srgb(&dst),
                     options.clip_out_of_gamut(),
                 )
-                .map(|inner| {
+                .map(|transform| {
                     Box::new(MoxRowTransformMut {
-                        inner,
+                        inner: MoxTransformInner::F32(transform),
+                        extent: RowExtent::of(src_format, dst_format),
+                    }) as Box<dyn crate::cms::RowTransformMut>
+                })
+                .map_err(|error| whereat::at!(CmsPluginError::new(error))),
+            );
+        }
+        // Into another ink profile is a different operation, with its own path below. Otherwise the
+        // F32 path with the same profiles, built for F32, so the two depths can't differ.
+        if src_format == PixelFormat::Cmyk8
+            && dst_profile.color_space != moxcms::DataColorSpace::Cmyk
+        {
+            let float_target = match dst_format {
+                PixelFormat::Rgb8 => PixelFormat::RgbF32,
+                PixelFormat::Rgba8 => PixelFormat::RgbaF32,
+                PixelFormat::Gray8 => PixelFormat::GrayF32,
+                PixelFormat::GrayA8 => PixelFormat::GrayAF32,
+                _ => {
+                    return Some(Err(whereat::at!(CmsPluginError::msg(
+                        "Cmyk8 has no conversion to this format"
+                    ))));
+                }
+            };
+            let built =
+                build_moxcms_profile_for_format(&src, PixelFormat::CmykF32).and_then(|source| {
+                    let target = build_moxcms_profile_for_format(&dst, float_target)?;
+                    Ok((source, target))
+                });
+            let Ok((Some(source), Some(target))) = built else {
+                return Some(Err(whereat::at!(CmsPluginError::msg(
+                    "moxcms could not build the F32 form of these profiles"
+                ))));
+            };
+            return Some(
+                cmyk_float_transform(
+                    &source,
+                    &target,
+                    PixelFormat::CmykF32,
+                    float_target,
+                    names_srgb(&dst),
+                    true,
+                )
+                .map(|transform| {
+                    Box::new(MoxRowTransformMut {
+                        inner: MoxTransformInner::U8(Arc::new(U8ThroughF32 {
+                            transform,
+                            source_channels: src_layout.channels(),
+                            target_channels: dst_layout.channels(),
+                        })),
                         extent: RowExtent::of(src_format, dst_format),
                     }) as Box<dyn crate::cms::RowTransformMut>
                 })
