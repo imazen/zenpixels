@@ -178,7 +178,8 @@ impl RowConverter {
     /// Cross-profile conversions (different primaries or transfer) go
     /// through the default CMS dispatch chain — see
     /// [`new_explicit_with_cms`](Self::new_explicit_with_cms) for details.
-    /// Returns `Err` if no conversion path exists between the formats.
+    /// Returns `Err` if no conversion path exists between the formats, which
+    /// includes SDR-encoded samples into PQ or HLG: see [`ConvertPlan::new`].
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
         Self::new_explicit_with_cms(

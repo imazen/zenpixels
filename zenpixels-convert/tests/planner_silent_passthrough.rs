@@ -808,10 +808,23 @@ fn adobergb_u8_to_bt2020_pq_f32_gray_axis_preserved() {
     let src_d =
         rgb(ChannelType::U8, TransferFunction::Gamma22).with_primaries(ColorPrimaries::AdobeRgb);
     let dst_d = rgb(ChannelType::F32, TransferFunction::Pq).with_primaries(ColorPrimaries::Bt2020);
-    let mut c = RowConverter::new(src_d, dst_d).unwrap();
+    // SDR-encoded → PQ refuses, since nothing says where SDR white belongs. Through linear.
+    assert!(RowConverter::new(src_d, dst_d).is_err());
+    let linear =
+        rgb(ChannelType::F32, TransferFunction::Linear).with_primaries(ColorPrimaries::AdobeRgb);
     let src = [128u8, 128, 128];
+    let mut mid = [0f32; 3];
+    RowConverter::new(src_d, linear).unwrap().convert_row(
+        &src,
+        bytemuck::cast_slice_mut(&mut mid),
+        1,
+    );
     let mut dst = [0f32; 3];
-    c.convert_row(&src, bytemuck::cast_slice_mut(&mut dst), 1);
+    RowConverter::new(linear, dst_d).unwrap().convert_row(
+        bytemuck::cast_slice(&mid),
+        bytemuck::cast_slice_mut(&mut dst),
+        1,
+    );
     // Expected: gamma22 EOTF on 128/255 → linear → PQ OETF (matrix is
     // D65→D65, identity on neutral gray).
     let lin = gamma22_eotf(u8_to_f32(128));

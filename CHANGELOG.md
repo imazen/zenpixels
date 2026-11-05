@@ -33,6 +33,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- **Breaking:** sRGB, BT.709 and Gamma22 into PQ or HLG now return `NoPath` from `RowConverter`, `ConvertPlan`, `convert_to` and output plans, as `Color::try_convert_to` already did. They put SDR white at the transfer's peak, 10,000 cd/m² on PQ. Decode to linear, then use `quantize_to` to place it.
+
 - Fallible pixel-buffer constructors request allocator-zeroed bytes directly, retaining allocation errors.
 
 - **Breaking:** removed `cms::ColorManagement`, `finalize_for_output` and the colorant-based `identify_profile` with them. Use `PluggableCms` and `EncodeReady::finalize`; `zenpixels::icc::IccIdentification` identifies profiles. zenpipe's `IccTransformSource` and `job` need migrating at the pin bump. `builtin_profiles` stays: it's `pub(crate)`, and zenjpeg's XYB plan names it.

@@ -70,6 +70,7 @@ pub(crate) fn validate_descriptors(
             && (from.channel_type() != to.channel_type()
                 || from.transfer() != to.transfer()
                 || from.primaries != to.primaries))
+        || is_sdr_to_hdr(from.transfer(), to.transfer())
     {
         return Err(whereat::at!(ConvertError::NoPath { from, to }));
     }
@@ -189,6 +190,18 @@ pub(crate) fn is_hdr_to_sdr(from: TransferFunction, to: TransferFunction) -> boo
         TransferFunction::Srgb | TransferFunction::Bt709 | TransferFunction::Gamma22
     );
     src_is_hdr && dst_is_sdr_encoded
+}
+
+/// True when SDR-encoded samples would be written to PQ or HLG.
+///
+/// Neither side says where SDR white belongs, and passing the signal through puts it at the
+/// transfer's peak: 10,000 cd/m² on PQ, where BT.2408 and CSS put it at 203. A caller who knows
+/// decodes to `Linear` first, then uses `PixelSliceConvertExt::quantize_to` for an anchor.
+pub(crate) fn is_sdr_to_hdr(from: TransferFunction, to: TransferFunction) -> bool {
+    matches!(
+        from,
+        TransferFunction::Srgb | TransferFunction::Bt709 | TransferFunction::Gamma22
+    ) && matches!(to, TransferFunction::Pq | TransferFunction::Hlg)
 }
 
 /// Pre-computed conversion plan.
@@ -788,6 +801,12 @@ impl ConvertPlan {
     /// kernels use full-range scaling and cannot preserve narrow anchors.
     /// Relabeling without correct rescaling would corrupt pixels — see
     /// the signal-range notes on the [crate docs](crate#step-3-convert).
+    ///
+    /// SDR-encoded samples (`Srgb`, `Bt709`, `Gamma22`) into PQ or HLG also
+    /// return [`ConvertError::NoPath`]: nothing says where SDR white belongs,
+    /// and passing the signal through would put it at the transfer's peak.
+    /// Decode to `Linear`, then use
+    /// [`quantize_to`](crate::PixelSliceConvertExt::quantize_to) to place it.
     ///
     /// CMYK (and any other non-native color model) returns
     /// [`ConvertError::NeedsCms`] so the caller can re-issue via

@@ -28,6 +28,12 @@ fn skip_hdr_to_sdr_encoded(src: TransferFunction, dst: TransferFunction) -> bool
     src_is_hdr && dst_is_sdr_encoded
 }
 
+/// SDR-encoded → PQ/HLG refuses: nothing says where SDR white belongs
+/// (`tests/sdr_into_hdr.rs`). Linear ↔ PQ/HLG still covers each curve here.
+fn skip_sdr_encoded_to_hdr(src: TransferFunction, dst: TransferFunction) -> bool {
+    skip_hdr_to_sdr_encoded(dst, src)
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Section 1: CICP Code Point Mapping Exhaustiveness
 // ═══════════════════════════════════════════════════════════════════════════
@@ -529,7 +535,7 @@ fn all_f32_tf_pairs_create_converters() {
             // HDR→SDR-encoded refuses without a peak (use the HDR-aware
             // constructors); skip — these are tone-mapping tests, not TF
             // math tests.
-            if skip_hdr_to_sdr_encoded(from_tf, to_tf) {
+            if skip_hdr_to_sdr_encoded(from_tf, to_tf) || skip_sdr_encoded_to_hdr(from_tf, to_tf) {
                 continue;
             }
             let from = PixelDescriptor::new(ChannelType::F32, ChannelLayout::Rgb, None, from_tf);
@@ -639,7 +645,7 @@ fn cross_tf_via_linear_matches_direct() {
             // also goes through `from_lin = Linear → dst_tf` which would
             // be SDR→SDR (fine) or Linear→HDR (fine). Skip the HDR→SDR
             // direct comparison entirely.
-            if skip_hdr_to_sdr_encoded(src_tf, dst_tf) {
+            if skip_hdr_to_sdr_encoded(src_tf, dst_tf) || skip_sdr_encoded_to_hdr(src_tf, dst_tf) {
                 continue;
             }
             let mut direct = f32_converter(src_tf, dst_tf);
@@ -697,7 +703,7 @@ fn black_preserved_all_tf_pairs() {
             ) {
                 continue;
             }
-            if skip_hdr_to_sdr_encoded(from_tf, to_tf) {
+            if skip_hdr_to_sdr_encoded(from_tf, to_tf) || skip_sdr_encoded_to_hdr(from_tf, to_tf) {
                 continue;
             }
             let mut conv = f32_converter(from_tf, to_tf);
@@ -732,7 +738,7 @@ fn white_preserved_all_tf_pairs() {
             ) {
                 continue;
             }
-            if skip_hdr_to_sdr_encoded(from_tf, to_tf) {
+            if skip_hdr_to_sdr_encoded(from_tf, to_tf) || skip_sdr_encoded_to_hdr(from_tf, to_tf) {
                 continue;
             }
             let mut conv = f32_converter(from_tf, to_tf);

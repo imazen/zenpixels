@@ -62,7 +62,7 @@ Parsing to linear loses the original space, so a color can't be serialized back 
 
 **1. `rec2100-linear` means something else.** CSS puts 1.0 at 203 cd/m². Our linear puts 1.0 at PQ's peak, 10,000 cd/m². `color(rec2100-linear 1 1 1)` needs scaling by 203/10,000 at parse.
 
-**2. SDR doesn't convert straight to PQ or HLG.** `Color::srgb8(255, 255, 255).try_convert_to(pq)` is refused, where CSS gives 0.58. `CompositeOnto` places white through `reference_white`. `RowConverter::new` still puts it at the peak, 10,000 cd/m².
+**2. SDR doesn't convert straight to PQ or HLG.** Every entry point refuses it with `NoPath`, where CSS gives 0.58: `Color::try_convert_to`, `RowConverter`, `ConvertPlan`, `convert_to` and output plans. `CompositeOnto` places white through `reference_white`. To place SDR on PQ, decode to linear and call `quantize_to`, which reads the anchor from the color context and defaults to BT.2408's 203 cd/m². HLG has no such route yet.
 
 **3. Clipping shifts hue.** To sRGB `u8`, against the spec's binary search implemented here. Hue and ΔEOK are measured before rounding, with the rounded result beside them. [The gamut survey](gamut-mapping-survey.md) adds other methods and a tolerance-free search:
 

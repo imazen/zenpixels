@@ -249,7 +249,7 @@ fn output_digest_matches_on_every_platform() {
     assert_eq!(hash, EXPECTED_DIGEST, "output changed: {hash:#018x}");
 }
 
-const EXPECTED_DIGEST: u64 = 0x935dd17f25e38620;
+const EXPECTED_DIGEST: u64 = 0x28af9b6c9d9fd66c;
 
 /// Rounding in f32 polynomials can reverse adjacent inputs, by at most one 16-bit code. Windows
 /// of consecutive floats at the top of each range and around every branch.
