@@ -13,7 +13,7 @@ use kernels::*;
 use matrices::*;
 use methods::*;
 use std::io::Write;
-use zenpixels::{ColorPrimaries as P, PixelDescriptor as D, TransferFunction as Tf};
+use zenpixels::{ColorPrimaries as P, PixelDescriptor as D};
 use zenpixels_convert::{RowConverter, hdr::SoftCompress, oklab::OklabSpace, policy::ConvertOptions};
 
 const KNEE: f32 = 0.96;
@@ -119,23 +119,11 @@ type Eval = Box<dyn Fn(&mut [[f32; 3]]) + Send + Sync>;
 
 fn methods(tau: f32, eps: f32) -> Vec<(&'static str, Eval)> {
     let s = soft();
-    let s2 = soft();
-    let g = params(0, tau, eps);
     let mut out: Vec<(&'static str, Eval)> = vec![
         ("clip", Box::new(|v| clip_strip(v))),
-        ("soft-table", Box::new(move |v| s.apply_strip(v))),
-        (
-            "soft-table+gate",
-            Box::new(move |v| {
-                for px in v.iter_mut() {
-                    if !gate_passes(&g, px) {
-                        s2.apply_strip(core::slice::from_mut(px));
-                    }
-                }
-            }),
-        ),
+        ("soft", Box::new(move |v| s.apply_strip(v))),
     ];
-    for (name, n) in [("solve-1", 1), ("solve-2", 2), ("solve-3", 3), ("solve-4", 4)] {
+    for (name, n) in [("solve-3", 3)] {
         let p = params(n, tau, eps);
         out.push((name, Box::new(move |v| solve_strip(&p, v))));
     }
@@ -449,43 +437,34 @@ fn bench(dir: &str, tau: f32, eps: f32) {
                         }
                     })
                 });
-                let lin = D::RGBF32_LINEAR;
-                for (name, n) in [("gate+solve-2", 2u32), ("gate+solve-3", 3)] {
-                    let mut up = RowConverter::new_explicit(from, lin, &opts()).unwrap();
-                    let mut down = RowConverter::new_explicit(lin, to, &opts()).unwrap();
-                    let p = params(n, tau, eps);
-                    let s2 = src.clone();
-                    let mut mid = vec![[0f32; 3]; w];
-                    let mut dst = vec![0u8; w * 3];
-                    group.bench(name, move |b| {
-                        b.iter(|| {
-                            for row in s2.chunks_exact(w * 3) {
-                                up.convert_row(row, bytemuck::cast_slice_mut(&mut mid), w as u32);
-                                solve_strip(&p, &mut mid);
-                                down.convert_row(bytemuck::cast_slice(&mid), &mut dst, w as u32);
-                                std::hint::black_box(&dst);
-                            }
-                        })
-                    });
-                }
+                let mut opt = RowConverter::new_explicit(
+                    from,
+                    to,
+                    &ConvertOptions::permissive().with_gamut_mapping(zenpixels::GamutMapping::SoftCompress),
+                )
+                .unwrap();
+                let s2 = src.clone();
+                let mut dst = vec![0u8; w * 3];
+                group.bench("option-soft", move |b| {
+                    b.iter(|| {
+                        for row in s2.chunks_exact(w * 3) {
+                            opt.convert_row(row, &mut dst, w as u32);
+                            std::hint::black_box(&dst);
+                        }
+                    })
+                });
             });
         }
     });
-    std::fs::write("results/bench.json", serde_json::to_string_pretty(&result).unwrap()).unwrap();
+    std::fs::write(std::env::var("BENCH_JSON").unwrap(), serde_json::to_string_pretty(&result).unwrap()).unwrap();
     println!("{}", result.to_markdown());
 }
 
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     std::fs::create_dir_all("results").unwrap();
-    let (tau, eps) = (a.get(3).and_then(|v| v.parse().ok()).unwrap_or(0.0), a.get(4).map(|v| v.parse().unwrap()).unwrap_or(0.01));
+    let (tau, eps): (f32, f32) = (a.get(3).and_then(|v| v.parse().ok()).unwrap_or(0.0), a.get(4).map(|v| v.parse().unwrap()).unwrap_or(0.01));
     match a.get(1).map(|s| s.as_str()) {
-        Some("table-seam") => {
-            let lut = soft();
-            for h in [0.0f32, -1e-9, -1e-7, -1e-6, -1e-5, 1e-7] {
-                println!("max_chroma(0.5, {h:e}) = {}", lut.lut().max_chroma(0.5, h));
-            }
-        }
         Some("worst") => {
             let m = source_matrix(0);
             let p = params(3, tau, eps);
@@ -512,23 +491,11 @@ fn main() {
                 println!("de {e:.5} src {c:?} L {l:.5} C {h:.5} bisect {:.5} first_crossing {first:.5} solve_out {:?}", exact_cmax(l, a, b), o.map(|v| (v * 1e4).round() / 1e4));
             }
         }
-        Some("planar-table") => {
-            use zenpixels_convert::hdr::GamutBoundaryLut;
+        Some("planar") => {
             let m = source_matrix(0);
             let imgs = images(&a[2], &m);
             let space = OklabSpace::for_primaries(P::Bt709).unwrap();
             let result = zenbench::run(|suite| {
-                suite.group("table-build", |group| {
-                    let cfg = group.config();
-                    cfg.max_rounds = 20;
-                    cfg.min_rounds = 10;
-                    cfg.auto_rounds = false;
-                    cfg.max_iterations = 1;
-                    let inv = *space.lms_to_rgb();
-                    group.bench("GamutBoundaryLut::new", move |b| {
-                        b.iter(|| std::hint::black_box(GamutBoundaryLut::new(&inv)))
-                    });
-                });
                 for img in &imgs {
                     let n = (1usize << 18).min(img.rgb.len());
                     let (mut l, mut oa, mut ob) = (vec![0f32; n], vec![0f32; n], vec![0f32; n]);
@@ -545,13 +512,13 @@ fn main() {
                         cfg.auto_rounds = false;
                         cfg.max_iterations = 16;
                         group.throughput(zenbench::Throughput::Elements(n as u64));
-                        let lut = GamutBoundaryLut::new(space.lms_to_rgb());
+                        let sc = soft();
                         let (mut wa, mut wb) = (oa.clone(), ob.clone());
-                        group.bench("table", move |b| {
+                        group.bench("solve", move |b| {
                             b.iter(|| {
                                 wa.copy_from_slice(&oa);
                                 wb.copy_from_slice(&ob);
-                                lut.compress_planes(&l, &mut wa, &mut wb, KNEE).unwrap();
+                                sc.compress_oklab_planes(&l, &mut wa, &mut wb).unwrap();
                                 std::hint::black_box(&wa);
                             })
                         });
