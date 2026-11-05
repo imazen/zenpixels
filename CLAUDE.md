@@ -136,8 +136,9 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 - Fixed (2026-11-04): a PQ or HLG matte put white at the format's peak: 10,000 cd/m² on PQ.
   `CompositeOnto::reference_white` now places it, defaulting to BT.2408.
 
-- Open (2026-11-04): `RowConverter::new` puts SDR white at PQ's peak, 10,000 cd/m², where CSS puts 203. `ColorConvertExt::try_convert_to` refuses this.
-  `docs/css-color-parity.md` lists this and the other CSS differences.
+- Fixed (2026-11-05): `RowConverter::new` put SDR white at PQ's and HLG's peak (signal 1.0, measured; 10,000 cd/m² on PQ), where CSS puts 203.
+  `validate_descriptors` now refuses sRGB, BT.709 and Gamma22 into PQ or HLG for every entry point, which `Color::try_convert_to` already did. Nothing in
+  `~/work/zen` converted SDR into HDR that way. `tests/sdr_into_hdr.rs`; `docs/css-color-parity.md` lists the route that keeps an anchor.
 
 - Fixed (2026-11-04): the matte was not converted to wide-gamut source primaries, so sRGB red over a P3 source came out as P3's red.
   `CompositeOnto::background` is now a `Color`, converted to the source's primaries; `zenpixels-convert/tests/color.rs`.

@@ -19,8 +19,8 @@ fn involves_icc(src: &ColorProfileSource<'_>, dst: &ColorProfileSource<'_>) -> b
     matches!(src, ColorProfileSource::Icc(_)) || matches!(dst, ColorProfileSource::Icc(_))
 }
 use zenpixels_convert::{
-    Cicp, ColorAuthority, ColorOrigin, PixelBuffer, PixelDescriptor, PixelFormat,
-    output::OutputProfile,
+    Cicp, ColorAuthority, ColorOrigin, ColorPrimaries, ConvertError, PixelBuffer, PixelDescriptor,
+    PixelFormat, TransferFunction, output::OutputProfile,
 };
 
 extern crate alloc;
@@ -126,6 +126,32 @@ fn make_rgb8_buffer(width: u32, height: u32, pixel: [u8; 3]) -> PixelBuffer {
         data.extend_from_slice(&pixel);
     }
     PixelBuffer::from_vec(data, width, height, PixelDescriptor::RGB8_SRGB).unwrap()
+}
+
+/// A pixel already in `transfer` and BT.2020, as an HDR origin's buffer is.
+fn make_hdr_rgb8_buffer(transfer: TransferFunction) -> PixelBuffer {
+    let descriptor = PixelDescriptor::RGB8_SRGB
+        .with_transfer(transfer)
+        .with_primaries(ColorPrimaries::Bt2020);
+    PixelBuffer::from_vec(vec![128; 3], 1, 1, descriptor).unwrap()
+}
+
+/// SDR pixels whose origin was HDR are refused: their white has no place on PQ.
+#[test]
+fn sdr_pixels_refuse_an_hdr_output_profile() {
+    let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
+    let origin = ColorOrigin::from_cicp(pq_cicp());
+    let refused = EncodeReady::finalize(
+        &buf,
+        &origin,
+        OutputProfile::SameAsOrigin,
+        PixelFormat::Rgb8,
+        Some(&NoopCms),
+    );
+    assert!(matches!(
+        refused.err().map(|e| e.decompose().0),
+        Some(ConvertError::NoPath { .. })
+    ));
 }
 
 fn make_rgba8_buffer(width: u32, height: u32, pixel: [u8; 4]) -> PixelBuffer {
@@ -848,7 +874,7 @@ fn rgb(cicp: Cicp) -> Cicp {
 /// HDR origin → SameAsOrigin → allowed (passthrough)
 #[test]
 fn hdr_pq_same_as_origin_allowed() {
-    let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
+    let buf = make_hdr_rgb8_buffer(TransferFunction::Pq);
     let origin = ColorOrigin::from_cicp(pq_cicp());
     let ready = EncodeReady::finalize(
         &buf,
@@ -864,7 +890,7 @@ fn hdr_pq_same_as_origin_allowed() {
 /// HDR origin → HDR Named(PQ) target → allowed
 #[test]
 fn hdr_pq_to_hdr_named_allowed() {
-    let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
+    let buf = make_hdr_rgb8_buffer(TransferFunction::Pq);
     let origin = ColorOrigin::from_cicp(pq_cicp());
     let ready = EncodeReady::finalize(
         &buf,
@@ -880,7 +906,7 @@ fn hdr_pq_to_hdr_named_allowed() {
 /// HDR (HLG) origin → HDR Named(HLG) target → allowed
 #[test]
 fn hdr_hlg_to_hdr_named_allowed() {
-    let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
+    let buf = make_hdr_rgb8_buffer(TransferFunction::Hlg);
     let origin = ColorOrigin::from_cicp(hlg_cicp());
     let _ready = EncodeReady::finalize(
         &buf,

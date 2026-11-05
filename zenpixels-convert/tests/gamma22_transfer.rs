@@ -140,7 +140,9 @@ fn adobe_rgb_to_bt2020_pq_f32_preserves_neutral_gray() {
 
     // Neutral gray: AdobeRGB encodes as (v, v, v) with v^2.2 linear.
     let src: Vec<f32> = [0.25f32, 0.5, 0.75].iter().flat_map(|&v| [v; 3]).collect();
-    let dst = convert_f32_rgb(src_desc, dst_desc, &src);
+    // SDR-encoded → PQ refuses, since nothing says where SDR white belongs. Through linear.
+    let linear = src_desc.with_transfer(TransferFunction::Linear);
+    let dst = convert_f32_rgb(linear, dst_desc, &convert_f32_rgb(src_desc, linear, &src));
 
     // Gamut matrix preserves neutral gray (D65 → D65 white point match).
     // Expected: gamma22 EOTF(v), then identity on gray axis, then PQ OETF.
