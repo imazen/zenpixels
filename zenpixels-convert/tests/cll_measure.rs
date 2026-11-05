@@ -9,10 +9,7 @@
 //!
 //! Production callers consume `measure_max` as the single recommended
 //! peak-measurement method (2026-06-22 shootout: wins 3 of 6 metrics
-//! including the user-visible `pct_above_de5` by 11 %). The
-//! histogram-based readouts (`measure_robust`, `measure_percentile`,
-//! `measure_histogram`) live behind `#[doc(hidden)]` until the 0.3.0
-//! API freeze ships the queued `measure_robust → measure` rename.
+//! including the user-visible `pct_above_de5` by 11 %).
 //! Gated on `hdr-experimental`.
 
 #![cfg(feature = "hdr-experimental")]
@@ -200,18 +197,6 @@ fn light_level_method_luminance_bt2020_uses_luma_weights() {
     assert_eq!(cll_luma.max_content_light_level, 53);
 }
 
-// ── DEFAULT_PERCENTILE constant pin ─────────────────────────────────────
-
-#[test]
-fn default_percentile_remains_visible_via_const() {
-    // `ContentLightLevel::DEFAULT_PERCENTILE` is `#[doc(hidden)]` but
-    // still public so `CllMeasure::measure_robust` can refer to it (and
-    // so external callers building their own percentile-aware policy
-    // can refer to the same anchor). Pin the value — any silent change
-    // would shift every histogram-based MaxCLL reading downstream.
-    // The robust measurement policy is tested below; it is not a core metadata constant.
-}
-
 // ── measure_max: rejection paths ────────────────────────────────────────
 
 #[test]
@@ -370,34 +355,6 @@ fn measure_max_folds_nan_in_rgba_and_ignores_nan_alpha() {
             ),
             (want_cll, want_fall),
             "RGBA method {method:?}: SIMD result diverged from the scalar fold contract"
-        );
-    }
-}
-
-#[test]
-fn measure_robust_histogram_path_folds_nan_across_simd_chunks() {
-    // The histogram kernels (`accumulate_strip_*`) are a separate SIMD
-    // path from the `measure_max` scan kernels — pin the same fold
-    // contract there. MaxFALL from the histogram path is the exact
-    // arithmetic mean (not binned), so it compares exactly against the
-    // oracle; the percentile CLL readout is bin-quantised, so only
-    // sanity-bound it.
-    let mut pixels = alloc::vec![[1.0f32; 3]; 64];
-    pixels[20] = [0.5, 0.5, f32::NAN];
-    let buf = rgbf32(&pixels, 64, 1);
-    for method in [LightLevelMethod::MaxRgb, LightLevelMethod::LuminanceBt2020] {
-        let got = ContentLightLevel::measure_robust(buf.as_slice(), DiffuseWhite::BT2408, method)
-            .expect("linear RgbF32 accepted");
-        let (want_cll, want_fall) = oracle_max_fall(&pixels, 203.0, method);
-        assert_eq!(
-            got.max_frame_average_light_level, want_fall,
-            "histogram-path MaxFALL diverged from the scalar fold contract (method {method:?})"
-        );
-        assert!(
-            got.max_content_light_level <= want_cll
-                && f64::from(got.max_content_light_level) >= f64::from(want_cll) * 0.95,
-            "histogram-path MaxCLL {} implausible vs literal max {want_cll} (method {method:?})",
-            got.max_content_light_level
         );
     }
 }

@@ -10,11 +10,8 @@
 //! # Experimental: `measure` — content-light-level measurement
 //!
 //! Behind the `hdr-experimental` Cargo feature, the `measure` submodule
-//! exposes the `measure::CllMeasure` extension trait (with
-//! `measure_max` / `measure_robust` / `measure_max_smoothed` /
-//! `measure_percentile` / `measure_histogram` on
-//! [`ContentLightLevel`]), the `measure::LightLevelHistogram`
-//! primitive, and the `measure::LightLevelMethod` enum. (Plain code
+//! exposes the `measure::CllMeasure` extension trait (with `measure_max` on
+//! [`ContentLightLevel`]) and the `measure::LightLevelMethod` enum. (Plain code
 //! spans, not intra-doc links — the targets only exist when the feature
 //! is enabled, and this page renders either way.)
 //! Measurement stays explicitly named and separate from the shared metadata
@@ -65,7 +62,7 @@ mod tone_mapper;
 /// `use zenpixels_convert::hdr::CllMeasure;` instead of the full
 /// `zenpixels_convert::hdr::measure::CllMeasure` path. Same gating.
 #[cfg(feature = "hdr-experimental")]
-pub use measure::{CllMeasure, LightLevelHistogram, LightLevelMethod};
+pub use measure::{CllMeasure, LightLevelMethod};
 
 // HDR → SDR conversion now lives in the main `ConvertPlan` infrastructure:
 // build via [`crate::ConvertPlan::new_with_hdr_peak`] /
