@@ -1,11 +1,13 @@
 use zenpixels_convert::PixelSliceConvertExt;
-use zenpixels_convert::adapt::adapt_raw_rows_for_encode;
+#[path = "common/adapt_rows.rs"]
+mod adapt_rows;
+use adapt_rows::adapt_rows;
 use zenpixels_convert::*;
 #[test]
 fn known_transfer_is_converted() {
     let src = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Linear);
     let pixels = [128u8; 3];
-    let out = adapt_raw_rows_for_encode(
+    let out = adapt_rows(
         &pixels,
         src,
         1,
@@ -96,7 +98,7 @@ fn orientation_preserves_color_context() {
 fn explicit_adapter_encodes_known_transfer() {
     let src = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Linear);
     let pixels = [128u8; 3];
-    let out = adapt_raw_rows_for_encode(
+    let out = adapt_rows(
         &pixels,
         src,
         1,

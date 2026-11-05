@@ -10,7 +10,7 @@ Callers are text matches of call syntax in local checkouts under `~/work`, not c
 |---|---:|---|
 | `zpc::adapt::adapt_for_encode_cow` | 8+4 | `PixelSliceConvertExt::adapt_for_encode(&self, &[Desc], &ConvertOptions) -> Result<PixelCow<'a>, E>`. The old behavior is `ConvertOptions::permissive().with_alpha_policy(DiscardUnchecked)` |
 | `zpc::adapt::adapt_for_encode_with_intent_cow` | 0 | Removed. Encode paths use the fastest intent |
-| `zpc::adapt::adapt_for_encode_explicit_cow` | 2+0 | `PixelSliceConvertExt::adapt_for_encode`, or `zpc::adapt::adapt_raw_rows_for_encode` for rows whose padding isn't a whole number of pixels, which no type can own |
+| `zpc::adapt::adapt_for_encode_explicit_cow` | 2+0 | `PixelSliceConvertExt::adapt_for_encode` |
 | `zpc::adapt::check_opaque(PixelSlice)` | 0+1 | `PixelSliceConvertExt::check_opaque(&self) -> Result<(), E>` |
 | `zpc::adapt::try_adapt_in_place` | 0 | `PixelBufferConvertExt::try_adapt_in_place(&mut self, Desc) -> Result<(), E>`. Kept: it's the only format change with no allocation |
 | `zpc::convert_row` | 6+0 | `RowConverter::from_plan(plan).convert_row`. Whole images: `PixelSliceConvertExt::convert_into(&self, PixelSliceMut) -> Result<PixelSliceMut, E>` and `convert_to` |

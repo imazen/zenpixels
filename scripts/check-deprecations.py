@@ -78,7 +78,9 @@ fn main() { let _ = legacy_provider().as_pixel_slice(); }
         """
 fn main() {
     let d = zenpixels_convert::PixelDescriptor::RGB8_SRGB;
-    let result = zenpixels_convert::adapt::adapt_raw_rows_for_encode(&[0, 0, 0], d, 1, 1, 3, &[d], &zenpixels_convert::ConvertOptions::permissive()).unwrap();
+    let pixels = [0u8; 3];
+    let view = zenpixels_convert::PixelSlice::new(&pixels, 1, 1, 3, d).unwrap();
+    let result = zenpixels_convert::PixelSliceConvertExt::adapt_for_encode(&view, &[d], &zenpixels_convert::ConvertOptions::permissive()).unwrap();
     let _ = result.as_slice();
 }
 """,
@@ -217,7 +219,7 @@ zenpixels = {{ path = {json.dumps(str(ROOT / 'zenpixels'))} }}
                     should_warn = expected is not None
                     if should_warn:
                         ok = result.returncode != 0 and bool(errors) and all(
-                            (error.get("code") or {}).get("code") in {"E0432", "E0433", "E0425", "E0412", "E0599", "E0422", "E0277"} for error in errors
+                            (error.get("code") or {}).get("code") in {"E0432", "E0433", "E0425", "E0412", "E0599", "E0603", "E0422", "E0277"} for error in errors
                         ) and any(expected in error["message"] for error in errors)
                     else:
                         ok = result.returncode == 0

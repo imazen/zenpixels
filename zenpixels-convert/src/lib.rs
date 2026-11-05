@@ -379,7 +379,7 @@ pub mod error;
 pub(crate) mod f16_scalar;
 pub(crate) mod negotiate;
 
-pub mod adapt;
+pub(crate) mod adapt;
 // Internal only — zero consumers today. Kept for a future caller;
 // see zenpixels CLAUDE.md YAGNI section.
 /// Internal: runtime op tracer for in-repo tests. Gated on

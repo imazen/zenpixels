@@ -33,6 +33,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- **Breaking:** removed three duplicates, none used outside this repo. `PixelFormat::create_from(c, l)` is `from_parts(c, l, None)`. `adapt::adapt_raw_rows_for_encode` and the `adapt` module are private: use `PixelSliceConvertExt::adapt_for_encode`. `zenpixels` re-exports only `whereat::At`, not `ResultAtExt` or `at`; take those from `whereat`.
+
 - Docs: JPEG XL color authority cites ISO/IEC 18181-1, and AVIF lists its ICC encode.
 
 - `gamut_clamping_scenarios` runs again, with a resampling filter in the test file that matches zenresize to 2.3e-4 on its image. It also checks that unclipped F32 keeps what a kernel's lobes produce through an sRGB round trip, and that `RowConverter`'s U8 output clamps them.

@@ -16,7 +16,9 @@ fn convert_packed(
     let converted = source.convert_to(to)?;
     Ok(converted.as_slice().contiguous_bytes().into_owned())
 }
-use zenpixels_convert::adapt::adapt_raw_rows_for_encode;
+#[path = "common/adapt_rows.rs"]
+mod adapt_rows;
+use adapt_rows::adapt_rows;
 use zenpixels_convert::policy::{AlphaPolicy, ConvertOptions, DepthPolicy};
 use zenpixels_convert::{ConvertError, PixelDescriptor};
 
@@ -27,52 +29,12 @@ extern crate alloc;
 // ---------------------------------------------------------------------------
 
 #[test]
-fn strided_buffer_exact_match_strips_padding() {
-    // 2×2 RGB8 with stride=8 (2 bytes padding per row).
-    // Row 0: [R, G, B, R, G, B, pad, pad]
-    // Row 1: [R, G, B, R, G, B, pad, pad]
-    let data = vec![
-        100, 150, 200, 50, 100, 150, 0, 0, // row 0
-        10, 20, 30, 40, 50, 60, 0, 0, // row 1
-    ];
-    let desc = PixelDescriptor::RGB8_SRGB;
-
-    let result = adapt_raw_rows_for_encode(
-        &data,
-        desc,
-        2,
-        2,
-        8,
-        &[desc],
-        &zenpixels_convert::ConvertOptions::permissive()
-            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
-    )
-    .unwrap();
-
-    // Exact match, but stride != row_bytes, so padding must be stripped.
-    assert_eq!(result.as_slice().descriptor(), desc);
-    assert_eq!(result.as_slice().width(), 2);
-    assert_eq!(result.as_slice().rows(), 2);
-
-    // Output should be contiguous: 6 bytes per row, 12 total.
-    assert_eq!(result.as_slice().contiguous_bytes().len(), 12);
-    assert_eq!(
-        &result.as_slice().contiguous_bytes()[..6],
-        &[100, 150, 200, 50, 100, 150]
-    );
-    assert_eq!(
-        &result.as_slice().contiguous_bytes()[6..12],
-        &[10, 20, 30, 40, 50, 60]
-    );
-}
-
-#[test]
 fn strided_buffer_packed_is_zero_copy() {
     // Packed buffer (stride = row bytes).
     let data = vec![100, 150, 200, 50, 100, 150];
     let desc = PixelDescriptor::RGB8_SRGB;
 
-    let result = adapt_raw_rows_for_encode(
+    let result = adapt_rows(
         &data,
         desc,
         2,
@@ -87,38 +49,6 @@ fn strided_buffer_packed_is_zero_copy() {
     assert!(
         matches!(result, zenpixels::PixelCow::Borrowed(_)),
         "packed exact match should be zero-copy"
-    );
-}
-
-#[test]
-fn strided_buffer_conversion_strips_padding() {
-    // 2×1 RGB8 with stride=8, converting to RGBA8.
-    let data = vec![100, 150, 200, 50, 100, 150, 0, 0];
-    let src_desc = PixelDescriptor::RGB8_SRGB;
-    let dst_desc = PixelDescriptor::RGBA8_SRGB;
-
-    let result = adapt_raw_rows_for_encode(
-        &data,
-        src_desc,
-        2,
-        1,
-        8,
-        &[dst_desc],
-        &zenpixels_convert::ConvertOptions::permissive()
-            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
-    )
-    .unwrap();
-
-    assert_eq!(result.as_slice().descriptor(), dst_desc);
-    // Output should be packed RGBA8: 4 bytes per pixel, 8 bytes total.
-    assert_eq!(result.as_slice().contiguous_bytes().len(), 8);
-    assert_eq!(
-        &result.as_slice().contiguous_bytes()[..4],
-        &[100, 150, 200, 255]
-    );
-    assert_eq!(
-        &result.as_slice().contiguous_bytes()[4..8],
-        &[50, 100, 150, 255]
     );
 }
 
@@ -140,7 +70,7 @@ fn explicit_depth_forbid_returns_error() {
     let options =
         ConvertOptions::retain_channels().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
 
-    let result = adapt_raw_rows_for_encode(
+    let result = adapt_rows(
         &data,
         PixelDescriptor::RGBA16_SRGB,
         1,
@@ -162,7 +92,7 @@ fn explicit_alpha_forbid_returns_error() {
 
     let options = ConvertOptions::retain_channels().with_depth_policy(DepthPolicy::Round);
 
-    let result = adapt_raw_rows_for_encode(
+    let result = adapt_rows(
         &data,
         PixelDescriptor::RGBA8_SRGB,
         1,
@@ -184,7 +114,7 @@ fn explicit_discard_if_opaque_succeeds_when_opaque() {
 
     let options = ConvertOptions::permissive().with_luma(None);
 
-    let result = adapt_raw_rows_for_encode(
+    let result = adapt_rows(
         &data,
         PixelDescriptor::RGBA8_SRGB,
         2,
@@ -210,7 +140,7 @@ fn explicit_discard_if_opaque_fails_when_semitransparent() {
 
     let options = ConvertOptions::permissive().with_luma(None);
 
-    let result = adapt_raw_rows_for_encode(
+    let result = adapt_rows(
         &data,
         PixelDescriptor::RGBA8_SRGB,
         1,
@@ -291,7 +221,7 @@ fn convert_buffer_bgra_to_rgba() {
 fn adapt_empty_supported_returns_error() {
     let data = vec![100, 150, 200];
 
-    let result = adapt_raw_rows_for_encode(
+    let result = adapt_rows(
         &data,
         PixelDescriptor::RGB8_SRGB,
         1,
@@ -314,8 +244,7 @@ fn adapt_explicit_empty_supported_returns_error() {
     let data = vec![100, 150, 200];
     let options = ConvertOptions::permissive();
 
-    let result =
-        adapt_raw_rows_for_encode(&data, PixelDescriptor::RGB8_SRGB, 1, 1, 3, &[], &options);
+    let result = adapt_rows(&data, PixelDescriptor::RGB8_SRGB, 1, 1, 3, &[], &options);
 
     assert!(result.is_err());
 }

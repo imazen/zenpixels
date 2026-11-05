@@ -10,18 +10,18 @@
 #
 #   pub modules                                12
 #   pub types (struct/enum/trait/alias)       122
-#   pub consts/statics                        330
+#   pub consts/statics                        328
 #   free functions                              2
 #   inherent methods                          366
 #   struct fields                             109
 #   enum variants                             310
-#   re-exports                                  4
+#   re-exports                                  1
 #   trait roster entries (type × trait)       418
 #   auto-trait-complete types                  57
 #   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          475
+#   (root)                          470
 #   buffer                          310
 #   cicp                             38
 #   color                            80
@@ -34,13 +34,10 @@
 #   policy                           22
 #   sample                           33
 
-## items (1109 lines)
+## items (1105 lines)
 
 pub mod zenpixels
 pub use At
-pub use ResultAtExt
-pub use at
-pub use at
 pub mod buffer
 pub buffer::BufferError::AlignmentViolation
 pub buffer::BufferError::AllocationFailed
@@ -385,7 +382,6 @@ pub const fn descriptor::PixelFormat::bytes_per_pixel(self) -> usize [also: (roo
 pub const fn descriptor::PixelFormat::channel_type(self) -> descriptor::ChannelType [also: (root)]
 pub const fn descriptor::PixelFormat::channels(self) -> usize [also: (root)]
 pub const fn descriptor::PixelFormat::color_model(self) -> descriptor::ColorModel [also: (root)]
-pub const fn descriptor::PixelFormat::create_from(descriptor::ChannelType, descriptor::ChannelLayout) -> core::option::Option<Self> [also: (root)]
 pub const fn descriptor::PixelFormat::default_alpha(self) -> core::option::Option<descriptor::AlphaMode> [also: (root)]
 pub const fn descriptor::PixelFormat::descriptor(self) -> descriptor::PixelDescriptor [also: (root)]
 pub const fn descriptor::PixelFormat::from_parts(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>) -> core::option::Option<Self> [also: (root)]

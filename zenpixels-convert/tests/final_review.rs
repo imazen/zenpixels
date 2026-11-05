@@ -8,7 +8,9 @@ use zenpixels::{
     ColorContext, ColorPrimaries as P, PixelBuffer, PixelDescriptor as D, PixelSlice,
     TransferFunction as T, buffer::BufferError,
 };
-use zenpixels_convert::adapt::adapt_raw_rows_for_encode;
+#[path = "common/adapt_rows.rs"]
+mod adapt_rows;
+use adapt_rows::adapt_rows;
 use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
 use zenpixels_convert::{ConvertOptions, PixelSliceConvertExt, RowConverter};
 
@@ -100,10 +102,9 @@ fn color_refuses_samples_its_storage_cannot_align() {
 #[test]
 fn raw_adapter_geometry() {
     let options = ConvertOptions::permissive();
-    let view =
-        adapt_raw_rows_for_encode(&[0u8; 9], D::RGB8_SRGB, 1, 2, 6, &[D::RGB8_SRGB], &options);
+    let view = adapt_rows(&[0u8; 9], D::RGB8_SRGB, 1, 2, 6, &[D::RGB8_SRGB], &options);
     assert!(view.is_ok(), "{:?}", view.err().map(|e| e.to_string()));
-    let short = adapt_raw_rows_for_encode(
+    let short = adapt_rows(
         &[1u8, 2, 3],
         D::RGB8_SRGB,
         2,

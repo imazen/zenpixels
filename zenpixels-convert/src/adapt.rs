@@ -4,15 +4,12 @@
 //! single call, replacing the per-codec format dispatch if-chains that
 //! every encoder would otherwise need to write.
 //!
-//! # Which function to use
-//!
 //! [`PixelSliceConvertExt::adapt_for_encode`](crate::ext::PixelSliceConvertExt::adapt_for_encode)
-//! covers pixels a [`PixelSlice`] can describe. [`adapt_raw_rows_for_encode`] covers
-//! raw rows with padding that isn't a whole number of pixels.
+//! is the entry point; `adapt_raw_rows_for_encode` is its implementation over raw rows.
 //!
 //! # Zero-copy fast path
 //!
-//! Both check for an exact match first. If the
+//! An exact match is checked first. If the
 //! source descriptor matches one of the supported formats, the function
 //! returns `PixelCow::Borrowed` — no allocation, no copy, no conversion. This
 //! means the common case (JPEG u8 sRGB → JPEG u8 sRGB) has zero overhead.
@@ -24,29 +21,9 @@
 //!
 //! # Strided buffers
 //!
-//! The `stride` parameter allows adapting buffers with row padding (common
-//! when rows are SIMD-aligned or when working with sub-regions of a larger
-//! buffer). If `stride > width * bpp`, the padding is stripped during
-//! conversion and the output is always packed (stride = width * bpp).
-//!
-//! # Example
-//!
-//! ```rust,ignore
-//! use zenpixels_convert::adapt::adapt_for_encode_cow;
-//!
-//! let supported = &[
-//!     PixelDescriptor::RGB8_SRGB,
-//!     PixelDescriptor::GRAY8_SRGB,
-//! ];
-//!
-//! let adapted = adapt_for_encode_cow(
-//!     raw_bytes, source_desc, width, rows, stride, supported,
-//! )?;
-//!
-//! let view = adapted.as_slice();
-//! encoder.write_rows(view)?; // carries stride and descriptor
-
-//! ```
+//! Rows may have padding (common when rows are SIMD-aligned or when working
+//! with sub-regions of a larger buffer). It is stripped during conversion and
+//! the output is always packed (stride = width * bpp).
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -531,7 +508,7 @@ fn rewrap<'a>(
 ///
 /// [`PixelSliceConvertExt::adapt_for_encode`]: crate::ext::PixelSliceConvertExt::adapt_for_encode
 #[track_caller]
-pub fn adapt_raw_rows_for_encode<'a>(
+pub(crate) fn adapt_raw_rows_for_encode<'a>(
     data: &'a [u8],
     descriptor: PixelDescriptor,
     width: u32,
@@ -943,6 +920,42 @@ mod tests {
     use super::*;
     use zenpixels::descriptor::{ColorPrimaries, SignalRange};
     use zenpixels::policy::{AlphaPolicy, DepthPolicy};
+
+    #[test]
+    fn padding_of_part_of_a_pixel_is_stripped_on_an_exact_match() {
+        let data = vec![
+            100, 150, 200, 50, 100, 150, 0, 0, // row 0
+            10, 20, 30, 40, 50, 60, 0, 0, // row 1
+        ];
+        let desc = PixelDescriptor::RGB8_SRGB;
+        let result = adapt_for_encode_cow(&data, desc, 2, 2, 8, &[desc]).unwrap();
+        assert_eq!(result.as_slice().descriptor(), desc);
+        assert_eq!(result.as_slice().width(), 2);
+        assert_eq!(result.as_slice().rows(), 2);
+        assert_eq!(
+            &*result.as_slice().contiguous_bytes(),
+            &[100, 150, 200, 50, 100, 150, 10, 20, 30, 40, 50, 60]
+        );
+    }
+
+    #[test]
+    fn padding_of_part_of_a_pixel_is_skipped_when_converting() {
+        let data = vec![100, 150, 200, 50, 100, 150, 0, 0];
+        let result = adapt_for_encode_cow(
+            &data,
+            PixelDescriptor::RGB8_SRGB,
+            2,
+            1,
+            8,
+            &[PixelDescriptor::RGBA8_SRGB],
+        )
+        .unwrap();
+        assert_eq!(result.as_slice().descriptor(), PixelDescriptor::RGBA8_SRGB);
+        assert_eq!(
+            &*result.as_slice().contiguous_bytes(),
+            &[100, 150, 200, 255, 50, 100, 150, 255]
+        );
+    }
 
     /// 2×1 RGB8 pixel data (6 bytes).
     fn test_rgb8_data() -> Vec<u8> {

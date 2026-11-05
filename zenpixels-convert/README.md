@@ -194,7 +194,7 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 | [`Provenance`] / [`ConversionCost`] / [`FormatOption`] | Cost-model inputs and results |
 | `ConvertOptions` (re-export) | Explicit lossy-operation policy |
 | [`ConvertPlan`] | Lower-level plan, run through `RowConverter::from_plan` |
-| `PixelSlice::adapt_for_encode` / [`adapt::adapt_raw_rows_for_encode`] / `PixelBuffer::try_adapt_in_place` | One-call negotiate-and-convert helpers |
+| `PixelSlice::adapt_for_encode` / `PixelBuffer::try_adapt_in_place` | One-call negotiate-and-convert helpers |
 | [`PluggableCms`] / [`RowTransformMut`] / [`MoxCms`] | Pluggable CMS backend interface + moxcms impl |
 | [`GamutMatrix`] | Gamut matrix construction and application, in place on rows |
 | [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`bt2446a` feature) |
