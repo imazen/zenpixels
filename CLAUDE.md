@@ -118,9 +118,6 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
-- Open (2026-11-05, imazen/zenpixels#112): F32 CMYK K-only black through a table profile is 0.137 in the workspace
-  test build and 0 in `cms-contract`, on the same call, moxcms and pxfm. `k_only_black` is ignored until it's explained.
-
 - Fixed in the CMS contract (2026-11-05): `MoxCms` floored 8-bit samples (mean -0.40 of a code against lcms2), left
   8-bit white at (255, 255, 254) between ICC and generated profiles, turned 16-bit table profiles into a constant
   through high barycentric weights, and ignored a row's `width`. `tests/cms_moxcms_accuracy.rs` covers each.

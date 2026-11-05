@@ -35,9 +35,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 - `MoxCms` rounds 8-bit samples to nearest, by taking them through the backend's 16-bit path. The backend's 8-bit path floors. On Display P3 to sRGB, 40.2% of samples missed C lcms2 2.20, for a mean of -0.40 of a code; now 1.5% miss, for a mean of -0.006. This changes 8-bit output and costs speed.
 - `MoxCms` keeps white between ICC profiles and generated ones: 8-bit white into generated sRGB was (255, 255, 254). Generated colorants now sum to the ICC PCS white.
-- `MoxCms` selects low barycentric weights for 16-bit and 8-bit table profiles. High weights turned every 16-bit pixel into a constant.
+- `MoxCms` uses low barycentric weights. High weights turned every 16-bit pixel of a table profile into a constant.
 - `MoxCms` row transforms honor `width`, and return an error for a row shorter than it. They used to convert the whole slice.
-- `zenpixels-convert` requires moxcms 0.9.1. 0.9.0 gave 0.137 for K-only black through a table-only CMYK profile.
 - `cms-contract/` runs each CMS backend through one behavioral contract and against the others: `just cms-contract`. It isn't a workspace member.
 
 - `MoxCms` converts `CmykF32` and `CmykF32Inverted` sources with `build_source_transform`, by the route JPEG XL decoders take through lcms2. To sRGB that is relative colorimetric with black-point compensation. Conversion into F32 CMYK still refuses.

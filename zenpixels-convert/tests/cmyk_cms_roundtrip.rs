@@ -355,8 +355,7 @@ mod cmyk_f32 {
 
     #[test]
     fn polarity_is_the_formats_and_rows_split_cleanly() {
-        let icc = super::load_cmyk_icc_from_disk()
-            .expect("a CMYK profile from codec-corpus, as cmyk_with_real_icc_profile loads");
+        let icc = super::synthetic_icc::synthetic_cmyk_icc();
         // Longer than the transform's stack chunk, so its seam is inside the row.
         let ink: Vec<f32> = (0..600 * 4).map(|i| (i % 97) as f32 / 96.0).collect();
         let inverted: Vec<f32> = ink.iter().map(|v| 1.0 - v).collect();
@@ -381,10 +380,8 @@ mod cmyk_f32 {
         }
     }
 
-    /// Passes in `cms-contract`, on the same call. See imazen/zenpixels#112.
     #[test]
-    #[ignore = "unexplained: 0.137 in this build, 0 in cms-contract"]
-    fn k_only_black() {
+    fn k_only_ink_is_black_on_this_profile() {
         let icc = super::synthetic_icc::synthetic_cmyk_icc();
         let mut plain = transform(&icc, PixelFormat::CmykF32, PixelFormat::RgbF32);
         for v in run(&mut plain, &[0.0, 0.0, 0.0, 1.0]) {

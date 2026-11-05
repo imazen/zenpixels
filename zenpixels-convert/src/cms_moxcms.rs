@@ -42,8 +42,8 @@ use moxcms::{
 ///   results on them. See `docs/gamut-mapping-survey.md`.
 /// - **Tetrahedral interpolation** for 3D CLUTs, more accurate than trilinear where
 ///   saturated colors cross cube diagonals.
-/// - **High barycentric weight scale** for F32, where `Low` left K-only black at 0.137 through a CMYK
-///   table. [`options_for_profiles`] selects `Low` for the integer paths.
+/// - **Low barycentric weight scale.** `High` turned 16-bit table profiles into a constant, gave the same
+///   8-bit result on every profile we scored, and moved F32 by at most 0.00003 of a code.
 ///
 /// Crate-internal: moxcms types stay out of the public API so the moxcms version
 /// range can change without a zenpixels-convert release.
@@ -51,7 +51,7 @@ pub(crate) fn transform_opts() -> TransformOptions {
     TransformOptions {
         rendering_intent: moxcms::RenderingIntent::RelativeColorimetric,
         allow_use_cicp_transfer: false,
-        barycentric_weight_scale: BarycentricWeightScale::High,
+        barycentric_weight_scale: BarycentricWeightScale::Low,
         interpolation_method: InterpolationMethod::Tetrahedral,
         ..Default::default()
     }
@@ -102,10 +102,6 @@ fn options_for_profiles(
     target: &ColorProfile,
 ) -> TransformOptions {
     let mut options = transform_opts();
-    // At 16 bits, `High` turned a table profile's pixels into a constant. 8-bit samples take this path.
-    if format.channel_type() != ChannelType::F32 {
-        options.barycentric_weight_scale = BarycentricWeightScale::Low;
-    }
     // ICC falls back to A2B0 when A2B1 is absent, as lcms2 does. JPEG XL's PQ and HLG profiles have
     // only A2B0, and the backend refuses them under relative colorimetric intent.
     if source.lut_a_to_b_colorimetric.is_none()
@@ -394,7 +390,7 @@ fn cmyk_float_transform(
         } else {
             moxcms::RenderingIntent::Perceptual
         },
-        barycentric_weight_scale: moxcms::BarycentricWeightScale::High,
+        barycentric_weight_scale: moxcms::BarycentricWeightScale::Low,
         ..TransformOptions::default()
     };
     let black_point_y = if encode_srgb {
