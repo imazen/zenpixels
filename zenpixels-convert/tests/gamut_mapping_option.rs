@@ -126,12 +126,12 @@ fn alpha_is_untouched_and_rows_can_be_split() {
         Tf::Srgb,
     );
     let mut src = Vec::new();
-    for (i, px) in grid().chunks_exact(3).enumerate() {
+    for (i, px) in grid().as_chunks::<3>().0.iter().enumerate() {
         src.extend_from_slice(px);
         src.push((i % 251) as u8);
     }
     let whole = convert(from, to, &soft(), &src);
-    for (a, b) in whole.chunks_exact(4).zip(src.chunks_exact(4)) {
+    for (a, b) in whole.as_chunks::<4>().0.iter().zip(src.as_chunks::<4>().0) {
         assert_eq!(a[3], b[3]);
     }
     let mut c = RowConverter::new_explicit(from, to, &soft()).unwrap();

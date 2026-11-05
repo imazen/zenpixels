@@ -30,8 +30,8 @@ fn source_matrix(g: usize) -> M {
 fn params(iters: u32, tau: f32, eps: f32) -> Params {
     let space = OklabSpace::for_primaries(P::Bt709).unwrap();
     Params {
-        m1: (*space.rgb_to_lms()).into(),
-        m1_inv: (*space.lms_to_rgb()).into(),
+        m1: *space.rgb_to_lms().rows(),
+        m1_inv: *space.lms_to_rgb().rows(),
         knee: KNEE,
         tau,
         eps,
@@ -465,6 +465,25 @@ fn main() {
     std::fs::create_dir_all("results").unwrap();
     let (tau, eps): (f32, f32) = (a.get(3).and_then(|v| v.parse().ok()).unwrap_or(0.0), a.get(4).map(|v| v.parse().unwrap()).unwrap_or(0.01));
     match a.get(1).map(|s| s.as_str()) {
+        Some("css-golden") => {
+            // Reference values for the crate's map_to_gamut test: the f64 port that
+            // agreed with Color.js within 1.55e-14 in the gamut survey.
+            let m = source_matrix(0);
+            let m2 = source_matrix(1);
+            for (name, mat, c) in [
+                ("p3 red", &m, [1.0, 0.0, 0.0]),
+                ("p3 green", &m, [0.0, 1.0, 0.0]),
+                ("p3 blue", &m, [0.0, 0.0, 1.0]),
+                ("p3 mid", &m, [0.9, 0.2, 0.3]),
+                ("2020 red", &m2, [1.0, 0.0, 0.0]),
+                ("2020 green", &m2, [0.0, 1.0, 0.0]),
+                ("2020 blue", &m2, [0.0, 0.0, 1.0]),
+                ("2020 mid", &m2, [0.2, 0.8, 0.6]),
+            ] {
+                let e = css(mul(mat, c));
+                println!("{name}: {:.6} {:.6} {:.6}", e[0], e[1], e[2]);
+            }
+        }
         Some("worst") => {
             let m = source_matrix(0);
             let p = params(3, tau, eps);

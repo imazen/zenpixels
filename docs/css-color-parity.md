@@ -39,7 +39,7 @@ Parsing to linear loses the original space, so a color can't be serialized back 
 |---|---|---|
 | Conversion | Linearize, XYZ, Bradford if whites differ, destination | Same; all named primaries are D65 |
 | Clamping during conversion | ["The results of color conversion are not clamped"](https://drafts.csswg.org/css-color-4/), §11.1 | Float output keeps them only with `with_clip_out_of_gamut(false)`; `permissive()` clips |
-| Out of gamut at output | OkLCh chroma reduction for single colors; a perceptual intent suggested for images | Clips; `SoftCompressOklch` only on the experimental HDR path |
+| Out of gamut at output | OkLCh chroma reduction for single colors; a perceptual intent suggested for images | `ColorConvertExt::map_to_gamut` for single colors, matching the CSS algorithm. Images clip by default, with `GamutMapping::SoftCompress` as an option |
 | Alpha | Unpremultiplied values, premultiplied for interpolation | Descriptor says which |
 | Interpolation | Default Oklab; legacy sRGB in encoded sRGB; premultiplied | No color interpolation API; resampling is linear |
 | [Compositing](https://drafts.csswg.org/compositing-1/) | The text read here names no space. Browsers are reported to use encoded sRGB ([csswg-drafts #6093](https://github.com/w3c/csswg-drafts/issues/6093), [public-colorweb, 2021](https://lists.w3.org/Archives/Public/public-colorweb/2021Jan/0044.html)); not verified | Linear; zenpipe's `MatteBlend::Encoded` opts into the other |

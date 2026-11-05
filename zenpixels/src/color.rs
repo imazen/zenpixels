@@ -262,7 +262,7 @@ impl<'a> ColorProfileSource<'a> {
 /// - **JPEG, WebP, TIFF**: `Icc` (ICC is the only color signal)
 /// - **PNG 3rd Ed**: `Cicp` when cICP chunk present, `Icc` when only iCCP
 /// - **AVIF/MIAF**: `Icc` when ICC colr box present, `Cicp` otherwise
-/// - **HEIC/HEIF**: `Cicp` when nclx colr box present, `Icc` otherwise
+/// - **HEIC/HEIF**: `Icc` when ICC colr box present, `Cicp` otherwise
 /// - **JPEG XL**: `Cicp` when enum encoding (`want_icc=false`), `Icc` when embedded ICC
 ///
 /// Readers' measured behavior for conflicting signals is in

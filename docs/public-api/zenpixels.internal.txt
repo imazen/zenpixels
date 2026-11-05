@@ -9,31 +9,32 @@
 
 ## summary
 #
-#   inherent methods                           47
+#   inherent methods                           49
 #   enum variants                              14
-#   trait roster entries (type × trait)        49
+#   trait roster entries (type × trait)        50
 #
 # per-module pub lines:
 #   (root)                            7
 #   buffer                            3
 #   cicp                              2
-#   color                             7
+#   color                             8
 #   descriptor                       17
 #   hdr                               1
 #   icc                               2
 #   orientation                       1
 #   pixel_types                       2
 #   plane                             7
-#   policy                            5
+#   policy                            6
 #   sample                            7
 
-## items (61 lines)
+## items (63 lines)
 
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
 pub fn buffer::Rgbx::assert_fields_are_eq(&self)
 pub fn cicp::Cicp::assert_fields_are_eq(&self)
 pub fn cicp::CicpDescriptorError::assert_fields_are_eq(&self)
+pub fn color::AnyColor::assert_fields_are_eq(&self)
 pub fn color::Color::assert_fields_are_eq(&self)
 pub fn color::ColorAuthority::assert_fields_are_eq(&self)
 pub fn color::ColorContext::assert_fields_are_eq(&self)
@@ -67,6 +68,7 @@ pub fn plane::PlaneSpec::assert_fields_are_eq(&self)
 pub fn policy::AlphaPolicy::assert_fields_are_eq(&self)
 pub fn policy::ConvertOptions::assert_fields_are_eq(&self)
 pub fn policy::DepthPolicy::assert_fields_are_eq(&self)
+pub fn policy::GamutMapping::assert_fields_are_eq(&self)
 pub fn policy::GrayExpand::assert_fields_are_eq(&self)
 pub fn policy::LumaCoefficients::assert_fields_are_eq(&self)
 pub fn sample::ChromaSiting::assert_fields_are_eq(&self)
@@ -91,7 +93,7 @@ pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (49 types)
+## trait impls (50 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
@@ -132,6 +134,7 @@ plane::PlaneSpec: TrivialClone
 policy::AlphaPolicy: TrivialClone
 policy::ConvertOptions: TrivialClone
 policy::DepthPolicy: TrivialClone
+policy::GamutMapping: TrivialClone
 policy::GrayExpand: TrivialClone
 policy::LumaCoefficients: TrivialClone
 sample::ChromaSiting: TrivialClone

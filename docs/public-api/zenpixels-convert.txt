@@ -9,34 +9,34 @@
 ## summary
 #
 #   pub modules                                14
-#   pub types (struct/enum/trait/alias)        55
-#   pub consts/statics                         26
-#   free functions                              6
-#   inherent methods                          164
+#   pub types (struct/enum/trait/alias)        57
+#   pub consts/statics                         31
+#   free functions                              4
+#   inherent methods                          173
 #   struct fields                              73
-#   enum variants                              74
+#   enum variants                              79
 #   re-exports                                  3
-#   trait roster entries (type × trait)        98
-#   auto-trait-complete types                  18
+#   trait roster entries (type × trait)       106
+#   auto-trait-complete types                  20
 #   auto-trait exceptions                       4
 #
 # per-module pub lines:
-#   (root)                          180
+#   (root)                          191
 #   adapt                             1
 #   cms                              23
 #   codes                            39
 #   converter                        31
 #   error                            34
-#   ext                              24
+#   ext                              26
 #   gamut                            11
-#   hdr                               2
+#   hdr                               8
 #   icc_profiles                      9
 #   load_bearing                     11
 #   oklab                             8
 #   output                           20
 #   ycbcr                            22
 
-## items (390 lines)
+## items (409 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -154,6 +154,7 @@ pub error::ConvertError::UnsupportedTransfer
 pub error::ConvertError::UnsupportedTransfer::from: zenpixels::descriptor::TransferFunction
 pub error::ConvertError::UnsupportedTransfer::to: zenpixels::descriptor::TransferFunction
 pub mod ext
+pub fn ext::ColorConvertExt::map_to_gamut(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn ext::ColorConvertExt::try_convert_to(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn ext::ColorPrimariesExt::from_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub fn ext::ColorPrimariesExt::to_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
@@ -161,6 +162,7 @@ pub fn ext::PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::Pixe
 pub fn ext::PixelBufferConvertExt::delinearize(&self, zenpixels::descriptor::TransferFunction) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::into_oriented(self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::linearize(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn ext::PixelBufferConvertExt::try_adapt_in_place(&mut self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::try_add_alpha(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::try_narrow_to_u8(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::try_widen_to_u16(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
@@ -180,11 +182,17 @@ pub fn gamut::GamutMatrix::apply_row_rgba(&self, &mut [[f32; 4]])
 pub const fn gamut::GamutMatrix::between(zenpixels::descriptor::ColorPrimaries, zenpixels::descriptor::ColorPrimaries) -> core::option::Option<Self> [also: (root)]
 pub const fn gamut::GamutMatrix::from_rows([[f32; 3]; 3]) -> Self [also: (root)]
 pub fn gamut::GamutMatrix::inverse(&self) -> core::option::Option<Self>
+pub const fn gamut::GamutMatrix::rows(&self) -> &[[f32; 3]; 3] [also: (root)]
 pub fn gamut::GamutMatrix::then(&self, &Self) -> Self
-pub fn [[f32; 3]; 3]::from(gamut::GamutMatrix) -> Self [also: (root)]
 pub mod hdr
 pub use hdr::ContentLightLevel
 pub use hdr::MasteringDisplay
+pub struct hdr::SoftCompress
+pub const hdr::SoftCompress::DEFAULT_KNEE: f32
+pub fn hdr::SoftCompress::apply_strip(&self, &mut [[f32; 3]])
+pub fn hdr::SoftCompress::compress_oklab_planes(&self, &[f32], &mut [f32], &mut [f32]) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn hdr::SoftCompress::knee(&self) -> f32
+pub fn hdr::SoftCompress::new(&oklab::OklabSpace, f32) -> Self
 pub mod icc_profiles
 #[non_exhaustive] pub enum icc_profiles::SynthesizedIcc
 pub icc_profiles::SynthesizedIcc::CmsUnsupported
@@ -209,6 +217,7 @@ pub struct oklab::OklabSpace
 pub fn oklab::OklabSpace::for_primaries(zenpixels::descriptor::ColorPrimaries) -> core::option::Option<Self>
 pub fn oklab::OklabSpace::from_rgb(&self, [f32; 3]) -> [f32; 3]
 pub const fn oklab::OklabSpace::lms_to_rgb(&self) -> &gamut::GamutMatrix
+pub const fn oklab::OklabSpace::primaries(&self) -> zenpixels::descriptor::ColorPrimaries
 pub const fn oklab::OklabSpace::rgb_to_lms(&self) -> &gamut::GamutMatrix
 pub fn oklab::OklabSpace::to_rgb(&self, [f32; 3]) -> [f32; 3]
 pub const oklab::LMS_CBRT_FROM_OKLAB: gamut::GamutMatrix
@@ -299,7 +308,14 @@ pub ConvertIntent::Fastest
 pub ConvertIntent::LinearLight
 pub ConvertIntent::Perceptual
 pub fn ConvertIntent::best_match(self, zenpixels::descriptor::PixelDescriptor, &[zenpixels::descriptor::PixelDescriptor]) -> core::option::Option<zenpixels::descriptor::PixelDescriptor>
+pub fn ConvertIntent::best_match_within(self, zenpixels::descriptor::PixelDescriptor, &[zenpixels::descriptor::PixelDescriptor], LossBucket) -> core::option::Option<zenpixels::descriptor::PixelDescriptor>
 pub fn ConvertIntent::negotiate(self, zenpixels::descriptor::PixelDescriptor, Provenance, impl core::iter::traits::iterator::Iterator<Item = FormatOption>) -> core::option::Option<zenpixels::descriptor::PixelDescriptor>
+#[non_exhaustive] pub enum LossBucket
+pub LossBucket::Clear
+pub LossBucket::Imperceptible
+pub LossBucket::Minor
+pub LossBucket::Severe
+pub LossBucket::SideBySide
 #[non_exhaustive] pub enum OutputProfile [also: output]
 pub OutputProfile::Icc(alloc::sync::Arc<[u8]>)
 pub OutputProfile::Named(zenpixels::cicp::Cicp)
@@ -315,6 +331,7 @@ pub ConversionCost::loss: u16
 pub const ConversionCost::ZERO: Self
 pub fn ConversionCost::between(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> Self
 pub fn ConversionCost::between_with_provenance(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, Provenance) -> Self
+pub const fn ConversionCost::loss_bucket(&self) -> LossBucket
 pub const fn ConversionCost::new(u16, u16) -> Self
 pub struct ConvertPlan
 pub fn ConvertPlan::compose(&self, &Self) -> core::option::Option<Self>
@@ -334,7 +351,7 @@ pub fn output::EncodeReady::pixels(&self) -> zenpixels::buffer::PixelSlice<'_>
 pub FormatOption::consumer_cost: ConversionCost
 pub FormatOption::descriptor: zenpixels::descriptor::PixelDescriptor
 pub const fn FormatOption::with_cost(zenpixels::descriptor::PixelDescriptor, ConversionCost) -> Self
-#[repr(transparent)] pub struct GamutMatrix(_) [also: gamut]
+pub struct GamutMatrix(_) [also: gamut]
 pub fn gamut::GamutMatrix::apply(&self, [f32; 3]) -> [f32; 3]
 pub fn gamut::GamutMatrix::apply_row_rgb(&self, &mut [[f32; 3]])
 pub fn gamut::GamutMatrix::apply_row_rgba(&self, &mut [[f32; 4]])
@@ -383,6 +400,7 @@ pub fn converter::RowConverter::to_descriptor(&self) -> zenpixels::descriptor::P
 pub fn converter::RowConverter::try_clone(&self) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::try_convert_row(&mut self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub trait ColorConvertExt: sealed::Sealed + core::marker::Sized [also: ext]
+pub fn ColorConvertExt::map_to_gamut(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn ColorConvertExt::try_convert_to(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub trait ColorManagement [also: cms]
 pub type ColorManagement::Error: core::fmt::Debug
@@ -397,6 +415,7 @@ pub fn PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::PixelDesc
 pub fn PixelBufferConvertExt::delinearize(&self, zenpixels::descriptor::TransferFunction) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::into_oriented(self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::linearize(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn PixelBufferConvertExt::try_adapt_in_place(&mut self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::try_add_alpha(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::try_narrow_to_u8(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::try_widen_to_u16(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
@@ -429,15 +448,15 @@ pub fn TransferFunctionExt::delinearize(&self, f32) -> f32
 pub fn TransferFunctionExt::linearize(&self, f32) -> f32
 pub fn finalize_for_output<C: cms::ColorManagement>(&zenpixels::buffer::PixelBuffer, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelFormat, &C) -> core::result::Result<output::EncodeReady, whereat::at::At<error::ConvertError>> [also: output]
 
-## trait impls (27 types)
+## trait impls (28 types)
 
 ConversionCost: Add, Clone, Copy, Debug, Default, Eq, PartialEq
 ConvertIntent: Clone, Copy, Debug, Default, Eq, PartialEq
 ConvertPlan: Clone, Debug
 FormatOption: Clone, Copy, Debug, From<zenpixels::descriptor::PixelDescriptor>
+LossBucket: Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd
 OutputPlan: Debug
 Provenance: Clone, Copy, Debug, Eq, PartialEq
-[[f32; 3]; 3]: From<gamut::GamutMatrix>
 cms::CmsPluginError: Debug, Display, Error, PartialEq
 codes::CodeMap: Clone, Copy, Debug, Eq, PartialEq
 codes::CodeMapError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
@@ -445,7 +464,8 @@ codes::CodeRole: Clone, Copy, Debug, Eq, Hash, PartialEq
 codes::CodesError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 converter::RowConverter: Clone
 error::ConvertError: Clone, Debug, Display, Error, From<zenpixels::buffer::BufferError>, PartialEq
-gamut::GamutMatrix: Clone, Copy, Debug, Deref, From<[[f32; 3]; 3]>, PartialEq
+gamut::GamutMatrix: Clone, Copy, Debug, PartialEq
+hdr::SoftCompress: Clone, Debug, PartialEq
 icc_profiles::SynthesizedIcc: Clone, Debug, Eq, PartialEq
 load_bearing::LoadBearingReport: Clone, Copy, Debug, Default
 oklab::OklabSpace: Clone, Copy, Debug, PartialEq

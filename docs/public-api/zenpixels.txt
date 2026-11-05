@@ -9,32 +9,32 @@
 ## summary
 #
 #   pub modules                                12
-#   pub types (struct/enum/trait/alias)       118
-#   pub consts/statics                        314
+#   pub types (struct/enum/trait/alias)       122
+#   pub consts/statics                        316
 #   free functions                              2
-#   inherent methods                          355
-#   struct fields                             119
-#   enum variants                             306
+#   inherent methods                          364
+#   struct fields                             121
+#   enum variants                             310
 #   re-exports                                  4
-#   trait roster entries (type × trait)       402
-#   auto-trait-complete types                  55
+#   trait roster entries (type × trait)       415
+#   auto-trait-complete types                  57
 #   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          462
+#   (root)                          469
 #   buffer                          308
 #   cicp                             38
-#   color                            69
+#   color                            78
 #   descriptor                      167
 #   hdr                              12
-#   icc                              10
+#   icc                              11
 #   orientation                      11
 #   pixel_types                       9
 #   plane                            87
-#   policy                           24
+#   policy                           28
 #   sample                           33
 
-## items (1093 lines)
+## items (1111 lines)
 
 pub mod zenpixels
 pub use At
@@ -268,6 +268,10 @@ pub const fn color::NamedProfile::from_cicp(cicp::Cicp) -> core::option::Option<
 pub const fn color::NamedProfile::from_primaries_transfer(descriptor::ColorPrimaries, descriptor::TransferFunction) -> core::option::Option<Self> [also: (root)]
 pub const fn color::NamedProfile::to_cicp(self) -> core::option::Option<cicp::Cicp> [also: (root)]
 pub const fn color::NamedProfile::to_primaries_transfer(self) -> (descriptor::ColorPrimaries, descriptor::TransferFunction) [also: (root)]
+pub fn color::AnyColor::as_bytes(&self) -> &[u8]
+pub fn color::AnyColor::as_color(&self) -> core::option::Option<color::Color>
+pub fn color::AnyColor::descriptor(&self) -> descriptor::PixelDescriptor
+pub fn color::AnyColor::try_new(descriptor::PixelDescriptor, &[u8]) -> core::result::Result<Self, buffer::BufferError>
 pub fn color::Color::as_bytes(&self) -> &[u8]
 pub const fn color::Color::descriptor(&self) -> descriptor::PixelDescriptor [also: (root)]
 pub const fn color::Color::srgb8(u8, u8, u8) -> Self [also: (root)]
@@ -500,6 +504,7 @@ pub icc::IccIdentification::primaries: descriptor::ColorPrimaries
 pub icc::IccIdentification::transfer: descriptor::TransferFunction
 pub icc::IccIdentification::valid_use: icc::IdentificationUse
 pub fn icc::IccIdentification::from_icc(&[u8]) -> core::option::Option<Self>
+pub fn icc::IccIdentification::is_common_srgb(&[u8]) -> bool
 pub fn icc::IccIdentification::is_srgb(&self) -> bool
 pub fn icc::IccIdentification::to_cicp(&self) -> core::option::Option<cicp::Cicp>
 pub const fn icc::normalized_hash(&[u8]) -> u64
@@ -641,6 +646,8 @@ pub policy::AlphaPolicy::Forbid
 pub policy::DepthPolicy::Forbid
 pub policy::DepthPolicy::Round
 pub policy::DepthPolicy::Truncate
+pub policy::GamutMapping::Clip
+pub policy::GamutMapping::SoftCompress
 pub policy::GrayExpand::Broadcast
 pub policy::LumaCoefficients::Bt2020
 pub policy::LumaCoefficients::Bt601
@@ -650,6 +657,7 @@ pub const fn policy::LumaCoefficients::coefficients(self) -> [f32; 3] [also: (ro
 pub policy::ConvertOptions::alpha_policy: policy::AlphaPolicy
 pub policy::ConvertOptions::clip_out_of_gamut: bool
 pub policy::ConvertOptions::depth_policy: policy::DepthPolicy
+pub policy::ConvertOptions::gamut_mapping: policy::GamutMapping
 pub policy::ConvertOptions::gray_expand: policy::GrayExpand
 pub policy::ConvertOptions::luma: core::option::Option<policy::LumaCoefficients>
 pub const fn policy::ConvertOptions::forbid_lossy() -> Self [also: (root)]
@@ -658,6 +666,7 @@ pub const fn policy::ConvertOptions::retain_channels() -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_alpha_policy(self, policy::AlphaPolicy) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_clip_out_of_gamut(self, bool) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_depth_policy(self, policy::DepthPolicy) -> Self [also: (root)]
+pub const fn policy::ConvertOptions::with_gamut_mapping(self, policy::GamutMapping) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_gray_expand(self, policy::GrayExpand) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_luma(self, core::option::Option<policy::LumaCoefficients>) -> Self [also: (root)]
 pub mod sample
@@ -787,6 +796,9 @@ pub ColorProvenance::Icc
 pub DepthPolicy::Forbid
 pub DepthPolicy::Round
 pub DepthPolicy::Truncate
+#[non_exhaustive] pub enum GamutMapping [also: policy]
+pub GamutMapping::Clip
+pub GamutMapping::SoftCompress
 #[non_exhaustive] pub enum GrayExpand [also: policy]
 pub GrayExpand::Broadcast
 #[non_exhaustive] pub enum LumaCoefficients [also: policy]
@@ -870,6 +882,11 @@ pub TransferFunction::Pq
 pub TransferFunction::Srgb
 pub TransferFunction::Unknown
 pub fn descriptor::TransferFunction::reference_white_nits(&self) -> f32
+pub struct AnyColor(_) [also: color]
+pub fn color::AnyColor::as_bytes(&self) -> &[u8]
+pub fn color::AnyColor::as_color(&self) -> core::option::Option<color::Color>
+pub fn color::AnyColor::descriptor(&self) -> descriptor::PixelDescriptor
+pub fn color::AnyColor::try_new(descriptor::PixelDescriptor, &[u8]) -> core::result::Result<Self, buffer::BufferError>
 #[repr(C)] pub struct Bgrx [also: buffer]
 pub Bgrx::b: u8
 pub Bgrx::g: u8
@@ -922,6 +939,7 @@ pub fn color::ColorOrigin::with_color_authority(self, color::ColorAuthority) -> 
 pub ConvertOptions::alpha_policy: policy::AlphaPolicy
 pub ConvertOptions::clip_out_of_gamut: bool
 pub ConvertOptions::depth_policy: policy::DepthPolicy
+pub ConvertOptions::gamut_mapping: policy::GamutMapping
 pub ConvertOptions::gray_expand: policy::GrayExpand
 pub ConvertOptions::luma: core::option::Option<policy::LumaCoefficients>
 pub struct FromPartsError<S> [also: buffer]
@@ -1130,7 +1148,7 @@ pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 pub trait StorageSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::marker::Sized [also: buffer]
 
-## trait impls (84 types)
+## trait impls (86 types)
 
 &S: plane::SampleStorage
 &mut S: plane::SampleStorage, plane::SampleStorageMut
@@ -1156,6 +1174,7 @@ buffer::Rgbx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, b
 cicp::Cicp: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 cicp::CicpDescriptorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 cicp::UnspecifiedMatrixError: Debug, Display, Error
+color::AnyColor: Clone, Debug, Eq, From<color::Color>, Hash, PartialEq
 color::Color: Clone, Copy, Debug, Eq, Hash, PartialEq
 color::ColorAuthority: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 color::ColorContext: Clone, Debug, Default, Eq, PartialEq
@@ -1202,6 +1221,7 @@ plane::PlaneSpec: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::AlphaPolicy: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::ConvertOptions: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::DepthPolicy: Clone, Copy, Debug, Eq, Hash, PartialEq
+policy::GamutMapping: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 policy::GrayExpand: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::LumaCoefficients: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::ChromaSiting: Clone, Copy, Debug, Default, Eq, Hash, PartialEq

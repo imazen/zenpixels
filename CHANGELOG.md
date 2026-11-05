@@ -37,17 +37,24 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
   `docs/public-api/ABLATION-zenpixels-convert.md` for each old and new path.
   - `PixelSliceConvertExt` (new): `convert_to`, `convert_into`, `adapt_for_encode`,
     `check_opaque`, `quantize_to`, `oriented`, `oriented_into`.
-    `PixelBufferConvertExt::into_oriented` (new).
+    `PixelBufferConvertExt::{into_oriented, try_adapt_in_place}`.
   - `ConvertIntent::{best_match, negotiate}`, `ConversionCost::{between,
     between_with_provenance}`, `EncodeReady::finalize`, `SynthesizedIcc::for_cicp`,
-    `Cicp::from_icc`, `IccIdentification::from_icc`, `ColorModel::from_icc`.
-  - `GamutMatrix` is a newtype with `between`, `then`, `inverse`, `apply`, and in-place
-    `apply_row_rgb` and `apply_row_rgba`. `OklabSpace` (new) replaces the free Oklab
+    `Cicp::from_icc`, `IccIdentification::{from_icc, is_common_srgb}`, `ColorModel::from_icc`.
+  - `GamutMatrix` is a newtype with a private array, read through `rows()`, with `between`,
+    `then`, `inverse`, `apply`, and in-place `apply_row_rgb` and `apply_row_rgba`. `OklabSpace` (new) replaces the free Oklab
     functions and holds both directions. `SoftCompress::new` takes it and can't panic.
-- API: removed `pipeline` and its feature, `ideal_format`, `best_match_with`,
-  `is_common_srgb`, `try_adapt_in_place`, `RenderingIntent`, `ColorPriority`,
-  `measure_exact_depth`, `icc_profile_for_primaries`, `display_p3_icc`,
-  `adapt_for_encode_cow`, `adapt_for_encode_with_intent_cow`, and `CodesError::Unmeasurable`.
+- API: removed most of `pipeline` and its feature, `ideal_format`, `best_match_with`,
+  `RenderingIntent`, `ColorPriority`, `GamutBoundaryLut`, `measure_exact_depth`,
+  `icc_profile_for_primaries`, `display_p3_icc`, `adapt_for_encode_cow`,
+  `adapt_for_encode_with_intent_cow`, and `CodesError::Unmeasurable`. `LossBucket` moves to
+  the crate root with renamed variants, and `QualityThreshold` becomes
+  `ConvertIntent::best_match_within`.
+- API: `ConvertOptions::gamut_mapping` with `GamutMapping::{Clip, SoftCompress}`.
+  `SoftCompress::compress_oklab_planes`. `AnyColor` for pixels wider than `Color` holds.
+  `ColorConvertExt::map_to_gamut`, the CSS Color 4 algorithm.
+- Fix: `SoftCompress` solves the boundary directly, without its table. In-gamut colors
+  below the knee stay bit-identical, and every SIMD tier gives identical bits.
   `adapt_for_encode_explicit_cow` is now `adapt_raw_rows_for_encode`.
 - API: `crop_copy` and `compress_planes` return `Result`. Panicking accessors gain
   `try_` forms: `try_row`, `try_row_mut`, `try_row_with_stride`, `try_sub_rows`,

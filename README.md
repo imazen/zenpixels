@@ -451,6 +451,8 @@ operations on it, all allocation-free:
 - `buf.reduce_to_load_bearing_format_in_place(force)` — bit-exact narrowing
   (drop an all-opaque alpha lane, collapse `R==G==B` to gray, narrow
   bit-replicated U16 to U8) driven by a SIMD content scan;
+- `buf.try_adapt_in_place(target)` — metadata re-tags, `Rgba8`↔`Bgra8`
+  SIMD B↔R swap, and contract-exact alpha-lane drops (RGBX→RGB and friends);
 - `buf.into_oriented(orientation)` — orientation baking without a second
   pixel buffer.
 

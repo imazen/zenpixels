@@ -158,7 +158,7 @@ pub trait PluggableCms: Send + Sync {
 - `src/convert.rs` — `ConvertPlan`, `ConvertStep`, peephole fusion, HDR tone-map plan.
 - `src/estimate.rs` — `ResourceEstimate` / `ComputeEnvironment` / `ImageCharacteristics` / `SimdTier` (see `docs/ESTIMATE.md`).
 - `src/fast_gamut.rs` — fused matlut SIMD kernels for u8/u16/f32 RGB(A).
-- `src/hdr/` — `Bt2446A`, `SoftCompress`, `GamutBoundaryLut`, `measure::CllMeasure` (behind `hdr-experimental`).
+- `src/hdr/` — `Bt2446A`, `SoftCompress`, `measure::CllMeasure` (behind `hdr-experimental`).
 - `src/output.rs` — `finalize_for_output_with`, `OutputProfile`, `EncodeReady`.
 
 ### zencodec (sibling crate)

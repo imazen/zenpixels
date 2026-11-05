@@ -60,7 +60,7 @@ fn matrices_against_chromaticities() {
         if fname == tname { continue; }
         let exact = matmul(&inv(&rgb_to_xyz(tp)), &rgb_to_xyz(fp));
         let ours = GamutMatrix::between(f, t).unwrap();
-        for i in 0..3 { for j in 0..3 { all = all.max((f64::from(ours[i][j]) - exact[i][j]).abs()); } }
+        for i in 0..3 { for j in 0..3 { all = all.max((f64::from(ours.rows()[i][j]) - exact[i][j]).abs()); } }
     } }
     println!("Gamut matrices among 4 spaces, 12 pairs: worst element off by {all:.2e}");
 }

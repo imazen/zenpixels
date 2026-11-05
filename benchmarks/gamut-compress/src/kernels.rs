@@ -55,7 +55,7 @@ fn solve_strip_impl(token: Token, p: &Params, rgb: &mut [[f32; 3]]) {
     let (zero, one, cap, tiny, three) =
         (splat(0.0), splat(1.0), splat(S_CAP), splat(1e-12), splat(3.0));
     let (tau, top, knee) = (splat(p.tau), splat(1.0 - p.eps), splat(p.knee));
-    let ok0 = OKLAB_FROM_LMS_CBRT[0];
+    let ok0 = OKLAB_FROM_LMS_CBRT.rows()[0];
 
     let solve = |px: &mut [[f32; 3]; 8]| {
         let r0 = f32x8::from_array_t(token, core::array::from_fn(|i| px[i][0]));

@@ -883,9 +883,130 @@ pub trait ColorConvertExt: crate::sealed::Sealed + Sized {
         target: PixelDescriptor,
         options: &zenpixels::ConvertOptions,
     ) -> Result<Self, whereat::At<crate::ConvertError>>;
+
+    /// This color in `target`, moved into its gamut if needed, keeping hue and lightness.
+    ///
+    /// Follows the CSS Color 4 gamut mapping algorithm: OKLCh chroma reduction with a
+    /// 0.02 tolerance in OKLab, then a clip. For one color at a time; it's far slower
+    /// per pixel than [`SoftCompress`](crate::hdr::SoftCompress) and not meant for images.
+    /// Alpha is kept.
+    ///
+    /// # Errors
+    ///
+    /// [`ConvertError::NoPath`](crate::ConvertError::NoPath) for HDR transfers, unknown
+    /// primaries, non-RGB targets, or primaries with no OKLab matrices here.
+    fn map_to_gamut(
+        &self,
+        target: PixelDescriptor,
+    ) -> Result<Self, whereat::At<crate::ConvertError>>;
+}
+
+/// CSS Color 4 gamut mapping of linear RGB, in the RGB of `space`.
+///
+/// Clipping encoded or linear channels to `0..=1` gives the same color, since transfer
+/// functions are monotonic and fix both ends, so this stays in linear light.
+fn css_gamut_map(space: &crate::oklab::OklabSpace, rgb: [f32; 3]) -> [f32; 3] {
+    const JND: f32 = 0.02;
+    const EPSILON: f32 = 0.0001;
+    const ROUNDOFF: f32 = 1e-6;
+    let delta = |x: [f32; 3], y: [f32; 3]| {
+        let d: [f32; 3] = core::array::from_fn(|i| x[i] - y[i]);
+        libm::sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2])
+    };
+    let clip = |c: [f32; 3]| c.map(|v| v.clamp(0.0, 1.0));
+    let in_gamut = |c: [f32; 3]| c.iter().all(|v| (-ROUNDOFF..=1.0 + ROUNDOFF).contains(v));
+
+    let origin @ [l, a, b] = space.from_rgb(rgb);
+    if l >= 1.0 {
+        return [1.0; 3];
+    }
+    if l <= 0.0 {
+        return [0.0; 3];
+    }
+    if in_gamut(rgb) {
+        return clip(rgb);
+    }
+    let mut clipped = clip(rgb);
+    if delta(space.from_rgb(clipped), origin) < JND {
+        return clipped;
+    }
+    let chroma = libm::sqrtf(a * a + b * b);
+    let (ca, sa) = (a / chroma, b / chroma);
+    let (mut min, mut max, mut min_in_gamut) = (0.0f32, chroma, true);
+    while max - min > EPSILON {
+        let c = (min + max) / 2.0;
+        let current = space.to_rgb([l, c * ca, c * sa]);
+        if min_in_gamut && in_gamut(current) {
+            min = c;
+            continue;
+        }
+        clipped = clip(current);
+        let e = delta(space.from_rgb(clipped), space.from_rgb(current));
+        if e < JND {
+            if JND - e < EPSILON {
+                return clipped;
+            }
+            min_in_gamut = false;
+            min = c;
+        } else {
+            max = c;
+        }
+    }
+    clipped
 }
 
 impl ColorConvertExt for zenpixels::Color {
+    fn map_to_gamut(
+        &self,
+        target: PixelDescriptor,
+    ) -> Result<Self, whereat::At<crate::ConvertError>> {
+        use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction as Tf};
+        let from = self.descriptor();
+        let no_path = || whereat::at!(crate::ConvertError::NoPath { from, to: target });
+        let hdr = |t: Tf| matches!(t, Tf::Pq | Tf::Hlg);
+        if hdr(from.transfer())
+            || hdr(target.transfer())
+            || !matches!(
+                target.layout(),
+                ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
+            )
+        {
+            return Err(no_path());
+        }
+        let space =
+            crate::oklab::OklabSpace::for_primaries(target.primaries).ok_or_else(no_path)?;
+        let options = zenpixels::ConvertOptions::permissive()
+            .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked);
+
+        // Linear RGBA in the target's primaries, with out-of-gamut values kept.
+        let linear = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgba,
+            Some(AlphaMode::Straight),
+            Tf::Linear,
+        )
+        .with_primaries(target.primaries);
+        let mut pixel = [0f32; 4];
+        crate::RowConverter::new_explicit(from, linear, &options.with_clip_out_of_gamut(false))?
+            .try_convert_row(self.as_bytes(), bytemuck::cast_slice_mut(&mut pixel), 1)?;
+        let [r, g, b, alpha] = pixel;
+        let [r, g, b] = css_gamut_map(&space, [r, g, b]);
+
+        let mapped = [r, g, b, alpha];
+        let mut out = [[0f32; 4]; 1];
+        let bytes = bytemuck::cast_slice_mut::<[f32; 4], u8>(&mut out);
+        if target.bytes_per_pixel() > bytes.len() {
+            return Err(no_path());
+        }
+        let bytes = &mut bytes[..target.bytes_per_pixel()];
+        crate::RowConverter::new_explicit(linear, target, &options)?.try_convert_row(
+            bytemuck::cast_slice(&mapped),
+            bytes,
+            1,
+        )?;
+        Self::try_new(target, bytes).map_err(|e| whereat::at!(crate::ConvertError::Buffer(e)))
+    }
+
     fn try_convert_to(
         &self,
         target: PixelDescriptor,

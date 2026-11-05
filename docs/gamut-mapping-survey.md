@@ -45,7 +45,7 @@ The CSS search here agrees with Color.js 0.7.1 within 1.55e-14 on 2,048 samples,
 
 ## A faster soft compressor, 2026-11-04
 
-`benchmarks/gamut-compress` tests a two-step mapper for images, against the existing `SoftCompress`, with the same 0.96 knee. Results are on the Ryzen 9 7900X (Zen 4) with AVX2 dispatch; not measured on Zen 5.
+`benchmarks/gamut-compress` tests a two-step mapper for images, against the boundary-table `SoftCompress` it replaced, with the same 0.96 knee. Results are on the Ryzen 9 7900X (Zen 4) with AVX2 dispatch; not measured on Zen 5.
 
 1. **Gate in linear RGB.** A pixel with `min > 0.0875 * max` and `max < 0.95` can't be past the knee, so it stays bit-identical with no color math. A 257³ sRGB grid had 12,020,103 passing colors and none the exact mapper would change. These thresholds are for sRGB output; other primaries need their own.
 2. **Solve the boundary directly.** Scaling OKLab chroma by `s` at constant L and hue is a lerp in cube-root LMS, `x'(s) = L + s (x' - L)`, because the a and b rows of M2 sum to zero and the L row sums to one. So each RGB channel is a cubic in `s`, needing no atan2, square root or table. Start on the chord from gray to the input, take 2 or 3 Newton steps on packed SIMD batches, and apply the same knee.
@@ -68,8 +68,25 @@ Whole P3 u8 to sRGB u8 rows on those images took 2.65 to 9.00 ns/pixel with 3 st
 | Ramp reversals over 1e-7, P3 / BT.2020 | 1,780 / 2,270 | 288 / 345 | 0 / 380 |
 | Largest reversal, P3 / BT.2020 | 0.0000038 / 0.0000039 | 0.178 / 0.179 | 0 / 0.00027 |
 
-The table's large reversals came from a hue-seam bug, since fixed; its figures here predate the fix. It also needs a 64 KiB table per primaries, which the solve doesn't. On real images the solve and the table differed by at most 0.0064 in OKLab.
+The table's large reversals came from a hue-seam bug, since fixed; its figures here predate the fix. It also needed a 64 KiB table per primaries and 2.72 ms to build one, and neither remains. On real images the solve and the table differed by at most 0.0064 in OKLab.
 
 The solve keeps more chroma than bisection on the dark P3 blues, by up to 0.042 in OKLab, because the sRGB boundary there leaves and re-enters at fixed L and hue. Which is preferable hasn't been judged, and no visual comparison has been done.
 
 moxcms doesn't need to change to use this: for recognizable matrix-shaper curves it can produce unclipped linear target RGB, and the mapper then runs before the target curve. A hook inside moxcms would touch its matrix kernels, 16 files and 5,625 lines across SSE, AVX, AVX-512 and NEON and the fixed-point variants. LUT profiles keep their authored tables.
+
+### In the crate
+
+`SoftCompress` now uses this directly, and the table is gone. Every SIMD tier gives identical bits, because it uses no fused operations. `ConvertOptions::gamut_mapping` opts images in, with clipping staying the default. It refuses, rather than clips, for ICC sources, HDR transfers and targets with no OKLab matrices.
+
+| ns/pixel on the 10 real P3 images | Clip or table | Two-step |
+|---|---:|---:|
+| Whole u8 row, `GamutMapping::SoftCompress` | 1.24 to 1.25 (clip) | 2.81 to 9.10 |
+| Planar OKLab, as zenfilters holds it | 12.02 to 18.58 (table) | 0.94 to 5.73 |
+
+### zenfilters
+
+- `GamutMapping::SoftCompress` used the table through `compress_planes`, building one per `Pipeline`. `compress_oklab_planes` is the replacement.
+- `GamutMapping::ChromaReduce` is declared but never applied, so selecting it gives clipping. A knee of 1.0 is the same mapping.
+- Its docs suggest a knee of 0.9, against the 0.96 default the June sweep chose.
+- The June sweep measured pre-clamp out-of-gamut pixels through the table, so table overshoot counts in its result. Whether 0.96 survives an exact boundary needs a re-run.
+- `GamutLut` and `GamutMLP` expand sRGB toward P3, the other direction, so nothing here touches them.
