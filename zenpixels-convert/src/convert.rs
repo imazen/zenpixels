@@ -25,6 +25,28 @@ fn has_numeric_kernels(channel: ChannelType) -> bool {
     )
 }
 
+/// The linear RGB form an Oklab conversion must pass through, when `from` and `to` aren't already next to
+/// each other. The Oklab kernels take and give linear RGB, so every transfer, depth and gamut change
+/// happens on the RGB side.
+fn oklab_pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelDescriptor> {
+    let is_oklab =
+        |d: PixelDescriptor| matches!(d.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA);
+    let linear_rgb = |oklab: PixelDescriptor| {
+        let base = if oklab.layout() == ChannelLayout::OklabA {
+            PixelDescriptor::RGBAF32_LINEAR.with_alpha(oklab.alpha())
+        } else {
+            PixelDescriptor::RGBF32_LINEAR
+        };
+        base.with_primaries(oklab.primaries)
+    };
+    match (is_oklab(from), is_oklab(to)) {
+        (false, true) => Some(linear_rgb(to)).filter(|p| *p != from),
+        (true, false) => Some(linear_rgb(from)).filter(|p| *p != to),
+        (true, true) if from.primaries != to.primaries => Some(linear_rgb(from)),
+        _ => None,
+    }
+}
+
 /// Reject range operations for which the planner has no correct kernels.
 /// Shared with CMS dispatch so an external descriptor-only plan cannot bypass
 /// the range contract before a backend is asked to prepare a transform.
@@ -776,6 +798,11 @@ impl ConvertPlan {
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
         validate_descriptors(from, to)?;
+        if let Some(pivot) = oklab_pivot(from, to) {
+            return Self::new(from, pivot)?
+                .compose(&Self::new(pivot, to)?)
+                .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
+        }
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
@@ -1721,6 +1748,11 @@ impl ConvertPlan {
     ) -> Result<Self, At<ConvertError>> {
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
+        }
+        if let Some(pivot) = oklab_pivot(from, to) {
+            return Self::new_explicit(from, pivot, options)?
+                .compose(&Self::new_explicit(pivot, to, options)?)
+                .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
         }
         // Check alpha removal policy.
         let drops_alpha = from.has_alpha() && !to.has_alpha();

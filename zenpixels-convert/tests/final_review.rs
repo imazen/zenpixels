@@ -33,8 +33,8 @@ fn f16_cross_gamut_converts_whole_rows() {
     RowConverter::new(from, to)
         .unwrap()
         .convert_row(&src, &mut dst, 2);
-    for sample in dst.chunks_exact(2) {
-        let code = u16::from_ne_bytes([sample[0], sample[1]]);
+    for i in 0..6 {
+        let code = u16::from_ne_bytes([dst[i * 2], dst[i * 2 + 1]]);
         assert!(code.abs_diff(ONE) <= 2, "{code:#x}");
     }
 }
@@ -113,4 +113,93 @@ fn raw_adapter_geometry() {
         &options,
     );
     assert!(short.is_err());
+}
+
+fn close(got: &[f32], want: &[f32], tolerance: f32) {
+    for (a, b) in got.iter().zip(want) {
+        assert!((a - b).abs() < tolerance, "{got:?} vs {want:?}");
+    }
+}
+
+fn to_oklab(from: D, to: D, src: &[u8], pixels: u32) -> Vec<f32> {
+    let mut out = vec![0f32; pixels as usize * to.channels()];
+    RowConverter::new(from, to)
+        .unwrap()
+        .try_convert_row(src, bytemuck::cast_slice_mut(&mut out), pixels)
+        .unwrap();
+    out
+}
+
+/// Oklab kernels take linear RGB. Non-linear input skipped the transfer function, and float sRGB input
+/// ran it after Oklab, clamping a and b.
+#[test]
+fn oklab_conversions_pass_through_linear_rgb() {
+    let gray = to_oklab(D::RGB8_SRGB, D::OKLABF32, &[128, 128, 128], 1);
+    close(&gray, &[0.5998752, 0.0, 0.0], 1e-4);
+
+    let mut back = [0u8; 3];
+    RowConverter::new(D::OKLABF32, D::RGB8_SRGB)
+        .unwrap()
+        .try_convert_row(
+            bytemuck::cast_slice(&[0.5998752f32, 0.0, 0.0]),
+            &mut back,
+            1,
+        )
+        .unwrap();
+    assert_eq!(back, [128, 128, 128]);
+
+    let green = to_oklab(
+        D::RGBF32_LINEAR.with_transfer(T::Srgb),
+        D::OKLABF32.with_transfer(T::Linear),
+        bytemuck::cast_slice(&[0.0f32, 1.0, 0.0]),
+        1,
+    );
+    close(&green, &[0.8664396, -0.23388702, 0.1794982], 1e-3);
+}
+
+/// `Some(&MoxCms)` must not make a conversion fail, or lose alpha, that works without it.
+#[test]
+fn a_cms_handles_depth_alpha_and_gray_like_the_plan_does() {
+    use zenpixels::{AlphaPolicy, Color};
+    let cms = zenpixels_convert::cms_moxcms::MoxCms;
+    let cms: &dyn zenpixels_convert::cms::PluggableCms = &cms;
+    let p3 = |d: D| d.with_primaries(P::DisplayP3);
+
+    // Across depths.
+    let mut c = RowConverter::new_explicit_with_cms(
+        p3(D::RGB16_SRGB),
+        D::RGB8_SRGB,
+        &ConvertOptions::permissive(),
+        Some(cms),
+    )
+    .unwrap();
+    let mut out = [0u8; 3];
+    c.try_convert_row(bytemuck::cast_slice(&[65535u16; 3]), &mut out, 1)
+        .unwrap();
+    assert_eq!(out, [255; 3]);
+
+    // Compositing is the plan's to do, not a plugin's to skip.
+    let white = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
+        background: Color::srgb8(255, 255, 255),
+        reference_white: None,
+    });
+    let mut c =
+        RowConverter::new_explicit_with_cms(p3(D::RGBA8_SRGB), D::RGB8_SRGB, &white, Some(cms))
+            .unwrap();
+    let mut out = [0u8; 3];
+    c.try_convert_row(&[0, 0, 0, 0], &mut out, 1).unwrap();
+    assert_eq!(out, [255; 3]);
+}
+
+#[test]
+fn orientation_refuses_a_different_format_of_the_same_size() {
+    let pixel = [255u8, 0, 0, 255];
+    let source = PixelSlice::new(&pixel, 1, 1, 4, D::RGBA8_SRGB).unwrap();
+    let mut buffer = PixelBuffer::try_new(1, 1, D::BGRA8_SRGB).unwrap();
+    let dst = buffer.as_slice_mut();
+    assert!(
+        source
+            .oriented_into(zenpixels::Orientation::Identity, dst)
+            .is_err()
+    );
 }

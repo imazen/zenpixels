@@ -33,9 +33,18 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- `ConvertPlan`: conversions to and from Oklab pass through linear RGB. A non-linear source skipped its transfer function, float sRGB ran it after Oklab and clamped a and b, and cross-gamut sources multiplied Oklab by an RGB matrix.
+- `ConvertPlan`: F16 cross-gamut conversion read samples as U8 and wrote half the row.
+- `ConvertPlan::new_with_tone_mapper`: a premultiplied source keeps the injected mapper, and a mapper receives the working primaries it asks for.
+- `hdr`: removed `LuminanceHistogram`, `ToneMapper::cost_ns_per_mp`, and the `log_avg_luminance` and `luminance_histogram` requests and context fields. Nothing used them, and the plan never supplied them. `ToneMapContext` no longer has a lifetime.
+- `PixelSliceConvertExt::adapt_for_encode` honors a current ICC profile, as `convert_to` does, instead of converting by descriptor and relabeling the result.
+- `PixelSliceConvertExt::convert_into` replaces the destination's color context. `oriented_into` refuses a destination of a different format with the same pixel size.
+- `RowConverter`: with a CMS, a conversion across depths, into gray, or compositing onto a background now gives a result where it refused or dropped alpha. `MoxCms` declines depth pairs the plan can convert.
+- `Color::try_new` refuses samples needing alignment above 4 bytes; `AnyColor` holds them. `adapt_raw_rows_for_encode` accepts a last row without padding, and returns an error for a short stride instead of panicking.
+
 - `MoxCms` rounds 8-bit samples to nearest, by taking them through the backend's 16-bit path. The backend's 8-bit path floors. On Display P3 to sRGB, 40.2% of samples missed C lcms2 2.20, for a mean of -0.40 of a code; now 1.5% miss, for a mean of -0.006. This changes 8-bit output and costs speed.
 - `MoxCms` keeps white between ICC profiles and generated ones: 8-bit white into generated sRGB was (255, 255, 254). Generated colorants now sum to the ICC PCS white.
-- `MoxCms` uses low barycentric weights. High weights turned every 16-bit pixel of a table profile into a constant.
+- `MoxCms` uses low barycentric weights on integer paths. High weights turned every 16-bit pixel of a table profile into a constant.
 - `MoxCms` row transforms honor `width`, and return an error for a row shorter than it. They used to convert the whole slice.
 - `cms-contract/` runs each CMS backend through one behavioral contract and against the others: `just cms-contract`. It isn't a workspace member.
 

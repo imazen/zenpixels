@@ -297,12 +297,6 @@ mod tests {
     struct MockMapper {
         observed_source_peak_bits: core::sync::atomic::AtomicU32,
         observed_target_peak_bits: core::sync::atomic::AtomicU32,
-        // `u64::MAX` sentinel = unobserved; otherwise low 32 bits = the
-        // observed f32 bits, high 32 bits = 1 if `Some`, 0 if `None`.
-    }
-
-    impl MockMapper {
-        const LOG_AVG_UNSEEN: u64 = u64::MAX;
     }
 
     impl ToneMapper for MockMapper {

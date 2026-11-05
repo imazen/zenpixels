@@ -42,8 +42,10 @@ use moxcms::{
 ///   results on them. See `docs/gamut-mapping-survey.md`.
 /// - **Tetrahedral interpolation** for 3D CLUTs, more accurate than trilinear where
 ///   saturated colors cross cube diagonals.
-/// - **Low barycentric weight scale.** `High` turned 16-bit table profiles into a constant, gave the same
-///   8-bit result on every profile we scored, and moved F32 by at most 0.00003 of a code.
+/// - **High barycentric weight scale** for F32: on a CMYK table it stays closer to lcms2, at a worst
+///   difference of 2.18 of a code against 2.99 for `Low`. [`options_for_profiles`] selects `Low` for the
+///   integer paths, because `High` turned 16-bit table profiles into a constant, and 8-bit samples take the
+///   16-bit path.
 ///
 /// Crate-internal: moxcms types stay out of the public API so the moxcms version
 /// range can change without a zenpixels-convert release.
@@ -51,7 +53,7 @@ pub(crate) fn transform_opts() -> TransformOptions {
     TransformOptions {
         rendering_intent: moxcms::RenderingIntent::RelativeColorimetric,
         allow_use_cicp_transfer: false,
-        barycentric_weight_scale: BarycentricWeightScale::Low,
+        barycentric_weight_scale: BarycentricWeightScale::High,
         interpolation_method: InterpolationMethod::Tetrahedral,
         ..Default::default()
     }
@@ -102,6 +104,9 @@ fn options_for_profiles(
     target: &ColorProfile,
 ) -> TransformOptions {
     let mut options = transform_opts();
+    if format.channel_type() != ChannelType::F32 {
+        options.barycentric_weight_scale = BarycentricWeightScale::Low;
+    }
     // ICC falls back to A2B0 when A2B1 is absent, as lcms2 does. JPEG XL's PQ and HLG profiles have
     // only A2B0, and the backend refuses them under relative colorimetric intent.
     if source.lut_a_to_b_colorimetric.is_none()
@@ -235,6 +240,18 @@ fn u8_through_u16(
         source_channels: source.channels(),
         target_channels: target.channels(),
     }))
+}
+
+const fn is_rgb_format(format: PixelFormat) -> bool {
+    !matches!(
+        format,
+        PixelFormat::Gray8
+            | PixelFormat::Gray16
+            | PixelFormat::GrayF32
+            | PixelFormat::GrayA8
+            | PixelFormat::GrayA16
+            | PixelFormat::GrayAF32
+    )
 }
 
 const fn is_cmyk_f32(format: PixelFormat) -> bool {
@@ -390,7 +407,7 @@ fn cmyk_float_transform(
         } else {
             moxcms::RenderingIntent::Perceptual
         },
-        barycentric_weight_scale: moxcms::BarycentricWeightScale::Low,
+        barycentric_weight_scale: moxcms::BarycentricWeightScale::High,
         ..TransformOptions::default()
     };
     let black_point_y = if encode_srgb {
@@ -740,12 +757,22 @@ impl crate::cms::PluggableCms for MoxCms {
     ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
     {
         use crate::cms::CmsPluginError;
-        if src_format.channel_type() != dst_format.channel_type()
-            || !matches!(
-                src_format.channel_type(),
-                ChannelType::U8 | ChannelType::U16 | ChannelType::F32
+        // Depths the plan can convert aren't this backend's problem, so it declines them. Sample types
+        // nothing here can convert are diagnosed.
+        let plannable = |t: ChannelType| {
+            matches!(
+                t,
+                ChannelType::U8 | ChannelType::U16 | ChannelType::F16 | ChannelType::F32
             )
+        };
+        let (src_type, dst_type) = (src_format.channel_type(), dst_format.channel_type());
+        if plannable(src_type)
+            && plannable(dst_type)
+            && (src_type != dst_type || src_type == ChannelType::F16)
         {
+            return None;
+        }
+        if src_type != dst_type || !plannable(src_type) {
             return Some(Err(whereat::at!(CmsPluginError::msg(
                 "moxcms requires matching U8, U16 or F32 sample types; convert depth separately"
             ))));
@@ -895,6 +922,17 @@ fn build_moxcms_profile_for_format(
         // CICP describes RGB colorimetry; CMYK descriptors with CICP
         // (which is unusual — CICP rarely tags CMYK) decline so the
         // caller can attach a real CMYK ICC instead.
+        // Generated profiles are RGB, and unspecified code points describe no color.
+        _ if !is_rgb_format(format) && !matches!(src, crate::ColorProfileSource::Icc(_)) => {
+            Ok(None)
+        }
+        crate::ColorProfileSource::Cicp(cicp)
+            if !is_cmyk
+                && (cicp.color_primaries_enum() == crate::ColorPrimaries::Unknown
+                    || cicp.transfer_function_enum() == crate::TransferFunction::Unknown) =>
+        {
+            Ok(None)
+        }
         crate::ColorProfileSource::Cicp(cicp) if !is_cmyk => {
             Ok(Some(with_pcs_white(cicp_to_moxcms_profile(cicp))))
         }

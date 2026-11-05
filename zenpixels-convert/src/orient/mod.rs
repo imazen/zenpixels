@@ -157,6 +157,13 @@ pub(crate) fn apply_orientation_into(
             actual: dst.width() as usize * dst.rows() as usize * dst_bpp,
         });
     }
+    // Orientation moves pixels; it can't change what their bytes mean.
+    if dst.descriptor().pixel_format() != src.descriptor().pixel_format() {
+        return Err(ConvertError::NoPath {
+            from: src.descriptor(),
+            to: dst.descriptor(),
+        });
+    }
     if w == 0 || h == 0 || bpp == 0 {
         return Ok(());
     }
@@ -421,7 +428,8 @@ fn inplace_transpose(a: &mut [u8], w: u32, h: u32, bpp: usize) {
         let mut cur = start;
         loop {
             moved[cur] = true;
-            let prev = (cur * w) % mn1; // element that belongs at `cur`
+            // The element that belongs at `cur`. The product overflows a 32-bit usize.
+            let prev = ((cur as u64 * w as u64) % mn1 as u64) as usize;
             if prev == start {
                 break;
             }

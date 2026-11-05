@@ -161,16 +161,25 @@ mod tests {
     }
     #[cfg(feature = "cms-moxcms")]
     #[test]
-    fn moxcms_crossdepth_refused_at_planning() {
+    fn moxcms_crossdepth_gives_the_plans_result() {
+        // A backend with U8 and F32 paths has no U8-to-F32 path, so it declines, and the bytes must
+        // never land in float storage unconverted.
         let from = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
-        assert!(
+        let to = PixelDescriptor::RGBF32_LINEAR;
+        let src = [255u8, 128, 0];
+        let convert = |cms: Option<&dyn zenpixels_convert::cms::PluggableCms>| {
+            let mut out = [0f32; 3];
             RowConverter::new_explicit_with_cms(
                 from,
-                PixelDescriptor::RGBF32_LINEAR,
+                to,
                 &policy::ConvertOptions::permissive(),
-                Some(&MoxCms)
+                cms,
             )
-            .is_err()
-        );
+            .unwrap()
+            .try_convert_row(&src, bytemuck::cast_slice_mut(&mut out), 1)
+            .unwrap();
+            out
+        };
+        assert_eq!(convert(Some(&MoxCms)), convert(None));
     }
 }

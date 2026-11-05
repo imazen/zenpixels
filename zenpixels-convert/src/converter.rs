@@ -267,7 +267,11 @@ impl RowConverter {
         //     different output — surface the failure instead.
         let primaries_differ = from.primaries != to.primaries;
         let needs_cms_dispatch = crate::convert::needs_cms_for_color_model(&from, &to);
+        // A plugin can only drop alpha. The built-in plan composites and applies the other policies.
+        let plugin_may_drop_alpha = !(from.has_alpha() && !to.has_alpha())
+            || options.alpha_policy() == AlphaPolicy::DiscardUnchecked;
         if (primaries_differ || needs_cms_dispatch)
+            && plugin_may_drop_alpha
             && from.alpha() != Some(crate::AlphaMode::Premultiplied)
             && to.alpha() != Some(crate::AlphaMode::Premultiplied)
             && from.alpha() != Some(crate::AlphaMode::Undefined)
@@ -338,11 +342,6 @@ impl RowConverter {
             }
 
             if let Some(external) = external {
-                // Policy checks still apply.
-                let drops_alpha = from.has_alpha() && !to.has_alpha();
-                if drops_alpha && options.alpha_policy() == AlphaPolicy::Forbid {
-                    return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
-                }
                 // Precision bits, not byte size — see convert.rs for rationale.
                 let reduces_depth = crate::negotiate::channel_bits(from.channel_type())
                     > crate::negotiate::channel_bits(to.channel_type());
@@ -414,7 +413,13 @@ impl RowConverter {
         {
             return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
-        if from.has_alpha() && !to.has_alpha() {
+        let composites = from.has_alpha()
+            && !to.has_alpha()
+            && matches!(
+                options.alpha_policy(),
+                crate::AlphaPolicy::CompositeOnto { .. }
+            );
+        if from.has_alpha() && !to.has_alpha() && !composites {
             match options.alpha_policy() {
                 crate::AlphaPolicy::DiscardUnchecked => {}
                 crate::AlphaPolicy::DiscardIfOpaque => {
@@ -423,25 +428,43 @@ impl RowConverter {
                 _ => return Err(whereat::at!(ConvertError::AlphaRemovalForbidden)),
             }
         }
+        // A plugin takes one depth, straight alpha and no layout change that loses channels, so the
+        // color change runs in straight F32 and the plan handles the rest on either side of it.
+        let to_gray = matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha)
+            && !matches!(
+                from.layout(),
+                ChannelLayout::Gray | ChannelLayout::GrayAlpha
+            );
         if from.alpha() == Some(crate::AlphaMode::Premultiplied)
             || to.alpha() == Some(crate::AlphaMode::Premultiplied)
+            || from.channel_type() != to.channel_type()
+            || composites
+            || to_gray
         {
-            let straight_float =
-                |desc: PixelDescriptor| -> Result<PixelDescriptor, At<ConvertError>> {
-                    let format = match desc.layout() {
-                        ChannelLayout::Rgb => crate::PixelFormat::RgbF32,
-                        ChannelLayout::Rgba | ChannelLayout::Bgra => crate::PixelFormat::RgbaF32,
-                        ChannelLayout::Gray => crate::PixelFormat::GrayF32,
-                        ChannelLayout::GrayAlpha => crate::PixelFormat::GrayAF32,
-                        _ => return Err(whereat::at!(ConvertError::NoPath { from, to })),
-                    };
-                    Ok(format
-                        .descriptor()
-                        .with_primaries(desc.primaries)
-                        .with_transfer(desc.transfer()))
+            let straight_float = |layout: ChannelLayout, color: PixelDescriptor| {
+                let format = match layout {
+                    ChannelLayout::Rgb => crate::PixelFormat::RgbF32,
+                    ChannelLayout::Rgba | ChannelLayout::Bgra => crate::PixelFormat::RgbaF32,
+                    ChannelLayout::Gray => crate::PixelFormat::GrayF32,
+                    ChannelLayout::GrayAlpha => crate::PixelFormat::GrayAF32,
+                    _ => return Err(whereat::at!(ConvertError::NoPath { from, to })),
                 };
-            let straight_from = straight_float(from)?;
-            let straight_to = straight_float(to)?;
+                Ok(format
+                    .descriptor()
+                    .with_primaries(color.primaries)
+                    .with_transfer(color.transfer()))
+            };
+            let straight_from = straight_float(from.layout(), from)?;
+            // Keep the channels until the color change is done.
+            let middle_layout = if composites || to_gray {
+                from.layout()
+            } else {
+                to.layout()
+            };
+            let straight_to = straight_float(middle_layout, to)?;
+            if straight_from == from && straight_to == to {
+                return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            }
             let pipeline = AlphaPipeline {
                 before: Self::new_explicit(from, straight_from, options)?,
                 color: Self::new_with_sources(
