@@ -33,6 +33,9 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- `zenpixels::precision`: the rule for what a chosen format may drop, in `docs/precision-policy-design.md`. `SourcePrecision` says what a source really carried, `ConversionPolicy` and `ConversionResolver` decide among `ConversionOffer`s, and `plan_chain` does so across a job's nodes. `PixelSliceConvertExt::scan_source_precision` measures what a decoder couldn't state, so `zenpixels-convert` now depends on `enough`.
+- `adapt_for_encode` and `adapt_raw_rows_for_encode` pick a supported format that holds the source when one exists. RGB16 with `[RGB8, RGBF32]` on offer used to narrow to RGB8, because that's less work.
+
 - Fallible pixel-buffer constructors request allocator-zeroed bytes directly, retaining allocation errors.
 
 - **Breaking:** removed `cms::ColorManagement`, `finalize_for_output` and the colorant-based `identify_profile` with them. Use `PluggableCms` and `EncodeReady::finalize`; `zenpixels::icc::IccIdentification` identifies profiles. zenpipe's `IccTransformSource` and `job` need migrating at the pin bump. `builtin_profiles` stays: it's `pub(crate)`, and zenjpeg's XYB plan names it.

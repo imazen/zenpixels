@@ -386,6 +386,22 @@ pub trait PixelSliceConvertExt<'a>: crate::sealed::Sealed {
     /// [`ConvertError::AlphaNotOpaque`](crate::ConvertError::AlphaNotOpaque).
     fn check_opaque(&self) -> Result<(), At<crate::ConvertError>>;
 
+    /// Read these samples for what a decoder couldn't state: 8-bit content in `u16` storage, or
+    /// whether alpha is really used. Row padding is ignored, and nothing allocates.
+    ///
+    /// This is a whole pass, so it is the caller's choice, and `stop` is checked between rows. A
+    /// format with no canonical grid to measure against, such as a float, gets
+    /// [`SourcePrecision::from_storage`](zenpixels::precision::SourcePrecision::from_storage). The
+    /// result describes these samples, so call it before anything edits them.
+    ///
+    /// # Errors
+    ///
+    /// The [`StopReason`](enough::StopReason) when `stop` fires.
+    fn scan_source_precision(
+        &self,
+        stop: &dyn enough::Stop,
+    ) -> Result<zenpixels::precision::SourcePrecision, At<enough::StopReason>>;
+
     /// Quantize PQ-anchored linear pixels to `target`. **Allocates**.
     ///
     /// The anchor comes from the slice's `ColorContext`. See `docs/hdr-anchor-api-design.md`.
@@ -546,6 +562,14 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
                 })
             }
         })
+    }
+
+    #[track_caller]
+    fn scan_source_precision(
+        &self,
+        stop: &dyn enough::Stop,
+    ) -> Result<zenpixels::precision::SourcePrecision, At<enough::StopReason>> {
+        crate::adapt::scan_source_precision(self, stop)
     }
 
     #[track_caller]

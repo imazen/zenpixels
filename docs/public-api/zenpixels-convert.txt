@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)        53
 #   pub consts/statics                         32
 #   free functions                              2
-#   inherent methods                          168
+#   inherent methods                          170
 #   struct fields                              73
 #   enum variants                              83
 #   re-exports                                  3
@@ -21,14 +21,14 @@
 #   auto-trait exceptions                       4
 #
 # per-module pub lines:
-#   (root)                          190
+#   (root)                          191
 #   adapt                             1
 #   cms                              18
 #   codes                            39
 #   converter                        31
 #   css                               3
 #   error                            36
-#   ext                              28
+#   ext                              29
 #   gamut                            11
 #   hdr                               2
 #   icc_profiles                     10
@@ -37,7 +37,7 @@
 #   output                           19
 #   ycbcr                            22
 
-## items (406 lines)
+## items (408 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -178,6 +178,7 @@ pub fn ext::PixelSliceConvertExt::convert_to(&self, zenpixels::descriptor::Pixel
 pub fn ext::PixelSliceConvertExt::oriented(&self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelSliceConvertExt::oriented_into(&self, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn ext::PixelSliceConvertExt::quantize_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn ext::PixelSliceConvertExt::scan_source_precision(&self, &dyn enough::Stop) -> core::result::Result<zenpixels::precision::SourcePrecision, whereat::at::At<enough::reason::StopReason>>
 pub fn ext::TransferFunctionExt::delinearize(&self, f32) -> f32
 pub fn ext::TransferFunctionExt::linearize(&self, f32) -> f32
 pub mod gamut
@@ -428,6 +429,7 @@ pub fn PixelSliceConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescr
 pub fn PixelSliceConvertExt::oriented(&self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelSliceConvertExt::oriented_into(&self, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn PixelSliceConvertExt::quantize_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn PixelSliceConvertExt::scan_source_precision(&self, &dyn enough::Stop) -> core::result::Result<zenpixels::precision::SourcePrecision, whereat::at::At<enough::reason::StopReason>>
 pub trait PixelSliceLoadBearingExt: load_bearing::sealed::Sealed [also: load_bearing]
 pub fn PixelSliceLoadBearingExt::determine_load_bearing(&self) -> load_bearing::LoadBearingReport
 pub fn PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuffer>

@@ -63,6 +63,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "enough"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "877362cb7b70d1c617f0cd3c67708bd58d894a86af5104018e2c10ebaee3c02f"
+
+[[package]]
 name = "garb"
 version = "0.2.8"
 source = "git+https://github.com/imazen/garb?rev=605276d717ea0b31a1cd2a36ae05301383c7b8b5#605276d717ea0b31a1cd2a36ae05301383c7b8b5"
@@ -221,6 +227,7 @@ version = "0.3.1"
 dependencies = [
  "archmage",
  "bytemuck",
+ "enough",
  "garb",
  "libm",
  "linear-srgb",
