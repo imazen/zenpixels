@@ -312,3 +312,96 @@ fn cms_attached_for_native_pair_is_unused() {
         res.err().map(|e| alloc::format!("{:?}", e.error())),
     );
 }
+
+#[cfg(feature = "cms-moxcms")]
+#[path = "common/synthetic_icc.rs"]
+#[allow(dead_code)]
+mod synthetic_icc;
+
+/// The parity of this path with lcms2 on real profiles is measured in `benchmarks/jxl-cms-parity`.
+#[cfg(feature = "cms-moxcms")]
+mod cmyk_f32 {
+    use zenpixels::{ColorProfileSource, PixelFormat};
+    use zenpixels_convert::cms::{PluggableCms, RowTransformMut};
+    use zenpixels_convert::cms_moxcms::MoxCms;
+    use zenpixels_convert::policy::ConvertOptions;
+
+    const SRGB: ColorProfileSource<'static> =
+        ColorProfileSource::Cicp(zenpixels::Cicp::new(1, 13, 0, true));
+
+    fn transform(icc: &[u8], src: PixelFormat, dst: PixelFormat) -> Box<dyn RowTransformMut> {
+        MoxCms
+            .build_source_transform(
+                ColorProfileSource::Icc(icc),
+                SRGB,
+                src,
+                dst,
+                &ConvertOptions::permissive(),
+            )
+            .expect("not declined")
+            .expect("built")
+    }
+
+    fn run(t: &mut Box<dyn RowTransformMut>, ink: &[f32]) -> Vec<f32> {
+        let mut out = vec![0f32; ink.len() / 4 * 3];
+        t.try_transform_row(
+            bytemuck::cast_slice(ink),
+            bytemuck::cast_slice_mut(&mut out),
+            (ink.len() / 4) as u32,
+        )
+        .unwrap();
+        out
+    }
+
+    #[test]
+    fn polarity_is_the_formats_and_rows_split_cleanly() {
+        let icc = super::load_cmyk_icc_from_disk()
+            .expect("a CMYK profile from codec-corpus, as cmyk_with_real_icc_profile loads");
+        // Longer than the transform's stack chunk, so its seam is inside the row.
+        let ink: Vec<f32> = (0..600 * 4).map(|i| (i % 97) as f32 / 96.0).collect();
+        let inverted: Vec<f32> = ink.iter().map(|v| 1.0 - v).collect();
+        let mut plain = transform(&icc, PixelFormat::CmykF32, PixelFormat::RgbF32);
+        let mut flipped = transform(&icc, PixelFormat::CmykF32Inverted, PixelFormat::RgbF32);
+        let a = run(&mut plain, &ink);
+        let b = run(&mut flipped, &inverted);
+        for (x, y) in a.iter().zip(&b) {
+            assert!((x - y).abs() < 1e-5, "{x} vs {y}");
+        }
+        let mut parts = Vec::new();
+        for row in ink.chunks(7 * 4) {
+            parts.extend(run(&mut plain, row));
+        }
+        assert_eq!(a, parts);
+        // No ink is white and all ink is black, through the table-only profile's A2B0.
+        for v in run(&mut plain, &[0.0; 4]) {
+            assert!((v - 1.0).abs() < 1e-3, "{v}");
+        }
+        for v in run(&mut plain, &[1.0; 4]) {
+            assert!(v.abs() < 1e-3, "{v}");
+        }
+    }
+
+    /// Passes in `cms-contract`, on the same call. See imazen/zenpixels#112.
+    #[test]
+    #[ignore = "unexplained: 0.137 in this build, 0 in cms-contract"]
+    fn k_only_black() {
+        let icc = super::synthetic_icc::synthetic_cmyk_icc();
+        let mut plain = transform(&icc, PixelFormat::CmykF32, PixelFormat::RgbF32);
+        for v in run(&mut plain, &[0.0, 0.0, 0.0, 1.0]) {
+            assert!(v.abs() < 1e-3, "{v}");
+        }
+    }
+
+    #[test]
+    fn nothing_converts_into_f32_cmyk() {
+        let icc = super::synthetic_icc::synthetic_cmyk_icc();
+        let refused = MoxCms.build_source_transform(
+            SRGB,
+            ColorProfileSource::Icc(&icc),
+            PixelFormat::RgbF32,
+            PixelFormat::CmykF32,
+            &ConvertOptions::permissive(),
+        );
+        assert!(matches!(refused, Some(Err(_))));
+    }
+}

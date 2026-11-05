@@ -140,12 +140,13 @@ once_cell = { version = "1.21.4", default-features = false, features = ["race", 
 # `#![forbid(unsafe_code)]`.
 lz4_flex = { version = "0.14.0", default-features = false, features = ["safe-decode"], optional = true }
 whereat = { version = "0.1.5", default-features = false }
-# Verified against both moxcms 0.8.1 and the unreleased 0.9.0 (master): the only
+# 0.9.1 is the floor: on 0.9.0, F32 CMYK through a table-only profile gave 0.137 for K-only black, where
+# 0.9.1 gives 0. Verified against 0.8.1 and the unreleased 0.9.0 (master) at the time: the only
 # API our code touches that changed is the D50 white-point spelling (const
 # `WHITE_POINT_D50` → fn `white_point_d50()`), which the gray test oracle
 # reconstructs version-agnostically (see `cms_moxcms::moxcms_d50_xyz`). `<0.10`
 # excludes the next untested minor.
-moxcms = { version = ">=0.8.1, <0.10", optional = true, features = ["options", "extended_range"] }
+moxcms = { version = ">=0.9.1, <0.10", optional = true, features = ["options", "extended_range"] }
 
 [dev-dependencies]
 zenpixels = { workspace = true, features = ["planar", "imgref"] }

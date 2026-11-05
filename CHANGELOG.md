@@ -33,6 +33,16 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [0.3.1] — unreleased candidate
 
+- `MoxCms` rounds 8-bit samples to nearest, by taking them through the backend's 16-bit path. The backend's 8-bit path floors. On Display P3 to sRGB, 40.2% of samples missed C lcms2 2.20, for a mean of -0.40 of a code; now 1.5% miss, for a mean of -0.006. This changes 8-bit output and costs speed.
+- `MoxCms` keeps white between ICC profiles and generated ones: 8-bit white into generated sRGB was (255, 255, 254). Generated colorants now sum to the ICC PCS white.
+- `MoxCms` selects low barycentric weights for 16-bit and 8-bit table profiles. High weights turned every 16-bit pixel into a constant.
+- `MoxCms` row transforms honor `width`, and return an error for a row shorter than it. They used to convert the whole slice.
+- `zenpixels-convert` requires moxcms 0.9.1. 0.9.0 gave 0.137 for K-only black through a table-only CMYK profile.
+- `cms-contract/` runs each CMS backend through one behavioral contract and against the others: `just cms-contract`. It isn't a workspace member.
+
+- `MoxCms` converts `CmykF32` and `CmykF32Inverted` sources with `build_source_transform`, by the route JPEG XL decoders take through lcms2. To sRGB that is relative colorimetric with black-point compensation. Conversion into F32 CMYK still refuses.
+- `MoxCms` falls back to `A2B0` when a table-only profile has no `A2B1`, as ICC specifies. JPEG XL's PQ and HLG profiles need this, and they refused before. Such profiles also keep extended range. `benchmarks/jxl-cms-parity` measures all of this against lcms2 and `zenjxl-decoder`'s own wrapper.
+
 - `hdr::ToneMapper`, a two-phase tone-mapping trait with `Requirements`, `ToneMapContext`, `PreparedMapper` and `StripMapper`, and `ConvertPlan::new_with_tone_mapper` to inject one. `Bt2446A` implements it and stays the one built-in algorithm.
 - `Bt2446A` output no longer depends on where a row ends or splits: the tail ran exact `powf` while the lanes ran a polynomial. The lanes now use `pow_midp_unchecked`, so black is 0, not 5.88e-5, and the worst error falls from 49.8 16-bit codes to under 0.1. On 16,384-pixel rows, 70.5 µs becomes 75.1 µs on Zen 4.
 

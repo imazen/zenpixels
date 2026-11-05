@@ -118,6 +118,15 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Open (2026-11-05, imazen/zenpixels#112): F32 CMYK K-only black through a table profile is 0.137 in the workspace
+  test build and 0 in `cms-contract`, on the same call, moxcms and pxfm. `k_only_black` is ignored until it's explained.
+
+- Fixed in the CMS contract (2026-11-05): `MoxCms` floored 8-bit samples (mean -0.40 of a code against lcms2), left
+  8-bit white at (255, 255, 254) between ICC and generated profiles, turned 16-bit table profiles into a constant
+  through high barycentric weights, and ignored a row's `width`. `tests/cms_moxcms_accuracy.rs` covers each.
+  moxcms' table results still differ from lcms2 on some profiles: on mozjpeg's `test3.icc` 61% of 8-bit samples differ
+  and on `test1.icc` 17% to 26%.
+
 - Fixed 2026-11-04: planning added the gamut matrix after layout and depth steps, so wide
   RGB into gray or from RGBA to RGB ran it on rows of the wrong shape, and U16 rows ran U8
   steps. `tests/gamut_across_layouts.rs` measures every route against independent `f64`
