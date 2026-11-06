@@ -159,6 +159,12 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
   `CompositeOnto::reference_white` now places it, defaulting to BT.2408.
 
 - Open (2026-11-04): `RowConverter::new` puts SDR white at PQ's peak, 10,000 cd/m², where CSS puts 203. `ColorConvertExt::try_convert_to` refuses this.
+  PR #115 refuses SDR-encoded sources into PQ and HLG; it doesn't cover the case below and waits on the HDR API decision.
+- Open (2026-11-05): Linear into PQ has two defaults for one input. Linear BT.2020 (1, 1, 1) with no anchor into `RGB16_BT2100_PQ`
+  gives 65535 (10,000 cd/m²) from `convert_to` and `RowConverter`, and 38055 (203 cd/m²) from `quantize_to`; both match the analytic
+  PQ codes. With a 203 anchor in a `ColorContext::from_cicp(Cicp::BT2100_PQ)`, `convert_to` refuses with
+  `CicpDescriptor(NonIdentityMatrix(9))` while `quantize_to` accepts it. Measured on `fde59b96`. The proposed fix (one anchor rule:
+  explicit option, then context, then refuse) is in `docs/hdr-anchor-api-design.md` §6.
   `docs/css-color-parity.md` lists this and the other CSS differences.
 
 - Fixed (2026-11-04): the matte was not converted to wide-gamut source primaries, so sRGB red over a P3 source came out as P3's red.

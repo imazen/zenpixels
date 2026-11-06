@@ -50,12 +50,12 @@ A format's capability isn't one number. It varies by codec and by path. JPEG in 
 |---|---|
 | The format | 8 and 12-bit DCT; lossless SOF3 at 2 to 16 bits |
 | zenjpeg decode (`extended-jpeg`, on by default) | 12-bit DCT and lossless. `OutputTarget::Native16` gives native codes, 0 to 4095 for 12-bit, not canonical U16. `sample_precision()` reports the source |
-| zenjpeg's zencodec decoder | `U8` and `F32` descriptors only. 12-bit input rounds to 8 when `U8` is preferred, with `bit_depth` 12 in `ImageInfo`. A comment there still says the parser rejects 12-bit |
+| zenjpeg's zencodec decoder | Since zenjpeg `a8ebcd0b` (2026-11-05): offers and honors `RGB16_SRGB`, `RGBA16_SRGB` and `GRAY16_SRGB` on one-shot, push and streaming; a frame above 8 bits gets U16 unless the preference list offers only U8. Matches libjpeg-turbo `djpeg` on 6 files. Before that, `U8` and `F32` only, and 12-bit input rounded to 8 |
 | Coefficient transcoding (lossless transforms) | Keeps 12-bit, written as SOF1 |
 | Pixel encoding and lossy recompression | 8-bit only |
 
 So a capability table needs at least: what the decoder delivers, what the encoder accepts, and what a coefficient path keeps. Today a
-12-bit JPEG through `zencodecs` with a `U8` preference drops 4 bits at the decoder with nothing but a metadata field to show it. This
+Before zenjpeg `a8ebcd0b`, a 12-bit JPEG through `zencodecs` with a `U8` preference dropped 4 bits at the decoder with nothing but a metadata field to show it; with an only-U8 list it still does. This
 is the hidden case in the table above. The fix has two parts, both after the stack merges: zenjpeg's zencodec decoder offers a canonical
 `U16` exit, scaled to white at 65535 by `zenpixels_convert::codes`; and a decoder that delivers fewer bits than the source
 reports that as a narrowing.
@@ -131,7 +131,7 @@ the four-axis sweep.
 | Tool | Today |
 |---|---|
 | `cjxl-rs` | Keeps 16-bit PNG input |
-| `cavif` (`ravif`) | Narrows `RGB16`, `RGBA16`, `GRAY16` and `GRAYA16` input to `RGBA8` with no notice |
+| `cavif` (`ravif`) | Since cavif-rs `0aa806ca` (2026-11-05): 16-bit input goes to 10-bit planes; `--depth=8` narrows, with a notice unless `--quiet`. Before that it narrowed to `RGBA8` with no notice |
 | `zenpng` | Refuses 16-bit to convert, and its compare goes through `to_rgba8` |
 | `zjpeg` | JPEG-to-JPEG operations, no pixel conversion |
 | `zencodecs`, `zenpipe` | Whatever the library does |
