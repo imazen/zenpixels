@@ -295,3 +295,16 @@ This is an exact-zero ICC pure-gamma failure, not merely a tiny synthetic value.
 The comparison is a constructed pixel test, not a corpus frequency survey or
 evidence of visible benefit from the separate CICP tiny-value guards. See
 `benchmarks/moxcms_review_2026-11-06.md`.
+
+### Power implementation comparison and current numerical limits (2026-11-06)
+
+The matched-domain harness in `benchmarks/pow-comparison` compares pxfm0.1.30
+with pinned magetypes f40f5d38 on scalar/AVX2. On the normalized-U16 grid its
+sampled maxima are 2.371181022e-6 dirty, 1.866631039e-6 midp, 5.567079078e-3
+lowp relative error. This is not a speed or all-f32 accuracy claim. Checked
+magetypes methods handle zero but do not provide full IEEE powf semantics:
+NaN/negative and subnormal cases remain outside a safe drop-in replacement
+contract. In the current revision, pow_midp(NaN,1.8)=0 and
+pow_midp(-0.5,1.8)=MIN_POSITIVE on both measured backends. These limits need
+caller handling; no sibling source was changed. Details, raw counts, source
+links and reproduction are in `benchmarks/pow-comparison/README.md`.

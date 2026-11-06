@@ -387,3 +387,10 @@ jxl-cms-render-references djxl fixtures output:
 # Exact public-transform zero-channel comparison, separate from timing.
 moxcms-real-pixel-check:
     cargo run --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features review-revisions --bin black
+
+pow-comparison-check:
+    cargo fmt --manifest-path benchmarks/pow-comparison/Cargo.toml -p gamma-pow-comparison --check
+    cargo clippy --locked --manifest-path benchmarks/pow-comparison/Cargo.toml --all-targets -- -D warnings
+
+pow-comparison output:
+    cargo run --locked --release --manifest-path benchmarks/pow-comparison/Cargo.toml > "{{output}}"

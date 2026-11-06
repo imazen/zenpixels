@@ -1,0 +1,12 @@
+[package]
+name = "gamma-pow-comparison"
+version = "0.0.0"
+edition = "2024"
+publish = false
+[workspace]
+[dependencies]
+pxfm = "=0.1.30"
+archmage = { git = "https://github.com/imazen/archmage", rev = "f40f5d38c22544a1bdd57da5c33fb037b533c8e4" }
+magetypes = { git = "https://github.com/imazen/archmage", rev = "f40f5d38c22544a1bdd57da5c33fb037b533c8e4", default-features = false, features = ["std"] }
+[profile.release]
+lto = "thin"
