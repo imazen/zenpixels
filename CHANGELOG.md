@@ -31,6 +31,16 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 # Changelog
 
+## [Unreleased]
+
+### QUEUED BREAKING CHANGES
+
+See the 0.3.1 candidate entries below for the approved breaking release queue.
+
+### Added
+
+- Pixel Format Explorer on GitHub Pages, with a CI-built WASM converter, conversion plans and byte comparisons (`5a97b0dd`).
+
 ## [0.3.1] — unreleased candidate
 
 - `MoxCms` at F32 no longer returns unrelated values from pure-gamma curves: ProPhoto (0.5, 0.5, 0) into sRGB was (1, 1, 0) with clipping on, and black was about -2.1e9 without it. The adapter now applies a single-value `curv` itself on RGB and gray sources and on gray routes, and keeps a negative sample's sign from a table source. Values the backend's fast power can represent keep their bits. See `benchmarks/pure_gamma_f32_2026-11-05.md`.

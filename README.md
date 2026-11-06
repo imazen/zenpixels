@@ -18,7 +18,8 @@ Pixel format types and transfer-function-aware conversion for Rust image codecs.
 > [0.2.16 reference](https://docs.rs/zenpixels/0.2.16/zenpixels/).
 
 See the [finalization/release contract](https://github.com/imazen/zenpixels/blob/main/docs/finalization-release-contract.md)
-and the [interactive color & sample explorer](https://github.com/imazen/zenpixels/blob/main/docs/color-explorer/index.html).
+and the [Pixel Format Explorer](https://imazen.github.io/zenpixels/) with a live WASM converter.
+The [color & sample decision model](https://imazen.github.io/zenpixels/color-explorer/) explains metadata choices.
 Estimation is retired in both release plans; the 0.2 feature no longer suppresses warnings.
 
 Native codec planes can now carry a checked
