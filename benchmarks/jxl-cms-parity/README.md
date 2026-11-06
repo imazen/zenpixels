@@ -7,6 +7,40 @@ instead checks both moxcms paths against lcms2 values pinned in the decoder's un
 It builds outside the repo, with a `Cargo.toml` that depends on this tree, `zenjxl-decoder` and `zenjxl-decoder-cli`, and an archmage cap
 in the decoder raised to admit 0.9.31-beta.2. It unifies on moxcms 0.9.1.
 
+## Approved adapter defaults, revalidated 2026-11-06
+
+The executable harness now sends structured RGB PQ to `PluggableCms` as CICP.
+Known HLG in structured profiles or an ICC CICP tag returns a CMS error before
+construction because this adapter has no OOTF. The historical `exact/hdr_class.rs`
+is unchanged so its original comparisons remain reproducible.
+
+Fresh complete 1024x1024 PQ decodes against frozen djxl/skcms PFMs differ by at
+most **0.022236** clamped eight-bit codes for sRGB and **0.052848** for P3.
+The original adapter fails the same sRGB image check at **210.454285** codes.
+Both HLG decode targets return the explicit OOTF refusal. Two route tests and
+strict harness Clippy also pass. The independent-image check uses a newly added
+0.1-code bound; no existing numerical expectation changed. It is caller-admitted
+with explicit fixture/reference directories and fails if either is missing.
+These are clamped display comparisons, not equality of extended-range floats.
+The earlier classification was also rerun: CICP versus analytic rows is 0.05/0.02
+codes for PQ and 56.40/56.36 for HLG without OOTF. Those are different comparisons.
+
+`prepare.py PIXELS DECODER NEW_OUTPUT` creates a publish=false manifest and
+records hashes of the supplied sources. It never modifies either checkout.
+The measured graph uses historical pixels `04cc06f5`, moxcms 0.9.1 and a decoder
+experiment copy whose cap already admits beta.2. It does not qualify HDR PR 120,
+the current native-codec cohort or a production zenjxl PluggableCms API.
+The current cohort's resolver blockers are in
+[codec-cohort/README.md](../codec-cohort/README.md).
+
+From the zenpixels root, run `just jxl-cms-adapter-check MANIFEST`, then
+`just jxl-cms-reference-check MANIFEST FIXTURES REFERENCES`. The references are
+`hdr_pq_test_SRG.pfm` and `hdr_pq_test_P3.pfm`; fixtures include
+`hdr_pq_test.jxl` and `hdr_hlg_test.jxl`. Preserve the generated lockfile with
+run artifacts. Resource wrapper for the final two gates: 3 seconds, peak RSS
+0.44 GiB, minimum available 18423 MiB, peak load 0.20; these are validation
+process measurements rather than codec performance or memory claims.
+
 ## Results, 2026-11-05
 
 Worst difference in 8-bit codes, clamped to 0..=1, and the share of samples more than 2 codes apart.

@@ -274,3 +274,14 @@ without dropping recognition of older profile bytes. Full corpus regeneration
 still uses the existing corpus pipeline. `just icc-bundle-reader-check OUTPUT_DIR`
 runs the independent readers. ICC requirements: [ICC.1:2022](https://www.color.org/specifications/ICC.1-2022-05.pdf),
 sections 7.1 and 7.2.16.
+
+### JXL PluggableCms adapter defaults revalidated (2026-11-06)
+
+The standalone parity harness routes structured RGB PQ as CICP and refuses
+known HLG until OOTF exists. Full 1024x1024 PQ decode versus frozen djxl/skcms
+PFMs measures worst 0.022236 sRGB / 0.052848 P3 clamped eight-bit codes; both
+HLG targets return CMS errors. The frozen historical row classification also
+reran. These measurements use historical pixels 04cc06f5, not HDR PR120 or the
+current native cohort. Source hashes, recipes and scope are in
+`benchmarks/jxl-cms-parity/README.md`. Production zenjxl integration remains
+unqualified while the newer cohort fails dependency resolution.

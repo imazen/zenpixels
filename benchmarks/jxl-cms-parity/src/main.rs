@@ -1,4 +1,5 @@
 //! One trait? PluggableCms behind JxlCms, against lcms2 and the decoder's own moxcms wrapper.
+#![forbid(unsafe_code)]
 use jxl::api::{JxlCms, JxlCmsTransformer, JxlColorEncoding, JxlColorProfile, JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlPixelFormat, ProcessingResult};
 use std::sync::Mutex;
 use zenpixels::{ColorProfileSource, PixelFormat};
@@ -16,17 +17,31 @@ fn cicp_of(p: &JxlColorProfile) -> Option<zenpixels::Cicp> {
     let tc = match transfer_function { T::SRGB => 13, T::PQ => 16, T::HLG => 18, T::Linear => 8, T::BT709 => 1, _ => return None };
     Some(zenpixels::Cicp::new(pr, tc, 0, true))
 }
+fn has_hlg(profile: &JxlColorProfile) -> bool {
+    use jxl::api::JxlTransferFunction;
+    if let JxlColorProfile::Icc(bytes) = profile {
+        return zenpixels::Cicp::from_icc(bytes)
+            .is_some_and(|cicp| cicp.transfer_characteristics == 18);
+    }
+    matches!(profile, JxlColorProfile::Simple(
+        JxlColorEncoding::RgbColorSpace { transfer_function: JxlTransferFunction::HLG, .. }
+        | JxlColorEncoding::GrayscaleColorSpace { transfer_function: JxlTransferFunction::HLG, .. }
+    ))
+}
 struct Tr { inner: Mutex<Box<dyn RowTransformMut>>, inc: usize, outc: usize }
 fn fmt(ch: usize) -> PixelFormat { match ch { 1 => PixelFormat::GrayF32, 3 => PixelFormat::RgbF32, 4 => PixelFormat::CmykF32Inverted, _ => panic!("{ch}") } }
 impl<C: PluggableCms> JxlCms for Adapter<C> {
     fn initialize_transforms(&self, n: usize, max: usize, input: JxlColorProfile, output: JxlColorProfile, _intensity: f32) -> jxl::api::Result<(usize, Vec<Box<dyn JxlCmsTransformer + Send + Sync>>)> {
         let err = |s: String| whereat::at!(jxl::api::Error::CmsError(s));
+        if has_hlg(&input) || has_hlg(&output) {
+            return Err(err("HLG OOTF is not implemented by this PluggableCms adapter".into()));
+        }
         let (inc, outc) = (input.channels(), output.channels());
-        // JXL is CICP-native: built-in encodings go as CICP, the rest as ICC.
+        // Pass sRGB and PQ structured RGB as CICP; retain ICC for other profiles.
         let si_owned = input.try_as_icc().map(|c| c.into_owned());
         let di_owned = output.try_as_icc().map(|c| c.into_owned());
         let source = |p: &JxlColorProfile, icc: &Option<Vec<u8>>| -> Option<(Option<zenpixels::Cicp>, Vec<u8>)> {
-            let c = cicp_of(p).filter(|c| c.color_primaries == 1 && c.transfer_characteristics == 13);
+            let c = cicp_of(p).filter(|c| (c.color_primaries == 1 && c.transfer_characteristics == 13) || c.transfer_characteristics == 16);
             Some((c, icc.clone().unwrap_or_default()))
         };
         let (sc, si) = source(&input, &si_owned).ok_or_else(|| err("source".into()))?;
@@ -145,13 +160,12 @@ fn main() {
             CALLS.store(0, std::sync::atomic::Ordering::Relaxed);
             let a = decode(&bytes, Box::new(Adapter(MoxCms)), t, ct);
             let calls = CALLS.load(std::sync::atomic::Ordering::Relaxed);
-            if let (Ok(l), Ok(m), Ok(a)) = (&l, &m, &a) {
-                if name.starts_with("hdr_") || name.starts_with("cmyk") {
+            if let (Ok(l), Ok(m), Ok(a)) = (&l, &m, &a)
+                && (name.starts_with("hdr_") || name.starts_with("cmyk")) {
                     for &p in &[(l.1 / 2 * l.0 + l.0 / 2), (l.1 / 4 * l.0 + l.0 / 4), (3 * l.1 / 4 * l.0 + 3 * l.0 / 4)] {
                         let at = |v: &[f32]| [v[p * 3], v[p * 3 + 1], v[p * 3 + 2]];
                         println!("SAMPLE {name} {tn} px{p}: lcms2 {:.4?} decoder {:.4?} adapter {:.4?}", at(&l.2), at(&m.2), at(&a.2));
                     }
-                }
             }
             match (&l, &m, &a) {
                 (Ok(l), Ok(m), Ok(a)) => println!("{name}\t{tn}\tcalls {calls}\t{}x{}\tdecoder-moxcms vs lcms2: {}\tadapter vs lcms2: {}\tadapter vs decoder-moxcms: {}", l.0, l.1, cmp(&m.2, &l.2), cmp(&a.2, &l.2), cmp(&a.2, &m.2)),
@@ -159,4 +173,99 @@ fn main() {
             }
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    type Seen = Arc<Mutex<Vec<(Option<zenpixels::Cicp>, Option<zenpixels::Cicp>)>>>;
+    struct Spy(Seen);
+    impl PluggableCms for Spy {
+        fn build_source_transform(&self, src: ColorProfileSource<'_>, dst: ColorProfileSource<'_>,
+            _: PixelFormat, _: PixelFormat, _: &ConvertOptions)
+            -> Option<Result<Box<dyn RowTransformMut>, whereat::At<zenpixels_convert::cms::CmsPluginError>>> {
+            let signal = |p| match p { ColorProfileSource::Cicp(c) => Some(c), _ => None };
+            self.0.lock().unwrap().push((signal(src), signal(dst)));
+            Some(Err(whereat::at!(zenpixels_convert::cms::CmsPluginError::msg("recorded route"))))
+        }
+    }
+    fn profile(tf: jxl::api::JxlTransferFunction) -> JxlColorProfile {
+        JxlColorProfile::Simple(JxlColorEncoding::RgbColorSpace {
+            white_point: jxl::api::JxlWhitePoint::D65,
+            primaries: jxl::api::JxlPrimaries::BT2100,
+            transfer_function: tf,
+            rendering_intent: jxl::api::RenderingIntent::Relative,
+        })
+    }
+    #[test]
+    fn pq_reaches_plugin_as_cicp() {
+        let seen = Seen::default();
+        let adapter = Adapter(Spy(Arc::clone(&seen)));
+        assert!(adapter.initialize_transforms(1, 8, profile(jxl::api::JxlTransferFunction::PQ),
+            JxlColorProfile::Simple(JxlColorEncoding::srgb(false)), 10000.0).is_err());
+        assert_eq!(*seen.lock().unwrap(), vec![(Some(zenpixels::Cicp::new(9,16,0,true)), Some(zenpixels::Cicp::new(1,13,0,true)))]);
+    }
+    #[test]
+    fn hlg_refuses_before_plugin_construction_in_both_directions() {
+        let seen = Seen::default();
+        let adapter = Adapter(Spy(Arc::clone(&seen)));
+        let srgb = JxlColorProfile::Simple(JxlColorEncoding::srgb(false));
+        let hlg = profile(jxl::api::JxlTransferFunction::HLG);
+        for (source, target) in [(hlg.clone(),srgb.clone()),(srgb,hlg)] {
+            let error = match adapter.initialize_transforms(1,8,source,target,1000.0) {
+                Err(error) => error, Ok(_) => panic!("HLG must refuse until OOTF exists")
+            };
+            assert!(format!("{error:?}").contains("HLG OOTF"));
+        }
+        assert!(seen.lock().unwrap().is_empty());
+    }
+    fn pfm(path: &std::path::Path) -> (usize, usize, Vec<f32>) {
+        let bytes = std::fs::read(path).expect("caller-provided djxl reference PFM");
+        let mut lines = bytes.splitn(4, |&b| b == b'\n');
+        assert_eq!(lines.next().unwrap(), b"PF");
+        let geometry = std::str::from_utf8(lines.next().unwrap()).unwrap();
+        let mut dims = geometry.split_whitespace().map(|v| v.parse::<usize>().unwrap());
+        let (w,h) = (dims.next().unwrap(),dims.next().unwrap());
+        let scale = std::str::from_utf8(lines.next().unwrap()).unwrap().parse::<f32>().unwrap();
+        assert_eq!(scale.abs(),1.0);
+        let data = lines.next().unwrap();
+        assert_eq!(data.len(), w*h*3*4);
+        let mut output = Vec::with_capacity(w*h*3);
+        for row in data.chunks_exact(w*3*4).rev() {
+            output.extend(row.as_chunks::<4>().0.iter().map(|&v| if scale>0.0 {f32::from_be_bytes(v)} else {f32::from_le_bytes(v)}));
+        }
+        (w,h,output)
+    }
+    #[test]
+    #[ignore = "caller supplies full JXL fixtures and frozen djxl PFM references"]
+    fn pq_matches_djxl_references_and_hlg_returns_refusal() {
+        let fixtures = std::path::PathBuf::from(std::env::var_os("JXL_CMS_FIXTURES").expect("JXL_CMS_FIXTURES"));
+        let references = std::path::PathBuf::from(std::env::var_os("JXL_CMS_REFERENCES").expect("JXL_CMS_REFERENCES"));
+        let bytes = std::fs::read(fixtures.join("hdr_pq_test.jxl")).unwrap();
+        let targets = [
+            ("SRG", JxlColorProfile::Simple(JxlColorEncoding::srgb(false))),
+            ("P3", JxlColorProfile::Simple(JxlColorEncoding::RgbColorSpace {
+                white_point:jxl::api::JxlWhitePoint::D65,primaries:jxl::api::JxlPrimaries::P3,
+                transfer_function:jxl::api::JxlTransferFunction::SRGB,
+                rendering_intent:jxl::api::RenderingIntent::Relative,
+            })),
+        ];
+        for (name,target) in targets {
+            let (w,h,actual) = decode(&bytes,Box::new(Adapter(MoxCms)),&target,JxlColorType::Rgb).unwrap();
+            let (rw,rh,expected) = pfm(&references.join(format!("hdr_pq_test_{name}.pfm")));
+            assert_eq!((w,h),(rw,rh));
+            assert_eq!(actual.len(),expected.len());
+            let worst = actual.iter().zip(&expected).map(|(a,b)| {
+                assert!(a.is_finite() && b.is_finite());
+                (a.clamp(0.0,1.0)-b.clamp(0.0,1.0)).abs()*255.0
+            }).fold(0.0f32,f32::max);
+            println!("PQ full decode vs frozen djxl {name}: {w}x{h}, worst {worst:.6} clamped 8-bit codes");
+            assert!(worst <= 0.1, "{name}: {worst} exceeds a tenth of one display code");
+            let hlg = std::fs::read(fixtures.join("hdr_hlg_test.jxl")).unwrap();
+            let refusal = decode(&hlg,Box::new(Adapter(MoxCms)),&target,JxlColorType::Rgb).unwrap_err();
+            assert!(refusal.contains("HLG OOTF"), "{refusal}");
+        }
+    }
+
 }

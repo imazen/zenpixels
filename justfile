@@ -365,3 +365,15 @@ codec-cohort-prepare codec output core pixels:
 
 codec-cohort-resolve manifest:
     cargo metadata --format-version 1 --manifest-path "{{manifest}}"
+
+# Caller supplies the frozen experimental dependencies; never edits them.
+jxl-cms-prepare pixels decoder output:
+    python3 benchmarks/jxl-cms-parity/prepare.py "{{pixels}}" "{{decoder}}" "{{output}}"
+
+jxl-cms-adapter-check manifest:
+    cargo test --locked --manifest-path "{{manifest}}" --bin jxl-cms-parity-review
+    cargo clippy --locked --manifest-path "{{manifest}}" --bin jxl-cms-parity-review --no-deps -- -D warnings
+
+# Explicit fixture admission; this fails if either input directory is absent.
+jxl-cms-reference-check manifest fixtures references:
+    JXL_CMS_FIXTURES="{{fixtures}}" JXL_CMS_REFERENCES="{{references}}" cargo test --locked --manifest-path "{{manifest}}" --bin jxl-cms-parity-review pq_matches_djxl_references_and_hlg_returns_refusal -- --ignored --nocapture
