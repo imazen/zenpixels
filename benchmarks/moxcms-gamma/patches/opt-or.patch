@@ -1,0 +1,54 @@
+diff --git a/src/gamma.rs b/src/gamma.rs
+index b296a92..12d35f9 100644
+--- a/src/gamma.rs
++++ b/src/gamma.rs
+@@ -439,7 +439,9 @@ fn exact_powf(x: f32, exponent: f32) -> f32 {
+ #[cfg(feature = "extended_range")]
+ #[inline(always)]
+ fn bounded_powf(x: f32, exponent: f32) -> f32 {
+-    if is_fast_powf(x) {
++    if x == 0.0 {
++        x
++    } else if is_fast_powf(x) {
+         // `abs` shows the optimizer that `x` is positive, which drops the negative base handling.
+         dirty_powf(x.abs(), exponent)
+     } else {
+@@ -452,7 +454,8 @@ fn bounded_powf(x: f32, exponent: f32) -> f32 {
+ #[cfg(feature = "extended_range")]
+ #[inline(always)]
+ fn bounded_powf_tristimulus(rgb: Rgb<f32>, exponent: f32) -> Rgb<f32> {
+-    if is_fast_powf(rgb.r) & is_fast_powf(rgb.g) & is_fast_powf(rgb.b) {
++    let distance = |x: f32| x.to_bits().wrapping_sub(0x2980_0000);
++    if (distance(rgb.r) | distance(rgb.g) | distance(rgb.b)) <= 0x2c00_0000 {
+         Rgb::new(
+             dirty_powf(rgb.r.abs(), exponent),
+             dirty_powf(rgb.g.abs(), exponent),
+diff --git a/src/trc.rs b/src/trc.rs
+index bcda80b..22887d9 100644
+--- a/src/trc.rs
++++ b/src/trc.rs
+@@ -1496,7 +1496,9 @@ impl ToneCurveEvaluatorPureGamma {
+ 
+     #[inline(always)]
+     fn odd_pure_gamma(&self, x: f32) -> f32 {
+-        if self.is_fast(x) {
++        if x == 0.0 {
++            x
++        } else if self.is_fast(x) {
+             self.fast(x)
+         } else {
+             self.exact(x)
+@@ -1533,8 +1535,11 @@ impl ToneCurveEvaluator for ToneCurveParametricEvaluator {
+ 
+ impl ToneCurveEvaluator for ToneCurveEvaluatorPureGamma {
+     fn evaluate_tristimulus(&self, rgb: Rgb<f32>) -> Rgb<f32> {
+-        // One test for the pixel keeps the common case free of branches around each power.
+-        if self.is_fast(rgb.r) & self.is_fast(rgb.g) & self.is_fast(rgb.b) {
++        // The OR is at least each unsigned distance, so passing one comparison
++        // proves that all channels are inside the fast interval. It may reject
++        // some valid combinations; the per-channel path preserves their bits.
++        let distance = |x: f32| (x.to_bits() & 0x7fff_ffff).wrapping_sub(self.fast_min_bits);
++        if (distance(rgb.r) | distance(rgb.g) | distance(rgb.b)) <= self.fast_span {
+             Rgb::new(self.fast(rgb.r), self.fast(rgb.g), self.fast(rgb.b))
+         } else {
+             Rgb::new(

@@ -50,6 +50,8 @@ def main():
             raise SystemExit(f"{variant}: source digest mismatch: {actual}")
         print(f"{variant}: verified {actual}")
 
+    for optimized in ["opt-or", "opt-wide", "opt-pixel"]:
+        subprocess.run(["python3",str(ROOT / "prepare-optimized.py"),optimized],check=True)
 
 if __name__ == "__main__":
     main()

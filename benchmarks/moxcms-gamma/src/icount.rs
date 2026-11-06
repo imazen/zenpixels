@@ -43,7 +43,7 @@ macro_rules! variant {
     ($m:ident, $load:expr, $neg:expr, $n:expr) => {{
         match $load {
             "eval_encode" | "eval_decode" => {
-                let curve = $m::curve_from_gamma(2.19921875);
+                let curve = $m::curve_from_gamma(563.0 / 256.0);
                 let e = if $load == "eval_encode" {
                     curve.make_gamma_evaluator().unwrap()
                 } else {
@@ -110,6 +110,12 @@ fn main() {
         "bitor" => variant!(m3, a[2].as_str(), neg, n),
         "guarded" => variant!(m4, a[2].as_str(), neg, n),
         "always_f_powf" => variant!(m5, a[2].as_str(), neg, n),
+        #[cfg(feature = "optimized")]
+        "opt_or" => variant!(opt_or, a[2].as_str(), neg, n),
+        #[cfg(feature = "optimized")]
+        "opt_wide" => variant!(opt_wide, a[2].as_str(), neg, n),
+        #[cfg(feature = "optimized")]
+        "opt_pixel" => variant!(opt_pixel, a[2].as_str(), neg, n),
         other => panic!("{other}"),
     }
 }

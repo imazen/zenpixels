@@ -1,0 +1,20 @@
+{
+  "opt-or": {
+    "base": "4ab190f0e76f95b332a04ce059b51c893e2f5d79",
+    "name": "opt-or",
+    "patch_sha256": "ad9ab888d7783b3ba392812fe29ae3500f971a07459e2d98baf0d2c91c35efd8",
+    "source_sha256": "ce64069e289fc4d5e8a0d085ba78a4c8cf66caee153681e6d199e209f717ba0c"
+  },
+  "opt-wide": {
+    "base": "4ab190f0e76f95b332a04ce059b51c893e2f5d79",
+    "name": "opt-wide",
+    "patch_sha256": "f0dcc684de3382157bd284bee148151f88211d96fb8fabdfbb0f44a9d3e3ebfb",
+    "source_sha256": "b33af21457c5d33252df8d45b35f78a2bf024ee2a397e68701e17e142de1be50"
+  },
+  "opt-pixel": {
+    "base": "4ab190f0e76f95b332a04ce059b51c893e2f5d79",
+    "name": "opt-pixel",
+    "patch_sha256": "b448fb80ae0f01e05298188e799556c31f0ca41293f9194df9456e062cd829d3",
+    "source_sha256": "60f93df77bb54c8de59597e5b44437005ac68cd2ea55dfed41fc387902913bdd"
+  }
+}

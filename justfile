@@ -394,3 +394,12 @@ pow-comparison-check:
 
 pow-comparison output:
     cargo run --locked --release --manifest-path benchmarks/pow-comparison/Cargo.toml > "{{output}}"
+
+moxcms-optimized-check:
+    cargo run --locked --release --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features optimized --bin optimized_check
+
+moxcms-optimized-instructions output:
+    python3 benchmarks/moxcms-gamma/optimized-evidence.py "{{output}}"
+
+moxcms-optimized-cells binary output:
+    python3 benchmarks/moxcms-gamma/optimized-cells.py "{{binary}}" "{{output}}"
