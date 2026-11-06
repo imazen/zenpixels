@@ -1429,7 +1429,7 @@ pub(crate) fn icc_bytes_for_cicp(cicp: &Cicp) -> Option<alloc::vec::Vec<u8>> {
     // CICP — bail with None (surfaces as `CmsUnsupported`) rather than emit a
     // degenerate profile whose colorimetry omits or contradicts the requested color.
     profile.red_trc.as_ref()?;
-    profile.encode().ok()
+    crate::icc_profiles::canonical::canonicalize(profile.encode().ok()?)
 }
 
 /// moxcms's D50 white point (`white_point_from_temperature(5003)`), reconstructed so
@@ -1503,7 +1503,7 @@ pub(crate) fn gray_icc_bytes_for_cicp(cicp: &Cicp) -> Option<alloc::vec::Vec<u8>
         )
     ]));
 
-    gray.encode().ok()
+    crate::icc_profiles::canonical::canonicalize(gray.encode().ok()?)
 }
 
 /// The white point of an H.273 colour-primaries code, as CIE xy

@@ -262,3 +262,20 @@ is unconditionally deprecated in 0.2 and removed in 0.3; core HDR computation
 and root aliases are removed in 0.3. Concrete-type conversion extensions are
 sealed there, while Pixel and CMS plugins remain open. No crate publication
 is authorized by release-branch preparation.
+
+### Synthesized ICC serialization (verified 2026-11-06)
+
+The CICP bundle generator and fresh moxcms comparison use the private
+`icc_profiles/canonical.rs` serializer: D50 PCS illuminant, four-byte tag
+alignment, zero timestamp/profile ID, unchanged tag payloads. Tag sharing is
+retained. The regenerated blob is 35,379 bytes, SHA-256
+`10aaba9c228d86b47718d5e2f4bea739b336fea808c3fd68d7d40ff7a0f80a2f`.
+All 159 RGB and 175 gray mappings pass fresh-synthesis equality. All 334
+profiles pass structural checks, Little CMS parsing and exact libpng ICC
+roundtrips without warnings; a non-D50 negative control fails.
+
+`just icc-bundle-identification OUTPUT_DIR` generates and adds bundle hashes
+without dropping recognition of older profile bytes. Full corpus regeneration
+still uses the existing corpus pipeline. `just icc-bundle-reader-check OUTPUT_DIR`
+runs the independent readers. ICC requirements: [ICC.1:2022](https://www.color.org/specifications/ICC.1-2022-05.pdf),
+sections 7.1 and 7.2.16.

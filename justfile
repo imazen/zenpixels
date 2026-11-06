@@ -328,3 +328,22 @@ hdr-intent-check:
     cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
     cargo check --locked -p zenpixels-convert --no-default-features --features bt2446a
     ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
+
+# Frozen, unpublished gamma diagnostics; prepare.py reconstructs dependencies.
+moxcms-gamma-check:
+    cargo fmt --manifest-path benchmarks/moxcms-gamma/Cargo.toml -p moxcms-gamma-harness --check
+    cargo check --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --all-targets
+    cargo run --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --bin probe
+    cargo run --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --bin black
+
+# Add fresh bundle hashes without dropping recognition of older profile bytes.
+icc-bundle-identification output:
+    cargo run --locked -p icc-gen --release --bin icc-gen -- zenpixels-convert/src/profiles {{output}}
+    python3 scripts/icc-gen/merge_bundle_tables.py {{output}} zenpixels/src/icc
+
+# Requires pkg-config, libpng development headers and Little CMS 2.
+icc-bundle-reader-check output:
+    mkdir -p "{{output}}"
+    cargo run --locked -p zenpixels-convert --example icc_bundle_export -- "{{output}}"
+    cc -Wall -Wextra -Werror scripts/icc-gen/validation/png_icc_reader.c -o "{{output}}/reader" $(pkg-config --cflags --libs libpng lcms2)
+    python3 scripts/icc-gen/validation/check_bundle.py "{{output}}/reader" "{{output}}"
