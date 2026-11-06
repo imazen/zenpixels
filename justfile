@@ -358,3 +358,10 @@ moxcms-review-cells binary output:
 # Validate all retained process gates and export review timing comparisons.
 moxcms-review-summary study output:
     python3 benchmarks/moxcms-gamma/summarize-review-cells.py "{{study}}" "{{output}}"
+
+# Read-only source checkouts; output must be a new directory.
+codec-cohort-prepare codec output core pixels:
+    python3 benchmarks/codec-cohort/prepare.py "{{codec}}" "{{output}}" "{{core}}" "{{pixels}}"
+
+codec-cohort-resolve manifest:
+    cargo metadata --format-version 1 --manifest-path "{{manifest}}"
