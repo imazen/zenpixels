@@ -14,14 +14,16 @@ Known HLG in structured profiles or an ICC CICP tag returns a CMS error before
 construction because this adapter has no OOTF. The historical `exact/hdr_class.rs`
 is unchanged so its original comparisons remain reproducible.
 
-Fresh complete 1024x1024 PQ decodes against frozen djxl/skcms PFMs differ by at
+Fresh complete 1024x1024 PQ decodes against djxl PFMs differ by at
 most **0.022236** clamped eight-bit codes for sRGB and **0.052848** for P3.
 The original adapter fails the same sRGB image check at **210.454285** codes.
 Both HLG decode targets return the explicit OOTF refusal. Two route tests and
 strict harness Clippy also pass. The independent-image check uses a newly added
 0.1-code bound; no existing numerical expectation changed. It is caller-admitted
 with explicit fixture/reference directories and fails if either is missing.
-These are clamped display comparisons, not equality of extended-range floats.
+The two reference PFMs were regenerated with independent `djxl v0.12.0 4128790`
+and are byte-identical to the frozen PFMs. These are clamped display comparisons,
+not equality of extended-range floats.
 The earlier classification was also rerun: CICP versus analytic rows is 0.05/0.02
 codes for PQ and 56.40/56.36 for HLG without OOTF. Those are different comparisons.
 
@@ -32,6 +34,10 @@ experiment copy whose cap already admits beta.2. It does not qualify HDR PR 120,
 the current native-codec cohort or a production zenjxl PluggableCms API.
 The current cohort's resolver blockers are in
 [codec-cohort/README.md](../codec-cohort/README.md).
+
+`just jxl-cms-render-references DJXL FIXTURES NEW_OUTPUT` regenerates sRGB and
+P3 references. JPEG XL spells P3 primaries `DCI` in the color description:
+`RGB_D65_DCI_Rel_SRG` ([libjxl parser](https://github.com/libjxl/libjxl/blob/v0.12.0/lib/extras/dec/color_description.cc)).
 
 From the zenpixels root, run `just jxl-cms-adapter-check MANIFEST`, then
 `just jxl-cms-reference-check MANIFEST FIXTURES REFERENCES`. The references are

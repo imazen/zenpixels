@@ -278,7 +278,7 @@ sections 7.1 and 7.2.16.
 ### JXL PluggableCms adapter defaults revalidated (2026-11-06)
 
 The standalone parity harness routes structured RGB PQ as CICP and refuses
-known HLG until OOTF exists. Full 1024x1024 PQ decode versus frozen djxl/skcms
+known HLG until OOTF exists. Full 1024x1024 PQ decode versus independently regenerated djxl
 PFMs measures worst 0.022236 sRGB / 0.052848 P3 clamped eight-bit codes; both
 HLG targets return CMS errors. The frozen historical row classification also
 reran. These measurements use historical pixels 04cc06f5, not HDR PR120 or the

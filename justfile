@@ -377,3 +377,9 @@ jxl-cms-adapter-check manifest:
 # Explicit fixture admission; this fails if either input directory is absent.
 jxl-cms-reference-check manifest fixtures references:
     JXL_CMS_FIXTURES="{{fixtures}}" JXL_CMS_REFERENCES="{{references}}" cargo test --locked --manifest-path "{{manifest}}" --bin jxl-cms-parity-review pq_matches_djxl_references_and_hlg_returns_refusal -- --ignored --nocapture
+
+jxl-cms-render-references djxl fixtures output:
+    mkdir "{{output}}"
+    "{{djxl}}" --version
+    "{{djxl}}" "{{fixtures}}/hdr_pq_test.jxl" "{{output}}/hdr_pq_test_SRG.pfm" --num_threads=4 --color_space=RGB_D65_SRG_Rel_SRG
+    "{{djxl}}" "{{fixtures}}/hdr_pq_test.jxl" "{{output}}/hdr_pq_test_P3.pfm" --num_threads=4 --color_space=RGB_D65_DCI_Rel_SRG
