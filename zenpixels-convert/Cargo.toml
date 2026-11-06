@@ -138,7 +138,7 @@ libm = { version = "0.2", default-features = false }
 # on AVX2, 2×128 polyfill below), and the 512-bit type set isn't worth its
 # compile-time cost without a stronger AVX-512 use case in this crate.
 magetypes = { version = ">=0.9.31-beta.2, <0.10.0", default-features = false }
-paste = "1.0.15"
+paste = { package = "pastey", version = "0.2.3" }
 once_cell = { version = "1.21.4", default-features = false, features = ["race", "alloc"] }
 # Pure-Rust LZ4 safe-decode for the bundled CICP->ICC profile blob. no_std
 # (block format only); decodes the standard LZ4 blocks emitted by the icc-gen
