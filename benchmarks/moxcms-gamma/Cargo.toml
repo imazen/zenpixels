@@ -7,6 +7,7 @@ publish = false
 exclude = ["variants/base", "variants/c1", "variants/c2", "variants/c3", "variants/c4", "variants/c5"]
 [features]
 default = []
+review-revisions = ["dep:review_before", "dep:review_sign", "dep:review_range"]
 [dependencies]
 m0 = { package = "moxcms", path = "variants/base", features = ["extended_range", "in_place"] }
 m1 = { package = "moxcms", path = "variants/c1", features = ["extended_range", "in_place"] }
@@ -14,6 +15,9 @@ m2 = { package = "moxcms", path = "variants/c2", features = ["extended_range", "
 m3 = { package = "moxcms", path = "variants/c3", features = ["extended_range", "in_place"] }
 m4 = { package = "moxcms", path = "variants/c4", features = ["extended_range", "in_place"] }
 m5 = { package = "moxcms", path = "variants/c5", features = ["extended_range", "in_place"] }
+review_before = { package = "moxcms", git = "https://github.com/lilith/moxcms", rev = "841044439077ec1ec67a71b2db979ab51d304fcf", features = ["extended_range", "in_place"], optional = true }
+review_sign = { package = "moxcms", git = "https://github.com/lilith/moxcms", rev = "45b011cdd045351eea689d250df0e7cc55af84dd", features = ["extended_range", "in_place"], optional = true }
+review_range = { package = "moxcms", git = "https://github.com/lilith/moxcms", rev = "4ab190f0e76f95b332a04ce059b51c893e2f5d79", features = ["extended_range", "in_place"], optional = true }
 [dev-dependencies]
 zenbench = "0.1.11"
 [profile.release]

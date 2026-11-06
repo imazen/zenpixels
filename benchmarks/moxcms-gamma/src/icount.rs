@@ -1,4 +1,11 @@
 #![forbid(unsafe_code)]
+// Compile the exact proposed PR revisions when validating a review report.
+#[cfg(feature = "review-revisions")]
+use review_before as m0;
+#[cfg(feature = "review-revisions")]
+use review_range as m4;
+#[cfg(feature = "review-revisions")]
+use review_sign as m2;
 // Instruction counts under callgrind: `run_work` is the only collected function.
 // usage: icount <before|copysign|branch|bitor> <eval_encode|eval_decode|p3_adobe_f32|srgb_adobe_f32|p3_adobe_u8> <neg_pct> <pixels>
 use std::hint::black_box;

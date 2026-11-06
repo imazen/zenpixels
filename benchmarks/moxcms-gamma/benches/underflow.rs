@@ -1,4 +1,11 @@
 #![forbid(unsafe_code)]
+// Compile the exact proposed PR revisions when validating a review report.
+#[cfg(feature = "review-revisions")]
+use review_before as m0;
+#[cfg(feature = "review-revisions")]
+use review_range as m4;
+#[cfg(feature = "review-revisions")]
+use review_sign as m2;
 // PR 2 cost: sign fix alone against the guarded evaluator and always-exact f_powf.
 use std::sync::Arc;
 use zenbench::prelude::*;

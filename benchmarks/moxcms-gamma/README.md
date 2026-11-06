@@ -33,3 +33,10 @@ byte-identical to the original arm. No exhaustive sweep result is asserted here.
 
 The instruction-count entry point keeps its Rust symbol and disables inlining;
 Callgrind selects it by `*run_work*`, without an unsafe exported symbol.
+
+For the upstream review candidates, enable `review-revisions`. The `underflow`
+bench and `icount` diagnostic then use the exact Git sources: baseline `84104443`,
+sign fix `45b011cd`, and range fix `4ab190f0`, in the before/sign_fix/guarded
+arms (before/branch/guarded in `icount`). The always_f_powf comparison remains
+the frozen historical c5 arm. This avoids attributing timing of an experimental
+source copy to a different proposed patch.

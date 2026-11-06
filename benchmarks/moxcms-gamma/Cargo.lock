@@ -248,19 +248,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "moxcms-gamma-harness"
-version = "0.0.0"
-dependencies = [
- "moxcms 0.9.1-base",
- "moxcms 0.9.1-c1",
- "moxcms 0.9.1-c2",
- "moxcms 0.9.1-c3",
- "moxcms 0.9.1-c4",
- "moxcms 0.9.1-c5",
- "zenbench",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -383,6 +370,49 @@ version = "0.9.1-c5"
 dependencies = [
  "num-traits",
  "pxfm",
+]
+
+[[package]]
+name = "moxcms"
+version = "0.9.1"
+source = "git+https://github.com/lilith/moxcms?rev=45b011cdd045351eea689d250df0e7cc55af84dd#45b011cdd045351eea689d250df0e7cc55af84dd"
+dependencies = [
+ "num-traits",
+ "pxfm",
+]
+
+[[package]]
+name = "moxcms"
+version = "0.9.1"
+source = "git+https://github.com/lilith/moxcms?rev=4ab190f0e76f95b332a04ce059b51c893e2f5d79#4ab190f0e76f95b332a04ce059b51c893e2f5d79"
+dependencies = [
+ "num-traits",
+ "pxfm",
+]
+
+[[package]]
+name = "moxcms"
+version = "0.9.1"
+source = "git+https://github.com/lilith/moxcms?rev=841044439077ec1ec67a71b2db979ab51d304fcf#841044439077ec1ec67a71b2db979ab51d304fcf"
+dependencies = [
+ "num-traits",
+ "pxfm",
+]
+
+[[package]]
+name = "moxcms-gamma-harness"
+version = "0.0.0"
+dependencies = [
+ "moxcms 0.9.1 (git+https://github.com/lilith/moxcms?rev=45b011cdd045351eea689d250df0e7cc55af84dd)",
+ "moxcms 0.9.1 (git+https://github.com/lilith/moxcms?rev=4ab190f0e76f95b332a04ce059b51c893e2f5d79)",
+ "moxcms 0.9.1 (git+https://github.com/lilith/moxcms?rev=841044439077ec1ec67a71b2db979ab51d304fcf)",
+ "moxcms 0.9.1-base",
+ "moxcms 0.9.1-c1",
+ "moxcms 0.9.1-c2",
+ "moxcms 0.9.1-c3",
+ "moxcms 0.9.1-c4",
+ "moxcms 0.9.1-c5",
+ "zenbench",
 ]
 
 [[package]]
