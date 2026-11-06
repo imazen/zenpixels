@@ -4,9 +4,10 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 [workspace]
-exclude = ["variants/base", "variants/c1", "variants/c2", "variants/c3", "variants/c4", "variants/c5", "variants/opt-or", "variants/opt-wide", "variants/opt-pixel", "variants/opt-cold"]
+exclude = ["variants/base", "variants/c1", "variants/c2", "variants/c3", "variants/c4", "variants/c5", "variants/opt-or", "variants/opt-wide", "variants/opt-pixel", "variants/opt-cold", "variants/opt-final"]
 [features]
 default = []
+final-review = ["outlined", "dep:opt_final"]
 outlined = ["optimized", "dep:opt_cold"]
 optimized = ["review-revisions", "dep:opt_or", "dep:opt_wide", "dep:opt_pixel"]
 review-revisions = ["dep:review_before", "dep:review_sign", "dep:review_range"]
@@ -24,6 +25,7 @@ opt_or = { package = "moxcms", path = "variants/opt-or", features = ["extended_r
 opt_wide = { package = "moxcms", path = "variants/opt-wide", features = ["extended_range", "in_place"], optional = true }
 opt_pixel = { package = "moxcms", path = "variants/opt-pixel", features = ["extended_range", "in_place"], optional = true }
 opt_cold = { package = "moxcms", path = "variants/opt-cold", features = ["extended_range", "in_place"], optional = true }
+opt_final = { package = "moxcms", path = "variants/opt-final", features = ["extended_range", "in_place"], optional = true }
 [dev-dependencies]
 zenbench = "=0.1.11"
 [profile.release]

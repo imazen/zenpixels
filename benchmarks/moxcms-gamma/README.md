@@ -61,3 +61,10 @@ three variants are retained experimental controls; their zero shortcut was
 screened only for positive exponents. `outlined-cells.py` declares a new 45-cell
 study with original/sign/range/pixel controls and the same admission and
 confidence rules. Its binary identity distinguishes it from the first study.
+
+Use `final-review` for candidate `3e098543`: it aliases the `opt_cold` benchmark
+arm to the separately frozen `opt-final` source. This preserves exact
+negative-zero behavior in the bounded CICP power helper. `final-cells.py` uses
+a distinct workload/scope and binary hash; it does not replace either earlier
+study. The diagnostic now checks signed zero across all 65,536 nominal ICC
+gamma encodings in both directions. Source records distinguish every variant.

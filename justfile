@@ -419,3 +419,16 @@ moxcms-outlined-cells binary output:
 
 moxcms-outlined-instructions output:
     python3 benchmarks/moxcms-gamma/outlined-evidence.py "{{output}}"
+
+moxcms-final-build:
+    cargo fmt --manifest-path benchmarks/moxcms-gamma/Cargo.toml -p moxcms-gamma-harness --check
+    cargo clippy --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features final-review --bench underflow --bin optimized_check --bin icount --no-deps -- -D warnings
+    cargo run --locked --release --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features final-review --bin optimized_check
+    cargo build --locked --release --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features final-review --bin icount --bench underflow
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cargo build --locked --release --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features final-review --bench underflow --target aarch64-unknown-linux-gnu
+
+moxcms-final-instructions output:
+    python3 benchmarks/moxcms-gamma/final-evidence.py "{{output}}"
+
+moxcms-final-cells binary output:
+    python3 benchmarks/moxcms-gamma/final-cells.py "{{binary}}" "{{output}}"

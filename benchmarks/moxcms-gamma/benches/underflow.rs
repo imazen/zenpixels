@@ -1,4 +1,6 @@
 #![forbid(unsafe_code)]
+#[cfg(feature = "final-review")]
+use opt_final as opt_cold;
 // Compile the exact proposed PR revisions when validating a review report.
 #[cfg(feature = "review-revisions")]
 use review_before as m0;

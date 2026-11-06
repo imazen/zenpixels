@@ -50,7 +50,7 @@ def main():
             raise SystemExit(f"{variant}: source digest mismatch: {actual}")
         print(f"{variant}: verified {actual}")
 
-    for optimized in ["opt-or", "opt-wide", "opt-pixel", "opt-cold"]:
+    for optimized in ["opt-or", "opt-wide", "opt-pixel", "opt-cold", "opt-final"]:
         subprocess.run(["python3",str(ROOT / "prepare-optimized.py"),optimized],check=True)
 
 if __name__ == "__main__":

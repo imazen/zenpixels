@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parent
 REV='4ab190f0e76f95b332a04ce059b51c893e2f5d79'
 parser=argparse.ArgumentParser(description=__doc__)
-parser.add_argument('name',choices=['opt-or','opt-wide','opt-pixel','opt-cold'])
+parser.add_argument('name',choices=['opt-or','opt-wide','opt-pixel','opt-cold','opt-final'])
 parser.add_argument("--record-new",action="store_true",help="freeze a newly introduced source manifest; never replace an existing record")
 args=parser.parse_args()
 out=ROOT/'variants'/args.name

@@ -1,4 +1,6 @@
 #![forbid(unsafe_code)]
+#[cfg(feature = "final-review")]
+use opt_final as opt_cold;
 macro_rules! compare {
     ($m:ident,$name:literal) => {{
         let mut values = Vec::new();
@@ -166,27 +168,34 @@ fn main() {
     {
         compare!(opt_cold, "opt_cold");
         transform_compare!(opt_cold, "opt_cold");
-        let curve = opt_cold::curve_from_gamma(0.0);
-        let reference = review_range::curve_from_gamma(0.0);
-        for encode in [false, true] {
-            let (actual, expected) = if encode {
-                (
-                    curve.make_gamma_evaluator().unwrap(),
-                    reference.make_gamma_evaluator().unwrap(),
-                )
-            } else {
-                (
-                    curve.make_linear_evaluator().unwrap(),
-                    reference.make_linear_evaluator().unwrap(),
-                )
-            };
-            for x in [0f32, -0.0, 0.5, -0.5] {
-                assert_eq!(
-                    actual.evaluate_value(x).to_bits(),
-                    expected.evaluate_value(x).to_bits()
-                );
+        let mut zeros = 0;
+        for nominal in 0..=65535u32 {
+            let gamma = nominal as f32 / 256.0;
+            let curve = opt_cold::curve_from_gamma(gamma);
+            let reference = review_range::curve_from_gamma(gamma);
+            for encode in [false, true] {
+                let (actual, expected) = if encode {
+                    (
+                        curve.make_gamma_evaluator().unwrap(),
+                        reference.make_gamma_evaluator().unwrap(),
+                    )
+                } else {
+                    (
+                        curve.make_linear_evaluator().unwrap(),
+                        reference.make_linear_evaluator().unwrap(),
+                    )
+                };
+                for x in [0f32, -0.0] {
+                    assert_eq!(
+                        actual.evaluate_value(x).to_bits(),
+                        expected.evaluate_value(x).to_bits(),
+                        "gamma={gamma},encode={encode}"
+                    );
+                    zeros += 1;
+                }
             }
         }
+        println!("opt_cold signed_zero_bit_matches={zeros} across all 65536 ICC gamma encodings");
     }
     compare!(opt_or, "opt_or");
     compare!(opt_pixel, "opt_pixel");

@@ -43,15 +43,20 @@ def main():
                          "package_id": matches[0]["package_id"]})
         # Preserve only the complete evaluator function; the archive contains many unrelated objects.
         disassembler = subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
-        selected, capturing = [], False
+        selected, fallback, capturing, capturing_fallback = [], [], False, False
         for line in disassembler.stdout:
             if line.rstrip().endswith(">:"):
                 capturing = ("ToneCurveEvaluatorPureGamma as " in line and "::evaluate_tristimulus>" in line)
+                capturing_fallback = ("ToneCurveEvaluatorPureGamma" in line and "::fallback_rgb>" in line)
             if capturing:
                 selected.append(line)
+            if capturing_fallback:
+                fallback.append(line)
         assert disassembler.wait() == 0
         assert selected, name
         (output / f"{name}.asm").write_text("".join(selected))
+        if fallback:
+            (output / f"{name}-fallback.asm").write_text("".join(fallback))
     binary = target / "release/icount"
     receipt["binary_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
     counts = []

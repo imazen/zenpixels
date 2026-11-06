@@ -22,5 +22,11 @@
     "name": "opt-cold",
     "patch_sha256": "c9f1d6a04d1778ef72cf0c15e03b0f30fbe15094ea5e8049914b105aca0f75ca",
     "source_sha256": "9730d31c5bf03bf604f87abd57024fa8f8498a51da4b4c185af13164246e83c2"
+  },
+  "opt-final": {
+    "base": "4ab190f0e76f95b332a04ce059b51c893e2f5d79",
+    "name": "opt-final",
+    "patch_sha256": "cbd057a4544b1edf55ed034ac100f0b1f57b71cd23dd653125794d67dd96b510",
+    "source_sha256": "8cacd8168ffe2c518ae7ddae50fae09a2c910eeb5c0038744a270dec2e5af8ef"
   }
 }
