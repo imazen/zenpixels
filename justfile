@@ -350,3 +350,7 @@ moxcms-review-instructions output:
 
 moxcms-review-bench data:
     ZENBENCH_DATA_DIR="{{data}}" cargo bench --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features review-revisions --bench underflow -- --mode=confirm --processes=5 --timeout=1200 --workload-id=moxcms-review-84104443-45b011cd-4ab190f0-v1 --format=llm
+
+# Predeclared cell matrix: unchanged admission; confidence adjusted across 36 cells.
+moxcms-review-cells binary output:
+    python3 benchmarks/moxcms-gamma/review-cells.py "{{binary}}" "{{output}}"
