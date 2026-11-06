@@ -68,3 +68,9 @@ negative-zero behavior in the bounded CICP power helper. `final-cells.py` uses
 a distinct workload/scope and binary hash; it does not replace either earlier
 study. The diagnostic now checks signed zero across all 65,536 nominal ICC
 gamma encodings in both directions. Source records distinguish every variant.
+
+Final source qualification: 103 library tests and strict Clippy pass. The final
+sampled evaluator comparison preserves 4,595,836 checked results, 589,824
+transformed channels and 262,144 signed-zero results. See the
+[optimization report](../moxcms_optimized_2026-11-06.md) for timing qualification,
+executed counts, full disassembly and limits. No exhaustive F32 result is claimed.

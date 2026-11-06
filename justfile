@@ -432,3 +432,9 @@ moxcms-final-instructions output:
 
 moxcms-final-cells binary output:
     python3 benchmarks/moxcms-gamma/final-cells.py "{{binary}}" "{{output}}"
+
+moxcms-final-summary study output:
+    python3 benchmarks/moxcms-gamma/summarize-optimized-cells.py "{{study}}" "{{output}}" --allow-partial
+
+moxcms-final-report study comparisons output:
+    python3 benchmarks/moxcms-gamma/report-final.py "{{study}}" "{{comparisons}}" "{{output}}"
