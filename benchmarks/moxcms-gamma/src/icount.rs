@@ -83,6 +83,55 @@ macro_rules! variant {
                 run_work(&mut || tr.transform(black_box(&input), &mut out).unwrap());
                 black_box(&out);
             }
+            "prophoto_srgb_zero10"
+            | "prophoto_srgb_zero100"
+            | "cicp22_bt2020"
+            | "cicp28_bt2020" => {
+                let mut source = if $load.starts_with("prophoto") {
+                    $m::ColorProfile::new_pro_photo_rgb()
+                } else {
+                    $m::ColorProfile::new_srgb()
+                };
+                if $load.starts_with("cicp") {
+                    source.cicp = Some($m::CicpProfile {
+                        color_primaries: $m::CicpColorPrimaries::Bt709,
+                        transfer_characteristics: if $load == "cicp22_bt2020" {
+                            $m::TransferCharacteristics::Bt470M
+                        } else {
+                            $m::TransferCharacteristics::Bt470Bg
+                        },
+                        matrix_coefficients: $m::MatrixCoefficients::Bt709,
+                        full_range: true,
+                    });
+                }
+                let target = if $load.starts_with("prophoto") {
+                    $m::ColorProfile::new_srgb()
+                } else {
+                    $m::ColorProfile::new_bt2020()
+                };
+                let transform = source
+                    .create_transform_f32(
+                        $m::Layout::Rgb,
+                        &target,
+                        $m::Layout::Rgb,
+                        $m::TransformOptions {
+                            allow_extended_range_rgb_xyz: true,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                let mut input = samples($n, $neg);
+                if $load.ends_with("zero100") {
+                    input.fill(0.0);
+                } else if $load.ends_with("zero10") {
+                    for x in input.iter_mut().step_by(10) {
+                        *x = 0.0;
+                    }
+                }
+                let mut out = vec![0f32; input.len()];
+                run_work(&mut || transform.transform(black_box(&input), &mut out).unwrap());
+                black_box(&out);
+            }
             "p3_adobe_u8" => {
                 let (s, t) = (
                     $m::ColorProfile::new_display_p3(),
@@ -116,6 +165,8 @@ fn main() {
         "opt_wide" => variant!(opt_wide, a[2].as_str(), neg, n),
         #[cfg(feature = "optimized")]
         "opt_pixel" => variant!(opt_pixel, a[2].as_str(), neg, n),
+        #[cfg(feature = "outlined")]
+        "opt_cold" => variant!(opt_cold, a[2].as_str(), neg, n),
         other => panic!("{other}"),
     }
 }

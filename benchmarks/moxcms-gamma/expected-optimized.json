@@ -16,5 +16,11 @@
     "name": "opt-pixel",
     "patch_sha256": "b448fb80ae0f01e05298188e799556c31f0ca41293f9194df9456e062cd829d3",
     "source_sha256": "60f93df77bb54c8de59597e5b44437005ac68cd2ea55dfed41fc387902913bdd"
+  },
+  "opt-cold": {
+    "base": "4ab190f0e76f95b332a04ce059b51c893e2f5d79",
+    "name": "opt-cold",
+    "patch_sha256": "c9f1d6a04d1778ef72cf0c15e03b0f30fbe15094ea5e8049914b105aca0f75ca",
+    "source_sha256": "9730d31c5bf03bf604f87abd57024fa8f8498a51da4b4c185af13164246e83c2"
   }
 }

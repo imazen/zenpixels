@@ -1,0 +1,217 @@
+diff --git a/src/gamma.rs b/src/gamma.rs
+index b296a926f4..9a89cb5197 100644
+--- a/src/gamma.rs
++++ b/src/gamma.rs
+@@ -439,7 +439,9 @@
+ #[cfg(feature = "extended_range")]
+ #[inline(always)]
+ fn bounded_powf(x: f32, exponent: f32) -> f32 {
+-    if is_fast_powf(x) {
++    if x == 0.0 {
++        x
++    } else if is_fast_powf(x) {
+         // `abs` shows the optimizer that `x` is positive, which drops the negative base handling.
+         dirty_powf(x.abs(), exponent)
+     } else {
+@@ -452,7 +454,8 @@
+ #[cfg(feature = "extended_range")]
+ #[inline(always)]
+ fn bounded_powf_tristimulus(rgb: Rgb<f32>, exponent: f32) -> Rgb<f32> {
+-    if is_fast_powf(rgb.r) & is_fast_powf(rgb.g) & is_fast_powf(rgb.b) {
++    let distance = |x: f32| x.to_bits().wrapping_sub(0x2980_0000);
++    if (distance(rgb.r) | distance(rgb.g) | distance(rgb.b)) <= 0x2c00_0000 {
+         Rgb::new(
+             dirty_powf(rgb.r.abs(), exponent),
+             dirty_powf(rgb.g.abs(), exponent),
+@@ -474,6 +477,27 @@
+     if x <= 0. { 0. } else { bounded_powf(x, gamma) }
+ }
+ 
++/// Preserve the scalar negative/zero clamp while admitting all positive
++/// channels with one conservative interval check.
++#[cfg(feature = "extended_range")]
++#[inline(always)]
++fn pure_gamma_tristimulus(rgb: Rgb<f32>, exponent: f32) -> Rgb<f32> {
++    let distance = |x: f32| x.to_bits().wrapping_sub(0x2980_0000);
++    if (distance(rgb.r) | distance(rgb.g) | distance(rgb.b)) <= 0x2c00_0000 {
++        Rgb::new(
++            dirty_powf(rgb.r.abs(), exponent),
++            dirty_powf(rgb.g.abs(), exponent),
++            dirty_powf(rgb.b.abs(), exponent),
++        )
++    } else {
++        Rgb::new(
++            pure_gamma_function_f(rgb.r, exponent),
++            pure_gamma_function_f(rgb.g, exponent),
++            pure_gamma_function_f(rgb.b, exponent),
++        )
++    }
++}
++
+ pub(crate) fn iec61966_to_linear(gamma: f64) -> f64 {
+     if gamma < -4.5f64 * 0.018053968510807f64 {
+         f_pow(
+@@ -791,20 +815,8 @@
+                 )
+             },
+             TransferCharacteristics::Unspecified => |x| Rgb::new(x.r, x.g, x.b),
+-            TransferCharacteristics::Bt470M => |x| {
+-                Rgb::new(
+-                    gamma2p2_from_linear_f(x.r),
+-                    gamma2p2_from_linear_f(x.g),
+-                    gamma2p2_from_linear_f(x.b),
+-                )
+-            },
+-            TransferCharacteristics::Bt470Bg => |x| {
+-                Rgb::new(
+-                    gamma2p8_from_linear_f(x.r),
+-                    gamma2p8_from_linear_f(x.g),
+-                    gamma2p8_from_linear_f(x.b),
+-                )
+-            },
++            TransferCharacteristics::Bt470M => |x| pure_gamma_tristimulus(x, 1. / 2.2),
++            TransferCharacteristics::Bt470Bg => |x| pure_gamma_tristimulus(x, 1. / 2.8),
+             TransferCharacteristics::Smpte240 => |x| {
+                 Rgb::new(
+                     smpte240_from_linearf_extended(x.r),
+@@ -905,20 +917,8 @@
+                 )
+             },
+             TransferCharacteristics::Unspecified => |x| Rgb::new(x.r, x.g, x.b),
+-            TransferCharacteristics::Bt470M => |x| {
+-                Rgb::new(
+-                    gamma2p2_to_linear_f(x.r),
+-                    gamma2p2_to_linear_f(x.g),
+-                    gamma2p2_to_linear_f(x.b),
+-                )
+-            },
+-            TransferCharacteristics::Bt470Bg => |x| {
+-                Rgb::new(
+-                    gamma2p8_to_linear_f(x.r),
+-                    gamma2p8_to_linear_f(x.g),
+-                    gamma2p8_to_linear_f(x.b),
+-                )
+-            },
++            TransferCharacteristics::Bt470M => |x| pure_gamma_tristimulus(x, 2.2),
++            TransferCharacteristics::Bt470Bg => |x| pure_gamma_tristimulus(x, 2.8),
+             TransferCharacteristics::Smpte240 => |x| {
+                 Rgb::new(
+                     smpte240_to_linearf_extended(x.r),
+@@ -1053,6 +1053,40 @@
+ mod tests {
+     use super::*;
+ 
++    #[cfg(feature = "extended_range")]
++    #[test]
++    fn pure_gamma_pixel_matches_scalar_with_mixed_boundaries() {
++        for exponent in [2.2, 1. / 2.2, 2.8, 1. / 2.8] {
++            for x in [
++                0f32,
++                -0.,
++                -0.5,
++                f32::from_bits(1),
++                1e-30,
++                0.5,
++                1.,
++                f32::MAX,
++                f32::INFINITY,
++                f32::NAN,
++            ] {
++                let input = Rgb::new(x, 0.5, 0.0);
++                let output = pure_gamma_tristimulus(input, exponent);
++                for (value, actual) in [
++                    (input.r, output.r),
++                    (input.g, output.g),
++                    (input.b, output.b),
++                ] {
++                    let expected = pure_gamma_function_f(value, exponent);
++                    if expected.is_nan() {
++                        assert!(actual.is_nan());
++                    } else {
++                        assert_eq!(actual.to_bits(), expected.to_bits());
++                    }
++                }
++            }
++        }
++    }
++
+     #[test]
+     fn integer_gamma_table_rounds_to_nearest() {
+         const N: usize = 4096;
+diff --git a/src/trc.rs b/src/trc.rs
+index bcda80b6b3..6c923d56af 100644
+--- a/src/trc.rs
++++ b/src/trc.rs
+@@ -1457,7 +1457,7 @@
+     gamma: f32,
+     /// The magnitudes `dirty_powf` can represent the power of, which leave its result a normal
+     /// `f32`, as bit patterns: the smallest, and the distance to the largest. Anything else,
+-    /// zero, subnormals, infinity and NaN among them, takes `f_powf`.
++    /// subnormals, infinity and NaN among them, takes `f_powf`. Zero is handled separately.
+     fast_min_bits: u32,
+     fast_span: u32,
+ }
+@@ -1494,9 +1494,21 @@
+         f_powf(x.abs(), self.gamma).copysign(x)
+     }
+ 
++    #[cold]
++    #[inline(never)]
++    fn fallback_rgb(&self, rgb: Rgb<f32>) -> Rgb<f32> {
++        Rgb::new(
++            self.odd_pure_gamma(rgb.r),
++            self.odd_pure_gamma(rgb.g),
++            self.odd_pure_gamma(rgb.b),
++        )
++    }
++
+     #[inline(always)]
+     fn odd_pure_gamma(&self, x: f32) -> f32 {
+-        if self.is_fast(x) {
++        if x == 0.0 {
++            if self.gamma == 0.0 { self.exact(x) } else { x }
++        } else if self.is_fast(x) {
+             self.fast(x)
+         } else {
+             self.exact(x)
+@@ -1533,15 +1545,14 @@
+ 
+ impl ToneCurveEvaluator for ToneCurveEvaluatorPureGamma {
+     fn evaluate_tristimulus(&self, rgb: Rgb<f32>) -> Rgb<f32> {
+-        // One test for the pixel keeps the common case free of branches around each power.
+-        if self.is_fast(rgb.r) & self.is_fast(rgb.g) & self.is_fast(rgb.b) {
++        // The OR is at least each unsigned distance, so passing one comparison
++        // proves that all channels are inside the fast interval. It may reject
++        // some valid combinations; the per-channel path preserves their bits.
++        let distance = |x: f32| (x.to_bits() & 0x7fff_ffff).wrapping_sub(self.fast_min_bits);
++        if (distance(rgb.r) | distance(rgb.g) | distance(rgb.b)) <= self.fast_span {
+             Rgb::new(self.fast(rgb.r), self.fast(rgb.g), self.fast(rgb.b))
+         } else {
+-            Rgb::new(
+-                self.odd_pure_gamma(rgb.r),
+-                self.odd_pure_gamma(rgb.g),
+-                self.odd_pure_gamma(rgb.b),
+-            )
++            self.fallback_rgb(rgb)
+         }
+     }
+ 
+@@ -1856,6 +1867,18 @@
+         }
+     }
+ 
++    #[test]
++    fn zero_exponent_retains_exact_zero_semantics() {
++        let curve = curve_from_gamma(0.0);
++        let evaluator = curve.make_linear_evaluator().unwrap();
++        for x in [0f32, -0.0] {
++            let expected = f_powf(x.abs(), 0.0).copysign(x);
++            assert_eq!(evaluator.evaluate_value(x).to_bits(), expected.to_bits());
++            let rgb = evaluator.evaluate_tristimulus(Rgb::new(x, 0.5, -0.5));
++            assert_eq!(rgb.r.to_bits(), expected.to_bits());
++        }
++    }
++
+     /// ProPhoto (0.5, 0.5, 0) is (0.6461, 0.5729, -0.6007) in extended sRGB. Decoding its zero
+     /// channel used to give about -1.65e8 in linear light.
+     #[test]

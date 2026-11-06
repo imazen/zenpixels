@@ -54,3 +54,10 @@ cells with five processes and 30 rounds each, a 1% margin, and 95% family
 confidence. Failed cells remain failures. `optimized-evidence.py` collects
 full RGB evaluator assembly and row-scoped Callgrind instruction counts.
 No timing result is implied by adding these experiments.
+
+The follow-up `outlined` feature adds `opt-cold`: the RGB fallback is a separate
+cold function, and the zero shortcut retains exponent-zero behavior. The first
+three variants are retained experimental controls; their zero shortcut was
+screened only for positive exponents. `outlined-cells.py` declares a new 45-cell
+study with original/sign/range/pixel controls and the same admission and
+confidence rules. Its binary identity distinguishes it from the first study.

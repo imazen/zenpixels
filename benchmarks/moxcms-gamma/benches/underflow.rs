@@ -125,12 +125,17 @@ fn underflow(suite: &mut Suite) {
                     arm!(g, "before", m0, input, enc);
                     arm!(g, "sign_fix", m2, input, enc);
                     arm!(g, "guarded", m4, input, enc);
+                    #[cfg(not(feature = "outlined"))]
                     arm!(g, "always_f_powf", m5, input, enc);
                     #[cfg(feature = "optimized")]
                     {
+                        #[cfg(not(feature = "outlined"))]
                         arm!(g, "opt_or", opt_or, input, enc);
+                        #[cfg(not(feature = "outlined"))]
                         arm!(g, "opt_wide", opt_wide, input, enc);
                         arm!(g, "opt_pixel", opt_pixel, input, enc);
+                        #[cfg(feature = "outlined")]
+                        arm!(g, "opt_cold", opt_cold, input, enc);
                     }
                 });
             }
@@ -146,7 +151,9 @@ fn underflow(suite: &mut Suite) {
                     xf_profiles!(g, "before", m0, input, new_pro_photo_rgb, new_srgb);
                     xf_profiles!(g, "sign_fix", m2, input, new_pro_photo_rgb, new_srgb);
                     xf_profiles!(g, "guarded", m4, input, new_pro_photo_rgb, new_srgb);
+                    #[cfg(not(feature = "outlined"))]
                     xf_profiles!(g, "opt_or", opt_or, input, new_pro_photo_rgb, new_srgb);
+                    #[cfg(not(feature = "outlined"))]
                     xf_profiles!(g, "opt_wide", opt_wide, input, new_pro_photo_rgb, new_srgb);
                     xf_profiles!(
                         g,
@@ -156,6 +163,8 @@ fn underflow(suite: &mut Suite) {
                         new_pro_photo_rgb,
                         new_srgb
                     );
+                    #[cfg(feature = "outlined")]
+                    xf_profiles!(g, "opt_cold", opt_cold, input, new_pro_photo_rgb, new_srgb);
                 },
             );
         }
@@ -168,9 +177,13 @@ fn underflow(suite: &mut Suite) {
             cicp!(g, "guarded", m4, i2, Bt470M);
             #[cfg(feature = "optimized")]
             {
+                #[cfg(not(feature = "outlined"))]
                 cicp!(g, "opt_or", opt_or, i2, Bt470M);
+                #[cfg(not(feature = "outlined"))]
                 cicp!(g, "opt_wide", opt_wide, i2, Bt470M);
                 cicp!(g, "opt_pixel", opt_pixel, i2, Bt470M);
+                #[cfg(feature = "outlined")]
+                cicp!(g, "opt_cold", opt_cold, i2, Bt470M);
             }
         });
         let i3 = input.clone();
@@ -183,9 +196,13 @@ fn underflow(suite: &mut Suite) {
                 cicp!(g, "guarded", m4, i3, Smpte428);
                 #[cfg(feature = "optimized")]
                 {
+                    #[cfg(not(feature = "outlined"))]
                     cicp!(g, "opt_or", opt_or, i3, Smpte428);
+                    #[cfg(not(feature = "outlined"))]
                     cicp!(g, "opt_wide", opt_wide, i3, Smpte428);
                     cicp!(g, "opt_pixel", opt_pixel, i3, Smpte428);
+                    #[cfg(feature = "outlined")]
+                    cicp!(g, "opt_cold", opt_cold, i3, Smpte428);
                 }
             },
         );
@@ -197,9 +214,13 @@ fn underflow(suite: &mut Suite) {
             cicp!(g, "guarded", m4, i4, Bt470Bg);
             #[cfg(feature = "optimized")]
             {
+                #[cfg(not(feature = "outlined"))]
                 cicp!(g, "opt_or", opt_or, i4, Bt470Bg);
+                #[cfg(not(feature = "outlined"))]
                 cicp!(g, "opt_wide", opt_wide, i4, Bt470Bg);
                 cicp!(g, "opt_pixel", opt_pixel, i4, Bt470Bg);
+                #[cfg(feature = "outlined")]
+                cicp!(g, "opt_cold", opt_cold, i4, Bt470Bg);
             }
         });
         suite.group(
@@ -213,12 +234,17 @@ fn underflow(suite: &mut Suite) {
                 xf!(g, "before", m0, input);
                 xf!(g, "sign_fix", m2, input);
                 xf!(g, "guarded", m4, input);
+                #[cfg(not(feature = "outlined"))]
                 xf!(g, "always_f_powf", m5, input);
                 #[cfg(feature = "optimized")]
                 {
+                    #[cfg(not(feature = "outlined"))]
                     xf!(g, "opt_or", opt_or, input);
+                    #[cfg(not(feature = "outlined"))]
                     xf!(g, "opt_wide", opt_wide, input);
                     xf!(g, "opt_pixel", opt_pixel, input);
+                    #[cfg(feature = "outlined")]
+                    xf!(g, "opt_cold", opt_cold, input);
                 }
             },
         );

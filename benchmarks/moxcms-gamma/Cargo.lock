@@ -374,6 +374,14 @@ dependencies = [
 
 [[package]]
 name = "moxcms"
+version = "0.9.1-opt-cold"
+dependencies = [
+ "num-traits",
+ "pxfm",
+]
+
+[[package]]
+name = "moxcms"
 version = "0.9.1-opt-or"
 dependencies = [
  "num-traits",
@@ -436,6 +444,7 @@ dependencies = [
  "moxcms 0.9.1-c3",
  "moxcms 0.9.1-c4",
  "moxcms 0.9.1-c5",
+ "moxcms 0.9.1-opt-cold",
  "moxcms 0.9.1-opt-or",
  "moxcms 0.9.1-opt-pixel",
  "moxcms 0.9.1-opt-wide",

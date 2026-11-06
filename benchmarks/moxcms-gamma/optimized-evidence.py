@@ -57,7 +57,8 @@ def main():
     counts = []
     for workload, negative in [("eval_encode", 0), ("eval_encode", 10), ("eval_encode", 50),
                                ("eval_encode", 100), ("eval_decode", 0), ("eval_decode", 50),
-                               ("p3_adobe_f32", 0), ("srgb_adobe_f32", 0), ("p3_adobe_u8", 0)]:
+                               ("p3_adobe_f32", 0), ("srgb_adobe_f32", 0), ("p3_adobe_u8", 0), ("cicp22_bt2020",0), ("cicp28_bt2020",0),
+                               ("prophoto_srgb_zero10",0), ("prophoto_srgb_zero100",0)]:
         for arm in identities:
             label = f"{workload}-{negative}-{arm}"
             command = ["valgrind", "--tool=callgrind", f"--callgrind-out-file={output/label}.callgrind",
