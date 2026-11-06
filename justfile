@@ -339,3 +339,14 @@ icc-bundle-reader-check output:
     cargo run --locked -p zenpixels-convert --example icc_bundle_export -- "{{output}}"
     cc -Wall -Wextra -Werror scripts/icc-gen/validation/png_icc_reader.c -o "{{output}}/reader" $(pkg-config --cflags --libs libpng lcms2)
     python3 scripts/icc-gen/validation/check_bundle.py "{{output}}/reader" "{{output}}"
+
+# Exact upstream review sources; caller supplies the host resource wrapper.
+moxcms-review-build:
+    cargo check --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features review-revisions --all-targets
+    cargo build --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --release --features review-revisions --bin icount
+
+moxcms-review-instructions output:
+    python3 benchmarks/moxcms-gamma/review-evidence.py "{{output}}"
+
+moxcms-review-bench data:
+    ZENBENCH_DATA_DIR="{{data}}" cargo bench --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features review-revisions --bench underflow -- --mode=confirm --processes=5 --timeout=1200 --workload-id=moxcms-review-84104443-45b011cd-4ab190f0-v1 --format=llm
