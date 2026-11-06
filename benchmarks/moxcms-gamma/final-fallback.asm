@@ -246,4 +246,3 @@
  43c:	jmp    399 <<moxcms::trc::ToneCurveEvaluatorPureGamma>::fallback_rgb+0x399>
 
 Disassembly of section .text._RNvMs5_NtCs8N3SupDdS21_6moxcms3trcNtB5_27ToneCurveEvaluatorPureGamma3new:
-
