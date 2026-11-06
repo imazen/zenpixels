@@ -510,3 +510,6 @@ pub use cms_moxcms::MoxCms;
 pub use output::OutputPlan;
 #[allow(deprecated)]
 pub use output::{EncodeReady, OutputMetadata, OutputProfile};
+
+#[cfg(test)]
+mod kernel_tests;

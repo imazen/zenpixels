@@ -9,25 +9,25 @@
 ## summary
 #
 #   pub modules                                13
-#   pub types (struct/enum/trait/alias)       140
-#   pub consts/statics                        346
+#   pub types (struct/enum/trait/alias)       142
+#   pub consts/statics                        361
 #   free functions                              2
-#   inherent methods                          372
-#   struct fields                             138
-#   enum variants                             333
+#   inherent methods                          374
+#   struct fields                             140
+#   enum variants                             336
 #   re-exports                                  4
-#   trait roster entries (type × trait)       501
+#   trait roster entries (type × trait)       514
 #   conditional trait impls (verbatim)          1
-#   auto-trait-complete types                  71
+#   auto-trait-complete types                  73
 #   auto-trait exceptions                      11
 #
 # per-module pub lines:
-#   (root)                          492
+#   (root)                          508
 #   buffer                          310
 #   cicp                             38
-#   color                            80
+#   color                            83
 #   descriptor                      167
-#   hdr                              12
+#   hdr                              17
 #   icc                              11
 #   orientation                      11
 #   pixel_types                       9
@@ -36,7 +36,7 @@
 #   precision                        76
 #   sample                           33
 
-## items (1202 lines)
+## items (1220 lines)
 
 pub mod zenpixels
 pub use At
@@ -283,6 +283,7 @@ pub const fn color::Color::srgba8(u8, u8, u8, u8) -> Self [also: (root)]
 pub fn color::Color::try_new(descriptor::PixelDescriptor, &[u8]) -> core::result::Result<Self, buffer::BufferError>
 pub color::ColorContext::cicp: core::option::Option<cicp::Cicp>
 pub color::ColorContext::diffuse_white: core::option::Option<hdr::DiffuseWhite>
+pub color::ColorContext::hdr_peak: core::option::Option<hdr::Nits>
 pub color::ColorContext::icc: core::option::Option<alloc::sync::Arc<[u8]>>
 pub fn color::ColorContext::as_profile_source(&self) -> core::option::Option<color::ColorProfileSource<'_>>
 pub fn color::ColorContext::from_cicp(cicp::Cicp) -> Self
@@ -291,6 +292,7 @@ pub fn color::ColorContext::is_srgb(&self) -> bool
 pub fn color::ColorContext::transfer_function(&self) -> descriptor::TransferFunction
 pub fn color::ColorContext::with_cicp(self, cicp::Cicp) -> Self
 pub fn color::ColorContext::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
+pub fn color::ColorContext::with_hdr_peak(self, hdr::Nits) -> Self
 pub fn color::ColorContext::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
 pub color::ColorOrigin::cicp: core::option::Option<cicp::Cicp>
 pub color::ColorOrigin::color_authority: color::ColorAuthority
@@ -483,6 +485,10 @@ pub const fn descriptor::PixelDescriptor::with_primaries(self, descriptor::Color
 pub const fn descriptor::PixelDescriptor::with_signal_range(self, descriptor::SignalRange) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::with_transfer(self, descriptor::TransferFunction) -> Self [also: (root)]
 pub mod hdr
+#[non_exhaustive] pub enum hdr::HdrPeak
+pub hdr::HdrPeak::Declared
+pub hdr::HdrPeak::Measured
+pub hdr::HdrPeak::Nits(hdr::Nits)
 pub struct hdr::ContentLightLevel
 pub hdr::ContentLightLevel::max_content_light_level: u16
 pub hdr::ContentLightLevel::max_frame_average_light_level: u16
@@ -500,6 +506,10 @@ pub hdr::MasteringDisplay::white_point_xy: [f32; 2]
 pub const hdr::MasteringDisplay::DISPLAY_P3_1000: Self
 pub const hdr::MasteringDisplay::HDR10_REFERENCE: Self
 pub const fn hdr::MasteringDisplay::new([[f32; 2]; 3], [f32; 2], f32, f32) -> Self
+pub struct hdr::Nits(_)
+pub const fn hdr::Nits::new(f32) -> Self
+pub const fn hdr::Nits::nits(self) -> f32
+pub const fn hdr::Nits::try_new(f32) -> core::option::Option<Self>
 pub mod icc
 #[non_exhaustive] pub enum icc::IdentificationUse
 pub icc::IdentificationUse::MatrixTrcSubstitution
@@ -664,15 +674,21 @@ pub const fn policy::ConvertOptions::clip_out_of_gamut(&self) -> bool [also: (ro
 pub const fn policy::ConvertOptions::depth_policy(&self) -> policy::DepthPolicy [also: (root)]
 pub const fn policy::ConvertOptions::gamut_mapping(&self) -> policy::GamutMapping [also: (root)]
 pub const fn policy::ConvertOptions::gray_expand(&self) -> policy::GrayExpand [also: (root)]
+pub const fn policy::ConvertOptions::hdr_peak(&self) -> hdr::HdrPeak [also: (root)]
 pub const fn policy::ConvertOptions::luma(&self) -> core::option::Option<policy::LumaCoefficients> [also: (root)]
 pub const fn policy::ConvertOptions::permissive() -> Self [also: (root)]
 pub const fn policy::ConvertOptions::retain_channels() -> Self [also: (root)]
+pub const fn policy::ConvertOptions::sdr_peak(&self) -> core::option::Option<hdr::Nits> [also: (root)]
+pub const fn policy::ConvertOptions::sdr_white(&self) -> core::option::Option<hdr::DiffuseWhite> [also: (root)]
 pub const fn policy::ConvertOptions::with_alpha_policy(self, policy::AlphaPolicy) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_clip_out_of_gamut(self, bool) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_depth_policy(self, policy::DepthPolicy) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_gamut_mapping(self, policy::GamutMapping) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_gray_expand(self, policy::GrayExpand) -> Self [also: (root)]
+pub const fn policy::ConvertOptions::with_hdr_peak(self, hdr::HdrPeak) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_luma(self, core::option::Option<policy::LumaCoefficients>) -> Self [also: (root)]
+pub const fn policy::ConvertOptions::with_sdr_peak(self, hdr::Nits) -> Self [also: (root)]
+pub const fn policy::ConvertOptions::with_sdr_white(self, hdr::DiffuseWhite) -> Self [also: (root)]
 pub mod precision
 #[non_exhaustive] pub enum precision::AlphaContent
 pub precision::AlphaContent::Opaque
@@ -1013,6 +1029,7 @@ pub fn color::Color::try_new(descriptor::PixelDescriptor, &[u8]) -> core::result
 #[non_exhaustive] pub struct ColorContext [also: color]
 pub ColorContext::cicp: core::option::Option<cicp::Cicp>
 pub ColorContext::diffuse_white: core::option::Option<hdr::DiffuseWhite>
+pub ColorContext::hdr_peak: core::option::Option<hdr::Nits>
 pub ColorContext::icc: core::option::Option<alloc::sync::Arc<[u8]>>
 pub fn color::ColorContext::as_profile_source(&self) -> core::option::Option<color::ColorProfileSource<'_>>
 pub fn color::ColorContext::from_cicp(cicp::Cicp) -> Self
@@ -1021,6 +1038,7 @@ pub fn color::ColorContext::is_srgb(&self) -> bool
 pub fn color::ColorContext::transfer_function(&self) -> descriptor::TransferFunction
 pub fn color::ColorContext::with_cicp(self, cicp::Cicp) -> Self
 pub fn color::ColorContext::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
+pub fn color::ColorContext::with_hdr_peak(self, hdr::Nits) -> Self
 pub fn color::ColorContext::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
 #[non_exhaustive] pub struct ColorOrigin [also: color]
 pub ColorOrigin::cicp: core::option::Option<cicp::Cicp>
@@ -1241,7 +1259,7 @@ pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 pub trait StorageSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::marker::Sized [also: buffer]
 
-## trait impls (102 types)
+## trait impls (104 types)
 
 &S: plane::SampleStorage
 &mut S: plane::SampleStorage, plane::SampleStorageMut
@@ -1289,7 +1307,9 @@ f32: buffer::StorageSample, plane::PlaneSample
 f64: buffer::StorageSample
 hdr::ContentLightLevel: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 hdr::DiffuseWhite: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+hdr::HdrPeak: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 hdr::MasteringDisplay: Clone, Copy, Debug, Default, PartialEq
+hdr::Nits: Clone, Copy, Debug, Eq, Hash, PartialEq
 i16: buffer::StorageSample
 i32: buffer::StorageSample
 i64: buffer::StorageSample

@@ -147,7 +147,7 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 - Fixed 2026-11-04: planning added the gamut matrix after layout and depth steps, so wide
   RGB into gray or from RGBA to RGB ran it on rows of the wrong shape, and U16 rows ran U8
-  steps. `tests/gamut_across_layouts.rs` measures every route against independent `f64`
+  steps. `src/kernel_tests/gamut_across_layouts.rs` measures every route against independent `f64`
   math. A row split could also change `f32` bits, and an odd scratch size could misalign
   F32 rows: `tests/row_partition_parity.rs`. BT.709 and Gamma22 `f32` output keep negative
   values while sRGB `f32` clips: that difference is existing behavior, pinned by the test.
@@ -158,14 +158,19 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 - Fixed (2026-11-04): a PQ or HLG matte put white at the format's peak: 10,000 cd/m² on PQ.
   `CompositeOnto::reference_white` now places it, defaulting to BT.2408.
 
-- Open (2026-11-04): `RowConverter::new` puts SDR white at PQ's peak, 10,000 cd/m², where CSS puts 203. `ColorConvertExt::try_convert_to` refuses this.
-  PR #115 refuses SDR-encoded sources into PQ and HLG; it doesn't cover the case below and waits on the HDR API decision.
-- Open (2026-11-05): Linear into PQ has two defaults for one input. Linear BT.2020 (1, 1, 1) with no anchor into `RGB16_BT2100_PQ`
-  gives 65535 (10,000 cd/m²) from `convert_to` and `RowConverter`, and 38055 (203 cd/m²) from `quantize_to`; both match the analytic
-  PQ codes. With a 203 anchor in a `ColorContext::from_cicp(Cicp::BT2100_PQ)`, `convert_to` refuses with
-  `CicpDescriptor(NonIdentityMatrix(9))` while `quantize_to` accepts it. Measured on `fde59b96`. The proposed fix (one anchor rule:
-  explicit option, then context, then refuse) is in `docs/hdr-anchor-api-design.md` §6.
-  `docs/css-color-parity.md` lists this and the other CSS differences.
+- HDR intent correction (2026-11-06, PR #120 candidate): unanchored relative/absolute
+  conversions refuse with `SdrWhiteRequired`; `ConvertOptions::with_sdr_white` overrides
+  `ColorContext::diffuse_white`, then absence refuses. Row, buffer and quantizer paths
+  agree at 203 nits (PQ16 white code 38055). Invalid/conflicting CICP remains rejected
+  consistently; an anchor-only context avoids falsely tagging linear samples as PQ.
+  Buffer HDR-to-SDR conversion measures MaxRGB peak by default; row/output plans require
+  an explicit or context-declared peak. SDR target peak is explicit. HLG transfer
+  conversion returns `HlgOotfNotImplemented` until a display OOTF exists. Old HDR-config
+  constructors remain available for compatibility; the preferred interface is
+  `convert_to_with_options` / `new_explicit`. Design: `docs/hdr-anchor-api-design.md` §6.
+  Kernel tests moved to `src/kernel_tests`: the same numerical assertions and frozen
+  digest `509de40f680b9c2e` still pass, including raw HLG transfer kernels exercised
+  privately; the public API separately refuses unimplemented light-domain work.
 
 - Fixed (2026-11-04): the matte was not converted to wide-gamut source primaries, so sRGB red over a P3 source came out as P3's red.
   `CompositeOnto::background` is now a `Color`, converted to the source's primaries; `zenpixels-convert/tests/color.rs`.

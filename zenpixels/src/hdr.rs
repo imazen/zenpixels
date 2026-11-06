@@ -90,6 +90,60 @@ impl Default for DiffuseWhite {
     }
 }
 
+/// A finite, strictly positive luminance in cd/m².
+/// Used for source/display peaks independently of the relative-linear white anchor.
+#[derive(Clone, Copy, Debug)]
+pub struct Nits(f32);
+impl Nits {
+    /// Return a luminance when it is finite and strictly positive.
+    pub const fn try_new(value: f32) -> Option<Self> {
+        if value.is_finite() && value > 0.0 {
+            Some(Self(value))
+        } else {
+            None
+        }
+    }
+    /// Construct a luminance.
+    /// # Panics
+    /// Panics for zero, negative, NaN or infinite values.
+    #[track_caller]
+    pub const fn new(value: f32) -> Self {
+        assert!(
+            value.is_finite() && value > 0.0,
+            "luminance must be finite and strictly positive"
+        );
+        Self(value)
+    }
+    /// Luminance in cd/m².
+    pub const fn nits(self) -> f32 {
+        self.0
+    }
+}
+impl PartialEq for Nits {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_bits() == other.0.to_bits()
+    }
+}
+impl Eq for Nits {}
+impl core::hash::Hash for Nits {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state);
+    }
+}
+
+/// How to obtain the source peak for HDR tone mapping.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum HdrPeak {
+    /// Measure the current buffer's peak. Row plans need an explicit measurement.
+    #[default]
+    Measured,
+    /// Use the source peak declared in its color context; refuse if absent.
+    Declared,
+    /// Use this explicit peak instead of measuring or consulting metadata.
+    Nits(Nits),
+}
+
 /// HDR content light level metadata (CEA-861.3 / CTA-861-H).
 ///
 /// Describes the peak brightness characteristics of HDR content.

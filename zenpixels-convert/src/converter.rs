@@ -3,6 +3,7 @@
 //! [`RowConverter`] wraps a [`ConvertPlan`] with pre-allocated scratch
 //! buffers for zero-allocation-per-row streaming conversion.
 
+use crate::TransferFunction;
 use alloc::boxed::Box;
 
 use crate::convert::{ConvertPlan, ConvertScratch, convert_row_buffered};
@@ -230,11 +231,18 @@ impl RowConverter {
         // Check before CMS setup: its profile/format interface cannot express
         // the missing narrow-range depth scaling either.
         crate::convert::validate_descriptors(from, to)?;
-        if crate::convert::is_hdr_to_sdr(from.transfer(), to.transfer()) {
-            return Err(whereat::at!(ConvertError::HdrSourceRequiresPeak {
-                from,
-                to
-            }));
+        if from.transfer() != to.transfer()
+            && matches!(
+                (from.transfer(), to.transfer()),
+                (TransferFunction::Pq | TransferFunction::Hlg, _)
+                    | (_, TransferFunction::Pq | TransferFunction::Hlg)
+            )
+        {
+            // The CMS interface has no luminance-intent parameter. Native HDR
+            // plans must retain the explicit anchor and peak policy.
+            return Ok(Self::from_plan(ConvertPlan::new_explicit(
+                from, to, options,
+            )?));
         }
 
         if from.has_alpha()
@@ -844,7 +852,19 @@ mod tests {
         to: PixelDescriptor,
         src: &[u8],
     ) -> alloc::vec::Vec<u8> {
-        let mut conv = RowConverter::new(from, to).unwrap();
+        let mut conv =
+            if from.transfer() == TransferFunction::Hlg || to.transfer() == TransferFunction::Hlg {
+                RowConverter::from_plan(ConvertPlan::plan_native(from, to).unwrap())
+            } else {
+                RowConverter::new_explicit(
+                    from,
+                    to,
+                    &ConvertOptions::permissive()
+                        .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
+                        .with_sdr_white(zenpixels::hdr::DiffuseWhite::new(10000.)),
+                )
+                .unwrap()
+            };
         let dst_bpp = to.bytes_per_pixel();
         let mut dst = vec![0u8; dst_bpp];
         conv.convert_row(src, &mut dst, 1);
@@ -1352,7 +1372,7 @@ mod tests {
             TransferFunction::Pq,
         );
         match RowConverter::new(hlg_f32, pq_f32) {
-            Err(e) => assert!(matches!(*e.error(), ConvertError::NoPath { .. })),
+            Err(e) => assert!(matches!(*e.error(), ConvertError::HlgOotfNotImplemented)),
             Ok(_) => panic!("HLG→PQ must refuse, not emit wrong pixels"),
         }
         // Both directions and the u16 form refuse.
@@ -1364,38 +1384,10 @@ mod tests {
             )
             .is_err()
         );
-        // HLG → SDR-encoded targets (sRGB / BT.709 / Gamma22) now require a
-        // source-peak luminance (the HDR-aware constructors) — silently
-        // routing without a tone map produced wrong pixels. HLG → Linear
-        // F32 stays allowed (the data is preserved; the caller can
-        // tone-map downstream). The cms_lite plugin wraps the
-        // `HdrSourceRequiresPeak` into `CmsError` when source/dst
-        // primaries also differ (the cms path runs before the built-in
-        // plan), so accept either variant.
-        #[cfg(feature = "hdr-experimental")]
-        {
-            let err = RowConverter::new(
-                PixelDescriptor::RGB16_BT2100_HLG,
-                PixelDescriptor::RGB8_SRGB,
-            )
-            .expect_err("HLG → sRGB without peak must refuse");
-            assert!(
-                matches!(*err.error(), ConvertError::HdrSourceRequiresPeak { .. })
-                    || matches!(
-                        *err.error(),
-                        ConvertError::CmsError(_) | ConvertError::CmsBackend(_)
-                    ),
-                "expected HdrSourceRequiresPeak or CmsError, got {:?}",
-                err.error()
-            );
+        for to in [PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR] {
+            let error = RowConverter::new(hlg_f32, to).expect_err("HLG requires a display OOTF");
+            assert!(matches!(error.error(), ConvertError::HlgOotfNotImplemented));
         }
-        let lin = PixelDescriptor::new(
-            ChannelType::F32,
-            ChannelLayout::Rgb,
-            None,
-            TransferFunction::Linear,
-        );
-        assert!(RowConverter::new(hlg_f32, lin).is_ok());
     }
 
     #[test]
@@ -1415,7 +1407,7 @@ mod tests {
             .expect_err("plain HDR→SDR must refuse")
             .error()
             .clone();
-        assert!(matches!(err, ConvertError::HdrSourceRequiresPeak { .. }));
+        assert!(matches!(err, ConvertError::HdrPeakRequired));
 
         // The HDR-aware constructor accepts a source peak and produces a
         // valid sRGB pixel (BT.2446-A tone-map step inserted).
@@ -1443,7 +1435,7 @@ mod tests {
             .expect_err("plain HDR→SDR must refuse")
             .error()
             .clone();
-        assert!(matches!(err, ConvertError::HdrSourceRequiresPeak { .. }));
+        assert!(matches!(err, ConvertError::HlgOotfNotImplemented));
 
         assert!(
             ConvertPlan::new_with_hdr_peak(hlg_u16, PixelDescriptor::RGB8_SRGB, 1000.0).is_err(),

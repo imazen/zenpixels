@@ -69,6 +69,16 @@ pub enum ConvertError {
     /// Original CMS build/row failure, retaining its concrete error chain.
     /// Clones share the error; equality compares error identity.
     CmsBackend(alloc::sync::Arc<crate::cms::CmsPluginError>),
+    /// Relative/absolute light conversion needs an explicit SDR-white anchor.
+    SdrWhiteRequired,
+    /// Tone mapping needs a declared or explicit source peak; rows cannot measure a buffer.
+    HdrPeakRequired,
+    /// Tone mapping needs an explicit destination SDR peak.
+    SdrPeakRequired,
+    /// The requested HDR conversion needs a Cargo feature that is not enabled.
+    HdrFeatureRequired,
+    /// HLG light-domain conversion requires the unimplemented display OOTF.
+    HlgOotfNotImplemented,
     /// The conversion is HDR (`Pq` / `Hlg`) → SDR but no usable peak
     /// luminance was supplied. Raised both when no peak was given at all
     /// (the plain [`ConvertPlan::new`](crate::ConvertPlan::new) entry
@@ -236,6 +246,11 @@ impl fmt::Display for ConvertError {
             Self::CicpDescriptor(e) => write!(f, "color declaration failed: {e}"),
             Self::CmsBackend(error) => write!(f, "CMS failure: {error}"),
             Self::CmsError(msg) => write!(f, "CMS transform failed: {msg}"),
+            Self::SdrWhiteRequired => f.write_str("SDR white is missing; use ConvertOptions::with_sdr_white or ColorContext::with_diffuse_white"),
+            Self::HdrPeakRequired => f.write_str("HDR peak is missing; buffer conversion measures it, or use ConvertOptions::with_hdr_peak(HdrPeak::Nits(...))"),
+            Self::SdrPeakRequired => f.write_str("SDR target peak is missing; use ConvertOptions::with_sdr_peak"),
+            Self::HdrFeatureRequired => f.write_str("HDR tone mapping requires the bt2446a Cargo feature"),
+            Self::HlgOotfNotImplemented => f.write_str("HLG display OOTF conversion is not implemented"),
             Self::HdrSourceRequiresPeak { from, to } => write!(
                 f,
                 "HDR→SDR conversion ({:?} → {:?}) requires positive, finite peak \

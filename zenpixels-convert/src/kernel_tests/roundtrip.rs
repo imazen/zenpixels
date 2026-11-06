@@ -1,7 +1,7 @@
 //! Roundtrip tests for all supported format pairs.
 
-use zenpixels_convert::RowConverter;
-use zenpixels_convert::{
+use super::KernelConverter as RowConverter;
+use crate::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
 };
 
@@ -404,7 +404,7 @@ fn hlg_f32_linear_f32_roundtrip() {
 #[test]
 #[cfg(feature = "bt2446a")]
 fn pq_u16_to_srgb_u8() {
-    use zenpixels_convert::ConvertPlan;
+    use crate::ConvertPlan;
     let width = 4u32;
     let pq_u16 = PixelDescriptor::new(
         ChannelType::U16,
@@ -719,7 +719,8 @@ fn f16_linear_to_u16_linear_roundtrip_within_f16_ulp() {
 /// 11 effective bits) even though both are 2 bytes.
 #[test]
 fn u16_to_f16_triggers_depth_reduction_policy() {
-    use zenpixels_convert::{ConvertError, ConvertOptions, DepthPolicy, RowConverter};
+    use super::KernelConverter as RowConverter;
+    use crate::{ConvertError, ConvertOptions, DepthPolicy};
 
     let from = PixelDescriptor::new(
         ChannelType::U16,

@@ -35,9 +35,13 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ### QUEUED BREAKING CHANGES
 
+- HDR transfer conversion now requires explicit or context-supplied SDR white; buffers measure source peak by default for tone mapping, while row plans require an explicit peak. HLG light-domain conversion refuses until its display OOTF is implemented. Quantization retains actual source primaries.
+
 See the 0.3.1 candidate entries below for the approved breaking release queue.
 
 ### Added
+
+- `hdr::Nits`, `hdr::HdrPeak`, HDR intent on `ConvertOptions`, declared source peak on `ColorContext`, and `convert_to_with_options` on buffer/slice extension traits.
 
 - Pixel Format Explorer on GitHub Pages, with a CI-built WASM converter, conversion plans and byte comparisons (`5a97b0dd`).
 

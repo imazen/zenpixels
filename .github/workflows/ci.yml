@@ -68,7 +68,7 @@ jobs:
       # that is what makes "every SDR transfer kernel is covered" a checked
       # claim rather than a comment.
       - name: Test (zenpixels-convert transfer alpha, with __trace_ops)
-        run: cargo test -p zenpixels-convert --features __trace_ops --test transfer_alpha
+        run: cargo test -p zenpixels-convert --features __trace_ops --lib kernel_tests::transfer_alpha
 
       # The CllMeasure surface (and its test targets, including the
       # deprecated-measure parity gate) is behind the hdr-experimental

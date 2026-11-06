@@ -330,7 +330,14 @@ pub(crate) fn convert_into_with_anchor(
 
     // `from == to` yields an Identity plan, whose row step copies src → dst — so
     // the strided loop handles it too (no packed-only special case needed).
-    let plan = ConvertPlan::new(from, to).at()?.with_pq_anchor(anchor);
+    let plan = ConvertPlan::new_explicit(
+        from,
+        to,
+        &zenpixels::ConvertOptions::permissive()
+            .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked)
+            .with_sdr_white(anchor),
+    )
+    .at()?;
     let mut converter = RowConverter::from_plan(plan);
     let src_row = (width as usize) * from.bytes_per_pixel();
 

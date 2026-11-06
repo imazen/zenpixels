@@ -7,7 +7,7 @@
 //! This replaces statistical sampling with exhaustive numerical proof:
 //! "u8 sRGB → f32 linear → u8 sRGB is lossless (max error = 0 for all 256 values)".
 
-use zenpixels_convert::{ConvertPlan, PixelDescriptor};
+use crate::{ConvertPlan, PixelDescriptor};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Helper: exhaustive u8 round-trip through an intermediate format
@@ -18,8 +18,8 @@ use zenpixels_convert::{ConvertPlan, PixelDescriptor};
 /// Returns the max error in u8 units (0 = perfectly lossless).
 fn measure_u8_roundtrip_max_error(intermediate: PixelDescriptor) -> u8 {
     let src_desc = PixelDescriptor::RGB8_SRGB;
-    let plan_fwd = ConvertPlan::new(src_desc, intermediate).expect("forward plan");
-    let plan_back = ConvertPlan::new(intermediate, src_desc).expect("backward plan");
+    let plan_fwd = crate::ConvertPlan::plan_native(src_desc, intermediate).expect("forward plan");
+    let plan_back = crate::ConvertPlan::plan_native(intermediate, src_desc).expect("backward plan");
 
     let inter_bpp = intermediate.bytes_per_pixel();
     let mut max_err: u8 = 0;
@@ -32,13 +32,8 @@ fn measure_u8_roundtrip_max_error(intermediate: PixelDescriptor) -> u8 {
                 let mut mid = vec![0u8; inter_bpp];
                 let mut output = [0u8; 3];
 
-                zenpixels_convert::RowConverter::from_plan(plan_fwd.clone())
-                    .convert_row(&input, &mut mid, 1);
-                zenpixels_convert::RowConverter::from_plan(plan_back.clone()).convert_row(
-                    &mid,
-                    &mut output,
-                    1,
-                );
+                crate::RowConverter::from_plan(plan_fwd.clone()).convert_row(&input, &mut mid, 1);
+                crate::RowConverter::from_plan(plan_back.clone()).convert_row(&mid, &mut output, 1);
 
                 for c in 0..3 {
                     let err = (output[c] as i16 - input[c] as i16).unsigned_abs() as u8;
@@ -56,8 +51,8 @@ fn measure_u8_roundtrip_max_error(intermediate: PixelDescriptor) -> u8 {
 /// This is slower (~16M evaluations) but proves correctness for every value.
 fn measure_u8_roundtrip_full_cube(intermediate: PixelDescriptor) -> u8 {
     let src_desc = PixelDescriptor::RGB8_SRGB;
-    let plan_fwd = ConvertPlan::new(src_desc, intermediate).expect("forward plan");
-    let plan_back = ConvertPlan::new(intermediate, src_desc).expect("backward plan");
+    let plan_fwd = crate::ConvertPlan::plan_native(src_desc, intermediate).expect("forward plan");
+    let plan_back = crate::ConvertPlan::plan_native(intermediate, src_desc).expect("backward plan");
 
     let inter_bpp = intermediate.bytes_per_pixel();
     let mut max_err: u8 = 0;
@@ -69,13 +64,8 @@ fn measure_u8_roundtrip_full_cube(intermediate: PixelDescriptor) -> u8 {
                 let mut mid = vec![0u8; inter_bpp];
                 let mut output = [0u8; 3];
 
-                zenpixels_convert::RowConverter::from_plan(plan_fwd.clone())
-                    .convert_row(&input, &mut mid, 1);
-                zenpixels_convert::RowConverter::from_plan(plan_back.clone()).convert_row(
-                    &mid,
-                    &mut output,
-                    1,
-                );
+                crate::RowConverter::from_plan(plan_fwd.clone()).convert_row(&input, &mut mid, 1);
+                crate::RowConverter::from_plan(plan_back.clone()).convert_row(&mid, &mut output, 1);
 
                 for c in 0..3 {
                     let err = (output[c] as i16 - input[c] as i16).unsigned_abs() as u8;
@@ -119,7 +109,7 @@ fn ulp_u8_srgb_f32_linear_roundtrip_full_cube() {
 fn ulp_u8_u16_roundtrip() {
     // u8 → u16 uses v * 257, u16 → u8 uses (v * 255 + 32768) >> 16
     // This should be perfectly lossless.
-    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
+    use crate::{ChannelLayout, ChannelType, TransferFunction};
 
     let src = PixelDescriptor::RGB8_SRGB;
     let mid_desc = PixelDescriptor::new(
@@ -129,8 +119,8 @@ fn ulp_u8_u16_roundtrip() {
         TransferFunction::Srgb,
     );
 
-    let plan_fwd = ConvertPlan::new(src, mid_desc).expect("u8→u16 plan");
-    let plan_back = ConvertPlan::new(mid_desc, src).expect("u16→u8 plan");
+    let plan_fwd = crate::ConvertPlan::plan_native(src, mid_desc).expect("u8→u16 plan");
+    let plan_back = crate::ConvertPlan::plan_native(mid_desc, src).expect("u16→u8 plan");
 
     let mut max_err: u8 = 0;
     for v in 0u8..=255 {
@@ -138,13 +128,8 @@ fn ulp_u8_u16_roundtrip() {
         let mut mid = [0u8; 6]; // 3 × u16
         let mut output = [0u8; 3];
 
-        zenpixels_convert::RowConverter::from_plan(plan_fwd.clone())
-            .convert_row(&input, &mut mid, 1);
-        zenpixels_convert::RowConverter::from_plan(plan_back.clone()).convert_row(
-            &mid,
-            &mut output,
-            1,
-        );
+        crate::RowConverter::from_plan(plan_fwd.clone()).convert_row(&input, &mut mid, 1);
+        crate::RowConverter::from_plan(plan_back.clone()).convert_row(&mid, &mut output, 1);
 
         for c in 0..3 {
             let err = (output[c] as i16 - input[c] as i16).unsigned_abs() as u8;
@@ -161,7 +146,7 @@ fn ulp_u8_u16_roundtrip() {
 
 #[test]
 fn ulp_u16_to_u8_max_error() {
-    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
+    use crate::{ChannelLayout, ChannelType, TransferFunction};
 
     let src = PixelDescriptor::new(
         ChannelType::U16,
@@ -170,7 +155,7 @@ fn ulp_u16_to_u8_max_error() {
         TransferFunction::Srgb,
     );
     let dst = PixelDescriptor::RGB8_SRGB;
-    let plan = ConvertPlan::new(src, dst).expect("u16→u8 plan");
+    let plan = crate::ConvertPlan::plan_native(src, dst).expect("u16→u8 plan");
 
     let mut max_err: u16 = 0;
     // Test all 65536 values for one channel.
@@ -178,11 +163,7 @@ fn ulp_u16_to_u8_max_error() {
         let v16 = v as u16;
         let input: [u8; 6] = bytemuck::cast([v16, v16, v16]);
         let mut output = [0u8; 3];
-        zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
-            &input,
-            &mut output,
-            1,
-        );
+        crate::RowConverter::from_plan(plan.clone()).convert_row(&input, &mut output, 1);
 
         // Expected: correctly rounded `v * 255 / 65535` == `v / 257`
         // (65535 = 255 · 257). Because 257 is odd, `v / 257` can never
@@ -209,7 +190,7 @@ fn ulp_u16_to_u8_max_error() {
 /// two routes were non-interchangeable.
 #[test]
 fn ulp_u16_to_u8_integer_and_f32_routes_agree() {
-    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
+    use crate::{ChannelLayout, ChannelType, TransferFunction};
 
     let src = PixelDescriptor::new(
         ChannelType::U16,
@@ -224,9 +205,9 @@ fn ulp_u16_to_u8_integer_and_f32_routes_agree() {
         TransferFunction::Srgb,
     );
     let dst = PixelDescriptor::RGB8_SRGB;
-    let plan_int = ConvertPlan::new(src, dst).expect("u16→u8 plan");
-    let plan_f32_a = ConvertPlan::new(src, mid).expect("u16→f32 plan");
-    let plan_f32_b = ConvertPlan::new(mid, dst).expect("f32→u8 plan");
+    let plan_int = crate::ConvertPlan::plan_native(src, dst).expect("u16→u8 plan");
+    let plan_f32_a = crate::ConvertPlan::plan_native(src, mid).expect("u16→f32 plan");
+    let plan_f32_b = crate::ConvertPlan::plan_native(mid, dst).expect("f32→u8 plan");
 
     let mut mismatches = 0u32;
     let mut first: Option<(u32, u8, u8)> = None;
@@ -234,24 +215,12 @@ fn ulp_u16_to_u8_integer_and_f32_routes_agree() {
         let v16 = v as u16;
         let input: [u8; 6] = bytemuck::cast([v16, v16, v16]);
         let mut out_int = [0u8; 3];
-        zenpixels_convert::RowConverter::from_plan(plan_int.clone()).convert_row(
-            &input,
-            &mut out_int,
-            1,
-        );
+        crate::RowConverter::from_plan(plan_int.clone()).convert_row(&input, &mut out_int, 1);
 
         let mut midbuf = [0u8; 12];
         let mut out_f32 = [0u8; 3];
-        zenpixels_convert::RowConverter::from_plan(plan_f32_a.clone()).convert_row(
-            &input,
-            &mut midbuf,
-            1,
-        );
-        zenpixels_convert::RowConverter::from_plan(plan_f32_b.clone()).convert_row(
-            &midbuf,
-            &mut out_f32,
-            1,
-        );
+        crate::RowConverter::from_plan(plan_f32_a.clone()).convert_row(&input, &mut midbuf, 1);
+        crate::RowConverter::from_plan(plan_f32_b.clone()).convert_row(&midbuf, &mut out_f32, 1);
 
         if out_int != out_f32 {
             mismatches += 1;
@@ -270,7 +239,7 @@ fn ulp_u16_to_u8_integer_and_f32_routes_agree() {
 
 #[test]
 fn ulp_u8_to_u16_exact() {
-    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
+    use crate::{ChannelLayout, ChannelType, TransferFunction};
 
     let src = PixelDescriptor::RGB8_SRGB;
     let dst = PixelDescriptor::new(
@@ -279,16 +248,12 @@ fn ulp_u8_to_u16_exact() {
         None,
         TransferFunction::Srgb,
     );
-    let plan = ConvertPlan::new(src, dst).expect("u8→u16 plan");
+    let plan = crate::ConvertPlan::plan_native(src, dst).expect("u8→u16 plan");
 
     for v in 0u8..=255 {
         let input = [v, v, v];
         let mut output = [0u8; 6];
-        zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
-            &input,
-            &mut output,
-            1,
-        );
+        crate::RowConverter::from_plan(plan.clone()).convert_row(&input, &mut output, 1);
 
         let out16: &[u16] = bytemuck::cast_slice(&output);
         let expected = v as u16 * 257; // 0→0, 255→65535
@@ -308,8 +273,8 @@ fn ulp_u8_to_u16_exact() {
 fn ulp_bgra_rgba_swizzle_roundtrip() {
     let rgba = PixelDescriptor::RGBA8_SRGB;
     let bgra = PixelDescriptor::BGRA8_SRGB;
-    let plan_fwd = ConvertPlan::new(rgba, bgra).expect("rgba→bgra plan");
-    let plan_back = ConvertPlan::new(bgra, rgba).expect("bgra→rgba plan");
+    let plan_fwd = crate::ConvertPlan::plan_native(rgba, bgra).expect("rgba→bgra plan");
+    let plan_back = crate::ConvertPlan::plan_native(bgra, rgba).expect("bgra→rgba plan");
 
     // Test 1M random-ish values (sampled from a grid).
     let mut error_count = 0u32;
@@ -320,9 +285,9 @@ fn ulp_bgra_rgba_swizzle_roundtrip() {
                     let input = [r, g, b, a];
                     let mut mid = [0u8; 4];
                     let mut output = [0u8; 4];
-                    zenpixels_convert::RowConverter::from_plan(plan_fwd.clone())
+                    crate::RowConverter::from_plan(plan_fwd.clone())
                         .convert_row(&input, &mut mid, 1);
-                    zenpixels_convert::RowConverter::from_plan(plan_back.clone()).convert_row(
+                    crate::RowConverter::from_plan(plan_back.clone()).convert_row(
                         &mid,
                         &mut output,
                         1,
@@ -350,17 +315,13 @@ fn ulp_srgb_eotf_monotonic() {
     // Verify sRGB EOTF (u8→f32 linear) produces monotonically increasing values.
     let src = PixelDescriptor::RGB8_SRGB;
     let dst = PixelDescriptor::RGBF32_LINEAR;
-    let plan = ConvertPlan::new(src, dst).expect("sRGB→linear plan");
+    let plan = crate::ConvertPlan::plan_native(src, dst).expect("sRGB→linear plan");
 
     let mut prev: f32 = -1.0;
     for v in 0u8..=255 {
         let input = [v, 0, 0]; // Only R channel
         let mut output = [0u8; 12]; // 3 × f32
-        zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
-            &input,
-            &mut output,
-            1,
-        );
+        crate::RowConverter::from_plan(plan.clone()).convert_row(&input, &mut output, 1);
         let outf: &[f32] = bytemuck::cast_slice(&output);
         assert!(
             outf[0] >= prev,
@@ -378,12 +339,8 @@ fn ulp_srgb_eotf_monotonic() {
     let input_255 = [255u8, 0, 0];
     let mut out_0 = [0u8; 12];
     let mut out_255 = [0u8; 12];
-    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(&input_0, &mut out_0, 1);
-    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
-        &input_255,
-        &mut out_255,
-        1,
-    );
+    crate::RowConverter::from_plan(plan.clone()).convert_row(&input_0, &mut out_0, 1);
+    crate::RowConverter::from_plan(plan.clone()).convert_row(&input_255, &mut out_255, 1);
     let f0: &[f32] = bytemuck::cast_slice(&out_0);
     let f255: &[f32] = bytemuck::cast_slice(&out_255);
     assert_eq!(f0[0], 0.0, "sRGB EOTF(0) should be 0.0");
@@ -402,29 +359,21 @@ fn ulp_srgb_eotf_monotonic() {
 fn ulp_srgb_oetf_boundary_values() {
     let src = PixelDescriptor::RGBF32_LINEAR;
     let dst = PixelDescriptor::RGB8_SRGB;
-    let plan = ConvertPlan::new(src, dst).expect("linear→sRGB plan");
+    let plan = crate::ConvertPlan::plan_native(src, dst).expect("linear→sRGB plan");
 
     // Test that the exact f32 values corresponding to each u8 step
     // round-trip correctly.
-    let eotf_plan = ConvertPlan::new(dst, src).expect("sRGB→linear plan");
+    let eotf_plan = crate::ConvertPlan::plan_native(dst, src).expect("sRGB→linear plan");
 
     for v in 0u8..=255 {
         // Get the f32 value for this u8.
         let u8_input = [v, 0, 0];
         let mut f32_bytes = [0u8; 12];
-        zenpixels_convert::RowConverter::from_plan(eotf_plan.clone()).convert_row(
-            &u8_input,
-            &mut f32_bytes,
-            1,
-        );
+        crate::RowConverter::from_plan(eotf_plan.clone()).convert_row(&u8_input, &mut f32_bytes, 1);
 
         // Convert back to u8.
         let mut u8_output = [0u8; 3];
-        zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
-            &f32_bytes,
-            &mut u8_output,
-            1,
-        );
+        crate::RowConverter::from_plan(plan.clone()).convert_row(&f32_bytes, &mut u8_output, 1);
 
         assert_eq!(
             u8_output[0], v,
@@ -440,7 +389,7 @@ fn ulp_srgb_oetf_boundary_values() {
 
 #[test]
 fn ulp_naive_u8_f32_roundtrip() {
-    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
+    use crate::{ChannelLayout, ChannelType, TransferFunction};
 
     let u8_desc = PixelDescriptor::new(
         ChannelType::U8,
@@ -455,21 +404,16 @@ fn ulp_naive_u8_f32_roundtrip() {
         TransferFunction::Unknown,
     );
 
-    let plan_fwd = ConvertPlan::new(u8_desc, f32_desc).expect("u8→f32 naive plan");
-    let plan_back = ConvertPlan::new(f32_desc, u8_desc).expect("f32→u8 naive plan");
+    let plan_fwd = crate::ConvertPlan::plan_native(u8_desc, f32_desc).expect("u8→f32 naive plan");
+    let plan_back = crate::ConvertPlan::plan_native(f32_desc, u8_desc).expect("f32→u8 naive plan");
 
     let mut max_err: u8 = 0;
     for v in 0u8..=255 {
         let input = [v, v, v];
         let mut mid = [0u8; 12];
         let mut output = [0u8; 3];
-        zenpixels_convert::RowConverter::from_plan(plan_fwd.clone())
-            .convert_row(&input, &mut mid, 1);
-        zenpixels_convert::RowConverter::from_plan(plan_back.clone()).convert_row(
-            &mid,
-            &mut output,
-            1,
-        );
+        crate::RowConverter::from_plan(plan_fwd.clone()).convert_row(&input, &mut mid, 1);
+        crate::RowConverter::from_plan(plan_back.clone()).convert_row(&mid, &mut output, 1);
 
         for c in 0..3 {
             let err = (output[c] as i16 - input[c] as i16).unsigned_abs() as u8;
@@ -489,7 +433,7 @@ fn ulp_naive_u8_f32_roundtrip() {
 
 #[test]
 fn ulp_u16_f32_roundtrip_exhaustive() {
-    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
+    use crate::{ChannelLayout, ChannelType, TransferFunction};
 
     let u16_desc = PixelDescriptor::new(
         ChannelType::U16,
@@ -504,8 +448,8 @@ fn ulp_u16_f32_roundtrip_exhaustive() {
         TransferFunction::Srgb,
     );
 
-    let plan_fwd = ConvertPlan::new(u16_desc, f32_desc).expect("u16→f32 plan");
-    let plan_back = ConvertPlan::new(f32_desc, u16_desc).expect("f32→u16 plan");
+    let plan_fwd = crate::ConvertPlan::plan_native(u16_desc, f32_desc).expect("u16→f32 plan");
+    let plan_back = crate::ConvertPlan::plan_native(f32_desc, u16_desc).expect("f32→u16 plan");
 
     let mut max_err: u16 = 0;
     for v in 0u32..=65535 {
@@ -514,13 +458,8 @@ fn ulp_u16_f32_roundtrip_exhaustive() {
         let mut mid = [0u8; 4]; // 1 × f32
         let mut output = [0u8; 2]; // 1 × u16
 
-        zenpixels_convert::RowConverter::from_plan(plan_fwd.clone())
-            .convert_row(&input, &mut mid, 1);
-        zenpixels_convert::RowConverter::from_plan(plan_back.clone()).convert_row(
-            &mid,
-            &mut output,
-            1,
-        );
+        crate::RowConverter::from_plan(plan_fwd.clone()).convert_row(&input, &mut mid, 1);
+        crate::RowConverter::from_plan(plan_back.clone()).convert_row(&mid, &mut output, 1);
 
         let result = u16::from_ne_bytes(output);
         let err = (result as i32 - v16 as i32).unsigned_abs() as u16;
@@ -539,7 +478,7 @@ fn ulp_u16_f32_roundtrip_exhaustive() {
 
 #[test]
 fn ulp_premul_roundtrip_u8_exhaustive() {
-    use zenpixels_convert::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use crate::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
 
     let straight = PixelDescriptor::new(
         ChannelType::U8,
@@ -554,8 +493,10 @@ fn ulp_premul_roundtrip_u8_exhaustive() {
         TransferFunction::Srgb,
     );
 
-    let plan_to_premul = ConvertPlan::new(straight, premul).expect("straight→premul plan");
-    let plan_to_straight = ConvertPlan::new(premul, straight).expect("premul→straight plan");
+    let plan_to_premul =
+        crate::ConvertPlan::plan_native(straight, premul).expect("straight→premul plan");
+    let plan_to_straight =
+        crate::ConvertPlan::plan_native(premul, straight).expect("premul→straight plan");
 
     let mut max_err: u8 = 0;
     let mut error_count = 0u32;
@@ -569,9 +510,8 @@ fn ulp_premul_roundtrip_u8_exhaustive() {
             let mut mid = [0u8; 4];
             let mut output = [0u8; 4];
 
-            zenpixels_convert::RowConverter::from_plan(plan_to_premul.clone())
-                .convert_row(&input, &mut mid, 1);
-            zenpixels_convert::RowConverter::from_plan(plan_to_straight.clone()).convert_row(
+            crate::RowConverter::from_plan(plan_to_premul.clone()).convert_row(&input, &mut mid, 1);
+            crate::RowConverter::from_plan(plan_to_straight.clone()).convert_row(
                 &mid,
                 &mut output,
                 1,
@@ -611,7 +551,7 @@ fn ulp_premul_roundtrip_u8_exhaustive() {
 
 #[test]
 fn ulp_premul_roundtrip_f32() {
-    use zenpixels_convert::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use crate::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
 
     let straight = PixelDescriptor::new(
         ChannelType::F32,
@@ -626,8 +566,10 @@ fn ulp_premul_roundtrip_f32() {
         TransferFunction::Linear,
     );
 
-    let plan_to_premul = ConvertPlan::new(straight, premul).expect("f32 straight→premul plan");
-    let plan_to_straight = ConvertPlan::new(premul, straight).expect("f32 premul→straight plan");
+    let plan_to_premul =
+        crate::ConvertPlan::plan_native(straight, premul).expect("f32 straight→premul plan");
+    let plan_to_straight =
+        crate::ConvertPlan::plan_native(premul, straight).expect("f32 premul→straight plan");
 
     let mut max_ulp_err: u32 = 0;
     let test_values: Vec<f32> = (0..=255).map(|v| v as f32 / 255.0).collect();
@@ -639,9 +581,8 @@ fn ulp_premul_roundtrip_f32() {
             let mut mid = [0u8; 16];
             let mut output = [0u8; 16];
 
-            zenpixels_convert::RowConverter::from_plan(plan_to_premul.clone())
-                .convert_row(&input, &mut mid, 1);
-            zenpixels_convert::RowConverter::from_plan(plan_to_straight.clone()).convert_row(
+            crate::RowConverter::from_plan(plan_to_premul.clone()).convert_row(&input, &mut mid, 1);
+            crate::RowConverter::from_plan(plan_to_straight.clone()).convert_row(
                 &mid,
                 &mut output,
                 1,
@@ -674,8 +615,8 @@ fn ulp_gray_rgb_gray_roundtrip() {
     let gray = PixelDescriptor::GRAY8_SRGB;
     let rgb = PixelDescriptor::RGB8_SRGB;
 
-    let plan_to_rgb = ConvertPlan::new(gray, rgb).expect("gray→rgb plan");
-    let plan_to_gray = ConvertPlan::new(rgb, gray).expect("rgb→gray plan");
+    let plan_to_rgb = crate::ConvertPlan::plan_native(gray, rgb).expect("gray→rgb plan");
+    let plan_to_gray = crate::ConvertPlan::plan_native(rgb, gray).expect("rgb→gray plan");
 
     let mut max_err: u8 = 0;
     for v in 0u8..=255 {
@@ -683,13 +624,8 @@ fn ulp_gray_rgb_gray_roundtrip() {
         let mut mid = [0u8; 3];
         let mut output = [0u8; 1];
 
-        zenpixels_convert::RowConverter::from_plan(plan_to_rgb.clone())
-            .convert_row(&input, &mut mid, 1);
-        zenpixels_convert::RowConverter::from_plan(plan_to_gray.clone()).convert_row(
-            &mid,
-            &mut output,
-            1,
-        );
+        crate::RowConverter::from_plan(plan_to_rgb.clone()).convert_row(&input, &mut mid, 1);
+        crate::RowConverter::from_plan(plan_to_gray.clone()).convert_row(&mid, &mut output, 1);
 
         let err = (output[0] as i16 - v as i16).unsigned_abs() as u8;
         max_err = max_err.max(err);
@@ -713,8 +649,8 @@ fn ulp_add_drop_alpha_roundtrip() {
     let rgb = PixelDescriptor::RGB8_SRGB;
     let rgba = PixelDescriptor::RGBA8_SRGB;
 
-    let plan_add = ConvertPlan::new(rgb, rgba).expect("rgb→rgba plan");
-    let plan_drop = ConvertPlan::new(rgba, rgb).expect("rgba→rgb plan");
+    let plan_add = crate::ConvertPlan::plan_native(rgb, rgba).expect("rgb→rgba plan");
+    let plan_drop = crate::ConvertPlan::plan_native(rgba, rgb).expect("rgba→rgb plan");
 
     let mut max_err: u8 = 0;
     for r in (0u8..=255).step_by(1) {
@@ -724,15 +660,10 @@ fn ulp_add_drop_alpha_roundtrip() {
                 let mut mid = [0u8; 4];
                 let mut output = [0u8; 3];
 
-                zenpixels_convert::RowConverter::from_plan(plan_add.clone())
-                    .convert_row(&input, &mut mid, 1);
+                crate::RowConverter::from_plan(plan_add.clone()).convert_row(&input, &mut mid, 1);
                 // Verify alpha is opaque.
                 assert_eq!(mid[3], 255, "added alpha should be 255");
-                zenpixels_convert::RowConverter::from_plan(plan_drop.clone()).convert_row(
-                    &mid,
-                    &mut output,
-                    1,
-                );
+                crate::RowConverter::from_plan(plan_drop.clone()).convert_row(&mid, &mut output, 1);
 
                 for c in 0..3 {
                     let err = (output[c] as i16 - input[c] as i16).unsigned_abs() as u8;
@@ -751,7 +682,7 @@ fn ulp_add_drop_alpha_roundtrip() {
 
 #[test]
 fn ulp_gray_alpha_rgba_roundtrip() {
-    use zenpixels_convert::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
+    use crate::{AlphaMode, ChannelLayout, ChannelType, TransferFunction};
 
     let ga = PixelDescriptor::new(
         ChannelType::U8,
@@ -761,7 +692,7 @@ fn ulp_gray_alpha_rgba_roundtrip() {
     );
     let rgba = PixelDescriptor::RGBA8_SRGB;
 
-    let plan_to_rgba = ConvertPlan::new(ga, rgba).expect("ga→rgba plan");
+    let plan_to_rgba = crate::ConvertPlan::plan_native(ga, rgba).expect("ga→rgba plan");
     // RGBA → GrayAlpha isn't a direct path (would need RGBA→Gray + keep alpha).
     // Instead test GrayAlpha → RGBA preserves values.
 
@@ -769,7 +700,7 @@ fn ulp_gray_alpha_rgba_roundtrip() {
         for &a in &[0u8, 1, 128, 254, 255] {
             let input = [v, a];
             let mut output = [0u8; 4];
-            zenpixels_convert::RowConverter::from_plan(plan_to_rgba.clone()).convert_row(
+            crate::RowConverter::from_plan(plan_to_rgba.clone()).convert_row(
                 &input,
                 &mut output,
                 1,
@@ -789,7 +720,7 @@ fn ulp_gray_alpha_rgba_roundtrip() {
 
 #[test]
 fn ulp_pq_eotf_boundary_values() {
-    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
+    use crate::{ChannelLayout, ChannelType, TransferFunction};
 
     let pq_u16 = PixelDescriptor::new(
         ChannelType::U16,
@@ -804,23 +735,20 @@ fn ulp_pq_eotf_boundary_values() {
         TransferFunction::Linear,
     );
 
-    let plan = ConvertPlan::new(pq_u16, linear_f32).expect("PQ U16 → Linear F32 plan");
+    let plan =
+        crate::ConvertPlan::plan_native(pq_u16, linear_f32).expect("PQ U16 → Linear F32 plan");
 
     // PQ code 0 → linear 0.0
     let input_0: [u8; 2] = 0u16.to_ne_bytes();
     let mut out_0 = [0u8; 4];
-    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(&input_0, &mut out_0, 1);
+    crate::RowConverter::from_plan(plan.clone()).convert_row(&input_0, &mut out_0, 1);
     let f0: f32 = bytemuck::cast(out_0);
     assert_eq!(f0, 0.0, "PQ EOTF(0) should be 0.0");
 
     // PQ code 65535 → linear ~1.0 (10000 cd/m² normalized)
     let input_max: [u8; 2] = 65535u16.to_ne_bytes();
     let mut out_max = [0u8; 4];
-    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
-        &input_max,
-        &mut out_max,
-        1,
-    );
+    crate::RowConverter::from_plan(plan.clone()).convert_row(&input_max, &mut out_max, 1);
     let fmax: f32 = bytemuck::cast(out_max);
     assert!(
         (fmax - 1.0).abs() < 0.001,
@@ -830,11 +758,7 @@ fn ulp_pq_eotf_boundary_values() {
     // PQ mid-range (~0.508 encoded ≈ 100 nits / 10000 = 0.01 linear)
     let input_mid: [u8; 2] = 33280u16.to_ne_bytes(); // ~0.508
     let mut out_mid = [0u8; 4];
-    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
-        &input_mid,
-        &mut out_mid,
-        1,
-    );
+    crate::RowConverter::from_plan(plan.clone()).convert_row(&input_mid, &mut out_mid, 1);
     let fmid: f32 = bytemuck::cast(out_mid);
     // PQ encodes the full 0-10000 cd/m² range. ~0.508 encodes roughly 100 nits.
     assert!(
@@ -845,7 +769,7 @@ fn ulp_pq_eotf_boundary_values() {
 
 #[test]
 fn ulp_pq_roundtrip_u16() {
-    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
+    use crate::{ChannelLayout, ChannelType, TransferFunction};
 
     let pq_u16 = PixelDescriptor::new(
         ChannelType::U16,
@@ -860,8 +784,10 @@ fn ulp_pq_roundtrip_u16() {
         TransferFunction::Linear,
     );
 
-    let plan_fwd = ConvertPlan::new(pq_u16, linear_f32).expect("PQ U16 → Linear F32");
-    let plan_back = ConvertPlan::new(linear_f32, pq_u16).expect("Linear F32 → PQ U16");
+    let plan_fwd =
+        crate::ConvertPlan::plan_native(pq_u16, linear_f32).expect("PQ U16 → Linear F32");
+    let plan_back =
+        crate::ConvertPlan::plan_native(linear_f32, pq_u16).expect("Linear F32 → PQ U16");
 
     let mut max_err: u16 = 0;
     // Test representative values across the range.
@@ -871,13 +797,8 @@ fn ulp_pq_roundtrip_u16() {
         let mut mid = [0u8; 4];
         let mut output = [0u8; 2];
 
-        zenpixels_convert::RowConverter::from_plan(plan_fwd.clone())
-            .convert_row(&input, &mut mid, 1);
-        zenpixels_convert::RowConverter::from_plan(plan_back.clone()).convert_row(
-            &mid,
-            &mut output,
-            1,
-        );
+        crate::RowConverter::from_plan(plan_fwd.clone()).convert_row(&input, &mut mid, 1);
+        crate::RowConverter::from_plan(plan_back.clone()).convert_row(&mid, &mut output, 1);
 
         let result = u16::from_ne_bytes(output);
         let err = (result as i32 - v16 as i32).unsigned_abs() as u16;
@@ -895,7 +816,7 @@ fn ulp_pq_roundtrip_u16() {
 
 #[test]
 fn ulp_pq_f32_roundtrip() {
-    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
+    use crate::{ChannelLayout, ChannelType, TransferFunction};
 
     let pq_f32 = PixelDescriptor::new(
         ChannelType::F32,
@@ -910,8 +831,10 @@ fn ulp_pq_f32_roundtrip() {
         TransferFunction::Linear,
     );
 
-    let plan_fwd = ConvertPlan::new(pq_f32, linear_f32).expect("PQ F32 → Linear F32");
-    let plan_back = ConvertPlan::new(linear_f32, pq_f32).expect("Linear F32 → PQ F32");
+    let plan_fwd =
+        crate::ConvertPlan::plan_native(pq_f32, linear_f32).expect("PQ F32 → Linear F32");
+    let plan_back =
+        crate::ConvertPlan::plan_native(linear_f32, pq_f32).expect("Linear F32 → PQ F32");
 
     let mut max_rel_err: f64 = 0.0;
     // Test values across [0, 1] in PQ domain.
@@ -921,13 +844,8 @@ fn ulp_pq_f32_roundtrip() {
         let mut mid = [0u8; 4];
         let mut output = [0u8; 4];
 
-        zenpixels_convert::RowConverter::from_plan(plan_fwd.clone())
-            .convert_row(&input, &mut mid, 1);
-        zenpixels_convert::RowConverter::from_plan(plan_back.clone()).convert_row(
-            &mid,
-            &mut output,
-            1,
-        );
+        crate::RowConverter::from_plan(plan_fwd.clone()).convert_row(&input, &mut mid, 1);
+        crate::RowConverter::from_plan(plan_back.clone()).convert_row(&mid, &mut output, 1);
 
         let result: f32 = bytemuck::cast(output);
         if pq_val > 0.01 {
@@ -945,7 +863,7 @@ fn ulp_pq_f32_roundtrip() {
 
 #[test]
 fn ulp_pq_eotf_monotonic() {
-    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
+    use crate::{ChannelLayout, ChannelType, TransferFunction};
 
     let pq_u16 = PixelDescriptor::new(
         ChannelType::U16,
@@ -960,18 +878,14 @@ fn ulp_pq_eotf_monotonic() {
         TransferFunction::Linear,
     );
 
-    let plan = ConvertPlan::new(pq_u16, linear_f32).expect("PQ EOTF plan");
+    let plan = crate::ConvertPlan::plan_native(pq_u16, linear_f32).expect("PQ EOTF plan");
     let mut prev: f32 = -1.0;
 
     for v in 0u32..=65535 {
         let v16 = v as u16;
         let input: [u8; 2] = v16.to_ne_bytes();
         let mut output = [0u8; 4];
-        zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
-            &input,
-            &mut output,
-            1,
-        );
+        crate::RowConverter::from_plan(plan.clone()).convert_row(&input, &mut output, 1);
         let result: f32 = bytemuck::cast(output);
         assert!(
             result >= prev,
@@ -987,7 +901,7 @@ fn ulp_pq_eotf_monotonic() {
 
 #[test]
 fn ulp_hlg_boundary_values() {
-    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
+    use crate::{ChannelLayout, ChannelType, TransferFunction};
 
     let hlg_u16 = PixelDescriptor::new(
         ChannelType::U16,
@@ -1002,23 +916,20 @@ fn ulp_hlg_boundary_values() {
         TransferFunction::Linear,
     );
 
-    let plan = ConvertPlan::new(hlg_u16, linear_f32).expect("HLG U16 → Linear F32 plan");
+    let plan =
+        crate::ConvertPlan::plan_native(hlg_u16, linear_f32).expect("HLG U16 → Linear F32 plan");
 
     // HLG code 0 → linear 0.0
     let input_0: [u8; 2] = 0u16.to_ne_bytes();
     let mut out_0 = [0u8; 4];
-    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(&input_0, &mut out_0, 1);
+    crate::RowConverter::from_plan(plan.clone()).convert_row(&input_0, &mut out_0, 1);
     let f0: f32 = bytemuck::cast(out_0);
     assert_eq!(f0, 0.0, "HLG EOTF(0) should be 0.0");
 
     // HLG code 65535 → linear 1.0
     let input_max: [u8; 2] = 65535u16.to_ne_bytes();
     let mut out_max = [0u8; 4];
-    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
-        &input_max,
-        &mut out_max,
-        1,
-    );
+    crate::RowConverter::from_plan(plan.clone()).convert_row(&input_max, &mut out_max, 1);
     let fmax: f32 = bytemuck::cast(out_max);
     assert!(
         (fmax - 1.0).abs() < 0.01,
@@ -1028,7 +939,7 @@ fn ulp_hlg_boundary_values() {
 
 #[test]
 fn ulp_hlg_roundtrip_u16() {
-    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
+    use crate::{ChannelLayout, ChannelType, TransferFunction};
 
     let hlg_u16 = PixelDescriptor::new(
         ChannelType::U16,
@@ -1043,8 +954,10 @@ fn ulp_hlg_roundtrip_u16() {
         TransferFunction::Linear,
     );
 
-    let plan_fwd = ConvertPlan::new(hlg_u16, linear_f32).expect("HLG U16 → Linear F32");
-    let plan_back = ConvertPlan::new(linear_f32, hlg_u16).expect("Linear F32 → HLG U16");
+    let plan_fwd =
+        crate::ConvertPlan::plan_native(hlg_u16, linear_f32).expect("HLG U16 → Linear F32");
+    let plan_back =
+        crate::ConvertPlan::plan_native(linear_f32, hlg_u16).expect("Linear F32 → HLG U16");
 
     let mut max_err: u16 = 0;
     for v in 0u32..=65535 {
@@ -1053,13 +966,8 @@ fn ulp_hlg_roundtrip_u16() {
         let mut mid = [0u8; 4];
         let mut output = [0u8; 2];
 
-        zenpixels_convert::RowConverter::from_plan(plan_fwd.clone())
-            .convert_row(&input, &mut mid, 1);
-        zenpixels_convert::RowConverter::from_plan(plan_back.clone()).convert_row(
-            &mid,
-            &mut output,
-            1,
-        );
+        crate::RowConverter::from_plan(plan_fwd.clone()).convert_row(&input, &mut mid, 1);
+        crate::RowConverter::from_plan(plan_back.clone()).convert_row(&mid, &mut output, 1);
 
         let result = u16::from_ne_bytes(output);
         let err = (result as i32 - v16 as i32).unsigned_abs() as u16;
@@ -1075,7 +983,7 @@ fn ulp_hlg_roundtrip_u16() {
 
 #[test]
 fn ulp_hlg_eotf_monotonic() {
-    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
+    use crate::{ChannelLayout, ChannelType, TransferFunction};
 
     let hlg_u16 = PixelDescriptor::new(
         ChannelType::U16,
@@ -1090,18 +998,14 @@ fn ulp_hlg_eotf_monotonic() {
         TransferFunction::Linear,
     );
 
-    let plan = ConvertPlan::new(hlg_u16, linear_f32).expect("HLG EOTF plan");
+    let plan = crate::ConvertPlan::plan_native(hlg_u16, linear_f32).expect("HLG EOTF plan");
     let mut prev: f32 = -1.0;
 
     for v in 0u32..=65535 {
         let v16 = v as u16;
         let input: [u8; 2] = v16.to_ne_bytes();
         let mut output = [0u8; 4];
-        zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
-            &input,
-            &mut output,
-            1,
-        );
+        crate::RowConverter::from_plan(plan.clone()).convert_row(&input, &mut output, 1);
         let result: f32 = bytemuck::cast(output);
         assert!(
             result >= prev,
@@ -1118,7 +1022,7 @@ fn ulp_hlg_eotf_monotonic() {
 #[test]
 #[cfg(feature = "bt2446a")]
 fn ulp_pq_to_srgb_basic() {
-    use zenpixels_convert::{ChannelLayout, ChannelType, TransferFunction};
+    use crate::{ChannelLayout, ChannelType, TransferFunction};
 
     let pq_u16 = PixelDescriptor::new(
         ChannelType::U16,
@@ -1141,18 +1045,14 @@ fn ulp_pq_to_srgb_basic() {
     // PQ code 0 → sRGB 0
     let input_0: [u8; 6] = [0; 6]; // 3 × u16(0)
     let mut out_0 = [0u8; 3];
-    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(&input_0, &mut out_0, 1);
+    crate::RowConverter::from_plan(plan.clone()).convert_row(&input_0, &mut out_0, 1);
     assert_eq!(out_0, [0, 0, 0], "PQ(0) → sRGB should be black");
 
     // ~203 nits (diffuse white) in PQ ≈ code ~33280 → should map to sRGB ~200-255
     let mid_val: u16 = 33280;
     let input_mid: [u8; 6] = bytemuck::cast([mid_val, mid_val, mid_val]);
     let mut out_mid = [0u8; 3];
-    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
-        &input_mid,
-        &mut out_mid,
-        1,
-    );
+    crate::RowConverter::from_plan(plan.clone()).convert_row(&input_mid, &mut out_mid, 1);
     println!(
         "PQ({mid_val}) → sRGB: [{}, {}, {}]",
         out_mid[0], out_mid[1], out_mid[2]

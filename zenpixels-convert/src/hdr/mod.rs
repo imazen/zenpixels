@@ -103,26 +103,30 @@ use zenpixels::hdr::DiffuseWhite;
 // ---------------------------------------------------------------------------
 
 /// Shared `quantize_*` setup: read the anchor from the source `ColorContext`
-/// (default [`DiffuseWhite::BT2408`] = 203), validate the source is linear
+/// (refuse when absent), validate the source is linear
 /// RGB(A) f32 and the target is PQ, and return the gamut-tagged source
-/// descriptor + anchor + dimensions. The source descriptor carries the target's
-/// primaries so no gamut step is planned (value-only quantize); the target's
+/// descriptor + anchor + dimensions. Source primaries remain authoritative,
+/// so an actual gamut conversion is planned when required; the target's
 /// channel count then drives whether alpha is dropped or preserved.
 fn quantize_setup(
     px: &PixelSlice<'_>,
     target: PixelDescriptor,
 ) -> Result<(PixelDescriptor, DiffuseWhite, u32, u32), At<ConvertError>> {
+    crate::output::current_profile_for(
+        px.descriptor(),
+        px.color_context().map(alloc::sync::Arc::as_ref),
+    )?;
     let diffuse_white = px
         .color_context()
         .and_then(|c| c.diffuse_white)
-        .unwrap_or(DiffuseWhite::BT2408);
+        .ok_or_else(|| whereat::at!(ConvertError::SdrWhiteRequired))?;
     let desc = px.descriptor();
     let src = match desc.pixel_format() {
         PixelFormat::RgbF32 => PixelDescriptor::RGBF32_LINEAR,
         PixelFormat::RgbaF32 => PixelDescriptor::RGBAF32_LINEAR,
         _ => return Err(whereat::at!(ConvertError::NoMatch { source: desc })),
     }
-    .with_primaries(target.primaries);
+    .with_primaries(desc.primaries);
     if desc.transfer != TransferFunction::Linear {
         return Err(whereat::at!(ConvertError::UnsupportedTransfer {
             from: desc.transfer,
@@ -148,9 +152,8 @@ fn quantize_setup(
 /// descriptor (e.g. [`PixelDescriptor::RGB16_BT2100_PQ`]).
 ///
 /// The absolute-luminance anchor — the nits that sample `1.0` represents — is
-/// read from the source `ColorContext`'s `diffuse_white`, defaulting to
-/// [`DiffuseWhite::BT2408`] (203, the cross-vendor relative-linear convention)
-/// when unsignaled. Attach a custom anchor with
+/// read from the source `ColorContext`'s `diffuse_white`; unsignaled input
+/// returns `ConvertError::SdrWhiteRequired`. Attach a custom anchor with
 /// `ColorContext::with_diffuse_white` (e.g. a buffer reconstructed at a
 /// different reference white). The anchor threads **into the PQ `ConvertStep`s
 /// themselves**: the linear → PQ kernel scales the RGB lanes by `anchor / 10000`
@@ -164,8 +167,8 @@ fn quantize_setup(
 /// PQ target (`RGBA16.with_transfer(Pq).with_primaries(…)`) preserves it,
 /// carried linearly and **never PQ-encoded or anchor-scaled**.
 ///
-/// **Primaries are not converted** — the source gamut is signaled as the
-/// target's (feed BT.2020-relative-linear for `RGB16_BT2100_PQ`). Measure CLL
+/// Source primaries remain authoritative. A different target gamut invokes
+/// the same matrix conversion as the general buffer path. Measure CLL
 /// separately with `hdr::measure::CllMeasure::measure_max`.
 ///
 /// The successor to the withdrawn `encode_pq16` (rationale:
@@ -290,7 +293,16 @@ mod tests {
                 data.extend_from_slice(&c.to_ne_bytes());
             }
         }
-        PixelBuffer::from_vec(data, w, h, PixelDescriptor::RGBF32_LINEAR).unwrap()
+        PixelBuffer::from_vec(
+            data,
+            w,
+            h,
+            PixelDescriptor::RGBF32_LINEAR.with_primaries(zenpixels::ColorPrimaries::Bt2020),
+        )
+        .unwrap()
+        .with_color_context(alloc::sync::Arc::new(
+            zenpixels::ColorContext::default().with_diffuse_white(DiffuseWhite::BT2408),
+        ))
     }
 
     fn rgbaf32(pixels: &[[f32; 4]], w: u32, h: u32) -> PixelBuffer {
@@ -300,7 +312,16 @@ mod tests {
                 data.extend_from_slice(&c.to_ne_bytes());
             }
         }
-        PixelBuffer::from_vec(data, w, h, PixelDescriptor::RGBAF32_LINEAR).unwrap()
+        PixelBuffer::from_vec(
+            data,
+            w,
+            h,
+            PixelDescriptor::RGBAF32_LINEAR.with_primaries(zenpixels::ColorPrimaries::Bt2020),
+        )
+        .unwrap()
+        .with_color_context(alloc::sync::Arc::new(
+            zenpixels::ColorContext::default().with_diffuse_white(DiffuseWhite::BT2408),
+        ))
     }
 
     /// RGBA16 PQ target (BT.2020), matching `RGB16_BT2100_PQ` plus an alpha lane.
@@ -362,11 +383,11 @@ mod tests {
     #[test]
     fn quantize_to_reads_anchor_from_color_context() {
         use alloc::sync::Arc;
-        use zenpixels::{Cicp, ColorContext};
+        use zenpixels::ColorContext;
         // A 100-nit anchor on the ColorContext (not the 203 default) must
         // change the PQ scale — proving the anchor travels with the pixels.
         let buf = rgbf32(&[[1.0; 3]], 1, 1).with_color_context(Arc::new(
-            ColorContext::from_cicp(Cicp::BT2100_PQ).with_diffuse_white(DiffuseWhite::new(100.0)),
+            ColorContext::default().with_diffuse_white(DiffuseWhite::new(100.0)),
         ));
         let out = quantize_to(buf.as_slice(), PixelDescriptor::RGB16_BT2100_PQ).unwrap();
         let bytes = out.as_slice().as_strided_bytes();
@@ -423,7 +444,17 @@ mod tests {
             }
             data[off..off + 4].copy_from_slice(&999.0f32.to_ne_bytes()); // sentinel
         }
-        let strided = PixelSlice::new(&data, 2, 2, stride, PixelDescriptor::RGBF32_LINEAR).unwrap();
+        let strided = PixelSlice::new(
+            &data,
+            2,
+            2,
+            stride,
+            PixelDescriptor::RGBF32_LINEAR.with_primaries(zenpixels::ColorPrimaries::Bt2020),
+        )
+        .unwrap()
+        .with_color_context(Arc::new(
+            ColorContext::default().with_diffuse_white(DiffuseWhite::BT2408),
+        ));
         let got = quantize_to(strided, target).unwrap();
 
         let packed = rgbf32(&[[0.1; 3], [1.0; 3], [0.1; 3], [1.0; 3]], 2, 2);
@@ -485,14 +516,14 @@ mod tests {
     #[test]
     fn quantize_to_carries_diffuse_white_anchor_onto_output() {
         use alloc::sync::Arc;
-        use zenpixels::{Cicp, ColorContext};
+        use zenpixels::ColorContext;
         let target = PixelDescriptor::RGB16_BT2100_PQ;
 
         // A signaled 100-nit anchor must ride out on the output's ColorContext —
         // the encode applied it, so the buffer self-describes it (the `ndwt`
         // signal a downstream encoder needs), rather than silently dropping it.
         let buf = rgbf32(&[[1.0; 3]], 1, 1).with_color_context(Arc::new(
-            ColorContext::from_cicp(Cicp::BT2100_PQ).with_diffuse_white(DiffuseWhite::new(100.0)),
+            ColorContext::default().with_diffuse_white(DiffuseWhite::new(100.0)),
         ));
         let out = quantize_to(buf.as_slice(), target).unwrap();
         let ctx = out.color_context().expect("output carries a ColorContext");

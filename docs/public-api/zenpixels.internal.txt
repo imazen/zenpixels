@@ -9,9 +9,9 @@
 
 ## summary
 #
-#   inherent methods                           62
+#   inherent methods                           63
 #   enum variants                              14
-#   trait roster entries (type × trait)        63
+#   trait roster entries (type × trait)        65
 #
 # per-module pub lines:
 #   (root)                            7
@@ -19,7 +19,7 @@
 #   cicp                              2
 #   color                             8
 #   descriptor                       17
-#   hdr                               1
+#   hdr                               2
 #   icc                               2
 #   orientation                       1
 #   pixel_types                       2
@@ -28,7 +28,7 @@
 #   precision                        13
 #   sample                            7
 
-## items (76 lines)
+## items (77 lines)
 
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
@@ -54,6 +54,7 @@ pub fn descriptor::PixelFormat::assert_fields_are_eq(&self)
 pub fn descriptor::SignalRange::assert_fields_are_eq(&self)
 pub fn descriptor::TransferFunction::assert_fields_are_eq(&self)
 pub fn hdr::ContentLightLevel::assert_fields_are_eq(&self)
+pub fn hdr::HdrPeak::assert_fields_are_eq(&self)
 pub fn icc::IccIdentification::assert_fields_are_eq(&self)
 pub fn icc::IdentificationUse::assert_fields_are_eq(&self)
 pub fn orientation::Orientation::assert_fields_are_eq(&self)
@@ -107,7 +108,7 @@ pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (63 types)
+## trait impls (65 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
@@ -130,7 +131,9 @@ descriptor::SignalRange: TrivialClone
 descriptor::TransferFunction: TrivialClone
 hdr::ContentLightLevel: TrivialClone
 hdr::DiffuseWhite: TrivialClone
+hdr::HdrPeak: TrivialClone
 hdr::MasteringDisplay: TrivialClone
+hdr::Nits: TrivialClone
 icc::IccIdentification: TrivialClone
 icc::IdentificationUse: TrivialClone
 orientation::Orientation: TrivialClone

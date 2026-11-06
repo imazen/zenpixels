@@ -164,6 +164,18 @@ impl OutputPlan {
             PlanPolicy::Convert(options, cms) => (options, cms),
             PlanPolicy::PreserveSamples => (&conservative, None),
         };
+        let mut resolved_options = *options;
+        if resolved_options.sdr_white().is_none()
+            && let Some(white) = current.as_ref().and_then(|c| c.diffuse_white)
+        {
+            resolved_options = resolved_options.with_sdr_white(white);
+        }
+        if resolved_options.hdr_peak() == zenpixels::hdr::HdrPeak::Declared
+            && let Some(peak) = current.as_ref().and_then(|c| c.hdr_peak)
+        {
+            resolved_options = resolved_options.with_hdr_peak(zenpixels::hdr::HdrPeak::Nits(peak));
+        }
+        let options = &resolved_options;
         let source_profile = super::current_profile_for(source_desc, current.as_deref())?;
         let target_profile = match &target {
             OutputProfile::SameAsOrigin => {
@@ -268,13 +280,9 @@ impl OutputPlan {
         let mut context = crate::ColorContext::default();
         context.icc = metadata.icc.clone();
         context.cicp = metadata.cicp;
-        context.diffuse_white = if source_desc.transfer() == TransferFunction::Pq
-            && target_desc_full.transfer() == TransferFunction::Linear
-        {
-            Some(zenpixels::hdr::DiffuseWhite::new(10_000.0))
-        } else {
-            current.as_ref().and_then(|c| c.diffuse_white)
-        };
+        context.diffuse_white = resolved_options
+            .sdr_white()
+            .or_else(|| current.as_ref().and_then(|c| c.diffuse_white));
         let context = Arc::new(context);
 
         // A decoder may carry an authoritative ICC while leaving the compact

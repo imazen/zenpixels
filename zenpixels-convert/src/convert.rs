@@ -256,7 +256,8 @@ fn matte_background(
     .with_primaries(primaries);
     let options = ConvertOptions::permissive()
         .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
-        .with_clip_out_of_gamut(false);
+        .with_clip_out_of_gamut(false)
+        .with_sdr_white(zenpixels::hdr::DiffuseWhite::new(10_000.0));
     let mut linear = [0f32; 3];
     convert_row_buffered(
         &ConvertPlan::new_explicit(from, to, &options)?,
@@ -797,10 +798,21 @@ impl ConvertPlan {
     /// through `RowConverter` for that.
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
+        Self::new_explicit(
+            from,
+            to,
+            &ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked),
+        )
+    }
+
+    pub(crate) fn plan_native(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+    ) -> Result<Self, At<ConvertError>> {
         validate_descriptors(from, to)?;
         if let Some(pivot) = oklab_pivot(from, to) {
-            return Self::new(from, pivot)?
-                .compose(&Self::new(pivot, to)?)
+            return Self::plan_native(from, pivot)?
+                .compose(&Self::plan_native(pivot, to)?)
                 .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
         }
         if needs_cms_for_color_model(&from, &to) {
@@ -939,8 +951,8 @@ impl ConvertPlan {
                 let middle = PixelDescriptor::new(depth, from.layout(), from.alpha(), transfer)
                     .with_primaries(to.primaries)
                     .with_signal_range(from.signal_range);
-                return Self::new(from, middle)?
-                    .compose(&Self::new(middle, to)?)
+                return Self::plan_native(from, middle)?
+                    .compose(&Self::plan_native(middle, to)?)
                     .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
             }
         }
@@ -956,7 +968,7 @@ impl ConvertPlan {
             )
             .with_primaries(from.primaries)
             .with_signal_range(from.signal_range);
-            let mut plan = Self::new(rgb, to)?;
+            let mut plan = Self::plan_native(rgb, to)?;
             plan.steps.insert(0, ConvertStep::DropAlpha);
             plan.from = from;
             return Ok(plan);
@@ -977,7 +989,7 @@ impl ConvertPlan {
             } else {
                 to
             };
-            let mut plan = Self::new(straight_from, straight_to)?;
+            let mut plan = Self::plan_native(straight_from, straight_to)?;
             plan.steps.insert(0, ConvertStep::PremulToStraight);
             if to.alpha() == Some(AlphaMode::Premultiplied) {
                 plan.steps.push(ConvertStep::StraightToPremul);
@@ -1340,7 +1352,7 @@ impl ConvertPlan {
         from: PixelDescriptor,
         to: PixelDescriptor,
     ) -> Result<Self, At<ConvertError>> {
-        let plan = Self::new(from, to)?;
+        let plan = Self::plan_native(from, to)?;
         if from.transfer() != to.transfer()
             || from.primaries != to.primaries
             || (from.has_alpha() && from.alpha() != to.alpha())
@@ -1515,7 +1527,10 @@ impl ConvertPlan {
             TransferFunction::Srgb | TransferFunction::Bt709 | TransferFunction::Gamma22
         );
         if src_is_sdr_encoded {
-            return Self::new(from, to);
+            return Self::plan_native(from, to);
+        }
+        if from.transfer() == TransferFunction::Hlg || to.transfer() == TransferFunction::Hlg {
+            return Err(whereat::at!(ConvertError::HlgOotfNotImplemented));
         }
         // Reject unusable peak luminances up front (only on the HDR path —
         // the SDR early-return above documents `hdr` as ignored there).
@@ -1763,8 +1778,24 @@ impl ConvertPlan {
         to: PixelDescriptor,
         options: &ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
+        if from.transfer() != to.transfer()
+            && matches!(
+                (from.transfer(), to.transfer()),
+                (TransferFunction::Hlg, _) | (_, TransferFunction::Hlg)
+            )
+        {
+            return Err(whereat::at!(ConvertError::HlgOotfNotImplemented));
+        }
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
+        }
+        let pq_boundary = from.transfer() != to.transfer()
+            && (from.transfer() == TransferFunction::Pq || to.transfer() == TransferFunction::Pq);
+        if pq_boundary
+            && !is_hdr_to_sdr(from.transfer(), to.transfer())
+            && options.sdr_white().is_none()
+        {
+            return Err(whereat::at!(ConvertError::SdrWhiteRequired));
         }
         if let Some(pivot) = oklab_pivot(from, to) {
             return Self::new_explicit(from, pivot, options)?
@@ -1817,10 +1848,52 @@ impl ConvertPlan {
         if options.gamut_mapping() == GamutMapping::SoftCompress
             && soft_compress_applies(&from, &to)
         {
-            return Self::new_soft_compressed(from, to, options);
+            return Self::new_soft_compressed(from, to, options).map(|plan| {
+                if let Some(anchor) = options.sdr_white() {
+                    plan.with_pq_anchor(anchor)
+                } else {
+                    plan
+                }
+            });
         }
 
-        let mut plan = Self::new(from, to).at()?;
+        let mut plan = if is_hdr_to_sdr(from.transfer(), to.transfer()) {
+            let source_peak = match options.hdr_peak() {
+                zenpixels::hdr::HdrPeak::Nits(value) => value,
+                _ => return Err(whereat::at!(ConvertError::HdrPeakRequired)),
+            };
+            let target_peak = options
+                .sdr_peak()
+                .ok_or_else(|| whereat::at!(ConvertError::SdrPeakRequired))?;
+            #[cfg(feature = "bt2446a")]
+            {
+                Self::new_with_hdr_config(
+                    from,
+                    to,
+                    HdrConfig {
+                        source_peak_nits: source_peak.nits(),
+                        target_peak_nits: target_peak.nits(),
+                        ..HdrConfig::default()
+                    },
+                )?
+            }
+            #[cfg(not(feature = "bt2446a"))]
+            {
+                let _ = (source_peak, target_peak);
+                return Err(whereat::at!(ConvertError::HdrFeatureRequired));
+            }
+        } else {
+            Self::plan_native(from, to).at()?
+        };
+        if from.transfer() != to.transfer()
+            && (from.transfer() == TransferFunction::Pq || to.transfer() == TransferFunction::Pq)
+            && !is_hdr_to_sdr(from.transfer(), to.transfer())
+        {
+            let anchor = options
+                .sdr_white()
+                .ok_or_else(|| whereat::at!(ConvertError::SdrWhiteRequired))?;
+            plan = plan.with_pq_anchor(anchor);
+        }
 
         // Replace DropAlpha with MatteComposite when policy is CompositeOnto.
         //
@@ -3338,12 +3411,20 @@ mod composition_anchor_contract {
     fn unequal_pq_anchors_are_not_cancelled_and_each_stage_keeps_its_units() {
         let linear = PixelDescriptor::RGBF32_LINEAR;
         let pq = linear.with_transfer(TransferFunction::Pq);
-        let a = ConvertPlan::new(linear, pq)
-            .unwrap()
-            .with_pq_anchor(zenpixels::hdr::DiffuseWhite::new(100.));
-        let b = ConvertPlan::new(pq, linear)
-            .unwrap()
-            .with_pq_anchor(zenpixels::hdr::DiffuseWhite::new(200.));
+        let a = ConvertPlan::new_explicit(
+            linear,
+            pq,
+            &ConvertOptions::permissive().with_sdr_white(zenpixels::hdr::DiffuseWhite::new(100.)),
+        )
+        .unwrap()
+        .with_pq_anchor(zenpixels::hdr::DiffuseWhite::new(100.));
+        let b = ConvertPlan::new_explicit(
+            pq,
+            linear,
+            &ConvertOptions::permissive().with_sdr_white(zenpixels::hdr::DiffuseWhite::new(200.)),
+        )
+        .unwrap()
+        .with_pq_anchor(zenpixels::hdr::DiffuseWhite::new(200.));
         let composed = a.compose(&b).unwrap();
         let input = [1f32; 3];
         let mut output = [0f32; 3];
