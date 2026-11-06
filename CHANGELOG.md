@@ -33,9 +33,13 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [Unreleased]
 
+- Add borrowed `plane::Planes`, inline `Copy` layouts, layout role/single-plane validation, and native byte accessors for erased planes. Existing typed `PixelBuffer::from_pixels` is documented as the constructor for typed vectors.
+
 - Preserve the standalone, unpublished moxcms gamma diagnostics and paired benches in `benchmarks/moxcms-gamma`, with pinned source reconstruction and hashes for all six original experiment arms.
 
 ### QUEUED BREAKING CHANGES
+
+- `PlanarLayout::new` accepts `impl AsRef<[PlaneSpec]>` instead of a `Vec` parameter. Existing Vec calls remain valid; untyped `collect()` calls need a collection annotation.
 
 See the 0.3.1 candidate entries below for the approved breaking release queue.
 

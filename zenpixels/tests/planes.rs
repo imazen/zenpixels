@@ -264,7 +264,7 @@ fn layouts_refuse_inconsistent_planes() {
     use PlaneRole::*;
     let e = codes(ChannelType::U8, 8, 0);
     let err = |roles: &[PlaneRole], s| {
-        let planes = roles.iter().map(|&r| PlaneSpec::new(r, e)).collect();
+        let planes: Vec<_> = roles.iter().map(|&r| PlaneSpec::new(r, e)).collect();
         PlanarLayout::new(planes, s, ChromaSiting::Center).unwrap_err()
     };
     assert_eq!(err(&[], Mono), LayoutError::Empty);

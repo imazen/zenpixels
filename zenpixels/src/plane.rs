@@ -824,6 +824,29 @@ impl AnyPlane<'_> {
         }
     }
 
+    /// Bytes between row starts. A sample stride may exceed byte-addressable
+    /// storage for an empty or single-row view; that returns GeometryOverflow.
+    pub fn stride_bytes(&self) -> Result<usize, PlaneError> {
+        let stride = match self {
+            Self::U8(p) => p.stride(),
+            Self::U16(p) => p.stride(),
+            Self::F32(p) => p.stride(),
+        };
+        stride
+            .checked_mul(self.channel_type().byte_size())
+            .ok_or(PlaneError::GeometryOverflow)
+    }
+
+    /// Native-endian bytes from the first through the last active sample,
+    /// including intervening row padding, without trailing row padding.
+    pub fn as_strided_bytes(&self) -> &[u8] {
+        match self {
+            Self::U8(p) => p.strided_samples(),
+            Self::U16(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::F32(p) => bytemuck::cast_slice(p.strided_samples()),
+        }
+    }
+
     /// The sample type.
     pub fn channel_type(&self) -> ChannelType {
         match self {
@@ -1035,6 +1058,15 @@ pub enum LayoutError {
         /// Planes supplied.
         actual: usize,
     },
+    /// A plane index is outside this layout.
+    PlaneIndex {
+        /// Requested plane.
+        index: usize,
+        /// Planes in the layout.
+        count: usize,
+    },
+    /// Picture dimensions are empty.
+    EmptyDimensions,
     /// A plane's sample type differs from its encoding.
     SampleType {
         /// Plane index.
@@ -1062,6 +1094,10 @@ impl fmt::Display for LayoutError {
             Self::PlaneCount { expected, actual } => {
                 write!(f, "layout has {expected} planes, {actual} supplied")
             }
+            Self::PlaneIndex { index, count } => {
+                write!(f, "plane {index} is outside a {count}-plane layout")
+            }
+            Self::EmptyDimensions => f.write_str("planar picture dimensions must be nonzero"),
             Self::SampleType { index } => {
                 write!(f, "plane {index} sample type differs from its encoding")
             }
@@ -1083,9 +1119,10 @@ impl core::error::Error for LayoutError {}
 ///
 /// Plane order is the order of [`PlanarLayout::planes`]; it is not implied by
 /// the roles. Color signaling travels with the enclosing descriptor.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PlanarLayout {
-    planes: Vec<PlaneSpec>,
+    planes: [PlaneSpec; 4],
+    len: u8,
     subsampling: ChromaSubsampling,
     siting: ChromaSiting,
 }
@@ -1102,10 +1139,11 @@ impl PlanarLayout {
     ///
     /// A [`LayoutError`] naming the first inconsistency.
     pub fn new(
-        planes: Vec<PlaneSpec>,
+        planes: impl AsRef<[PlaneSpec]>,
         subsampling: ChromaSubsampling,
         siting: ChromaSiting,
     ) -> Result<Self, LayoutError> {
+        let planes = planes.as_ref();
         if planes.is_empty() {
             return Err(LayoutError::Empty);
         }
@@ -1155,8 +1193,18 @@ impl PlanarLayout {
                 return Err(LayoutError::Subsampling);
             }
         }
+        // The validated role families contain at most four planes.
+        if planes.len() > 4 {
+            return Err(LayoutError::PlaneCount {
+                expected: 4,
+                actual: planes.len(),
+            });
+        }
+        let mut inline = [planes[0]; 4];
+        inline[..planes.len()].copy_from_slice(planes);
         Ok(Self {
-            planes,
+            planes: inline,
+            len: planes.len() as u8,
             subsampling,
             siting,
         })
@@ -1164,7 +1212,12 @@ impl PlanarLayout {
 
     /// The planes, in storage order.
     pub fn planes(&self) -> &[PlaneSpec] {
-        &self.planes
+        &self.planes[..usize::from(self.len)]
+    }
+
+    /// Roles, in storage order.
+    pub fn roles(&self) -> impl ExactSizeIterator<Item = PlaneRole> + Clone + '_ {
+        self.planes().iter().map(|p| p.role)
     }
 
     /// Chroma subsampling; `Mono` without chroma, `Yuv444` for planar RGB.
@@ -1182,7 +1235,7 @@ impl PlanarLayout {
     /// Chroma planes are rounded up; multiply the width by
     /// [`PlaneRole::components`] for samples per row.
     pub fn plane_size(&self, index: usize, width: u32, height: u32) -> Option<(u32, u32)> {
-        let spec = self.planes.get(index)?;
+        let spec = self.planes().get(index)?;
         if spec.role.is_chroma() {
             self.subsampling.chroma_size(width, height)
         } else {
@@ -1203,29 +1256,113 @@ impl PlanarLayout {
         width: u32,
         height: u32,
     ) -> Result<(), LayoutError> {
-        if planes.len() != self.planes.len() {
+        if planes.len() != usize::from(self.len) {
             return Err(LayoutError::PlaneCount {
-                expected: self.planes.len(),
+                expected: usize::from(self.len),
                 actual: planes.len(),
             });
         }
-        for (index, (plane, spec)) in planes.iter().zip(&self.planes).enumerate() {
-            if plane.channel_type() != spec.encoding.channel_type() {
-                return Err(LayoutError::SampleType { index });
-            }
-            let (w, h) = self
-                .plane_size(index, width, height)
-                .expect("index within the layout");
-            let expected = ((w as usize) * spec.role.components(), h as usize);
-            let actual = (plane.width(), plane.height());
-            if actual != expected {
-                return Err(LayoutError::Dimensions {
-                    index,
-                    expected,
-                    actual,
-                });
-            }
+        for (index, plane) in planes.iter().enumerate() {
+            self.check_plane(index, plane, width, height)?;
         }
         Ok(())
+    }
+
+    /// Validate one plane's type and dimensions without assembling every view.
+    pub fn check_plane(
+        &self,
+        index: usize,
+        plane: &AnyPlane<'_>,
+        width: u32,
+        height: u32,
+    ) -> Result<(), LayoutError> {
+        let spec = self.planes().get(index).ok_or(LayoutError::PlaneIndex {
+            index,
+            count: usize::from(self.len),
+        })?;
+        if plane.channel_type() != spec.encoding.channel_type() {
+            return Err(LayoutError::SampleType { index });
+        }
+        let (w, h) = self
+            .plane_size(index, width, height)
+            .expect("validated plane index");
+        let expected_width = usize::try_from(w)
+            .ok()
+            .and_then(|w| w.checked_mul(spec.role.components()));
+        let expected = (expected_width.unwrap_or(usize::MAX), h as usize);
+        let actual = (plane.width(), plane.height());
+        if expected_width.is_none() || actual != expected {
+            return Err(LayoutError::Dimensions {
+                index,
+                expected,
+                actual,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// A validated borrowed planar picture. Samples are never converted or copied.
+/// Color context is retained for consumers to resolve alongside the declared CICP.
+#[derive(Clone, Debug)]
+pub struct Planes<'a> {
+    layout: &'a PlanarLayout,
+    planes: &'a [AnyPlane<'a>],
+    width: u32,
+    height: u32,
+    cicp: crate::Cicp,
+    context: Option<alloc::sync::Arc<crate::ColorContext>>,
+}
+
+impl<'a> Planes<'a> {
+    /// Validate plane count, encodings, subsampling geometry and nonempty dimensions.
+    pub fn new(
+        layout: &'a PlanarLayout,
+        planes: &'a [AnyPlane<'a>],
+        width: u32,
+        height: u32,
+        cicp: crate::Cicp,
+    ) -> Result<Self, LayoutError> {
+        if width == 0 || height == 0 {
+            return Err(LayoutError::EmptyDimensions);
+        }
+        layout.check(planes, width, height)?;
+        Ok(Self {
+            layout,
+            planes,
+            width,
+            height,
+            cicp,
+            context: None,
+        })
+    }
+    /// Attach authoritative color context without reinterpreting samples.
+    pub fn with_color_context(mut self, context: alloc::sync::Arc<crate::ColorContext>) -> Self {
+        self.context = Some(context);
+        self
+    }
+    /// The native layout.
+    pub fn layout(&self) -> &PlanarLayout {
+        self.layout
+    }
+    /// Strided plane views in layout order.
+    pub fn planes(&self) -> &[AnyPlane<'a>] {
+        self.planes
+    }
+    /// Picture width, before chroma subsampling.
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+    /// Picture height, before chroma subsampling.
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+    /// Declared current CICP, without implicit ICC conversion.
+    pub fn cicp(&self) -> crate::Cicp {
+        self.cicp
+    }
+    /// Additional color and absolute-luminance context.
+    pub fn color_context(&self) -> Option<&alloc::sync::Arc<crate::ColorContext>> {
+        self.context.as_ref()
     }
 }
