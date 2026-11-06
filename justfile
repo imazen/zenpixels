@@ -354,3 +354,7 @@ moxcms-review-bench data:
 # Predeclared cell matrix: unchanged admission; confidence adjusted across 36 cells.
 moxcms-review-cells binary output:
     python3 benchmarks/moxcms-gamma/review-cells.py "{{binary}}" "{{output}}"
+
+# Validate all retained process gates and export review timing comparisons.
+moxcms-review-summary study output:
+    python3 benchmarks/moxcms-gamma/summarize-review-cells.py "{{study}}" "{{output}}"
