@@ -285,3 +285,13 @@ reran. These measurements use historical pixels 04cc06f5, not HDR PR120 or the
 current native cohort. Source hashes, recipes and scope are in
 `benchmarks/jxl-cms-parity/README.md`. Production zenjxl integration remains
 unqualified while the newer cohort fails dependency resolution.
+
+### Practical pure-gamma range guard reproduction (2026-11-06)
+
+`just moxcms-real-pixel-check` compares exact baseline/sign/range revisions on
+ProPhoto-to-sRGB F32 transforms with extended range enabled. At (0.5,0.5,0),
+baseline/sign-only clip to (1,1,0); range gives (0.6461351,0.57291955,0).
+This is an exact-zero ICC pure-gamma failure, not merely a tiny synthetic value.
+The comparison is a constructed pixel test, not a corpus frequency survey or
+evidence of visible benefit from the separate CICP tiny-value guards. See
+`benchmarks/moxcms_review_2026-11-06.md`.

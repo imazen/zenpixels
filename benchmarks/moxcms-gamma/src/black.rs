@@ -23,6 +23,8 @@ macro_rules! run {
     }};
 }
 fn main() {
+    #[cfg(feature = "review-revisions")]
+    review_real_pixels();
     use m0::ColorProfile as P;
     run!(
         m0,
@@ -38,4 +40,37 @@ fn main() {
         P::new_pro_photo_rgb(),
         P::new_adobe_rgb()
     );
+}
+
+#[cfg(feature = "review-revisions")]
+fn review_real_pixels() {
+    macro_rules! compare {
+        ($m:ident, $name:expr) => {{
+            let source = $m::ColorProfile::new_pro_photo_rgb();
+            let target = $m::ColorProfile::new_srgb();
+            let transform = source
+                .create_transform_f32(
+                    $m::Layout::Rgb,
+                    &target,
+                    $m::Layout::Rgb,
+                    $m::TransformOptions {
+                        allow_extended_range_rgb_xyz: true,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            for input in [[0.0f32; 3], [0.5, 0.5, 0.0], [0.5; 3]] {
+                let mut output = [0.0; 3];
+                transform.transform(&input, &mut output).unwrap();
+                println!(
+                    "REAL_PIXEL {} ProPhoto->sRGB {input:?}: float={output:?}, clipped={:?}",
+                    $name,
+                    output.map(|v| v.clamp(0.0, 1.0))
+                );
+            }
+        }};
+    }
+    compare!(review_before, "baseline");
+    compare!(review_sign, "sign-only");
+    compare!(review_range, "range");
 }

@@ -383,3 +383,7 @@ jxl-cms-render-references djxl fixtures output:
     "{{djxl}}" --version
     "{{djxl}}" "{{fixtures}}/hdr_pq_test.jxl" "{{output}}/hdr_pq_test_SRG.pfm" --num_threads=4 --color_space=RGB_D65_SRG_Rel_SRG
     "{{djxl}}" "{{fixtures}}/hdr_pq_test.jxl" "{{output}}/hdr_pq_test_P3.pfm" --num_threads=4 --color_space=RGB_D65_DCI_Rel_SRG
+
+# Exact public-transform zero-channel comparison, separate from timing.
+moxcms-real-pixel-check:
+    cargo run --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features review-revisions --bin black

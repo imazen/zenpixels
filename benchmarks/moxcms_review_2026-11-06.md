@@ -52,6 +52,32 @@ ARM binary SHA-256:
 Study wrapper: 242 seconds, peak RSS 0.06 GiB, minimum available 14856 MiB,
 peak load 0.87. These are harness resource measurements, not library memory use.
 
+## Practical range-fix case: an ordinary zero channel
+
+`just moxcms-real-pixel-check` freshly compares the three exact Git revisions
+through the public F32 transform API with `allow_extended_range_rgb_xyz=true`.
+The source is moxcms's built-in ProPhoto profile (pure gamma 1.80078125), and the
+target is sRGB. This is a constructed pixel reproduction, not a corpus survey.
+
+| ProPhoto input | Baseline and sign-only output | Range-fix output |
+|---|---|---|
+| `(0.5, 0.5, 0)` | `(1712.983, 245.75737, -2482075000)` | `(0.6461351, 0.57291955, -0.60066473)` |
+| `(0, 0, 0)` | `(-2136075800, -2136075600, -2136075400)` | `(0, 0, 0)` |
+| `(0.5, 0.5, 0.5)` | `(0.57216084, 0.5721608, 0.5721608)` | identical |
+
+Clipping the first output gives `(1, 1, 0)` before, versus
+`(0.6461351, 0.57291955, 0)` after. The gamma approximation's invalid result
+at exactly zero contaminates other channels through the color matrix. The
+sign-only change does not fix zero. Black clips to black in both versions,
+but its huge invalid float values could affect subsequent processing.
+
+This establishes a practical benefit for the ICC pure-gamma guard. It does not
+establish a visible real-image benefit for all the added CICP near-zero guards,
+nor does it qualify the ordinary U8 table path as affected. Both the numeric
+comparison and strict harness Clippy pass. Resource wrapper: 4 seconds, peak
+RSS 0.44 GiB, minimum available 17827 MiB, peak load 0.18; these describe the
+validation process, not codec performance or per-image memory consumption.
+
 ## Sources and build
 
 - Baseline: [84104443](https://github.com/lilith/moxcms/commit/841044439077ec1ec67a71b2db979ab51d304fcf).
