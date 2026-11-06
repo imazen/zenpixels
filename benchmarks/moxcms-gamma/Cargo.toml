@@ -1,0 +1,47 @@
+[package]
+name = "moxcms-gamma-harness"
+version = "0.0.0"
+edition = "2024"
+publish = false
+[workspace]
+exclude = ["variants/base", "variants/c1", "variants/c2", "variants/c3", "variants/c4", "variants/c5"]
+[features]
+default = []
+[dependencies]
+m0 = { package = "moxcms", path = "variants/base", features = ["extended_range", "in_place"] }
+m1 = { package = "moxcms", path = "variants/c1", features = ["extended_range", "in_place"] }
+m2 = { package = "moxcms", path = "variants/c2", features = ["extended_range", "in_place"] }
+m3 = { package = "moxcms", path = "variants/c3", features = ["extended_range", "in_place"] }
+m4 = { package = "moxcms", path = "variants/c4", features = ["extended_range", "in_place"] }
+m5 = { package = "moxcms", path = "variants/c5", features = ["extended_range", "in_place"] }
+[dev-dependencies]
+zenbench = "0.1.11"
+[profile.release]
+debug = 1
+[[bench]]
+name = "gamma"
+harness = false
+[[bin]]
+name = "probe"
+path = "src/probe.rs"
+[[bin]]
+name = "sweep"
+path = "src/sweep.rs"
+[[bin]]
+name = "icount"
+path = "src/icount.rs"
+[[bin]]
+name = "black"
+path = "src/black.rs"
+[[bin]]
+name = "sweep2"
+path = "src/sweep2.rs"
+[[bench]]
+name = "underflow"
+harness = false
+[[bin]]
+name = "cicp_probe"
+path = "src/cicp_probe.rs"
+[[bin]]
+name = "cicp_bits"
+path = "src/cicp_bits.rs"

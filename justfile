@@ -320,3 +320,10 @@ site-build:
 # Browser integration checks; PLAYWRIGHT_MODULE points at an installed Playwright.
 site-check URL='http://127.0.0.1:3116':
     node site/smoke.cjs {{URL}}
+
+# Frozen, unpublished gamma diagnostics; prepare.py reconstructs dependencies.
+moxcms-gamma-check:
+    cargo fmt --manifest-path benchmarks/moxcms-gamma/Cargo.toml -p moxcms-gamma-harness --check
+    cargo check --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --all-targets
+    cargo run --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --bin probe
+    cargo run --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --bin black

@@ -1,0 +1,12 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,8 +1,7 @@
+-workspace = { members = ["app", "fuzz"] }
+ 
+ [package]
+ name = "moxcms"
+-version = "0.9.1"
++version = "0.9.1-base"
+ edition = "2024"
+ description = "Simple Color Management in Rust"
+ readme = "./README.md"

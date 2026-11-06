@@ -33,6 +33,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [Unreleased]
 
+- Preserve the standalone, unpublished moxcms gamma diagnostics and paired benches in `benchmarks/moxcms-gamma`, with pinned source reconstruction and hashes for all six original experiment arms.
+
 ### QUEUED BREAKING CHANGES
 
 See the 0.3.1 candidate entries below for the approved breaking release queue.
