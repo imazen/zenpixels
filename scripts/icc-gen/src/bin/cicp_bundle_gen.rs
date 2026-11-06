@@ -27,6 +27,9 @@
 //! used by the byte-equality test to recompute the blob in memory and diff it
 //! against the committed asset.
 
+#[path = "../../../../zenpixels-convert/src/icc_profiles/canonical.rs"]
+mod canonical;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -77,25 +80,7 @@ fn synth_icc(primaries: u8, transfer: u8) -> Option<Vec<u8>> {
     // Require a transfer curve before encoding. The independent colorant
     // gate in enumerate_grid checks the encoded RGB matrix as well.
     profile.red_trc.as_ref()?;
-    let mut bytes = profile.encode().ok()?;
-    normalize_creation_timestamp(&mut bytes);
-    Some(bytes)
-}
-
-/// Zero the ICC header's creation date/time field (bytes 24..36).
-///
-/// moxcms's `encode()` stamps `ColorDateTime::now()` — the current wall-clock
-/// time — into every generated profile (moxcms `writer.rs`). That makes the
-/// bytes non-deterministic across regenerations and would make the committed
-/// blob (and its golden sha256) unstable. The field is purely informational and
-/// carries no colorimetry; zenpixels' own normalized ICC hash already treats
-/// bytes 24..36 as metadata-to-ignore. Zeroing it yields a reproducible,
-/// deterministic profile. The runtime roundtrip test masks the same field when
-/// comparing against a fresh moxcms run.
-fn normalize_creation_timestamp(icc: &mut [u8]) {
-    if icc.len() >= 36 {
-        icc[24..36].fill(0);
-    }
+    canonical::canonicalize(profile.encode().ok()?)
 }
 
 /// The sRGB / BT.709 default combinations that `synthesize_icc_for_cicp` short
@@ -175,9 +160,7 @@ fn synth_gray_icc(primaries: u8, transfer: u8) -> Option<Vec<u8>> {
         format!("Gray H.273 TC{transfer} {white_name} white"),
     )]));
 
-    let mut bytes = gray.encode().ok()?;
-    normalize_creation_timestamp(&mut bytes);
-    Some(bytes)
+    canonical::canonicalize(gray.encode().ok()?)
 }
 
 /// One profile occurrence in the grid, before dedup.

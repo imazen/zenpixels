@@ -73,6 +73,8 @@ use crate::TransferFunction;
 // transfer group at runtime (`cicp_bundle`). This gives `synthesize_icc_for_cicp`
 // full H.273-grid coverage with no CMS dependency — moxcms becomes a build-time
 // generator only. Both submodules are internal implementation detail.
+#[cfg(all(test, feature = "cms-moxcms"))]
+pub(crate) mod canonical;
 #[cfg(feature = "icc-db")]
 mod cicp_bundle;
 #[cfg(feature = "icc-db")]

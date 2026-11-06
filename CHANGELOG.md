@@ -33,6 +33,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [Unreleased]
 
+- Regenerate the CICP ICC bundle with a D50 PCS header and four-byte-aligned tags. Preserve every tag payload and retain identification of older profile bytes while adding the new hashes. All 334 generated profiles pass independent libpng/Little CMS container checks.
+
 - Preserve the standalone, unpublished moxcms gamma diagnostics and paired benches in `benchmarks/moxcms-gamma`, with pinned source reconstruction and hashes for all six original experiment arms.
 
 ### QUEUED BREAKING CHANGES
