@@ -413,11 +413,15 @@ impl RowConverter {
             .map(|(p, t)| to.with_primaries(p).with_transfer(t))
             .unwrap_or(to);
         crate::convert::validate_descriptors(from, to)?;
-        if crate::convert::is_hdr_to_sdr(from.transfer(), to.transfer()) {
-            return Err(whereat::at!(ConvertError::HdrSourceRequiresPeak {
-                from,
-                to
-            }));
+        if from.transfer() != to.transfer()
+            && matches!(
+                (from.transfer(), to.transfer()),
+                (TransferFunction::Pq | TransferFunction::Hlg, _)
+                    | (_, TransferFunction::Pq | TransferFunction::Hlg)
+            )
+        {
+            // Profile-only transforms cannot express the luminance intent.
+            return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
         // No ICC transform here can honor a mapping, and clipping silently would be wrong.
         if options.gamut_mapping() != crate::policy::GamutMapping::Clip {

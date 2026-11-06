@@ -1527,7 +1527,7 @@ impl ConvertPlan {
             TransferFunction::Srgb | TransferFunction::Bt709 | TransferFunction::Gamma22
         );
         if src_is_sdr_encoded {
-            return Self::plan_native(from, to);
+            return Self::new(from, to);
         }
         if from.transfer() == TransferFunction::Hlg || to.transfer() == TransferFunction::Hlg {
             return Err(whereat::at!(ConvertError::HlgOotfNotImplemented));

@@ -1,5 +1,7 @@
 use std::sync::Arc;
-use zenpixels::hdr::{DiffuseWhite, HdrPeak, Nits};
+#[cfg(feature = "bt2446a")]
+use zenpixels::hdr::HdrPeak;
+use zenpixels::hdr::{DiffuseWhite, Nits};
 use zenpixels_convert::{
     ColorContext, ColorPrimaries, ConvertError, ConvertOptions, ConvertPlan, PixelBuffer,
     PixelBufferConvertExt, PixelDescriptor, PixelSlice, PixelSliceConvertExt, RowConverter,
@@ -213,4 +215,30 @@ fn black_frame_measurement_maps_to_black_without_inventing_a_declared_peak() {
         assert_eq!(result.as_slice().row(row), &[0; 6]);
     }
     assert_eq!(result.color_context().unwrap().hdr_peak, None);
+}
+
+#[cfg(feature = "bt2446a")]
+#[test]
+fn legacy_hdr_constructor_does_not_bypass_sdr_white_or_hlg_refusal() {
+    let options = zenpixels_convert::HdrConfig::default();
+    assert!(matches!(
+        ConvertPlan::new_with_hdr_config(
+            PixelDescriptor::RGB8_SRGB,
+            PixelDescriptor::RGB16_BT2100_PQ,
+            options
+        )
+        .unwrap_err()
+        .error(),
+        ConvertError::SdrWhiteRequired
+    ));
+    assert!(matches!(
+        ConvertPlan::new_with_hdr_config(
+            PixelDescriptor::RGB8_SRGB,
+            PixelDescriptor::RGB16_BT2100_HLG,
+            options
+        )
+        .unwrap_err()
+        .error(),
+        ConvertError::HlgOotfNotImplemented
+    ));
 }

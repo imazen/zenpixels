@@ -7,7 +7,9 @@
 //! This replaces statistical sampling with exhaustive numerical proof:
 //! "u8 sRGB → f32 linear → u8 sRGB is lossless (max error = 0 for all 256 values)".
 
-use crate::{ConvertPlan, PixelDescriptor};
+#[cfg(feature = "bt2446a")]
+use crate::ConvertPlan;
+use crate::PixelDescriptor;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Helper: exhaustive u8 round-trip through an intermediate format
