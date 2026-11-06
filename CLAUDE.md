@@ -118,6 +118,28 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed at F32 (2026-11-05): moxcms's `ToneCurveEvaluatorPureGamma` uses `dirty_powf`, which returns unrelated values where the power isn't representable (gamma 1.8 of zero is -1.65e8) and takes a negative base's sign from the exponent's integer part. A zero channel of a ProPhoto F32 sample clipped ordinary colors to full scale: 13,254 of 421,824 channels were over 2 codes from the 8-bit route, worst 255; now 0, worst 1. `PureGammaCurve` keeps the backend's evaluator for representable magnitudes and takes `libm` for the rest, on sources and gray routes. Evidence and limits: `benchmarks/pure_gamma_f32_2026-11-05.md`.
+
+- Open (2026-11-05), can't be fixed in the adapter: table source to pure-gamma RGB target. The backend interpolates a grid filled through the target's curve, so a grid node can be corrected but a value between a negative node and a positive one mixes two forms: worst 18 codes on a synthetic table, from 144 before. Upstream's own fix would remove this.
+
+- Fixed (2026-11-05): `Cmyk8` and `CmykF32` gave different colors from one ink: on 49 real profiles to sRGB, a mean of 17.8 codes and at worst 114, because `Cmyk8` had no black-point compensation and its own intent. `Cmyk8` now runs the F32 transform and rounds, with no U16 in the way, so they agree exactly (`eight_bit_cmyk_is_f32_cmyk_rounded`). Also fixed: RGBA targets from CMYK skipped the compensation that RGB got (`cmyk_targets_agree_with_and_without_alpha`). `benchmarks/cmyk8_bpc_2026-11-05.md`: `Cmyk8` is 44% slower, `CmykF32` 6 times faster.
+
+- Open (2026-11-05): `linear_light_suitability` charges 120 (LowLoss) for any gamma-encoded format whatever the resize kernel. On the sharp-edge image Mitchell and Robidoux agree within a bucket, but CatmullRom and Lanczos through U8 measure p95 ΔE 21 to 33 (High), and clipping alone accounts for it: 6 of 12 scenarios are two buckets off. The model has no kernel input. `gamut_clamping_scenarios` pins the gap.
+
+- Open, in moxcms 0.9.1, measured 2026-11-05 against exact evaluation: a pre-v4 `lut8Type` Lab table reads 0.39%
+  high (mozjpeg `test3.icc`, mean +0.68 of a code, worst 22; fixed on moxcms master, unreleased). A v4 RGB table
+  profile's black is mapped to zero whatever the intent (mean about -1 of a code on JPEG XL's PQ and HLG profiles;
+  still so on master). `benchmarks/jxl-cms-parity/README.md` has the measurements. Neither can be routed around from
+  `cms_moxcms.rs`: moxcms reads the profile version privately, and a patched header changes both.
+
+- Fixed in the CMS investigation (2026-11-05): `MoxCms` lost the sign of out-of-gamut samples on pure-gamma matrix
+  targets, through moxcms's `ToneCurveEvaluatorPureGamma`: P3 into Adobe RGB was a mean of +2.35 of an 8-bit code
+  high, worst 66. A CICP tag inside an explicit ICC profile changed the 8-bit route's curves, while F32 ignored it.
+  `cms_moxcms_accuracy` and `cms_moxcms` cover both.
+
+- Open, in moxcms 0.9.1: 16-bit output through its sRGB or BT.709 table misses nearest on 57% of samples, mean -0.64 of a
+  16-bit code, because the same `make_gamma_table_impl` truncates. `MoxCms` still takes that path.
+
 - Fixed in the CMS contract (2026-11-05). moxcms' own 8-bit path comes out low (mean -0.40 of a code against its own F32; cause not
   located). The wrapper chose high barycentric weights at 16 bits, which turned table profiles into a constant, ignored a row's
   `width`, and mixed moxcms' generated colorants (CIE D50) with ICC profiles (PCS white), leaving 8-bit white at (255, 255, 254).
@@ -137,6 +159,12 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
   `CompositeOnto::reference_white` now places it, defaulting to BT.2408.
 
 - Open (2026-11-04): `RowConverter::new` puts SDR white at PQ's peak, 10,000 cd/m², where CSS puts 203. `ColorConvertExt::try_convert_to` refuses this.
+  PR #115 refuses SDR-encoded sources into PQ and HLG; it doesn't cover the case below and waits on the HDR API decision.
+- Open (2026-11-05): Linear into PQ has two defaults for one input. Linear BT.2020 (1, 1, 1) with no anchor into `RGB16_BT2100_PQ`
+  gives 65535 (10,000 cd/m²) from `convert_to` and `RowConverter`, and 38055 (203 cd/m²) from `quantize_to`; both match the analytic
+  PQ codes. With a 203 anchor in a `ColorContext::from_cicp(Cicp::BT2100_PQ)`, `convert_to` refuses with
+  `CicpDescriptor(NonIdentityMatrix(9))` while `quantize_to` accepts it. Measured on `fde59b96`. The proposed fix (one anchor rule:
+  explicit option, then context, then refuse) is in `docs/hdr-anchor-api-design.md` §6.
   `docs/css-color-parity.md` lists this and the other CSS differences.
 
 - Fixed (2026-11-04): the matte was not converted to wide-gamut source primaries, so sRGB red over a P3 source came out as P3's red.

@@ -81,7 +81,10 @@ dependencies = [
 [[package]]
 name = "lcms"
 version = "0.0.0"
-source = "git+https://github.com/imazen/lcms?rev=f81f5a7a#f81f5a7a0066c8242eec7f9b39a19c4300c83894"
+source = "git+https://github.com/imazen/lcms?rev=39068cc62f470d183e078637e19504ac9ecf7392#39068cc62f470d183e078637e19504ac9ecf7392"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "libm"

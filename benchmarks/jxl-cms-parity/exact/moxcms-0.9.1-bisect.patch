@@ -1,0 +1,95 @@
+
+--- a/src/conversions/lut_transforms.rs	2006-07-23 19:21:28.000000000 -0600
++++ b/src/conversions/lut_transforms.rs	2026-11-05 11:24:48.583170414 -0700
+@@ -140,6 +140,8 @@
+ }
+ 
+ fn pcs_lab_v2_to_v4(profile: &ColorProfile, lut: &mut [f32]) {
++    // BISECT: stage toggle, scratch copy only.
++    if crate::BISECT_SKIP_LAB_V2.load(core::sync::atomic::Ordering::Relaxed) { return; }
+     if profile.pcs == DataColorSpace::Lab
+         && profile.version_internal < ProfileVersion::V4_0
+         && lut.len().is_multiple_of(3)
+@@ -362,6 +364,8 @@
+     (): LutBarycentricReduction<T, u16>,
+ {
+     let apply_bpc_scaling = |lut: &mut [f32]| {
++        // BISECT: stage toggle, scratch copy only.
++        if crate::BISECT_SKIP_BPC.load(core::sync::atomic::Ordering::Relaxed) { return; }
+         if let (Some(src_bp), Some(dest_bp)) = (
+             source.detect_black_point(options.rendering_intent, TransformDirection::DeviceToPcs),
+             dest.detect_black_point(options.rendering_intent, TransformDirection::PcsToDevice),
+
+--- a/src/conversions/rgbxyz.rs	2006-07-23 19:21:28.000000000 -0600
++++ b/src/conversions/rgbxyz.rs	2026-11-05 10:32:00.477863530 -0700
+@@ -135,7 +135,12 @@
+         let mut dst_matrix = Matrix3::<i16> { v: [[0i16; 3]; 3] };
+         for i in 0..3 {
+             for j in 0..3 {
+-                dst_matrix.v[i][j] = (source_matrix.v[i][j] * scale) as i16;
++                // BISECT: stage toggle, scratch copy only.
++                dst_matrix.v[i][j] = if crate::BISECT_ROUND_MATRIX.load(core::sync::atomic::Ordering::Relaxed) {
++                    (source_matrix.v[i][j] * scale).round() as i16
++                } else {
++                    (source_matrix.v[i][j] * scale) as i16
++                };
+             }
+         }
+         TransformMatrixShaperFp {
+@@ -184,7 +189,12 @@
+         };
+         for i in 0..3 {
+             for j in 0..3 {
+-                dst_matrix.v[i][j] = (source_matrix.v[i][j] * scale) as i16;
++                // BISECT: stage toggle, scratch copy only.
++                dst_matrix.v[i][j] = if crate::BISECT_ROUND_MATRIX.load(core::sync::atomic::Ordering::Relaxed) {
++                    (source_matrix.v[i][j] * scale).round() as i16
++                } else {
++                    (source_matrix.v[i][j] * scale) as i16
++                };
+             }
+         }
+         TransformMatrixShaperFixedPointOpt {
+@@ -222,7 +232,12 @@
+         };
+         for i in 0..3 {
+             for j in 0..3 {
+-                dst_matrix.v[i][j] = (source_matrix.v[i][j] * scale) as i16;
++                // BISECT: stage toggle, scratch copy only.
++                dst_matrix.v[i][j] = if crate::BISECT_ROUND_MATRIX.load(core::sync::atomic::Ordering::Relaxed) {
++                    (source_matrix.v[i][j] * scale).round() as i16
++                } else {
++                    (source_matrix.v[i][j] * scale) as i16
++                };
+             }
+         }
+         TransformMatrixShaperFpOptVec {
+
+--- a/src/gamma.rs	2006-07-23 19:21:28.000000000 -0600
++++ b/src/gamma.rs	2026-11-05 10:32:00.477664973 -0700
+@@ -651,7 +651,12 @@
+     let max_range = 1f64 / (output.len() - 1) as f64;
+     if round {
+         for (v, o) in output.iter_mut().enumerate() {
+-            *o = (gamma(v as f64 * max_range) * max_value) as f32;
++            // BISECT: stage toggle, scratch copy only.
++            *o = if crate::BISECT_ROUND_GAMMA.load(core::sync::atomic::Ordering::Relaxed) {
++                (gamma(v as f64 * max_range) * max_value).round() as f32
++            } else {
++                (gamma(v as f64 * max_range) * max_value) as f32
++            };
+         }
+     } else {
+         for (v, o) in output.iter_mut().enumerate() {
+
+--- a/src/lib.rs	2006-07-23 19:21:28.000000000 -0600
++++ b/src/lib.rs	2026-11-05 11:24:48.583383248 -0700
+@@ -138,3 +138,8 @@
+ };
+ pub use xyy::{XyY, XyYRepresentable};
+ pub use yrg::{Ych, Yrg, cie_y_1931_to_cie_y_2006};
++
++#[doc(hidden)] pub static BISECT_ROUND_GAMMA: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
++#[doc(hidden)] pub static BISECT_ROUND_MATRIX: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
++#[doc(hidden)] pub static BISECT_SKIP_LAB_V2: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
++#[doc(hidden)] pub static BISECT_SKIP_BPC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);

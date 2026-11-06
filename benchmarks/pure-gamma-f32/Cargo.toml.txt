@@ -1,0 +1,34 @@
+[package]
+name = "zpcheck"
+version = "0.0.0"
+edition = "2024"
+[workspace]
+[dependencies]
+zb = { package = "zenpixels", path = "../scratch/zp-before/zenpixels" }
+zcb = { package = "zenpixels-convert", path = "../scratch/zp-before/zenpixels-convert", features = ["cms-moxcms"] }
+za = { package = "zenpixels", path = "../zenpixels/zenpixels" }
+zca = { package = "zenpixels-convert", path = "../zenpixels/zenpixels-convert", features = ["cms-moxcms"] }
+moxcms = { version = "=0.9.1", features = ["options", "extended_range"] }
+bytemuck = "1"
+[dev-dependencies]
+zenbench = "0.1.11"
+[profile.release]
+debug = 1
+[[bin]]
+name = "routes"
+path = "src/routes.rs"
+[[bin]]
+name = "sweep"
+path = "src/sweep.rs"
+[[bin]]
+name = "routes2"
+path = "src/routes2.rs"
+[[bin]]
+name = "exhaustive"
+path = "src/exhaustive.rs"
+[[bench]]
+name = "f32route"
+harness = false
+[patch.crates-io]
+garb = { git = "https://github.com/imazen/garb", rev = "58ce9cad7b337418a7abe9b1f6e3e4bd1928b385" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }

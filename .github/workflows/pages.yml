@@ -1,0 +1,61 @@
+name: Pixel Format Explorer
+on:
+  push:
+    branches: [main]
+    paths: ['site/**', 'zenpixels/**', 'zenpixels-convert/**', 'docs/color-explorer/**', 'docs/format_browser.html', 'Cargo.toml', '.github/workflows/pages.yml']
+  pull_request:
+    paths: ['site/**', 'zenpixels/**', 'zenpixels-convert/**', 'docs/color-explorer/**', 'docs/format_browser.html', 'Cargo.toml', '.github/workflows/pages.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.1'
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - name: Install pinned binding generator
+        run: |
+          curl -fLsS https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.130/wasm-bindgen-0.2.130-x86_64-unknown-linux-musl.tar.gz -o "$RUNNER_TEMP/wasm-bindgen.tar.gz"
+          echo '9687f3bb551b9f66f37ed32a40d7913a00f7962db653054e56857bc306c3227f  '"$RUNNER_TEMP/wasm-bindgen.tar.gz" | sha256sum -c -
+          tar -xf "$RUNNER_TEMP/wasm-bindgen.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/wasm-bindgen-0.2.130-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
+      - name: Check browser boundary
+        run: |
+          cargo fmt --manifest-path site/converter-wasm/Cargo.toml --check
+          cargo clippy --manifest-path site/converter-wasm/Cargo.toml --locked --target wasm32-unknown-unknown -- -D warnings
+      - name: Build WASM and assemble site
+        run: ./site/build.sh
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Browser integration
+        run: |
+          npm install --prefix "$RUNNER_TEMP/browser" playwright@1.63.0
+          "$RUNNER_TEMP/browser/node_modules/.bin/playwright" install --with-deps chromium
+          python3 -m http.server 3116 --bind 127.0.0.1 --directory site/dist > "$RUNNER_TEMP/site.log" 2>&1 &
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/browser/node_modules/playwright" node site/smoke.cjs http://127.0.0.1:3116
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/dist
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v6
+      - uses: actions/deploy-pages@v5
+        id: deployment

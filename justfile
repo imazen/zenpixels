@@ -312,3 +312,11 @@ zeroed-alloc-check:
     cargo test --locked -p zenpixels --lib
     cargo check --locked -p zenpixels --no-default-features
     cargo clippy --locked -p zenpixels --lib -- -D warnings
+
+# Build the optional browser converter and assemble the GitHub Pages artifact.
+site-build:
+    ./site/build.sh
+
+# Browser integration checks; PLAYWRIGHT_MODULE points at an installed Playwright.
+site-check URL='http://127.0.0.1:3116':
+    node site/smoke.cjs {{URL}}

@@ -218,3 +218,44 @@ Each story states the persona, the need, the **auto-or-explicit** tier, and the
 The one-line rule to carry forward: **auto-convert what the pixels already
 determine; require an explicit, safe-defaulted policy for everything that loses
 information or encodes the caller's taste.**
+
+## 6. Review, 2026-11-05: what the shipped API does, and a proposal (pending owner decision)
+
+Measured on `fde59b96`, Linear BT.2020 (1, 1, 1) into `RGB16_BT2100_PQ`:
+
+| Call | No anchor | Anchor 203 in `ColorContext::from_cicp(Cicp::BT2100_PQ)` |
+|---|---|---|
+| `convert_to` | 65535 (10,000 cd/m²) | refused: `CicpDescriptor(NonIdentityMatrix(9))` |
+| `RowConverter` | 65535 | takes descriptors only, so can't see an anchor |
+| `quantize_to` | 38055 (203 cd/m²) | 38055 |
+
+Both no-anchor values match the analytic PQ codes, so the call chosen picks the luminance, a factor of about 49.
+
+Other friction found in the same review:
+
+- `NoPath` is returned both where a route exists but a value is missing (SDR into PQ under PR #115) and where the `bt2446a` feature is off. Neither error names the missing input.
+- HDR to SDR passes a peak to a constructor (`new_with_hdr_peak`, `new_with_hdr_config`, `new_with_tone_mapper`, `convert_to_with_hdr_config`, `convert_to_sdr_measuring_peak`). SDR to HDR is three steps: `linearize`, set an anchor on the buffer, `quantize_to`.
+- `HdrConfig` uses `0.0` as unset and bare `f32` nits, while `DiffuseWhite` is a newtype because bare `f32` invites unit confusion.
+- Measured-peak-by-default with an override, the owner's decision, exists only as zenpipe's `ToneMapPeak`.
+- HLG has no anchored route.
+
+Proposal, not yet approved: put HDR intent on `ConvertOptions`, which is already `Copy`, `#[non_exhaustive]` and built with const methods, so every planning entry point reads it:
+
+```rust
+// Sketch, not compiled.
+let opts = ConvertOptions::permissive()
+    .with_sdr_white(DiffuseWhite::BT2408)   // what SDR white and linear 1.0 mean
+    .with_hdr_peak(HdrPeak::Measured)       // or Declared, or Nits(1000.0)
+    .with_sdr_peak(Nits(100.0));
+let plan = ConvertPlan::new_explicit(from, to, &opts)?;
+```
+
+1. One anchor rule everywhere: explicit option, then `ColorContext`, then refuse. No silent 10,000 or 203 default.
+2. Errors name the missing value and the call that supplies it.
+3. Buffer paths measure the peak; row paths return a typed "needs a peak" error until one is supplied.
+4. A preset such as `HdrPolicy::BT2408` expands to explicit values and prints them in `Debug`.
+5. `new_explicit` and a buffer-level convert replace the five entry points; `.with_tone_mapper()` on the plan stays for injected mappers.
+6. HLG returns a typed "not built" error until an inverse OOTF exists.
+
+0.3.1 is unpublished, so these breaks cost nothing now. PR #115's refusal would move onto the new error, and the precision policy PR #120 is the natural place for the options.
+

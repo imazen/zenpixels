@@ -405,6 +405,55 @@ fn float_explicit_icc_uses_its_curve_despite_conflicting_cicp() {
     }
 }
 
+/// A CICP tag inside an explicitly requested ICC profile changes nothing, on any depth or route.
+#[test]
+fn integer_explicit_icc_uses_its_curve_despite_conflicting_cicp() {
+    use zenpixels_convert::{ColorProfileSource, ConvertOptions, cms::PluggableCms};
+    let run = |conflict: bool, from: PixelFormat, to: PixelFormat, input: &[u8], out: &mut [u8]| {
+        let source = diagonal_profile([1.0; 3], [256; 3], conflict);
+        let target = diagonal_profile([0.5, 1.0, 2.0], [256; 3], conflict);
+        MoxCms
+            .build_source_transform(
+                ColorProfileSource::Icc(&source),
+                ColorProfileSource::Icc(&target),
+                from,
+                to,
+                &ConvertOptions::retain_channels(),
+            )
+            .unwrap()
+            .unwrap()
+            .try_transform_row(input, out, 1)
+            .unwrap();
+    };
+    for (from, to, want) in [
+        (PixelFormat::Rgb8, PixelFormat::Rgb8, vec![128u8, 64, 32]),
+        (
+            PixelFormat::Rgb8,
+            PixelFormat::Rgba8,
+            vec![128u8, 64, 32, 255],
+        ),
+    ] {
+        let mut clean = vec![0u8; want.len()];
+        run(false, from, to, &[64, 64, 64], &mut clean);
+        assert_eq!(clean, want, "{from:?} to {to:?}");
+        let mut tagged = vec![0u8; want.len()];
+        run(true, from, to, &[64, 64, 64], &mut tagged);
+        assert_eq!(tagged, want, "{from:?} to {to:?} with a CICP tag");
+    }
+    let input = [16384u16; 3];
+    for conflict in [false, true] {
+        let mut out = [0u16; 3];
+        run(
+            conflict,
+            PixelFormat::Rgb16,
+            PixelFormat::Rgb16,
+            bytemuck::cast_slice(&input),
+            bytemuck::cast_slice_mut(&mut out),
+        );
+        assert_eq!(out, [32768, 16384, 8192], "CICP tag: {conflict}");
+    }
+}
+
 #[test]
 fn float_profile_conversion_adds_opaque_alpha_across_staging_boundary() {
     use zenpixels_convert::{ColorProfileSource, ConvertOptions, cms::PluggableCms};

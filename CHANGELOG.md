@@ -31,10 +31,33 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 # Changelog
 
+## [Unreleased]
+
+### QUEUED BREAKING CHANGES
+
+See the 0.3.1 candidate entries below for the approved breaking release queue.
+
+### Added
+
+- Pixel Format Explorer on GitHub Pages, with a CI-built WASM converter, conversion plans and byte comparisons (`5a97b0dd`).
+
 ## [0.3.1] — unreleased candidate
 
 - `zenpixels::precision`: the rule for what a chosen format may drop, in `docs/precision-policy-design.md`. `SourcePrecision` says what a source really carried, `ConversionPolicy` and `ConversionResolver` decide among `ConversionOffer`s, and `plan_chain` does so across a job's nodes. `PixelSliceConvertExt::scan_source_precision` measures what a decoder couldn't state, so `zenpixels-convert` now depends on `enough`.
 - `adapt_for_encode` and `adapt_raw_rows_for_encode` pick a supported format that holds the source when one exists. RGB16 with `[RGB8, RGBF32]` on offer used to narrow to RGB8, because that's less work.
+
+- `MoxCms` at F32 no longer returns unrelated values from pure-gamma curves: ProPhoto (0.5, 0.5, 0) into sRGB was (1, 1, 0) with clipping on, and black was about -2.1e9 without it. The adapter now applies a single-value `curv` itself on RGB and gray sources and on gray routes, and keeps a negative sample's sign from a table source. Values the backend's fast power can represent keep their bits. See `benchmarks/pure_gamma_f32_2026-11-05.md`.
+- `MoxCms` 8-bit routes that go through F32 get the same fix: gray 1.8 of 0 into gray 2.2 was 255, and ProPhoto (128, 128, 0) into Adobe RGB was (255, 255, 0). Routes into sRGB's curve take the matrix kernels and don't change.
+
+- New test: premultiplied ICC samples keep every bit through `OutputPlan::new_preserving_samples`, with no CMS.
+
+- `Cmyk8` through `MoxCms` now gives `CmykF32`'s color, rounded, including its black-point compensation: on 49 real profiles to sRGB they differed by a mean of 17.8 codes. RGBA targets get the same transform as RGB. `Cmyk8` is 44% slower and `CmykF32` 6 times faster (`benchmarks/cmyk8_bpc_2026-11-05.md`).
+
+- Docs: JPEG XL color authority cites ISO/IEC 18181-1, and AVIF lists its ICC encode.
+
+- `gamut_clamping_scenarios` runs again, with a resampling filter in the test file that matches zenresize to 2.3e-4 on its image. It also checks that unclipped F32 keeps what a kernel's lobes produce through an sRGB round trip, and that `RowConverter`'s U8 output clamps them.
+
+- README review callouts match the code: the authority rule, constructor geometry and in-place retag refusal exist, and output metadata no longer disagrees with pixels on the paths the review reproduced. The limits that remain true stay listed.
 
 - Fallible pixel-buffer constructors request allocator-zeroed bytes directly, retaining allocation errors.
 
@@ -44,6 +67,7 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 - **Breaking:** `ColorPrimaries::white_point` returns `Option`, `None` for unknown primaries. `ColorAuthority` is `#[non_exhaustive]`. `PixelDescriptor::try_new` refuses a layout with alpha and no mode, or the reverse. Typed views of padding formats no longer read padding as alpha. `hdr::SoftCompress` needs `hdr-experimental`.
 - **Breaking:** removed `PixelSliceMut::{upgrade_to_rgba, upgrade_to_bgra, matte_to_rgbx, matte_to_bgrx, strip_alpha_to_rgbx, strip_alpha_to_bgrx}`, which relabeled pixels as sRGB and double-multiplied premultiplied alpha. Nothing used them. `zenpixels_convert`'s `AlphaPolicy::CompositeOnto` composites.
 - **Breaking:** removed the deprecated `ConvertOptions::forbid_lossy`. `retain_channels` has the same policy values; `new_preserving_samples` is the path that keeps samples exact.
+- Moved the garb patch to a rev that accepts archmage 0.9.31 and brings garb 0.2.9's rounding fixes. F32 and F16 to U16 now round to nearest, so 336 of the 2,172 digest conversions change by at most one U16 code; `row_partition::EXPECTED_DIGEST` is updated.
 - `RowConverter` implements `Debug`. `image_interop` maps `YCgCoRo`. `UnspecifiedMatrixError` implements `Error` without `std`. `GrayAlpha` pixel impls no longer need the `rgb` feature. `__trace_ops` is public only with its feature. Both crates package their license files.
 
 - New feature `bt2446a`, which implies `hdr-experimental`, holds the BT.2446 Method A curve. **Breaking for `hdr-experimental` users:** `hdr::Bt2446A` needs it, and `new_with_hdr_config`, `convert_to_sdr` and friends return `NoPath` without it unless a `ToneMapper` is injected. At opt-level 3 it adds 63,696 B; the machinery alone adds 24,920 B.
@@ -61,10 +85,12 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 - `RowConverter`: with a CMS, a conversion across depths, into gray, or compositing onto a background now gives a result where it refused or dropped alpha. `MoxCms` declines depth pairs the plan can convert.
 - `Color::try_new` refuses samples needing alignment above 4 bytes; `AnyColor` holds them. `adapt_raw_rows_for_encode` accepts a last row without padding, and returns an error for a short stride instead of panicking.
 
-- `MoxCms` rounds 8-bit samples to nearest. The backend's 8-bit path comes out low: on Display P3 to sRGB, 40% of its samples miss nearest, for a mean of -0.40 of a code; the cause isn't located. Matrix-and-curve profiles now take this crate's kernels with the profiles' own curve and colorants, and the rest take the backend's F32 path. This changes 8-bit output and costs speed: on Zen 4, 1.05 G px/s becomes 416 M on a matrix profile, 396 M becomes 116 M on an RGB table and 216 M becomes 88.5 M on CMYK.
+- `MoxCms` rounds 8-bit samples to nearest. The backend's 8-bit path comes out low: on Display P3 to sRGB, 40% of its samples miss nearest, for a mean of -0.40 of a code. moxcms 0.9.1's `make_gamma_table_impl` truncates integer gamma table entries for sRGB and BT.709 target curves; its master has the fix, unreleased. Matrix-and-curve profiles now take this crate's kernels with the profiles' own curve and colorants, and the rest take the backend's F32 path. This changes 8-bit output and costs speed: on Zen 4, 1.05 G px/s becomes 416 M on a matrix profile, 396 M becomes 116 M on an RGB table and 216 M becomes 88.5 M on CMYK.
 - Fused U8 sRGB kernels round to nearest. A floor-indexed table with one threshold comparison replaces a 4096-entry table that was off by one on about 1.3% of inputs.
 - `MoxCms` keeps white between ICC profiles and generated ones: 8-bit white into generated sRGB was (255, 255, 254). Generated colorants now sum to the ICC PCS white.
 - `MoxCms` uses low barycentric weights at 16 bits. High weights turned every 16-bit pixel of a table profile into a constant.
+- `MoxCms` keeps the sign of out-of-gamut samples on pure-gamma matrix targets. The backend's evaluator lost it: Display P3 into Adobe RGB came out a mean of +2.35 of an 8-bit code high across every 8-bit input, and up to 66 on samples that clip to 0.
+- `MoxCms` ignores a CICP tag inside an explicitly requested ICC profile at 8 and 16 bits as it does at F32. The F32 route for 8-bit samples otherwise evaluated the tag's curves in place of the profile's.
 - `MoxCms` row transforms honor `width`, and return an error for a row shorter than it. They used to convert the whole slice.
 - `cms-contract/` runs each CMS backend through one behavioral contract and against the others: `just cms-contract`. It isn't a workspace member.
 
