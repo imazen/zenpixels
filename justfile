@@ -207,8 +207,11 @@ icc-hdr-profile-check input output:
     cargo run -p icc-gen --features lcms2-crosscheck --bin icc-gen -- --report {{input}} {{output}}
     cargo test -p zenpixels --features icc icc::
 
-# Check compatibility after admitting the current archmage/magetypes beta.
-beta-cohort-check:
+# Compatibility alias for existing callers.
+beta-cohort-check: stable-cohort-check
+
+# Validate the released SIMD/CMS cohort without changing pixel expectations.
+stable-cohort-check:
     cargo fmt --check
     cargo clippy --locked --workspace --lib -- -D warnings
     cargo test --locked --workspace --lib --no-fail-fast
@@ -438,3 +441,36 @@ moxcms-final-summary study output:
 
 moxcms-final-report study comparisons output:
     python3 benchmarks/moxcms-gamma/report-final.py "{{study}}" "{{comparisons}}" "{{output}}"
+
+# Observe the released CMS on the original exact-zero regression inputs.
+moxcms-release-probe:
+    cargo run --locked -p icc-gen --bin moxcms_release_probe
+
+# Compare a proposed bundle without replacing committed data or expectations.
+icc-bundle-compare proposed output:
+    python3 scripts/icc-gen/validation/compare_bundles.py zenpixels-convert {{proposed}} {{output}}
+
+# Independent old/new decoded-color characterization; no fixture updates.
+icc-bundle-color-compare old proposed output:
+    cc -Wall -Wextra -Werror scripts/icc-gen/validation/compare_color.c -o "{{output}}-comparator" $(pkg-config --cflags --libs lcms2)
+    python3 scripts/icc-gen/validation/compare_bundle_color.py "{{output}}-comparator" "{{old}}" "{{proposed}}" "{{output}}"
+
+# Print selected versions and beta ceilings without copying local paths.
+inspect-cohort metadata output:
+    python3 scripts/inspect-cohort.py "{{metadata}}" "{{output}}"
+
+# Caller must already hold the isolated repository lock; prepares without pushing.
+prepare-stable-cap repo base owner *manifests:
+    python3 scripts/prepare-stable-cap.py "{{repo}}" "{{base}}" "{{owner}}" {{manifests}}
+
+# Isolated roots and resource wrapper must already be owned by the caller.
+resolve-stable-cohorts inventory output:
+    python3 scripts/resolve-stable-cohorts.py "{{inventory}}" "{{output}}"
+
+check-stable-cohorts plan output owner:
+    python3 scripts/check-stable-cohorts.py "{{plan}}" "{{output}}" "{{owner}}"
+
+stable-standalone-check:
+    cargo check --locked --manifest-path tools/jzazbz-bench/Cargo.toml --all-targets
+    cargo test --locked --manifest-path cms-contract/Cargo.toml
+    cargo check --locked --manifest-path site/converter-wasm/Cargo.toml --target wasm32-unknown-unknown
