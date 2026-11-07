@@ -455,6 +455,14 @@ icc-bundle-color-compare old proposed output:
     cc -Wall -Wextra -Werror scripts/icc-gen/validation/compare_color.c -o "{{output}}-comparator" $(pkg-config --cflags --libs lcms2)
     python3 scripts/icc-gen/validation/compare_bundle_color.py "{{output}}-comparator" "{{old}}" "{{proposed}}" "{{output}}"
 
+# Same grid and output schema through the already integrated Rust LCMS port.
+icc-bundle-rust-color-compare old proposed output:
+    cargo build --locked --manifest-path cms-contract/Cargo.toml --examples
+    python3 scripts/icc-gen/validation/compare_bundle_color.py "${CARGO_TARGET_DIR:-cms-contract/target}/debug/examples/bundle_color" "{{old}}" "{{proposed}}" "{{output}}"
+
+cms-rust-cmyk-floats icc:
+    cargo run --locked --manifest-path cms-contract/Cargo.toml --example cmyk_floats -- "{{icc}}"
+
 # Print selected versions and beta ceilings without copying local paths.
 inspect-cohort metadata output:
     python3 scripts/inspect-cohort.py "{{metadata}}" "{{output}}"
