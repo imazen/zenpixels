@@ -207,8 +207,11 @@ icc-hdr-profile-check input output:
     cargo run -p icc-gen --features lcms2-crosscheck --bin icc-gen -- --report {{input}} {{output}}
     cargo test -p zenpixels --features icc icc::
 
-# Check compatibility after admitting the current archmage/magetypes beta.
-beta-cohort-check:
+# Compatibility alias for existing callers.
+beta-cohort-check: stable-cohort-check
+
+# Validate the released SIMD/CMS cohort without changing pixel expectations.
+stable-cohort-check:
     cargo fmt --check
     cargo clippy --locked --workspace --lib -- -D warnings
     cargo test --locked --workspace --lib --no-fail-fast
