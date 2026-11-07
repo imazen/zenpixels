@@ -33,6 +33,11 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [Unreleased]
 
+- Require released archmage/magetypes 0.9.31 and moxcms 0.9.2 in active
+  conversion tools. Retain the pure-gamma range/sign guards and existing
+  numerical source patches. The separately reviewed RGB ICC bundle proposal
+  records changed decoded color; no pixel threshold is relaxed.
+
 - Regenerate the CICP ICC bundle with a D50 PCS header and four-byte-aligned tags. Preserve every tag payload and retain identification of older profile bytes while adding the new hashes. All 334 generated profiles pass independent libpng/Little CMS container checks.
 
 - Preserve the standalone, unpublished moxcms gamma diagnostics and paired benches in `benchmarks/moxcms-gamma`, with pinned source reconstruction and hashes for all six original experiment arms.

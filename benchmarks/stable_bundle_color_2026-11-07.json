@@ -98,9 +98,7 @@
         "new_x": "0.79852292388750357",
         "new_y": "0.32464598949900392",
         "new_z": "0.79490658645681833"
-      },
-      "new_white_error": 0,
-      "new_white_worst": null
+      }
     },
     "3": {
       "unit_cube_max": 0.3718362932477248,
@@ -136,5 +134,5 @@
   },
   "reproduce": "just icc-bundle-color-compare OLD_PROFILE_EXPORT PROPOSED_PROFILE_EXPORT NEW_OUTPUT_DIR",
   "comparator_source_sha256": "370834adb09b1134fcd2155da2358819a6fc2aeb4061879638a802bf634005aa",
-  "unqualified": "No HLG OOTF, no corpus rendering equivalence, no owner acceptance; proposed binary not committed."
+  "unqualified": "No HLG OOTF, no corpus rendering equivalence, no merge approval or numerical-equivalence claim."
 }

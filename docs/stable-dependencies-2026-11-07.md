@@ -82,8 +82,9 @@ chad and D50 in wtpt. This is the intended PCS representation. The observed
 improvement in native-white reconstruction supports that correction, but
 does not make the old and new profiles equivalent. Relative colorant drift
 and residual native-white error remain measured differences, not accepted
-replacement tolerances. Owner approval is still required for the separate
-binary and established golden change.
+replacement tolerances. The owner authorized staging the binary/index/hash change as a separate,
+unmerged proposal after reviewing these observations. That authorization
+does not establish equivalence or authorize merging the proposal.
 
 Little CMS defaults to observer adaptation 1 even for the absolute intent.
 The first capture used that default and is retained as an additional control;
