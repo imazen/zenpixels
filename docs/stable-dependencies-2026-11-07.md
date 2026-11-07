@@ -38,7 +38,7 @@ accuracy tests pass without changed expectations.
   PNG source PR #56 remains necessary for the public ICC facade migration.
   They must not be merged together merely to select stable dependencies.
 
-## Separate ICC bundle proposal: blocked on numerical review
+## Separate ICC bundle proposal: staged for numerical review
 
 No binary or golden is changed by the dependency candidate. Fresh generation
 with 0.9.2 creates a 37,260-byte bundle (SHA-256
@@ -114,13 +114,79 @@ tests. Existing ignored tests remain unchanged.
   and type errors. The stable release does not resolve that blocker.
 - PNG PR #59: all 23 facade migration controls and strict library/harness
   Clippy pass. No pixel, fixture or assertion changes.
-- The core PR #200 descendant passes 1,313 library/integration tests and
-  strict Clippy. It remains local for the core owner's integration.
+- Core PR #199 and #200 descendants pass the full existing metadata recipe:
+  1,464 and 1,453 all-feature tests/doctests respectively, strict all-target
+  Clippy, formatting and five host-target no-default-feature variants. Each
+  retains 39 existing ignored doctests. Both remain local for the core
+  owner's integration; original review heads are unchanged.
 - Active standalone tools now select stable SIMD: JzAzBz all-target checks,
   the browser converter's WASM check and the CMS contract pass. The CMS
   contract has 12 enabled tests and two existing ignored profile-corpus
   comparisons; no ignored comparison is claimed as qualified. Historical
   experiment sources and measurements retain their original dependency pins.
+
+## Broader main-based audit
+
+Separate review branches preserve each consumer's current main source.
+They are not replacements for the frozen review graphs above. Of 26 root
+manifests, 25 resolve released SIMD dependencies; the newer JXL encoder
+root requires a missing sibling CVVDP workspace. Legacy MoxCMS 0.7/0.8
+families remain where dependencies require them; this does not claim a
+single CMS version throughout every graph.
+
+Library tests and strict library Clippy pass on garb (59), linear-srgb
+(109), zenblend (94), zentone (141), zenflate (306, one existing ignore),
+zenresize (357), zenquant (100), heic (119, explicit std/Rust backend),
+butteraugli (92), zenanalyze (458, four existing ignores), zenavif (239,
+three existing ignores), zenbitmaps (26), zenraw (87), zenwebp (367, one
+existing ignore), zenextras (150), and fast-ssim2 (18, one existing ignore).
+These counts describe the library gates, not full corpus/parity coverage.
+The main-based pipeline passes workspace checking and strict Clippy for
+its std/CMS/JPEG/PNG codec subset; its pending public API migration and
+full runtime parity remain separate work. No model training or evaluation
+was performed. Explicit equivalent `mul_add_relaxed` spellings remove
+stable Magetypes deprecations in three main-based consumers; frozen
+numerical sources are preserved separately.
+
+JXL default-feature workspace tests pass 1,247 cases with 28 existing
+ignores using bounded internal fixture workers, optimized tests with debug
+assertions and overflow checks, and an 8 GiB cap (peak RSS 5.45 GiB).
+This does not enable its optional MoxCMS path. The existing CMYK
+relative-colorimetric/BPC float test fails on 0.9.2: at reflectance
+[0.2347, 0.9601, 0.5918, 0.9813], red is -0.066765495 against frozen LCMS
+-0.0645, outside the unchanged 0.0013 bound. Identical source on 0.9.1
+passes with -0.06461855; the current explicit LCMS adapter returns
+-0.064411186. Its adapter workaround and expectations remain unchanged.
+The model crate's main-based source compiles but strict Clippy reports
+341 deprecated SIMD calls; scientific qualification is not claimed.
+
+Cavif's default-depth control still confirms 10-bit output, but its
+pre-existing omission assertion fails: explicit nclx (1, 13, 6, full range)
+is present. The same test fails on archmage 0.9.30 and moxcms 0.9.1 with
+all other source/dependencies fixed. This is not a newly introduced stable
+release regression; its established expectation awaits owner decision.
+
+The older frozen rav1d cap descendant passes all 206 unchanged library
+tests in an optimized test build retaining debug assertions and overflow
+checks (peak RSS 1.50 GiB). Its earlier slow debug attempt was interrupted
+and preserved, not counted as a successful gate.
+
+## Cleanup boundaries
+
+The separate bundle proposal is draft PR #123, based on dependency PR #122.
+Its 728 library tests, 38 CMS controls and all 334 independent reader
+controls pass locally; it preserves every historical recognition row.
+Changed colorants and white adaptation remain an explicit numerical review.
+There is no merge, release, main overwrite or automatic golden acceptance.
+
+One confirmed inactive Cargo target was removed after checking for live
+users and unique artifacts; it occupied 980,574,208 allocated bytes before
+removal. That is not an exact filesystem-space gain measurement. Historical
+benchmark harnesses, assembly, traces, source snapshots and all original
+failing receipts remain preserved. Temporary beta caps and redundant
+bridges can be removed as the owner integrates the qualified stable graphs;
+source patches and old experimental locks remain where they carry numerical
+changes or reproducibility provenance.
 
 ## Source references
 
