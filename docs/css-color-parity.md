@@ -78,3 +78,11 @@ Parsing to linear loses the original space, so a color can't be serialized back 
 CSS applies this to individually specified colors, not images. Clipping is closer in ΔEOK in every case but blue P3, where they tie, and CSS gives up that distance to hold hue.
 
 **4. Mattes blend in linear light, on purpose.** 50% red on white is green 187 here and 127 on encoded values, which is what browsers are reported to do.
+
+### HDR intent candidate (2026-11-06, PR 120)
+
+The older default-anchor comparisons above describe the pre-candidate behavior.
+The candidate requires an explicit SDR white or a source diffuse-white context;
+unanchored PQ conversion refuses. Row/buffer/quantizer output agrees for an
+explicit 203-nit white. HLG light-domain conversion refuses until the display OOTF
+is implemented. Source/target profiles still must agree with current samples.

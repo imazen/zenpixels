@@ -9,9 +9,9 @@
 
 ## summary
 #
-#   inherent methods                           49
+#   inherent methods                           63
 #   enum variants                              14
-#   trait roster entries (type × trait)        50
+#   trait roster entries (type × trait)        65
 #
 # per-module pub lines:
 #   (root)                            7
@@ -19,15 +19,16 @@
 #   cicp                              2
 #   color                             8
 #   descriptor                       17
-#   hdr                               1
+#   hdr                               2
 #   icc                               2
 #   orientation                       1
 #   pixel_types                       2
 #   plane                             7
 #   policy                            6
+#   precision                        13
 #   sample                            7
 
-## items (63 lines)
+## items (77 lines)
 
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
@@ -53,6 +54,7 @@ pub fn descriptor::PixelFormat::assert_fields_are_eq(&self)
 pub fn descriptor::SignalRange::assert_fields_are_eq(&self)
 pub fn descriptor::TransferFunction::assert_fields_are_eq(&self)
 pub fn hdr::ContentLightLevel::assert_fields_are_eq(&self)
+pub fn hdr::HdrPeak::assert_fields_are_eq(&self)
 pub fn icc::IccIdentification::assert_fields_are_eq(&self)
 pub fn icc::IdentificationUse::assert_fields_are_eq(&self)
 pub fn orientation::Orientation::assert_fields_are_eq(&self)
@@ -71,6 +73,19 @@ pub fn policy::DepthPolicy::assert_fields_are_eq(&self)
 pub fn policy::GamutMapping::assert_fields_are_eq(&self)
 pub fn policy::GrayExpand::assert_fields_are_eq(&self)
 pub fn policy::LumaCoefficients::assert_fields_are_eq(&self)
+pub fn precision::AlphaContent::assert_fields_are_eq(&self)
+pub fn precision::ChainPlan::assert_fields_are_eq(&self)
+pub fn precision::ConversionChoice<'a>::assert_fields_are_eq(&self)
+pub fn precision::ConversionDecision::assert_fields_are_eq(&self)
+pub fn precision::ConversionEffect::assert_fields_are_eq(&self)
+pub fn precision::ConversionOffer::assert_fields_are_eq(&self)
+pub fn precision::ConversionPolicy::assert_fields_are_eq(&self)
+pub fn precision::ConversionPreset::assert_fields_are_eq(&self)
+pub fn precision::ConversionRecord::assert_fields_are_eq(&self)
+pub fn precision::ConversionRefusal::assert_fields_are_eq(&self)
+pub fn precision::DecidedBy::assert_fields_are_eq(&self)
+pub fn precision::OutputChoice::assert_fields_are_eq(&self)
+pub fn precision::SourcePrecision::assert_fields_are_eq(&self)
 pub fn sample::ChromaSiting::assert_fields_are_eq(&self)
 pub fn sample::ChromaSubsampling::assert_fields_are_eq(&self)
 pub fn sample::CodePlaneError::assert_fields_are_eq(&self)
@@ -93,7 +108,7 @@ pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (50 types)
+## trait impls (65 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
@@ -116,7 +131,9 @@ descriptor::SignalRange: TrivialClone
 descriptor::TransferFunction: TrivialClone
 hdr::ContentLightLevel: TrivialClone
 hdr::DiffuseWhite: TrivialClone
+hdr::HdrPeak: TrivialClone
 hdr::MasteringDisplay: TrivialClone
+hdr::Nits: TrivialClone
 icc::IccIdentification: TrivialClone
 icc::IdentificationUse: TrivialClone
 orientation::Orientation: TrivialClone
@@ -137,6 +154,19 @@ policy::DepthPolicy: TrivialClone
 policy::GamutMapping: TrivialClone
 policy::GrayExpand: TrivialClone
 policy::LumaCoefficients: TrivialClone
+precision::AlphaContent: TrivialClone
+precision::ConversionChoice<'a>: TrivialClone
+precision::ConversionDecision: TrivialClone
+precision::ConversionEffect: TrivialClone
+precision::ConversionOffer: TrivialClone
+precision::ConversionPolicy: TrivialClone
+precision::ConversionPreset: TrivialClone
+precision::ConversionQuestion<'a>: TrivialClone
+precision::ConversionRecord: TrivialClone
+precision::ConversionRefusal: TrivialClone
+precision::DecidedBy: TrivialClone
+precision::OutputChoice: TrivialClone
+precision::SourcePrecision: TrivialClone
 sample::ChromaSiting: TrivialClone
 sample::ChromaSubsampling: TrivialClone
 sample::CodePlane<'a>: TrivialClone

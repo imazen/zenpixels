@@ -196,7 +196,10 @@ fn sdr_to_hdr_transfers_are_refused() {
         for target in [pq, hlg] {
             let e = white.try_convert_to(target, &lossless()).unwrap_err();
             assert!(
-                matches!(e.error(), ConvertError::NoPath { .. }),
+                matches!(
+                    e.error(),
+                    ConvertError::SdrWhiteRequired | ConvertError::HlgOotfNotImplemented
+                ),
                 "{sdr:?} to {target:?}: {e:?}"
             );
         }
@@ -205,14 +208,22 @@ fn sdr_to_hdr_transfers_are_refused() {
 
 /// Linear isn't SDR's question: PQ and HLG decode to it and come back.
 #[test]
-fn linear_still_reaches_hdr_transfers() {
-    for (transfer, signal) in [(Tf::Pq, 0.5807f32), (Tf::Hlg, 0.7499)] {
-        let hdr = D::RGBF32_LINEAR.with_transfer(transfer);
-        let linear = f32_color(hdr, &[signal; 3])
-            .try_convert_to(D::RGBF32_LINEAR, &lossless())
-            .unwrap();
-        let back = linear.try_convert_to(hdr, &lossless()).unwrap();
-        let c = bytemuck::cast_slice::<u8, f32>(back.as_bytes());
-        assert!((c[0] - signal).abs() < 1e-4, "{transfer:?}: {c:?}");
-    }
+fn linear_reaches_pq_with_explicit_units_and_hlg_requires_ootf() {
+    let options = lossless().with_sdr_white(zenpixels::hdr::DiffuseWhite::new(10000.));
+    let hdr = D::RGBF32_LINEAR.with_transfer(Tf::Pq);
+    let signal = 0.5807_f32;
+    let linear = f32_color(hdr, &[signal; 3])
+        .try_convert_to(D::RGBF32_LINEAR, &options)
+        .unwrap();
+    let back = linear.try_convert_to(hdr, &options).unwrap();
+    let values = bytemuck::cast_slice::<u8, f32>(back.as_bytes());
+    assert!((values[0] - signal).abs() < 1e-4);
+    let hlg = D::RGBF32_LINEAR.with_transfer(Tf::Hlg);
+    assert!(matches!(
+        f32_color(hlg, &[0.7499; 3])
+            .try_convert_to(D::RGBF32_LINEAR, &options)
+            .unwrap_err()
+            .error(),
+        ConvertError::HlgOotfNotImplemented
+    ));
 }

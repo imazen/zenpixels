@@ -12,23 +12,23 @@
 #   pub types (struct/enum/trait/alias)        53
 #   pub consts/statics                         32
 #   free functions                              2
-#   inherent methods                          168
+#   inherent methods                          174
 #   struct fields                              73
-#   enum variants                              83
+#   enum variants                              93
 #   re-exports                                  3
 #   trait roster entries (type × trait)       111
 #   auto-trait-complete types                  20
 #   auto-trait exceptions                       4
 #
 # per-module pub lines:
-#   (root)                          190
+#   (root)                          198
 #   adapt                             1
 #   cms                              18
 #   codes                            39
 #   converter                        31
 #   css                               3
-#   error                            36
-#   ext                              28
+#   error                            41
+#   ext                              31
 #   gamut                            11
 #   hdr                               2
 #   icc_profiles                     10
@@ -37,7 +37,7 @@
 #   output                           19
 #   ycbcr                            22
 
-## items (406 lines)
+## items (422 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -136,9 +136,12 @@ pub error::ConvertError::DepthReductionForbidden
 pub error::ConvertError::EmptyFormatList
 pub error::ConvertError::FullImageMapperNotSupported
 pub error::ConvertError::FullImageMapperNotSupported::mapper_name: &'static str
+pub error::ConvertError::HdrFeatureRequired
+pub error::ConvertError::HdrPeakRequired
 pub error::ConvertError::HdrSourceRequiresPeak
 pub error::ConvertError::HdrSourceRequiresPeak::from: zenpixels::descriptor::PixelDescriptor
 pub error::ConvertError::HdrSourceRequiresPeak::to: zenpixels::descriptor::PixelDescriptor
+pub error::ConvertError::HlgOotfNotImplemented
 pub error::ConvertError::InvalidWidth(u32)
 pub error::ConvertError::NeedsCms
 pub error::ConvertError::NeedsCms::from: zenpixels::descriptor::PixelDescriptor
@@ -152,6 +155,8 @@ pub error::ConvertError::OutputInterpretationMismatch
 pub error::ConvertError::OutputInterpretationMismatch::profile: zenpixels::descriptor::PixelDescriptor
 pub error::ConvertError::OutputInterpretationMismatch::requested: zenpixels::descriptor::PixelDescriptor
 pub error::ConvertError::RgbToGray
+pub error::ConvertError::SdrPeakRequired
+pub error::ConvertError::SdrWhiteRequired
 pub error::ConvertError::SourceInterpretationChanged
 pub error::ConvertError::UnsupportedTransfer
 pub error::ConvertError::UnsupportedTransfer::from: zenpixels::descriptor::TransferFunction
@@ -164,6 +169,7 @@ pub fn ext::ColorConvertExt::try_convert_to(&self, zenpixels::descriptor::PixelD
 pub fn ext::ColorPrimariesExt::from_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub fn ext::ColorPrimariesExt::to_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub fn ext::PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn ext::PixelBufferConvertExt::convert_to_with_options(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::delinearize(&self, zenpixels::descriptor::TransferFunction) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::into_oriented(self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::linearize(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
@@ -175,9 +181,11 @@ pub fn ext::PixelSliceConvertExt::adapt_for_encode(&self, &[zenpixels::descripto
 pub fn ext::PixelSliceConvertExt::check_opaque(&self) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn ext::PixelSliceConvertExt::convert_into<'d>(&self, zenpixels::buffer::PixelSliceMut<'d>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'d>, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelSliceConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn ext::PixelSliceConvertExt::convert_to_with_options(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelSliceConvertExt::oriented(&self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelSliceConvertExt::oriented_into(&self, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn ext::PixelSliceConvertExt::quantize_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn ext::PixelSliceConvertExt::scan_source_precision(&self, &dyn enough::Stop) -> core::result::Result<zenpixels::precision::SourcePrecision, whereat::at::At<enough::reason::StopReason>>
 pub fn ext::TransferFunctionExt::delinearize(&self, f32) -> f32
 pub fn ext::TransferFunctionExt::linearize(&self, f32) -> f32
 pub mod gamut
@@ -284,9 +292,12 @@ pub ConvertError::DepthReductionForbidden
 pub ConvertError::EmptyFormatList
 pub ConvertError::FullImageMapperNotSupported
 pub ConvertError::FullImageMapperNotSupported::mapper_name: &'static str
+pub ConvertError::HdrFeatureRequired
+pub ConvertError::HdrPeakRequired
 pub ConvertError::HdrSourceRequiresPeak
 pub ConvertError::HdrSourceRequiresPeak::from: zenpixels::descriptor::PixelDescriptor
 pub ConvertError::HdrSourceRequiresPeak::to: zenpixels::descriptor::PixelDescriptor
+pub ConvertError::HlgOotfNotImplemented
 pub ConvertError::InvalidWidth(u32)
 pub ConvertError::NeedsCms
 pub ConvertError::NeedsCms::from: zenpixels::descriptor::PixelDescriptor
@@ -300,6 +311,8 @@ pub ConvertError::OutputInterpretationMismatch
 pub ConvertError::OutputInterpretationMismatch::profile: zenpixels::descriptor::PixelDescriptor
 pub ConvertError::OutputInterpretationMismatch::requested: zenpixels::descriptor::PixelDescriptor
 pub ConvertError::RgbToGray
+pub ConvertError::SdrPeakRequired
+pub ConvertError::SdrWhiteRequired
 pub ConvertError::SourceInterpretationChanged
 pub ConvertError::UnsupportedTransfer
 pub ConvertError::UnsupportedTransfer::from: zenpixels::descriptor::TransferFunction
@@ -411,6 +424,7 @@ pub fn ColorPrimariesExt::from_xyz_matrix(&self) -> core::option::Option<&'stati
 pub fn ColorPrimariesExt::to_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub trait PixelBufferConvertExt: sealed::Sealed + core::marker::Sized [also: ext]
 pub fn PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn PixelBufferConvertExt::convert_to_with_options(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::delinearize(&self, zenpixels::descriptor::TransferFunction) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::into_oriented(self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::linearize(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
@@ -425,9 +439,11 @@ pub fn PixelSliceConvertExt::adapt_for_encode(&self, &[zenpixels::descriptor::Pi
 pub fn PixelSliceConvertExt::check_opaque(&self) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn PixelSliceConvertExt::convert_into<'d>(&self, zenpixels::buffer::PixelSliceMut<'d>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'d>, whereat::at::At<error::ConvertError>>
 pub fn PixelSliceConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn PixelSliceConvertExt::convert_to_with_options(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelSliceConvertExt::oriented(&self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelSliceConvertExt::oriented_into(&self, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn PixelSliceConvertExt::quantize_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn PixelSliceConvertExt::scan_source_precision(&self, &dyn enough::Stop) -> core::result::Result<zenpixels::precision::SourcePrecision, whereat::at::At<enough::reason::StopReason>>
 pub trait PixelSliceLoadBearingExt: load_bearing::sealed::Sealed [also: load_bearing]
 pub fn PixelSliceLoadBearingExt::determine_load_bearing(&self) -> load_bearing::LoadBearingReport
 pub fn PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuffer>

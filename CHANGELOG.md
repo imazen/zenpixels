@@ -39,13 +39,20 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ### QUEUED BREAKING CHANGES
 
+- HDR transfer conversion now requires explicit or context-supplied SDR white; buffers measure source peak by default for tone mapping, while row plans require an explicit peak. HLG light-domain conversion refuses until its display OOTF is implemented. Quantization retains actual source primaries.
+
 See the 0.3.1 candidate entries below for the approved breaking release queue.
 
 ### Added
 
+- `hdr::Nits`, `hdr::HdrPeak`, HDR intent on `ConvertOptions`, declared source peak on `ColorContext`, and `convert_to_with_options` on buffer/slice extension traits.
+
 - Pixel Format Explorer on GitHub Pages, with a CI-built WASM converter, conversion plans and byte comparisons (`5a97b0dd`).
 
 ## [0.3.1] — unreleased candidate
+
+- `zenpixels::precision`: the rule for what a chosen format may drop, in `docs/precision-policy-design.md`. `SourcePrecision` says what a source really carried, `ConversionPolicy` and `ConversionResolver` decide among `ConversionOffer`s, and `plan_chain` does so across a job's nodes. `PixelSliceConvertExt::scan_source_precision` measures what a decoder couldn't state, so `zenpixels-convert` now depends on `enough`.
+- `adapt_for_encode` and `adapt_raw_rows_for_encode` pick a supported format that holds the source when one exists. RGB16 with `[RGB8, RGBF32]` on offer used to narrow to RGB8, because that's less work.
 
 - `MoxCms` at F32 no longer returns unrelated values from pure-gamma curves: ProPhoto (0.5, 0.5, 0) into sRGB was (1, 1, 0) with clipping on, and black was about -2.1e9 without it. The adapter now applies a single-value `curv` itself on RGB and gray sources and on gray routes, and keeps a negative sample's sign from a table source. Values the backend's fast power can represent keep their bits. See `benchmarks/pure_gamma_f32_2026-11-05.md`.
 - `MoxCms` 8-bit routes that go through F32 get the same fix: gray 1.8 of 0 into gray 2.2 was 255, and ProPhoto (128, 128, 0) into Adobe RGB was (255, 255, 0). Routes into sRGB's curve take the matrix kernels and don't change.

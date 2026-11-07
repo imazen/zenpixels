@@ -11,6 +11,7 @@ document.getElementById('to-transfer').value = 'Srgb';
 document.getElementById('to-primaries').value = 'Bt709';
 document.getElementById('to-alphamode').innerHTML = ['Straight', 'Premultiplied', 'Opaque'].map(v => `<option>${v}</option>`).join('');
 document.getElementById('to-range').value = 'Full';
+for (const id of ['sdr-white', 'hdr-peak', 'sdr-peak']) document.getElementById(id).addEventListener('input', renderConverter);
 
 function converterDescriptor(cfg) {
   const f = FMAP[cfg.format];
@@ -36,7 +37,10 @@ function currentConversion() {
     for (let c = 0; c < one.length; c++) bytes[y * st + x * one.length + c] = one[c];
   }
   return { source, model, request: { from: converterDescriptor(source.cfg), to: converterDescriptor(target),
-    bytes, stride: st, width: S.w, rows: S.h, luma: S.luma } };
+    bytes, stride: st, width: S.w, rows: S.h, luma: S.luma,
+    sdrWhite: $('sdr-white').value === '' ? null : Number($('sdr-white').value),
+    hdrPeak: $('hdr-peak').value === '' ? null : Number($('hdr-peak').value),
+    sdrPeak: $('sdr-peak').value === '' ? null : Number($('sdr-peak').value) } };
 }
 const hexBytes = bytes => bytes.map(x => hex2(x).toUpperCase()).join(' ');
 function renderConverter() {

@@ -138,6 +138,8 @@ fn context_after_conversion(
 // ---------------------------------------------------------------------------
 
 use alloc::sync::Arc;
+#[cfg(feature = "bt2446a")]
+use alloc::vec::Vec;
 use whereat::{At, ResultAtExt};
 use zenpixels::PixelDescriptor;
 use zenpixels::buffer::{PixelBuffer, PixelCow, PixelSlice, PixelSliceMut};
@@ -155,6 +157,14 @@ pub trait PixelBufferConvertExt: crate::sealed::Sealed + Sized {
     ///
     /// **Allocates** a new [`PixelBuffer`].
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>>;
+
+    /// Convert with explicit loss and HDR intent. Source context supplies a
+    /// missing white anchor; HDR-to-SDR buffers measure their peak by default.
+    fn convert_to_with_options(
+        &self,
+        target: PixelDescriptor,
+        options: &zenpixels::ConvertOptions,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>>;
 
     /// Change format in place when no conversion math is needed, with no allocation.
     ///
@@ -304,36 +314,48 @@ fn exact_after_preserving(
 fn converter_for(
     source: &PixelSlice<'_>,
     target: PixelDescriptor,
+    options: &zenpixels::ConvertOptions,
 ) -> Result<crate::RowConverter, At<crate::ConvertError>> {
     let src_desc = source.descriptor();
     check_needs_cms(&src_desc, &target)?;
+    let mut options = *options;
+    if options.sdr_white().is_none()
+        && let Some(white) = source.color_context().and_then(|c| c.diffuse_white)
+    {
+        options = options.with_sdr_white(white);
+    }
     let source_profile =
         crate::output::current_profile_for(src_desc, source.color_context().map(Arc::as_ref))?;
     let changes_color =
         src_desc.transfer() != target.transfer() || src_desc.primaries != target.primaries;
     if changes_color && matches!(source_profile, zenpixels::ColorProfileSource::Icc(_)) {
+        // The profile-only CMS interface cannot express absolute-light intent.
+        if matches!(
+            (src_desc.transfer(), target.transfer()),
+            (TransferFunction::Pq | TransferFunction::Hlg, _)
+                | (_, TransferFunction::Pq | TransferFunction::Hlg)
+        ) {
+            return Err(whereat::at!(crate::ConvertError::NeedsCms {
+                from: src_desc,
+                to: target
+            }));
+        }
         crate::RowConverter::new_with_sources(
             src_desc,
             target,
             source_profile,
             target.color_profile_source(),
-            &zenpixels::ConvertOptions::permissive()
-                .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked),
+            &options,
             None,
         )
-    } else if src_desc.transfer() == TransferFunction::Linear
-        && target.transfer() == TransferFunction::Pq
-    {
-        let anchor = source
-            .color_context()
-            .and_then(|c| c.diffuse_white)
-            .unwrap_or(zenpixels::hdr::DiffuseWhite::new(10_000.0));
-        Ok(crate::RowConverter::from_plan(
-            crate::ConvertPlan::new(src_desc, target)?.with_pq_anchor(anchor),
-        ))
     } else {
-        crate::RowConverter::new(src_desc, target).at()
+        crate::RowConverter::new_explicit(src_desc, target, &options).at()
     }
+}
+
+fn default_options() -> zenpixels::ConvertOptions {
+    zenpixels::ConvertOptions::permissive()
+        .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked)
 }
 
 /// Adds whole-image conversion methods to type-erased [`PixelSlice`].
@@ -346,6 +368,14 @@ pub trait PixelSliceConvertExt<'a>: crate::sealed::Sealed {
     /// Uses the slice's current ICC profile when it has one. Conversions that need
     /// a CMS return [`ConvertError::NeedsCms`](crate::ConvertError::NeedsCms).
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>>;
+
+    /// Convert with explicit loss and HDR intent. Source context supplies a
+    /// missing white anchor; HDR-to-SDR buffers measure their peak by default.
+    fn convert_to_with_options(
+        &self,
+        target: PixelDescriptor,
+        options: &zenpixels::ConvertOptions,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>>;
 
     /// Convert into `dst`, whose descriptor is the target. No output allocation.
     ///
@@ -386,6 +416,22 @@ pub trait PixelSliceConvertExt<'a>: crate::sealed::Sealed {
     /// [`ConvertError::AlphaNotOpaque`](crate::ConvertError::AlphaNotOpaque).
     fn check_opaque(&self) -> Result<(), At<crate::ConvertError>>;
 
+    /// Read these samples for what a decoder couldn't state: 8-bit content in `u16` storage, or
+    /// whether alpha is really used. Row padding is ignored, and nothing allocates.
+    ///
+    /// This is a whole pass, so it is the caller's choice, and `stop` is checked between rows. A
+    /// format with no canonical grid to measure against, such as a float, gets
+    /// [`SourcePrecision::from_storage`](zenpixels::precision::SourcePrecision::from_storage). The
+    /// result describes these samples, so call it before anything edits them.
+    ///
+    /// # Errors
+    ///
+    /// The [`StopReason`](enough::StopReason) when `stop` fires.
+    fn scan_source_precision(
+        &self,
+        stop: &dyn enough::Stop,
+    ) -> Result<zenpixels::precision::SourcePrecision, At<enough::StopReason>>;
+
     /// Quantize PQ-anchored linear pixels to `target`. **Allocates**.
     ///
     /// The anchor comes from the slice's `ColorContext`. See `docs/hdr-anchor-api-design.md`.
@@ -412,6 +458,15 @@ pub trait PixelSliceConvertExt<'a>: crate::sealed::Sealed {
 impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
     #[track_caller]
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>> {
+        self.convert_to_with_options(target, &default_options())
+    }
+
+    #[track_caller]
+    fn convert_to_with_options(
+        &self,
+        target: PixelDescriptor,
+        options: &zenpixels::ConvertOptions,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>> {
         let src_desc = self.descriptor();
         let width = self.width();
         if src_desc == target {
@@ -431,15 +486,60 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
                 .expect("identical descriptors accept the same evidence");
             return Ok(buf);
         }
-        let mut converter = converter_for(self, target)?;
+        let mut resolved = *options;
+        if crate::convert::is_hdr_to_sdr(src_desc.transfer(), target.transfer()) {
+            if src_desc.transfer() == TransferFunction::Hlg {
+                return Err(whereat::at!(crate::ConvertError::HlgOotfNotImplemented));
+            }
+            if resolved.sdr_peak().is_none() {
+                return Err(whereat::at!(crate::ConvertError::SdrPeakRequired));
+            }
+            let peak = match resolved.hdr_peak() {
+                zenpixels::hdr::HdrPeak::Nits(peak) => peak,
+                zenpixels::hdr::HdrPeak::Declared => self
+                    .color_context()
+                    .and_then(|c| c.hdr_peak)
+                    .ok_or_else(|| whereat::at!(crate::ConvertError::HdrPeakRequired))?,
+                zenpixels::hdr::HdrPeak::Measured => {
+                    #[cfg(feature = "bt2446a")]
+                    {
+                        measured_peak(self, resolved.sdr_peak().expect("validated target peak"))?
+                    }
+                    #[cfg(not(feature = "bt2446a"))]
+                    {
+                        return Err(whereat::at!(crate::ConvertError::HdrFeatureRequired));
+                    }
+                }
+                _ => return Err(whereat::at!(crate::ConvertError::HdrPeakRequired)),
+            };
+            resolved = resolved.with_hdr_peak(zenpixels::hdr::HdrPeak::Nits(peak));
+        }
+        let mut converter = converter_for(self, target, &resolved)?;
         let mut buf = PixelBuffer::try_new(width, self.rows(), target)
             .map_err_at(crate::ConvertError::from)?;
         let mut destination = buf.as_slice_mut();
         for y in 0..self.rows() {
             converter.try_convert_row(self.row(y), destination.row_mut(y), width)?;
         }
-        if let Some(ctx) = context_after_conversion(self, target) {
-            buf = buf.with_color_context(ctx);
+        let anchor = if crate::convert::is_hdr_to_sdr(src_desc.transfer(), target.transfer()) {
+            resolved
+                .sdr_peak()
+                .map(|n| zenpixels::hdr::DiffuseWhite::new(n.nits()))
+        } else {
+            resolved
+                .sdr_white()
+                .or_else(|| self.color_context().and_then(|c| c.diffuse_white))
+        };
+        let context = context_after_conversion(self, target);
+        if let Some(white) = anchor {
+            let context = context
+                .as_deref()
+                .cloned()
+                .unwrap_or_default()
+                .with_diffuse_white(white);
+            buf = buf.with_color_context(Arc::new(context));
+        } else if let Some(context) = context {
+            buf = buf.with_color_context(context);
         }
         if let Some(exact) = self
             .exact_depth()
@@ -468,7 +568,7 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
             }));
         }
         let target = dst.descriptor();
-        let mut converter = converter_for(self, target)?;
+        let mut converter = converter_for(self, target, &default_options())?;
         for y in 0..self.rows() {
             converter.try_convert_row(self.row(y), dst.row_mut(y), self.width())?;
         }
@@ -549,6 +649,14 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
     }
 
     #[track_caller]
+    fn scan_source_precision(
+        &self,
+        stop: &dyn enough::Stop,
+    ) -> Result<zenpixels::precision::SourcePrecision, At<enough::StopReason>> {
+        crate::adapt::scan_source_precision(self, stop)
+    }
+
+    #[track_caller]
     fn check_opaque(&self) -> Result<(), At<crate::ConvertError>> {
         crate::adapt::check_opaque(self)
     }
@@ -581,6 +689,15 @@ impl PixelBufferConvertExt for PixelBuffer {
     #[track_caller]
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>> {
         self.as_slice().convert_to(target)
+    }
+
+    #[track_caller]
+    fn convert_to_with_options(
+        &self,
+        target: PixelDescriptor,
+        options: &zenpixels::ConvertOptions,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>> {
+        self.as_slice().convert_to_with_options(target, options)
     }
 
     #[track_caller]
@@ -721,56 +838,10 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
         &self,
         target: PixelDescriptor,
     ) -> Result<PixelBuffer, At<crate::ConvertError>> {
-        use zenpixels::hdr::DiffuseWhite;
-
-        let src_desc = self.descriptor();
-        check_needs_cms(&src_desc, &target)?;
-
-        // Non-HDR source: short-circuit to the regular convert_to path
-        // (which now rejects HDR→SDR loudly, so this is purely the
-        // "doesn't matter, source isn't HDR" branch).
-        if !matches!(
-            src_desc.transfer(),
-            TransferFunction::Pq | TransferFunction::Hlg
-        ) {
-            return self.convert_to(target);
-        }
-
-        // Measure source peak. For PQ buffers we need linear-light F32
-        // first (CllMeasure operates on relative-linear RGB f32).
-        // For HLG, same thing.
-        //
-        // The linearized image is only needed to find the brightest pixel,
-        // so it is never materialized: each row is decoded into one reused
-        // F32 scratch row and measured immediately (imazen/zenpixels#69 —
-        // this used to allocate a full F32 copy, 4× an RGBA8 source, and
-        // throw it away). MaxCLL is a max, so the per-row maximum of
-        // `measure_max` composes exactly with the whole-image reading
-        // (`nits_to_u16` is monotone); the MaxFALL half is unused here.
-        let lin_desc = PixelDescriptor::new_full(
-            ChannelType::F32,
-            if src_desc.has_alpha() {
-                ChannelLayout::Rgba
-            } else {
-                ChannelLayout::Rgb
-            },
-            src_desc.alpha(),
-            TransferFunction::Linear,
-            src_desc.primaries,
-        );
-        // Unanchored PQ decoding yields L/10000, regardless of an attached
-        // relative-linear diffuse-white anchor. HLG needs a display OOTF and
-        // is refused until that mapping is supplied explicitly.
-        if src_desc.transfer() == TransferFunction::Hlg {
-            return Err(whereat::at!(crate::ConvertError::NoPath {
-                from: src_desc,
-                to: target
-            }));
-        }
-        let diffuse_white = DiffuseWhite::new(10_000.0);
-        let max_cll = measure_peak_rowwise(self, lin_desc, diffuse_white)?;
-        let source_peak_nits = f32::from(max_cll).max(100.0);
-        self.convert_to_with_hdr_config(target, crate::HdrConfig::for_source_peak(source_peak_nits))
+        self.convert_to_with_options(
+            target,
+            &default_options().with_sdr_peak(zenpixels::hdr::Nits::new(100.0)),
+        )
     }
 
     #[track_caller]
@@ -835,49 +906,57 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
     }
 }
 
-/// Spec-literal MaxCLL (cd/m², CTA-861.3) of `src` after decoding it to
-/// `lin_desc` (relative-linear `RgbF32` / `RgbaF32`), one row at a time
-/// through a single reused scratch row — no full-image intermediate.
-///
-/// Byte-parity with measuring a fully materialized `src.convert_to(lin_desc)`:
-/// each row goes through the same `RowConverter`, and MaxCLL is a maximum
-/// (`max_y nits_to_u16(max_row_y · white) == nits_to_u16(max_all · white)`
-/// because `nits_to_u16` is monotone non-decreasing).
-#[cfg(feature = "hdr-experimental")]
-#[track_caller]
-fn measure_peak_rowwise(
-    src: &PixelBuffer,
-    lin_desc: PixelDescriptor,
-    white: zenpixels::hdr::DiffuseWhite,
-) -> Result<u16, At<crate::ConvertError>> {
-    use crate::hdr::{CllMeasure, LightLevelMethod};
-    use zenpixels::hdr::ContentLightLevel;
-
-    let src_desc = src.descriptor();
-    check_needs_cms(&src_desc, &lin_desc)?;
-    let mut converter = crate::RowConverter::new(src_desc, lin_desc).at()?;
-
-    let width = src.width();
-    // `Vec<f32>` (not `Vec<u8>`) so the scratch row satisfies the F32
-    // alignment `PixelSlice::new` validates.
-    let floats_per_row = (width as usize)
-        .checked_mul(lin_desc.channels())
-        .ok_or_else(|| whereat::at!(crate::ConvertError::AllocationFailed))?;
-    let mut scratch = alloc::vec![0f32; floats_per_row];
-    let row_bytes = floats_per_row * 4;
-
-    let src_slice = src.as_slice();
-    let mut max_cll = 0u16;
-    for y in 0..src.height() {
-        let row: &mut [u8] = bytemuck::cast_slice_mut(&mut scratch);
-        converter.convert_row(src_slice.row(y), row, width);
-        let lin_row = zenpixels::PixelSlice::new(row, width, 1, row_bytes, lin_desc)
-            .map_err_at(crate::ConvertError::from)?;
-        let row_cll = ContentLightLevel::measure_max(lin_row, white, LightLevelMethod::MaxRgb)
-            .map_or(1000, |c| c.max_content_light_level);
-        max_cll = max_cll.max(row_cll);
+/// Measure absolute MaxRGB luminance from current PQ samples, rowwise with a
+/// reused F32 row. Metadata never substitutes for the measured peak.
+#[cfg(feature = "bt2446a")]
+fn measured_peak(
+    source: &PixelSlice<'_>,
+    black_frame_axis: zenpixels::hdr::Nits,
+) -> Result<zenpixels::hdr::Nits, At<crate::ConvertError>> {
+    let from = source.descriptor();
+    crate::output::current_profile_for(from, source.color_context().map(Arc::as_ref))?;
+    if source.color_context().is_some_and(|c| c.icc.is_some()) {
+        return Err(whereat::at!(crate::ConvertError::NeedsCms {
+            from,
+            to: from
+        }));
     }
-    Ok(max_cll)
+    let linear = PixelDescriptor::new_full(
+        ChannelType::F32,
+        from.layout(),
+        from.alpha().map(|_| AlphaMode::Straight),
+        TransferFunction::Linear,
+        from.primaries,
+    )
+    .with_signal_range(from.signal_range);
+    let options = default_options().with_sdr_white(zenpixels::hdr::DiffuseWhite::new(10_000.0));
+    let mut converter = crate::RowConverter::new_explicit(from, linear, &options)?;
+    let count = (source.width() as usize)
+        .checked_mul(linear.channels())
+        .ok_or_else(|| whereat::at!(crate::ConvertError::AllocationFailed))?;
+    let mut row = Vec::new();
+    row.try_reserve_exact(count)
+        .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
+    row.resize(count, 0_f32);
+    let mut peak = 0_f32;
+    for y in 0..source.rows() {
+        converter.try_convert_row(
+            source.row(y),
+            bytemuck::cast_slice_mut(&mut row),
+            source.width(),
+        )?;
+        for pixel in row.chunks_exact(linear.channels()) {
+            for &value in &pixel[..usize::from(linear.color_model().color_channels())] {
+                if !value.is_finite() {
+                    return Err(whereat::at!(crate::ConvertError::HdrPeakRequired));
+                }
+                peak = peak.max(value * 10_000.0);
+            }
+        }
+    }
+    // All-black samples map to zero on every finite positive axis. Reuse the
+    // caller's explicit target axis so mapper coefficients remain well defined.
+    Ok(zenpixels::hdr::Nits::try_new(peak).unwrap_or(black_frame_axis))
 }
 
 #[cfg(feature = "rgb")]
@@ -1155,15 +1234,6 @@ impl ColorConvertExt for zenpixels::Color {
         target: PixelDescriptor,
         options: &zenpixels::ConvertOptions,
     ) -> Result<Self, whereat::At<crate::ConvertError>> {
-        use zenpixels::TransferFunction as Tf;
-        if matches!(target.transfer(), Tf::Pq | Tf::Hlg)
-            && !matches!(self.descriptor().transfer(), Tf::Pq | Tf::Hlg | Tf::Linear)
-        {
-            return Err(whereat::at!(crate::ConvertError::NoPath {
-                from: self.descriptor(),
-                to: target,
-            }));
-        }
         let mut converter = crate::RowConverter::new_explicit(self.descriptor(), target, options)?;
         let mut pixel = [[0f32; 4]; 1];
         let pixel = bytemuck::cast_slice_mut::<[f32; 4], u8>(&mut pixel);

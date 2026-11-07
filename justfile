@@ -298,7 +298,8 @@ output-plan-sync export: (prepared-sync export)
 
 # Unclipped transfer requests, legacy in-range parity and exact alpha/padding.
 unclipped-transfer-check:
-    cargo test -p zenpixels-convert --test unclipped_transfer_contract --test gamma22_transfer --test transfer_alpha --features __trace_ops --locked
+    cargo test -p zenpixels-convert --lib kernel_tests::transfer_alpha --features __trace_ops --locked
+    cargo test -p zenpixels-convert --test unclipped_transfer_contract --test gamma22_transfer --features __trace_ops --locked
     cargo clippy -p zenpixels-convert --lib --test unclipped_transfer_contract --features __trace_ops --locked -- -D warnings
 
 # Qualify the 0.3 retirement merged with current output and precision contracts.
@@ -320,6 +321,13 @@ site-build:
 # Browser integration checks; PLAYWRIGHT_MODULE points at an installed Playwright.
 site-check URL='http://127.0.0.1:3116':
     node site/smoke.cjs {{URL}}
+
+# Explicit HDR units, existing kernel goldens and public API contracts.
+hdr-intent-check:
+    cargo test --locked --workspace --all-features
+    cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+    cargo check --locked -p zenpixels-convert --no-default-features --features bt2446a
+    ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
 
 # Frozen, unpublished gamma diagnostics; prepare.py reconstructs dependencies.
 moxcms-gamma-check:
