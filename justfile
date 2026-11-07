@@ -441,3 +441,11 @@ moxcms-final-summary study output:
 
 moxcms-final-report study comparisons output:
     python3 benchmarks/moxcms-gamma/report-final.py "{{study}}" "{{comparisons}}" "{{output}}"
+
+# Observe the released CMS on the original exact-zero regression inputs.
+moxcms-release-probe:
+    cargo run --locked -p icc-gen --bin moxcms_release_probe
+
+# Compare a proposed bundle without replacing committed data or expectations.
+icc-bundle-compare proposed output:
+    python3 scripts/icc-gen/validation/compare_bundles.py zenpixels-convert {{proposed}} {{output}}
