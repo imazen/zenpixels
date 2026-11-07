@@ -48,16 +48,23 @@ def main():
                 # One update can move several packages. Re-read identities after
                 # each update instead of targeting an already removed package ID.
                 for family in ["archmage", "archmage-macros", "magetypes"]:
-                    versions = sorted({p["version"] for p in json.loads(metadata.read_text())["packages"]
-                                       if p["name"] == family and p["version"].startswith("0.9.")
-                                       and p["version"] != "0.9.31"})
-                    for version in versions:
+                    while True:
+                        packages = json.loads(metadata.read_text())["packages"]
+                        versions = sorted({p["version"] for p in packages
+                                           if p["name"] == family and p["version"].startswith("0.9.")
+                                           and p["version"] != "0.9.31"
+                                           and (p["source"] or "").startswith("registry+")})
+                        if not versions:
+                            break
+                        version = versions[0]
                         rc, _ = run(["cargo", "update", "-p", f"{family}@{version}",
-                                     "--precise", "0.9.31"], f"update-{family}")
+                                     "--precise", "0.9.31"], f"update-{family}-{version}")
                         if rc:
                             break
                         rc, metadata = run(["cargo", "metadata", "--format-version", "1"],
-                                           f"after-{family}")
+                                           f"after-{family}-{version}")
+                        if rc:
+                            break
                     if rc:
                         break
                 if rc == 0:
